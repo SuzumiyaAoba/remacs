@@ -21571,7 +21571,7 @@ It is also called if Tooltip mode is on, for text-only displays." (when (and (no
 MSG is either a help string to display, or nil to cancel the display." (if (not (and (eq window-system 'ns) (menu-or-popup-active-p))) (let ((previous-help tooltip-help-message)) (setq tooltip-help-message msg) (cond ((null msg) (tooltip-hide)) ((equal previous-help msg)) (t (tooltip-hide) (tooltip-start-delayed-tip))))))
 
 (defun gui-get-primary-selection nil "Return the PRIMARY selection, or the best emulation thereof." (or (gui--selection-value-internal 'PRIMARY) (and (fboundp 'w32-get-selection-value) (eq (framep (selected-frame)) 'w32) (w32-get-selection-value)) (error "No selection is available")))
-(defvar electric-pair-open-newline-between-pairs nil)
+(defvar electric-pair-open-newline-between-pairs)
 (defcustom electric-quote-comment t "Non-nil means to use electric quoting in program comments." :version "25.1" :type 'boolean :safe 'booleanp :group 'electricity)
 (defcustom electric-quote-string nil "Non-nil means to use electric quoting in program strings." :version "25.1" :type 'boolean :safe 'booleanp :group 'electricity)
 (defcustom electric-quote-paragraph t "Non-nil means to use electric quoting in text paragraphs." :version "25.1" :type 'boolean :safe 'booleanp :group 'electricity)
@@ -39898,32 +39898,55 @@ type is.  This defaults to \"INFO\"." (let ((string (format "  %-9s%s" (or type 
 (defun byte-compile-info-message (&rest args) "Message format ARGS in a way that looks pleasing in the compilation output." (declare (obsolete byte-compile-info "28.1")) (byte-compile-info (apply #'format args) t))
 
 
-(setq defun-declarations-alist
-      (list
-       (list 'advertised-calling-convention #'byte-run--set-advertised-calling-convention)
-       (list 'obsolete #'byte-run--set-obsolete)
-       (list 'interactive-only #'byte-run--set-interactive-only)
-       (list 'pure #'byte-run--set-pure)
-       (list 'side-effect-free #'byte-run--set-side-effect-free)
-       (list 'important-return-value #'byte-run--set-important-return-value)
-       (list 'compiler-macro #'byte-run--set-compiler-macro)
-       (list 'doc-string #'byte-run--set-doc-string)
-       (list 'indent #'byte-run--set-indent)
-       (list 'speed #'byte-run--set-speed)
-       (list 'safety #'byte-run--set-safety)
-       (list 'completion #'byte-run--set-completion)
-       (list 'modes #'byte-run--set-modes)
-       (list 'interactive-args #'byte-run--set-interactive-args)
-       (list 'ftype #'byte-run--set-function-type)))
+;; GNU byte-run.el uses `defvar' for both alists, so reloading it is a
+;; no-op and entries pushed by earlier loads (e.g. tramp-loaddefs's
+;; `tramp-suppress-trace' handler) are preserved.  Plain `setq' here
+;; would clobber those entries on every re-`require' — merge ours in
+;; keyed-by-name instead (first wins, so reload is idempotent).
+(dolist (entry '((advertised-calling-convention
+                  . byte-run--set-advertised-calling-convention)
+                 (obsolete . byte-run--set-obsolete)
+                 (interactive-only . byte-run--set-interactive-only)
+                 (pure . byte-run--set-pure)
+                 (side-effect-free . byte-run--set-side-effect-free)
+                 (important-return-value
+                  . byte-run--set-important-return-value)
+                 (compiler-macro . byte-run--set-compiler-macro)
+                 (doc-string . byte-run--set-doc-string)
+                 (indent . byte-run--set-indent)
+                 (speed . byte-run--set-speed)
+                 (safety . byte-run--set-safety)
+                 (completion . byte-run--set-completion)
+                 (modes . byte-run--set-modes)
+                 (interactive-args . byte-run--set-interactive-args)
+                 (ftype . byte-run--set-function-type)))
+  (unless (assq (car entry) defun-declarations-alist)
+    (setq defun-declarations-alist
+          (nconc defun-declarations-alist
+                 (list (list (car entry) (symbol-function (cdr entry))))))))
 
-(setq macro-declarations-alist
-      (nconc
-       (list
-        (list 'debug #'byte-run--set-debug)
-        (list 'autoload-macro #'byte-run--set-autoload-macro)
-        (list 'indent (byte-run--dont-autoload #'byte-run--set-indent))
-        (list 'no-font-lock-keyword #'byte-run--set-no-font-lock-keyword))
-       defun-declarations-alist))
+;; GNU's `macro-declarations-alist' = macro entries `nconc'ed onto
+;; `defun-declarations-alist'.  Same caveat: merge ours by key so a
+;; reload can't drop entries another file added first.  `indent'
+;; deliberately keeps the macro-only `dont-autoload' wrapper.
+(dolist (entry '((debug . byte-run--set-debug)
+                 (autoload-macro . byte-run--set-autoload-macro)))
+  (unless (assq (car entry) macro-declarations-alist)
+    (push (list (car entry) (symbol-function (cdr entry)))
+          macro-declarations-alist)))
+(unless (assq 'indent macro-declarations-alist)
+  (push (list 'indent (byte-run--dont-autoload #'byte-run--set-indent))
+        macro-declarations-alist))
+(unless (assq 'no-font-lock-keyword macro-declarations-alist)
+  (push (list 'no-font-lock-keyword #'byte-run--set-no-font-lock-keyword)
+        macro-declarations-alist))
+;; GNU shares the tail: `macro-declarations-alist' ends with every
+;; `defun-declarations-alist' entry.  Mirror that by appending missing
+;; defun entries after the macro heads.
+(dolist (entry defun-declarations-alist)
+  (unless (assq (car entry) macro-declarations-alist)
+    (setq macro-declarations-alist
+          (nconc macro-declarations-alist (list entry)))))
 
 ;; gv.el registers these `declare' handlers via autoload cookies.
 (let ((x (list 'gv-expander #'gv--expander-defun-declaration)))
@@ -40539,7 +40562,7 @@ they had none before." :type 'boolean :version "31.1" :set (lambda (symbol value
 (defvar dynamic-library-suffixes '(".dylib" ".so"))
 (defvar echo-area-clear-hook nil)
 (defvar echo-keystrokes-help 't)
-(defvar-local electric-pair-skip-whitespace 'chomp)
+(defvar electric-pair-skip-whitespace) ;Remacs: GNU -Q leaves this unbound (elec-pair.el not dumped)
 (defvar eln-dest-dir '"/nix/store/7l70cwk87fk30viyjpj9iwha6a2wcs6v-emacs-unstable-31.1/lib/emacs/31.1/native-lisp/31.1-df9c9041/")
 (defvar emacsclient-program-name '"emacsclient")
 (defvar enable-character-translation 't)
@@ -40575,8 +40598,8 @@ they had none before." :type 'boolean :version "31.1" :set (lambda (symbol value
 (defvar hexl-program-name '"hexl")
 (defvar highlight-nonselected-windows nil)
 (defvar hourglass-delay '1)
-(defvar-local hs-block-end-regexp "\\s)\\|\"")
-(defvar-local hs-block-start-regexp "\\s(\\|\"")
+(defvar hs-block-end-regexp) ;Remacs: GNU -Q leaves these unbound (hideshow.el not dumped)
+(defvar hs-block-start-regexp)
 (defvar iconify-child-frame 'iconify-top-level)
 (defvar ignore-relative-composition nil)
 (defvar image-cache-eviction-delay '300)
@@ -40656,9 +40679,9 @@ they had none before." :type 'boolean :version "31.1" :set (lambda (symbol value
 (defvar otf-script-alist '((adlm . adlam) (ahom . ahom) (hluw . anatolian) (arab . arabic) (armi . aramaic) (armn . armenian) (avst . avestan) (bali . balinese) (bamu . bamum) (bass . bassa-vah) (batk . batak) (bng2 . bengali) (beng . bengali) (berf . beria-erfe) (bhks . bhaiksuki) (bopo . bopomofo) (brah . brahmi) (brai . braille) (bugi . buginese) (buhd . buhid) (byzm . byzantine-musical-symbol) (cans . canadian-aboriginal) (cari . carian) (aghb . caucasian-albanian) (cakm . chakma) (cham . cham) (cher . cherokee) (chrs . chorasmian) (copt . coptic) (xsux . cuneiform) (cprt . cypriot) (cpmn . cypro-minoan) (cyrl . cyrillic) (dsrt . deseret) (deva . devanagari) (dev2 . devanagari) (diak . dives-akuru) (dogr . dogra) (dupl . duployan-shorthand) (egyp . egyptian) (elba . elbasan) (elym . elymaic) (ethi . ethiopic) (gara . garay) (geor . georgian) (glag . glagolitic) (goth . gothic) (gran . grantha) (grek . greek) (gujr . gujarati) (gjr2 . gujarati) (gong . gunjala-gondi) (guru . gurmukhi) (gur2 . gurmukhi) (gukh . gurung-khema) (hani . han) (hang . hangul) (jamo . hangul) (rohg . hanifi-rohingya) (hano . hanunoo) (hatr . hatran) (hebr . hebrew) (hung . old-hungarian) (phli . inscriptional-pahlavi) (prti . inscriptional-parthian) (java . javanese) (kthi . kaithi) (knda . kannada) (knd2 . kannada) (kana . kana) (kawi . kawi) (kali . kayah-li) (khar . kharoshthi) (kits . khitan-small-script) (khmr . khmer) (khoj . khojki) (sind . khudawadi) (krai . kirat-rai) (lao\  . lao) (latn . latin) (lepc . lepcha) (limb . limbu) (lina . linear-a) (linb . linear-b) (lisu . lisu) (lyci . lycian) (lydi . lydian) (mahj . mahajani) (maka . makasar) (marc . marchen) (mlym . malayalam) (mlm2 . malayalam) (mand . mandaic) (mani . manichaean) (gonm . masaram-gondi) (math . mathematical) (medf . medefaidrin) (mtei . meetei-mayek) (mend . mende-kikakui) (merc . meroitic) (mero . meroitic) (plrd . miao) (modi . modi) (mong . mongolian) (mroo . mro) (mult . multani) (musc . musical-symbol) (mym2 . burmese) (mymr . burmese) (nand . nandinagari) (nbat . nabataean) (nagm . nag-mundari) (newa . newa) (nko\  . nko) (nshu . nushu) (hmnp . nyiakeng-puachue-hmong) (ogam . ogham) (olck . ol-chiki) (omao . ol-onal) (ital . old-italic) (xpeo . old-persian) (narb . old-north-arabian) (perm . old-permic) (sogo . old-sogdian) (sarb . old-south-arabian) (orkh . old-turkic) (ougr . old-uyghur) (orya . oriya) (ory2 . oriya) (osge . osage) (osma . osmanya) (hmng . pahawh-hmong) (palm . palmyrene) (pauc . pau-cin-hau) (phag . phags-pa) (phli . inscriptional-pahlavi) (phnx . phoenician) (phlp . psalter-pahlavi) (prti . inscriptional-parthian) (rjng . rejang) (runr . runic) (samr . samaritan) (saur . saurashtra) (shrd . sharada) (shaw . shavian) (sidd . siddham) (sidt . sidetic) (sgnw . sutton-sign-writing) (sinh . sinhala) (sogd . sogdian) (sora . sora-sompeng) (soyo . soyombo) (sund . sundanese) (sunu . sunuwar) (sylo . syloti-nagri) (syrc . syriac) (tglg . tagalog) (tagb . tagbanwa) (tale . tai-le) (talu . tai-lue) (lana . tai-tham) (tavt . tai-viet) (takr . takri) (taml . tamil) (tml2 . tamil) (tnsa . tangsa) (tang . tangut) (tayo . tai-yo) (telu . telugu) (tel2 . telugu) (thaa . thaana) (thai . thai) (tibt . tibetan) (tfng . tifinagh) (tirh . tirhuta) (todr . todhri) (tols . tolong-siki) (toto . toto) (tutg . tulu-tigalari) (ugar . ugaritic) (vith . vithkuqi) (vai\  . vai) (wcho . wancho) (wara . warang-citi) (yezi . yezidi) (yi\ \	 . yi) (zanb . zanabazar-square)))
 (defvar other-window-scroll-buffer nil)
 (defvar other-window-scroll-default nil)
-(defvar-local outline-level 'lisp-outline-level)
-(defvar-local outline-regexp nil)
-(defvar-local outline-search-function 'elisp-outline-search)
+(defvar outline-level) ;Remacs: GNU -Q leaves these unbound (outline.el not dumped;
+(defvar outline-regexp)  ; scratch gets locals from lisp-mode-variables instead)
+(defvar outline-search-function)
 (defvar overlay-arrow-string '"=>")
 (defvar overline-margin '2)
 (defvar overriding-local-map-menu-flag nil)
@@ -40674,7 +40697,7 @@ they had none before." :type 'boolean :version "31.1" :set (lambda (symbol value
 (defvar print-symbols-bare nil)
 (defvar printable-chars nil)
 (defvar process-prioritize-lower-fds nil)
-(defvar-local project-vc-external-roots-function 'elisp-load-path-roots)
+(defvar project-vc-external-roots-function) ;Remacs: GNU -Q leaves this unbound (elisp-mode.el setq-locals it)
 (defvar pure-bytes-used '0)
 (defvar purify-flag nil)
 (defvar query-all-font-backends nil)

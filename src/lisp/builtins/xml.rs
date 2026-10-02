@@ -301,16 +301,12 @@ fn parse_html(i: &mut Interp, text: &str) -> Value {
     }
 }
 
-fn f_libxml_parse_xml_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let text = region_text(i, &a)?;
-    let drop_comments = arg(&a, 3).truthy();
-    Ok(parse_xml(i, &text, drop_comments))
-}
+fn f_libxml_parse_xml_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let text = region_text(i, &a)?;
+let drop_comments = arg(&a, 3).truthy();
+Ok(parse_xml(i, &text, drop_comments)) }
 
-fn f_libxml_parse_html_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let text = region_text(i, &a)?;
-    Ok(parse_html(i, &text))
-}
+fn f_libxml_parse_html_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let text = region_text(i, &a)?;
+Ok(parse_html(i, &text)) }
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!(

@@ -2,7 +2,7 @@
 //! These receive their arguments unevaluated (as a raw list).
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+
 use std::rc::Rc;
 
 use super::Interp;
@@ -199,15 +199,16 @@ fn sf_if(i: &mut Interp, args: Value) -> EvalResult {
 }
 
 fn sf_cond(i: &mut Interp, args: Value) -> EvalResult {
-    let mut cur = args;
+    // Raw-pointer spine walk: the next cdr is read after the clause
+    // test is evaluated, matching GNU's eval order and skipping a
+    // borrow+clone pair per clause.
+    let mut cur = &args as *const Value;
     loop {
-        match cur {
+        match unsafe { &*cur } {
             Value::Nil => return Ok(Value::Nil),
             Value::Cons(c) => {
-                let (clause, next) = {
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
-                };
+                let cell = RefCell::as_ptr(c);
+                let clause = unsafe { &*cell }.car.clone();
                 // GNU's Fcond XCARs each clause: a non-list clause
                 // signals `wrong-type-argument' (listp CLAUSE).
                 if !matches!(clause, Value::Cons(_) | Value::Nil) {
@@ -222,9 +223,9 @@ fn sf_cond(i: &mut Interp, args: Value) -> EvalResult {
                     }
                     return i.eval_progn(&body);
                 }
-                cur = next;
+                cur = unsafe { &(*cell).cdr };
             }
-            tail => return Err(i.wrong_type_mut("listp", &tail)),
+            tail => return Err(i.wrong_type_mut("listp", tail)),
         }
     }
 }
@@ -249,21 +250,18 @@ fn sf_prog2(i: &mut Interp, args: Value) -> EvalResult {
 
 
 fn sf_and(i: &mut Interp, args: Value) -> EvalResult {
-    let mut cur = args;
+    let mut cur = &args as *const Value;
     let mut last = Value::t();
     loop {
-        match cur {
+        match unsafe { &*cur } {
             Value::Nil => return Ok(last),
             Value::Cons(c) => {
-                let (car_v, next) = {
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
-                };
-                last = i.eval(&car_v)?;
+                let cell = RefCell::as_ptr(c);
+                last = i.eval(unsafe { &(*cell).car })?;
                 if last.is_nil() {
                     return Ok(Value::Nil);
                 }
-                cur = next;
+                cur = unsafe { &(*cell).cdr };
             }
             _ => return Err(i.error("dotted and")),
         }
@@ -271,20 +269,17 @@ fn sf_and(i: &mut Interp, args: Value) -> EvalResult {
 }
 
 fn sf_or(i: &mut Interp, args: Value) -> EvalResult {
-    let mut cur = args;
+    let mut cur = &args as *const Value;
     loop {
-        match cur {
+        match unsafe { &*cur } {
             Value::Nil => return Ok(Value::Nil),
             Value::Cons(c) => {
-                let (car_v, next) = {
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
-                };
-                let v = i.eval(&car_v)?;
+                let cell = RefCell::as_ptr(c);
+                let v = i.eval(unsafe { &(*cell).car })?;
                 if v.truthy() {
                     return Ok(v);
                 }
-                cur = next;
+                cur = unsafe { &(*cell).cdr };
             }
             _ => return Err(i.error("dotted or")),
         }
@@ -301,15 +296,13 @@ fn parse_let_specs(i: &mut Interp, specs: &Value) -> Result<Vec<(Value, Value)>,
         _ => return Err(i.wrong_type_mut("listp", specs)),
     }
     let mut out = Vec::new();
-    let mut cur = specs.clone();
+    let mut cur = specs as *const Value;
     loop {
-        match cur {
+        match unsafe { &*cur } {
             Value::Nil => return Ok(out),
             Value::Cons(c) => {
-                let (spec, next) = {
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
-                };
+                let cell = RefCell::as_ptr(c);
+                let spec = unsafe { &*cell }.car.clone();
                 if i.sym_id(&spec).is_some() {
                     // A bare symbol spec (possibly a positioned symbol)
                     // binds to nil.
@@ -329,9 +322,9 @@ fn parse_let_specs(i: &mut Interp, specs: &Value) -> Result<Vec<(Value, Value)>,
                     }
                     out.push((let_car(i, &spec)?, let_car(i, &tail)?));
                 }
-                cur = next;
+                cur = unsafe { &(*cell).cdr };
             }
-            _ => return Err(i.wrong_type_mut("listp", &cur)),
+            _ => return Err(i.wrong_type_mut("listp", unsafe { &*cur })),
         }
     }
 }
@@ -371,15 +364,14 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
     }
     if i.lexical_binding_active() {
         let frame = Rc::new(LexFrame {
-            vars: RefCell::new(HashMap::new()),
-            var_order: RefCell::new(Vec::new()),
-            declared: RefCell::new(std::collections::HashSet::new()),
+            vars: RefCell::new(Vec::new()),
+            declared: RefCell::new(Vec::new()),
             parent: i.lexenv.clone(),
         });
         let mark = i.specbind_depth();
         let mut r = Ok(Value::Nil);
         for (v, val) in evaluated {
-            if std::env::var_os("DBG_SETCONST").is_some()
+            if i.dbg_flags & 0x100 != 0
                 && let_var(i, &v).map(|s| s == sym::NIL).unwrap_or(false)
             {
                 eprintln!("[let-nil-lex] spec={:?} val={:?}",
@@ -404,7 +396,7 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
         let mark = i.specbind_depth();
         let mut r = Ok(Value::Nil);
         for (v, val) in evaluated {
-            if std::env::var_os("DBG_SETCONST").is_some()
+            if i.dbg_flags & 0x100 != 0
                 && let_var(i, &v).map(|s| s == sym::NIL).unwrap_or(false)
             {
                 eprintln!("[let-nil] spec={:?} val={:?}",
@@ -431,9 +423,8 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
     let body = cdr(&args);
     if i.lexical_binding_active() {
         let frame = Rc::new(LexFrame {
-            vars: RefCell::new(HashMap::new()),
-            var_order: RefCell::new(Vec::new()),
-            declared: RefCell::new(std::collections::HashSet::new()),
+            vars: RefCell::new(Vec::new()),
+            declared: RefCell::new(Vec::new()),
             parent: i.lexenv.clone(),
         });
         let mark = i.specbind_depth();
@@ -525,8 +516,12 @@ fn setq_pairs(i: &mut Interp, args: &Value, default: bool, who: SymId) -> EvalRe
                     if !is_special && i.lexenv.is_some() {
                         let mut env = &i.lexenv;
                         while let Some(frame) = env {
-                            if frame.vars.borrow().contains_key(&sid) {
-                                frame.vars.borrow_mut().insert(sid, last.clone());
+                            let pos = {
+                                let vars = frame.vars.borrow();
+                                vars.iter().position(|(s, _)| *s == sid)
+                            };
+                            if let Some(pos) = pos {
+                                frame.vars.borrow_mut()[pos].1 = last.clone();
                                 done = true;
                                 break;
                             }
@@ -787,7 +782,7 @@ fn sf_while(i: &mut Interp, args: Value) -> EvalResult {
         }
         i.eval_progn(&body)?;
         iters += 1;
-        if std::env::var("WHILE_WATCH").is_ok() && iters == 2_000_000 {
+        if i.dbg_flags & 0x20 != 0 && iters == 2_000_000 {
             let names: Vec<String> = i
                 .lisp_stack
                 .iter()
@@ -797,7 +792,7 @@ fn sf_while(i: &mut Interp, args: Value) -> EvalResult {
                     format!(
                         "{} {}",
                         i.prin1_to_string(f),
-                        i.prin1_to_string(&Value::list(a.clone()))
+                        i.prin1_to_string(&Value::list(a.as_slice().to_vec()))
                     )
                 })
                 .collect();
@@ -881,9 +876,8 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                         let mark = i.specbind_depth();
                         let lex_frame = if i.lexical_binding_active() {
                             Some(Rc::new(LexFrame {
-                                vars: RefCell::new(HashMap::new()),
-                                var_order: RefCell::new(Vec::new()),
-                                declared: RefCell::new(std::collections::HashSet::new()),
+                                vars: RefCell::new(Vec::new()),
+                                declared: RefCell::new(Vec::new()),
                                 parent: i.lexenv.clone(),
                             }))
                         } else {
@@ -932,9 +926,8 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                             let mark = i.specbind_depth();
                             let lex_frame = if i.lexical_binding_active() {
                                 Some(Rc::new(LexFrame {
-                                    vars: RefCell::new(HashMap::new()),
-                                    var_order: RefCell::new(Vec::new()),
-                                    declared: RefCell::new(std::collections::HashSet::new()),
+                                    vars: RefCell::new(Vec::new()),
+                                    declared: RefCell::new(Vec::new()),
                                     parent: i.lexenv.clone(),
                                 }))
                             } else {

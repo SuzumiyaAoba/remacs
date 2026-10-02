@@ -55,105 +55,87 @@ pub(crate) static SUBRS: &[Subr] = &[
 /// GNU fns.c `format-proper-list-p': the `format' arg validator —
 /// length of a proper list, nil otherwise (no error on non-lists,
 /// dotted or circular lists).
-fn f_format_proper_list_p(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let mut cur = a[0].clone();
-    let mut n: i128 = 0;
-    let mut guard = 0usize;
-    loop {
-        match &cur {
-            Value::Cons(c) => {
-                guard += 1;
-                if guard > 500_000 {
-                    return Ok(Value::Nil);
-                }
-                let next = c.borrow().cdr.clone();
-                cur = next;
-                n += 1;
+fn f_format_proper_list_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let mut cur = a[0].clone();
+let mut n: i128 = 0;
+let mut guard = 0usize;
+loop {
+    match &cur {
+        Value::Cons(c) => {
+            guard += 1;
+            if guard > 500_000 {
+                return Ok(Value::Nil);
             }
-            Value::Nil => return Ok(Value::Int(n)),
-            _ => return Ok(Value::Nil),
+            let next = c.borrow().cdr.clone();
+            cur = next;
+            n += 1;
         }
+        Value::Nil => return Ok(Value::Int(n)),
+        _ => return Ok(Value::Nil),
+    }
+} }
+
+fn f_noop(_i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { Ok(Value::Nil) }
+
+fn f_prin1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = i.print_to_string_cb(&args[0])?;
+i.write_output_to(&s, &arg(&args, 1))?;
+Ok(args[0].clone()) }
+
+fn f_princ(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = i.princ_to_string_cb(&args[0])?;
+i.write_output_to(&s, &arg(&args, 1))?;
+Ok(args[0].clone()) }
+
+fn f_print(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = i.print_to_string_cb(&args[0])?;
+// GNU's print emits a newline before and after the object.
+i.write_output_to(&format!("\n{}\n", s), &arg(&args, 1))?;
+Ok(args[0].clone()) }
+
+fn f_terpri(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU: (terpri &optional PRINTCHARFUN ENSURE) — PRINTCHARFUN is the
+// print stream; with ENSURE, output only if not already at BOL.
+let stream = arg(&args, 0);
+// GNU's terpri accepts only t/nil/marker/buffer streams; function
+// streams signal `error' ("Unsupported function argument" FN).
+let dest = match &stream {
+    Value::Nil => i.symbol_value(i.standard_output_sym),
+    v => v.clone(),
+};
+match &dest {
+    Value::Nil => {}
+    Value::Sym(sid) if *sid == sym::T => {}
+    Value::Marker(_) | Value::Buffer(_) => {}
+    _ => {
+        return Err(i.signal_data(
+            sym::ERROR,
+            vec![Value::string("Unsupported function argument"), dest],
+        ));
     }
 }
-
-fn f_noop(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
+let ensure = arg(&args, 1).truthy();
+if ensure && i.output_at_bol(&stream) {
+    return Ok(Value::Nil);
 }
+i.write_output_to("\n", &stream)?;
+Ok(Value::Sym(sym::T)) }
 
-fn f_prin1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = i.print_to_string(&args[0]);
-    i.write_output_to(&s, &arg(&args, 1))?;
-    Ok(args[0].clone())
-}
-
-fn f_princ(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = i.princ_to_string(&args[0]);
-    i.write_output_to(&s, &arg(&args, 1))?;
-    Ok(args[0].clone())
-}
-
-fn f_print(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = i.print_to_string(&args[0]);
-    // GNU's print emits a newline before and after the object.
-    i.write_output_to(&format!("\n{}\n", s), &arg(&args, 1))?;
-    Ok(args[0].clone())
-}
-
-fn f_terpri(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU: (terpri &optional PRINTCHARFUN ENSURE) — PRINTCHARFUN is the
-    // print stream; with ENSURE, output only if not already at BOL.
-    let stream = arg(&args, 0);
-    // GNU's terpri accepts only t/nil/marker/buffer streams; function
-    // streams signal `error' ("Unsupported function argument" FN).
-    let dest = match &stream {
-        Value::Nil => i.symbol_value(i.standard_output_sym),
-        v => v.clone(),
-    };
-    match &dest {
-        Value::Nil => {}
-        Value::Sym(sid) if *sid == sym::T => {}
-        Value::Marker(_) | Value::Buffer(_) => {}
-        _ => {
-            return Err(i.signal_data(
-                sym::ERROR,
-                vec![Value::string("Unsupported function argument"), dest],
-            ));
-        }
+fn f_write_char(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { if let Value::Int(n) = &args[0] {
+    if let Some(c) = char::from_u32(*n as u32) {
+        let mut s = [0u8; 4];
+        i.write_output_to(c.encode_utf8(&mut s), &arg(&args, 1))?;
     }
-    let ensure = arg(&args, 1).truthy();
-    if ensure && i.output_at_bol(&stream) {
-        return Ok(Value::Nil);
-    }
-    i.write_output_to("\n", &stream)?;
-    Ok(Value::Sym(sym::T))
 }
+Ok(args[0].clone()) }
 
-fn f_write_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    if let Value::Int(n) = &args[0] {
-        if let Some(c) = char::from_u32(*n as u32) {
-            let mut s = [0u8; 4];
-            i.write_output_to(c.encode_utf8(&mut s), &arg(&args, 1))?;
-        }
-    }
-    Ok(args[0].clone())
-}
+fn f_prin1_to_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let noescape = arg(&args, 1).truthy();
+Ok(Value::string(if noescape {
+    i.princ_to_string_cb(&args[0])?
+} else {
+    i.print_to_string_cb(&args[0])?
+})) }
 
-fn f_prin1_to_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let noescape = arg(&args, 1).truthy();
-    Ok(Value::string(if noescape {
-        i.princ_to_string(&args[0])
-    } else {
-        i.print_to_string(&args[0])
-    }))
-}
-
-fn f_with_output_to_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (with-output-to-string &rest BODY)
-    let body = args.into_iter().next().unwrap_or(Value::Nil);
-    let saved = std::mem::take(&mut i.output_buffer);
-    i.capture_output = true;
-    let r = i.eval_progn(&body);
-    i.capture_output = false;
-    let captured = std::mem::replace(&mut i.output_buffer, saved);
-    r.map(|_| Value::string(captured))
-}
+fn f_with_output_to_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // (with-output-to-string &rest BODY)
+let body = args.iter().next().cloned().unwrap_or(Value::Nil);
+let saved = std::mem::take(&mut i.output_buffer);
+i.capture_output = true;
+let r = i.eval_progn(&body);
+i.capture_output = false;
+let captured = std::mem::replace(&mut i.output_buffer, saved);
+r.map(|_| Value::string(captured)) }

@@ -775,4 +775,21 @@
       (list (re-search-backward "a" nil nil 2) (point)))
     '(3 3))
 
+;; NOERROR non-t in a narrowed buffer: point lands at ZV/BEGV of the
+;; narrowed region — the limit is the *absolute* end index, not
+;; region length (a `begv' slip here broke `forward-paragraph's
+;; `(goto-char start)' inside erc's narrowed docstring buffers).
+(qa (with-temp-buffer
+      (insert "aaa bbb ccc")
+      (narrow-to-region 5 11)
+      (goto-char (point-min))
+      (list (re-search-forward "zzz" nil 1) (point)))
+    '(nil 11))
+(qa (with-temp-buffer
+      (insert "aaa bbb ccc")
+      (narrow-to-region 5 11)
+      (goto-char (point-max))
+      (list (re-search-backward "zzz" nil 1) (point)))
+    '(nil 5))
+
 (princ (qa--done))

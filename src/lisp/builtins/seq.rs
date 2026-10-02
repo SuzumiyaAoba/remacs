@@ -293,7 +293,7 @@ fn seq_let_bind(
             let Some(name) = elems.get(pos + 1) else {
                 return Err(i.error("seq-let: &rest without variable"));
             };
-            let v = f_seq_drop(i, vec![seqv.clone(), Value::Int(idx as i128)])?;
+            let v = f_seq_drop(i, vec![seqv.clone(), Value::Int(idx as i128)].into())?;
             return seq_let_bind_one(i, name, &v, nbind);
         }
         if i.sym_id(&el) == Some(amp_opt) {
@@ -310,22 +310,20 @@ fn seq_let_bind(
 
 /// `(seq-let ARGS SEQ BODY...)': evaluate SEQ, destructure-bind ARGS
 /// against its elements, then run BODY (dynamic binding like `let').
-fn f_seq_let_raw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let all = arg(&args, 0);
-    let forms = match all.list_to_vec() {
-        Ok(v) => v,
-        Err(_) => return Err(i.wrong_type_mut("listp", &all)),
-    };
-    if forms.len() < 2 {
-        let s = Value::Sym(i.intern("seq-let"));
-        return Err(i.wrong_number_of_args(&s, forms.len() as i128));
-    }
-    let seqv = i.eval(&forms[1])?;
-    let mut nbind = 0usize;
-    let r = seq_let_bind(i, &forms[0], &seqv, &mut nbind).and_then(|()| i.eval_body(&forms[2..]));
-    let _ = i.unbind(nbind);
-    r
+fn f_seq_let_raw(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let all = arg(&args, 0);
+let forms = match all.list_to_vec() {
+    Ok(v) => v,
+    Err(_) => return Err(i.wrong_type_mut("listp", &all)),
+};
+if forms.len() < 2 {
+    let s = Value::Sym(i.intern("seq-let"));
+    return Err(i.wrong_number_of_args(&s, forms.len() as i128));
 }
+let seqv = i.eval(&forms[1])?;
+let mut nbind = 0usize;
+let r = seq_let_bind(i, &forms[0], &seqv, &mut nbind).and_then(|()| i.eval_body(&forms[2..]));
+let _ = i.unbind(nbind);
+r }
 
 /// Convert sequence to Vec<Value> of its elements.
 pub(crate) fn seq_to_vec(i: &mut Interp, v: &Value) -> Result<Vec<Value>, super::Flow> {
@@ -383,108 +381,90 @@ fn seq_from_like(_i: &mut Interp, like: &Value, items: Vec<Value>) -> Value {
     .clone()
 }
 
-fn f_elt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU `elt' fixnum-checks N (fns.c Felt).
-    let n = want_fixnum(i, &args[1])?;
-    match &args[0] {
-        Value::Nil => {
-            if n == 0 {
-                Ok(Value::Nil)
-            } else {
-                Ok(Value::Nil)
-            }
+fn f_elt(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU `elt' fixnum-checks N (fns.c Felt).
+let n = want_fixnum(i, &args[1])?;
+match &args[0] {
+    Value::Nil => {
+        if n == 0 {
+            Ok(Value::Nil)
+        } else {
+            Ok(Value::Nil)
         }
-        Value::Cons(_) => {
-            // Emacs: elt on a list is car(nthcdr(N, list)) — negative
-            // clamps to 0; an improper tail is a wrong-type error.
-            let tail = super::listfn::nthcdr_strict(i, &args[0], n.max(0) as usize)?;
-            match tail {
-                Value::Cons(c) => Ok(c.borrow().car.clone()),
-                Value::Nil => Ok(Value::Nil),
-                ref other => Err(i.wrong_type_mut("listp", other)),
-            }
-        }
-        Value::Str(s) => {
-            let chars: Vec<char> = s.borrow().chars().collect();
-            if n < 0 || n as usize >= chars.len() {
-                return Err(i.signal_data(
-                    sym::ARGS_OUT_OF_RANGE,
-                    vec![args[0].clone(), args[1].clone()],
-                ));
-            }
-            let c = chars[n as usize];
-            // GNU: elements of a unibyte string are the raw byte
-            // values (eight-bit proxies read back as 0x80-0xFF).
-            let code = if i.is_unibyte_str(s) {
-                crate::lisp::value::eight_bit_byte(c)
-                    .map(|b| b as i128)
-                    .unwrap_or((c as u32) as i128 & 0xFF)
-            } else {
-                crate::lisp::value::lisp_char_code(c)
-            };
-            Ok(Value::Int(code))
-        }
-        Value::Vec(v) => {
-            let items = v.borrow();
-            if n < 0 || n as usize >= items.len() {
-                return Err(i.signal_data(
-                    sym::ARGS_OUT_OF_RANGE,
-                    vec![args[0].clone(), args[1].clone()],
-                ));
-            }
-            Ok(items[n as usize].clone())
-        }
-        Value::Record(_) if super::misc::is_bool_vector(i, &args[0]) => {
-            let bits = super::misc::bool_vec_of(i, &args[0])?;
-            if n < 0 || n as usize >= bits.len() {
-                return Err(i.signal_data(
-                    sym::ARGS_OUT_OF_RANGE,
-                    vec![args[0].clone(), args[1].clone()],
-                ));
-            }
-            Ok(Value::from_bool(bits[n as usize]))
-        }
-        Value::Record(_) if super::misc::is_char_table(i, &args[0]) => {
-            // GNU `char_table_ref': content slot → defalt → parent
-            // chain.  The index is a character: out-of-range fixnums
-            // are `(characterp N)', not `args-out-of-range'.
-            if !(0..=0x3FFFFF).contains(&n) {
-                return Err(i.wrong_type_mut("characterp", &args[1]));
-            }
-            Ok(super::misc::char_table_ref(i, &args[0], n as usize))
-        }
-        other => Err(i.wrong_type_mut("sequencep", other)),
     }
-}
-
-fn f_aref(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // aref works on arrays including plain records (unlike elt, which
-    // rejects them — matching GNU).  Lists/nil are not arrays.
-    match &args[0] {
-        Value::Str(_) | Value::Vec(_) => {}
-        Value::Record(r) => {
-            if super::misc::as_sympos(&args[0]).is_some() {
-                return Err(i.wrong_type_mut("arrayp", &args[0]));
-            }
-            if !super::misc::is_bool_vector(i, &args[0]) && !super::misc::is_char_table(i, &args[0])
-            {
-                let n = want_fixnum(i, &args[1])?;
-                let items = r.borrow();
-                if n < 0 || n as usize >= items.len() {
-                    return Err(i.signal_data(
-                        sym::ARGS_OUT_OF_RANGE,
-                        vec![args[0].clone(), args[1].clone()],
-                    ));
-                }
-                return Ok(items[n as usize].clone());
-            }
+    Value::Cons(_) => {
+        // Emacs: elt on a list is car(nthcdr(N, list)) — negative
+        // clamps to 0; an improper tail is a wrong-type error.
+        let tail = super::listfn::nthcdr_strict(i, &args[0], n.max(0) as usize)?;
+        match tail {
+            Value::Cons(c) => Ok(c.borrow().car.clone()),
+            Value::Nil => Ok(Value::Nil),
+            ref other => Err(i.wrong_type_mut("listp", other)),
         }
-        Value::Lambda(l) => {
-            // GNU `aref' reads the elements of closures and byte-code
-            // objects even though `arrayp' is nil for both — the
-            // [args body env nil docstring iform] view (truncated).
-            let items = super::misc::lambda_slot_values(l);
+    }
+    Value::Str(s) => {
+        let chars: Vec<char> = s.borrow().chars().collect();
+        if n < 0 || n as usize >= chars.len() {
+            return Err(i.signal_data(
+                sym::ARGS_OUT_OF_RANGE,
+                vec![args[0].clone(), args[1].clone()],
+            ));
+        }
+        let c = chars[n as usize];
+        // GNU: elements of a unibyte string are the raw byte
+        // values (eight-bit proxies read back as 0x80-0xFF).
+        let code = if i.is_unibyte_str(s) {
+            crate::lisp::value::eight_bit_byte(c)
+                .map(|b| b as i128)
+                .unwrap_or((c as u32) as i128 & 0xFF)
+        } else {
+            crate::lisp::value::lisp_char_code(c)
+        };
+        Ok(Value::Int(code))
+    }
+    Value::Vec(v) => {
+        let items = v.borrow();
+        if n < 0 || n as usize >= items.len() {
+            return Err(i.signal_data(
+                sym::ARGS_OUT_OF_RANGE,
+                vec![args[0].clone(), args[1].clone()],
+            ));
+        }
+        Ok(items[n as usize].clone())
+    }
+    Value::Record(_) if super::misc::is_bool_vector(i, &args[0]) => {
+        let bits = super::misc::bool_vec_of(i, &args[0])?;
+        if n < 0 || n as usize >= bits.len() {
+            return Err(i.signal_data(
+                sym::ARGS_OUT_OF_RANGE,
+                vec![args[0].clone(), args[1].clone()],
+            ));
+        }
+        Ok(Value::from_bool(bits[n as usize]))
+    }
+    Value::Record(_) if super::misc::is_char_table(i, &args[0]) => {
+        // GNU `char_table_ref': content slot → defalt → parent
+        // chain.  The index is a character: out-of-range fixnums
+        // are `(characterp N)', not `args-out-of-range'.
+        if !(0..=0x3FFFFF).contains(&n) {
+            return Err(i.wrong_type_mut("characterp", &args[1]));
+        }
+        Ok(super::misc::char_table_ref(i, &args[0], n as usize))
+    }
+    other => Err(i.wrong_type_mut("sequencep", other)),
+} }
+
+fn f_aref(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // aref works on arrays including plain records (unlike elt, which
+// rejects them — matching GNU).  Lists/nil are not arrays.
+match &args[0] {
+    Value::Str(_) | Value::Vec(_) => {}
+    Value::Record(r) => {
+        if super::misc::as_sympos(&args[0]).is_some() {
+            return Err(i.wrong_type_mut("arrayp", &args[0]));
+        }
+        if !super::misc::is_bool_vector(i, &args[0]) && !super::misc::is_char_table(i, &args[0])
+        {
             let n = want_fixnum(i, &args[1])?;
+            let items = r.borrow();
             if n < 0 || n as usize >= items.len() {
                 return Err(i.signal_data(
                     sym::ARGS_OUT_OF_RANGE,
@@ -493,205 +473,215 @@ fn f_aref(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
             return Ok(items[n as usize].clone());
         }
-        other => return Err(i.wrong_type_mut("arrayp", other)),
     }
-    f_elt(i, args)
-}
-
-fn f_aset(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU `Faset': CHECK_FIXNUM_COERCE_MARKer's index check precedes
-    // the per-type dispatch — non-fixnums are `(fixnump IDX)'.
-    let n = want_fixnum(i, &args[1])?;
-    match &args[0] {
-        Value::Vec(v) => {
-            let mut items = v.borrow_mut();
-            if n < 0 || n as usize >= items.len() {
-                return Err(i.signal_data(
-                    sym::ARGS_OUT_OF_RANGE,
-                    vec![args[0].clone(), args[1].clone()],
-                ));
-            }
-            items[n as usize] = args[2].clone();
-            Ok(args[2].clone())
+    Value::Lambda(l) => {
+        // GNU `aref' reads the elements of closures and byte-code
+        // objects even though `arrayp' is nil for both — the
+        // [args body env nil docstring iform] view (truncated).
+        let items = super::misc::lambda_slot_values(l);
+        let n = want_fixnum(i, &args[1])?;
+        if n < 0 || n as usize >= items.len() {
+            return Err(i.signal_data(
+                sym::ARGS_OUT_OF_RANGE,
+                vec![args[0].clone(), args[1].clone()],
+            ));
         }
-        Value::Str(s) => {
-            let nch = match &args[2] {
-                Value::Int(x) => *x,
-                _ => return Err(i.wrong_type_mut("characterp", &args[2])),
-            };
-            let c = crate::lisp::value::lisp_char(nch as u32)
-                .ok_or_else(|| i.wrong_type_mut("characterp", &args[2]))?;
-            let unibyte = i.is_unibyte_str(s);
-            let mut chars: Vec<char> = s.borrow().chars().collect();
-            if n < 0 || n as usize >= chars.len() {
-                return Err(i.signal_data(
-                    sym::ARGS_OUT_OF_RANGE,
-                    vec![args[0].clone(), args[1].clone()],
-                ));
+        return Ok(items[n as usize].clone());
+    }
+    other => return Err(i.wrong_type_mut("arrayp", other)),
+}
+f_elt(i, args) }
+
+fn f_aset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU `Faset': CHECK_FIXNUM_COERCE_MARKer's index check precedes
+// the per-type dispatch — non-fixnums are `(fixnump IDX)'.
+let n = want_fixnum(i, &args[1])?;
+match &args[0] {
+    Value::Vec(v) => {
+        let mut items = v.borrow_mut();
+        if n < 0 || n as usize >= items.len() {
+            return Err(i.signal_data(
+                sym::ARGS_OUT_OF_RANGE,
+                vec![args[0].clone(), args[1].clone()],
+            ));
+        }
+        items[n as usize] = args[2].clone();
+        Ok(args[2].clone())
+    }
+    Value::Str(s) => {
+        let nch = match &args[2] {
+            Value::Int(x) => *x,
+            _ => return Err(i.wrong_type_mut("characterp", &args[2])),
+        };
+        let c = crate::lisp::value::lisp_char(nch as u32)
+            .ok_or_else(|| i.wrong_type_mut("characterp", &args[2]))?;
+        let unibyte = i.is_unibyte_str(s);
+        let mut chars: Vec<char> = s.borrow().chars().collect();
+        if n < 0 || n as usize >= chars.len() {
+            return Err(i.signal_data(
+                sym::ARGS_OUT_OF_RANGE,
+                vec![args[0].clone(), args[1].clone()],
+            ));
+        }
+        let old = chars[n as usize];
+        if unibyte {
+            // GNU: a unibyte string only stores byte values; a
+            // 0x80-0xFF byte is the eight-bit char, held as its
+            // PUA proxy internally.
+            if !(0..=0xFF).contains(&nch) {
+                return Err(i.error("Attempt to store non-byte value into unibyte string"));
             }
-            let old = chars[n as usize];
-            if unibyte {
-                // GNU: a unibyte string only stores byte values; a
-                // 0x80-0xFF byte is the eight-bit char, held as its
-                // PUA proxy internally.
-                if !(0..=0xFF).contains(&nch) {
-                    return Err(i.error("Attempt to store non-byte value into unibyte string"));
-                }
-                chars[n as usize] = if nch >= 0x80 {
-                    char::from_u32(crate::lisp::value::EIGHT_BIT_BASE + nch as u32)
-                        .unwrap_or('\u{fffd}')
-                } else {
-                    c
-                };
-            } else if nch >= 0x80 || (old as u32) >= 0x80 {
-                // GNU multibyte rule: ASCII -> ASCII is always fine;
-                // otherwise the new char must encode to the same byte
-                // length as the old one.
-                let byte_len = |ch: char, code: i128| -> usize {
-                    if (0x3FFF80..=0x3FFFFF).contains(&code) {
-                        2 // eight-bit codes are 2 bytes internally
-                    } else {
-                        ch.len_utf8()
-                    }
-                };
-                let (nl, ol) = (
-                    byte_len(c, nch),
-                    byte_len(old, crate::lisp::value::lisp_char_code(old)),
-                );
-                if nl != ol {
-                    return Err(i.error(if nch < 0x80 {
-                        "Attempt to replace non-ASCII char in multibyte string"
-                    } else {
-                        "Attempt to store non-ASCII char into multibyte string"
-                    }));
-                }
-                chars[n as usize] = c;
+            chars[n as usize] = if nch >= 0x80 {
+                char::from_u32(crate::lisp::value::EIGHT_BIT_BASE + nch as u32)
+                    .unwrap_or('\u{fffd}')
             } else {
-                chars[n as usize] = c;
-            }
-            *s.borrow_mut() = chars.into_iter().collect();
-            Ok(args[2].clone())
-        }
-        Value::Record(r) if super::misc::is_bool_vector(i, &args[0]) => {
-            let rr = r.borrow();
-            let Value::Vec(bits) = rr[1].clone() else {
-                return Err(i.wrong_type_mut("bool-vector-p", &args[0]));
+                c
             };
-            drop(rr);
-            let mut bits = bits.borrow_mut();
-            if n < 0 || n as usize >= bits.len() {
-                return Err(i.signal_data(
-                    sym::ARGS_OUT_OF_RANGE,
-                    vec![args[0].clone(), args[1].clone()],
-                ));
-            }
-            bits[n as usize] = Value::Int(if args[2].is_nil() { 0 } else { 1 });
-            Ok(args[2].clone())
-        }
-        Value::Record(_) if super::misc::is_char_table(i, &args[0]) => {
-            // Char-table: (aset CT CHAR VALUE) → `char_table_set';
-            // the index must be a character (`characterp').
-            if !(0..=super::misc::CT_MAX_CHAR as i128).contains(&n) {
-                return Err(i.wrong_type_mut("characterp", &args[1]));
-            }
-            super::misc::ct_set(i, &args[0], n as u32, args[2].clone());
-            Ok(args[2].clone())
-        }
-        Value::Record(r) => {
-            // `symbols-with-pos-enabled' objects are not arrays.
-            if super::misc::as_sympos(&args[0]).is_some() {
-                return Err(i.wrong_type_mut("arrayp", &args[0]));
-            }
-            // Ordinary records: GNU allows writing any slot (even the
-            // tag at index 0).
-            let mut items = r.borrow_mut();
-            if n < 0 || n as usize >= items.len() {
-                return Err(i.signal_data(
-                    sym::ARGS_OUT_OF_RANGE,
-                    vec![args[0].clone(), args[1].clone()],
-                ));
-            }
-            items[n as usize] = args[2].clone();
-            Ok(args[2].clone())
-        }
-        Value::Lambda(l) => {
-            // `#[...]' byte-code objects: GNU permits `aset' into the
-            // element vector (e.g. replacing the constants slot).
-            let Some(items) = &l.bc_items else {
-                return Err(i.wrong_type_mut("arrayp", &args[0]));
+        } else if nch >= 0x80 || (old as u32) >= 0x80 {
+            // GNU multibyte rule: ASCII -> ASCII is always fine;
+            // otherwise the new char must encode to the same byte
+            // length as the old one.
+            let byte_len = |ch: char, code: i128| -> usize {
+                if (0x3FFF80..=0x3FFFFF).contains(&code) {
+                    2 // eight-bit codes are 2 bytes internally
+                } else {
+                    ch.len_utf8()
+                }
             };
-            let mut items = items.borrow_mut();
-            if n < 0 || n as usize >= items.len() {
-                return Err(i.signal_data(
-                    sym::ARGS_OUT_OF_RANGE,
-                    vec![args[0].clone(), args[1].clone()],
-                ));
+            let (nl, ol) = (
+                byte_len(c, nch),
+                byte_len(old, crate::lisp::value::lisp_char_code(old)),
+            );
+            if nl != ol {
+                return Err(i.error(if nch < 0x80 {
+                    "Attempt to replace non-ASCII char in multibyte string"
+                } else {
+                    "Attempt to store non-ASCII char into multibyte string"
+                }));
             }
-            items[n as usize] = args[2].clone();
-            Ok(args[2].clone())
+            chars[n as usize] = c;
+        } else {
+            chars[n as usize] = c;
         }
-        other => Err(i.wrong_type_mut("arrayp", other)),
+        *s.borrow_mut() = chars.into_iter().collect();
+        Ok(args[2].clone())
     }
-}
+    Value::Record(r) if super::misc::is_bool_vector(i, &args[0]) => {
+        let rr = r.borrow();
+        let Value::Vec(bits) = rr[1].clone() else {
+            return Err(i.wrong_type_mut("bool-vector-p", &args[0]));
+        };
+        drop(rr);
+        let mut bits = bits.borrow_mut();
+        if n < 0 || n as usize >= bits.len() {
+            return Err(i.signal_data(
+                sym::ARGS_OUT_OF_RANGE,
+                vec![args[0].clone(), args[1].clone()],
+            ));
+        }
+        bits[n as usize] = Value::Int(if args[2].is_nil() { 0 } else { 1 });
+        Ok(args[2].clone())
+    }
+    Value::Record(_) if super::misc::is_char_table(i, &args[0]) => {
+        // Char-table: (aset CT CHAR VALUE) → `char_table_set';
+        // the index must be a character (`characterp').
+        if !(0..=super::misc::CT_MAX_CHAR as i128).contains(&n) {
+            return Err(i.wrong_type_mut("characterp", &args[1]));
+        }
+        super::misc::ct_set(i, &args[0], n as u32, args[2].clone());
+        Ok(args[2].clone())
+    }
+    Value::Record(r) => {
+        // `symbols-with-pos-enabled' objects are not arrays.
+        if super::misc::as_sympos(&args[0]).is_some() {
+            return Err(i.wrong_type_mut("arrayp", &args[0]));
+        }
+        // Ordinary records: GNU allows writing any slot (even the
+        // tag at index 0).
+        let mut items = r.borrow_mut();
+        if n < 0 || n as usize >= items.len() {
+            return Err(i.signal_data(
+                sym::ARGS_OUT_OF_RANGE,
+                vec![args[0].clone(), args[1].clone()],
+            ));
+        }
+        items[n as usize] = args[2].clone();
+        Ok(args[2].clone())
+    }
+    Value::Lambda(l) => {
+        // `#[...]' byte-code objects: GNU permits `aset' into the
+        // element vector (e.g. replacing the constants slot).
+        let Some(items) = &l.bc_items else {
+            return Err(i.wrong_type_mut("arrayp", &args[0]));
+        };
+        let mut items = items.borrow_mut();
+        if n < 0 || n as usize >= items.len() {
+            return Err(i.signal_data(
+                sym::ARGS_OUT_OF_RANGE,
+                vec![args[0].clone(), args[1].clone()],
+            ));
+        }
+        items[n as usize] = args[2].clone();
+        Ok(args[2].clone())
+    }
+    other => Err(i.wrong_type_mut("arrayp", other)),
+} }
 
-fn f_copy_sequence(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match &args[0] {
-        Value::Cons(_) => {
-            let items = want_list(i, &args[0])?;
-            Ok(Value::list(items))
-        }
-        Value::Str(s) => {
-            // A real copy: new identity, own copy of prop intervals.
-            let ns = std::rc::Rc::new(std::cell::RefCell::new(s.borrow().clone()));
-            if i.has_str_props(s) {
-                let ivs = i.str_props(s).to_vec();
-                i.set_str_props(&ns, ivs);
-            }
-            if i.is_unibyte_str(s) {
-                i.mark_unibyte(&ns);
-            }
-            if i.is_multibyte_str(s) {
-                i.mark_multibyte(&ns);
-            }
-            Ok(Value::Str(ns))
-        }
-        Value::Nil => Ok(Value::Nil),
-        // GNU's `copy_sequence' allocates a fresh vector with the same
-        // elements; sharing the backing store would let `aset' mutate
-        // the original (CC Mode's `c-find-assignment-for-mode' relies
-        // on the copy for its source-position backup).
-        Value::Vec(v) => Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-            v.borrow().clone(),
-        )))),
-        // Hash tables aren't sequences in GNU (`sequencep' is nil):
-        // `copy-sequence' signals `wrong-type-argument sequencep'.
-        // Char-tables copy through `copy_char_table' (deep trie copy,
-        // shared slot objects); other Records shallow-copy the vec.
-        Value::Record(_) if super::misc::is_bool_vector(i, &args[0]) => {
-            // Bool-vectors: copy the bit storage too — sharing it would
-            // let `aset' on the copy mutate the original.
-            let Value::Record(r) = &args[0] else { unreachable!() };
-            let mut rec = r.borrow().clone();
-            let bits = match rec.get(1) {
-                Some(Value::Vec(b)) => Some(b.borrow().clone()),
-                _ => None,
-            };
-            if let Some(bits) = bits {
-                rec[1] = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(bits)));
-            }
-            Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(rec))))
-        }
-        // Char-tables copy through `copy_char_table' (deep trie copy,
-        // shared slot objects); other Records shallow-copy the vec.
-        Value::Record(_) if super::misc::is_char_table(i, &args[0]) => {
-            Ok(super::misc::ct_copy(i, &args[0]))
-        }
-        Value::Record(r) => Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
-            r.borrow().clone(),
-        )))),
-        other => Err(i.wrong_type_mut("sequencep", other)),
+fn f_copy_sequence(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { match &args[0] {
+    Value::Cons(_) => {
+        let items = want_list(i, &args[0])?;
+        Ok(Value::list(items))
     }
-}
+    Value::Str(s) => {
+        // A real copy: new identity, own copy of prop intervals.
+        let ns = std::rc::Rc::new(std::cell::RefCell::new(s.borrow().clone()));
+        if i.has_str_props(s) {
+            let ivs = i.str_props(s).to_vec();
+            i.set_str_props(&ns, ivs);
+        }
+        if i.is_unibyte_str(s) {
+            i.mark_unibyte(&ns);
+        }
+        if i.is_multibyte_str(s) {
+            i.mark_multibyte(&ns);
+        }
+        Ok(Value::Str(ns))
+    }
+    Value::Nil => Ok(Value::Nil),
+    // GNU's `copy_sequence' allocates a fresh vector with the same
+    // elements; sharing the backing store would let `aset' mutate
+    // the original (CC Mode's `c-find-assignment-for-mode' relies
+    // on the copy for its source-position backup).
+    Value::Vec(v) => Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
+        v.borrow().clone(),
+    )))),
+    // Hash tables aren't sequences in GNU (`sequencep' is nil):
+    // `copy-sequence' signals `wrong-type-argument sequencep'.
+    // Char-tables copy through `copy_char_table' (deep trie copy,
+    // shared slot objects); other Records shallow-copy the vec.
+    Value::Record(_) if super::misc::is_bool_vector(i, &args[0]) => {
+        // Bool-vectors: copy the bit storage too — sharing it would
+        // let `aset' on the copy mutate the original.
+        let Value::Record(r) = &args[0] else { unreachable!() };
+        let mut rec = r.borrow().clone();
+        let bits = match rec.get(1) {
+            Some(Value::Vec(b)) => Some(b.borrow().clone()),
+            _ => None,
+        };
+        if let Some(bits) = bits {
+            rec[1] = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(bits)));
+        }
+        Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(rec))))
+    }
+    // Char-tables copy through `copy_char_table' (deep trie copy,
+    // shared slot objects); other Records shallow-copy the vec.
+    Value::Record(_) if super::misc::is_char_table(i, &args[0]) => {
+        Ok(super::misc::ct_copy(i, &args[0]))
+    }
+    Value::Record(r) => Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
+        r.borrow().clone(),
+    )))),
+    other => Err(i.wrong_type_mut("sequencep", other)),
+} }
 
 fn map_seq(
     i: &mut Interp,
@@ -744,239 +734,227 @@ fn map_seq(
     }
 }
 
-fn f_mapcar(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let fun = args[0].clone();
-    let mut out = Vec::new();
-    map_seq(i, &fun, &args[1], |i, v| {
-        let r = i.apply(&fun, vec![v.clone()])?;
-        out.push(r);
-        Ok(())
-    })?;
-    Ok(Value::list(out))
-}
+fn f_mapcar(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let fun = args[0].clone();
+let mut out = Vec::new();
+map_seq(i, &fun, &args[1], |i, v| {
+    let r = i.apply(&fun, vec![v.clone()])?;
+    out.push(r);
+    Ok(())
+})?;
+Ok(Value::list(out)) }
 
-fn f_mapc(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let fun = args[0].clone();
-    map_seq(i, &fun, &args[1], |i, v| {
-        i.apply(&fun, vec![v.clone()])?;
-        Ok(())
-    })?;
-    Ok(args[1].clone())
-}
+fn f_mapc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let fun = args[0].clone();
+map_seq(i, &fun, &args[1], |i, v| {
+    i.apply(&fun, vec![v.clone()])?;
+    Ok(())
+})?;
+Ok(args[1].clone()) }
 
-fn f_mapcan(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (mapcan FUNCTION SEQUENCE &rest SEQUENCES) — apply FUNCTION to
-    // successive element tuples, then `nconc' the result lists.  GNU
-    // splices the function's own list objects into the answer (no
-    // copying), so the returned structure shares with them.
-    let fun = args[0].clone();
-    let seqs: Vec<Vec<Value>> = args[1..]
-        .iter()
-        .map(|s| seq_to_vec(i, s))
-        .collect::<Result<_, _>>()?;
-    let n = seqs.iter().map(|s| s.len()).min().unwrap_or(0);
-    let mut results = Vec::with_capacity(n);
-    for k in 0..n {
-        let argv: Vec<Value> = seqs.iter().map(|s| s[k].clone()).collect();
-        results.push(i.apply(&fun, argv)?);
-    }
-    // Splice each result's conses in, nconc-style: nil contributes
-    // nothing, a list is chained onto the accumulated tail, and any
-    // other atom signals (consp VALUE) — even for the last result.
-    let mut out = Value::Nil;
-    // The last cons appended so far: the cell whose cdr we extend.
-    let mut tail: Option<crate::lisp::value::ConsRef> = None;
-    for r in &results {
-        let mut cur = r.clone();
-        loop {
-            match &cur {
-                Value::Nil => break,
-                Value::Cons(c) => {
-                    let next = c.borrow().cdr.clone();
-                    match &tail {
-                        Some(t) => t.borrow_mut().cdr = cur.clone(),
-                        None => out = cur.clone(),
-                    }
-                    tail = Some(c.clone());
-                    cur = next;
+fn f_mapcan(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // (mapcan FUNCTION SEQUENCE &rest SEQUENCES) — apply FUNCTION to
+// successive element tuples, then `nconc' the result lists.  GNU
+// splices the function's own list objects into the answer (no
+// copying), so the returned structure shares with them.
+let fun = args[0].clone();
+let seqs: Vec<Vec<Value>> = args[1..]
+    .iter()
+    .map(|s| seq_to_vec(i, s))
+    .collect::<Result<_, _>>()?;
+let n = seqs.iter().map(|s| s.len()).min().unwrap_or(0);
+let mut results = Vec::with_capacity(n);
+for k in 0..n {
+    let argv: Vec<Value> = seqs.iter().map(|s| s[k].clone()).collect();
+    results.push(i.apply(&fun, argv)?);
+}
+// Splice each result's conses in, nconc-style: nil contributes
+// nothing, a list is chained onto the accumulated tail, and any
+// other atom signals (consp VALUE) — even for the last result.
+let mut out = Value::Nil;
+// The last cons appended so far: the cell whose cdr we extend.
+let mut tail: Option<crate::lisp::value::ConsRef> = None;
+for r in &results {
+    let mut cur = r.clone();
+    loop {
+        match &cur {
+            Value::Nil => break,
+            Value::Cons(c) => {
+                let next = c.borrow().cdr.clone();
+                match &tail {
+                    Some(t) => t.borrow_mut().cdr = cur.clone(),
+                    None => out = cur.clone(),
                 }
-                // Dotted tail of a result list is ignored (nconc skips
-                // checking the last arg's tail).
-                _ => break,
+                tail = Some(c.clone());
+                cur = next;
             }
-        }
-        match r {
-            Value::Nil | Value::Cons(_) => {}
-            other => return Err(i.wrong_type_mut("consp", other)),
+            // Dotted tail of a result list is ignored (nconc skips
+            // checking the last arg's tail).
+            _ => break,
         }
     }
-    Ok(out)
-}
-
-fn f_mapconcat(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let fun = args[0].clone();
-    let mut parts = Vec::new();
-    map_seq(i, &fun, &args[1], |i, v| {
-        let r = i.apply(&fun, vec![v.clone()])?;
-        parts.push(r);
-        Ok(())
-    })?;
-    let sep = args
-        .get(2)
-        .map(|v| want_string(i, v))
-        .transpose()?
-        .unwrap_or_default();
-    // GNU's mapconcat concatenates the mapped strings directly, so
-    // text properties of the parts are carried into the result.
-    let mut out = String::new();
-    let mut ivs: Vec<(usize, usize, Vec<Value>)> = Vec::new();
-    let mut saw_props = false;
-    for (k, p) in parts.iter().enumerate() {
-        if k > 0 {
-            out.push_str(&sep);
-        }
-        let off = out.chars().count();
-        if let Value::Str(s) = p {
-            if i.has_str_props(s) {
-                saw_props = true;
-                for (s0, e0, pl) in i.str_props(s) {
-                    ivs.push((
-                        s0 + off,
-                        e0 + off,
-                        crate::buffer::primitives::plist_pairs_rev(pl),
-                    ));
-                }
-            }
-            out.push_str(&s.borrow());
-        } else {
-            // GNU's mapconcat passes each result to `concat': non-string
-            // results must be sequences of characters (an int signals
-            // sequencep, a non-char element signals characterp).
-            for item in seq_to_vec(i, p)? {
-                match item {
-                    Value::Int(n) => match crate::lisp::value::lisp_char(n as u32) {
-                        Some(c) => out.push(c),
-                        None => return Err(i.wrong_type_mut("characterp", &item)),
-                    },
-                    _ => return Err(i.wrong_type_mut("characterp", &item)),
-                }
-            }
-        }
-    }
-    let ns = std::rc::Rc::new(std::cell::RefCell::new(out));
-    if saw_props {
-        i.set_str_props(&ns, ivs);
-    }
-    Ok(Value::Str(ns))
-}
-
-fn f_maphash(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let fun = args[0].clone();
-    match &args[1] {
-        Value::Hash(h) => {
-            let pairs: Vec<(Value, Value)> = {
-                let hh = h.borrow();
-                hh.keys
-                    .iter()
-                    .map(|(hk, k)| {
-                        let val = hh.map.get(hk).cloned().unwrap_or(Value::Nil);
-                        (k.clone(), val)
-                    })
-                    .collect()
-            };
-            for (k, v) in pairs {
-                i.apply(&fun, vec![k, v])?;
-            }
-            Ok(Value::Nil)
-        }
-        other => Err(i.wrong_type_mut("hash-table-p", other)),
+    match r {
+        Value::Nil | Value::Cons(_) => {}
+        other => return Err(i.wrong_type_mut("consp", other)),
     }
 }
+Ok(out) }
 
-fn f_sort(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU sort.el: (sort SEQ [PRED] &key KEY LESSP REVERSE IN-PLACE).
-    // Old-style call has PRED as arg 2; keyword call starts with a
-    // keyword symbol.  The two forms cannot be mixed.
-    let rest = &args[1..];
-    let kw_style =
-        matches!(rest.first(), Some(Value::Sym(s)) if i.obarray.name(*s).starts_with(':'));
-    let (keyf, lessp, reverse, in_place) = if kw_style {
-        let mut keyf = Value::Nil;
-        let mut lessp = Value::Nil;
-        let mut reverse = false;
-        let mut in_place = false;
-        let mut it = rest.iter();
-        while let Some(k) = it.next() {
-            let kn = match k {
-                Value::Sym(s) => i.obarray.name(*s).to_string(),
-                _ => return Err(i.error("Invalid argument list")),
-            };
-            let v = it
-                .next()
-                .cloned()
-                .ok_or_else(|| i.error("Invalid argument list"))?;
-            match kn.as_str() {
-                ":key" => keyf = v,
-                ":lessp" => lessp = v,
-                ":reverse" => reverse = v.truthy(),
-                ":in-place" => in_place = v.truthy(),
-                _ => return Err(i.error("Invalid argument list")),
+fn f_mapconcat(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let fun = args[0].clone();
+let mut parts = Vec::new();
+map_seq(i, &fun, &args[1], |i, v| {
+    let r = i.apply(&fun, vec![v.clone()])?;
+    parts.push(r);
+    Ok(())
+})?;
+let sep = args
+    .get(2)
+    .map(|v| want_string(i, v))
+    .transpose()?
+    .unwrap_or_default();
+// GNU's mapconcat concatenates the mapped strings directly, so
+// text properties of the parts are carried into the result.
+let mut out = String::new();
+let mut ivs: Vec<(usize, usize, Vec<Value>)> = Vec::new();
+let mut saw_props = false;
+for (k, p) in parts.iter().enumerate() {
+    if k > 0 {
+        out.push_str(&sep);
+    }
+    let off = out.chars().count();
+    if let Value::Str(s) = p {
+        if i.has_str_props(s) {
+            saw_props = true;
+            for (s0, e0, pl) in i.str_props(s) {
+                ivs.push((
+                    s0 + off,
+                    e0 + off,
+                    crate::buffer::primitives::plist_pairs_rev(pl),
+                ));
             }
         }
-        (keyf, lessp, reverse, in_place)
+        out.push_str(&s.borrow());
     } else {
-        if rest.len() > 1 {
-            return Err(i.error("Invalid argument list"));
-        }
-        // Old-style call: vectors sort in place (historic behavior);
-        // keyword calls default :in-place to nil (sorted copy).
-        (
-            Value::Nil,
-            rest.first().cloned().unwrap_or(Value::Nil),
-            false,
-            true,
-        )
-    };
-    // Default comparator is `value<' (GNU sorts any comparable
-    // values — numbers, strings, symbols — without a predicate).
-    let lessp = match lessp {
-        Value::Nil => Value::Sym(i.intern("value<")),
-        f => f,
-    };
-    let spec = SortSpec {
-        keyf,
-        lessp,
-        reverse,
-    };
-    match &args[0] {
-        Value::Cons(_) => {
-            let mut items = want_list(i, &args[0])?;
-            merge_sort(i, &mut items, &spec)?;
-            // GNU sort_list writes sorted values back into the
-            // argument's own conses — the result is `eq' to the input.
-            let mut tail = args[0].clone();
-            for v in items {
-                if let Value::Cons(c) = tail {
-                    c.borrow_mut().car = v;
-                    tail = c.borrow().cdr.clone();
-                }
-            }
-            Ok(args[0].clone())
-        }
-        Value::Vec(v) => {
-            let mut items = v.borrow().clone();
-            merge_sort(i, &mut items, &spec)?;
-            if in_place {
-                *v.borrow_mut() = items;
-                Ok(args[0].clone())
-            } else {
-                Ok(Value::Vec(Rc::new(RefCell::new(items))))
+        // GNU's mapconcat passes each result to `concat': non-string
+        // results must be sequences of characters (an int signals
+        // sequencep, a non-char element signals characterp).
+        for item in seq_to_vec(i, p)? {
+            match item {
+                Value::Int(n) => match crate::lisp::value::lisp_char(n as u32) {
+                    Some(c) => out.push(c),
+                    None => return Err(i.wrong_type_mut("characterp", &item)),
+                },
+                _ => return Err(i.wrong_type_mut("characterp", &item)),
             }
         }
-        Value::Nil => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("list-or-vector-p", other)),
     }
 }
+let ns = std::rc::Rc::new(std::cell::RefCell::new(out));
+if saw_props {
+    i.set_str_props(&ns, ivs);
+}
+Ok(Value::Str(ns)) }
+
+fn f_maphash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let fun = args[0].clone();
+match &args[1] {
+    Value::Hash(h) => {
+        let pairs: Vec<(Value, Value)> = {
+            let hh = h.borrow();
+            hh.keys
+                .iter()
+                .map(|(hk, k)| {
+                    let val = hh.map.get(hk).cloned().unwrap_or(Value::Nil);
+                    (k.clone(), val)
+                })
+                .collect()
+        };
+        for (k, v) in pairs {
+            i.apply(&fun, vec![k, v])?;
+        }
+        Ok(Value::Nil)
+    }
+    other => Err(i.wrong_type_mut("hash-table-p", other)),
+} }
+
+fn f_sort(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU sort.el: (sort SEQ [PRED] &key KEY LESSP REVERSE IN-PLACE).
+// Old-style call has PRED as arg 2; keyword call starts with a
+// keyword symbol.  The two forms cannot be mixed.
+let rest = &args[1..];
+let kw_style =
+    matches!(rest.first(), Some(Value::Sym(s)) if i.obarray.name(*s).starts_with(':'));
+let (keyf, lessp, reverse, in_place) = if kw_style {
+    let mut keyf = Value::Nil;
+    let mut lessp = Value::Nil;
+    let mut reverse = false;
+    let mut in_place = false;
+    let mut it = rest.iter();
+    while let Some(k) = it.next() {
+        let kn = match k {
+            Value::Sym(s) => i.obarray.name(*s).to_string(),
+            _ => return Err(i.error("Invalid argument list")),
+        };
+        let v = it
+            .next()
+            .cloned()
+            .ok_or_else(|| i.error("Invalid argument list"))?;
+        match kn.as_str() {
+            ":key" => keyf = v,
+            ":lessp" => lessp = v,
+            ":reverse" => reverse = v.truthy(),
+            ":in-place" => in_place = v.truthy(),
+            _ => return Err(i.error("Invalid argument list")),
+        }
+    }
+    (keyf, lessp, reverse, in_place)
+} else {
+    if rest.len() > 1 {
+        return Err(i.error("Invalid argument list"));
+    }
+    // Old-style call: vectors sort in place (historic behavior);
+    // keyword calls default :in-place to nil (sorted copy).
+    (
+        Value::Nil,
+        rest.first().cloned().unwrap_or(Value::Nil),
+        false,
+        true,
+    )
+};
+// Default comparator is `value<' (GNU sorts any comparable
+// values — numbers, strings, symbols — without a predicate).
+let lessp = match lessp {
+    Value::Nil => Value::Sym(i.intern("value<")),
+    f => f,
+};
+let spec = SortSpec {
+    keyf,
+    lessp,
+    reverse,
+};
+match &args[0] {
+    Value::Cons(_) => {
+        let mut items = want_list(i, &args[0])?;
+        merge_sort(i, &mut items, &spec)?;
+        // GNU sort_list writes sorted values back into the
+        // argument's own conses — the result is `eq' to the input.
+        let mut tail = args[0].clone();
+        for v in items {
+            if let Value::Cons(c) = tail {
+                c.borrow_mut().car = v;
+                tail = c.borrow().cdr.clone();
+            }
+        }
+        Ok(args[0].clone())
+    }
+    Value::Vec(v) => {
+        let mut items = v.borrow().clone();
+        merge_sort(i, &mut items, &spec)?;
+        if in_place {
+            *v.borrow_mut() = items;
+            Ok(args[0].clone())
+        } else {
+            Ok(Value::Vec(Rc::new(RefCell::new(items))))
+        }
+    }
+    Value::Nil => Ok(Value::Nil),
+    other => Err(i.wrong_type_mut("list-or-vector-p", other)),
+} }
 
 struct SortSpec {
     keyf: Value,
@@ -1043,588 +1021,510 @@ fn merge_sort(i: &mut Interp, items: &mut Vec<Value>, spec: &SortSpec) -> Result
     Ok(())
 }
 
-fn f_string_to_sequence(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let items = seq_to_vec(i, &args[0])?;
-    let ty = arg(&args, 1);
-    match i.sym_id(&ty) {
-        Some(s) if s == i.intern("list") || s == 0 => Ok(Value::list(items)),
-        Some(s) if s == i.intern("vector") => {
-            Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(items))))
-        }
-        Some(s) if s == i.intern("string") => Ok(args[0].clone()),
-        _ => Ok(Value::list(items)),
+fn f_string_to_sequence(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let items = seq_to_vec(i, &args[0])?;
+let ty = arg(&args, 1);
+match i.sym_id(&ty) {
+    Some(s) if s == i.intern("list") || s == 0 => Ok(Value::list(items)),
+    Some(s) if s == i.intern("vector") => {
+        Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(items))))
     }
-}
+    Some(s) if s == i.intern("string") => Ok(args[0].clone()),
+    _ => Ok(Value::list(items)),
+} }
 
-fn f_seq(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(args.into_iter().next().unwrap_or(Value::Nil))
-}
+fn f_seq(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(args.first().cloned().unwrap_or(Value::Nil)) }
 
-fn f_append_to_list(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let mut items = want_list(i, &args[0])?;
-    items.push(args[1].clone());
-    Ok(Value::list(items))
-}
+fn f_append_to_list(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let mut items = want_list(i, &args[0])?;
+items.push(args[1].clone());
+Ok(Value::list(items)) }
 
-fn f_fillarray(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match &args[0] {
-        Value::Vec(v) => {
-            for x in v.borrow_mut().iter_mut() {
-                *x = args[1].clone();
-            }
-            Ok(args[0].clone())
+fn f_fillarray(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { match &args[0] {
+    Value::Vec(v) => {
+        for x in v.borrow_mut().iter_mut() {
+            *x = args[1].clone();
         }
-        Value::Record(r) if super::misc::is_char_table(i, &args[0]) => {
-            // GNU `Ffillarray' on a char-table: the 64 top-level
-            // contents slots take ITEM (the ASCII slot is untouched),
-            // the defalt and every extra slot become ITEM, and the
-            // parent is preserved.
-            let item = args[1].clone();
-            if let Some(v) = super::misc::char_table_vec(&args[0]) {
-                let mut vv = v.borrow_mut();
-                for slot in vv.iter_mut().skip(1) {
-                    *slot = item.clone();
-                }
-            }
-            i.set_char_table_defalt(&args[0], item.clone());
-            for slot in r.borrow_mut().iter_mut().skip(3) {
+        Ok(args[0].clone())
+    }
+    Value::Record(r) if super::misc::is_char_table(i, &args[0]) => {
+        // GNU `Ffillarray' on a char-table: the 64 top-level
+        // contents slots take ITEM (the ASCII slot is untouched),
+        // the defalt and every extra slot become ITEM, and the
+        // parent is preserved.
+        let item = args[1].clone();
+        if let Some(v) = super::misc::char_table_vec(&args[0]) {
+            let mut vv = v.borrow_mut();
+            for slot in vv.iter_mut().skip(1) {
                 *slot = item.clone();
             }
-            Ok(args[0].clone())
         }
-        Value::Record(r) if super::misc::is_bool_vector(i, &args[0]) => {
-            // GNU fills the bit vector with (not (null ITEM)).
-            let bit = if args[1].is_nil() { 0 } else { 1 };
-            if let Some(Value::Vec(b)) = r.borrow().get(1) {
-                for x in b.borrow_mut().iter_mut() {
-                    *x = Value::Int(bit);
-                }
-            }
-            Ok(args[0].clone())
+        i.set_char_table_defalt(&args[0], item.clone());
+        for slot in r.borrow_mut().iter_mut().skip(3) {
+            *slot = item.clone();
         }
-        Value::Str(s) => {
-            // GNU replaces each character with ITEM.  A unibyte
-            // (all-ASCII) string filled with a non-ASCII char takes
-            // ITEM's low byte; shrinking a multibyte char signals.
-            let item = match &args[1] {
-                Value::Int(n) if (0..=0x3fffff).contains(n) => *n as u32,
-                _ => return Err(i.wrong_type_mut("characterp", &args[1])),
-            };
-            let mut st = s.borrow_mut();
-            let n = st.chars().count();
-            let all_ascii = st.chars().all(|c| (c as u32) < 0x80);
-            let new: String = if item < 0x80 {
-                if !all_ascii {
-                    return Err(i.error("Attempt to change byte length of a string"));
-                }
-                std::iter::repeat_n(item as u8 as char, n).collect()
-            } else if all_ascii {
-                let low = char::from_u32(item & 0xff).unwrap_or('\u{fffd}');
-                std::iter::repeat_n(low, n).collect()
-            } else {
-                let ilen = char::from_u32(item).map_or(4, |c| c.len_utf8());
-                if !st.chars().all(|c| c.len_utf8() == ilen) {
-                    return Err(i.error("Attempt to change byte length of a string"));
-                }
-                let c = char::from_u32(item).unwrap_or('\u{fffd}');
-                std::iter::repeat_n(c, n).collect()
-            };
-            *st = new;
-            drop(st);
-            Ok(args[0].clone())
-        }
-        other => Err(i.wrong_type_mut("arrayp", other)),
+        Ok(args[0].clone())
     }
-}
-
-fn f_make_vector(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU `Fmake_vector' CHECK_FIXNAT's LENGTH → `wholenump'.
-    let len = want_int(i, &args[0])?;
-    if len < 0 {
-        return Err(i.wrong_type_mut("wholenump", &args[0]));
-    }
-    let n = len as usize;
-    if n == 0 {
-        // GNU: allocate_clear_vector(0) returns the shared zero_vector.
-        return Ok(i.zero_vector.clone());
-    }
-    Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-        vec![args[1].clone(); n],
-    ))))
-}
-
-fn f_vector(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU: `zero_vector' is shared — `(vector)' and `[]' are eq.
-    if args.is_empty() {
-        return Ok(i.zero_vector.clone());
-    }
-    Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(args))))
-}
-
-fn f_bool_vector(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(super::misc::make_bool_vector(
-        i,
-        args.iter().map(|v| !v.is_nil()).collect(),
-    ))
-}
-
-fn f_purecopy(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(args[0].clone())
-}
-
-fn f_nreverse_seq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match &args[0] {
-        Value::Cons(_) => {
-            // GNU signals circular-list before mutating; detect the
-            // cycle with a tortoise/hare walk first.
-            let mut tortoise = args[0].clone();
-            let mut hare = args[0].clone();
-            let mut guard = 0usize;
-            loop {
-                guard += 1;
-                if guard > 500_000 {
-                    return Err(err_circular(i));
-                }
-                match &hare {
-                    Value::Cons(c) => {
-                        let n1 = c.borrow().cdr.clone();
-                        match &n1 {
-                            Value::Cons(c2) => {
-                                let n2 = c2.borrow().cdr.clone();
-                                hare = n2;
-                            }
-                            Value::Nil => break,
-                            _ => break,
-                        }
-                        if let Value::Cons(tc) = &tortoise {
-                            let tnext = tc.borrow().cdr.clone();
-                            tortoise = tnext;
-                        }
-                        if eq_values(&hare, &tortoise) {
-                            return Err(err_circular(i));
-                        }
-                    }
-                    _ => break,
-                }
-            }
-            // delegate to list version semantics
-            let mut prev = Value::Nil;
-            let mut cur = args[0].clone();
-            loop {
-                match &cur {
-                    Value::Cons(c) => {
-                        let next = c.borrow().cdr.clone();
-                        c.borrow_mut().cdr = prev;
-                        prev = cur;
-                        cur = next;
-                    }
-                    _ => break,
-                }
-            }
-            // Emacs requires a proper list; a dotted tail is an error.
-            if !cur.is_nil() {
-                return Err(i.wrong_type_mut("listp", &args[0]));
-            }
-            Ok(prev)
-        }
-        Value::Vec(v) => {
-            v.borrow_mut().reverse();
-            Ok(args[0].clone())
-        }
-        Value::Str(s) => {
-            // GNU ≥29 reverses a copy: the argument string is not
-            // mutated and a new string object is returned.  Text
-            // properties are reversed with the characters.
-            let src = s.borrow().clone();
-            let n = src.chars().count();
-            let ns = Value::string(src.chars().rev().collect::<String>());
-            if let Value::Str(ns_ref) = &ns {
-                if i.has_str_props(s) {
-                    let ivs: Vec<(usize, usize, Vec<Value>)> = i
-                        .str_props(s)
-                        .iter()
-                        .map(|(a, b, pl)| (n.saturating_sub(*b), n.saturating_sub(*a), pl.clone()))
-                        .collect();
-                    i.set_str_props(ns_ref, ivs);
-                }
-            }
-            Ok(ns)
-        }
-        Value::Nil => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("arrayp", other)),
-    }
-}
-
-fn f_clear_vector(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match &args[0] {
-        Value::Vec(v) => {
-            for x in v.borrow_mut().iter_mut() {
-                *x = args[1].clone();
-            }
-            Ok(args[0].clone())
-        }
-        other => Err(i.wrong_type_mut("arrayp", other)),
-    }
-}
-
-fn f_seq_concatenate(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let ty = i.sym_id(&args[0]).unwrap_or(0);
-    let mut items = Vec::new();
-    for s in &args[1..] {
-        items.extend(seq_to_vec(i, s)?);
-    }
-    let list_id = i.intern("list");
-    let vec_id = i.intern("vector");
-    let str_id = i.intern("string");
-    Ok(if ty == list_id {
-        Value::list(items)
-    } else if ty == vec_id {
-        Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(items)))
-    } else if ty == str_id {
-        let mut s = String::new();
-        for v in items {
-            if let Value::Int(n) = v {
-                if let Some(c) = char::from_u32(n as u32) {
-                    s.push(c);
-                }
+    Value::Record(r) if super::misc::is_bool_vector(i, &args[0]) => {
+        // GNU fills the bit vector with (not (null ITEM)).
+        let bit = if args[1].is_nil() { 0 } else { 1 };
+        if let Some(Value::Vec(b)) = r.borrow().get(1) {
+            for x in b.borrow_mut().iter_mut() {
+                *x = Value::Int(bit);
             }
         }
-        Value::string(s)
-    } else {
-        let name = match &args[0] {
-            Value::Sym(s) => i.obarray.name(*s).to_string(),
-            other => format!("{:?}", other),
+        Ok(args[0].clone())
+    }
+    Value::Str(s) => {
+        // GNU replaces each character with ITEM.  A unibyte
+        // (all-ASCII) string filled with a non-ASCII char takes
+        // ITEM's low byte; shrinking a multibyte char signals.
+        let item = match &args[1] {
+            Value::Int(n) if (0..=0x3fffff).contains(n) => *n as u32,
+            _ => return Err(i.wrong_type_mut("characterp", &args[1])),
         };
-        return Err(i.error(&format!("Not a sequence type name: {}", name)));
-    })
-}
+        let mut st = s.borrow_mut();
+        let n = st.chars().count();
+        let all_ascii = st.chars().all(|c| (c as u32) < 0x80);
+        let new: String = if item < 0x80 {
+            if !all_ascii {
+                return Err(i.error("Attempt to change byte length of a string"));
+            }
+            std::iter::repeat_n(item as u8 as char, n).collect()
+        } else if all_ascii {
+            let low = char::from_u32(item & 0xff).unwrap_or('\u{fffd}');
+            std::iter::repeat_n(low, n).collect()
+        } else {
+            let ilen = char::from_u32(item).map_or(4, |c| c.len_utf8());
+            if !st.chars().all(|c| c.len_utf8() == ilen) {
+                return Err(i.error("Attempt to change byte length of a string"));
+            }
+            let c = char::from_u32(item).unwrap_or('\u{fffd}');
+            std::iter::repeat_n(c, n).collect()
+        };
+        *st = new;
+        drop(st);
+        Ok(args[0].clone())
+    }
+    other => Err(i.wrong_type_mut("arrayp", other)),
+} }
 
-fn f_seq_subseq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let items = seq_to_vec(i, &args[0])?;
-    let len = items.len() as i128;
-    // GNU seq.el checks indices with number-or-marker-p; nil END = length.
-    let num_index = |i: &mut Interp, v: &Value| -> Result<i128, Flow> {
-        match v {
-            Value::Int(n) => Ok(*n),
-            Value::Float(f) => Ok((**f).trunc() as i128),
-            other => Err(i.wrong_type_mut("number-or-marker-p", other)),
+fn f_make_vector(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU `Fmake_vector' CHECK_FIXNAT's LENGTH → `wholenump'.
+let len = want_int(i, &args[0])?;
+if len < 0 {
+    return Err(i.wrong_type_mut("wholenump", &args[0]));
+}
+let n = len as usize;
+if n == 0 {
+    // GNU: allocate_clear_vector(0) returns the shared zero_vector.
+    return Ok(i.zero_vector.clone());
+}
+Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
+    vec![args[1].clone(); n],
+)))) }
+
+fn f_vector(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU: `zero_vector' is shared — `(vector)' and `[]' are eq.
+if args.is_empty() {
+    return Ok(i.zero_vector.clone());
+}
+Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(args.as_slice().to_vec())))) }
+
+fn f_bool_vector(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(super::misc::make_bool_vector(
+    i,
+    args.iter().map(|v| !v.is_nil()).collect(),
+)) }
+
+fn f_purecopy(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(args[0].clone()) }
+
+fn f_nreverse_seq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { match &args[0] {
+    Value::Cons(_) => {
+        // GNU signals circular-list before mutating; detect the
+        // cycle with a tortoise/hare walk first.
+        let mut tortoise = args[0].clone();
+        let mut hare = args[0].clone();
+        let mut guard = 0usize;
+        loop {
+            guard += 1;
+            if guard > 500_000 {
+                return Err(err_circular(i));
+            }
+            match &hare {
+                Value::Cons(c) => {
+                    let n1 = c.borrow().cdr.clone();
+                    match &n1 {
+                        Value::Cons(c2) => {
+                            let n2 = c2.borrow().cdr.clone();
+                            hare = n2;
+                        }
+                        Value::Nil => break,
+                        _ => break,
+                    }
+                    if let Value::Cons(tc) = &tortoise {
+                        let tnext = tc.borrow().cdr.clone();
+                        tortoise = tnext;
+                    }
+                    if eq_values(&hare, &tortoise) {
+                        return Err(err_circular(i));
+                    }
+                }
+                _ => break,
+            }
+        }
+        // delegate to list version semantics
+        let mut prev = Value::Nil;
+        let mut cur = args[0].clone();
+        loop {
+            match &cur {
+                Value::Cons(c) => {
+                    let next = c.borrow().cdr.clone();
+                    c.borrow_mut().cdr = prev;
+                    prev = cur;
+                    cur = next;
+                }
+                _ => break,
+            }
+        }
+        // Emacs requires a proper list; a dotted tail is an error.
+        if !cur.is_nil() {
+            return Err(i.wrong_type_mut("listp", &args[0]));
+        }
+        Ok(prev)
+    }
+    Value::Vec(v) => {
+        v.borrow_mut().reverse();
+        Ok(args[0].clone())
+    }
+    Value::Str(s) => {
+        // GNU ≥29 reverses a copy: the argument string is not
+        // mutated and a new string object is returned.  Text
+        // properties are reversed with the characters.
+        let src = s.borrow().clone();
+        let n = src.chars().count();
+        let ns = Value::string(src.chars().rev().collect::<String>());
+        if let Value::Str(ns_ref) = &ns {
+            if i.has_str_props(s) {
+                let ivs: Vec<(usize, usize, Vec<Value>)> = i
+                    .str_props(s)
+                    .iter()
+                    .map(|(a, b, pl)| (n.saturating_sub(*b), n.saturating_sub(*a), pl.clone()))
+                    .collect();
+                i.set_str_props(ns_ref, ivs);
+            }
+        }
+        Ok(ns)
+    }
+    Value::Nil => Ok(Value::Nil),
+    other => Err(i.wrong_type_mut("arrayp", other)),
+} }
+
+fn f_clear_vector(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { match &args[0] {
+    Value::Vec(v) => {
+        for x in v.borrow_mut().iter_mut() {
+            *x = args[1].clone();
+        }
+        Ok(args[0].clone())
+    }
+    other => Err(i.wrong_type_mut("arrayp", other)),
+} }
+
+fn f_seq_concatenate(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let ty = i.sym_id(&args[0]).unwrap_or(0);
+let mut items = Vec::new();
+for s in &args[1..] {
+    items.extend(seq_to_vec(i, s)?);
+}
+let list_id = i.intern("list");
+let vec_id = i.intern("vector");
+let str_id = i.intern("string");
+Ok(if ty == list_id {
+    Value::list(items)
+} else if ty == vec_id {
+    Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(items)))
+} else if ty == str_id {
+    let mut s = String::new();
+    for v in items {
+        if let Value::Int(n) = v {
+            if let Some(c) = char::from_u32(n as u32) {
+                s.push(c);
+            }
+        }
+    }
+    Value::string(s)
+} else {
+    let name = match &args[0] {
+        Value::Sym(s) => i.obarray.name(*s).to_string(),
+        other => format!("{:?}", other),
+    };
+    return Err(i.error(&format!("Not a sequence type name: {}", name)));
+}) }
+
+fn f_seq_subseq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let items = seq_to_vec(i, &args[0])?;
+let len = items.len() as i128;
+// GNU seq.el checks indices with number-or-marker-p; nil END = length.
+let num_index = |i: &mut Interp, v: &Value| -> Result<i128, Flow> {
+    match v {
+        Value::Int(n) => Ok(*n),
+        Value::Float(f) => Ok((**f).trunc() as i128),
+        other => Err(i.wrong_type_mut("number-or-marker-p", other)),
+    }
+};
+let start0 = num_index(i, &args[1])?;
+let end0 = match args.get(2) {
+    Some(v) if !v.is_nil() => num_index(i, v)?,
+    _ => len,
+}
+.min(len);
+// GNU: negative indices count from the end; anything outside
+// [0,len] or a reversed range is a plain `error'.
+let start = if start0 < 0 { start0 + len } else { start0 };
+let end = if end0 < 0 { end0 + len } else { end0 };
+if start < 0 || end < 0 || start > len || end > len || start > end {
+    return Err(i.error(&format!("Bad bounding indices: {}, {}", start0, end0)));
+}
+Ok(seq_from_like(
+    i,
+    &args[0],
+    items[start as usize..end as usize].to_vec(),
+)) }
+
+fn f_seq_take(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let items = seq_to_vec(i, &args[0])?;
+let n = want_int(i, &args[1])?.max(0) as usize;
+Ok(seq_from_like(
+    i,
+    &args[0],
+    items.into_iter().take(n).collect(),
+)) }
+fn f_seq_drop(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let items = seq_to_vec(i, &args[0])?;
+let n = want_int(i, &args[1])?.max(0) as usize;
+Ok(seq_from_like(
+    i,
+    &args[0],
+    items.into_iter().skip(n).collect(),
+)) }
+fn f_seq_length(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::Int(seq_to_vec(i, &args[0])?.len() as i128)) }
+fn f_seq_do(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let fun = args[0].clone();
+map_seq(i, &fun, &args[1], |i, v| {
+    i.apply(&fun, vec![v.clone()])?;
+    Ok(())
+})?;
+// GNU returns the sequence itself.
+Ok(args[1].clone()) }
+fn f_seq_map(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let fun = args[0].clone();
+let mut out = Vec::new();
+map_seq(i, &fun, &args[1], |i, v| {
+    out.push(i.apply(&fun, vec![v.clone()])?);
+    Ok(())
+})?;
+Ok(Value::list(out)) }
+fn f_seq_filter(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let pred = args[0].clone();
+let mut out = Vec::new();
+map_seq(i, &pred, &args[1], |i, v| {
+    if i.apply(&pred, vec![v.clone()])?.truthy() {
+        out.push(v.clone());
+    }
+    Ok(())
+})?;
+// GNU seq.el always returns a list here, even for vector/string
+// input.
+Ok(Value::list(out)) }
+fn f_seq_contains_p(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let items = seq_to_vec(i, &args[0])?;
+for x in items {
+    let r = match args.get(2) {
+        Some(f) if f.truthy() => i.apply(f, vec![x.clone(), args[1].clone()])?,
+        _ => {
+            if equal_values(i, &x, &args[1]) {
+                Value::t()
+            } else {
+                Value::Nil
+            }
         }
     };
-    let start0 = num_index(i, &args[1])?;
-    let end0 = match args.get(2) {
-        Some(v) if !v.is_nil() => num_index(i, v)?,
-        _ => len,
-    }
-    .min(len);
-    // GNU: negative indices count from the end; anything outside
-    // [0,len] or a reversed range is a plain `error'.
-    let start = if start0 < 0 { start0 + len } else { start0 };
-    let end = if end0 < 0 { end0 + len } else { end0 };
-    if start < 0 || end < 0 || start > len || end > len || start > end {
-        return Err(i.error(&format!("Bad bounding indices: {}, {}", start0, end0)));
-    }
-    Ok(seq_from_like(
-        i,
-        &args[0],
-        items[start as usize..end as usize].to_vec(),
-    ))
-}
-
-fn f_seq_take(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let items = seq_to_vec(i, &args[0])?;
-    let n = want_int(i, &args[1])?.max(0) as usize;
-    Ok(seq_from_like(
-        i,
-        &args[0],
-        items.into_iter().take(n).collect(),
-    ))
-}
-fn f_seq_drop(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let items = seq_to_vec(i, &args[0])?;
-    let n = want_int(i, &args[1])?.max(0) as usize;
-    Ok(seq_from_like(
-        i,
-        &args[0],
-        items.into_iter().skip(n).collect(),
-    ))
-}
-fn f_seq_length(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(seq_to_vec(i, &args[0])?.len() as i128))
-}
-fn f_seq_do(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let fun = args[0].clone();
-    map_seq(i, &fun, &args[1], |i, v| {
-        i.apply(&fun, vec![v.clone()])?;
-        Ok(())
-    })?;
-    // GNU returns the sequence itself.
-    Ok(args[1].clone())
-}
-fn f_seq_map(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let fun = args[0].clone();
-    let mut out = Vec::new();
-    map_seq(i, &fun, &args[1], |i, v| {
-        out.push(i.apply(&fun, vec![v.clone()])?);
-        Ok(())
-    })?;
-    Ok(Value::list(out))
-}
-fn f_seq_filter(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let pred = args[0].clone();
-    let mut out = Vec::new();
-    map_seq(i, &pred, &args[1], |i, v| {
-        if i.apply(&pred, vec![v.clone()])?.truthy() {
-            out.push(v.clone());
-        }
-        Ok(())
-    })?;
-    // GNU seq.el always returns a list here, even for vector/string
-    // input.
-    Ok(Value::list(out))
-}
-fn f_seq_contains_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let items = seq_to_vec(i, &args[0])?;
-    for x in items {
-        let r = match args.get(2) {
-            Some(f) if f.truthy() => i.apply(f, vec![x.clone(), args[1].clone()])?,
-            _ => {
-                if equal_values(i, &x, &args[1]) {
-                    Value::t()
-                } else {
-                    Value::Nil
-                }
-            }
-        };
-        if r.truthy() {
-            return Ok(Value::t());
-        }
-    }
-    Ok(Value::Nil)
-}
-fn f_seq_position(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let items = seq_to_vec(i, &args[0])?;
-    for (k, x) in items.iter().enumerate() {
-        let eq = match args.get(2) {
-            Some(f) if f.truthy() => i.apply(f, vec![x.clone(), args[1].clone()])?.truthy(),
-            _ => equal_values(i, x, &args[1]),
-        };
-        if eq {
-            return Ok(Value::Int(k as i128));
-        }
-    }
-    Ok(Value::Nil)
-}
-fn f_seq_count(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let pred = args[0].clone();
-    let mut n = 0;
-    map_seq(i, &pred, &args[1], |i, v| {
-        if i.apply(&pred, vec![v.clone()])?.truthy() {
-            n += 1;
-        }
-        Ok(())
-    })?;
-    Ok(Value::Int(n))
-}
-fn f_seq_reverse(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let items = seq_to_vec(i, &args[0])?;
-    Ok(seq_from_like(
-        i,
-        &args[0],
-        items.into_iter().rev().collect(),
-    ))
-}
-fn f_seq_some(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let pred = args[0].clone();
-    let items = seq_to_vec(i, &args[1])?;
-    for v in items {
-        let r = i.apply(&pred, vec![v])?;
-        if r.truthy() {
-            return Ok(r);
-        }
-    }
-    Ok(Value::Nil)
-}
-fn f_seq_every_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let pred = args[0].clone();
-    let items = seq_to_vec(i, &args[1])?;
-    for v in items {
-        if i.apply(&pred, vec![v])?.is_nil() {
-            return Ok(Value::Nil);
-        }
-    }
-    Ok(Value::t())
-}
-fn f_seq_find(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let pred = args[0].clone();
-    let items = seq_to_vec(i, &args[1])?;
-    for v in items {
-        if i.apply(&pred, vec![v.clone()])?.truthy() {
-            return Ok(v);
-        }
-    }
-    Ok(args.get(2).cloned().unwrap_or(Value::Nil))
-}
-fn f_seq_remove(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let pred = args[0].clone();
-    let mut out = Vec::new();
-    map_seq(i, &pred, &args[1], |i, v| {
-        if i.apply(&pred, vec![v.clone()])?.is_nil() {
-            out.push(v.clone());
-        }
-        Ok(())
-    })?;
-    // GNU seq.el always returns a list here.
-    Ok(Value::list(out))
-}
-fn f_seq_reduce(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let fun = args[0].clone();
-    let items = seq_to_vec(i, &args[1])?;
-    let mut acc = args[2].clone();
-    for v in items {
-        acc = i.apply(&fun, vec![acc, v])?;
-    }
-    Ok(acc)
-}
-fn f_seq_take_while(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let pred = args[0].clone();
-    let items = seq_to_vec(i, &args[1])?;
-    let mut out = Vec::new();
-    for v in items {
-        if i.apply(&pred, vec![v.clone()])?.is_nil() {
-            break;
-        }
-        out.push(v);
-    }
-    Ok(seq_from_like(i, &args[1], out))
-}
-fn f_seq_drop_while(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let pred = args[0].clone();
-    let items = seq_to_vec(i, &args[1])?;
-    let mut k = 0;
-    while k < items.len() {
-        if i.apply(&pred, vec![items[k].clone()])?.is_nil() {
-            break;
-        }
-        k += 1;
-    }
-    Ok(seq_from_like(i, &args[1], items[k..].to_vec()))
-}
-fn f_seq_into(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let items = seq_to_vec(i, &args[0])?;
-    let list_id = i.intern("list");
-    let vec_id = i.intern("vector");
-    let str_id = i.intern("string");
-    let ty = i.sym_id(&args[1]).unwrap_or(0);
-    Ok(if ty == list_id {
-        Value::list(items)
-    } else if ty == vec_id {
-        Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(items)))
-    } else if ty == str_id {
-        let mut s = String::new();
-        for v in items {
-            if let Value::Int(n) = v {
-                if let Some(c) = char::from_u32(n as u32) {
-                    s.push(c);
-                }
-            }
-        }
-        Value::string(s)
-    } else {
-        let name = match &args[1] {
-            Value::Sym(s) => i.obarray.name(*s).to_string(),
-            other => format!("{:?}", other),
-        };
-        return Err(i.error(&format!("Not a sequence type name: {}", name)));
-    })
-}
-fn f_seq_into_sequence(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match &args[0] {
-        Value::Nil | Value::Cons(_) | Value::Str(_) | Value::Vec(_) => Ok(args[0].clone()),
-        other => {
-            let msg = i.prin1_to_string(other);
-            Err(i.error(&format!("Cannot convert {} into a sequence", msg)))
-        }
+    if r.truthy() {
+        return Ok(Value::t());
     }
 }
-fn f_seq_empty_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(seq_to_vec(i, &args[0])?.is_empty()))
-}
-fn f_seq_first(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let items = seq_to_vec(i, &args[0])?;
-    Ok(items.into_iter().next().unwrap_or(Value::Nil))
-}
-fn f_seq_rest(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let items = seq_to_vec(i, &args[0])?;
-    Ok(seq_from_like(
-        i,
-        &args[0],
-        items.into_iter().skip(1).collect(),
-    ))
-}
-fn f_seq_last(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let items = seq_to_vec(i, &args[0])?;
-    Ok(items.into_iter().last().unwrap_or(Value::Nil))
-}
-fn f_seq_min(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU's seq-min applies `min' across the elements, so an empty
-    // sequence fails with wrong-number-of-arguments and any
-    // non-number element is a type error.
-    let items = seq_to_vec(i, &args[0])?;
-    let f = Value::Sym(i.intern("min"));
-    i.apply(&f, items)
-}
-fn f_seq_max(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let items = seq_to_vec(i, &args[0])?;
-    let f = Value::Sym(i.intern("max"));
-    i.apply(&f, items)
-}
-fn f_seq_uniq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let items = seq_to_vec(i, &args[0])?;
-    let testfn = arg(&args, 1);
-    let mut out: Vec<Value> = Vec::new();
-    'outer: for v in items {
-        for u in &out {
-            let dup = if testfn.truthy() {
-                i.apply(&testfn, vec![u.clone(), v.clone()])?.truthy()
-            } else {
-                equal_values(i, u, &v)
-            };
-            if dup {
-                continue 'outer;
-            }
-        }
-        out.push(v);
-    }
-    // GNU seq.el always returns a list here.
-    Ok(Value::list(out))
-}
-fn f_make_char_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // Char-table = #s(char-table SUBTYPE [65 slots] EXTRA...) — a
-    // Record so `char-table-p'/`char-table-subtype' are exact.  The
-    // contents vec is the GNU trie root: [0] is the ASCII cache slot,
-    // [1..=64] the top-level 65536-char blocks, all initialized to
-    // INIT (GNU `make_vector' fills every slot incl. the defalt).
-    // GNU sizes the extras from the subtype's `char-table-extra-slots'
-    // property (e.g. disp-table.el puts 18 on `display-table').
-    let subtype = arg(&args, 0);
-    let init = arg(&args, 1);
-    let vec = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
-        init.clone();
-        65
-    ])));
-    let prop = i.intern("char-table-extra-slots");
-    // GNU `CHECK_FIXNAT': a non-nil property must be a natural number
-    // — `(wholenump PROP)', not silently zero slots.
-    let n = match crate::lisp::builtins::data::f_get(i, vec![subtype.clone(), Value::Sym(prop)])? {
-        Value::Nil => 0,
-        Value::Int(n) if n >= 0 => (n as usize).min(1 << 22),
-        ref other => return Err(i.wrong_type_mut("wholenump", other)),
+Ok(Value::Nil) }
+fn f_seq_position(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let items = seq_to_vec(i, &args[0])?;
+for (k, x) in items.iter().enumerate() {
+    let eq = match args.get(2) {
+        Some(f) if f.truthy() => i.apply(f, vec![x.clone(), args[1].clone()])?.truthy(),
+        _ => equal_values(i, x, &args[1]),
     };
-    let mut rec = vec![Value::Sym(i.intern("char-table")), subtype, vec];
-    rec.resize(3 + n, Value::Nil);
-    let t = Value::Record(std::rc::Rc::new(std::cell::RefCell::new(rec)));
-    if !init.is_nil() {
-        i.set_char_table_defalt(&t, init);
+    if eq {
+        return Ok(Value::Int(k as i128));
     }
-    Ok(t)
 }
+Ok(Value::Nil) }
+fn f_seq_count(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let pred = args[0].clone();
+let mut n = 0;
+map_seq(i, &pred, &args[1], |i, v| {
+    if i.apply(&pred, vec![v.clone()])?.truthy() {
+        n += 1;
+    }
+    Ok(())
+})?;
+Ok(Value::Int(n)) }
+fn f_seq_reverse(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let items = seq_to_vec(i, &args[0])?;
+Ok(seq_from_like(
+    i,
+    &args[0],
+    items.into_iter().rev().collect(),
+)) }
+fn f_seq_some(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let pred = args[0].clone();
+let items = seq_to_vec(i, &args[1])?;
+for v in items {
+    let r = i.apply(&pred, vec![v])?;
+    if r.truthy() {
+        return Ok(r);
+    }
+}
+Ok(Value::Nil) }
+fn f_seq_every_p(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let pred = args[0].clone();
+let items = seq_to_vec(i, &args[1])?;
+for v in items {
+    if i.apply(&pred, vec![v])?.is_nil() {
+        return Ok(Value::Nil);
+    }
+}
+Ok(Value::t()) }
+fn f_seq_find(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let pred = args[0].clone();
+let items = seq_to_vec(i, &args[1])?;
+for v in items {
+    if i.apply(&pred, vec![v.clone()])?.truthy() {
+        return Ok(v);
+    }
+}
+Ok(args.get(2).cloned().unwrap_or(Value::Nil)) }
+fn f_seq_remove(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let pred = args[0].clone();
+let mut out = Vec::new();
+map_seq(i, &pred, &args[1], |i, v| {
+    if i.apply(&pred, vec![v.clone()])?.is_nil() {
+        out.push(v.clone());
+    }
+    Ok(())
+})?;
+// GNU seq.el always returns a list here.
+Ok(Value::list(out)) }
+fn f_seq_reduce(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let fun = args[0].clone();
+let items = seq_to_vec(i, &args[1])?;
+let mut acc = args[2].clone();
+for v in items {
+    acc = i.apply(&fun, vec![acc, v])?;
+}
+Ok(acc) }
+fn f_seq_take_while(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let pred = args[0].clone();
+let items = seq_to_vec(i, &args[1])?;
+let mut out = Vec::new();
+for v in items {
+    if i.apply(&pred, vec![v.clone()])?.is_nil() {
+        break;
+    }
+    out.push(v);
+}
+Ok(seq_from_like(i, &args[1], out)) }
+fn f_seq_drop_while(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let pred = args[0].clone();
+let items = seq_to_vec(i, &args[1])?;
+let mut k = 0;
+while k < items.len() {
+    if i.apply(&pred, vec![items[k].clone()])?.is_nil() {
+        break;
+    }
+    k += 1;
+}
+Ok(seq_from_like(i, &args[1], items[k..].to_vec())) }
+fn f_seq_into(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let items = seq_to_vec(i, &args[0])?;
+let list_id = i.intern("list");
+let vec_id = i.intern("vector");
+let str_id = i.intern("string");
+let ty = i.sym_id(&args[1]).unwrap_or(0);
+Ok(if ty == list_id {
+    Value::list(items)
+} else if ty == vec_id {
+    Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(items)))
+} else if ty == str_id {
+    let mut s = String::new();
+    for v in items {
+        if let Value::Int(n) = v {
+            if let Some(c) = char::from_u32(n as u32) {
+                s.push(c);
+            }
+        }
+    }
+    Value::string(s)
+} else {
+    let name = match &args[1] {
+        Value::Sym(s) => i.obarray.name(*s).to_string(),
+        other => format!("{:?}", other),
+    };
+    return Err(i.error(&format!("Not a sequence type name: {}", name)));
+}) }
+fn f_seq_into_sequence(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { match &args[0] {
+    Value::Nil | Value::Cons(_) | Value::Str(_) | Value::Vec(_) => Ok(args[0].clone()),
+    other => {
+        let msg = i.prin1_to_string(other);
+        Err(i.error(&format!("Cannot convert {} into a sequence", msg)))
+    }
+} }
+fn f_seq_empty_p(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(seq_to_vec(i, &args[0])?.is_empty())) }
+fn f_seq_first(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let items = seq_to_vec(i, &args[0])?;
+Ok(items.into_iter().next().unwrap_or(Value::Nil)) }
+fn f_seq_rest(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let items = seq_to_vec(i, &args[0])?;
+Ok(seq_from_like(
+    i,
+    &args[0],
+    items.into_iter().skip(1).collect(),
+)) }
+fn f_seq_last(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let items = seq_to_vec(i, &args[0])?;
+Ok(items.into_iter().last().unwrap_or(Value::Nil)) }
+fn f_seq_min(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU's seq-min applies `min' across the elements, so an empty
+// sequence fails with wrong-number-of-arguments and any
+// non-number element is a type error.
+let items = seq_to_vec(i, &args[0])?;
+let f = Value::Sym(i.intern("min"));
+i.apply(&f, items) }
+fn f_seq_max(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let items = seq_to_vec(i, &args[0])?;
+let f = Value::Sym(i.intern("max"));
+i.apply(&f, items) }
+fn f_seq_uniq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let items = seq_to_vec(i, &args[0])?;
+let testfn = arg(&args, 1);
+let mut out: Vec<Value> = Vec::new();
+'outer: for v in items {
+    for u in &out {
+        let dup = if testfn.truthy() {
+            i.apply(&testfn, vec![u.clone(), v.clone()])?.truthy()
+        } else {
+            equal_values(i, u, &v)
+        };
+        if dup {
+            continue 'outer;
+        }
+    }
+    out.push(v);
+}
+// GNU seq.el always returns a list here.
+Ok(Value::list(out)) }
+fn f_make_char_table(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // Char-table = #s(char-table SUBTYPE [65 slots] EXTRA...) — a
+// Record so `char-table-p'/`char-table-subtype' are exact.  The
+// contents vec is the GNU trie root: [0] is the ASCII cache slot,
+// [1..=64] the top-level 65536-char blocks, all initialized to
+// INIT (GNU `make_vector' fills every slot incl. the defalt).
+// GNU sizes the extras from the subtype's `char-table-extra-slots'
+// property (e.g. disp-table.el puts 18 on `display-table').
+let subtype = arg(&args, 0);
+let init = arg(&args, 1);
+let vec = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
+    init.clone();
+    65
+])));
+let prop = i.intern("char-table-extra-slots");
+// GNU `CHECK_FIXNAT': a non-nil property must be a natural number
+// — `(wholenump PROP)', not silently zero slots.
+let n = match crate::lisp::builtins::data::f_get(i, vec![subtype.clone(), Value::Sym(prop)].into())? {
+    Value::Nil => 0,
+    Value::Int(n) if n >= 0 => (n as usize).min(1 << 22),
+    ref other => return Err(i.wrong_type_mut("wholenump", other)),
+};
+let mut rec = vec![Value::Sym(i.intern("char-table")), subtype, vec];
+rec.resize(3 + n, Value::Nil);
+let t = Value::Record(std::rc::Rc::new(std::cell::RefCell::new(rec)));
+if !init.is_nil() {
+    i.set_char_table_defalt(&t, init);
+}
+Ok(t) }

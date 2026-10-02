@@ -6,7 +6,7 @@
 //! records (`#s(...)`), `#N=`/`#N#` labels, quote/backquote/comma, `#'`,
 //! `;` comments, `#!` shebang comments, `#_` and `#@` char skipping.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::rc::Rc;
 
 use super::Interp;
@@ -114,9 +114,9 @@ impl<'a> Reader<'a> {
             chars,
             pos: 0,
             interp,
-            labels: HashMap::new(),
+            labels: HashMap::default(),
             pending_labels: Vec::new(),
-            label_markers: HashMap::new(),
+            label_markers: HashMap::default(),
             annotate_pos: None,
             sympos_enabled: false,
             from_buffer: false,
@@ -1173,7 +1173,7 @@ impl<'a> Reader<'a> {
         let Some(marker) = self.label_markers.get(&n).copied() else {
             return;
         };
-        let mut seen: HashSet<usize> = HashSet::new();
+        let mut seen: HashSet<usize> = HashSet::default();
         patch_in(obj, marker, obj, &mut seen);
     }
 

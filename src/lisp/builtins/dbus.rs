@@ -1198,216 +1198,210 @@ fn close_bus(i: &mut Interp, bus: &Value) {
 // DEFUNs — connection side
 // ---------------------------------------------------------------------------
 
-fn f_init_bus(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let mut bus = arg(&a, 0);
-    let private = arg(&a, 1);
-    if !private.is_nil() {
-        if i.sym_id(&bus) == Some(kw(i, "system")) {
-            bus = symv(i, ":system-private");
-        } else if i.sym_id(&bus) == Some(kw(i, "session")) {
-            bus = symv(i, ":session-private");
-        }
+fn f_init_bus(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let mut bus = arg(&a, 0);
+let private = arg(&a, 1);
+if !private.is_nil() {
+    if i.sym_id(&bus) == Some(kw(i, "system")) {
+        bus = symv(i, ":system-private");
+    } else if i.sym_id(&bus) == Some(kw(i, "session")) {
+        bus = symv(i, ":session-private");
     }
-    validate_bus_address(i, &mut bus)?;
-
-    // Close existing registration, then re-check whether still connected.
-    close_bus(i, &bus);
-    if find_bus_pos(i, &bus).is_some() {
-        let conn = get_connection(i, &bus)?;
-        let d = dbus().unwrap();
-        unsafe {
-            (d.dbus_connection_ref)(conn);
-        }
-        return Ok(Value::Int(connection_refs(conn) as i128));
-    }
-
-    let d = match dbus() {
-        Some(d) => d,
-        None => return Err(dbus_error_val(i, "No connection to bus", &bus)),
-    };
-
-    let conn = unsafe {
-        let mut err = DBusError {
-            name: std::ptr::null(),
-            message: std::ptr::null(),
-            dummy: 0,
-            padding1: std::ptr::null_mut(),
-        };
-        (d.dbus_error_init)(&mut err);
-        let c = if let Value::Str(s) = &bus {
-            let addr = s.borrow().clone();
-            let cs = cstr(&addr);
-            if private.is_nil() {
-                (d.dbus_connection_open)(cs.as_ptr(), &mut err)
-            } else {
-                (d.dbus_connection_open_private)(cs.as_ptr(), &mut err)
-            }
-        } else {
-            let bustype = if i.sym_id(&bus) == Some(kw(i, "system"))
-                || i.sym_id(&bus) == Some(kw(i, "system-private"))
-            {
-                DBUS_BUS_SYSTEM
-            } else {
-                DBUS_BUS_SESSION
-            };
-            if private.is_nil() {
-                (d.dbus_bus_get)(bustype, &mut err)
-            } else {
-                (d.dbus_bus_get_private)(bustype, &mut err)
-            }
-        };
-        if (d.dbus_error_is_set)(&err) != 0 {
-            return Err(xd_error(i, &mut err));
-        }
-        if c.is_null() {
-            (d.dbus_error_free)(&mut err);
-            return Err(dbus_error_val(i, "No connection to bus", &bus));
-        }
-        if matches!(bus, Value::Str(_)) {
-            (d.dbus_bus_register)(c, &mut err);
-        } else {
-            (d.dbus_connection_set_exit_on_disconnect)(c, 0);
-        }
-        if (d.dbus_error_is_set)(&err) != 0 {
-            return Err(xd_error(i, &mut err));
-        }
-        (d.dbus_error_free)(&mut err);
-        c
-    };
-
-    i.dbus.buses.push(DbusReg {
-        bus: bus.clone(),
-        conn,
-    });
-    Ok(Value::Int(connection_refs(conn) as i128))
 }
+validate_bus_address(i, &mut bus)?;
 
-fn f_get_unique_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let mut bus = a[0].clone();
-    validate_bus_address(i, &mut bus)?;
+// Close existing registration, then re-check whether still connected.
+close_bus(i, &bus);
+if find_bus_pos(i, &bus).is_some() {
     let conn = get_connection(i, &bus)?;
     let d = dbus().unwrap();
     unsafe {
-        let name = (d.dbus_bus_get_unique_name)(conn);
-        if name.is_null() {
-            return Err(dbus_error(i, "No unique name available"));
-        }
-        Ok(Value::string(
-            std::ffi::CStr::from_ptr(name)
-                .to_string_lossy()
-                .into_owned(),
-        ))
+        (d.dbus_connection_ref)(conn);
     }
+    return Ok(Value::Int(connection_refs(conn) as i128));
 }
+
+let d = match dbus() {
+    Some(d) => d,
+    None => return Err(dbus_error_val(i, "No connection to bus", &bus)),
+};
+
+let conn = unsafe {
+    let mut err = DBusError {
+        name: std::ptr::null(),
+        message: std::ptr::null(),
+        dummy: 0,
+        padding1: std::ptr::null_mut(),
+    };
+    (d.dbus_error_init)(&mut err);
+    let c = if let Value::Str(s) = &bus {
+        let addr = s.borrow().clone();
+        let cs = cstr(&addr);
+        if private.is_nil() {
+            (d.dbus_connection_open)(cs.as_ptr(), &mut err)
+        } else {
+            (d.dbus_connection_open_private)(cs.as_ptr(), &mut err)
+        }
+    } else {
+        let bustype = if i.sym_id(&bus) == Some(kw(i, "system"))
+            || i.sym_id(&bus) == Some(kw(i, "system-private"))
+        {
+            DBUS_BUS_SYSTEM
+        } else {
+            DBUS_BUS_SESSION
+        };
+        if private.is_nil() {
+            (d.dbus_bus_get)(bustype, &mut err)
+        } else {
+            (d.dbus_bus_get_private)(bustype, &mut err)
+        }
+    };
+    if (d.dbus_error_is_set)(&err) != 0 {
+        return Err(xd_error(i, &mut err));
+    }
+    if c.is_null() {
+        (d.dbus_error_free)(&mut err);
+        return Err(dbus_error_val(i, "No connection to bus", &bus));
+    }
+    if matches!(bus, Value::Str(_)) {
+        (d.dbus_bus_register)(c, &mut err);
+    } else {
+        (d.dbus_connection_set_exit_on_disconnect)(c, 0);
+    }
+    if (d.dbus_error_is_set)(&err) != 0 {
+        return Err(xd_error(i, &mut err));
+    }
+    (d.dbus_error_free)(&mut err);
+    c
+};
+
+i.dbus.buses.push(DbusReg {
+    bus: bus.clone(),
+    conn,
+});
+Ok(Value::Int(connection_refs(conn) as i128)) }
+
+fn f_get_unique_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let mut bus = a[0].clone();
+validate_bus_address(i, &mut bus)?;
+let conn = get_connection(i, &bus)?;
+let d = dbus().unwrap();
+unsafe {
+    let name = (d.dbus_bus_get_unique_name)(conn);
+    if name.is_null() {
+        return Err(dbus_error(i, "No unique name available"));
+    }
+    Ok(Value::string(
+        std::ffi::CStr::from_ptr(name)
+            .to_string_lossy()
+            .into_owned(),
+    ))
+} }
 
 // ---------------------------------------------------------------------------
 // DEFUN — dbus-message-internal
 // ---------------------------------------------------------------------------
 
-fn f_message_internal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let nargs = args.len();
-    let message_type = arg(&args, 0);
-    let bus = arg(&args, 1);
-    let service = arg(&args, 2);
-    let mut handler = Value::Nil;
-    let mut path = Value::Nil;
-    let mut interface = Value::Nil;
-    let mut member = Value::Nil;
-    let mut error_name = Value::Nil;
-    let mut serial: u32 = 0;
-    let count: usize;
+fn f_message_internal(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let nargs = args.len();
+let message_type = arg(&args, 0);
+let bus = arg(&args, 1);
+let service = arg(&args, 2);
+let mut handler = Value::Nil;
+let mut path = Value::Nil;
+let mut interface = Value::Nil;
+let mut member = Value::Nil;
+let mut error_name = Value::Nil;
+let mut serial: u32 = 0;
+let count: usize;
 
-    let mtype = match &message_type {
-        Value::Int(n) if *n >= DBUS_MESSAGE_TYPE_INVALID as i128 && *n < 5_i128 => *n as i32,
-        _ => {
-            check_fixnat(i, &message_type)?;
-            return Err(dbus_error_val(i, "Invalid message type", &message_type));
-        }
-    };
+let mtype = match &message_type {
+    Value::Int(n) if *n >= DBUS_MESSAGE_TYPE_INVALID as i128 && *n < 5_i128 => *n as i32,
+    _ => {
+        check_fixnat(i, &message_type)?;
+        return Err(dbus_error_val(i, "Invalid message type", &message_type));
+    }
+};
 
-    if mtype == DBUS_MESSAGE_TYPE_METHOD_CALL || mtype == DBUS_MESSAGE_TYPE_SIGNAL {
-        path = arg(&args, 3);
-        interface = arg(&args, 4);
-        member = arg(&args, 5);
-        if mtype == DBUS_MESSAGE_TYPE_METHOD_CALL {
-            handler = arg(&args, 6);
-        }
-        count = if mtype == DBUS_MESSAGE_TYPE_METHOD_CALL {
-            7
-        } else {
-            6
-        };
-    } else if mtype == DBUS_MESSAGE_TYPE_METHOD_RETURN || mtype == DBUS_MESSAGE_TYPE_ERROR {
-        serial = extract_unsigned(i, &arg(&args, 3), u32::MAX as u64)? as u32;
-        if mtype == DBUS_MESSAGE_TYPE_ERROR {
-            error_name = arg(&args, 4);
-        }
-        count = if mtype == DBUS_MESSAGE_TYPE_ERROR {
-            5
-        } else {
-            4
-        };
+if mtype == DBUS_MESSAGE_TYPE_METHOD_CALL || mtype == DBUS_MESSAGE_TYPE_SIGNAL {
+    path = arg(&args, 3);
+    interface = arg(&args, 4);
+    member = arg(&args, 5);
+    if mtype == DBUS_MESSAGE_TYPE_METHOD_CALL {
+        handler = arg(&args, 6);
+    }
+    count = if mtype == DBUS_MESSAGE_TYPE_METHOD_CALL {
+        7
     } else {
-        count = 3;
+        6
+    };
+} else if mtype == DBUS_MESSAGE_TYPE_METHOD_RETURN || mtype == DBUS_MESSAGE_TYPE_ERROR {
+    serial = extract_unsigned(i, &arg(&args, 3), u32::MAX as u64)? as u32;
+    if mtype == DBUS_MESSAGE_TYPE_ERROR {
+        error_name = arg(&args, 4);
     }
+    count = if mtype == DBUS_MESSAGE_TYPE_ERROR {
+        5
+    } else {
+        4
+    };
+} else {
+    count = 3;
+}
 
-    let mut bus = bus;
-    validate_bus_address(i, &mut bus)?;
-    validate_bus_name(i, &service)?;
+let mut bus = bus;
+validate_bus_address(i, &mut bus)?;
+validate_bus_name(i, &service)?;
 
-    if nargs < count {
-        let f = symv(i, "dbus-message-internal");
-        return Err(i.wrong_number_of_args(&f, nargs as i128));
-    }
+if nargs < count {
+    let f = symv(i, "dbus-message-internal");
+    return Err(i.wrong_number_of_args(&f, nargs as i128));
+}
 
-    if mtype == DBUS_MESSAGE_TYPE_METHOD_CALL || mtype == DBUS_MESSAGE_TYPE_SIGNAL {
-        validate_path(i, &path)?;
-        validate_interface_member(i, &interface, true)?;
-        validate_interface_member(i, &member, false)?;
-        if !handler.is_nil() {
-            let fp = call_lisp(i, "functionp", vec![handler.clone()])?;
-            if fp.is_nil() {
-                return Err(i.wrong_type_mut("invalid-function", &handler));
-            }
+if mtype == DBUS_MESSAGE_TYPE_METHOD_CALL || mtype == DBUS_MESSAGE_TYPE_SIGNAL {
+    validate_path(i, &path)?;
+    validate_interface_member(i, &interface, true)?;
+    validate_interface_member(i, &member, false)?;
+    if !handler.is_nil() {
+        let fp = call_lisp(i, "functionp", vec![handler.clone()])?;
+        if fp.is_nil() {
+            return Err(i.wrong_type_mut("invalid-function", &handler));
         }
     }
-
-    let conn = get_connection(i, &bus)?;
-    let d = dbus().unwrap();
-
-    let dmsg = unsafe {
-        (d.dbus_message_new)(if mtype == DBUS_MESSAGE_TYPE_INVALID {
-            DBUS_MESSAGE_TYPE_SIGNAL
-        } else {
-            mtype
-        })
-    };
-    if dmsg.is_null() {
-        return Err(dbus_error(i, "Unable to create a new message"));
-    }
-
-    let r = f_message_internal_2(
-        i,
-        d,
-        conn,
-        dmsg,
-        mtype,
-        &bus,
-        &service,
-        &path,
-        &interface,
-        &member,
-        &error_name,
-        serial,
-        &handler,
-        &args,
-        count,
-    );
-    unsafe {
-        (d.dbus_message_unref)(dmsg);
-    }
-    r
 }
+
+let conn = get_connection(i, &bus)?;
+let d = dbus().unwrap();
+
+let dmsg = unsafe {
+    (d.dbus_message_new)(if mtype == DBUS_MESSAGE_TYPE_INVALID {
+        DBUS_MESSAGE_TYPE_SIGNAL
+    } else {
+        mtype
+    })
+};
+if dmsg.is_null() {
+    return Err(dbus_error(i, "Unable to create a new message"));
+}
+
+let r = f_message_internal_2(
+    i,
+    d,
+    conn,
+    dmsg,
+    mtype,
+    &bus,
+    &service,
+    &path,
+    &interface,
+    &member,
+    &error_name,
+    serial,
+    &handler,
+    &args,
+    count,
+);
+unsafe {
+    (d.dbus_message_unref)(dmsg);
+}
+r }
 
 fn f_message_internal_2(
     i: &mut Interp,
@@ -1589,45 +1583,39 @@ fn f_message_internal_2(
 // DEFUNs — fd helpers (GNU `xd_registered_fds')
 // ---------------------------------------------------------------------------
 
-fn f_fd_open(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let filename = want_string(i, &a[0])?;
-    let filename = crate::editor::expand_file_name_str(i, &filename);
-    if let Some((fd, _)) = i.dbus.fds.iter().find(|(_, f)| f == &filename) {
-        return Ok(Value::Int(*fd as i128));
-    }
-    let cs = cstr(&filename);
-    let fd = unsafe { libc::open(cs.as_ptr(), libc::O_RDONLY) };
-    if fd <= 0 {
-        return Err(dbus_error_val(
-            i,
-            "Cannot open file",
-            &Value::string(filename),
-        ));
-    }
-    i.dbus.fds.push((fd as i64, filename));
-    Ok(Value::Int(fd as i128))
+fn f_fd_open(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let filename = want_string(i, &a[0])?;
+let filename = crate::editor::expand_file_name_str(i, &filename);
+if let Some((fd, _)) = i.dbus.fds.iter().find(|(_, f)| f == &filename) {
+    return Ok(Value::Int(*fd as i128));
 }
+let cs = cstr(&filename);
+let fd = unsafe { libc::open(cs.as_ptr(), libc::O_RDONLY) };
+if fd <= 0 {
+    return Err(dbus_error_val(
+        i,
+        "Cannot open file",
+        &Value::string(filename),
+    ));
+}
+i.dbus.fds.push((fd as i64, filename));
+Ok(Value::Int(fd as i128)) }
 
-fn f_fd_close(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let fd = want_int(i, &a[0])?;
-    let Some(p) = i.dbus.fds.iter().position(|(f, _)| *f == fd as i64) else {
-        return Ok(Value::Nil);
-    };
-    i.dbus.fds.remove(p);
-    let ok = unsafe { libc::close(fd as i32) };
-    Ok(if ok == 0 { Value::t() } else { Value::Nil })
-}
+fn f_fd_close(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let fd = want_int(i, &a[0])?;
+let Some(p) = i.dbus.fds.iter().position(|(f, _)| *f == fd as i64) else {
+    return Ok(Value::Nil);
+};
+i.dbus.fds.remove(p);
+let ok = unsafe { libc::close(fd as i32) };
+Ok(if ok == 0 { Value::t() } else { Value::Nil }) }
 
-fn f_registered_fds(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let mut out = Vec::new();
-    for (fd, f) in &i.dbus.fds {
-        out.push(Value::cons(
-            Value::Int(*fd as i128),
-            Value::string(f.clone()),
-        ));
-    }
-    Ok(Value::list(out))
+fn f_registered_fds(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { let mut out = Vec::new();
+for (fd, f) in &i.dbus.fds {
+    out.push(Value::cons(
+        Value::Int(*fd as i128),
+        Value::string(f.clone()),
+    ));
 }
+Ok(Value::list(out)) }
 
 // ---------------------------------------------------------------------------
 // Incoming message → `dbus-event' (GNU `xd_read_message_1' + `xd_store_event')

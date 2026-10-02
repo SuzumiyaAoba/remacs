@@ -425,68 +425,60 @@ pub(crate) static SUBRS: &[Subr] = &[
 
 /// GNU: ASCII/Latin-1 chars (0..=0xFF) are their own unibyte byte,
 /// eight-bit chars (0x3FFF80..) map to the raw byte; others → -1.
-fn f_multibyte_char_to_unibyte(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let c = match &args[0] {
-        Value::Int(n) => *n,
-        v => return Err(i.wrong_type_mut("characterp", v)),
-    };
-    Ok(Value::Int(if (0..=0xFF).contains(&c) {
-        c
-    } else if (0x3FFF80..=0x3FFFFF).contains(&c) {
-        c - 0x3FFF00
-    } else {
-        -1
-    }))
-}
+fn f_multibyte_char_to_unibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let c = match &args[0] {
+    Value::Int(n) => *n,
+    v => return Err(i.wrong_type_mut("characterp", v)),
+};
+Ok(Value::Int(if (0..=0xFF).contains(&c) {
+    c
+} else if (0x3FFF80..=0x3FFFFF).contains(&c) {
+    c - 0x3FFF00
+} else {
+    -1
+})) }
 
 /// GNU: bytes 0..=127 stay; 128..=255 become eight-bit chars
 /// (0x3FFF00 + byte); out of range → error.
-fn f_unibyte_char_to_multibyte(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let b = match &args[0] {
-        Value::Int(n) => *n,
-        v => return Err(i.wrong_type_mut("characterp", v)),
-    };
-    match b {
-        0..=127 => Ok(Value::Int(b)),
-        128..=255 => Ok(Value::Int(0x3FFF00 + b)),
-        _ => Err(i.error(&format!("Unibyte char out of range: {}", b))),
-    }
-}
+fn f_unibyte_char_to_multibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let b = match &args[0] {
+    Value::Int(n) => *n,
+    v => return Err(i.wrong_type_mut("characterp", v)),
+};
+match b {
+    0..=127 => Ok(Value::Int(b)),
+    128..=255 => Ok(Value::Int(0x3FFF00 + b)),
+    _ => Err(i.error(&format!("Unibyte char out of range: {}", b))),
+} }
 
 /// GNU string-truncate-left: when STRING is longer than LENGTH,
 /// return "..." plus the last max(LENGTH-3, 1) characters.
-fn f_string_truncate_left(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    let length = want_int(i, &args[1])?;
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() as i128 <= length {
-        return Ok(args[0].clone());
-    }
-    let keep = (length - 3).max(1).min(chars.len() as i128) as usize;
-    let tail: String = chars[chars.len() - keep..].iter().collect();
-    Ok(Value::string(format!("...{tail}")))
+fn f_string_truncate_left(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = want_string(i, &args[0])?;
+let length = want_int(i, &args[1])?;
+let chars: Vec<char> = s.chars().collect();
+if chars.len() as i128 <= length {
+    return Ok(args[0].clone());
 }
+let keep = (length - 3).max(1).min(chars.len() as i128) as usize;
+let tail: String = chars[chars.len() - keep..].iter().collect();
+Ok(Value::string(format!("...{tail}"))) }
 
-fn f_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU's `string' builds a MULTIBYTE string — bytes 0x80-0xFF are
-    // stored as eight-bit chars (codes 0x3FFF80-0x3FFFFF, PUA proxies
-    // internally); `multibyte-string-p' is t on the result.
-    let mut out = String::new();
-    for a in &args {
-        match a {
-            Value::Int(n) => match lisp_char(*n as u32) {
-                Some(c) => out.push(c),
-                None => return Err(i.wrong_type_mut("characterp", a)),
-            },
-            _ => return Err(i.wrong_type_mut("characterp", a)),
-        }
+fn f_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU's `string' builds a MULTIBYTE string — bytes 0x80-0xFF are
+// stored as eight-bit chars (codes 0x3FFF80-0x3FFFFF, PUA proxies
+// internally); `multibyte-string-p' is t on the result.
+let mut out = String::new();
+for a in args.iter() {
+    match a {
+        Value::Int(n) => match lisp_char(*n as u32) {
+            Some(c) => out.push(c),
+            None => return Err(i.wrong_type_mut("characterp", a)),
+        },
+        _ => return Err(i.wrong_type_mut("characterp", a)),
     }
-    let v = Value::string(out);
-    if let Value::Str(r) = &v {
-        i.mark_multibyte(r);
-    }
-    Ok(v)
 }
+let v = Value::string(out);
+if let Value::Str(r) = &v {
+    i.mark_multibyte(r);
+}
+Ok(v) }
 
 /// Concatenate a sequence value's characters into `out`.
 pub(crate) fn concat_seq(i: &mut Interp, v: &Value, out: &mut String) -> Result<(), super::Flow> {
@@ -533,197 +525,185 @@ pub(crate) fn concat_seq(i: &mut Interp, v: &Value, out: &mut String) -> Result<
     }
 }
 
-fn f_concat(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let mut out = String::new();
-    let mut ivs: Vec<(usize, usize, Vec<Value>)> = Vec::new();
-    let mut saw_props = false;
-    for a in &args {
-        // GNU concat carries each source string's text properties.
-        let off = out.chars().count();
-        if let Value::Str(s) = a {
-            if i.has_str_props(s) {
-                saw_props = true;
-                for (s0, e0, pl) in i.str_props(s) {
-                    // GNU's concat copies props through
-                    // copy_text_properties, reversing plist order.
-                    ivs.push((
-                        s0 + off,
-                        e0 + off,
-                        crate::buffer::primitives::plist_pairs_rev(pl),
-                    ));
-                }
+fn f_concat(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let mut out = String::new();
+let mut ivs: Vec<(usize, usize, Vec<Value>)> = Vec::new();
+let mut saw_props = false;
+for a in args.iter() {
+    // GNU concat carries each source string's text properties.
+    let off = out.chars().count();
+    if let Value::Str(s) = a {
+        if i.has_str_props(s) {
+            saw_props = true;
+            for (s0, e0, pl) in i.str_props(s) {
+                // GNU's concat copies props through
+                // copy_text_properties, reversing plist order.
+                ivs.push((
+                    s0 + off,
+                    e0 + off,
+                    crate::buffer::primitives::plist_pairs_rev(pl),
+                ));
             }
         }
-        concat_seq(i, a, &mut out)?;
     }
-    // GNU `concat_internal': the result is multibyte iff some string
-    // arg is multibyte, or some sequence element is a char that is
-    // neither ASCII nor an eight-bit byte char (list/vector elements
-    // were already validated as characters by concat_seq).
-    let mut any_multi = false;
-    let promotes = |n: i128| n >= 0x80 && !(0x3FFF80..=0x3FFFFF).contains(&n);
-    for a in &args {
-        match a {
-            Value::Str(s) => {
-                if !i.is_unibyte_str(s)
-                    && (i.is_multibyte_str(s)
-                        || s.borrow().chars().any(|c| (c as u32) > 0xFF))
-                {
-                    any_multi = true;
-                }
+    concat_seq(i, a, &mut out)?;
+}
+// GNU `concat_internal': the result is multibyte iff some string
+// arg is multibyte, or some sequence element is a char that is
+// neither ASCII nor an eight-bit byte char (list/vector elements
+// were already validated as characters by concat_seq).
+let mut any_multi = false;
+let promotes = |n: i128| n >= 0x80 && !(0x3FFF80..=0x3FFFFF).contains(&n);
+for a in args.iter() {
+    match a {
+        Value::Str(s) => {
+            if !i.is_unibyte_str(s)
+                && (i.is_multibyte_str(s)
+                    || s.borrow().chars().any(|c| (c as u32) > 0xFF))
+            {
+                any_multi = true;
             }
-            Value::Cons(_) => {
-                for item in super::want_list(i, a)? {
-                    if let Value::Int(n) = item {
-                        if promotes(n) {
-                            any_multi = true;
-                        }
+        }
+        Value::Cons(_) => {
+            for item in super::want_list(i, a)? {
+                if let Value::Int(n) = item {
+                    if promotes(n) {
+                        any_multi = true;
                     }
                 }
             }
-            Value::Vec(v) => {
-                for item in v.borrow().iter() {
-                    if let Value::Int(n) = item {
-                        if promotes(*n) {
-                            any_multi = true;
-                        }
+        }
+        Value::Vec(v) => {
+            for item in v.borrow().iter() {
+                if let Value::Int(n) = item {
+                    if promotes(*n) {
+                        any_multi = true;
                     }
                 }
             }
-            _ => {}
         }
+        _ => {}
     }
-    let ns = std::rc::Rc::new(std::cell::RefCell::new(out));
-    if any_multi {
-        i.mark_multibyte(&ns);
-    } else {
-        i.mark_unibyte(&ns);
+}
+let ns = std::rc::Rc::new(std::cell::RefCell::new(out));
+if any_multi {
+    i.mark_multibyte(&ns);
+} else {
+    i.mark_unibyte(&ns);
+}
+if saw_props {
+    i.set_str_props(&ns, ivs);
+}
+Ok(Value::Str(ns)) }
+
+fn f_ngettext(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // (ngettext MSGID MSGID-PLURAL N) — English rule: N != 1 → plural.
+let sing = want_string(i, &args[0])?;
+let plural = want_string(i, &args[1])?;
+let n = want_int(i, &args[2])?;
+Ok(Value::string(if n == 1 { sing } else { plural })) }
+
+fn f_vconcat(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let mut out: Vec<Value> = Vec::new();
+for a in args.iter() {
+    match a {
+        Value::Nil => {}
+        Value::Cons(_) => {
+            let items = super::want_list(i, a)?;
+            out.extend(items);
+        }
+        Value::Vec(v) => out.extend(v.borrow().iter().cloned()),
+        Value::Str(s) => {
+            for c in s.borrow().chars() {
+                out.push(Value::Int(lisp_char_code(c)));
+            }
+        }
+        Value::Record(_) if super::misc::is_bool_vector(i, a) => {
+            for b in super::misc::bool_vec_of(i, a)? {
+                out.push(Value::from_bool(b));
+            }
+        }
+        other => return Err(i.wrong_type_mut("sequencep", other)),
     }
-    if saw_props {
-        i.set_str_props(&ns, ivs);
+}
+Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(out)))) }
+
+fn f_substring(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { substring_impl(i, args, true) }
+
+fn f_substring_no_properties(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { substring_impl(i, args, false) }
+
+fn substring_impl(i: &mut Interp, args: crate::lisp::Argv, copy_props: bool) -> EvalResult { // Emacs: substring works on vectors too (returns a new vector).
+let is_vec = matches!(&args[0], Value::Vec(_));
+let chars: Vec<Value> = match &args[0] {
+    Value::Str(s) => s
+        .borrow()
+        .chars()
+        .map(|c| Value::Int(lisp_char_code(c)))
+        .collect(),
+    Value::Vec(v) => v.borrow().clone(),
+    other => return Err(i.wrong_type_mut("arrayp", other)),
+};
+let len = chars.len() as i128;
+let mut int_or = |v: Option<&Value>, d: i128| -> Result<i128, Flow> {
+    match v {
+        None | Some(Value::Nil) => Ok(d),
+        Some(v) => want_int(i, v),
+    }
+};
+let from = int_or(args.get(1), 0)?;
+let to = int_or(args.get(2), len)?;
+// Emacs allows negative indices counting from the end.
+let f = if from < 0 { len + from } else { from };
+let t = if to < 0 { len + to } else { to };
+if f < 0 || t < f || t > len {
+    return Err(i.signal_data(
+        sym::ARGS_OUT_OF_RANGE,
+        vec![
+            args[0].clone(),
+            args.get(1).cloned().unwrap_or(Value::Int(0)),
+            args.get(2).cloned().unwrap_or(Value::Nil),
+        ],
+    ));
+}
+let slice: Vec<Value> = chars[f as usize..t as usize].to_vec();
+if is_vec {
+    Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(slice))))
+} else {
+    let ns = std::rc::Rc::new(std::cell::RefCell::new(
+        slice
+            .iter()
+            .filter_map(|v| match v {
+                Value::Int(n) => lisp_char(*n as u32),
+                _ => None,
+            })
+            .collect::<String>(),
+    ));
+    // GNU substring copies the source's text properties on the
+    // sliced range (shifted to 0-based on the result).
+    if copy_props {
+        if let Value::Str(src) = &args[0] {
+            if i.has_str_props(src) {
+                let (f0, t0) = (f as usize, t as usize);
+                let ivs: Vec<(usize, usize, Vec<Value>)> = i
+                    .str_props(src)
+                    .iter()
+                    .filter_map(|(a, b, pl)| {
+                        let lo = (*a).max(f0);
+                        let hi = (*b).min(t0);
+                        // GNU's substring copies properties via
+                        // copy_text_properties, reversing plist order.
+                        (lo < hi).then(|| {
+                            (
+                                lo - f0,
+                                hi - f0,
+                                crate::buffer::primitives::plist_pairs_rev(pl),
+                            )
+                        })
+                    })
+                    .collect();
+                i.set_str_props(&ns, ivs);
+            }
+        }
     }
     Ok(Value::Str(ns))
-}
-
-fn f_ngettext(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (ngettext MSGID MSGID-PLURAL N) — English rule: N != 1 → plural.
-    let sing = want_string(i, &args[0])?;
-    let plural = want_string(i, &args[1])?;
-    let n = want_int(i, &args[2])?;
-    Ok(Value::string(if n == 1 { sing } else { plural }))
-}
-
-fn f_vconcat(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let mut out: Vec<Value> = Vec::new();
-    for a in &args {
-        match a {
-            Value::Nil => {}
-            Value::Cons(_) => {
-                let items = super::want_list(i, a)?;
-                out.extend(items);
-            }
-            Value::Vec(v) => out.extend(v.borrow().iter().cloned()),
-            Value::Str(s) => {
-                for c in s.borrow().chars() {
-                    out.push(Value::Int(lisp_char_code(c)));
-                }
-            }
-            Value::Record(_) if super::misc::is_bool_vector(i, a) => {
-                for b in super::misc::bool_vec_of(i, a)? {
-                    out.push(Value::from_bool(b));
-                }
-            }
-            other => return Err(i.wrong_type_mut("sequencep", other)),
-        }
-    }
-    Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(out))))
-}
-
-fn f_substring(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    substring_impl(i, args, true)
-}
-
-fn f_substring_no_properties(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    substring_impl(i, args, false)
-}
-
-fn substring_impl(i: &mut Interp, args: Vec<Value>, copy_props: bool) -> EvalResult {
-    // Emacs: substring works on vectors too (returns a new vector).
-    let is_vec = matches!(&args[0], Value::Vec(_));
-    let chars: Vec<Value> = match &args[0] {
-        Value::Str(s) => s
-            .borrow()
-            .chars()
-            .map(|c| Value::Int(lisp_char_code(c)))
-            .collect(),
-        Value::Vec(v) => v.borrow().clone(),
-        other => return Err(i.wrong_type_mut("arrayp", other)),
-    };
-    let len = chars.len() as i128;
-    let mut int_or = |v: Option<&Value>, d: i128| -> Result<i128, Flow> {
-        match v {
-            None | Some(Value::Nil) => Ok(d),
-            Some(v) => want_int(i, v),
-        }
-    };
-    let from = int_or(args.get(1), 0)?;
-    let to = int_or(args.get(2), len)?;
-    // Emacs allows negative indices counting from the end.
-    let f = if from < 0 { len + from } else { from };
-    let t = if to < 0 { len + to } else { to };
-    if f < 0 || t < f || t > len {
-        return Err(i.signal_data(
-            sym::ARGS_OUT_OF_RANGE,
-            vec![
-                args[0].clone(),
-                args.get(1).cloned().unwrap_or(Value::Int(0)),
-                args.get(2).cloned().unwrap_or(Value::Nil),
-            ],
-        ));
-    }
-    let slice: Vec<Value> = chars[f as usize..t as usize].to_vec();
-    if is_vec {
-        Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(slice))))
-    } else {
-        let ns = std::rc::Rc::new(std::cell::RefCell::new(
-            slice
-                .iter()
-                .filter_map(|v| match v {
-                    Value::Int(n) => lisp_char(*n as u32),
-                    _ => None,
-                })
-                .collect::<String>(),
-        ));
-        // GNU substring copies the source's text properties on the
-        // sliced range (shifted to 0-based on the result).
-        if copy_props {
-            if let Value::Str(src) = &args[0] {
-                if i.has_str_props(src) {
-                    let (f0, t0) = (f as usize, t as usize);
-                    let ivs: Vec<(usize, usize, Vec<Value>)> = i
-                        .str_props(src)
-                        .iter()
-                        .filter_map(|(a, b, pl)| {
-                            let lo = (*a).max(f0);
-                            let hi = (*b).min(t0);
-                            // GNU's substring copies properties via
-                            // copy_text_properties, reversing plist order.
-                            (lo < hi).then(|| {
-                                (
-                                    lo - f0,
-                                    hi - f0,
-                                    crate::buffer::primitives::plist_pairs_rev(pl),
-                                )
-                            })
-                        })
-                        .collect();
-                    i.set_str_props(&ns, ivs);
-                }
-            }
-        }
-        Ok(Value::Str(ns))
-    }
-}
+} }
 
 // GNU string-equal/string-lessp accept strings or symbols (symbols compare
 // by name); other types signal wrong-type-argument stringp.
@@ -736,40 +716,30 @@ fn str_or_sym_arg(i: &mut Interp, v: &Value) -> Result<String, Flow> {
         other => Err(i.wrong_type_mut("stringp", other)),
     }
 }
-fn f_string_equal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let a = str_or_sym_arg(i, &args[0])?;
-    let b = str_or_sym_arg(i, &args[1])?;
-    Ok(Value::from_bool(a == b))
-}
-fn f_string_lessp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let a = str_or_sym_arg(i, &args[0])?;
-    let b = str_or_sym_arg(i, &args[1])?;
-    Ok(Value::from_bool(a < b))
-}
-fn f_string_collate_equalp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let a = want_string(i, &args[0])?;
-    let b = want_string(i, &args[1])?;
-    // GNU accepts any LOCALE object without validating it, and on
-    // this build IGNORE-CASE is inert (no locale collation support):
-    // both extra args are ignored, comparison is plain byte order.
-    Ok(Value::from_bool(a == b))
-}
-fn f_string_collate_lessp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let a = want_string(i, &args[0])?;
-    let b = want_string(i, &args[1])?;
-    Ok(Value::from_bool(a < b))
-}
-fn f_string_compare(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let a = want_string(i, &args[0])?;
-    let b = want_string(i, &args[1])?;
-    Ok(if a < b {
-        Value::Int(-1)
-    } else if a > b {
-        Value::Int(1)
-    } else {
-        Value::t()
-    })
-}
+fn f_string_equal(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let a = str_or_sym_arg(i, &args[0])?;
+let b = str_or_sym_arg(i, &args[1])?;
+Ok(Value::from_bool(a == b)) }
+fn f_string_lessp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let a = str_or_sym_arg(i, &args[0])?;
+let b = str_or_sym_arg(i, &args[1])?;
+Ok(Value::from_bool(a < b)) }
+fn f_string_collate_equalp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let a = want_string(i, &args[0])?;
+let b = want_string(i, &args[1])?;
+// GNU accepts any LOCALE object without validating it, and on
+// this build IGNORE-CASE is inert (no locale collation support):
+// both extra args are ignored, comparison is plain byte order.
+Ok(Value::from_bool(a == b)) }
+fn f_string_collate_lessp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let a = want_string(i, &args[0])?;
+let b = want_string(i, &args[1])?;
+Ok(Value::from_bool(a < b)) }
+fn f_string_compare(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let a = want_string(i, &args[0])?;
+let b = want_string(i, &args[1])?;
+Ok(if a < b {
+    Value::Int(-1)
+} else if a > b {
+    Value::Int(1)
+} else {
+    Value::t()
+}) }
 // --- GNU casefiddle.c casing ------------------------------------------
 // Case ops run through the current buffer's case table: contents is the
 // downcase map, extra slot 0 the upcase map.  Titlecase (capitalize /
@@ -981,63 +951,51 @@ fn casify_region(i: &mut Interp, args: &[Value], op: CaseOp) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_upcase_initials_region(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    casify_region(i, &args, CaseOp::CapUp)
+fn f_upcase_initials_region(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { casify_region(i, &args, CaseOp::CapUp) }
+
+fn f_upcase(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { casify(i, &args[0], CaseOp::Up) }
+fn f_downcase(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { casify(i, &args[0], CaseOp::Down) }
+fn f_capitalize(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { casify(i, &args[0], CaseOp::Cap) }
+fn f_upcase_initials(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { casify(i, &args[0], CaseOp::CapUp) }
+
+fn f_string_to_number(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = want_string(i, &args[0])?;
+let base = args
+    .get(1)
+    .map(|v| want_int(i, v))
+    .transpose()?
+    .unwrap_or(10);
+let t = s.trim();
+if t.is_empty() {
+    return Ok(Value::Int(0));
 }
 
-fn f_upcase(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    casify(i, &args[0], CaseOp::Up)
+// Emacs: BASE must be an integer in 2..16 (0 is out of range).
+if !(2..=16).contains(&base) {
+    let sym = i.intern("args-out-of-range");
+    return Err(i.signal_data(sym, vec![Value::Int(base)]));
 }
-fn f_downcase(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    casify(i, &args[0], CaseOp::Down)
+if base != 10 {
+    let neg = t.starts_with('-');
+    let digits = t.trim_start_matches(['+', '-']);
+    // Parse the longest valid digit prefix for the base.
+    let take: String = digits
+        .chars()
+        .take_while(|c| c.to_digit(base as u32).is_some())
+        .collect();
+    let v = i128::from_str_radix(&take, base as u32)
+        .map(|n| if neg { -n } else { n })
+        .unwrap_or(0);
+    return Ok(Value::Int(v));
 }
-fn f_capitalize(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    casify(i, &args[0], CaseOp::Cap)
+// Emacs parses the longest valid numeric prefix ("10abc" -> 10).
+let prefix = number_prefix(t);
+if prefix.is_empty() {
+    return Ok(Value::Int(0));
 }
-fn f_upcase_initials(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    casify(i, &args[0], CaseOp::CapUp)
-}
-
-fn f_string_to_number(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    let base = args
-        .get(1)
-        .map(|v| want_int(i, v))
-        .transpose()?
-        .unwrap_or(10);
-    let t = s.trim();
-    if t.is_empty() {
-        return Ok(Value::Int(0));
-    }
-
-    // Emacs: BASE must be an integer in 2..16 (0 is out of range).
-    if !(2..=16).contains(&base) {
-        let sym = i.intern("args-out-of-range");
-        return Err(i.signal_data(sym, vec![Value::Int(base)]));
-    }
-    if base != 10 {
-        let neg = t.starts_with('-');
-        let digits = t.trim_start_matches(['+', '-']);
-        // Parse the longest valid digit prefix for the base.
-        let take: String = digits
-            .chars()
-            .take_while(|c| c.to_digit(base as u32).is_some())
-            .collect();
-        let v = i128::from_str_radix(&take, base as u32)
-            .map(|n| if neg { -n } else { n })
-            .unwrap_or(0);
-        return Ok(Value::Int(v));
-    }
-    // Emacs parses the longest valid numeric prefix ("10abc" -> 10).
-    let prefix = number_prefix(t);
-    if prefix.is_empty() {
-        return Ok(Value::Int(0));
-    }
-    match super::super::reader::parse_number(&prefix) {
-        Some(v) => Ok(v),
-        None => Ok(Value::Int(0)),
-    }
-}
+match super::super::reader::parse_number(&prefix) {
+    Some(v) => Ok(v),
+    None => Ok(Value::Int(0)),
+} }
 
 /// The longest valid [+-]? digits [. digits] [eE [+-] digits] prefix
 /// of `t`, or "" if it doesn't start with a number.
@@ -1085,30 +1043,24 @@ fn scan_digits(cs: &[char], mut p: usize) -> usize {
     }
     p - start
 }
-fn f_number_to_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match &args[0] {
-        Value::Int(n) => Ok(Value::string(n.to_string())),
-        Value::Float(f) => Ok(Value::string(crate::lisp::print::format_float(**f))),
-        other => Err(i.wrong_type_mut("numberp", other)),
+fn f_number_to_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { match &args[0] {
+    Value::Int(n) => Ok(Value::string(n.to_string())),
+    Value::Float(f) => Ok(Value::string(crate::lisp::print::format_float(**f))),
+    other => Err(i.wrong_type_mut("numberp", other)),
+} }
+fn f_string_to_char(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = want_string(i, &args[0])?;
+Ok(Value::Int(
+    s.chars().next().map(lisp_char_code).unwrap_or(0),
+)) }
+fn f_char_to_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { match &args[0] {
+    // GNU CHECK_CHARACTER: any fixnum 0..#x3FFFFF is a char;
+    // eight-bit codes map to PUA proxies like the rest of strfn.
+    Value::Int(n) if (0..=0x3f_ffff).contains(n) => {
+        let c = lisp_char(*n as u32).unwrap_or('\u{FFFD}');
+        Ok(Value::string(c.to_string()))
     }
-}
-fn f_string_to_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    Ok(Value::Int(
-        s.chars().next().map(lisp_char_code).unwrap_or(0),
-    ))
-}
-fn f_char_to_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match &args[0] {
-        // GNU CHECK_CHARACTER: any fixnum 0..#x3FFFFF is a char;
-        // eight-bit codes map to PUA proxies like the rest of strfn.
-        Value::Int(n) if (0..=0x3f_ffff).contains(n) => {
-            let c = lisp_char(*n as u32).unwrap_or('\u{FFFD}');
-            Ok(Value::string(c.to_string()))
-        }
-        other => Err(i.wrong_type_mut("characterp", other)),
-    }
-}
+    other => Err(i.wrong_type_mut("characterp", other)),
+} }
 /// `string-trim-left/right` use regexps (subr-x): strip ONE match of
 /// TRIM at the edge. TRIM nil or absent defaults to whitespace.
 fn trim_re(i: &mut Interp, args: &[Value], idx: usize) -> Result<String, Flow> {
@@ -1118,23 +1070,17 @@ fn trim_re(i: &mut Interp, args: &[Value], idx: usize) -> Result<String, Flow> {
     }
 }
 
-fn f_string_trim(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    let left = trim_re(i, &args, 1)?;
-    let right = trim_re(i, &args, 2)?;
-    let after_left = trim_left_re(i, &s, &left)?;
-    Ok(Value::string(trim_right_re(i, &after_left, &right)?))
-}
-fn f_string_trim_left(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    let re = trim_re(i, &args, 1)?;
-    Ok(Value::string(trim_left_re(i, &s, &re)?))
-}
-fn f_string_trim_right(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    let re = trim_re(i, &args, 1)?;
-    Ok(Value::string(trim_right_re(i, &s, &re)?))
-}
+fn f_string_trim(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = want_string(i, &args[0])?;
+let left = trim_re(i, &args, 1)?;
+let right = trim_re(i, &args, 2)?;
+let after_left = trim_left_re(i, &s, &left)?;
+Ok(Value::string(trim_right_re(i, &after_left, &right)?)) }
+fn f_string_trim_left(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = want_string(i, &args[0])?;
+let re = trim_re(i, &args, 1)?;
+Ok(Value::string(trim_left_re(i, &s, &re)?)) }
+fn f_string_trim_right(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = want_string(i, &args[0])?;
+let re = trim_re(i, &args, 1)?;
+Ok(Value::string(trim_right_re(i, &s, &re)?)) }
 
 fn trim_left_re(i: &mut Interp, s: &str, trim: &str) -> Result<String, Flow> {
     // GNU: (string-match (concat "\\`" regexp) string) — a single
@@ -1163,188 +1109,165 @@ fn trim_right_re(i: &mut Interp, s: &str, trim: &str) -> Result<String, Flow> {
         None => Ok(s.to_string()),
     }
 }
-fn f_string_pad(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    // GNU CHECK_FIXNAT: negative LENGTH signals `wholenump'.
-    let len = match &args[1] {
-        Value::Int(n) if *n >= 0 => *n as usize,
-        Value::Int(_) => return Err(i.wrong_type_mut("wholenump", &args[1])),
-        other => return Err(i.wrong_type_mut("fixnump", other)),
-    };
-    // GNU: PADDING is a single character; a string signals.
-    let pad_char = match args.get(2) {
-        None | Some(Value::Nil) => ' ',
-        Some(Value::Int(n)) => match lisp_char(*n as u32) {
-            Some(c) => c,
-            None => return Err(i.wrong_type_mut("characterp", &args[2])),
-        },
-        Some(other) => return Err(i.wrong_type_mut("characterp", other)),
-    };
-    let pad_start = args.get(3).map(|v| v.truthy()).unwrap_or(false);
-    let cur = s.chars().count();
-    if cur >= len {
-        return Ok(Value::string(s));
-    }
-    let pad: String = std::iter::repeat(pad_char).take(len - cur).collect();
-    Ok(Value::string(if pad_start {
-        format!("{}{}", pad, s)
-    } else {
-        format!("{}{}", s, pad)
-    }))
+fn f_string_pad(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = want_string(i, &args[0])?;
+// GNU CHECK_FIXNAT: negative LENGTH signals `wholenump'.
+let len = match &args[1] {
+    Value::Int(n) if *n >= 0 => *n as usize,
+    Value::Int(_) => return Err(i.wrong_type_mut("wholenump", &args[1])),
+    other => return Err(i.wrong_type_mut("fixnump", other)),
+};
+// GNU: PADDING is a single character; a string signals.
+let pad_char = match args.get(2) {
+    None | Some(Value::Nil) => ' ',
+    Some(Value::Int(n)) => match lisp_char(*n as u32) {
+        Some(c) => c,
+        None => return Err(i.wrong_type_mut("characterp", &args[2])),
+    },
+    Some(other) => return Err(i.wrong_type_mut("characterp", other)),
+};
+let pad_start = args.get(3).map(|v| v.truthy()).unwrap_or(false);
+let cur = s.chars().count();
+if cur >= len {
+    return Ok(Value::string(s));
 }
+let pad: String = std::iter::repeat(pad_char).take(len - cur).collect();
+Ok(Value::string(if pad_start {
+    format!("{}{}", pad, s)
+} else {
+    format!("{}{}", s, pad)
+})) }
 
 /// `string-reverse' — GNU fns.c subr: character-reverse the string.
-fn f_string_reverse(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    Ok(Value::string(s.chars().rev().collect::<String>()))
+fn f_string_reverse(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = want_string(i, &args[0])?;
+Ok(Value::string(s.chars().rev().collect::<String>())) }
+fn f_string_join(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let items = super::seq::seq_to_vec(i, &args[0])?;
+// GNU's string-join is `(mapconcat #'identity STRINGS SEPARATOR)':
+// elements and SEPARATOR are concat'ed, so they may be any char
+// sequence, and SEPARATOR is only coerced when a join happens.
+let mut sep: Option<String> = None;
+let mut parts: Vec<String> = Vec::with_capacity(items.len());
+for item in &items {
+    let mut p = String::new();
+    concat_seq(i, item, &mut p)?;
+    parts.push(p);
 }
-fn f_string_join(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let items = super::seq::seq_to_vec(i, &args[0])?;
-    // GNU's string-join is `(mapconcat #'identity STRINGS SEPARATOR)':
-    // elements and SEPARATOR are concat'ed, so they may be any char
-    // sequence, and SEPARATOR is only coerced when a join happens.
-    let mut sep: Option<String> = None;
-    let mut parts: Vec<String> = Vec::with_capacity(items.len());
-    for item in &items {
-        let mut p = String::new();
-        concat_seq(i, item, &mut p)?;
-        parts.push(p);
-    }
-    let mut out = String::new();
-    for (k, p) in parts.iter().enumerate() {
-        if k > 0 {
-            if sep.is_none() {
-                let mut s = String::new();
-                match args.get(1) {
-                    None | Some(Value::Nil) => {}
-                    Some(v) => concat_seq(i, v, &mut s)?,
-                }
-                sep = Some(s);
+let mut out = String::new();
+for (k, p) in parts.iter().enumerate() {
+    if k > 0 {
+        if sep.is_none() {
+            let mut s = String::new();
+            match args.get(1) {
+                None | Some(Value::Nil) => {}
+                Some(v) => concat_seq(i, v, &mut s)?,
             }
-            out.push_str(sep.as_deref().unwrap_or_default());
+            sep = Some(s);
         }
-        out.push_str(p);
+        out.push_str(sep.as_deref().unwrap_or_default());
     }
-    Ok(Value::string(out))
+    out.push_str(p);
 }
-fn f_split_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    let sep_is_default = matches!(args.get(1), None | Some(Value::Nil));
-    let sep = match args.get(1) {
-        None | Some(Value::Nil) => "[ \u{0C}\t\n\r\u{0B}]+".into(),
-        Some(v) => want_string(i, v)?,
-    };
-    // GNU: when SEPARATORS is nil, OMIT-NULLS defaults to t.
-    let omit_nulls = match args.get(2) {
-        Some(v) if !v.is_nil() => true,
-        _ => sep_is_default,
-    };
-    // GNU's optional TRIM is a regexp stripped (one match per edge)
-    // from each substring before the OMIT-NULLS test; it must be a
-    // string or nil.
-    let trim: Option<String> = match args.get(3) {
-        None | Some(Value::Nil) => None,
-        Some(v) => Some(want_string(i, v)?),
-    };
-    // If sep is a regex-ish, use our regexp engine; else literal split.
-    let is_regex = sep.contains('\\')
-        || sep.contains('[')
-        || sep.contains('^')
-        || sep.contains('$')
-        || sep.contains('.')
-        || sep.contains('*')
-        || sep.contains('+')
-        || sep.contains('?');
-    let mut parts: Vec<String> = if is_regex {
-        match crate::lisp::regexp::compile(&sep) {
-            Ok(re) => {
-                let mut out = Vec::new();
-                let mut pos = 0usize;
-                let syn = crate::editor::re_syntax(i);
-                let chars: Vec<char> = s.chars().collect();
-                while pos <= chars.len() {
-                    match crate::lisp::regexp::search(
-                        &re,
-                        &chars,
-                        pos,
-                        &syn,
-                        &crate::editor::re_category(i),
-                        crate::lisp::regexp::NO_POINT,
-                    ) {
-                        Some((ms, me)) => {
-                            out.push(chars[pos..ms].iter().collect());
-                            pos = me.max(ms + 1);
-                            if ms == me && pos > chars.len() {
-                                break;
-                            }
-                        }
-                        None => {
-                            out.push(chars[pos..].iter().collect());
+Ok(Value::string(out)) }
+fn f_split_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = want_string(i, &args[0])?;
+let sep_is_default = matches!(args.get(1), None | Some(Value::Nil));
+let sep = match args.get(1) {
+    None | Some(Value::Nil) => "[ \u{0C}\t\n\r\u{0B}]+".into(),
+    Some(v) => want_string(i, v)?,
+};
+// GNU: when SEPARATORS is nil, OMIT-NULLS defaults to t.
+let omit_nulls = match args.get(2) {
+    Some(v) if !v.is_nil() => true,
+    _ => sep_is_default,
+};
+// GNU's optional TRIM is a regexp stripped (one match per edge)
+// from each substring before the OMIT-NULLS test; it must be a
+// string or nil.
+let trim: Option<String> = match args.get(3) {
+    None | Some(Value::Nil) => None,
+    Some(v) => Some(want_string(i, v)?),
+};
+// If sep is a regex-ish, use our regexp engine; else literal split.
+let is_regex = sep.contains('\\')
+    || sep.contains('[')
+    || sep.contains('^')
+    || sep.contains('$')
+    || sep.contains('.')
+    || sep.contains('*')
+    || sep.contains('+')
+    || sep.contains('?');
+let mut parts: Vec<String> = if is_regex {
+    match crate::lisp::regexp::compile(&sep) {
+        Ok(re) => {
+            let mut out = Vec::new();
+            let mut pos = 0usize;
+            let syn = crate::editor::re_syntax(i);
+            let chars: Vec<char> = s.chars().collect();
+            while pos <= chars.len() {
+                match crate::lisp::regexp::search(
+                    &re,
+                    &chars,
+                    pos,
+                    &syn,
+                    &crate::editor::re_category(i),
+                    crate::lisp::regexp::NO_POINT,
+                ) {
+                    Some((ms, me)) => {
+                        out.push(chars[pos..ms].iter().collect());
+                        pos = me.max(ms + 1);
+                        if ms == me && pos > chars.len() {
                             break;
                         }
                     }
+                    None => {
+                        out.push(chars[pos..].iter().collect());
+                        break;
+                    }
                 }
-                out
             }
-            Err(_) => s.split(&sep as &str).map(|x| x.to_string()).collect(),
+            out
         }
-    } else {
-        s.split(&sep as &str).map(|x| x.to_string()).collect()
-    };
-    if let Some(t) = &trim {
-        let mut tp = Vec::with_capacity(parts.len());
-        for p in parts {
-            let a = trim_left_re(i, &p, t)?;
-            tp.push(trim_right_re(i, &a, t)?);
-        }
-        parts = tp;
+        Err(_) => s.split(&sep as &str).map(|x| x.to_string()).collect(),
     }
-    let filtered: Vec<Value> = parts
-        .into_iter()
-        .filter(|p| !omit_nulls || !p.is_empty())
-        .map(Value::string)
-        .collect();
-    Ok(Value::list(filtered))
+} else {
+    s.split(&sep as &str).map(|x| x.to_string()).collect()
+};
+if let Some(t) = &trim {
+    let mut tp = Vec::with_capacity(parts.len());
+    for p in parts {
+        let a = trim_left_re(i, &p, t)?;
+        tp.push(trim_right_re(i, &a, t)?);
+    }
+    parts = tp;
 }
-fn f_string_replace(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let from = want_string(i, &args[0])?;
-    let to = want_string(i, &args[1])?;
-    let s = want_string(i, &args[2])?;
-    if from.is_empty() {
-        let sym = i.intern("wrong-length-argument");
-        return Err(i.signal_data(sym, vec![Value::Int(0)]));
-    }
-    // GNU's string-replace keeps the text properties of the
-    // non-replaced runs (verbatim, like copy-sequence); the
-    // replacement text itself gets no properties.
-    let schars: Vec<char> = s.chars().collect();
-    let fchars: Vec<char> = from.chars().collect();
-    let flen = fchars.len();
-    let mut out = String::new();
-    // Kept source runs as (src_beg, src_end, dst_beg), all char indices.
-    let mut runs: Vec<(usize, usize, usize)> = Vec::new();
-    let mut pos = 0usize;
-    let mut changed = false;
-    while pos + flen <= schars.len() {
-        if schars[pos..pos + flen] == fchars[..] {
-            out.push_str(&to);
-            pos += flen;
-            changed = true;
-        } else {
-            let dst = out.chars().count();
-            out.push(schars[pos]);
-            if let Some(last) = runs.last_mut() {
-                if last.1 == pos {
-                    last.1 = pos + 1;
-                    pos += 1;
-                    continue;
-                }
-            }
-            runs.push((pos, pos + 1, dst));
-            pos += 1;
-        }
-    }
-    while pos < schars.len() {
+let filtered: Vec<Value> = parts
+    .into_iter()
+    .filter(|p| !omit_nulls || !p.is_empty())
+    .map(Value::string)
+    .collect();
+Ok(Value::list(filtered)) }
+fn f_string_replace(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let from = want_string(i, &args[0])?;
+let to = want_string(i, &args[1])?;
+let s = want_string(i, &args[2])?;
+if from.is_empty() {
+    let sym = i.intern("wrong-length-argument");
+    return Err(i.signal_data(sym, vec![Value::Int(0)]));
+}
+// GNU's string-replace keeps the text properties of the
+// non-replaced runs (verbatim, like copy-sequence); the
+// replacement text itself gets no properties.
+let schars: Vec<char> = s.chars().collect();
+let fchars: Vec<char> = from.chars().collect();
+let flen = fchars.len();
+let mut out = String::new();
+// Kept source runs as (src_beg, src_end, dst_beg), all char indices.
+let mut runs: Vec<(usize, usize, usize)> = Vec::new();
+let mut pos = 0usize;
+let mut changed = false;
+while pos + flen <= schars.len() {
+    if schars[pos..pos + flen] == fchars[..] {
+        out.push_str(&to);
+        pos += flen;
+        changed = true;
+    } else {
         let dst = out.chars().count();
         out.push(schars[pos]);
         if let Some(last) = runs.last_mut() {
@@ -1357,35 +1280,46 @@ fn f_string_replace(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         runs.push((pos, pos + 1, dst));
         pos += 1;
     }
-    if !changed {
-        // GNU returns the original object when nothing matched.
-        return Ok(args[2].clone());
-    }
-    let ns = std::rc::Rc::new(std::cell::RefCell::new(out));
-    if let Value::Str(src) = &args[2] {
-        if i.has_str_props(src) {
-            let mut ivs: Vec<(usize, usize, Vec<Value>)> = Vec::new();
-            for (a, b, pl) in i.str_props(src) {
-                for &(s0, s1, d0) in &runs {
-                    let lo = (*a).max(s0);
-                    let hi = (*b).min(s1);
-                    if lo < hi {
-                        ivs.push((d0 + (lo - s0), d0 + (hi - s0), pl.clone()));
-                    }
-                }
-            }
-            i.set_str_props(&ns, ivs);
+}
+while pos < schars.len() {
+    let dst = out.chars().count();
+    out.push(schars[pos]);
+    if let Some(last) = runs.last_mut() {
+        if last.1 == pos {
+            last.1 = pos + 1;
+            pos += 1;
+            continue;
         }
     }
-    Ok(Value::Str(ns))
+    runs.push((pos, pos + 1, dst));
+    pos += 1;
 }
-fn f_string_chop_newline(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    // GNU removes only the final newline, not a run of them.
-    Ok(Value::string(
-        s.strip_suffix('\n').unwrap_or(&s).to_string(),
-    ))
+if !changed {
+    // GNU returns the original object when nothing matched.
+    return Ok(args[2].clone());
 }
+let ns = std::rc::Rc::new(std::cell::RefCell::new(out));
+if let Value::Str(src) = &args[2] {
+    if i.has_str_props(src) {
+        let mut ivs: Vec<(usize, usize, Vec<Value>)> = Vec::new();
+        for (a, b, pl) in i.str_props(src) {
+            for &(s0, s1, d0) in &runs {
+                let lo = (*a).max(s0);
+                let hi = (*b).min(s1);
+                if lo < hi {
+                    ivs.push((d0 + (lo - s0), d0 + (hi - s0), pl.clone()));
+                }
+            }
+        }
+        i.set_str_props(&ns, ivs);
+    }
+}
+Ok(Value::Str(ns)) }
+fn f_string_chop_newline(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = want_string(i, &args[0])?;
+// GNU removes only the final newline, not a run of them.
+Ok(Value::string(
+    s.strip_suffix('\n').unwrap_or(&s).to_string(),
+)) }
 /// Display column width of one character under GNU's `strwidth'
 /// rules: each character contributes its `char-width-table' width —
 /// tab is 8 flat (no tab-stop tracking) and newline counts 0.
@@ -1399,24 +1333,22 @@ fn gnu_char_width(c: char) -> usize {
     }
 }
 
-fn f_string_width(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = match &args[0] {
-        Value::Str(s) => s.borrow().clone(),
-        other => return Err(i.wrong_type_mut("stringp", other)),
-    };
-    // GNU: FROM/TO are positions with nil → 0/length, negatives
-    // count from the end, and bounds violations signal
-    // args-out-of-range carrying the original values.
-    let from = args.get(1).cloned().unwrap_or(Value::Nil);
-    let to = args.get(2).cloned().unwrap_or(Value::Nil);
-    let chars: Vec<char> = s.chars().collect();
-    let (f, t) = validate_subarray(i, &args[0], &from, &to, chars.len())?;
-    let mut w = 0usize;
-    for c in &chars[f..t] {
-        w += gnu_char_width(*c);
-    }
-    Ok(Value::Int(w as i128))
+fn f_string_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = match &args[0] {
+    Value::Str(s) => s.borrow().clone(),
+    other => return Err(i.wrong_type_mut("stringp", other)),
+};
+// GNU: FROM/TO are positions with nil → 0/length, negatives
+// count from the end, and bounds violations signal
+// args-out-of-range carrying the original values.
+let from = args.get(1).cloned().unwrap_or(Value::Nil);
+let to = args.get(2).cloned().unwrap_or(Value::Nil);
+let chars: Vec<char> = s.chars().collect();
+let (f, t) = validate_subarray(i, &args[0], &from, &to, chars.len())?;
+let mut w = 0usize;
+for c in &chars[f..t] {
+    w += gnu_char_width(*c);
 }
+Ok(Value::Int(w as i128)) }
 /// `truncate-string-to-width' — GNU signature:
 /// (truncate-string-to-width STRING WIDTH &optional START-COLUMN
 /// PADDING ELLIPSIS).  Cuts STRING so its display width doesn't exceed
@@ -1427,101 +1359,99 @@ fn f_string_width(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 /// pads the result out to WIDTH — PADDING of a character pads with
 /// that character, otherwise with spaces.  START-COLUMN is the
 /// starting display column (affects tab expansion and leaves room).
-fn f_truncate_string_to_width(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    let width = want_int(i, &args[1])?.max(0) as usize;
-    let start_col = match args.get(2) {
-        Some(Value::Int(n)) => (*n).max(0) as usize,
-        Some(other) if !other.is_nil() => return Err(i.wrong_type_mut("integerp", other)),
-        _ => 0,
-    };
-    let padding = args.get(3).cloned().unwrap_or(Value::Nil);
-    let ellipsis_v = args.get(4).cloned().unwrap_or(Value::Nil);
+fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = want_string(i, &args[0])?;
+let width = want_int(i, &args[1])?.max(0) as usize;
+let start_col = match args.get(2) {
+    Some(Value::Int(n)) => (*n).max(0) as usize,
+    Some(other) if !other.is_nil() => return Err(i.wrong_type_mut("integerp", other)),
+    _ => 0,
+};
+let padding = args.get(3).cloned().unwrap_or(Value::Nil);
+let ellipsis_v = args.get(4).cloned().unwrap_or(Value::Nil);
 
-    // Resolve the ellipsis string (GNU: a string is used verbatim;
-    // any other non-nil value means `truncate-string-ellipsis',
-    // defaulting to "…").
-    let ellipsis = match &ellipsis_v {
-        Value::Nil => None,
-        Value::Str(e) => Some(e.borrow().clone()),
-        _ => {
-            let eid = i.intern("truncate-string-ellipsis");
-            match i.symbol_value(eid) {
-                Value::Str(e) => Some(e.borrow().clone()),
-                _ => Some("…".to_string()),
-            }
-        }
-    };
-    let ell_w: usize = ellipsis
-        .as_deref()
-        .map(|e| {
-            let mut w = 0;
-            for c in e.chars() {
-                w += gnu_char_width(c);
-            }
-            w
-        })
-        .unwrap_or(0);
-
-    // GNU: skip over the characters lying before START-COLUMN (their
-    // widths still accumulate, so they consume part of WIDTH).
-    let chars: Vec<char> = s.chars().collect();
-    let mut col = 0usize;
-    let mut idx = 0usize;
-    while idx < chars.len() && col < start_col {
-        col += gnu_char_width(chars[idx]);
-        idx += 1;
-    }
-    // Scan the tail: if it fits within WIDTH, return it whole (an
-    // ellipsis is only used when the string is actually truncated).
-    let mut fits = true;
-    {
-        let mut c = col;
-        for &ch in &chars[idx..] {
-            let cw = gnu_char_width(ch);
-            if c + cw > width {
-                fits = false;
-                break;
-            }
-            c += cw;
+// Resolve the ellipsis string (GNU: a string is used verbatim;
+// any other non-nil value means `truncate-string-ellipsis',
+// defaulting to "…").
+let ellipsis = match &ellipsis_v {
+    Value::Nil => None,
+    Value::Str(e) => Some(e.borrow().clone()),
+    _ => {
+        let eid = i.intern("truncate-string-ellipsis");
+        match i.symbol_value(eid) {
+            Value::Str(e) => Some(e.borrow().clone()),
+            _ => Some("…".to_string()),
         }
     }
-    let budget = if fits || ellipsis.is_none() {
-        width
-    } else {
-        // Reserve room for the ellipsis.
-        width.saturating_sub(ell_w)
-    };
-    let mut out = String::new();
-    let mut truncated = false;
-    for &c in &chars[idx..] {
-        let cw = gnu_char_width(c);
-        if col + cw > budget {
-            truncated = true;
+};
+let ell_w: usize = ellipsis
+    .as_deref()
+    .map(|e| {
+        let mut w = 0;
+        for c in e.chars() {
+            w += gnu_char_width(c);
+        }
+        w
+    })
+    .unwrap_or(0);
+
+// GNU: skip over the characters lying before START-COLUMN (their
+// widths still accumulate, so they consume part of WIDTH).
+let chars: Vec<char> = s.chars().collect();
+let mut col = 0usize;
+let mut idx = 0usize;
+while idx < chars.len() && col < start_col {
+    col += gnu_char_width(chars[idx]);
+    idx += 1;
+}
+// Scan the tail: if it fits within WIDTH, return it whole (an
+// ellipsis is only used when the string is actually truncated).
+let mut fits = true;
+{
+    let mut c = col;
+    for &ch in &chars[idx..] {
+        let cw = gnu_char_width(ch);
+        if c + cw > width {
+            fits = false;
             break;
         }
-        out.push(c);
-        col += cw;
+        c += cw;
     }
-    if truncated {
-        if let Some(e) = &ellipsis {
-            out.push_str(e);
-            col += ell_w;
-        }
-    }
-    // PADDING: non-nil pads out to WIDTH with the padding char (or
-    // spaces when PADDING isn't a character).
-    if padding.truthy() && col < width {
-        let pad = match &padding {
-            Value::Int(n) => char::from_u32(*n as u32).unwrap_or(' '),
-            _ => ' ',
-        };
-        for _ in col..width {
-            out.push(pad);
-        }
-    }
-    Ok(Value::string(out))
 }
+let budget = if fits || ellipsis.is_none() {
+    width
+} else {
+    // Reserve room for the ellipsis.
+    width.saturating_sub(ell_w)
+};
+let mut out = String::new();
+let mut truncated = false;
+for &c in &chars[idx..] {
+    let cw = gnu_char_width(c);
+    if col + cw > budget {
+        truncated = true;
+        break;
+    }
+    out.push(c);
+    col += cw;
+}
+if truncated {
+    if let Some(e) = &ellipsis {
+        out.push_str(e);
+        col += ell_w;
+    }
+}
+// PADDING: non-nil pads out to WIDTH with the padding char (or
+// spaces when PADDING isn't a character).
+if padding.truthy() && col < width {
+    let pad = match &padding {
+        Value::Int(n) => char::from_u32(*n as u32).unwrap_or(' '),
+        _ => ' ',
+    };
+    for _ in col..width {
+        out.push(pad);
+    }
+}
+Ok(Value::string(out)) }
 /// `string-fill' — GNU's subr-x definition wraps `fill-region': the
 /// string is broken into words and whitespace runs (space, tab,
 /// newline only); each inter-word run becomes a single space or a
@@ -1531,265 +1461,271 @@ fn f_truncate_string_to_width(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 /// it is dropped). A leading run is kept verbatim, a trailing run is
 /// dropped unless it's a separator. Columns are display columns:
 /// tab advances to the next multiple of 8 and newline resets.
-fn f_string_fill(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    let width = want_int(i, &args[1])?;
-    let chars: Vec<char> = s.chars().collect();
-    let n = chars.len();
-    let is_ws = |c: char| c == ' ' || c == '\t' || c == '\n';
-    let adv = |col: usize, c: char| -> usize {
-        if c == '\n' {
-            0
-        } else if c == '\t' {
-            col + (8 - col % 8)
-        } else {
-            col + gnu_char_width(c)
-        }
-    };
-    let word_width = |mut pos: usize| -> usize {
-        let mut w = 0usize;
-        while pos < n && !is_ws(chars[pos]) {
-            w = adv(w, chars[pos]);
-            pos += 1;
-        }
-        w
-    };
-    let mut out = String::new();
-    let mut col = 0usize;
-    let mut pos = 0usize;
-    // Leading whitespace run: verbatim.
-    while pos < n && is_ws(chars[pos]) {
+fn f_string_fill(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = want_string(i, &args[0])?;
+let width = want_int(i, &args[1])?;
+let chars: Vec<char> = s.chars().collect();
+let n = chars.len();
+let is_ws = |c: char| c == ' ' || c == '\t' || c == '\n';
+let adv = |col: usize, c: char| -> usize {
+    if c == '\n' {
+        0
+    } else if c == '\t' {
+        col + (8 - col % 8)
+    } else {
+        col + gnu_char_width(c)
+    }
+};
+let word_width = |mut pos: usize| -> usize {
+    let mut w = 0usize;
+    while pos < n && !is_ws(chars[pos]) {
+        w = adv(w, chars[pos]);
+        pos += 1;
+    }
+    w
+};
+let mut out = String::new();
+let mut col = 0usize;
+let mut pos = 0usize;
+// Leading whitespace run: verbatim.
+while pos < n && is_ws(chars[pos]) {
+    col = adv(col, chars[pos]);
+    out.push(chars[pos]);
+    pos += 1;
+}
+while pos < n {
+    // Word run.
+    while pos < n && !is_ws(chars[pos]) {
         col = adv(col, chars[pos]);
         out.push(chars[pos]);
         pos += 1;
     }
-    while pos < n {
-        // Word run.
-        while pos < n && !is_ws(chars[pos]) {
-            col = adv(col, chars[pos]);
-            out.push(chars[pos]);
-            pos += 1;
+    if pos >= n {
+        break;
+    }
+    // Whitespace gap.
+    let gstart = pos;
+    while pos < n && is_ws(chars[pos]) {
+        pos += 1;
+    }
+    let gap = &chars[gstart..pos];
+    let first_nl = gap.iter().position(|&c| c == '\n');
+    let nls = gap.iter().filter(|&&c| c == '\n').count();
+    if nls >= 2 || pos >= n {
+        // Paragraph separator (or trailing run): verbatim from the
+        // first newline on; a trailing run without two newlines is
+        // dropped entirely.
+        if let Some(f) = first_nl.filter(|_| nls >= 2) {
+            for &c in &gap[f..] {
+                col = adv(col, c);
+                out.push(c);
+            }
         }
-        if pos >= n {
+    } else if col + 1 + word_width(pos) <= width.max(0) as usize {
+        out.push(' ');
+        col += 1;
+    } else {
+        out.push('\n');
+        col = 0;
+    }
+}
+Ok(Value::string(out)) }
+fn f_string_lines(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU: nil splits to nil.
+if args[0].is_nil() {
+    return Ok(Value::Nil);
+}
+let s = want_string(i, &args[0])?;
+let omit = arg(&args, 1).truthy();
+let keep = arg(&args, 2).truthy();
+// (string-lines STRING &optional OMIT-EMPTY KEEP-NEWLINES) —
+// GNU's subr.el loop walks `string-search' hits, so a trailing
+// newline never yields a final empty element, and a `""' input
+// splits to `(""' (nil when OMIT-EMPTY).
+if s.is_empty() {
+    return Ok(if omit {
+        Value::Nil
+    } else {
+        Value::list(vec![Value::string("")])
+    });
+}
+let bytes = s.as_bytes();
+let mut lines: Vec<&str> = Vec::new();
+let mut start = 0usize;
+while start < bytes.len() {
+    match bytes[start..].iter().position(|b| *b == b'\n') {
+        Some(off) => {
+            let nl = start + off;
+            if !omit || start != nl {
+                let end = if keep { nl + 1 } else { nl };
+                let line = &s[start..end];
+                if !(keep && omit && line == "\n") {
+                    lines.push(line);
+                }
+            }
+            start = nl + 1;
+        }
+        None => {
+            lines.push(&s[start..]);
             break;
         }
-        // Whitespace gap.
-        let gstart = pos;
-        while pos < n && is_ws(chars[pos]) {
-            pos += 1;
-        }
-        let gap = &chars[gstart..pos];
-        let first_nl = gap.iter().position(|&c| c == '\n');
-        let nls = gap.iter().filter(|&&c| c == '\n').count();
-        if nls >= 2 || pos >= n {
-            // Paragraph separator (or trailing run): verbatim from the
-            // first newline on; a trailing run without two newlines is
-            // dropped entirely.
-            if let Some(f) = first_nl.filter(|_| nls >= 2) {
-                for &c in &gap[f..] {
-                    col = adv(col, c);
-                    out.push(c);
-                }
-            }
-        } else if col + 1 + word_width(pos) <= width.max(0) as usize {
-            out.push(' ');
-            col += 1;
-        } else {
-            out.push('\n');
-            col = 0;
-        }
     }
-    Ok(Value::string(out))
 }
-fn f_string_lines(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU: nil splits to nil.
-    if args[0].is_nil() {
-        return Ok(Value::Nil);
+Ok(Value::list(lines.into_iter().map(Value::string).collect())) }
+fn f_string_equal_ignore_case(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let a = want_string(i, &args[0])?;
+let b = want_string(i, &args[1])?;
+Ok(Value::from_bool(a.to_lowercase() == b.to_lowercase())) }
+fn f_char_equal(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let a = match &args[0] {
+    Value::Int(n) => *n,
+    v => return Err(i.wrong_type_mut("characterp", v)),
+};
+let b = match &args[1] {
+    Value::Int(n) => *n,
+    v => return Err(i.wrong_type_mut("characterp", v)),
+};
+// Emacs consults `case-fold-search' (default t in -Q).
+let fold = i
+    .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
+    .truthy();
+let eq = a == b
+    || (fold
+        && char::from_u32(a as u32).and_then(|c| c.to_lowercase().next())
+            == char::from_u32(b as u32).and_then(|c| c.to_lowercase().next()));
+Ok(Value::from_bool(eq)) }
+fn f_char_or_string_p(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(matches!(
+    &args[0],
+    Value::Int(_) | Value::Str(_)
+))) }
+fn f_string_search(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let needle = want_string(i, &args[0])?;
+let hay = want_string(i, &args[1])?;
+let start = args
+    .get(2)
+    .map(|v| want_int(i, v))
+    .transpose()?
+    .unwrap_or(0);
+let hchars: Vec<char> = hay.chars().collect();
+let nchars: Vec<char> = needle.chars().collect();
+if nchars.is_empty() {
+    return Ok(Value::Int(start.min(hchars.len() as i128)));
+}
+let mut idx = start.max(0) as usize;
+while idx + nchars.len() <= hchars.len() {
+    if hchars[idx..idx + nchars.len()] == nchars[..] {
+        return Ok(Value::Int(idx as i128));
     }
-    let s = want_string(i, &args[0])?;
-    let omit = arg(&args, 1).truthy();
-    let keep = arg(&args, 2).truthy();
-    // (string-lines STRING &optional OMIT-EMPTY KEEP-NEWLINES) —
-    // GNU's subr.el loop walks `string-search' hits, so a trailing
-    // newline never yields a final empty element, and a `""' input
-    // splits to `(""' (nil when OMIT-EMPTY).
-    if s.is_empty() {
-        return Ok(if omit {
-            Value::Nil
-        } else {
-            Value::list(vec![Value::string("")])
-        });
-    }
-    let bytes = s.as_bytes();
-    let mut lines: Vec<&str> = Vec::new();
-    let mut start = 0usize;
-    while start < bytes.len() {
-        match bytes[start..].iter().position(|b| *b == b'\n') {
-            Some(off) => {
-                let nl = start + off;
-                if !omit || start != nl {
-                    let end = if keep { nl + 1 } else { nl };
-                    let line = &s[start..end];
-                    if !(keep && omit && line == "\n") {
-                        lines.push(line);
-                    }
-                }
-                start = nl + 1;
-            }
-            None => {
-                lines.push(&s[start..]);
-                break;
-            }
+    idx += 1;
+}
+Ok(Value::Nil) }
+fn f_string_version_lessp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU calls gnulib's filenvercmp; symbols compare by name.
+macro_rules! name_of {
+    ($v:expr) => {
+        match $v {
+            Value::Str(s) => s.borrow().clone(),
+            Value::Sym(s) => i.symbol_name(*s).to_string(),
+            _ => return Err(i.wrong_type_mut("stringp", $v)),
         }
-    }
-    Ok(Value::list(lines.into_iter().map(Value::string).collect()))
-}
-fn f_string_equal_ignore_case(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let a = want_string(i, &args[0])?;
-    let b = want_string(i, &args[1])?;
-    Ok(Value::from_bool(a.to_lowercase() == b.to_lowercase()))
-}
-fn f_char_equal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let a = match &args[0] {
-        Value::Int(n) => *n,
-        v => return Err(i.wrong_type_mut("characterp", v)),
     };
-    let b = match &args[1] {
-        Value::Int(n) => *n,
-        v => return Err(i.wrong_type_mut("characterp", v)),
-    };
-    // Emacs consults `case-fold-search' (default t in -Q).
-    let fold = i
-        .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
-        .truthy();
-    let eq = a == b
-        || (fold
-            && char::from_u32(a as u32).and_then(|c| c.to_lowercase().next())
-                == char::from_u32(b as u32).and_then(|c| c.to_lowercase().next()));
-    Ok(Value::from_bool(eq))
 }
-fn f_char_or_string_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(
-        &args[0],
-        Value::Int(_) | Value::Str(_)
-    )))
-}
-fn f_string_search(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let needle = want_string(i, &args[0])?;
-    let hay = want_string(i, &args[1])?;
-    let start = args
-        .get(2)
-        .map(|v| want_int(i, v))
-        .transpose()?
-        .unwrap_or(0);
-    let hchars: Vec<char> = hay.chars().collect();
-    let nchars: Vec<char> = needle.chars().collect();
-    if nchars.is_empty() {
-        return Ok(Value::Int(start.min(hchars.len() as i128)));
-    }
-    let mut idx = start.max(0) as usize;
-    while idx + nchars.len() <= hchars.len() {
-        if hchars[idx..idx + nchars.len()] == nchars[..] {
-            return Ok(Value::Int(idx as i128));
-        }
-        idx += 1;
-    }
-    Ok(Value::Nil)
-}
-fn f_string_version_lessp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU calls gnulib's filenvercmp; symbols compare by name.
-    macro_rules! name_of {
-        ($v:expr) => {
-            match $v {
-                Value::Str(s) => s.borrow().clone(),
-                Value::Sym(s) => i.symbol_name(*s).to_string(),
-                _ => return Err(i.wrong_type_mut("stringp", $v)),
-            }
-        };
-    }
-    let a = name_of!(&args[0]);
-    let b = name_of!(&args[1]);
-    Ok(Value::from_bool(
-        filevercmp(
-            &a.chars().collect::<Vec<_>>(),
-            &b.chars().collect::<Vec<_>>(),
-        ) == std::cmp::Ordering::Less,
-    ))
-}
+let a = name_of!(&args[0]);
+let b = name_of!(&args[1]);
+Ok(Value::from_bool(
+    filevercmp(
+        &a.chars().collect::<Vec<_>>(),
+        &b.chars().collect::<Vec<_>>(),
+    ) == std::cmp::Ordering::Less,
+)) }
 
-/// gnulib `filenvercmp': non-digit runs compare bytewise; digit runs
-/// compare numerically (leading zeros ignored — a run that differs
-/// only in zeros is the first_diff tiebreak at the end).
-fn filevercmp(s1: &[char], s2: &[char]) -> std::cmp::Ordering {
+/// gnulib `verrevcmp' (dpkg order): non-digit runs compare via
+/// `order' (~=-2 < end=-1 < digits=0 < letters=byte < others=byte+256);
+/// digit runs compare numerically (leading zeros skipped; first
+/// differing digit wins; the longer run wins a prefix tie).  Emacs's
+/// `string-version-lessp' calls `filenvercmp', which wraps this with
+/// a file-suffix split that only matters for `x.y' names.
+fn verrevcmp(s1: &[char], s2: &[char]) -> std::cmp::Ordering {
     use std::cmp::Ordering;
+    fn order(s: &[char], pos: usize) -> i64 {
+        if pos >= s.len() {
+            return -1;
+        }
+        let c = s[pos];
+        if c.is_ascii_digit() {
+            0
+        } else if c.is_ascii_alphabetic() {
+            c as i64
+        } else if c == '~' {
+            -2
+        } else {
+            (c as i64) + 256 // UCHAR_MAX+1
+        }
+    }
     let (mut p1, mut p2) = (0usize, 0usize);
     while p1 < s1.len() || p2 < s2.len() {
-        // Non-digit runs.
+        let mut first_diff: i64 = 0;
         while (p1 < s1.len() && !s1[p1].is_ascii_digit())
             || (p2 < s2.len() && !s2[p2].is_ascii_digit())
         {
-            let c1 = if p1 < s1.len() { s1[p1] as u32 } else { 0 };
-            let c2 = if p2 < s2.len() { s2[p2] as u32 } else { 0 };
-            if c1 != c2 {
-                return c1.cmp(&c2);
+            let d = order(s1, p1) - order(s2, p2);
+            if d != 0 {
+                return d.cmp(&0);
             }
             p1 += 1;
             p2 += 1;
         }
-        // Digit runs: skip leading zeros.
         while p1 < s1.len() && s1[p1] == '0' {
             p1 += 1;
         }
         while p2 < s2.len() && s2[p2] == '0' {
             p2 += 1;
         }
-        let (d1, d2) = (p1, p2);
-        while p1 < s1.len() && s1[p1].is_ascii_digit() {
+        while p1 < s1.len()
+            && p2 < s2.len()
+            && s1[p1].is_ascii_digit()
+            && s2[p2].is_ascii_digit()
+        {
+            if first_diff == 0 {
+                first_diff = s1[p1] as i64 - s2[p2] as i64;
+            }
             p1 += 1;
-        }
-        while p2 < s2.len() && s2[p2].is_ascii_digit() {
             p2 += 1;
         }
-        let (l1, l2) = (p1 - d1, p2 - d2);
-        if l1 != l2 {
-            return l1.cmp(&l2);
+        if p1 < s1.len() && s1[p1].is_ascii_digit() {
+            return Ordering::Greater;
         }
-        for k in 0..l1 {
-            if s1[d1 + k] != s2[d2 + k] {
-                return s1[d1 + k].cmp(&s2[d2 + k]);
-            }
+        if p2 < s2.len() && s2[p2].is_ascii_digit() {
+            return Ordering::Less;
+        }
+        if first_diff != 0 {
+            return first_diff.cmp(&0);
         }
     }
     Ordering::Equal
 }
-fn f_string_distance(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let a: Vec<char> = want_string(i, &args[0])?.chars().collect();
-    let b: Vec<char> = want_string(i, &args[1])?.chars().collect();
-    let (n, m) = (a.len(), b.len());
-    if n == 0 {
-        return Ok(Value::Int(m as i128));
-    }
-    if m == 0 {
-        return Ok(Value::Int(n as i128));
-    }
-    let mut prev: Vec<usize> = (0..=m).collect();
-    let mut cur = vec![0; m + 1];
-    for x in 1..=n {
-        cur[0] = x;
-        for y in 1..=m {
-            let cost = if a[x - 1] == b[y - 1] { 0 } else { 1 };
-            cur[y] = (prev[y] + 1).min(cur[y - 1] + 1).min(prev[y - 1] + cost);
-        }
-        std::mem::swap(&mut prev, &mut cur);
-    }
-    Ok(Value::Int(prev[m] as i128))
+
+fn filevercmp(s1: &[char], s2: &[char]) -> std::cmp::Ordering {
+    verrevcmp(s1, s2)
 }
-fn f_string_glyph_split(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    Ok(Value::list(
-        s.chars().map(|c| Value::string(c.to_string())).collect(),
-    ))
+fn f_string_distance(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let a: Vec<char> = want_string(i, &args[0])?.chars().collect();
+let b: Vec<char> = want_string(i, &args[1])?.chars().collect();
+let (n, m) = (a.len(), b.len());
+if n == 0 {
+    return Ok(Value::Int(m as i128));
 }
+if m == 0 {
+    return Ok(Value::Int(n as i128));
+}
+let mut prev: Vec<usize> = (0..=m).collect();
+let mut cur = vec![0; m + 1];
+for x in 1..=n {
+    cur[0] = x;
+    for y in 1..=m {
+        let cost = if a[x - 1] == b[y - 1] { 0 } else { 1 };
+        cur[y] = (prev[y] + 1).min(cur[y - 1] + 1).min(prev[y - 1] + cost);
+    }
+    std::mem::swap(&mut prev, &mut cur);
+}
+Ok(Value::Int(prev[m] as i128)) }
+fn f_string_glyph_split(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = want_string(i, &args[0])?;
+Ok(Value::list(
+    s.chars().map(|c| Value::string(c.to_string())).collect(),
+)) }
 // GNU sxhash (src/fns.c): EMACS_UINT is 64-bit, fixnums are 62-bit.
 // sxhash_combine (x, y) = (x << 4) + (x >> 60) + y   (wrapping)
 // SXHASH_REDUCE (x)     = (x ^ (x >> 2)) & (2^62 - 1)
@@ -2011,128 +1947,110 @@ fn sxhash_obj_ptr5(v: &Value) -> u64 {
     (p as u64 >> 2) ^ 5
 }
 
-fn f_sxhash(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(sxhash_reduce(sxhash_obj(i, &args[0], 0))))
-}
+fn f_sxhash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::Int(sxhash_reduce(sxhash_obj(i, &args[0], 0)))) }
 
-fn f_sxhash_eq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(sxhash_reduce(sxhash_eq(i, &args[0]))))
-}
+fn f_sxhash_eq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::Int(sxhash_reduce(sxhash_eq(i, &args[0])))) }
 
-fn f_sxhash_eql(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let h = match &args[0] {
-        // FLOATP or BIGNUMP → sxhash, else sxhash_eq.
-        Value::Float(_) => sxhash_obj(i, &args[0], 0),
-        _ => sxhash_eq(i, &args[0]),
-    };
-    Ok(Value::Int(sxhash_reduce(h)))
-}
+fn f_sxhash_eql(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let h = match &args[0] {
+    // FLOATP or BIGNUMP → sxhash, else sxhash_eq.
+    Value::Float(_) => sxhash_obj(i, &args[0], 0),
+    _ => sxhash_eq(i, &args[0]),
+};
+Ok(Value::Int(sxhash_reduce(h))) }
 
-fn f_sxhash_including_props(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let mut hash = sxhash_obj(i, &args[0], 0);
-    if let Value::Str(s) = &args[0] {
-        // GNU folds each interval's (position, length, plist) in.
-        for (start, end, plist) in i.str_props(s) {
-            hash = sxhash_combine(hash, *start as u64);
-            hash = sxhash_combine(hash, (end - start) as u64);
-            let pl = Value::list(plist.clone());
-            hash = sxhash_combine(hash, sxhash_obj(i, &pl, 0));
-        }
-    }
-    Ok(Value::Int(sxhash_reduce(hash)))
-}
-fn f_clear_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match &args[0] {
-        Value::Str(s) => {
-            // GNU memsets the byte storage: the string keeps its
-            // length (in bytes) but becomes all NULs — and unibyte.
-            let n = s.borrow().len();
-            *s.borrow_mut() = "\0".repeat(n);
-            i.mark_unibyte(s);
-            Ok(Value::Nil)
-        }
-        other => Err(i.wrong_type_mut("stringp", other)),
+fn f_sxhash_including_props(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let mut hash = sxhash_obj(i, &args[0], 0);
+if let Value::Str(s) = &args[0] {
+    // GNU folds each interval's (position, length, plist) in.
+    for (start, end, plist) in i.str_props(s) {
+        hash = sxhash_combine(hash, *start as u64);
+        hash = sxhash_combine(hash, (end - start) as u64);
+        let pl = Value::list(plist.clone());
+        hash = sxhash_combine(hash, sxhash_obj(i, &pl, 0));
     }
 }
-fn f_store_substring(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let idx = want_int(i, &args[1])?;
-    match &args[0] {
-        Value::Str(s) => {
-            let mut chars: Vec<char> = s.borrow().chars().collect();
-            let rep: Vec<char> = match &args[2] {
-                Value::Str(rs) => rs.borrow().chars().collect(),
-                Value::Int(n) => vec![char::from_u32(*n as u32).unwrap_or('\0')],
-                other => return Err(i.wrong_type_mut("char-or-string-p", other)),
-            };
-            // GNU stores character by character and signals
-            // args-out-of-range at the first invalid index (a partially
-            // written string is observable in the error object).
-            let len = chars.len() as i128;
-            for (k, c) in rep.iter().enumerate() {
-                let at = idx + k as i128;
-                if at < 0 || at >= len {
-                    return Err(i.signal_data(
-                        sym::ARGS_OUT_OF_RANGE,
-                        vec![args[0].clone(), Value::Int(at)],
-                    ));
-                }
-                chars[at as usize] = *c;
-                *s.borrow_mut() = chars.iter().collect();
+Ok(Value::Int(sxhash_reduce(hash))) }
+fn f_clear_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { match &args[0] {
+    Value::Str(s) => {
+        // GNU memsets the byte storage: the string keeps its
+        // length (in bytes) but becomes all NULs — and unibyte.
+        let n = s.borrow().len();
+        *s.borrow_mut() = "\0".repeat(n);
+        i.mark_unibyte(s);
+        Ok(Value::Nil)
+    }
+    other => Err(i.wrong_type_mut("stringp", other)),
+} }
+fn f_store_substring(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let idx = want_int(i, &args[1])?;
+match &args[0] {
+    Value::Str(s) => {
+        let mut chars: Vec<char> = s.borrow().chars().collect();
+        let rep: Vec<char> = match &args[2] {
+            Value::Str(rs) => rs.borrow().chars().collect(),
+            Value::Int(n) => vec![char::from_u32(*n as u32).unwrap_or('\0')],
+            other => return Err(i.wrong_type_mut("char-or-string-p", other)),
+        };
+        // GNU stores character by character and signals
+        // args-out-of-range at the first invalid index (a partially
+        // written string is observable in the error object).
+        let len = chars.len() as i128;
+        for (k, c) in rep.iter().enumerate() {
+            let at = idx + k as i128;
+            if at < 0 || at >= len {
+                return Err(i.signal_data(
+                    sym::ARGS_OUT_OF_RANGE,
+                    vec![args[0].clone(), Value::Int(at)],
+                ));
             }
-            Ok(args[0].clone())
+            chars[at as usize] = *c;
+            *s.borrow_mut() = chars.iter().collect();
         }
-        other => Err(i.wrong_type_mut("stringp", other)),
+        Ok(args[0].clone())
     }
+    other => Err(i.wrong_type_mut("stringp", other)),
+} }
+fn f_string_aref(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let chars: Vec<char> = want_string(i, &args[0])?.chars().collect();
+let idx = want_int(i, &args[1])?;
+if idx < 0 || idx as usize >= chars.len() {
+    return Err(i.signal_data(
+        sym::ARGS_OUT_OF_RANGE,
+        vec![args[0].clone(), Value::Int(idx)],
+    ));
 }
-fn f_string_aref(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let chars: Vec<char> = want_string(i, &args[0])?.chars().collect();
-    let idx = want_int(i, &args[1])?;
-    if idx < 0 || idx as usize >= chars.len() {
-        return Err(i.signal_data(
-            sym::ARGS_OUT_OF_RANGE,
-            vec![args[0].clone(), Value::Int(idx)],
-        ));
-    }
-    Ok(Value::Int(lisp_char_code(chars[idx as usize])))
-}
+Ok(Value::Int(lisp_char_code(chars[idx as usize]))) }
 
 // ---------- format ----------
 
 /// `format` — printf-style with elisp conventions:
 /// `%s` princ, `%S` prin1, `%d`/`%o`/`%x`/`%X`/`%e`/`%f`/`%g` numeric,
 /// `%c` char, `%%` literal. Supports `%Nd`, `%-Ns`, `%0Nd`, `%.Nf`.
-fn f_format(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let fmt = want_string(i, &args[0])?;
-    let fmt_ivs = match &args[0] {
-        Value::Str(s) => i.str_props(s).to_vec(),
-        _ => Vec::new(),
-    };
-    let mut spans = Vec::new();
-    let v = format_impl_spans(i, &fmt, &args, &fmt_ivs, &mut spans)?;
-    if let Value::Str(s) = &v {
-        if !spans.is_empty() {
-            i.set_str_props(s, spans);
-        }
+fn f_format(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let fmt = want_string(i, &args[0])?;
+let fmt_ivs = match &args[0] {
+    Value::Str(s) => i.str_props(s).to_vec(),
+    _ => Vec::new(),
+};
+let mut spans = Vec::new();
+let v = format_impl_spans(i, &fmt, &args, &fmt_ivs, &mut spans)?;
+if let Value::Str(s) = &v {
+    if !spans.is_empty() {
+        i.set_str_props(s, spans);
     }
-    Ok(v)
 }
+Ok(v) }
 
-fn f_format_message(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let fmt = want_string(i, &args[0])?;
-    let fmt_ivs = match &args[0] {
-        Value::Str(s) => i.str_props(s).to_vec(),
-        _ => Vec::new(),
-    };
-    let fmt = super::evalfn::translate_message_quotes(i, &fmt);
-    let mut spans = Vec::new();
-    let v = format_impl_spans(i, &fmt, &args, &fmt_ivs, &mut spans)?;
-    if let Value::Str(s) = &v {
-        if !spans.is_empty() {
-            i.set_str_props(s, spans);
-        }
+fn f_format_message(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let fmt = want_string(i, &args[0])?;
+let fmt_ivs = match &args[0] {
+    Value::Str(s) => i.str_props(s).to_vec(),
+    _ => Vec::new(),
+};
+let fmt = super::evalfn::translate_message_quotes(i, &fmt);
+let mut spans = Vec::new();
+let v = format_impl_spans(i, &fmt, &args, &fmt_ivs, &mut spans)?;
+if let Value::Str(s) = &v {
+    if !spans.is_empty() {
+        i.set_str_props(s, spans);
     }
-    Ok(v)
 }
+Ok(v) }
 
 pub(crate) fn format_impl(i: &Interp, fmt: &str, args: &[Value]) -> EvalResult {
     let mut spans = Vec::new();
@@ -2607,169 +2525,157 @@ fn format_g(f: f64, prec: Option<usize>) -> String {
 
 // ---------- added builtins ----------
 
-fn f_make_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU CHECK_NATNUM: anything but a nonnegative fixnum signals
-    // wholenump; INIT takes the full CHECK_CHARACTER range.
-    let n = match &args[0] {
-        Value::Int(n) if *n >= 0 => *n as usize,
-        other => return Err(i.wrong_type_mut("wholenump", other)),
-    };
-    let ch = match &args[1] {
-        Value::Int(c) if (0..=0x3f_ffff).contains(c) => lisp_char(*c as u32).unwrap_or('\u{FFFD}'),
-        other => return Err(i.wrong_type_mut("characterp", other)),
-    };
-    // GNU: nil MULTIBYTE ⇒ a unibyte string; mark it so `aset',
-    // `aref', and seq iteration use byte semantics (md4.el relies
-    // on storing 0x80-0xFF bytes into a make-string'd buffer).
-    let multibyte = args.get(2).map(|v| v.truthy()).unwrap_or(false);
-    let mut s = String::with_capacity(if multibyte { n * ch.len_utf8() } else { n });
-    if multibyte {
-        for _ in 0..n { s.push(ch) }
+fn f_make_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU CHECK_NATNUM: anything but a nonnegative fixnum signals
+// wholenump; INIT takes the full CHECK_CHARACTER range.
+let n = match &args[0] {
+    Value::Int(n) if *n >= 0 => *n as usize,
+    other => return Err(i.wrong_type_mut("wholenump", other)),
+};
+let ch = match &args[1] {
+    Value::Int(c) if (0..=0x3f_ffff).contains(c) => lisp_char(*c as u32).unwrap_or('\u{FFFD}'),
+    other => return Err(i.wrong_type_mut("characterp", other)),
+};
+// GNU: nil MULTIBYTE ⇒ a unibyte string; mark it so `aset',
+// `aref', and seq iteration use byte semantics (md4.el relies
+// on storing 0x80-0xFF bytes into a make-string'd buffer).
+let multibyte = args.get(2).map(|v| v.truthy()).unwrap_or(false);
+let mut s = String::with_capacity(if multibyte { n * ch.len_utf8() } else { n });
+if multibyte {
+    for _ in 0..n { s.push(ch) }
+} else {
+    // Bytes 0x80-0xFF stored as their eight-bit PUA proxies.
+    let bch = if (0x80..=0xFF).contains(&(ch as u32)) {
+        char::from_u32(crate::lisp::value::EIGHT_BIT_BASE + ch as u32).unwrap_or(ch)
     } else {
-        // Bytes 0x80-0xFF stored as their eight-bit PUA proxies.
-        let bch = if (0x80..=0xFF).contains(&(ch as u32)) {
-            char::from_u32(crate::lisp::value::EIGHT_BIT_BASE + ch as u32).unwrap_or(ch)
+        ch
+    };
+    for _ in 0..n { s.push(bch) }
+}
+let v = Value::string(s);
+if !multibyte {
+    if let Value::Str(r) = &v {
+        i.mark_unibyte(r);
+    }
+}
+Ok(v) }
+
+fn f_string_to_list(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = want_string(i, &args[0])?;
+// GNU: elements of a unibyte string are raw byte values.
+let unibyte = match &args[0] {
+    Value::Str(r) => i.is_unibyte_str(r),
+    _ => false,
+};
+let items: Vec<Value> = s
+    .chars()
+    .map(|c| {
+        Value::Int(if unibyte {
+            crate::lisp::value::eight_bit_byte(c)
+                .map(|b| b as i128)
+                .unwrap_or((c as u32) as i128 & 0xFF)
         } else {
-            ch
-        };
-        for _ in 0..n { s.push(bch) }
-    }
-    let v = Value::string(s);
-    if !multibyte {
-        if let Value::Str(r) = &v {
-            i.mark_unibyte(r);
-        }
-    }
-    Ok(v)
-}
+            lisp_char_code(c)
+        })
+    })
+    .collect();
+Ok(Value::list(items)) }
+fn f_string_to_vector(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // Emacs accepts nil (treated as the empty sequence).
+let s = match &args[0] {
+    Value::Nil => String::new(),
+    v => want_string(i, v)?,
+};
+let unibyte = match &args[0] {
+    Value::Str(r) => i.is_unibyte_str(r),
+    _ => false,
+};
+let items: Vec<Value> = s
+    .chars()
+    .map(|c| {
+        Value::Int(if unibyte {
+            crate::lisp::value::eight_bit_byte(c)
+                .map(|b| b as i128)
+                .unwrap_or((c as u32) as i128 & 0xFF)
+        } else {
+            lisp_char_code(c)
+        })
+    })
+    .collect();
+Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(items)))) }
 
-fn f_string_to_list(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    // GNU: elements of a unibyte string are raw byte values.
-    let unibyte = match &args[0] {
-        Value::Str(r) => i.is_unibyte_str(r),
-        _ => false,
-    };
-    let items: Vec<Value> = s
+fn f_string_bytes(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = want_string(i, &args[0])?;
+// Unibyte strings hold chars as raw bytes (eight-bit PUA proxies)
+// — GNU's byte count is the char count; multibyte strings count
+// per-char storage: UTF-8 length, with eight-bit chars taking 2
+// bytes (GNU's raw-byte encoding).
+let n = match &args[0] {
+    Value::Str(r) if i.is_unibyte_str(r) => s.chars().count(),
+    _ => s
         .chars()
         .map(|c| {
-            Value::Int(if unibyte {
-                crate::lisp::value::eight_bit_byte(c)
-                    .map(|b| b as i128)
-                    .unwrap_or((c as u32) as i128 & 0xFF)
+            if crate::lisp::value::eight_bit_byte(c).is_some() {
+                2
             } else {
-                lisp_char_code(c)
-            })
-        })
-        .collect();
-    Ok(Value::list(items))
-}
-fn f_string_to_vector(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // Emacs accepts nil (treated as the empty sequence).
-    let s = match &args[0] {
-        Value::Nil => String::new(),
-        v => want_string(i, v)?,
-    };
-    let unibyte = match &args[0] {
-        Value::Str(r) => i.is_unibyte_str(r),
-        _ => false,
-    };
-    let items: Vec<Value> = s
-        .chars()
-        .map(|c| {
-            Value::Int(if unibyte {
-                crate::lisp::value::eight_bit_byte(c)
-                    .map(|b| b as i128)
-                    .unwrap_or((c as u32) as i128 & 0xFF)
-            } else {
-                lisp_char_code(c)
-            })
-        })
-        .collect();
-    Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(items))))
-}
-
-fn f_string_bytes(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    // Unibyte strings hold chars as raw bytes (eight-bit PUA proxies)
-    // — GNU's byte count is the char count; multibyte strings count
-    // per-char storage: UTF-8 length, with eight-bit chars taking 2
-    // bytes (GNU's raw-byte encoding).
-    let n = match &args[0] {
-        Value::Str(r) if i.is_unibyte_str(r) => s.chars().count(),
-        _ => s
-            .chars()
-            .map(|c| {
-                if crate::lisp::value::eight_bit_byte(c).is_some() {
-                    2
-                } else {
-                    c.len_utf8()
-                }
-            })
-            .sum(),
-    };
-    Ok(Value::Int(n as i128))
-}
-
-fn f_subst_char_in_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let from = want_int(i, &args[0])? as u32;
-    let to = want_int(i, &args[1])? as u32;
-    let inplace = arg(&args, 3).truthy();
-    let from_c = char::from_u32(from).unwrap_or('\u{FFFD}');
-    let to_c = char::from_u32(to).unwrap_or('\u{FFFD}');
-    match &args[2] {
-        Value::Str(s) => {
-            if inplace {
-                let mut b = s.borrow_mut();
-                let replaced: String = b
-                    .chars()
-                    .map(|c| if c == from_c { to_c } else { c })
-                    .collect();
-                *b = replaced;
-                return Ok(args[2].clone());
+                c.len_utf8()
             }
-            let b = s.borrow();
+        })
+        .sum(),
+};
+Ok(Value::Int(n as i128)) }
+
+fn f_subst_char_in_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let from = want_int(i, &args[0])? as u32;
+let to = want_int(i, &args[1])? as u32;
+let inplace = arg(&args, 3).truthy();
+let from_c = char::from_u32(from).unwrap_or('\u{FFFD}');
+let to_c = char::from_u32(to).unwrap_or('\u{FFFD}');
+match &args[2] {
+    Value::Str(s) => {
+        if inplace {
+            let mut b = s.borrow_mut();
             let replaced: String = b
                 .chars()
                 .map(|c| if c == from_c { to_c } else { c })
                 .collect();
-            Ok(Value::string(replaced))
+            *b = replaced;
+            return Ok(args[2].clone());
         }
-        other => Err(i.wrong_type_mut("stringp", other)),
+        let b = s.borrow();
+        let replaced: String = b
+            .chars()
+            .map(|c| if c == from_c { to_c } else { c })
+            .collect();
+        Ok(Value::string(replaced))
     }
-}
+    other => Err(i.wrong_type_mut("stringp", other)),
+} }
 
-fn f_compare_strings(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (compare-strings STR1 START1 END1 STR2 START2 END2 &optional IGNORE-CASE)
-    // GNU Fcompare_strings: CHECK_STRING on both (symbols rejected),
-    // then too-large positive END values are silently clamped before
-    // validate_subarray runs.
-    let s1 = want_string(i, &args[0])?;
-    let s2 = want_string(i, &args[3])?;
-    let v1: Vec<char> = s1.chars().collect();
-    let v2: Vec<char> = s2.chars().collect();
-    let e1v = clamp_end(&args[2], v1.len());
-    let e2v = clamp_end(&args[5], v2.len());
-    let (b1, e1) = validate_subarray(i, &args[0], &args[1], &e1v, v1.len())?;
-    let (b2, e2) = validate_subarray(i, &args[3], &args[4], &e2v, v2.len())?;
-    let fold = arg(&args, 6).truthy();
-    let ac: Vec<char> = v1[b1..e1].to_vec();
-    let bc: Vec<char> = v2[b2..e2].to_vec();
-    // GNU compares char-by-char; IGNORE-CASE upcases each char first.
-    let up = |c: char| c.to_uppercase().next().unwrap_or(c);
-    for (k, (&a, &b)) in ac.iter().zip(bc.iter()).enumerate() {
-        let (a, b) = if fold { (up(a), up(b)) } else { (a, b) };
-        if a != b {
-            let pos = k as i128 + 1;
-            return Ok(Value::Int(if a < b { -pos } else { pos }));
-        }
+fn f_compare_strings(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // (compare-strings STR1 START1 END1 STR2 START2 END2 &optional IGNORE-CASE)
+// GNU Fcompare_strings: CHECK_STRING on both (symbols rejected),
+// then too-large positive END values are silently clamped before
+// validate_subarray runs.
+let s1 = want_string(i, &args[0])?;
+let s2 = want_string(i, &args[3])?;
+let v1: Vec<char> = s1.chars().collect();
+let v2: Vec<char> = s2.chars().collect();
+let e1v = clamp_end(&args[2], v1.len());
+let e2v = clamp_end(&args[5], v2.len());
+let (b1, e1) = validate_subarray(i, &args[0], &args[1], &e1v, v1.len())?;
+let (b2, e2) = validate_subarray(i, &args[3], &args[4], &e2v, v2.len())?;
+let fold = arg(&args, 6).truthy();
+let ac: Vec<char> = v1[b1..e1].to_vec();
+let bc: Vec<char> = v2[b2..e2].to_vec();
+// GNU compares char-by-char; IGNORE-CASE upcases each char first.
+let up = |c: char| c.to_uppercase().next().unwrap_or(c);
+for (k, (&a, &b)) in ac.iter().zip(bc.iter()).enumerate() {
+    let (a, b) = if fold { (up(a), up(b)) } else { (a, b) };
+    if a != b {
+        let pos = k as i128 + 1;
+        return Ok(Value::Int(if a < b { -pos } else { pos }));
     }
-    if ac.len() == bc.len() {
-        return Ok(Value::t());
-    }
-    let n = ac.len().min(bc.len()) as i128 + 1;
-    Ok(Value::Int(if ac.len() < bc.len() { -n } else { n }))
 }
+if ac.len() == bc.len() {
+    return Ok(Value::t());
+}
+let n = ac.len().min(bc.len()) as i128 + 1;
+Ok(Value::Int(if ac.len() < bc.len() { -n } else { n })) }
 
 /// GNU Fcompare_strings's "For backward compatibility, silently bring
 /// too-large positive end values into range" clamp — applied to the
@@ -2822,399 +2728,373 @@ fn validate_subarray(
     Ok((f as usize, t as usize))
 }
 
-fn f_char_width(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU Fchar_width: CHECK_CHARACTER — 0..=MAX_5_BYTE_CHAR.
-    let c = match &args[0] {
-        Value::Int(n) if (0..=0x3FFFFF).contains(n) => *n,
-        other => return Err(i.wrong_type_mut("characterp", other)),
-    };
-    // GNU `Fchar_width' reads the buffer-local `tab-width' for TAB.
-    if c == '\t' as i128 {
-        let tid = i.intern("tab-width");
-        let tw = i.symbol_value(tid).int().unwrap_or(8);
-        return Ok(Value::Int(tw));
-    }
-    // GNU's default char-width-table: 4 for ISO control chars
-    // (0x80..=0x9F) and eight-bit chars (0x3FFF80..=0x3FFFFF),
-    // 1 for the other non-Unicode internals; the rest per the
-    // display width table.
-    let u = c as u32;
-    let w = if (0x80..=0x9F).contains(&u)
-        || (0x3FFF80..=0x3FFFFF).contains(&u)
-    {
-        4
-    } else if u > 0x10FFFF {
-        1
-    } else {
-        let ch = char::from_u32(u).unwrap_or('\u{FFFD}');
-        gnu_char_width(ch)
-    };
-    Ok(Value::Int(w as i128))
+fn f_char_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU Fchar_width: CHECK_CHARACTER — 0..=MAX_5_BYTE_CHAR.
+let c = match &args[0] {
+    Value::Int(n) if (0..=0x3FFFFF).contains(n) => *n,
+    other => return Err(i.wrong_type_mut("characterp", other)),
+};
+// GNU `Fchar_width' reads the buffer-local `tab-width' for TAB.
+if c == '\t' as i128 {
+    let tid = i.intern("tab-width");
+    let tw = i.symbol_value(tid).int().unwrap_or(8);
+    return Ok(Value::Int(tw));
 }
-fn f_format_spec(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let fmt = want_string(i, &args[0])?;
-    let alist = &args[1];
-    let mut out = String::new();
-    let mut chars = fmt.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '%' {
-            out.push(c);
-            continue;
-        }
-        // Optional flags.
-        let mut minus = false;
-        let mut zero = false;
-        let mut width = 0usize;
-        let mut prec: Option<usize> = None;
-        loop {
-            match chars.peek() {
-                Some('-') => {
-                    minus = true;
-                    chars.next();
-                }
-                Some('0') => {
-                    zero = true;
-                    chars.next();
-                }
-                Some(' ') => {
-                    chars.next();
-                }
-                _ => break,
-            }
-        }
-        while let Some(d @ '0'..='9') = chars.peek() {
-            width = width * 10 + (*d as usize - '0' as usize);
-            chars.next();
-        }
-        if chars.peek() == Some(&'.') {
-            chars.next();
-            let mut p = 0usize;
-            while let Some(d @ '0'..='9') = chars.peek() {
-                p = p * 10 + (*d as usize - '0' as usize);
+// GNU's default char-width-table: 4 for ISO control chars
+// (0x80..=0x9F) and eight-bit chars (0x3FFF80..=0x3FFFFF),
+// 1 for the other non-Unicode internals; the rest per the
+// display width table.
+let u = c as u32;
+let w = if (0x80..=0x9F).contains(&u)
+    || (0x3FFF80..=0x3FFFFF).contains(&u)
+{
+    4
+} else if u > 0x10FFFF {
+    1
+} else {
+    let ch = char::from_u32(u).unwrap_or('\u{FFFD}');
+    gnu_char_width(ch)
+};
+Ok(Value::Int(w as i128)) }
+fn f_format_spec(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let fmt = want_string(i, &args[0])?;
+let alist = &args[1];
+let mut out = String::new();
+let mut chars = fmt.chars().peekable();
+while let Some(c) = chars.next() {
+    if c != '%' {
+        out.push(c);
+        continue;
+    }
+    // Optional flags.
+    let mut minus = false;
+    let mut zero = false;
+    let mut width = 0usize;
+    let mut prec: Option<usize> = None;
+    loop {
+        match chars.peek() {
+            Some('-') => {
+                minus = true;
                 chars.next();
             }
-            prec = Some(p);
+            Some('0') => {
+                zero = true;
+                chars.next();
+            }
+            Some(' ') => {
+                chars.next();
+            }
+            _ => break,
         }
-        let spec = match chars.next() {
-            Some(s) => s,
-            // GNU errors on a trailing lone `%'.
-            None => return Err(i.error("Invalid format character: `%'")),
-        };
-        if spec == '%' {
-            out.push('%');
-            continue;
+    }
+    while let Some(d @ '0'..='9') = chars.peek() {
+        width = width * 10 + (*d as usize - '0' as usize);
+        chars.next();
+    }
+    if chars.peek() == Some(&'.') {
+        chars.next();
+        let mut p = 0usize;
+        while let Some(d @ '0'..='9') = chars.peek() {
+            p = p * 10 + (*d as usize - '0' as usize);
+            chars.next();
         }
-        // Look up spec char in alist: key is a char (Int). GNU skips
-        // non-cons elements (assq semantics) but a non-list tail is a
-        // wrong-type-argument; a spec char with no entry is an error.
-        let key = Value::Int(spec as i128);
-        let mut val = Value::Nil;
-        let mut found = false;
-        let mut cur = alist.clone();
-        loop {
-            match cur {
-                Value::Nil => break,
-                Value::Cons(c2) => {
-                    let (elem, next) = {
-                        let b = c2.borrow();
+        prec = Some(p);
+    }
+    let spec = match chars.next() {
+        Some(s) => s,
+        // GNU errors on a trailing lone `%'.
+        None => return Err(i.error("Invalid format character: `%'")),
+    };
+    if spec == '%' {
+        out.push('%');
+        continue;
+    }
+    // Look up spec char in alist: key is a char (Int). GNU skips
+    // non-cons elements (assq semantics) but a non-list tail is a
+    // wrong-type-argument; a spec char with no entry is an error.
+    let key = Value::Int(spec as i128);
+    let mut val = Value::Nil;
+    let mut found = false;
+    let mut cur = alist.clone();
+    loop {
+        match cur {
+            Value::Nil => break,
+            Value::Cons(c2) => {
+                let (elem, next) = {
+                    let b = c2.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                if let Value::Cons(pair) = &elem {
+                    let (k, v) = {
+                        let b = pair.borrow();
                         (b.car.clone(), b.cdr.clone())
                     };
-                    if let Value::Cons(pair) = &elem {
-                        let (k, v) = {
-                            let b = pair.borrow();
-                            (b.car.clone(), b.cdr.clone())
-                        };
-                        if super::eq_values(&k, &key) {
-                            val = v;
-                            found = true;
-                            break;
-                        }
+                    if super::eq_values(&k, &key) {
+                        val = v;
+                        found = true;
+                        break;
                     }
-                    cur = next;
                 }
-                other => return Err(i.wrong_type_mut("listp", &other)),
+                cur = next;
             }
+            other => return Err(i.wrong_type_mut("listp", &other)),
         }
-        if !found {
-            return Err(i.error(&format!("Invalid format character: `%{}'", spec)));
-        }
-        // Render val like princ, honoring width/precision.
-        let mut text = match &val {
-            Value::Nil => String::new(),
-            _ => {
-                let mut s = i.princ_to_string(&val);
-                if let Some(p) = prec {
-                    s = s.chars().take(p).collect();
-                }
-                s
-            }
-        };
-        if width > 0 && text.chars().count() < width {
-            let pad = width - text.chars().count();
-            if minus {
-                text.extend(std::iter::repeat_n(' ', pad));
-            } else {
-                let padc = if zero { '0' } else { ' ' };
-                text = std::iter::repeat_n(padc, pad).chain(text.chars()).collect();
-            }
-        }
-        out.push_str(&text);
     }
-    Ok(Value::string(out))
+    if !found {
+        return Err(i.error(&format!("Invalid format character: `%{}'", spec)));
+    }
+    // Render val like princ, honoring width/precision.
+    let mut text = match &val {
+        Value::Nil => String::new(),
+        _ => {
+            let mut s = i.princ_to_string(&val);
+            if let Some(p) = prec {
+                s = s.chars().take(p).collect();
+            }
+            s
+        }
+    };
+    if width > 0 && text.chars().count() < width {
+        let pad = width - text.chars().count();
+        if minus {
+            text.extend(std::iter::repeat_n(' ', pad));
+        } else {
+            let padc = if zero { '0' } else { ' ' };
+            text = std::iter::repeat_n(padc, pad).chain(text.chars()).collect();
+        }
+    }
+    out.push_str(&text);
 }
+Ok(Value::string(out)) }
 
 /// `string-to-multibyte' — in a unibyte string, each byte-value char
 /// ≥0x80 becomes an eight-bit char (0x3FFF80 + byte − 0x80); a
 /// multibyte string is returned unchanged.
-fn f_string_to_multibyte(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    let unibyte_in = match &args[0] {
-        Value::Str(r) => {
-            i.is_unibyte_str(r)
-                || (!i.is_multibyte_str(r) && !r.borrow().chars().any(|c| (c as u32) > 0xFF))
-        }
-        _ => false,
-    };
-    let out: String = s
-        .chars()
-        .map(|c| {
-            let u = c as u32;
-            if unibyte_in && (0x80..=0xFF).contains(&u) {
-                lisp_char(u + 0x3FFF00).unwrap()
-            } else {
-                c
-            }
-        })
-        .collect();
-    let v = Value::string(out);
-    if let Value::Str(r) = &v {
-        i.mark_multibyte(r);
+fn f_string_to_multibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = want_string(i, &args[0])?;
+let unibyte_in = match &args[0] {
+    Value::Str(r) => {
+        i.is_unibyte_str(r)
+            || (!i.is_multibyte_str(r) && !r.borrow().chars().any(|c| (c as u32) > 0xFF))
     }
-    Ok(v)
+    _ => false,
+};
+let out: String = s
+    .chars()
+    .map(|c| {
+        let u = c as u32;
+        if unibyte_in && (0x80..=0xFF).contains(&u) {
+            lisp_char(u + 0x3FFF00).unwrap()
+        } else {
+            c
+        }
+    })
+    .collect();
+let v = Value::string(out);
+if let Value::Str(r) = &v {
+    i.mark_multibyte(r);
 }
+Ok(v) }
 
 /// `string-to-unibyte' — a unibyte string is unchanged; in multibyte
 /// input, chars <0x80 stay bytes and eight-bit chars return to their
 /// byte value; anything else errors.
-fn f_string_to_unibyte(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    let unibyte_in = matches!(&args[0], Value::Str(r) if i.is_unibyte_str(r));
-    let mut out = String::new();
-    for (ix, c) in s.chars().enumerate() {
-        let u = c as u32;
-        if u < 0x80 || (unibyte_in && u <= 0xFF) {
-            out.push(c);
-        } else if let Some(b) = eight_bit_byte(c) {
-            out.push(b as char);
-        } else {
-            return Err(i.error(format!("Cannot convert character at index {ix} to unibyte")));
-        }
+fn f_string_to_unibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = want_string(i, &args[0])?;
+let unibyte_in = matches!(&args[0], Value::Str(r) if i.is_unibyte_str(r));
+let mut out = String::new();
+for (ix, c) in s.chars().enumerate() {
+    let u = c as u32;
+    if u < 0x80 || (unibyte_in && u <= 0xFF) {
+        out.push(c);
+    } else if let Some(b) = eight_bit_byte(c) {
+        out.push(b as char);
+    } else {
+        return Err(i.error(format!("Cannot convert character at index {ix} to unibyte")));
     }
-    let v = Value::string(out);
-    if let Value::Str(r) = &v {
-        i.mark_unibyte(r);
-    }
-    Ok(v)
 }
+let v = Value::string(out);
+if let Value::Str(r) = &v {
+    i.mark_unibyte(r);
+}
+Ok(v) }
 
 /// `string-as-unibyte' — a unibyte string is returned unchanged; a
 /// multibyte string's chars are re-encoded as their UTF-8 bytes.
-fn f_string_as_unibyte(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    let multibyte = match &args[0] {
-        Value::Str(r) => {
-            i.is_multibyte_str(r)
-                || (!i.is_unibyte_str(r) && r.borrow().chars().any(|c| (c as u32) > 0xFF))
-        }
-        _ => false,
-    };
-    let out = if multibyte {
-        let mut o = String::new();
-        for c in s.chars() {
-            if let Some(b) = eight_bit_byte(c) {
-                o.push(b as char);
-            } else {
-                let mut buf = [0u8; 4];
-                o.extend(c.encode_utf8(&mut buf).bytes().map(|b| b as char));
-            }
-        }
-        o
-    } else {
-        s
-    };
-    let v = Value::string(out);
-    if let Value::Str(r) = &v {
-        i.mark_unibyte(r);
+fn f_string_as_unibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = want_string(i, &args[0])?;
+let multibyte = match &args[0] {
+    Value::Str(r) => {
+        i.is_multibyte_str(r)
+            || (!i.is_unibyte_str(r) && r.borrow().chars().any(|c| (c as u32) > 0xFF))
     }
-    Ok(v)
+    _ => false,
+};
+let out = if multibyte {
+    let mut o = String::new();
+    for c in s.chars() {
+        if let Some(b) = eight_bit_byte(c) {
+            o.push(b as char);
+        } else {
+            let mut buf = [0u8; 4];
+            o.extend(c.encode_utf8(&mut buf).bytes().map(|b| b as char));
+        }
+    }
+    o
+} else {
+    s
+};
+let v = Value::string(out);
+if let Value::Str(r) = &v {
+    i.mark_unibyte(r);
 }
+Ok(v) }
 
 /// `string-as-multibyte' — decode the string's byte-chars as UTF-8;
 /// bytes that can't decode become eight-bit chars.  An already
 /// multibyte string is returned unchanged.
-fn f_string_as_multibyte(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    let multibyte_in = match &args[0] {
-        Value::Str(r) => {
-            i.is_multibyte_str(r)
-                || (!i.is_unibyte_str(r) && r.borrow().chars().any(|c| (c as u32) > 0xFF))
-        }
-        _ => false,
-    };
-    if multibyte_in {
-        let v = Value::string(s);
-        if let Value::Str(r) = &v {
-            i.mark_multibyte(r);
-        }
-        return Ok(v);
+fn f_string_as_multibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = want_string(i, &args[0])?;
+let multibyte_in = match &args[0] {
+    Value::Str(r) => {
+        i.is_multibyte_str(r)
+            || (!i.is_unibyte_str(r) && r.borrow().chars().any(|c| (c as u32) > 0xFF))
     }
-    let bytes: Vec<u8> = s.chars().map(|c| c as u8).collect();
-    let mut out = String::new();
-    let mut k = 0;
-    while k < bytes.len() {
-        match std::str::from_utf8(&bytes[k..]) {
-            Ok(t) => {
-                out.push_str(t);
-                break;
-            }
-            Err(e) => {
-                let good = e.valid_up_to();
-                out.push_str(unsafe { std::str::from_utf8_unchecked(&bytes[k..k + good]) });
-                k += good;
-                let bad = e.error_len().unwrap_or(1);
-                for _ in 0..bad.min(bytes.len() - k) {
-                    out.push(lisp_char(bytes[k] as u32 + 0x3FFF00).unwrap());
-                    k += 1;
-                }
-            }
-        }
-    }
-    let v = Value::string(out);
+    _ => false,
+};
+if multibyte_in {
+    let v = Value::string(s);
     if let Value::Str(r) = &v {
         i.mark_multibyte(r);
     }
-    Ok(v)
+    return Ok(v);
 }
+let bytes: Vec<u8> = s.chars().map(|c| c as u8).collect();
+let mut out = String::new();
+let mut k = 0;
+while k < bytes.len() {
+    match std::str::from_utf8(&bytes[k..]) {
+        Ok(t) => {
+            out.push_str(t);
+            break;
+        }
+        Err(e) => {
+            let good = e.valid_up_to();
+            out.push_str(unsafe { std::str::from_utf8_unchecked(&bytes[k..k + good]) });
+            k += good;
+            let bad = e.error_len().unwrap_or(1);
+            for _ in 0..bad.min(bytes.len() - k) {
+                out.push(lisp_char(bytes[k] as u32 + 0x3FFF00).unwrap());
+                k += 1;
+            }
+        }
+    }
+}
+let v = Value::string(out);
+if let Value::Str(r) = &v {
+    i.mark_multibyte(r);
+}
+Ok(v) }
 
 /// `string-make-unibyte' — truncate every char to its low-order 8
 /// bits and mark the result unibyte (GNU `CHAR_TO_BYTE8': eight-bit
 /// chars yield their byte; anything else keeps `c & 0xFF').
-fn f_string_make_unibyte(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    let out: String = s
-        .chars()
-        .map(|c| {
-            let b = crate::lisp::value::eight_bit_byte(c)
-                .unwrap_or_else(|| (crate::lisp::value::lisp_char_code(c) & 0xFF) as u8);
-            if b >= 0x80 {
-                char::from_u32(crate::lisp::value::EIGHT_BIT_BASE + b as u32).unwrap()
-            } else {
-                b as char
-            }
-        })
-        .collect();
-    let v = Value::string(out);
-    if let Value::Str(r) = &v {
-        i.mark_unibyte(r);
-    }
-    Ok(v)
-}
-
-fn f_multibyte_string_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(match &args[0] {
-        Value::Str(s) => {
-            if i.is_unibyte_str(s) {
-                false
-            } else if i.is_multibyte_str(s) {
-                true
-            } else {
-                // Unmarked strings are unibyte when all chars are
-                // byte-representable (GNU's storage rule).
-                s.borrow().chars().any(|c| (c as u32) > 0xFF)
-            }
+fn f_string_make_unibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let s = want_string(i, &args[0])?;
+let out: String = s
+    .chars()
+    .map(|c| {
+        let b = crate::lisp::value::eight_bit_byte(c)
+            .unwrap_or_else(|| (crate::lisp::value::lisp_char_code(c) & 0xFF) as u8);
+        if b >= 0x80 {
+            char::from_u32(crate::lisp::value::EIGHT_BIT_BASE + b as u32).unwrap()
+        } else {
+            b as char
         }
-        _ => false,
-    }))
+    })
+    .collect();
+let v = Value::string(out);
+if let Value::Str(r) = &v {
+    i.mark_unibyte(r);
 }
+Ok(v) }
 
-fn f_unibyte_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let mut s = String::new();
-    for a in &args {
-        let n = want_int(i, a)?;
-        let c = char::from_u32((n & 0xff) as u32).unwrap_or('\u{FFFD}');
-        s.push(c);
-    }
-    let v = Value::string(s);
-    if let Value::Str(r) = &v {
-        i.mark_unibyte(r);
-    }
-    Ok(v)
-}
-
-fn f_make_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (make-char CHARSET &optional CODE1 CODE2 CODE3 CODE4)
-    // GNU Fmake_char: the codes are positions inside CHARSET's
-    // code-space; the mapped char = DECODE_CHAR(charset, packed).
-    let name = super::charset::want_charset(i, &args[0])?;
-    match super::charset::make_char(i, &name, &args[1..]) {
-        Ok(c) => Ok(Value::Int(c.into())),
-        Err(f) => Err(f),
-    }
-}
-
-fn f_split_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU `split_char': (CHARSET CODE1 .. CODEn) where CHARSET is the
-    // `char-charset' winner and each CODE is a byte of CH's packed
-    // code-point in that charset (dimension bytes, MSB first).
-    let ch = match &args[0] {
-        Value::Int(n) if (0..=0x3FFFFF).contains(n) => *n as i64,
-        other => return Err(i.wrong_type_mut("characterp", other)),
-    };
-    let name =
-        super::charset::char_charset(i, ch, &[]).unwrap_or_else(|| "emacs".to_string());
-    let Some(code) = super::charset::charset_encode(i, &name, ch) else {
-        return Ok(Value::Nil);
-    };
-    let dim = super::charset::charset_dimension_of(i, &name).max(1);
-    let mut out = vec![Value::Sym(i.intern(&name))];
-    for k in (0..dim).rev() {
-        out.push(Value::Int(((code >> (8 * k)) & 0xFF).into()));
-    }
-    Ok(Value::list(out))
-}
-
-fn f_encode_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU Fencode_char: CHECK_CHARSET_GET_ID runs before CHECK_CHARACTER.
-    let name = super::charset::want_charset(i, &args[1])?;
-    let ch = match &args[0] {
-        Value::Int(n) if (0..=0x3FFFFF).contains(n) => *n as i64,
-        _ => return Err(i.wrong_type_mut("characterp", &args[0])),
-    };
-    match super::charset::charset_encode(i, &name, ch) {
-        Some(c) => Ok(Value::Int(c.into())),
-        None => Ok(Value::Nil),
-    }
-}
-
-fn f_decode_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU Fdecode_char: CHECK_CHARSET_GET_ID then cons_to_unsigned —
-    // an integer, an integral float in range, or a cons pair
-    // (HIGH . LOW) packing a >16-bit code-point; anything else signals
-    // "Not an in-range integer, integral float, or cons of integers".
-    let name = super::charset::want_charset(i, &args[0])?;
-    let code = match super::charset::cons_to_u64(&args[1]) {
-        Some(c) => c,
-        None => {
-            return Err(i.error(
-                "Not an in-range integer, integral float, or cons of integers",
-            ))
+fn f_multibyte_string_p(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(match &args[0] {
+    Value::Str(s) => {
+        if i.is_unibyte_str(s) {
+            false
+        } else if i.is_multibyte_str(s) {
+            true
+        } else {
+            // Unmarked strings are unibyte when all chars are
+            // byte-representable (GNU's storage rule).
+            s.borrow().chars().any(|c| (c as u32) > 0xFF)
         }
-    };
-    match super::charset::charset_decode(i, &name, code as i64) {
-        Some(c) => Ok(Value::Int(c.into())),
-        None => Ok(Value::Nil),
     }
+    _ => false,
+})) }
+
+fn f_unibyte_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let mut s = String::new();
+for a in args.iter() {
+    let n = want_int(i, a)?;
+    let c = char::from_u32((n & 0xff) as u32).unwrap_or('\u{FFFD}');
+    s.push(c);
 }
+let v = Value::string(s);
+if let Value::Str(r) = &v {
+    i.mark_unibyte(r);
+}
+Ok(v) }
+
+fn f_make_char(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // (make-char CHARSET &optional CODE1 CODE2 CODE3 CODE4)
+// GNU Fmake_char: the codes are positions inside CHARSET's
+// code-space; the mapped char = DECODE_CHAR(charset, packed).
+let name = super::charset::want_charset(i, &args[0])?;
+match super::charset::make_char(i, &name, &args[1..]) {
+    Ok(c) => Ok(Value::Int(c.into())),
+    Err(f) => Err(f),
+} }
+
+fn f_split_char(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU `split_char': (CHARSET CODE1 .. CODEn) where CHARSET is the
+// `char-charset' winner and each CODE is a byte of CH's packed
+// code-point in that charset (dimension bytes, MSB first).
+let ch = match &args[0] {
+    Value::Int(n) if (0..=0x3FFFFF).contains(n) => *n as i64,
+    other => return Err(i.wrong_type_mut("characterp", other)),
+};
+let name =
+    super::charset::char_charset(i, ch, &[]).unwrap_or_else(|| "emacs".to_string());
+let Some(code) = super::charset::charset_encode(i, &name, ch) else {
+    return Ok(Value::Nil);
+};
+let dim = super::charset::charset_dimension_of(i, &name).max(1);
+let mut out = vec![Value::Sym(i.intern(&name))];
+for k in (0..dim).rev() {
+    out.push(Value::Int(((code >> (8 * k)) & 0xFF).into()));
+}
+Ok(Value::list(out)) }
+
+fn f_encode_char(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU Fencode_char: CHECK_CHARSET_GET_ID runs before CHECK_CHARACTER.
+let name = super::charset::want_charset(i, &args[1])?;
+let ch = match &args[0] {
+    Value::Int(n) if (0..=0x3FFFFF).contains(n) => *n as i64,
+    _ => return Err(i.wrong_type_mut("characterp", &args[0])),
+};
+match super::charset::charset_encode(i, &name, ch) {
+    Some(c) => Ok(Value::Int(c.into())),
+    None => Ok(Value::Nil),
+} }
+
+fn f_decode_char(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU Fdecode_char: CHECK_CHARSET_GET_ID then cons_to_unsigned —
+// an integer, an integral float in range, or a cons pair
+// (HIGH . LOW) packing a >16-bit code-point; anything else signals
+// "Not an in-range integer, integral float, or cons of integers".
+let name = super::charset::want_charset(i, &args[0])?;
+let code = match super::charset::cons_to_u64(&args[1]) {
+    Some(c) => c,
+    None => {
+        return Err(i.error(
+            "Not an in-range integer, integral float, or cons of integers",
+        ))
+    }
+};
+match super::charset::charset_decode(i, &name, code as i64) {
+    Some(c) => Ok(Value::Int(c.into())),
+    None => Ok(Value::Nil),
+} }
 
 /// Charsets we model, in GNU's `charset-priority-list` order.
 pub(crate) const CHARSET_PRIORITY: &[&str] = crate::lisp::builtins::charset::GNU_CHARSET_PRIORITY;
@@ -3311,24 +3191,22 @@ fn char_charset_of(ch: i128) -> Option<&'static str> {
         .map(|ix| super::enc_tables::CHAR_CHARSET[ix].1)
 }
 
-fn f_char_charset(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let ch = match &args[0] {
-        Value::Int(n) => *n,
-        other => return Err(i.wrong_type_mut("characterp", other)),
-    };
-    if !(0..=0x3FFFFF).contains(&ch) {
-        return Err(i.wrong_type_mut("characterp", &args[0]));
-    }
-    match args.get(1) {
-        None | Some(Value::Nil) => {
-            match super::charset::char_charset(i, ch as i64, &[]) {
-                Some(name) => Ok(Value::Sym(i.intern(&name))),
-                None => Ok(Value::Nil),
-            }
-        }
-        Some(v) => charset_restricted_charset(i, ch as i64, v),
-    }
+fn f_char_charset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let ch = match &args[0] {
+    Value::Int(n) => *n,
+    other => return Err(i.wrong_type_mut("characterp", other)),
+};
+if !(0..=0x3FFFFF).contains(&ch) {
+    return Err(i.wrong_type_mut("characterp", &args[0]));
 }
+match args.get(1) {
+    None | Some(Value::Nil) => {
+        match super::charset::char_charset(i, ch as i64, &[]) {
+            Some(name) => Ok(Value::Sym(i.intern(&name))),
+            None => Ok(Value::Nil),
+        }
+    }
+    Some(v) => charset_restricted_charset(i, ch as i64, v),
+} }
 
 /// GNU `Fchar_charset' with a non-nil RESTRICTION: a list restricts
 /// to its member charsets in LIST order (each must satisfy

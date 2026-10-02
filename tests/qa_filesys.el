@@ -136,6 +136,18 @@
 (qa (file-name-quoted-p "a/:b") nil)
 (qa (file-name-quoted-p "/:" 'top) t)
 (qa (file-remote-p "/a/b") nil)
+(qa (let ((inhibit-file-name-handlers '(tramp-file-name-handler
+                                        tramp-autoload-file-name-handler
+                                        tramp-completion-file-name-handler))
+          (inhibit-file-name-operation 'file-remote-p))
+      (file-remote-p "/ssh:user@host:/tmp/foo"))
+    nil)
+(qa (let ((inhibit-file-name-handlers '(tramp-file-name-handler
+                                        tramp-autoload-file-name-handler
+                                        tramp-completion-file-name-handler))
+          (inhibit-file-name-operation 'file-remote-p))
+      (file-remote-p "/sudo::/tmp/foo" 'user))
+    nil)
 (qa path-separator ":")
 (qa null-device "/dev/null")
 (qa (boundp 'directory-sep-char) nil)

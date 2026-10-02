@@ -476,201 +476,181 @@ pub(crate) static SUBRS: &[Subr] = &[
 
 /// GNU cl-preloaded.el: an error object is a list `(TYPE . DATA)';
 /// `error-type' is its car (nil stays nil, non-lists signal `listp').
-fn f_error_type(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match &a[0] {
-        Value::Cons(c) => Ok(c.borrow().car.clone()),
-        Value::Nil => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("listp", other)),
-    }
-}
+fn f_error_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match &a[0] {
+    Value::Cons(c) => Ok(c.borrow().car.clone()),
+    Value::Nil => Ok(Value::Nil),
+    other => Err(i.wrong_type_mut("listp", other)),
+} }
 
-fn f_eval(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (eval FORM &optional LEXICAL) — GNU binds
-    // `internal-interpreter-environment' to LEXICAL when nil (dynamic)
-    // or a cons (an actual env), else to `(t)' (fresh lexical env).
-    let lex = arg(&args, 1);
-    // GNU `Feval': nil LEXICAL means dynamic evaluation — the dynamic
-    // `lexical-binding' value is NOT consulted (verified on 31.1:
-    // `(eval '(let ((x 5)) (symbol-value 'x)))' returns 5 even with
-    // lexical-binding=t).  Non-nil non-cons LEXICAL uses a fresh
-    // lexical environment; a cons is an actual env.
-    let lexenv = if matches!(lex, Value::Cons(_)) {
-        parse_lexenv_spec(i, &lex)
-    } else if lex.truthy() {
-        crate::lisp::eval::lexenv_root()
-    } else {
-        None
-    };
-    i.explicit_eval_depth += 1;
-    // GNU `Feval' does NOT bind the `lexical-binding' variable (only
-    // `internal-interpreter-environment' is set): `(eval
-    // 'lexical-binding t)' reads the ordinary dynamic value
-    // (verified on 31.1 → nil).  The `lexical-binding' specbind GNU
-    // installs lives solely around eval-driven macroexpansion
-    // (`eval_macro_expand').
-    let saved = std::mem::replace(&mut i.lexenv, lexenv);
-    let r = i.eval(&args[0]);
-    i.lexenv = saved;
-    i.explicit_eval_depth -= 1;
-    r
-}
+fn f_eval(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // (eval FORM &optional LEXICAL) — GNU binds
+// `internal-interpreter-environment' to LEXICAL when nil (dynamic)
+// or a cons (an actual env), else to `(t)' (fresh lexical env).
+let lex = arg(&args, 1);
+// GNU `Feval': nil LEXICAL means dynamic evaluation — the dynamic
+// `lexical-binding' value is NOT consulted (verified on 31.1:
+// `(eval '(let ((x 5)) (symbol-value 'x)))' returns 5 even with
+// lexical-binding=t).  Non-nil non-cons LEXICAL uses a fresh
+// lexical environment; a cons is an actual env.
+let lexenv = if matches!(lex, Value::Cons(_)) {
+    parse_lexenv_spec(i, &lex)
+} else if lex.truthy() {
+    crate::lisp::eval::lexenv_root()
+} else {
+    None
+};
+i.explicit_eval_depth += 1;
+// GNU `Feval' does NOT bind the `lexical-binding' variable (only
+// `internal-interpreter-environment' is set): `(eval
+// 'lexical-binding t)' reads the ordinary dynamic value
+// (verified on 31.1 → nil).  The `lexical-binding' specbind GNU
+// installs lives solely around eval-driven macroexpansion
+// (`eval_macro_expand').
+let saved = std::mem::replace(&mut i.lexenv, lexenv);
+let r = i.eval(&args[0]);
+i.lexenv = saved;
+i.explicit_eval_depth -= 1;
+r }
 
-fn f_apply(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    if args.is_empty() {
-        let s = Value::Sym(i.intern("apply"));
-        return Err(i.wrong_number_of_args(&s, 0));
-    }
-    let fun = args[0].clone();
-    let mut argv: Vec<Value> = if args.len() > 1 {
-        args[1..args.len() - 1].to_vec()
-    } else {
-        Vec::new()
-    };
-    // Last arg must be a list.
-    if !matches!(args.last(), Some(Value::Nil)) {
-        argv.extend(want_list(i, args.last().unwrap())?);
-    }
-    i.apply(&fun, argv)
+fn f_apply(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { if args.is_empty() {
+    let s = Value::Sym(i.intern("apply"));
+    return Err(i.wrong_number_of_args(&s, 0));
 }
+let fun = args[0].clone();
+let mut argv: Vec<Value> = if args.len() > 1 {
+    args[1..args.len() - 1].to_vec()
+} else {
+    Vec::new()
+};
+// Last arg must be a list.
+if !matches!(args.last(), Some(Value::Nil)) {
+    argv.extend(want_list(i, args.last().unwrap())?);
+}
+i.apply(&fun, argv) }
 
-fn f_funcall(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    if args.is_empty() {
-        let s = Value::Sym(i.intern("funcall"));
-        return Err(i.wrong_number_of_args(&s, 0));
-    }
-    let fun = args[0].clone();
-    i.apply(&fun, args[1..].to_vec())
+fn f_funcall(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { if args.is_empty() {
+    let s = Value::Sym(i.intern("funcall"));
+    return Err(i.wrong_number_of_args(&s, 0));
 }
+let fun = args[0].clone();
+i.apply(&fun, args[1..].to_vec()) }
 
-fn f_funcall_interactively(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU Ffuncall_interactively counts as an interactive call for
-    // `called-interactively-p' (the evaluator sees a `funcall-interactively'
-    // stack frame).
-    i.interactive_call_depth += 1;
-    let r = f_funcall(i, args);
-    i.interactive_call_depth = i.interactive_call_depth.saturating_sub(1);
-    r
-}
+fn f_funcall_interactively(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU Ffuncall_interactively counts as an interactive call for
+// `called-interactively-p' (the evaluator sees a `funcall-interactively'
+// stack frame).
+i.interactive_call_depth += 1;
+let r = f_funcall(i, args);
+i.interactive_call_depth = i.interactive_call_depth.saturating_sub(1);
+r }
 
-fn f_function_raw(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    f_special_form_via_apply(i, Vec::new())
-}
+fn f_function_raw(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { f_special_form_via_apply(i, Vec::new().into()) }
 
 /// Special forms are not funcallable (GNU signals `invalid-function').
-fn f_special_form_via_apply(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Err(i.signal_data(sym::INVALID_FUNCTION, vec![Value::Nil]))
-}
+fn f_special_form_via_apply(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { Err(i.signal_data(sym::INVALID_FUNCTION, vec![Value::Nil])) }
 
-fn f_macroexpand(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU: (macroexpand FORM &optional ENVIRONMENT) consults only the
-    // explicit ENVIRONMENT alist; the dynamic variable
-    // `macroexpand-all-environment' is `macroexpand-all''s business.
-    let env = args.get(1).cloned().unwrap_or(Value::Nil);
-    i.macroexpand_env(&args[0], &env)
-}
+fn f_macroexpand(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU: (macroexpand FORM &optional ENVIRONMENT) consults only the
+// explicit ENVIRONMENT alist; the dynamic variable
+// `macroexpand-all-environment' is `macroexpand-all''s business.
+let env = args.get(1).cloned().unwrap_or(Value::Nil);
+i.macroexpand_env(&args[0], &env) }
 
-fn f_macroexpand_1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // single-step expansion
-    let form = &args[0];
-    match form {
-        Value::Cons(c) => {
-            let (car, cdr) = {
-                let b = c.borrow();
-                (b.car.clone(), b.cdr.clone())
-            };
-            // GNU `macroexpand-1' (eval.c): a `(lambda ...)' form in
-            // expansion position is a function expression, so its
-            // expansion is `(function (lambda ...))'.
-            if i.sym_is(&car, sym::LAMBDA) {
-                return Ok(Value::list(vec![Value::Sym(sym::FUNCTION), form.clone()]));
-            }
-            // GNU `macroexpand-1' consults ENVIRONMENT (its second
-            // argument) before the global definition; remacs reads it
-            // from the dynamically bound `macroexpand-all-environment'.
-            if args.len() > 1 {
-                let env = &args[1];
-                let mut tail = env.clone();
-                loop {
-                    match tail {
-                        Value::Cons(cc) => {
-                            let (a, d) = {
-                                let b = cc.borrow();
+fn f_macroexpand_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // single-step expansion
+let form = &args[0];
+match form {
+    Value::Cons(c) => {
+        let (car, cdr) = {
+            let b = c.borrow();
+            (b.car.clone(), b.cdr.clone())
+        };
+        // GNU `macroexpand-1' (eval.c): a `(lambda ...)' form in
+        // expansion position is a function expression, so its
+        // expansion is `(function (lambda ...))'.
+        if i.sym_is(&car, sym::LAMBDA) {
+            return Ok(Value::list(vec![Value::Sym(sym::FUNCTION), form.clone()]));
+        }
+        // GNU `macroexpand-1' consults ENVIRONMENT (its second
+        // argument) before the global definition; remacs reads it
+        // from the dynamically bound `macroexpand-all-environment'.
+        if args.len() > 1 {
+            let env = &args[1];
+            let mut tail = env.clone();
+            loop {
+                match tail {
+                    Value::Cons(cc) => {
+                        let (a, d) = {
+                            let b = cc.borrow();
+                            (b.car.clone(), b.cdr.clone())
+                        };
+                        if let Value::Cons(e) = &a {
+                            let (ek, ev) = {
+                                let b = e.borrow();
                                 (b.car.clone(), b.cdr.clone())
                             };
-                            if let Value::Cons(e) = &a {
-                                let (ek, ev) = {
-                                    let b = e.borrow();
-                                    (b.car.clone(), b.cdr.clone())
-                                };
-                                // Sympos env keys unwrap to their bare
-                                // symbol id (GNU's `assq' matches `eq').
-                                if let (Some(eid), Some(id)) = (i.sym_id(&ek), i.sym_id(&car)) {
-                                    if eid == id {
-                                        if ev.is_nil() {
-                                            return Ok(form.clone());
-                                        }
-                                        let argl = want_list(i, &cdr)?;
-                                        return i.apply(&ev, argl);
+                            // Sympos env keys unwrap to their bare
+                            // symbol id (GNU's `assq' matches `eq').
+                            if let (Some(eid), Some(id)) = (i.sym_id(&ek), i.sym_id(&car)) {
+                                if eid == id {
+                                    if ev.is_nil() {
+                                        return Ok(form.clone());
                                     }
+                                    let argl = want_list(i, &cdr)?;
+                                    return i.apply(&ev, argl);
                                 }
                             }
-                            tail = d;
                         }
-                        _ => break,
+                        tail = d;
                     }
+                    _ => break,
                 }
             }
-            if let Some(id) = i.sym_id(&car) {
-                // GNU macroexp.el: `autoload-do-load' resolves an
-                // autoload cell (macro-only); then aliases to macros
-                // re-expanda, and `(macro . FN)' cells call FN.
-                let def = i.symbol_function(id);
-                let def = autoload_do_load(i, def, true)?;
-                // (and (symbolp def) (macrop def)) → (cons def cdr):
-                // let the outer macroexpand re-enter on the alias.
-                if let Value::Sym(did) = def {
-                    if did != sym::UNBOUND {
-                        let f = i.symbol_function(did);
-                        let is_mac = match &f {
-                            Value::Lambda(l) => l.is_macro,
-                            Value::Cons(cc) => i.sym_is(&cc.borrow().car, sym::MACRO),
-                            _ => false,
-                        };
-                        if is_mac {
-                            return Ok(Value::cons(Value::Sym(did), cdr));
-                        }
-                    }
-                    return Ok(form.clone());
-                }
-                match &def {
-                    Value::Cons(cc) if i.sym_is(&cc.borrow().car, sym::MACRO) => {
-                        let fn_ = cc.borrow().cdr.clone();
-                        let argv = cdr.list_to_vec().unwrap_or_default();
-                        return i.apply(&fn_, argv);
-                    }
-                    Value::Lambda(l) if l.is_macro => {
-                        return i.macro_expand_call(&def, &cdr);
-                    }
-                    _ => return Ok(form.clone()),
-                }
-            }
-            Ok(form.clone())
         }
-        _ => Ok(form.clone()),
+        if let Some(id) = i.sym_id(&car) {
+            // GNU macroexp.el: `autoload-do-load' resolves an
+            // autoload cell (macro-only); then aliases to macros
+            // re-expanda, and `(macro . FN)' cells call FN.
+            let def = i.symbol_function(id);
+            let def = autoload_do_load(i, def, true)?;
+            // (and (symbolp def) (macrop def)) → (cons def cdr):
+            // let the outer macroexpand re-enter on the alias.
+            if let Value::Sym(did) = def {
+                if did != sym::UNBOUND {
+                    let f = i.symbol_function(did);
+                    let is_mac = match &f {
+                        Value::Lambda(l) => l.is_macro,
+                        Value::Cons(cc) => i.sym_is(&cc.borrow().car, sym::MACRO),
+                        _ => false,
+                    };
+                    if is_mac {
+                        return Ok(Value::cons(Value::Sym(did), cdr));
+                    }
+                }
+                return Ok(form.clone());
+            }
+            match &def {
+                Value::Cons(cc) if i.sym_is(&cc.borrow().car, sym::MACRO) => {
+                    let fn_ = cc.borrow().cdr.clone();
+                    let argv = cdr.list_to_vec().unwrap_or_default();
+                    return i.apply(&fn_, argv);
+                }
+                Value::Lambda(l) if l.is_macro => {
+                    return i.macro_expand_call(&def, &cdr);
+                }
+                _ => return Ok(form.clone()),
+            }
+        }
+        Ok(form.clone())
     }
-}
+    _ => Ok(form.clone()),
+} }
 
-fn f_macroexpand_all(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU: ENVIRONMENT is passed through the dynamic variable
-    // `macroexpand-all-environment'; macros such as `rx'/`rx-let'
-    // consult it for local definitions.
-    let env = args.get(1).cloned().unwrap_or(Value::Nil);
-    let id = i.intern("macroexpand-all-environment");
-    i.specbind(id, env)?;
-    let r = macroexpand_all(i, &args[0]);
-    i.unbind(1)?;
-    r
-}
+fn f_macroexpand_all(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU: ENVIRONMENT is passed through the dynamic variable
+// `macroexpand-all-environment'; macros such as `rx'/`rx-let'
+// consult it for local definitions.
+let env = args.get(1).cloned().unwrap_or(Value::Nil);
+let id = i.intern("macroexpand-all-environment");
+i.specbind(id, env)?;
+let r = macroexpand_all(i, &args[0]);
+i.unbind(1)?;
+r }
 
 /// Whether FORM is a `(declare ...)' spec — a data position consumed
 /// by `defun'/`lambda' declaration handling, not expanded.
@@ -1384,50 +1364,44 @@ fn macroexpand_all_inner(i: &mut Interp, form: &Value) -> EvalResult {
     }
 }
 
-fn f_signal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // Emacs: signaling a symbol with no `error-conditions' property
-    // signals `error' with ("Invalid error symbol" SYM) instead.
-    if let Some(sid) = i.sym_id(&args[0]) {
-        let ec = i.intern("error-conditions");
-        if i.get_prop(sid, ec).is_nil() {
-            return Err(Flow::Signal(
-                Value::Sym(sym::ERROR),
-                Value::list(vec![Value::string("Invalid error symbol"), args[0].clone()]),
-                false,
-            ));
-        }
+fn f_signal(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // Emacs: signaling a symbol with no `error-conditions' property
+// signals `error' with ("Invalid error symbol" SYM) instead.
+if let Some(sid) = i.sym_id(&args[0]) {
+    let ec = i.intern("error-conditions");
+    if i.get_prop(sid, ec).is_nil() {
+        return Err(Flow::Signal(
+            Value::Sym(sym::ERROR),
+            Value::list(vec![Value::string("Invalid error symbol"), args[0].clone()]),
+            false,
+        ));
     }
-    Err(Flow::Signal(
-        args[0].clone(),
-        arg(&args, 1),
-        false,
-    ))
 }
+Err(Flow::Signal(
+    args[0].clone(),
+    arg(&args, 1),
+    false,
+)) }
 
-fn f_error(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU `Ferror' stringp-checks the format (non-strings like
-    // `(error 'sym)' signal wrong-type-argument).
-    let fmt = want_string(i, &args[0])?;
-    let msg = apply_format_simple(i, &fmt, &args[1..]);
-    Err(Flow::Signal(
-        Value::Sym(sym::ERROR),
-        Value::list(vec![Value::string(msg)]),
-        false,
-    ))
-}
+fn f_error(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU `Ferror' stringp-checks the format (non-strings like
+// `(error 'sym)' signal wrong-type-argument).
+let fmt = want_string(i, &args[0])?;
+let msg = apply_format_simple(i, &fmt, &args[1..]);
+Err(Flow::Signal(
+    Value::Sym(sym::ERROR),
+    Value::list(vec![Value::string(msg)]),
+    false,
+)) }
 
-fn f_user_error(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let fmt = match &args[0] {
-        Value::Str(s) => s.borrow().clone(),
-        _ => "%s".into(),
-    };
-    let msg = apply_format_simple(i, &fmt, &args[1..]);
-    Err(Flow::Signal(
-        Value::Sym(sym::USER_ERROR),
-        Value::list(vec![Value::string(msg)]),
-        false,
-    ))
-}
+fn f_user_error(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let fmt = match &args[0] {
+    Value::Str(s) => s.borrow().clone(),
+    _ => "%s".into(),
+};
+let msg = apply_format_simple(i, &fmt, &args[1..]);
+Err(Flow::Signal(
+    Value::Sym(sym::USER_ERROR),
+    Value::list(vec![Value::string(msg)]),
+    false,
+)) }
 
 /// GNU's `format-message' quote convention honors the
 /// `text-quoting-style' variable: `grave' leaves `` `' `` and `'`
@@ -1537,45 +1511,37 @@ pub(crate) fn apply_format_simple(i: &Interp, fmt: &str, args: &[Value]) -> Stri
     out
 }
 
-fn f_throw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // Emacs: Fthrow scans the catch chain; with no matching catch it
-    // signals `no-catch' at the throw site (so condition-case can catch
-    // it, but an outer matching catch would have won instead).
-    if i.catch_tags
-        .iter()
-        .any(|t| crate::lisp::eq_values(t, &args[0]))
-    {
-        Err(Flow::Throw(args[0].clone(), args[1].clone()))
-    } else {
-        let nc = i.intern("no-catch");
-        Err(i.signal_data(nc, vec![args[0].clone(), args[1].clone()]))
-    }
-}
+fn f_throw(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // Emacs: Fthrow scans the catch chain; with no matching catch it
+// signals `no-catch' at the throw site (so condition-case can catch
+// it, but an outer matching catch would have won instead).
+if i.catch_tags
+    .iter()
+    .any(|t| crate::lisp::eq_values(t, &args[0]))
+{
+    Err(Flow::Throw(args[0].clone(), args[1].clone()))
+} else {
+    let nc = i.intern("no-catch");
+    Err(i.signal_data(nc, vec![args[0].clone(), args[1].clone()]))
+} }
 
-fn f_condition_case_raw(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    f_special_form_via_apply(i, Vec::new())
-}
+fn f_condition_case_raw(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { f_special_form_via_apply(i, Vec::new().into()) }
 
 /// `(ignore-errors BODY...)` and `(with-demoted-errors BODY...)`.
-fn f_ignore_errors_raw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let body = args.into_iter().next().unwrap_or(Value::Nil);
-    let err = Value::Sym(i.intern("error"));
-    ignore_body_forms(i, &err, &body)
-}
+fn f_ignore_errors_raw(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let body = args.iter().next().cloned().unwrap_or(Value::Nil);
+let err = Value::Sym(i.intern("error"));
+ignore_body_forms(i, &err, &body) }
 
 /// `(ignore-error CONDITION BODY...)` — GNU's two-arg form: the first
 /// raw arg element is the error-condition spec, the rest is body.
-fn f_ignore_error_raw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let all = args.into_iter().next().unwrap_or(Value::Nil);
-    let (cond, body) = match &all {
-        Value::Cons(c) => {
-            let b = c.borrow();
-            (b.car.clone(), b.cdr.clone())
-        }
-        _ => (Value::Nil, Value::Nil),
-    };
-    ignore_body_forms(i, &cond, &body)
-}
+fn f_ignore_error_raw(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let all = args.iter().next().cloned().unwrap_or(Value::Nil);
+let (cond, body) = match &all {
+    Value::Cons(c) => {
+        let b = c.borrow();
+        (b.car.clone(), b.cdr.clone())
+    }
+    _ => (Value::Nil, Value::Nil),
+};
+ignore_body_forms(i, &cond, &body) }
 
 fn ignore_body_forms(i: &mut Interp, cond: &Value, body: &Value) -> EvalResult {
     // Register the claimed condition so handler-bind handlers don't
@@ -1597,9 +1563,7 @@ fn ignore_body_forms(i: &mut Interp, cond: &Value, body: &Value) -> EvalResult {
     }
 }
 
-fn f_with_demoted_errors(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    f_ignore_errors_raw(i, args)
-}
+fn f_with_demoted_errors(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { f_ignore_errors_raw(i, args) }
 
 /// GNU `require'/`featurep' test: membership in the Lisp-visible
 /// `features' variable — which dynamic binds (e.g. Gnus's
@@ -1635,142 +1599,136 @@ fn loadhist_attach(i: &mut Interp, entry: Value) {
     i.obarray.symbol_mut(cll).value = Value::list(items);
 }
 
-fn f_featurep(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let id = want_sym(i, &args[0])?;
-    // GNU Ffeaturep: SUBFEATURE non-nil looks it up in the feature's
-    // `subfeatures' plist entry instead of the features list.
-    let sub = arg(&args, 1);
-    if !sub.is_nil() {
-        let prop = i.intern("subfeatures");
-        let subs = i.get_prop(id, prop);
-        let found = subs
-            .list_to_vec()
-            .map(|items| items.iter().any(|v| super::equal_values(i, v, &sub)))
-            .unwrap_or(false);
-        return Ok(Value::from_bool(found));
-    }
-    Ok(Value::from_bool(feature_present(i, id)))
+fn f_featurep(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let id = want_sym(i, &args[0])?;
+// GNU Ffeaturep: SUBFEATURE non-nil looks it up in the feature's
+// `subfeatures' plist entry instead of the features list.
+let sub = arg(&args, 1);
+if !sub.is_nil() {
+    let prop = i.intern("subfeatures");
+    let subs = i.get_prop(id, prop);
+    let found = subs
+        .list_to_vec()
+        .map(|items| items.iter().any(|v| super::equal_values(i, v, &sub)))
+        .unwrap_or(false);
+    return Ok(Value::from_bool(found));
 }
+Ok(Value::from_bool(feature_present(i, id))) }
 
-fn f_provide(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let id = want_sym(i, &args[0])?;
-    // GNU Fprovide: CHECK_LIST on SUBFEATURES, then record it on the
-    // feature's `subfeatures' plist.
-    let sub = arg(&args, 1);
-    if !sub.is_nil() && sub.list_to_vec().is_err() {
-        return Err(i.wrong_type_mut("listp", &sub));
-    }
-    if !sub.is_nil() {
-        let prop = i.intern("subfeatures");
-        i.put_prop(id, prop, sub);
-    }
-    // `remacs--provided': `features' is seeded at boot with GNU's dump
-    // state, which includes libraries remacs never actually loads
-    // (`cl-preloaded' & friends).  `eval-after-load' uses this mark to
-    // tell "feature really provided" (GNU evaluates immediately) from
-    // a seed-only entry (defer — the deferred forms may need machinery
-    // the never-loaded file would have defined).
-    let prov_mark = i.intern("remacs--provided");
-    i.put_prop(id, prov_mark, Value::t());
-    // Symbol-keyed `after-load-alist' entries run their delayed
-    // wrappers now (they defer to `after-load-functions' when a file
-    // load is in progress, per GNU's eval-after-load indirection).
-    let alist_sym = i.intern("after-load-alist");
-    let entries = i.symbol_value(alist_sym).list_to_vec().unwrap_or_default();
-    let feat_v = i.sym(id);
-    for entry in entries {
-        let mut parts = entry.list_to_vec().unwrap_or_default();
-        if parts.is_empty() {
-            continue;
-        }
-        let key = parts.remove(0);
-        if super::eq_values(&key, &feat_v) {
-            for f in parts {
-                i.apply(&f, vec![])?;
-            }
-        }
-    }
-    // GNU records `(provide . FEATURE)' on `current-load-list' at
-    // provide time (catches nested provides too).
-    let provide_id = i.intern("provide");
-    loadhist_attach(i, Value::cons(i.sym(provide_id), feat_v.clone()));
-    // `(push feature features)' on the current binding, deduped.
-    if !feature_present(i, id) {
-        let fid = i.intern("features");
-        let cur = i.symbol_value(fid);
-        let mut items = cur.list_to_vec().unwrap_or_default();
-        items.insert(0, feat_v.clone());
-        i.set_symbol(fid, Value::list(items))?;
-    }
-    if !i.features.contains(&id) {
-        i.features.insert(0, id);
-    }
-    Ok(args[0].clone())
+fn f_provide(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let id = want_sym(i, &args[0])?;
+// GNU Fprovide: CHECK_LIST on SUBFEATURES, then record it on the
+// feature's `subfeatures' plist.
+let sub = arg(&args, 1);
+if !sub.is_nil() && sub.list_to_vec().is_err() {
+    return Err(i.wrong_type_mut("listp", &sub));
 }
+if !sub.is_nil() {
+    let prop = i.intern("subfeatures");
+    i.put_prop(id, prop, sub);
+}
+// `remacs--provided': `features' is seeded at boot with GNU's dump
+// state, which includes libraries remacs never actually loads
+// (`cl-preloaded' & friends).  `eval-after-load' uses this mark to
+// tell "feature really provided" (GNU evaluates immediately) from
+// a seed-only entry (defer — the deferred forms may need machinery
+// the never-loaded file would have defined).
+let prov_mark = i.intern("remacs--provided");
+i.put_prop(id, prov_mark, Value::t());
+// Symbol-keyed `after-load-alist' entries run their delayed
+// wrappers now (they defer to `after-load-functions' when a file
+// load is in progress, per GNU's eval-after-load indirection).
+let alist_sym = i.intern("after-load-alist");
+let entries = i.symbol_value(alist_sym).list_to_vec().unwrap_or_default();
+let feat_v = i.sym(id);
+for entry in entries {
+    let mut parts = entry.list_to_vec().unwrap_or_default();
+    if parts.is_empty() {
+        continue;
+    }
+    let key = parts.remove(0);
+    if super::eq_values(&key, &feat_v) {
+        for f in parts {
+            i.apply(&f, vec![])?;
+        }
+    }
+}
+// GNU records `(provide . FEATURE)' on `current-load-list' at
+// provide time (catches nested provides too).
+let provide_id = i.intern("provide");
+loadhist_attach(i, Value::cons(i.sym(provide_id), feat_v.clone()));
+// `(push feature features)' on the current binding, deduped.
+if !feature_present(i, id) {
+    let fid = i.intern("features");
+    let cur = i.symbol_value(fid);
+    let mut items = cur.list_to_vec().unwrap_or_default();
+    items.insert(0, feat_v.clone());
+    i.set_symbol(fid, Value::list(items))?;
+}
+if !i.features.contains(&id) {
+    i.features.insert(0, id);
+}
+Ok(args[0].clone()) }
 
-fn f_require(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let id = want_sym(i, &args[0])?;
-    // GNU `require' is `(unless (memq feature features) (load ...))':
-    // the check consults the Lisp `features' variable, so a dynamic
-    // binding (the Gnus `dlet' cycle-breaker) counts as provided.
-    if feature_present(i, id) {
-        return Ok(args[0].clone());
-    }
-    // Try to load feature file from load-path.
-    let name = match args.get(1) {
-        Some(Value::Str(s)) => s.borrow().clone(),
-        _ => i.symbol_name(id),
-    };
-    let noerror = args.get(2).map(|v| v.truthy()).unwrap_or(false);
-    // GNU records `(require . FEATURE)' on `current-load-list' before
-    // the load runs.
-    let require_id = i.intern("require");
-    loadhist_attach(i, Value::cons(i.sym(require_id), i.sym(id)));
-    match crate::lisp::load::load_library(i, &name) {
-        Ok(crate::lisp::load::LoadOutcome::Loaded(found)) => {
-            // GNU's `require': after loading FILE, FEATURE must be
-            // provided — a file that loads without `(provide FEATURE)'
-            // signals `error' with the RESOLVED file name ("Loading
-            // file FILE failed to provide feature ‘FEATURE’"), and
-            // NOERROR does not suppress it.
-            if !feature_present(i, id) {
-                return Err(i.signal_data(
-                    sym::ERROR,
-                    vec![Value::string(format!(
-                        "Loading file {} failed to provide feature ‘{}’",
-                        found,
-                        i.symbol_name(id)
-                    ))],
-                ));
-            }
-            Ok(args[0].clone())
-        }
-        Ok(crate::lisp::load::LoadOutcome::Missing) if noerror => Ok(Value::Nil),
-        Ok(crate::lisp::load::LoadOutcome::Dir(_)) if noerror => Ok(Value::Nil),
-        Ok(crate::lisp::load::LoadOutcome::Missing) => {
-            let fm = i.intern("file-missing");
-            Err(i.signal_data(
-                fm,
-                vec![
-                    Value::string("Cannot open load file"),
-                    Value::string("No such file or directory"),
-                    Value::string(name),
-                ],
-            ))
-        }
-        Ok(crate::lisp::load::LoadOutcome::Dir(d)) => {
-            Err(i.signal_data(
-                crate::lisp::sym::FILE_ERROR,
-                vec![
-                    Value::string("Cannot open load file"),
-                    Value::string("Is a directory"),
-                    Value::string(d),
-                ],
-            ))
-        }
-        Err(e) => Err(e),
-    }
+fn f_require(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let id = want_sym(i, &args[0])?;
+// GNU `require' is `(unless (memq feature features) (load ...))':
+// the check consults the Lisp `features' variable, so a dynamic
+// binding (the Gnus `dlet' cycle-breaker) counts as provided.
+if feature_present(i, id) {
+    return Ok(args[0].clone());
 }
+// Try to load feature file from load-path.
+let name = match args.get(1) {
+    Some(Value::Str(s)) => s.borrow().clone(),
+    _ => i.symbol_name(id),
+};
+let noerror = args.get(2).map(|v| v.truthy()).unwrap_or(false);
+// GNU records `(require . FEATURE)' on `current-load-list' before
+// the load runs.
+let require_id = i.intern("require");
+loadhist_attach(i, Value::cons(i.sym(require_id), i.sym(id)));
+match crate::lisp::load::load_library(i, &name) {
+    Ok(crate::lisp::load::LoadOutcome::Loaded(found)) => {
+        // GNU's `require': after loading FILE, FEATURE must be
+        // provided — a file that loads without `(provide FEATURE)'
+        // signals `error' with the RESOLVED file name ("Loading
+        // file FILE failed to provide feature ‘FEATURE’"), and
+        // NOERROR does not suppress it.
+        if !feature_present(i, id) {
+            return Err(i.signal_data(
+                sym::ERROR,
+                vec![Value::string(format!(
+                    "Loading file {} failed to provide feature ‘{}’",
+                    found,
+                    i.symbol_name(id)
+                ))],
+            ));
+        }
+        Ok(args[0].clone())
+    }
+    Ok(crate::lisp::load::LoadOutcome::Missing) if noerror => Ok(Value::Nil),
+    Ok(crate::lisp::load::LoadOutcome::Dir(_)) if noerror => Ok(Value::Nil),
+    Ok(crate::lisp::load::LoadOutcome::Missing) => {
+        let fm = i.intern("file-missing");
+        Err(i.signal_data(
+            fm,
+            vec![
+                Value::string("Cannot open load file"),
+                Value::string("No such file or directory"),
+                Value::string(name),
+            ],
+        ))
+    }
+    Ok(crate::lisp::load::LoadOutcome::Dir(d)) => {
+        Err(i.signal_data(
+            crate::lisp::sym::FILE_ERROR,
+            vec![
+                Value::string("Cannot open load file"),
+                Value::string("Is a directory"),
+                Value::string(d),
+            ],
+        ))
+    }
+    Err(e) => Err(e),
+} }
 
 
 
@@ -1818,69 +1776,59 @@ fn want_hook_sym(i: &mut Interp, hook: &Value) -> Result<(), super::Flow> {
     }
 }
 
-fn f_run_hooks(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    for hook in &args {
-        want_hook_sym(i, hook)?;
-        let fns = hook_fns(i, hook);
-        for f in fns {
-            i.apply(&f, vec![])?;
-        }
-    }
-    Ok(Value::Nil)
-}
-
-fn f_run_hook_with_args(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let hook = args[0].clone();
-    want_hook_sym(i, &hook)?;
-    let fns = hook_fns(i, &hook);
+fn f_run_hooks(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { for hook in args.iter() {
+    want_hook_sym(i, hook)?;
+    let fns = hook_fns(i, hook);
     for f in fns {
-        i.apply(&f, args[1..].to_vec())?;
+        i.apply(&f, vec![])?;
     }
-    Ok(Value::Nil)
 }
+Ok(Value::Nil) }
 
-fn f_run_hook_until_fail(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let hook = args[0].clone();
-    want_hook_sym(i, &hook)?;
-    let fns = hook_fns(i, &hook);
-    for f in fns {
-        if i.apply(&f, args[1..].to_vec())?.is_nil() {
-            return Ok(Value::Nil);
-        }
-    }
-    Ok(Value::t())
+fn f_run_hook_with_args(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let hook = args[0].clone();
+want_hook_sym(i, &hook)?;
+let fns = hook_fns(i, &hook);
+for f in fns {
+    i.apply(&f, args[1..].to_vec())?;
 }
+Ok(Value::Nil) }
 
-fn f_run_hook_until_success(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let hook = args[0].clone();
-    want_hook_sym(i, &hook)?;
-    let fns = hook_fns(i, &hook);
-    for f in fns {
-        let r = i.apply(&f, args[1..].to_vec())?;
-        if r.truthy() {
-            return Ok(r);
-        }
+fn f_run_hook_until_fail(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let hook = args[0].clone();
+want_hook_sym(i, &hook)?;
+let fns = hook_fns(i, &hook);
+for f in fns {
+    if i.apply(&f, args[1..].to_vec())?.is_nil() {
+        return Ok(Value::Nil);
     }
-    Ok(Value::Nil)
 }
+Ok(Value::t()) }
 
-fn f_run_hook_wrapped(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (run-hook-wrapped HOOK WRAP-FUNCTION &rest ARGS)
-    // GNU eval.c: each hook function is called through WRAP-FUNCTION;
-    // if a call returns non-nil, hook processing aborts and returns it.
-    let hook = args[0].clone();
-    let wrap = args[1].clone();
-    let fns = hook_fns(i, &hook);
-    for f in fns {
-        let mut call_args = vec![f];
-        call_args.extend(args[2..].iter().cloned());
-        let res = i.apply(&wrap, call_args)?;
-        if res.truthy() {
-            return Ok(res);
-        }
+fn f_run_hook_until_success(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let hook = args[0].clone();
+want_hook_sym(i, &hook)?;
+let fns = hook_fns(i, &hook);
+for f in fns {
+    let r = i.apply(&f, args[1..].to_vec())?;
+    if r.truthy() {
+        return Ok(r);
     }
-    Ok(Value::Nil)
 }
+Ok(Value::Nil) }
+
+fn f_run_hook_wrapped(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // (run-hook-wrapped HOOK WRAP-FUNCTION &rest ARGS)
+// GNU eval.c: each hook function is called through WRAP-FUNCTION;
+// if a call returns non-nil, hook processing aborts and returns it.
+let hook = args[0].clone();
+let wrap = args[1].clone();
+let fns = hook_fns(i, &hook);
+for f in fns {
+    let mut call_args = vec![f];
+    call_args.extend(args[2..].iter().cloned());
+    let res = i.apply(&wrap, call_args)?;
+    if res.truthy() {
+        return Ok(res);
+    }
+}
+Ok(Value::Nil) }
 
 /// GNU `inhibit_modification_hooks': `inhibit-modification-hooks'
 /// (bound by `with-silent-modifications' and `combine-after-change-*'
@@ -2150,330 +2098,304 @@ fn hook_set_depth_alist(i: &mut Interp, hook_id: SymId, local: bool, alist: Vec<
     i.obarray.symbol_mut(dsym).value = v;
 }
 
-fn f_add_hook(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let hook_id = want_sym(i, &args[0])?;
-    let fun = args[1].clone();
-    let depth = match args.get(2) {
-        Some(Value::Int(n)) => *n,
-        Some(Value::Nil) | None => 0,
-        Some(_) => 90, // any other non-nil symbol/object counts as 90
-    };
-    let mut local = args.get(3).map(|v| v.truthy()).unwrap_or(false);
-    // (or (boundp hook) (set hook nil))
-    // (or (default-boundp hook) (set-default hook nil))
-    if !hook_boundp(i, hook_id) {
-        i.set_symbol(hook_id, Value::Nil)?;
+fn f_add_hook(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let hook_id = want_sym(i, &args[0])?;
+let fun = args[1].clone();
+let depth = match args.get(2) {
+    Some(Value::Int(n)) => *n,
+    Some(Value::Nil) | None => 0,
+    Some(_) => 90, // any other non-nil symbol/object counts as 90
+};
+let mut local = args.get(3).map(|v| v.truthy()).unwrap_or(false);
+// (or (boundp hook) (set hook nil))
+// (or (default-boundp hook) (set-default hook nil))
+if !hook_boundp(i, hook_id) {
+    i.set_symbol(hook_id, Value::Nil)?;
+}
+if !hook_default_boundp(i, hook_id) {
+    i.set_symbol_default(hook_id, Value::Nil)?;
+}
+if local {
+    // Unless the var is automatically buffer-local, the binding
+    // is created fresh holding (t) -- the global value is not
+    // copied into the local list.
+    if !hook_local_if_set(i, hook_id) {
+        hook_make_local(i, hook_id);
+        i.set_symbol(hook_id, Value::list(vec![Value::Sym(sym::T)]))?;
     }
-    if !hook_default_boundp(i, hook_id) {
-        i.set_symbol_default(hook_id, Value::Nil)?;
+} else if hook_force_local(i, hook_id) {
+    local = true;
+}
+let mut hook_value = if local {
+    i.symbol_value(hook_id)
+} else {
+    i.obarray.symbol(hook_id).value.clone()
+};
+// GNU: `(or (not (listp hook-value)) (functionp hook-value))' is
+// wrapped in a list -- a bare function value becomes one element.
+if matches!(hook_value, Value::Sym(s) if s == sym::UNBOUND) {
+    hook_value = Value::Nil;
+}
+if hook_value.list_to_vec().is_err() || i.function_p(&hook_value) {
+    hook_value = Value::list(vec![hook_value]);
+}
+let mut list = hook_value.list_to_vec().unwrap_or_default();
+// The membership test uses `equal' (GNU `member').
+if !list.iter().any(|f| super::equal_values(i, f, &fun)) {
+    let mut alist = hook_depth_alist(i, hook_id, local, depth != 0).unwrap_or_default();
+    if depth != 0 {
+        alist.retain(|(f, _)| !crate::lisp::eq_values(f, &fun));
+        alist.push((fun.clone(), depth));
+        hook_set_depth_alist(i, hook_id, local, alist.clone());
     }
-    if local {
-        // Unless the var is automatically buffer-local, the binding
-        // is created fresh holding (t) -- the global value is not
-        // copied into the local list.
-        if !hook_local_if_set(i, hook_id) {
-            hook_make_local(i, hook_id);
-            i.set_symbol(hook_id, Value::list(vec![Value::Sym(sym::T)]))?;
-        }
-    } else if hook_force_local(i, hook_id) {
-        local = true;
-    }
-    let mut hook_value = if local {
-        i.symbol_value(hook_id)
+    if depth > 0 {
+        list.push(fun.clone());
     } else {
-        i.obarray.symbol(hook_id).value.clone()
-    };
-    // GNU: `(or (not (listp hook-value)) (functionp hook-value))' is
-    // wrapped in a list -- a bare function value becomes one element.
-    if matches!(hook_value, Value::Sym(s) if s == sym::UNBOUND) {
-        hook_value = Value::Nil;
+        list.insert(0, fun.clone());
     }
-    if hook_value.list_to_vec().is_err() || i.function_p(&hook_value) {
-        hook_value = Value::list(vec![hook_value]);
-    }
-    let mut list = hook_value.list_to_vec().unwrap_or_default();
-    // The membership test uses `equal' (GNU `member').
-    if !list.iter().any(|f| super::equal_values(i, f, &fun)) {
-        let mut alist = hook_depth_alist(i, hook_id, local, depth != 0).unwrap_or_default();
-        if depth != 0 {
-            alist.retain(|(f, _)| !crate::lisp::eq_values(f, &fun));
-            alist.push((fun.clone(), depth));
-            hook_set_depth_alist(i, hook_id, local, alist.clone());
-        }
-        if depth > 0 {
-            list.push(fun.clone());
-        } else {
-            list.insert(0, fun.clone());
-        }
-        // When a depth alist exists, stable-sort by recorded depth.
-        let depth_alist = hook_depth_alist(i, hook_id, local, false).unwrap_or_default();
-        if !depth_alist.is_empty() {
-            let d_of = |f: &Value| -> i128 {
-                depth_alist
-                    .iter()
-                    .find(|(x, _)| crate::lisp::eq_values(x, f))
-                    .map(|(_, d)| *d)
-                    .unwrap_or(0)
-            };
-            // stable sort keeps original order for equal depths only
-            // when the new element appended (>0); for <=0 GNU's `sort'
-            // puts equal-depth items after the consed newcomer anyway,
-            // matching: copy before sort when depth<=0 (GNU does
-            // copy-sequence for <=0 and sorts the fresh append for >0;
-            // sort is stable in both cases).
-            list.sort_by_key(|f| d_of(f));
-        }
-    }
-    if local {
-        // permanent-local-hook marking for mode-survival.
-        if let Value::Sym(fs) = fun {
-            let plh_sym = i.intern("permanent-local-hook");
-            let pl_sym = i.intern("permanent-local");
-            if i.get_prop(fs, plh_sym).truthy() && !i.get_prop(hook_id, pl_sym).truthy() {
-                i.put_prop(hook_id, pl_sym, Value::Sym(plh_sym));
-            }
-        }
-        i.set_symbol(hook_id, Value::list(list.clone()))?;
-    } else {
-        i.set_symbol_default(hook_id, Value::list(list.clone()))?;
-    }
-    // GNU `add-hook' returns the resulting hook list.
-    Ok(Value::list(list))
-}
-
-fn f_remove_hook(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let hook_id = want_sym(i, &args[0])?;
-    let fun = args[1].clone();
-    let mut local = args.get(2).map(|v| v.truthy()).unwrap_or(false);
-    if !hook_boundp(i, hook_id) {
-        i.set_symbol(hook_id, Value::Nil)?;
-    }
-    if !hook_default_boundp(i, hook_id) {
-        i.set_symbol_default(hook_id, Value::Nil)?;
-    }
-    // Do nothing if LOCAL is t but this hook has no local binding.
-    if local && !hook_is_local(i, hook_id) {
-        return Ok(Value::Nil);
-    }
-    if hook_force_local(i, hook_id) {
-        local = true;
-    }
-    let hook_value = if local {
-        i.symbol_value(hook_id)
-    } else {
-        i.obarray.symbol(hook_id).value.clone()
-    };
-    let (list, removed) = match hook_value.list_to_vec() {
-        // A non-list value or a bare lambda form compares with `equal'.
-        Err(_) if super::equal_values(i, &hook_value, &fun) => {
-            (Vec::new(), Some(hook_value.clone()))
-        }
-        Err(_) => (Vec::new(), None),
-        Ok(items) => {
-            let is_lambda = matches!(items.first(), Some(Value::Sym(s)) if *s == sym::LAMBDA);
-            if is_lambda && super::equal_values(i, &hook_value, &fun) {
-                (Vec::new(), Some(hook_value.clone()))
-            } else {
-                // GNU: `(car (member ...))' locates with `equal';
-                // `remq' then removes that same object.
-                match items.iter().position(|f| super::equal_values(i, f, &fun)) {
-                    Some(p) => {
-                        let old = items[p].clone();
-                        let mut v = items;
-                        v.retain(|x| !crate::lisp::eq_values(x, &old));
-                        (v, Some(old))
-                    }
-                    None => (items, None),
-                }
-            }
-        }
-    };
-    if let Some(old) = &removed {
-        // Drop the removed function's depth record.
-        if let Some(mut alist) = hook_depth_alist(i, hook_id, local, false) {
-            let before = alist.len();
-            alist.retain(|(f, _)| !crate::lisp::eq_values(f, &old));
-            if alist.len() != before {
-                hook_set_depth_alist(i, hook_id, local, alist);
-            }
-        }
-    }
-    if !local {
-        i.set_symbol_default(hook_id, Value::list(list.clone()))?;
-    } else if list.len() == 1 && matches!(&list[0], Value::Sym(s) if *s == sym::T) {
-        // A local value of exactly (t) kills the local binding.
-        if let Some(b) = i.buffers.get(i.current_buffer) {
-            if let Ok(mut bb) = b.try_borrow_mut() {
-                bb.locals.remove(&hook_id);
-            }
-        }
-    } else {
-        i.set_symbol(hook_id, Value::list(list.clone()))?;
-    }
-    // GNU `remove-hook' returns the resulting hook list (or the
-    // untouched non-list value when nothing matched).
-    if removed.is_none() && hook_value.list_to_vec().is_err() {
-        return Ok(hook_value);
-    }
-    Ok(Value::list(list))
-}
-
-fn f_identity(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(args[0].clone())
-}
-fn f_ignore(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
-}
-fn f_always(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::t())
-}
-fn f_prog1_raw(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    f_special_form_via_apply(i, Vec::new())
-}
-fn f_or_raw(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    f_special_form_via_apply(i, Vec::new())
-}
-fn f_and_raw(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    f_special_form_via_apply(i, Vec::new())
-}
-fn f_values(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::list(args))
-}
-fn f_eval_expression(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU (simple.el): the value is consed onto `values'; INSERT-VALUE
-    // non-nil inserts the printed value into the buffer instead of
-    // echoing it.
-    let v = i.eval(&args[0])?;
-    let printed = i.print_to_string(&v);
-    if arg(&args, 1).truthy() {
-        let ins = Value::Sym(i.intern("insert"));
-        i.apply(&ins, vec![Value::string(printed)])?;
-    } else {
-        i.message(&printed);
-    }
-    let vals = i.intern("values");
-    let cur = i.symbol_value(vals);
-    let _ = i.set_symbol(vals, Value::cons(v.clone(), cur));
-    Ok(v)
-}
-fn f_load(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (load FILE &optional NOERROR NOMESSAGE NOSUFFIX MUST-SUFFIX)
-    let name = match &args[0] {
-        Value::Str(s) => s.borrow().clone(),
-        _ => return Err(i.wrong_type_mut("stringp", &args[0])),
-    };
-    let noerror = arg(&args, 1).truthy();
-    let nomessage = arg(&args, 2).truthy();
-    let nosuffix = arg(&args, 3).truthy();
-    let mustsuffix = arg(&args, 4).truthy();
-    let outcome = crate::lisp::load::load_library_opts_msg(
-        i,
-        &name,
-        nosuffix,
-        mustsuffix,
-        true,
-        nomessage,
-    )?;
-    match outcome {
-        crate::lisp::load::LoadOutcome::Loaded(_) => Ok(Value::t()),
-        crate::lisp::load::LoadOutcome::Missing | crate::lisp::load::LoadOutcome::Dir(_)
-            if noerror =>
-        {
-            Ok(Value::Nil)
-        }
-        crate::lisp::load::LoadOutcome::Missing => {
-            // GNU: file-missing ("Cannot open load file" REASON NAME).
-            let fm = i.intern("file-missing");
-            Err(i.signal_data(
-                fm,
-                vec![
-                    Value::string("Cannot open load file"),
-                    Value::string("No such file or directory"),
-                    args[0].clone(),
-                ],
-            ))
-        }
-        crate::lisp::load::LoadOutcome::Dir(d) => Err(i.signal_data(
-            crate::lisp::sym::FILE_ERROR,
-            vec![
-                Value::string("Cannot open load file"),
-                Value::string("Is a directory"),
-                Value::string(d),
-            ],
-        )),
-    }
-}
-fn f_load_file(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU's `load-file': (load (expand-file-name FILE) nil nil t) —
-    // NOSUFFIX, so the literal name is opened (or fails).
-    let name = match &args[0] {
-        Value::Str(s) => s.borrow().clone(),
-        _ => return Err(i.wrong_type_mut("stringp", &args[0])),
-    };
-    let efn = i.intern("expand-file-name");
-    let expanded = i.apply(&Value::Sym(efn), vec![args[0].clone()])?;
-    let name = match &expanded {
-        Value::Str(s) => s.borrow().clone(),
-        _ => name,
-    };
-    let outcome = crate::lisp::load::load_library_opts(i, &name, true, false, true)?;
-    match outcome {
-        crate::lisp::load::LoadOutcome::Loaded(_) => Ok(Value::t()),
-        crate::lisp::load::LoadOutcome::Dir(d) => Err(i.signal_data(
-            crate::lisp::sym::FILE_ERROR,
-            vec![
-                Value::string("Cannot open load file"),
-                Value::string("Is a directory"),
-                Value::string(d),
-            ],
-        )),
-        crate::lisp::load::LoadOutcome::Missing => {
-            let fm = i.intern("file-missing");
-            Err(i.signal_data(
-                fm,
-                vec![
-                    Value::string("Cannot open load file"),
-                    Value::string("No such file or directory"),
-                    Value::string(name),
-                ],
-            ))
-        }
-    }
-}
-fn f_locate_library(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (locate-library LIBRARY &optional NOSUFFIX PATH INTERACTIVE-CALL)
-    // GNU subr.el: `locate-file' over PATH (default `load-path') with
-    // suffixes (get-load-suffixes) ∪ load-file-rep-suffixes when
-    // NOSUFFIX is nil, else just load-file-rep-suffixes.
-    let name = match &args[0] {
-        Value::Str(s) => s.borrow().clone(),
-        _ => return Err(i.wrong_type_mut("stringp", &args[0])),
-    };
-    let nosuffix = arg(&args, 1).truthy();
-    let path = arg(&args, 2);
-    let interactive = arg(&args, 3).truthy();
-    let file = if !path.truthy() {
-        crate::lisp::load::locate_opts(i, &name, nosuffix, false)
-    } else {
-        locate_library_in(i, &name, nosuffix, &path)?
-    };
-    if interactive {
-        // GNU reports through `message' for M-x calls.
-        let msg = match &file {
-            Some(f) => format!("Library is file {f}"),
-            None => format!("No library {name} in search path"),
+    // When a depth alist exists, stable-sort by recorded depth.
+    let depth_alist = hook_depth_alist(i, hook_id, local, false).unwrap_or_default();
+    if !depth_alist.is_empty() {
+        let d_of = |f: &Value| -> i128 {
+            depth_alist
+                .iter()
+                .find(|(x, _)| crate::lisp::eq_values(x, f))
+                .map(|(_, d)| *d)
+                .unwrap_or(0)
         };
-        let msg_sym = i.intern("message");
-        let _ = i.apply(
-            &Value::Sym(msg_sym),
-            vec![Value::string("%s"), Value::string(msg)],
-        );
+        // stable sort keeps original order for equal depths only
+        // when the new element appended (>0); for <=0 GNU's `sort'
+        // puts equal-depth items after the consed newcomer anyway,
+        // matching: copy before sort when depth<=0 (GNU does
+        // copy-sequence for <=0 and sorts the fresh append for >0;
+        // sort is stable in both cases).
+        list.sort_by_key(|f| d_of(f));
     }
-    Ok(match file {
-        Some(f) => Value::string(f),
-        None => Value::Nil,
-    })
 }
+if local {
+    // permanent-local-hook marking for mode-survival.
+    if let Value::Sym(fs) = fun {
+        let plh_sym = i.intern("permanent-local-hook");
+        let pl_sym = i.intern("permanent-local");
+        if i.get_prop(fs, plh_sym).truthy() && !i.get_prop(hook_id, pl_sym).truthy() {
+            i.put_prop(hook_id, pl_sym, Value::Sym(plh_sym));
+        }
+    }
+    i.set_symbol(hook_id, Value::list(list.clone()))?;
+} else {
+    i.set_symbol_default(hook_id, Value::list(list.clone()))?;
+}
+// GNU `add-hook' returns the resulting hook list.
+Ok(Value::list(list)) }
+
+fn f_remove_hook(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let hook_id = want_sym(i, &args[0])?;
+let fun = args[1].clone();
+let mut local = args.get(2).map(|v| v.truthy()).unwrap_or(false);
+if !hook_boundp(i, hook_id) {
+    i.set_symbol(hook_id, Value::Nil)?;
+}
+if !hook_default_boundp(i, hook_id) {
+    i.set_symbol_default(hook_id, Value::Nil)?;
+}
+// Do nothing if LOCAL is t but this hook has no local binding.
+if local && !hook_is_local(i, hook_id) {
+    return Ok(Value::Nil);
+}
+if hook_force_local(i, hook_id) {
+    local = true;
+}
+let hook_value = if local {
+    i.symbol_value(hook_id)
+} else {
+    i.obarray.symbol(hook_id).value.clone()
+};
+let (list, removed) = match hook_value.list_to_vec() {
+    // A non-list value or a bare lambda form compares with `equal'.
+    Err(_) if super::equal_values(i, &hook_value, &fun) => {
+        (Vec::new(), Some(hook_value.clone()))
+    }
+    Err(_) => (Vec::new(), None),
+    Ok(items) => {
+        let is_lambda = matches!(items.first(), Some(Value::Sym(s)) if *s == sym::LAMBDA);
+        if is_lambda && super::equal_values(i, &hook_value, &fun) {
+            (Vec::new(), Some(hook_value.clone()))
+        } else {
+            // GNU: `(car (member ...))' locates with `equal';
+            // `remq' then removes that same object.
+            match items.iter().position(|f| super::equal_values(i, f, &fun)) {
+                Some(p) => {
+                    let old = items[p].clone();
+                    let mut v = items;
+                    v.retain(|x| !crate::lisp::eq_values(x, &old));
+                    (v, Some(old))
+                }
+                None => (items, None),
+            }
+        }
+    }
+};
+if let Some(old) = &removed {
+    // Drop the removed function's depth record.
+    if let Some(mut alist) = hook_depth_alist(i, hook_id, local, false) {
+        let before = alist.len();
+        alist.retain(|(f, _)| !crate::lisp::eq_values(f, &old));
+        if alist.len() != before {
+            hook_set_depth_alist(i, hook_id, local, alist);
+        }
+    }
+}
+if !local {
+    i.set_symbol_default(hook_id, Value::list(list.clone()))?;
+} else if list.len() == 1 && matches!(&list[0], Value::Sym(s) if *s == sym::T) {
+    // A local value of exactly (t) kills the local binding.
+    if let Some(b) = i.buffers.get(i.current_buffer) {
+        if let Ok(mut bb) = b.try_borrow_mut() {
+            bb.locals.remove(&hook_id);
+        }
+    }
+} else {
+    i.set_symbol(hook_id, Value::list(list.clone()))?;
+}
+// GNU `remove-hook' returns the resulting hook list (or the
+// untouched non-list value when nothing matched).
+if removed.is_none() && hook_value.list_to_vec().is_err() {
+    return Ok(hook_value);
+}
+Ok(Value::list(list)) }
+
+fn f_identity(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(args[0].clone()) }
+fn f_ignore(_i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { Ok(Value::Nil) }
+fn f_always(_i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { Ok(Value::t()) }
+fn f_prog1_raw(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { f_special_form_via_apply(i, Vec::new().into()) }
+fn f_or_raw(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { f_special_form_via_apply(i, Vec::new().into()) }
+fn f_and_raw(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { f_special_form_via_apply(i, Vec::new().into()) }
+fn f_values(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::list(args.as_slice().to_vec())) }
+fn f_eval_expression(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU (simple.el): the value is consed onto `values'; INSERT-VALUE
+// non-nil inserts the printed value into the buffer instead of
+// echoing it.
+let v = i.eval(&args[0])?;
+let printed = i.print_to_string(&v);
+if arg(&args, 1).truthy() {
+    let ins = Value::Sym(i.intern("insert"));
+    i.apply(&ins, vec![Value::string(printed)])?;
+} else {
+    i.message(&printed);
+}
+let vals = i.intern("values");
+let cur = i.symbol_value(vals);
+let _ = i.set_symbol(vals, Value::cons(v.clone(), cur));
+Ok(v) }
+fn f_load(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // (load FILE &optional NOERROR NOMESSAGE NOSUFFIX MUST-SUFFIX)
+let name = match &args[0] {
+    Value::Str(s) => s.borrow().clone(),
+    _ => return Err(i.wrong_type_mut("stringp", &args[0])),
+};
+let noerror = arg(&args, 1).truthy();
+let nomessage = arg(&args, 2).truthy();
+let nosuffix = arg(&args, 3).truthy();
+let mustsuffix = arg(&args, 4).truthy();
+let outcome = crate::lisp::load::load_library_opts_msg(
+    i,
+    &name,
+    nosuffix,
+    mustsuffix,
+    true,
+    nomessage,
+)?;
+match outcome {
+    crate::lisp::load::LoadOutcome::Loaded(_) => Ok(Value::t()),
+    crate::lisp::load::LoadOutcome::Missing | crate::lisp::load::LoadOutcome::Dir(_)
+        if noerror =>
+    {
+        Ok(Value::Nil)
+    }
+    crate::lisp::load::LoadOutcome::Missing => {
+        // GNU: file-missing ("Cannot open load file" REASON NAME).
+        let fm = i.intern("file-missing");
+        Err(i.signal_data(
+            fm,
+            vec![
+                Value::string("Cannot open load file"),
+                Value::string("No such file or directory"),
+                args[0].clone(),
+            ],
+        ))
+    }
+    crate::lisp::load::LoadOutcome::Dir(d) => Err(i.signal_data(
+        crate::lisp::sym::FILE_ERROR,
+        vec![
+            Value::string("Cannot open load file"),
+            Value::string("Is a directory"),
+            Value::string(d),
+        ],
+    )),
+} }
+fn f_load_file(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU's `load-file': (load (expand-file-name FILE) nil nil t) —
+// NOSUFFIX, so the literal name is opened (or fails).
+let name = match &args[0] {
+    Value::Str(s) => s.borrow().clone(),
+    _ => return Err(i.wrong_type_mut("stringp", &args[0])),
+};
+let efn = i.intern("expand-file-name");
+let expanded = i.apply(&Value::Sym(efn), vec![args[0].clone()])?;
+let name = match &expanded {
+    Value::Str(s) => s.borrow().clone(),
+    _ => name,
+};
+let outcome = crate::lisp::load::load_library_opts(i, &name, true, false, true)?;
+match outcome {
+    crate::lisp::load::LoadOutcome::Loaded(_) => Ok(Value::t()),
+    crate::lisp::load::LoadOutcome::Dir(d) => Err(i.signal_data(
+        crate::lisp::sym::FILE_ERROR,
+        vec![
+            Value::string("Cannot open load file"),
+            Value::string("Is a directory"),
+            Value::string(d),
+        ],
+    )),
+    crate::lisp::load::LoadOutcome::Missing => {
+        let fm = i.intern("file-missing");
+        Err(i.signal_data(
+            fm,
+            vec![
+                Value::string("Cannot open load file"),
+                Value::string("No such file or directory"),
+                Value::string(name),
+            ],
+        ))
+    }
+} }
+fn f_locate_library(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // (locate-library LIBRARY &optional NOSUFFIX PATH INTERACTIVE-CALL)
+// GNU subr.el: `locate-file' over PATH (default `load-path') with
+// suffixes (get-load-suffixes) ∪ load-file-rep-suffixes when
+// NOSUFFIX is nil, else just load-file-rep-suffixes.
+let name = match &args[0] {
+    Value::Str(s) => s.borrow().clone(),
+    _ => return Err(i.wrong_type_mut("stringp", &args[0])),
+};
+let nosuffix = arg(&args, 1).truthy();
+let path = arg(&args, 2);
+let interactive = arg(&args, 3).truthy();
+let file = if !path.truthy() {
+    crate::lisp::load::locate_opts(i, &name, nosuffix, false)
+} else {
+    locate_library_in(i, &name, nosuffix, &path)?
+};
+if interactive {
+    // GNU reports through `message' for M-x calls.
+    let msg = match &file {
+        Some(f) => format!("Library is file {f}"),
+        None => format!("No library {name} in search path"),
+    };
+    let msg_sym = i.intern("message");
+    let _ = i.apply(
+        &Value::Sym(msg_sym),
+        vec![Value::string("%s"), Value::string(msg)],
+    );
+}
+Ok(match file {
+    Some(f) => Value::string(f),
+    None => Value::Nil,
+}) }
 
 /// `locate-library''s PATH-given search: scan DIRS only (no bundled
 /// `builtin_dirs` fallback — an explicit PATH is authoritative, so a
@@ -2550,48 +2472,55 @@ fn locate_library_suffixes(i: &mut Interp, nosuffix: bool) -> Vec<String> {
     }
     sufs
 }
-fn f_autoload(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (autoload FUNCTION FILE &optional DOCSTRING INTERACTIVE TYPE)
-    // Register an autoload stub: on first call, load FILE then call.
-    let fid = want_sym(i, &args[0])?;
-    let file = args[1].clone();
-    // GNU `Fautoload' checks FILE's type before the fbound early-out.
-    if !matches!(file, Value::Str(_)) {
-        return Err(i.wrong_type_mut("stringp", &file));
-    }
-    if i.fbound_p(fid) {
-        // Already defined: GNU's `autoload' is a no-op returning nil.
-        return Ok(Value::Nil);
-    }
-    // GNU's autoload cell is always (autoload FILE DOC INTERACTIVE TYPE)
-    // — absent optional fields are stored as nil.
-    let auto_id = i.intern("autoload");
-    let mut cell = vec![Value::Sym(auto_id), file];
-    for k in 2..5 {
-        cell.push(args.get(k).cloned().unwrap_or(Value::Nil));
-    }
-    i.fset(fid, Value::list(cell));
-    // GNU's `autoload' returns FUNCTION.
-    Ok(args[0].clone())
+fn f_autoload(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // (autoload FUNCTION FILE &optional DOCSTRING INTERACTIVE TYPE)
+// Register an autoload stub: on first call, load FILE then call.
+let fid = want_sym(i, &args[0])?;
+let file = args[1].clone();
+// GNU `Fautoload' checks FILE's type before the fbound early-out.
+if !matches!(file, Value::Str(_)) {
+    return Err(i.wrong_type_mut("stringp", &file));
 }
-fn f_autoloadp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let auto_id = i.intern("autoload");
-    match &args[0] {
-        Value::Cons(c) => {
-            let b = c.borrow();
-            Ok(Value::from_bool(i.sym_is(&b.car, auto_id)))
-        }
-        _ => Ok(Value::Nil),
+if i.fbound_p(fid) {
+    // Already defined: GNU's `autoload' is a no-op returning nil.
+    return Ok(Value::Nil);
+}
+// GNU's autoload cell is always (autoload FILE DOC INTERACTIVE TYPE)
+// — absent optional fields are stored as nil.
+let auto_id = i.intern("autoload");
+let mut cell = vec![Value::Sym(auto_id), file];
+for k in 2..5 {
+    cell.push(args.get(k).cloned().unwrap_or(Value::Nil));
+}
+i.fset(fid, Value::list(cell));
+// GNU's `autoload' returns FUNCTION.
+Ok(args[0].clone()) }
+fn f_autoloadp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let auto_id = i.intern("autoload");
+let macro_id = i.intern("macro");
+// Macro autoload cells are (macro . (autoload ...)): GNU's
+// Fautoloadp unwraps the `macro' cons before the car check.
+let mut v = &args[0];
+let cdr;
+if let Value::Cons(c) = v {
+    let b = c.borrow();
+    if i.sym_is(&b.car, macro_id) {
+        cdr = b.cdr.clone();
+        drop(b);
+        v = &cdr;
     }
 }
+match v {
+    Value::Cons(c) => {
+        let b = c.borrow();
+        Ok(Value::from_bool(i.sym_is(&b.car, auto_id)))
+    }
+    _ => Ok(Value::Nil),
+} }
 
-fn f_autoload_do_load(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let fundef = args[0].clone();
-    // GNU: (autoload-do-load FUNDEF &optional FUNNAME MACRO-ONLY) —
-    // MACRO-ONLY is the THIRD argument.
-    let macro_only = args.get(2).map(|v| v.truthy()).unwrap_or(false);
-    autoload_do_load(i, fundef, macro_only)
-}
+fn f_autoload_do_load(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let fundef = args[0].clone();
+// GNU: (autoload-do-load FUNDEF &optional FUNNAME MACRO-ONLY) —
+// MACRO-ONLY is the THIRD argument.
+let macro_only = args.get(2).map(|v| v.truthy()).unwrap_or(false);
+autoload_do_load(i, fundef, macro_only) }
 
 /// `autoload-do-load` FUNDEF MACRO-ONLY — load the file for an autoload
 /// cell and return the resulting function definition. Shared with the
@@ -2633,7 +2562,7 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
                 .into_iter()
                 .find(|id| super::equal_values(i, &i.symbol_function(*id), &fundef))
         });
-    if std::env::var_os("REMACS_TRACE_AUTOLOAD").is_some() {
+    if i.dbg_flags & 0x800 != 0 {
         eprintln!(
             "[autoload {} -> {}]{}",
             owner.map(|id| i.symbol_name(id)).unwrap_or("?".into()),
@@ -2672,13 +2601,16 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
         let hidden = i.get_prop(id, pk);
         let has_hidden =
             !hidden.is_nil() && !matches!(hidden, Value::Sym(s) if s == crate::lisp::sym::UNBOUND);
-        if (macro_only || i.macroexp_call_depth > 0 || (loading_same && is_macro_autoload))
-            && has_hidden
-        {
+        // Only the SELF-autoload case (loading the same file) may
+        // resolve through the stash: for a foreign target GNU really
+        // loads the file, and skipping that load leaves the file's
+        // non-function state (e.g. pcase.el's `pcase--memoize'
+        // defconst) unbound while its macros still work.
+        if (loading_same && is_macro_autoload) && has_hidden {
             return Ok(hidden);
         }
         if loading_same {
-            if std::env::var_os("REMACS_TRACE_ERR").is_some() {
+            if i.dbg_flags & 0x1000 != 0 {
                 eprintln!(
                     "=== recursive autoload of {} for {}; last 30 frames ===",
                     name,
@@ -2688,7 +2620,7 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
                     eprintln!(
                         "  {} {}",
                         i.princ_to_string(f).chars().take(80).collect::<String>(),
-                        i.princ_to_string(&Value::list(a.clone()))
+                        i.princ_to_string(&Value::list(a.as_slice().to_vec()))
                             .chars()
                             .take(120)
                             .collect::<String>()
@@ -2792,156 +2724,126 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
     }
 }
 
-fn f_handler_bind_1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (handler-bind-1 BODY-FN CONDS HANDLER CONDS HANDLER ...) — bind
-    // dynamic signal handlers while running the 0-argument BODY-FN.
-    let body = args[0].clone();
-    let base = i.handler_bindings.len();
-    // Pairs are consulted innermost-first (reverse stack order), so
-    // push them in reverse to consult them in argument order, with all
-    // of this call's bindings inner to any outer `handler-bind-1'.
-    let mut k = if args.len() % 2 == 1 {
-        args.len() - 1
-    } else {
-        args.len() - 2
-    };
-    while k >= 2 {
-        i.handler_bindings
-            .push((args[k - 1].clone(), args[k].clone()));
-        k -= 2;
-    }
-    let r = i.apply(&body, vec![]);
-    i.handler_bindings.truncate(base);
-    r
+fn f_handler_bind_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // (handler-bind-1 BODY-FN CONDS HANDLER CONDS HANDLER ...) — bind
+// dynamic signal handlers while running the 0-argument BODY-FN.
+let body = args[0].clone();
+let base = i.handler_bindings.len();
+// Pairs are consulted innermost-first (reverse stack order), so
+// push them in reverse to consult them in argument order, with all
+// of this call's bindings inner to any outer `handler-bind-1'.
+let mut k = if args.len() % 2 == 1 {
+    args.len() - 1
+} else {
+    args.len() - 2
+};
+while k >= 2 {
+    i.handler_bindings
+        .push((args[k - 1].clone(), args[k].clone()));
+    k -= 2;
 }
+let r = i.apply(&body, vec![]);
+i.handler_bindings.truncate(base);
+r }
 
-fn f_access_file(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (access-file FILENAME ERROR-FORMAT) — signal `file-missing' with
-    // (ERROR-FORMAT ERRNO-STRING FILENAME) when FILENAME can't be read.
-    let name = match &args[0] {
-        Value::Str(s) => s.borrow().clone(),
-        other => return Err(i.wrong_type_mut("stringp", other)),
-    };
-    let expanded = crate::editor::expand_file_name_str(i, &name);
-    match std::fs::File::open(&expanded) {
-        Ok(_) => Ok(Value::Nil),
-        Err(e) => {
-            let estr = e.to_string();
-            let estr = estr.split(" (os error").next().unwrap_or(&estr).to_string();
-            let fmt = args.get(1).cloned().unwrap_or(Value::Nil);
-            Err(i.signal_data(
-                sym::FILE_MISSING,
-                vec![fmt, Value::string(estr), args[0].clone()],
-            ))
-        }
+fn f_access_file(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // (access-file FILENAME ERROR-FORMAT) — signal `file-missing' with
+// (ERROR-FORMAT ERRNO-STRING FILENAME) when FILENAME can't be read.
+let name = match &args[0] {
+    Value::Str(s) => s.borrow().clone(),
+    other => return Err(i.wrong_type_mut("stringp", other)),
+};
+let expanded = crate::editor::expand_file_name_str(i, &name);
+match std::fs::File::open(&expanded) {
+    Ok(_) => Ok(Value::Nil),
+    Err(e) => {
+        let estr = e.to_string();
+        let estr = estr.split(" (os error").next().unwrap_or(&estr).to_string();
+        let fmt = args.get(1).cloned().unwrap_or(Value::Nil);
+        Err(i.signal_data(
+            sym::FILE_MISSING,
+            vec![fmt, Value::string(estr), args[0].clone()],
+        ))
     }
-}
+} }
 
-fn f_current_message(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    if i.echo_message.is_empty() {
-        Ok(Value::Nil)
-    } else {
-        Ok(Value::string(i.echo_message.clone()))
-    }
-}
-fn f_eval_buffer(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (eval-buffer &optional BUFFER ...) — eval buffer text.
-    let buf_id = match args.get(0) {
-        Some(v) if !v.is_nil() => i.buffer_id_of(v).unwrap_or(i.current_buffer),
-        _ => i.current_buffer,
-    };
-    let text = i
-        .buffers
-        .get(buf_id)
-        .map(|b| b.borrow().text.text())
-        .unwrap_or_default();
-    i.eval_str_buf(&text)
-}
-fn f_eval_region(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (eval-region START END) — eval region of current buffer.
-    let (s, e) = match (args.get(0), args.get(1)) {
-        (Some(Value::Int(a)), Some(Value::Int(b))) => (*a, *b),
-        _ => return Err(i.wrong_type_mut("integerp", &args[0])),
-    };
-    let len = i
-        .buffers
-        .get(i.current_buffer)
-        .map(|b| b.borrow().text.len() as i128 + 1)
-        .unwrap_or(1);
-    if s < 1 || e < 1 || s > len || e > len {
-        let sym = i.intern("args-out-of-range");
-        return Err(i.signal_data(sym, vec![Value::Int(s), Value::Int(e)]));
-    }
-    let text = i
-        .buffers
-        .get(i.current_buffer)
-        .map(|b| {
-            let bb = b.borrow();
-            bb.text.substring((s - 1) as usize, (e - 1) as usize)
-        })
-        .unwrap_or_default();
-    i.eval_str_buf(&text)
-}
-fn f_command_execute(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    i.command_execute(&args[0])
-}
-fn f_called_interactively_p(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    // True while a `call-interactively'/command-loop call is on the
-    // stack (the KIND argument selects among frames; the depth flag
-    // collapses them like a batch GNU where only `any' matters).
-    Ok(Value::from_bool(i.interactive_call_depth > 0))
-}
-fn f_funcall_with_delayed_message(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // ARGS = (TIMEOUT MESSAGE FUNCTION): GNU runs FUNCTION in place and
-    // flashes MESSAGE via an idle timer; here just call FUNCTION.
-    i.apply(&args[2], vec![])
-}
-fn f_declare_function(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    let _ = i;
+fn f_current_message(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { if i.echo_message.is_empty() {
     Ok(Value::Nil)
+} else {
+    Ok(Value::string(i.echo_message.clone()))
+} }
+fn f_eval_buffer(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // (eval-buffer &optional BUFFER ...) — eval buffer text.
+let buf_id = match args.get(0) {
+    Some(v) if !v.is_nil() => i.buffer_id_of(v).unwrap_or(i.current_buffer),
+    _ => i.current_buffer,
+};
+let text = i
+    .buffers
+    .get(buf_id)
+    .map(|b| b.borrow().text.text())
+    .unwrap_or_default();
+i.eval_str_buf(&text) }
+fn f_eval_region(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // (eval-region START END) — eval region of current buffer.
+let (s, e) = match (args.get(0), args.get(1)) {
+    (Some(Value::Int(a)), Some(Value::Int(b))) => (*a, *b),
+    _ => return Err(i.wrong_type_mut("integerp", &args[0])),
+};
+let len = i
+    .buffers
+    .get(i.current_buffer)
+    .map(|b| b.borrow().text.len() as i128 + 1)
+    .unwrap_or(1);
+if s < 1 || e < 1 || s > len || e > len {
+    let sym = i.intern("args-out-of-range");
+    return Err(i.signal_data(sym, vec![Value::Int(s), Value::Int(e)]));
 }
-fn f_declare(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    if std::env::var_os("REMACS_TRACE_DECLARE").is_some() {
-        eprintln!("[declare-call] args={:?}", _args.first());
-    }
-    let _ = i;
-    Ok(Value::Nil)
+let text = i
+    .buffers
+    .get(i.current_buffer)
+    .map(|b| {
+        let bb = b.borrow();
+        bb.text.substring((s - 1) as usize, (e - 1) as usize)
+    })
+    .unwrap_or_default();
+i.eval_str_buf(&text) }
+fn f_command_execute(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { i.command_execute(&args[0]) }
+fn f_called_interactively_p(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { // True while a `call-interactively'/command-loop call is on the
+// stack (the KIND argument selects among frames; the depth flag
+// collapses them like a batch GNU where only `any' matters).
+Ok(Value::from_bool(i.interactive_call_depth > 0)) }
+fn f_funcall_with_delayed_message(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // ARGS = (TIMEOUT MESSAGE FUNCTION): GNU runs FUNCTION in place and
+// flashes MESSAGE via an idle timer; here just call FUNCTION.
+i.apply(&args[2], vec![]) }
+fn f_declare_function(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { let _ = i;
+Ok(Value::Nil) }
+fn f_declare(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { if i.dbg_flags & 0x80000 != 0 {
+    eprintln!("[declare-call] args={:?}", _args.first());
 }
-fn f_eval_and_compile(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let body = args.into_iter().next().unwrap_or(Value::Nil);
-    i.eval_progn(&body)
+let _ = i;
+Ok(Value::Nil) }
+fn f_eval_and_compile(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let body = args.iter().next().cloned().unwrap_or(Value::Nil);
+i.eval_progn(&body) }
+fn f_eval_when_compile(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU: when the code is not being byte-compiled, `eval-when-compile'
+// evaluates its body like `progn' (the compile-time-only behavior only
+// applies inside the byte compiler, which remacs does not have).
+let body = args.iter().next().cloned().unwrap_or(Value::Nil);
+i.eval_progn(&body) }
+fn f_with_no_warnings(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let body = args.iter().next().cloned().unwrap_or(Value::Nil);
+i.eval_progn(&body) }
+pub(crate) fn f_message(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let fmt = match &args[0] {
+    Value::Str(s) => s.borrow().clone(),
+    Value::Nil => return Ok(Value::Nil),
+    other => i.princ_to_string(other),
+};
+let msg = apply_format_simple(i, &fmt, &args[1..]);
+i.message(&msg);
+Ok(Value::string(msg)) }
+fn f_ding(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { // GNU's Fding: noninteractive sessions write \a to stdout.  It
+// stays in stdio's block buffer, so a piped reader sees it merged
+// with the next stdout write — `print!' without flush reproduces
+// that ordering exactly.
+if i.noninteractive {
+    print!("\x07");
 }
-fn f_eval_when_compile(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU: when the code is not being byte-compiled, `eval-when-compile'
-    // evaluates its body like `progn' (the compile-time-only behavior only
-    // applies inside the byte compiler, which remacs does not have).
-    let body = args.into_iter().next().unwrap_or(Value::Nil);
-    i.eval_progn(&body)
-}
-fn f_with_no_warnings(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let body = args.into_iter().next().unwrap_or(Value::Nil);
-    i.eval_progn(&body)
-}
-pub(crate) fn f_message(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let fmt = match &args[0] {
-        Value::Str(s) => s.borrow().clone(),
-        Value::Nil => return Ok(Value::Nil),
-        other => i.princ_to_string(other),
-    };
-    let msg = apply_format_simple(i, &fmt, &args[1..]);
-    i.message(&msg);
-    Ok(Value::string(msg))
-}
-fn f_ding(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    // GNU's Fding: noninteractive sessions write \a to stdout.  It
-    // stays in stdio's block buffer, so a piped reader sees it merged
-    // with the next stdout write — `print!' without flush reproduces
-    // that ordering exactly.
-    if i.noninteractive {
-        print!("\x07");
-    }
-    Ok(Value::Nil)
-}
+Ok(Value::Nil) }
 /// keyboard.c `timer_check': run each due, untriggered timer on
 /// `timer-list' through `timer-event-handler' (which reschedules
 /// repeat timers and swallows handler errors itself).  GNU never
@@ -3028,148 +2930,138 @@ fn sleep_firing_timers(i: &mut Interp, secs: f64) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_sleep_for(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let secs = match &args[0] {
-        Value::Int(n) => *n as f64,
-        Value::Float(f) => **f,
+fn f_sleep_for(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let secs = match &args[0] {
+    Value::Int(n) => *n as f64,
+    Value::Float(f) => **f,
+    _ => 0.0,
+} + args
+    .get(1)
+    .map(|v| match v {
+        Value::Int(n) => *n as f64 / 1000.0,
         _ => 0.0,
-    } + args
-        .get(1)
-        .map(|v| match v {
-            Value::Int(n) => *n as f64 / 1000.0,
-            _ => 0.0,
-        })
-        .unwrap_or(0.0);
-    sleep_firing_timers(i, secs)
-}
-fn f_sit_for(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // Batch: no input to wait for — GNU sleeps the full time, firing timers.
-    let secs = match args.get(0) {
-        Some(Value::Int(n)) => *n as f64,
-        Some(Value::Float(f)) => **f,
-        _ => 0.0,
-    };
-    sleep_firing_timers(i, secs)?;
-    Ok(Value::t())
-}
-fn f_current_time(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    let us = super::misc::lisp_time_to_us(i, &Value::Nil)?;
-    Ok(super::misc::us_to_lisp_time(us))
-}
-fn f_current_time_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let t = match args.get(0) {
-        Some(v) => super::misc::lisp_time_to_us(i, v)?,
-        None => super::misc::lisp_time_to_us(i, &Value::Nil)?,
-    };
-    let secs = (t / 1_000_000) as i64;
-    let tm = super::misc::interp_local_tm(i, secs);
-    let wday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][tm.tm_wday.clamp(0, 6) as usize];
-    let mon = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ][tm.tm_mon.clamp(0, 11) as usize];
-    // GNU uses ctime's format: the day-of-month is space-padded
-    // ("%e"), so single digits print as " 1" not "01".
-    Ok(Value::string(format!(
-        "{} {} {:2} {:02}:{:02}:{:02} {}",
-        wday,
-        mon,
-        tm.tm_mday,
-        tm.tm_hour,
-        tm.tm_min,
-        tm.tm_sec,
-        tm.tm_year + 1900
-    )))
-}
+    })
+    .unwrap_or(0.0);
+sleep_firing_timers(i, secs) }
+fn f_sit_for(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // Batch: no input to wait for — GNU sleeps the full time, firing timers.
+let secs = match args.get(0) {
+    Some(Value::Int(n)) => *n as f64,
+    Some(Value::Float(f)) => **f,
+    _ => 0.0,
+};
+sleep_firing_timers(i, secs)?;
+Ok(Value::t()) }
+fn f_current_time(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { let us = super::misc::lisp_time_to_us(i, &Value::Nil)?;
+Ok(super::misc::us_to_lisp_time(us)) }
+fn f_current_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let t = match args.get(0) {
+    Some(v) => super::misc::lisp_time_to_us(i, v)?,
+    None => super::misc::lisp_time_to_us(i, &Value::Nil)?,
+};
+let secs = (t / 1_000_000) as i64;
+let tm = super::misc::interp_local_tm(i, secs);
+let wday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][tm.tm_wday.clamp(0, 6) as usize];
+let mon = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+][tm.tm_mon.clamp(0, 11) as usize];
+// GNU uses ctime's format: the day-of-month is space-padded
+// ("%e"), so single digits print as " 1" not "01".
+Ok(Value::string(format!(
+    "{} {} {:2} {:02}:{:02}:{:02} {}",
+    wday,
+    mon,
+    tm.tm_mday,
+    tm.tm_hour,
+    tm.tm_min,
+    tm.tm_sec,
+    tm.tm_year + 1900
+))) }
 /// `current-time-zone' — (OFFSET NAME) for TIME under ZONE.  GNU's
 /// decode_time_zone: nil/`wall' = ambient local zone, t and
 /// "UTC"/"t" = Universal Time, integer = fixed seconds-east offset
 /// (named "+HH[MM[SS]]"), other strings name a TZ spec, a cons uses
 /// its car as the fixed offset (cadr as the name when a string).
 /// Anything else signals "Invalid time zone specification".
-fn f_current_time_zone(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    /// GNU's name for an integer zone: sign plus HH, then MM/SS only
-    /// when non-zero ("+01", "+0130", "+010101").
-    fn offset_name(off: i64) -> String {
-        let sign = if off < 0 { '-' } else { '+' };
-        let a = off.abs();
-        let (h, m, s) = (a / 3600, (a % 3600) / 60, a % 60);
-        if s != 0 {
-            format!("{}{:02}{:02}{:02}", sign, h, m, s)
-        } else if m != 0 {
-            format!("{}{:02}{:02}", sign, h, m)
-        } else {
-            format!("{}{:02}", sign, h)
-        }
+fn f_current_time_zone(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { /// GNU's name for an integer zone: sign plus HH, then MM/SS only
+/// when non-zero ("+01", "+0130", "+010101").
+fn offset_name(off: i64) -> String {
+    let sign = if off < 0 { '-' } else { '+' };
+    let a = off.abs();
+    let (h, m, s) = (a / 3600, (a % 3600) / 60, a % 60);
+    if s != 0 {
+        format!("{}{:02}{:02}{:02}", sign, h, m, s)
+    } else if m != 0 {
+        format!("{}{:02}{:02}", sign, h, m)
+    } else {
+        format!("{}{:02}", sign, h)
     }
-    let t = match args.get(0) {
-        Some(v) => super::misc::lisp_time_to_us(i, v)?,
-        None => super::misc::lisp_time_to_us(i, &Value::Nil)?,
-    };
-    let secs = t.div_euclid(1_000_000) as i64;
-    let t_sym = i.intern("t");
-    let wall_sym = i.intern("wall");
-    let (off, name) = match args.get(1) {
-        Some(Value::Int(off)) => (*off as i64, offset_name(*off as i64)),
-        Some(Value::Sym(s)) if *s == t_sym => (0, "UTC".to_string()),
-        Some(Value::Sym(s)) if *s == wall_sym => {
-            // `wall' = startup wall clock, unaffected by
-            // `set-time-zone-rule' (GNU's `wall_tz').
-            let tm = super::misc::local_tm(secs);
-            (tm.tm_gmtoff, tm_zone_name(&tm))
-        }
-        Some(Value::Str(z)) => {
-            let z = z.borrow().clone();
-            if z == "UTC" || z == "t" {
-                (0, "UTC".to_string())
-            } else {
-                let (tm, name) = super::misc::tz_local_tm(secs, &z);
-                (tm.tm_gmtoff, name)
-            }
-        }
-        Some(Value::Cons(c)) => {
-            let (off, name) = {
-                let b = c.borrow();
-                let off = match &b.car {
-                    Value::Int(n) => *n as i64,
-                    _ => 0,
-                };
-                let name = match &b.cdr {
-                    Value::Cons(c2) => match &c2.borrow().car {
-                        Value::Str(s) => s.borrow().clone(),
-                        _ => String::new(),
-                    },
-                    Value::Str(s) => s.borrow().clone(),
-                    _ => String::new(),
-                };
-                (off, name)
-            };
-            (
-                off,
-                if name.is_empty() {
-                    offset_name(off)
-                } else {
-                    name
-                },
-            )
-        }
-        Some(Value::Nil) | None => {
-            // Under a tz_rule the Tm's tm_zone pointer dangles after
-            // tz_local_tm's restore tzset — use the captured name.
-            let (tm, name) = super::misc::interp_local_tm_named(i, secs);
+}
+let t = match args.get(0) {
+    Some(v) => super::misc::lisp_time_to_us(i, v)?,
+    None => super::misc::lisp_time_to_us(i, &Value::Nil)?,
+};
+let secs = t.div_euclid(1_000_000) as i64;
+let t_sym = i.intern("t");
+let wall_sym = i.intern("wall");
+let (off, name) = match args.get(1) {
+    Some(Value::Int(off)) => (*off as i64, offset_name(*off as i64)),
+    Some(Value::Sym(s)) if *s == t_sym => (0, "UTC".to_string()),
+    Some(Value::Sym(s)) if *s == wall_sym => {
+        // `wall' = startup wall clock, unaffected by
+        // `set-time-zone-rule' (GNU's `wall_tz').
+        let tm = super::misc::local_tm(secs);
+        (tm.tm_gmtoff, tm_zone_name(&tm))
+    }
+    Some(Value::Str(z)) => {
+        let z = z.borrow().clone();
+        if z == "UTC" || z == "t" {
+            (0, "UTC".to_string())
+        } else {
+            let (tm, name) = super::misc::tz_local_tm(secs, &z);
             (tm.tm_gmtoff, name)
         }
-        Some(v) => {
-            return Err(i.signal_data(
-                crate::lisp::obarray::sym::ERROR,
-                vec![
-                    Value::string("Invalid time zone specification"),
-                    v.clone(),
-                ],
-            ));
-        }
-    };
-    Ok(Value::list(vec![Value::Int(off as i128), Value::string(name)]))
-}
+    }
+    Some(Value::Cons(c)) => {
+        let (off, name) = {
+            let b = c.borrow();
+            let off = match &b.car {
+                Value::Int(n) => *n as i64,
+                _ => 0,
+            };
+            let name = match &b.cdr {
+                Value::Cons(c2) => match &c2.borrow().car {
+                    Value::Str(s) => s.borrow().clone(),
+                    _ => String::new(),
+                },
+                Value::Str(s) => s.borrow().clone(),
+                _ => String::new(),
+            };
+            (off, name)
+        };
+        (
+            off,
+            if name.is_empty() {
+                offset_name(off)
+            } else {
+                name
+            },
+        )
+    }
+    Some(Value::Nil) | None => {
+        // Under a tz_rule the Tm's tm_zone pointer dangles after
+        // tz_local_tm's restore tzset — use the captured name.
+        let (tm, name) = super::misc::interp_local_tm_named(i, secs);
+        (tm.tm_gmtoff, name)
+    }
+    Some(v) => {
+        return Err(i.signal_data(
+            crate::lisp::obarray::sym::ERROR,
+            vec![
+                Value::string("Invalid time zone specification"),
+                v.clone(),
+            ],
+        ));
+    }
+};
+Ok(Value::list(vec![Value::Int(off as i128), Value::string(name)])) }
 
 /// `tm_zone' as an owned string (empty when the field is null).
 fn tm_zone_name(tm: &super::misc::Tm) -> String {
@@ -3181,18 +3073,16 @@ fn tm_zone_name(tm: &super::misc::Tm) -> String {
             .into_owned()
     }
 }
-fn f_float_time(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let t = match args.get(0) {
-        Some(v) => super::misc::lisp_time_to_ps(i, v)?,
-        None => super::misc::lisp_time_to_ps(i, &Value::Nil)?,
-    };
-    // GNU `decode_float' computes seconds and the sub-second part as
-    // separate doubles — a single `i128 as f64' division loses the low
-    // bits (1592230530000000000ps rounds above the integer).
-    let secs = t.div_euclid(1_000_000_000_000) as f64;
-    let frac = t.rem_euclid(1_000_000_000_000) as f64 / 1e12;
-    Ok(Value::float(secs + frac))
-}
+fn f_float_time(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let t = match args.get(0) {
+    Some(v) => super::misc::lisp_time_to_ps(i, v)?,
+    None => super::misc::lisp_time_to_ps(i, &Value::Nil)?,
+};
+// GNU `decode_float' computes seconds and the sub-second part as
+// separate doubles — a single `i128 as f64' division loses the low
+// bits (1592230530000000000ps rounds above the integer).
+let secs = t.div_euclid(1_000_000_000_000) as f64;
+let frac = t.rem_euclid(1_000_000_000_000) as f64 / 1e12;
+Ok(Value::float(secs + frac)) }
 
 /// How `format-time-string' renders %Z for a given ZONE argument.
 enum ZoneLabel {
@@ -3205,453 +3095,423 @@ enum ZoneLabel {
     Libc,
 }
 
-fn f_format_time_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let fmt = match &args[0] {
-        Value::Str(s) => s.borrow().clone(),
-        other => return Err(i.wrong_type_mut("stringp", other)),
-    };
-    // Work in picoseconds so %N can see the PICO slot.
-    let t = match args.get(1) {
-        Some(v) => super::misc::lisp_time_to_ps(i, v)?,
-        None => super::misc::lisp_time_to_ps(i, &Value::Nil)?,
-    };
-    let secs = t.div_euclid(1_000_000_000_000) as i64;
-    // sub-second digits as a 12-digit picosecond fraction.
-    let frac12 = t.rem_euclid(1_000_000_000_000);
-    // GNU (format-time-string FORMAT TIME ZONE): nil/`wall' = local,
-    // integer = fixed offset, string = TZ spec, `t' is UTC; anything
-    // else signals "Invalid time zone specification".
-    let t_sym = i.intern("t");
-    let wall_sym = i.intern("wall");
-    let (tm, zlabel) = match args.get(2) {
-        Some(Value::Int(off)) => {
-            let mut tm = super::misc::gmt_tm(secs + *off as i64);
-            tm.tm_gmtoff = *off as i64;
-            (tm, ZoneLabel::Offset(*off as i64))
+fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let fmt = match &args[0] {
+    Value::Str(s) => s.borrow().clone(),
+    other => return Err(i.wrong_type_mut("stringp", other)),
+};
+// Work in picoseconds so %N can see the PICO slot.
+let t = match args.get(1) {
+    Some(v) => super::misc::lisp_time_to_ps(i, v)?,
+    None => super::misc::lisp_time_to_ps(i, &Value::Nil)?,
+};
+let secs = t.div_euclid(1_000_000_000_000) as i64;
+// sub-second digits as a 12-digit picosecond fraction.
+let frac12 = t.rem_euclid(1_000_000_000_000);
+// GNU (format-time-string FORMAT TIME ZONE): nil/`wall' = local,
+// integer = fixed offset, string = TZ spec, `t' is UTC; anything
+// else signals "Invalid time zone specification".
+let t_sym = i.intern("t");
+let wall_sym = i.intern("wall");
+let (tm, zlabel) = match args.get(2) {
+    Some(Value::Int(off)) => {
+        let mut tm = super::misc::gmt_tm(secs + *off as i64);
+        tm.tm_gmtoff = *off as i64;
+        (tm, ZoneLabel::Offset(*off as i64))
+    }
+    Some(Value::Sym(s)) if *s == t_sym => (
+        super::misc::gmt_tm(secs),
+        ZoneLabel::Named("UTC".to_string()),
+    ),
+    Some(Value::Sym(s)) if *s == wall_sym => (
+        // `wall' = startup wall clock; the interp's tz_rule is the
+        // nil/default zone, not `wall'.
+        super::misc::local_tm(secs),
+        ZoneLabel::Libc,
+    ),
+    Some(Value::Str(z)) => {
+        let z = z.borrow().clone();
+        if z == "UTC" || z == "t" {
+            let mut tm = super::misc::gmt_tm(secs);
+            tm.tm_gmtoff = 0;
+            (tm, ZoneLabel::Named("UTC".to_string()))
+        } else {
+            // GNU decode_time_zone: the TZ spec sets the zone and
+            // %Z prints the resolved tm_zone abbreviation (e.g.
+            // "UTC0" → "UTC"), not the spec text.  The name is
+            // copied by tz_local_tm before TZ is restored.
+            let (tm, name) = super::misc::tz_local_tm(secs, &z);
+            (tm, ZoneLabel::Named(name))
         }
-        Some(Value::Sym(s)) if *s == t_sym => (
-            super::misc::gmt_tm(secs),
-            ZoneLabel::Named("UTC".to_string()),
-        ),
-        Some(Value::Sym(s)) if *s == wall_sym => (
-            // `wall' = startup wall clock; the interp's tz_rule is the
-            // nil/default zone, not `wall'.
-            super::misc::local_tm(secs),
-            ZoneLabel::Libc,
-        ),
-        Some(Value::Str(z)) => {
-            let z = z.borrow().clone();
-            if z == "UTC" || z == "t" {
-                let mut tm = super::misc::gmt_tm(secs);
-                tm.tm_gmtoff = 0;
-                (tm, ZoneLabel::Named("UTC".to_string()))
-            } else {
-                // GNU decode_time_zone: the TZ spec sets the zone and
-                // %Z prints the resolved tm_zone abbreviation (e.g.
-                // "UTC0" → "UTC"), not the spec text.  The name is
-                // copied by tz_local_tm before TZ is restored.
-                let (tm, name) = super::misc::tz_local_tm(secs, &z);
-                (tm, ZoneLabel::Named(name))
-            }
-        }
-        // GNU's decode_time_zone accepts `current-time-zone' output —
-        // a (OFFSET NAME) cons — and uses the car as the fixed offset.
-        Some(Value::Cons(c)) => {
-            let (off, name) = {
-                let b = c.borrow();
-                let off = match &b.car {
-                    Value::Int(n) => *n as i64,
-                    _ => 0,
-                };
-                let name = match &b.cdr {
-                    Value::Cons(c2) => match &c2.borrow().car {
-                        Value::Str(s) => s.borrow().clone(),
-                        _ => String::new(),
-                    },
+    }
+    // GNU's decode_time_zone accepts `current-time-zone' output —
+    // a (OFFSET NAME) cons — and uses the car as the fixed offset.
+    Some(Value::Cons(c)) => {
+        let (off, name) = {
+            let b = c.borrow();
+            let off = match &b.car {
+                Value::Int(n) => *n as i64,
+                _ => 0,
+            };
+            let name = match &b.cdr {
+                Value::Cons(c2) => match &c2.borrow().car {
                     Value::Str(s) => s.borrow().clone(),
                     _ => String::new(),
-                };
-                (off, name)
-            };
-            let mut tm = super::misc::gmt_tm(secs + off);
-            tm.tm_gmtoff = off;
-            (
-                tm,
-                if name.is_empty() {
-                    ZoneLabel::Offset(off)
-                } else {
-                    ZoneLabel::Named(name)
                 },
-            )
-        }
-        Some(Value::Nil) | None => {
-            let (tm, name) = super::misc::interp_local_tm_named(i, secs);
-            // Under a tz_rule tm.tm_zone dangles (restore tzset), so
-            // %Z must use the name captured before the restore.
-            let label = if i.tz_rule.is_some() {
-                ZoneLabel::Named(name)
-            } else {
-                ZoneLabel::Libc
+                Value::Str(s) => s.borrow().clone(),
+                _ => String::new(),
             };
-            (tm, label)
-        }
-        Some(v) => {
-            return Err(i.signal_data(
-                crate::lisp::obarray::sym::ERROR,
-                vec![Value::string("Invalid time zone specification"), v.clone()],
-            ));
-        }
-    };
-    // `system-time-locale' overrides LC_TIME for this call, falling
-    // back to "C" for names the C library rejects (like GNU).
-    let locale: Option<String> = i
-        .intern_soft("system-time-locale")
-        .filter(|id| i.bound_p(*id))
-        .and_then(|id| match i.symbol_value(id) {
-            Value::Str(s) => Some(s.borrow().clone()),
-            _ => None,
-        });
-    let mut out = String::new();
-    let chars: Vec<char> = fmt.chars().collect();
-    let mut k = 0;
-    while k < chars.len() {
-        let c = chars[k];
-        if c != '%' {
-            out.push(c);
-            k += 1;
-            continue;
-        }
-        // %- flags, _ space-pad, 0 zero-pad, ^ uppercase, # case-swap,
-        // then an optional width, then (for %z) colons before the spec.
-        let mut j = k + 1;
-        let flag_start = j;
-        while j < chars.len() && matches!(chars[j], '-' | '_' | '0' | '^' | '#') {
-            j += 1;
-        }
-        let flags: Vec<char> = chars[flag_start..j].to_vec();
-        let pad = if flags.contains(&'-') {
-            '-'
-        } else if flags.contains(&'_') {
-            '_'
-        } else {
-            '0'
+            (off, name)
         };
-        let mut width = 0usize;
-        while j < chars.len() && chars[j].is_ascii_digit() {
-            width = width * 10 + (chars[j] as usize - '0' as usize);
-            j += 1;
-        }
-        let mut colons = 0usize;
-        while j < chars.len() && chars[j] == ':' {
-            colons += 1;
-            j += 1;
-        }
-        let spec = chars.get(j).copied();
-        let spec_text: String = chars[k..=j.min(chars.len() - 1)].iter().collect();
-        k = j + 1;
-        // %E and %O are POSIX alternative-representation modifiers:
-        // when a conversion letter follows, they're part of the spec
-        // (%Ec); a bare %E/%O is a literal per GNU.
-        if matches!(spec, Some('E') | Some('O')) {
-            if let Some(&nxt) = chars.get(k) {
-                if nxt.is_ascii_alphabetic() {
-                    let ext: String = chars[k..=k].iter().collect();
-                    let spec2 = format!("{}{}", spec_text, ext);
-                    out.push_str(&super::misc::strftime_spec(
-                        &spec2,
-                        &tm,
-                        locale.as_deref(),
-                    ));
-                    k += 1;
-                    continue;
-                }
+        let mut tm = super::misc::gmt_tm(secs + off);
+        tm.tm_gmtoff = off;
+        (
+            tm,
+            if name.is_empty() {
+                ZoneLabel::Offset(off)
+            } else {
+                ZoneLabel::Named(name)
+            },
+        )
+    }
+    Some(Value::Nil) | None => {
+        let (tm, name) = super::misc::interp_local_tm_named(i, secs);
+        // Under a tz_rule tm.tm_zone dangles (restore tzset), so
+        // %Z must use the name captured before the restore.
+        let label = if i.tz_rule.is_some() {
+            ZoneLabel::Named(name)
+        } else {
+            ZoneLabel::Libc
+        };
+        (tm, label)
+    }
+    Some(v) => {
+        return Err(i.signal_data(
+            crate::lisp::obarray::sym::ERROR,
+            vec![Value::string("Invalid time zone specification"), v.clone()],
+        ));
+    }
+};
+// `system-time-locale' overrides LC_TIME for this call, falling
+// back to "C" for names the C library rejects (like GNU).
+let locale: Option<String> = i
+    .intern_soft("system-time-locale")
+    .filter(|id| i.bound_p(*id))
+    .and_then(|id| match i.symbol_value(id) {
+        Value::Str(s) => Some(s.borrow().clone()),
+        _ => None,
+    });
+let mut out = String::new();
+let chars: Vec<char> = fmt.chars().collect();
+let mut k = 0;
+while k < chars.len() {
+    let c = chars[k];
+    if c != '%' {
+        out.push(c);
+        k += 1;
+        continue;
+    }
+    // %- flags, _ space-pad, 0 zero-pad, ^ uppercase, # case-swap,
+    // then an optional width, then (for %z) colons before the spec.
+    let mut j = k + 1;
+    let flag_start = j;
+    while j < chars.len() && matches!(chars[j], '-' | '_' | '0' | '^' | '#') {
+        j += 1;
+    }
+    let flags: Vec<char> = chars[flag_start..j].to_vec();
+    let pad = if flags.contains(&'-') {
+        '-'
+    } else if flags.contains(&'_') {
+        '_'
+    } else {
+        '0'
+    };
+    let mut width = 0usize;
+    while j < chars.len() && chars[j].is_ascii_digit() {
+        width = width * 10 + (chars[j] as usize - '0' as usize);
+        j += 1;
+    }
+    let mut colons = 0usize;
+    while j < chars.len() && chars[j] == ':' {
+        colons += 1;
+        j += 1;
+    }
+    let spec = chars.get(j).copied();
+    let spec_text: String = chars[k..=j.min(chars.len() - 1)].iter().collect();
+    k = j + 1;
+    // %E and %O are POSIX alternative-representation modifiers:
+    // when a conversion letter follows, they're part of the spec
+    // (%Ec); a bare %E/%O is a literal per GNU.
+    if matches!(spec, Some('E') | Some('O')) {
+        if let Some(&nxt) = chars.get(k) {
+            if nxt.is_ascii_alphabetic() {
+                let ext: String = chars[k..=k].iter().collect();
+                let spec2 = format!("{}{}", spec_text, ext);
+                out.push_str(&super::misc::strftime_spec(
+                    &spec2,
+                    &tm,
+                    locale.as_deref(),
+                ));
+                k += 1;
+                continue;
             }
-            out.push_str(&spec_text);
-            continue;
         }
-        let off = tm.tm_gmtoff;
-        // gnulib nstrftime %z rules (verified against GNU 31.1):
-        //  colons 0 → sign+hhmm; 1 → hh:mm; 2 → hh:mm:ss; 3 →
-        //  minimal (drop zero seconds, then zero minutes).  `-'/`_'
-        //  unpad just the hour field (colons=0 collapses to the
-        //  numeric hhmm); an explicit WIDTH zero-pads the hour so the
-        //  whole output reaches WIDTH chars; `_' = " " + `-'.
-        //  `compact' drops the colons — GNU's integer-zone %Z.
-        let signed_zone =
-            |off: i64, colons: usize, pad: char, width: usize, compact: bool| -> String {
-                let sign = if off < 0 { '-' } else { '+' };
-                let a = off.abs();
-                let (h, m, s) = (a / 3600, (a % 3600) / 60, a % 60);
-                let minimal = pad != '0';
-                let hh = |w: usize| -> String {
-                    if minimal {
-                        format!("{}", h)
-                    } else {
-                        format!("{:0w$}", h, w = w.max(2))
-                    }
-                };
-                let body = if compact {
-                    if s != 0 {
-                        format!("{:02}{:02}{:02}", h, m, s)
-                    } else if m != 0 {
-                        format!("{:02}{:02}", h, m)
-                    } else {
-                        format!("{:02}", h)
-                    }
+        out.push_str(&spec_text);
+        continue;
+    }
+    let off = tm.tm_gmtoff;
+    // gnulib nstrftime %z rules (verified against GNU 31.1):
+    //  colons 0 → sign+hhmm; 1 → hh:mm; 2 → hh:mm:ss; 3 →
+    //  minimal (drop zero seconds, then zero minutes).  `-'/`_'
+    //  unpad just the hour field (colons=0 collapses to the
+    //  numeric hhmm); an explicit WIDTH zero-pads the hour so the
+    //  whole output reaches WIDTH chars; `_' = " " + `-'.
+    //  `compact' drops the colons — GNU's integer-zone %Z.
+    let signed_zone =
+        |off: i64, colons: usize, pad: char, width: usize, compact: bool| -> String {
+            let sign = if off < 0 { '-' } else { '+' };
+            let a = off.abs();
+            let (h, m, s) = (a / 3600, (a % 3600) / 60, a % 60);
+            let minimal = pad != '0';
+            let hh = |w: usize| -> String {
+                if minimal {
+                    format!("{}", h)
                 } else {
-                    match colons {
-                        0 => {
-                            if minimal {
-                                format!("{}", h * 100 + m)
-                            } else {
-                                format!("{}{:02}", hh(width.saturating_sub(3)), m)
-                            }
-                        }
-                        1 => format!("{}:{:02}", hh(width.saturating_sub(4)), m),
-                        2 => format!("{}:{:02}:{:02}", hh(width.saturating_sub(7)), m, s),
-                        _ => {
-                            if s != 0 {
-                                format!("{}:{:02}:{:02}", hh(0), m, s)
-                            } else if m != 0 {
-                                format!("{}:{:02}", hh(0), m)
-                            } else {
-                                hh(0)
-                            }
-                        }
-                    }
-                };
-                if pad == '_' {
-                    format!(" {}{}", sign, body)
-                } else {
-                    format!("{}{}", sign, body)
+                    format!("{:0w$}", h, w = w.max(2))
                 }
             };
-        match spec {
-            Some('P') => {
-                // glibc %P = lowercase %p; macOS strftime lacks it.
-                let p = super::misc::strftime_spec("%p", &tm, locale.as_deref());
-                out.push_str(&p.to_lowercase());
-            }
-            Some('N') => {
-                // Width selects the number of fraction digits
-                // (default 9 = nanoseconds; up to 12 = picoseconds).
-                let w = if width == 0 { 9 } else { width.min(12) };
-                let s = format!("{:012}", frac12);
-                out.push_str(&s[..w]);
-            }
-            Some('s') => out.push_str(&format!("{}", secs)),
-            Some('q') => {
-                // GNU extension: quarter of year (not in strftime).
-                out.push_str(&format!("{}", tm.tm_mon / 3 + 1));
-            }
-            Some('l') => {
-                // macOS strftime lacks %l (space-padded 12-hour).
-                let h12 = if tm.tm_hour % 12 == 0 { 12 } else { tm.tm_hour % 12 };
-                out.push_str(&format!("{:2}", h12));
-            }
-            Some('k') => {
-                out.push_str(&format!("{:2}", tm.tm_hour));
-            }
-            // macOS strftime derives %z from the process TZ and lacks
-            // the colon variants — compute it from tm_gmtoff instead.
-            Some('z') => out.push_str(&signed_zone(off, colons, pad, width, false)),
-            Some('Z') => match &zlabel {
-                // GNU: an integer-zone %Z renders compactly — sign plus
-                // hh[mm[ss]] with trailing zero fields dropped.
-                ZoneLabel::Offset(off) => {
-                    out.push_str(&signed_zone(*off, 3, '0', 0, true));
+            let body = if compact {
+                if s != 0 {
+                    format!("{:02}{:02}{:02}", h, m, s)
+                } else if m != 0 {
+                    format!("{:02}{:02}", h, m)
+                } else {
+                    format!("{:02}", h)
                 }
-                ZoneLabel::Named(n) => out.push_str(n),
-                ZoneLabel::Libc => {
-                    let name = if tm.tm_zone.is_null() {
-                        String::new()
-                    } else {
-                        unsafe { std::ffi::CStr::from_ptr(tm.tm_zone as *const i8) }
-                            .to_string_lossy()
-                            .into_owned()
-                    };
-                    out.push_str(&name);
+            } else {
+                match colons {
+                    0 => {
+                        if minimal {
+                            format!("{}", h * 100 + m)
+                        } else {
+                            format!("{}{:02}", hh(width.saturating_sub(3)), m)
+                        }
+                    }
+                    1 => format!("{}:{:02}", hh(width.saturating_sub(4)), m),
+                    2 => format!("{}:{:02}:{:02}", hh(width.saturating_sub(7)), m, s),
+                    _ => {
+                        if s != 0 {
+                            format!("{}:{:02}:{:02}", hh(0), m, s)
+                        } else if m != 0 {
+                            format!("{}:{:02}", hh(0), m)
+                        } else {
+                            hh(0)
+                        }
+                    }
                 }
-            },
-            // Unsupported spec letters pass through literally (GNU's
-            // Emacs-only specs like %q are handled above; unknown
-            // strftime letters echo the whole "%<flags>X" text).
-            Some(s) if !matches!(s, 'a'..='z' | 'A'..='Z' | '%') => {
+            };
+            if pad == '_' {
+                format!(" {}{}", sign, body)
+            } else {
+                format!("{}{}", sign, body)
+            }
+        };
+    match spec {
+        Some('P') => {
+            // glibc %P = lowercase %p; macOS strftime lacks it.
+            let p = super::misc::strftime_spec("%p", &tm, locale.as_deref());
+            out.push_str(&p.to_lowercase());
+        }
+        Some('N') => {
+            // Width selects the number of fraction digits
+            // (default 9 = nanoseconds; up to 12 = picoseconds).
+            let w = if width == 0 { 9 } else { width.min(12) };
+            let s = format!("{:012}", frac12);
+            out.push_str(&s[..w]);
+        }
+        Some('s') => out.push_str(&format!("{}", secs)),
+        Some('q') => {
+            // GNU extension: quarter of year (not in strftime).
+            out.push_str(&format!("{}", tm.tm_mon / 3 + 1));
+        }
+        Some('l') => {
+            // macOS strftime lacks %l (space-padded 12-hour).
+            let h12 = if tm.tm_hour % 12 == 0 { 12 } else { tm.tm_hour % 12 };
+            out.push_str(&format!("{:2}", h12));
+        }
+        Some('k') => {
+            out.push_str(&format!("{:2}", tm.tm_hour));
+        }
+        // macOS strftime derives %z from the process TZ and lacks
+        // the colon variants — compute it from tm_gmtoff instead.
+        Some('z') => out.push_str(&signed_zone(off, colons, pad, width, false)),
+        Some('Z') => match &zlabel {
+            // GNU: an integer-zone %Z renders compactly — sign plus
+            // hh[mm[ss]] with trailing zero fields dropped.
+            ZoneLabel::Offset(off) => {
+                out.push_str(&signed_zone(*off, 3, '0', 0, true));
+            }
+            ZoneLabel::Named(n) => out.push_str(n),
+            ZoneLabel::Libc => {
+                let name = if tm.tm_zone.is_null() {
+                    String::new()
+                } else {
+                    unsafe { std::ffi::CStr::from_ptr(tm.tm_zone as *const i8) }
+                        .to_string_lossy()
+                        .into_owned()
+                };
+                out.push_str(&name);
+            }
+        },
+        // Unsupported spec letters pass through literally (GNU's
+        // Emacs-only specs like %q are handled above; unknown
+        // strftime letters echo the whole "%<flags>X" text).
+        Some(s) if !matches!(s, 'a'..='z' | 'A'..='Z' | '%') => {
+            out.push_str(&spec_text);
+        }
+        Some(s) => {
+            let known = matches!(
+                s,
+                'a' | 'A'
+                    | 'b'
+                    | 'B'
+                    | 'c'
+                    | 'C'
+                    | 'd'
+                    | 'D'
+                    | 'e'
+                    | 'F'
+                    | 'g'
+                    | 'G'
+                    | 'h'
+                    | 'H'
+                    | 'I'
+                    | 'j'
+                    | 'm'
+                    | 'M'
+                    | 'n'
+                    | 'p'
+                    | 'P'
+                    | 'r'
+                    | 'R'
+                    | 'S'
+                    | 't'
+                    | 'T'
+                    | 'u'
+                    | 'U'
+                    | 'V'
+                    | 'w'
+                    | 'W'
+                    | 'x'
+                    | 'X'
+                    | 'y'
+                    | 'Y'
+                    | '%'
+            );
+            if known {
+                out.push_str(&super::misc::strftime_spec(
+                    &spec_text,
+                    &tm,
+                    locale.as_deref(),
+                ));
+            } else {
                 out.push_str(&spec_text);
             }
-            Some(s) => {
-                let known = matches!(
-                    s,
-                    'a' | 'A'
-                        | 'b'
-                        | 'B'
-                        | 'c'
-                        | 'C'
-                        | 'd'
-                        | 'D'
-                        | 'e'
-                        | 'F'
-                        | 'g'
-                        | 'G'
-                        | 'h'
-                        | 'H'
-                        | 'I'
-                        | 'j'
-                        | 'm'
-                        | 'M'
-                        | 'n'
-                        | 'p'
-                        | 'P'
-                        | 'r'
-                        | 'R'
-                        | 'S'
-                        | 't'
-                        | 'T'
-                        | 'u'
-                        | 'U'
-                        | 'V'
-                        | 'w'
-                        | 'W'
-                        | 'x'
-                        | 'X'
-                        | 'y'
-                        | 'Y'
-                        | '%'
-                );
-                if known {
-                    out.push_str(&super::misc::strftime_spec(
-                        &spec_text,
-                        &tm,
-                        locale.as_deref(),
-                    ));
-                } else {
-                    out.push_str(&spec_text);
-                }
-            }
-            None => out.push('%'),
         }
+        None => out.push('%'),
     }
-    Ok(Value::string(out))
 }
+Ok(Value::string(out)) }
 
-fn f_garbage_collect(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    // GNU shape: (NAME SIZE USED FREE) triples per category, except
-    // string-bytes/buffers which lack the FREE count.
-    let n = i.obarray.len() as i128;
-    let item = |i: &mut Interp, name: &str, vals: &[i128]| {
-        let mut v = vec![Value::Sym(i.intern(name))];
-        v.extend(vals.iter().map(|x| Value::Int(*x)));
-        Value::list(v)
+fn f_garbage_collect(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { // GNU shape: (NAME SIZE USED FREE) triples per category, except
+// string-bytes/buffers which lack the FREE count.
+let n = i.obarray.len() as i128;
+let item = |i: &mut Interp, name: &str, vals: &[i128]| {
+    let mut v = vec![Value::Sym(i.intern(name))];
+    v.extend(vals.iter().map(|x| Value::Int(*x)));
+    Value::list(v)
+};
+Ok(Value::list(vec![
+    item(i, "conses", &[16, n, 0]),
+    item(i, "symbols", &[48, n, 0]),
+    item(i, "strings", &[32, 0, 0]),
+    item(i, "string-bytes", &[1, 0]),
+    item(i, "vectors", &[16, 0]),
+    item(i, "vector-slots", &[8, 0, 0]),
+    item(i, "floats", &[8, 0, 0]),
+    item(i, "intervals", &[56, 0, 0]),
+    item(i, "buffers", &[1064, 0]),
+])) }
+fn f_memory_info(_i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { // GNU returns nil where the kernel gives no memory-info query
+// interface (macOS, and thus our batch probes).
+Ok(Value::Nil) }
+fn f_kill_emacs(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU's kill_emacs runs `kill-emacs-hook' before exiting in every
+// case; a signaling hook function aborts the exit.
+call_hook(i, "kill-emacs-hook")?;
+i.quit_editor = true;
+if i.noninteractive {
+    // GNU batch: kill-emacs exits the process immediately; an
+    // integer ARG is the exit status, a string ARG is printed.
+    let code = match args.first() {
+        Some(Value::Int(n)) => *n,
+        Some(Value::Str(s)) => {
+            let msg = s.borrow().clone();
+            let _ = i;
+            eprint!("{msg}");
+            0
+        }
+        _ => 0,
     };
-    Ok(Value::list(vec![
-        item(i, "conses", &[16, n, 0]),
-        item(i, "symbols", &[48, n, 0]),
-        item(i, "strings", &[32, 0, 0]),
-        item(i, "string-bytes", &[1, 0]),
-        item(i, "vectors", &[16, 0]),
-        item(i, "vector-slots", &[8, 0, 0]),
-        item(i, "floats", &[8, 0, 0]),
-        item(i, "intervals", &[56, 0, 0]),
-        item(i, "buffers", &[1064, 0]),
-    ]))
+    return Err(Flow::Exit(code));
 }
-fn f_memory_info(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    // GNU returns nil where the kernel gives no memory-info query
-    // interface (macOS, and thus our batch probes).
-    Ok(Value::Nil)
+Ok(Value::Nil) }
+fn f_recursive_edit(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { // GNU's recursive_edit_1 specbinds command_loop_level and installs
+// an `exit' catch around a command loop; both unwind when it
+// returns.  There's no callable command loop here yet, so just
+// keep the depth/catch scoped like the specbind.
+i.recursion_depth += 1;
+let exit_sym = Value::Sym(i.intern("exit"));
+i.catch_tags.push(exit_sym);
+i.catch_tags.pop();
+i.recursion_depth -= 1;
+Ok(Value::Nil) }
+fn f_top_level(_i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { Err(Flow::Throw(Value::Sym(sym::TOP_LEVEL), Value::Nil)) }
+fn f_exit_recursive_edit(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { // GNU: `(throw 'exit nil)' when a command loop or minibuffer is
+// active, else user-error.
+if i.recursion_depth == 0 && i.minibuf_level <= 0 {
+    let ue = i.intern("user-error");
+    return Err(i.signal_data(ue, vec![Value::string("No recursive edit is in progress")]));
 }
-fn f_kill_emacs(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU's kill_emacs runs `kill-emacs-hook' before exiting in every
-    // case; a signaling hook function aborts the exit.
-    call_hook(i, "kill-emacs-hook")?;
-    i.quit_editor = true;
-    if i.noninteractive {
-        // GNU batch: kill-emacs exits the process immediately; an
-        // integer ARG is the exit status, a string ARG is printed.
-        let code = match args.first() {
-            Some(Value::Int(n)) => *n,
-            Some(Value::Str(s)) => {
-                let msg = s.borrow().clone();
-                let _ = i;
-                eprint!("{msg}");
-                0
-            }
-            _ => 0,
-        };
-        return Err(Flow::Exit(code));
-    }
-    Ok(Value::Nil)
+Err(Flow::Throw(Value::Sym(i.intern("exit")), Value::Nil)) }
+fn f_abort_recursive_edit(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { // GNU: `(throw 'exit t)' — the `exit' catch maps t to `quit'.
+if i.recursion_depth == 0 && i.minibuf_level <= 0 {
+    let ue = i.intern("user-error");
+    return Err(i.signal_data(ue, vec![Value::string("No recursive edit is in progress")]));
 }
-fn f_recursive_edit(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    // GNU's recursive_edit_1 specbinds command_loop_level and installs
-    // an `exit' catch around a command loop; both unwind when it
-    // returns.  There's no callable command loop here yet, so just
-    // keep the depth/catch scoped like the specbind.
-    i.recursion_depth += 1;
-    let exit_sym = Value::Sym(i.intern("exit"));
-    i.catch_tags.push(exit_sym);
-    i.catch_tags.pop();
-    i.recursion_depth -= 1;
-    Ok(Value::Nil)
-}
-fn f_top_level(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Err(Flow::Throw(Value::Sym(sym::TOP_LEVEL), Value::Nil))
-}
-fn f_exit_recursive_edit(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    // GNU: `(throw 'exit nil)' when a command loop or minibuffer is
-    // active, else user-error.
-    if i.recursion_depth == 0 && i.minibuf_level <= 0 {
-        let ue = i.intern("user-error");
-        return Err(i.signal_data(ue, vec![Value::string("No recursive edit is in progress")]));
-    }
-    Err(Flow::Throw(Value::Sym(i.intern("exit")), Value::Nil))
-}
-fn f_abort_recursive_edit(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    // GNU: `(throw 'exit t)' — the `exit' catch maps t to `quit'.
-    if i.recursion_depth == 0 && i.minibuf_level <= 0 {
-        let ue = i.intern("user-error");
-        return Err(i.signal_data(ue, vec![Value::string("No recursive edit is in progress")]));
-    }
-    Err(Flow::Throw(Value::Sym(i.intern("exit")), Value::t()))
-}
-fn f_recursion_depth(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    // GNU: command_loop_level + minibuf_level.
-    Ok(Value::Int(
-        (i.recursion_depth + i.minibuf_level.max(0) as usize) as i128,
-    ))
-}
-fn f_emacs_pid(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(std::process::id() as i128))
-}
-fn f_system_name(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::string(crate::buffer::our_host_name()))
-}
-fn f_emacs_version(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::string(format!(
-        "remacs {} (Emacs-compatible)",
-        env!("CARGO_PKG_VERSION")
-    )))
-}
-fn f_emacs_build_time(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(0))
-}
-fn f_noop(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
-}
-fn f_internal_make_closure(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (internal-make-interpreted-closure-function ARGS BODY ENV)
-    let params = &args[0];
-    let body_v = &args[1];
-    let env_v = &args[2];
-    let body = match body_v {
-        Value::Cons(_) => body_v.list_to_vec().unwrap_or_default(),
-        _ => vec![body_v.clone()],
-    };
-    let env = parse_lexenv_spec(i, env_v);
-    let mut lam = i.parse_lambda(params, &body, None)?;
-    lam.env = env;
-    Ok(Value::Lambda(std::rc::Rc::new(lam)))
-}
+Err(Flow::Throw(Value::Sym(i.intern("exit")), Value::t())) }
+fn f_recursion_depth(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { // GNU: command_loop_level + minibuf_level.
+Ok(Value::Int(
+    (i.recursion_depth + i.minibuf_level.max(0) as usize) as i128,
+)) }
+fn f_emacs_pid(_i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { Ok(Value::Int(std::process::id() as i128)) }
+fn f_system_name(_i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { Ok(Value::string(crate::buffer::our_host_name())) }
+fn f_emacs_version(_i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { Ok(Value::string(format!(
+    "remacs {} (Emacs-compatible)",
+    env!("CARGO_PKG_VERSION")
+))) }
+fn f_emacs_build_time(_i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { Ok(Value::Int(0)) }
+fn f_noop(_i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { Ok(Value::Nil) }
+fn f_internal_make_closure(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // (internal-make-interpreted-closure-function ARGS BODY ENV)
+let params = &args[0];
+let body_v = &args[1];
+let env_v = &args[2];
+let body = match body_v {
+    Value::Cons(_) => body_v.list_to_vec().unwrap_or_default(),
+    _ => vec![body_v.clone()],
+};
+let env = parse_lexenv_spec(i, env_v);
+let mut lam = i.parse_lambda(params, &body, None)?;
+lam.env = env;
+Ok(Value::Lambda(std::rc::Rc::new(lam))) }
 
 /// Convert the alist-ish ENV argument used by `eval'/byte-compiled
 /// closures into a LexEnv. Elements that are (VAR . VAL) pairs go in
@@ -3659,7 +3519,7 @@ fn f_internal_make_closure(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 /// become enclosing frames.
 fn parse_lexenv_spec(i: &mut Interp, env_v: &Value) -> crate::lisp::LexEnv {
     use crate::lisp::eval::LexFrame;
-    use std::collections::HashMap;
+
     let mut inner: Option<std::rc::Rc<LexFrame>> = None;
     let mut parents: Vec<std::rc::Rc<LexFrame>> = Vec::new();
     let is_pair = |v: &Value| -> bool {
@@ -3667,23 +3527,21 @@ fn parse_lexenv_spec(i: &mut Interp, env_v: &Value) -> crate::lisp::LexEnv {
             && !matches!(c.borrow().cdr, Value::Cons(_)))
     };
     let frame_of = |vars: Vec<(Value, Value)>, markers: Vec<SymId>| -> std::rc::Rc<LexFrame> {
-        let mut m = HashMap::new();
-        let mut order = Vec::new();
+        let mut m: Vec<(SymId, Value)> = Vec::new();
         for (k, v) in vars {
             if let Value::Sym(id) = k {
-                if !m.contains_key(&id) {
-                    order.push(id);
+                match m.iter_mut().find(|(s, _)| *s == id) {
+                    Some(e) => e.1 = v,
+                    None => m.push((id, v)),
                 }
-                m.insert(id, v);
             }
         }
         // `vars' arrives in env order (newest first); store
         // oldest-first so `lexenv_as_value' reproduces it.
-        order.reverse();
+        m.reverse();
         std::rc::Rc::new(LexFrame {
             vars: std::cell::RefCell::new(m),
-            var_order: std::cell::RefCell::new(order),
-            declared: std::cell::RefCell::new(markers.into_iter().collect()),
+            declared: std::cell::RefCell::new(markers),
             parent: None,
         })
     };
@@ -3723,8 +3581,7 @@ fn parse_lexenv_spec(i: &mut Interp, env_v: &Value) -> crate::lisp::LexEnv {
     // Chain: innermost first, then the enclosing frames in order.
     for p in parents.into_iter().rev() {
         let q = std::rc::Rc::new(LexFrame {
-            vars: p.vars.clone(),
-            var_order: std::cell::RefCell::new(p.var_order.borrow().clone()),
+            vars: std::cell::RefCell::new(p.vars.borrow().clone()),
             declared: std::cell::RefCell::new(p.declared.borrow().clone()),
             parent: inner.take(),
         });
@@ -3733,158 +3590,136 @@ fn parse_lexenv_spec(i: &mut Interp, env_v: &Value) -> crate::lisp::LexEnv {
     let _ = i;
     inner
 }
-fn f_macroexp_parse_body(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let items = want_list(i, &args[0])?;
-    // split leading (declare ...) forms and strings
-    let mut declares = Vec::new();
-    let mut rest_start = items.len();
-    for (k, f) in items.iter().enumerate() {
-        let is_decl = match f {
-            Value::Cons(c) => {
-                let b = c.borrow();
-                let decl_id = i.intern("declare");
-                i.sym_is(&b.car, decl_id)
-            }
-            Value::Str(_) => k < items.len() - 1,
-            _ => false,
-        };
-        if is_decl {
-            declares.push(f.clone());
-        } else {
-            rest_start = k;
-            break;
+fn f_macroexp_parse_body(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let items = want_list(i, &args[0])?;
+// split leading (declare ...) forms and strings
+let mut declares = Vec::new();
+let mut rest_start = items.len();
+for (k, f) in items.iter().enumerate() {
+    let is_decl = match f {
+        Value::Cons(c) => {
+            let b = c.borrow();
+            let decl_id = i.intern("declare");
+            i.sym_is(&b.car, decl_id)
         }
-    }
-    Ok(Value::cons(
-        Value::list(declares),
-        Value::list(items[rest_start..].to_vec()),
-    ))
-}
-
-fn f_byte_code_function_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // `#[...]' byte-code literals (string code slot) answer t;
-    // interpreted closures (cons code slot) and lambdas answer nil.
-    Ok(Value::from_bool(
-        matches!(&args[0], Value::Lambda(l) if l.is_bytecode()),
-    ))
-}
-fn f_compiled_function_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(match &args[0] {
-        Value::Subr(_) => true,
-        Value::Lambda(l) => l.is_bytecode(),
+        Value::Str(_) => k < items.len() - 1,
         _ => false,
-    }))
-}
-fn f_interactive_p(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
-}
-fn f_byte_code(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU `Fbyte_code': run a raw (bytecode, constants, depth) triple
-    // as a zero-argument byte-code object.
-    let _depth = &args[2];
-    crate::lisp::bytecode::exec_raw(i, &args[0], &args[1])
-}
-fn f_make_byte_code(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU `make-byte-code': pack ARGLIST BYTE-CODE CONSTANTS DEPTH
-    // (and optional doc/interactive slots) into a `#[...]' object.
-    // The Lambda keeps the raw slots in `bc_items' so `aref'/`arrayp'
-    // see GNU's element view and `bytecode::exec' can run it.
-    let argdesc = args[0].clone();
-    let doc = args.get(4).and_then(|v| match v {
-        Value::Str(s) => Some(s.borrow().clone()),
-        _ => None,
-    });
-    let interactive = args.get(5).cloned();
-    Ok(Value::Lambda(std::rc::Rc::new(crate::lisp::value::Lambda {
-        is_macro: false,
-        required: Vec::new(),
-        optional: Vec::new(),
-        rest: None,
-        body: Vec::new(),
-        env: None,
-        doc,
-        interactive,
-        name: None,
-        bad_arglist: false,
-        arglist: Some(argdesc),
-        plain: false,
-        dumped_doc: false,
-        compiled: false,
-        advice_link: None,
-        bc_items: Some(std::rc::Rc::new(std::cell::RefCell::new(args))),
-        doc_value: None,
-        env_value: None,
-    })))
-}
-fn f_subr_native_lambda_list(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // Emacs 31: t for primitives, wrong-type-argument otherwise.
-    match &args[0] {
-        Value::Subr(_) => Ok(Value::t()),
-        other => Err(i.wrong_type_mut("subrp", other)),
+    };
+    if is_decl {
+        declares.push(f.clone());
+    } else {
+        rest_start = k;
+        break;
     }
 }
-fn f_declare_functionp(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
-}
+Ok(Value::cons(
+    Value::list(declares),
+    Value::list(items[rest_start..].to_vec()),
+)) }
+
+fn f_byte_code_function_p(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // `#[...]' byte-code literals (string code slot) answer t;
+// interpreted closures (cons code slot) and lambdas answer nil.
+Ok(Value::from_bool(
+    matches!(&args[0], Value::Lambda(l) if l.is_bytecode()),
+)) }
+fn f_compiled_function_p(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(match &args[0] {
+    Value::Subr(_) => true,
+    Value::Lambda(l) => l.is_bytecode(),
+    _ => false,
+})) }
+fn f_interactive_p(_i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { Ok(Value::Nil) }
+fn f_byte_code(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU `Fbyte_code': run a raw (bytecode, constants, depth) triple
+// as a zero-argument byte-code object.
+let _depth = &args[2];
+crate::lisp::bytecode::exec_raw(i, &args[0], &args[1]) }
+fn f_make_byte_code(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU `make-byte-code': pack ARGLIST BYTE-CODE CONSTANTS DEPTH
+// (and optional doc/interactive slots) into a `#[...]' object.
+// The Lambda keeps the raw slots in `bc_items' so `aref'/`arrayp'
+// see GNU's element view and `bytecode::exec' can run it.
+let argdesc = args[0].clone();
+let doc = args.get(4).and_then(|v| match v {
+    Value::Str(s) => Some(s.borrow().clone()),
+    _ => None,
+});
+let interactive = args.get(5).cloned();
+Ok(Value::Lambda(std::rc::Rc::new(crate::lisp::value::Lambda {
+    is_macro: false,
+    required: Vec::new(),
+    optional: Vec::new(),
+    rest: None,
+    body: Vec::new(),
+    env: None,
+    doc,
+    interactive,
+    name: None,
+    bad_arglist: false,
+    arglist: Some(argdesc),
+    plain: false,
+    dumped_doc: false,
+    compiled: false,
+    advice_link: None,
+    bc_items: Some(std::rc::Rc::new(std::cell::RefCell::new(args.as_slice().to_vec()))),
+    doc_value: None,
+    env_value: None,
+}))) }
+fn f_subr_native_lambda_list(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // Emacs 31: t for primitives, wrong-type-argument otherwise.
+match &args[0] {
+    Value::Subr(_) => Ok(Value::t()),
+    other => Err(i.wrong_type_mut("subrp", other)),
+} }
+fn f_declare_functionp(_i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult { Ok(Value::Nil) }
 
 /// `internal--track-mouse` — GNU enters mouse-tracking mode then calls
 /// BODYFN; tracking is a no-op without a window system, so just apply.
-fn f_internal_track_mouse(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    i.apply(&a[0], vec![])
-}
+fn f_internal_track_mouse(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { i.apply(&a[0], vec![]) }
 
 /// `save-mark-and-excursion--save` → (MARKER . ACTIVE) — `(nil)' when
 /// the mark isn't set, like GNU.
-fn f_smae_save(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let buf = i.current_buffer;
-    let Some(b) = i.buffers.get(buf) else {
-        return Ok(Value::cons(Value::Nil, Value::Nil));
-    };
-    let (mark, active) = {
-        let bb = b.borrow();
-        let ma = i.intern_soft("mark-active").unwrap_or(0);
-        (
-            bb.mark_position(),
-            bb.locals.get(&ma).map(|v| v.truthy()).unwrap_or(false),
-        )
-    };
-    let m = match mark {
-        Some(pos) => {
-            let mk = Rc::new(RefCell::new(Marker {
-                buffer: Some(buf),
-                position: pos,
-                insertion_type: false,
-            }));
-            b.borrow_mut().register_marker(&mk);
-            Value::Marker(mk)
-        }
-        None => Value::Nil,
-    };
-    Ok(Value::cons(m, if active { Value::t() } else { Value::Nil }))
-}
+fn f_smae_save(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { let buf = i.current_buffer;
+let Some(b) = i.buffers.get(buf) else {
+    return Ok(Value::cons(Value::Nil, Value::Nil));
+};
+let (mark, active) = {
+    let bb = b.borrow();
+    let ma = i.intern_soft("mark-active").unwrap_or(0);
+    (
+        bb.mark_position(),
+        bb.locals.get(&ma).map(|v| v.truthy()).unwrap_or(false),
+    )
+};
+let m = match mark {
+    Some(pos) => {
+        let mk = Rc::new(RefCell::new(Marker {
+            buffer: Some(buf),
+            position: pos,
+            insertion_type: false,
+        }));
+        b.borrow_mut().register_marker(&mk);
+        Value::Marker(mk)
+    }
+    None => Value::Nil,
+};
+Ok(Value::cons(m, if active { Value::t() } else { Value::Nil })) }
 
 /// `save-mark-and-excursion--restore` — restore mark position (when the
 /// saved cons's car is a marker) and activation flag.
-fn f_smae_restore(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if let Value::Cons(c) = &a[0] {
-        let (mk, act) = {
-            let b = c.borrow();
-            (b.car.clone(), b.cdr.clone())
-        };
-        let buf = i.current_buffer;
-        if let Some(b) = i.buffers.get(buf) {
-            let ma = i.intern_soft("mark-active").unwrap_or(0);
-            let mut bb = b.borrow_mut();
-            if let Value::Marker(m) = &mk {
-                let len = bb.text.len();
-                bb.set_mark(m.borrow().position.min(len));
-            }
-            bb.locals
-                .insert(ma, if act.truthy() { Value::t() } else { Value::Nil });
+fn f_smae_restore(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if let Value::Cons(c) = &a[0] {
+    let (mk, act) = {
+        let b = c.borrow();
+        (b.car.clone(), b.cdr.clone())
+    };
+    let buf = i.current_buffer;
+    if let Some(b) = i.buffers.get(buf) {
+        let ma = i.intern_soft("mark-active").unwrap_or(0);
+        let mut bb = b.borrow_mut();
+        if let Value::Marker(m) = &mk {
+            let len = bb.text.len();
+            bb.set_mark(m.borrow().position.min(len));
         }
+        bb.locals
+            .insert(ma, if act.truthy() { Value::t() } else { Value::Nil });
     }
-    Ok(Value::Nil)
 }
+Ok(Value::Nil) }
 
 const ADVICE_WHERES: &[&str] = &[
     ":around",
@@ -3930,25 +3765,23 @@ fn advice_entry_matches(i: &Interp, fun: &Value, name: &Value, sel: &Value) -> b
     super::equal_values(i, fun, sel) || (!name.is_nil() && super::equal_values(i, name, sel))
 }
 
-fn f_advice_add(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let sym = want_sym(i, &a[0])?;
-    let w = want_sym(i, &a[1])?;
-    if !ADVICE_WHERES
-        .iter()
-        .any(|n| i.symbol_name(w).as_str() == *n)
-    {
-        return Err(i.signal_data(
-            sym::ERROR,
-            vec![Value::string(format!(
-                "Unknown add-function location ‘{}’",
-                i.symbol_name(w)
-            ))],
-        ));
-    }
-    let name = advice_name(i, &arg(&a, 3));
-    advice_push(i, sym, w, a[2].clone(), name)?;
-    Ok(Value::Nil)
+fn f_advice_add(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let sym = want_sym(i, &a[0])?;
+let w = want_sym(i, &a[1])?;
+if !ADVICE_WHERES
+    .iter()
+    .any(|n| i.symbol_name(w).as_str() == *n)
+{
+    return Err(i.signal_data(
+        sym::ERROR,
+        vec![Value::string(format!(
+            "Unknown add-function location ‘{}’",
+            i.symbol_name(w)
+        ))],
+    ));
 }
+let name = advice_name(i, &arg(&a, 3));
+advice_push(i, sym, w, a[2].clone(), name)?;
+Ok(Value::Nil) }
 
 fn advice_retain(i: &mut Interp, key: SymId, sel: &Value) -> Result<(), Flow> {
     if let Some(pos) = i.advices.iter().position(|(s, _)| *s == key) {
@@ -4014,246 +3847,232 @@ fn advice_unwrap(i: &mut Interp, v: &Value) -> Option<(SymId, Value)> {
     None
 }
 
-fn f_advice_remove(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let sym = want_sym(i, &a[0])?;
-    advice_retain(i, sym, &a[1])?;
-    Ok(Value::Nil)
-}
+fn f_advice_remove(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let sym = want_sym(i, &a[0])?;
+advice_retain(i, sym, &a[1])?;
+Ok(Value::Nil) }
 
 /// `cl--add-function` — (HOW PLACE FUNCTION PROPS) where PLACE is a
 /// normalized `(KIND . ARGS)' list produced by the `add-function'
 /// macro: (function SYM), (var SYM), or (get SYM PROP).
-fn f_add_function(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = want_sym(i, &a[0])?;
-    if !ADVICE_WHERES
-        .iter()
-        .any(|n| i.symbol_name(w).as_str() == *n)
-    {
+fn f_add_function(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = want_sym(i, &a[0])?;
+if !ADVICE_WHERES
+    .iter()
+    .any(|n| i.symbol_name(w).as_str() == *n)
+{
+    return Err(i.signal_data(
+        sym::ERROR,
+        vec![Value::string(format!(
+            "Unknown add-function location ‘{}’",
+            i.symbol_name(w)
+        ))],
+    ));
+}
+let p = a[1]
+    .list_to_vec()
+    .map_err(|_| i.wrong_type_mut("listp", &a[1]))?;
+let kind = p
+    .first()
+    .and_then(|h| i.sym_id(h))
+    .map(|s| i.symbol_name(s));
+let key = match kind.as_deref() {
+    Some("function") | Some("symbol-function") => want_sym(i, &p[1])?,
+    Some("var") | Some("default-value") | Some("local") => {
+        let sym = want_sym(i, &p[1])?;
+        let cur = i.symbol_value(sym);
+        let k = advice_wrap(i, &cur);
+        i.set_symbol(sym, Value::Sym(k))?;
+        k
+    }
+    Some("get") => {
+        let sym = want_sym(i, &p[1])?;
+        let prop = want_sym(i, &p[2])?;
+        let cur = i.get_prop(sym, prop);
+        let k = advice_wrap(i, &cur);
+        i.put_prop(sym, prop, Value::Sym(k));
+        k
+    }
+    // GNU's gv setter for a quoted place is the nonexistent
+    // function `(setf quote)' — signal the same void-function.
+    Some("setf-quote") => {
+        let sf = i.intern("(setf quote)");
+        return Err(i.signal_data(sym::VOID_FUNCTION, vec![Value::Sym(sf)]));
+    }
+    _ => {
         return Err(i.signal_data(
             sym::ERROR,
             vec![Value::string(format!(
-                "Unknown add-function location ‘{}’",
-                i.symbol_name(w)
+                "Unknown add-function place ‘{}’",
+                i.print_to_string(&a[1])
             ))],
         ));
     }
-    let p = a[1]
-        .list_to_vec()
-        .map_err(|_| i.wrong_type_mut("listp", &a[1]))?;
-    let kind = p
-        .first()
-        .and_then(|h| i.sym_id(h))
-        .map(|s| i.symbol_name(s));
-    let key = match kind.as_deref() {
-        Some("function") | Some("symbol-function") => want_sym(i, &p[1])?,
-        Some("var") | Some("default-value") | Some("local") => {
-            let sym = want_sym(i, &p[1])?;
-            let cur = i.symbol_value(sym);
-            let k = advice_wrap(i, &cur);
-            i.set_symbol(sym, Value::Sym(k))?;
-            k
-        }
-        Some("get") => {
-            let sym = want_sym(i, &p[1])?;
-            let prop = want_sym(i, &p[2])?;
-            let cur = i.get_prop(sym, prop);
-            let k = advice_wrap(i, &cur);
-            i.put_prop(sym, prop, Value::Sym(k));
-            k
-        }
-        // GNU's gv setter for a quoted place is the nonexistent
-        // function `(setf quote)' — signal the same void-function.
-        Some("setf-quote") => {
-            let sf = i.intern("(setf quote)");
-            return Err(i.signal_data(sym::VOID_FUNCTION, vec![Value::Sym(sf)]));
-        }
-        _ => {
-            return Err(i.signal_data(
-                sym::ERROR,
-                vec![Value::string(format!(
-                    "Unknown add-function place ‘{}’",
-                    i.print_to_string(&a[1])
-                ))],
-            ));
-        }
-    };
-    let name = advice_name(i, &arg(&a, 3));
-    advice_push(i, key, w, a[2].clone(), name)?;
-    Ok(Value::Nil)
-}
+};
+let name = advice_name(i, &arg(&a, 3));
+advice_push(i, key, w, a[2].clone(), name)?;
+Ok(Value::Nil) }
 
 /// `cl--remove-function` — (PLACE FUNCTION); mirror of the above.
-fn f_remove_function(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let p = a[0]
-        .list_to_vec()
-        .map_err(|_| i.wrong_type_mut("listp", &a[0]))?;
-    let kind = p
-        .first()
-        .and_then(|h| i.sym_id(h))
-        .map(|s| i.symbol_name(s));
-    let (holder, key) = match kind.as_deref() {
-        Some("function") | Some("symbol-function") => (None, want_sym(i, &p[1])?),
-        Some("var") | Some("default-value") | Some("local") => {
-            let sym = want_sym(i, &p[1])?;
-            let cur = i.symbol_value(sym);
-            match advice_unwrap(i, &cur) {
-                Some((k, orig)) => (Some(("var".to_string(), sym, orig, sym)), k),
-                None => return Ok(Value::Nil),
-            }
-        }
-        Some("get") => {
-            let sym = want_sym(i, &p[1])?;
-            let prop = want_sym(i, &p[2])?;
-            match advice_unwrap(i, &i.get_prop(sym, prop)) {
-                Some((k, orig)) => (Some(("get".to_string(), sym, orig, prop)), k),
-                None => return Ok(Value::Nil),
-            }
-        }
-        Some("setf-quote") => {
-            let sf = i.intern("(setf quote)");
-            return Err(i.signal_data(sym::VOID_FUNCTION, vec![Value::Sym(sf)]));
-        }
-        _ => return Ok(Value::Nil),
-    };
-    advice_retain(i, key, &a[1])?;
-    if i.advice_list(key).is_empty() {
-        if let Some((kind, sym, orig, prop)) = holder {
-            match kind.as_str() {
-                "var" => i.set_symbol(sym, orig)?,
-                _ => i.put_prop(sym, prop, orig),
-            }
-        }
-    }
-    Ok(Value::Nil)
-}
-
-fn f_advice_member_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU's advice-member-p resolves FUNCTION-DEF through
-    // `advice--symbol-function' and walks the advice chain, returning
-    // the matching layer (our trampoline stands in for the oclosure).
-    let mut cur = match &a[1] {
-        Value::Sym(s) => i.symbol_function(*s),
-        v => v.clone(),
-    };
-    loop {
-        match i.advice_link_entry(&cur) {
-            Some((_, f, next, n)) => {
-                if advice_entry_matches(i, &f, &n, &a[0]) {
-                    return Ok(cur);
-                }
-                cur = next;
-            }
+fn f_remove_function(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let p = a[0]
+    .list_to_vec()
+    .map_err(|_| i.wrong_type_mut("listp", &a[0]))?;
+let kind = p
+    .first()
+    .and_then(|h| i.sym_id(h))
+    .map(|s| i.symbol_name(s));
+let (holder, key) = match kind.as_deref() {
+    Some("function") | Some("symbol-function") => (None, want_sym(i, &p[1])?),
+    Some("var") | Some("default-value") | Some("local") => {
+        let sym = want_sym(i, &p[1])?;
+        let cur = i.symbol_value(sym);
+        match advice_unwrap(i, &cur) {
+            Some((k, orig)) => (Some(("var".to_string(), sym, orig, sym)), k),
             None => return Ok(Value::Nil),
         }
     }
-}
-
-fn f_advice_function_mapc(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU walks FUNCTION-DEF's `advice--p' chain — a bare symbol is not
-    // an advice object, so it iterates zero times there too.
-    let name_kw = i.intern("name");
-    let mut cur = a[1].clone();
-    while let Some((_, f, next, n)) = i.advice_link_entry(&cur) {
-        let props = if n.is_nil() {
-            Value::Nil
-        } else {
-            Value::list(vec![Value::cons(Value::Sym(name_kw), n)])
-        };
-        i.apply(&a[0], vec![f, props])?;
-        cur = next;
+    Some("get") => {
+        let sym = want_sym(i, &p[1])?;
+        let prop = want_sym(i, &p[2])?;
+        match advice_unwrap(i, &i.get_prop(sym, prop)) {
+            Some((k, orig)) => (Some(("get".to_string(), sym, orig, prop)), k),
+            None => return Ok(Value::Nil),
+        }
     }
-    Ok(Value::Nil)
+    Some("setf-quote") => {
+        let sf = i.intern("(setf quote)");
+        return Err(i.signal_data(sym::VOID_FUNCTION, vec![Value::Sym(sf)]));
+    }
+    _ => return Ok(Value::Nil),
+};
+advice_retain(i, key, &a[1])?;
+if i.advice_list(key).is_empty() {
+    if let Some((kind, sym, orig, prop)) = holder {
+        match kind.as_str() {
+            "var" => i.set_symbol(sym, orig)?,
+            _ => i.put_prop(sym, prop, orig),
+        }
+    }
 }
+Ok(Value::Nil) }
+
+fn f_advice_member_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU's advice-member-p resolves FUNCTION-DEF through
+// `advice--symbol-function' and walks the advice chain, returning
+// the matching layer (our trampoline stands in for the oclosure).
+let mut cur = match &a[1] {
+    Value::Sym(s) => i.symbol_function(*s),
+    v => v.clone(),
+};
+loop {
+    match i.advice_link_entry(&cur) {
+        Some((_, f, next, n)) => {
+            if advice_entry_matches(i, &f, &n, &a[0]) {
+                return Ok(cur);
+            }
+            cur = next;
+        }
+        None => return Ok(Value::Nil),
+    }
+} }
+
+fn f_advice_function_mapc(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU walks FUNCTION-DEF's `advice--p' chain — a bare symbol is not
+// an advice object, so it iterates zero times there too.
+let name_kw = i.intern("name");
+let mut cur = a[1].clone();
+while let Some((_, f, next, n)) = i.advice_link_entry(&cur) {
+    let props = if n.is_nil() {
+        Value::Nil
+    } else {
+        Value::list(vec![Value::cons(Value::Sym(name_kw), n)])
+    };
+    i.apply(&a[0], vec![f, props])?;
+    cur = next;
+}
+Ok(Value::Nil) }
 
 /// `(cl--advice--link OBJ)` — when OBJ is an advice trampoline,
 /// `(FUN NEXT HOW PROPS)' describing its layer; else nil.  The Lisp
 /// `advice--car'/`advice--cdr'/`advice--how'/`advice--props' accessors
 /// read off this list, mirroring GNU's oclosure slot accessors.
-fn f_advice_link(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match i.advice_link_entry(&a[0]) {
-        Some((w, f, next, n)) => {
-            let name_kw = i.intern("name");
-            let props = if n.is_nil() {
-                Value::Nil
-            } else {
-                Value::list(vec![Value::cons(Value::Sym(name_kw), n)])
-            };
-            Ok(Value::list(vec![f, next, w, props]))
-        }
-        None => Ok(Value::Nil),
+fn f_advice_link(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match i.advice_link_entry(&a[0]) {
+    Some((w, f, next, n)) => {
+        let name_kw = i.intern("name");
+        let props = if n.is_nil() {
+            Value::Nil
+        } else {
+            Value::list(vec![Value::cons(Value::Sym(name_kw), n)])
+        };
+        Ok(Value::list(vec![f, next, w, props]))
     }
-}
+    None => Ok(Value::Nil),
+} }
 
 /// `(cl--advice--apply IDX ARGS...)` — apply advice wrapper IDX:
 /// entry = (WHERE FUN NEXT).
-fn f_advice_apply_link(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let idx = match &a[0] {
-        Value::Int(n) => *n as usize,
-        _ => return Err(i.wrong_type_mut("fixnump", &a[0])),
-    };
-    let (w, f, next, _name) = match i.advice_links.get(idx) {
-        Some(p) => p.clone(),
-        None => return Err(i.error("Invalid advice link")),
-    };
-    let args: Vec<Value> = a[1..].to_vec();
-    let wname = match &w {
-        Value::Sym(s) => i.symbol_name(*s),
-        _ => return Err(i.wrong_type_mut("symbolp", &w)),
-    };
-    match wname.as_str() {
-        ":around" => {
-            let mut argv = vec![next];
-            argv.extend(args);
-            i.apply(&f, argv)
-        }
-        ":override" => i.apply(&f, args),
-        ":before" => {
-            i.apply(&f, args.clone())?;
+fn f_advice_apply_link(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let idx = match &a[0] {
+    Value::Int(n) => *n as usize,
+    _ => return Err(i.wrong_type_mut("fixnump", &a[0])),
+};
+let (w, f, next, _name) = match i.advice_links.get(idx) {
+    Some(p) => p.clone(),
+    None => return Err(i.error("Invalid advice link")),
+};
+let args: Vec<Value> = a[1..].to_vec();
+let wname = match &w {
+    Value::Sym(s) => i.symbol_name(*s),
+    _ => return Err(i.wrong_type_mut("symbolp", &w)),
+};
+match wname.as_str() {
+    ":around" => {
+        let mut argv = vec![next];
+        argv.extend(args);
+        i.apply(&f, argv)
+    }
+    ":override" => i.apply(&f, args),
+    ":before" => {
+        i.apply(&f, args.clone())?;
+        i.apply(&next, args)
+    }
+    ":before-until" => {
+        let r = i.apply(&f, args.clone())?;
+        if r.truthy() {
+            Ok(r)
+        } else {
             i.apply(&next, args)
         }
-        ":before-until" => {
-            let r = i.apply(&f, args.clone())?;
-            if r.truthy() {
-                Ok(r)
-            } else {
-                i.apply(&next, args)
-            }
-        }
-        ":before-while" => {
-            if i.apply(&f, args.clone())?.truthy() {
-                i.apply(&next, args)
-            } else {
-                Ok(Value::Nil)
-            }
-        }
-        ":after" => {
-            let r = i.apply(&next, args.clone())?;
-            i.apply(&f, args)?;
-            Ok(r)
-        }
-        // GNU: (or OLDFUN ADVICE)
-        ":after-until" => {
-            let r = i.apply(&next, args.clone())?;
-            Ok(if r.truthy() { r } else { i.apply(&f, args)? })
-        }
-        // GNU: (and OLDFUN ADVICE)
-        ":after-while" => {
-            let r = i.apply(&next, args.clone())?;
-            if r.truthy() {
-                i.apply(&f, args)
-            } else {
-                Ok(Value::Nil)
-            }
-        }
-        ":filter-args" => {
-            let r = i.apply(&f, vec![Value::list(args)])?;
-            let argv = r.list_to_vec().unwrap_or_else(|_| vec![r]);
-            i.apply(&next, argv)
-        }
-        ":filter-return" => {
-            let r = i.apply(&next, args)?;
-            i.apply(&f, vec![r])
-        }
-        _ => Err(i.error("Invalid advice class")),
     }
-}
+    ":before-while" => {
+        if i.apply(&f, args.clone())?.truthy() {
+            i.apply(&next, args)
+        } else {
+            Ok(Value::Nil)
+        }
+    }
+    ":after" => {
+        let r = i.apply(&next, args.clone())?;
+        i.apply(&f, args)?;
+        Ok(r)
+    }
+    // GNU: (or OLDFUN ADVICE)
+    ":after-until" => {
+        let r = i.apply(&next, args.clone())?;
+        Ok(if r.truthy() { r } else { i.apply(&f, args)? })
+    }
+    // GNU: (and OLDFUN ADVICE)
+    ":after-while" => {
+        let r = i.apply(&next, args.clone())?;
+        if r.truthy() {
+            i.apply(&f, args)
+        } else {
+            Ok(Value::Nil)
+        }
+    }
+    ":filter-args" => {
+        let r = i.apply(&f, vec![Value::list(args)])?;
+        let argv = r.list_to_vec().unwrap_or_else(|_| vec![r]);
+        i.apply(&next, argv)
+    }
+    ":filter-return" => {
+        let r = i.apply(&next, args)?;
+        i.apply(&f, vec![r])
+    }
+    _ => Err(i.error("Invalid advice class")),
+} }

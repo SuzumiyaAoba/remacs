@@ -3,6 +3,7 @@
 //! Like Emacs's `DEFUN`s in C. Each subr is a static `Subr` with a name,
 //! arity, and a `fn(&mut Interp, Vec<Value>) -> EvalResult`.
 
+pub(crate) mod backquote;
 pub(crate) mod arith;
 pub(crate) mod bidi_table;
 pub(crate) mod charset;
@@ -73,6 +74,7 @@ pub use misc::error_message;
 /// All subrs, aggregated from the category modules.
 pub(crate) fn collect() -> Vec<&'static Subr> {
     let mut v: Vec<&'static Subr> = Vec::new();
+    v.extend(backquote::SUBRS);
     v.extend(arith::SUBRS);
     v.extend(data::SUBRS);
     v.extend(evalfn::SUBRS);
@@ -130,10 +132,8 @@ pub fn register_extlib_features(interp: &mut Interp) {
     comp::install(interp);
 }
 
-fn sf_cannot_call(i: &mut Interp, a: Vec<Value>) -> super::error::EvalResult {
-    let _ = a;
-    Err(i.signal_data(sym::INVALID_FUNCTION, vec![Value::Nil]))
-}
+fn sf_cannot_call(i: &mut Interp, a: crate::lisp::Argv) -> super::error::EvalResult { let _ = a;
+Err(i.signal_data(sym::INVALID_FUNCTION, vec![Value::Nil])) }
 
 /// Special forms (dispatch lives in `lisp::special`).
 static SPECIAL_FORM_SUBRS: &[Subr] = &[

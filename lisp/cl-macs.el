@@ -582,6 +582,11 @@ If ALIST is non-nil, the new pairs are prepended to it."
 
 ;;; Macro-writing helpers (GNU cl-macs.el).
 
+;; GNU cl-macs.el: `(defvar cl--labels-convert-cache nil)' — the stash-
+;; installed `cl--labels-convert' reads this cache when `cl-labels'
+;; bodies are macroexpanded during this very load.
+(defvar cl--labels-convert-cache nil)
+
 (defvar cl--gensym-counter 0)
 (defun cl-gensym (&optional prefix)
   "Generate a new uninterned symbol.

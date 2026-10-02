@@ -62,7 +62,7 @@ pub(crate) fn is_byte_code(items: &[Value]) -> bool {
 /// Execute a `#[ARGDESC BYTESTR CONSTS DEPTH ...]' byte-code object.
 /// `l' is the Lambda built by `make-byte-code'/the `#[...]' reader;
 /// `argv' are the already-evaluated call arguments.
-pub(crate) fn exec(i: &mut Interp, l: &Lambda, argv: Vec<Value>) -> EvalResult {
+pub(crate) fn exec(i: &mut Interp, l: &Lambda, argv: crate::lisp::Argv) -> EvalResult {
     let items = l
         .bc_items
         .as_ref()
@@ -71,12 +71,12 @@ pub(crate) fn exec(i: &mut Interp, l: &Lambda, argv: Vec<Value>) -> EvalResult {
     let argdesc = items.first().cloned().unwrap_or(Value::Nil);
     let bytestr = items.get(1).cloned().unwrap_or(Value::Nil);
     let consts = items.get(2).cloned().unwrap_or(Value::Nil);
-    run(i, &argdesc, &bytestr, &consts, argv)
+    run(i, &argdesc, &bytestr, &consts, &argv)
 }
 
 /// `(byte-code BYTESTR CONSTVEC DEPTH)' entry point — no arguments.
 pub(crate) fn exec_raw(i: &mut Interp, bytestr: &Value, consts: &Value) -> EvalResult {
-    run(i, &Value::Int(0), bytestr, consts, Vec::new())
+    run(i, &Value::Int(0), bytestr, consts, &[])
 }
 
 fn run(
@@ -84,7 +84,7 @@ fn run(
     argdesc: &Value,
     bytestr: &Value,
     consts: &Value,
-    argv: Vec<Value>,
+    argv: &[Value],
 ) -> EvalResult {
     let code = code_bytes(i, bytestr)?;
     let consts = match consts {
@@ -194,7 +194,7 @@ fn dispatch(
             return Err(Flow::Quit);
         }
         let op = *code.get(pc).unwrap_or(&0) as usize;
-        if std::env::var_os("REMACS_TRACE_BC").is_some() {
+        if i.dbg_flags & 0x40 != 0 {
             eprintln!(
                 "[bc] pc={} op={} sp={} uw={} hd={} top={}",
                 pc,
@@ -429,7 +429,7 @@ fn step_op(
             let n = operand!();
             let fpos = stack.len().saturating_sub(n + 1);
             let fun = stack.get(fpos).cloned().unwrap_or(Value::Nil);
-            if std::env::var_os("DBG_FUNCALL").is_some() {
+            if i.dbg_flags & 0x01 != 0 {
                 let bad = if let Value::Cons(c) = &fun {
                     let car = c.borrow().car.clone();
                     let lam = i.intern("lambda");

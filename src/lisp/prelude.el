@@ -329,6 +329,84 @@ if it's an autoloaded macro."
           (setq f fundef))))
     val))
 
+;; GNU subr.el: `define-symbol-prop' is to `put' what `defalias' is to
+;; `fset' — it also records (SYM . PROP) under `define-symbol-props' in
+;; `current-load-list' so `find-lisp-object-file-name' can find the
+;; defining file.  Bytecode eager expansion calls it (bytecomp wraps
+;; `put'/`function-put' through it), so it must exist pre-dump.
+(defun define-symbol-prop (symbol prop val)
+  "Define the property PROP of SYMBOL to be VAL.
+This is to `put' what `defalias' is to `fset'."
+  ;; Can't use `cl-pushnew' here (nor `push' on (cdr foo)).
+  (let ((sps (assq 'define-symbol-props current-load-list)))
+    (unless sps
+      (setq sps (list 'define-symbol-props))
+      (push sps current-load-list))
+    (let ((ps (assq prop sps)))
+      (unless ps
+        (setq ps (list prop))
+        (setcdr sps (cons ps (cdr sps))))
+      (unless (member symbol (cdr ps))
+        (setcdr ps (cons symbol (cdr ps))))))
+  (put symbol prop val))
+
+;; GNU subr.el: `def-edebug-elem-spec' registers an edebug spec
+;; shorthand.  pcase.el calls it at top level for `pcase-PAT'.
+(defun def-edebug-elem-spec (name spec)
+  "Define a new Edebug spec element NAME as shorthand for SPEC.
+The SPEC has to be a list."
+  (declare (indent 1))
+  (when (string-match "\\`[&:]" (symbol-name name))
+    ;; & and : have special meaning in spec element names.
+    (error "Edebug spec name cannot start with '&' or ':'"))
+  (unless (consp spec)
+    (error "Edebug spec has to be a list: %S" spec))
+  (put name 'edebug-elem-spec spec))
+
+;; GNU macroexp.el: `macroexp-file-name'/`macroexp--fgrep' are needed by
+;; pcase.el during its in-prelude load; macroexp.el itself is a
+;; pre-registered feature so its copies never run.
+(defun macroexp-file-name ()
+  "Return the name of the file from which the code comes.
+Returns nil when we do not know."
+  ;; `eval-buffer' binds `current-load-list' but not `load-file-name',
+  ;; so prefer using it over using `load-file-name'.
+  (let ((file (car (last current-load-list))))
+    (or (if (stringp file) file)
+        (bound-and-true-p byte-compile-current-file))))
+
+(defun macroexp--fgrep (bindings sexp)
+  "Return those of the BINDINGS which might be used in SEXP.
+This is a poor-man's \"free variables\" test: it does not know Elisp
+syntax, so it only looks for the presence of symbols in SEXP."
+  (let ((res '())
+        ;; Cyclic code should not happen, but code can contain cyclic data :-(
+        (seen (make-hash-table :test #'eq))
+        (sexpss (list (list sexp))))
+    (while (and sexpss bindings)
+      (let ((sexps (pop sexpss)))
+        (unless (gethash sexps seen)
+          (puthash sexps t seen)
+          (if (vectorp sexps) (setq sexps (mapcar #'identity sexps)))
+          (let ((tortoise sexps) (skip t))
+            (while sexps
+              (let ((sexp (if (consp sexps) (pop sexps)
+                            (prog1 sexps (setq sexps nil)))))
+                (if skip
+                    (setq skip nil)
+                  (setq tortoise (cdr tortoise))
+                  (if (eq tortoise sexps)
+                      (setq sexps nil) ;; Found a cycle: we're done!
+                    (setq skip t)))
+                (cond
+                 ((or (consp sexp) (vectorp sexp)) (push sexp sexpss))
+                 (t
+                  (let ((tmp (assq sexp bindings)))
+                    (when tmp
+                      (push tmp res)
+                      (setq bindings (remove tmp bindings))))))))))))
+    res))
+
 ;; GNU dumps macroexp.el, so `(featurep 'macroexp)' is t and
 ;; `(require 'macroexp)' in `push'/gv.el is a no-op.  Mirror that.
 (provide 'macroexp)
@@ -5587,7 +5665,12 @@ Leave one space or none, according to the context."
   s))
 (fset 'kmacro-keymap
   '(autoload "kmacro" "Keymap for keyboard macro commands." t keymap))
-(fset 'ctl-x-4-prefix
+;; GNU subr.el: `ctl-x-4-map' is the variable; `ctl-x-4-prefix' is a
+;; `defalias' to it.  Defining the *variable* first keeps subr.el's
+;; boot-time `defvar' a no-op and its `defalias' pointing at this
+;; same (populated) map — otherwise the alias rebinds to a fresh
+;; empty keymap and every `C-x 4 ...' binding is orphaned.
+(defvar ctl-x-4-map
   (let ((s (make-sparse-keymap)))
   (define-key s [46] 'xref-find-definitions-other-window)
   (define-key s [112] 'project-other-window-command)
@@ -5604,8 +5687,10 @@ Leave one space or none, according to the context."
   (define-key s [97] 'add-change-log-entry-other-window)
   (define-key s [10] 'dired-jump-other-window)
   (define-key s [109] 'compose-mail-other-window)
-  s))
-(fset 'ctl-x-5-prefix
+  s)
+  "Keymap for subcommands of \\`C-x 4'.")
+(fset 'ctl-x-4-prefix ctl-x-4-map)
+(defvar ctl-x-5-map
   (let ((s (make-sparse-keymap)))
   (define-key s [117] 'undelete-frame)
   (define-key s [99] 'clone-frame)
@@ -5623,7 +5708,9 @@ Leave one space or none, according to the context."
   (define-key s [102] 'find-file-other-frame)
   (define-key s [98] 'switch-to-buffer-other-frame)
   (define-key s [109] 'compose-mail-other-frame)
-  s))
+  s)
+  "Keymap for frame commands.")
+(fset 'ctl-x-5-prefix ctl-x-5-map)
 (fset '2C-command
   '(keymap (115 . 2C-split) (98 . 2C-associate-buffer)
            (f2 . 2C-two-columns) (50 . 2C-two-columns)))
@@ -7282,8 +7369,15 @@ whose value is such a string."
 ;; gv.el registers these `declare' handlers via autoload cookies; the
 ;; alist entries must exist before gv.el loads so `defun''s dispatch
 ;; reaches them (the autoload cell funcalls into the real library).
-(autoload 'gv--expander-defun-declaration "gv" nil nil)
-(autoload 'gv--setter-defun-declaration "gv" nil nil)
+;; GNU ldefs-boot.el installs these two as real `defsubst's (not
+;; autoloads) so `declare' handling works before gv.el is ever
+;; loaded; our loaddefs only autoloads them, so they must live here
+;; as real definitions — a mere autoload cell is voided by the dump
+;; rollback of gv.el and `(require 'image)' then dies in defcustom.
+(defun gv--expander-defun-declaration (&rest args)
+  (apply #'gv--defun-declaration 'gv-expander args))
+(defun gv--setter-defun-declaration (&rest args)
+  (apply #'gv--defun-declaration 'gv-setter args))
 (or (assq 'gv-expander defun-declarations-alist)
     (let ((x (list 'gv-expander #'gv--expander-defun-declaration)))
       (push x macro-declarations-alist)
@@ -9760,6 +9854,28 @@ modify the table."
     (define-key map [backspace] [127])
     (define-key map [delete] [127])
     (define-key map [S-tab] [backtab])
+    ;; GNU bindings.el: X11 keypad keys map to their plain
+    ;; counterparts for every basic modifier combination.
+    (let ((modifiers '(nil (control) (meta) (control meta) (shift)
+                       (control shift) (meta shift) (control meta shift)))
+          (keys '((kp-delete delete) (kp-insert insert)
+                  (kp-end end) (kp-down down) (kp-next next)
+                  (kp-left left) (kp-begin begin) (kp-right right)
+                  (kp-home home) (kp-up up) (kp-prior prior)
+                  (kp-enter enter) (kp-decimal ?.)
+                  (kp-0 ?0) (kp-1 ?1) (kp-2 ?2) (kp-3 ?3) (kp-4 ?4)
+                  (kp-5 ?5) (kp-6 ?6) (kp-7 ?7) (kp-8 ?8) (kp-9 ?9)
+                  (kp-add ?+) (kp-subtract ?-) (kp-multiply ?*)
+                  (kp-divide ?/))))
+      (dolist (pair keys)
+        (let ((keypad (nth 0 pair))
+              (normal (nth 1 pair)))
+          (when (characterp normal)
+            (put keypad 'ascii-character normal))
+          (dolist (mod modifiers)
+            (define-key map
+              (vector (append mod (list keypad)))
+              (vector (append mod (list normal))))))))
     map)
   "Keymap mapping ASCII function key sequences onto their preferred forms.
 This uses a `keymap' data structure that is used by `read-key-sequence'
@@ -12547,11 +12663,19 @@ Also see `completion-category-overrides' and `completion-category-get'.")
 
 ;; ---------- minibuffer.el completion machinery (GNU ports) ----------
 
-(defun make-obsolete-variable (obsolete-name current-name
-                                             &optional when access-type)
-  "Make the byte-compiler warn that OBSOLETE-NAME is obsolete."
+(defun make-obsolete-variable (obsolete-name current-name when
+                                             &optional access-type)
+  "Make the byte-compiler warn that OBSOLETE-NAME is obsolete.
+The warning will say that CURRENT-NAME should be used instead.
+WHEN should be a string indicating when the variable
+was first made obsolete, for example a date or a release number.
+ACCESS-TYPE if non-nil should specify the kind of access that will trigger
+  obsolescence warnings; it can be either `get' or `set'."
+  (byte-run--constant-obsolete-warning obsolete-name)
   (put obsolete-name 'byte-obsolete-variable
-       (purecopy (list current-name when access-type))))
+       ;; GNU byte-run.el order: (CURRENT ACCESS-TYPE WHEN).
+       (list current-name access-type when))
+  obsolete-name)
 
 (defun byte-run--constant-obsolete-warning (obsolete-name)
   (if (memq obsolete-name '(nil t))
@@ -12819,8 +12943,7 @@ This is equivalent to `(cl-return-from nil RESULT)'."
   "Return a new list with specified ARGs as elements, consed to last ARG.
 Thus, `(cl-list* A B C D)' is equivalent to `(nconc (list A B C) D)', or to
 `(cons A (cons B (cons C D)))'."
-  (declare (side-effect-free error-free)
-           (compiler-macro cl--compiler-macro-list*))
+  (declare (side-effect-free error-free))
   (cond ((not rest) arg)
 	((not (cdr rest)) (cons arg (car rest)))
 	(t (let* ((n (length rest))
@@ -16735,33 +16858,75 @@ Any remaining forms form the default method (specializers all `t')."
          ',name)))
 
 (defun cl--generic-dispatch (name args)
-  (let* ((methods (get name 'cl--methods))
-         (applicable
-          (let (out)
-            (dolist (m methods)
-              (let ((specs (car m)) (ok t) (as args))
-                (while (and specs as ok)
-                  (unless (cl--spec-applicable-p (car specs) (car as))
-                    (setq ok nil))
-                  (setq specs (cdr specs) as (cdr as)))
-                (when ok (push m out))))
-            ;; Stable sort: most specific first.
-            (sort (nreverse out)
-                  (lambda (a b) (cl--method-more-specific-p a b)))))
-         (around (cl--methods-with-qual applicable :around))
-         (before (cl--methods-with-qual applicable :before))
-         (primary (cl--methods-with-qual applicable nil))
-         (after (nreverse (cl--methods-with-qual applicable :after))))
-    (unless (or around primary)
-      (signal 'cl-no-applicable-method (cons name args)))
-    (let ((cl--cnm-ok t) (cl--cnm-name name))
-      (dolist (m before) (apply (cl--method-fn m) args))
-      (let* ((cl--cnm-args args)
-             (cl--cnm (append (cdr around) primary))
-             (fn (cl--method-fn (car (or around primary))))
-             (result (apply fn args)))
-        (dolist (m after) (apply (cl--method-fn m) args))
-        result))))
+  ;; cl-generic.el bootstrap: while `cl-generic-generalizers' still has
+  ;; no real methods, GNU installs an fset fallback answering
+  ;; `t-generalizer' so `cl-defmethod' can keep registering.  Extend it
+  ;; to return the `head'/`eql' generalizers for cons specializers —
+  ;; those generalizers are already defined by the time any `(head X)'
+  ;; or `(eql X)' method is registered, and the shapes are what the real
+  ;; methods would answer anyway.
+  (if (and (eq name 'cl-generic-generalizers)
+           (null (get name 'cl--methods))
+           (boundp 'cl--generic-t-generalizer))
+      ;; The dispatch arg is the specializer itself — `(head X)' /
+      ;; `(eql X)' arrive as bare conses, not (ARG . SPEC) pairs.
+      (let ((spec (car args)))
+        (list (cond
+               ((and (consp spec) (eq (car spec) 'head))
+                (unless (bound-and-true-p cl--generic-head-used)
+                  (defvar cl--generic-head-used (make-hash-table :test #'eql))
+                  (setq cl--generic-head-used (make-hash-table :test #'eql)))
+                (or (bound-and-true-p cl--generic-head-generalizer)
+                    (setq cl--generic-head-generalizer
+                          (record 'cl--generic-generalizer
+                                  'cl--generic-head-generalizer 80
+                                  (lambda (name &rest _)
+                                    `(gethash (car-safe ,name)
+                                              cl--generic-head-used))
+                                  (lambda (tag &rest _)
+                                    (if (eq (car-safe tag) 'head)
+                                        (list tag)))))))
+               ((and (consp spec) (eq (car spec) 'eql))
+                (unless (bound-and-true-p cl--generic-eql-used)
+                  (defvar cl--generic-eql-used (make-hash-table :test #'eql))
+                  (setq cl--generic-eql-used (make-hash-table :test #'eql)))
+                (or (bound-and-true-p cl--generic-eql-generalizer)
+                    (setq cl--generic-eql-generalizer
+                          (record 'cl--generic-generalizer
+                                  'cl--generic-eql-generalizer 100
+                                  (lambda (name &rest _)
+                                    `(gethash ,name cl--generic-eql-used))
+                                  (lambda (tag &rest _)
+                                    (if (eq (car-safe tag) 'eql)
+                                        (cdr tag)))))))
+               (t cl--generic-t-generalizer))))
+    (let* ((methods (get name 'cl--methods))
+           (applicable
+            (let (out)
+              (dolist (m methods)
+                (let ((specs (car m)) (ok t) (as args))
+                  (while (and specs as ok)
+                    (unless (cl--spec-applicable-p (car specs) (car as))
+                      (setq ok nil))
+                    (setq specs (cdr specs) as (cdr as)))
+                  (when ok (push m out))))
+              ;; Stable sort: most specific first.
+              (sort (nreverse out)
+                    (lambda (a b) (cl--method-more-specific-p a b)))))
+           (around (cl--methods-with-qual applicable :around))
+           (before (cl--methods-with-qual applicable :before))
+           (primary (cl--methods-with-qual applicable nil))
+           (after (nreverse (cl--methods-with-qual applicable :after))))
+      (unless (or around primary)
+        (signal 'cl-no-applicable-method (cons name args)))
+      (let ((cl--cnm-ok t) (cl--cnm-name name))
+        (dolist (m before) (apply (cl--method-fn m) args))
+        (let* ((cl--cnm-args args)
+               (cl--cnm (append (cdr around) primary))
+               (fn (cl--method-fn (car (or around primary))))
+               (result (apply fn args)))
+          (dolist (m after) (apply (cl--method-fn m) args))
+          result)))))
 
 (defun cl--methods-with-qual (methods qual)
   (let (out)
@@ -19333,7 +19498,7 @@ dynamically during expansion.")
   "Return a list of (KEYSEQ . BINDING) for all of MAP, descending
 into prefix keymaps (like GNU's `cl--map-keymap-recursively')."
   (let (acc)
-    (cl--map-keymap-recursively (lambda (s b) (push (cons s b) acc))
+    (remacs--map-keymap-recursively (lambda (s b) (push (cons s b) acc))
                                 map)
     (nreverse acc)))
 
@@ -20100,9 +20265,16 @@ symbol macros only apply to variable positions."
        (t
         ;; A call: the function-position head is a function name (or a
         ;; lambda form), not a variable — never substitute the symbol.
+        ;; Tails may be dotted ((tk . dd) destructuring specs), so walk
+        ;; cdrs manually: `mapcar' would hit the final atom with
+        ;; `sequencep'.
         (cons (if (consp head) (cl--sm-subst head bindings) head)
-              (mapcar (lambda (f) (cl--sm-subst f bindings))
-                      (cdr form)))))))
+              (let ((rest (cdr form)) (out nil))
+                (while (consp rest)
+                  (push (cl--sm-subst (car rest) bindings) out)
+                  (setq rest (cdr rest)))
+                (nconc (nreverse out)
+                       (cl--sm-subst rest bindings))))))))
    (t form)))
 
 (defmacro cl-symbol-macrolet (bindings &rest body)
@@ -26660,6 +26832,20 @@ all RULES in total." (declare (debug (&rest &or symbolp (def-form &rest (numberp
 (define-derived-mode special-mode nil "Special"
   "Major mode for buffers containing read-only text.")
 
+;; GNU simple.el's `special-mode-map' (defvar-keymap), verbatim.
+(defvar-keymap special-mode-map
+  :suppress t
+  "q" #'quit-window
+  "SPC" #'scroll-up-command
+  "S-SPC" #'scroll-down-command
+  "DEL" #'scroll-down-command
+  "?" #'describe-mode
+  "h" #'describe-mode
+  ">" #'end-of-buffer
+  "<" #'beginning-of-buffer
+  "g" #'revert-buffer)
+
+
 (define-derived-mode messages-buffer-mode special-mode "Messages"
   "Major mode for the *Messages* buffer.")
 
@@ -27071,18 +27257,33 @@ determined at run time.")
 
 (define-derived-mode lisp-data-mode prog-mode "Lisp-Data"
   "Major mode for editing Lisp data (as opposed to code)."
+  ;; GNU `lisp-mode-variables' (emacs-lisp/lisp-mode.el), full body.
+  (setq-local paragraph-ignore-fill-prefix t)
+  (setq-local fill-paragraph-function 'lisp-fill-paragraph)
+  (setq-local adaptive-fill-function #'lisp-adaptive-fill)
+  (setq-local indent-line-function 'lisp-indent-line)
+  (setq-local indent-region-function #'lisp-indent-region)
+  (setq-local comment-indent-function #'lisp-comment-indent)
+  (setq-local outline-regexp (concat ";;;;* [^ \t\n]\\|(\\|\\("
+                                     lisp-mode-autoload-regexp
+                                     "\\)"))
+  (setq-local outline-level 'lisp-outline-level)
+  (setq-local add-log-current-defun-function #'lisp-current-defun-name)
   (setq-local comment-start ";")
   (setq-local comment-start-skip ";+ *")
-  ;; GNU `lisp-mode-variables' (emacs-lisp/lisp-mode.el) also sets:
   (setq-local comment-add 1)		;default to `;;' in comment-region
   (setq-local comment-column 40)
   (setq-local comment-use-syntax t)
-  (setq-local multibyte-syntax-as-symbol t)
-  (setq-local comment-indent-function #'lisp-comment-indent)
-  ;; GNU `lisp-mode-variables' sets these for every Lisp mode.
-  (setq-local indent-region-function #'lisp-indent-region)
   (setq-local imenu-generic-expression lisp-imenu-generic-expression)
-  (setq imenu-case-fold-search nil))
+  (setq-local multibyte-syntax-as-symbol t)
+  (setq-local prettify-symbols-alist lisp-prettify-symbols-alist)
+  (setq-local electric-pair-skip-whitespace 'chomp)
+  (setq-local electric-pair-open-newline-between-pairs nil)
+  ;; GNU `lisp-data-mode' body (after lisp-mode-variables):
+  (setq-local electric-quote-string t)
+  (setq imenu-case-fold-search nil)
+  (setq-local hs-block-start-regexp "\\s(\\|\"")
+  (setq-local hs-block-end-regexp "\\s)\\|\""))
 
 (define-derived-mode lisp-mode lisp-data-mode "Lisp"
   "Major mode for editing Lisp code."
@@ -27115,6 +27316,26 @@ determined at run time.")
   (add-hook 'font-lock-extend-region-functions
             #'elisp-extend-region-to-whole-defuns nil t)
   (add-hook 'after-load-functions #'elisp--font-lock-flush-elisp-buffers)
+  ;; GNU elisp-mode.el body (electric-pair-text-pairs branch +
+  ;; hooks + the trailing setq-locals):
+  (if (boundp 'electric-pair-text-pairs)
+      (setq-local electric-pair-text-pairs
+                  (append '((?\` . ?\') (?\‘ . ?\’))
+                          electric-pair-text-pairs))
+    (add-hook 'electric-pair-mode-hook #'emacs-lisp-set-electric-text-pairs))
+  (add-hook 'eldoc-documentation-functions
+            #'elisp-eldoc-funcall nil t)
+  (add-hook 'eldoc-documentation-functions
+            #'elisp-eldoc-var-docstring nil t)
+  (add-hook 'xref-backend-functions #'elisp--xref-backend nil t)
+  (setq-local project-vc-external-roots-function #'elisp-load-path-roots)
+  (setq-local outline-search-function #'elisp-outline-search)
+  (add-hook 'completion-at-point-functions
+            #'elisp-completion-at-point nil 'local)
+  (add-hook 'flymake-diagnostic-functions #'elisp-flymake-checkdoc nil t)
+  (add-hook 'flymake-diagnostic-functions
+            #'elisp-flymake-byte-compile nil t)
+  (add-hook 'context-menu-functions #'elisp-context-menu 10 t)
   ;; GNU ends up with this enabled in elisp buffers (set lazily by
   ;; `syntax-propertize'); setting it eagerly matches the observable
   ;; state.
@@ -29268,12 +29489,15 @@ On error, location of point is unspecified."
 (put 'buffer-backed-up 'permanent-local t)
 
 ;; minor convenience feature for handling of an obsolete Rmail file format.
-(defun define-obsolete-function-alias (obsolete-name current-name
-                                                     &optional when docstring)
-  "Make OBSOLETE-NAME a (function) alias for CURRENT-NAME."
-  (defalias obsolete-name current-name docstring)
-  (put obsolete-name 'byte-obsolete-function t)
-  obsolete-name)
+(defmacro define-obsolete-function-alias (obsolete-name current-name when
+                                          &optional docstring)
+  "Set OBSOLETE-NAME's function definition to CURRENT-NAME and mark it obsolete.
+WHEN should be a string indicating when the function was first
+made obsolete, for example a date or a release number."
+  (declare (doc-string 4) (indent defun))
+  `(progn
+     (defalias ,obsolete-name ,current-name ,docstring)
+     (make-obsolete ,obsolete-name ,current-name ,when)))
 
 ;; GNU byte-run.el: advertised calling conventions.  Needed early —
 ;; `define-obsolete-function-alias' call sites with an
@@ -29293,21 +29517,26 @@ convention was modified."
 Return t if there isn't any."
   (gethash function advertised-signature-table t))
 
-;; GNU subr.el: the variable-alias counterpart.  The byte-compiler's
-;; `byte-obsolete-variable' triple gets (CURRENT WHEN ACCESS-TYPE); an
-;; older alias defined before ACCESS-TYPE existed defaults to `set'.
-(defun define-obsolete-variable-alias (obsolete-name current-name
-                                                     &optional when docstring)
-  "Make OBSOLETE-NAME a variable alias for CURRENT-NAME."
-  (let ((where (get obsolete-name 'byte-obsolete-variable)))
-    (put obsolete-name 'byte-obsolete-variable
-         (purecopy (list current-name when
-                         (if (and where (symbolp (car where)))
-                             'set
-                           (nth 2 where)))))
-    (defvaralias obsolete-name current-name docstring)
-    (put obsolete-name 'saved-var-name current-name)
-    obsolete-name))
+;; GNU byte-run.el: `define-obsolete-variable-alias' is a macro whose
+;; expansion runs `defvaralias', copies `saved-value'/
+;; `saved-variable-comment' props for Customize, then
+;; `make-obsolete-variable' writes (CURRENT ACCESS-TYPE WHEN) on
+;; `byte-obsolete-variable'.
+(defmacro define-obsolete-variable-alias (obsolete-name current-name when
+                                          &optional docstring)
+  "Make OBSOLETE-NAME a variable alias for CURRENT-NAME and mark it obsolete.
+WHEN should be a string indicating when the variable was first
+made obsolete, for example a date or a release number."
+  (declare (doc-string 4) (indent defun))
+  `(progn
+     (defvaralias ,obsolete-name ,current-name ,docstring)
+     ;; See Bug#4706.
+     (dolist (prop '(saved-value saved-variable-comment))
+       (and (get ,obsolete-name prop)
+            (null (get ,current-name prop))
+            (put ,current-name prop (get ,obsolete-name prop))))
+     (put ,obsolete-name 'saved-var-name ,current-name)
+     (make-obsolete-variable ,obsolete-name ,current-name ,when)))
 
 ;; GNU faces.el: face aliases record `face-alias' + `obsolete-face'
 ;; properties (used by emacs-authors-mode et al.).
@@ -41845,7 +42074,11 @@ Value is a list of the form (NAME INDEX R G B)."
 
 ;; ---------- more -Q-bound helpers ----------
 
-(defun cl--map-keymap-recursively (func-rec map &optional base)
+;; remacs-internal name: GNU's `cl--map-keymap-recursively' (cl-extra)
+;; is autoloaded by map-ynp.el at -Q, so the prelude must not occupy
+;; the symbol — a bound cell makes `autoload' a no-op and -Q shows a
+;; real definition where GNU has `(autoload "cl-extra" ...)'.
+(defun remacs--map-keymap-recursively (func-rec map &optional base)
   "Apply FUNC-REC to every binding in MAP, tracking the key sequence."
   (or base
       (setq base (copy-sequence [0])))
@@ -41853,7 +42086,7 @@ Value is a list of the form (NAME INDEX R G B)."
    (lambda (key bind)
      (aset base (1- (length base)) key)
      (if (keymapp bind)
-         (cl--map-keymap-recursively
+         (remacs--map-keymap-recursively
           func-rec bind
           (vconcat base (list 0)))
        (funcall func-rec base bind)))
@@ -49320,9 +49553,10 @@ abbreviating it with ellipses to fit within a size limit."
                         (dolist (path x t)
                           (unless (stringp path) (throw 'tag nil)))))))
 
-;; Remaining prop-parity stragglers: warnings.el's risky-local marks
-;; and cl-macs's cl-list* compiler-macro (a `declare' spec GNU only
-;; expands at byte-compile time).
+;; Remaining prop-parity stragglers: warnings.el's risky-local marks.
+;; cl-list*'s compiler-macro `declare' spec is NOT seeded: GNU's -Q
+;; keeps `(get 'cl-list* 'compiler-macro)' nil — the prop is only set
+;; when cl-macs/cl-loaddefs loads — and seeding it would make
+;; `macroexpand-all' try (and fail to resolve) the unbound handler.
 (put 'warning-levels 'risky-local-variable t)
 (put 'warning-series 'risky-local-variable t)
-(function-put 'cl-list* 'compiler-macro 'cl--compiler-macro-list*)

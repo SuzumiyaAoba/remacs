@@ -197,8 +197,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!(
         "match-data--translate", 1, 1,
-        f_nil2,
-        "Adjust match data (no-op)."
+        f_match_data_translate,
+        "Add N to all positions in the match data."
     ),
     S!(
         "field-beginning",
@@ -359,90 +359,85 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
 ];
 
-fn f_b64url_encode_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    use base64::Engine;
-    let s = want_string(i, &a[0])?;
-    let no_pad = a.get(1).map(|v| v.truthy()).unwrap_or(false);
-    let eng = if no_pad {
-        base64::engine::general_purpose::URL_SAFE_NO_PAD
-    } else {
-        base64::engine::general_purpose::URL_SAFE
-    };
-    Ok(Value::string(eng.encode(s.as_bytes())))
-}
+fn f_b64url_encode_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { use base64::Engine;
+let s = want_string(i, &a[0])?;
+let no_pad = a.get(1).map(|v| v.truthy()).unwrap_or(false);
+let eng = if no_pad {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+} else {
+    base64::engine::general_purpose::URL_SAFE
+};
+Ok(Value::string(eng.encode(s.as_bytes()))) }
 
-fn f_get_byte(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (get-byte &optional POSITION STRING) — byte units; multibyte
-    // chars that aren't ASCII/8-bit signal an error like Emacs.
-    match a.get(1) {
-        Some(Value::Str(s)) => {
-            let s = s.borrow().clone();
-            let chars: Vec<char> = s.chars().collect();
-            let pos = a.get(0).and_then(|v| v.int()).unwrap_or(0);
-            if pos < 0 || pos as usize >= chars.len() {
-                return Err(i.signal_data(
-                    crate::lisp::sym::ARGS_OUT_OF_RANGE,
-                    vec![a[1].clone(), a[0].clone()],
-                ));
-            }
-            let c = chars[pos as usize] as u32;
-            if c < 128 {
-                Ok(Value::Int(c as i128))
-            } else {
-                Err(i.signal_data(
-                    crate::lisp::sym::ERROR,
-                    vec![Value::string(format!(
-                        "Not an ASCII nor an 8-bit character: {}",
-                        c
-                    ))],
-                ))
-            }
+fn f_get_byte(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // (get-byte &optional POSITION STRING) — byte units; multibyte
+// chars that aren't ASCII/8-bit signal an error like Emacs.
+match a.get(1) {
+    Some(Value::Str(s)) => {
+        let s = s.borrow().clone();
+        let chars: Vec<char> = s.chars().collect();
+        let pos = a.get(0).and_then(|v| v.int()).unwrap_or(0);
+        if pos < 0 || pos as usize >= chars.len() {
+            return Err(i.signal_data(
+                crate::lisp::sym::ARGS_OUT_OF_RANGE,
+                vec![a[1].clone(), a[0].clone()],
+            ));
         }
-        Some(other) if !other.is_nil() => Err(i.wrong_type_mut("stringp", other)),
-        _ => {
-            // Buffer text at POSITION (1-based); ASCII-only like strings.
-            let b = cur(i);
-            let bb = b.borrow();
-            let pos = a.get(0).and_then(|v| v.int()).unwrap_or(bb.point() as i128);
-            let p = if pos < 1 {
-                usize::MAX
-            } else {
-                (pos - 1) as usize
-            };
-            if p >= bb.text.len() {
-                return Err(i.signal_data(
-                    crate::lisp::sym::ARGS_OUT_OF_RANGE,
-                    vec![a.get(0).cloned().unwrap_or(Value::Nil)],
-                ));
-            }
-            let c = bb.text.char_at(p) as u32;
-            if c < 128 {
-                Ok(Value::Int(c as i128))
-            } else {
-                Err(i.signal_data(
-                    crate::lisp::sym::ERROR,
-                    vec![Value::string(format!(
-                        "Not an ASCII nor an 8-bit character: {}",
-                        c
-                    ))],
-                ))
-            }
+        let c = chars[pos as usize] as u32;
+        if c < 128 {
+            Ok(Value::Int(c as i128))
+        } else {
+            Err(i.signal_data(
+                crate::lisp::sym::ERROR,
+                vec![Value::string(format!(
+                    "Not an ASCII nor an 8-bit character: {}",
+                    c
+                ))],
+            ))
         }
     }
-}
+    Some(other) if !other.is_nil() => Err(i.wrong_type_mut("stringp", other)),
+    _ => {
+        // Buffer text at POSITION (1-based); ASCII-only like strings.
+        let b = cur(i);
+        let bb = b.borrow();
+        let pos = a.get(0).and_then(|v| v.int()).unwrap_or(bb.point() as i128);
+        let p = if pos < 1 {
+            usize::MAX
+        } else {
+            (pos - 1) as usize
+        };
+        if p >= bb.text.len() {
+            return Err(i.signal_data(
+                crate::lisp::sym::ARGS_OUT_OF_RANGE,
+                vec![a.get(0).cloned().unwrap_or(Value::Nil)],
+            ));
+        }
+        let c = bb.text.char_at(p) as u32;
+        if c < 128 {
+            Ok(Value::Int(c as i128))
+        } else {
+            Err(i.signal_data(
+                crate::lisp::sym::ERROR,
+                vec![Value::string(format!(
+                    "Not an ASCII nor an 8-bit character: {}",
+                    c
+                ))],
+            ))
+        }
+    }
+} }
 
-fn f_find_file_name_handler(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (find-file-name-handler FILE OPERATION) — scan
-    // `file-name-handler-alist' (REGEXP . HANDLER) pairs.
-    let file = want_string(i, &a[0])?;
+/// Shared helper: GNU `find-file-name-handler' scan of
+/// `file-name-handler-alist' for FILE serving OPERATION.
+pub(crate) fn find_file_name_handler(
+    i: &mut Interp,
+    file: &str,
+    operation: Value,
+) -> Option<Value> {
     let fid = i.intern("file-name-handler-alist");
     let alist = i.symbol_value(fid);
-    // GNU fileio.c Ffind_file_name_handler: a matching handler symbol
-    // carrying an `operations' property only serves the operations
-    // listed there (e.g. `jka-compr-handler' declines
-    // `file-name-sans-versions' but serves `insert-file-contents').
-    // (`inhibit-file-name-handlers' is consulted where C code *calls*
-    // handlers, not by this subr — GNU ignores it here.)
+    let iid = i.intern("inhibit-file-name-handlers");
+    let inhibit = i.symbol_value(iid);
     let ops_id = i.intern("operations");
     let mut cur = alist;
     loop {
@@ -452,6 +447,7 @@ fn f_find_file_name_handler(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     let b = c.borrow();
                     (b.car.clone(), b.cdr.clone())
                 };
+                cur = next;
                 if let Value::Cons(pair) = &cell {
                     let (re, handler) = {
                         let b = pair.borrow();
@@ -476,6 +472,25 @@ fn f_find_file_name_handler(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                             })
                             .is_some();
                         if matched {
+                            // GNU Ffind_file_name_handler: Fmemq on
+                            // Vinhibit_file_name_handlers skips
+                            // inhibited handlers.
+                            let mut inhibited = false;
+                            let mut ic = inhibit.clone();
+                            while let Value::Cons(cc) = ic {
+                                let (h, n) = {
+                                    let b = cc.borrow();
+                                    (b.car.clone(), b.cdr.clone())
+                                };
+                                if crate::lisp::builtins::eq_values(&h, &handler) {
+                                    inhibited = true;
+                                    break;
+                                }
+                                ic = n;
+                            }
+                            if inhibited {
+                                continue;
+                            }
                             let mut excluded = false;
                             if let Value::Sym(hs) = &handler {
                                 let ops = i.get_prop(*hs, ops_id);
@@ -487,7 +502,7 @@ fn f_find_file_name_handler(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                                             let b = cc.borrow();
                                             (b.car.clone(), b.cdr.clone())
                                         };
-                                        if crate::lisp::builtins::eq_values(&h, &a[1]) {
+                                        if crate::lisp::builtins::eq_values(&h, &operation) {
                                             excluded = false;
                                             break;
                                         }
@@ -496,103 +511,115 @@ fn f_find_file_name_handler(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                                 }
                             }
                             if !excluded {
-                                return Ok(handler);
+                                return Some(handler);
                             }
                         }
                     }
                 }
-                cur = next;
             }
-            _ => return Ok(Value::Nil),
+            _ => return None,
         }
     }
 }
 
-fn f_replace_region_contents(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (replace-region-contents BEG END SOURCE &rest) — SOURCE is a
-    // buffer, a string, or a 0-arg function returning one.
-    let (s, e, _) = region_text(i, &a)?;
-    let src = a[2].clone();
-    let text = match &src {
-        Value::Str(st) => st.borrow().clone(),
-        Value::Buffer(_) => {
-            let b = buf_of(i, &src)?;
-            b.borrow().text.text()
-        }
-        Value::Sym(_) | Value::Lambda(_) | Value::Subr(_) | Value::Cons(_) => {
-            let r = i.apply(&src, vec![])?;
-            match &r {
-                Value::Str(st) => st.borrow().clone(),
-                Value::Buffer(_) => buf_of(i, &r)?.borrow().text.text(),
-                other => return Err(i.wrong_type_mut("stringp", other)),
-            }
-        }
-        other => return Err(i.wrong_type_mut("stringp", other)),
-    };
-    check_writable(i)?;
-    crate::buffer::primitives::chg_delete(i, s, e)?;
-    crate::buffer::primitives::chg_insert(i, s, &text)?;
-    Ok(Value::t())
-}
+fn f_find_file_name_handler(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // (find-file-name-handler FILE OPERATION) — scan
+let file = want_string(i, &a[0])?;
+// GNU fileio.c Ffind_file_name_handler: a matching handler symbol
+// carrying an `operations' property only serves the operations
+// listed there (e.g. `jka-compr-handler' declines
+// `file-name-sans-versions' but serves `insert-file-contents').
+// (`inhibit-file-name-handlers' is consulted where C code *calls*
+// handlers, not by this subr — GNU ignores it here.)
+Ok(find_file_name_handler(i, &file, a[1].clone()).unwrap_or(Value::Nil)) }
 
-fn f_combine_after_change_execute(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
-}
+fn f_replace_region_contents(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // (replace-region-contents BEG END SOURCE &rest) — SOURCE is a
+// buffer, a string, or a 0-arg function returning one.
+let (s, e, _) = region_text(i, &a)?;
+let src = a[2].clone();
+let text = match &src {
+    Value::Str(st) => st.borrow().clone(),
+    Value::Buffer(_) => {
+        let b = buf_of(i, &src)?;
+        b.borrow().text.text()
+    }
+    Value::Sym(_) | Value::Lambda(_) | Value::Subr(_) | Value::Cons(_) => {
+        let r = i.apply(&src, vec![])?;
+        match &r {
+            Value::Str(st) => st.borrow().clone(),
+            Value::Buffer(_) => buf_of(i, &r)?.borrow().text.text(),
+            other => return Err(i.wrong_type_mut("stringp", other)),
+        }
+    }
+    other => return Err(i.wrong_type_mut("stringp", other)),
+};
+check_writable(i)?;
+crate::buffer::primitives::chg_delete(i, s, e)?;
+crate::buffer::primitives::chg_insert(i, s, &text)?;
+Ok(Value::t()) }
+
+fn f_combine_after_change_execute(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { Ok(Value::Nil) }
 
 /// (translate-region-internal START END TABLE) — GNU
 /// `translate-region-internal': TABLE is a string or a char-table of
 /// `translation-table' purpose; returns the number of chars changed.
-fn f_translate_region_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let (s, e) = beg_end(i, &a, 0, 1)?;
-    check_writable(i)?;
-    Ok(Value::Int(translate_region_core(i, s, e, &a[2])?))
-}
+fn f_translate_region_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let (s, e) = beg_end(i, &a, 0, 1)?;
+check_writable(i)?;
+Ok(Value::Int(translate_region_core(i, s, e, &a[2])?)) }
 
 /// (buffer-line-statistics) → (LINES LONGEST MEAN) over the accessible
 /// portion: a line ends at each newline, plus a trailing partial line
 /// when text follows the last newline.
-fn f_buffer_line_statistics(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let b = cur(i);
-    let bb = b.borrow();
-    let (lo, hi) = (bb.begv, bb.zv.min(bb.text.len()));
-    let mut lines = 0usize;
-    let mut longest = 0usize;
-    let mut total = 0usize;
-    let mut cur_len = 0usize;
-    for pos in lo..hi {
-        if bb.text.char_at(pos) == '\n' {
-            lines += 1;
-            total += cur_len;
-            longest = longest.max(cur_len);
-            cur_len = 0;
-        } else {
-            cur_len += 1;
-        }
-    }
-    if cur_len > 0 {
+fn f_buffer_line_statistics(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { let b = cur(i);
+let bb = b.borrow();
+let (lo, hi) = (bb.begv, bb.zv.min(bb.text.len()));
+let mut lines = 0usize;
+let mut longest = 0usize;
+let mut total = 0usize;
+let mut cur_len = 0usize;
+for pos in lo..hi {
+    if bb.text.char_at(pos) == '\n' {
         lines += 1;
         total += cur_len;
         longest = longest.max(cur_len);
-    }
-    let mean = if lines > 0 {
-        total as f64 / lines as f64
+        cur_len = 0;
     } else {
-        0.0
-    };
-    Ok(Value::list(vec![
-        Value::Int(lines as i128),
-        Value::Int(longest as i128),
-        Value::float(mean),
-    ]))
+        cur_len += 1;
+    }
 }
+if cur_len > 0 {
+    lines += 1;
+    total += cur_len;
+    longest = longest.max(cur_len);
+}
+let mean = if lines > 0 {
+    total as f64 / lines as f64
+} else {
+    0.0
+};
+Ok(Value::list(vec![
+    Value::Int(lines as i128),
+    Value::Int(longest as i128),
+    Value::float(mean),
+])) }
 
-fn f_nil2(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
-}
+fn f_nil2(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { Ok(Value::Nil) }
 
-fn f_one(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(1))
+/// `match-data--translate' (search.c): add N to every recorded
+/// position, clamping at 0.  GNU stores "positions as opaque pair
+/// values" — ours are plain usize regs inside `MatchData'.
+fn f_match_data_translate(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let n = want_int(i, &a[0])?;
+if let Some(md) = &mut i.match_data {
+    for r in &mut md.regs {
+        if let Some(p) = r {
+            let np = *p as i128 + n;
+            *p = np.max(0) as usize;
+        }
+    }
 }
+Ok(Value::Nil) }
+
+
+fn f_one(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { Ok(Value::Int(1)) }
 
 fn beg_end(
     i: &mut Interp,
@@ -622,27 +649,25 @@ fn marker_pos(v: &Value) -> Option<i128> {
     }
 }
 
-fn f_current_indentation(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let b = cur(i);
-    let bb = b.borrow();
-    let pos = bb.point();
-    let ls = line_start(&bb.text, pos);
-    let mut col = 0i128;
-    let mut p = ls;
-    let end = bb.text_len();
-    loop {
-        if p >= end {
-            break;
-        }
-        match bb.text.char_at(p) {
-            ' ' => col += 1,
-            '\t' => col += 8 - (col % 8),
-            _ => break,
-        }
-        p += 1;
+fn f_current_indentation(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { let b = cur(i);
+let bb = b.borrow();
+let pos = bb.point();
+let ls = line_start(&bb.text, pos);
+let mut col = 0i128;
+let mut p = ls;
+let end = bb.text_len();
+loop {
+    if p >= end {
+        break;
     }
-    Ok(Value::Int(col))
+    match bb.text.char_at(p) {
+        ' ' => col += 1,
+        '\t' => col += 8 - (col % 8),
+        _ => break,
+    }
+    p += 1;
 }
+Ok(Value::Int(col)) }
 
 // ---------- sort engine (mirrors GNU sort.el `sort-subr`) ----------
 
@@ -1028,7 +1053,7 @@ fn sort_engine_inner(
     }
     // ---- sort-reorder-buffer ----
     let b = cur(i);
-    let (min, max, mut out) = {
+    let (min, max, out) = {
         let bb = b.borrow();
         let (min, max) = (bb.begv, bb.text_len());
         let mut out = String::new();
@@ -1063,118 +1088,110 @@ fn cons_bounds(v: &Value) -> (usize, usize) {
     }
 }
 
-fn f_sort_subr(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let reverse = a[0].truthy();
-    let nv = a[1].clone();
-    let ev = a[2].clone();
-    let skv = a.get(3).cloned().filter(|v| v.truthy());
-    let ekv = a.get(4).cloned().filter(|v| v.truthy());
-    let pred = a.get(5).cloned().filter(|v| v.truthy());
-    let mut nr = |i: &mut Interp| i.apply(&nv, Vec::new());
-    let mut er = |i: &mut Interp| i.apply(&ev, Vec::new());
-    let mut sk = |i: &mut Interp| -> Result<KeyOut, Flow> {
-        match i.apply(skv.as_ref().unwrap(), Vec::new()) {
-            Ok(v) if v.truthy() => Ok(KeyOut::Val(v)),
-            Ok(_) => Ok(KeyOut::Nil),
-            Err(e) => Err(e),
-        }
-    };
-    let mut ek = |i: &mut Interp| i.apply(ekv.as_ref().unwrap(), Vec::new());
-    sort_engine(
-        i,
-        reverse,
-        if nv.truthy() { Some(&mut nr) } else { None },
-        if ev.truthy() { Some(&mut er) } else { None },
-        skv.as_ref().map(|_| &mut sk as KeyFn<'_>),
-        ekv.as_ref().map(|_| &mut ek as MoveFn<'_>),
-        pred.as_ref(),
-    )
-}
+fn f_sort_subr(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let reverse = a[0].truthy();
+let nv = a[1].clone();
+let ev = a[2].clone();
+let skv = a.get(3).cloned().filter(|v| v.truthy());
+let ekv = a.get(4).cloned().filter(|v| v.truthy());
+let pred = a.get(5).cloned().filter(|v| v.truthy());
+let mut nr = |i: &mut Interp| i.apply(&nv, Vec::new());
+let mut er = |i: &mut Interp| i.apply(&ev, Vec::new());
+let mut sk = |i: &mut Interp| -> Result<KeyOut, Flow> {
+    match i.apply(skv.as_ref().unwrap(), Vec::new()) {
+        Ok(v) if v.truthy() => Ok(KeyOut::Val(v)),
+        Ok(_) => Ok(KeyOut::Nil),
+        Err(e) => Err(e),
+    }
+};
+let mut ek = |i: &mut Interp| i.apply(ekv.as_ref().unwrap(), Vec::new());
+sort_engine(
+    i,
+    reverse,
+    if nv.truthy() { Some(&mut nr) } else { None },
+    if ev.truthy() { Some(&mut er) } else { None },
+    skv.as_ref().map(|_| &mut sk as KeyFn<'_>),
+    ekv.as_ref().map(|_| &mut ek as MoveFn<'_>),
+    pred.as_ref(),
+) }
 
-fn f_sort_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let reverse = a[0].truthy();
-    let (s, e) = beg_end(i, &a, 1, 2)?;
-    with_narrow(i, s, e, |i| {
-        let mut nr = |i: &mut Interp| line_next(i);
-        let mut er = |i: &mut Interp| line_end_move(i);
-        sort_engine(i, reverse, Some(&mut nr), Some(&mut er), None, None, None)
-    })
-}
+fn f_sort_lines(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let reverse = a[0].truthy();
+let (s, e) = beg_end(i, &a, 1, 2)?;
+with_narrow(i, s, e, |i| {
+    let mut nr = |i: &mut Interp| line_next(i);
+    let mut er = |i: &mut Interp| line_end_move(i);
+    sort_engine(i, reverse, Some(&mut nr), Some(&mut er), None, None, None)
+}) }
 
-fn f_sort_paragraphs(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let reverse = a[0].truthy();
-    let (s, e) = beg_end(i, &a, 1, 2)?;
-    let sep = match i.symbol_value(i.intern_soft("paragraph-separate").unwrap_or(0)) {
-        Value::Str(s) => s.borrow().clone(),
-        _ => "[ \t\x0c]*$".to_string(),
-    };
-    let fold = i
-        .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
-        .truthy();
-    let re = crate::lisp::regexp::compile_case(&sep, fold)
-        .map_err(|er| err_sym(i, "invalid-regexp", vec![Value::string(er.0)]))?;
-    let fp = Value::Sym(i.intern("forward-paragraph"));
-    with_narrow(i, s, e, |i| {
-        let mut nr = |i: &mut Interp| {
-            loop {
-                let (p, zv) = (pt(i), zv(i));
-                if p >= zv {
-                    break;
-                }
-                let syn = crate::editor::re_syntax(i);
-                let (text, begv) = {
-                    let b = cur(i);
-                    let bb = b.borrow();
-                    (
-                        bb.text
-                            .substring(bb.begv, bb.text_len())
-                            .chars()
-                            .collect::<Vec<char>>(),
-                        bb.begv,
-                    )
-                };
-                if crate::lisp::regexp::looking_at(
-                    &re,
-                    &text,
-                    p - begv,
-                    &syn,
-                    &crate::editor::re_category(i),
-                    p - begv,
-                    false,
+fn f_sort_paragraphs(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let reverse = a[0].truthy();
+let (s, e) = beg_end(i, &a, 1, 2)?;
+let sep = match i.symbol_value(i.intern_soft("paragraph-separate").unwrap_or(0)) {
+    Value::Str(s) => s.borrow().clone(),
+    _ => "[ \t\x0c]*$".to_string(),
+};
+let fold = i
+    .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
+    .truthy();
+let re = crate::lisp::regexp::compile_case(&sep, fold)
+    .map_err(|er| err_sym(i, "invalid-regexp", vec![Value::string(er.0)]))?;
+let fp = Value::Sym(i.intern("forward-paragraph"));
+with_narrow(i, s, e, |i| {
+    let mut nr = |i: &mut Interp| {
+        loop {
+            let (p, zv) = (pt(i), zv(i));
+            if p >= zv {
+                break;
+            }
+            let syn = crate::editor::re_syntax(i);
+            let (text, begv) = {
+                let b = cur(i);
+                let bb = b.borrow();
+                (
+                    bb.text
+                        .substring(bb.begv, bb.text_len())
+                        .chars()
+                        .collect::<Vec<char>>(),
+                    bb.begv,
                 )
-                .is_none()
-                {
-                    break;
-                }
-                line_next(i)?;
+            };
+            if crate::lisp::regexp::looking_at(
+                &re,
+                &text,
+                p - begv,
+                &syn,
+                &crate::editor::re_category(i),
+                p - begv,
+                false,
+            )
+            .is_none()
+            {
+                break;
             }
-            Ok(Value::Nil)
-        };
-        let mut er = |i: &mut Interp| {
-            i.apply(&fp, Vec::new())?;
-            // GNU adds a newline so trailing paragraphs aren't merged.
-            if pt(i) >= zv(i) && !bolp(i) {
-                crate::buffer::primitives::chg_insert_pt(i, "\n", false)?;
-            }
-            Ok(Value::Nil)
-        };
-        sort_engine(i, reverse, Some(&mut nr), Some(&mut er), None, None, None)
-    })
-}
+            line_next(i)?;
+        }
+        Ok(Value::Nil)
+    };
+    let mut er = |i: &mut Interp| {
+        i.apply(&fp, Vec::new())?;
+        // GNU adds a newline so trailing paragraphs aren't merged.
+        if pt(i) >= zv(i) && !bolp(i) {
+            crate::buffer::primitives::chg_insert_pt(i, "\n", false)?;
+        }
+        Ok(Value::Nil)
+    };
+    sort_engine(i, reverse, Some(&mut nr), Some(&mut er), None, None, None)
+}) }
 
-fn f_sort_pages(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let reverse = a[0].truthy();
-    let (s, e) = beg_end(i, &a, 1, 2)?;
-    let fp = Value::Sym(i.intern("forward-page"));
-    with_narrow(i, s, e, |i| {
-        let mut nr = |i: &mut Interp| {
-            skip_while(i, true, |c| c == '\n');
-            Ok(Value::Nil)
-        };
-        let mut er = |i: &mut Interp| i.apply(&fp, Vec::new());
-        sort_engine(i, reverse, Some(&mut nr), Some(&mut er), None, None, None)
-    })
-}
+fn f_sort_pages(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let reverse = a[0].truthy();
+let (s, e) = beg_end(i, &a, 1, 2)?;
+let fp = Value::Sym(i.intern("forward-page"));
+with_narrow(i, s, e, |i| {
+    let mut nr = |i: &mut Interp| {
+        skip_while(i, true, |c| c == '\n');
+        Ok(Value::Nil)
+    };
+    let mut er = |i: &mut Interp| i.apply(&fp, Vec::new());
+    sort_engine(i, reverse, Some(&mut nr), Some(&mut er), None, None, None)
+}) }
 
 /// GNU sort-skip-fields: position at field N of the current line
 /// (N negative counts from the right). Errors when the line lacks it.
@@ -1367,17 +1384,13 @@ fn string_to_num_base(t: &str, base: i128) -> i128 {
     s.parse::<f64>().map(|f| f as i128).unwrap_or(0)
 }
 
-fn f_sort_fields(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let field = want_int(i, &a[0])?;
-    let (s, e) = beg_end(i, &a, 1, 2)?;
-    sort_fields_1(i, field, s, e, false)
-}
+fn f_sort_fields(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let field = want_int(i, &a[0])?;
+let (s, e) = beg_end(i, &a, 1, 2)?;
+sort_fields_1(i, field, s, e, false) }
 
-fn f_sort_numeric_fields(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let field = want_int(i, &a[0])?;
-    let (s, e) = beg_end(i, &a, 1, 2)?;
-    sort_fields_1(i, field, s, e, true)
-}
+fn f_sort_numeric_fields(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let field = want_int(i, &a[0])?;
+let (s, e) = beg_end(i, &a, 1, 2)?;
+sort_fields_1(i, field, s, e, true) }
 
 /// Forward re-search on the current buffer; sets match data on hit.
 /// `bound` is a 0-based absolute limit on the match end. When
@@ -1435,119 +1448,117 @@ fn match_pos(i: &Interp, n: usize, end: bool) -> Option<usize> {
     })
 }
 
-fn f_sort_regexp_fields(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let reverse = a[0].truthy();
-    let record_pat = want_string(i, &a[1])?;
-    // GNU: "" or "\&" -> group 0; "\<digit>" -> group N; number -> N;
-    // otherwise a regexp searched inside each record.
-    enum KeySpec {
-        Group(usize),
-        Re(String),
+fn f_sort_regexp_fields(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let reverse = a[0].truthy();
+let record_pat = want_string(i, &a[1])?;
+// GNU: "" or "\&" -> group 0; "\<digit>" -> group N; number -> N;
+// otherwise a regexp searched inside each record.
+enum KeySpec {
+    Group(usize),
+    Re(String),
+}
+let key = match &a[2] {
+    Value::Str(s) => {
+        let s = s.borrow().clone();
+        if s.is_empty() || s == "\\&" {
+            KeySpec::Group(0)
+        } else if s.len() == 2
+            && s.starts_with('\\')
+            && s.chars().nth(1).is_some_and(|c| ('1'..='9').contains(&c))
+        {
+            KeySpec::Group(s.chars().nth(1).unwrap() as usize - '0' as usize)
+        } else {
+            KeySpec::Re(s)
+        }
     }
-    let key = match &a[2] {
-        Value::Str(s) => {
-            let s = s.borrow().clone();
-            if s.is_empty() || s == "\\&" {
-                KeySpec::Group(0)
-            } else if s.len() == 2
-                && s.starts_with('\\')
-                && s.chars().nth(1).is_some_and(|c| ('1'..='9').contains(&c))
-            {
-                KeySpec::Group(s.chars().nth(1).unwrap() as usize - '0' as usize)
-            } else {
-                KeySpec::Re(s)
+    // GNU: (numberp key-regexp) only after string normalization; a
+    // non-string argument errors wrong-type-argument stringp.
+    other => return Err(i.wrong_type_mut("stringp", other)),
+};
+let (s, e) = beg_end(i, &a, 3, 4)?;
+let ambient_fold = i
+    .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
+    .truthy();
+let fold = i
+    .symbol_value(i.intern_soft("sort-fold-case").unwrap_or(0))
+    .truthy();
+let record_re0 = crate::lisp::regexp::compile_case(&record_pat, ambient_fold)
+    .map_err(|er| err_sym(i, "invalid-regexp", vec![Value::string(er.0)]))?;
+let record_re = crate::lisp::regexp::compile_case(&record_pat, fold)
+    .map_err(|er| err_sym(i, "invalid-regexp", vec![Value::string(er.0)]))?;
+let key_re = match &key {
+    KeySpec::Re(pat) => Some(
+        crate::lisp::regexp::compile_case(pat, fold)
+            .map_err(|er| err_sym(i, "invalid-regexp", vec![Value::string(er.0)]))?,
+    ),
+    _ => None,
+};
+with_narrow(i, s, e, |i| {
+    let nbeg = cur(i).borrow().begv;
+    goto(i, nbeg);
+    // GNU: (re-search-forward re nil t) -- no move on failure; then
+    // record-end = (point), and (goto-char (match-beginning 0)).
+    // In a fresh buffer match data reads as 0 -> goto clamps to begv.
+    re_search_fwd(i, &record_re0, None, false)?;
+    let rec_end = std::rc::Rc::new(std::cell::Cell::new(pt(i)));
+    goto(i, match_pos(i, 0, false).unwrap_or(0));
+    let rec_end2 = rec_end.clone();
+    let mut nr = move |i: &mut Interp| {
+        let oldpos = pt(i);
+        if re_search_fwd(i, &record_re, None, true)?.truthy() {
+            rec_end2.set(match_pos(i, 0, true).unwrap_or_else(|| pt(i)));
+            if rec_end2.get() == oldpos {
+                // Empty match: skip a char and search again (GNU).
+                goto(i, pt(i) + 1);
+                re_search_fwd(i, &record_re, None, true)?;
+                rec_end2.set(match_pos(i, 0, true).unwrap_or_else(|| pt(i)));
+            }
+            goto(i, match_pos(i, 0, false).unwrap_or_else(|| pt(i)));
+        }
+        Ok(Value::Nil)
+    };
+    let rec_end3 = rec_end.clone();
+    let mut er = move |i: &mut Interp| {
+        goto(i, rec_end3.get());
+        Ok(Value::Nil)
+    };
+    let rec_end4 = rec_end.clone();
+    let mut sk = move |i: &mut Interp| -> Result<KeyOut, Flow> {
+        match &key {
+            KeySpec::Group(n) => {
+                let n = *n;
+                match (match_pos(i, n, false), match_pos(i, n, true)) {
+                    (Some(b), Some(e)) => Ok(KeyOut::Val(Value::cons(
+                        Value::Int(b as i128 + 1),
+                        Value::Int(e as i128 + 1),
+                    ))),
+                    _ => Ok(KeyOut::Skip),
+                }
+            }
+            KeySpec::Re(_) => {
+                let bound = rec_end4.get();
+                if re_search_fwd(i, key_re.as_ref().unwrap(), Some(bound), false)?.truthy() {
+                    let b = match_pos(i, 0, false).unwrap_or(0);
+                    let e = match_pos(i, 0, true).unwrap_or(0);
+                    Ok(KeyOut::Val(Value::cons(
+                        Value::Int(b as i128 + 1),
+                        Value::Int(e as i128 + 1),
+                    )))
+                } else {
+                    Ok(KeyOut::Skip)
+                }
             }
         }
-        // GNU: (numberp key-regexp) only after string normalization; a
-        // non-string argument errors wrong-type-argument stringp.
-        other => return Err(i.wrong_type_mut("stringp", other)),
     };
-    let (s, e) = beg_end(i, &a, 3, 4)?;
-    let ambient_fold = i
-        .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
-        .truthy();
-    let fold = i
-        .symbol_value(i.intern_soft("sort-fold-case").unwrap_or(0))
-        .truthy();
-    let record_re0 = crate::lisp::regexp::compile_case(&record_pat, ambient_fold)
-        .map_err(|er| err_sym(i, "invalid-regexp", vec![Value::string(er.0)]))?;
-    let record_re = crate::lisp::regexp::compile_case(&record_pat, fold)
-        .map_err(|er| err_sym(i, "invalid-regexp", vec![Value::string(er.0)]))?;
-    let key_re = match &key {
-        KeySpec::Re(pat) => Some(
-            crate::lisp::regexp::compile_case(pat, fold)
-                .map_err(|er| err_sym(i, "invalid-regexp", vec![Value::string(er.0)]))?,
-        ),
-        _ => None,
-    };
-    with_narrow(i, s, e, |i| {
-        let nbeg = cur(i).borrow().begv;
-        goto(i, nbeg);
-        // GNU: (re-search-forward re nil t) -- no move on failure; then
-        // record-end = (point), and (goto-char (match-beginning 0)).
-        // In a fresh buffer match data reads as 0 -> goto clamps to begv.
-        re_search_fwd(i, &record_re0, None, false)?;
-        let rec_end = std::rc::Rc::new(std::cell::Cell::new(pt(i)));
-        goto(i, match_pos(i, 0, false).unwrap_or(0));
-        let rec_end2 = rec_end.clone();
-        let mut nr = move |i: &mut Interp| {
-            let oldpos = pt(i);
-            if re_search_fwd(i, &record_re, None, true)?.truthy() {
-                rec_end2.set(match_pos(i, 0, true).unwrap_or_else(|| pt(i)));
-                if rec_end2.get() == oldpos {
-                    // Empty match: skip a char and search again (GNU).
-                    goto(i, pt(i) + 1);
-                    re_search_fwd(i, &record_re, None, true)?;
-                    rec_end2.set(match_pos(i, 0, true).unwrap_or_else(|| pt(i)));
-                }
-                goto(i, match_pos(i, 0, false).unwrap_or_else(|| pt(i)));
-            }
-            Ok(Value::Nil)
-        };
-        let rec_end3 = rec_end.clone();
-        let mut er = move |i: &mut Interp| {
-            goto(i, rec_end3.get());
-            Ok(Value::Nil)
-        };
-        let rec_end4 = rec_end.clone();
-        let mut sk = move |i: &mut Interp| -> Result<KeyOut, Flow> {
-            match &key {
-                KeySpec::Group(n) => {
-                    let n = *n;
-                    match (match_pos(i, n, false), match_pos(i, n, true)) {
-                        (Some(b), Some(e)) => Ok(KeyOut::Val(Value::cons(
-                            Value::Int(b as i128 + 1),
-                            Value::Int(e as i128 + 1),
-                        ))),
-                        _ => Ok(KeyOut::Skip),
-                    }
-                }
-                KeySpec::Re(_) => {
-                    let bound = rec_end4.get();
-                    if re_search_fwd(i, key_re.as_ref().unwrap(), Some(bound), false)?.truthy() {
-                        let b = match_pos(i, 0, false).unwrap_or(0);
-                        let e = match_pos(i, 0, true).unwrap_or(0);
-                        Ok(KeyOut::Val(Value::cons(
-                            Value::Int(b as i128 + 1),
-                            Value::Int(e as i128 + 1),
-                        )))
-                    } else {
-                        Ok(KeyOut::Skip)
-                    }
-                }
-            }
-        };
-        sort_engine(
-            i,
-            reverse,
-            Some(&mut nr),
-            Some(&mut er),
-            Some(&mut sk),
-            None,
-            None,
-        )
-    })
-}
+    sort_engine(
+        i,
+        reverse,
+        Some(&mut nr),
+        Some(&mut er),
+        Some(&mut sk),
+        None,
+        None,
+    )
+}) }
 
 /// Display column of absolute position `p` (tabs via `tab-width`).
 fn col_at(i: &Interp, p: usize) -> i128 {
@@ -1599,239 +1610,231 @@ fn move_to_col(i: &mut Interp, goal: i128) -> EvalResult {
     Ok(Value::Int(col))
 }
 
-fn f_sort_columns(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    check_writable(i)?;
-    let reverse = a[0].truthy();
-    let (s, e) = beg_end(i, &a, 1, 2)?;
-    let (col_s, col_e) = (col_at(i, s), col_at(i, e));
-    let (col_start, col_end) = (col_s.min(col_e), col_s.max(col_e));
-    let (beg1, end1) = {
-        let b = cur(i);
-        let bb = b.borrow();
-        let beg1 = line_start(&bb.text, s.min(e));
-        // GNU: (goto-char (max beg end)) (forward-line) -> next line start.
-        let mut end1 = line_end(&bb.text, s.max(e));
-        if end1 < bb.text_len() {
-            end1 += 1;
-        }
-        (beg1, end1)
-    };
-    // GNU rejects tabs in the sorted lines.
-    {
-        let b = cur(i);
-        let bb = b.borrow();
-        if bb.text.substring(beg1, end1).contains('\t') {
-            drop(bb);
-            return Err(err_sym(
-                i,
-                "error",
-                vec![Value::string(
-                    "sort-columns does not work with tabs -- use M-x untabify",
-                )],
-            ));
-        }
-    }
-    with_narrow(i, beg1, end1, |i| {
-        let nbeg = cur(i).borrow().begv;
-        goto(i, nbeg);
-        let mut nr = |i: &mut Interp| line_next(i);
-        let mut er = |i: &mut Interp| line_end_move(i);
-        let mut sk = move |i: &mut Interp| {
-            move_to_col(i, col_start)?;
-            Ok(KeyOut::Nil)
-        };
-        let mut ek = move |i: &mut Interp| move_to_col(i, col_end);
-        sort_engine(
-            i,
-            reverse,
-            Some(&mut nr),
-            Some(&mut er),
-            Some(&mut sk),
-            Some(&mut ek),
-            None,
-        )
-    })
-}
-
-fn f_reverse_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    check_writable(i)?;
-    let (s, e) = beg_end(i, &a, 0, 1)?;
+fn f_sort_columns(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { check_writable(i)?;
+let reverse = a[0].truthy();
+let (s, e) = beg_end(i, &a, 1, 2)?;
+let (col_s, col_e) = (col_at(i, s), col_at(i, e));
+let (col_start, col_end) = (col_s.min(col_e), col_s.max(col_e));
+let (beg1, end1) = {
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    // GNU: beg moves to the start of the next line unless already at BOL;
-    // end moves to the end of the previous line unless at a non-empty EOL.
-    let beg = if line_start(&bb.text, s) == s {
-        s
-    } else {
-        let le = line_end(&bb.text, s);
-        if le < bb.text_len() { le + 1 } else { le }
-    };
-    let end = {
-        let le = line_end(&bb.text, e);
-        if e == le && line_start(&bb.text, e) < e {
-            e
-        } else {
-            // (forward-line -1) (end-of-line)
-            let prev = if line_start(&bb.text, e) > bb.begv {
-                line_start(&bb.text, line_start(&bb.text, e) - 1)
-            } else {
-                line_start(&bb.text, e)
-            };
-            line_end(&bb.text, prev)
-        }
-    };
-    if end <= beg {
+    let bb = b.borrow();
+    let beg1 = line_start(&bb.text, s.min(e));
+    // GNU: (goto-char (max beg end)) (forward-line) -> next line start.
+    let mut end1 = line_end(&bb.text, s.max(e));
+    if end1 < bb.text_len() {
+        end1 += 1;
+    }
+    (beg1, end1)
+};
+// GNU rejects tabs in the sorted lines.
+{
+    let b = cur(i);
+    let bb = b.borrow();
+    if bb.text.substring(beg1, end1).contains('\t') {
         drop(bb);
         return Err(err_sym(
             i,
-            "user-error",
-            vec![Value::string("There are no full lines in the region")],
+            "error",
+            vec![Value::string(
+                "sort-columns does not work with tabs -- use M-x untabify",
+            )],
         ));
     }
-    let mut lines = Vec::new();
-    let mut p = beg;
-    loop {
-        let le = line_end(&bb.text, p);
-        lines.push(bb.text.substring(p, le));
-        if le >= end {
-            break;
-        }
-        p = le + 1;
-    }
-    let out = lines.iter().rev().cloned().collect::<Vec<_>>().join("\n");
-    drop(bb);
-    crate::buffer::primitives::chg_delete(i, beg, end)?;
-    crate::buffer::primitives::chg_insert(i, beg, &out)?;
-    Ok(Value::Nil)
 }
+with_narrow(i, beg1, end1, |i| {
+    let nbeg = cur(i).borrow().begv;
+    goto(i, nbeg);
+    let mut nr = |i: &mut Interp| line_next(i);
+    let mut er = |i: &mut Interp| line_end_move(i);
+    let mut sk = move |i: &mut Interp| {
+        move_to_col(i, col_start)?;
+        Ok(KeyOut::Nil)
+    };
+    let mut ek = move |i: &mut Interp| move_to_col(i, col_end);
+    sort_engine(
+        i,
+        reverse,
+        Some(&mut nr),
+        Some(&mut er),
+        Some(&mut sk),
+        Some(&mut ek),
+        None,
+    )
+}) }
 
-fn f_delete_duplicate_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    check_writable(i)?;
-    let (mut beg, mut end) = beg_end(i, &a, 0, 1)?;
-    let reverse = arg(&a, 2).truthy();
-    let adjacent = arg(&a, 3).truthy();
-    let keep_blanks = arg(&a, 4).truthy();
-    let interactive = arg(&a, 5).truthy();
-    let mut seen = std::collections::HashSet::new();
-    let mut prev_line = String::new();
-    let mut first_line = false;
-    let mut count = 0i128;
-    goto(i, if reverse { end } else { beg });
-    if reverse && bolp(i) {
-        goto(i, pt(i).saturating_sub(1));
-    }
-    loop {
-        let (p, zv, begv) = {
-            let b = cur(i);
-            let bb = b.borrow();
-            (bb.point(), bb.text_len(), bb.begv)
-        };
-        if reverse {
-            if first_line {
-                break;
-            }
-        } else if !(p < end && p < zv) {
-            break;
-        }
-        if reverse {
-            first_line = p <= beg || p <= begv;
-        }
-        let (ls, le) = {
-            let b = cur(i);
-            let bb = b.borrow();
-            (line_start(&bb.text, p), line_end(&bb.text, p))
-        };
-        let line = cur(i).borrow().text.substring(ls, le);
-        if keep_blanks && line.is_empty() {
-            line_next(i)?;
+fn f_reverse_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { check_writable(i)?;
+let (s, e) = beg_end(i, &a, 0, 1)?;
+let b = cur(i);
+let bb = b.borrow_mut();
+// GNU: beg moves to the start of the next line unless already at BOL;
+// end moves to the end of the previous line unless at a non-empty EOL.
+let beg = if line_start(&bb.text, s) == s {
+    s
+} else {
+    let le = line_end(&bb.text, s);
+    if le < bb.text_len() { le + 1 } else { le }
+};
+let end = {
+    let le = line_end(&bb.text, e);
+    if e == le && line_start(&bb.text, e) < e {
+        e
+    } else {
+        // (forward-line -1) (end-of-line)
+        let prev = if line_start(&bb.text, e) > bb.begv {
+            line_start(&bb.text, line_start(&bb.text, e) - 1)
         } else {
-            let dup = if adjacent {
-                line == prev_line
+            line_start(&bb.text, e)
+        };
+        line_end(&bb.text, prev)
+    }
+};
+if end <= beg {
+    drop(bb);
+    return Err(err_sym(
+        i,
+        "user-error",
+        vec![Value::string("There are no full lines in the region")],
+    ));
+}
+let mut lines = Vec::new();
+let mut p = beg;
+loop {
+    let le = line_end(&bb.text, p);
+    lines.push(bb.text.substring(p, le));
+    if le >= end {
+        break;
+    }
+    p = le + 1;
+}
+let out = lines.iter().rev().cloned().collect::<Vec<_>>().join("\n");
+drop(bb);
+crate::buffer::primitives::chg_delete(i, beg, end)?;
+crate::buffer::primitives::chg_insert(i, beg, &out)?;
+Ok(Value::Nil) }
+
+fn f_delete_duplicate_lines(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { check_writable(i)?;
+let (mut beg, mut end) = beg_end(i, &a, 0, 1)?;
+let reverse = arg(&a, 2).truthy();
+let adjacent = arg(&a, 3).truthy();
+let keep_blanks = arg(&a, 4).truthy();
+let interactive = arg(&a, 5).truthy();
+let mut seen = std::collections::HashSet::new();
+let mut prev_line = String::new();
+let mut first_line = false;
+let mut count = 0i128;
+goto(i, if reverse { end } else { beg });
+if reverse && bolp(i) {
+    goto(i, pt(i).saturating_sub(1));
+}
+loop {
+    let (p, zv, begv) = {
+        let b = cur(i);
+        let bb = b.borrow();
+        (bb.point(), bb.text_len(), bb.begv)
+    };
+    if reverse {
+        if first_line {
+            break;
+        }
+    } else if !(p < end && p < zv) {
+        break;
+    }
+    if reverse {
+        first_line = p <= beg || p <= begv;
+    }
+    let (ls, le) = {
+        let b = cur(i);
+        let bb = b.borrow();
+        (line_start(&bb.text, p), line_end(&bb.text, p))
+    };
+    let line = cur(i).borrow().text.substring(ls, le);
+    if keep_blanks && line.is_empty() {
+        line_next(i)?;
+    } else {
+        let dup = if adjacent {
+            line == prev_line
+        } else {
+            seen.contains(&line)
+        };
+        if dup {
+            // GNU: delete line incl. its newline (or to eob).
+            let del_end = if le < zv { le + 1 } else { le };
+            crate::buffer::primitives::chg_delete(i, ls, del_end)?;
+            // Marker semantics for beg/end.
+            let dlen = del_end - ls;
+            if beg > del_end {
+                beg -= dlen;
+            } else if beg > ls {
+                beg = ls;
+            }
+            if end > del_end {
+                end -= dlen;
+            } else if end > ls {
+                end = ls;
+            }
+            let cap = ls.min(cur(i).borrow().text_len());
+            goto(i, cap);
+            if reverse {
+                line_prev(i)?;
+            }
+            count += 1;
+        } else {
+            if adjacent {
+                prev_line = line;
             } else {
-                seen.contains(&line)
-            };
-            if dup {
-                // GNU: delete line incl. its newline (or to eob).
-                let del_end = if le < zv { le + 1 } else { le };
-                crate::buffer::primitives::chg_delete(i, ls, del_end)?;
-                // Marker semantics for beg/end.
-                let dlen = del_end - ls;
-                if beg > del_end {
-                    beg -= dlen;
-                } else if beg > ls {
-                    beg = ls;
-                }
-                if end > del_end {
-                    end -= dlen;
-                } else if end > ls {
-                    end = ls;
-                }
-                let cap = ls.min(cur(i).borrow().text_len());
-                goto(i, cap);
-                if reverse {
-                    line_prev(i)?;
-                }
-                count += 1;
+                seen.insert(line);
+            }
+            if reverse {
+                line_prev(i)?;
             } else {
-                if adjacent {
-                    prev_line = line;
-                } else {
-                    seen.insert(line);
-                }
-                if reverse {
-                    line_prev(i)?;
-                } else {
-                    line_next(i)?;
-                }
+                line_next(i)?;
             }
         }
     }
-    if interactive {
-        i.message(&format!(
-            "Deleted {} {}duplicate line{}{}",
-            count,
-            if adjacent { "adjacent " } else { "" },
-            if count == 1 { "" } else { "s" },
-            if reverse { " backward" } else { "" }
-        ));
-    }
-    Ok(Value::Int(count))
 }
+if interactive {
+    i.message(&format!(
+        "Deleted {} {}duplicate line{}{}",
+        count,
+        if adjacent { "adjacent " } else { "" },
+        if count == 1 { "" } else { "s" },
+        if reverse { " backward" } else { "" }
+    ));
+}
+Ok(Value::Int(count)) }
 
-fn f_how_many(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pat = want_string(i, &a[0])?;
-    // GNU defaults RSTART to point (not point-min) when nil.
-    let (mut s, e) = beg_end(i, &a, 1, 2)?;
-    if a.get(1).map(|v| v.is_nil()).unwrap_or(true) {
-        s = cur(i).borrow().point.min(e);
-    }
-    let case_fold = i
-        .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
-        .truthy();
-    let re = crate::lisp::regexp::compile_case(&pat, case_fold)
-        .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
-    let syn = crate::editor::re_syntax(i);
-    let b = cur(i);
-    let bb = b.borrow();
-    let chars: Vec<char> = bb.text.substring(s, e).chars().collect();
-    let mut count = 0i128;
-    let mut pos = 0usize;
-    while let Some(regs) =
-        crate::lisp::regexp::search_full(&re, &chars, pos, &syn, &crate::editor::re_category(i), crate::lisp::regexp::NO_POINT, false)
-    {
-        let (ms, me) = (regs[0].unwrap_or(0), regs[1].unwrap_or(0));
-        count += 1;
-        pos = if me > ms { me } else { me + 1 };
-        if pos > chars.len() {
-            break;
-        }
-    }
-    // Interactive calls print the count in the echo area.
-    if arg(&a, 3).truthy() {
-        i.message(&format!("{} occurrences", count));
-    }
-    Ok(Value::Int(count))
+fn f_how_many(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pat = want_string(i, &a[0])?;
+// GNU defaults RSTART to point (not point-min) when nil.
+let (mut s, e) = beg_end(i, &a, 1, 2)?;
+if a.get(1).map(|v| v.is_nil()).unwrap_or(true) {
+    s = cur(i).borrow().point.min(e);
 }
+let case_fold = i
+    .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
+    .truthy();
+let re = crate::lisp::regexp::compile_case(&pat, case_fold)
+    .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
+let syn = crate::editor::re_syntax(i);
+let b = cur(i);
+let bb = b.borrow();
+let chars: Vec<char> = bb.text.substring(s, e).chars().collect();
+let mut count = 0i128;
+let mut pos = 0usize;
+while let Some(regs) =
+    crate::lisp::regexp::search_full(&re, &chars, pos, &syn, &crate::editor::re_category(i), crate::lisp::regexp::NO_POINT, false)
+{
+    let (ms, me) = (regs[0].unwrap_or(0), regs[1].unwrap_or(0));
+    count += 1;
+    pos = if me > ms { me } else { me + 1 };
+    if pos > chars.len() {
+        break;
+    }
+}
+// Interactive calls print the count in the echo area.
+if arg(&a, 3).truthy() {
+    i.message(&format!("{} occurrences", count));
+}
+Ok(Value::Int(count)) }
 
 fn delete_lines_matching(i: &mut Interp, a: &[Value], keep_match: bool) -> EvalResult {
     check_writable(i)?;
@@ -1844,7 +1847,7 @@ fn delete_lines_matching(i: &mut Interp, a: &[Value], keep_match: bool) -> EvalR
         .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
     let syn = crate::editor::re_syntax(i);
     let b = cur(i);
-    let mut bb = b.borrow_mut();
+    let bb = b.borrow_mut();
     let region = bb.text.substring(s, e);
     let mut out = String::new();
     let mut removed = 0i128;
@@ -1870,67 +1873,59 @@ fn delete_lines_matching(i: &mut Interp, a: &[Value], keep_match: bool) -> EvalR
     Ok(Value::Int(removed))
 }
 
-fn f_flush_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    delete_lines_matching(i, &a, false)
-}
+fn f_flush_lines(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { delete_lines_matching(i, &a, false) }
 
-fn f_keep_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    delete_lines_matching(i, &a, true)
-}
+fn f_keep_lines(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { delete_lines_matching(i, &a, true) }
 
-fn f_replace_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    check_writable(i)?;
-    let from = want_string(i, &a[0])?;
-    let to = want_string(i, &a[1])?;
-    if from.is_empty() {
-        return Ok(Value::Nil);
+fn f_replace_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { check_writable(i)?;
+let from = want_string(i, &a[0])?;
+let to = want_string(i, &a[1])?;
+if from.is_empty() {
+    return Ok(Value::Nil);
+}
+let (s, e) = beg_end(i, &a, 2, 3)?;
+let b = cur(i);
+let bb = b.borrow_mut();
+let region = bb.text.substring(s, e);
+let out = region.replace(&from, &to);
+drop(bb);
+crate::buffer::primitives::chg_delete(i, s, e)?;
+crate::buffer::primitives::chg_insert(i, s, &out)?;
+Ok(Value::Nil) }
+
+fn f_replace_regexp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { check_writable(i)?;
+let pat = want_string(i, &a[0])?;
+let to = want_string(i, &a[1])?;
+let case_fold = i
+    .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
+    .truthy();
+let re = crate::lisp::regexp::compile_case(&pat, case_fold)
+    .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
+let (s, e) = beg_end(i, &a, 2, 3)?;
+let syn = crate::editor::re_syntax(i);
+let b = cur(i);
+let bb = b.borrow_mut();
+let region: Vec<char> = bb.text.substring(s, e).chars().collect();
+let mut out = String::new();
+let mut pos = 0usize;
+let mut n = 0usize;
+while let Some(regs) =
+    crate::lisp::regexp::search_full(&re, &region, pos, &syn, &crate::editor::re_category(i), crate::lisp::regexp::NO_POINT, false)
+{
+    let (ms, me) = (regs[0].unwrap_or(0), regs[1].unwrap_or(0));
+    out.extend(&region[pos..ms]);
+    expand_rep(i, &to, &regs, &region, &mut out, false)?;
+    pos = if me > ms { me } else { me + 1 };
+    n += 1;
+    if pos > region.len() || n > 1_000_000 {
+        break;
     }
-    let (s, e) = beg_end(i, &a, 2, 3)?;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let region = bb.text.substring(s, e);
-    let out = region.replace(&from, &to);
-    drop(bb);
-    crate::buffer::primitives::chg_delete(i, s, e)?;
-    crate::buffer::primitives::chg_insert(i, s, &out)?;
-    Ok(Value::Nil)
 }
-
-fn f_replace_regexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    check_writable(i)?;
-    let pat = want_string(i, &a[0])?;
-    let to = want_string(i, &a[1])?;
-    let case_fold = i
-        .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
-        .truthy();
-    let re = crate::lisp::regexp::compile_case(&pat, case_fold)
-        .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
-    let (s, e) = beg_end(i, &a, 2, 3)?;
-    let syn = crate::editor::re_syntax(i);
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let region: Vec<char> = bb.text.substring(s, e).chars().collect();
-    let mut out = String::new();
-    let mut pos = 0usize;
-    let mut n = 0usize;
-    while let Some(regs) =
-        crate::lisp::regexp::search_full(&re, &region, pos, &syn, &crate::editor::re_category(i), crate::lisp::regexp::NO_POINT, false)
-    {
-        let (ms, me) = (regs[0].unwrap_or(0), regs[1].unwrap_or(0));
-        out.extend(&region[pos..ms]);
-        expand_rep(i, &to, &regs, &region, &mut out, false)?;
-        pos = if me > ms { me } else { me + 1 };
-        n += 1;
-        if pos > region.len() || n > 1_000_000 {
-            break;
-        }
-    }
-    out.extend(&region[pos.min(region.len())..]);
-    drop(bb);
-    crate::buffer::primitives::chg_delete(i, s, e)?;
-    crate::buffer::primitives::chg_insert(i, s, &out)?;
-    Ok(Value::Nil)
-}
+out.extend(&region[pos.min(region.len())..]);
+drop(bb);
+crate::buffer::primitives::chg_delete(i, s, e)?;
+crate::buffer::primitives::chg_insert(i, s, &out)?;
+Ok(Value::Nil) }
 
 /// Expand `\1..\9' and `\&' in REP against match registers REGS over
 /// REGION, appending to OUT. LITERAL inserts REP unchanged.
@@ -2018,206 +2013,200 @@ fn str_slice(i: &mut Interp, src: &Value, f: usize, t: usize) -> Value {
     Value::Str(ns)
 }
 
-fn f_replace_regexp_in_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pat = want_string(i, &a[0])?;
-    // GNU's REP may be a string or a function called with the matched
-    // text (subr.el `replace-regexp-in-string').
-    let rep_fn = match &a[1] {
-        Value::Str(_) => None,
-        f => Some(f.clone()),
-    };
-    let rep = match &a[1] {
-        Value::Str(s) => s.borrow().clone(),
-        _ => String::new(),
-    };
-    let s = want_string(i, &a[2])?;
-    let fixedcase = arg(&a, 3).truthy();
-    let literal = !arg(&a, 4).is_nil();
-    let subexp = match arg(&a, 5) {
-        Value::Int(n) => n.max(0) as usize,
-        _ => 0,
-    };
-    let chars: Vec<char> = s.chars().collect();
-    let l = chars.len();
-    let start = match arg(&a, 6) {
-        Value::Nil => 0usize,
-        v => want_int(i, &v)?.max(0) as usize,
-    };
-    if start > l {
-        let e = i.intern("args-out-of-range");
-        return Err(i.signal_data(e, vec![Value::string(s.clone()), Value::Int(start as i128)]));
-    }
-    let case_fold = i
-        .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
-        .truthy();
-    let re = crate::lisp::regexp::compile_case(&pat, case_fold)
-        .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
-    // GNU (subr.el `replace-regexp-in-string'):
-    //   (while (and (< start l) (string-match regexp string start))
-    //     mb = match-beg, me = match-end; if empty, me = mb+1;
-    //     str = string[mb..me]; match data translated by -mb;
-    //     piece = (replace-match rep fixedcase literal str subexp)
-    //     — replace-match splices rep BEFORE the rest of str, so an
-    //     empty match inserts rep before the skipped char, and a
-    //     trailing empty match at mb == l never happens (start < l).)
-    let mut pieces: Vec<String> = Vec::new();
-    let mut pos = start;
-    let mut n = 0usize;
-    let syn = crate::editor::re_syntax(i);
-    while pos < l {
-        let regs = match crate::lisp::regexp::search_full(
-            &re,
-            &chars,
-            pos,
-            &syn,
-            &crate::editor::re_category(i),
-            crate::lisp::regexp::NO_POINT,
-            false,
-        ) {
-            Some(r) => r,
-            None => break,
-        };
-        let (ms, me) = (regs[0].unwrap_or(0), regs[1].unwrap_or(0));
-        let we = if me == ms { (ms + 1).min(l) } else { me };
-        pieces.push(chars[pos..ms].iter().collect());
-        // Match data translated to str = string[ms..we].
-        let tregs: Vec<Option<usize>> = regs.iter().map(|r| r.map(|x| x - ms)).collect();
-        let str_chars = &chars[ms..we];
-        // GNU: a function REP is called with `match-string 0' under
-        // the translated match data; the result is then expanded.
-        let rep_text: String;
-        let rep_str = if let Some(f) = &rep_fn {
-            let saved_md = i.match_data.clone();
-            i.match_data = Some(crate::lisp::eval::MatchData {
-                regs: tregs.clone(),
-                in_buffer: false,
-                base: 0,
-                buffer: None,
-            });
-            let mstr = str_slice(i, &a[2], ms, me);
-            let rv = i.apply(f, vec![mstr]);
-            i.match_data = saved_md;
-            rep_text = want_string(i, &rv?)?;
-            rep_text.as_str()
-        } else {
-            rep.as_str()
-        };
-        let (gs, ge) = if subexp > 0 {
-            match (
-                tregs.get(2 * subexp).copied().flatten(),
-                tregs.get(2 * subexp + 1).copied().flatten(),
-            ) {
-                (Some(s), Some(e)) => (s, e),
-                // GNU `replace-match': any subexp beyond the match
-                // registers — existing-but-unmatched or absent
-                // entirely — signals "replace-match subexpression
-                // does not exist".
-                _ => {
-                    return Err(err_sym(
-                        i,
-                        "error",
-                        vec![
-                            Value::string("replace-match subexpression does not exist"),
-                            Value::Int(subexp as i128),
-                        ],
-                    ))
-                }
-            }
-        } else {
-            (0, me - ms)
-        };
-        let mut rep_piece = String::new();
-        expand_rep(i, rep_str, &tregs, str_chars, &mut rep_piece, literal)?;
-        if !fixedcase {
-            let old: String = str_chars
-                [gs.min(str_chars.len())..ge.min(str_chars.len())]
-                .iter()
-                .collect();
-            rep_piece = crate::buffer::primitives::match_case(&old, &rep_piece);
-        }
-        let mut piece: String = str_chars[..gs.min(str_chars.len())].iter().collect();
-        piece.push_str(&rep_piece);
-        piece.extend(str_chars[ge.min(str_chars.len())..].iter());
-        pieces.push(piece);
-        pos = we;
-        n += 1;
-        if n > 1_000_000 {
-            break;
-        }
-    }
-    pieces.push(chars[pos.min(l)..].iter().collect());
-    Ok(Value::string(pieces.concat()))
+fn f_replace_regexp_in_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pat = want_string(i, &a[0])?;
+// GNU's REP may be a string or a function called with the matched
+// text (subr.el `replace-regexp-in-string').
+let rep_fn = match &a[1] {
+    Value::Str(_) => None,
+    f => Some(f.clone()),
+};
+let rep = match &a[1] {
+    Value::Str(s) => s.borrow().clone(),
+    _ => String::new(),
+};
+let s = want_string(i, &a[2])?;
+let fixedcase = arg(&a, 3).truthy();
+let literal = !arg(&a, 4).is_nil();
+let subexp = match arg(&a, 5) {
+    Value::Int(n) => n.max(0) as usize,
+    _ => 0,
+};
+let chars: Vec<char> = s.chars().collect();
+let l = chars.len();
+let start = match arg(&a, 6) {
+    Value::Nil => 0usize,
+    v => want_int(i, &v)?.max(0) as usize,
+};
+if start > l {
+    let e = i.intern("args-out-of-range");
+    return Err(i.signal_data(e, vec![Value::string(s.clone()), Value::Int(start as i128)]));
 }
-
-fn f_transpose_regions(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    check_writable(i)?;
-    let (s1, e1) = beg_end(i, &a, 0, 1)?;
-    let (s2, e2) = beg_end(i, &a, 2, 3)?;
-    if s1 > s2 {
-        return f_transpose_regions(
-            i,
-            vec![a[2].clone(), a[3].clone(), a[0].clone(), a[1].clone()],
-        );
+let case_fold = i
+    .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
+    .truthy();
+let re = crate::lisp::regexp::compile_case(&pat, case_fold)
+    .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
+// GNU (subr.el `replace-regexp-in-string'):
+//   (while (and (< start l) (string-match regexp string start))
+//     mb = match-beg, me = match-end; if empty, me = mb+1;
+//     str = string[mb..me]; match data translated by -mb;
+//     piece = (replace-match rep fixedcase literal str subexp)
+//     — replace-match splices rep BEFORE the rest of str, so an
+//     empty match inserts rep before the skipped char, and a
+//     trailing empty match at mb == l never happens (start < l).)
+let mut pieces: Vec<String> = Vec::new();
+let mut pos = start;
+let mut n = 0usize;
+let syn = crate::editor::re_syntax(i);
+while pos < l {
+    let regs = match crate::lisp::regexp::search_full(
+        &re,
+        &chars,
+        pos,
+        &syn,
+        &crate::editor::re_category(i),
+        crate::lisp::regexp::NO_POINT,
+        false,
+    ) {
+        Some(r) => r,
+        None => break,
+    };
+    let (ms, me) = (regs[0].unwrap_or(0), regs[1].unwrap_or(0));
+    let we = if me == ms { (ms + 1).min(l) } else { me };
+    pieces.push(chars[pos..ms].iter().collect());
+    // Match data translated to str = string[ms..we].
+    let tregs: Vec<Option<usize>> = regs.iter().map(|r| r.map(|x| x - ms)).collect();
+    let str_chars = &chars[ms..we];
+    // GNU: a function REP is called with `match-string 0' under
+    // the translated match data; the result is then expanded.
+    let rep_text: String;
+    let rep_str = if let Some(f) = &rep_fn {
+        let saved_md = i.match_data.clone();
+        i.match_data = Some(crate::lisp::eval::MatchData {
+            regs: tregs.clone(),
+            in_buffer: false,
+            base: 0,
+            buffer: None,
+        });
+        let mstr = str_slice(i, &a[2], ms, me);
+        let rv = i.apply(f, vec![mstr]);
+        i.match_data = saved_md;
+        rep_text = want_string(i, &rv?)?;
+        rep_text.as_str()
+    } else {
+        rep.as_str()
+    };
+    let (gs, ge) = if subexp > 0 {
+        match (
+            tregs.get(2 * subexp).copied().flatten(),
+            tregs.get(2 * subexp + 1).copied().flatten(),
+        ) {
+            (Some(s), Some(e)) => (s, e),
+            // GNU `replace-match': any subexp beyond the match
+            // registers — existing-but-unmatched or absent
+            // entirely — signals "replace-match subexpression
+            // does not exist".
+            _ => {
+                return Err(err_sym(
+                    i,
+                    "error",
+                    vec![
+                        Value::string("replace-match subexpression does not exist"),
+                        Value::Int(subexp as i128),
+                    ],
+                ))
+            }
+        }
+    } else {
+        (0, me - ms)
+    };
+    let mut rep_piece = String::new();
+    expand_rep(i, rep_str, &tregs, str_chars, &mut rep_piece, literal)?;
+    if !fixedcase {
+        let old: String = str_chars
+            [gs.min(str_chars.len())..ge.min(str_chars.len())]
+            .iter()
+            .collect();
+        rep_piece = crate::buffer::primitives::match_case(&old, &rep_piece);
     }
+    let mut piece: String = str_chars[..gs.min(str_chars.len())].iter().collect();
+    piece.push_str(&rep_piece);
+    piece.extend(str_chars[ge.min(str_chars.len())..].iter());
+    pieces.push(piece);
+    pos = we;
+    n += 1;
+    if n > 1_000_000 {
+        break;
+    }
+}
+pieces.push(chars[pos.min(l)..].iter().collect());
+Ok(Value::string(pieces.concat())) }
+
+fn f_transpose_regions(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { check_writable(i)?;
+let (s1, e1) = beg_end(i, &a, 0, 1)?;
+let (s2, e2) = beg_end(i, &a, 2, 3)?;
+if s1 > s2 {
+    return f_transpose_regions(
+        i,
+        vec![a[2].clone(), a[3].clone(), a[0].clone(), a[1].clone()].into(),
+    );
+}
+let b = cur(i);
+let bb = b.borrow_mut();
+if e1 > s2 {
+    return Err(err_sym(i, "error", vec![Value::string("Regions overlap")]));
+}
+let t1 = bb.text.substring(s1, e1);
+let t2 = bb.text.substring(s2, e2);
+drop(bb);
+crate::buffer::primitives::chg_delete(i, s2, e2)?;
+crate::buffer::primitives::chg_insert(i, s2, &t1)?;
+crate::buffer::primitives::chg_delete(i, s1, e1)?;
+crate::buffer::primitives::chg_insert(i, s1, &t2)?;
+Ok(Value::Nil) }
+
+fn f_subst_char_in_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { check_writable(i)?;
+let (s, e) = beg_end(i, &a, 0, 1)?;
+let from = want_int(i, &a[2])? as u32;
+let to = want_int(i, &a[3])? as u32;
+let fc = char::from_u32(from).unwrap_or('\u{FFFD}');
+let tc = char::from_u32(to).unwrap_or('\u{FFFD}');
+// GNU calls modify_text (before-change + MODIFF bump) only when a
+// match exists, at the FIRST match position, covering [pos, end);
+// after-change spans first..last substitution.  No match -> no
+// hooks, no tick, nil.
+let (first, last) = {
+    let b = cur(i);
+    let bb = b.borrow();
+    let mut first = None;
+    let mut last = 0;
+    for p in s..e.min(bb.text.len()) {
+        if bb.text.char_at(p) == fc {
+            if first.is_none() {
+                first = Some(p);
+            }
+            last = p + 1;
+        }
+    }
+    match first {
+        Some(f) => (f, last),
+        None => return Ok(Value::Nil),
+    }
+};
+crate::lisp::builtins::evalfn::signal_before_change(i, first + 1, e + 1)?;
+{
     let b = cur(i);
     let mut bb = b.borrow_mut();
-    if e1 > s2 {
-        return Err(err_sym(i, "error", vec![Value::string("Regions overlap")]));
+    // GNU substitutes in place: point and markers are undisturbed.
+    for p in first..e.min(bb.text.len()) {
+        if bb.text.char_at(p) == fc {
+            bb.text.set_char_at(p, tc);
+        }
     }
-    let t1 = bb.text.substring(s1, e1);
-    let t2 = bb.text.substring(s2, e2);
-    drop(bb);
-    crate::buffer::primitives::chg_delete(i, s2, e2)?;
-    crate::buffer::primitives::chg_insert(i, s2, &t1)?;
-    crate::buffer::primitives::chg_delete(i, s1, e1)?;
-    crate::buffer::primitives::chg_insert(i, s1, &t2)?;
-    Ok(Value::Nil)
+    bb.note_text_change(e - first);
 }
-
-fn f_subst_char_in_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    check_writable(i)?;
-    let (s, e) = beg_end(i, &a, 0, 1)?;
-    let from = want_int(i, &a[2])? as u32;
-    let to = want_int(i, &a[3])? as u32;
-    let fc = char::from_u32(from).unwrap_or('\u{FFFD}');
-    let tc = char::from_u32(to).unwrap_or('\u{FFFD}');
-    // GNU calls modify_text (before-change + MODIFF bump) only when a
-    // match exists, at the FIRST match position, covering [pos, end);
-    // after-change spans first..last substitution.  No match -> no
-    // hooks, no tick, nil.
-    let (first, last) = {
-        let b = cur(i);
-        let bb = b.borrow();
-        let mut first = None;
-        let mut last = 0;
-        for p in s..e.min(bb.text.len()) {
-            if bb.text.char_at(p) == fc {
-                if first.is_none() {
-                    first = Some(p);
-                }
-                last = p + 1;
-            }
-        }
-        match first {
-            Some(f) => (f, last),
-            None => return Ok(Value::Nil),
-        }
-    };
-    crate::lisp::builtins::evalfn::signal_before_change(i, first + 1, e + 1)?;
-    {
-        let b = cur(i);
-        let mut bb = b.borrow_mut();
-        // GNU substitutes in place: point and markers are undisturbed.
-        for p in first..e.min(bb.text.len()) {
-            if bb.text.char_at(p) == fc {
-                bb.text.set_char_at(p, tc);
-            }
-        }
-        bb.note_text_change(e - first);
-    }
-    crate::lisp::builtins::evalfn::signal_after_change(i, first + 1, last + 1, last - first)?;
-    Ok(Value::Nil)
-}
+crate::lisp::builtins::evalfn::signal_after_change(i, first + 1, last + 1, last - first)?;
+Ok(Value::Nil) }
 
 /// GNU `check_translation': VAL is an alist (([FROM-CHAR ...] . TO)
 /// ...) — find the entry whose FROM sequence matches the text at
@@ -2273,7 +2262,7 @@ fn translate_region_core(i: &mut Interp, s: usize, e: usize, table: &Value) -> R
         }
     }
     let b = cur(i);
-    let mut bb = b.borrow_mut();
+    let bb = b.borrow_mut();
     let region: Vec<char> = bb.text.substring(s, e).chars().collect();
     let ii: &Interp = i;
     // GNU `translate-region-internal': per char, the table's value is
@@ -2360,305 +2349,282 @@ fn translate_region_core(i: &mut Interp, s: usize, e: usize, table: &Value) -> R
     Ok(changed as i128)
 }
 
-fn f_translate_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    check_writable(i)?;
-    let (s, e) = beg_end(i, &a, 0, 1)?;
-    // GNU's Lisp `translate-region' resolves a SYMBOL table through
-    // its `translation-table' property, then delegates to
-    // `translate-region-internal'.
-    let mut table = a[2].clone();
-    if let Value::Sym(sid) = &table {
-        let tpid = i.intern("translation-table");
-        let p = i.get_prop(*sid, tpid);
-        // GNU: (or (char-table-p val) (error "Invalid translation table
-        // name: %s" table)).
-        if !crate::lisp::builtins::misc::is_char_table(i, &p) {
-            let name = i.symbol_name(*sid).to_string();
-            return Err(i.error(&format!("Invalid translation table name: {}", name)));
-        }
-        table = p;
+fn f_translate_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { check_writable(i)?;
+let (s, e) = beg_end(i, &a, 0, 1)?;
+// GNU's Lisp `translate-region' resolves a SYMBOL table through
+// its `translation-table' property, then delegates to
+// `translate-region-internal'.
+let mut table = a[2].clone();
+if let Value::Sym(sid) = &table {
+    let tpid = i.intern("translation-table");
+    let p = i.get_prop(*sid, tpid);
+    // GNU: (or (char-table-p val) (error "Invalid translation table
+    // name: %s" table)).
+    if !crate::lisp::builtins::misc::is_char_table(i, &p) {
+        let name = i.symbol_name(*sid).to_string();
+        return Err(i.error(&format!("Invalid translation table name: {}", name)));
     }
-    Ok(Value::Int(translate_region_core(i, s, e, &table)?))
+    table = p;
 }
+Ok(Value::Int(translate_region_core(i, s, e, &table)?)) }
 
 /// GNU mule.el `make-translation-table-from-alist': builds a forward
 /// table plus a reverse table (extra slot 0); extra slot 1 is the
 /// max FROM sequence length.  Each cell may hold TO, or a list of
 /// (([FROM-CHAR ...] . TO) ...) built by nconc'ing new entries.
-fn f_make_translation_table_from_alist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let items = a[0].list_to_vec().unwrap_or_default();
-    let tag = Value::Sym(i.intern("translation-table"));
-    let forward =
-        crate::lisp::builtins::misc::make_ct(i, tag.clone(), Value::Nil, vec![Value::Nil; 2]);
-    let reverse = crate::lisp::builtins::misc::make_ct(i, tag, Value::Nil, vec![Value::Nil; 2]);
-    for pass in 0..2 {
-        let table = if pass == 0 { &forward } else { &reverse };
-        let mut max_lookup = 1i128;
-        for item in &items {
-            let (car, cdr) = match item {
-                Value::Cons(c) => {
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
-                }
-                _ => continue,
-            };
-            let (from, to) = if pass == 0 { (car, cdr) } else { (cdr, car) };
-            let idx = match &from {
-                Value::Int(c) => Some(*c),
-                Value::Vec(v) => {
-                    let v = v.borrow();
-                    if v.is_empty() {
-                        None
-                    } else {
-                        max_lookup = max_lookup.max(v.len() as i128);
-                        match &v[0] {
-                            Value::Int(c) => Some(*c),
-                            _ => None,
-                        }
+fn f_make_translation_table_from_alist(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let items = a[0].list_to_vec().unwrap_or_default();
+let tag = Value::Sym(i.intern("translation-table"));
+let forward =
+    crate::lisp::builtins::misc::make_ct(i, tag.clone(), Value::Nil, vec![Value::Nil; 2]);
+let reverse = crate::lisp::builtins::misc::make_ct(i, tag, Value::Nil, vec![Value::Nil; 2]);
+for pass in 0..2 {
+    let table = if pass == 0 { &forward } else { &reverse };
+    let mut max_lookup = 1i128;
+    for item in &items {
+        let (car, cdr) = match item {
+            Value::Cons(c) => {
+                let b = c.borrow();
+                (b.car.clone(), b.cdr.clone())
+            }
+            _ => continue,
+        };
+        let (from, to) = if pass == 0 { (car, cdr) } else { (cdr, car) };
+        let idx = match &from {
+            Value::Int(c) => Some(*c),
+            Value::Vec(v) => {
+                let v = v.borrow();
+                if v.is_empty() {
+                    None
+                } else {
+                    max_lookup = max_lookup.max(v.len() as i128);
+                    match &v[0] {
+                        Value::Int(c) => Some(*c),
+                        _ => None,
                     }
                 }
-                _ => None,
-            };
-            let Some(idx) = idx else { continue };
-            if !(0..=crate::lisp::builtins::misc::CT_MAX_CHAR as i128).contains(&idx) {
-                continue;
             }
-            let val = crate::lisp::builtins::misc::char_table_ref(i, table, idx as usize);
-            let cell = if !val.is_nil() {
-                // Existing entry: a non-list value is first wrapped
-                // as ([idx] . val), then (from . to) is nconc'd on.
-                let mut vl = match &val {
-                    Value::Cons(_) => val.list_to_vec().unwrap_or_default(),
-                    _ => vec![Value::cons(
-                        Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Int(
-                            idx,
-                        )]))),
-                        val.clone(),
-                    )],
+            _ => None,
+        };
+        let Some(idx) = idx else { continue };
+        if !(0..=crate::lisp::builtins::misc::CT_MAX_CHAR as i128).contains(&idx) {
+            continue;
+        }
+        let val = crate::lisp::builtins::misc::char_table_ref(i, table, idx as usize);
+        let cell = if !val.is_nil() {
+            // Existing entry: a non-list value is first wrapped
+            // as ([idx] . val), then (from . to) is nconc'd on.
+            let mut vl = match &val {
+                Value::Cons(_) => val.list_to_vec().unwrap_or_default(),
+                _ => vec![Value::cons(
+                    Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Int(
+                        idx,
+                    )]))),
+                    val.clone(),
+                )],
+            };
+            let f =
+                match &from {
+                    Value::Int(c) => Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
+                        vec![Value::Int(*c)],
+                    ))),
+                    _ => from.clone(),
                 };
-                let f =
-                    match &from {
-                        Value::Int(c) => Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-                            vec![Value::Int(*c)],
-                        ))),
-                        _ => from.clone(),
-                    };
-                vl.push(Value::cons(f, to));
-                Value::list(vl)
-            } else if matches!(from, Value::Int(_)) {
-                to
-            } else {
-                Value::list(vec![Value::cons(from.clone(), to)])
-            };
-            crate::lisp::builtins::misc::ct_set(i, table, idx as u32, cell);
-        }
-        // Extra slot 1: max-lookup for this direction.
-        if let Value::Record(r) = table {
-            r.borrow_mut()[4] = Value::Int(max_lookup);
-        }
+            vl.push(Value::cons(f, to));
+            Value::list(vl)
+        } else if matches!(from, Value::Int(_)) {
+            to
+        } else {
+            Value::list(vec![Value::cons(from.clone(), to)])
+        };
+        crate::lisp::builtins::misc::ct_set(i, table, idx as u32, cell);
     }
-    // Extra slot 0 of the forward table: the reverse table.
-    if let Value::Record(r) = &forward {
-        r.borrow_mut()[3] = reverse;
+    // Extra slot 1: max-lookup for this direction.
+    if let Value::Record(r) = table {
+        r.borrow_mut()[4] = Value::Int(max_lookup);
     }
-    Ok(forward)
 }
+// Extra slot 0 of the forward table: the reverse table.
+if let Value::Record(r) = &forward {
+    r.borrow_mut()[3] = reverse;
+}
+Ok(forward) }
 
-fn f_buffer_swap_text(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU Fbuffer_swap_text takes a buffer OBJECT (CHECK_BUFFER), not
-    // a name — and the checks run in this order: dead, then indirect,
-    // then has-indirect-children.
-    let other = match &a[0] {
-        Value::Buffer(b) => b.clone(),
-        other => return Err(i.wrong_type_mut("bufferp", other)),
-    };
-    let cur_b = cur(i);
-    if !other.borrow().live {
+fn f_buffer_swap_text(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU Fbuffer_swap_text takes a buffer OBJECT (CHECK_BUFFER), not
+// a name — and the checks run in this order: dead, then indirect,
+// then has-indirect-children.
+let other = match &a[0] {
+    Value::Buffer(b) => b.clone(),
+    other => return Err(i.wrong_type_mut("bufferp", other)),
+};
+let cur_b = cur(i);
+if !other.borrow().live {
+    return Err(err_sym(
+        i,
+        "error",
+        vec![Value::string("Cannot swap a dead buffer’s text")],
+    ));
+}
+// Swapping a buffer with itself is a no-op (and avoids a double
+// borrow_mut on the same RefCell).
+if std::rc::Rc::ptr_eq(&cur_b, &other) {
+    return Ok(Value::Nil);
+}
+if cur_b.borrow().base_buffer.is_some() || other.borrow().base_buffer.is_some() {
+    return Err(err_sym(
+        i,
+        "error",
+        vec![Value::string("Cannot swap indirect buffers’s text")],
+    ));
+}
+// Neither buffer may have indirect children hanging off its text.
+let (cur_id, other_id) = (cur_b.borrow().id, other.borrow().id);
+for cid in i.buffers.list() {
+    let is_child = i
+        .buffers
+        .get(cid)
+        .and_then(|cb| cb.borrow().base_buffer.as_ref().map(|br| br.borrow().id))
+        .map(|bid| bid == cur_id || bid == other_id)
+        .unwrap_or(false);
+    if is_child {
         return Err(err_sym(
             i,
             "error",
-            vec![Value::string("Cannot swap a dead buffer’s text")],
+            vec![Value::string("One of the buffers to swap has indirect buffers")],
         ));
     }
-    // Swapping a buffer with itself is a no-op (and avoids a double
-    // borrow_mut on the same RefCell).
-    if std::rc::Rc::ptr_eq(&cur_b, &other) {
-        return Ok(Value::Nil);
-    }
-    if cur_b.borrow().base_buffer.is_some() || other.borrow().base_buffer.is_some() {
-        return Err(err_sym(
-            i,
-            "error",
-            vec![Value::string("Cannot swap indirect buffers’s text")],
-        ));
-    }
-    // Neither buffer may have indirect children hanging off its text.
-    let (cur_id, other_id) = (cur_b.borrow().id, other.borrow().id);
-    for cid in i.buffers.list() {
-        let is_child = i
-            .buffers
-            .get(cid)
-            .and_then(|cb| cb.borrow().base_buffer.as_ref().map(|br| br.borrow().id))
-            .map(|bid| bid == cur_id || bid == other_id)
-            .unwrap_or(false);
-        if is_child {
-            return Err(err_sym(
-                i,
-                "error",
-                vec![Value::string("One of the buffers to swap has indirect buffers")],
-            ));
-        }
-    }
-    let (mut mine, mut theirs) = (cur_b.borrow_mut(), other.borrow_mut());
-    // GNU swapfield(own_text): the text storage — including intervals
-    // (our SharedText::props) and MODIFF ticks — moves wholesale.
-    std::mem::swap(&mut mine.text, &mut theirs.text);
-    // Move the viewer registrations with the text: post-swap each
-    // buffer views the other's former SharedText.
-    mine.text.remove_viewer(&other);
-    mine.text.add_viewer(&cur_b);
-    theirs.text.remove_viewer(&cur_b);
-    theirs.text.add_viewer(&other);
-    // swapfield pt/begv/zv — point and narrowing travel with the text.
-    std::mem::swap(&mut mine.point, &mut theirs.point);
-    std::mem::swap(&mut mine.begv, &mut theirs.begv);
-    std::mem::swap(&mut mine.zv, &mut theirs.zv);
-    // GNU swapfield_(undo_list), swapfield_(mark), swapfield_(mark_active).
-    let undo_sym = mine.undo_sym;
-    let mu = mine.locals.remove(&undo_sym).unwrap_or(Value::Nil);
-    let tu = theirs.locals.remove(&undo_sym).unwrap_or(Value::Nil);
-    mine.locals.insert(undo_sym, tu);
-    theirs.locals.insert(undo_sym, mu);
-    std::mem::swap(&mut mine.mark, &mut theirs.mark);
-    let ma = i.intern("mark-active");
-    let (mm_a, tm_a) = (mine.locals.remove(&ma), theirs.locals.remove(&ma));
-    if let Some(v) = tm_a {
-        mine.locals.insert(ma, v);
-    }
-    if let Some(v) = mm_a {
-        theirs.locals.insert(ma, v);
-    }
-    for s in [
-        "enable-multibyte-characters",
-        "bidi-display-reordering",
-        "bidi-paragraph-direction",
-        "bidi-paragraph-separate-re",
-        "bidi-paragraph-start-re",
-    ] {
-        let sid = i.intern(s);
-        let (mv, tv) = (mine.locals.remove(&sid), theirs.locals.remove(&sid));
-        if let Some(v) = tv {
-            mine.locals.insert(sid, v);
-        }
-        if let Some(v) = mv {
-            theirs.locals.insert(sid, v);
-        }
-    }
-    // GNU swap_buffer_overlays: overlay objects stay with their buffer
-    // handle but their positions… actually GNU swaps the overlay
-    // trees — each overlay's `buffer' retargets to the other buffer.
-    std::mem::swap(&mut mine.overlays, &mut theirs.overlays);
-    for ov in &mut mine.overlays {
-        if ov.buffer == Some(other_id) {
-            ov.buffer = Some(cur_id);
-        }
-    }
-    for ov in &mut theirs.overlays {
-        if ov.buffer == Some(cur_id) {
-            ov.buffer = Some(other_id);
-        }
-    }
-    // GNU: markers follow the text — each buffer's marker list moves
-    // to the other buffer and the markers retarget their owner.
-    std::mem::swap(&mut mine.markers, &mut theirs.markers);
-    for w in &mine.markers {
-        if let Some(m) = w.upgrade() {
-            let mut mm = m.borrow_mut();
-            if mm.buffer == Some(other_id) {
-                mm.buffer = Some(cur_id);
-            }
-        }
-    }
-    for w in &theirs.markers {
-        if let Some(m) = w.upgrade() {
-            let mut mm = m.borrow_mut();
-            if mm.buffer == Some(cur_id) {
-                mm.buffer = Some(other_id);
-            }
-        }
-    }
-    // GNU bumps MODIFF/CHARS_MODIFF on both texts after the swap.
-    mine.text.mod_tick.set(mine.text.mod_tick.get() + 1);
-    mine.text.chars_mod_tick.set(mine.text.chars_mod_tick.get() + 1);
-    theirs.text.mod_tick.set(theirs.text.mod_tick.get() + 1);
-    theirs.text.chars_mod_tick.set(theirs.text.chars_mod_tick.get() + 1);
-    Ok(Value::Nil)
 }
+let (mut mine, mut theirs) = (cur_b.borrow_mut(), other.borrow_mut());
+// GNU swapfield(own_text): the text storage — including intervals
+// (our SharedText::props) and MODIFF ticks — moves wholesale.
+std::mem::swap(&mut mine.text, &mut theirs.text);
+// Move the viewer registrations with the text: post-swap each
+// buffer views the other's former SharedText.
+mine.text.remove_viewer(&other);
+mine.text.add_viewer(&cur_b);
+theirs.text.remove_viewer(&cur_b);
+theirs.text.add_viewer(&other);
+// swapfield pt/begv/zv — point and narrowing travel with the text.
+std::mem::swap(&mut mine.point, &mut theirs.point);
+std::mem::swap(&mut mine.begv, &mut theirs.begv);
+std::mem::swap(&mut mine.zv, &mut theirs.zv);
+// GNU swapfield_(undo_list), swapfield_(mark), swapfield_(mark_active).
+let undo_sym = mine.undo_sym;
+let mu = mine.locals.remove(&undo_sym).unwrap_or(Value::Nil);
+let tu = theirs.locals.remove(&undo_sym).unwrap_or(Value::Nil);
+mine.locals.insert(undo_sym, tu);
+theirs.locals.insert(undo_sym, mu);
+std::mem::swap(&mut mine.mark, &mut theirs.mark);
+let ma = i.intern("mark-active");
+let (mm_a, tm_a) = (mine.locals.remove(&ma), theirs.locals.remove(&ma));
+if let Some(v) = tm_a {
+    mine.locals.insert(ma, v);
+}
+if let Some(v) = mm_a {
+    theirs.locals.insert(ma, v);
+}
+for s in [
+    "enable-multibyte-characters",
+    "bidi-display-reordering",
+    "bidi-paragraph-direction",
+    "bidi-paragraph-separate-re",
+    "bidi-paragraph-start-re",
+] {
+    let sid = i.intern(s);
+    let (mv, tv) = (mine.locals.remove(&sid), theirs.locals.remove(&sid));
+    if let Some(v) = tv {
+        mine.locals.insert(sid, v);
+    }
+    if let Some(v) = mv {
+        theirs.locals.insert(sid, v);
+    }
+}
+// GNU swap_buffer_overlays: overlay objects stay with their buffer
+// handle but their positions… actually GNU swaps the overlay
+// trees — each overlay's `buffer' retargets to the other buffer.
+std::mem::swap(&mut mine.overlays, &mut theirs.overlays);
+for ov in &mut mine.overlays {
+    if ov.buffer == Some(other_id) {
+        ov.buffer = Some(cur_id);
+    }
+}
+for ov in &mut theirs.overlays {
+    if ov.buffer == Some(cur_id) {
+        ov.buffer = Some(other_id);
+    }
+}
+// GNU: markers follow the text — each buffer's marker list moves
+// to the other buffer and the markers retarget their owner.
+std::mem::swap(&mut mine.markers, &mut theirs.markers);
+for w in &mine.markers {
+    if let Some(m) = w.upgrade() {
+        let mut mm = m.borrow_mut();
+        if mm.buffer == Some(other_id) {
+            mm.buffer = Some(cur_id);
+        }
+    }
+}
+for w in &theirs.markers {
+    if let Some(m) = w.upgrade() {
+        let mut mm = m.borrow_mut();
+        if mm.buffer == Some(cur_id) {
+            mm.buffer = Some(other_id);
+        }
+    }
+}
+// GNU bumps MODIFF/CHARS_MODIFF on both texts after the swap.
+mine.text.mod_tick.set(mine.text.mod_tick.get() + 1);
+mine.text.chars_mod_tick.set(mine.text.chars_mod_tick.get() + 1);
+theirs.text.mod_tick.set(theirs.text.mod_tick.get() + 1);
+theirs.text.chars_mod_tick.set(theirs.text.chars_mod_tick.get() + 1);
+Ok(Value::Nil) }
 
-fn f_buffer_last_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU: last name before the last rename or the kill; a fresh
-    // buffer's last name is its creation name.
-    let b = crate::buffer::primitives::buf_of(i, &crate::lisp::builtins::arg(&a, 0))?;
-    match &b.borrow().last_name {
-        Some(n) => Ok(Value::string(n.clone())),
-        None => Ok(Value::Nil),
-    }
-}
+fn f_buffer_last_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU: last name before the last rename or the kill; a fresh
+// buffer's last name is its creation name.
+let b = crate::buffer::primitives::buf_of(i, &crate::lisp::builtins::arg(&a, 0))?;
+match &b.borrow().last_name {
+    Some(n) => Ok(Value::string(n.clone())),
+    None => Ok(Value::Nil),
+} }
 
-fn f_buffer_mod_tick(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let b = cur(i);
-    Ok(Value::Int(b.borrow().text.mod_tick.get() as i128))
-}
+fn f_buffer_mod_tick(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { let b = cur(i);
+Ok(Value::Int(b.borrow().text.mod_tick.get() as i128)) }
 
-fn f_buffer_chars_mod_tick(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let b = cur(i);
-    Ok(Value::Int(b.borrow().text.chars_mod_tick.get() as i128))
-}
+fn f_buffer_chars_mod_tick(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { let b = cur(i);
+Ok(Value::Int(b.borrow().text.chars_mod_tick.get() as i128)) }
 
-fn f_store_match_data(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Same as set-match-data plus reseat markers (we use plain ints).
-    let items = a[0].list_to_vec().unwrap_or_default();
-    let mut regs = Vec::new();
-    let in_buffer = i.match_data.as_ref().map(|m| m.in_buffer).unwrap_or(true);
-    let base = i.match_data.as_ref().map(|m| m.base).unwrap_or(0);
-    let off = base + if in_buffer { 1 } else { 0 };
-    let to_pos = |v: &Value| -> Option<usize> {
-        // GNU accepts markers in the list too (match-data returns them).
-        match v {
-            Value::Marker(m) => {
-                let mm = m.borrow();
-                mm.buffer.map(|_| mm.position.saturating_sub(base))
-            }
-            _ => v.int().map(|p| (p as usize).saturating_sub(off)),
+fn f_store_match_data(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // Same as set-match-data plus reseat markers (we use plain ints).
+let items = a[0].list_to_vec().unwrap_or_default();
+let mut regs = Vec::new();
+let in_buffer = i.match_data.as_ref().map(|m| m.in_buffer).unwrap_or(true);
+let base = i.match_data.as_ref().map(|m| m.base).unwrap_or(0);
+let off = base + if in_buffer { 1 } else { 0 };
+let to_pos = |v: &Value| -> Option<usize> {
+    // GNU accepts markers in the list too (match-data returns them).
+    match v {
+        Value::Marker(m) => {
+            let mm = m.borrow();
+            mm.buffer.map(|_| mm.position.saturating_sub(base))
         }
-    };
-    let mut k = 0;
-    while k < items.len() {
-        let s = to_pos(&items[k]);
-        let e = items.get(k + 1).and_then(|v| to_pos(v));
-        regs.push(s);
-        regs.push(e);
-        k += 2;
+        _ => v.int().map(|p| (p as usize).saturating_sub(off)),
     }
-    i.match_data = Some(crate::lisp::MatchData {
-        regs,
-        in_buffer,
-        base,
-        buffer: None,
-    });
-    Ok(Value::Nil)
+};
+let mut k = 0;
+while k < items.len() {
+    let s = to_pos(&items[k]);
+    let e = items.get(k + 1).and_then(|v| to_pos(v));
+    regs.push(s);
+    regs.push(e);
+    k += 2;
 }
+i.match_data = Some(crate::lisp::MatchData {
+    regs,
+    in_buffer,
+    base,
+    buffer: None,
+});
+Ok(Value::Nil) }
 
 // ---------- text-property scans ----------
-
-fn prop_at_pos(bb: &crate::buffer::Buffer, pos: usize, prop: u32) -> Value {
-    for tp in bb.text.props.borrow().iter().rev() {
-        if tp.prop == prop && pos >= tp.start && pos < tp.end {
-            return tp.value.clone();
-        }
-    }
-    Value::Nil
-}
 
 /// GNU `find_field' (editfns.c): fields left/right of POS, the
 /// at_field_start/at_field_end edge detection driven by the
@@ -2691,7 +2657,7 @@ fn find_field(
     let gpos = |i: &mut Interp, p: i128| -> EvalResult {
         crate::buffer::primitives::f_get_pos_property(
             i,
-            vec![Value::Int(p), Value::Sym(field_sym)],
+            vec![Value::Int(p), Value::Sym(field_sym)].into(),
         )
     };
     let next_change = |i: &mut Interp, p: i128, lim: Option<i128>| -> EvalResult {
@@ -2702,7 +2668,7 @@ fn find_field(
                 Value::Sym(field_sym),
                 Value::Nil,
                 lim.map(Value::Int).unwrap_or(Value::Nil),
-            ],
+            ].into(),
         )
     };
     let prev_change = |i: &mut Interp, p: i128, lim: Option<i128>| -> EvalResult {
@@ -2713,7 +2679,7 @@ fn find_field(
                 Value::Sym(field_sym),
                 Value::Nil,
                 lim.map(Value::Int).unwrap_or(Value::Nil),
-            ],
+            ].into(),
         )
     };
     let after_field = gcp(i, pos);
@@ -2776,348 +2742,324 @@ fn find_field_bounds(
     Ok((b, e))
 }
 
-fn f_field_beginning(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pos = match a.get(0) {
-        Some(v) if !v.is_nil() => Some(v.int().or_else(|| marker_pos(v)).unwrap_or(1)),
-        _ => None,
-    };
-    let merge = arg(&a, 1).truthy();
-    let lim = a.get(2).and_then(|v| v.int());
-    let (b, _) = find_field_bounds(i, pos, merge, lim, None)?;
-    Ok(Value::Int(b))
-}
+fn f_field_beginning(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pos = match a.get(0) {
+    Some(v) if !v.is_nil() => Some(v.int().or_else(|| marker_pos(v)).unwrap_or(1)),
+    _ => None,
+};
+let merge = arg(&a, 1).truthy();
+let lim = a.get(2).and_then(|v| v.int());
+let (b, _) = find_field_bounds(i, pos, merge, lim, None)?;
+Ok(Value::Int(b)) }
 
-fn f_field_end(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pos = match a.get(0) {
-        Some(v) if !v.is_nil() => Some(v.int().or_else(|| marker_pos(v)).unwrap_or(1)),
-        _ => None,
-    };
-    let merge = arg(&a, 1).truthy();
-    let lim = a.get(2).and_then(|v| v.int());
-    let (_, e) = find_field_bounds(i, pos, merge, None, lim)?;
-    Ok(Value::Int(e))
-}
+fn f_field_end(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pos = match a.get(0) {
+    Some(v) if !v.is_nil() => Some(v.int().or_else(|| marker_pos(v)).unwrap_or(1)),
+    _ => None,
+};
+let merge = arg(&a, 1).truthy();
+let lim = a.get(2).and_then(|v| v.int());
+let (_, e) = find_field_bounds(i, pos, merge, None, lim)?;
+Ok(Value::Int(e)) }
 
-fn f_field_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pos = match a.get(0) {
-        Some(v) if !v.is_nil() => Some(v.int().or_else(|| marker_pos(v)).unwrap_or(1)),
-        _ => None,
-    };
-    let (s, e) = find_field_bounds(i, pos, false, None, None)?;
-    let v = crate::buffer::primitives::f_buffer_substring(
-        i,
-        vec![Value::Int(s), Value::Int(e)],
-    )?;
-    // field-string-no-properties shares this fn; the caller strips
-    // via the OBJECT arg convention — distinguish by subr name is not
-    // possible here, so look at the registration: the -no-properties
-    // variant calls f_field_string_no_properties below.
-    Ok(v)
-}
+fn f_field_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pos = match a.get(0) {
+    Some(v) if !v.is_nil() => Some(v.int().or_else(|| marker_pos(v)).unwrap_or(1)),
+    _ => None,
+};
+let (s, e) = find_field_bounds(i, pos, false, None, None)?;
+let v = crate::buffer::primitives::f_buffer_substring(
+    i,
+    vec![Value::Int(s), Value::Int(e)].into(),
+)?;
+// field-string-no-properties shares this fn; the caller strips
+// via the OBJECT arg convention — distinguish by subr name is not
+// possible here, so look at the registration: the -no-properties
+// variant calls f_field_string_no_properties below.
+Ok(v) }
 
-fn f_field_string_no_properties(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pos = match a.get(0) {
-        Some(v) if !v.is_nil() => Some(v.int().or_else(|| marker_pos(v)).unwrap_or(1)),
-        _ => None,
-    };
-    let (s, e) = find_field_bounds(i, pos, false, None, None)?;
-    crate::buffer::primitives::f_buffer_substring_no_properties(
-        i,
-        vec![Value::Int(s), Value::Int(e)],
-    )
-}
+fn f_field_string_no_properties(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pos = match a.get(0) {
+    Some(v) if !v.is_nil() => Some(v.int().or_else(|| marker_pos(v)).unwrap_or(1)),
+    _ => None,
+};
+let (s, e) = find_field_bounds(i, pos, false, None, None)?;
+crate::buffer::primitives::f_buffer_substring_no_properties(
+    i,
+    vec![Value::Int(s), Value::Int(e)].into(),
+) }
 
-fn f_delete_field(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    check_writable(i)?;
-    let pos = match a.get(0) {
-        Some(v) if !v.is_nil() => Some(v.int().or_else(|| marker_pos(v)).unwrap_or(1)),
-        _ => None,
-    };
-    let (s, e) = find_field_bounds(i, pos, false, None, None)?;
-    if s != e {
-        crate::buffer::primitives::chg_delete(i, (s - 1) as usize, (e - 1) as usize)?;
+fn f_delete_field(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { check_writable(i)?;
+let pos = match a.get(0) {
+    Some(v) if !v.is_nil() => Some(v.int().or_else(|| marker_pos(v)).unwrap_or(1)),
+    _ => None,
+};
+let (s, e) = find_field_bounds(i, pos, false, None, None)?;
+if s != e {
+    crate::buffer::primitives::chg_delete(i, (s - 1) as usize, (e - 1) as usize)?;
+}
+Ok(Value::Nil) }
+
+fn f_constrain_to_field(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU Fconstrain_to_field (editfns.c): clamp NEW-POS into the
+// field OLD-POS lives in; nil NEW-POS means point (and moves it).
+let move_pt = a[0].is_nil();
+let new_v = if move_pt {
+    cur(i).borrow().point() as i128 + 1
+} else {
+    a[0].int()
+        .or_else(|| marker_pos(&a[0]))
+        .ok_or_else(|| i.wrong_type_mut("integer-or-marker-p", &a[0]))?
+};
+let old_v = a[1]
+    .int()
+    .or_else(|| marker_pos(&a[1]))
+    .ok_or_else(|| i.wrong_type_mut("integer-or-marker-p", &a[1]))?;
+let merge = arg(&a, 2).truthy();
+let only_in_line = arg(&a, 3).truthy();
+let inhibit_prop = a.get(4).cloned().unwrap_or(Value::Nil);
+let field_sym = i.intern("field");
+let begv = cur(i).borrow().begv as i128 + 1;
+let zv = cur(i).borrow().zv as i128 + 1;
+let gcp = |i: &mut Interp, p: i128| -> Value {
+    if p < begv || p > zv {
+        return Value::Nil;
     }
-    Ok(Value::Nil)
-}
-
-fn f_constrain_to_field(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU Fconstrain_to_field (editfns.c): clamp NEW-POS into the
-    // field OLD-POS lives in; nil NEW-POS means point (and moves it).
-    let move_pt = a[0].is_nil();
-    let new_v = if move_pt {
-        cur(i).borrow().point() as i128 + 1
-    } else {
-        a[0].int()
-            .or_else(|| marker_pos(&a[0]))
-            .ok_or_else(|| i.wrong_type_mut("integer-or-marker-p", &a[0]))?
-    };
-    let old_v = a[1]
-        .int()
-        .or_else(|| marker_pos(&a[1]))
-        .ok_or_else(|| i.wrong_type_mut("integer-or-marker-p", &a[1]))?;
-    let merge = arg(&a, 2).truthy();
-    let only_in_line = arg(&a, 3).truthy();
-    let inhibit_prop = a.get(4).cloned().unwrap_or(Value::Nil);
-    let field_sym = i.intern("field");
-    let begv = cur(i).borrow().begv as i128 + 1;
-    let zv = cur(i).borrow().zv as i128 + 1;
-    let gcp = |i: &mut Interp, p: i128| -> Value {
-        if p < begv || p > zv {
-            return Value::Nil;
-        }
-        let b = cur(i);
-        let bb = b.borrow();
-        crate::buffer::primitives::char_prop_at_overlay(i, &bb, (p - 1) as usize, field_sym).0
-    };
-    let fwd = new_v > old_v;
-    let mut result = new_v;
-    let inhibit_motion = i
-        .intern_soft("inhibit-field-text-motion")
-        .map(|id| i.symbol_value(id).truthy())
-        .unwrap_or(false);
-    let has_field = !gcp(i, new_v).is_nil()
-        || !gcp(i, old_v).is_nil()
-        || (new_v > begv && !gcp(i, new_v - 1).is_nil())
-        || (old_v > begv && !gcp(i, old_v - 1).is_nil());
-    let mut captured = false;
-    if inhibit_prop.truthy() {
-        let psym = i.sym_id(&inhibit_prop).unwrap_or(sym::NIL);
-        let pos_val = crate::buffer::primitives::f_get_pos_property(
-            i,
-            vec![Value::Int(old_v), inhibit_prop.clone()],
-        )?;
-        captured = pos_val.truthy()
-            && (old_v <= begv
-                || crate::buffer::primitives::char_prop_at_overlay(
-                    i,
-                    &cur(i).borrow(),
-                    (old_v - 1) as usize,
-                    psym,
-                )
-                .0
-                .truthy()
-                || crate::buffer::primitives::char_prop_at_overlay(
-                    i,
-                    &cur(i).borrow(),
-                    (old_v - 2).max(0) as usize,
-                    psym,
-                )
-                .0
-                .truthy());
-    }
-    if !inhibit_motion && new_v != old_v && has_field && !captured {
-        let field_bound = if fwd {
-            let (_, e) = find_field_bounds(i, Some(old_v), merge, None, Some(new_v))?;
-            e
-        } else {
-            let (b, _) = find_field_bounds(i, Some(old_v), merge, Some(new_v), None)?;
-            b
-        };
-        // If ESCAPE-FROM-EDGE moved the bound past NEW-POS, NEW-POS is
-        // already inside the right field — leave it.
-        let need = if field_bound < new_v { fwd } else { !fwd };
-        if need {
-            let same_line = if only_in_line {
-                // Constraint is OK only when NEW-POS and FIELD_BOUND
-                // share a line.
-                let b = cur(i);
-                let bb = b.borrow();
-                let (lo, hi) = (new_v.min(field_bound), new_v.max(field_bound));
-                let (s, e) = ((lo - 1).max(0) as usize, (hi - 1).max(0) as usize);
-                !bb.text.substring(s, e.min(bb.text.len())).contains('\n')
-            } else {
-                true
-            };
-            if same_line {
-                result = field_bound;
-            }
-        }
-    }
-    if move_pt {
-        cur(i).borrow_mut().set_point((result - 1).max(0) as usize);
-    }
-    Ok(Value::Int(result))
-}
-
-fn f_get_char_prop_and_overlay(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU `get_char_property_and_overlay': (PROPVAL . OVERLAY) where
-    // OVERLAY is the winning overlay or nil for a text property.
-    let prop = crate::buffer::primitives::want_sym(i, &a[1])?;
-    let len = cur(i).borrow().text_len();
-    let pos = pos_idx(len, a[0].int().unwrap_or(1));
     let b = cur(i);
     let bb = b.borrow();
-    let (v, ov) = crate::buffer::primitives::char_prop_at_overlay(i, &bb, pos, prop);
-    Ok(Value::cons(v, ov))
+    crate::buffer::primitives::char_prop_at_overlay(i, &bb, (p - 1) as usize, field_sym).0
+};
+let fwd = new_v > old_v;
+let mut result = new_v;
+let inhibit_motion = i
+    .intern_soft("inhibit-field-text-motion")
+    .map(|id| i.symbol_value(id).truthy())
+    .unwrap_or(false);
+let has_field = !gcp(i, new_v).is_nil()
+    || !gcp(i, old_v).is_nil()
+    || (new_v > begv && !gcp(i, new_v - 1).is_nil())
+    || (old_v > begv && !gcp(i, old_v - 1).is_nil());
+let mut captured = false;
+if inhibit_prop.truthy() {
+    let psym = i.sym_id(&inhibit_prop).unwrap_or(sym::NIL);
+    let pos_val = crate::buffer::primitives::f_get_pos_property(
+        i,
+        vec![Value::Int(old_v), inhibit_prop.clone()].into(),
+    )?;
+    captured = pos_val.truthy()
+        && (old_v <= begv
+            || crate::buffer::primitives::char_prop_at_overlay(
+                i,
+                &cur(i).borrow(),
+                (old_v - 1) as usize,
+                psym,
+            )
+            .0
+            .truthy()
+            || crate::buffer::primitives::char_prop_at_overlay(
+                i,
+                &cur(i).borrow(),
+                (old_v - 2).max(0) as usize,
+                psym,
+            )
+            .0
+            .truthy());
 }
-
-fn f_next_prop_change_fwd(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU `next-char-property-change': like next-property-change but
-    // also considers overlays — and defaults to point-max (not nil)
-    // when nothing changes.
-    if matches!(a.get(1), Some(Value::Str(_))) {
-        return crate::buffer::primitives::f_next_property_change(i, a);
-    }
-    let len = cur(i).borrow().text_len();
-    let begv = cur(i).borrow().begv;
-    let pos = pos_idx(len, a[0].int().unwrap_or(1));
-    let explicit_lim = a.get(1).and_then(|v| v.int());
-    // LIMIT is a 1-based position; default is point-max.
-    let lim = explicit_lim
-        .map(|l| (l.max(begv as i128 + 1) as usize).min(len + 1))
-        .unwrap_or(len + 1);
-    let mut next: Option<usize> = None;
-    {
-        let b = cur(i);
-        let bb = b.borrow();
-        let mut take = |cand: usize| {
-            // A boundary at 0-based index CAND is position CAND+1.
-            if cand > pos && cand < lim && next.map(|n| cand < n).unwrap_or(true) {
-                next = Some(cand);
-            }
+if !inhibit_motion && new_v != old_v && has_field && !captured {
+    let field_bound = if fwd {
+        let (_, e) = find_field_bounds(i, Some(old_v), merge, None, Some(new_v))?;
+        e
+    } else {
+        let (b, _) = find_field_bounds(i, Some(old_v), merge, Some(new_v), None)?;
+        b
+    };
+    // If ESCAPE-FROM-EDGE moved the bound past NEW-POS, NEW-POS is
+    // already inside the right field — leave it.
+    let need = if field_bound < new_v { fwd } else { !fwd };
+    if need {
+        let same_line = if only_in_line {
+            // Constraint is OK only when NEW-POS and FIELD_BOUND
+            // share a line.
+            let b = cur(i);
+            let bb = b.borrow();
+            let (lo, hi) = (new_v.min(field_bound), new_v.max(field_bound));
+            let (s, e) = ((lo - 1).max(0) as usize, (hi - 1).max(0) as usize);
+            !bb.text.substring(s, e.min(bb.text.len())).contains('\n')
+        } else {
+            true
         };
-        for tp in bb.text.props.borrow().iter() {
-            take(tp.start);
-            take(tp.end);
-        }
-        for ov in &bb.overlays {
-            if ov.buffer == Some(bb.id) {
-                take(ov.start);
-                take(ov.end);
-            }
+        if same_line {
+            result = field_bound;
         }
     }
-    Ok(Value::Int(next.map(|n| n as i128 + 1).unwrap_or(lim as i128)))
 }
+if move_pt {
+    cur(i).borrow_mut().set_point((result - 1).max(0) as usize);
+}
+Ok(Value::Int(result)) }
 
-fn f_prev_prop_change(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU `previous-char-property-change': defaults to point-min
-    // (not nil) when nothing changes before POS.
-    if matches!(a.get(1), Some(Value::Str(_))) {
-        return crate::buffer::primitives::f_prev_property_change(i, a);
-    }
-    let len = cur(i).borrow().text_len();
-    let pos = pos_idx(len, a[0].int().unwrap_or(1));
-    let begv = cur(i).borrow().begv;
-    // LIMIT is a 1-based position; default is point-min (GNU).
-    let explicit_lim = a.get(1).and_then(|v| v.int());
-    let lim = explicit_lim
-        .map(|l| (l.max(1) as usize - 1).min(len))
-        .unwrap_or(begv);
-    let mut prev: Option<usize> = None;
-    {
-        let b = cur(i);
-        let bb = b.borrow();
-        let mut take = |cand: usize| {
-            if cand < pos && cand >= lim && prev.map(|n| cand > n).unwrap_or(true) {
-                prev = Some(cand);
-            }
-        };
-        for tp in bb.text.props.borrow().iter() {
-            take(tp.start);
-            take(tp.end);
-        }
-        for ov in &bb.overlays {
-            if ov.buffer == Some(bb.id) {
-                take(ov.start);
-                take(ov.end);
-            }
-        }
-    }
-    Ok(Value::Int(prev.map(|p| p as i128 + 1).unwrap_or(lim as i128 + 1)))
-}
+fn f_get_char_prop_and_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU `get_char_property_and_overlay': (PROPVAL . OVERLAY) where
+// OVERLAY is the winning overlay or nil for a text property.
+let prop = crate::buffer::primitives::want_sym(i, &a[1])?;
+let len = cur(i).borrow().text_len();
+let pos = pos_idx(len, a[0].int().unwrap_or(1));
+let b = cur(i);
+let bb = b.borrow();
+let (v, ov) = crate::buffer::primitives::char_prop_at_overlay(i, &bb, pos, prop);
+Ok(Value::cons(v, ov)) }
 
-fn f_marker_last_position(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = i;
-    match &a[0] {
-        Value::Marker(m) => Ok(Value::Int(m.borrow().position as i128 + 1)),
-        other => Ok(other.clone()),
+fn f_next_prop_change_fwd(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU `next-char-property-change': like next-property-change but
+// also considers overlays — and defaults to point-max (not nil)
+// when nothing changes.
+if matches!(a.get(1), Some(Value::Str(_))) {
+    return crate::buffer::primitives::f_next_property_change(i, a);
+}
+let len = cur(i).borrow().text_len();
+let begv = cur(i).borrow().begv;
+let pos = pos_idx(len, a[0].int().unwrap_or(1));
+let explicit_lim = a.get(1).and_then(|v| v.int());
+// LIMIT is a 1-based position; default is point-max.
+let lim = explicit_lim
+    .map(|l| (l.max(begv as i128 + 1) as usize).min(len + 1))
+    .unwrap_or(len + 1);
+let mut next: Option<usize> = None;
+{
+    let b = cur(i);
+    let bb = b.borrow();
+    let mut take = |cand: usize| {
+        // A boundary at 0-based index CAND is position CAND+1.
+        if cand > pos && cand < lim && next.map(|n| cand < n).unwrap_or(true) {
+            next = Some(cand);
+        }
+    };
+    for tp in bb.text.props.borrow().iter() {
+        take(tp.start);
+        take(tp.end);
+    }
+    for ov in &bb.overlays {
+        if ov.buffer == Some(bb.id) {
+            take(ov.start);
+            take(ov.end);
+        }
     }
 }
+Ok(Value::Int(next.map(|n| n as i128 + 1).unwrap_or(lim as i128))) }
+
+fn f_prev_prop_change(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU `previous-char-property-change': defaults to point-min
+// (not nil) when nothing changes before POS.
+if matches!(a.get(1), Some(Value::Str(_))) {
+    return crate::buffer::primitives::f_prev_property_change(i, a);
+}
+let len = cur(i).borrow().text_len();
+let pos = pos_idx(len, a[0].int().unwrap_or(1));
+let begv = cur(i).borrow().begv;
+// LIMIT is a 1-based position; default is point-min (GNU).
+let explicit_lim = a.get(1).and_then(|v| v.int());
+let lim = explicit_lim
+    .map(|l| (l.max(1) as usize - 1).min(len))
+    .unwrap_or(begv);
+let mut prev: Option<usize> = None;
+{
+    let b = cur(i);
+    let bb = b.borrow();
+    let mut take = |cand: usize| {
+        if cand < pos && cand >= lim && prev.map(|n| cand > n).unwrap_or(true) {
+            prev = Some(cand);
+        }
+    };
+    for tp in bb.text.props.borrow().iter() {
+        take(tp.start);
+        take(tp.end);
+    }
+    for ov in &bb.overlays {
+        if ov.buffer == Some(bb.id) {
+            take(ov.start);
+            take(ov.end);
+        }
+    }
+}
+Ok(Value::Int(prev.map(|p| p as i128 + 1).unwrap_or(lim as i128 + 1))) }
+
+fn f_marker_last_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let _ = i;
+match &a[0] {
+    Value::Marker(m) => Ok(Value::Int(m.borrow().position as i128 + 1)),
+    other => Ok(other.clone()),
+} }
 
 // ---------- motion ----------
 
-fn f_compute_motion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (compute-motion FROM FROMVCONS TO TOVCONS WIDTH OFFSETS WINDOW)
-    // → (TO HPOS VPOS PREVHPOS CONTIN). Simplified: column counting.
-    let to = a.get(2).and_then(|v| v.int()).unwrap_or(1);
-    let b = cur(i);
-    let bb = b.borrow();
-    let len = bb.text_len();
-    let target = pos_idx(len, to);
-    let mut col = 0i128;
-    let mut vpos = 0i128;
-    let mut p = bb.begv;
-    let mut last_bol = 0i128;
-    while p < target {
-        match bb.text.char_at(p) {
-            '\n' => {
-                vpos += 1;
-                col = 0;
-                last_bol = col;
-            }
-            '\t' => {
-                last_bol = col;
-                col += 8 - (col % 8);
-            }
-            c => {
-                last_bol = col;
-                col += crate::buffer::primitives::char_width(c);
-            }
+fn f_compute_motion(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // (compute-motion FROM FROMVCONS TO TOVCONS WIDTH OFFSETS WINDOW)
+// → (TO HPOS VPOS PREVHPOS CONTIN). Simplified: column counting.
+let to = a.get(2).and_then(|v| v.int()).unwrap_or(1);
+let b = cur(i);
+let bb = b.borrow();
+let len = bb.text_len();
+let target = pos_idx(len, to);
+let mut col = 0i128;
+let mut vpos = 0i128;
+let mut p = bb.begv;
+let mut last_bol = 0i128;
+while p < target {
+    match bb.text.char_at(p) {
+        '\n' => {
+            vpos += 1;
+            col = 0;
+            last_bol = col;
         }
-        p += 1;
+        '\t' => {
+            last_bol = col;
+            col += 8 - (col % 8);
+        }
+        c => {
+            last_bol = col;
+            col += crate::buffer::primitives::char_width(c);
+        }
     }
-    Ok(Value::list(vec![
-        Value::Int(target as i128 + 1),
-        Value::Int(col),
-        Value::Int(vpos),
-        Value::Int(last_bol),
-        Value::Nil,
-    ]))
+    p += 1;
 }
+Ok(Value::list(vec![
+    Value::Int(target as i128 + 1),
+    Value::Int(col),
+    Value::Int(vpos),
+    Value::Int(last_bol),
+    Value::Nil,
+])) }
 
-fn f_vertical_motion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (vertical-motion LINES &optional WINDOW CUR-COL).  LINES may be a
-    // cons (COLS . LINES); without a real display matrix (batch) GNU
-    // moves LINES lines and lands at the beginning of the line, and the
-    // return value is the signed number of lines actually moved.
-    let lines = match &a[0] {
-        Value::Cons(c) => c.borrow().cdr.int().unwrap_or(0),
-        v => v.int().unwrap_or(0),
-    };
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let len = bb.text_len();
-    let mut p = bb.point();
-    let mut moved = 0i128;
-    if lines == 0 {
-        // Zero lines: GNU still lands on the beginning of the line.
-        p = line_start(&bb.text, p);
-    } else if lines > 0 {
-        for _ in 0..lines {
-            let eol = line_end(&bb.text, p);
-            if eol >= len {
-                p = len;
-                break;
-            }
-            p = eol + 1;
-            moved += 1;
+fn f_vertical_motion(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // (vertical-motion LINES &optional WINDOW CUR-COL).  LINES may be a
+// cons (COLS . LINES); without a real display matrix (batch) GNU
+// moves LINES lines and lands at the beginning of the line, and the
+// return value is the signed number of lines actually moved.
+let lines = match &a[0] {
+    Value::Cons(c) => c.borrow().cdr.int().unwrap_or(0),
+    v => v.int().unwrap_or(0),
+};
+let b = cur(i);
+let mut bb = b.borrow_mut();
+let len = bb.text_len();
+let mut p = bb.point();
+let mut moved = 0i128;
+if lines == 0 {
+    // Zero lines: GNU still lands on the beginning of the line.
+    p = line_start(&bb.text, p);
+} else if lines > 0 {
+    for _ in 0..lines {
+        let eol = line_end(&bb.text, p);
+        if eol >= len {
+            p = len;
+            break;
         }
-    } else {
-        for _ in 0..(-lines) {
-            // Each step lands on the beginning of the previous line.
-            let bol = line_start(&bb.text, p);
-            if bol == 0 {
-                p = 0;
-                break;
-            }
-            p = line_start(&bb.text, bol - 1);
-            moved -= 1;
-        }
+        p = eol + 1;
+        moved += 1;
     }
-    bb.set_point(p);
-    Ok(Value::Int(moved))
+} else {
+    for _ in 0..(-lines) {
+        // Each step lands on the beginning of the previous line.
+        let bol = line_start(&bb.text, p);
+        if bol == 0 {
+            p = 0;
+            break;
+        }
+        p = line_start(&bb.text, bol - 1);
+        moved -= 1;
+    }
 }
+bb.set_point(p);
+Ok(Value::Int(moved)) }
 
 fn line_start(text: &crate::buffer::SharedText, pos: usize) -> usize {
     let mut p = pos.min(text.len());
@@ -3135,48 +3077,42 @@ fn line_end(text: &crate::buffer::SharedText, pos: usize) -> usize {
     p
 }
 
-fn f_win_line_height(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU returns (HEIGHT VPOS YPOS OFFY) or nil when the line isn't
-    // visible in the window; in batch there is no window, so nil.
-    if i.noninteractive {
-        return Ok(Value::Nil);
-    }
-    // tty approximation: every line is 1 row tall; VPOS is the row
-    // index inside the window (arg 0 = line offset, -1 = last line).
-    let w = crate::editor::sel_window(i).unwrap();
-    let height = w.borrow().height;
-    let line = a.get(0).and_then(|v| v.int()).unwrap_or(0);
-    let vpos = if line < 0 {
-        height - 1
-    } else {
-        (line as usize).min(height.saturating_sub(1))
-    };
-    Ok(Value::list(vec![
-        Value::Int(1),
-        Value::Int(vpos as i128),
-        Value::Int(0),
-        Value::Int(0),
-    ]))
+fn f_win_line_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU returns (HEIGHT VPOS YPOS OFFY) or nil when the line isn't
+// visible in the window; in batch there is no window, so nil.
+if i.noninteractive {
+    return Ok(Value::Nil);
 }
+// tty approximation: every line is 1 row tall; VPOS is the row
+// index inside the window (arg 0 = line offset, -1 = last line).
+let w = crate::editor::sel_window(i).unwrap();
+let height = w.borrow().height;
+let line = a.get(0).and_then(|v| v.int()).unwrap_or(0);
+let vpos = if line < 0 {
+    height - 1
+} else {
+    (line as usize).min(height.saturating_sub(1))
+};
+Ok(Value::list(vec![
+    Value::Int(1),
+    Value::Int(vpos as i128),
+    Value::Int(0),
+    Value::Int(0),
+])) }
 
-fn f_backward_prefix_chars(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    // GNU: skip back over unquoted `''-class chars and `p'-flagged chars.
-    let upto = cur(i).borrow().point() + 1;
-    let syn = crate::editor::Syn::current(i, upto);
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let (beg, pt) = (bb.begv, bb.point());
-    let p = {
-        let text = bb.text.as_slice();
-        crate::buffer::primitives::backward_prefix_chars(&syn, &text, beg, pt)
-    };
-    bb.set_point(p);
-    Ok(Value::Nil)
-}
+fn f_backward_prefix_chars(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { // GNU: skip back over unquoted `''-class chars and `p'-flagged chars.
+let upto = cur(i).borrow().point() + 1;
+let syn = crate::editor::Syn::current(i, upto);
+let b = cur(i);
+let mut bb = b.borrow_mut();
+let (beg, pt) = (bb.begv, bb.point());
+let p = {
+    let text = bb.text.as_slice();
+    crate::buffer::primitives::backward_prefix_chars(&syn, &text, beg, pt)
+};
+bb.set_point(p);
+Ok(Value::Nil) }
 
-fn f_move_point_visually(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    f_vertical_motion(i, a).map(|_| Value::Nil)
-}
+fn f_move_point_visually(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { f_vertical_motion(i, a).map(|_| Value::Nil) }
 
 // ---------- region encode/decode ----------
 
@@ -3197,60 +3133,52 @@ fn region_text(i: &Interp, a: &[Value]) -> Result<(usize, usize, String), Flow> 
     Ok((s, e, bb.text.substring(s, e)))
 }
 
-fn f_b64_encode_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    use base64::Engine;
-    let (_s, _e, text) = region_text(i, &a)?;
-    let no_break = arg(&a, 2).truthy();
-    let eng = if no_break {
-        base64::engine::general_purpose::STANDARD_NO_PAD
-    } else {
-        base64::engine::general_purpose::STANDARD
-    };
-    let encoded = eng.encode(text.as_bytes());
-    // Emacs replaces the region contents and returns its new length.
-    check_writable(i)?;
-    let (s, e, _) = region_text(i, &a)?;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    drop(bb);
-    crate::buffer::primitives::chg_delete(i, s, e)?;
-    crate::buffer::primitives::chg_insert(i, s, &encoded)?;
-    Ok(Value::Int(encoded.chars().count() as i128))
-}
+fn f_b64_encode_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { use base64::Engine;
+let (_s, _e, text) = region_text(i, &a)?;
+let no_break = arg(&a, 2).truthy();
+let eng = if no_break {
+    base64::engine::general_purpose::STANDARD_NO_PAD
+} else {
+    base64::engine::general_purpose::STANDARD
+};
+let encoded = eng.encode(text.as_bytes());
+// Emacs replaces the region contents and returns its new length.
+check_writable(i)?;
+let (s, e, _) = region_text(i, &a)?;
+let b = cur(i);
+let bb = b.borrow_mut();
+drop(bb);
+crate::buffer::primitives::chg_delete(i, s, e)?;
+crate::buffer::primitives::chg_insert(i, s, &encoded)?;
+Ok(Value::Int(encoded.chars().count() as i128)) }
 
-fn f_b64url_encode_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    use base64::Engine;
-    let (s, e, text) = region_text(i, &a)?;
-    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(text.as_bytes());
-    check_writable(i)?;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    drop(bb);
-    crate::buffer::primitives::chg_delete(i, s, e)?;
-    crate::buffer::primitives::chg_insert(i, s, &encoded)?;
-    Ok(Value::Int(encoded.chars().count() as i128))
-}
+fn f_b64url_encode_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { use base64::Engine;
+let (s, e, text) = region_text(i, &a)?;
+let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(text.as_bytes());
+check_writable(i)?;
+let b = cur(i);
+let bb = b.borrow_mut();
+drop(bb);
+crate::buffer::primitives::chg_delete(i, s, e)?;
+crate::buffer::primitives::chg_insert(i, s, &encoded)?;
+Ok(Value::Int(encoded.chars().count() as i128)) }
 
-fn f_b64_decode_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    use base64::Engine;
-    let (s, e, text) = region_text(i, &a)?;
-    let cleaned: String = text.chars().filter(|c| !c.is_whitespace()).collect();
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(cleaned.as_bytes())
-        .map_err(|_| err_sym(i, "error", vec![Value::string("Invalid base64 data")]))?;
-    let decoded = String::from_utf8_lossy(&bytes).to_string();
-    check_writable(i)?;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    drop(bb);
-    crate::buffer::primitives::chg_delete(i, s, e)?;
-    crate::buffer::primitives::chg_insert(i, s, &decoded)?;
-    Ok(Value::Int(decoded.chars().count() as i128))
-}
+fn f_b64_decode_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { use base64::Engine;
+let (s, e, text) = region_text(i, &a)?;
+let cleaned: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+let bytes = base64::engine::general_purpose::STANDARD
+    .decode(cleaned.as_bytes())
+    .map_err(|_| err_sym(i, "error", vec![Value::string("Invalid base64 data")]))?;
+let decoded = String::from_utf8_lossy(&bytes).to_string();
+check_writable(i)?;
+let b = cur(i);
+let bb = b.borrow_mut();
+drop(bb);
+crate::buffer::primitives::chg_delete(i, s, e)?;
+crate::buffer::primitives::chg_insert(i, s, &decoded)?;
+Ok(Value::Int(decoded.chars().count() as i128)) }
 
-fn f_undo_boundary(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    bb.undo_boundary();
-    Ok(Value::Nil)
-}
+fn f_undo_boundary(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { let b = cur(i);
+let mut bb = b.borrow_mut();
+bb.undo_boundary();
+Ok(Value::Nil) }

@@ -232,253 +232,235 @@ pub(crate) static SUBRS: &[Subr] = &[
     // `isqrt' does not exist in GNU Emacs 31; `cl-isqrt' is in cl-extra.
 ];
 
-fn f_plus(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let mut acc_i: i128 = 0;
-    let mut acc_f: f64 = 0.0;
-    let mut is_float = false;
-    for a in &args {
-        match to_num(i, a)? {
-            Some(Num::I(n)) => {
-                if is_float {
-                    acc_f += n as f64;
-                } else {
-                    acc_i = acc_i.checked_add(n).ok_or_else(|| overflow_err(i, a))?;
-                }
+fn f_plus(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let mut acc_i: i128 = 0;
+let mut acc_f: f64 = 0.0;
+let mut is_float = false;
+for a in args.iter() {
+    match to_num(i, a)? {
+        Some(Num::I(n)) => {
+            if is_float {
+                acc_f += n as f64;
+            } else {
+                acc_i = acc_i.checked_add(n).ok_or_else(|| overflow_err(i, a))?;
             }
-            Some(Num::F(f)) => {
-                if !is_float {
-                    acc_f = acc_i as f64;
-                    is_float = true;
-                }
-                acc_f += f;
-            }
-            None => return Err(i.wrong_type_mut("number-or-marker-p", a)),
         }
+        Some(Num::F(f)) => {
+            if !is_float {
+                acc_f = acc_i as f64;
+                is_float = true;
+            }
+            acc_f += f;
+        }
+        None => return Err(i.wrong_type_mut("number-or-marker-p", a)),
     }
-    Ok(if is_float {
-        Value::float(acc_f)
-    } else {
-        Value::Int(acc_i)
-    })
 }
+Ok(if is_float {
+    Value::float(acc_f)
+} else {
+    Value::Int(acc_i)
+}) }
 
-fn f_minus(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU `Fminus': no arguments → 0.
-    if args.is_empty() {
-        return Ok(Value::Int(0));
-    }
-    if args.len() == 1 {
-        return match to_num(i, &args[0])? {
-            Some(Num::I(n)) => n
-                .checked_neg()
-                .map(Value::Int)
-                .ok_or_else(|| overflow_err(i, &args[0])),
-            Some(Num::F(f)) => Ok(Value::float(-f)),
-            None => Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
-        };
-    }
-    let mut it = args.iter();
-    let first = to_num(i, it.next().unwrap())?;
-    let (mut acc_i, mut acc_f, mut is_float) = match first {
-        Some(Num::I(n)) => (n, 0.0, false),
-        Some(Num::F(f)) => (0, f, true),
-        None => return Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
+fn f_minus(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU `Fminus': no arguments → 0.
+if args.is_empty() {
+    return Ok(Value::Int(0));
+}
+if args.len() == 1 {
+    return match to_num(i, &args[0])? {
+        Some(Num::I(n)) => n
+            .checked_neg()
+            .map(Value::Int)
+            .ok_or_else(|| overflow_err(i, &args[0])),
+        Some(Num::F(f)) => Ok(Value::float(-f)),
+        None => Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
     };
-    for a in it {
-        match to_num(i, a)? {
-            Some(Num::I(n)) => {
-                if is_float {
-                    acc_f -= n as f64;
-                } else {
-                    acc_i = acc_i.checked_sub(n).ok_or_else(|| overflow_err(i, a))?;
-                }
-            }
-            Some(Num::F(f)) => {
-                if !is_float {
-                    acc_f = acc_i as f64;
-                    is_float = true;
-                }
-                acc_f -= f;
-            }
-            None => return Err(i.wrong_type_mut("number-or-marker-p", a)),
-        }
-    }
-    Ok(if is_float {
-        Value::float(acc_f)
-    } else {
-        Value::Int(acc_i)
-    })
 }
-
-fn f_times(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let mut acc_i: i128 = 1;
-    let mut acc_f: f64 = 1.0;
-    let mut is_float = false;
-    for a in &args {
-        match to_num(i, a)? {
-            Some(Num::I(n)) => {
-                if is_float {
-                    acc_f *= n as f64;
-                } else {
-                    acc_i = acc_i.checked_mul(n).ok_or_else(|| overflow_err(i, a))?;
-                }
+let mut it = args.iter();
+let first = to_num(i, it.next().unwrap())?;
+let (mut acc_i, mut acc_f, mut is_float) = match first {
+    Some(Num::I(n)) => (n, 0.0, false),
+    Some(Num::F(f)) => (0, f, true),
+    None => return Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
+};
+for a in it {
+    match to_num(i, a)? {
+        Some(Num::I(n)) => {
+            if is_float {
+                acc_f -= n as f64;
+            } else {
+                acc_i = acc_i.checked_sub(n).ok_or_else(|| overflow_err(i, a))?;
             }
-            Some(Num::F(f)) => {
-                if !is_float {
-                    acc_f = acc_i as f64;
-                    is_float = true;
-                }
-                acc_f *= f;
-            }
-            None => return Err(i.wrong_type_mut("number-or-marker-p", a)),
         }
-    }
-    Ok(if is_float {
-        Value::float(acc_f)
-    } else {
-        Value::Int(acc_i)
-    })
-}
-
-fn f_div(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    if args.len() == 1 {
-        // (/ x) = 1/x
-        return match to_num(i, &args[0])? {
-            Some(Num::I(n)) => {
-                if n == 0 {
-                    Err(arith_err(i, "Division by zero"))
-                } else {
-                    // GNU: (/ N) with a fixnum is integer division.
-                    Ok(Value::Int(1 / n))
-                }
+        Some(Num::F(f)) => {
+            if !is_float {
+                acc_f = acc_i as f64;
+                is_float = true;
             }
-            Some(Num::F(f)) => Ok(Value::float(1.0 / f)),
-            None => Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
-        };
+            acc_f -= f;
+        }
+        None => return Err(i.wrong_type_mut("number-or-marker-p", a)),
     }
-    let first = to_num(i, &args[0])?;
-    let (mut acc_i, mut acc_f, mut is_float) = match first {
-        Some(Num::I(n)) => (n, 0.0, false),
-        Some(Num::F(f)) => (0, f, true),
-        None => return Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
+}
+Ok(if is_float {
+    Value::float(acc_f)
+} else {
+    Value::Int(acc_i)
+}) }
+
+fn f_times(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let mut acc_i: i128 = 1;
+let mut acc_f: f64 = 1.0;
+let mut is_float = false;
+for a in args.iter() {
+    match to_num(i, a)? {
+        Some(Num::I(n)) => {
+            if is_float {
+                acc_f *= n as f64;
+            } else {
+                acc_i = acc_i.checked_mul(n).ok_or_else(|| overflow_err(i, a))?;
+            }
+        }
+        Some(Num::F(f)) => {
+            if !is_float {
+                acc_f = acc_i as f64;
+                is_float = true;
+            }
+            acc_f *= f;
+        }
+        None => return Err(i.wrong_type_mut("number-or-marker-p", a)),
+    }
+}
+Ok(if is_float {
+    Value::float(acc_f)
+} else {
+    Value::Int(acc_i)
+}) }
+
+fn f_div(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { if args.len() == 1 {
+    // (/ x) = 1/x
+    return match to_num(i, &args[0])? {
+        Some(Num::I(n)) => {
+            if n == 0 {
+                Err(arith_err(i, "Division by zero"))
+            } else {
+                // GNU: (/ N) with a fixnum is integer division.
+                Ok(Value::Int(1 / n))
+            }
+        }
+        Some(Num::F(f)) => Ok(Value::float(1.0 / f)),
+        None => Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
     };
-    for a in &args[1..] {
-        match to_num(i, a)? {
-            Some(Num::I(n)) => {
-                if is_float {
-                    acc_f /= n as f64;
-                } else {
-                    acc_i = acc_i
-                        .checked_div(n)
-                        .ok_or_else(|| arith_err(i, "Division by zero"))?;
-                }
-            }
-            Some(Num::F(f)) => {
-                if !is_float {
-                    acc_f = acc_i as f64;
-                    is_float = true;
-                }
-                acc_f /= f;
-            }
-            None => return Err(i.wrong_type_mut("number-or-marker-p", a)),
-        }
-    }
-    Ok(if is_float {
-        Value::float(acc_f)
-    } else {
-        Value::Int(acc_i)
-    })
 }
+let first = to_num(i, &args[0])?;
+let (mut acc_i, mut acc_f, mut is_float) = match first {
+    Some(Num::I(n)) => (n, 0.0, false),
+    Some(Num::F(f)) => (0, f, true),
+    None => return Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
+};
+for a in &args[1..] {
+    match to_num(i, a)? {
+        Some(Num::I(n)) => {
+            if is_float {
+                acc_f /= n as f64;
+            } else {
+                acc_i = acc_i
+                    .checked_div(n)
+                    .ok_or_else(|| arith_err(i, "Division by zero"))?;
+            }
+        }
+        Some(Num::F(f)) => {
+            if !is_float {
+                acc_f = acc_i as f64;
+                is_float = true;
+            }
+            acc_f /= f;
+        }
+        None => return Err(i.wrong_type_mut("number-or-marker-p", a)),
+    }
+}
+Ok(if is_float {
+    Value::float(acc_f)
+} else {
+    Value::Int(acc_i)
+}) }
 
 /// `%` — integer remainder only (floats are a type error in Emacs).
-fn f_mod(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match (&args[0], &args[1]) {
-        (Value::Int(x), Value::Int(y)) => {
-            if *y == 0 {
-                Err(arith_err(i, "Division by zero"))
-            } else {
-                x.checked_rem(*y)
-                    .map(Value::Int)
-                    .ok_or_else(|| arith_err(i, "Division by zero"))
-            }
-        }
-        (Value::Int(_), other) | (other, Value::Int(_)) | (other, _) => {
-            Err(i.wrong_type_mut("integer-or-marker-p", other))
+fn f_mod(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { match (&args[0], &args[1]) {
+    (Value::Int(x), Value::Int(y)) => {
+        if *y == 0 {
+            Err(arith_err(i, "Division by zero"))
+        } else {
+            x.checked_rem(*y)
+                .map(Value::Int)
+                .ok_or_else(|| arith_err(i, "Division by zero"))
         }
     }
-}
+    (Value::Int(_), other) | (other, Value::Int(_)) | (other, _) => {
+        Err(i.wrong_type_mut("integer-or-marker-p", other))
+    }
+} }
 
 /// `mod` — floored remainder (sign of divisor). For ints only in Emacs.
-fn f_mod_fn(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match (to_num(i, &args[0])?, to_num(i, &args[1])?) {
-        (Some(Num::I(x)), Some(Num::I(y))) => {
-            if y == 0 {
-                Err(arith_err(i, "Division by zero"))
-            } else {
-                // GNU's mod takes the sign of the divisor:
-                // rem_euclid is non-negative, so adjust when y < 0.
-                let r = x.rem_euclid(y);
-                Ok(Value::Int(if y < 0 && r != 0 { r + y } else { r }))
-            }
-        }
-        (Some(x), Some(y)) => {
-            let (xf, yf) = match (x, y) {
-                (Num::I(a), Num::I(b)) => (a as f64, b as f64),
-                (Num::I(a), Num::F(b)) => (a as f64, b),
-                (Num::F(a), Num::I(b)) => (a, b as f64),
-                (Num::F(a), Num::F(b)) => (a, b),
-            };
-            // GNU computes fmod directly: a zero float divisor yields
-            // NaN, and the result takes the divisor's sign.
-            let r = xf.rem_euclid(yf);
-            Ok(Value::float(if yf < 0.0 && r != 0.0 { r + yf } else { r }))
-        }
-        _ => {
-            let bad = if to_num(i, &args[0])?.is_none() {
-                &args[0]
-            } else {
-                &args[1]
-            };
-            Err(i.wrong_type_mut("number-or-marker-p", bad))
+fn f_mod_fn(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { match (to_num(i, &args[0])?, to_num(i, &args[1])?) {
+    (Some(Num::I(x)), Some(Num::I(y))) => {
+        if y == 0 {
+            Err(arith_err(i, "Division by zero"))
+        } else {
+            // GNU's mod takes the sign of the divisor:
+            // rem_euclid is non-negative, so adjust when y < 0.
+            let r = x.rem_euclid(y);
+            Ok(Value::Int(if y < 0 && r != 0 { r + y } else { r }))
         }
     }
-}
+    (Some(x), Some(y)) => {
+        let (xf, yf) = match (x, y) {
+            (Num::I(a), Num::I(b)) => (a as f64, b as f64),
+            (Num::I(a), Num::F(b)) => (a as f64, b),
+            (Num::F(a), Num::I(b)) => (a, b as f64),
+            (Num::F(a), Num::F(b)) => (a, b),
+        };
+        // GNU computes fmod directly: a zero float divisor yields
+        // NaN, and the result takes the divisor's sign.
+        let r = xf.rem_euclid(yf);
+        Ok(Value::float(if yf < 0.0 && r != 0.0 { r + yf } else { r }))
+    }
+    _ => {
+        let bad = if to_num(i, &args[0])?.is_none() {
+            &args[0]
+        } else {
+            &args[1]
+        };
+        Err(i.wrong_type_mut("number-or-marker-p", bad))
+    }
+} }
 
-fn f_1plus(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match to_num(i, &args[0])? {
-        Some(Num::I(n)) => n
-            .checked_add(1)
-            .map(Value::Int)
-            .ok_or_else(|| overflow_err(i, &args[0])),
-        Some(Num::F(f)) => Ok(Value::float(f + 1.0)),
-        None => Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
-    }
-}
+fn f_1plus(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { match to_num(i, &args[0])? {
+    Some(Num::I(n)) => n
+        .checked_add(1)
+        .map(Value::Int)
+        .ok_or_else(|| overflow_err(i, &args[0])),
+    Some(Num::F(f)) => Ok(Value::float(f + 1.0)),
+    None => Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
+} }
 
-fn f_1minus(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match to_num(i, &args[0])? {
-        Some(Num::I(n)) => n
-            .checked_sub(1)
-            .map(Value::Int)
-            .ok_or_else(|| overflow_err(i, &args[0])),
-        Some(Num::F(f)) => Ok(Value::float(f - 1.0)),
-        None => Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
-    }
-}
+fn f_1minus(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { match to_num(i, &args[0])? {
+    Some(Num::I(n)) => n
+        .checked_sub(1)
+        .map(Value::Int)
+        .ok_or_else(|| overflow_err(i, &args[0])),
+    Some(Num::F(f)) => Ok(Value::float(f - 1.0)),
+    None => Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
+} }
 
-fn f_abs(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    if matches!(&args[0], Value::Marker(_)) {
-        return Err(i.wrong_type_mut("numberp", &args[0]));
-    }
-    match to_num(i, &args[0])? {
-        Some(Num::I(n)) => n
-            .checked_abs()
-            .map(Value::Int)
-            .ok_or_else(|| overflow_err(i, &args[0])),
-        Some(Num::F(f)) => Ok(Value::float(f.abs())),
-        None => Err(i.wrong_type_mut("numberp", &args[0])),
-    }
+fn f_abs(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { if matches!(&args[0], Value::Marker(_)) {
+    return Err(i.wrong_type_mut("numberp", &args[0]));
 }
+match to_num(i, &args[0])? {
+    Some(Num::I(n)) => n
+        .checked_abs()
+        .map(Value::Int)
+        .ok_or_else(|| overflow_err(i, &args[0])),
+    Some(Num::F(f)) => Ok(Value::float(f.abs())),
+    None => Err(i.wrong_type_mut("numberp", &args[0])),
+} }
 
 /// `min`/`max` — GNU's minmax_driver: the winning argument's value is
 /// kept (markers coerce to their position first); a NaN argument wins
@@ -517,12 +499,8 @@ fn minmax(i: &mut Interp, args: &[Value], lt: bool) -> EvalResult {
     }
     Ok(best)
 }
-fn f_min(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    minmax(i, &args, true)
-}
-fn f_max(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    minmax(i, &args, false)
-}
+fn f_min(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { minmax(i, &args, true) }
+fn f_max(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { minmax(i, &args, false) }
 
 /// `=</<=/>/>=`: adjacent pairwise `arithcompare'.  Comparisons use the
 /// exact int/float ordering of `num_ord` — coercing through f64 would
@@ -550,75 +528,51 @@ fn cmp_all(
     Ok(Value::t())
 }
 
-fn f_numeq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    cmp_all(i, &args, |o| o == Some(std::cmp::Ordering::Equal))
-}
-fn f_numne(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // `/=' takes exactly two args (enforced by arity); t iff they differ.
-    let a = match to_num(i, &args[0])? {
-        Some(n) => n,
-        None => return Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
-    };
-    let b = match to_num(i, &args[1])? {
-        Some(n) => n,
-        None => return Err(i.wrong_type_mut("number-or-marker-p", &args[1])),
-    };
-    Ok(Value::from_bool(
-        num_ord(a, b) != Some(std::cmp::Ordering::Equal),
-    ))
-}
-fn f_lt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    cmp_all(i, &args, |o| o == Some(std::cmp::Ordering::Less))
-}
-fn f_le(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    cmp_all(i, &args, |o| {
-        matches!(
-            o,
-            Some(std::cmp::Ordering::Less) | Some(std::cmp::Ordering::Equal)
-        )
-    })
-}
-fn f_gt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    cmp_all(i, &args, |o| o == Some(std::cmp::Ordering::Greater))
-}
-fn f_ge(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    cmp_all(i, &args, |o| {
-        matches!(
-            o,
-            Some(std::cmp::Ordering::Greater) | Some(std::cmp::Ordering::Equal)
-        )
-    })
-}
+fn f_numeq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { cmp_all(i, &args, |o| o == Some(std::cmp::Ordering::Equal)) }
+fn f_numne(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // `/=' takes exactly two args (enforced by arity); t iff they differ.
+let a = match to_num(i, &args[0])? {
+    Some(n) => n,
+    None => return Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
+};
+let b = match to_num(i, &args[1])? {
+    Some(n) => n,
+    None => return Err(i.wrong_type_mut("number-or-marker-p", &args[1])),
+};
+Ok(Value::from_bool(
+    num_ord(a, b) != Some(std::cmp::Ordering::Equal),
+)) }
+fn f_lt(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { cmp_all(i, &args, |o| o == Some(std::cmp::Ordering::Less)) }
+fn f_le(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { cmp_all(i, &args, |o| {
+    matches!(
+        o,
+        Some(std::cmp::Ordering::Less) | Some(std::cmp::Ordering::Equal)
+    )
+}) }
+fn f_gt(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { cmp_all(i, &args, |o| o == Some(std::cmp::Ordering::Greater)) }
+fn f_ge(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { cmp_all(i, &args, |o| {
+    matches!(
+        o,
+        Some(std::cmp::Ordering::Greater) | Some(std::cmp::Ordering::Equal)
+    )
+}) }
 
-fn f_zerop(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let n = want_num(i, &args[0])?;
-    Ok(Value::from_bool(n == 0.0))
-}
+fn f_zerop(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let n = want_num(i, &args[0])?;
+Ok(Value::from_bool(n == 0.0)) }
 
-fn f_natnump(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(
-        matches!(&args[0], Value::Int(n) if *n >= 0),
-    ))
-}
+fn f_natnump(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(
+    matches!(&args[0], Value::Int(n) if *n >= 0),
+)) }
 
-fn f_integerp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(&args[0], Value::Int(_))))
-}
-fn f_numberp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(
-        &args[0],
-        Value::Int(_) | Value::Float(_)
-    )))
-}
-fn f_floatp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(&args[0], Value::Float(_))))
-}
-fn f_number_or_marker_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(
-        &args[0],
-        Value::Int(_) | Value::Float(_) | Value::Marker(_)
-    )))
-}
+fn f_integerp(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(matches!(&args[0], Value::Int(_)))) }
+fn f_numberp(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(matches!(
+    &args[0],
+    Value::Int(_) | Value::Float(_)
+))) }
+fn f_floatp(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(matches!(&args[0], Value::Float(_)))) }
+fn f_number_or_marker_p(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(matches!(
+    &args[0],
+    Value::Int(_) | Value::Float(_) | Value::Marker(_)
+))) }
 
 /// Rounding: f(x) or f(x/y) with optional divisor. Always returns an
 /// integer (possibly a bignum) in Emacs, even for float inputs.
@@ -722,18 +676,10 @@ fn round_with(i: &mut Interp, args: &[Value], mode: u8) -> EvalResult {
     Ok(Value::Int(r as i128))
 }
 
-fn f_truncate(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    round_with(i, &args, 0)
-}
-fn f_floor(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    round_with(i, &args, 1)
-}
-fn f_ceiling(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    round_with(i, &args, 2)
-}
-fn f_round(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    round_with(i, &args, 3)
-}
+fn f_truncate(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { round_with(i, &args, 0) }
+fn f_floor(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { round_with(i, &args, 1) }
+fn f_ceiling(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { round_with(i, &args, 2) }
+fn f_round(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { round_with(i, &args, 3) }
 
 /// Like `want_num` but signals `numberp' — GNU's pure-math functions
 /// (float, sqrt, expt, ...) reject markers with that predicate.
@@ -755,114 +701,84 @@ fn want_int_or_marker(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
     }
 }
 
-fn f_float(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::float(want_number(i, &args[0])?))
-}
+fn f_float(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::float(want_number(i, &args[0])?)) }
 
-fn f_expt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    for a in &args {
-        if matches!(a, Value::Marker(_)) {
-            return Err(i.wrong_type_mut("numberp", a));
-        }
+fn f_expt(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { for a in args.iter() {
+    if matches!(a, Value::Marker(_)) {
+        return Err(i.wrong_type_mut("numberp", a));
     }
-    match (to_num(i, &args[0])?, to_num(i, &args[1])?) {
-        (Some(Num::I(x)), Some(Num::I(y))) => {
-            if y >= 0 {
-                match x.checked_pow(y.min(u32::MAX as i128) as u32) {
-                    Some(r) => return Ok(Value::Int(r)),
-                    // Beyond i128 — fall back to float (true bignum
-                    // would still be an integer; documented deviation).
-                    None => return Ok(Value::float((x as f64).powf(y as f64))),
-                }
+}
+match (to_num(i, &args[0])?, to_num(i, &args[1])?) {
+    (Some(Num::I(x)), Some(Num::I(y))) => {
+        if y >= 0 {
+            match x.checked_pow(y.min(u32::MAX as i128) as u32) {
+                Some(r) => return Ok(Value::Int(r)),
+                // Beyond i128 — fall back to float (true bignum
+                // would still be an integer; documented deviation).
+                None => return Ok(Value::float((x as f64).powf(y as f64))),
             }
-            Ok(Value::float((x as f64).powf(y as f64)))
         }
-        (Some(x), Some(y)) => {
-            let (xf, yf) = match (x, y) {
-                (Num::I(a), Num::I(b)) => (a as f64, b as f64),
-                (Num::I(a), Num::F(b)) => (a as f64, b),
-                (Num::F(a), Num::I(b)) => (a, b as f64),
-                (Num::F(a), Num::F(b)) => (a, b),
-            };
-            Ok(Value::float(xf.powf(yf)))
-        }
-        _ => {
-            let bad = if to_num(i, &args[0])?.is_none() {
-                &args[0]
-            } else {
-                &args[1]
-            };
-            Err(i.wrong_type_mut("numberp", bad))
-        }
+        Ok(Value::float((x as f64).powf(y as f64)))
     }
-}
+    (Some(x), Some(y)) => {
+        let (xf, yf) = match (x, y) {
+            (Num::I(a), Num::I(b)) => (a as f64, b as f64),
+            (Num::I(a), Num::F(b)) => (a as f64, b),
+            (Num::F(a), Num::I(b)) => (a, b as f64),
+            (Num::F(a), Num::F(b)) => (a, b),
+        };
+        Ok(Value::float(xf.powf(yf)))
+    }
+    _ => {
+        let bad = if to_num(i, &args[0])?.is_none() {
+            &args[0]
+        } else {
+            &args[1]
+        };
+        Err(i.wrong_type_mut("numberp", bad))
+    }
+} }
 
-fn f_sqrt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::float(want_number(i, &args[0])?.sqrt()))
-}
-fn f_exp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::float(want_number(i, &args[0])?.exp()))
-}
-fn f_sin(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::float(want_number(i, &args[0])?.sin()))
-}
-fn f_cos(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::float(want_number(i, &args[0])?.cos()))
-}
-fn f_tan(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::float(want_number(i, &args[0])?.tan()))
-}
-fn f_asin(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::float(want_number(i, &args[0])?.asin()))
-}
-fn f_acos(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::float(want_number(i, &args[0])?.acos()))
-}
-fn f_atan(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let y = want_number(i, &args[0])?;
-    match args.get(1) {
-        Some(x) => Ok(Value::float(y.atan2(want_number(i, x)?))),
-        None => Ok(Value::float(y.atan())),
+fn f_sqrt(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::float(want_number(i, &args[0])?.sqrt())) }
+fn f_exp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::float(want_number(i, &args[0])?.exp())) }
+fn f_sin(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::float(want_number(i, &args[0])?.sin())) }
+fn f_cos(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::float(want_number(i, &args[0])?.cos())) }
+fn f_tan(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::float(want_number(i, &args[0])?.tan())) }
+fn f_asin(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::float(want_number(i, &args[0])?.asin())) }
+fn f_acos(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::float(want_number(i, &args[0])?.acos())) }
+fn f_atan(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let y = want_number(i, &args[0])?;
+match args.get(1) {
+    Some(x) => Ok(Value::float(y.atan2(want_number(i, x)?))),
+    None => Ok(Value::float(y.atan())),
+} }
+fn f_log(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let n = want_number(i, &args[0])?;
+match args.get(1) {
+    Some(b) => {
+        let b = want_number(i, b)?;
+        // GNU's Flog calls log10() directly for base 10, so
+        // (log 1000 10) yields exactly 3.0.
+        Ok(Value::float(if b == 10.0 { n.log10() } else { n.log(b) }))
     }
-}
-fn f_log(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let n = want_number(i, &args[0])?;
-    match args.get(1) {
-        Some(b) => {
-            let b = want_number(i, b)?;
-            // GNU's Flog calls log10() directly for base 10, so
-            // (log 1000 10) yields exactly 3.0.
-            Ok(Value::float(if b == 10.0 { n.log10() } else { n.log(b) }))
-        }
-        None => Ok(Value::float(n.ln())),
-    }
-}
+    None => Ok(Value::float(n.ln())),
+} }
 
-fn f_logand(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let mut acc = -1i128;
-    for a in &args {
-        acc &= want_int_or_marker(i, a)?;
-    }
-    Ok(Value::Int(acc))
+fn f_logand(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let mut acc = -1i128;
+for a in args.iter() {
+    acc &= want_int_or_marker(i, a)?;
 }
-fn f_logior(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let mut acc = 0i128;
-    for a in &args {
-        acc |= want_int_or_marker(i, a)?;
-    }
-    Ok(Value::Int(acc))
+Ok(Value::Int(acc)) }
+fn f_logior(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let mut acc = 0i128;
+for a in args.iter() {
+    acc |= want_int_or_marker(i, a)?;
 }
-fn f_logxor(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let mut acc = 0i128;
-    for a in &args {
-        acc ^= want_int_or_marker(i, a)?;
-    }
-    Ok(Value::Int(acc))
+Ok(Value::Int(acc)) }
+fn f_logxor(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let mut acc = 0i128;
+for a in args.iter() {
+    acc ^= want_int_or_marker(i, a)?;
 }
-fn f_lognot(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU CHECK_INTEGER: markers are rejected, unlike logand/logior.
-    Ok(Value::Int(!want_int(i, &args[0])?))
-}
+Ok(Value::Int(acc)) }
+fn f_lognot(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU CHECK_INTEGER: markers are rejected, unlike logand/logior.
+Ok(Value::Int(!want_int(i, &args[0])?)) }
 /// Left shift with overflow detection: `wrapping_shl' yields the
 /// wrapped result even at c = 127 (where 1 << 127 becomes the
 /// negative MIN), so round-trip a right shift to verify the value
@@ -872,67 +788,63 @@ fn shl_checked(v: i128, c: u32) -> Option<i128> {
     if r >> c == v { Some(r) } else { None }
 }
 
-fn f_ash(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let v = want_int(i, &args[0])?;
-    let c = want_int(i, &args[1])?;
-    Ok(Value::Int(if c >= 0 {
-        if c >= 128 {
-            return Err(overflow_err(i, &args[0]));
-        }
-        match shl_checked(v, c as u32) {
-            Some(r) => r,
-            None => return Err(overflow_err(i, &args[0])),
-        }
-    } else if c <= -128 {
-        if v < 0 { -1 } else { 0 }
-    } else {
-        v >> (-c) as u32
-    }))
-}
+fn f_ash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let v = want_int(i, &args[0])?;
+let c = want_int(i, &args[1])?;
+Ok(Value::Int(if c >= 0 {
+    if c >= 128 {
+        return Err(overflow_err(i, &args[0]));
+    }
+    match shl_checked(v, c as u32) {
+        Some(r) => r,
+        None => return Err(overflow_err(i, &args[0])),
+    }
+} else if c <= -128 {
+    if v < 0 { -1 } else { 0 }
+} else {
+    v >> (-c) as u32
+})) }
 /// `lsh` — logical shift. Right shift masks the value to a 62-bit
 /// unsigned fixnum then shifts; left shift is a signed shift whose
 /// result may promote to a bignum. (Matches Emacs's mixed semantics.)
-fn f_lsh(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU `Flsh' coerces markers via CHECK_INTEGER_OR_MARKER: a dead
-    // marker signals "Marker does not point anywhere" before the
-    // integer check; a live one supplies its position.
-    let v = match &args[0] {
-        Value::Int(n) => *n,
-        Value::Marker(m) => {
-            let _ = marker_pos_err(i, m)?;
-            return Err(i.wrong_type_mut("integerp", &args[0]));
-        }
-        Value::Float(_) => {
-            return Err(i.wrong_type_mut("integerp", &args[0]));
-        }
-        other => return Err(i.wrong_type_mut("number-or-marker-p", other)),
-    };
-    let c = want_int(i, &args[1])?;
-    const U62: u64 = 0x3fff_ffff_ffff_ffff; // 62-bit mask
-    Ok(Value::Int(if c >= 0 {
-        // Signed left shift: may produce a bignum.
-        if c >= 128 {
-            return Err(overflow_err(i, &args[0]));
-        }
-        match shl_checked(v, c as u32) {
-            Some(r) => r,
-            None => return Err(overflow_err(i, &args[0])),
-        }
-    } else {
-        let k = -c;
-        if (crate::lisp::value::FIXNUM_MIN..=crate::lisp::value::FIXNUM_MAX).contains(&v) {
-            if k >= 62 {
-                0
-            } else {
-                (((v as u64) & U62) >> k as u32) as i128
-            }
-        } else if k >= 128 {
-            if v < 0 { -1 } else { 0 }
+fn f_lsh(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU `Flsh' coerces markers via CHECK_INTEGER_OR_MARKER: a dead
+// marker signals "Marker does not point anywhere" before the
+// integer check; a live one supplies its position.
+let v = match &args[0] {
+    Value::Int(n) => *n,
+    Value::Marker(m) => {
+        let _ = marker_pos_err(i, m)?;
+        return Err(i.wrong_type_mut("integerp", &args[0]));
+    }
+    Value::Float(_) => {
+        return Err(i.wrong_type_mut("integerp", &args[0]));
+    }
+    other => return Err(i.wrong_type_mut("number-or-marker-p", other)),
+};
+let c = want_int(i, &args[1])?;
+const U62: u64 = 0x3fff_ffff_ffff_ffff; // 62-bit mask
+Ok(Value::Int(if c >= 0 {
+    // Signed left shift: may produce a bignum.
+    if c >= 128 {
+        return Err(overflow_err(i, &args[0]));
+    }
+    match shl_checked(v, c as u32) {
+        Some(r) => r,
+        None => return Err(overflow_err(i, &args[0])),
+    }
+} else {
+    let k = -c;
+    if (crate::lisp::value::FIXNUM_MIN..=crate::lisp::value::FIXNUM_MAX).contains(&v) {
+        if k >= 62 {
+            0
         } else {
-            v >> k as u32
+            (((v as u64) & U62) >> k as u32) as i128
         }
-    }))
-}
+    } else if k >= 128 {
+        if v < 0 { -1 } else { 0 }
+    } else {
+        v >> k as u32
+    }
+})) }
 // GNU `random' = Gnulib BSD `random()' (TYPE_3: degree 31, sep 3,
 // Schrage-seeded table, 310-step warm-up) threaded through sysdep.c's
 // get_random bit-assembly.  State is per-interp thread like GNU's
@@ -973,103 +885,95 @@ impl Rand3 {
     }
 }
 
-fn f_random(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    use std::cell::RefCell;
-    thread_local! {
-        static GEN: RefCell<Rand3> = RefCell::new(Rand3::seeded(1));
-    }
-    let t_sym = i.intern_soft("t").unwrap_or(u32::MAX);
-    let mut limit: Option<i64> = None;
-    match args.get(0) {
-        Some(Value::Sym(s)) if *s == t_sym => {
-            // init_random: seed from OS entropy.
-            let t = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.subsec_nanos() as u64 ^ (d.as_secs() << 16))
-                .unwrap_or(0xabcdef);
-            GEN.with(|g| *g.borrow_mut() = Rand3::seeded(t as u32));
-        }
-        Some(Value::Str(s)) => {
-            // seed_random: XOR string bytes into a u32 seed
-            // (little-endian argp[i % 4] layout).
-            let b = s.borrow().as_bytes().to_vec();
-            let mut arg = 0u32;
-            for (k, &by) in b.iter().enumerate() {
-                arg ^= (by as u32) << ((k % 4) * 8);
-            }
-            GEN.with(|g| *g.borrow_mut() = Rand3::seeded(arg));
-        }
-        Some(Value::Int(n)) => {
-            if *n <= 0 {
-                let s = i.intern("args-out-of-range");
-                return Err(i.signal_data(s, vec![args[0].clone()]));
-            }
-            limit = Some(*n as i64);
-        }
-        _ => {}
-    }
-    // sysdep.c get_random: FIXNUM_BITS=62, RAND_BITS=31 → 2 draws per
-    // value; INTMASK = 2^62-1.  Seeding arms fall through to this same
-    // return in GNU, so (random "s")/(random t) also return a value.
-    let get = || -> i64 {
-        GEN.with(|g| {
-            let mut g = g.borrow_mut();
-            let mut val: u64 = 0;
-            for _ in 0..2 {
-                val = g.next() ^ (val << 31) ^ (val >> 33);
-            }
-            val ^= val >> 2;
-            (val & 0x3fff_ffff_ffff_ffff) as i64
-        })
-    };
-    match limit {
-        Some(lim) => {
-            // get_random_fixnum: remainder rejection near INTMASK.
-            let difflim: i64 = 0x3fff_ffff_ffff_ffff - lim + 1;
-            loop {
-                let r = get();
-                let rem = r % lim;
-                if r - rem <= difflim {
-                    return Ok(Value::Int(rem as i128));
-                }
-            }
-        }
-        None => {
-            // make_ufixnum: values past most-positive-fixnum wrap into
-            // the negative fixnum range (61-bit signed fixnums).
-            let v = get();
-            let signed = if v > 0x1fff_ffff_ffff_ffff {
-                v - 0x4000_0000_0000_0000
-            } else {
-                v
-            };
-            Ok(Value::Int(signed as i128))
-        }
-    }
+fn f_random(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { use std::cell::RefCell;
+thread_local! {
+    static GEN: RefCell<Rand3> = RefCell::new(Rand3::seeded(1));
 }
-fn f_eql(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let _ = i;
-    Ok(Value::from_bool(super::eql_values(&args[0], &args[1])))
+let t_sym = i.intern_soft("t").unwrap_or(u32::MAX);
+let mut limit: Option<i64> = None;
+match args.get(0) {
+    Some(Value::Sym(s)) if *s == t_sym => {
+        // init_random: seed from OS entropy.
+        let t = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos() as u64 ^ (d.as_secs() << 16))
+            .unwrap_or(0xabcdef);
+        GEN.with(|g| *g.borrow_mut() = Rand3::seeded(t as u32));
+    }
+    Some(Value::Str(s)) => {
+        // seed_random: XOR string bytes into a u32 seed
+        // (little-endian argp[i % 4] layout).
+        let b = s.borrow().as_bytes().to_vec();
+        let mut arg = 0u32;
+        for (k, &by) in b.iter().enumerate() {
+            arg ^= (by as u32) << ((k % 4) * 8);
+        }
+        GEN.with(|g| *g.borrow_mut() = Rand3::seeded(arg));
+    }
+    Some(Value::Int(n)) => {
+        if *n <= 0 {
+            let s = i.intern("args-out-of-range");
+            return Err(i.signal_data(s, vec![args[0].clone()]));
+        }
+        limit = Some(*n as i64);
+    }
+    _ => {}
 }
+// sysdep.c get_random: FIXNUM_BITS=62, RAND_BITS=31 → 2 draws per
+// value; INTMASK = 2^62-1.  Seeding arms fall through to this same
+// return in GNU, so (random "s")/(random t) also return a value.
+let get = || -> i64 {
+    GEN.with(|g| {
+        let mut g = g.borrow_mut();
+        let mut val: u64 = 0;
+        for _ in 0..2 {
+            val = g.next() ^ (val << 31) ^ (val >> 33);
+        }
+        val ^= val >> 2;
+        (val & 0x3fff_ffff_ffff_ffff) as i64
+    })
+};
+match limit {
+    Some(lim) => {
+        // get_random_fixnum: remainder rejection near INTMASK.
+        let difflim: i64 = 0x3fff_ffff_ffff_ffff - lim + 1;
+        loop {
+            let r = get();
+            let rem = r % lim;
+            if r - rem <= difflim {
+                return Ok(Value::Int(rem as i128));
+            }
+        }
+    }
+    None => {
+        // make_ufixnum: values past most-positive-fixnum wrap into
+        // the negative fixnum range (61-bit signed fixnums).
+        let v = get();
+        let signed = if v > 0x1fff_ffff_ffff_ffff {
+            v - 0x4000_0000_0000_0000
+        } else {
+            v
+        };
+        Ok(Value::Int(signed as i128))
+    }
+} }
+fn f_eql(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let _ = i;
+Ok(Value::from_bool(super::eql_values(&args[0], &args[1]))) }
 
-fn f_frexp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let x = want_number(i, &args[0])?;
-    if x == 0.0 || x.is_nan() || x.is_infinite() {
-        return Ok(Value::cons(Value::float(x), Value::Int(0)));
-    }
-    let e = x.abs().log2().floor() as i128 + 1;
-    let m = x / 2f64.powi(e as i32);
-    Ok(Value::cons(Value::float(m), Value::Int(e)))
+fn f_frexp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let x = want_number(i, &args[0])?;
+if x == 0.0 || x.is_nan() || x.is_infinite() {
+    return Ok(Value::cons(Value::float(x), Value::Int(0)));
 }
+let e = x.abs().log2().floor() as i128 + 1;
+let m = x / 2f64.powi(e as i32);
+Ok(Value::cons(Value::float(m), Value::Int(e))) }
 
-fn f_ldexp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let x = want_number(i, &args[0])?;
-    let e = match &args[1] {
-        Value::Int(n) => *n as i32,
-        other => return Err(i.wrong_type_mut("fixnump", other)),
-    };
-    Ok(Value::float(x * 2f64.powi(e)))
-}
+fn f_ldexp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let x = want_number(i, &args[0])?;
+let e = match &args[1] {
+    Value::Int(n) => *n as i32,
+    other => return Err(i.wrong_type_mut("fixnump", other)),
+};
+Ok(Value::float(x * 2f64.powi(e))) }
 
 /// GNU's ffloor/fceiling/fround/ftruncate require a FLOAT argument.
 fn want_float(i: &mut Interp, v: &Value) -> Result<f64, Flow> {
@@ -1079,83 +983,55 @@ fn want_float(i: &mut Interp, v: &Value) -> Result<f64, Flow> {
     }
 }
 
-fn f_fround(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let x = want_float(i, &args[0])?;
-    Ok(Value::float(x.round_ties_even()))
-}
+fn f_fround(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let x = want_float(i, &args[0])?;
+Ok(Value::float(x.round_ties_even())) }
 
-fn f_ftruncate(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let x = want_float(i, &args[0])?;
-    Ok(Value::float(x.trunc()))
-}
+fn f_ftruncate(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let x = want_float(i, &args[0])?;
+Ok(Value::float(x.trunc())) }
 
-fn f_fceiling(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let x = want_float(i, &args[0])?;
-    Ok(Value::float(x.ceil()))
-}
+fn f_fceiling(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let x = want_float(i, &args[0])?;
+Ok(Value::float(x.ceil())) }
 
-fn f_ffloor(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let x = want_float(i, &args[0])?;
-    Ok(Value::float(x.floor()))
-}
+fn f_ffloor(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let x = want_float(i, &args[0])?;
+Ok(Value::float(x.floor())) }
 
-fn f_copysign(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // Emacs requires both args to be floats.
-    let (x, y) = match (&args[0], &args[1]) {
-        (Value::Float(a), Value::Float(b)) => (**a, **b),
-        (Value::Float(_), other) | (other, _) => return Err(i.wrong_type_mut("floatp", other)),
-    };
-    Ok(Value::float(x.copysign(y)))
-}
+fn f_copysign(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // Emacs requires both args to be floats.
+let (x, y) = match (&args[0], &args[1]) {
+    (Value::Float(a), Value::Float(b)) => (**a, **b),
+    (Value::Float(_), other) | (other, _) => return Err(i.wrong_type_mut("floatp", other)),
+};
+Ok(Value::float(x.copysign(y))) }
 
-fn f_logb(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let x = want_number(i, &args[0])?;
-    if x == 0.0 {
-        return Ok(Value::float(f64::NEG_INFINITY));
-    }
-    if x.is_nan() {
-        return Ok(Value::float(f64::NAN));
-    }
-    if x.is_infinite() {
-        return Ok(Value::float(f64::INFINITY));
-    }
-    Ok(Value::Int(x.abs().log2().floor() as i128))
+fn f_logb(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let x = want_number(i, &args[0])?;
+if x == 0.0 {
+    return Ok(Value::float(f64::NEG_INFINITY));
 }
+if x.is_nan() {
+    return Ok(Value::float(f64::NAN));
+}
+if x.is_infinite() {
+    return Ok(Value::float(f64::INFINITY));
+}
+Ok(Value::Int(x.abs().log2().floor() as i128)) }
 
-fn f_isnan(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let x = want_float(i, &args[0])?;
-    Ok(Value::from_bool(x.is_nan()))
-}
+fn f_isnan(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let x = want_float(i, &args[0])?;
+Ok(Value::from_bool(x.is_nan())) }
 
-fn f_logcount(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let n = want_int(i, &args[0])?;
-    // Emacs counts 1-bits for nonneg, 0-bits for negative.
-    let c = if n >= 0 {
-        n.count_ones()
-    } else {
-        (!n).count_ones()
-    };
-    Ok(Value::Int(c as i128))
-}
+fn f_logcount(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let n = want_int(i, &args[0])?;
+// Emacs counts 1-bits for nonneg, 0-bits for negative.
+let c = if n >= 0 {
+    n.count_ones()
+} else {
+    (!n).count_ones()
+};
+Ok(Value::Int(c as i128)) }
 
-fn f_plusp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(want_num(i, &args[0])? > 0.0))
-}
-fn f_minusp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(want_num(i, &args[0])? < 0.0))
-}
-fn f_oddp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(want_int_or_marker(i, &args[0])? % 2 != 0))
-}
-fn f_evenp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(want_int_or_marker(i, &args[0])? % 2 == 0))
-}
-fn f_fixnump(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(args[0].fixnump()))
-}
-fn f_bignump(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(
-        &args[0],
-        Value::Int(n) if !(crate::lisp::value::FIXNUM_MIN..=crate::lisp::value::FIXNUM_MAX).contains(n)
-    )))
-}
+fn f_plusp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(want_num(i, &args[0])? > 0.0)) }
+fn f_minusp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(want_num(i, &args[0])? < 0.0)) }
+fn f_oddp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(want_int_or_marker(i, &args[0])? % 2 != 0)) }
+fn f_evenp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(want_int_or_marker(i, &args[0])? % 2 == 0)) }
+fn f_fixnump(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(args[0].fixnump())) }
+fn f_bignump(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(matches!(
+    &args[0],
+    Value::Int(n) if !(crate::lisp::value::FIXNUM_MIN..=crate::lisp::value::FIXNUM_MAX).contains(n)
+))) }

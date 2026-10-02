@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::editor::{
-    Window, WindowRef, f_window_list, fmenu_shift, frame_of, frame_of_window, is_terminal,
+    WindowRef, f_window_list, fmenu_shift, frame_of, frame_of_window, is_terminal,
     relay_children, sel_frame, sel_window, terminal_token, w_parent, w_siblings, win_of,
 };
 use crate::lisp::Interp;
@@ -503,167 +503,124 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
 ];
 
-fn f_nil(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
-}
+fn f_nil(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { Ok(Value::Nil) }
 
-fn f_other_window_for_scrolling(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    // GNU: with a single window, other-window scrolling errors.
-    let f = i
-        .selected_frame
-        .clone()
-        .ok_or_else(|| i.error("No frame"))?;
-    let fb = f.borrow();
-    if fb.windows.len() <= 1 {
-        return Err(i.error("There is no other window"));
-    }
-    // Return the first non-selected window.
-    let sel = fb.selected.clone();
-    for w in &fb.windows {
-        if w.borrow().id != sel.borrow().id {
-            return Ok(Value::Window(w.clone()));
-        }
-    }
-    Err(i.error("There is no other window"))
+fn f_other_window_for_scrolling(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { // GNU: with a single window, other-window scrolling errors.
+let f = i
+    .selected_frame
+    .clone()
+    .ok_or_else(|| i.error("No frame"))?;
+let fb = f.borrow();
+if fb.windows.len() <= 1 {
+    return Err(i.error("There is no other window"));
 }
-
-fn f_suspend_tty(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU batch: the initial terminal is not suspendable.
-    let _ = want_terminal_live(i, &arg(&a, 0))?;
-    Err(i.error("Attempt to suspend a non-text terminal device"))
-}
-
-fn f_resume_tty(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = want_terminal_live(i, &arg(&a, 0))?;
-    Err(i.error("Attempt to resume a non-text terminal device"))
-}
-
-fn f_delete_terminal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU batch: deleting the sole live terminal is an error; a
-    // non-terminal arg is quietly ignored (nil).
-    match a.first() {
-        None | Some(Value::Nil) => {
-            Err(i.error("Attempt to delete the sole active display terminal"))
-        }
-        Some(v) if is_terminal(i, v) => {
-            Err(i.error("Attempt to delete the sole active display terminal"))
-        }
-        _ => Ok(Value::Nil),
+// Return the first non-selected window.
+let sel = fb.selected.clone();
+for w in &fb.windows {
+    if w.borrow().id != sel.borrow().id {
+        return Ok(Value::Window(w.clone()));
     }
 }
+Err(i.error("There is no other window")) }
 
-fn f_force_window_update(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU: t when OBJECT designates something updateable — nil (all
-    // windows), a window, a buffer, or a live buffer name.
-    match a.first() {
-        None | Some(Value::Nil) => Ok(Value::t()),
-        Some(Value::Window(_)) | Some(Value::Buffer(_)) => Ok(Value::t()),
-        Some(Value::Str(s)) => {
-            let name = s.borrow().clone();
-            Ok(Value::from_bool(i.buffers.by_name(&name).is_some()))
-        }
-        _ => Ok(Value::Nil),
+fn f_suspend_tty(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU batch: the initial terminal is not suspendable.
+let _ = want_terminal_live(i, &arg(&a, 0))?;
+Err(i.error("Attempt to suspend a non-text terminal device")) }
+
+fn f_resume_tty(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let _ = want_terminal_live(i, &arg(&a, 0))?;
+Err(i.error("Attempt to resume a non-text terminal device")) }
+
+fn f_delete_terminal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU batch: deleting the sole live terminal is an error; a
+// non-terminal arg is quietly ignored (nil).
+match a.first() {
+    None | Some(Value::Nil) => {
+        Err(i.error("Attempt to delete the sole active display terminal"))
     }
-}
-
-fn f_coordinates_in_window_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU: COORDINATES is (X . Y) relative to the frame; returns it when
-    // inside WINDOW's body. Our single batch window spans the frame.
-    let (x, y) = match &a[0] {
-        Value::Cons(c) => {
-            let cc = c.borrow();
-            (cc.car.clone(), cc.cdr.clone())
-        }
-        other => return Err(i.wrong_type_mut("consp", other)),
-    };
-    match (x, y) {
-        (Value::Int(_), Value::Int(_)) => Ok(a[0].clone()),
-        _ => Ok(Value::Nil),
+    Some(v) if is_terminal(i, v) => {
+        Err(i.error("Attempt to delete the sole active display terminal"))
     }
-}
+    _ => Ok(Value::Nil),
+} }
 
-fn f_false(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    f_nil(i, a)
-}
+fn f_force_window_update(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU: t when OBJECT designates something updateable — nil (all
+// windows), a window, a buffer, or a live buffer name.
+match a.first() {
+    None | Some(Value::Nil) => Ok(Value::t()),
+    Some(Value::Window(_)) | Some(Value::Buffer(_)) => Ok(Value::t()),
+    Some(Value::Str(s)) => {
+        let name = s.borrow().clone();
+        Ok(Value::from_bool(i.buffers.by_name(&name).is_some()))
+    }
+    _ => Ok(Value::Nil),
+} }
 
-fn f_t(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::t())
-}
+fn f_coordinates_in_window_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU: COORDINATES is (X . Y) relative to the frame; returns it when
+// inside WINDOW's body. Our single batch window spans the frame.
+let (x, y) = match &a[0] {
+    Value::Cons(c) => {
+        let cc = c.borrow();
+        (cc.car.clone(), cc.cdr.clone())
+    }
+    other => return Err(i.wrong_type_mut("consp", other)),
+};
+match (x, y) {
+    (Value::Int(_), Value::Int(_)) => Ok(a[0].clone()),
+    _ => Ok(Value::Nil),
+} }
 
-fn f_true2(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    f_t(i, a)
-}
+fn f_false(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { f_nil(i, a) }
 
-fn f_zero(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(0))
-}
+fn f_t(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { Ok(Value::t()) }
 
-fn f_one(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(1))
-}
+fn f_true2(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { f_t(i, a) }
 
-fn f_one_f(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::float(1.0))
-}
+fn f_zero(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { Ok(Value::Int(0)) }
 
-fn f_zero4(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::list(vec![
-        Value::Int(0),
-        Value::Int(0),
-        Value::Int(0),
-        Value::Nil,
-    ]))
-}
+fn f_one(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { Ok(Value::Int(1)) }
+
+fn f_one_f(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { Ok(Value::float(1.0)) }
+
+fn f_zero4(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { Ok(Value::list(vec![
+    Value::Int(0),
+    Value::Int(0),
+    Value::Int(0),
+    Value::Nil,
+])) }
 
 /// `window-scroll-bars' — window-live-p check; batch GNU reports
 /// (WIDTH COLS VT HEIGHT LINES HT PERSISTENT) = (nil 0 t nil 0 t nil)
 /// on a tty frame with no scroll bars.
-fn f_window_scroll_bars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Window(_) => Ok(Value::list(vec![
-            Value::Nil,
-            Value::Int(0),
-            Value::t(),
-            Value::Nil,
-            Value::Int(0),
-            Value::t(),
-            Value::Nil,
-        ])),
-        other => Err(i.wrong_type_mut("window-live-p", &other)),
-    }
-}
+fn f_window_scroll_bars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match arg(&a, 0) {
+    Value::Nil | Value::Window(_) => Ok(Value::list(vec![
+        Value::Nil,
+        Value::Int(0),
+        Value::t(),
+        Value::Nil,
+        Value::Int(0),
+        Value::t(),
+        Value::Nil,
+    ])),
+    other => Err(i.wrong_type_mut("window-live-p", &other)),
+} }
 
 /// `window-current-scroll-bars' — window-live-p check; batch GNU
 /// reports the cons (WIDTH . HEIGHT) = (nil . nil) on a tty frame.
-fn f_window_current_scroll_bars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Window(_) => Ok(Value::cons(Value::Nil, Value::Nil)),
-        other => Err(i.wrong_type_mut("window-live-p", &other)),
-    }
-}
+fn f_window_current_scroll_bars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match arg(&a, 0) {
+    Value::Nil | Value::Window(_) => Ok(Value::cons(Value::Nil, Value::Nil)),
+    other => Err(i.wrong_type_mut("window-live-p", &other)),
+} }
 
-fn f_nil_win(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = win_of(i, &arg(&a, 0))?;
-    Ok(Value::Nil)
-}
-
-fn f_sel_window(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    match sel_window(i) {
-        Some(w) => Ok(Value::Window(w)),
-        None => Ok(Value::Nil),
-    }
-}
+fn f_sel_window(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { match sel_window(i) {
+    Some(w) => Ok(Value::Window(w)),
+    None => Ok(Value::Nil),
+} }
 
 /// `window-valid-p': any window object — leaf or internal — that
 /// hasn't been deleted (GNU's WINDOW_VALID_P).
-fn f_window_valid_p(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(&a[0], Value::Window(w) if !w.borrow().dead)))
-}
+fn f_window_valid_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(matches!(&a[0], Value::Window(w) if !w.borrow().dead))) }
 
-fn f_window_live_t(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = win_of(i, &arg(&a, 0))?;
-    Ok(Value::from_bool(!w.borrow().dead))
-}
+fn f_window_live_t(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = win_of(i, &arg(&a, 0))?;
+Ok(Value::from_bool(!w.borrow().dead)) }
 
 /// The "N is not a valid window" error GNU's decode_valid_window
 /// signals for dead windows and non-window objects.
@@ -680,51 +637,41 @@ fn valid_window_arg(i: &mut Interp, v: &Value) -> Result<WindowRef, Flow> {
 
 /// `window-parent' — the internal combination window above WINDOW,
 /// nil for the root and minibuffer windows.
-fn f_window_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = valid_window_arg(i, &arg(&a, 0))?;
-    Ok(w_parent(&w).map(Value::Window).unwrap_or(Value::Nil))
-}
+fn f_window_parent(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = valid_window_arg(i, &arg(&a, 0))?;
+Ok(w_parent(&w).map(Value::Window).unwrap_or(Value::Nil)) }
 
 /// `window-top-child': first child of a vc combination window;
 /// nil on leaves and hc internals.
-fn f_window_top_child(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = valid_window_arg(i, &arg(&a, 0))?;
-    let wb = w.borrow();
-    Ok(if wb.horiz == Some(false) {
-        wb.children
-            .first()
-            .map(|k| Value::Window(k.clone()))
-            .unwrap_or(Value::Nil)
-    } else {
-        Value::Nil
-    })
-}
+fn f_window_top_child(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = valid_window_arg(i, &arg(&a, 0))?;
+let wb = w.borrow();
+Ok(if wb.horiz == Some(false) {
+    wb.children
+        .first()
+        .map(|k| Value::Window(k.clone()))
+        .unwrap_or(Value::Nil)
+} else {
+    Value::Nil
+}) }
 
 /// `window-left-child': first child of an hc combination window.
-fn f_window_left_child(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = valid_window_arg(i, &arg(&a, 0))?;
-    let wb = w.borrow();
-    Ok(if wb.horiz == Some(true) {
-        wb.children
-            .first()
-            .map(|k| Value::Window(k.clone()))
-            .unwrap_or(Value::Nil)
-    } else {
-        Value::Nil
-    })
-}
+fn f_window_left_child(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = valid_window_arg(i, &arg(&a, 0))?;
+let wb = w.borrow();
+Ok(if wb.horiz == Some(true) {
+    wb.children
+        .first()
+        .map(|k| Value::Window(k.clone()))
+        .unwrap_or(Value::Nil)
+} else {
+    Value::Nil
+}) }
 
 /// `window-combination-p': internal windows only.
-fn f_window_combination_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = valid_window_arg(i, &arg(&a, 0))?;
-    Ok(Value::from_bool(w.borrow().horiz.is_some()))
-}
+fn f_window_combination_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = valid_window_arg(i, &arg(&a, 0))?;
+Ok(Value::from_bool(w.borrow().horiz.is_some())) }
 
 /// 0 for the `window-old-pixel-*' family — no redisplay in batch.
-fn f_zero_win(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = win_of(i, &arg(&a, 0))?;
-    Ok(Value::Int(0))
-}
+fn f_zero_win(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let _ = win_of(i, &arg(&a, 0))?;
+Ok(Value::Int(0)) }
 
 /// Sibling navigation: children of the same parent, or the frame's
 /// parentless chain (root … minibuffer).  Never wraps.
@@ -748,109 +695,79 @@ fn siblings(i: &mut Interp, w: &Value, next: bool) -> EvalResult {
     }
 }
 
-fn f_next_sibling(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    siblings(i, &arg(&a, 0), true)
-}
+fn f_next_sibling(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { siblings(i, &arg(&a, 0), true) }
 
-fn f_prev_sibling(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    siblings(i, &arg(&a, 0), false)
-}
+fn f_prev_sibling(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { siblings(i, &arg(&a, 0), false) }
 
-fn f_window_height2(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = win_of(i, &arg(&a, 0))?;
-    Ok(Value::Int(w.borrow().height as i128))
-}
+fn f_window_height2(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = win_of(i, &arg(&a, 0))?;
+Ok(Value::Int(w.borrow().height as i128)) }
 
-fn f_window_height_px(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    f_window_height2(i, a)
-}
+fn f_window_height_px(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { f_window_height2(i, a) }
 
-fn f_window_width_px(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = win_of(i, &arg(&a, 0))?;
-    Ok(Value::Int(w.borrow().width as i128))
-}
+fn f_window_width_px(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = win_of(i, &arg(&a, 0))?;
+Ok(Value::Int(w.borrow().width as i128)) }
 
-fn f_window_left_px(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = win_of(i, &arg(&a, 0))?;
-    Ok(Value::Int(w.borrow().left as i128))
-}
+fn f_window_left_px(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = win_of(i, &arg(&a, 0))?;
+Ok(Value::Int(w.borrow().left as i128)) }
 
-fn f_window_top_px(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = win_of(i, &arg(&a, 0))?;
-    Ok(Value::Int(w.borrow().top as i128))
-}
+fn f_window_top_px(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = win_of(i, &arg(&a, 0))?;
+Ok(Value::Int(w.borrow().top as i128)) }
 
-fn f_window_point1(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = win_of(i, &arg(&a, 0))?;
-    Ok(Value::Int(w.borrow().point as i128 + 1))
-}
+fn f_window_point1(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = win_of(i, &arg(&a, 0))?;
+Ok(Value::Int(w.borrow().point as i128 + 1)) }
 
-fn f_window_buffer1(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = win_of(i, &arg(&a, 0))?;
-    Ok(i.buffer_value(w.borrow().buffer).unwrap_or(Value::Nil))
-}
+fn f_window_buffer1(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = win_of(i, &arg(&a, 0))?;
+Ok(i.buffer_value(w.borrow().buffer).unwrap_or(Value::Nil)) }
 
-fn f_window_has_params(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = win_of(i, &arg(&a, 0))?;
-    let p = w.borrow().params.clone();
-    Ok(Value::from_bool(!p.is_nil()))
-}
+fn f_window_has_params(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = win_of(i, &arg(&a, 0))?;
+let p = w.borrow().params.clone();
+Ok(Value::from_bool(!p.is_nil())) }
 
 /// `window-min-size' — GNU's decode_any_window convention: nil →
 /// selected, non-window → plain "N is not a valid window" error.
 /// Safe minimum plus decorations, clamped to `window-min-height'/
 /// `window-min-width' unless IGNORE suppresses them.
-fn f_win_min_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let wv = match &arg(&a, 0) {
-        Value::Nil => sel_window(i).map(Value::Window).unwrap_or(Value::Nil),
-        v @ Value::Window(_) => v.clone(),
-        other => {
-            let shown = i.princ_to_string(other);
-            return Err(i.error(format!("{shown} is not a valid window")));
-        }
-    };
-    let horiz = arg(&a, 1).truthy();
-    let ignore = arg(&a, 2);
-    Ok(Value::Int(crate::lisp::builtins::misc::win_min_size(
-        i, &wv, horiz, &ignore,
-    )))
-}
+fn f_win_min_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let wv = match &arg(&a, 0) {
+    Value::Nil => sel_window(i).map(Value::Window).unwrap_or(Value::Nil),
+    v @ Value::Window(_) => v.clone(),
+    other => {
+        let shown = i.princ_to_string(other);
+        return Err(i.error(format!("{shown} is not a valid window")));
+    }
+};
+let horiz = arg(&a, 1).truthy();
+let ignore = arg(&a, 2);
+Ok(Value::Int(crate::lisp::builtins::misc::win_min_size(
+    i, &wv, horiz, &ignore,
+))) }
 
 /// `window-size' — GNU's subr uses CHECK_VALID_WINDOW (typed
 /// `window-valid-p' error) and returns the total size.
-fn f_window_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = match arg(&a, 0) {
-        Value::Nil => sel_window(i),
-        Value::Window(w) => Some(w),
-        other => return Err(i.wrong_type_mut("window-valid-p", &other)),
-    };
-    let horiz = arg(&a, 1).truthy();
-    let (wd, ht) = w
-        .map(|w| {
-            let w = w.borrow();
-            (w.width, w.height)
-        })
-        .unwrap_or((80, 24));
-    Ok(Value::Int(if horiz { wd } else { ht } as i128))
-}
+fn f_window_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = match arg(&a, 0) {
+    Value::Nil => sel_window(i),
+    Value::Window(w) => Some(w),
+    other => return Err(i.wrong_type_mut("window-valid-p", &other)),
+};
+let horiz = arg(&a, 1).truthy();
+let (wd, ht) = w
+    .map(|w| {
+        let w = w.borrow();
+        (w.width, w.height)
+    })
+    .unwrap_or((80, 24));
+Ok(Value::Int(if horiz { wd } else { ht } as i128)) }
 
 /// `window-safe-min-size' — `window-safe-min-height'/`-width' (1/2).
-fn f_window_safe_min_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Window(_) => {}
-        other => return Err(i.wrong_type_mut("window-valid-p", &other)),
-    }
-    let horiz = arg(&a, 1).truthy();
-    Ok(Value::Int(if horiz { 2 } else { 1 }))
+fn f_window_safe_min_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match arg(&a, 0) {
+    Value::Nil | Value::Window(_) => {}
+    other => return Err(i.wrong_type_mut("window-valid-p", &other)),
 }
+let horiz = arg(&a, 1).truthy();
+Ok(Value::Int(if horiz { 2 } else { 1 })) }
 
-fn f_window_resize(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    window_resize_impl(i, a, false)
-}
+fn f_window_resize(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { window_resize_impl(i, a, false) }
 
-fn f_window_resize_no_error(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    window_resize_impl(i, a, true)
-}
+fn f_window_resize_no_error(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { window_resize_impl(i, a, true) }
 
 /// Window's size on the split axis its parent combines along, or
 /// None when the window can't be resized that way (root leaf,
@@ -907,36 +824,32 @@ fn resize_caps(i: &mut Interp, w: &WindowRef, horizontal: bool) -> (i128, i128) 
 
 /// `window-max-delta' — how far WINDOW can grow (batch: siblings'
 /// slack; 0 for root/minibuffer).
-fn f_window_max_delta(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU signature has a leading DELTA arg; window.el callers omit
-    // it (window WINDOW HORIZONTAL ...).  Detect the shape.
-    let (wv, horiz) = delta_args(i, &a)?;
-    let w = match wv {
-        Value::Window(w) if !w.borrow().dead => w,
-        _ => return Ok(Value::Int(0)),
-    };
-    if w.borrow().minibuffer || w.borrow().horiz.is_some() {
-        return Ok(Value::Int(0));
-    }
-    Ok(Value::Int(resize_caps(i, &w, horiz).0))
+fn f_window_max_delta(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU signature has a leading DELTA arg; window.el callers omit
+// it (window WINDOW HORIZONTAL ...).  Detect the shape.
+let (wv, horiz) = delta_args(i, &a)?;
+let w = match wv {
+    Value::Window(w) if !w.borrow().dead => w,
+    _ => return Ok(Value::Int(0)),
+};
+if w.borrow().minibuffer || w.borrow().horiz.is_some() {
+    return Ok(Value::Int(0));
 }
+Ok(Value::Int(resize_caps(i, &w, horiz).0)) }
 
 /// `window-min-delta' — how far WINDOW can shrink (positive amount).
-fn f_window_min_delta(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let (wv, horiz) = delta_args(i, &a)?;
-    let w = match wv {
-        Value::Window(w) if !w.borrow().dead => w,
-        _ => return Ok(Value::Int(0)),
-    };
-    if w.borrow().minibuffer || w.borrow().horiz.is_some() {
-        return Ok(Value::Int(0));
-    }
-    Ok(Value::Int(resize_caps(i, &w, horiz).1))
+fn f_window_min_delta(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let (wv, horiz) = delta_args(i, &a)?;
+let w = match wv {
+    Value::Window(w) if !w.borrow().dead => w,
+    _ => return Ok(Value::Int(0)),
+};
+if w.borrow().minibuffer || w.borrow().horiz.is_some() {
+    return Ok(Value::Int(0));
 }
+Ok(Value::Int(resize_caps(i, &w, horiz).1)) }
 
 /// Parse the ambiguous (WINDOW DELTA ...)/(DELTA WINDOW ...) arg
 /// shapes `window-max-delta' sees from window.el vs direct calls.
-fn delta_args(i: &mut Interp, a: &[Value]) -> Result<(Value, bool), Flow> {
+fn delta_args(_i: &mut Interp, a: &[Value]) -> Result<(Value, bool), Flow> {
     let first = arg(a, 0);
     if matches!(first, Value::Int(_)) {
         let w = arg(a, 1);
@@ -948,127 +861,123 @@ fn delta_args(i: &mut Interp, a: &[Value]) -> Result<(Value, bool), Flow> {
     }
 }
 
-fn window_resize_impl(i: &mut Interp, a: Vec<Value>, no_error: bool) -> EvalResult {
-    // GNU Fwindow_resize uses decode_valid_window: bogus objects and
-    // dead windows get the plain "N is not a valid window" error.
-    let w = valid_window_arg(i, &arg(&a, 0))?;
-    let delta = want_int(i, &a[1])?;
-    let horizontal = arg(&a, 2).truthy();
-    let fail = |i: &mut Interp, msg: &str| -> EvalResult {
-        if no_error {
-            Ok(Value::Nil)
-        } else {
-            Err(i.error(msg))
-        }
-    };
-    {
-        let wb = w.borrow();
-        if wb.minibuffer {
-            return fail(i, "Cannot resize the minibuffer window");
-        }
-    }
-    // GNU: resizing a frame's root window is invalid.
-    let is_root = w_parent(&w).is_none();
-    if is_root {
-        return fail(i, "Cannot resize the root window of a frame");
-    }
-    if delta == 0 {
-        return fail(i, "Invalid window size");
-    }
-    let Some((p, kids)) = resize_axis(&w, horizontal) else {
-        return fail(i, "Invalid window size");
-    };
-    let (grow, shrink) = resize_caps(i, &w, horizontal);
-    let ok = if delta > 0 { delta <= grow } else { -delta <= shrink };
-    if !ok {
-        return fail(i, "Invalid window size");
-    }
-    // Apply: W takes DELTA; siblings give up (grow) or receive
-    // (shrink) space proportional to their current sizes.
-    {
-        let mut wb = w.borrow_mut();
-        if horizontal {
-            wb.width = (wb.width as i128 + delta).max(1) as usize;
-        } else {
-            wb.height = (wb.height as i128 + delta).max(1) as usize;
-        }
-    }
-    let pool = if delta > 0 {
-        grow
+fn window_resize_impl(i: &mut Interp, a: crate::lisp::Argv, no_error: bool) -> EvalResult { // GNU Fwindow_resize uses decode_valid_window: bogus objects and
+// dead windows get the plain "N is not a valid window" error.
+let w = valid_window_arg(i, &arg(&a, 0))?;
+let delta = want_int(i, &a[1])?;
+let horizontal = arg(&a, 2).truthy();
+let fail = |i: &mut Interp, msg: &str| -> EvalResult {
+    if no_error {
+        Ok(Value::Nil)
     } else {
-        // Shrinking W releases space siblings soak up — proportional
-        // to their current sizes (a sole sibling takes it all).
-        kids.iter()
-            .filter(|k| !Rc::ptr_eq(k, &w) && !k.borrow().dead)
-            .map(|k| {
-                let kb = k.borrow();
-                (if horizontal { kb.width } else { kb.height }) as i128
-            })
-            .sum()
-    };
-    let mut need = delta.abs();
-    let last = kids
-        .iter()
+        Err(i.error(msg))
+    }
+};
+{
+    let wb = w.borrow();
+    if wb.minibuffer {
+        return fail(i, "Cannot resize the minibuffer window");
+    }
+}
+// GNU: resizing a frame's root window is invalid.
+let is_root = w_parent(&w).is_none();
+if is_root {
+    return fail(i, "Cannot resize the root window of a frame");
+}
+if delta == 0 {
+    return fail(i, "Invalid window size");
+}
+let Some((p, kids)) = resize_axis(&w, horizontal) else {
+    return fail(i, "Invalid window size");
+};
+let (grow, shrink) = resize_caps(i, &w, horizontal);
+let ok = if delta > 0 { delta <= grow } else { -delta <= shrink };
+if !ok {
+    return fail(i, "Invalid window size");
+}
+// Apply: W takes DELTA; siblings give up (grow) or receive
+// (shrink) space proportional to their current sizes.
+{
+    let mut wb = w.borrow_mut();
+    if horizontal {
+        wb.width = (wb.width as i128 + delta).max(1) as usize;
+    } else {
+        wb.height = (wb.height as i128 + delta).max(1) as usize;
+    }
+}
+let pool = if delta > 0 {
+    grow
+} else {
+    // Shrinking W releases space siblings soak up — proportional
+    // to their current sizes (a sole sibling takes it all).
+    kids.iter()
         .filter(|k| !Rc::ptr_eq(k, &w) && !k.borrow().dead)
-        .last()
-        .cloned();
-    for k in &kids {
-        if Rc::ptr_eq(k, &w) || k.borrow().dead {
-            continue;
-        }
-        let ksize = {
+        .map(|k| {
             let kb = k.borrow();
             (if horizontal { kb.width } else { kb.height }) as i128
-        };
-        let mut delta_k = if pool > 0 {
-            if delta > 0 {
-                // W grows: shrink K by its share of NEED (≤ its slack).
-                let kmin = crate::lisp::builtins::misc::win_min_size(
-                    i,
-                    &Value::Window(k.clone()),
-                    horizontal,
-                    &Value::Nil,
-                );
-                let slack = (ksize - kmin).max(0);
-                -(need * slack / pool).min(slack).min(need)
-            } else {
-                // W shrinks: grow K by its share of NEED.
-                (need * ksize / pool).min(need)
-            }
+        })
+        .sum()
+};
+let mut need = delta.abs();
+let last = kids
+    .iter()
+    .filter(|k| !Rc::ptr_eq(k, &w) && !k.borrow().dead)
+    .last()
+    .cloned();
+for k in &kids {
+    if Rc::ptr_eq(k, &w) || k.borrow().dead {
+        continue;
+    }
+    let ksize = {
+        let kb = k.borrow();
+        (if horizontal { kb.width } else { kb.height }) as i128
+    };
+    let mut delta_k = if pool > 0 {
+        if delta > 0 {
+            // W grows: shrink K by its share of NEED (≤ its slack).
+            let kmin = crate::lisp::builtins::misc::win_min_size(
+                i,
+                &Value::Window(k.clone()),
+                horizontal,
+                &Value::Nil,
+            );
+            let slack = (ksize - kmin).max(0);
+            -(need * slack / pool).min(slack).min(need)
         } else {
-            0
+            // W shrinks: grow K by its share of NEED.
+            (need * ksize / pool).min(need)
+        }
+    } else {
+        0
+    };
+    // The last sibling absorbs any rounding remainder so the
+    // parent combination stays exactly tiled.
+    if last.as_ref().is_some_and(|l| Rc::ptr_eq(l, k)) {
+        delta_k = if delta > 0 {
+            -need
+        } else {
+            need
         };
-        // The last sibling absorbs any rounding remainder so the
-        // parent combination stays exactly tiled.
-        if last.as_ref().is_some_and(|l| Rc::ptr_eq(l, k)) {
-            delta_k = if delta > 0 {
-                -need
-            } else {
-                need
-            };
-        }
-        need -= delta_k.abs();
-        {
-            let mut kb = k.borrow_mut();
-            if horizontal {
-                kb.width = (kb.width as i128 + delta_k).max(1) as usize;
-            } else {
-                kb.height = (kb.height as i128 + delta_k).max(1) as usize;
-            }
+    }
+    need -= delta_k.abs();
+    {
+        let mut kb = k.borrow_mut();
+        if horizontal {
+            kb.width = (kb.width as i128 + delta_k).max(1) as usize;
+        } else {
+            kb.height = (kb.height as i128 + delta_k).max(1) as usize;
         }
     }
-    relay_children(&p);
-    if no_error {
-        return Ok(Value::Nil);
-    }
-    Ok(Value::t())
 }
+relay_children(&p);
+if no_error {
+    return Ok(Value::Nil);
+}
+Ok(Value::t()) }
 
-fn f_window_list1(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (window-list-1 WINDOW MINIBUF ALL-FRAMES): flat model — same
-    // filtering as `window-list' on WINDOW's frame (the selected one).
-    f_window_list(i, vec![Value::Nil, arg(&a, 1)])
-}
+fn f_window_list1(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // (window-list-1 WINDOW MINIBUF ALL-FRAMES): flat model — same
+// filtering as `window-list' on WINDOW's frame (the selected one).
+f_window_list(i, vec![Value::Nil, arg(&a, 1)].into()) }
 
 /// Candidate windows for `get-lru-window'/`get-mru-window'/
 /// `get-largest-window': the live, non-minibuffer windows of the
@@ -1096,196 +1005,198 @@ fn some_window_candidates(i: &mut Interp, a: &[Value]) -> Vec<WindowRef> {
     }
 }
 
-fn f_split_window_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU Fsplit_window_internal validates SIZE before geometry:
-    // non-fixnum → wrong-type-argument; then on a tty frame every
-    // explicit SIZE fails — positive in `wset_new_size' ("Resizing
-    // old window failed"), non-positive in the minimum-size check
-    // ("Size of new window too small (after split)") — verified on
-    // GNU -Q --batch for right/below and 0/±N.  All remacs frames are
-    // tty-equivalent, so the tty branch applies unconditionally.
-    // (This strictness is only on the -internal worker: the public
-    // `split-window' computes its own size before delegating.)
-    match &a[1] {
-        Value::Int(s) => {
-            if *s > 0 {
-                return Err(i.error("Resizing old window failed".to_string()));
-            }
-            return Err(i.error("Size of new window too small (after split)".to_string()));
+fn f_split_window_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU Fsplit_window_internal validates SIZE before geometry:
+// non-fixnum → wrong-type-argument; then on a tty frame every
+// explicit SIZE fails — positive in `wset_new_size' ("Resizing
+// old window failed"), non-positive in the minimum-size check
+// ("Size of new window too small (after split)") — verified on
+// GNU -Q --batch for right/below and 0/±N.  All remacs frames are
+// tty-equivalent, so the tty branch applies unconditionally.
+// (This strictness is only on the -internal worker: the public
+// `split-window' computes its own size before delegating.)
+match &a[1] {
+    Value::Int(s) => {
+        if *s > 0 {
+            return Err(i.error("Resizing old window failed".to_string()));
         }
-        _ => return Err(i.wrong_type_mut("fixnump", &a[1])),
+        return Err(i.error("Size of new window too small (after split)".to_string()));
     }
-}
+    _ => return Err(i.wrong_type_mut("fixnump", &a[1])),
+} }
 
-fn f_delete_window_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = win_of(i, &a[0])?;
-    let wid = w.borrow().id;
-    for f in &i.frames {
-        let mut fb = f.borrow_mut();
-        if fb.windows.len() <= 1 {
-            continue;
+fn f_delete_window_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = win_of(i, &a[0])?;
+let wid = w.borrow().id;
+for f in &i.frames {
+    let mut fb = f.borrow_mut();
+    if fb.windows.len() <= 1 {
+        continue;
+    }
+    if let Some(pos) = fb.windows.iter().position(|x| x.borrow().id == wid) {
+        let removed = fb.windows.remove(pos);
+        removed.borrow_mut().dead = true;
+        // Unlink from the combination parent.
+        if let Some(p) = w_parent(&removed) {
+            p.borrow_mut().children.retain(|k| !Rc::ptr_eq(k, &removed));
+            removed.borrow_mut().parent = None;
         }
-        if let Some(pos) = fb.windows.iter().position(|x| x.borrow().id == wid) {
-            let removed = fb.windows.remove(pos);
-            removed.borrow_mut().dead = true;
-            // Unlink from the combination parent.
-            if let Some(p) = w_parent(&removed) {
-                p.borrow_mut().children.retain(|k| !Rc::ptr_eq(k, &removed));
-                removed.borrow_mut().parent = None;
+        if fb.selected.borrow().id == wid {
+            if let Some(first) = fb.windows.first() {
+                fb.selected = first.clone();
             }
-            if fb.selected.borrow().id == wid {
-                if let Some(first) = fb.windows.first() {
-                    fb.selected = first.clone();
-                }
-            }
-            return Ok(Value::Nil);
         }
-    }
-    Ok(Value::Nil)
-}
-
-fn f_get_lru_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU Fget_lru_window: lowest use-time among the candidates.
-    match some_window_candidates(i, &a)
-        .iter()
-        .min_by_key(|w| w.borrow().use_time)
-    {
-        Some(w) => Ok(Value::Window(w.clone())),
-        None => Ok(Value::Nil),
-    }
-}
-
-fn f_get_mru_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU Fget_mru_window: highest use-time among the candidates
-    // (rev() so ties keep the first, matching GNU's strict-> scan).
-    match some_window_candidates(i, &a)
-        .iter()
-        .rev()
-        .max_by_key(|w| w.borrow().use_time)
-    {
-        Some(w) => Ok(Value::Window(w.clone())),
-        None => Ok(Value::Nil),
-    }
-}
-
-fn f_get_largest_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU Fget_largest_window: maximum pixel area (ties keep the
-    // first, i.e. the least recently used among equals).
-    match some_window_candidates(i, &a).iter().rev().max_by_key(|w| {
-        let wb = w.borrow();
-        wb.width * wb.height
-    }) {
-        Some(w) => Ok(Value::Window(w.clone())),
-        None => Ok(Value::Nil),
-    }
-}
-
-fn f_posn_at_point(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if i.noninteractive {
-        // GNU: no window exists in batch mode, so the position isn't
-        // visible anywhere and the whole posn is nil.
         return Ok(Value::Nil);
     }
-    let pos = a.get(0).and_then(|v| v.int()).unwrap_or_else(|| {
-        i.current_buffer_ref()
-            .map(|b| b.borrow().point() as i128 + 1)
-            .unwrap_or(1)
-    });
-    // (x y) → col/line in window.
-    let _ = pos;
-    Ok(Value::list(vec![
-        Value::Int(0),
-        Value::Int(0),
-        Value::Nil,
-        Value::Nil,
-        Value::Int(0),
-        Value::Int(0),
-        Value::Nil,
-        Value::Nil,
-        Value::Int(pos),
-        Value::list(vec![Value::Int(0), Value::Int(0)]),
-        Value::Nil,
-        Value::Int(0),
-        Value::Nil,
-        Value::list(vec![Value::Int(0), Value::Int(0)]),
-        Value::Nil,
-        Value::list(vec![Value::Int(0), Value::Int(0)]),
-        Value::Int(0),
-        Value::Int(0),
-    ]))
 }
+Ok(Value::Nil) }
 
-fn f_posn_at_xy(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let x = want_int(i, &a[0])?;
-    let y = want_int(i, &a[1])?;
-    // Approximate position: line y, column x of the current buffer.
-    let b = i
-        .current_buffer_ref()
-        .ok_or_else(|| i.error("No current buffer"))?;
-    let bb = b.borrow();
-    let line = bb.text.line_start(y.max(0) as usize);
-    let pos = (line + x.max(0) as usize).min(bb.text_len());
-    Ok(Value::list(vec![
-        Value::Window(sel_window(i).unwrap()),
-        Value::Int(pos as i128 + 1),
-        Value::Int(x),
-        Value::Int(y),
-        Value::Nil,
-    ]))
+fn f_get_lru_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU Fget_lru_window: lowest use-time among the candidates.
+match some_window_candidates(i, &a)
+    .iter()
+    .min_by_key(|w| w.borrow().use_time)
+{
+    Some(w) => Ok(Value::Window(w.clone())),
+    None => Ok(Value::Nil),
+} }
+
+fn f_get_mru_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU Fget_mru_window: highest use-time among the candidates
+// (rev() so ties keep the first, matching GNU's strict-> scan).
+match some_window_candidates(i, &a)
+    .iter()
+    .rev()
+    .max_by_key(|w| w.borrow().use_time)
+{
+    Some(w) => Ok(Value::Window(w.clone())),
+    None => Ok(Value::Nil),
+} }
+
+fn f_get_largest_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU Fget_largest_window: maximum pixel area (ties keep the
+// first, i.e. the least recently used among equals).
+match some_window_candidates(i, &a).iter().rev().max_by_key(|w| {
+    let wb = w.borrow();
+    wb.width * wb.height
+}) {
+    Some(w) => Ok(Value::Window(w.clone())),
+    None => Ok(Value::Nil),
+} }
+
+fn f_posn_at_point(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if i.noninteractive {
+    // GNU: no window exists in batch mode, so the position isn't
+    // visible anywhere and the whole posn is nil.
+    return Ok(Value::Nil);
 }
+let pos = a.get(0).and_then(|v| v.int()).unwrap_or_else(|| {
+    i.current_buffer_ref()
+        .map(|b| b.borrow().point() as i128 + 1)
+        .unwrap_or(1)
+});
+// (x y) → col/line in window.
+let _ = pos;
+Ok(Value::list(vec![
+    Value::Int(0),
+    Value::Int(0),
+    Value::Nil,
+    Value::Nil,
+    Value::Int(0),
+    Value::Int(0),
+    Value::Nil,
+    Value::Nil,
+    Value::Int(pos),
+    Value::list(vec![Value::Int(0), Value::Int(0)]),
+    Value::Nil,
+    Value::Int(0),
+    Value::Nil,
+    Value::list(vec![Value::Int(0), Value::Int(0)]),
+    Value::Nil,
+    Value::list(vec![Value::Int(0), Value::Int(0)]),
+    Value::Int(0),
+    Value::Int(0),
+])) }
 
-fn f_posn_pair(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // `window-absolute-pixel-position' (POSITION WINDOW): on a batch
-    // terminal every pixel coordinate is 0,0.
-    if let Some(v) = a.first() {
-        if !v.is_nil() {
-            want_int(i, v)?;
-        }
+fn f_posn_at_xy(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let x = want_int(i, &a[0])?;
+let y = want_int(i, &a[1])?;
+// Approximate position: line y, column x of the current buffer.
+let b = i
+    .current_buffer_ref()
+    .ok_or_else(|| i.error("No current buffer"))?;
+let bb = b.borrow();
+let line = bb.text.line_start(y.max(0) as usize);
+let pos = (line + x.max(0) as usize).min(bb.text_len());
+Ok(Value::list(vec![
+    Value::Window(sel_window(i).unwrap()),
+    Value::Int(pos as i128 + 1),
+    Value::Int(x),
+    Value::Int(y),
+    Value::Nil,
+])) }
+
+fn f_posn_pair(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // `window-absolute-pixel-position' (POSITION WINDOW): on a batch
+// terminal every pixel coordinate is 0,0.
+if let Some(v) = a.first() {
+    if !v.is_nil() {
+        want_int(i, v)?;
     }
-    Ok(Value::cons(Value::Int(0), Value::Int(0)))
 }
+Ok(Value::cons(Value::Int(0), Value::Int(0))) }
 
-fn f_set_window_vscroll(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = win_of(i, &arg(&a, 0))?;
-    // A tty window has no vscroll; GNU reports 0.
-    Ok(Value::Int(0))
-}
+fn f_set_window_vscroll(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let _ = win_of(i, &arg(&a, 0))?;
+// A tty window has no vscroll; GNU reports 0.
+Ok(Value::Int(0)) }
 
-fn f_scroll_left(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = arg(&a, 0).int().unwrap_or(1);
-    let w = win_of(i, &arg(&a, 1))?;
-    w.borrow_mut().hscroll += n.max(0) as usize;
-    Ok(Value::Nil)
-}
-
-fn f_scroll_right(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = arg(&a, 0).int().unwrap_or(1);
-    let w = win_of(i, &arg(&a, 1))?;
+fn f_scroll_left(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU Fscroll_left: changes hscroll only — point does NOT move;
+    // `suspend_auto_hscroll' keeps auto-hscroll from undoing it until
+    // point changes (xdisp.c window-point vs old_pointm check).
+    let w = sel_window(i).ok_or_else(|| i.error("No window"))?;
+    let default = w.borrow().width.saturating_sub(2) as i128;
+    let n = crate::editor::scroll_arg(i, &arg(&a, 0), default)?;
+    let min = arg(&a, 1).truthy();
     let mut wb = w.borrow_mut();
-    wb.hscroll = wb.hscroll.saturating_sub(n.max(0) as usize);
-    Ok(Value::Nil)
+    let new = if n >= 0 {
+        wb.hscroll.saturating_add(n.min(usize::MAX as i128) as usize)
+    } else {
+        wb.hscroll.saturating_sub(n.unsigned_abs().min(usize::MAX as u128) as usize)
+    };
+    wb.hscroll = new;
+    if min {
+        wb.min_hscroll = new;
+    }
+    wb.suspend_hscroll = true;
+    Ok(Value::Int(new as i128))
 }
 
-fn f_window_margins(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = match &arg(&a, 0) {
-        Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
-        Value::Window(w) if !w.borrow().dead => w.clone(),
-        other => return Err(i.wrong_type_mut("window-live-p", other)),
-    };
-    let m = w.borrow().margins;
-    // GNU always returns (LEFT . RIGHT), nil sides for zero margins.
-    let lv = if m.0 == 0 {
-        Value::Nil
-    } else {
-        Value::Int(m.0 as i128)
-    };
-    let rv = if m.1 == 0 {
-        Value::Nil
-    } else {
-        Value::Int(m.1 as i128)
-    };
-    Ok(Value::cons(lv, rv))
+fn f_scroll_right(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let w = sel_window(i).ok_or_else(|| i.error("No window"))?;
+    let default = w.borrow().width.saturating_sub(2) as i128;
+    let n = crate::editor::scroll_arg(i, &arg(&a, 0), default)?;
+    let min = arg(&a, 1).truthy();
+    let mut wb = w.borrow_mut();
+    let new = wb.hscroll.saturating_sub(n.max(0) as usize);
+    wb.hscroll = new;
+    if min {
+        wb.min_hscroll = new;
+    }
+    wb.suspend_hscroll = true;
+    Ok(Value::Int(new as i128))
 }
+
+fn f_window_margins(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = match &arg(&a, 0) {
+    Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
+    Value::Window(w) if !w.borrow().dead => w.clone(),
+    other => return Err(i.wrong_type_mut("window-live-p", other)),
+};
+let m = w.borrow().margins;
+// GNU always returns (LEFT . RIGHT), nil sides for zero margins.
+let lv = if m.0 == 0 {
+    Value::Nil
+} else {
+    Value::Int(m.0 as i128)
+};
+let rv = if m.1 == 0 {
+    Value::Nil
+} else {
+    Value::Int(m.1 as i128)
+};
+Ok(Value::cons(lv, rv)) }
 
 /// Pixel-edge helpers shared by `window-inside-pixel-edges' /
 /// `window-absolute-pixel-edges' — GNU's batch inside geometry is the
@@ -1323,60 +1234,48 @@ fn pixel_edges_of(i: &mut Interp, v: &Value) -> Result<(i128, i128, i128, i128),
     ))
 }
 
-fn f_window_pixel_edges4(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let (l, t, r, b) = pixel_edges_of(i, &arg(&a, 0))?;
-    Ok(Value::list(vec![
-        Value::Int(l),
-        Value::Int(t),
-        Value::Int(r),
-        Value::Int(b),
-    ]))
-}
+fn f_window_pixel_edges4(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let (l, t, r, b) = pixel_edges_of(i, &arg(&a, 0))?;
+Ok(Value::list(vec![
+    Value::Int(l),
+    Value::Int(t),
+    Value::Int(r),
+    Value::Int(b),
+])) }
 
 
-fn f_window_edges4(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let (l, t, r, b) = inside_edges_of(i, &arg(&a, 0))?;
-    Ok(Value::list(vec![
-        Value::Int(l),
-        Value::Int(t),
-        Value::Int(r),
-        Value::Int(b),
-    ]))
-}
+fn f_window_edges4(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let (l, t, r, b) = inside_edges_of(i, &arg(&a, 0))?;
+Ok(Value::list(vec![
+    Value::Int(l),
+    Value::Int(t),
+    Value::Int(r),
+    Value::Int(b),
+])) }
 
-fn f_window_body_edges4(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Body excludes mode line (1 line at bottom).
-    let w = win_of(i, &arg(&a, 0))?;
-    let wb = w.borrow();
-    Ok(Value::list(vec![
-        Value::Int(wb.left as i128),
-        Value::Int(wb.top as i128),
-        Value::Int((wb.left + wb.width) as i128),
-        Value::Int((wb.top + wb.height.saturating_sub(1)) as i128),
-    ]))
-}
+fn f_window_body_edges4(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // Body excludes mode line (1 line at bottom).
+let w = win_of(i, &arg(&a, 0))?;
+let wb = w.borrow();
+Ok(Value::list(vec![
+    Value::Int(wb.left as i128),
+    Value::Int(wb.top as i128),
+    Value::Int((wb.left + wb.width) as i128),
+    Value::Int((wb.top + wb.height.saturating_sub(1)) as i128),
+])) }
 
-fn f_window_screen_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = win_of(i, &arg(&a, 0))?;
-    Ok(Value::float(w.borrow().height as f64))
-}
+fn f_window_screen_lines(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = win_of(i, &arg(&a, 0))?;
+Ok(Value::float(w.borrow().height as f64)) }
 
 // ---------- frames ----------
 
-fn f_frame_root_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let f = frame_of(i, &arg(&a, 0))?;
-    // GNU: the lone live window IS the root; once split the root is
-    // the internal combination window maintained by split/delete.
-    match &f.borrow().root {
-        Some(r) => Ok(Value::Window(r.clone())),
-        None => Ok(Value::Nil),
-    }
-}
+fn f_frame_root_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let f = frame_of(i, &arg(&a, 0))?;
+// GNU: the lone live window IS the root; once split the root is
+// the internal combination window maintained by split/delete.
+match &f.borrow().root {
+    Some(r) => Ok(Value::Window(r.clone())),
+    None => Ok(Value::Nil),
+} }
 
-fn f_frame_sel_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let f = frame_of(i, &arg(&a, 0))?;
-    Ok(Value::Window(f.borrow().selected.clone()))
-}
+fn f_frame_sel_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let f = frame_of(i, &arg(&a, 0))?;
+Ok(Value::Window(f.borrow().selected.clone())) }
 
 /// Leftmost/topmost live leaf of W's subtree.
 fn first_leaf(w: &WindowRef) -> WindowRef {
@@ -1394,96 +1293,68 @@ fn first_leaf(w: &WindowRef) -> WindowRef {
     }
 }
 
-fn f_frame_first_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU `frame_first_window' walks the window tree to the leftmost/
-    // topmost leaf.
-    let f = frame_of(i, &arg(&a, 0))?;
-    match f.borrow().root.as_ref().map(first_leaf) {
-        Some(w) => Ok(Value::Window(w)),
-        None => Ok(Value::Nil),
-    }
-}
+fn f_frame_first_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU `frame_first_window' walks the window tree to the leftmost/
+// topmost leaf.
+let f = frame_of(i, &arg(&a, 0))?;
+match f.borrow().root.as_ref().map(first_leaf) {
+    Some(w) => Ok(Value::Window(w)),
+    None => Ok(Value::Nil),
+} }
 
-fn f_minibuffer_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let f = frame_of(i, &arg(&a, 0))?;
-    match &f.borrow().minibuffer {
-        Some(w) => Ok(Value::Window(w.clone())),
-        None => Ok(Value::Nil),
-    }
-}
+fn f_minibuffer_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let f = frame_of(i, &arg(&a, 0))?;
+match &f.borrow().minibuffer {
+    Some(w) => Ok(Value::Window(w.clone())),
+    None => Ok(Value::Nil),
+} }
 
-fn f_frame_self(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match frame_of(i, &arg(&a, 0)) {
-        Ok(f) => Ok(Value::Frame(f)),
-        Err(_) => Ok(Value::Nil),
-    }
-}
+fn f_frame_self(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match frame_of(i, &arg(&a, 0)) {
+    Ok(f) => Ok(Value::Frame(f)),
+    Err(_) => Ok(Value::Nil),
+} }
 
-fn f_frame_initial_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match frame_of(i, &arg(&a, 0)) {
-        Ok(f) => Ok(Value::from_bool(f.borrow().id == 0)),
-        Err(_) => Ok(Value::Nil),
-    }
-}
+fn f_frame_initial_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match frame_of(i, &arg(&a, 0)) {
+    Ok(f) => Ok(Value::from_bool(f.borrow().id == 0)),
+    Err(_) => Ok(Value::Nil),
+} }
 
-fn f_frame_id(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let f = frame_of(i, &arg(&a, 0))?;
-    Ok(Value::Int(f.borrow().id as i128))
-}
+fn f_frame_id(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let f = frame_of(i, &arg(&a, 0))?;
+Ok(Value::Int(f.borrow().id as i128)) }
 
-fn f_frame_width(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let f = frame_of(i, &arg(&a, 0))?;
-    Ok(Value::Int(f.borrow().width as i128))
-}
+fn f_frame_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let f = frame_of(i, &arg(&a, 0))?;
+Ok(Value::Int(f.borrow().width as i128)) }
 
-fn f_frame_height(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let f = frame_of(i, &arg(&a, 0))?;
-    Ok(Value::Int(f.borrow().height as i128))
-}
+fn f_frame_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let f = frame_of(i, &arg(&a, 0))?;
+Ok(Value::Int(f.borrow().height as i128)) }
 
-fn f_set_frame_height(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let f = frame_of(i, &arg(&a, 0))?;
-    let h = want_int(i, &a[1])?;
-    f.borrow_mut().height = h.max(1) as usize;
-    Ok(Value::Nil)
-}
+fn f_set_frame_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let f = frame_of(i, &arg(&a, 0))?;
+let h = want_int(i, &a[1])?;
+f.borrow_mut().height = h.max(1) as usize;
+Ok(Value::Nil) }
 
-fn f_set_frame_width(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let f = frame_of(i, &arg(&a, 0))?;
-    let w = want_int(i, &a[1])?;
-    f.borrow_mut().width = w.max(1) as usize;
-    Ok(Value::Nil)
-}
+fn f_set_frame_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let f = frame_of(i, &arg(&a, 0))?;
+let w = want_int(i, &a[1])?;
+f.borrow_mut().width = w.max(1) as usize;
+Ok(Value::Nil) }
 
-fn f_set_frame_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let f = frame_of(i, &arg(&a, 0))?;
-    let w = want_int(i, &a[1])?;
-    let h = want_int(i, &a[2])?;
-    let mut fb = f.borrow_mut();
-    fb.width = w.max(1) as usize;
-    fb.height = h.max(1) as usize;
-    Ok(Value::Nil)
-}
+fn f_set_frame_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let f = frame_of(i, &arg(&a, 0))?;
+let w = want_int(i, &a[1])?;
+let h = want_int(i, &a[2])?;
+let mut fb = f.borrow_mut();
+fb.width = w.max(1) as usize;
+fb.height = h.max(1) as usize;
+Ok(Value::Nil) }
 
-fn f_frame_list(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let fs: Vec<Value> = i.frames.iter().map(|f| Value::Frame(f.clone())).collect();
-    Ok(Value::list(fs))
-}
+fn f_frame_list(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { let fs: Vec<Value> = i.frames.iter().map(|f| Value::Frame(f.clone())).collect();
+Ok(Value::list(fs)) }
 
-fn f_tty_colors(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    // GNU batch terminal: no color support → 0 cells.
-    Ok(Value::Int(0))
-}
+fn f_tty_colors(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { // GNU batch terminal: no color support → 0 cells.
+Ok(Value::Int(0)) }
 
-fn f_arg0(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Ok(a[0].clone())
-}
+fn f_arg0(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { Ok(a[0].clone()) }
 
-fn f_tty_type(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU: nil on a tty batch terminal; TERMINAL must be terminal-live-p.
-    let _ = want_terminal_live(i, &arg(&a, 0))?;
-    Ok(Value::Nil)
-}
+fn f_tty_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU: nil on a tty batch terminal; TERMINAL must be terminal-live-p.
+let _ = want_terminal_live(i, &arg(&a, 0))?;
+Ok(Value::Nil) }
 
 /// nil or the terminal record; anything else is a terminal-live-p error.
 fn want_terminal_live(i: &mut Interp, v: &Value) -> EvalResult {
@@ -1499,20 +1370,10 @@ fn want_terminal_live(i: &mut Interp, v: &Value) -> EvalResult {
 
 /// `window-live-p' check on an optional arg, then nil (all our
 /// windows are live).
-fn f_window_live_nil(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Window(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("window-live-p", &other)),
-    }
-}
-
-/// `window-valid-p' check on an optional arg, then nil.
-fn f_window_valid_nil(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Window(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("window-valid-p", &other)),
-    }
-}
+fn f_window_live_nil(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match arg(&a, 0) {
+    Value::Nil | Value::Window(_) => Ok(Value::Nil),
+    other => Err(i.wrong_type_mut("window-live-p", &other)),
+} }
 
 /// GNU's plain `error "N is not a valid window"' (window.c signals a
 /// bare `error', not a typed one, for these predicates).
@@ -1529,302 +1390,252 @@ fn err_not_live_window(i: &mut Interp, v: &Value) -> Flow {
 
 /// `window-sizable-p' — GNU: normalize WINDOW, then compare
 /// `window-sizable' against DELTA.
-fn f_window_sizable_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Window(_) => {}
-        ref other => {
-            let shown = i.princ_to_string(other);
-            return Err(i.error(format!("{shown} is not a valid window")));
-        }
+fn f_window_sizable_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match arg(&a, 0) {
+    Value::Nil | Value::Window(_) => {}
+    ref other => {
+        let shown = i.princ_to_string(other);
+        return Err(i.error(format!("{shown} is not a valid window")));
     }
-    let delta = match &arg(&a, 1) {
-        Value::Int(n) => *n,
-        other => return Err(i.wrong_type_mut("number-or-marker-p", other)),
-    };
-    let wv = arg(&a, 0);
-    let horiz = arg(&a, 2).truthy();
-    let ignore = arg(&a, 3);
-    let actual = if delta < 0 {
-        let min = crate::lisp::builtins::misc::win_min_size(i, &wv, horiz, &ignore);
-        let size = match &wv {
-            Value::Window(w) => {
-                let w = w.borrow();
-                if horiz { w.width } else { w.height }
-            }
-            _ => {
-                if horiz {
-                    80
-                } else {
-                    24
-                }
-            }
-        } as i128;
-        if size <= min {
-            0
-        } else {
-            (min - size).max(delta)
-        }
-    } else if delta > 0 {
-        delta
-    } else {
-        0
-    };
-    Ok(Value::from_bool(if delta > 0 {
-        actual >= delta
-    } else {
-        actual <= delta
-    }))
 }
+let delta = match &arg(&a, 1) {
+    Value::Int(n) => *n,
+    other => return Err(i.wrong_type_mut("number-or-marker-p", other)),
+};
+let wv = arg(&a, 0);
+let horiz = arg(&a, 2).truthy();
+let ignore = arg(&a, 3);
+let actual = if delta < 0 {
+    let min = crate::lisp::builtins::misc::win_min_size(i, &wv, horiz, &ignore);
+    let size = match &wv {
+        Value::Window(w) => {
+            let w = w.borrow();
+            if horiz { w.width } else { w.height }
+        }
+        _ => {
+            if horiz {
+                80
+            } else {
+                24
+            }
+        }
+    } as i128;
+    if size <= min {
+        0
+    } else {
+        (min - size).max(delta)
+    }
+} else if delta > 0 {
+    delta
+} else {
+    0
+};
+Ok(Value::from_bool(if delta > 0 {
+    actual >= delta
+} else {
+    actual <= delta
+})) }
 
 /// `set-frame-position' — frame-live-p check, then t (GNU reports
 /// success even though a tty has no real positioning).
-fn f_set_frame_position(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Frame(_) => Ok(Value::t()),
-        other => Err(i.wrong_type_mut("frame-live-p", &other)),
-    }
-}
+fn f_set_frame_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match arg(&a, 0) {
+    Value::Nil | Value::Frame(_) => Ok(Value::t()),
+    other => Err(i.wrong_type_mut("frame-live-p", &other)),
+} }
 
 /// `set-frame-size-and-position-pixelwise' /
 /// `set-frame-window-state-change' / `frame-window-state-change' —
 /// frame-live-p on the first/optional FRAME argument, then nil.
-fn f_frame_live_arg_nil(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Frame(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("frame-live-p", &other)),
-    }
-}
+fn f_frame_live_arg_nil(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match arg(&a, 0) {
+    Value::Nil | Value::Frame(_) => Ok(Value::Nil),
+    other => Err(i.wrong_type_mut("frame-live-p", &other)),
+} }
 
 /// `tty-frame-restack' — GNU's tty version always signals that the
 /// operation is not implemented.
-fn f_tty_frame_restack(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Err(i.error("tty-frame-restack is not implemented"))
-}
+fn f_tty_frame_restack(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { Err(i.error("tty-frame-restack is not implemented")) }
 
 /// `resize-mini-window-internal' — GNU requires a minibuffer window.
-fn f_resize_mini_window_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Window(w) => {
-            let is_mini = w.borrow().minibuffer;
-            if is_mini {
-                Ok(Value::Nil)
-            } else {
-                Err(i.error("Not a valid minibuffer window"))
-            }
+fn f_resize_mini_window_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match arg(&a, 0) {
+    Value::Window(w) => {
+        let is_mini = w.borrow().minibuffer;
+        if is_mini {
+            Ok(Value::Nil)
+        } else {
+            Err(i.error("Not a valid minibuffer window"))
         }
-        other => Err(err_not_valid_window(i, &other)),
     }
-}
+    other => Err(err_not_valid_window(i, &other)),
+} }
 
 /// `frame-parent' — frame-live-p check on the optional FRAME; tty
 /// frames have no parent so nil.
-fn f_frame_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Frame(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("frame-live-p", &other)),
-    }
-}
+fn f_frame_parent(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match arg(&a, 0) {
+    Value::Nil | Value::Frame(_) => Ok(Value::Nil),
+    other => Err(i.wrong_type_mut("frame-live-p", &other)),
+} }
 
 /// `window-size-fixed-p' — nil on our model (nothing is size-fixed).
-fn f_window_size_fixed_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Window(_) => Ok(Value::Nil),
-        other => Err(err_not_valid_window(i, &other)),
-    }
-}
+fn f_window_size_fixed_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match arg(&a, 0) {
+    Value::Nil | Value::Window(_) => Ok(Value::Nil),
+    other => Err(err_not_valid_window(i, &other)),
+} }
 
 /// `truncated-partial-width-window-p' — nil; GNU checks the window
 /// is live with the plain "not a live window" error.
-fn f_truncated_partial_width(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Window(_) => Ok(Value::Nil),
-        other => Err(err_not_live_window(i, &other)),
-    }
-}
+fn f_truncated_partial_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match arg(&a, 0) {
+    Value::Nil | Value::Window(_) => Ok(Value::Nil),
+    other => Err(err_not_live_window(i, &other)),
+} }
 
 /// `window-mode-line-height' — 1 on tty; GNU uses a typed
 /// `window-live-p' check here (unlike the predicates above).
-fn f_window_mode_line_height(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match &arg(&a, 0) {
-        Value::Nil => Ok(Value::Int(1)),
-        Value::Window(w) => {
-            // The minibuffer window has no mode line.
-            let wb = w.borrow();
-            Ok(Value::Int(if wb.minibuffer || wb.horiz.is_some() { 0 } else { 1 }))
-        }
-        other => Err(i.wrong_type_mut("window-live-p", other)),
+fn f_window_mode_line_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match &arg(&a, 0) {
+    Value::Nil => Ok(Value::Int(1)),
+    Value::Window(w) => {
+        // The minibuffer window has no mode line.
+        let wb = w.borrow();
+        Ok(Value::Int(if wb.minibuffer || wb.horiz.is_some() { 0 } else { 1 }))
     }
-}
+    other => Err(i.wrong_type_mut("window-live-p", other)),
+} }
 
 /// `frame-ancestor-p' — both args must be live frames; our single
 /// frame is no one's ancestor.
-fn f_frame_ancestor_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    for v in &a[..2] {
-        match v {
-            Value::Frame(_) => {}
-            other => return Err(i.wrong_type_mut("frame-live-p", other)),
-        }
+fn f_frame_ancestor_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { for v in &a[..2] {
+    match v {
+        Value::Frame(_) => {}
+        other => return Err(i.wrong_type_mut("frame-live-p", other)),
     }
-    Ok(Value::Nil)
 }
+Ok(Value::Nil) }
 
 /// `set-window-new-normal' — window-valid-p check (nil means the
 /// selected window); GNU returns the SIZE argument (nil when omitted).
-fn f_set_window_new_normal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match &a[0] {
-        Value::Nil | Value::Window(_) => Ok(arg(&a, 1)),
-        other => Err(i.wrong_type_mut("window-valid-p", other)),
-    }
-}
+fn f_set_window_new_normal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match &a[0] {
+    Value::Nil | Value::Window(_) => Ok(arg(&a, 1)),
+    other => Err(i.wrong_type_mut("window-valid-p", other)),
+} }
 
 /// `set-window-new-pixel' — window-valid-p check, then nil.
-fn f_set_window_new_pixel(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match &a[0] {
-        Value::Nil | Value::Window(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("window-valid-p", other)),
-    }
-}
+fn f_set_window_new_pixel(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match &a[0] {
+    Value::Nil | Value::Window(_) => Ok(Value::Nil),
+    other => Err(i.wrong_type_mut("window-valid-p", other)),
+} }
 
 /// `set-window-combination-limit' — sets the flag on an internal
 /// window; GNU signals a plain error on leaves.
-fn f_set_window_combination_limit(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match &a[0] {
-        Value::Window(w) if !w.borrow().dead => {
-            if w.borrow().horiz.is_some() {
-                w.borrow_mut().combination_limit = arg(&a, 1).truthy();
-                Ok(arg(&a, 1))
-            } else {
-                Err(i.error("Combination limit is meaningful for internal windows only"))
-            }
+fn f_set_window_combination_limit(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match &a[0] {
+    Value::Window(w) if !w.borrow().dead => {
+        if w.borrow().horiz.is_some() {
+            w.borrow_mut().combination_limit = arg(&a, 1).truthy();
+            Ok(arg(&a, 1))
+        } else {
+            Err(i.error("Combination limit is meaningful for internal windows only"))
         }
-        _ => Err(i.error("Combination limit is meaningful for internal windows only")),
     }
-}
+    _ => Err(i.error("Combination limit is meaningful for internal windows only")),
+} }
 
 /// `window-next-buffers' — list of buffers recorded by
 /// `unrecord-window-buffer'/quit-restore; nil selects the selected
 /// window.
-fn f_window_next_buffers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = match arg(&a, 0) {
-        Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
-        other => win_of(i, &other)?,
-    };
-    Ok(w.borrow().next_buffers.clone())
-}
+fn f_window_next_buffers(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = match arg(&a, 0) {
+    Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
+    other => win_of(i, &other)?,
+};
+Ok(w.borrow().next_buffers.clone()) }
 
 /// `window-prev-buffers' — list of `(buffer start point)' entries
 /// for buffers previously shown in WINDOW.
-fn f_window_prev_buffers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = match arg(&a, 0) {
-        Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
-        other => win_of(i, &other)?,
-    };
-    Ok(w.borrow().prev_buffers.clone())
-}
+fn f_window_prev_buffers(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = match arg(&a, 0) {
+    Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
+    other => win_of(i, &other)?,
+};
+Ok(w.borrow().prev_buffers.clone()) }
 
 /// `set-window-next-buffers' — replace WINDOW's next-buffers list.
-fn f_set_window_next_buffers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = match &a[0] {
-        Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
-        other => win_of(i, other)?,
-    };
-    w.borrow_mut().next_buffers = arg(&a, 1);
-    Ok(Value::Nil)
-}
+fn f_set_window_next_buffers(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = match &a[0] {
+    Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
+    other => win_of(i, other)?,
+};
+w.borrow_mut().next_buffers = arg(&a, 1);
+Ok(Value::Nil) }
 
 /// `set-window-prev-buffers' — replace WINDOW's prev-buffers list.
-fn f_set_window_prev_buffers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = match &a[0] {
-        Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
-        other => win_of(i, other)?,
-    };
-    w.borrow_mut().prev_buffers = arg(&a, 1);
-    Ok(Value::Nil)
-}
+fn f_set_window_prev_buffers(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = match &a[0] {
+    Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
+    other => win_of(i, other)?,
+};
+w.borrow_mut().prev_buffers = arg(&a, 1);
+Ok(Value::Nil) }
 
 /// `set-window-margins' — window-live-p check (nil = selected
 /// window), stores the margin widths on the window; GNU returns t.
-fn f_set_window_margins(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = match &a[0] {
-        Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
-        Value::Window(w) => w.clone(),
-        other => return Err(i.wrong_type_mut("window-live-p", other)),
-    };
-    let l = arg(&a, 1).int().unwrap_or(0).max(0) as usize;
-    let r = arg(&a, 2).int().unwrap_or(0).max(0) as usize;
-    w.borrow_mut().margins = (l, r);
-    Ok(Value::t())
-}
+fn f_set_window_margins(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = match &a[0] {
+    Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
+    Value::Window(w) => w.clone(),
+    other => return Err(i.wrong_type_mut("window-live-p", other)),
+};
+let l = arg(&a, 1).int().unwrap_or(0).max(0) as usize;
+let r = arg(&a, 2).int().unwrap_or(0).max(0) as usize;
+w.borrow_mut().margins = (l, r);
+Ok(Value::t()) }
 
 /// `set-window-fringes' — window-live-p check; GNU returns t.
-fn f_set_window_fringes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match &a[0] {
-        Value::Nil | Value::Window(_) => Ok(Value::t()),
-        other => Err(i.wrong_type_mut("window-live-p", &other)),
-    }
-}
+fn f_set_window_fringes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match &a[0] {
+    Value::Nil | Value::Window(_) => Ok(Value::t()),
+    other => Err(i.wrong_type_mut("window-live-p", &other)),
+} }
 
 /// `set-window-scroll-bars' — window-live-p check; GNU returns nil.
-fn f_set_window_scroll_bars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match &a[0] {
-        Value::Nil | Value::Window(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("window-live-p", &other)),
-    }
-}
+fn f_set_window_scroll_bars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match &a[0] {
+    Value::Nil | Value::Window(_) => Ok(Value::Nil),
+    other => Err(i.wrong_type_mut("window-live-p", &other)),
+} }
 
 /// `raise-frame'/`lower-frame'/`iconify-frame' — frame-live-p check,
 /// then nil (no window manager to talk to).
-fn f_frame_live_nil(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Frame(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("frame-live-p", &other)),
-    }
-}
+fn f_frame_live_nil(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match arg(&a, 0) {
+    Value::Nil | Value::Frame(_) => Ok(Value::Nil),
+    other => Err(i.wrong_type_mut("frame-live-p", &other)),
+} }
 
 /// `frame-after-make-frame' — GNU checks FRAME with frame-live-p
 /// and returns the VALUE flag.
-fn f_frame_after_make_frame(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match &a[0] {
-        Value::Frame(_) => Ok(arg(&a, 1)),
-        other => Err(i.wrong_type_mut("frame-live-p", other)),
-    }
-}
+fn f_frame_after_make_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match &a[0] {
+    Value::Frame(_) => Ok(arg(&a, 1)),
+    other => Err(i.wrong_type_mut("frame-live-p", other)),
+} }
 
 /// `frame--set-was-invisible' — frame-live-p check on FRAME; GNU
 /// returns WAS-INVISIBLE.
-fn f_frame_set_was_invisible(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match &a[0] {
-        Value::Frame(_) => Ok(arg(&a, 1)),
-        other => Err(i.wrong_type_mut("frame-live-p", other)),
-    }
-}
+fn f_frame_set_was_invisible(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match &a[0] {
+    Value::Frame(_) => Ok(arg(&a, 1)),
+    other => Err(i.wrong_type_mut("frame-live-p", other)),
+} }
 
 /// `redirect-frame-focus' — GNU checks both args with framep; the
 /// redirect itself is a display detail we don't model.
-fn f_redirect_frame_focus(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    for v in &a[..2] {
-        match v {
-            Value::Nil | Value::Frame(_) => {}
-            other => return Err(i.wrong_type_mut("framep", other)),
-        }
+fn f_redirect_frame_focus(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { for v in &a[..2] {
+    match v {
+        Value::Nil | Value::Frame(_) => {}
+        other => return Err(i.wrong_type_mut("framep", other)),
     }
-    Ok(Value::Nil)
 }
+Ok(Value::Nil) }
 
 /// `tty-find-type' — GNU funcalls the first argument; a non-callable
 /// one raises `invalid-function'.
-fn f_tty_find_type(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let callable = match &a[0] {
-        Value::Sym(s) => i.fbound_p(*s),
-        Value::Lambda(_) | Value::Subr(_) => true,
-        _ => false,
-    };
-    if !callable {
-        let s = i.intern("invalid-function");
-        return Err(i.signal_data(s, vec![a[0].clone()]));
-    }
-    i.apply(&a[0], vec![a[1].clone()])
+fn f_tty_find_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let callable = match &a[0] {
+    Value::Sym(s) => i.fbound_p(*s),
+    Value::Lambda(_) | Value::Subr(_) => true,
+    _ => false,
+};
+if !callable {
+    let s = i.intern("invalid-function");
+    return Err(i.signal_data(s, vec![a[0].clone()]));
 }
+i.apply(&a[0], vec![a[1].clone()]) }
 
 /// The terminal parameter alist: GNU's tty defaults, seeded lazily so
 /// `set-terminal-parameter' can overwrite them.
@@ -1853,183 +1664,147 @@ fn param_eq(a: &Value, b: &Value) -> bool {
     }
 }
 
-fn f_terminal_parameters(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = want_terminal_live(i, &arg(&a, 0))?;
-    let entries = terminal_params(i)
-        .iter()
-        .map(|(k, v)| Value::cons(k.clone(), v.clone()))
-        .collect();
-    Ok(Value::list(entries))
-}
+fn f_terminal_parameters(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let _ = want_terminal_live(i, &arg(&a, 0))?;
+let entries = terminal_params(i)
+    .iter()
+    .map(|(k, v)| Value::cons(k.clone(), v.clone()))
+    .collect();
+Ok(Value::list(entries)) }
 
-fn f_terminal_parameter(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = want_terminal_live(i, &a[0])?;
-    // assq over the alist.
-    for (k, v) in terminal_params(i) {
-        if param_eq(k, &a[1]) {
-            return Ok(v.clone());
-        }
+fn f_terminal_parameter(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let _ = want_terminal_live(i, &a[0])?;
+// assq over the alist.
+for (k, v) in terminal_params(i) {
+    if param_eq(k, &a[1]) {
+        return Ok(v.clone());
     }
-    Ok(Value::Nil)
 }
+Ok(Value::Nil) }
 
 /// `set-terminal-parameter` — set/overwrite a parameter on the
 /// terminal's alist.
-fn f_set_terminal_parameter(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = want_terminal_live(i, &a[0])?;
-    let _ = terminal_params(i);
-    for entry in i.terminal_params.iter_mut() {
-        if param_eq(&entry.0, &a[1]) {
-            entry.1 = a[2].clone();
-            return Ok(Value::Nil);
-        }
-    }
-    i.terminal_params.push((a[1].clone(), a[2].clone()));
-    Ok(Value::Nil)
-}
-
-fn f_frame_face_hash_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Validate FRAME like GNU (frame-live-p), then hand back a hash
-    // table of the frame's faces: symbol → lface vector
-    // [face ATTR...] — `frame-face-alist' maphashes over this.
-    if let Some(v) = a.first() {
-        match v {
-            Value::Nil | Value::Frame(_) => {}
-            other => return Err(i.wrong_type_mut("frame-live-p", other)),
-        }
-    }
-    use crate::lisp::value::{HashTest, LispHash};
-    let mut h = LispHash::new(HashTest::Eq);
-    let un = Value::Sym(i.intern("unspecified"));
-    let names: Vec<String> = crate::editor::KNOWN_FACES
-        .iter()
-        .map(|s| s.to_string())
-        .chain(i.face_table.iter().map(|(n, _)| n.clone()))
-        .collect();
-    for n in names {
-        let sym = Value::Sym(i.intern(&n));
-        let key = crate::lisp::builtins::hashfn::hash_key_for(i, &sym, HashTest::Eq);
-        let mut v = Vec::with_capacity(20);
-        v.push(Value::Sym(i.intern("face")));
-        v.resize(20, un.clone());
-        h.map.insert(key.clone(), Value::Vec(Rc::new(RefCell::new(v))));
-        h.put_key(key, sym);
-    }
-    Ok(Value::Hash(Rc::new(RefCell::new(h))))
-}
-
-/// `controlling-tty-p' — GNU validates the optional TERMINAL with
-/// terminal-live-p; in batch we are never the controlling tty → nil.
-fn f_controlling_tty_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil => Ok(Value::Nil),
-        v if is_terminal(i, &v) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("terminal-live-p", &other)),
+fn f_set_terminal_parameter(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let _ = want_terminal_live(i, &a[0])?;
+let _ = terminal_params(i);
+for entry in i.terminal_params.iter_mut() {
+    if param_eq(&entry.0, &a[1]) {
+        entry.1 = a[2].clone();
+        return Ok(Value::Nil);
     }
 }
+i.terminal_params.push((a[1].clone(), a[2].clone()));
+Ok(Value::Nil) }
 
-fn f_terminal_live_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Our only terminal is the singleton record (nil = default
-    // terminal); a live frame means its terminal is live.
-    Ok(Value::from_bool(match &a[0] {
-        Value::Nil => true,
-        Value::Frame(f) => !f.borrow().dead,
-        v => is_terminal(i, v),
-    }))
-}
-
-fn f_uncombine_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // nil = selected window; nothing to uncombine in batch → nil.
-    match &a[0] {
-        Value::Nil | Value::Window(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("window-valid-p", other)),
-    }
-}
-
-fn f_combine_windows(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match &a[0] {
-        Value::Window(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("window-valid-p", other)),
-    }
-}
-
-fn f_terminal_list(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::list(vec![terminal_token(i)]))
-}
-
-/// `window-text-pixel-size' — fixed-pitch model: (WIDTH . HEIGHT)
-/// in pixels; MODE-AND-HEADER-LINE arg adds the header rows (1).
-fn f_window_text_pixel_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if let Some(v) = a.first() {
-        match v {
-            Value::Nil | Value::Window(_) => {}
-            other => return Err(i.wrong_type_mut("window-live-p", other)),
-        }
-    }
-    // Nothing has ever been displayed in batch: the text area is
-    // degenerate (0 . 0) no matter the arguments.
-    Ok(Value::cons(Value::Int(0), Value::Int(0)))
-}
-
-/// tty output-buffer helpers on a non-tty terminal → GNU error.
-fn f_not_tty(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Err(i.error("Not a tty terminal"))
-}
-
-/// `make-frame-invisible' — our batch frame is always the sole
-/// visible frame → GNU's error.
-fn f_make_frame_invisible(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if let Some(v) = a.first() {
-        match v {
-            Value::Nil | Value::Frame(_) => {}
-            other => return Err(i.wrong_type_mut("frame-live-p", other)),
-        }
-    }
-    Err(i.error("Attempt to make invisible the sole visible or iconified frame"))
-}
-
-/// `reconsider-frame-fonts' — frame check, then GNU's non-wsi error.
-fn f_reconsider_frame_fonts(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match &a[0] {
+fn f_frame_face_hash_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // Validate FRAME like GNU (frame-live-p), then hand back a hash
+// table of the frame's faces: symbol → lface vector
+// [face ATTR...] — `frame-face-alist' maphashes over this.
+if let Some(v) = a.first() {
+    match v {
         Value::Nil | Value::Frame(_) => {}
         other => return Err(i.wrong_type_mut("frame-live-p", other)),
     }
-    Err(i.error("Window system frame should be used"))
 }
-
-fn f_terminal_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = want_terminal_live(i, &arg(&a, 0))?;
-    Ok(Value::string("initial_terminal"))
+use crate::lisp::value::{HashTest, LispHash};
+let mut h = LispHash::new(HashTest::Eq);
+let un = Value::Sym(i.intern("unspecified"));
+let names: Vec<String> = crate::editor::KNOWN_FACES
+    .iter()
+    .map(|s| s.to_string())
+    .chain(i.face_table.iter().map(|(n, _)| n.clone()))
+    .collect();
+for n in names {
+    let sym = Value::Sym(i.intern(&n));
+    let key = crate::lisp::builtins::hashfn::hash_key_for(i, &sym, HashTest::Eq);
+    let mut v = Vec::with_capacity(20);
+    v.push(Value::Sym(i.intern("face")));
+    v.resize(20, un.clone());
+    h.map.insert(key.clone(), Value::Vec(Rc::new(RefCell::new(v))));
+    h.put_key(key, sym);
 }
+Ok(Value::Hash(Rc::new(RefCell::new(h)))) }
 
-fn f_set_window_new_total(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = win_of(i, &arg(&a, 0))?;
-    let n = want_int(i, &a[1])?;
-    w.borrow_mut().height = n.max(1) as usize;
-    Ok(Value::Nil)
-}
+/// `controlling-tty-p' — GNU validates the optional TERMINAL with
+/// terminal-live-p; in batch we are never the controlling tty → nil.
+fn f_controlling_tty_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match arg(&a, 0) {
+    Value::Nil => Ok(Value::Nil),
+    v if is_terminal(i, &v) => Ok(Value::Nil),
+    other => Err(i.wrong_type_mut("terminal-live-p", &other)),
+} }
 
-fn f_frame_pointer_visible_p(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::t())
-}
+fn f_terminal_live_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // Our only terminal is the singleton record (nil = default
+// terminal); a live frame means its terminal is live.
+Ok(Value::from_bool(match &a[0] {
+    Value::Nil => true,
+    Value::Frame(f) => !f.borrow().dead,
+    v => is_terminal(i, v),
+})) }
 
-fn f_x_focus_frame(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU errors "Cannot switch to an invisible frame" etc. in batch;
-    // on a lone tty frame any arg raises `error'.
-    let _ = a;
-    let sym = i.intern("error");
-    Err(i.signal_data(
-        sym,
-        vec![Value::string("Window system frame should be used")],
-    ))
-}
+fn f_uncombine_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // nil = selected window; nothing to uncombine in batch → nil.
+match &a[0] {
+    Value::Nil | Value::Window(_) => Ok(Value::Nil),
+    other => Err(i.wrong_type_mut("window-valid-p", other)),
+} }
 
-fn f_make_frame_visible(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match &arg(&a, 0) {
-        Value::Frame(_) => Ok(a[0].clone()),
-        _ => match crate::editor::sel_frame(i) {
-            Some(f) => Ok(Value::Frame(f)),
-            None => Ok(Value::Nil),
-        },
+fn f_combine_windows(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match &a[0] {
+    Value::Window(_) => Ok(Value::Nil),
+    other => Err(i.wrong_type_mut("window-valid-p", other)),
+} }
+
+fn f_terminal_list(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { Ok(Value::list(vec![terminal_token(i)])) }
+
+/// `window-text-pixel-size' — fixed-pitch model: (WIDTH . HEIGHT)
+/// in pixels; MODE-AND-HEADER-LINE arg adds the header rows (1).
+fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if let Some(v) = a.first() {
+    match v {
+        Value::Nil | Value::Window(_) => {}
+        other => return Err(i.wrong_type_mut("window-live-p", other)),
     }
 }
+// Nothing has ever been displayed in batch: the text area is
+// degenerate (0 . 0) no matter the arguments.
+Ok(Value::cons(Value::Int(0), Value::Int(0))) }
+
+/// tty output-buffer helpers on a non-tty terminal → GNU error.
+fn f_not_tty(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { Err(i.error("Not a tty terminal")) }
+
+/// `make-frame-invisible' — our batch frame is always the sole
+/// visible frame → GNU's error.
+fn f_make_frame_invisible(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if let Some(v) = a.first() {
+    match v {
+        Value::Nil | Value::Frame(_) => {}
+        other => return Err(i.wrong_type_mut("frame-live-p", other)),
+    }
+}
+Err(i.error("Attempt to make invisible the sole visible or iconified frame")) }
+
+/// `reconsider-frame-fonts' — frame check, then GNU's non-wsi error.
+fn f_reconsider_frame_fonts(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match &a[0] {
+    Value::Nil | Value::Frame(_) => {}
+    other => return Err(i.wrong_type_mut("frame-live-p", other)),
+}
+Err(i.error("Window system frame should be used")) }
+
+fn f_terminal_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let _ = want_terminal_live(i, &arg(&a, 0))?;
+Ok(Value::string("initial_terminal")) }
+
+fn f_set_window_new_total(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let w = win_of(i, &arg(&a, 0))?;
+let n = want_int(i, &a[1])?;
+w.borrow_mut().height = n.max(1) as usize;
+Ok(Value::Nil) }
+
+fn f_frame_pointer_visible_p(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { Ok(Value::t()) }
+
+fn f_x_focus_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU errors "Cannot switch to an invisible frame" etc. in batch;
+// on a lone tty frame any arg raises `error'.
+let _ = a;
+let sym = i.intern("error");
+Err(i.signal_data(
+    sym,
+    vec![Value::string("Window system frame should be used")],
+)) }
+
+fn f_make_frame_visible(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match &arg(&a, 0) {
+    Value::Frame(_) => Ok(a[0].clone()),
+    _ => match crate::editor::sel_frame(i) {
+        Some(f) => Ok(Value::Frame(f)),
+        None => Ok(Value::Nil),
+    },
+} }

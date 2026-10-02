@@ -204,10 +204,8 @@ fn ax_trusted() -> Option<AxTrusted> {
     })
 }
 
-fn f_ns_process_is_accessibility_trusted(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let ok = ax_trusted().map(|f| unsafe { f() } != 0).unwrap_or(false);
-    Ok(Value::from_bool(ok))
-}
+fn f_ns_process_is_accessibility_trusted(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { let ok = ax_trusted().map(|f| unsafe { f() } != 0).unwrap_or(false);
+Ok(Value::from_bool(ok)) }
 
 // ---------------------------------------------------------------------------
 // Pure-string helpers
@@ -217,151 +215,143 @@ fn f_ns_process_is_accessibility_trusted(_i: &mut Interp, _a: Vec<Value>) -> Eva
 /// fontset names other than `fontset-startup') pass through; otherwise
 /// the XLFD family field is extracted, `$'→`-', `_'→` ', and
 /// first/after-separator letters are uppercased.  Empty → "Monaco".
-fn f_ns_font_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let name = match &a[0] {
-        Value::Str(s) => s.borrow().clone(),
-        _ => return Err(i.wrong_type_mut("stringp", &a[0])),
-    };
-    if !name.starts_with('-') {
-        return Ok(a[0].clone());
-    }
-    if name.contains("fontset") && !name.contains("fontset-startup") {
-        return Ok(a[0].clone());
-    }
-    // `-%*[^-]-%179[^-]-' (or `--' prefixed): family = 2nd field.
-    let body = name.trim_start_matches('-');
-    let family = body.split('-').nth(1).unwrap_or("");
-    let mut fam: String = if family.is_empty() {
-        "Monaco".to_string()
-    } else {
-        family.chars().take(179).collect()
-    };
-    // Uppercase the first char.
-    fam = {
-        let mut it = fam.chars();
-        match it.next() {
-            Some(c0) => c0.to_uppercase().collect::<String>() + it.as_str(),
-            None => fam,
-        }
-    };
-    // `$'→`-', `_'→` ', uppercasing the following char.
-    let bytes = fam.as_bytes().to_vec();
-    let mut out = String::with_capacity(fam.len());
-    let mut upcase_next = false;
-    for (idx, &b) in bytes.iter().enumerate() {
-        let ch = b as char;
-        if ch == '$' || ch == '_' {
-            out.push(if ch == '$' { '-' } else { ' ' });
-            upcase_next = true;
-            continue;
-        }
-        if upcase_next && idx > 0 {
-            for u in ch.to_uppercase() {
-                out.push(u);
-            }
-            upcase_next = false;
-        } else {
-            out.push(ch);
-        }
-    }
-    Ok(Value::string(out))
+fn f_ns_font_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let name = match &a[0] {
+    Value::Str(s) => s.borrow().clone(),
+    _ => return Err(i.wrong_type_mut("stringp", &a[0])),
+};
+if !name.starts_with('-') {
+    return Ok(a[0].clone());
 }
+if name.contains("fontset") && !name.contains("fontset-startup") {
+    return Ok(a[0].clone());
+}
+// `-%*[^-]-%179[^-]-' (or `--' prefixed): family = 2nd field.
+let body = name.trim_start_matches('-');
+let family = body.split('-').nth(1).unwrap_or("");
+let mut fam: String = if family.is_empty() {
+    "Monaco".to_string()
+} else {
+    family.chars().take(179).collect()
+};
+// Uppercase the first char.
+fam = {
+    let mut it = fam.chars();
+    match it.next() {
+        Some(c0) => c0.to_uppercase().collect::<String>() + it.as_str(),
+        None => fam,
+    }
+};
+// `$'→`-', `_'→` ', uppercasing the following char.
+let bytes = fam.as_bytes().to_vec();
+let mut out = String::with_capacity(fam.len());
+let mut upcase_next = false;
+for (idx, &b) in bytes.iter().enumerate() {
+    let ch = b as char;
+    if ch == '$' || ch == '_' {
+        out.push(if ch == '$' { '-' } else { ' ' });
+        upcase_next = true;
+        continue;
+    }
+    if upcase_next && idx > 0 {
+        for u in ch.to_uppercase() {
+            out.push(u);
+        }
+        upcase_next = false;
+    } else {
+        out.push(ch);
+    }
+}
+Ok(Value::string(out)) }
 
 // ---------------------------------------------------------------------------
 // Dock-tile / process activity (real implementations)
 // ---------------------------------------------------------------------------
 
-fn f_ns_list_colors(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU checks FRAMEP (a live frame) when the arg is non-nil.
-    if let Some(v) = a.first() {
-        if !v.is_nil() && !matches!(v, Value::Frame(_)) {
-            return Err(i.wrong_type_mut("framep", v));
-        }
+fn f_ns_list_colors(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU checks FRAMEP (a live frame) when the arg is non-nil.
+if let Some(v) = a.first() {
+    if !v.is_nil() && !matches!(v, Value::Frame(_)) {
+        return Err(i.wrong_type_mut("framep", v));
     }
-    let Some(o) = objc() else {
-        return Err(i.error("Window system is not in use or not initialized"));
-    };
-    Ok(with_pool(o, |o| {
-        let mut list = Value::Nil;
-        unsafe {
-            let lists = (o.id0)(cls(o, "NSColorList"), sel(o, "availableColorLists"));
-            let n = (o.int0)(lists, sel(o, "count"));
-            for k in 0..n {
-                let clist = (o.id1)(lists, sel(o, "objectAtIndex:"), k as usize);
-                if clist == 0 {
-                    continue;
-                }
-                let lname = (o.id0)(clist, sel(o, "name"));
-                let len = (o.int0)(lname, sel(o, "length"));
-                // GNU: include when name < 7 chars or starts "PANTONE".
-                let pantone = ns_str(o, "PANTONE");
-                let range = (o.range1)(lname, sel(o, "rangeOfString:"), pantone);
-                if !(len < 7 || range.location == 0) {
-                    continue;
-                }
-                let keys = (o.id0)(clist, sel(o, "allKeys"));
-                let nk = (o.int0)(keys, sel(o, "count"));
-                // GNU pushes `reverseObjectEnumerator' order → result is
-                // forward allKeys order.
-                for j in (0..nk).rev() {
-                    let key = (o.id1)(keys, sel(o, "objectAtIndex:"), j as usize);
-                    list = Value::cons(Value::string(utf8(o, key)), list);
-                }
+}
+let Some(o) = objc() else {
+    return Err(i.error("Window system is not in use or not initialized"));
+};
+Ok(with_pool(o, |o| {
+    let mut list = Value::Nil;
+    unsafe {
+        let lists = (o.id0)(cls(o, "NSColorList"), sel(o, "availableColorLists"));
+        let n = (o.int0)(lists, sel(o, "count"));
+        for k in 0..n {
+            let clist = (o.id1)(lists, sel(o, "objectAtIndex:"), k as usize);
+            if clist == 0 {
+                continue;
+            }
+            let lname = (o.id0)(clist, sel(o, "name"));
+            let len = (o.int0)(lname, sel(o, "length"));
+            // GNU: include when name < 7 chars or starts "PANTONE".
+            let pantone = ns_str(o, "PANTONE");
+            let range = (o.range1)(lname, sel(o, "rangeOfString:"), pantone);
+            if !(len < 7 || range.location == 0) {
+                continue;
+            }
+            let keys = (o.id0)(clist, sel(o, "allKeys"));
+            let nk = (o.int0)(keys, sel(o, "count"));
+            // GNU pushes `reverseObjectEnumerator' order → result is
+            // forward allKeys order.
+            for j in (0..nk).rev() {
+                let key = (o.id1)(keys, sel(o, "objectAtIndex:"), j as usize);
+                list = Value::cons(Value::string(utf8(o, key)), list);
             }
         }
-        list
-    }))
-}
-
-fn f_ns_badge(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if !a[0].is_nil() {
-        if !matches!(a[0], Value::Str(_)) {
-            return Err(i.wrong_type_mut("stringp", &a[0]));
-        }
     }
-    let Some(o) = objc() else {
-        return Err(i.error("Window system is not in use or not initialized"));
-    };
-    with_pool(o, |o| unsafe {
-        let dock = (o.id0)(ns_app(o), sel(o, "dockTile"));
-        let label = match &a[0] {
-            Value::Str(s) => ns_str(o, &s.borrow()),
-            _ => 0,
-        };
-        (o.void1)(dock, sel(o, "setBadgeLabel:"), label);
-    });
-    Ok(Value::Nil)
+    list
+})) }
+
+fn f_ns_badge(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if !a[0].is_nil() {
+    if !matches!(a[0], Value::Str(_)) {
+        return Err(i.wrong_type_mut("stringp", &a[0]));
+    }
 }
+let Some(o) = objc() else {
+    return Err(i.error("Window system is not in use or not initialized"));
+};
+with_pool(o, |o| unsafe {
+    let dock = (o.id0)(ns_app(o), sel(o, "dockTile"));
+    let label = match &a[0] {
+        Value::Str(s) => ns_str(o, &s.borrow()),
+        _ => 0,
+    };
+    (o.void1)(dock, sel(o, "setBadgeLabel:"), label);
+});
+Ok(Value::Nil) }
 
 static ATTENTION_ID: std::sync::Mutex<i64> = std::sync::Mutex::new(-1);
 
-fn f_ns_request_user_attention(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let Some(o) = objc() else {
-        return Err(i.error("Window system is not in use or not initialized"));
-    };
-    let (is_sym, name) = match &a[0] {
-        Value::Sym(s) => (true, i.symbol_name(*s).to_string()),
-        _ => (false, String::new()),
-    };
-    with_pool(o, |o| unsafe {
-        let app = ns_app(o);
-        let mut guard = ATTENTION_ID.lock().unwrap();
-        if *guard != -1 {
-            (o.void1)(app, sel(o, "cancelUserAttentionRequest:"), *guard as usize);
-            *guard = -1;
-        }
-        if is_sym {
-            let kind: i64 = match name.as_str() {
-                // NSCriticalRequest = 0, NSInformationalRequest = 10.
-                "critical" => 0,
-                "informational" => 10,
-                _ => return,
-            };
-            *guard = (o.int1)(app, sel(o, "requestUserAttention:"), kind as usize);
-        }
-    });
-    Ok(Value::Nil)
-}
+fn f_ns_request_user_attention(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let Some(o) = objc() else {
+    return Err(i.error("Window system is not in use or not initialized"));
+};
+let (is_sym, name) = match &a[0] {
+    Value::Sym(s) => (true, i.symbol_name(*s).to_string()),
+    _ => (false, String::new()),
+};
+with_pool(o, |o| unsafe {
+    let app = ns_app(o);
+    let mut guard = ATTENTION_ID.lock().unwrap();
+    if *guard != -1 {
+        (o.void1)(app, sel(o, "cancelUserAttentionRequest:"), *guard as usize);
+        *guard = -1;
+    }
+    if is_sym {
+        let kind: i64 = match name.as_str() {
+            // NSCriticalRequest = 0, NSInformationalRequest = 10.
+            "critical" => 0,
+            "informational" => 10,
+            _ => return,
+        };
+        *guard = (o.int1)(app, sel(o, "requestUserAttention:"), kind as usize);
+    }
+});
+Ok(Value::Nil) }
 
 /// Sleep-block tokens → NSProcessInfo activity objects.
 static SLEEP_MAP: OnceLock<std::sync::Mutex<HashMap<u64, usize>>> = OnceLock::new();
@@ -371,148 +361,142 @@ fn sleep_map() -> &'static std::sync::Mutex<HashMap<u64, usize>> {
     SLEEP_MAP.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
 }
 
-fn f_ns_block_system_sleep(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let why = match &a[0] {
-        Value::Nil => None,
-        Value::Str(s) => Some(s.borrow().clone()),
-        _ => return Err(i.wrong_type_mut("stringp", &a[0])),
-    };
-    let Some(o) = objc() else {
-        return Ok(Value::Nil);
-    };
-    let token = with_pool(o, |o| unsafe {
-        let pi = (o.id0)(cls(o, "NSProcessInfo"), sel(o, "processInfo"));
-        if pi == 0 {
-            return 0usize;
-        }
-        // NSActivityUserInitiated | NSActivityIdleSystemSleepDisabled,
-        // | NSActivityIdleDisplaySleepDisabled when arg is nil.
-        let mut opts: u64 = (1u64 << 40) | 0x00FF_FFFF;
-        if a[1].is_nil() {
-            opts |= 1u64 << 46;
-        }
-        let reason = ns_str(o, why.as_deref().unwrap_or("Emacs"));
-        let act = (o.u64_2)(pi, sel(o, "beginActivityWithOptions:reason:"), opts, reason);
-        // The activity object is autoreleased; keep it alive past the
-        // pool pop so `endActivity:' can use it later.
-        if act != 0 {
-            (o.id0)(act, sel(o, "retain"))
-        } else {
-            0
-        }
-    });
-    if token == 0 {
-        return Ok(Value::Nil);
+fn f_ns_block_system_sleep(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let why = match &a[0] {
+    Value::Nil => None,
+    Value::Str(s) => Some(s.borrow().clone()),
+    _ => return Err(i.wrong_type_mut("stringp", &a[0])),
+};
+let Some(o) = objc() else {
+    return Ok(Value::Nil);
+};
+let token = with_pool(o, |o| unsafe {
+    let pi = (o.id0)(cls(o, "NSProcessInfo"), sel(o, "processInfo"));
+    if pi == 0 {
+        return 0usize;
     }
-    let mut guard = SLEEP_ID.lock().unwrap();
-    *guard += 1;
-    sleep_map().lock().unwrap().insert(*guard, token);
-    Ok(Value::Int(*guard as i128))
-}
-
-fn f_ns_unblock_system_sleep(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let tok = match &a[0] {
-        Value::Int(n) if *n >= 0 => *n as u64,
-        _ => return Err(i.wrong_type_mut("wholenump", &a[0])),
-    };
-    let Some(o) = objc() else {
-        return Ok(Value::Nil);
-    };
-    let act = sleep_map().lock().unwrap().remove(&tok);
-    match act {
-        Some(id) => {
-            with_pool(o, |o| unsafe {
-                let pi = (o.id0)(cls(o, "NSProcessInfo"), sel(o, "processInfo"));
-                (o.void1)(pi, sel(o, "endActivity:"), id);
-                (o.void0)(id, sel(o, "release"));
-            });
-            Ok(Value::t())
-        }
-        None => Ok(Value::Nil),
+    // NSActivityUserInitiated | NSActivityIdleSystemSleepDisabled,
+    // | NSActivityIdleDisplaySleepDisabled when arg is nil.
+    let mut opts: u64 = (1u64 << 40) | 0x00FF_FFFF;
+    if a[1].is_nil() {
+        opts |= 1u64 << 46;
     }
+    let reason = ns_str(o, why.as_deref().unwrap_or("Emacs"));
+    let act = (o.u64_2)(pi, sel(o, "beginActivityWithOptions:reason:"), opts, reason);
+    // The activity object is autoreleased; keep it alive past the
+    // pool pop so `endActivity:' can use it later.
+    if act != 0 {
+        (o.id0)(act, sel(o, "retain"))
+    } else {
+        0
+    }
+});
+if token == 0 {
+    return Ok(Value::Nil);
 }
+let mut guard = SLEEP_ID.lock().unwrap();
+*guard += 1;
+sleep_map().lock().unwrap().insert(*guard, token);
+Ok(Value::Int(*guard as i128)) }
 
-fn f_ns_progress_indicator(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let Some(o) = objc() else {
-        return Ok(Value::Nil);
-    };
-    with_pool(o, |o| unsafe {
-        let dock = (o.id0)(ns_app(o), sel(o, "dockTile"));
-        if dock == 0 {
-            return;
-        }
-        let content = (o.id0)(dock, sel(o, "contentView"));
-        let mut indicator = 0usize;
-        if content != 0 {
-            let subs = (o.id0)(content, sel(o, "subviews"));
-            let n = (o.int0)(subs, sel(o, "count"));
-            if n > 0 {
-                let last = (o.id0)(subs, sel(o, "lastObject"));
-                let lcls = (o.id0)(last, sel(o, "class"));
-                let lname = utf8(o, (o.id0)(lcls, sel(o, "description")));
-                if lname == "NSLevelIndicator" {
-                    indicator = last;
-                }
+fn f_ns_unblock_system_sleep(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let tok = match &a[0] {
+    Value::Int(n) if *n >= 0 => *n as u64,
+    _ => return Err(i.wrong_type_mut("wholenump", &a[0])),
+};
+let Some(o) = objc() else {
+    return Ok(Value::Nil);
+};
+let act = sleep_map().lock().unwrap().remove(&tok);
+match act {
+    Some(id) => {
+        with_pool(o, |o| unsafe {
+            let pi = (o.id0)(cls(o, "NSProcessInfo"), sel(o, "processInfo"));
+            (o.void1)(pi, sel(o, "endActivity:"), id);
+            (o.void0)(id, sel(o, "release"));
+        });
+        Ok(Value::t())
+    }
+    None => Ok(Value::Nil),
+} }
+
+fn f_ns_progress_indicator(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let Some(o) = objc() else {
+    return Ok(Value::Nil);
+};
+with_pool(o, |o| unsafe {
+    let dock = (o.id0)(ns_app(o), sel(o, "dockTile"));
+    if dock == 0 {
+        return;
+    }
+    let content = (o.id0)(dock, sel(o, "contentView"));
+    let mut indicator = 0usize;
+    if content != 0 {
+        let subs = (o.id0)(content, sel(o, "subviews"));
+        let n = (o.int0)(subs, sel(o, "count"));
+        if n > 0 {
+            let last = (o.id0)(subs, sel(o, "lastObject"));
+            let lcls = (o.id0)(last, sel(o, "class"));
+            let lname = utf8(o, (o.id0)(lcls, sel(o, "description")));
+            if lname == "NSLevelIndicator" {
+                indicator = last;
             }
         }
-        if indicator == 0 {
-            let mut cv = content;
-            if cv == 0 {
-                let iv = (o.id0)(
-                    (o.id0)(cls(o, "NSImageView"), sel(o, "alloc")),
-                    sel(o, "init"),
-                );
-                let icon = (o.id0)(ns_app(o), sel(o, "applicationIconImage"));
-                (o.void1)(iv, sel(o, "setImage:"), icon);
-                (o.void1)(dock, sel(o, "setContentView:"), iv);
-                cv = iv;
-            }
-            let size = (o.size0)(
-                (o.id0)(ns_app(o), sel(o, "applicationIconImage")),
-                sel(o, "size"),
+    }
+    if indicator == 0 {
+        let mut cv = content;
+        if cv == 0 {
+            let iv = (o.id0)(
+                (o.id0)(cls(o, "NSImageView"), sel(o, "alloc")),
+                sel(o, "init"),
             );
-            let li_cls = cls(o, "NSLevelIndicator");
-            let li = (o.rect1)(
-                (o.id0)(li_cls, sel(o, "alloc")),
-                sel(o, "initWithFrame:"),
-                NsRect {
-                    x: 0.0,
-                    y: 0.0,
-                    w: size.width,
-                    h: 0.10 * size.height,
-                },
-            );
-            (o.void1)(li, sel(o, "setWantsLayer:"), 1usize);
-            (o.void1)(li, sel(o, "setEnabled:"), 0usize);
-            // NSLevelIndicatorStyleContinuousCapacity = 1.
-            (o.void1)(li, sel(o, "setLevelIndicatorStyle:"), 1usize);
-            let accent = (o.id0)(cls(o, "NSColor"), sel(o, "controlAccentColor"));
-            (o.void1)(li, sel(o, "setFillColor:"), accent);
-            (o.dbl1)(li, sel(o, "setMinValue:"), 0.0);
-            (o.dbl1)(li, sel(o, "setMaxValue:"), 1.0);
-            (o.void1)(cv, sel(o, "addSubview:"), li);
-            indicator = li;
+            let icon = (o.id0)(ns_app(o), sel(o, "applicationIconImage"));
+            (o.void1)(iv, sel(o, "setImage:"), icon);
+            (o.void1)(dock, sel(o, "setContentView:"), iv);
+            cv = iv;
         }
-        let hide = match &a[0] {
-            Value::Nil => true,
-            Value::Float(f) => !(0.0..=1.0).contains(&**f),
-            _ => true,
-        };
-        let v = match &a[0] {
-            Value::Float(f) => **f,
-            _ => 0.0,
-        };
-        if hide {
-            (o.dbl1)(indicator, sel(o, "setDoubleValue:"), 0.0);
-            (o.void1)(indicator, sel(o, "setHidden:"), 1usize);
-        } else {
-            (o.dbl1)(indicator, sel(o, "setDoubleValue:"), v);
-            (o.void1)(indicator, sel(o, "setHidden:"), 0usize);
-        }
-        (o.void0)(dock, sel(o, "display"));
-    });
-    Ok(Value::Nil)
-}
+        let size = (o.size0)(
+            (o.id0)(ns_app(o), sel(o, "applicationIconImage")),
+            sel(o, "size"),
+        );
+        let li_cls = cls(o, "NSLevelIndicator");
+        let li = (o.rect1)(
+            (o.id0)(li_cls, sel(o, "alloc")),
+            sel(o, "initWithFrame:"),
+            NsRect {
+                x: 0.0,
+                y: 0.0,
+                w: size.width,
+                h: 0.10 * size.height,
+            },
+        );
+        (o.void1)(li, sel(o, "setWantsLayer:"), 1usize);
+        (o.void1)(li, sel(o, "setEnabled:"), 0usize);
+        // NSLevelIndicatorStyleContinuousCapacity = 1.
+        (o.void1)(li, sel(o, "setLevelIndicatorStyle:"), 1usize);
+        let accent = (o.id0)(cls(o, "NSColor"), sel(o, "controlAccentColor"));
+        (o.void1)(li, sel(o, "setFillColor:"), accent);
+        (o.dbl1)(li, sel(o, "setMinValue:"), 0.0);
+        (o.dbl1)(li, sel(o, "setMaxValue:"), 1.0);
+        (o.void1)(cv, sel(o, "addSubview:"), li);
+        indicator = li;
+    }
+    let hide = match &a[0] {
+        Value::Nil => true,
+        Value::Float(f) => !(0.0..=1.0).contains(&**f),
+        _ => true,
+    };
+    let v = match &a[0] {
+        Value::Float(f) => **f,
+        _ => 0.0,
+    };
+    if hide {
+        (o.dbl1)(indicator, sel(o, "setDoubleValue:"), 0.0);
+        (o.void1)(indicator, sel(o, "setHidden:"), 1usize);
+    } else {
+        (o.dbl1)(indicator, sel(o, "setDoubleValue:"), v);
+        (o.void1)(indicator, sel(o, "setHidden:"), 0usize);
+    }
+    (o.void0)(dock, sel(o, "display"));
+});
+Ok(Value::Nil) }
 
 // ---------------------------------------------------------------------------
 // Window-system-gated functions (GNU `check_window_system' parity)
@@ -526,7 +510,7 @@ fn winsys(i: &mut Interp) -> Flow {
 
 macro_rules! winsys_fn {
     ($f:ident) => {
-        fn $f(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+        fn $f(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
             Err(winsys(i))
         }
     };
@@ -556,45 +540,33 @@ winsys_fn!(f_x_apply_session_resources);
 
 /// `ns-perform-service': GNU checks SERVICE is a string *before*
 /// `check_window_system'.
-fn f_ns_perform_service(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if !matches!(a[0], Value::Str(_)) {
-        return Err(i.wrong_type_mut("stringp", &a[0]));
-    }
-    Err(winsys(i))
+fn f_ns_perform_service(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if !matches!(a[0], Value::Str(_)) {
+    return Err(i.wrong_type_mut("stringp", &a[0]));
 }
+Err(winsys(i)) }
 
 // ---------------------------------------------------------------------------
 // nil-returning functions (GNU batch behavior)
 // ---------------------------------------------------------------------------
 
-fn f_ns_selection_exists_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU: no owned selection types without a terminal → nil.
-    let _ = (i, a);
-    Ok(Value::Nil)
-}
+fn f_ns_selection_exists_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU: no owned selection types without a terminal → nil.
+let _ = (i, a);
+Ok(Value::Nil) }
 
-fn f_ns_frame_list_z_order(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU: nil when no ns frames exist.
-    let _ = (i, a);
-    Ok(Value::Nil)
-}
+fn f_ns_frame_list_z_order(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU: nil when no ns frames exist.
+let _ = (i, a);
+Ok(Value::Nil) }
 
-fn f_ns_display_monitor_attributes_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU: nil on a terminal-only session.
-    let _ = (i, a);
-    Ok(Value::Nil)
-}
+fn f_ns_display_monitor_attributes_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU: nil on a terminal-only session.
+let _ = (i, a);
+Ok(Value::Nil) }
 
-fn f_ns_list_services(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU's NS_IMPL_COCOA branch returns nil unconditionally.
-    let _ = (i, a);
-    Ok(Value::Nil)
-}
+fn f_ns_list_services(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU's NS_IMPL_COCOA branch returns nil unconditionally.
+let _ = (i, a);
+Ok(Value::Nil) }
 
-fn f_ns_reset_menu(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = (i, a);
-    Ok(Value::Nil)
-}
+fn f_ns_reset_menu(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let _ = (i, a);
+Ok(Value::Nil) }
 
 // ---------------------------------------------------------------------------
 // Registration

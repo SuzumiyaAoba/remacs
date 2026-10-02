@@ -652,112 +652,92 @@ fn reparse(i: &mut Interp, pid: u64, buf: &BufferRef) -> Result<Vec<(usize, usiz
 // Language / library predicates
 // ---------------------------------------------------------------------------
 
-fn f_treesit_available_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = (i, a);
-    Ok(Value::t())
-}
+fn f_treesit_available_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let _ = (i, a);
+Ok(Value::t()) }
 
-fn f_language_available_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let lang = want_sym(i, &a[0])?;
-    let detail = arg(&a, 1).truthy();
-    match load_language(i, lang) {
-        Ok(_) => {
-            if detail {
-                Ok(Value::cons(Value::t(), Value::Nil))
-            } else {
-                Ok(Value::t())
-            }
-        }
-        Err((_, data)) => {
-            if detail {
-                // (nil . SIGNAL-DATA) — the data list of
-                // `treesit-load-language-error', like GNU.
-                Ok(Value::cons(Value::Nil, Value::list(data)))
-            } else {
-                Ok(Value::Nil)
-            }
+fn f_language_available_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let lang = want_sym(i, &a[0])?;
+let detail = arg(&a, 1).truthy();
+match load_language(i, lang) {
+    Ok(_) => {
+        if detail {
+            Ok(Value::cons(Value::t(), Value::Nil))
+        } else {
+            Ok(Value::t())
         }
     }
-}
-
-fn f_library_abi_version(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let min = arg(&a, 0).truthy();
-    let _ = i;
-    Ok(Value::Int(if min {
-        tree_sitter::MIN_COMPATIBLE_LANGUAGE_VERSION as i128
-    } else {
-        tree_sitter::LANGUAGE_VERSION as i128
-    }))
-}
-
-fn f_language_abi_version(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU: LANGUAGE nil → the latest ABI version this tree-sitter
-    // runtime supports.
-    if arg(&a, 0).is_nil() {
-        return Ok(Value::Int(tree_sitter::LANGUAGE_VERSION as i128));
-    }
-    let lang = want_sym(i, &a[0])?;
-    match load_language(i, lang) {
-        Ok(l) => {
-            let detail = arg(&a, 1).truthy();
-            let abi = l.language.abi_version() as i128;
-            if detail {
-                let name = l.language.name().unwrap_or("");
-                Ok(Value::cons(
-                    Value::Int(abi),
-                    Value::string(name.to_string()),
-                ))
-            } else {
-                Ok(Value::Int(abi))
-            }
+    Err((_, data)) => {
+        if detail {
+            // (nil . SIGNAL-DATA) — the data list of
+            // `treesit-load-language-error', like GNU.
+            Ok(Value::cons(Value::Nil, Value::list(data)))
+        } else {
+            Ok(Value::Nil)
         }
-        Err(_) => Ok(Value::Nil),
     }
-}
+} }
 
-fn f_grammar_location(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let lang = want_sym(i, &a[0])?;
-    match load_language(i, lang) {
-        Ok(l) => Ok(Value::string(l.path.clone())),
-        Err(_) => Ok(Value::Nil),
-    }
+fn f_library_abi_version(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let min = arg(&a, 0).truthy();
+let _ = i;
+Ok(Value::Int(if min {
+    tree_sitter::MIN_COMPATIBLE_LANGUAGE_VERSION as i128
+} else {
+    tree_sitter::LANGUAGE_VERSION as i128
+})) }
+
+fn f_language_abi_version(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU: LANGUAGE nil → the latest ABI version this tree-sitter
+// runtime supports.
+if arg(&a, 0).is_nil() {
+    return Ok(Value::Int(tree_sitter::LANGUAGE_VERSION as i128));
 }
+let lang = want_sym(i, &a[0])?;
+match load_language(i, lang) {
+    Ok(l) => {
+        let detail = arg(&a, 1).truthy();
+        let abi = l.language.abi_version() as i128;
+        if detail {
+            let name = l.language.name().unwrap_or("");
+            Ok(Value::cons(
+                Value::Int(abi),
+                Value::string(name.to_string()),
+            ))
+        } else {
+            Ok(Value::Int(abi))
+        }
+    }
+    Err(_) => Ok(Value::Nil),
+} }
+
+fn f_grammar_location(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let lang = want_sym(i, &a[0])?;
+match load_language(i, lang) {
+    Ok(l) => Ok(Value::string(l.path.clone())),
+    Err(_) => Ok(Value::Nil),
+} }
 
 // ---------------------------------------------------------------------------
 // Line-column tracking
 // ---------------------------------------------------------------------------
 
-fn f_tracking_line_column_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = a;
-    Ok(Value::from_bool(i.treesit.tracking_linecol))
-}
+fn f_tracking_line_column_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let _ = a;
+Ok(Value::from_bool(i.treesit.tracking_linecol)) }
 
-fn f_parser_tracking_line_column_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pid = want_parser(i, &a[0])?;
-    Ok(Value::from_bool(i.treesit.parsers[&pid].tracking_linecol))
-}
+fn f_parser_tracking_line_column_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pid = want_parser(i, &a[0])?;
+Ok(Value::from_bool(i.treesit.parsers[&pid].tracking_linecol)) }
 
 // ---------------------------------------------------------------------------
 // Object predicates
 // ---------------------------------------------------------------------------
 
-fn f_parser_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(
-        tagged(i, &a[0], "treesit-parser")
-            .and_then(|r| r.first().cloned())
-            .and_then(|v| v.int().map(|n| n as u64))
-            .map(|id| i.treesit.parsers.contains_key(&id))
-            .unwrap_or(false),
-    ))
-}
+fn f_parser_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(
+    tagged(i, &a[0], "treesit-parser")
+        .and_then(|r| r.first().cloned())
+        .and_then(|v| v.int().map(|n| n as u64))
+        .map(|id| i.treesit.parsers.contains_key(&id))
+        .unwrap_or(false),
+)) }
 
-fn f_node_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(is_node_obj(i, &a[0])))
-}
+fn f_node_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(is_node_obj(i, &a[0]))) }
 
-fn f_compiled_query_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(is_query_obj(i, &a[0])))
-}
+fn f_compiled_query_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(is_query_obj(i, &a[0]))) }
 
 fn query_p_val(i: &mut Interp, v: &Value) -> bool {
     match v {
@@ -766,32 +746,22 @@ fn query_p_val(i: &mut Interp, v: &Value) -> bool {
     }
 }
 
-fn f_query_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(query_p_val(i, &a[0])))
-}
+fn f_query_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(query_p_val(i, &a[0]))) }
 
-fn f_query_eagerly_compiled_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match want_query(i, &a[0]) {
-        Ok(id) => Ok(Value::from_bool(i.treesit.queries[&id].query.is_some())),
-        Err(_) => Ok(Value::Nil),
-    }
-}
+fn f_query_eagerly_compiled_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match want_query(i, &a[0]) {
+    Ok(id) => Ok(Value::from_bool(i.treesit.queries[&id].query.is_some())),
+    Err(_) => Ok(Value::Nil),
+} }
 
-fn f_query_language(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let id = want_query(i, &a[0])?;
-    Ok(Value::Sym(i.treesit.queries[&id].language))
-}
+fn f_query_language(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let id = want_query(i, &a[0])?;
+Ok(Value::Sym(i.treesit.queries[&id].language)) }
 
-fn f_query_source(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let id = want_query(i, &a[0])?;
-    Ok(i.treesit.queries[&id].source.clone())
-}
+fn f_query_source(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let id = want_query(i, &a[0])?;
+Ok(i.treesit.queries[&id].source.clone()) }
 
-fn f_node_parser(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let key = check_node(i, &a[0])?;
-    let pid = i.treesit.nodes[&key].parser_id;
-    Ok(i.treesit.parsers[&pid].self_val.clone())
-}
+fn f_node_parser(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let key = check_node(i, &a[0])?;
+let pid = i.treesit.nodes[&key].parser_id;
+Ok(i.treesit.parsers[&pid].self_val.clone()) }
 
 // ---------------------------------------------------------------------------
 // Parser API
@@ -826,199 +796,179 @@ fn want_buffer_or_current(i: &mut Interp, v: &Value) -> Result<(BufferRef, Value
     Ok((buf, buf_val))
 }
 
-fn f_parser_create(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let lang = want_sym(i, &a[0])?;
-    let buffer = arg(&a, 1);
-    let no_reuse = arg(&a, 2).truthy();
-    let tag = arg(&a, 3);
-    if !matches!(tag, Value::Sym(_) | Value::Nil) {
-        return Err(i.wrong_type_mut("symbolp", &tag));
-    }
-    if matches!(tag, Value::Sym(s) if s == sym::T) {
-        let not_s = sname(i, "not");
-        return Err(sig(
-            i,
-            "wrong-type-argument",
-            vec![Value::list(vec![Value::Sym(not_s), Value::t()]), tag],
-        ));
-    }
-
-    let (buf, buf_val) = want_buffer_or_current(i, &buffer)?;
-
-    // Reuse an existing parser for (language, tag, buffer).
-    if !no_reuse {
-        let bid = buf.borrow().id;
-        for pid in &i.treesit.parser_order {
-            let p = &i.treesit.parsers[pid];
-            if !p.deleted
-                && p.buffer.borrow().live
-                && p.language == lang
-                && super::eq_values(&p.tag, &tag)
-                && p.buffer.borrow().id == bid
-            {
-                return Ok(p.self_val.clone());
-            }
-        }
-    }
-
-    let lang_ref = load_language_signal(i, lang)?;
-    let mut parser = Parser::new();
-    if parser.set_language(&lang_ref.language).is_err() {
-        return Err(sig(
-            i,
-            "treesit-load-language-error",
-            vec![Value::Sym(lang)],
-        ));
-    }
-
-    let tracking = language_needs_linecol(i, lang);
-    if tracking {
-        i.treesit.tracking_linecol = true;
-    }
-
-    let id = i.treesit.next_id;
-    i.treesit.next_id += 1;
-    let tag_id = sname(i, "treesit-parser");
-    let self_val = tag_record(tag_id, vec![Value::Int(id as i128)]);
-    i.treesit.parsers.insert(
-        id,
-        TsParser {
-            parser,
-            tree: None,
-            buffer: buf,
-            buffer_val: buf_val,
-            self_val: self_val.clone(),
-            language: lang,
-            tag,
-            embed_level: Value::Nil,
-            ranges: Value::Nil,
-            notifiers: Vec::new(),
-            deleted: false,
-            need_reparse: true,
-            parse_count: 0,
-            buf_tick: 0,
-            begv: usize::MAX,
-            zv: usize::MAX,
-            tracking_linecol: tracking,
-        },
-    );
-    i.treesit.parser_order.push(id);
-    Ok(self_val)
+fn f_parser_create(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let lang = want_sym(i, &a[0])?;
+let buffer = arg(&a, 1);
+let no_reuse = arg(&a, 2).truthy();
+let tag = arg(&a, 3);
+if !matches!(tag, Value::Sym(_) | Value::Nil) {
+    return Err(i.wrong_type_mut("symbolp", &tag));
+}
+if matches!(tag, Value::Sym(s) if s == sym::T) {
+    let not_s = sname(i, "not");
+    return Err(sig(
+        i,
+        "wrong-type-argument",
+        vec![Value::list(vec![Value::Sym(not_s), Value::t()]), tag],
+    ));
 }
 
-fn f_parser_delete(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pid = want_parser(i, &a[0])?;
-    i.treesit.parsers.get_mut(&pid).unwrap().deleted = true;
-    Ok(Value::Nil)
-}
+let (buf, buf_val) = want_buffer_or_current(i, &buffer)?;
 
-fn f_parser_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let buffer = arg(&a, 0);
-    let language = arg(&a, 1);
-    let tag = arg(&a, 2);
-    let lang_sym = if matches!(language, Value::Nil) {
-        None
-    } else {
-        Some(want_sym(i, &language)?)
-    };
-    let (buf, buf_val) = want_buffer_or_current(i, &buffer)?;
+// Reuse an existing parser for (language, tag, buffer).
+if !no_reuse {
     let bid = buf.borrow().id;
-    let tag_is_t = matches!(tag, Value::Sym(s) if s == sym::T);
-    let mut items = Vec::new();
     for pid in &i.treesit.parser_order {
         let p = &i.treesit.parsers[pid];
-        if p.deleted || !p.buffer.borrow().live {
-            continue;
-        }
-        if p.buffer.borrow().id != bid {
-            continue;
-        }
-        if let Some(l) = lang_sym {
-            if p.language != l {
-                continue;
-            }
-        }
-        if !tag_is_t && !super::eq_values(&p.tag, &tag) {
-            continue;
-        }
-        if !super::eq_values(&p.buffer_val, &buf_val) {
-            continue;
-        }
-        items.push(p.self_val.clone());
-    }
-    Ok(Value::list(items))
-}
-
-fn f_parser_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pid = want_parser(i, &a[0])?;
-    Ok(i.treesit.parsers[&pid].buffer_val.clone())
-}
-
-fn f_parser_language(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pid = want_parser(i, &a[0])?;
-    Ok(Value::Sym(i.treesit.parsers[&pid].language))
-}
-
-fn f_parser_tag(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pid = want_parser(i, &a[0])?;
-    Ok(i.treesit.parsers[&pid].tag.clone())
-}
-
-fn f_parser_embed_level(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pid = want_parser(i, &a[0])?;
-    Ok(i.treesit.parsers[&pid].embed_level.clone())
-}
-
-fn f_parser_set_embed_level(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pid = want_parser(i, &a[0])?;
-    let level = a[1].clone();
-    if !matches!(level, Value::Nil) {
-        let n = want_int(i, &level)?;
-        if n < 0 {
-            return Err(sig(i, "args-out-of-range", vec![level]));
+        if !p.deleted
+            && p.buffer.borrow().live
+            && p.language == lang
+            && super::eq_values(&p.tag, &tag)
+            && p.buffer.borrow().id == bid
+        {
+            return Ok(p.self_val.clone());
         }
     }
-    i.treesit.parsers.get_mut(&pid).unwrap().embed_level = level.clone();
-    Ok(level)
 }
 
-fn f_parser_root_node(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pid = want_parser(i, &a[0])?;
-    ensure_parsed(i, pid)?;
-    let root = stored_root(i, pid);
-    Ok(make_node(i, pid, root))
+let lang_ref = load_language_signal(i, lang)?;
+let mut parser = Parser::new();
+if parser.set_language(&lang_ref.language).is_err() {
+    return Err(sig(
+        i,
+        "treesit-load-language-error",
+        vec![Value::Sym(lang)],
+    ));
 }
+
+let tracking = language_needs_linecol(i, lang);
+if tracking {
+    i.treesit.tracking_linecol = true;
+}
+
+let id = i.treesit.next_id;
+i.treesit.next_id += 1;
+let tag_id = sname(i, "treesit-parser");
+let self_val = tag_record(tag_id, vec![Value::Int(id as i128)]);
+i.treesit.parsers.insert(
+    id,
+    TsParser {
+        parser,
+        tree: None,
+        buffer: buf,
+        buffer_val: buf_val,
+        self_val: self_val.clone(),
+        language: lang,
+        tag,
+        embed_level: Value::Nil,
+        ranges: Value::Nil,
+        notifiers: Vec::new(),
+        deleted: false,
+        need_reparse: true,
+        parse_count: 0,
+        buf_tick: 0,
+        begv: usize::MAX,
+        zv: usize::MAX,
+        tracking_linecol: tracking,
+    },
+);
+i.treesit.parser_order.push(id);
+Ok(self_val) }
+
+fn f_parser_delete(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pid = want_parser(i, &a[0])?;
+i.treesit.parsers.get_mut(&pid).unwrap().deleted = true;
+Ok(Value::Nil) }
+
+fn f_parser_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let buffer = arg(&a, 0);
+let language = arg(&a, 1);
+let tag = arg(&a, 2);
+let lang_sym = if matches!(language, Value::Nil) {
+    None
+} else {
+    Some(want_sym(i, &language)?)
+};
+let (buf, buf_val) = want_buffer_or_current(i, &buffer)?;
+let bid = buf.borrow().id;
+let tag_is_t = matches!(tag, Value::Sym(s) if s == sym::T);
+let mut items = Vec::new();
+for pid in &i.treesit.parser_order {
+    let p = &i.treesit.parsers[pid];
+    if p.deleted || !p.buffer.borrow().live {
+        continue;
+    }
+    if p.buffer.borrow().id != bid {
+        continue;
+    }
+    if let Some(l) = lang_sym {
+        if p.language != l {
+            continue;
+        }
+    }
+    if !tag_is_t && !super::eq_values(&p.tag, &tag) {
+        continue;
+    }
+    if !super::eq_values(&p.buffer_val, &buf_val) {
+        continue;
+    }
+    items.push(p.self_val.clone());
+}
+Ok(Value::list(items)) }
+
+fn f_parser_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pid = want_parser(i, &a[0])?;
+Ok(i.treesit.parsers[&pid].buffer_val.clone()) }
+
+fn f_parser_language(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pid = want_parser(i, &a[0])?;
+Ok(Value::Sym(i.treesit.parsers[&pid].language)) }
+
+fn f_parser_tag(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pid = want_parser(i, &a[0])?;
+Ok(i.treesit.parsers[&pid].tag.clone()) }
+
+fn f_parser_embed_level(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pid = want_parser(i, &a[0])?;
+Ok(i.treesit.parsers[&pid].embed_level.clone()) }
+
+fn f_parser_set_embed_level(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pid = want_parser(i, &a[0])?;
+let level = a[1].clone();
+if !matches!(level, Value::Nil) {
+    let n = want_int(i, &level)?;
+    if n < 0 {
+        return Err(sig(i, "args-out-of-range", vec![level]));
+    }
+}
+i.treesit.parsers.get_mut(&pid).unwrap().embed_level = level.clone();
+Ok(level) }
+
+fn f_parser_root_node(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pid = want_parser(i, &a[0])?;
+ensure_parsed(i, pid)?;
+let root = stored_root(i, pid);
+Ok(make_node(i, pid, root)) }
 
 /// `treesit-buffer-root-node': first parser (or first for LANGUAGE)
 /// in the current buffer.
-fn f_buffer_root_node(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let language = arg(&a, 0);
-    let lang_sym = if matches!(language, Value::Nil) {
-        None
-    } else {
-        Some(want_sym(i, &language)?)
-    };
-    let buf = i
-        .current_buffer_ref()
-        .ok_or_else(|| i.error("Selecting deleted buffer"))?;
-    let bid = buf.borrow().id;
-    for pid in &i.treesit.parser_order {
-        let p = &i.treesit.parsers[pid];
-        if p.deleted || !p.buffer.borrow().live || p.buffer.borrow().id != bid {
+fn f_buffer_root_node(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let language = arg(&a, 0);
+let lang_sym = if matches!(language, Value::Nil) {
+    None
+} else {
+    Some(want_sym(i, &language)?)
+};
+let buf = i
+    .current_buffer_ref()
+    .ok_or_else(|| i.error("Selecting deleted buffer"))?;
+let bid = buf.borrow().id;
+for pid in &i.treesit.parser_order {
+    let p = &i.treesit.parsers[pid];
+    if p.deleted || !p.buffer.borrow().live || p.buffer.borrow().id != bid {
+        continue;
+    }
+    if let Some(l) = lang_sym {
+        if p.language != l {
             continue;
         }
-        if let Some(l) = lang_sym {
-            if p.language != l {
-                continue;
-            }
-        }
-        let pid = *pid;
-        ensure_parsed(i, pid)?;
-        let root = stored_root(i, pid);
-        return Ok(make_node(i, pid, root));
     }
-    Ok(Value::Nil)
+    let pid = *pid;
+    ensure_parsed(i, pid)?;
+    let root = stored_root(i, pid);
+    return Ok(make_node(i, pid, root));
 }
+Ok(Value::Nil) }
 
 /// Convert `(BEG . END)' charpos ranges into `TSRange's in visible-text
 /// byte offsets, like `treesit_make_ts_ranges'.
@@ -1062,108 +1012,94 @@ fn make_ts_ranges(i: &mut Interp, ranges: &Value, buf: &BufferRef) -> Result<Vec
     Ok(out)
 }
 
-fn f_parser_set_included_ranges(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pid = want_parser(i, &a[0])?;
-    let ranges = a[1].clone();
-    if !matches!(ranges, Value::Nil) && !matches!(ranges, Value::Cons(_)) {
-        return Err(i.wrong_type_mut("consp", &ranges));
-    }
-    if super::equal_values(i, &i.treesit.parsers[&pid].ranges, &ranges) {
-        return Ok(Value::Nil);
-    }
-    let buf = i.treesit.parsers[&pid].buffer.clone();
-    let ts_ranges = make_ts_ranges(i, &ranges, &buf)?;
-    let ok = i
-        .treesit
-        .parsers
-        .get_mut(&pid)
-        .unwrap()
-        .parser
-        .set_included_ranges(&ts_ranges)
-        .is_ok();
-    if !ok {
-        return Err(sig(
-            i,
-            "treesit-range-invalid",
-            vec![
-                Value::string("Something went wrong when setting ranges"),
-                ranges,
-            ],
-        ));
-    }
-    let p = i.treesit.parsers.get_mut(&pid).unwrap();
-    p.ranges = ranges;
-    p.need_reparse = true;
-    Ok(Value::Nil)
+fn f_parser_set_included_ranges(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pid = want_parser(i, &a[0])?;
+let ranges = a[1].clone();
+if !matches!(ranges, Value::Nil) && !matches!(ranges, Value::Cons(_)) {
+    return Err(i.wrong_type_mut("consp", &ranges));
 }
-
-fn f_parser_included_ranges(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pid = want_parser(i, &a[0])?;
-    Ok(i.treesit.parsers[&pid].ranges.clone())
+if super::equal_values(i, &i.treesit.parsers[&pid].ranges, &ranges) {
+    return Ok(Value::Nil);
 }
-
-fn f_parser_notifiers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pid = want_parser(i, &a[0])?;
-    Ok(Value::list(i.treesit.parsers[&pid].notifiers.clone()))
-}
-
-fn f_parser_add_notifier(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pid = want_parser(i, &a[0])?;
-    let f = a[1].clone();
-    i.treesit.parsers.get_mut(&pid).unwrap().notifiers.push(f);
-    Ok(Value::Nil)
-}
-
-fn f_parser_remove_notifier(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pid = want_parser(i, &a[0])?;
-    let f = a[1].clone();
-    let p = i.treesit.parsers.get_mut(&pid).unwrap();
-    p.notifiers.retain(|x| !super::eq_values(x, &f));
-    Ok(Value::Nil)
-}
-
-fn f_parse_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let text = want_string(i, &a[0])?;
-    let lang = want_sym(i, &a[1])?;
-    // Create a scratch buffer like GNU's " *treesit-parse-string*".
-    let gen_sym = sname(i, "generate-new-buffer-name");
-    let name = i.call_function(
-        &Value::Sym(gen_sym),
-        &Value::list(vec![Value::string(" *treesit-parse-string*"), Value::Nil]),
-        Some(gen_sym),
-    )?;
-    let gc = sname(i, "get-buffer-create");
-    let bufv = i.call_function(
-        &Value::Sym(gc),
-        &Value::list(vec![name, Value::Nil]),
-        Some(gc),
-    )?;
-    let buf = match &bufv {
-        Value::Buffer(b) => b.clone(),
-        _ => return Err(i.error("get-buffer-create did not return a buffer")),
-    };
-    {
-        let mut b = buf.borrow_mut();
-        b.text.set_text(&text);
-        b.begv = 0;
-        b.zv = b.text.len();
-        b.text.chars_mod_tick.set(b.text.chars_mod_tick.get() + 1);
-        b.text.mod_tick.set(b.text.mod_tick.get() + 1);
-    }
-    let parser = f_parser_create(
+let buf = i.treesit.parsers[&pid].buffer.clone();
+let ts_ranges = make_ts_ranges(i, &ranges, &buf)?;
+let ok = i
+    .treesit
+    .parsers
+    .get_mut(&pid)
+    .unwrap()
+    .parser
+    .set_included_ranges(&ts_ranges)
+    .is_ok();
+if !ok {
+    return Err(sig(
         i,
-        vec![Value::Sym(lang), bufv.clone(), Value::t(), Value::Nil],
-    )?;
-    let pid = want_parser(i, &parser)?;
-    ensure_parsed(i, pid)?;
-    let root = stored_root(i, pid);
-    Ok(make_node(i, pid, root))
+        "treesit-range-invalid",
+        vec![
+            Value::string("Something went wrong when setting ranges"),
+            ranges,
+        ],
+    ));
 }
+let p = i.treesit.parsers.get_mut(&pid).unwrap();
+p.ranges = ranges;
+p.need_reparse = true;
+Ok(Value::Nil) }
 
-fn f_parser_changed_regions(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pid = want_parser(i, &a[0])?;
-    ensure_parsed(i, pid)
+fn f_parser_included_ranges(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pid = want_parser(i, &a[0])?;
+Ok(i.treesit.parsers[&pid].ranges.clone()) }
+
+fn f_parser_notifiers(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pid = want_parser(i, &a[0])?;
+Ok(Value::list(i.treesit.parsers[&pid].notifiers.clone())) }
+
+fn f_parser_add_notifier(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pid = want_parser(i, &a[0])?;
+let f = a[1].clone();
+i.treesit.parsers.get_mut(&pid).unwrap().notifiers.push(f);
+Ok(Value::Nil) }
+
+fn f_parser_remove_notifier(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pid = want_parser(i, &a[0])?;
+let f = a[1].clone();
+let p = i.treesit.parsers.get_mut(&pid).unwrap();
+p.notifiers.retain(|x| !super::eq_values(x, &f));
+Ok(Value::Nil) }
+
+fn f_parse_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let text = want_string(i, &a[0])?;
+let lang = want_sym(i, &a[1])?;
+// Create a scratch buffer like GNU's " *treesit-parse-string*".
+let gen_sym = sname(i, "generate-new-buffer-name");
+let name = i.call_function(
+    &Value::Sym(gen_sym),
+    &Value::list(vec![Value::string(" *treesit-parse-string*"), Value::Nil]),
+    Some(gen_sym),
+)?;
+let gc = sname(i, "get-buffer-create");
+let bufv = i.call_function(
+    &Value::Sym(gc),
+    &Value::list(vec![name, Value::Nil]),
+    Some(gc),
+)?;
+let buf = match &bufv {
+    Value::Buffer(b) => b.clone(),
+    _ => return Err(i.error("get-buffer-create did not return a buffer")),
+};
+{
+    let mut b = buf.borrow_mut();
+    b.text.set_text(&text);
+    b.begv = 0;
+    b.zv = b.text.len();
+    b.text.chars_mod_tick.set(b.text.chars_mod_tick.get() + 1);
+    b.text.mod_tick.set(b.text.mod_tick.get() + 1);
 }
+let parser = f_parser_create(
+    i,
+    vec![Value::Sym(lang), bufv.clone(), Value::t(), Value::Nil].into(),
+)?;
+let pid = want_parser(i, &parser)?;
+ensure_parsed(i, pid)?;
+let root = stored_root(i, pid);
+Ok(make_node(i, pid, root)) }
+
+fn f_parser_changed_regions(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pid = want_parser(i, &a[0])?;
+ensure_parsed(i, pid) }
 
 // ---------------------------------------------------------------------------
 // Node API
@@ -1182,269 +1118,239 @@ fn node_charpos(i: &Interp, pid: u64, byte: usize) -> i128 {
     byte_to_charpos(&b, byte)
 }
 
-fn f_node_type(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if matches!(a[0], Value::Nil) {
-        return Ok(Value::Nil);
-    }
-    let key = check_node(i, &a[0])?;
-    let n = *ts_node_of(i, key);
-    Ok(Value::string(n.kind()))
+fn f_node_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if matches!(a[0], Value::Nil) {
+    return Ok(Value::Nil);
 }
+let key = check_node(i, &a[0])?;
+let n = *ts_node_of(i, key);
+Ok(Value::string(n.kind())) }
 
-fn f_node_start(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if matches!(a[0], Value::Nil) {
-        return Ok(Value::Nil);
-    }
-    let key = check_node(i, &a[0])?;
-    let pid = i.treesit.nodes[&key].parser_id;
-    let byte = ts_node_of(i, key).start_byte();
-    Ok(Value::Int(node_charpos(i, pid, byte)))
+fn f_node_start(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if matches!(a[0], Value::Nil) {
+    return Ok(Value::Nil);
 }
+let key = check_node(i, &a[0])?;
+let pid = i.treesit.nodes[&key].parser_id;
+let byte = ts_node_of(i, key).start_byte();
+Ok(Value::Int(node_charpos(i, pid, byte))) }
 
-fn f_node_end(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if matches!(a[0], Value::Nil) {
-        return Ok(Value::Nil);
-    }
-    let key = check_node(i, &a[0])?;
-    let pid = i.treesit.nodes[&key].parser_id;
-    let byte = ts_node_of(i, key).end_byte();
-    Ok(Value::Int(node_charpos(i, pid, byte)))
+fn f_node_end(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if matches!(a[0], Value::Nil) {
+    return Ok(Value::Nil);
 }
+let key = check_node(i, &a[0])?;
+let pid = i.treesit.nodes[&key].parser_id;
+let byte = ts_node_of(i, key).end_byte();
+Ok(Value::Int(node_charpos(i, pid, byte))) }
 
-fn f_node_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if matches!(a[0], Value::Nil) {
-        return Ok(Value::Nil);
-    }
-    let key = check_node(i, &a[0])?;
-    let n = *ts_node_of(i, key);
-    Ok(Value::string(n.to_sexp()))
+fn f_node_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if matches!(a[0], Value::Nil) {
+    return Ok(Value::Nil);
 }
+let key = check_node(i, &a[0])?;
+let n = *ts_node_of(i, key);
+Ok(Value::string(n.to_sexp())) }
 
-fn f_node_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if matches!(a[0], Value::Nil) {
-        return Ok(Value::Nil);
-    }
-    let key = check_node(i, &a[0])?;
-    let pid = i.treesit.nodes[&key].parser_id;
-    let n = *ts_node_of(i, key);
-    let p = n.parent();
-    Ok(node_value_or_nil(i, p, pid))
+fn f_node_parent(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if matches!(a[0], Value::Nil) {
+    return Ok(Value::Nil);
 }
+let key = check_node(i, &a[0])?;
+let pid = i.treesit.nodes[&key].parser_id;
+let n = *ts_node_of(i, key);
+let p = n.parent();
+Ok(node_value_or_nil(i, p, pid)) }
 
-fn f_node_child(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if matches!(a[0], Value::Nil) {
-        return Ok(Value::Nil);
-    }
-    let key = check_node(i, &a[0])?;
-    let pid = i.treesit.nodes[&key].parser_id;
-    let n = *ts_node_of(i, key);
-    let named = arg(&a, 2).truthy();
-    let mut idx = want_int(i, &a[1])?;
-    if idx < 0 {
-        idx += if named {
-            n.named_child_count() as i128
-        } else {
-            n.child_count() as i128
-        };
-    }
-    if idx < 0 {
-        return Ok(Value::Nil);
-    }
-    if idx > u32::MAX as i128 {
-        return Err(sig(i, "args-out-of-range", vec![a[1].clone()]));
-    }
-    let child = if named {
-        n.named_child(idx as usize)
+fn f_node_child(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if matches!(a[0], Value::Nil) {
+    return Ok(Value::Nil);
+}
+let key = check_node(i, &a[0])?;
+let pid = i.treesit.nodes[&key].parser_id;
+let n = *ts_node_of(i, key);
+let named = arg(&a, 2).truthy();
+let mut idx = want_int(i, &a[1])?;
+if idx < 0 {
+    idx += if named {
+        n.named_child_count() as i128
     } else {
-        n.child(idx as usize)
+        n.child_count() as i128
     };
-    Ok(node_value_or_nil(i, child, pid))
 }
-
-fn f_node_check(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if matches!(a[0], Value::Nil) {
-        return Ok(Value::Nil);
-    }
-    let prop = want_sym(i, &a[1])?;
-    // `outdated' answers without the live check, like GNU.
-    let key = node_entry(i, &a[0])?;
-    let entry = &i.treesit.nodes[&key];
-    let pname = i.symbol_name(prop);
-    if pname == "outdated" {
-        let p = &i.treesit.parsers[&entry.parser_id];
-        return Ok(Value::from_bool(entry.parse_count != p.parse_count));
-    }
-    let key = check_node(i, &a[0])?;
-    let n = *ts_node_of(i, key);
-    let result = match pname.as_str() {
-        "named" => n.is_named(),
-        "missing" => n.is_missing(),
-        "extra" => n.is_extra(),
-        "has-error" => n.has_error(),
-        "live" => parser_live(i, i.treesit.nodes[&key].parser_id),
-        _ => {
-            return Err(sig(
-                i,
-                "error",
-                vec![Value::string(format!(
-                    "Expecting `named', `missing', `extra', `outdated', `has-error', or `live', but got {}",
-                    pname
-                ))],
-            ));
-        }
-    };
-    Ok(Value::from_bool(result))
+if idx < 0 {
+    return Ok(Value::Nil);
 }
-
-fn f_node_field_name_for_child(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if matches!(a[0], Value::Nil) {
-        return Ok(Value::Nil);
-    }
-    let key = check_node(i, &a[0])?;
-    let n = *ts_node_of(i, key);
-    let mut idx = want_int(i, &a[1])?;
-    if idx < 0 {
-        idx += n.child_count() as i128;
-    }
-    if idx < 0 {
-        return Ok(Value::Nil);
-    }
-    if idx > u32::MAX as i128 {
-        return Err(sig(i, "args-out-of-range", vec![a[1].clone()]));
-    }
-    match n.field_name_for_child(idx as u32) {
-        Some(f) => Ok(Value::string(f)),
-        None => Ok(Value::Nil),
-    }
+if idx > u32::MAX as i128 {
+    return Err(sig(i, "args-out-of-range", vec![a[1].clone()]));
 }
+let child = if named {
+    n.named_child(idx as usize)
+} else {
+    n.child(idx as usize)
+};
+Ok(node_value_or_nil(i, child, pid)) }
 
-fn f_node_child_count(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if matches!(a[0], Value::Nil) {
-        return Ok(Value::Nil);
-    }
-    let key = check_node(i, &a[0])?;
-    let n = *ts_node_of(i, key);
-    let named = arg(&a, 1).truthy();
-    Ok(Value::Int(
-        (if named {
-            n.named_child_count()
-        } else {
-            n.child_count()
-        }) as i128,
-    ))
+fn f_node_check(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if matches!(a[0], Value::Nil) {
+    return Ok(Value::Nil);
 }
-
-fn f_node_child_by_field_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if matches!(a[0], Value::Nil) {
-        return Ok(Value::Nil);
-    }
-    let key = check_node(i, &a[0])?;
-    let pid = i.treesit.nodes[&key].parser_id;
-    let n = *ts_node_of(i, key);
-    let name = want_string(i, &a[1])?;
-    let c = n.child_by_field_name(&name);
-    Ok(node_value_or_nil(i, c, pid))
+let prop = want_sym(i, &a[1])?;
+// `outdated' answers without the live check, like GNU.
+let key = node_entry(i, &a[0])?;
+let entry = &i.treesit.nodes[&key];
+let pname = i.symbol_name(prop);
+if pname == "outdated" {
+    let p = &i.treesit.parsers[&entry.parser_id];
+    return Ok(Value::from_bool(entry.parse_count != p.parse_count));
 }
-
-fn f_node_next_sibling(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if matches!(a[0], Value::Nil) {
-        return Ok(Value::Nil);
+let key = check_node(i, &a[0])?;
+let n = *ts_node_of(i, key);
+let result = match pname.as_str() {
+    "named" => n.is_named(),
+    "missing" => n.is_missing(),
+    "extra" => n.is_extra(),
+    "has-error" => n.has_error(),
+    "live" => parser_live(i, i.treesit.nodes[&key].parser_id),
+    _ => {
+        return Err(sig(
+            i,
+            "error",
+            vec![Value::string(format!(
+                "Expecting `named', `missing', `extra', `outdated', `has-error', or `live', but got {}",
+                pname
+            ))],
+        ));
     }
-    let key = check_node(i, &a[0])?;
-    let pid = i.treesit.nodes[&key].parser_id;
-    let n = *ts_node_of(i, key);
-    let named = arg(&a, 1).truthy();
-    let sib = if named {
-        n.next_named_sibling()
+};
+Ok(Value::from_bool(result)) }
+
+fn f_node_field_name_for_child(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if matches!(a[0], Value::Nil) {
+    return Ok(Value::Nil);
+}
+let key = check_node(i, &a[0])?;
+let n = *ts_node_of(i, key);
+let mut idx = want_int(i, &a[1])?;
+if idx < 0 {
+    idx += n.child_count() as i128;
+}
+if idx < 0 {
+    return Ok(Value::Nil);
+}
+if idx > u32::MAX as i128 {
+    return Err(sig(i, "args-out-of-range", vec![a[1].clone()]));
+}
+match n.field_name_for_child(idx as u32) {
+    Some(f) => Ok(Value::string(f)),
+    None => Ok(Value::Nil),
+} }
+
+fn f_node_child_count(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if matches!(a[0], Value::Nil) {
+    return Ok(Value::Nil);
+}
+let key = check_node(i, &a[0])?;
+let n = *ts_node_of(i, key);
+let named = arg(&a, 1).truthy();
+Ok(Value::Int(
+    (if named {
+        n.named_child_count()
     } else {
-        n.next_sibling()
-    };
-    Ok(node_value_or_nil(i, sib, pid))
-}
+        n.child_count()
+    }) as i128,
+)) }
 
-fn f_node_prev_sibling(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if matches!(a[0], Value::Nil) {
-        return Ok(Value::Nil);
-    }
-    let key = check_node(i, &a[0])?;
-    let pid = i.treesit.nodes[&key].parser_id;
-    let n = *ts_node_of(i, key);
-    let named = arg(&a, 1).truthy();
-    let sib = if named {
-        n.prev_named_sibling()
-    } else {
-        n.prev_sibling()
-    };
-    Ok(node_value_or_nil(i, sib, pid))
+fn f_node_child_by_field_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if matches!(a[0], Value::Nil) {
+    return Ok(Value::Nil);
 }
+let key = check_node(i, &a[0])?;
+let pid = i.treesit.nodes[&key].parser_id;
+let n = *ts_node_of(i, key);
+let name = want_string(i, &a[1])?;
+let c = n.child_by_field_name(&name);
+Ok(node_value_or_nil(i, c, pid)) }
 
-fn f_node_first_child_for_pos(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if matches!(a[0], Value::Nil) {
-        return Ok(Value::Nil);
-    }
-    let key = check_node(i, &a[0])?;
-    let pid = i.treesit.nodes[&key].parser_id;
-    let n = *ts_node_of(i, key);
-    let (pos, byte) = {
-        let bufr = i.treesit.parsers[&pid].buffer.clone();
-        let bb = bufr.borrow();
-        let pos = check_position(i, &a[1], &bb)?;
-        (pos, charpos_to_byte(&bb, pos))
-    };
-    let _ = pos;
-    let named = arg(&a, 2).truthy();
-    // GNU `treesit_cursor_first_child_for_byte': first child extending
-    // beyond POS (end_byte > pos), honoring NAMED.
-    let mut cursor = n.walk();
-    if !cursor.goto_first_child() {
-        return Ok(Value::Nil);
-    }
-    loop {
-        let c = cursor.node();
-        if (!named || c.is_named()) && c.end_byte() > byte {
-            return Ok(make_node(i, pid, c));
-        }
-        if !cursor.goto_next_sibling() {
-            return Ok(Value::Nil);
-        }
-    }
+fn f_node_next_sibling(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if matches!(a[0], Value::Nil) {
+    return Ok(Value::Nil);
 }
+let key = check_node(i, &a[0])?;
+let pid = i.treesit.nodes[&key].parser_id;
+let n = *ts_node_of(i, key);
+let named = arg(&a, 1).truthy();
+let sib = if named {
+    n.next_named_sibling()
+} else {
+    n.next_sibling()
+};
+Ok(node_value_or_nil(i, sib, pid)) }
 
-fn f_node_descendant_for_range(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if matches!(a[0], Value::Nil) {
-        return Ok(Value::Nil);
-    }
-    let key = check_node(i, &a[0])?;
-    let pid = i.treesit.nodes[&key].parser_id;
-    let n = *ts_node_of(i, key);
-    let (beg, end) = {
-        let bufr = i.treesit.parsers[&pid].buffer.clone();
-        let bb = bufr.borrow();
-        let beg = check_position(i, &a[1], &bb)?;
-        let end = check_position(i, &a[2], &bb)?;
-        (charpos_to_byte(&bb, beg), charpos_to_byte(&bb, end))
-    };
-    let named = arg(&a, 3).truthy();
-    let d = if named {
-        n.named_descendant_for_byte_range(beg, end)
-    } else {
-        n.descendant_for_byte_range(beg, end)
-    };
-    Ok(node_value_or_nil(i, d, pid))
+fn f_node_prev_sibling(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if matches!(a[0], Value::Nil) {
+    return Ok(Value::Nil);
 }
+let key = check_node(i, &a[0])?;
+let pid = i.treesit.nodes[&key].parser_id;
+let n = *ts_node_of(i, key);
+let named = arg(&a, 1).truthy();
+let sib = if named {
+    n.prev_named_sibling()
+} else {
+    n.prev_sibling()
+};
+Ok(node_value_or_nil(i, sib, pid)) }
 
-fn f_node_eq(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if matches!(a[0], Value::Nil) || matches!(a[1], Value::Nil) {
+fn f_node_first_child_for_pos(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if matches!(a[0], Value::Nil) {
+    return Ok(Value::Nil);
+}
+let key = check_node(i, &a[0])?;
+let pid = i.treesit.nodes[&key].parser_id;
+let n = *ts_node_of(i, key);
+let (pos, byte) = {
+    let bufr = i.treesit.parsers[&pid].buffer.clone();
+    let bb = bufr.borrow();
+    let pos = check_position(i, &a[1], &bb)?;
+    (pos, charpos_to_byte(&bb, pos))
+};
+let _ = pos;
+let named = arg(&a, 2).truthy();
+// GNU `treesit_cursor_first_child_for_byte': first child extending
+// beyond POS (end_byte > pos), honoring NAMED.
+let mut cursor = n.walk();
+if !cursor.goto_first_child() {
+    return Ok(Value::Nil);
+}
+loop {
+    let c = cursor.node();
+    if (!named || c.is_named()) && c.end_byte() > byte {
+        return Ok(make_node(i, pid, c));
+    }
+    if !cursor.goto_next_sibling() {
         return Ok(Value::Nil);
     }
-    let k1 = node_entry(i, &a[0])?;
-    let k2 = node_entry(i, &a[1])?;
-    let (e1, e2) = (&i.treesit.nodes[&k1], &i.treesit.nodes[&k2]);
-    let same = e1.parser_id == e2.parser_id
-        && e1.parse_count == e2.parse_count
-        && e1.node.id() == e2.node.id();
-    Ok(Value::from_bool(same))
+} }
+
+fn f_node_descendant_for_range(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if matches!(a[0], Value::Nil) {
+    return Ok(Value::Nil);
 }
+let key = check_node(i, &a[0])?;
+let pid = i.treesit.nodes[&key].parser_id;
+let n = *ts_node_of(i, key);
+let (beg, end) = {
+    let bufr = i.treesit.parsers[&pid].buffer.clone();
+    let bb = bufr.borrow();
+    let beg = check_position(i, &a[1], &bb)?;
+    let end = check_position(i, &a[2], &bb)?;
+    (charpos_to_byte(&bb, beg), charpos_to_byte(&bb, end))
+};
+let named = arg(&a, 3).truthy();
+let d = if named {
+    n.named_descendant_for_byte_range(beg, end)
+} else {
+    n.descendant_for_byte_range(beg, end)
+};
+Ok(node_value_or_nil(i, d, pid)) }
+
+fn f_node_eq(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if matches!(a[0], Value::Nil) || matches!(a[1], Value::Nil) {
+    return Ok(Value::Nil);
+}
+let k1 = node_entry(i, &a[0])?;
+let k2 = node_entry(i, &a[1])?;
+let (e1, e2) = (&i.treesit.nodes[&k1], &i.treesit.nodes[&k2]);
+let same = e1.parser_id == e2.parser_id
+    && e1.parse_count == e2.parse_count
+    && e1.node.id() == e2.node.id();
+Ok(Value::from_bool(same)) }
 
 // ---------------------------------------------------------------------------
 // Query expansion
@@ -1523,26 +1429,22 @@ fn pattern_expand(i: &mut Interp, pat: &Value) -> Value {
     }
 }
 
-fn f_pattern_expand(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Ok(pattern_expand(i, &a[0]))
-}
+fn f_pattern_expand(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { Ok(pattern_expand(i, &a[0])) }
 
-fn f_query_expand(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let items = a[0]
-        .list_to_vec()
-        .map_err(|_| i.wrong_type_mut("listp", &a[0]))?;
-    let parts: Vec<String> = items
-        .iter()
-        .map(|x| {
-            let e = pattern_expand(i, x);
-            match e {
-                Value::Str(s) => s.borrow().clone(),
-                _ => String::new(),
-            }
-        })
-        .collect();
-    Ok(Value::string(parts.join(" ")))
-}
+fn f_query_expand(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let items = a[0]
+    .list_to_vec()
+    .map_err(|_| i.wrong_type_mut("listp", &a[0]))?;
+let parts: Vec<String> = items
+    .iter()
+    .map(|x| {
+        let e = pattern_expand(i, x);
+        match e {
+            Value::Str(s) => s.borrow().clone(),
+            _ => String::new(),
+        }
+    })
+    .collect();
+Ok(Value::string(parts.join(" "))) }
 
 // ---------------------------------------------------------------------------
 // Query compile/capture (raw FFI, like GNU)
@@ -1600,7 +1502,7 @@ fn query_source_string(i: &mut Interp, q: &Value) -> Result<String, Flow> {
     match q {
         Value::Str(s) => Ok(s.borrow().clone()),
         Value::Cons(_) => {
-            let expanded = f_query_expand(i, vec![q.clone()])?;
+            let expanded = f_query_expand(i, vec![q.clone()].into())?;
             if let Value::Str(s) = expanded {
                 Ok(s.borrow().clone())
             } else {
@@ -1627,35 +1529,33 @@ fn ensure_query_compiled(i: &mut Interp, qid: u64) -> Result<*mut ffi::TSQuery, 
     Ok(q)
 }
 
-fn f_query_compile(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let lang = want_sym(i, &a[0])?;
-    let query = a[1].clone();
-    let eager = arg(&a, 2).truthy();
-    if !query_p_val(i, &query) {
-        return Err(i.wrong_type_mut("treesit-query-p", &query));
-    }
-    if let Ok(id) = want_query(i, &query) {
-        if eager {
-            ensure_query_compiled(i, id)?;
-        }
-        return Ok(query);
-    }
-    let id = i.treesit.next_id;
-    i.treesit.next_id += 1;
-    i.treesit.queries.insert(
-        id,
-        TsQueryObj {
-            source: query,
-            language: lang,
-            query: None,
-        },
-    );
+fn f_query_compile(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let lang = want_sym(i, &a[0])?;
+let query = a[1].clone();
+let eager = arg(&a, 2).truthy();
+if !query_p_val(i, &query) {
+    return Err(i.wrong_type_mut("treesit-query-p", &query));
+}
+if let Ok(id) = want_query(i, &query) {
     if eager {
         ensure_query_compiled(i, id)?;
     }
-    let tag = sname(i, "treesit-compiled-query");
-    Ok(tag_record(tag, vec![Value::Int(id as i128)]))
+    return Ok(query);
 }
+let id = i.treesit.next_id;
+i.treesit.next_id += 1;
+i.treesit.queries.insert(
+    id,
+    TsQueryObj {
+        source: query,
+        language: lang,
+        query: None,
+    },
+);
+if eager {
+    ensure_query_compiled(i, id)?;
+}
+let tag = sname(i, "treesit-compiled-query");
+Ok(tag_record(tag, vec![Value::Int(id as i128)])) }
 
 /// Resolve NODE to a node key (accepts node, parser, or language
 /// symbol), like `treesit_resolve_node'.
@@ -1668,7 +1568,7 @@ fn resolve_node(i: &mut Interp, v: &Value) -> Result<(u64, usize), Flow> {
     } else if i.sym_id(v).is_some() {
         // Language symbol: create (or reuse) a parser in the current
         // buffer like GNU.
-        let parser = f_parser_create(i, vec![v.clone(), Value::Nil, Value::Nil, Value::Nil])?;
+        let parser = f_parser_create(i, vec![v.clone(), Value::Nil, Value::Nil, Value::Nil].into())?;
         want_parser(i, &parser)?
     } else {
         return Err(i.wrong_type_mut("(or treesit-node-p treesit-parser-p symbolp)", v));
@@ -1921,153 +1821,151 @@ fn eval_predicates(
     Ok(true)
 }
 
-fn f_query_capture(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let node = a[0].clone();
-    let query = a[1].clone();
-    let beg = arg(&a, 2);
-    let end = arg(&a, 3);
-    let node_only = arg(&a, 4).truthy();
-    let grouped = arg(&a, 5).truthy();
+fn f_query_capture(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let node = a[0].clone();
+let query = a[1].clone();
+let beg = arg(&a, 2);
+let end = arg(&a, 3);
+let node_only = arg(&a, 4).truthy();
+let grouped = arg(&a, 5).truthy();
 
-    if !query_p_val(i, &query) {
-        return Err(i.wrong_type_mut("treesit-query-p", &query));
-    }
-
-    let (pid, node_key) = resolve_node(i, &node)?;
-    let ts_node = *ts_node_of(i, (pid, node_key));
-    let parser_lang = i.treesit.parsers[&pid].language;
-
-    // A compiled query must match the node's parser language (GNU
-    // signals "language of query and node differ").
-    if let Ok(qid) = want_query(i, &query) {
-        if i.treesit.queries[&qid].language != parser_lang {
-            return Err(sig(
-                i,
-                "treesit-error",
-                vec![Value::string(
-                    "Query's language is different from the node's parser's language",
-                )],
-            ));
-        }
-    }
-
-    // Check BEG/END.
-    let (beg_byte, end_byte) = {
-        let bufr = i.treesit.parsers[&pid].buffer.clone();
-        let bb = bufr.borrow();
-        let mut bb_ = (0usize, u32::MAX as usize);
-        if !matches!(beg, Value::Nil) {
-            let p1 = check_position(i, &beg, &bb)?;
-            bb_.0 = charpos_to_byte(&bb, p1);
-        }
-        if !matches!(end, Value::Nil) {
-            let p2 = check_position(i, &end, &bb)?;
-            bb_.1 = charpos_to_byte(&bb, p2);
-        }
-        if bb_.0 > bb_.1 {
-            return Err(sig(i, "args-out-of-range", vec![beg.clone(), end.clone()]));
-        }
-        bb_
-    };
-
-    // Initialize query + cursor (raw FFI).
-    let (qptr, need_free) = match &query {
-        v if is_query_obj(i, v) => {
-            let qid = want_query(i, v)?;
-            (ensure_query_compiled(i, qid)?, false)
-        }
-        _ => {
-            let lang_ref = load_language_signal(i, parser_lang)?;
-            let src = query_source_string(i, &query)?;
-            (compile_query_raw(i, lang_ref, &src)?, true)
-        }
-    };
-
-    let mut result: Vec<Value> = Vec::new();
-    let mut pred_cache: HashMap<u16, Value> = HashMap::new();
-    let mut pred_error: Option<Vec<Value>> = None;
-
-    unsafe {
-        let cursor = ffi::ts_query_cursor_new();
-        ffi::ts_query_cursor_set_byte_range(
-            cursor,
-            beg_byte.min(u32::MAX as usize) as u32,
-            end_byte.min(u32::MAX as usize) as u32,
-        );
-        let raw_node = ts_node.into_raw();
-        ffi::ts_query_cursor_exec(cursor, qptr, raw_node);
-        let mut m: ffi::TSQueryMatch = std::mem::zeroed();
-        while ffi::ts_query_cursor_next_match(cursor, &mut m) {
-            let mut group: Vec<Value> = Vec::new();
-            // A match can carry zero captures (e.g. a pattern that is only
-            // a predicate); `captures` is NULL then.
-            let caps: &[ffi::TSQueryCapture] = if m.capture_count == 0 || m.captures.is_null() {
-                &[]
-            } else {
-                std::slice::from_raw_parts(m.captures, m.capture_count as usize)
-            };
-            for cap in caps {
-                let mut len: u32 = 0;
-                let cname = ffi::ts_query_capture_name_for_id(qptr, cap.index, &mut len);
-                let name = std::str::from_utf8_unchecked(std::slice::from_raw_parts(
-                    cname as *const u8,
-                    len as usize,
-                ));
-                let node_val = make_node(i, pid, Node::from_raw(cap.node));
-                let csym = sname(i, name);
-                group.push(Value::cons(Value::Sym(csym), node_val));
-            }
-            let predicates = match pred_cache.get(&m.pattern_index) {
-                Some(v) => v.clone(),
-                None => {
-                    let v = predicates_for_pattern(i, qptr, m.pattern_index as u32);
-                    pred_cache.insert(m.pattern_index, v.clone());
-                    v
-                }
-            };
-            let pass = match eval_predicates(i, &predicates, &group, pid) {
-                Ok(p) => p,
-                Err(e) => {
-                    pred_error = Some(e);
-                    break;
-                }
-            };
-            if !pass {
-                continue;
-            }
-            if node_only {
-                let nodes: Vec<Value> = group
-                    .into_iter()
-                    .map(|c| {
-                        if let Value::Cons(cc) = &c {
-                            cc.borrow().cdr.clone()
-                        } else {
-                            c
-                        }
-                    })
-                    .collect();
-                if grouped {
-                    result.push(Value::list(nodes));
-                } else {
-                    result.extend(nodes);
-                }
-            } else if grouped {
-                result.push(Value::list(group));
-            } else {
-                result.extend(group);
-            }
-        }
-        ffi::ts_query_cursor_delete(cursor);
-        if need_free {
-            ffi::ts_query_delete(qptr);
-        }
-    }
-
-    if let Some(e) = pred_error {
-        return Err(sig(i, "treesit-query-error", e));
-    }
-    Ok(Value::list(result))
+if !query_p_val(i, &query) {
+    return Err(i.wrong_type_mut("treesit-query-p", &query));
 }
+
+let (pid, node_key) = resolve_node(i, &node)?;
+let ts_node = *ts_node_of(i, (pid, node_key));
+let parser_lang = i.treesit.parsers[&pid].language;
+
+// A compiled query must match the node's parser language (GNU
+// signals "language of query and node differ").
+if let Ok(qid) = want_query(i, &query) {
+    if i.treesit.queries[&qid].language != parser_lang {
+        return Err(sig(
+            i,
+            "treesit-error",
+            vec![Value::string(
+                "Query's language is different from the node's parser's language",
+            )],
+        ));
+    }
+}
+
+// Check BEG/END.
+let (beg_byte, end_byte) = {
+    let bufr = i.treesit.parsers[&pid].buffer.clone();
+    let bb = bufr.borrow();
+    let mut bb_ = (0usize, u32::MAX as usize);
+    if !matches!(beg, Value::Nil) {
+        let p1 = check_position(i, &beg, &bb)?;
+        bb_.0 = charpos_to_byte(&bb, p1);
+    }
+    if !matches!(end, Value::Nil) {
+        let p2 = check_position(i, &end, &bb)?;
+        bb_.1 = charpos_to_byte(&bb, p2);
+    }
+    if bb_.0 > bb_.1 {
+        return Err(sig(i, "args-out-of-range", vec![beg.clone(), end.clone()]));
+    }
+    bb_
+};
+
+// Initialize query + cursor (raw FFI).
+let (qptr, need_free) = match &query {
+    v if is_query_obj(i, v) => {
+        let qid = want_query(i, v)?;
+        (ensure_query_compiled(i, qid)?, false)
+    }
+    _ => {
+        let lang_ref = load_language_signal(i, parser_lang)?;
+        let src = query_source_string(i, &query)?;
+        (compile_query_raw(i, lang_ref, &src)?, true)
+    }
+};
+
+let mut result: Vec<Value> = Vec::new();
+let mut pred_cache: HashMap<u16, Value> = HashMap::new();
+let mut pred_error: Option<Vec<Value>> = None;
+
+unsafe {
+    let cursor = ffi::ts_query_cursor_new();
+    ffi::ts_query_cursor_set_byte_range(
+        cursor,
+        beg_byte.min(u32::MAX as usize) as u32,
+        end_byte.min(u32::MAX as usize) as u32,
+    );
+    let raw_node = ts_node.into_raw();
+    ffi::ts_query_cursor_exec(cursor, qptr, raw_node);
+    let mut m: ffi::TSQueryMatch = std::mem::zeroed();
+    while ffi::ts_query_cursor_next_match(cursor, &mut m) {
+        let mut group: Vec<Value> = Vec::new();
+        // A match can carry zero captures (e.g. a pattern that is only
+        // a predicate); `captures` is NULL then.
+        let caps: &[ffi::TSQueryCapture] = if m.capture_count == 0 || m.captures.is_null() {
+            &[]
+        } else {
+            std::slice::from_raw_parts(m.captures, m.capture_count as usize)
+        };
+        for cap in caps {
+            let mut len: u32 = 0;
+            let cname = ffi::ts_query_capture_name_for_id(qptr, cap.index, &mut len);
+            let name = std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+                cname as *const u8,
+                len as usize,
+            ));
+            let node_val = make_node(i, pid, Node::from_raw(cap.node));
+            let csym = sname(i, name);
+            group.push(Value::cons(Value::Sym(csym), node_val));
+        }
+        let predicates = match pred_cache.get(&m.pattern_index) {
+            Some(v) => v.clone(),
+            None => {
+                let v = predicates_for_pattern(i, qptr, m.pattern_index as u32);
+                pred_cache.insert(m.pattern_index, v.clone());
+                v
+            }
+        };
+        let pass = match eval_predicates(i, &predicates, &group, pid) {
+            Ok(p) => p,
+            Err(e) => {
+                pred_error = Some(e);
+                break;
+            }
+        };
+        if !pass {
+            continue;
+        }
+        if node_only {
+            let nodes: Vec<Value> = group
+                .into_iter()
+                .map(|c| {
+                    if let Value::Cons(cc) = &c {
+                        cc.borrow().cdr.clone()
+                    } else {
+                        c
+                    }
+                })
+                .collect();
+            if grouped {
+                result.push(Value::list(nodes));
+            } else {
+                result.extend(nodes);
+            }
+        } else if grouped {
+            result.push(Value::list(group));
+        } else {
+            result.extend(group);
+        }
+    }
+    ffi::ts_query_cursor_delete(cursor);
+    if need_free {
+        ffi::ts_query_delete(qptr);
+    }
+}
+
+if let Some(e) = pred_error {
+    return Err(sig(i, "treesit-query-error", e));
+}
+Ok(Value::list(result)) }
 
 // ---------------------------------------------------------------------------
 // Traversal helpers (ports of GNU's cursor utilities)
@@ -2566,78 +2464,74 @@ fn check_sym_arg(i: &mut Interp, v: &Value) -> Result<(), Flow> {
     }
 }
 
-fn f_search_subtree(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let node_v = a[0].clone();
-    let predicate = a[1].clone();
-    let backward = arg(&a, 2);
-    let all = arg(&a, 3);
-    let depth = arg(&a, 4);
-    check_sym_arg(i, &backward)?;
-    check_sym_arg(i, &all)?;
-    let backward = backward.truthy();
-    let named = !all.truthy();
-    let limit = if matches!(depth, Value::Nil) {
-        RECURSION_LIMIT
-    } else {
-        want_int(i, &depth)? as usize
-    };
-    let key = check_node(i, &node_v)?;
-    let pid = i.treesit.nodes[&key].parser_id;
-    let language = i.treesit.parsers[&pid].language;
-    validate_predicate(i, &predicate, language, 0).map_err(|e| signal_pred(i, e))?;
+fn f_search_subtree(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let node_v = a[0].clone();
+let predicate = a[1].clone();
+let backward = arg(&a, 2);
+let all = arg(&a, 3);
+let depth = arg(&a, 4);
+check_sym_arg(i, &backward)?;
+check_sym_arg(i, &all)?;
+let backward = backward.truthy();
+let named = !all.truthy();
+let limit = if matches!(depth, Value::Nil) {
+    RECURSION_LIMIT
+} else {
+    want_int(i, &depth)? as usize
+};
+let key = check_node(i, &node_v)?;
+let pid = i.treesit.nodes[&key].parser_id;
+let language = i.treesit.parsers[&pid].language;
+validate_predicate(i, &predicate, language, 0).map_err(|e| signal_pred(i, e))?;
 
-    ensure_parsed(i, pid)?;
-    let node = *ts_node_of(i, key);
-    let root = stored_root(i, pid);
-    let mut cursor = root.walk();
-    if !cursor_helper(&mut cursor, node, root) {
-        return Ok(Value::Nil);
-    }
-    let found = search_dfs(
-        i,
-        &mut cursor,
-        &predicate,
-        pid,
-        !backward,
-        named,
-        limit,
-        true,
-    )?;
-    if found {
-        Ok(make_node(i, pid, cursor.node()))
-    } else {
-        Ok(Value::Nil)
-    }
+ensure_parsed(i, pid)?;
+let node = *ts_node_of(i, key);
+let root = stored_root(i, pid);
+let mut cursor = root.walk();
+if !cursor_helper(&mut cursor, node, root) {
+    return Ok(Value::Nil);
 }
+let found = search_dfs(
+    i,
+    &mut cursor,
+    &predicate,
+    pid,
+    !backward,
+    named,
+    limit,
+    true,
+)?;
+if found {
+    Ok(make_node(i, pid, cursor.node()))
+} else {
+    Ok(Value::Nil)
+} }
 
-fn f_search_forward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let node_v = a[0].clone();
-    let predicate = a[1].clone();
-    let backward = arg(&a, 2);
-    let all = arg(&a, 3);
-    check_sym_arg(i, &backward)?;
-    check_sym_arg(i, &all)?;
-    let backward = backward.truthy();
-    let named = !all.truthy();
-    let key = check_node(i, &node_v)?;
-    let pid = i.treesit.nodes[&key].parser_id;
-    let language = i.treesit.parsers[&pid].language;
-    validate_predicate(i, &predicate, language, 0).map_err(|e| signal_pred(i, e))?;
+fn f_search_forward(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let node_v = a[0].clone();
+let predicate = a[1].clone();
+let backward = arg(&a, 2);
+let all = arg(&a, 3);
+check_sym_arg(i, &backward)?;
+check_sym_arg(i, &all)?;
+let backward = backward.truthy();
+let named = !all.truthy();
+let key = check_node(i, &node_v)?;
+let pid = i.treesit.nodes[&key].parser_id;
+let language = i.treesit.parsers[&pid].language;
+validate_predicate(i, &predicate, language, 0).map_err(|e| signal_pred(i, e))?;
 
-    ensure_parsed(i, pid)?;
-    let node = *ts_node_of(i, key);
-    let root = stored_root(i, pid);
-    let mut cursor = root.walk();
-    if !cursor_helper(&mut cursor, node, root) {
-        return Ok(Value::Nil);
-    }
-    let found = search_forward_impl(i, &mut cursor, &predicate, pid, !backward, named)?;
-    if found {
-        Ok(make_node(i, pid, cursor.node()))
-    } else {
-        Ok(Value::Nil)
-    }
+ensure_parsed(i, pid)?;
+let node = *ts_node_of(i, key);
+let root = stored_root(i, pid);
+let mut cursor = root.walk();
+if !cursor_helper(&mut cursor, node, root) {
+    return Ok(Value::Nil);
 }
+let found = search_forward_impl(i, &mut cursor, &predicate, pid, !backward, named)?;
+if found {
+    Ok(make_node(i, pid, cursor.node()))
+} else {
+    Ok(Value::Nil)
+} }
 
 /// `treesit_build_sparse_tree' — matched nodes become
 /// `(NODE . children)'; unmatched levels are flattened out.
@@ -2690,177 +2584,165 @@ fn build_flat(
     }
 }
 
-fn f_induce_sparse_tree(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let node_v = a[0].clone();
-    let predicate = a[1].clone();
-    let process_fn = arg(&a, 2);
-    let depth = arg(&a, 3);
-    let limit = if matches!(depth, Value::Nil) {
-        RECURSION_LIMIT
-    } else {
-        want_int(i, &depth)? as usize
-    };
-    let key = check_node(i, &node_v)?;
-    let pid = i.treesit.nodes[&key].parser_id;
-    let language = i.treesit.parsers[&pid].language;
-    match validate_predicate(i, &predicate, language, 0) {
-        Ok(()) => {}
-        Err((name, data)) => {
-            if name == "treesit-predicate-not-found" {
-                return Ok(Value::Nil);
-            }
-            return Err(signal_pred(i, (name, data)));
+fn f_induce_sparse_tree(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let node_v = a[0].clone();
+let predicate = a[1].clone();
+let process_fn = arg(&a, 2);
+let depth = arg(&a, 3);
+let limit = if matches!(depth, Value::Nil) {
+    RECURSION_LIMIT
+} else {
+    want_int(i, &depth)? as usize
+};
+let key = check_node(i, &node_v)?;
+let pid = i.treesit.nodes[&key].parser_id;
+let language = i.treesit.parsers[&pid].language;
+match validate_predicate(i, &predicate, language, 0) {
+    Ok(()) => {}
+    Err((name, data)) => {
+        if name == "treesit-predicate-not-found" {
+            return Ok(Value::Nil);
         }
+        return Err(signal_pred(i, (name, data)));
     }
+}
 
-    ensure_parsed(i, pid)?;
-    let node = *ts_node_of(i, key);
+ensure_parsed(i, pid)?;
+let node = *ts_node_of(i, key);
 
-    let mut out: Vec<Value> = Vec::new();
-    if match_predicate(i, node, &predicate, pid, false)? {
-        let mut nv = make_node(i, pid, node);
-        if !matches!(process_fn, Value::Nil) {
-            nv = pred_call_guard(i, &process_fn, nv, pid)?;
-        }
-        let mut kids: Vec<Value> = Vec::new();
-        if limit > 0 {
-            let mut cursor = node.walk();
-            if cursor.goto_first_child() {
-                loop {
-                    let child = cursor.node();
-                    build_flat(i, child, &predicate, &process_fn, limit - 1, pid, &mut kids)?;
-                    if !cursor.goto_next_sibling() {
-                        break;
-                    }
-                }
-            }
-        }
-        let mut l = vec![nv];
-        l.extend(kids);
-        out.push(Value::list(l));
-    } else if limit > 0 {
+let mut out: Vec<Value> = Vec::new();
+if match_predicate(i, node, &predicate, pid, false)? {
+    let mut nv = make_node(i, pid, node);
+    if !matches!(process_fn, Value::Nil) {
+        nv = pred_call_guard(i, &process_fn, nv, pid)?;
+    }
+    let mut kids: Vec<Value> = Vec::new();
+    if limit > 0 {
         let mut cursor = node.walk();
         if cursor.goto_first_child() {
             loop {
                 let child = cursor.node();
-                build_flat(i, child, &predicate, &process_fn, limit - 1, pid, &mut out)?;
+                build_flat(i, child, &predicate, &process_fn, limit - 1, pid, &mut kids)?;
                 if !cursor.goto_next_sibling() {
                     break;
                 }
             }
         }
     }
-    if out.is_empty() {
-        Ok(Value::Nil)
-    } else {
-        let mut l = vec![Value::Nil];
-        l.extend(out);
-        Ok(Value::list(l))
-    }
-}
-
-fn f_node_match_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if matches!(a[0], Value::Nil) {
-        return Ok(Value::Nil);
-    }
-    let key = check_node(i, &a[0])?;
-    let predicate = a[1].clone();
-    let ignore_missing = arg(&a, 2).truthy();
-    let pid = i.treesit.nodes[&key].parser_id;
-    let language = i.treesit.parsers[&pid].language;
-    match validate_predicate(i, &predicate, language, 0) {
-        Ok(()) => {}
-        Err((name, data)) => {
-            if ignore_missing && name == "treesit-predicate-not-found" {
-                return Ok(Value::Nil);
-            }
-            return Err(signal_pred(i, (name, data)));
-        }
-    }
-    let node = *ts_node_of(i, key);
-    let r = match_predicate(i, node, &predicate, pid, false)?;
-    Ok(Value::from_bool(r))
-}
-
-fn f_subtree_stat(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let key = check_node(i, &a[0])?;
-    let n = *ts_node_of(i, key);
-    fn stat(n: Node, depth: usize, acc: &mut (usize, usize, usize)) {
-        acc.0 = acc.0.max(depth + 1);
-        acc.1 = acc.1.max(n.child_count());
-        acc.2 += 1;
-        for c in 0..n.child_count() {
-            if let Some(ch) = n.child(c) {
-                stat(ch, depth + 1, acc);
+    let mut l = vec![nv];
+    l.extend(kids);
+    out.push(Value::list(l));
+} else if limit > 0 {
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            let child = cursor.node();
+            build_flat(i, child, &predicate, &process_fn, limit - 1, pid, &mut out)?;
+            if !cursor.goto_next_sibling() {
+                break;
             }
         }
     }
-    let mut acc = (0usize, 0usize, 0usize);
-    stat(n, 0, &mut acc);
-    Ok(Value::list(vec![
-        Value::Int(acc.0 as i128),
-        Value::Int(acc.1 as i128),
-        Value::Int(acc.2 as i128),
-    ]))
 }
+if out.is_empty() {
+    Ok(Value::Nil)
+} else {
+    let mut l = vec![Value::Nil];
+    l.extend(out);
+    Ok(Value::list(l))
+} }
+
+fn f_node_match_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if matches!(a[0], Value::Nil) {
+    return Ok(Value::Nil);
+}
+let key = check_node(i, &a[0])?;
+let predicate = a[1].clone();
+let ignore_missing = arg(&a, 2).truthy();
+let pid = i.treesit.nodes[&key].parser_id;
+let language = i.treesit.parsers[&pid].language;
+match validate_predicate(i, &predicate, language, 0) {
+    Ok(()) => {}
+    Err((name, data)) => {
+        if ignore_missing && name == "treesit-predicate-not-found" {
+            return Ok(Value::Nil);
+        }
+        return Err(signal_pred(i, (name, data)));
+    }
+}
+let node = *ts_node_of(i, key);
+let r = match_predicate(i, node, &predicate, pid, false)?;
+Ok(Value::from_bool(r)) }
+
+fn f_subtree_stat(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let key = check_node(i, &a[0])?;
+let n = *ts_node_of(i, key);
+fn stat(n: Node, depth: usize, acc: &mut (usize, usize, usize)) {
+    acc.0 = acc.0.max(depth + 1);
+    acc.1 = acc.1.max(n.child_count());
+    acc.2 += 1;
+    for c in 0..n.child_count() {
+        if let Some(ch) = n.child(c) {
+            stat(ch, depth + 1, acc);
+        }
+    }
+}
+let mut acc = (0usize, 0usize, 0usize);
+stat(n, 0, &mut acc);
+Ok(Value::list(vec![
+    Value::Int(acc.0 as i128),
+    Value::Int(acc.1 as i128),
+    Value::Int(acc.2 as i128),
+])) }
 
 // ---------------------------------------------------------------------------
 // linecol internals
 // ---------------------------------------------------------------------------
 
-fn f_linecol_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let buf = i
-        .current_buffer_ref()
-        .ok_or_else(|| i.error("Selecting deleted buffer"))?;
-    let b = buf.borrow();
-    let pos = check_position(i, &a[0], &b)?;
-    let byte = b
-        .text
-        .substring(0, (pos as usize).saturating_sub(1).min(b.text.len()))
-        .len();
-    let full = b.text.text();
-    let mut line = 0i128;
-    let mut col = 0i128;
-    for c in &full.as_bytes()[..byte.min(full.len())] {
-        if *c == b'\n' {
-            line += 1;
-            col = 0;
-        } else {
-            col += 1;
-        }
+fn f_linecol_at(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let buf = i
+    .current_buffer_ref()
+    .ok_or_else(|| i.error("Selecting deleted buffer"))?;
+let b = buf.borrow();
+let pos = check_position(i, &a[0], &b)?;
+let byte = b
+    .text
+    .substring(0, (pos as usize).saturating_sub(1).min(b.text.len()))
+    .len();
+let full = b.text.text();
+let mut line = 0i128;
+let mut col = 0i128;
+for c in &full.as_bytes()[..byte.min(full.len())] {
+    if *c == b'\n' {
+        line += 1;
+        col = 0;
+    } else {
+        col += 1;
     }
-    Ok(Value::cons(Value::Int(line), Value::Int(col)))
 }
+Ok(Value::cons(Value::Int(line), Value::Int(col))) }
 
-fn f_linecol_cache_set(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let line = want_int(i, &a[0])?;
-    let col = want_int(i, &a[1])?;
-    let bytepos = want_int(i, &a[2])?;
-    let bid = i.current_buffer;
-    i.treesit
-        .linecol_caches
-        .insert(bid, (line as i64, col as i64, bytepos as i64));
-    Ok(Value::Nil)
-}
+fn f_linecol_cache_set(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let line = want_int(i, &a[0])?;
+let col = want_int(i, &a[1])?;
+let bytepos = want_int(i, &a[2])?;
+let bid = i.current_buffer;
+i.treesit
+    .linecol_caches
+    .insert(bid, (line as i64, col as i64, bytepos as i64));
+Ok(Value::Nil) }
 
-fn f_linecol_cache(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = a;
-    let bid = i.current_buffer;
-    let (line, col, bytepos) = i
-        .treesit
-        .linecol_caches
-        .get(&bid)
-        .copied()
-        .unwrap_or((0, 0, 0));
-    Ok(Value::list(vec![
-        Value::Sym(sname(i, ":line")),
-        Value::Int(line as i128),
-        Value::Sym(sname(i, ":col")),
-        Value::Int(col as i128),
-        Value::Sym(sname(i, ":bytepos")),
-        Value::Int(bytepos as i128),
-    ]))
-}
+fn f_linecol_cache(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let _ = a;
+let bid = i.current_buffer;
+let (line, col, bytepos) = i
+    .treesit
+    .linecol_caches
+    .get(&bid)
+    .copied()
+    .unwrap_or((0, 0, 0));
+Ok(Value::list(vec![
+    Value::Sym(sname(i, ":line")),
+    Value::Int(line as i128),
+    Value::Sym(sname(i, ":col")),
+    Value::Int(col as i128),
+    Value::Sym(sname(i, ":bytepos")),
+    Value::Int(bytepos as i128),
+])) }
 
 // ---------------------------------------------------------------------------
 // Printing support (`print.c' equivalent), called from `print.rs'.

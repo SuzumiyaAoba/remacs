@@ -9,7 +9,7 @@ pub mod primitives;
 pub use primitives::install_primitives;
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use std::rc::{Rc, Weak};
 
 use crate::lisp::value::{BufferRef, Marker, MarkerRef, SymId, Value};
@@ -265,7 +265,7 @@ impl Buffer {
         undo_sym: SymId,
         undo_inhibit: Rc<std::cell::Cell<bool>>,
     ) -> Buffer {
-        let mut locals = HashMap::new();
+        let mut locals = HashMap::default();
         // Buffers with space-prefixed (internal) names start with undo
         // disabled, like GNU get-buffer-create (undo_list = Qt).
         if name.starts_with(' ') {
@@ -947,7 +947,7 @@ impl BufferSet {
         BufferSet {
             bufs: Vec::new(),
             order: Vec::new(),
-            name_map: HashMap::new(),
+            name_map: HashMap::default(),
             counter: 0,
             undo_sym: 0,
             undo_inhibit: Rc::new(std::cell::Cell::new(false)),

@@ -325,7 +325,7 @@ struct NativeMeta {
     iform: Value,
 }
 
-fn tramp<const K: usize>(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+fn tramp<const K: usize>(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let entry = NATIVES.with(|n| n.borrow()[K]);
     let env = i as *mut Interp as EmEnv;
     let mark = OBJTAB.with(|t| t.borrow().len());
@@ -347,7 +347,7 @@ fn tramp<const K: usize>(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 macro_rules! tramps {
     ($($k:ident => $n:literal),+) => {
-        $(fn $k(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+        $(fn $k(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             tramp::<$n>(i, a)
         })*
     };
@@ -1478,9 +1478,7 @@ fn compile_fns_to(
 // DEFUNs
 // ---------------------------------------------------------------------------
 
-fn f_native_comp_available_p(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(compiler_available()))
-}
+fn f_native_comp_available_p(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(compiler_available())) }
 
 /// `(load "x.eln")' entry: dlopen a native unit file.
 pub(crate) fn native_load_file(i: &mut Interp, path: &str) -> EvalResult {
@@ -1490,96 +1488,88 @@ pub(crate) fn native_load_file(i: &mut Interp, path: &str) -> EvalResult {
     }
 }
 
-fn f_native_elisp_load(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let path = match &a[0] {
-        Value::Str(s) => s.borrow().clone(),
-        other => return Err(i.wrong_type_mut("stringp", &other)),
-    };
-    match load_eln(i, &path) {
-        Ok(idx) => Ok(unit_value(i, idx)),
-        Err(e) => Err(i.error(e)),
-    }
-}
+fn f_native_elisp_load(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let path = match &a[0] {
+    Value::Str(s) => s.borrow().clone(),
+    other => return Err(i.wrong_type_mut("stringp", &other)),
+};
+match load_eln(i, &path) {
+    Ok(idx) => Ok(unit_value(i, idx)),
+    Err(e) => Err(i.error(e)),
+} }
 
-fn f_comp_el_to_eln_rel_filename(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let path = match &a[0] {
-        Value::Str(s) => s.borrow().clone(),
-        other => return Err(i.wrong_type_mut("stringp", &other)),
-    };
-    match eln_rel_filename(&path) {
-        Ok(p) => Ok(Value::string(p)),
-        Err(e) => Err(i.error(e)),
-    }
-}
+fn f_comp_el_to_eln_rel_filename(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let path = match &a[0] {
+    Value::Str(s) => s.borrow().clone(),
+    other => return Err(i.wrong_type_mut("stringp", &other)),
+};
+match eln_rel_filename(&path) {
+    Ok(p) => Ok(Value::string(p)),
+    Err(e) => Err(i.error(e)),
+} }
 
-fn f_comp_el_to_eln_filename(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let path = match &a[0] {
-        Value::Str(s) => s.borrow().clone(),
-        other => return Err(i.wrong_type_mut("stringp", &other)),
-    };
-    let rel = match eln_rel_filename(&path) {
-        Ok(p) => p,
-        Err(e) => return Err(i.error(e)),
-    };
-    let base = match a.get(1) {
-        Some(Value::Str(s)) => s.borrow().clone(),
-        _ => format!("{}/", eln_cache_dir()),
-    };
-    let base = if base.ends_with('/') {
-        base
-    } else {
-        format!("{base}/")
-    };
-    Ok(Value::string(format!("{base}{rel}")))
-}
+fn f_comp_el_to_eln_filename(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let path = match &a[0] {
+    Value::Str(s) => s.borrow().clone(),
+    other => return Err(i.wrong_type_mut("stringp", &other)),
+};
+let rel = match eln_rel_filename(&path) {
+    Ok(p) => p,
+    Err(e) => return Err(i.error(e)),
+};
+let base = match a.get(1) {
+    Some(Value::Str(s)) => s.borrow().clone(),
+    _ => format!("{}/", eln_cache_dir()),
+};
+let base = if base.ends_with('/') {
+    base
+} else {
+    format!("{base}/")
+};
+Ok(Value::string(format!("{base}{rel}"))) }
 
-fn f_native_compile(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if !compiler_available() {
-        return Err(i.error("Cannot native-compile: no C compiler available"));
-    }
-    match &a[0] {
-        Value::Str(s) => {
-            let path = s.borrow().clone();
-            let out = match a.get(1) {
-                Some(Value::Str(o)) => o.borrow().clone(),
-                _ => {
-                    let rel = match eln_rel_filename(&path) {
-                        Ok(r) => r,
-                        Err(e) => return Err(i.error(e)),
-                    };
-                    format!("{}/{rel}", eln_cache_dir())
-                }
-            };
-            let fns = match file_defuns(i, &path) {
-                Ok(v) if !v.is_empty() => v,
-                Ok(_) => {
-                    return Err(i.error(format!("No defuns to compile in {path}")));
-                }
-                Err(e) => return Err(i.error(e)),
-            };
-            match compile_fns_to(i, &fns, &out) {
-                Ok(()) => Ok(Value::string(out)),
-                Err(e) => Err(i.error(e)),
+fn f_native_compile(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if !compiler_available() {
+    return Err(i.error("Cannot native-compile: no C compiler available"));
+}
+match &a[0] {
+    Value::Str(s) => {
+        let path = s.borrow().clone();
+        let out = match a.get(1) {
+            Some(Value::Str(o)) => o.borrow().clone(),
+            _ => {
+                let rel = match eln_rel_filename(&path) {
+                    Ok(r) => r,
+                    Err(e) => return Err(i.error(e)),
+                };
+                format!("{}/{rel}", eln_cache_dir())
             }
+        };
+        let fns = match file_defuns(i, &path) {
+            Ok(v) if !v.is_empty() => v,
+            Ok(_) => {
+                return Err(i.error(format!("No defuns to compile in {path}")));
+            }
+            Err(e) => return Err(i.error(e)),
+        };
+        match compile_fns_to(i, &fns, &out) {
+            Ok(()) => Ok(Value::string(out)),
+            Err(e) => Err(i.error(e)),
         }
-        Value::Sym(id) => {
-            let f = i.symbol_function(*id);
-            let name = i.symbol_name(*id);
-            compile_one(i, &name, &f, a.get(1))
-        }
-        Value::Lambda(l) => {
-            let l = l.clone();
-            let name = l.name.clone().unwrap_or_else(|| "anonymous".into());
-            compile_one_lambda(i, &name, &l, a.get(1))
-        }
-        // A `(lambda ...)' FORM — evaluate to a closure and compile.
-        Value::Cons(_) => match i.eval(&a[0]) {
-            Ok(v) => compile_one(i, "anonymous", &v, a.get(1)),
-            Err(f) => Err(f),
-        },
-        other => Err(i.wrong_type_mut("functionp", &other)),
     }
-}
+    Value::Sym(id) => {
+        let f = i.symbol_function(*id);
+        let name = i.symbol_name(*id);
+        compile_one(i, &name, &f, a.get(1))
+    }
+    Value::Lambda(l) => {
+        let l = l.clone();
+        let name = l.name.clone().unwrap_or_else(|| "anonymous".into());
+        compile_one_lambda(i, &name, &l, a.get(1))
+    }
+    // A `(lambda ...)' FORM — evaluate to a closure and compile.
+    Value::Cons(_) => match i.eval(&a[0]) {
+        Ok(v) => compile_one(i, "anonymous", &v, a.get(1)),
+        Err(f) => Err(f),
+    },
+    other => Err(i.wrong_type_mut("functionp", &other)),
+} }
 
 fn compile_one(i: &mut Interp, name: &str, f: &Value, out: Option<&Value>) -> EvalResult {
     match f {
@@ -1636,52 +1626,50 @@ fn unit_serial() -> u64 {
     *s
 }
 
-fn f_native_compile_async(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let files: Vec<String> = match &a[0] {
-        Value::Str(s) => vec![s.borrow().clone()],
-        Value::Nil => Vec::new(),
-        other => other
-            .list_to_vec()
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|v| {
-                if let Value::Str(s) = v {
-                    Some(s.borrow().clone())
-                } else {
-                    None
-                }
-            })
-            .collect(),
-    };
-    let load = a.get(2).map(|v| !v.is_nil()).unwrap_or(false);
-    let mut outs = Vec::new();
-    for f in files {
-        let mut paths = Vec::new();
-        if std::path::Path::new(&f).is_dir() {
-            let rec = a.get(1).map(|v| !v.is_nil()).unwrap_or(false);
-            collect_el_files(&f, rec, &mut paths);
-        } else {
-            paths.push(f);
-        }
-        for p in paths {
-            let rel = match eln_rel_filename(&p) {
-                Ok(r) => r,
-                Err(e) => return Err(i.error(e)),
-            };
-            let out = format!("{}/{rel}", eln_cache_dir());
-            let fns = file_defuns(i, &p).unwrap_or_default();
-            if fns.is_empty() {
-                continue;
+fn f_native_compile_async(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let files: Vec<String> = match &a[0] {
+    Value::Str(s) => vec![s.borrow().clone()],
+    Value::Nil => Vec::new(),
+    other => other
+        .list_to_vec()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|v| {
+            if let Value::Str(s) = v {
+                Some(s.borrow().clone())
+            } else {
+                None
             }
-            compile_fns_to(i, &fns, &out).map_err(|e| i.error(e))?;
-            if load {
-                load_eln(i, &out).map_err(|e| i.error(e))?;
-            }
-            outs.push(Value::string(out));
-        }
+        })
+        .collect(),
+};
+let load = a.get(2).map(|v| !v.is_nil()).unwrap_or(false);
+let mut outs = Vec::new();
+for f in files {
+    let mut paths = Vec::new();
+    if std::path::Path::new(&f).is_dir() {
+        let rec = a.get(1).map(|v| !v.is_nil()).unwrap_or(false);
+        collect_el_files(&f, rec, &mut paths);
+    } else {
+        paths.push(f);
     }
-    Ok(Value::list(outs))
+    for p in paths {
+        let rel = match eln_rel_filename(&p) {
+            Ok(r) => r,
+            Err(e) => return Err(i.error(e)),
+        };
+        let out = format!("{}/{rel}", eln_cache_dir());
+        let fns = file_defuns(i, &p).unwrap_or_default();
+        if fns.is_empty() {
+            continue;
+        }
+        compile_fns_to(i, &fns, &out).map_err(|e| i.error(e))?;
+        if load {
+            load_eln(i, &out).map_err(|e| i.error(e))?;
+        }
+        outs.push(Value::string(out));
+    }
 }
+Ok(Value::list(outs)) }
 
 fn collect_el_files(dir: &str, rec: bool, out: &mut Vec<String>) {
     if let Ok(rd) = std::fs::read_dir(dir) {
@@ -1696,155 +1684,131 @@ fn collect_el_files(dir: &str, rec: bool, out: &mut Vec<String>) {
     }
 }
 
-fn f_native_comp_function_p(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(match &a[0] {
-        Value::Subr(s) => is_native(s).is_some(),
-        _ => false,
-    }))
-}
+fn f_native_comp_function_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(match &a[0] {
+    Value::Subr(s) => is_native(s).is_some(),
+    _ => false,
+})) }
 
-fn f_subr_native_lambda_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match &a[0] {
-        Value::Subr(s) => {
-            if let Some(k) = is_native(s) {
-                Ok(META.with(|m| m.borrow()[k].arglist.clone()))
-            } else {
-                Ok(Value::t())
-            }
+fn f_subr_native_lambda_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match &a[0] {
+    Value::Subr(s) => {
+        if let Some(k) = is_native(s) {
+            Ok(META.with(|m| m.borrow()[k].arglist.clone()))
+        } else {
+            Ok(Value::t())
         }
-        other => Err(i.wrong_type_mut("subrp", &other)),
     }
-}
+    other => Err(i.wrong_type_mut("subrp", &other)),
+} }
 
-fn f_subr_native_comp_unit(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match &a[0] {
-        Value::Subr(s) => {
-            if let Some(k) = is_native(s) {
-                let u = META.with(|m| m.borrow()[k].unit);
-                if u >= 0 {
-                    Ok(unit_value(i, u as usize))
-                } else {
-                    Ok(Value::Nil)
-                }
+fn f_subr_native_comp_unit(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match &a[0] {
+    Value::Subr(s) => {
+        if let Some(k) = is_native(s) {
+            let u = META.with(|m| m.borrow()[k].unit);
+            if u >= 0 {
+                Ok(unit_value(i, u as usize))
             } else {
                 Ok(Value::Nil)
             }
+        } else {
+            Ok(Value::Nil)
         }
-        other => Err(i.wrong_type_mut("subrp", &other)),
     }
-}
+    other => Err(i.wrong_type_mut("subrp", &other)),
+} }
 
-fn f_native_comp_unit_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let idx = unit_index(i, &a[0])?;
-    UNITS.with(|u| match u.borrow().get(idx) {
-        Some(u) => Ok(Value::string(u.path.clone())),
-        None => Ok(Value::Nil),
-    })
-}
+fn f_native_comp_unit_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let idx = unit_index(i, &a[0])?;
+UNITS.with(|u| match u.borrow().get(idx) {
+    Some(u) => Ok(Value::string(u.path.clone())),
+    None => Ok(Value::Nil),
+}) }
 
-fn f_native_comp_unit_set_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let idx = unit_index(i, &a[0])?;
-    let p = match &a[1] {
-        Value::Str(s) => s.borrow().clone(),
-        other => return Err(i.wrong_type_mut("stringp", &other)),
-    };
-    UNITS.with(|u| {
-        if let Some(u) = u.borrow_mut().get_mut(idx) {
-            u.path = p;
-        }
-    });
-    Ok(Value::Nil)
-}
-
-fn f_comp_libgccjit_version(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    // remacs emits C and drives the system compiler — no libgccjit.
-    Ok(Value::Nil)
-}
-
-fn f_comp_subr_signature(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU resolves a symbol to its function cell here.
-    let v = match &a[0] {
-        Value::Sym(id) => i.symbol_function(*id),
-        other => other.clone(),
-    };
-    match &v {
-        Value::Subr(s) => {
-            let (min, max) = match s.arity {
-                Arity::Range { min, max } => (Value::Int(min as i128), Value::Int(max as i128)),
-                Arity::Many { min } => (Value::Int(min as i128), Value::Sym(i.intern("many"))),
-                Arity::Unevalled => (Value::Int(0), Value::Sym(i.intern("many"))),
-            };
-            Ok(Value::cons(
-                Value::Sym(i.intern(s.name)),
-                Value::cons(min, max),
-            ))
-        }
-        other => Err(i.wrong_type_mut("subrp", &other)),
+fn f_native_comp_unit_set_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let idx = unit_index(i, &a[0])?;
+let p = match &a[1] {
+    Value::Str(s) => s.borrow().clone(),
+    other => return Err(i.wrong_type_mut("stringp", &other)),
+};
+UNITS.with(|u| {
+    if let Some(u) = u.borrow_mut().get_mut(idx) {
+        u.path = p;
     }
-}
+});
+Ok(Value::Nil) }
+
+fn f_comp_libgccjit_version(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { // remacs emits C and drives the system compiler — no libgccjit.
+Ok(Value::Nil) }
+
+fn f_comp_subr_signature(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU resolves a symbol to its function cell here.
+let v = match &a[0] {
+    Value::Sym(id) => i.symbol_function(*id),
+    other => other.clone(),
+};
+match &v {
+    Value::Subr(s) => {
+        let (min, max) = match s.arity {
+            Arity::Range { min, max } => (Value::Int(min as i128), Value::Int(max as i128)),
+            Arity::Many { min } => (Value::Int(min as i128), Value::Sym(i.intern("many"))),
+            Arity::Unevalled => (Value::Int(0), Value::Sym(i.intern("many"))),
+        };
+        Ok(Value::cons(
+            Value::Sym(i.intern(s.name)),
+            Value::cons(min, max),
+        ))
+    }
+    other => Err(i.wrong_type_mut("subrp", &other)),
+} }
 
 /// Pending ctxt source for `comp--compile-ctxt-to-file0' — our own
 /// pipeline doesn't need the ctxt builder calls (comp.el's LIMPLE
 /// pass targets GNU's ABI), but the trio stays honest.
-fn f_comp_init_ctxt(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    CTXT.with(|c| *c.borrow_mut() = Some(String::new()));
-    Ok(Value::t())
-}
+fn f_comp_init_ctxt(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { CTXT.with(|c| *c.borrow_mut() = Some(String::new()));
+Ok(Value::t()) }
 
-fn f_comp_release_ctxt(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    CTXT.with(|c| *c.borrow_mut() = None);
-    Ok(Value::Nil)
-}
+fn f_comp_release_ctxt(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { CTXT.with(|c| *c.borrow_mut() = None);
+Ok(Value::Nil) }
 
-fn f_comp_compile_ctxt_to_file0(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let path = match &a[0] {
-        Value::Str(s) => s.borrow().clone(),
-        other => return Err(i.wrong_type_mut("stringp", &other)),
-    };
-    let src = CTXT.with(|c| c.borrow().clone()).unwrap_or_default();
-    if src.is_empty() {
-        return Err(i.error("Nothing in compilation context to emit"));
-    }
-    match run_cc(&src, &path) {
-        Ok(()) => Ok(Value::string(path)),
-        Err(e) => Err(i.error(e)),
-    }
+fn f_comp_compile_ctxt_to_file0(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let path = match &a[0] {
+    Value::Str(s) => s.borrow().clone(),
+    other => return Err(i.wrong_type_mut("stringp", &other)),
+};
+let src = CTXT.with(|c| c.borrow().clone()).unwrap_or_default();
+if src.is_empty() {
+    return Err(i.error("Nothing in compilation context to emit"));
 }
+match run_cc(&src, &path) {
+    Ok(()) => Ok(Value::string(path)),
+    Err(e) => Err(i.error(e)),
+} }
 
 /// `comp--install-trampoline' (SUBR-NAME TRAMPOLINE): TRAMPOLINE is an
 /// .eln file exporting `comp_trampoline'; install it as SUBR-NAME's
 /// definition (advice/late-trampoline machinery).
-fn f_comp_install_trampoline(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let name = match &a[0] {
-        Value::Sym(id) => i.symbol_name(*id),
-        Value::Str(s) => s.borrow().clone(),
-        other => return Err(i.wrong_type_mut("symbolp", &other)),
-    };
-    let file = match &a[1] {
-        Value::Str(s) => s.borrow().clone(),
-        other => return Err(i.wrong_type_mut("stringp", &other)),
-    };
-    let lib = match unsafe { libloading::Library::new(&file) } {
-        Ok(l) => l,
-        Err(e) => return Err(i.error(format!("Cannot load trampoline: {e}"))),
-    };
-    let entry: Option<EmEntry> = unsafe { crate::lisp::dynlib::sym(&lib, b"comp_trampoline\0") };
-    let Some(entry) = entry else {
-        return Err(i.error("Trampoline lacks comp_trampoline entry"));
-    };
-    core::mem::forget(lib);
-    match install_native_subr(i, -1, &name, 0, u32::MAX, entry, "") {
-        Ok(v) => Ok(v),
-        Err(()) => Err(i.error("Native subr table full")),
-    }
-}
+fn f_comp_install_trampoline(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let name = match &a[0] {
+    Value::Sym(id) => i.symbol_name(*id),
+    Value::Str(s) => s.borrow().clone(),
+    other => return Err(i.wrong_type_mut("symbolp", &other)),
+};
+let file = match &a[1] {
+    Value::Str(s) => s.borrow().clone(),
+    other => return Err(i.wrong_type_mut("stringp", &other)),
+};
+let lib = match unsafe { libloading::Library::new(&file) } {
+    Ok(l) => l,
+    Err(e) => return Err(i.error(format!("Cannot load trampoline: {e}"))),
+};
+let entry: Option<EmEntry> = unsafe { crate::lisp::dynlib::sym(&lib, b"comp_trampoline\0") };
+let Some(entry) = entry else {
+    return Err(i.error("Trampoline lacks comp_trampoline entry"));
+};
+core::mem::forget(lib);
+match install_native_subr(i, -1, &name, 0, u32::MAX, entry, "") {
+    Ok(v) => Ok(v),
+    Err(()) => Err(i.error("Native subr table full")),
+} }
 
 /// `comp--register-subr'/`-late-register-subr' (NAME C-NAME MINARG
 /// MAXARG TYPE REST COMP-U): resolve C_NAME inside COMP-U's handle
 /// and install it as the native subr NAME.
-fn f_comp_register_subr(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    register_subr_common(i, &a)
-}
+fn f_comp_register_subr(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { register_subr_common(i, &a) }
 
 fn register_subr_common(i: &mut Interp, a: &[Value]) -> EvalResult {
     let name = match &a[0] {
@@ -1895,77 +1859,71 @@ fn register_subr_common(i: &mut Interp, a: &[Value]) -> EvalResult {
 
 /// `comp--register-lambda' (RELOC-IDX C-NAME MINARG MAXARG TYPE REST
 /// COMP-U): produce the native function object (no fset).
-fn f_comp_register_lambda(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let cname = match &a[1] {
-        Value::Str(s) => s.borrow().clone(),
-        other => return Err(i.wrong_type_mut("stringp", &other)),
-    };
-    let min = match &a[2] {
-        Value::Int(n) => (*n).max(0) as u32,
-        other => return Err(i.wrong_type_mut("fixnump", &other)),
-    };
-    let mut max = match &a[3] {
-        Value::Int(n) => (*n).max(0) as u32,
-        _ => u32::MAX,
-    };
-    if let Some(v) = a.get(5) {
-        if !v.is_nil() {
-            max = u32::MAX;
-        }
+fn f_comp_register_lambda(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let cname = match &a[1] {
+    Value::Str(s) => s.borrow().clone(),
+    other => return Err(i.wrong_type_mut("stringp", &other)),
+};
+let min = match &a[2] {
+    Value::Int(n) => (*n).max(0) as u32,
+    other => return Err(i.wrong_type_mut("fixnump", &other)),
+};
+let mut max = match &a[3] {
+    Value::Int(n) => (*n).max(0) as u32,
+    _ => u32::MAX,
+};
+if let Some(v) = a.get(5) {
+    if !v.is_nil() {
+        max = u32::MAX;
     }
-    let unit_idx = match a.get(6) {
-        Some(v) => unit_index(i, v)?,
-        None => return Err(i.error("comp--register-lambda needs COMP-U")),
-    };
-    let entry = UNITS.with(|us| {
-        us.borrow().get(unit_idx).and_then(|u| unsafe {
-            u._lib
-                .get::<EmEntry>(format!("{cname}\0").as_bytes())
-                .ok()
-                .map(|s| *s)
-        })
-    });
-    let Some(entry) = entry else {
-        return Err(i.error(format!("Cannot resolve {cname}")));
-    };
-    let func = NATIVES.with(|n| {
-        let mut n = n.borrow_mut();
-        if n.len() >= TRAMPS.len() {
-            return Err(i.error("Native subr table full"));
+}
+let unit_idx = match a.get(6) {
+    Some(v) => unit_index(i, v)?,
+    None => return Err(i.error("comp--register-lambda needs COMP-U")),
+};
+let entry = UNITS.with(|us| {
+    us.borrow().get(unit_idx).and_then(|u| unsafe {
+        u._lib
+            .get::<EmEntry>(format!("{cname}\0").as_bytes())
+            .ok()
+            .map(|s| *s)
+    })
+});
+let Some(entry) = entry else {
+    return Err(i.error(format!("Cannot resolve {cname}")));
+};
+let func = NATIVES.with(|n| {
+    let mut n = n.borrow_mut();
+    if n.len() >= TRAMPS.len() {
+        return Err(i.error("Native subr table full"));
+    }
+    n.push(entry);
+    Ok(TRAMPS[n.len() - 1])
+})?;
+META.with(|m| {
+    m.borrow_mut().push(NativeMeta {
+        name: cname.clone(),
+        unit: unit_idx as i64,
+        arglist: Value::Nil,
+        iform: Value::Nil,
+    })
+});
+let s: &'static Subr = Box::leak(Box::new(Subr {
+    name: Box::leak(cname.into_boxed_str()),
+    arity: if max == u32::MAX {
+        Arity::Many { min: min as u16 }
+    } else {
+        Arity::Range {
+            min: min as u16,
+            max: max as u16,
         }
-        n.push(entry);
-        Ok(TRAMPS[n.len() - 1])
-    })?;
-    META.with(|m| {
-        m.borrow_mut().push(NativeMeta {
-            name: cname.clone(),
-            unit: unit_idx as i64,
-            arglist: Value::Nil,
-            iform: Value::Nil,
-        })
-    });
-    let s: &'static Subr = Box::leak(Box::new(Subr {
-        name: Box::leak(cname.into_boxed_str()),
-        arity: if max == u32::MAX {
-            Arity::Many { min: min as u16 }
-        } else {
-            Arity::Range {
-                min: min as u16,
-                max: max as u16,
-            }
-        },
-        func,
-        doc: "",
-    }));
-    Ok(Value::Subr(s))
-}
+    },
+    func,
+    doc: "",
+}));
+Ok(Value::Subr(s)) }
 
-fn f_comp_native_compiler_options_effective_p(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(compiler_available()))
-}
-fn f_comp_native_driver_options_effective_p(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(compiler_available()))
-}
+fn f_comp_native_compiler_options_effective_p(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(compiler_available())) }
+fn f_comp_native_driver_options_effective_p(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { Ok(Value::from_bool(compiler_available())) }
 
 // ---------------------------------------------------------------------------
 // SUBRS table + install

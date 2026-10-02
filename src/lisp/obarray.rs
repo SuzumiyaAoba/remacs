@@ -4,7 +4,7 @@
 //! function cell, plist, flags) lives in a single vector so `Value::Sym`
 //! stays small and comparisons are cheap integer compares.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 
 use super::value::{SymId, Value};
 
@@ -37,6 +37,10 @@ pub struct Symbol {
     pub variable_documentation: Option<String>,
     /// Uninterned symbols (make-symbol/gensym) print with a `#:' prefix.
     pub uninterned: bool,
+    /// Cached `variable-alias' property target (set by
+    /// `defvaralias'/`put'/`setplist' through `Interp::put_prop').
+    /// Avoids a plist walk on every variable reference.
+    pub var_alias: Option<SymId>,
 }
 
 /// Well-known symbol ids, interned at startup. Adding a new entry here
@@ -208,7 +212,7 @@ pub struct Obarray {
 impl Obarray {
     pub fn new() -> Self {
         let mut ob = Obarray {
-            map: HashMap::with_capacity(4096),
+            map: HashMap::with_capacity_and_hasher(4096, rustc_hash::FxBuildHasher::default()),
             symbols: Vec::with_capacity(4096),
             gensym_counter: 0,
             gensym_n: 0,
@@ -250,6 +254,7 @@ impl Obarray {
             builtin_variable: false,
             variable_documentation: None,
             uninterned: false,
+            var_alias: None,
         });
         if name.starts_with(':') {
             self.symbols[id as usize].value = Value::Sym(id);
@@ -282,6 +287,7 @@ impl Obarray {
             builtin_variable: false,
             variable_documentation: None,
             uninterned: true,
+            var_alias: None,
         });
         id
     }

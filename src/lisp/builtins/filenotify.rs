@@ -218,10 +218,8 @@ fn intern(i: &mut crate::lisp::eval::Interp, s: &str) -> SymId {
     i.intern(s)
 }
 
-fn file_notify_error(i: &mut crate::lisp::eval::Interp, data: Vec<Value>) -> Flow {
-    let s = intern(i, "file-notify-error");
-    i.signal_data(s, data)
-}
+fn file_notify_error(i: &mut crate::lisp::eval::Interp, data: crate::lisp::Argv) -> Flow { let s = intern(i, "file-notify-error");
+i.signal_data(s, data.as_slice().to_vec()) }
 
 fn call_lisp(i: &mut crate::lisp::eval::Interp, f: &str, args: Vec<Value>) -> Result<Value, Flow> {
     let fun = Value::Sym(i.intern(f));
@@ -267,29 +265,27 @@ pub(crate) fn dispatch_special_event(
     i.apply(&binding, vec![event.clone()])
 }
 
-fn f_insert_special_event(i: &mut crate::lisp::eval::Interp, a: Vec<Value>) -> EvalResult {
-    if !matches!(&a[0], Value::Cons(_)) {
-        return Err(i.wrong_type_mut("consp", &a[0]));
-    }
-    // GNU: check that the event kind has a binding in special-event-map.
-    let key = car_safe(&a[0]);
-    let sem = intern(i, "special-event-map");
-    let map = i.symbol_value(sem);
-    let lookup = Value::Sym(intern(i, "lookup-key"));
-    let vec = match &key {
-        Value::Sym(s) => Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Sym(
-            *s,
-        )]))),
-        _ => return Ok(Value::Nil),
-    };
-    let binding = i.apply(&lookup, vec![map, vec, Value::t()])?;
-    if binding.is_nil() || matches!(binding, Value::Sym(s) if s == sym::UNBOUND) {
-        return Err(i.error_obj("Invalid special event kind", &key));
-    }
-    // GNU queues the event for the next command-loop iteration; batch
-    // remacs dispatches synchronously.
-    i.apply(&binding, vec![a[0].clone()])
+fn f_insert_special_event(i: &mut crate::lisp::eval::Interp, a: crate::lisp::Argv) -> EvalResult { if !matches!(&a[0], Value::Cons(_)) {
+    return Err(i.wrong_type_mut("consp", &a[0]));
 }
+// GNU: check that the event kind has a binding in special-event-map.
+let key = car_safe(&a[0]);
+let sem = intern(i, "special-event-map");
+let map = i.symbol_value(sem);
+let lookup = Value::Sym(intern(i, "lookup-key"));
+let vec = match &key {
+    Value::Sym(s) => Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Sym(
+        *s,
+    )]))),
+    _ => return Ok(Value::Nil),
+};
+let binding = i.apply(&lookup, vec![map, vec, Value::t()])?;
+if binding.is_nil() || matches!(binding, Value::Sym(s) if s == sym::UNBOUND) {
+    return Err(i.error_obj("Invalid special event kind", &key));
+}
+// GNU queues the event for the next command-loop iteration; batch
+// remacs dispatches synchronously.
+i.apply(&binding, vec![a[0].clone()]) }
 
 // ---------------------------------------------------------------------------
 // kqueue DEFUNs
@@ -307,136 +303,130 @@ fn directory_file_name(s: &str) -> String {
     s.trim_end_matches('/').to_string()
 }
 
-fn f_kqueue_add_watch(i: &mut crate::lisp::eval::Interp, a: Vec<Value>) -> EvalResult {
-    let file = want_string(i, &a[0])?;
-    let flags = want_list(i, &a[1])?;
-    let callback = a[2].clone();
-    let fp = call_lisp(i, "functionp", vec![callback.clone()])?;
-    if fp.is_nil() {
-        return Err(i.wrong_type_mut("invalid-function", &callback));
-    }
-
-    // file = Fdirectory_file_name (Fexpand_file_name (file, Qnil))
-    let file = crate::editor::expand_file_name_str(i, &file);
-    let file = directory_file_name(&file);
-
-    if !std::path::Path::new(&file).exists() {
-        return Err(i.error_obj("File does not exist", &Value::string(file)));
-    }
-
-    if !HAVE_KQUEUE {
-        return Err(file_notify_error(
-            i,
-            vec![Value::string("File watching is not available"), Value::Nil],
-        ));
-    }
-    let kq = ensure_kqueue();
-    if kq < 0 {
-        return Err(file_notify_error(
-            i,
-            vec![Value::string("File watching is not available"), Value::Nil],
-        ));
-    }
-
-    // Assemble note flags from the flags list.
-    let mut has = |name: &str| flags.iter().any(|f| i.sym_id(f) == Some(intern(i, name)));
-    let mut fflags = 0u32;
-    if has("delete") {
-        fflags |= NOTE_DELETE;
-    }
-    if has("write") {
-        fflags |= NOTE_WRITE;
-    }
-    if has("extend") {
-        fflags |= NOTE_EXTEND;
-    }
-    if has("attrib") {
-        fflags |= NOTE_ATTRIB;
-    }
-    if has("link") {
-        fflags |= NOTE_LINK;
-    }
-    if has("rename") {
-        fflags |= NOTE_RENAME;
-    }
-    if has("revoke") {
-        fflags |= NOTE_REVOKE;
-    }
-
-    // Open the file the way GNU does (O_EVTONLY|O_SYMLINK preferred).
-    let cpath =
-        std::ffi::CString::new(file.clone()).map_err(|_| i.error("File name contains NUL"))?;
-    let mut oflags = libc::O_NONBLOCK | sys::O_EVTONLY;
-    if sys::O_SYMLINK != 0 {
-        oflags |= sys::O_SYMLINK;
-    } else {
-        oflags |= libc::O_NOFOLLOW;
-    }
-    if sys::O_EVTONLY == 0 {
-        oflags |= libc::O_RDONLY;
-    }
-    let fd = unsafe { libc::open(cpath.as_ptr(), oflags) };
-    if fd < 0 {
-        return Err(i.error_obj("File cannot be opened", &Value::string(file)));
-    }
-
-    if register_watch_fd(kq, fd, fflags) < 0 {
-        unsafe { libc::close(fd) };
-        return Err(i.error_obj("Cannot watch file", &Value::string(file)));
-    }
-
-    let dir_watch = is_dir(&file);
-    let watch = KqWatch {
-        desc: fd as i64,
-        file: file.clone(),
-        callback: callback.clone(),
-        dir_list: if dir_watch {
-            Some(directory_listing(&file))
-        } else {
-            None
-        },
-    };
-    i.filenotify.watches.push(watch);
-    Ok(Value::Int(fd as i64 as i128))
+fn f_kqueue_add_watch(i: &mut crate::lisp::eval::Interp, a: crate::lisp::Argv) -> EvalResult { let file = want_string(i, &a[0])?;
+let flags = want_list(i, &a[1])?;
+let callback = a[2].clone();
+let fp = call_lisp(i, "functionp", vec![callback.clone()])?;
+if fp.is_nil() {
+    return Err(i.wrong_type_mut("invalid-function", &callback));
 }
+
+// file = Fdirectory_file_name (Fexpand_file_name (file, Qnil))
+let file = crate::editor::expand_file_name_str(i, &file);
+let file = directory_file_name(&file);
+
+if !std::path::Path::new(&file).exists() {
+    return Err(i.error_obj("File does not exist", &Value::string(file)));
+}
+
+if !HAVE_KQUEUE {
+    return Err(file_notify_error(
+        i,
+        vec![Value::string("File watching is not available"), Value::Nil].into(),
+    ));
+}
+let kq = ensure_kqueue();
+if kq < 0 {
+    return Err(file_notify_error(
+        i,
+        vec![Value::string("File watching is not available"), Value::Nil].into(),
+    ));
+}
+
+// Assemble note flags from the flags list.
+let mut has = |name: &str| flags.iter().any(|f| i.sym_id(f) == Some(intern(i, name)));
+let mut fflags = 0u32;
+if has("delete") {
+    fflags |= NOTE_DELETE;
+}
+if has("write") {
+    fflags |= NOTE_WRITE;
+}
+if has("extend") {
+    fflags |= NOTE_EXTEND;
+}
+if has("attrib") {
+    fflags |= NOTE_ATTRIB;
+}
+if has("link") {
+    fflags |= NOTE_LINK;
+}
+if has("rename") {
+    fflags |= NOTE_RENAME;
+}
+if has("revoke") {
+    fflags |= NOTE_REVOKE;
+}
+
+// Open the file the way GNU does (O_EVTONLY|O_SYMLINK preferred).
+let cpath =
+    std::ffi::CString::new(file.clone()).map_err(|_| i.error("File name contains NUL"))?;
+let mut oflags = libc::O_NONBLOCK | sys::O_EVTONLY;
+if sys::O_SYMLINK != 0 {
+    oflags |= sys::O_SYMLINK;
+} else {
+    oflags |= libc::O_NOFOLLOW;
+}
+if sys::O_EVTONLY == 0 {
+    oflags |= libc::O_RDONLY;
+}
+let fd = unsafe { libc::open(cpath.as_ptr(), oflags) };
+if fd < 0 {
+    return Err(i.error_obj("File cannot be opened", &Value::string(file)));
+}
+
+if register_watch_fd(kq, fd, fflags) < 0 {
+    unsafe { libc::close(fd) };
+    return Err(i.error_obj("Cannot watch file", &Value::string(file)));
+}
+
+let dir_watch = is_dir(&file);
+let watch = KqWatch {
+    desc: fd as i64,
+    file: file.clone(),
+    callback: callback.clone(),
+    dir_list: if dir_watch {
+        Some(directory_listing(&file))
+    } else {
+        None
+    },
+};
+i.filenotify.watches.push(watch);
+Ok(Value::Int(fd as i64 as i128)) }
 
 fn find_watch_pos(state: &FnState, desc: i64) -> Option<usize> {
     state.watches.iter().position(|w| w.desc == desc)
 }
 
-fn f_kqueue_rm_watch(i: &mut crate::lisp::eval::Interp, a: Vec<Value>) -> EvalResult {
-    let desc = match &a[0] {
-        Value::Int(n) => *n as i64,
-        _ => {
-            return Err(file_notify_error(
-                i,
-                vec![Value::string("Not a watch descriptor"), a[0].clone()],
-            ));
-        }
-    };
-    let Some(pos) = find_watch_pos(&i.filenotify, desc) else {
+fn f_kqueue_rm_watch(i: &mut crate::lisp::eval::Interp, a: crate::lisp::Argv) -> EvalResult { let desc = match &a[0] {
+    Value::Int(n) => *n as i64,
+    _ => {
         return Err(file_notify_error(
             i,
-            vec![Value::string("Not a watch descriptor"), a[0].clone()],
+            vec![Value::string("Not a watch descriptor"), a[0].clone()].into(),
         ));
-    };
-    i.filenotify.watches.remove(pos);
-    unsafe { libc::close(desc as i32) };
-
-    // GNU closes the kqueue fd when the watch list is empty.
-    if i.filenotify.watches.is_empty() {
-        let kq = KQ_FD.swap(-1, Ordering::SeqCst);
-        if kq >= 0 {
-            unsafe { libc::close(kq) };
-        }
     }
-    Ok(Value::t())
-}
+};
+let Some(pos) = find_watch_pos(&i.filenotify, desc) else {
+    return Err(file_notify_error(
+        i,
+        vec![Value::string("Not a watch descriptor"), a[0].clone()].into(),
+    ));
+};
+i.filenotify.watches.remove(pos);
+unsafe { libc::close(desc as i32) };
 
-fn f_kqueue_valid_p(i: &mut crate::lisp::eval::Interp, a: Vec<Value>) -> EvalResult {
-    let ok = matches!(&a[0], Value::Int(n) if find_watch_pos(&i.filenotify, *n as i64).is_some());
-    if ok { Ok(Value::t()) } else { Ok(Value::Nil) }
+// GNU closes the kqueue fd when the watch list is empty.
+if i.filenotify.watches.is_empty() {
+    let kq = KQ_FD.swap(-1, Ordering::SeqCst);
+    if kq >= 0 {
+        unsafe { libc::close(kq) };
+    }
 }
+Ok(Value::t()) }
+
+fn f_kqueue_valid_p(i: &mut crate::lisp::eval::Interp, a: crate::lisp::Argv) -> EvalResult { let ok = matches!(&a[0], Value::Int(n) if find_watch_pos(&i.filenotify, *n as i64).is_some());
+if ok { Ok(Value::t()) } else { Ok(Value::Nil) } }
 
 // ---------------------------------------------------------------------------
 // Event translation + delivery

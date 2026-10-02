@@ -54,6 +54,22 @@ Keywords supported:  :test :test-not :key
       (let ((def (get sym 'remacs--dump-fn)))
         (when def (fset sym def))))))
 
+;; `cl-proclaim'/`cl-declaim' are real GNU cl-lib.el definitions (not
+;; autoloads, and the prelude never folds them): `eieio-core.el' calls
+;; `(eval-when-compile (cl-declaim (optimize (safety 0))))' during load.
+(defvar cl--proclaims-deferred nil)
+(defun cl-proclaim (spec)
+  "Record a global declaration specified by SPEC."
+  (if (fboundp 'cl--do-proclaim) (cl--do-proclaim spec t)
+    (push spec cl--proclaims-deferred))
+  nil)
+(defmacro cl-declaim (&rest specs)
+  "Like `cl-proclaim', but takes any number of unevaluated, unquoted arguments."
+  (let ((body (mapcar (lambda (x) `(cl-proclaim ',x)) specs)))
+    (if (and (fboundp 'macroexp-compiling-p) (macroexp-compiling-p))
+        `(cl-eval-when (compile load eval) ,@body)
+      `(progn ,@body))))
+
 ;; These are aliases in GNU, not independent subrs/lambdas.
 (defalias 'cl-evenp #'evenp)
 (defalias 'cl-oddp #'oddp)

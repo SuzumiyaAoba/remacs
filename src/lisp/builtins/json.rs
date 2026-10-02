@@ -583,72 +583,66 @@ impl<'a> Parser<'a> {
     }
 }
 
-fn f_json_parse_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let src = match &a[0] {
-        Value::Str(s) => s.borrow().clone(),
-        other => return Err(i.wrong_type_mut("stringp", other)),
-    };
-    let o = parse_opts(i, &a[1..], false)?;
-    let mut p = Parser {
-        s: src.chars().collect(),
-        pos: 0,
-        line: 1,
-        base: 0,
-        i,
-        o: &o,
-    };
-    let v = p.value()?;
-    p.ws();
-    if p.pos != p.s.len() {
-        // GNU: leftover input after a valid value is a dedicated
-        // `json-trailing-content' error with (LINE nil POS) data.
-        let (pos, line) = (p.pos + 1, p.line as i128);
-        drop(p);
-        let e = i.intern("json-trailing-content");
-        json_cond_chain(i, e);
-        return Err(i.signal_data(
-            e,
-            vec![Value::Int(line), Value::Nil, Value::Int(pos as i128)],
-        ));
-    }
-    Ok(v)
+fn f_json_parse_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let src = match &a[0] {
+    Value::Str(s) => s.borrow().clone(),
+    other => return Err(i.wrong_type_mut("stringp", other)),
+};
+let o = parse_opts(i, &a[1..], false)?;
+let mut p = Parser {
+    s: src.chars().collect(),
+    pos: 0,
+    line: 1,
+    base: 0,
+    i,
+    o: &o,
+};
+let v = p.value()?;
+p.ws();
+if p.pos != p.s.len() {
+    // GNU: leftover input after a valid value is a dedicated
+    // `json-trailing-content' error with (LINE nil POS) data.
+    let (pos, line) = (p.pos + 1, p.line as i128);
+    drop(p);
+    let e = i.intern("json-trailing-content");
+    json_cond_chain(i, e);
+    return Err(i.signal_data(
+        e,
+        vec![Value::Int(line), Value::Nil, Value::Int(pos as i128)],
+    ));
 }
+Ok(v) }
 
-fn f_json_parse_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let o = parse_opts(i, &a[..], false)?;
-    let buf = i.current_buffer;
-    let (text, point) = {
-        let Some(b) = i.buffers.get(buf) else {
-            return Ok(Value::Nil);
-        };
-        let bb = b.borrow();
-        (bb.text.text(), bb.point)
+fn f_json_parse_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let o = parse_opts(i, &a[..], false)?;
+let buf = i.current_buffer;
+let (text, point) = {
+    let Some(b) = i.buffers.get(buf) else {
+        return Ok(Value::Nil);
     };
-    let chars: Vec<char> = text.chars().collect();
-    let start = point.min(chars.len());
-    // GNU `buffer_byte_to_line' counts newlines inside the parsed
-    // span only, so error LINE starts at 1 at point like POSITION
-    // starts at 0.
-    let mut p = Parser {
-        s: chars,
-        pos: start,
-        line: 1,
-        base: start,
-        i,
-        o: &o,
-    };
-    let v = p.value()?;
-    if let Some(b) = p.i.buffers.get(buf) {
-        b.borrow_mut().set_point(p.pos);
-    }
-    Ok(v)
+    let bb = b.borrow();
+    (bb.text.text(), bb.point)
+};
+let chars: Vec<char> = text.chars().collect();
+let start = point.min(chars.len());
+// GNU `buffer_byte_to_line' counts newlines inside the parsed
+// span only, so error LINE starts at 1 at point like POSITION
+// starts at 0.
+let mut p = Parser {
+    s: chars,
+    pos: start,
+    line: 1,
+    base: start,
+    i,
+    o: &o,
+};
+let v = p.value()?;
+if let Some(b) = p.i.buffers.get(buf) {
+    b.borrow_mut().set_point(p.pos);
 }
+Ok(v) }
 
-fn f_json_insert(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let s = serialize(i, &a[0], &a[1..])?;
-    crate::buffer::primitives::chg_insert_pt(i, &s, false)?;
-    Ok(Value::Nil)
-}
+fn f_json_insert(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let s = serialize(i, &a[0], &a[1..])?;
+crate::buffer::primitives::chg_insert_pt(i, &s, false)?;
+Ok(Value::Nil) }
 
 // ---------- serializer ----------
 
@@ -822,13 +816,11 @@ fn serialize(i: &mut Interp, v: &Value, rest: &[Value]) -> Result<String, Flow> 
     Ok(out)
 }
 
-fn f_json_serialize(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let s = serialize(i, &a[0], &a[1..])?;
-    // GNU's jansson-backed serializer returns a UNIBYTE string holding
-    // the UTF-8 output bytes (jansson emits UTF-8).
-    let v = Value::string(s.bytes().map(|b| b as char).collect::<String>());
-    if let Value::Str(r) = &v {
-        i.mark_unibyte(r);
-    }
-    Ok(v)
+fn f_json_serialize(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let s = serialize(i, &a[0], &a[1..])?;
+// GNU's jansson-backed serializer returns a UNIBYTE string holding
+// the UTF-8 output bytes (jansson emits UTF-8).
+let v = Value::string(s.bytes().map(|b| b as char).collect::<String>());
+if let Value::Str(r) = &v {
+    i.mark_unibyte(r);
 }
+Ok(v) }

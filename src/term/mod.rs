@@ -51,7 +51,10 @@ pub struct Grid {
 }
 
 /// Compute the screen contents for the selected frame at `width` ×
-/// `height` text cells. Pure — reads Interp state only.
+/// `height` text cells.  Like GNU's `redisplay_window' it also keeps
+/// each window's point on screen: a window's `start' is scrolled the
+/// minimal amount to show point, and recentered when point sits more
+/// than a window-height away (scrolling can't reach it cheaply).
 pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
     let mut rows = vec![String::new(); height];
     let mut mode_rows = Vec::new();
@@ -88,6 +91,92 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
             let wb = w.borrow();
             (wb.buffer, wb.start, wb.hscroll)
         };
+        let text_rows = wh.saturating_sub(1);
+        // Keep point inside the window: scroll `start' the minimal
+        // amount, or recenter when point is more than a window-height
+        // away, and likewise `hscroll' horizontally (GNU
+        // `redisplay_window' semantics — the window's start/hscroll
+        // are redisplay state, so updating them here is correct).
+        let (start, hscroll) = match i.buffers.get(buf_id) {
+            Some(b) if text_rows > 0 => {
+                let (suspend_hs, old_pt, min_hs) = {
+                    let wb = w.borrow();
+                    (wb.suspend_hscroll, wb.old_point, wb.min_hscroll)
+                };
+                let bb = b.borrow();
+                let pt = if std::rc::Rc::ptr_eq(w, &fb.selected) {
+                    bb.point()
+                } else {
+                    w.borrow().point
+                };
+                // GNU xdisp.c: point movement since the last redisplay
+                // lifts an hscroll suspension; then record it as the
+                // new old_point.
+                let mut wb_mut = w.borrow_mut();
+                if wb_mut.suspend_hscroll && pt != wb_mut.old_point {
+                    wb_mut.suspend_hscroll = false;
+                }
+                wb_mut.old_point = pt;
+                drop(wb_mut);
+                let suspend_hs = suspend_hs && pt == old_pt;
+                let pt_line = bb.text.line_of_pos(pt);
+                let start_line = bb.text.line_of_pos(start);
+                let new_start = if pt_line < start_line {
+                    let up = start_line - pt_line;
+                    if up > text_rows {
+                        bb.text
+                            .line_start(pt_line.saturating_sub(text_rows / 2))
+                    } else {
+                        bb.text.line_start(pt_line)
+                    }
+                } else if pt_line >= start_line + text_rows {
+                    let down = pt_line - (start_line + text_rows - 1);
+                    if down > text_rows {
+                        bb.text
+                            .line_start(pt_line.saturating_sub(text_rows / 2))
+                    } else {
+                        bb.text
+                            .line_start(pt_line + 1 - text_rows)
+                    }
+                } else {
+                    start
+                };
+                // Auto-hscroll only when `auto-hscroll-mode' allows it
+                // for this window's buffer and not suspended by an
+                // explicit `scroll-left'/`-right'/`set-window-hscroll'.
+                // GNU's min_hscroll floors the automatic value.
+                let ahs_id = i.intern_soft("auto-hscroll-mode").unwrap_or(u32::MAX);
+                let ahs_on = i
+                    .buffer_local_toplevel_value(ahs_id, buf_id)
+                    .or_else(|| i.default_toplevel_value(ahs_id))
+                    .map(|v| v.truthy())
+                    .unwrap_or(true);
+                let new_hscroll = if width > 0 && ahs_on && !suspend_hs {
+                    let col = pt - bb.text.line_start(pt_line);
+                    if col < hscroll {
+                        col
+                    } else if col >= hscroll + width {
+                        col + 1 - width
+                    } else {
+                        hscroll
+                    }
+                    .max(min_hs)
+                } else {
+                    hscroll
+                };
+                {
+                    let mut wb = w.borrow_mut();
+                    if new_start != start {
+                        wb.start = new_start;
+                    }
+                    if new_hscroll != hscroll {
+                        wb.hscroll = new_hscroll;
+                    }
+                }
+                (new_start, new_hscroll)
+            }
+            _ => (start, hscroll),
+        };
         let text_lines: Vec<String> = match i.buffers.get(buf_id) {
             Some(b) => {
                 let bb = b.borrow();
@@ -96,7 +185,6 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
             }
             None => vec![String::new()],
         };
-        let text_rows = wh.saturating_sub(1);
         for row in 0..text_rows {
             let y = top + row;
             if y >= body_height {
@@ -145,8 +233,17 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
                 let ls = bb.text.line_start(line);
                 let start_line = bb.text.line_of_pos(start);
                 let row = line.saturating_sub(start_line);
-                let col = (p - ls).saturating_sub(hscroll);
-                if row < text_rows && col < width {
+                // GNU clamps an hscroll-hidden cursor to the window
+                // edge (left edge when scrolled past on the left,
+                // right edge when past the right) instead of hiding
+                // it — needed while `suspend_hscroll' holds the view.
+                let pcol = p - ls;
+                let col = if pcol < hscroll {
+                    0
+                } else {
+                    (pcol - hscroll).min(width.saturating_sub(1))
+                };
+                if row < text_rows && width > 0 {
                     cursor_pos = Some((col, top + row));
                 }
             }

@@ -6,15 +6,17 @@
 //! When `lexical-binding` is on, `let` binds in a captured lexical env
 //! chain instead (unless the symbol is `defvar`'d special).
 
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+
 use std::rc::Rc;
 
 use super::error::{EvalResult, Flow};
 use super::obarray::Obarray;
 use super::obarray::sym;
 use super::reader::Reader;
-use super::value::{Arity, Lambda, Marker, SymId, Value};
+use super::value::{Argv, Arity, Cons, Lambda, Marker, SymId, Value};
+
 
 /// A saved dynamic binding (specbind entry).
 struct SpecBind {
@@ -26,30 +28,36 @@ struct SpecBind {
 }
 
 /// A lexical environment frame (chained).
+///
+/// Bindings are stored in a `Vec`, not a `HashMap`: `let' frames and
+/// lambda calls typically bind a handful of variables, so a linear
+/// scan beats hashing and we skip two allocations per frame.  The
+/// vector's order doubles as GNU's `internal-interpreter-environment'
+/// order — `lexenv_as_value' walks it in reverse (newest first).
 pub struct LexFrame {
-    pub vars: RefCell<HashMap<SymId, Value>>,
-    /// Insertion order of `vars' — GNU's `internal-interpreter-
-    /// environment' is the flat alist specbind builds by prepending,
-    /// so a frame's bindings appear in reverse binding order.  Needed
-    /// to reconstruct that alist for `aref' on closures (oclosure.el
-    /// indexes into it positionally).
-    pub var_order: RefCell<Vec<SymId>>,
+    /// `(sym . value)' pairs in binding order (oldest first).
+    pub vars: RefCell<Vec<(SymId, Value)>>,
     /// Scoped `defvar' declarations — GNU's bare-symbol elements of
     /// `internal-interpreter-environment': a name listed here is bound
     /// dynamically by `let'/`let*' for the rest of this scope's extent,
     /// then the declaration unwinds with the frame.
-    pub declared: RefCell<HashSet<SymId>>,
+    pub declared: RefCell<Vec<SymId>>,
     pub parent: Option<Rc<LexFrame>>,
 }
 
 /// Record a binding in a lexical frame, tracking GNU's env order.
+/// A re-bind keeps the name's original position (GNU's `assq' hits the
+/// first env entry, same observable order).
 pub fn lexframe_bind(frame: &LexFrame, sym: SymId, val: Value) {
     let mut vars = frame.vars.borrow_mut();
-    if !vars.contains_key(&sym) {
-        frame.var_order.borrow_mut().push(sym);
+    if let Some(e) = vars.iter_mut().find(|(s, _)| *s == sym) {
+        e.1 = val;
+    } else {
+        vars.push((sym, val));
     }
-    vars.insert(sym, val);
 }
+
+
 
 /// GNU's `internal-interpreter-environment' as a Lisp value: a flat
 /// alist of `(sym . val)' conses, innermost bindings first (specbind
@@ -62,9 +70,8 @@ pub fn lexenv_as_value(env: &LexEnv) -> Value {
         for s in frame.declared.borrow().iter() {
             items.push(Value::Sym(*s));
         }
-        for s in frame.var_order.borrow().iter().rev() {
-            let v = frame.vars.borrow().get(s).cloned().unwrap_or(Value::Nil);
-            items.push(Value::cons(Value::Sym(*s), v));
+        for (s, v) in frame.vars.borrow().iter().rev() {
+            items.push(Value::cons(Value::Sym(*s), v.clone()));
         }
         cur = &frame.parent;
     }
@@ -79,12 +86,31 @@ pub type LexEnv = Option<Rc<LexFrame>>;
 
 pub fn lexenv_lookup(mut env: &LexEnv, sym: SymId) -> Option<Value> {
     while let Some(frame) = env {
-        if let Some(v) = frame.vars.borrow().get(&sym) {
+        if let Some((_, v)) = frame.vars.borrow().iter().find(|(s, _)| *s == sym) {
             return Some(v.clone());
         }
         env = &frame.parent;
     }
     None
+}
+
+/// Read a cons cell's `cdr` without borrowing the `RefCell` or cloning
+/// the `Value`.  Spine walks only ever follow `cdr` chains — the cells
+/// stay alive through the `Rc` links reachable from the list head, and
+/// nothing mutates them while these loops run — so a raw pointer read
+/// is safe and skips a borrow + two `Rc` refcount ops per step.  The
+/// returned `&'static` is a scoped lie: callers must only use it while
+/// the owning list value is alive and unmutated.
+pub(crate) unsafe fn cdr_ptr(c: &Rc<RefCell<Cons>>) -> &'static Value {
+    unsafe { &(*RefCell::as_ptr(c)).cdr }
+}
+
+/// Cons-cell pointer of a `Value::Cons`, or null.
+pub(crate) fn cons_ptr(v: &Value) -> *const RefCell<Cons> {
+    match v {
+        Value::Cons(c) => Rc::as_ptr(c),
+        _ => std::ptr::null(),
+    }
 }
 
 /// GNU's `Fmemq(var, Vinternal_interpreter_environment)': true when SYM
@@ -105,16 +131,18 @@ pub fn lexenv_declared(mut env: &LexEnv, sym: SymId) -> bool {
 /// (GNU pushes the bare symbol onto `internal-interpreter-environment').
 pub fn lexenv_declare(env: &LexEnv, sym: SymId) {
     if let Some(frame) = env {
-        frame.declared.borrow_mut().insert(sym);
+        let mut d = frame.declared.borrow_mut();
+        if !d.contains(&sym) {
+            d.push(sym);
+        }
     }
 }
 
 /// A fresh empty lexical root — GNU's `(t)' sentinel environment.
 pub fn lexenv_root() -> LexEnv {
     Some(Rc::new(LexFrame {
-        vars: RefCell::new(HashMap::new()),
-        var_order: RefCell::new(Vec::new()),
-        declared: RefCell::new(HashSet::new()),
+        vars: RefCell::new(Vec::new()),
+        declared: RefCell::new(Vec::new()),
         parent: None,
     }))
 }
@@ -144,7 +172,7 @@ pub struct Interp {
     /// loading, approximating the compiled effect for interpreted
     /// code (e.g. rx.el's `rx--pcase-vars' feeding pcase expansion
     /// during other libraries' loads).
-    pub file_declared: RefCell<std::collections::HashSet<SymId>>,
+    pub file_declared: RefCell<HashSet<SymId>>,
     /// The `lexical-binding` default (buffer-local in Emacs; we keep a
     /// default plus per-buffer locals).
     pub buffers: crate::buffer::BufferSet,
@@ -240,7 +268,7 @@ pub struct Interp {
     /// take seconds.  The pin holds the call-site cons alive so its
     /// `Rc' pointer stays unique.  Entries validate on the current
     /// `macro_gen' plus `eq' identity of the resolved fn cell.
-    pub macro_cache: std::collections::HashMap<usize, (u64, Value, Value, Value)>,
+    pub macro_cache: HashMap<usize, (u64, Value, Value, Value)>,
     /// Generation counter bumped by `fset'/`put_prop'/`setplist'/
     /// `fmakunbound' — any global change that could alter expansion
     /// output (expanders consult symbol properties like
@@ -257,7 +285,7 @@ pub struct Interp {
     /// and its address — alive, preventing a recycled cons pointer
     /// from matching a stale entry.
     pub macroexpand_all_cache:
-        std::cell::RefCell<(u64, std::collections::HashMap<usize, (Value, Value)>)>,
+        std::cell::RefCell<(u64, HashMap<usize, (Value, Value)>)>,
     /// GNU's `noninteractive_need_newline`: set when batch stdout was
     /// written, so the next stderr message is preceded by a newline.
     pub stderr_need_newline: bool,
@@ -333,7 +361,11 @@ pub struct Interp {
     pub charset_order: std::cell::RefCell<(Vec<String>, usize)>,
     /// Memoized `char-charset' winners for the default order
     /// (invalidated when the order or any charset definition changes).
-    pub char_charset_cache: std::cell::RefCell<std::collections::HashMap<i64, String>>,
+    pub char_charset_cache: std::cell::RefCell<HashMap<i64, String>>,
+    /// Interned id of `variable-alias' — caches `Symbol::var_alias'
+    /// updates in `put_prop'/`f_put'/`f_setplist' so `symbol_value'
+    /// skips the intern lookup and the plist walk.
+    pub var_alias_prop: SymId,
     /// D-Bus bus connections and registered fds — GNU's
     /// `xd_registered_buses' / `xd_registered_fds' from `src/dbusbind.c'.
     pub dbus: crate::lisp::builtins::dbus::DbusState,
@@ -344,7 +376,7 @@ pub struct Interp {
     /// Lazily parsed `etc/charsets/*.map' tables and maps installed
     /// by `unify-charset' (key `charset:NAME'); see builtins/charset.rs.
     pub charset_maps: std::cell::RefCell<
-        std::collections::HashMap<
+        HashMap<
             String,
             std::rc::Rc<crate::lisp::builtins::charset::CharsetTable>,
         >,
@@ -424,7 +456,7 @@ pub struct Interp {
     /// interpreted remacs library code (which stands in for GNU's
     /// .elc bodies) calls these via the same direct dispatch when
     /// `dumped_call_depth' is nonzero.
-    pub byte_op_subrs: Option<std::collections::HashMap<SymId, &'static crate::lisp::value::Subr>>,
+    pub byte_op_subrs: Option<HashMap<SymId, &'static crate::lisp::value::Subr>>,
     /// `set-char-table-parent' registry: record identity → parent table.
     /// Char-table parents live outside the record so existing record
     /// layouts are untouched.  The Weak guards against a dead record's
@@ -441,19 +473,19 @@ pub struct Interp {
     /// Cached debug env vars — reading them per eval/call showed up
     /// hot (getenv does a linear environ scan + OsString alloc).
     /// Checked once at `Interp::new'.
-    pub dbg_flags: u16,
+    pub dbg_flags: u32,
     /// Cached REMACS_BT_AT limit (0 = unset).
     pub bt_at_limit: usize,
     /// Live Lisp call frames `(FUNCTION . ARGS)', outermost first.
     /// Pushed by `apply' so `mapbacktrace'/backtrace internals can
     /// walk the stack like GNU's specpdl entries do.
-    pub lisp_stack: Vec<(Value, Vec<Value>)>,
+    pub lisp_stack: Vec<(Value, Argv)>,
     /// Debug: the raw form whose head symbol call is in progress.
     pub cur_head_form: Value,
     /// `lisp_stack' snapshot taken when the last signal was raised —
     /// the frames GNU's batch debugger prints after `Error:' (the live
     /// stack itself has already unwound by the time main sees it).
-    pub last_error_stack: std::cell::RefCell<Vec<(Value, Vec<Value>)>>,
+    pub last_error_stack: std::cell::RefCell<Vec<(Value, Argv)>>,
     /// `profiler-cpu-running-p' state flag (no real sampler).
     pub cpu_profiler: bool,
     /// The sole terminal object (`terminal-list', `frame-terminal'):
@@ -476,17 +508,17 @@ pub struct Interp {
     /// reuse: a dead entry never upgrades, so a fresh allocation at
     /// the same address is never mis-marked.
     pub unibyte_strings:
-        std::collections::HashMap<usize, std::rc::Weak<std::cell::RefCell<String>>>,
+        HashMap<usize, std::rc::Weak<std::cell::RefCell<String>>>,
     /// Strings produced by multibyte decoders — `multibyte-string-p'
     /// is t for them even when their contents are pure ASCII.
     pub multibyte_strings:
-        std::collections::HashMap<usize, std::rc::Weak<std::cell::RefCell<String>>>,
+        HashMap<usize, std::rc::Weak<std::cell::RefCell<String>>>,
     /// Text properties attached to string objects: pointer identity →
     /// (weak backref, sorted disjoint intervals (start, end, plist)).
     /// GNU keeps dead interval boundaries after property removal, so
     /// a true interval model is needed (not last-write-wins).  The
     /// Weak guards against address reuse like the unibyte map.
-    pub string_props: std::collections::HashMap<
+    pub string_props: HashMap<
         usize,
         (
             std::rc::Weak<std::cell::RefCell<String>>,
@@ -639,6 +671,9 @@ fn boot_lib(i: &mut Interp, name: &str) {
     if let Some(t0) = t {
         eprintln!("[boot] {name}: {}ms", t0.elapsed().as_millis());
     }
+    if let Err(e) = &r {
+        eprintln!("[boot-err] {name}: {e:?}");
+    }
     let _ = r;
 }
 
@@ -670,6 +705,13 @@ impl Interp {
             "mule-util",
             "term/common-win",
             "tool-bar",
+            // `subr-x' is deliberately absent: GNU -Q reports
+            // `(featurep 'subr-x)' => nil (subr-x.el isn't in loadup),
+            // even though the amalgamated file's dump-side defs are
+            // loaded via `boot_lib' below.  Registering the feature
+            // would make `(require 'subr-x)' a no-op and leave the
+            // real subr-x names (hash-table-keys, thread-first, ...)
+            // void — qa_subrx2's GNU-verified checks.
             "dnd",
             "fontset",
             "image",
@@ -780,23 +822,39 @@ impl Interp {
             obarray,
             specbind: Vec::new(),
             lexenv: None,
-            file_declared: RefCell::new(std::collections::HashSet::new()),
+            file_declared: RefCell::new(HashSet::default()),
             dbg_flags: {
-                let mut f = 0u16;
-                if std::env::var_os("DBG_FUNCALL").is_some() {
-                    f |= 0x01;
-                }
-                if std::env::var_os("REMACS_TRACE_DEPTH").is_some() {
-                    f |= 0x02;
-                }
-                if std::env::var_os("REMACS_TRACE_CALL").is_some() {
-                    f |= 0x04;
-                }
-                if std::env::var("REMACS_EVAL_WATCH").is_ok() {
-                    f |= 0x08;
-                }
-                if std::env::var("DBG_VOID").is_ok() {
-                    f |= 0x10;
+
+                let mut f = 0u32;
+                for (var, bit) in [
+                    ("DBG_FUNCALL", 0x01u32),
+                    ("REMACS_TRACE_DEPTH", 0x02),
+                    ("REMACS_TRACE_CALL", 0x04),
+                    ("REMACS_EVAL_WATCH", 0x08),
+                    ("DBG_VOID", 0x10),
+                    ("WHILE_WATCH", 0x20),
+                    ("REMACS_TRACE_BC", 0x40),
+                    ("DBG_DOTTED", 0x80),
+                    ("DBG_SETCONST", 0x100),
+                    ("REMACS_FORM_PROF", 0x200),
+                    ("REMACS_MCE_PROF", 0x400),
+                    ("REMACS_TRACE_AUTOLOAD", 0x800),
+                    ("REMACS_TRACE_ERR", 0x1000),
+                    ("WATCH_ROLLBACK", 0x2000),
+                    ("WATCH_MAKUNBOUND", 0x4000),
+                    ("REMACS_LOAD_POS", 0x8000),
+                    ("REMACS_TRACE_EVAL", 0x10000),
+                    ("REMACS_LOAD_DEBUG", 0x20000),
+                    ("WATCH_TERM_CODING", 0x40000),
+                    ("REMACS_TRACE_DECLARE", 0x80000),
+                    ("REMACS_UNIPROP_DEBUG", 0x100000),
+                    ("PRELUDE_TRACE", 0x200000),
+                    ("REMACS_BT_EOF", 0x400000),
+                    ("REMACS_BT_ERR", 0x800000),
+                ] {
+                    if std::env::var_os(var).is_some() {
+                        f |= bit;
+                    }
                 }
                 f
             },
@@ -838,9 +896,9 @@ impl Interp {
             dumped_call_depth: 0,
             macroexp_call_depth: 0,
             expand_unadvised_depth: 0,
-            macro_cache: std::collections::HashMap::new(),
+            macro_cache: HashMap::default(),
             macro_gen: 0,
-            macroexpand_all_cache: std::cell::RefCell::new((0, std::collections::HashMap::new())),
+            macroexpand_all_cache: std::cell::RefCell::new((0, HashMap::default())),
             stderr_need_newline: false,
             out_last_char: None,
             tz_rule: None,
@@ -864,9 +922,10 @@ impl Interp {
             dbus: crate::lisp::builtins::dbus::DbusState::new(),
             charsets: Vec::new(),
             charset_order: std::cell::RefCell::new((Vec::new(), 16)),
-            char_charset_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
+            char_charset_cache: std::cell::RefCell::new(HashMap::default()),
+            var_alias_prop: 0,
             charset_aliases: Vec::new(),
-            charset_maps: std::cell::RefCell::new(std::collections::HashMap::new()),
+            charset_maps: std::cell::RefCell::new(HashMap::default()),
             extra_coding_systems: Vec::new(),
             extra_coding_aliases: Vec::new(),
             terminal_coding: Value::Nil,
@@ -913,9 +972,9 @@ impl Interp {
             terminal_params: Vec::new(),
             x_display_attempted: false,
             color_db_init: false,
-            unibyte_strings: std::collections::HashMap::new(),
-            multibyte_strings: std::collections::HashMap::new(),
-            string_props: std::collections::HashMap::new(),
+            unibyte_strings: HashMap::default(),
+            multibyte_strings: HashMap::default(),
+            string_props: HashMap::default(),
             zero_vector: Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(Vec::new()))),
         };
         crate::lisp::builtins::install(&mut interp);
@@ -928,6 +987,7 @@ impl Interp {
         interp.buffers.set_undo_sym(us);
         interp.undo_inhibit_sym = interp.intern("undo-inhibit-record-point");
         interp.bfn_sym = interp.intern("buffer-file-name");
+        interp.var_alias_prop = interp.intern("variable-alias");
         // The initial buffers every Emacs session has, in GNU's
         // buffer-list order: (scratch Minibuf-0 Messages load
         // Warnings). New buffers append at the end of the order.
@@ -1033,6 +1093,51 @@ impl Interp {
                 "cl-old-struct-compat-mode-hook",
                 "internal-lisp-face-attributes",
                 "buffer-face-mode-face",
+                // Prelude-folded cells from files GNU doesn't run at
+                // dump time (cl-macs/cl-lib constants, pcase caches,
+                // rect vars) — GNU -Q leaves their value cells void.
+                "cl--active-block-names",
+                "cl--cnm",
+                "cl--cnm-args",
+                "cl--cnm-name",
+                "cl--cnm-ok",
+                "cl--labels-convert-cache",
+                "cl--labels-magic",
+                "cl--lambda-list-keywords",
+                "cl--loop--into-vars",
+                "cl--loop-keywords",
+                "cl--safe-funcs",
+                "cl--simple-funcs",
+                "cl-float-epsilon",
+                "cl-float-negative-epsilon",
+                "cl-least-negative-float",
+                "cl-least-negative-normalized-float",
+                "cl-least-positive-float",
+                "cl-least-positive-normalized-float",
+                "cl-most-negative-float",
+                "cl-most-positive-float",
+                "cl-struct-built-in-class",
+                "cl-struct-cl--class",
+                "cl-struct-cl--generic",
+                "cl-struct-cl--generic-generalizer",
+                "cl-struct-cl--generic-method",
+                "cl-struct-cl-derived-type-class",
+                "cl-struct-cl-slot-descriptor",
+                "cl-struct-cl-structure-class",
+                "cl-struct-cl-structure-object",
+                "cl-struct-oclosure--class",
+                "cl-struct-registerv",
+                "cl-struct-timer",
+                "cl-struct-xref-elisp-location",
+                "pcase--dontcare-upats",
+                "pcase--dontwarn-upats",
+                "pcase--find-macro-def-regexp",
+                "pcase--memoize",
+                "pcase--subtype-bitsets",
+                "rectangle--mark-crutches",
+                "rectangle-mark-mode-hook",
+                "rectangle-mark-mode-map",
+                "rectangle-mark-mode",
                 "buffer-face-mode-hook",
                 "buffer-face-mode-remapping",
                 "button-mode-map",
@@ -1497,6 +1602,20 @@ impl Interp {
                 "cl--advice-place-code",
                 "cl--alist-to-plist",
                 "cl--arglist-args",
+                // cl-macs inline helpers folded into the prelude —
+                // GNU keeps them void at -Q (cl-macs isn't dumped).
+                "cl--const-expr-p",
+                "cl--const-expr-val",
+                "cl--do-&aux",
+                "cl--do-arglist",
+                "cl--loop-intervals",
+                "cl--loop-keymap-pairs",
+                "cl--loop-keymap-seqs",
+                "cl--loop-obarray-symbols",
+                "cl--loop-overlays",
+                "cl--pop2",
+                "cl--sm-exp",
+                "cl--sm-shadow",
                 "cl--block-throw",
                 "cl--block-throw--cmacro",
                 "cl--block-wrapper",
@@ -2122,6 +2241,19 @@ impl Interp {
 ];
 
 
+        // Plist snapshot from before ANY Lisp runs: the cl chain
+        // (gv→cl-lib→cl-loaddefs→cl-macs) loads *inside* the prelude
+        // eval via pcase.el's expansion, so the post-prelude snapshot
+        // below already carries cl-loaddefs'/gv's prop writes.  Rolled
+        // files' own definitions restore their plist from this
+        // (absent → nil); the `remacs--dump-fn' stash pass preserves
+        // the prelude-folded definition on the same plist.
+        let pre_prelude_plists: HashMap<SymId, Value> = interp
+            .obarray
+            .all_ids()
+            .iter()
+            .map(|&id| (id, interp.obarray.symbol(id).plist.clone()))
+            .collect();
         interp.loading_dumped = true;
         if std::env::var("REMACS_NO_PRELUDE").is_ok() {
             // Debug escape: skip prelude evaluation entirely.
@@ -2242,6 +2374,43 @@ impl Interp {
                     }
                 }
             }
+            if interp.dbg_flags & 0x800 != 0 {
+                let id = interp.intern("cl-member");
+                eprintln!(
+                    "[post-prelude] cl-member fn={:?} plist={:?}",
+                    interp.obarray.symbol(id).function,
+                    interp.obarray.symbol(id).plist
+                );
+            }
+            // Snapshot every symbol's state after the prelude but before
+            // the boot-lib evals: interpreted loads fire
+            // `eval-when-compile'/autoload requires that GNU's dumped
+            // .elc files compiled away (cl-generic's `(eval-when-compile
+            // (require 'cl-lib))' pulls cl-macs + cl-loaddefs + gv;
+            // mouse pulls rect/send-to/map).  GNU's -Q image never ran
+            // those files, so everything they touch — function cells,
+            // value cells, plists — is restored from this snapshot after
+            // the loads finish below.
+        let pre_boot_syms: HashMap<SymId, (Value, Value, Value, bool, bool, bool)> =
+            interp
+                .obarray
+                .all_ids()
+                .iter()
+                .map(|&id| {
+                    let s = interp.obarray.symbol(id);
+                    (
+                        id,
+                        (
+                            s.function.clone(),
+                            s.value.clone(),
+                            s.plist.clone(),
+                            s.special,
+                            s.constant,
+                            s.make_local_if_set,
+                        ),
+                    )
+                })
+                .collect();
             // Seed `defun-declarations-alist'/`macro-declarations-alist'
             // with byte-run.el's values *before* loading it.  The prelude
             // binds both to nil (so its early `(declare (gv-expander ...))'
@@ -2305,6 +2474,34 @@ impl Interp {
             // `byte-hunk-handler' machinery.  The file has no
             // `provide', matching GNU's `featurep' => nil at -Q.
             let _ = boot_lib(&mut interp, "byte-run");
+
+            // GNU's loadup.el `(load "subr")' runs right after
+            // byte-run (line 125): its defmacros install the
+            // `(macro . closure)' cells that `macrop',
+            // `symbol-function' and the census surface report.  The
+            // prelude's folded definitions still win at eval time via
+            // `special_form', so this only corrects the cell shape.
+            let _ = boot_lib(&mut interp, "subr");
+            // subr.el's Lisp `defun's overwrite Rust subrs carrying
+            // parity tweaks (gensym's interned-name skip, oddp's marker
+            // rejection, apply-partially's #[128] byte-code shape,
+            // locate-library's suffix rules, ...).  GNU's nativecomp
+            // build reports `subrp' t for all of them, so restoring the
+            // Rust cells is the more faithful surface.
+            for s in crate::lisp::builtins::collect() {
+                if let Some(id) = interp.intern_soft(s.name) {
+                    let f = interp.symbol_function(id);
+                    let is_subr = matches!(f, Value::Subr(_));
+                    if !is_subr {
+                        interp.fset(id, Value::Subr(s));
+                    }
+                }
+            }
+
+            // seq.el is in GNU's dump too (loadup.el line 252): its
+            // `seq-let' defmacro replaces the raw-subr placeholder so
+            // `(macrop 'seq-let)' reports t like GNU.
+            let _ = boot_lib(&mut interp, "seq");
             // env.el is preloaded into GNU's dump (loadup.el): its
             // feature is already registered, but the definitions must
             // exist too — `(require 'env)' short-circuits on the
@@ -2699,68 +2896,450 @@ impl Interp {
             // those purely autoloaded.  Unbind every definition the
             // interpreted loads made, then reinstall the entry
             // points' loaddefs autoload cells.
-            let rolled_back = interp.eval_str(
-                "(let (fns vars) \
-                   (dolist (lib '(\"rect\" \"send-to\" \"map\")) \
-                     (let ((entry (cl-find lib load-history \
-                               :key #'car \
-                               :test (lambda (want key) \
-                                       (and (stringp key) \
-                                            (string-suffix-p \
-                                             (concat \"/\" want \".el\") key)))))) \
-                       (when entry \
-                         (dolist (item (cdr entry)) \
-                           (cond \
-                            ((and (consp item) (memq (car item) '(defun defmacro))) \
-                             (push (cdr item) fns)) \
-                            ((and (consp item) (memq (car item) '(cl-defgeneric cl-defmethod))) \
-                             (push (cadr item) fns)) \
-                            ((and (consp item) (memq (car item) '(defface require provide autoload))) \
-                             nil) \
-                            ((symbolp item) (push item vars)) \
-                            ((and (consp item) (symbolp (cdr item))) \
-                             (push (cdr item) vars)))) \
-                         (setq load-history (delq entry load-history))))) \
-                   (list fns vars))",
-            );
-            if let Ok(rolled) = rolled_back {
-                if let Ok(groups) = rolled.list_to_vec() {
-                    // Unbind in Rust rather than via `makunbound':
-                    // that builtin voids an always-buffer-local var by
-                    // planting a voided local binding, which would
-                    // shadow the default if the library later loads
-                    // for real — a plain "never loaded" state needs
-                    // the locals entry and the auto-local flag gone.
-                    let fns = groups.first().and_then(|v| v.list_to_vec().ok());
-                    let vars = groups.get(1).and_then(|v| v.list_to_vec().ok());
-                    for v in fns.into_iter().flatten() {
-                        if let Value::Sym(sid) = v {
-                            interp.obarray.symbol_mut(sid).function = Value::Sym(sym::UNBOUND);
+            // Roll back the `eval-when-compile' requires fired during
+            // the dumped libraries' interpreted loads: GNU's dumped
+            // .elc files compiled those requires away, so -Q keeps
+            // these libraries purely autoloaded.  mouse.el's
+            // `(require 'rect)'/`(require 'send-to)' pull in map.el;
+            // cl-generic's `(eval-when-compile (require 'cl-lib))'
+            // pulls cl-lib (remacs-compat + cl-loaddefs), cl-macs,
+            // pcase/subr-x no-ops — and `cl-defmethod (setf ...)'
+            // expansion pulls gv.  History records only the entry's
+            // own definitions, while cl-loaddefs' real work is `put'/
+            // `autoload' side effects that leave no history items, so
+            // the rolled-back state can't be reconstructed from
+            // history alone: restore every symbol those files mention
+            // (parsed from source) plus every symbol their history
+            // items name, from the pre-load `pre_boot_syms' snapshot —
+            // except symbols a KEPT library's history touches, which
+            // legitimately changed post-snapshot (e.g. a dumped file
+            // defining a `cl-*' name).
+            // NOTE: `subr-x' is NOT here: GNU -Q leaves its feature
+            // unregistered AND voids its own defs (handled by the
+            // GNU_VOID lists), but its amalgamated dump-file copies
+            // (bindings.el's `make-mode-line-mouse-map', leaf subr.el
+            // helpers) stay bound at -Q — mass-rolling the file would
+            // void those.  `pcase', `gv', `help-macro' ARE rolled:
+            // none are dumped, so their defs/props (`pcase--memoize',
+            // `progn's `gv-expander') are void at -Q — but see below:
+            // prelude-subtracted defs still restore from the snapshot.
+            // NOTE: `gv' is deliberately absent: GNU's loadup.el:195
+            // `(require 'gv)' runs before the dump, so gv.el's defs
+            // (`gv-get', `gv--defsetter', the `cond'/`if' gv-expander
+            // props) survive at -Q even though `featurep' is nil
+            // (its `provide' is dropped with the features reset at
+            // the end of `new').  Rolling it voided `gv--defsetter'
+            // while keeping `gv-get' bound (loaddefs history kept),
+            // producing `((setf cond) ...)' expansions that signal
+            // invalid-function — killing `advice-remove' and thus
+            // `electric-indent-mode' init.
+            const ROLLED_LIBS: &[&str] =
+                &["rect", "send-to", "map", "cl-macs", "cl-lib",
+                  "cl-loaddefs", "pcase", "help-macro",
+                  "remacs-compat", "inline"];
+            // Symbols every kept library's load-history items mention —
+            // restoring these would clobber post-snapshot work.
+            let mut kept_syms: HashSet<SymId> = HashSet::default();
+            let mut touched: HashSet<SymId> = HashSet::default();
+            let lh = interp.intern("load-history");
+            let mut hist = interp.symbol_value(lh);
+            let mut hist_items: Vec<Value> = Vec::new();
+            while let Value::Cons(c) = hist {
+                let b = c.borrow();
+                hist_items.push(b.car.clone());
+                hist = b.cdr.clone();
+            }
+            // One pass collects both sets: an entry belongs to a
+            // rolled-back library when its path tail-matches one of
+            // ROLLED_LIBS.
+            for entry in &hist_items {
+                let file = match entry {
+                    Value::Cons(c) => c.borrow().car.clone(),
+                    _ => continue,
+                };
+                let rolled = match &file {
+                    Value::Str(s) => {
+                        let f = s.borrow();
+                        ROLLED_LIBS.iter().any(|l| {
+                            f.ends_with(&format!("/{}.el", l))
+                                || f.ends_with(&format!("/{}.elc", l))
+                        })
+                    }
+                    _ => false,
+                };
+                if let Value::Cons(c) = entry {
+                    let mut items = c.borrow().cdr.clone();
+                    while let Value::Cons(ic) = items {
+                        let item = ic.borrow().car.clone();
+                        items = ic.borrow().cdr.clone();
+                        // Both rolled and kept entries record
+                        // `(TYPE . NAME)' / `(TYPE NAME ...)' items
+                        // where TYPE is defun/defmacro/autoload/...
+                        // and bare symbols for defvar'd names.  Only
+                        // NAME is a mutated symbol — collecting the
+                        // TYPE token itself (as a deep walk does) pulls
+                        // `defun' into the restore set and voids the
+                        // macro byte-run just defined.
+                        let mut push_sym = |v: &Value| {
+                            if let Value::Sym(sid) = v {
+                                if rolled {
+                                    touched.insert(*sid);
+                                } else {
+                                    kept_syms.insert(*sid);
+                                }
+                            }
+                        };
+                        match &item {
+                            Value::Cons(ic2) => {
+                                let ib = ic2.borrow();
+                                match &ib.car {
+                                    Value::Sym(t)
+                                        if matches!(
+                                            interp.obarray.name(*t),
+                                            "defun" | "defmacro"
+                                                | "cl-defgeneric"
+                                                | "autoload" | "t"
+                                                | "defvar" | "defconst"
+                                                | "defcustom" | "defalias"
+                                                | "defsubst" | "defvar-local"
+                                                | "defface" | "defgroup"
+                                                | "cl-defun" | "cl-defmacro"
+                                                | "cl-defsubst" | "cl-deftype"
+                                                | "cl-defstruct" | "defstruct"
+                                        ) =>
+                                    {
+                                        push_sym(&ib.cdr);
+                                    }
+                                    Value::Sym(t)
+                                        if interp.obarray.name(*t)
+                                            == "cl-defmethod" =>
+                                    {
+                                        if let Value::Cons(d) =
+                                            &ib.cdr
+                                        {
+                                            push_sym(
+                                                &d.borrow().car,
+                                            );
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            _ => push_sym(&item),
                         }
                     }
-                    for v in vars.into_iter().flatten() {
-                        if let Value::Sym(sid) = v {
-                            let _dbg_name = std::env::var_os("WATCH_ROLLBACK")
-                                .is_some()
-                                .then(|| interp.symbol_name(sid));
-                            {
-                                let s = interp.obarray.symbol_mut(sid);
-                                if let Some(n) = &_dbg_name {
-                                    eprintln!("[rollback-unbind] {}", n);
-                                }
-                                s.value = Value::Sym(sym::UNBOUND);
-                                s.special = false;
-                                s.constant = false;
-                                s.make_local_if_set = false;
-                                s.variable_documentation = None;
-                            }
-                            for bid in interp.buffers.list() {
-                                if let Some(b) = interp.buffers.get(bid) {
-                                    b.borrow_mut().locals.remove(&sid);
-                                }
-                            }
-                        }
+                }
+            }
+            // Add every symbol literally targeted in the rolled-back
+            // sources (autoload/'put/function-put/define-obsolete
+            // side effects don't appear in load-history).  These
+            // restore unconditionally — a rolled entry's own
+            // `(defun . s)' history records for its autoload forms
+            // would otherwise shield them as "kept".
+            let mut prop_strips: HashSet<(SymId, SymId)> = HashSet::default();
+            let mut rolled_defs: HashSet<SymId> = HashSet::default();
+            let mut file_syms: HashSet<SymId> = HashSet::default();
+            for lib in ROLLED_LIBS {
+                if let Some(src) = crate::lisp::load::embedded(lib) {
+                    collect_source_syms(
+                        &mut interp,
+                        src,
+                        &mut file_syms,
+                        &mut prop_strips,
+                        &mut rolled_defs,
+                    );
+                    if std::env::var_os("REMACS_TRACE_COLLECT").is_some()
+                        && rolled_defs.contains(&interp.intern("`"))
+                    {
+                        eprintln!("[rolled-defs got ` from {lib}]");
                     }
+                }
+            }
+            // The prelude itself writes some of the same (SYM . KEY)
+            // pairs a rolled file does (e.g. `(put 'cl--block-wrapper
+            // 'compiler-macro ...)'): those stay — GNU's dump carries
+            // them.  Scan PRELUDE with the same collector and subtract.
+            {
+                let mut _o = HashSet::default();
+                let mut prelude_pairs: HashSet<(SymId, SymId)> = HashSet::default();
+                let mut prelude_defs: HashSet<SymId> = HashSet::default();
+                collect_source_syms(
+                    &mut interp,
+                    crate::lisp::prelude::PRELUDE,
+                    &mut _o,
+                    &mut prelude_pairs,
+                    &mut prelude_defs,
+                );
+                prop_strips.retain(|pair| !prelude_pairs.contains(pair));
+                // Names the prelude itself defines must not force-void
+                // on rollback: prelude defs model GNU's dumped Lisp, so
+                // GNU -Q binds them even when a rolled file carries a
+                // copy (pcase.el's `define-symbol-prop' shim).
+                rolled_defs.retain(|s| !prelude_defs.contains(s));
+            }
+            let mut restore_set: HashSet<SymId> = HashSet::default();
+            // History-named symbols of rolled entries restore, and
+            // every symbol the rolled sources target — EXCEPT names a
+            // kept library's history records: a kept file wrote those
+            // cells *after* the snapshot (byte-run.el's defalias for
+            // `byte-run--parse-body'), so restoring the pre-snapshot
+            // cell would void a definition GNU keeps.  Names GNU voids
+            // anyway (cl-*) are re-voided by GNU_VOID_FNS_LATE below.
+            for s in touched.iter().chain(file_syms.iter()) {
+                if !kept_syms.contains(s) {
+                    restore_set.insert(*s);
+                }
+            }
+            if interp.dbg_flags & 0x800 != 0 {
+                let id = interp.intern("cl-member");
+                eprintln!(
+                    "[pre-restore] cl-member in_file={} in_touched={} kept={} fn={:?} plist={:?}",
+                    file_syms.contains(&id),
+                    touched.contains(&id),
+                    kept_syms.contains(&id),
+                    interp.obarray.symbol(id).function,
+                    interp.obarray.symbol(id).plist
+                );
+            }
+            // Restore the snapshot state — value, function, plist and
+            // binding flags together, plus every buffer's local cell.
+            // A name the rolled file itself *defined* (defun/defmacro/
+            // defvar/defalias) is voided even when the snapshot holds a
+            // prelude-folded copy: GNU -Q has no definition for it at
+                if interp.dbg_flags & 0x800 != 0 {
+                    let pb = interp.intern("byte-run--parse-body");
+                    let bq = interp.intern("`");
+                    let md = interp.intern("macroexp--dynvars");
+                    eprintln!(
+                        "[pre-restore] pb kept={} file={} tch={} | ` kept={} file={} tch={} rst={} | mdyn kept={} file={} tch={} rst={} snapv={:?}",
+                        kept_syms.contains(&pb),
+                        file_syms.contains(&pb),
+                        touched.contains(&pb),
+                        kept_syms.contains(&bq),
+                        file_syms.contains(&bq),
+                        touched.contains(&bq),
+                        restore_set.contains(&bq),
+                        kept_syms.contains(&md),
+                        file_syms.contains(&md),
+                        touched.contains(&md),
+                        restore_set.contains(&md),
+                        pre_boot_syms.get(&md).map(|t| t.1.clone())
+                    );
+                }
+                if interp.dbg_flags & 0x800 != 0 {
+                    for nm in [
+                        "pcase--memoize",
+                        "killed-rectangle",
+                        "cl--do-arglist",
+                        "cl--lambda-list-keywords",
+                        "cl-float-epsilon",
+                        "cl-struct-timer",
+                        "rectangle-mark-mode-map",
+                    ] {
+                        let q = interp.intern(nm);
+                        eprintln!(
+                            "[pre-restore] {nm} defs={} kept={} file={} tch={} rst={} snapfn={:?}",
+                            rolled_defs.contains(&q),
+                            kept_syms.contains(&q),
+                            file_syms.contains(&q),
+                            touched.contains(&q),
+                            restore_set.contains(&q),
+                            pre_boot_syms.get(&q).map(|t| t.0.clone())
+                        );
+                    }
+                }
+            // all.  Its plist likewise came from cl-loaddefs/declare
+            // writes inside the cl chain — restore the pre-prelude
+            // plist.  The `remacs--dump-fn' stash below keeps the
+            // folded def reachable for `(require 'cl-lib)'/self-hosting.
+            for sid in &restore_set {
+                let sid = *sid;
+                let fresh = || {
+                    (
+                        Value::Sym(sym::UNBOUND),
+                        Value::Sym(sym::UNBOUND),
+                        Value::Nil,
+                        false,
+                        false,
+                        false,
+                    )
+                };
+                let (f, v, p, sp, cn, ml) =
+                    pre_boot_syms.get(&sid).cloned().unwrap_or_else(fresh);
+                // A name the rolled file *defined* voids unless a kept
+                // file also defines it: prelude's own defs were already
+                // subtracted from `rolled_defs' above, so what remains
+                // here is never part of GNU's -Q dump state — even when
+                // the snapshot holds a cell from the file's own
+                // eval-when-compile run during the prelude
+                // (pcase--memoize).  Names GNU voids that prelude folds
+                // (cl-*) are re-voided by GNU_VOID_FNS_LATE after this.
+                let force_void =
+                    rolled_defs.contains(&sid) && !kept_syms.contains(&sid);
+                {
+                    let s = interp.obarray.symbol_mut(sid);
+                    s.function =
+                        if force_void { Value::Sym(sym::UNBOUND) } else { f };
+                    s.value =
+                        if force_void { Value::Sym(sym::UNBOUND) } else { v };
+                    s.plist = if force_void {
+                        pre_prelude_plists
+                            .get(&sid)
+                            .cloned()
+                            .unwrap_or(Value::Nil)
+                    } else {
+                        p
+                    };
+                    s.special = if force_void { false } else { sp };
+                    s.constant = if force_void { false } else { cn };
+                    s.make_local_if_set = if force_void { false } else { ml };
+                    s.variable_documentation = None;
+                    s.var_alias = None;
+                }
+                if force_void {
+                    // Preserve the dump-time stash the earlier pass
+                    // planted: self-hosting loads (cl-macs expanding
+                    // `cl-defmacro', pcase.el expanding `pcase')
+                    // resolve it via `autoload_do_load'.
+                    let dfk = interp.intern("remacs--dump-fn");
+                    let stashed = match pre_boot_syms.get(&sid) {
+                        Some((_, _, p, _, _, _)) => {
+                            let mut cur = p.clone();
+                            let mut found = Value::Nil;
+                            while let Value::Cons(c) = cur {
+                                let b = c.borrow();
+                                if matches!(&b.car, Value::Sym(s) if *s == dfk) {
+                                    found = match &b.cdr {
+                                        Value::Cons(c2) => c2.borrow().car.clone(),
+                                        _ => Value::Nil,
+                                    };
+                                    break;
+                                }
+                                cur = match &b.cdr {
+                                    Value::Cons(c2) => c2.borrow().cdr.clone(),
+                                    _ => Value::Nil,
+                                };
+                            }
+                            found
+                        }
+                        None => Value::Nil,
+                    };
+                    let stash_live = match &stashed {
+                        Value::Nil => false,
+                        Value::Sym(s) => *s != sym::UNBOUND,
+                        _ => true,
+                    };
+                    if stash_live {
+                        interp.put_prop(sid, dfk, stashed);
+                    }
+                }
+                for bid in interp.buffers.list() {
+                    if let Some(b) = interp.buffers.get(bid) {
+                        b.borrow_mut().locals.remove(&sid);
+                    }
+                }
+            }
+            // Strip the exact prop keys the rolled sources wrote
+            // (`gv-expander' on `nth'/`if'/..., `compiler-macro' on
+            // `cl-member'/..., obsolete/error metadata): the load ran
+            // during the *prelude* for the cl chain (pcase's
+            // eval-when-compile pulls gv→cl-lib→cl-loaddefs), so the
+            // post-prelude snapshot already carries them and the
+            // cell/plist restore above cannot remove them.  A NIL key
+            // sentinel restores the whole plist from the snapshot.
+            for (sym_id, key_id) in &prop_strips {
+                let sym_id = *sym_id;
+                let key_id = *key_id;
+                if key_id == sym::NIL {
+                    if let Some((_, _, p, _, _, _)) = pre_boot_syms.get(&sym_id) {
+                        interp.obarray.symbol_mut(sym_id).plist = p.clone();
+                    }
+                } else {
+                    // `remprop': walk key/value pairs; drop each pair
+                    // whose key matches, preserving order.
+                    let pl = interp.obarray.symbol(sym_id).plist.clone();
+                    let mut kept: Vec<Value> = Vec::new();
+                    let mut cur = pl;
+                    while let Value::Cons(c) = cur {
+                        let (k, after_k) = {
+                            let b = c.borrow();
+                            (b.car.clone(), b.cdr.clone())
+                        };
+                        // Read the value cons that follows the key.
+                        let (v, after_v) = match after_k {
+                            Value::Cons(c2) => {
+                                let b = c2.borrow();
+                                (b.car.clone(), b.cdr.clone())
+                            }
+                            _ => (Value::Nil, Value::Nil),
+                        };
+                        let is_target = matches!(&k, Value::Sym(s) if *s == key_id);
+                        if !is_target {
+                            kept.push(k);
+                            kept.push(v);
+                        }
+                        cur = after_v;
+                    }
+                    let mut tail = Value::Nil;
+                    for v in kept.iter().rev() {
+                        tail = Value::cons(v.clone(), tail);
+                    }
+                    interp.obarray.symbol_mut(sym_id).plist = tail;
+                }
+            }
+            interp.macro_gen += 1;
+            // Drop the rolled entries themselves from load-history.
+            let new_hist: Vec<Value> = hist_items
+                .iter()
+                .filter(|entry| {
+                    let file = match entry {
+                        Value::Cons(c) => c.borrow().car.clone(),
+                        _ => return true,
+                    };
+                    match &file {
+                        Value::Str(s) => {
+                            let f = s.borrow();
+                            !ROLLED_LIBS.iter().any(|l| {
+                                f.ends_with(&format!("/{}.el", l))
+                                    || f.ends_with(&format!("/{}.elc", l))
+                            })
+                        }
+                        _ => true,
+                    }
+                })
+                .cloned()
+                .collect();
+            let _ = interp.set_symbol(lh, Value::list(new_hist));
+            // Purge the rolled features from `interp.features' AND the
+            // `features' Lisp var (rebuilt from `interp.features' only
+            // at the very end of `new'): while they linger,
+            // `autoload_do_load''s feature-present shortcut resolves a
+            // gv/cl-macs autoload through the dump-time stash without
+            // loading the file, leaving side effects like `cond''s
+            // `gv-expander' unregistered (boot-reeval of
+            // `electric-indent-mode' broke this way).
+            {
+                let rolled_ids: HashSet<SymId> = ROLLED_LIBS
+                    .iter()
+                    .map(|l| interp.intern(l))
+                    .collect();
+                interp.features.retain(|f| !rolled_ids.contains(f));
+                let fid = interp.intern("features");
+                if let Value::Cons(_) = interp.symbol_value(fid) {
+                    let items = interp
+                        .symbol_value(fid)
+                        .list_to_vec()
+                        .unwrap_or_default();
+                    let kept: Vec<Value> = items
+                        .into_iter()
+                        .filter(|v| {
+                            !matches!(
+                                interp.sym_id(v),
+                                Some(id) if rolled_ids.contains(&id)
+                            )
+                        })
+                        .collect();
+                    let _ = interp.set_symbol(fid, Value::list(kept));
                 }
             }
             // The rolled-back loads also pushed `minor-mode-map-alist'
@@ -3110,7 +3689,7 @@ explicitly overridden.
                                 f
                             }
                             other => {
-                                if std::env::var_os("REMACS_TRACE_AUTOLOAD").is_some() {
+                                if interp.dbg_flags & 0x800 != 0 {
                                     eprintln!("[loaddefs-reinstall] reader stopped at {pos}: {other:?}");
                                 }
                                 break;
@@ -3144,12 +3723,30 @@ explicitly overridden.
                         }
                         _ => continue,
                     };
-                    let trace = std::env::var_os("REMACS_TRACE_AUTOLOAD").is_some()
+                    let trace = interp.dbg_flags & 0x800 != 0
                         && matches!(interp.obarray.name(name), "pcase" | "rx" | "map-let");
                     if void_names.contains(&name) {
                         if trace {
                             eprintln!("[skip {}: void_names]", interp.symbol_name(name));
                         }
+                        continue;
+                    }
+                    // GNU's loaddefs.el never carries autoloads for
+                    // cl-macs/cl-seq/cl-extra — those cookies are scraped
+                    // into cl-loaddefs.el instead, which only evaluates on
+                    // the first `(require 'cl-lib)'.  Skip them here so
+                    // -Q keeps the cl-* cells void like GNU; cl-lib.el's
+                    // own `(load "cl-loaddefs")' installs them on demand.
+                    let cl_deferred = match &items[2] {
+                        Value::Str(s) => {
+                            let f = s.borrow();
+                            f.as_str() == "cl-macs"
+                                || f.as_str() == "cl-seq"
+                                || f.as_str() == "cl-extra"
+                        }
+                        _ => false,
+                    };
+                    if cl_deferred {
                         continue;
                     }
                     // A file that provides a loaded feature (the
@@ -3172,6 +3769,62 @@ explicitly overridden.
                         if trace {
                             eprintln!("[skip {}: loaded_feature]", interp.symbol_name(name));
                         }
+                        continue;
+                    }
+                    // A symbol re-defined *after* loaddefs by a later
+                    // dump-time file (nadvice's `(cl-defmethod
+                    // cl-print-object ...)' installs the generic
+                    // dispatcher via `cl-generic-define-method') keeps
+                    // that definition — GNU's dump order is loaddefs
+                    // first.  Detect it by comparing the live cell
+                    // with the pre-boot snapshot: `eq' (Rc pointer
+                    // identity) means the prelude-folded def is still
+                    // in place and GNU's autoload replaces it.
+                    let live = interp.obarray.symbol(name).function.clone();
+                    let live_is_autoload = matches!(
+                        &live,
+                        Value::Cons(c) if matches!(&c.borrow().car, Value::Sym(s) if *s == auto_id)
+                    );
+                    // Only a Lisp-level definition counts as "re-defined
+                    // after loaddefs": a Subr cell predates loaddefs
+                    // (builtins register before the prelude), so GNU's
+                    // autoload still shadows it (format-spec).
+                    // Any non-autoload Lisp-level cell — Lambda,
+                    // bytecode Vec, or a Cons shape ((macro . λ),
+                    // closures, advice chains) — counts as "re-defined
+                    // after loaddefs".  A Subr cell predates loaddefs
+                    // entirely (builtins register before the prelude),
+                    // so GNU's autoload still shadows it (format-spec).
+                    let live_is_lisp_def = match &live {
+                        Value::Lambda(_) | Value::Vec(_) | Value::Cons(_) => true,
+                        _ => false,
+                    };
+                    let value_is = |a: &Value, b: &Value| -> bool {
+                        match (a, b) {
+                            (Value::Sym(x), Value::Sym(y)) => x == y,
+                            (Value::Cons(x), Value::Cons(y)) => Rc::ptr_eq(x, y),
+                            (Value::Lambda(x), Value::Lambda(y)) => Rc::ptr_eq(x, y),
+                            (Value::Nil, Value::Nil) => true,
+                            _ => false,
+                        }
+                    };
+                    let post_loaddefs_def = match pre_boot_syms.get(&name) {
+                        Some((snap_f, _, _, _, _, _)) => {
+                            // A snapshot cell that's itself an autoload
+                            // (prelude's `(autoload 'gv-letplace "gv")'
+                            // forms) IS the GNU -Q state — reinstalling
+                            // restores it over the prelude-pulled real
+                            // def (gv.el loaded mid-prelude via `push''s
+                            // `gv-letplace' expansion).
+                            let snap_is_autoload = matches!(
+                                snap_f,
+                                Value::Cons(c) if matches!(&c.borrow().car, Value::Sym(s) if *s == auto_id)
+                            );
+                            !snap_is_autoload && !value_is(&live, snap_f)
+                        }
+                        None => !matches!(live, Value::Sym(s) if s == sym::UNBOUND),
+                    };
+                    if live_is_lisp_def && post_loaddefs_def {
                         continue;
                     }
                     if trace {
@@ -3198,7 +3851,7 @@ explicitly overridden.
                     {
                         interp.put_prop(name, pk, old);
                     }
-                    if std::env::var_os("REMACS_TRACE_AUTOLOAD").is_some()
+                    if interp.dbg_flags & 0x800 != 0
                         && matches!(interp.obarray.name(name), "pcase" | "rx" | "map-let")
                     {
                         eprintln!(
@@ -3245,8 +3898,12 @@ explicitly overridden.
             // then sets the list to a non-list so later :initialize calls
             // (e.g. from `require') initialize immediately.
             let _ = interp.eval_str(
-                "(progn (mapc #'custom-reevaluate-setting \
-                              (nreverse custom-delayed-init-variables)) \
+                "(progn (dolist (v (nreverse custom-delayed-init-variables)) \
+                         (let ((r (condition-case e \
+                                    (progn (custom-reevaluate-setting v) 'ok) \
+                                    (t (list 'qa-error e))))) \
+                           (when (and (consp r) (eq (car r) 'qa-error)) \
+                             (message \"[boot-reeval] %s => %s\" v (cdr r))))) \
                          (setq custom-delayed-init-variables t))",
             );
             // GNU's `command-line' runs `set-locale-environment', which
@@ -3468,6 +4125,16 @@ command-line arguments.\" \
         if std::env::var("REMACS_NO_PRELUDE").is_err() {
             for name in GNU_VOID_VARS {
                 let sid = interp.intern(name);
+                // Stash the dump value under `remacs--dump-var':
+                // expansion-time machinery (cl-labels' convert cache,
+                // pcase's memoize table, cl-macs's float limits, ...)
+                // reads through it via `symbol_value' while `boundp'
+                // stays nil like GNU -Q.
+                let old = interp.obarray.symbol(sid).value.clone();
+                if !matches!(old, Value::Sym(s) if s == sym::UNBOUND) {
+                    let pvk = interp.intern("remacs--dump-var");
+                    interp.put_prop(sid, pvk, old);
+                }
                 {
                     let s = interp.obarray.symbol_mut(sid);
                     s.value = Value::Sym(sym::UNBOUND);
@@ -3516,6 +4183,12 @@ command-line arguments.\" \
                 }
             }
         }
+        // The backquote machinery must be fmakunbound-immune exactly like
+        // GNU's bytecompiled backquote.el (a user `(fmakunbound 'car)'
+        // can't break `Bcar' opcodes): bind `backquote'/`backquote-list*'
+        // and the helper defuns to Rust subrs after every library load,
+        // so prelude/Lisp redefinitions can't re-expose the cells.
+        crate::lisp::builtins::backquote::install_macros(&mut interp);
         interp
     }
 
@@ -3571,12 +4244,11 @@ command-line arguments.\" \
     /// Global (default) value of a symbol.
     /// Follow `defvaralias' chains: return the ultimate base symbol.
     pub fn var_alias_target(&self, id: SymId) -> SymId {
-        let prop = self.obarray.intern_soft("variable-alias").unwrap_or(0);
         let mut cur = id;
         for _ in 0..64 {
-            match self.get_prop(cur, prop) {
-                Value::Sym(next) => cur = next,
-                _ => return cur,
+            match self.obarray.symbol(cur).var_alias {
+                Some(next) => cur = next,
+                None => return cur,
             }
         }
         cur
@@ -3605,10 +4277,44 @@ command-line arguments.\" \
         let v = &self.obarray.symbol(id).value;
         if let Value::Sym(s) = v {
             if *s == sym::UNBOUND {
+                // A voided dump-time variable (GNU_VOID_VARS) still
+                // answers reads with its stashed dump value —
+                // expansion-time machinery (cl-labels' convert cache,
+                // pcase's memoize table, cl-macs's float limits, ...)
+                // keeps working while `boundp' stays nil like GNU -Q.
+                if let Some(stashed) = self.dumped_variable(id) {
+                    return stashed;
+                }
                 return Value::Sym(sym::UNBOUND);
             }
         }
         v.clone()
+    }
+
+    /// Hidden dump-time value for SYM, if it was stashed while the
+    /// public value cell was voided for GNU -Q compatibility.
+    fn dumped_variable(&self, id: SymId) -> Option<Value> {
+        let prop = self.intern_soft("remacs--dump-var")?;
+        // `nil' is a real stashed value (cl--labels-convert-cache's
+        // cache starts nil): test plist membership, not truthiness.
+        let mut cur = self.obarray.symbol(id).plist.clone();
+        while let Value::Cons(c) = cur {
+            let (car, next) = {
+                let b = c.borrow();
+                (b.car.clone(), b.cdr.clone())
+            };
+            if matches!(car, Value::Sym(s) if s == prop) {
+                return match &next {
+                    Value::Cons(c2) => Some(c2.borrow().car.clone()),
+                    _ => Some(Value::Nil),
+                };
+            }
+            cur = match next {
+                Value::Cons(c2) => c2.borrow().cdr.clone(),
+                _ => break,
+            };
+        }
+        None
     }
 
     /// Mark a string as unibyte (encoder output); `prin1' escapes
@@ -3752,13 +4458,13 @@ command-line arguments.\" \
     pub fn set_symbol(&mut self, id: SymId, val: Value) -> Result<(), Flow> {
         let id = self.var_alias_target(id);
         let constant = self.obarray.symbol(id).constant;
-        if std::env::var_os("DBG_SETCONST").is_some() && constant {
+        if self.dbg_flags & 0x100 != 0 && constant {
             eprintln!("[setconst {} = {}] caller={:?}", self.symbol_name(id),
                       self.princ_to_string(&val).chars().take(80).collect::<String>(),
                       std::panic::Location::caller());
             for (f, a) in self.lisp_stack.iter().rev().take(20).rev() {
                 eprintln!("  {} {}", self.princ_to_string(f).chars().take(100).collect::<String>(),
-                          self.princ_to_string(&Value::list(a.clone())).chars().take(160).collect::<String>());
+                          self.princ_to_string(&Value::list(a.as_slice().to_vec())).chars().take(160).collect::<String>());
             }
         }
         if constant && id != sym::NIL && id != sym::T {
@@ -3804,7 +4510,7 @@ command-line arguments.\" \
         if self.obarray.symbol(id).constant {
             return Err(self.signal_data(sym::SETTING_CONSTANT, vec![self.sym(id)]));
         }
-        if std::env::var_os("WATCH_TERM_CODING").is_some()
+        if self.dbg_flags & 0x40000 != 0
             && self.symbol_name(id) == "default-terminal-coding-system"
         {
             eprintln!(
@@ -3983,6 +4689,12 @@ command-line arguments.\" \
     /// `put` — set symbol property, returns value.
     pub fn put_prop(&mut self, id: SymId, prop: SymId, val: Value) {
         self.macro_gen += 1;
+        if prop == self.var_alias_prop {
+            self.obarray.symbol_mut(id).var_alias = match val {
+                Value::Sym(s) => Some(s),
+                _ => None,
+            };
+        }
         let plist = self.obarray.symbol(id).plist.clone();
         let new_plist = plist_put(&plist, prop, val);
         self.obarray.symbol_mut(id).plist = new_plist;
@@ -3994,13 +4706,13 @@ command-line arguments.\" \
     #[track_caller]
     pub fn specbind(&mut self, id: SymId, val: Value) -> Result<(), Flow> {
         if self.obarray.symbol(id).constant {
-            if std::env::var_os("DBG_SETCONST").is_some() {
+            if self.dbg_flags & 0x100 != 0 {
                 eprintln!("[bindconst {}] head_form={} caller={:?}", self.symbol_name(id),
                           self.princ_to_string(&self.cur_head_form).chars().take(400).collect::<String>(),
                           std::panic::Location::caller());
                 for (f, a) in self.lisp_stack.iter().rev().take(20).rev() {
                     eprintln!("  {} {}", self.princ_to_string(f).chars().take(100).collect::<String>(),
-                              self.princ_to_string(&Value::list(a.clone())).chars().take(160).collect::<String>());
+                              self.princ_to_string(&Value::list(a.as_slice().to_vec())).chars().take(160).collect::<String>());
                 }
             }
             return Err(self.signal_data(sym::SETTING_CONSTANT, vec![self.sym(id)]));
@@ -4146,7 +4858,7 @@ command-line arguments.\" \
     /// `(signal sym (data...))` where data is already a list.
     pub fn signal(&self, sym_id: SymId, data: Value) -> Flow {
         *self.last_error_stack.borrow_mut() = self.lisp_stack.clone();
-        if std::env::var("REMACS_BT_EOF").is_ok() && sym_id == sym::END_OF_FILE {
+        if self.dbg_flags & 0x400000 != 0 && sym_id == sym::END_OF_FILE {
             eprintln!("=== SIGNAL end-of-file {} ===\n{}", self.prin1_to_string(&data), std::backtrace::Backtrace::capture());
         }
         Flow::Signal(Value::Sym(sym_id), data, false)
@@ -4155,7 +4867,9 @@ command-line arguments.\" \
     /// `(signal sym data-list-from-vec)`.
     pub fn signal_data(&self, sym_id: SymId, data: Vec<Value>) -> Flow {
         *self.last_error_stack.borrow_mut() = self.lisp_stack.clone();
-        if let Some(filter) = std::env::var("REMACS_BT_ERR").ok() {
+        if let Some(filter) = (self.dbg_flags & 0x800000 != 0)
+            .then(|| std::env::var("REMACS_BT_ERR").unwrap_or_default())
+        {
             let rendered = self
                 .prin1_to_string(&Value::list(data.clone()))
                 .chars()
@@ -4168,7 +4882,7 @@ command-line arguments.\" \
                     eprintln!(
                         "  {} {}",
                         self.princ_to_string(f).chars().take(80).collect::<String>(),
-                        self.princ_to_string(&Value::list(a.clone()))
+                        self.princ_to_string(&Value::list(a.as_slice().to_vec()))
                             .chars()
                             .take(100)
                             .collect::<String>()
@@ -4189,6 +4903,25 @@ command-line arguments.\" \
 
     /// `wrong-type-argument` signal: pred, value.
     pub fn wrong_type_mut(&mut self, pred: &str, val: &Value) -> Flow {
+        if std::env::var_os("REMACS_TRACE_WT").is_some() {
+            let top: Vec<String> = self
+                .lisp_stack
+                .iter()
+                .rev()
+                .take(14)
+                .map(|(f, a)| {
+                    format!(
+                        "{}({})",
+                        self.princ_to_string(f).chars().take(60).collect::<String>(),
+                        self.princ_to_string(&Value::list(a.as_slice().to_vec()))
+                            .chars()
+                            .take(80)
+                            .collect::<String>()
+                    )
+                })
+                .collect();
+            eprintln!("=== wt {pred} on {:?}; top: {}", val, top.join(" <- "));
+        }
         let pred_id = self.intern(pred);
         self.signal_data(
             sym::WRONG_TYPE_ARGUMENT,
@@ -4320,7 +5053,7 @@ command-line arguments.\" \
             match next {
                 Some((form, end)) => {
                     pos = end;
-                    if std::env::var_os("REMACS_TRACE_EVAL").is_some() {
+                    if self.dbg_flags & 0x10000 != 0 {
                         eprintln!(
                             "[eval@{}] {}",
                             end,
@@ -4338,7 +5071,7 @@ command-line arguments.\" \
                             return Err(self.signal_data(nc, vec![tag, val]));
                         }
                         Err(f) => {
-                            if std::env::var_os("REMACS_TRACE_ERR").is_some() {
+                            if self.dbg_flags & 0x1000 != 0 {
                                 eprintln!(
                                     "[eval-err@{}] {} => {:?}",
                                     end,
@@ -4365,7 +5098,7 @@ command-line arguments.\" \
     pub fn eval_first_form(&mut self, src: &str) -> EvalResult {
         let chars: Rc<Vec<char>> = Rc::new(src.chars().collect());
         let form = {
-            let mut reader = Reader::with_chars(self, chars);
+            let mut reader = Reader::with_chars(self, chars.clone());
             reader.read()?
         };
         match form {
@@ -4636,7 +5369,7 @@ command-line arguments.\" \
                     let mut found = false;
                     while let Some(f) = env {
                         depth += 1;
-                        if f.vars.borrow().contains_key(&id) {
+                        if f.vars.borrow().iter().any(|(s, _)| *s == id) {
                             found = true;
                         }
                         env = &f.parent;
@@ -4682,34 +5415,28 @@ command-line arguments.\" \
         // GNU's FOR_EACH_TAIL halts on a repeat, so only a truly
         // non-cons tail is an error.
         {
-            let mut slow = args.clone();
-            let mut fast = args.clone();
-            // `guard' tracks the hare: once it stalls on the dotted
-            // tail the spine is non-circular and `slow' reaches the
-            // tail in bounded steps; if the two pointers meet first
-            // the spine is circular and GNU's FOR_EACH_TAIL sees no
-            // tail error either.
+            // Raw-pointer tortoise/hare over the cdr chain: identical
+            // semantics to the Value-clone walk it replaces (nil tail
+            // ends the spine, a non-cons tail is `listp' error, a
+            // pointer meet means circular and legal).
+            let mut slow = &args as *const Value;
+            let mut fast = &args as *const Value;
             let mut guard = true;
             loop {
-                match &slow {
-                    Value::Cons(c) => {
-                        let next = c.borrow().cdr.clone();
-                        slow = next;
-                    }
+                let sv = unsafe { &*slow };
+                match sv {
+                    Value::Cons(c) => slow = unsafe { cdr_ptr(c) },
                     Value::Nil => break,
                     other => return Err(self.wrong_type_mut("listp", other)),
                 }
                 if !guard {
                     continue;
                 }
-                match &fast {
+                match unsafe { &*fast } {
                     Value::Cons(c) => {
-                        let n1 = c.borrow().cdr.clone();
-                        match &n1 {
-                            Value::Cons(c2) => {
-                                let n2 = c2.borrow().cdr.clone();
-                                fast = n2;
-                            }
+                        let n1 = unsafe { cdr_ptr(c) };
+                        match n1 {
+                            Value::Cons(c2) => fast = unsafe { cdr_ptr(c2) },
                             _ => {
                                 fast = n1;
                                 guard = false;
@@ -4718,17 +5445,17 @@ command-line arguments.\" \
                     }
                     _ => guard = false,
                 }
-                if let (Value::Cons(a), Value::Cons(b)) = (&slow, &fast) {
-                    if Rc::ptr_eq(a, b) {
-                        break;
-                    }
+                if cons_ptr(unsafe { &*slow }) == cons_ptr(unsafe { &*fast })
+                    && matches!(unsafe { &*slow }, Value::Cons(_))
+                {
+                    break;
                 }
             }
         }
 
 
 
-        if std::env::var_os("DBG_DOTTED").is_some() {
+        if self.dbg_flags & 0x80 != 0 {
             eprintln!("[eval_form head={} args={}]", self.princ_to_string(&head), self.princ_to_string(&args));
         }
         match &head {
@@ -4839,18 +5566,18 @@ command-line arguments.\" \
 
     /// Evaluate each element of a list form.
     pub fn eval_args(&mut self, args: &Value) -> Result<Vec<Value>, Flow> {
-        let mut out = Vec::new();
-        let mut cur = args.clone();
+        // Raw-pointer spine walk: GNU's `eval_sub' reads the cdr AFTER
+        // evaluating the car, so a `setcdr' by an argument is seen.
+        // Cells stay alive through `args' while the walk runs.
+        let mut out = Vec::with_capacity(self.raw_list_length(args).unwrap_or(4) as usize);
+        let mut cur = args as *const Value;
         loop {
-            match cur {
+            match unsafe { &*cur } {
                 Value::Nil => return Ok(out),
                 Value::Cons(c) => {
-                    let (car, next) = {
-                        let b = c.borrow();
-                        (b.car.clone(), b.cdr.clone())
-                    };
-                    out.push(self.eval(&car)?);
-                    cur = next;
+                    let cell = RefCell::as_ptr(c);
+                    out.push(self.eval(unsafe { &(*cell).car })?);
+                    cur = unsafe { &(*cell).cdr };
                 }
                 _ => {
                     return Err(self.error("Invalid function call form (dotted)"));
@@ -4917,7 +5644,7 @@ command-line arguments.\" \
                 }
             }
             Value::Subr(s) => match s.arity {
-                Arity::Unevalled => (s.func)(self, vec![args.clone()]),
+                Arity::Unevalled => (s.func)(self, Argv::new(vec![args.clone()])),
                 _ => {
                     // GNU checks a subr's arity before evaluating the
                     // argument forms, so `(car BAD EXTRA)' reports
@@ -4930,8 +5657,8 @@ command-line arguments.\" \
                     // specpdl holds every call, so backtraces show the
                     // innermost subr (`car(5)') too.
                     let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
-                    self.lisp_stack.push((shown, argv.clone()));
-                    let r = (s.func)(self, argv);
+                    self.lisp_stack.push((shown, argv.clone().into()));
+                    let r = (s.func)(self, argv.into());
                     self.lisp_stack.pop();
                     r
                 }
@@ -4953,7 +5680,7 @@ command-line arguments.\" \
                 }
                 let argv = self.eval_args(args)?;
                 let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
-                self.apply_resolved(&fun, argv, shown)
+                self.apply_resolved(&fun, argv.into(), shown)
             }
             Value::Cons(_) => {
                 // A cons as function: `(lambda ...)` form or `(macro . f)`.
@@ -4976,7 +5703,7 @@ command-line arguments.\" \
                     let shown = sym_name
                         .map(Value::Sym)
                         .unwrap_or_else(|| Value::Lambda(lambda.clone()));
-                    return self.apply_resolved(&Value::Lambda(lambda), argv, shown);
+                    return self.apply_resolved(&Value::Lambda(lambda), argv.into(), shown);
                 }
                 let auto_id = self.intern("autoload");
                 if self.sym_is(&car, auto_id) {
@@ -5000,7 +5727,7 @@ command-line arguments.\" \
                 Err(self.signal_data(sym::INVALID_FUNCTION, vec![fun.clone()]))
             }
             _ => {
-                if std::env::var_os("DBG_FUNCALL").is_some() {
+                if self.dbg_flags & 0x01 != 0 {
                     eprintln!(
                         "[invfun_ {} head={:?} callform={}]",
                         self.princ_to_string(&fun),
@@ -5020,31 +5747,38 @@ command-line arguments.\" \
     /// cells in its spine.  A dotted tail is not counted; a circular
     /// list signals `circular-list' like GNU's `Flength'.
     pub(crate) fn raw_list_length(&mut self, args: &Value) -> Result<i128, Flow> {
+
+        // Raw-pointer walk — same tortoise/hare logic as before, minus
+        // a `Value` clone + drop per spine cell.
         let mut n = 0i128;
-        let mut cur = args.clone();
-        let mut hare = Some(args.clone());
+        let mut cur = args as *const Value;
+        let mut hare: Option<*const Value> = Some(args);
         loop {
-            let next = match &cur {
-                Value::Cons(c) => c.borrow().cdr.clone(),
+            let next = match unsafe { &*cur } {
+                Value::Cons(c) => unsafe { cdr_ptr(c) },
                 _ => break,
             };
             n += 1;
             cur = next;
             // Hare advances two cells per step while it can; if it
             // meets `cur' the spine loops.
-            if let Some(h) = hare.take() {
-                let step = |v: &Value| match v {
-                    Value::Cons(c) => c.borrow().cdr.clone(),
-                    _ => Value::Nil,
+            if let Some(h) = hare {
+                let step = |v: *const Value| -> *const Value {
+                    match unsafe { &*v } {
+                        Value::Cons(c) => unsafe { cdr_ptr(c) },
+                        _ => v,
+                    }
                 };
-                let h1 = step(&h);
-                if matches!(h1, Value::Cons(_)) {
-                    hare = Some(step(&h1));
-                    if let (Value::Cons(a), Some(Value::Cons(b))) = (&cur, hare.as_ref()) {
-                        if Rc::ptr_eq(a, b) {
+                let h1 = step(h);
+                if matches!(unsafe { &*h1 }, Value::Cons(_)) {
+                    hare = Some(step(h1));
+                    if let (Value::Cons(_), Some(hp)) = (unsafe { &*cur }, hare) {
+                        if cons_ptr(unsafe { &*cur }) == cons_ptr(unsafe { &*hp }) {
                             return Err(crate::lisp::builtins::listfn::err_circular(self));
                         }
                     }
+                } else {
+                    hare = None;
                 }
             }
         }
@@ -5097,7 +5831,7 @@ command-line arguments.\" \
     }
 
     /// `apply`/`funcall`: call `fun` with already-evaluated `argv`.
-    pub fn apply(&mut self, fun: &Value, argv: Vec<Value>) -> EvalResult {
+    pub fn apply(&mut self, fun: &Value, argv: impl Into<Argv>) -> EvalResult {
         if self.dbg_flags & 0x01 != 0 {
             if let Value::Cons(c) = fun {
                 let car = c.borrow().car.clone();
@@ -5110,6 +5844,7 @@ command-line arguments.\" \
                 }
             }
         }
+        let argv = argv.into();
         let fun = crate::lisp::builtins::misc::unpos(fun);
         match &fun {
             Value::Sym(id) => {
@@ -5151,7 +5886,7 @@ command-line arguments.\" \
     /// `lisp_stack' so `mapbacktrace' can walk live frames.  `shown' is
     /// what backtraces display as the callee — the symbol when the call
     /// came through a symbol's function cell, else the function itself.
-    fn apply_resolved(&mut self, fun: &Value, argv: Vec<Value>, shown: Value) -> EvalResult {
+    fn apply_resolved(&mut self, fun: &Value, argv: Argv, shown: Value) -> EvalResult {
         if self.dbg_flags & 0x04 != 0 {
             eprintln!(
                 "[call] {}",
@@ -5169,7 +5904,7 @@ command-line arguments.\" \
                     eprintln!(
                         "  {} {}",
                         self.princ_to_string(f).chars().take(80).collect::<String>(),
-                        self.princ_to_string(&Value::list(a.clone()))
+                        self.princ_to_string(&Value::list(a.as_slice().to_vec()))
                             .chars()
                             .take(120)
                             .collect::<String>()
@@ -5466,7 +6201,7 @@ command-line arguments.\" \
     /// (shipped-library-equivalent) function is running.
     fn byte_op_subr(&mut self, id: SymId) -> Option<&'static crate::lisp::value::Subr> {
         if self.byte_op_subrs.is_none() {
-            let mut m = std::collections::HashMap::new();
+            let mut m = HashMap::default();
             // Names mirrored from GNU's bytecomp.el `byte-defop' table
             // (opcodes 56-168): each compiled call to one of these is
             // a dedicated opcode, not a `byte-call' through
@@ -5528,7 +6263,7 @@ command-line arguments.\" \
     /// Call an interpreted lambda with evaluated args.  `shown' is what
     /// `wrong-number-of-arguments' reports as the function — GNU prints
     /// the called symbol when invoked by name.
-    fn call_lambda(&mut self, l: &Rc<Lambda>, argv: Vec<Value>, shown: &Value) -> EvalResult {
+    fn call_lambda(&mut self, l: &Rc<Lambda>, argv: Argv, shown: &Value) -> EvalResult {
         // `compiled' lambdas stand in for GNU's byte-compiled bodies:
         // while one runs, symbol-head calls to byte-op primitives
         // dispatch directly (see `byte_op_subr'), matching GNU's
@@ -5652,7 +6387,7 @@ command-line arguments.\" \
         None
     }
 
-    fn call_lambda_inner(&mut self, l: &Rc<Lambda>, argv: Vec<Value>, shown: &Value) -> EvalResult {
+    fn call_lambda_inner(&mut self, l: &Rc<Lambda>, argv: Argv, shown: &Value) -> EvalResult {
         if let Some(items) = &l.bc_items {
             if let Some(r) = self.unidata_bc_dispatch(l, &argv) {
                 return r;
@@ -5701,9 +6436,8 @@ command-line arguments.\" \
             // Macro expanders invoked from this body see `t' via the
             // `specbind' in `eval_macro_expand' instead.
             let frame = Rc::new(LexFrame {
-                vars: RefCell::new(HashMap::new()),
-                var_order: RefCell::new(Vec::new()),
-                declared: RefCell::new(HashSet::new()),
+                vars: RefCell::new(Vec::new()),
+                declared: RefCell::new(Vec::new()),
                 parent: l.env.clone(),
             });
             let saved = std::mem::replace(&mut self.lexenv, Some(frame.clone()));
@@ -5897,21 +6631,21 @@ command-line arguments.\" \
     /// Evaluate a list of forms (a `progn`-style list, not a Vec).
     pub fn eval_progn(&mut self, forms: &Value) -> EvalResult {
         let mut last = Value::Nil;
-        let mut cur = forms.clone();
+        // Same raw-pointer walk as `eval_args': zero `Value' clones per
+        // form, and the next cdr is read after the form runs (GNU's
+        // `prog_ignore' order).
+        let mut cur = forms as *const Value;
         loop {
-            match cur {
+            match unsafe { &*cur } {
                 Value::Nil => return Ok(last),
                 Value::Cons(c) => {
-                    let (car, next) = {
-                        let b = c.borrow();
-                        (b.car.clone(), b.cdr.clone())
-                    };
-                    last = self.eval(&car)?;
-                    cur = next;
+                    let cell = RefCell::as_ptr(c);
+                    last = self.eval(unsafe { &(*cell).car })?;
+                    cur = unsafe { &(*cell).cdr };
                 }
                 // GNU `prog_ignore' signals wrong-type-argument listp
                 // with the non-list tail as data.
-                _ => return Err(self.wrong_type_mut("listp", &cur)),
+                _ => return Err(self.wrong_type_mut("listp", unsafe { &*cur })),
             }
         }
     }
@@ -5941,7 +6675,7 @@ command-line arguments.\" \
 
     /// Expand a macro call: call the macro's function on raw args.
     pub fn macro_expand_call(&mut self, mac: &Value, args: &Value) -> EvalResult {
-        if std::env::var("PRELUDE_TRACE").is_ok() {
+        if self.dbg_flags & 0x200000 != 0 {
             eprintln!(
                 "mxcall {} <- {}",
                 self.prin1_to_string(mac)
@@ -5975,8 +6709,8 @@ command-line arguments.\" \
         }
         // The macro's function receives raw forms.
         let result = match mac {
-            Value::Lambda(l) if l.is_macro => self.call_lambda(l, argv, mac),
-            Value::Lambda(l) => self.call_lambda(l, argv, mac),
+            Value::Lambda(l) if l.is_macro => self.call_lambda(l, argv.into(), mac),
+            Value::Lambda(l) => self.call_lambda(l, argv.into(), mac),
             Value::Cons(_) => {
                 let (car, _) = {
                     let c = match mac {
@@ -6022,7 +6756,7 @@ command-line arguments.\" \
         let mut iters = 0;
         loop {
             iters += 1;
-            if std::env::var("PRELUDE_TRACE").is_ok() && iters > 500 {
+            if self.dbg_flags & 0x200000 != 0 && iters > 500 {
                 eprintln!(
                     "macroexpand iter {iters}: {}",
                     self.prin1_to_string(&cur)
@@ -7584,7 +8318,11 @@ command-line arguments.\" \
         let defs: &[(&str, Value)] = &[
             ("emacs-major-version", Value::Int(31)),
             ("emacs-minor-version", Value::Int(1)),
-            ("emacs-version", Value::string("31.1.0 (remacs)")),
+            // GNU's `emacs-version' variable is just "31.1" (the
+            // remacs identity lives in the `emacs-version' *function*).
+            // With " (remacs)" here, `version-to-list' errored on
+            // "Invalid version syntax" and broke ol/tramp-compat/xref.
+            ("emacs-version", Value::string("31.1")),
             // GNU's NS build binds this in nsterm.m (AppKit version);
             // `emacs-version' reads it under (featurep 'ns).
             (
@@ -7948,7 +8686,8 @@ command-line arguments.\" \
             // *scratch* buffer-local value (t) is seeded at init.
             ("require-final-newline", Value::Nil),
             ("sort-numeric-base", Value::Int(10)),
-            ("sort-fold-case", Value::Nil),
+            // GNU -Q leaves `sort-fold-case' unbound: its defcustom
+            // lives in sort.el, which is not in the dump.
             ("resize-mini-windows", Value::Sym(self.intern("grow-only"))),
             ("select-enable-clipboard", Value::Sym(sym::T)),
             ("selection-coding-system", Value::Nil),
@@ -10099,6 +10838,360 @@ command-line arguments.\" \
                 match v.list_to_vec() {
                     Ok(argv) => Ok(argv),
                     Err(_) => Err(self.wrong_type_mut("listp", &v)),
+                }
+            }
+        }
+    }
+}
+
+/// Deep-collect every interned symbol reachable inside a `load-history'
+/// item (or any Lisp object): the pre-boot rollback restores by symbol
+/// name, and side-effect forms (`put', `autoload', `defalias') never
+/// produce history items, so the set must be broader than
+/// `(defun . name)' pairs.  Cycles and shared tails are bounded by a
+/// visited-cons counter.
+fn collect_item_syms(i: &Interp, v: &Value, out: &mut HashSet<SymId>) {
+    let mut work = vec![v.clone()];
+    let mut steps = 0usize;
+    while let Some(x) = work.pop() {
+        steps += 1;
+        if steps > 200_000 {
+            break;
+        }
+        match &x {
+            Value::Sym(s) => {
+                out.insert(*s);
+            }
+            Value::Cons(c) => {
+                let b = c.borrow();
+                work.push(b.car.clone());
+                work.push(b.cdr.clone());
+            }
+            Value::Vec(vec) => {
+                for e in vec.borrow().iter() {
+                    work.push(e.clone());
+                }
+            }
+            Value::Record(r) => {
+                let mut k = 0;
+                while let Some(e) = r.borrow().get(k) {
+                    work.push(e.clone());
+                    k += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Read every top-level form of an embedded Lisp source and collect the
+/// symbols its evaluation could have mutated — the defined name of
+/// `defun'/`defmacro'/`defvar'/`cl-defmethod'/... forms and the target
+/// arguments of side-effect calls (`put', `autoload', `defalias',
+/// `define-error', `make-obsolete*', `gv-define-*', `fset', `set',
+/// `declare-function', `custom-declare-*').  Symbols merely *mentioned*
+/// in code (docstring tails, loop variables, called functions) must NOT
+/// be collected: the pre-boot rollback restores every collected symbol
+/// to its pre-prelude state, which unbound `dolist'/`when' & co. when
+/// the set was the union of every symbol in the file.
+fn collect_source_syms(
+    i: &mut Interp,
+    src: &str,
+    out: &mut HashSet<SymId>,
+    prop_out: &mut HashSet<(SymId, SymId)>,
+    defs_out: &mut HashSet<SymId>,
+) {
+    let chars: Rc<Vec<char>> = Rc::new(src.chars().collect());
+    let mut pos = 0usize;
+    loop {
+        let next = {
+            let mut reader = crate::lisp::reader::Reader::with_chars(i, chars.clone());
+            reader.set_position(pos);
+            match reader.read() {
+                Ok(f) => f.map(|v| (v, reader.position())),
+                Err(_) => None,
+            }
+        };
+        match next {
+            Some((form, end)) => {
+                pos = end;
+                collect_form_targets(i, &form, out, prop_out, defs_out);
+            }
+            None => break,
+        }
+    }
+}
+
+/// Push the symbol interned by `(quote SYM)' or `#'SYM' into `out';
+/// non-literal arguments (computed names) are ignored — they cannot be
+/// restored by name anyway.
+fn collect_quoted(i: &Interp, v: &Value, out: &mut HashSet<SymId>) {
+    if let Value::Cons(c) = v {
+        let b = c.borrow();
+        let is_quote = matches!(
+            &b.car,
+            Value::Sym(s) if matches!(i.obarray.name(*s), "quote" | "function")
+        );
+        if is_quote {
+            if let Value::Cons(t) = &b.cdr {
+                if let Value::Sym(s) = t.borrow().car {
+                    out.insert(s);
+                }
+            }
+        }
+    }
+}
+
+/// Push the literal symbol in `v' (a bare `Value::Sym') into `out'.
+fn collect_sym_arg(v: &Value, out: &mut HashSet<SymId>) {
+    if let Value::Sym(s) = v {
+        out.insert(*s);
+    }
+}
+
+/// Collect mutation targets from one top-level (or nested container)
+/// form.
+///
+/// Three disjoint output sets:
+///   * `out` — symbols whose whole state (function cell, value cell,
+///     plist, binding flags) is restored from the pre-boot snapshot:
+///     defined names plus non-defining cell writes (`fset', `autoload',
+///     `define-obsolete-function-alias', ...).
+///   * `prop_out` — `(symbol, prop-name)' pairs: literal `put'/
+///     `function-put' targets and the known prop keys written by
+///     `gv-define-*'/`make-obsolete*'/`define-error'/advertised-calling-
+///     convention.  Only that plist key is removed, preserving props the
+///     prelude/dump legitimately installed on the same symbol (unlike a
+///     whole-plist restore, which voided `if' itself when gv.el's
+///     `(put 'if 'gv-expander ...)' rolled back).
+///   * `defs_out` — top-level defining heads only (defun/defmacro/
+///     defvar/defconst/defcustom/defalias/defsubst).  A rolled file's
+///     own definition must be erased even when the prelude folded the
+///     same name (the snapshot then holds a real cell, not void): GNU
+///     -Q binds it only via the dump or not at all.
+fn collect_form_targets(
+    i: &mut Interp,
+    v: &Value,
+    out: &mut HashSet<SymId>,
+    prop_out: &mut HashSet<(SymId, SymId)>,
+    defs_out: &mut HashSet<SymId>,
+) {
+    let mut work = vec![v.clone()];
+    while let Some(x) = work.pop() {
+        let items = match &x {
+            Value::Cons(_) => {
+                let mut v = Vec::new();
+                let mut cur = x.clone();
+                while let Value::Cons(cc) = cur {
+                    let bb = cc.borrow();
+                    v.push(bb.car.clone());
+                    cur = bb.cdr.clone();
+                }
+                v
+            }
+            _ => continue,
+        };
+        if items.is_empty() {
+            continue;
+        }
+        let head = match &items[0] {
+            Value::Sym(s) => i.obarray.name(*s).to_string(),
+            _ => {
+                // Non-symbol head (e.g. `((lambda ...) args)'): scan
+                // subforms for nested defining forms.
+                for it in &items {
+                    if let Value::Cons(_) = it {
+                        work.push(it.clone());
+                    }
+                }
+                continue;
+            }
+        };
+        let h = head.as_str();
+        // Defining forms: the name is the first argument.  This covers
+        // `defun'/`defmacro'/`defvar'/`defcustom'/`defalias'-style heads
+        // including `cl-defun'/`cl-defmethod' (name is items[1];
+        // `(setf SYM)' method names yield the `(setf ...)' list, so
+        // also collect the inner symbol) and `defstruct'/`defclass'
+        // (whose accessor/constructor symbols aren't literal in the
+        // form — collect the whole form deeply for those).
+        let name_is_sym = matches!(&items.get(1), Some(Value::Sym(_)));
+        let name_is_quote = matches!(&items.get(1), Some(Value::Cons(_)));
+        if h.starts_with("def")
+            || h.starts_with("define-")
+            || h.starts_with("cl-def")
+        {
+            if h == "defstruct" || h == "defclass" || h == "cl-defstruct" {
+                collect_item_syms(i, &x, out);
+                if std::env::var_os("REMACS_TRACE_COLLECT").is_some() {
+                    let nm = match items.get(1) {
+                        Some(Value::Sym(s)) => i.obarray.name(*s).to_string(),
+                        _ => "?".to_string(),
+                    };
+                    eprintln!(
+                        "[defs {} <- {}]",
+                        nm,
+                        i.princ_to_string(&x).chars().take(80).collect::<String>()
+                    );
+                }
+            } else if h == "defvar" || h == "defcustom" || h == "defconst" {
+                // Rolled-file value defs force-void too: GNU never ran
+                // the file, so `boundp' is nil at -Q (pcase--memoize,
+                // killed-rectangle, the cl--loop-* caches, ...).  Names
+                // the prelude itself defines (macroexp--dynvars, also
+                // defvar'd by the rolled subr-x copy) are subtracted
+                // from rolled_defs before the restore loop, so their
+                // snapshot binding survives.
+                if let Value::Sym(s) = items[1] {
+                    out.insert(s);
+                    defs_out.insert(s);
+                }
+            } else if name_is_sym {
+                if let Value::Sym(s) = items[1] {
+                    out.insert(s);
+                    defs_out.insert(s);
+                    if std::env::var_os("REMACS_TRACE_COLLECT").is_some() {
+                        eprintln!(
+                            "[defs {} <- {}]",
+                            i.obarray.name(s),
+                            i.princ_to_string(&x).chars().take(90).collect::<String>()
+                        );
+                    }
+                }
+            } else if name_is_quote {
+                collect_quoted(i, &items[1], out);
+                // `(setf SYM)' heads and `(defalias 'f (..))' — scan
+                // the arg for a literal symbol too.
+                if let Value::Cons(c) = &items[1] {
+                    let b = c.borrow();
+                    let mut inner = b.cdr.clone();
+                    while let Value::Cons(t) = inner {
+                        let tb = t.borrow();
+                        collect_sym_arg(&tb.car, out);
+                        inner = tb.cdr.clone();
+                    }
+                }
+            }
+            continue;
+        }
+        // Resolve the literal symbol arg shared by every side-effect
+        // head below: `(head 'SYM ...)' / `(head SYM ...)'.
+        let sym_arg = |at: usize| -> Option<SymId> {
+            let a = items.get(at)?;
+            if let Value::Sym(s) = a {
+                return Some(*s);
+            }
+            if let Value::Cons(c) = a {
+                let b = c.borrow();
+                let quoted = matches!(
+                    &b.car,
+                    Value::Sym(s) if matches!(i.obarray.name(*s), "quote" | "function")
+                );
+                if quoted {
+                    if let Value::Cons(t) = &b.cdr {
+                        if let Value::Sym(s) = t.borrow().car {
+                            return Some(s);
+                        }
+                    }
+                }
+            }
+            None
+        };
+        match h {
+            // (quote SYM) / #'SYM appearing as a *form*: irrelevant.
+            "quote" | "function" | "provide" | "require" | "declare"
+            | "declare-function" => {}
+            // Literal `(put 'SYM 'KEY ...)'/`function-put': strip just
+            // that prop key (a nil value is `remprop' — removing is
+            // still correct).  A non-literal key forces a whole-plist
+            // restore — encoded with a NIL key sentinel.
+            "put" | "function-put" | "define-symbol-prop" => {
+                if let Some(sym_id) = sym_arg(1) {
+                    match sym_arg(2) {
+                        Some(key_id) => {
+                            prop_out.insert((sym_id, key_id));
+                        }
+                        None => {
+                            prop_out.insert((sym_id, sym::NIL));
+                        }
+                    }
+                }
+            }
+            // Known fixed prop keys for non-put heads.
+            "make-obsolete" | "define-obsolete-function-alias" => {
+                if let Some(s) = sym_arg(1) {
+                    prop_out.insert((s, i.intern("byte-obsolete-info")));
+                }
+            }
+            "make-obsolete-variable" | "define-obsolete-variable-alias" => {
+                if let Some(s) = sym_arg(1) {
+                    prop_out.insert((s, i.intern("byte-obsolete-variable")));
+                }
+            }
+            "make-obsolete-face" | "define-obsolete-face-alias" => {
+                if let Some(s) = sym_arg(1) {
+                    prop_out.insert((s, i.intern("obsolete-face")));
+                }
+            }
+            "make-obsolete-generalized-variable" => {
+                if let Some(s) = sym_arg(1) {
+                    prop_out
+                        .insert((s, i.intern("byte-obsolete-generalized-variable")));
+                }
+            }
+            // All three write the `gv-expander' prop.
+            "gv-define-setter" | "gv-define-simple-setter"
+            | "gv-define-expander" => {
+                if let Some(s) = sym_arg(1) {
+                    prop_out.insert((s, i.intern("gv-expander")));
+                }
+            }
+            "define-error" => {
+                if let Some(s) = sym_arg(1) {
+                    prop_out.insert((s, i.intern("error-conditions")));
+                    prop_out.insert((s, i.intern("error-message")));
+                }
+            }
+            "set-advertised-calling-convention" => {
+                if let Some(s) = sym_arg(1) {
+                    prop_out
+                        .insert((s, i.intern("advertised-calling-convention")));
+                }
+            }
+            // `pcase-defmacro' writes NAME's `pcase-macroexpander'
+            // prop — not a function cell (e.g. `(pcase-defmacro \`
+            // (qpat) ...)' must not void the backquote macro).
+            "pcase-defmacro" => {
+                if let Some(s) = sym_arg(1) {
+                    prop_out.insert((s, i.intern("pcase-macroexpander")));
+                }
+            }
+            // Whole-plist overwrite: restore the snapshot plist.
+            "setplist" => {
+                if let Some(s) = sym_arg(1) {
+                    prop_out.insert((s, sym::NIL));
+                }
+            }
+            // Function/value-cell writes without a definition form:
+            // `fset'/`autoload' leave an (autoload ...) cell; `set'
+            // assigns the value cell.  The whole symbol still needs
+            // restoring so the written cell goes back to its pre-load
+            // state.
+            "fset" | "set" | "defvaralias" | "autoload" => {
+                if let Some(a) = items.get(1) {
+                    collect_sym_arg(a, out);
+                    collect_quoted(i, a, out);
+                }
+            }
+            // Container/macro heads and everything else: recurse into
+            // every element so nested definitions inside `progn'/
+            // `eval-when-compile'/`unless' are still collected.  Bare
+            // symbols drop out (collect_form_targets ignores non-conses).
+            _ => {
+                for it in &items {
+                    if let Value::Cons(_) = it {
+                        work.push(it.clone());
+                    }
                 }
             }
         }

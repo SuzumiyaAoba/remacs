@@ -6,7 +6,7 @@
 //! documents this as a deliberate simplification over Emacs's mark-and-sweep.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use std::fmt;
 use std::rc::Rc;
 
@@ -147,7 +147,7 @@ impl LispHash {
     pub fn new(test: HashTest) -> Self {
         LispHash {
             test,
-            map: HashMap::new(),
+            map: HashMap::default(),
             keys: KeySlots(Vec::new()),
             weakness: None,
             size: 0,
@@ -243,7 +243,49 @@ pub struct Subr {
     pub doc: &'static str,
 }
 
-pub type SubrFn = fn(&mut crate::lisp::Interp, Vec<Value>) -> crate::lisp::EvalResult;
+pub type SubrFn = fn(&mut crate::lisp::Interp, Argv) -> crate::lisp::EvalResult;
+
+/// A subr argument vector, shared with the call frame on `lisp_stack'.
+/// `Rc<Vec<Value>>' lets `apply_resolved' push the live argv onto the
+/// backtrace stack with a refcount bump instead of cloning every
+/// argument `Value' per call (a top allocator driver at startup).
+/// `Deref' to the inner `Vec' keeps `args[i]'/`args.len()'/`args.iter()'
+/// working; `&*args' coerces to `&[Value]' through two derefs.
+#[derive(Clone)]
+pub struct Argv(pub Rc<Vec<Value>>);
+
+impl std::ops::Deref for Argv {
+    type Target = [Value];
+    fn deref(&self) -> &[Value] {
+        &self.0
+    }
+}
+
+impl Argv {
+    /// Wrap a freshly-built argument vector.
+    pub fn new(v: Vec<Value>) -> Argv {
+        Argv(Rc::new(v))
+    }
+    /// Borrow the arguments as a plain slice.
+    pub fn as_slice(&self) -> &[Value] {
+        &self.0
+    }
+    /// Number of arguments.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    /// Whether the vector is empty.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl From<Vec<Value>> for Argv {
+    fn from(v: Vec<Value>) -> Argv {
+        Argv(Rc::new(v))
+    }
+}
+
 
 /// An interpreted function (or macro) defined in Lisp.
 pub struct Lambda {

@@ -2867,7 +2867,7 @@ fn eval_str_for_load(i: &mut Interp, file: &str, src: &str) -> EvalResult {
                 }
             }
         };
-        if std::env::var_os("REMACS_LOAD_POS").is_some() {
+        if i.dbg_flags & 0x8000 != 0 {
             if let Some((form, end)) = &next {
                 eprintln!("[load-pos] {}: {}..{} len={} head={}", file, pos, end, chars.len(), i.princ_to_string(form).chars().take(60).collect::<String>());
             }
@@ -2875,8 +2875,7 @@ fn eval_str_for_load(i: &mut Interp, file: &str, src: &str) -> EvalResult {
         match next {
             Some((form, end)) => {
                 pos = end;
-                let t0 = std::env::var_os("REMACS_FORM_PROF")
-                    .map(|_| std::time::Instant::now());
+                let t0 = (i.dbg_flags & 0x200 != 0).then(std::time::Instant::now);
                 match eval_for_load(i, form.clone()) {
                     Ok(v) => {
                         last = v;
@@ -2901,7 +2900,7 @@ fn eval_str_for_load(i: &mut Interp, file: &str, src: &str) -> EvalResult {
                         }
                     }
                     Err(f) => {
-                        if std::env::var_os("REMACS_TRACE_ERR").is_some() {
+                        if i.dbg_flags & 0x1000 != 0 {
                             let fdesc = match &f {
                                 crate::lisp::Flow::Signal(s, d, _) => format!(
                                     "signal {} {}",
@@ -3112,7 +3111,6 @@ fn record_load_entry(i: &mut Interp, form: &Value) {
     let head_name = i.symbol_name(head).to_string();
     let defun_id = i.intern("defun");
     let defface_id = i.intern("defface");
-    let provide_id = i.intern("provide");
     let require_id = i.intern("require");
     let entry = match head_name.as_str() {
         h if DEFUN_HEADS.contains(&h) => name(&items).map(|nm| Value::cons(i.sym(defun_id), nm)),
@@ -3264,6 +3262,19 @@ pub(crate) fn load_library_opts_msg(
             None => Ok(LoadOutcome::Missing),
         },
     };
+    if let Some(saved) = &saved_gc {
+        // A file that DEFVARs `gensym-counter' itself (subr.el does)
+        // legitimately changes the cell from UNBOUND: restoring would
+        // unbind it again and break later loads' macroexpansion.
+        if matches!(saved, Value::Sym(s) if *s == crate::lisp::sym::UNBOUND)
+            && !matches!(
+                i.obarray.symbol(gc).value,
+                Value::Sym(s) if s == crate::lisp::sym::UNBOUND
+            )
+        {
+            return result;
+        }
+    }
     if let Some(v) = saved_gc {
         i.obarray.symbol_mut(gc).value = v;
     }

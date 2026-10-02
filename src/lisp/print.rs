@@ -65,16 +65,22 @@ thread_local! {
     /// object's second encounter (GNU's `print_number_index' order),
     /// and which labeled objects have already printed.
     static CIRCLE: RefCell<Option<CircleCtx>> = const { RefCell::new(None) };
+    /// `print-unreadable-function' support (GNU print.c
+    /// `print_unreadable_flag'): every `#<...>'-style emit records its
+    /// byte span and object here so the `&mut' caller can post-process
+    /// with a Lisp callback.
+    static UNREADABLE_HITS: RefCell<Vec<(usize, usize, Value)>> =
+        const { RefCell::new(Vec::new()) };
 }
 
 /// Per-print state for `print-circle'.
 struct CircleCtx {
     /// Objects already seen by the pre-scan.
-    seen: std::collections::HashSet<usize>,
+    seen: rustc_hash::FxHashSet<usize>,
     /// ptr -> label number, assigned at second encounter.
-    labels: std::collections::HashMap<usize, usize>,
+    labels: rustc_hash::FxHashMap<usize, usize>,
     /// Objects whose `#N=' form has already printed.
-    printed: std::collections::HashSet<usize>,
+    printed: rustc_hash::FxHashSet<usize>,
     /// Next label index (GNU's print_number_index starts at 1).
     next: usize,
 }
@@ -235,6 +241,64 @@ impl Interp {
         self.print_to_string(v)
     }
 
+    /// `prin1` representation honoring `print-unreadable-function'
+    /// (GNU print.c): each `#<...>' span recorded during the print is
+    /// replaced by the callback's return value (must be a string), and
+    /// a thrown tag/signal propagates as usual Lisp flow.
+    pub fn print_to_string_cb(&mut self, v: &Value) -> Result<String, crate::lisp::error::Flow> {
+        UNREADABLE_HITS.with(|u| u.borrow_mut().clear());
+        let mut s = String::new();
+        let mark = BEING_PRINTED.with(|bp| bp.borrow().len());
+        let prev_circle = self.install_circle_ctx(v);
+        self.prin1_inner(v, &mut s, 0, false);
+        CIRCLE.with(|c| *c.borrow_mut() = prev_circle);
+        BEING_PRINTED.with(|bp| bp.borrow_mut().truncate(mark));
+        let hits = UNREADABLE_HITS.with(|u| std::mem::take(&mut *u.borrow_mut()));
+        if hits.is_empty() {
+            return Ok(s);
+        }
+        let puf = self.intern("print-unreadable-function");
+        let f = self.symbol_value(puf);
+        if f.is_nil() {
+            return Ok(s);
+        }
+        // Splice right-to-left so recorded offsets stay valid.
+        for (lo, hi, obj) in hits.into_iter().rev() {
+            let r = self.apply(&f, vec![obj, Value::t()])?;
+            if let Value::Str(rep) = r {
+                s.replace_range(lo..hi, &rep.borrow());
+            }
+        }
+        Ok(s)
+    }
+
+    /// `princ` variant of `print_to_string_cb'.
+    pub fn princ_to_string_cb(&mut self, v: &Value) -> Result<String, crate::lisp::error::Flow> {
+        UNREADABLE_HITS.with(|u| u.borrow_mut().clear());
+        let mut s = String::new();
+        let mark = BEING_PRINTED.with(|bp| bp.borrow().len());
+        let prev_circle = self.install_circle_ctx(v);
+        self.princ_inner(v, &mut s, 0, false);
+        CIRCLE.with(|c| *c.borrow_mut() = prev_circle);
+        BEING_PRINTED.with(|bp| bp.borrow_mut().truncate(mark));
+        let hits = UNREADABLE_HITS.with(|u| std::mem::take(&mut *u.borrow_mut()));
+        if hits.is_empty() {
+            return Ok(s);
+        }
+        let puf = self.intern("print-unreadable-function");
+        let f = self.symbol_value(puf);
+        if f.is_nil() {
+            return Ok(s);
+        }
+        for (lo, hi, obj) in hits.into_iter().rev() {
+            let r = self.apply(&f, vec![obj, Value::Nil])?;
+            if let Value::Str(rep) = r {
+                s.replace_range(lo..hi, &rep.borrow());
+            }
+        }
+        Ok(s)
+    }
+
     /// `princ` representation: human-readable (strings unquoted).
     pub fn princ_to_string(&self, v: &Value) -> String {
         let mut s = String::new();
@@ -254,9 +318,9 @@ impl Interp {
             return None;
         }
         let mut ctx = CircleCtx {
-            seen: std::collections::HashSet::new(),
-            labels: std::collections::HashMap::new(),
-            printed: std::collections::HashSet::new(),
+            seen: rustc_hash::FxHashSet::default(),
+            labels: rustc_hash::FxHashMap::default(),
+            printed: rustc_hash::FxHashSet::default(),
             next: 1,
         };
         count_print_refs(self, v, &mut ctx);
@@ -343,6 +407,17 @@ impl Interp {
     }
 
     fn prin1_inner_obj(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
+        // `print-unreadable-function' hook: any `#<...>' fragment this
+        // object emits is recorded for the `&mut' caller to post-process.
+        let start = out.len();
+        self.prin1_inner_obj_raw(v, out, depth, bq);
+        let piece = &out[start..];
+        if piece.len() > 2 && piece.starts_with("#<") && piece.ends_with('>') {
+            UNREADABLE_HITS.with(|u| u.borrow_mut().push((start, out.len(), v.clone())));
+        }
+    }
+
+    fn prin1_inner_obj_raw(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
         if depth > 200 {
             out.push_str("##");
             return;
@@ -719,6 +794,15 @@ impl Interp {
     }
 
     fn princ_inner_obj(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
+        let start = out.len();
+        self.princ_inner_obj_raw(v, out, depth, bq);
+        let piece = &out[start..];
+        if piece.len() > 2 && piece.starts_with("#<") && piece.ends_with('>') {
+            UNREADABLE_HITS.with(|u| u.borrow_mut().push((start, out.len(), v.clone())));
+        }
+    }
+
+    fn princ_inner_obj_raw(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
         if let Some(level) = self.print_level_limit() {
             if depth >= level {
                 if let Value::Cons(_) = v {

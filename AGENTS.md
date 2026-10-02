@@ -56,6 +56,23 @@ Registration rules:
 - Generated loaddefs with qualified provide (e.g. `semantic/loaddefs`)
   need the qualified key too.
 
+## Startup profile (release build, `REMACS_BOOT_PROF=1`)
+
+Warm `--batch` startup is ~1.2 s: prelude eval ~290 ms + ~910 ms of
+`boot_lib` loads.  The backquote expander is a Rust port
+(`src/lisp/builtins/backquote.rs`) — GNU byte-compiles backquote.el, so
+an interpreted copy both cost ~700 ms of macroexpansion per boot and
+broke on `(fmakunbound 'car)' (its `car' calls are `Bcar' opcodes in
+GNU).  `backquote'/`\`'/`backquote-list*' are bound as
+`(macro . #<subr>)' cells after all library loads (`install_macros' in
+`Interp::new'), and the `backquote-*-symbol' variables are honored.
+Similarly, `subr.el''s Lisp defuns are loaded for cell-shape parity but
+then any symbol that no longer names a Rust subr is re-fset to the
+subr (right after `boot_lib "subr"') — several subrs carry parity
+tweaks (gensym's interned-name skip, oddp's marker rejection,
+apply-partially's `#[128]' shape, locate-library's suffix rules); GNU's
+nativecomp build reports `subrp' t for all of these anyway.
+
 ## Known runtime gaps (not port defects)
 
 - The files that used to be Emacs-internal-encoding (see the
@@ -298,7 +315,43 @@ the minibuffer).  `minibuf_loop` must propagate `poll_key` errors —
 swallowing them spins forever on dead input.
 
 Regression suite: `tests/tui_session.rs` (scripted `KeyIo` drives
-C-x C-f/TAB/C-x b/M-x/C-x C-s/C-g/C-x C-c through the real loop).
+C-x C-f/TAB/C-x b/M-x/C-x C-s/C-g/C-x C-c through the real loop, and
+captures `render_grid` output for the point-visibility scroll test).
+
+`term::render_grid` is the shared display engine (crossterm + gpui):
+like GNU's `redisplay_window' it keeps each window's point on screen
+by scrolling `window.start' — the minimal amount when point sits just
+outside, recentered (`point - text_rows/2`) when it is more than a
+window-height away — and `window.hscroll' likewise for the cursor
+column (lines are truncated, no continuation rows).  Without it
+cursor motion past a window edge left the buffer text frozen and hid
+the cursor.
+
+Scrolling primitives live in `src/editor/mod.rs` (`window_scroll'):
+like GNU's `window_scroll' they move the window's `start' AND, when
+the scroll would leave point outside the window, move point to the
+edge GNU picks — first visible line on scroll-up, last on scroll-down
+— so render_grid's snap-back cannot cancel the scroll.  C-v/M-v are
+the Lisp `scroll-*-command's in `lisp/window.el' (loaded via
+EMBEDDED_LISP), which call the `scroll-up'/`scroll-down' subrs;
+defaults are `text_rows - next-screen-context-lines' and raw `P'
+prefixes like `(4)' are decoded via `scroll_arg'.  `select-window'
+saves the previously selected window's buffer point into
+`window-point' (only when that window shows the current buffer —
+`with-selected-window'/`scroll-other-window' depend on it).
+Horizontal scrolling follows GNU's `suspend_auto_hscroll' model:
+`scroll-left'/`scroll-right'/`set-window-hscroll' set
+`Window.suspend_hscroll' (plus `min_hscroll' when given the
+interactive SET-MINIMUM arg) instead of moving point, and
+`render_grid' skips its cursor-column hscroll snap while suspended —
+clearing it as soon as `window.point != window.old_point' (the
+old_pointm check in GNU xdisp.c) and clamping the displayed cursor
+to the window edge meanwhile.  `auto-hscroll-mode' is read
+buffer-locally per window (t default).  `scroll-left'/`-right' are
+`disabled' commands under GNU — `C-x <'/`C-x >' prompt first.
+Regression: `tui_hscroll_suspends_until_point_moves' in
+tests/tui_session.rs.
+
 ## GNU-compat QA suite (`tests/qa.rs` + `tests/qa_*.el`)
 
 Each `qa_*.el` file is a flat list of `(qa FORM EXPECTED)` checks driven

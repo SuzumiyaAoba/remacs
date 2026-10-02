@@ -60,56 +60,12 @@
 ;; block (GNU-compatible definitions), so they are not reproduced here.
 ;; `built-in-class-p' is deliberately left undefined so that
 ;; `pcase--subtype-bitsets' takes its bootstrap (empty-table) path.
+;; `def-edebug-elem-spec', `define-symbol-prop', `macroexp-file-name'
+;; and `macroexp--fgrep' are GNU subr.el/macroexp.el definitions the
+;; prelude provides, so they are not reproduced here either (a local
+;; copy would be rolled back as an eval-when-compile side effect and
+;; wrongly void the prelude's version at -Q).
 
-(defmacro def-edebug-elem-spec (&rest _)
-  "No-op stub: edebug is not available."
-  nil)
-
-(defun define-symbol-prop (symbol prop val)
-  "Define the property PROP of SYMBOL to be VAL.
-This is to `put' what `defalias' is to `fset'.  Unlike GNU, this does
-not record the definition site in `current-load-list'."
-  (put symbol prop val))
-
-(defun macroexp-file-name ()
-  "Return the name of the file from which the code comes."
-  nil)
-
-(defun macroexp--fgrep (bindings sexp)
-  "Return those of the BINDINGS which might be used in SEXP.
-This is a poor-man's \"free variables\" test: it does not know Elisp
-syntax, so it only looks for the presence of symbols in SEXP."
-  (let ((res '())
-        ;; Cyclic code should not happen, but code can contain cyclic data :-(
-        (seen (make-hash-table :test #'eq))
-        (sexpss (list (list sexp))))
-    ;; Use a nested while loop to reduce the amount of heap allocations for
-    ;; pushes to `sexpss' and the `gethash' overhead.
-    (while (and sexpss bindings)
-      (let ((sexps (pop sexpss)))
-        (unless (gethash sexps seen)
-          (puthash sexps t seen)
-          (if (vectorp sexps) (setq sexps (mapcar #'identity sexps)))
-          (let ((tortoise sexps) (skip t))
-            (while sexps
-              (let ((sexp (if (consp sexps) (pop sexps)
-                            (prog1 sexps (setq sexps nil)))))
-                (if skip
-                    (setq skip nil)
-                  (setq tortoise (cdr tortoise))
-                  (if (eq tortoise sexps)
-                      (setq sexps nil) ;; Found a cycle: we're done!
-                    (setq skip t)))
-                (cond
-                 ((or (consp sexp) (vectorp sexp)) (push sexp sexpss))
-                 (t
-                  (let ((tmp (assq sexp bindings)))
-                    (when tmp
-                      (push tmp res)
-                      (setq bindings (remove tmp bindings))))))))))))
-    res))
-
-;; --- end of remacs shims -------------------------------------------------
 
 ;; Macro-expansion of pcase is reasonably fast, so it's not a problem
 ;; when byte-compiling a file, but when interpreting the code, if the pcase
