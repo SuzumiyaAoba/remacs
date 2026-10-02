@@ -132,10 +132,30 @@ Ok(Value::string(if noescape {
 })) }
 
 fn f_with_output_to_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // (with-output-to-string &rest BODY)
-let body = args.iter().next().cloned().unwrap_or(Value::Nil);
-let saved = std::mem::take(&mut i.output_buffer);
-i.capture_output = true;
+// GNU's macro binds `standard-output' to a temp BUFFER — code inside
+// may `(with-current-buffer standard-output ...)' (vc-git relies on
+// it), so a bare string capture is wrong.
+let body = Value::list(args.iter().cloned().collect());
+let buf_id = i.buffers.create_exact(" *string-output*");
+let buf_val = i
+    .buffers
+    .get(buf_id)
+    .map(Value::Buffer)
+    .unwrap_or(Value::Nil);
+let so = i.standard_output_sym;
+i.specbind(so, buf_val)?;
 let r = i.eval_progn(&body);
-i.capture_output = false;
-let captured = std::mem::replace(&mut i.output_buffer, saved);
-r.map(|_| Value::string(captured)) }
+let _ = i.unbind(1);
+let text = i
+    .buffers
+    .get(buf_id)
+    .map(|b| {
+        let bb = b.borrow();
+        bb.text.substring(0, bb.text.len())
+    })
+    .unwrap_or_default();
+let _ = i.buffers.kill(buf_id, |_| false);
+match r {
+    Ok(_) => Ok(Value::string(text)),
+    Err(f) => Err(f),
+} }

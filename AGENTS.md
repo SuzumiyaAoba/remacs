@@ -72,6 +72,18 @@ subr (right after `boot_lib "subr"') — several subrs carry parity
 tweaks (gensym's interned-name skip, oddp's marker rejection,
 apply-partially's `#[128]' shape, locate-library's suffix rules); GNU's
 nativecomp build reports `subrp' t for all of these anyway.
+Macro cells (`(macro . _)', `is_macro' lambdas) are skipped: the
+prelude's `with-output-to-string' defmacro is the faithful GNU shape
+(it binds `standard-output' to a real buffer, which `vc-git''s
+`with-current-buffer standard-output' requires), and shadowing it with
+the `f_with_output_to_string' subr broke `M-x dired' file selection
+with `wrong-type-argument stringp t'.
+
+`command_execute' resolves `(autoload ...)' function cells through
+`autoload_do_load' before interactive-spec lookup — GNU's
+call-interactively does the same via `indirect_function'; without it,
+M-x on autoloaded commands hit apply's bare-cons `symbolp' check.
+
 
 ## Known runtime gaps (not port defects)
 

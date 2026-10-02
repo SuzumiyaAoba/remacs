@@ -9853,6 +9853,9 @@ modify the table."
     (define-key map [linefeed] [10])
     (define-key map [backspace] [127])
     (define-key map [delete] [127])
+    ;; GNU bindings.el: C-SPC arrives as C-@ on text terminals; the
+    ;; `S-tab'/`backtab' convention and keypad-delete→DEL below.
+    (define-key map [?\C-@] [?\C-\s])
     (define-key map [S-tab] [backtab])
     ;; GNU bindings.el: X11 keypad keys map to their plain
     ;; counterparts for every basic modifier combination.
@@ -9876,6 +9879,16 @@ modify the table."
             (define-key map
               (vector (append mod (list keypad)))
               (vector (append mod (list normal))))))))
+    (define-key map [kp-delete] [127])
+      ;; GNU simple.el: additional one-key translations (supersede
+      ;; some loop bindings, e.g. `kp-enter' → RET, `clear' → C-l).
+      (dolist (pair '((kp-space ?\s) (kp-tab ?\t) (kp-enter ?\r)
+                      (kp-separator ?,) (kp-equal ?=)
+                      (backspace 127) (delete 127)
+                      (tab ?\t) (linefeed ?\n) (clear ?\C-l)
+                      (return ?\r) (escape ?\e)))
+        (put (car pair) 'ascii-character (cadr pair))
+        (define-key map (vector (car pair)) (vector (cadr pair))))
     map)
   "Keymap mapping ASCII function key sequences onto their preferred forms.
 This uses a `keymap' data structure that is used by `read-key-sequence'

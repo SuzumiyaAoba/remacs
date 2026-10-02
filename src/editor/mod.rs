@@ -5618,7 +5618,38 @@ if let Value::Vec(v) = &a[1] {
     }
 }
 let raw_keys = key_seq(i, &a[1])?;
-let def = a[2].clone();
+// GNU Fdefine_key rewrites a vector DEF through `lispy_event' on each
+// element: `[(48)]' stores as `[48]', `[(control 48)]' as an event
+// code — so `key-description'/describer see real events, not lists.
+let def = match &a[2] {
+    Value::Vec(v) => {
+        let mut changed = false;
+        let mut elts = Vec::with_capacity(v.borrow().len());
+        for x in v.borrow().iter() {
+            let converted = if let Value::Cons(_) = x {
+                match crate::lisp::builtins::misc::f_event_convert_list(
+                    i, vec![x.clone()].into(),
+                )? {
+                    Value::Int(n) => Value::Int(n),
+                    Value::Sym(s) => Value::Sym(s),
+                    _ => x.clone(),
+                }
+            } else {
+                x.clone()
+            };
+            if !crate::lisp::builtins::equal_values(i, &converted, x) {
+                changed = true;
+            }
+            elts.push(converted);
+        }
+        if changed {
+            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(elts)))
+        } else {
+            a[2].clone()
+        }
+    }
+    _ => a[2].clone(),
+};
 if raw_keys.is_empty() {
     // GNU returns nil for an empty key sequence.
     return Ok(Value::Nil);
@@ -7305,7 +7336,12 @@ pub(crate) fn describe_key(k: i128) -> String {
     } else if k & 0x7fff_0000 != 0 && bare == 0 {
         out.push_str("<key>");
     } else {
-        out.push(char::from_u32(bare as u32).unwrap_or('?'));
+        match crate::lisp::value::lisp_char(bare as u32) {
+            Some(ch) => out.push(ch),
+            // GNU push_key_description emits the mule encoding raw
+            // for codes above the Unicode range.
+            None => crate::lisp::value::push_mule_high(&mut out, bare as u32),
+        }
     }
     out
 }

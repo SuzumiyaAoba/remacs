@@ -2491,13 +2491,21 @@ impl Interp {
             for s in crate::lisp::builtins::collect() {
                 if let Some(id) = interp.intern_soft(s.name) {
                     let f = interp.symbol_function(id);
-                    let is_subr = matches!(f, Value::Subr(_));
-                    if !is_subr {
+                    // Never clobber a macro cell: several prelude
+                    // defmacros share names with helper subrs
+                    // (`with-output-to-string' binds a real buffer for
+                    // `standard-output'; the subr is just the runtime
+                    // sink).  Macros are the faithful GNU cell shape
+                    // anyway (subr.el's defmacro/defsubst beats the
+                    // special-form subr for `macrop' parity).
+                    let is_macro = matches!(&f, Value::Lambda(l) if l.is_macro)
+                        || matches!(&f, Value::Cons(c)
+                            if interp.sym_is(&c.borrow().car, sym::MACRO));
+                    if !is_macro && !matches!(f, Value::Subr(_)) {
                         interp.fset(id, Value::Subr(s));
                     }
                 }
             }
-
             // seq.el is in GNU's dump too (loadup.el line 252): its
             // `seq-let' defmacro replaces the raw-subr placeholder so
             // `(macrop 'seq-let)' reports t like GNU.
@@ -9718,20 +9726,31 @@ command-line arguments.\" \
                     Some(OutputSink::Stdout) => {
                         // GNU's output encoding renders an eight-bit
                         // char (0x80-0xFF) in its internal two-byte
-                        // form: 0xC0+((b>>6)&1), 0x80+(b&0x3F).
-                        if s.chars()
-                            .any(|c| crate::lisp::value::eight_bit_byte(c).is_some())
-                        {
+                        // form: 0xC0+((b>>6)&1), 0x80+(b&0x3F); raw-byte
+                        // marker chars (mule codes >0x10FFFF) write
+                        // their literal byte.
+                        if s.chars().any(|c| {
+                            crate::lisp::value::eight_bit_byte(c).is_some()
+                                || crate::lisp::value::raw_byte_marker(c).is_some()
+                        }) {
                             let mut bytes = Vec::with_capacity(s.len());
                             for c in s.chars() {
-                                match crate::lisp::value::eight_bit_byte(c) {
-                                    Some(b) => {
-                                        bytes.push(0xC0 + ((b >> 6) & 1));
-                                        bytes.push(0x80 + (b & 0x3F));
-                                    }
-                                    None => {
-                                        let mut tmp = [0u8; 4];
-                                        bytes.extend_from_slice(c.encode_utf8(&mut tmp).as_bytes());
+                                if let Some(b) =
+                                    crate::lisp::value::raw_byte_marker(c)
+                                {
+                                    bytes.push(b);
+                                } else {
+                                    match crate::lisp::value::eight_bit_byte(c) {
+                                        Some(b) => {
+                                            bytes.push(0xC0 + ((b >> 6) & 1));
+                                            bytes.push(0x80 + (b & 0x3F));
+                                        }
+                                        None => {
+                                            let mut tmp = [0u8; 4];
+                                            bytes.extend_from_slice(
+                                                c.encode_utf8(&mut tmp).as_bytes(),
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -10553,8 +10572,21 @@ command-line arguments.\" \
             }
         }
         // Resolve to function, then call with interactive args.
+        // GNU `command-execute' → `call-interactively' resolves the
+        // symbol's cell through `indirect_function', which loads
+        // autoload cells; applying the raw `(autoload ...)' cons would
+        // hit apply's bare-cons `symbolp' check ("No file chosen" path
+        // in dired's mouse command, M-x on autoloaded commands).
         let fun = match cmd {
-            Value::Sym(id) => self.symbol_function(*id),
+            Value::Sym(id) => {
+                let mut f = self.symbol_function(*id);
+                let auto_id = self.intern("autoload");
+                let is_auto = matches!(&f, Value::Cons(c) if self.sym_is(&c.borrow().car, auto_id));
+                if is_auto {
+                    f = crate::lisp::builtins::evalfn::autoload_do_load(self, f, false)?;
+                }
+                f
+            }
             other => other.clone(),
         };
         self.interactive_call_depth += 1;

@@ -403,12 +403,18 @@ pub const EIGHT_BIT_BASE: u32 = 0xF_0000;
 /// block: codepoint c maps to U+F0100+(c-0xD800).
 pub const SURROGATE_BASE: u32 = 0xF_0100;
 
+/// A *raw output byte* marker: codepoints that can't live in a Rust
+/// `char` (GNU mule codes 0x110000..=0x3FFFFF) are emitted into
+/// strings as their mule byte sequence, one marker char per byte —
+/// U+F0A00+b holds literal byte b.  The stdout/file encoders expand
+/// the markers back to raw bytes; nothing else should see them.
+pub const RAW_BYTE_BASE: u32 = 0xF_0A00;
+
 /// Map a GNU char code to a storable Rust char; eight-bit codes and
 /// surrogates become PUA proxies.
 pub fn lisp_char(code: u32) -> Option<char> {
     match code {
         0x3FFF80..=0x3FFFFF => char::from_u32(EIGHT_BIT_BASE + (code & 0xFF)),
-        0xD800..=0xDFFF => char::from_u32(SURROGATE_BASE + (code - 0xD800)),
         _ => char::from_u32(code),
     }
 }
@@ -439,6 +445,68 @@ pub fn lisp_char_code(c: char) -> i128 {
         return s as i128;
     }
     c as i128
+}
+
+/// If `c` is a raw-byte marker, return the literal byte it carries.
+pub fn raw_byte_marker(c: char) -> Option<u8> {
+    let u = c as u32;
+    (RAW_BYTE_BASE..RAW_BYTE_BASE + 0x100)
+        .contains(&u)
+        .then(|| (u - RAW_BYTE_BASE) as u8)
+}
+
+/// A high-mule sequence proxy: GNU codes 0x110000..=0x3FFF7F can't
+/// sit in a Rust `char`, so each distinct code is registered once and
+/// surfaces in strings as a single U+F0B00+idx char — keeping the
+/// description's column layout (GNU stores the code as one char).
+/// The output encoder expands the proxy back to GNU's 5-byte mule
+/// form 0xF8|(c>>24) + four 0x80|6-bit trails.
+pub const MULE_SEQ_BASE: u32 = 0xF_0B00;
+
+thread_local! {
+    static MULE_SEQS: std::cell::RefCell<std::collections::HashMap<u32, u32>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+    static MULE_SEQ_CODES: std::cell::RefCell<Vec<u32>> =
+        std::cell::RefCell::new(Vec::new());
+}
+
+/// The proxy char for a mule code 0x110000..=0x3FFF7F.
+pub fn mule_seq_char(code: u32) -> char {
+    let idx = MULE_SEQS.with(|m| {
+        let mut m = m.borrow_mut();
+        if let Some(&i) = m.get(&code) {
+            i
+        } else {
+            let i = m.len() as u32;
+            m.insert(code, i);
+            MULE_SEQ_CODES.with(|c| c.borrow_mut().push(code));
+            i
+        }
+    });
+    char::from_u32(MULE_SEQ_BASE + idx).unwrap_or('?')
+}
+
+/// If `c` is a mule-seq proxy, return its real GNU code.
+pub fn mule_seq_code(c: char) -> Option<u32> {
+    let u = c as u32;
+    if (MULE_SEQ_BASE..MULE_SEQ_BASE + 0x10000).contains(&u) {
+        MULE_SEQ_CODES.with(|codes| codes.borrow().get((u - MULE_SEQ_BASE) as usize).copied())
+    } else {
+        None
+    }
+}
+
+/// The GNU mule byte sequence for a codepoint a Rust `char` can't
+/// hold (0x110000..=0x3FFF7F): 0xF8|(c>>24), then four 0x80|6-bit
+/// trail bytes — the same form GNU writes on stdout.
+pub fn mule_high_bytes(code: u32) -> [u8; 5] {
+    [
+        0xF8 + ((code >> 24) & 3) as u8,
+        0x80 + ((code >> 18) & 0x3F) as u8,
+        0x80 + ((code >> 12) & 0x3F) as u8,
+        0x80 + ((code >> 6) & 0x3F) as u8,
+        0x80 + (code & 0x3F) as u8,
+    ]
 }
 
 impl Value {
