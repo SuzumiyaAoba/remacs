@@ -92,10 +92,16 @@ decide whether the selected frame can display that Unicode character."
    ((char-displayable-p ?\u2026) "…")
    ("...")))
 
-(defun unrecord-window-buffer (window buffer &optional all-frames)
-  "Mark WINDOW's association with BUFFER as forgotten.
-remacs stub: window buffer history is not tracked, so this is a no-op."
-  nil)
+(defun unrecord-window-buffer (&optional window buffer all)
+  "Unrecord BUFFER in WINDOW.
+WINDOW must be a live window and defaults to the selected one.  BUFFER
+must be a live buffer and defaults to the buffer of WINDOW.
+Remacs: ported from GNU window.el; history tracking is a no-op via
+`window-discard-buffer-from-window'."
+  (let* ((window (window-normalize-window window t))
+	 (buffer (or buffer (window-buffer window))))
+    (when (buffer-live-p buffer)
+      (window-discard-buffer-from-window buffer window all))))
 
 ;;; Threading.
 
@@ -947,10 +953,12 @@ This is the simplest safe way to acquire and release a mutex."
 If PLACE's value is non-nil, then don't bother evaluating CODE
 and return the value found in PLACE instead."
   (declare (indent 1) (debug (gv-place body)))
-  ;; remacs: `or' + `setf' is equivalent to GNU's `gv-letplace'
-  ;; expansion for the supported generalized variables.
-  `(or ,place
-       (setf ,place (progn ,@code))))
+  (gv-letplace (getter setter) place
+    `(or ,getter
+         ,(macroexp-let2 nil val (macroexp-progn code)
+            `(progn
+               ,(funcall setter val)
+               ,val)))))
 
 (defmacro with-delayed-message (args &rest body)
   "Like `progn', but display MESSAGE if BODY takes longer than TIMEOUT seconds.
@@ -10082,19 +10090,6 @@ or `never'."
       (let ((w (get-buffer-window buf)))
         (and (window-live-p w) (delete-window w)))
       (and (get-buffer buf) (kill-buffer buf)))))
-(defun register--get-method-type (val genfun &optional _other-args-type)
-  ;; GNU inspects GENFUN's method specializers; here the two register
-  ;; generics are known, so the dispatch types are enumerated directly.
-  (let ((type (cond ((registerv-p val) 'registerv)
-                    ((consp val) 'cons)
-                    ((markerp val) 'marker)
-                    ((stringp val) 'string)
-                    ((numberp val) 'number)
-                    (t 't))))
-    (if (memq type (if (eq genfun 'register-val-jump-to)
-                       '(registerv marker cons)
-                     '(registerv cons string number marker)))
-        type 't)))
 
 (defun register--insertable-p (regval)
   "Return non-nil if `register-val-insert' is implemented for REGVAL."
@@ -13271,19 +13266,6 @@ Also see `help-window-keep-selected'."
   :group 'help
   :version "23.1")
 
-
-;;; apropos.el autoloads (library loads on demand like GNU)
-(autoload 'apropos-read-pattern "apropos")
-(autoload 'apropos-user-option "apropos")
-(autoload 'apropos-variable "apropos")
-(autoload 'apropos-local-variable "apropos")
-(autoload 'apropos-function "apropos")
-(autoload 'apropos-command "apropos")
-(autoload 'apropos "apropos")
-(autoload 'apropos-documentation "apropos")
-(autoload 'apropos-value "apropos")
-(autoload 'apropos-local-value "apropos")
-(autoload 'apropos-library "apropos")
 
 (defvar font-weight-table
   [[0 thin] [40 ultra-light ultralight extra-light extralight] [50 light] [55 semi-light semilight demilight] [80 regular normal unspecified book] [100 medium] [180 semi-bold semibold demibold demi-bold demi] [200 bold] [205 extra-bold extrabold ultra-bold ultrabold] [210 black heavy] [250 ultra-heavy ultraheavy]]
@@ -20813,23 +20795,6 @@ that many seconds of Emacs idle time.  If t, display local help
 immediately.  If nil, never display local help.  The value
 `never' means never display local help in a timely manner; local
 help is only displayed by direct calls to `display-local-help'.")
-(autoload 'help-at-pt-string "help-at-pt"
-  "Return the help-echo string at point." t)
-(autoload 'help-at-pt-kbd-string "help-at-pt"
-  "Return the keyboard help string at point." t)
-(autoload 'display-local-help "help-at-pt"
-  "Display in the echo area `kbd-help' or `help-echo' text at point." t)
-(autoload 'help-at-pt-cancel-timer "help-at-pt"
-  "Cancel any timer controlling the display of local help." t)
-(autoload 'help-at-pt-set-timer "help-at-pt"
-  "Set a timer to display local help in the echo area." t)
-(autoload 'scan-buf-move-to-region "help-at-pt"
-  "Go to the start of the next region with non-nil PROP property." t)
-(autoload 'scan-buf-next-region "help-at-pt"
-  "Go to the start of the next region with non-nil help-echo." t)
-(autoload 'scan-buf-previous-region "help-at-pt"
-  "Go to the start of the previous region with non-nil help-echo." t)
-
 
 ;; --- eldoc.el remaining ---
 (defcustom eldoc-print-after-edit nil
@@ -20900,10 +20865,6 @@ If the value is the symbol `kill', the active region is killed
 instead of deleted.")
 ;; GNU loaddefs registers this defalias eagerly (not as an autoload).
 (defalias 'pending-delete-mode 'delete-selection-mode)
-(autoload 'delete-selection-local-mode "delsel"
-  "Toggle `delete-selection-mode' only in this buffer." t)
-(autoload 'delete-active-region "delsel"
-  "Delete the active region." t)
 
 
 ;; --- mwheel.el ---
@@ -23250,7 +23211,7 @@ has been requested by the completion table." (completions--start-background-upda
 
 (defvar isearch-suspended nil)
 
-(defvar isearch-message-properties 'minibuffer-prompt-properties
+(defvar isearch-message-properties minibuffer-prompt-properties
   "Text properties that are added to the isearch prompt.")
 
 (defvar isearch--yank-prev-point nil)
@@ -25600,8 +25561,8 @@ No problems result if this variable is not bound.
 (add-hook 'find-file-hook #'vc-refresh-state)
 (add-hook 'kill-buffer-hook #'vc-kill-buffer-hook)
 
-;;; misearch.el autoload cookie runs at dump time in GNU.
-(autoload 'multi-isearch-setup "misearch")
+;;; misearch.el: GNU's isearch-mode-hook side effect (the autoload
+;;; cell itself comes from loaddefs).
 (add-hook 'isearch-mode-hook 'multi-isearch-setup)
 
 (require 'help-macro)
@@ -40100,7 +40061,7 @@ type is.  This defaults to \"INFO\"." (let ((string (format "  %-9s%s" (or type 
                         (intern (substring (symbol-name k) 1))))
              (idx (and name (seq-position ppss--slots name))))
         (unless idx
-          (error "Keyword argument %s not one of %s"
+          (error "Keyword argument %S not one of %s"
                  k (mapcar (lambda (s) (intern (concat ":" (symbol-name s))))
                            ppss--slots)))
         (setcar (nthcdr idx vals) v)
@@ -40118,26 +40079,51 @@ type is.  This defaults to \"INFO\"." (let ((string (format "  %-9s%s" (or type 
 (defun ppss-open-parens (ppss) (nth 9 ppss))
 (defun ppss-two-character-syntax (ppss) (nth 10 ppss))
 
-(defun ppss-depth--inliner (_form x) `(progn (car ,x)))
-(defun ppss-innermost-start--inliner (_form x) `(progn (nth 1 ,x)))
-(defun ppss-last-complete-sexp-start--inliner (_form x) `(progn (nth 2 ,x)))
-(defun ppss-string-terminator--inliner (_form x) `(progn (nth 3 ,x)))
-(defun ppss-comment-depth--inliner (_form x) `(progn (nth 4 ,x)))
-(defun ppss-quoted-p--inliner (_form x) `(progn (nth 5 ,x)))
-(defun ppss-min-depth--inliner (_form x) `(progn (nth 6 ,x)))
-(defun ppss-comment-style--inliner (_form x) `(progn (nth 7 ,x)))
-(defun ppss-comment-or-string-start--inliner (_form x) `(progn (nth 8 ,x)))
-(defun ppss-open-parens--inliner (_form x) `(progn (nth 9 ,x)))
-(defun ppss-two-character-syntax--inliner (_form x) `(progn (nth 10 ,x)))
+(defun ppss-depth--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (car ,x))))
+(defun ppss-innermost-start--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (nth 1 ,x))))
+(defun ppss-last-complete-sexp-start--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (nth 2 ,x))))
+(defun ppss-string-terminator--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (nth 3 ,x))))
+(defun ppss-comment-depth--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (nth 4 ,x))))
+(defun ppss-quoted-p--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (nth 5 ,x))))
+(defun ppss-min-depth--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (nth 6 ,x))))
+(defun ppss-comment-style--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (nth 7 ,x))))
+(defun ppss-comment-or-string-start--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (nth 8 ,x))))
+(defun ppss-open-parens--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (nth 9 ,x))))
+(defun ppss-two-character-syntax--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (nth 10 ,x))))
 
-(defun make-ppss--cmacro (form)
-  "Compiler macro for `make-ppss'."
+(defun make-ppss--cmacro (_form &rest args)
+  "Compiler macro for `make-ppss'.  GNU's cl-defsubst shape: keyword
+ARGS are validated against the slot names, then expanded into a
+suppressed-warnings funcall of a positional lambda."
   (declare (advertised-calling-convention () "31.1"))
-  (let ((exps (cdr form)))
+  (let ((vals (make-list 11 nil)))
+    (while args
+      (let* ((k (car args))
+             (v (cadr args))
+             (name (and (keywordp k)
+                        (intern (substring (symbol-name k) 1))))
+             (idx (and name (seq-position ppss--slots name))))
+        (unless idx
+          (error "Keyword argument %S not one of %s"
+                 k (mapcar (lambda (s) (intern (concat ":" (symbol-name s))))
+                           ppss--slots)))
+        (setcar (nthcdr idx vals) v)
+        (setq args (cddr args))))
     `(with-suppressed-warnings ((lexical comment-style))
        (funcall (lambda ,ppss--slots
                   (cl-block make-ppss (list ,@ppss--slots)))
-                ,@exps))))
+                ,@vals))))
 
 (defsubst syntax-ppss-depth (ppss)
   (nth 0 ppss))
@@ -40224,75 +40210,89 @@ END) suitable for `syntax-propertize-function'." (lambda (start end) (with-no-wa
               (funcall isearch-push-state-function))
           isearch-match-data))
 
-(defun isearch--state-string (s) (aref s 1))
-(defun isearch--state-message (s) (aref s 2))
-(defun isearch--state-point (s) (aref s 3))
-(defun isearch--state-success (s) (aref s 4))
-(defun isearch--state-forward (s) (aref s 5))
-(defun isearch--state-other-end (s) (aref s 6))
-(defun isearch--state-word (s) (aref s 7))
-(defun isearch--state-error (s) (aref s 8))
-(defun isearch--state-wrapped (s) (aref s 9))
-(defun isearch--state-barrier (s) (aref s 10))
-(defun isearch--state-case-fold-search (s) (aref s 11))
-(defun isearch--state-pop-fun (s) (aref s 12))
-(defun isearch--state-match-data (s) (aref s 13))
+(defun isearch--state-string (s) (progn (or (isearch--state-p s) (signal 'wrong-type-argument (list 'isearch--state s))) (aref s 1)))
+(defun isearch--state-message (s) (progn (or (isearch--state-p s) (signal 'wrong-type-argument (list 'isearch--state s))) (aref s 2)))
+(defun isearch--state-point (s) (progn (or (isearch--state-p s) (signal 'wrong-type-argument (list 'isearch--state s))) (aref s 3)))
+(defun isearch--state-success (s) (progn (or (isearch--state-p s) (signal 'wrong-type-argument (list 'isearch--state s))) (aref s 4)))
+(defun isearch--state-forward (s) (progn (or (isearch--state-p s) (signal 'wrong-type-argument (list 'isearch--state s))) (aref s 5)))
+(defun isearch--state-other-end (s) (progn (or (isearch--state-p s) (signal 'wrong-type-argument (list 'isearch--state s))) (aref s 6)))
+(defun isearch--state-word (s) (progn (or (isearch--state-p s) (signal 'wrong-type-argument (list 'isearch--state s))) (aref s 7)))
+(defun isearch--state-error (s) (progn (or (isearch--state-p s) (signal 'wrong-type-argument (list 'isearch--state s))) (aref s 8)))
+(defun isearch--state-wrapped (s) (progn (or (isearch--state-p s) (signal 'wrong-type-argument (list 'isearch--state s))) (aref s 9)))
+(defun isearch--state-barrier (s) (progn (or (isearch--state-p s) (signal 'wrong-type-argument (list 'isearch--state s))) (aref s 10)))
+(defun isearch--state-case-fold-search (s) (progn (or (isearch--state-p s) (signal 'wrong-type-argument (list 'isearch--state s))) (aref s 11)))
+(defun isearch--state-pop-fun (s) (progn (or (isearch--state-p s) (signal 'wrong-type-argument (list 'isearch--state s))) (aref s 12)))
+(defun isearch--state-match-data (s) (progn (or (isearch--state-p s) (signal 'wrong-type-argument (list 'isearch--state s))) (aref s 13)))
 
-(defun isearch--state-string--inliner (_form s)
-  `(progn (or (isearch--state-p ,s)
-            (signal 'wrong-type-argument (list 'isearch--state ,s)))
-        (aref ,s 1)))
-(defun isearch--state-message--inliner (_form s)
-  `(progn (or (isearch--state-p ,s)
-            (signal 'wrong-type-argument (list 'isearch--state ,s)))
-        (aref ,s 2)))
-(defun isearch--state-point--inliner (_form s)
-  `(progn (or (isearch--state-p ,s)
-            (signal 'wrong-type-argument (list 'isearch--state ,s)))
-        (aref ,s 3)))
-(defun isearch--state-success--inliner (_form s)
-  `(progn (or (isearch--state-p ,s)
-            (signal 'wrong-type-argument (list 'isearch--state ,s)))
-        (aref ,s 4)))
-(defun isearch--state-forward--inliner (_form s)
-  `(progn (or (isearch--state-p ,s)
-            (signal 'wrong-type-argument (list 'isearch--state ,s)))
-        (aref ,s 5)))
-(defun isearch--state-other-end--inliner (_form s)
-  `(progn (or (isearch--state-p ,s)
-            (signal 'wrong-type-argument (list 'isearch--state ,s)))
-        (aref ,s 6)))
-(defun isearch--state-word--inliner (_form s)
-  `(progn (or (isearch--state-p ,s)
-            (signal 'wrong-type-argument (list 'isearch--state ,s)))
-        (aref ,s 7)))
-(defun isearch--state-error--inliner (_form s)
-  `(progn (or (isearch--state-p ,s)
-            (signal 'wrong-type-argument (list 'isearch--state ,s)))
-        (aref ,s 8)))
-(defun isearch--state-wrapped--inliner (_form s)
-  `(progn (or (isearch--state-p ,s)
-            (signal 'wrong-type-argument (list 'isearch--state ,s)))
-        (aref ,s 9)))
-(defun isearch--state-barrier--inliner (_form s)
-  `(progn (or (isearch--state-p ,s)
-            (signal 'wrong-type-argument (list 'isearch--state ,s)))
-        (aref ,s 10)))
-(defun isearch--state-case-fold-search--inliner (_form s)
-  `(progn (or (isearch--state-p ,s)
-            (signal 'wrong-type-argument (list 'isearch--state ,s)))
-        (aref ,s 11)))
-(defun isearch--state-pop-fun--inliner (_form s)
-  `(progn (or (isearch--state-p ,s)
-            (signal 'wrong-type-argument (list 'isearch--state ,s)))
-        (aref ,s 12)))
-(defun isearch--state-match-data--inliner (_form s)
-  `(progn (or (isearch--state-p ,s)
-            (signal 'wrong-type-argument (list 'isearch--state ,s)))
-        (aref ,s 13)))
+(defun isearch--state-string--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
+  `(progn (or (isearch--state-p ,x)
+            (signal 'wrong-type-argument (list 'isearch--state ,x)))
+        (aref ,x 1))))
+(defun isearch--state-message--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
+  `(progn (or (isearch--state-p ,x)
+            (signal 'wrong-type-argument (list 'isearch--state ,x)))
+        (aref ,x 2))))
+(defun isearch--state-point--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
+  `(progn (or (isearch--state-p ,x)
+            (signal 'wrong-type-argument (list 'isearch--state ,x)))
+        (aref ,x 3))))
+(defun isearch--state-success--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
+  `(progn (or (isearch--state-p ,x)
+            (signal 'wrong-type-argument (list 'isearch--state ,x)))
+        (aref ,x 4))))
+(defun isearch--state-forward--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
+  `(progn (or (isearch--state-p ,x)
+            (signal 'wrong-type-argument (list 'isearch--state ,x)))
+        (aref ,x 5))))
+(defun isearch--state-other-end--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
+  `(progn (or (isearch--state-p ,x)
+            (signal 'wrong-type-argument (list 'isearch--state ,x)))
+        (aref ,x 6))))
+(defun isearch--state-word--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
+  `(progn (or (isearch--state-p ,x)
+            (signal 'wrong-type-argument (list 'isearch--state ,x)))
+        (aref ,x 7))))
+(defun isearch--state-error--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
+  `(progn (or (isearch--state-p ,x)
+            (signal 'wrong-type-argument (list 'isearch--state ,x)))
+        (aref ,x 8))))
+(defun isearch--state-wrapped--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
+  `(progn (or (isearch--state-p ,x)
+            (signal 'wrong-type-argument (list 'isearch--state ,x)))
+        (aref ,x 9))))
+(defun isearch--state-barrier--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
+  `(progn (or (isearch--state-p ,x)
+            (signal 'wrong-type-argument (list 'isearch--state ,x)))
+        (aref ,x 10))))
+(defun isearch--state-case-fold-search--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
+  `(progn (or (isearch--state-p ,x)
+            (signal 'wrong-type-argument (list 'isearch--state ,x)))
+        (aref ,x 11))))
+(defun isearch--state-pop-fun--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
+  `(progn (or (isearch--state-p ,x)
+            (signal 'wrong-type-argument (list 'isearch--state ,x)))
+        (aref ,x 12))))
+(defun isearch--state-match-data--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
+  `(progn (or (isearch--state-p ,x)
+            (signal 'wrong-type-argument (list 'isearch--state ,x)))
+        (aref ,x 13))))
 
 (defun isearch--state-p--inliner (_form s)
-  `(and (memq (type-of ,s) cl-struct-isearch--state-tags) t))
+  (macroexp-let2 macroexp-copyable-p s s
+  `(and (memq (type-of ,s) cl-struct-isearch--state-tags) t)))
 
 ;;; `isearch-define-mode-toggle' invocations from GNU Emacs 31.1 `isearch.el'
 ;;; (defines isearch-toggle-word/-symbol/-char-fold/-regexp/-lax-whitespace/
@@ -40805,22 +40805,36 @@ they had none before." :type 'boolean :version "31.1" :set (lambda (symbol value
 
 ;;; `cl-defstruct timer' generates these `timer--SLOT--inliner' accessor
 ;;; inliners plus the `timer--create--cmacro' constructor compiler-macro.
-(defun timer--triggered--inliner (_form x) `(progn (aref ,x 0)))
-(defun timer--high-seconds--inliner (_form x) `(progn (aref ,x 1)))
-(defun timer--low-seconds--inliner (_form x) `(progn (aref ,x 2)))
-(defun timer--usecs--inliner (_form x) `(progn (aref ,x 3)))
-(defun timer--repeat-delay--inliner (_form x) `(progn (aref ,x 4)))
-(defun timer--function--inliner (_form x) `(progn (aref ,x 5)))
-(defun timer--args--inliner (_form x) `(progn (aref ,x 6)))
-(defun timer--idle-delay--inliner (_form x) `(progn (aref ,x 7)))
-(defun timer--psecs--inliner (_form x) `(progn (aref ,x 8)))
-(defun timer--integral-multiple--inliner (_form x) `(progn (aref ,x 9)))
+(defun timer--triggered--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (aref ,x 0))))
+(defun timer--high-seconds--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (aref ,x 1))))
+(defun timer--low-seconds--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (aref ,x 2))))
+(defun timer--usecs--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (aref ,x 3))))
+(defun timer--repeat-delay--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (aref ,x 4))))
+(defun timer--function--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (aref ,x 5))))
+(defun timer--args--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (aref ,x 6))))
+(defun timer--idle-delay--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (aref ,x 7))))
+(defun timer--psecs--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (aref ,x 8))))
+(defun timer--integral-multiple--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (aref ,x 9))))
 (defun timer--create--cmacro (_form)
   '(cl-block timer--create (vector t nil nil nil nil nil nil nil nil nil)))
 (function-put 'timer--create 'compiler-macro #'timer--create--cmacro)
 
 ;;; `(declare (compiler-macro ...))' in keymap.el generates these
 ;;; `NAME--anon-cmacro' functions via `byte-run--set-compiler-macro'.
+;; GNU's arity is (4 . 4): byte-run--set-compiler-macro passes
+;; (form + the declared arg list): form, keymap, key, definition.
+;; `byte-compile-warn' is void at -Q, so a vector/invalid-string KEY
+;; signals (void-function byte-compile-warn) — matched below.
 (defun keymap-set--anon-cmacro (form keymap key definition)
   (ignore keymap key definition)
   (keymap--compile-check key)
@@ -40879,35 +40893,49 @@ they had none before." :type 'boolean :version "31.1" :set (lambda (symbol value
 
 ;;; `cl-defstruct decoded-time' (list type) generates these accessor
 ;;; inliners.
-(defun decoded-time-second--inliner (_form x) `(progn (car ,x)))
-(defun decoded-time-minute--inliner (_form x) `(progn (nth 1 ,x)))
-(defun decoded-time-hour--inliner (_form x) `(progn (nth 2 ,x)))
-(defun decoded-time-day--inliner (_form x) `(progn (nth 3 ,x)))
-(defun decoded-time-month--inliner (_form x) `(progn (nth 4 ,x)))
-(defun decoded-time-year--inliner (_form x) `(progn (nth 5 ,x)))
-(defun decoded-time-weekday--inliner (_form x) `(progn (nth 6 ,x)))
-(defun decoded-time-dst--inliner (_form x) `(progn (nth 7 ,x)))
-(defun decoded-time-zone--inliner (_form x) `(progn (nth 8 ,x)))
+(defun decoded-time-second--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (car ,x))))
+(defun decoded-time-minute--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (nth 1 ,x))))
+(defun decoded-time-hour--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (nth 2 ,x))))
+(defun decoded-time-day--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (nth 3 ,x))))
+(defun decoded-time-month--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (nth 4 ,x))))
+(defun decoded-time-year--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (nth 5 ,x))))
+(defun decoded-time-weekday--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (nth 6 ,x))))
+(defun decoded-time-dst--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (nth 7 ,x))))
+(defun decoded-time-zone--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x `(progn (nth 8 ,x))))
 
 ;;; `cl-defstruct uniquify-item' (vector type) generates these.
 (defun uniquify-item-p--inliner (_form x)
-  `(and (memq (type-of ,x) cl-struct-uniquify-item-tags) t))
+  (macroexp-let2 macroexp-copyable-p x x
+  `(and (memq (type-of ,x) cl-struct-uniquify-item-tags) t)))
 (defun uniquify-item-base--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
   `(progn (or (uniquify-item-p ,x)
               (signal 'wrong-type-argument (list 'uniquify-item ,x)))
-          (aref ,x 1)))
+          (aref ,x 1))))
 (defun uniquify-item-dirname--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
   `(progn (or (uniquify-item-p ,x)
               (signal 'wrong-type-argument (list 'uniquify-item ,x)))
-          (aref ,x 2)))
+          (aref ,x 2))))
 (defun uniquify-item-buffer--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
   `(progn (or (uniquify-item-p ,x)
               (signal 'wrong-type-argument (list 'uniquify-item ,x)))
-          (aref ,x 3)))
+          (aref ,x 3))))
 (defun uniquify-item-proposed--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
   `(progn (or (uniquify-item-p ,x)
               (signal 'wrong-type-argument (list 'uniquify-item ,x)))
-          (aref ,x 4)))
+          (aref ,x 4))))
 (defun uniquify-make-item--cmacro (_form base dirname buffer &optional proposed)
   `(let ((base ,base) (dirname ,dirname) (buffer ,buffer) (proposed ,proposed))
      (cl-block uniquify-make-item
@@ -40916,23 +40944,28 @@ they had none before." :type 'boolean :version "31.1" :set (lambda (symbol value
 
 ;;; `cl-defstruct registerv' (record type) generates these.
 (defun registerv-p--inliner (_form x)
-  `(and (memq (type-of ,x) cl-struct-registerv-tags) t))
+  (macroexp-let2 macroexp-copyable-p x x
+  `(and (memq (type-of ,x) cl-struct-registerv-tags) t)))
 (defun registerv-data--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
   `(progn (or (registerv-p ,x)
               (signal 'wrong-type-argument (list 'registerv ,x)))
-          (aref ,x 1)))
+          (aref ,x 1))))
 (defun registerv-print-func--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
   `(progn (or (registerv-p ,x)
               (signal 'wrong-type-argument (list 'registerv ,x)))
-          (aref ,x 2)))
+          (aref ,x 2))))
 (defun registerv-jump-func--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
   `(progn (or (registerv-p ,x)
               (signal 'wrong-type-argument (list 'registerv ,x)))
-          (aref ,x 3)))
+          (aref ,x 3))))
 (defun registerv-insert-func--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
   `(progn (or (registerv-p ,x)
               (signal 'wrong-type-argument (list 'registerv ,x)))
-          (aref ,x 4)))
+          (aref ,x 4))))
 (defun registerv--make--cmacro (_form &optional data print-func jump-func insert-func)
   `(let ((data ,data) (print-func ,print-func)
          (jump-func ,jump-func) (insert-func ,insert-func))
@@ -41360,22 +41393,51 @@ This is meant to be used only for debugging TTY menus.")
 Elements of FIELDS can be of the form (NAME PAT) in which case the
 contents of field NAME is matched against PAT, or they can be of
 the form NAME which is a shorthand for (NAME NAME)."
+  ;; GNU resolves the `cl-struct' pattern through the cl-structure
+  ;; class table (cl-macs's `cl-struct-sequence-type' +
+  ;; `cl-struct-slot-offset' and a `cl-typep' predicate).  Remacs
+  ;; consults the `cl-struct--pcase-info' property first, then falls
+  ;; back to the real `cl-structure-class' object registered by
+  ;; `cl-defstruct' so any struct defined before macroexpansion time
+  ;; resolves.
   (let ((info (get type 'cl-struct--pcase-info)))
-    (unless info
-      (error "%s is not a known cl-struct type" type))
-    `(and (pred ,(car info))
-          ,@(mapcar
-             (lambda (field)
-               (let* ((name (if (consp field) (car field) field))
-                      (pat (if (consp field) (cadr field) field))
-                      (off (cdr (assq name (cddr info)))))
-                 (unless off
-                   (signal 'cl-struct-unknown-slot (list type name)))
-                 `(app ,(if (eq (cadr info) 'list)
-                            `(nth ,off)
-                          `(aref _ ,off))
-                       ,pat)))
-             fields))))
+    (if info
+        `(and (pred ,(car info))
+              ,@(mapcar
+                 (lambda (field)
+                   (let* ((name (if (consp field) (car field) field))
+                          (pat (if (consp field) (cadr field) field))
+                          (off (cdr (assq name (cddr info)))))
+                     (unless off
+                       (signal 'cl-struct-unknown-slot (list type name)))
+                     `(app ,(if (eq (cadr info) 'list)
+                                `(nth ,off)
+                              `(aref _ ,off))
+                           ,pat)))
+                 fields))
+      (let ((class (cl--find-class type)))
+        (unless class
+          (error "%S is not a struct name" type))
+        (let* ((seqtype (cl--struct-class-type class))
+               (tags (cl--struct-class-children-sym class))
+               (index-table (cl--struct-class-index-table class))
+               (tagcheck (if (eq seqtype 'list)
+                             `(and (consp _) (memq (car _) ,tags))
+                           `(memq (type-of _) ,tags))))
+          `(and (pred (lambda (_) ,tagcheck))
+                ,@(mapcar
+                   (lambda (field)
+                     (let* ((name (if (consp field) (car field) field))
+                            (pat (if (consp field) (cadr field) field))
+                            (off (gethash name index-table)))
+                       (unless off
+                         (signal 'cl-struct-unknown-slot
+                                 (list type name)))
+                       `(app ,(if (eq seqtype 'list)
+                                  `(nth ,off)
+                                `(aref _ ,off))
+                             ,pat)))
+                   fields)))))))
 
 ;;; --- `lisp-indent-state' (lisp-mode.el) ----------------------------
 ;;; `cl-defstruct (lisp-indent-state (:constructor nil)
@@ -41419,19 +41481,23 @@ the form NAME which is a shorthand for (NAME NAME)."
     (record 'lisp-indent-state stack ppss ppss-point)))
 
 (defun lisp-indent-state-p--inliner (_form x)
-  `(and (memq (type-of ,x) cl-struct-lisp-indent-state-tags) t))
+  (macroexp-let2 macroexp-copyable-p x x
+  `(and (memq (type-of ,x) cl-struct-lisp-indent-state-tags) t)))
 (defun lisp-indent-state-stack--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
   `(progn (or (lisp-indent-state-p ,x)
               (signal 'wrong-type-argument (list 'lisp-indent-state ,x)))
-          (aref ,x 1)))
+          (aref ,x 1))))
 (defun lisp-indent-state-ppss--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
   `(progn (or (lisp-indent-state-p ,x)
               (signal 'wrong-type-argument (list 'lisp-indent-state ,x)))
-          (aref ,x 2)))
+          (aref ,x 2))))
 (defun lisp-indent-state-ppss-point--inliner (_form x)
+  (macroexp-let2 macroexp-copyable-p x x
   `(progn (or (lisp-indent-state-p ,x)
               (signal 'wrong-type-argument (list 'lisp-indent-state ,x)))
-          (aref ,x 3)))
+          (aref ,x 3))))
 (function-put 'lisp-indent-state-p 'compiler-macro
               #'lisp-indent-state-p--inliner)
 (function-put 'lisp-indent-state-stack 'compiler-macro
@@ -41440,6 +41506,15 @@ the form NAME which is a shorthand for (NAME NAME)."
               #'lisp-indent-state-ppss--inliner)
 (function-put 'lisp-indent-state-ppss-point 'compiler-macro
               #'lisp-indent-state-ppss-point--inliner)
+
+;; GNU registers `lisp-indent-state' as a real `cl-structure-class'
+;; (lisp-mode.el's `cl-defstruct' expansion).  Without it,
+;; `pcase-let*'s `(cl-struct lisp-indent-state ...)' expansion and
+;; `cl--struct-get-class' fail on the unregistered type.
+(cl--struct-register-class
+ 'lisp-indent-state nil nil nil t
+ '((stack nil) (ppss nil) (ppss-point nil))
+ 'cl-struct-lisp-indent-state-tags 'lisp-indent-state nil)
 
 ;;; Registry entries for the manually-defined record/vector/list
 ;;; structures above and earlier in this file.
@@ -41601,15 +41676,11 @@ Turning on Paragraph-Indent minor mode runs the normal hook
 (defvar add-log-current-defun-function 'nil
   "If non-nil, function to guess name of surrounding function.")
 
-(autoload 'run-lisp "inf-lisp"
-  "Run an inferior Lisp process, input and output via buffer *inferior-lisp*." t)
-(autoload 'lisp-eval-defun "inf-lisp"
-  "Send the current defun to the inferior Lisp process." t)
-(autoload 'edebug-defun "edebug" "Evaluate a top-level form, stepping through with Edebug." t)
-(autoload 'toggle-text-mode-auto-fill "text-mode"
-  "Toggle whether to use Auto Fill in Text mode and related modes." t)
-(autoload 'ispell-complete-word "ispell"
-  "Try to complete the word before or under point." t)
+;; inf-lisp.el: `run-lisp' is `;;;###autoload'd as a defalias
+;; (installed below with the other GNU alias cells);
+;; `lisp-eval-defun' has no loaddefs cookie — GNU's cell is
+;; (autoload "inf-lisp" nil t nil).
+(autoload 'lisp-eval-defun "inf-lisp" nil t)
 
 ;;; --- nadvice.el ----------------------------------------------------
 ;;; GNU's `advice' is an oclosure type built by the real oclosure.el
@@ -42204,28 +42275,32 @@ IF can be a Lisp form to be interpreted or a function of no arguments."
 
 ;; `cl-struct' tags var + inliners that GNU's cl-defstruct generates.
 (defun xref-elisp-location-p--inliner (form x)
-  (list 'and (list 'memq (list 'type-of x) 'cl-struct-xref-elisp-location-tags) t))
+  (macroexp-let2 macroexp-copyable-p x x
+  (list 'and (list 'memq (list 'type-of x) 'cl-struct-xref-elisp-location-tags) t)))
 
 (defun xref-elisp-location-symbol--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'xref-elisp-location-p x)
               (list 'signal ''wrong-type-argument
                     (list 'list ''xref-elisp-location x)))
-        (list 'aref x 1)))
+        (list 'aref x 1))))
 
 (defun xref-elisp-location-type--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'xref-elisp-location-p x)
               (list 'signal ''wrong-type-argument
                     (list 'list ''xref-elisp-location x)))
-        (list 'aref x 2)))
+        (list 'aref x 2))))
 
 (defun xref-elisp-location-file--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'xref-elisp-location-p x)
               (list 'signal ''wrong-type-argument
                     (list 'list ''xref-elisp-location x)))
-        (list 'aref x 3)))
+        (list 'aref x 3))))
 
 (defun xref-make-elisp-location--cmacro (form symbol type file)
   (list 'let (list (list 'symbol symbol) (list 'type type) (list 'file file))
@@ -43647,28 +43722,60 @@ while it runs, and removed afterwards."
 ;; `xref-elisp-location' cl-defstruct (named ctor is
 ;; `xref-make-elisp-location'; `make-xref-elisp-location' is the
 ;; default keyword ctor GNU generates alongside it).
+(defconst xref-elisp-location--keys '(:symbol :type :file))
+
 (defun make-xref-elisp-location (&rest args)
-  "Create an `xref-elisp-location' record from keyword ARGS."
-  (record 'xref-elisp-location
-          (plist-get args :symbol)
-          (plist-get args :type)
-          (plist-get args :file)))
+  "Create an `xref-elisp-location' record from keyword ARGS.
+GNU's cl-defstruct keyword ctor validates each KEY against
+(:symbol :type :file) and signals on dangling/missing values."
+  (let ((a args) out)
+    (while a
+      (let ((k (car a)))
+        (unless (memq k xref-elisp-location--keys)
+          (error "Keyword argument %S not one of %s"
+                 k xref-elisp-location--keys))
+        (unless (cdr a)
+          (error "Missing argument for %s" k))
+        (push (list k (cadr a)) out)
+        (setq a (cddr a))))
+    (record 'xref-elisp-location
+            (cadr (assq :symbol out))
+            (cadr (assq :type out))
+            (cadr (assq :file out)))))
+
 (defun make-xref-elisp-location--cmacro (_form &rest args)
-  "Compiler macro for `make-xref-elisp-location'."
-  `(record 'xref-elisp-location
-           ,(plist-get args :symbol)
-           ,(plist-get args :type)
-           ,(plist-get args :file)))
+  "Compiler macro for `make-xref-elisp-location'.  GNU's cl-defsubst
+shape: validate keys like the ctor, then emit the `let' binding form
+that feeds `record'."
+  (let ((a args) out)
+    (while a
+      (let ((k (car a)))
+        (unless (memq k xref-elisp-location--keys)
+          (error "Keyword argument %S not one of %s"
+                 k xref-elisp-location--keys))
+        (unless (cdr a)
+          (error "Missing argument for %s" k))
+        (push (list k (cadr a)) out)
+        (setq a (cddr a))))
+    `(let ((symbol ,(cadr (assq :symbol out)))
+           (type ,(cadr (assq :type out)))
+           (file ,(cadr (assq :file out))))
+       (cl-block make-xref-elisp-location
+         (record 'xref-elisp-location symbol type file)))))
+
 (put 'make-xref-elisp-location 'compiler-macro
      #'make-xref-elisp-location--cmacro)
 
 ;; seq.el: gv setter for `seq-elt'.  GNU defines this as two
-;; cl-defmethods on the `(setf seq-elt)' generic (array/cons); remacs
-;; lacks setf-head generics, so dispatch by sequence type directly.
-(fset (intern "(setf seq-elt)")
-      (lambda (store sequence n)
-        (cond ((consp sequence) (setcar (nthcdr n sequence) store))
-              (t (aset sequence n store)))))
+;; cl-defmethods on the `(setf seq-elt)' generic (array/cons).
+;; Registering them as real methods (cl-generic boots before this
+;; file) keeps the name a generic so seq.el's identical
+;; cl-defmethods re-register cleanly instead of tripping
+;; `cl-generic-ensure-function's not-a-generic check.
+(cl-defmethod (setf seq-elt) (store (sequence array) n)
+  (aset sequence n store))
+(cl-defmethod (setf seq-elt) (store (sequence cons) n)
+  (setcar (nthcdr n sequence) store))
 
 ;; files.el: predicate generated by `oclosure-define' for the
 ;; `save-some-buffers-function' oclosure type.  Without oclosure
@@ -44759,70 +44866,92 @@ The argument object is not altered--the value is a copy."
                            0))
 
 (defun japanese-katakana-region (from to &optional hankaku)
-  "Convert Japanese `hiragana' chars in the region to `katakana' chars."
+  "Convert Japanese `hiragana' chars in the region to `katakana' chars.
+Optional argument HANKAKU t means to convert to `hankaku katakana' character
+of which charset is `japanese-jisx0201-kana'."
   (interactive "r\nP")
-  (save-excursion
-    (goto-char from)
-    (while (< (point) to)
-      (let* ((ch (following-char))
-             (composition (and (not hankaku)
-                               (get-char-code-property ch 'kana-composition)))
-             (slot (and composition
-                        (assq (char-after (1+ (point))) composition))))
-        (cond (slot
-               (japanese-replace-region (point) (+ (point) 2) (cdr slot)))
-              ((get-char-code-property ch (if hankaku 'jisx0201 'katakana))
-               (japanese-replace-region (point) (1+ (point))
-                (get-char-code-property ch (if hankaku 'jisx0201 'katakana))))
-              (t (forward-char 1)))))))
+  (save-restriction
+    (narrow-to-region from to)
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "\\cH\\|\\cK" nil t)
+	(let* ((kana (preceding-char))
+	       (composition
+		(and (not hankaku)
+		     (get-char-code-property kana 'kana-composition)))
+	       slot) ;; next
+	  (if (and composition (setq slot (assq (following-char) composition)))
+	      (japanese-replace-region (match-beginning 0) (1+ (point))
+				       (cdr slot))
+	    (let ((kata (get-char-code-property
+			 kana (if hankaku 'jisx0201 'katakana))))
+	      (if kata
+		  (japanese-replace-region (match-beginning 0) (point)
+					   kata)))))))))
 
 (defun japanese-hiragana-region (from to)
   "Convert Japanese `katakana' chars in the region to `hiragana' chars."
   (interactive "r")
-  (save-excursion
-    (goto-char from)
-    (while (< (point) to)
-      (let* ((ch (following-char))
-             (composition (get-char-code-property ch 'kana-composition))
-             (slot (and composition
-                        (assq (char-after (1+ (point))) composition))))
-        (cond (slot
-               (japanese-replace-region (point) (+ (point) 2)
-                (get-char-code-property (cdr slot) 'hiragana)))
-              ((get-char-code-property ch 'hiragana)
-               (japanese-replace-region (point) (1+ (point))
-                (get-char-code-property ch 'hiragana)))
-              (t (forward-char 1)))))))
+  (save-restriction
+    (narrow-to-region from to)
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "\\cK\\|\\ck" nil t)
+	(let* ((kata (preceding-char))
+	       (composition (get-char-code-property kata 'kana-composition))
+	       slot) ;; next
+	  (if (and composition (setq slot (assq (following-char) composition)))
+	      (japanese-replace-region (match-beginning 0) (1+ (point))
+				       (get-char-code-property
+					(cdr slot) 'hiragana))
+	    (let ((hira (get-char-code-property kata 'hiragana)))
+	      (if hira
+		  (japanese-replace-region (match-beginning 0) (point)
+					   hira)))))))))
 
 (defun japanese-hankaku-region (from to &optional ascii-only)
-  "Convert Japanese `zenkaku' chars in the region to `hankaku' chars."
+  "Convert Japanese `zenkaku' chars in the region to `hankaku' chars.
+`Zenkaku' chars belong to `japanese-jisx0208'
+`Hankaku' chars belong to `ascii' or `japanese-jisx0201-kana'.
+Optional argument ASCII-ONLY non-nil means to convert only to ASCII char."
   (interactive "r\nP")
-  (save-excursion
-    (goto-char from)
-    (while (< (point) to)
-      (let ((hankaku (or (and (not ascii-only)
-                              (get-char-code-property (following-char) 'jisx0201))
-                         (get-char-code-property (following-char) 'ascii))))
-        (if hankaku
-            (japanese-replace-region (point) (1+ (point)) hankaku)
-          (forward-char 1))))))
+  (save-restriction
+    (narrow-to-region from to)
+    (save-excursion
+      (goto-char (point-min))
+      (while (re-search-forward "\\cj" nil t)
+	(let* ((zenkaku (preceding-char))
+	       (hankaku (or (and (not ascii-only)
+				 (get-char-code-property zenkaku 'jisx0201))
+			    (get-char-code-property zenkaku 'ascii))))
+	  (if hankaku
+	      (japanese-replace-region (match-beginning 0) (match-end 0)
+				       hankaku)))))))
 
 (defun japanese-zenkaku-region (from to &optional katakana-only)
-  "Convert `hankaku' chars in the region to Japanese `zenkaku' chars."
+  "Convert `hankaku' chars in the region to Japanese `zenkaku' chars.
+`Zenkaku' chars belong to `japanese-jisx0208'
+`Hankaku' chars belong to `ascii' or `japanese-jisx0201-kana'.
+Optional argument KATAKANA-ONLY non-nil means to convert only KATAKANA char."
   (interactive "r\nP")
-  (save-excursion
-    (goto-char from)
-    (while (< (point) to)
-      (let* ((ch (following-char))
-             (hira (get-char-code-property ch 'hiragana))
-             (kata (get-char-code-property ch 'katakana)))
-        ;; hankaku chars carry jisx0208 only via the zenkaku side; the
-        ;; reverse lookup is the table on the hankaku char itself.
-        (if (and (not (and katakana-only hira))
-                 (get-char-code-property ch 'jisx0208))
-            (japanese-replace-region (point) (1+ (point))
-             (get-char-code-property ch 'jisx0208))
-          (forward-char 1))))))
+  (save-restriction
+    (narrow-to-region from to)
+    (save-excursion
+      (goto-char (point-min))
+      (while (or (and katakana-only
+		      (re-search-forward "\\ck" nil t))
+		 (and (not katakana-only)
+		      (re-search-forward "\\ca\\|\\ck" nil t)))
+	(let* ((hankaku (preceding-char))
+	       (composition (get-char-code-property hankaku 'kana-composition))
+	       slot) ;; next
+	  (if (and composition (setq slot (assq (following-char) composition)))
+	      (japanese-replace-region (match-beginning 0) (1+ (point))
+				       (cdr slot))
+	    (let ((zenkaku (japanese-zenkaku hankaku)))
+	      (if zenkaku
+		  (japanese-replace-region (match-beginning 0) (match-end 0)
+					   zenkaku)))))))))
 
 ;;; composite.el
 (define-minor-mode global-auto-composition-mode
@@ -44886,13 +45015,13 @@ For more information on Auto Composition mode, see
   "Type descriptors for built-in types."
   name docstring parents slots index-table non-abstract-supertype)
 
-(defun built-in-class--make
-    (name docstring parent-types &optional non-abstract-supertype)
-  (record 'built-in-class name docstring
-          (mapcar (lambda (type)
-                    (or (get type 'cl--class)
-                        (error "Unknown type: %S" type)))
-                  parent-types)
+(cl-defun built-in-class--make
+    (name docstring parent-types &optional non-abstract-supertype
+          &aux (parents (mapcar (lambda (type)
+                                  (or (get type 'cl--class)
+                                      (error "Unknown type: %S" type)))
+                                parent-types)))
+  (record 'built-in-class name docstring parents
           nil nil non-abstract-supertype))
 
 (cl-defstruct (cl-derived-type-class
@@ -44966,18 +45095,6 @@ For more information on Auto Composition mode, see
 This macro can only be used within the lexical scope of a cl-generic method."
   (error "cl-generic-current-method-specializers used outside of a method"))
 
-;; (setf NAME) accessors for the writable inherited slots.
-(dolist (pair '((built-in-class--name . 1) (built-in-class--docstring . 2)
-                (built-in-class--parents . 3) (built-in-class--slots . 4)
-                (built-in-class--index-table . 5)
-                (cl-derived-type-class-name . 1)
-                (cl-derived-type-class-docstring . 2)
-                (cl-derived-type-class-parents . 3)
-                (cl-derived-type-class-slots . 4)
-                (cl-derived-type-class-index-table . 5)))
-  (let ((slot (cdr pair)))
-    (fset (intern (concat "(setf " (symbol-name (car pair)) ")"))
-          (lambda (newval obj) (aset obj slot newval)))))
 
 ;; GNU cl-defstruct generates NAME--inliner expanders for accessors and
 ;; predicates; the list below mirrors those fboundp-visible names.
@@ -45404,254 +45521,327 @@ also passed as second argument to SPECIALIZERS-FUNCTION." (declare (indent 1) (d
 
 ;; GNU cl-defstruct `*--inliner' expanders (compiler-macro helpers).
 (defun cl--struct-class-p--inliner (form x)
-  (list 'and (list 'memq (list 'type-of x) 'cl-struct-cl-structure-class-tags) t))
+  (macroexp-let2 macroexp-copyable-p x x
+  (list 'and (list 'memq (list 'type-of x) 'cl-struct-cl-structure-class-tags) t)))
 (defun cl--struct-class-name--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--struct-class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--struct-class-p x)))
-        (list 'aref x 1)))
+                    (list 'list ''cl-structure-class x)))
+        (list 'aref x 1))))
 (defun cl--struct-class-docstring--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--struct-class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--struct-class-p x)))
-        (list 'aref x 2)))
+                    (list 'list ''cl-structure-class x)))
+        (list 'aref x 2))))
 (defun cl--struct-class-parents--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--struct-class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--struct-class-p x)))
-        (list 'aref x 3)))
+                    (list 'list ''cl-structure-class x)))
+        (list 'aref x 3))))
 (defun cl--struct-class-slots--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--struct-class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--struct-class-p x)))
-        (list 'aref x 4)))
+                    (list 'list ''cl-structure-class x)))
+        (list 'aref x 4))))
 (defun cl--struct-class-index-table--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--struct-class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--struct-class-p x)))
-        (list 'aref x 5)))
+                    (list 'list ''cl-structure-class x)))
+        (list 'aref x 5))))
 (defun cl--struct-class-tag--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--struct-class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--struct-class-p x)))
-        (list 'aref x 6)))
+                    (list 'list ''cl-structure-class x)))
+        (list 'aref x 6))))
 (defun cl--struct-class-type--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--struct-class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--struct-class-p x)))
-        (list 'aref x 7)))
+                    (list 'list ''cl-structure-class x)))
+        (list 'aref x 7))))
 (defun cl--struct-class-named--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--struct-class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--struct-class-p x)))
-        (list 'aref x 8)))
+                    (list 'list ''cl-structure-class x)))
+        (list 'aref x 8))))
 (defun cl--struct-class-print--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--struct-class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--struct-class-p x)))
-        (list 'aref x 9)))
+                    (list 'list ''cl-structure-class x)))
+        (list 'aref x 9))))
 (defun cl--struct-class-children-sym--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--struct-class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--struct-class-p x)))
-        (list 'aref x 10)))
+                    (list 'list ''cl-structure-class x)))
+        (list 'aref x 10))))
 (defun cl-slot-descriptor-p--inliner (form x)
-  (list 'and (list 'memq (list 'type-of x) 'cl-struct-cl-slot-descriptor-tags) t))
+  (macroexp-let2 macroexp-copyable-p x x
+  (list 'and (list 'memq (list 'type-of x) 'cl-struct-cl-slot-descriptor-tags) t)))
 (defun cl--slot-descriptor-name--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl-slot-descriptor-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl-slot-descriptor-p x)))
-        (list 'aref x 1)))
+                    (list 'list ''cl-slot-descriptor x)))
+        (list 'aref x 1))))
 (defun cl--slot-descriptor-initform--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl-slot-descriptor-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl-slot-descriptor-p x)))
-        (list 'aref x 2)))
+                    (list 'list ''cl-slot-descriptor x)))
+        (list 'aref x 2))))
 (defun cl--slot-descriptor-type--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl-slot-descriptor-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl-slot-descriptor-p x)))
-        (list 'aref x 3)))
+                    (list 'list ''cl-slot-descriptor x)))
+        (list 'aref x 3))))
 (defun cl--slot-descriptor-props--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl-slot-descriptor-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl-slot-descriptor-p x)))
-        (list 'aref x 4)))
+                    (list 'list ''cl-slot-descriptor x)))
+        (list 'aref x 4))))
 (defun cl--class-p--inliner (form x)
-  (list 'and (list 'memq (list 'type-of x) 'cl-struct-cl--class-tags) t))
+  (macroexp-let2 macroexp-copyable-p x x
+  (list 'and (list 'memq (list 'type-of x) 'cl-struct-cl--class-tags) t)))
 (defun cl--class-name--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--class-p x)))
-        (list 'aref x 1)))
+                    (list 'list ''cl--class x)))
+        (list 'aref x 1))))
 (defun cl--class-docstring--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--class-p x)))
-        (list 'aref x 2)))
+                    (list 'list ''cl--class x)))
+        (list 'aref x 2))))
 (defun cl--class-parents--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--class-p x)))
-        (list 'aref x 3)))
+                    (list 'list ''cl--class x)))
+        (list 'aref x 3))))
 (defun cl--class-slots--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--class-p x)))
-        (list 'aref x 4)))
+                    (list 'list ''cl--class x)))
+        (list 'aref x 4))))
 (defun cl--class-index-table--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--class-p x)))
-        (list 'aref x 5)))
+                    (list 'list ''cl--class x)))
+        (list 'aref x 5))))
 (defun cl--generic-generalizer-p--inliner (form x)
-  (list 'and (list 'memq (list 'type-of x) 'cl-struct-cl--generic-generalizer-tags) t))
+  (macroexp-let2 macroexp-copyable-p x x
+  (list 'and (list 'memq (list 'type-of x) 'cl-struct-cl--generic-generalizer-tags) t)))
 (defun cl--generic-generalizer-name--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--generic-generalizer-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--generic-generalizer-p x)))
-        (list 'aref x 1)))
+                    (list 'list ''cl--generic-generalizer x)))
+        (list 'aref x 1))))
 (defun cl--generic-generalizer-priority--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--generic-generalizer-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--generic-generalizer-p x)))
-        (list 'aref x 2)))
+                    (list 'list ''cl--generic-generalizer x)))
+        (list 'aref x 2))))
 (defun cl--generic-generalizer-tagcode-function--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--generic-generalizer-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--generic-generalizer-p x)))
-        (list 'aref x 3)))
+                    (list 'list ''cl--generic-generalizer x)))
+        (list 'aref x 3))))
 (defun cl--generic-generalizer-specializers-function--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--generic-generalizer-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--generic-generalizer-p x)))
-        (list 'aref x 4)))
+                    (list 'list ''cl--generic-generalizer x)))
+        (list 'aref x 4))))
 (defun cl--struct-cl--generic-method-p--inliner (form x)
-  (list 'and (list 'memq (list 'type-of x) 'cl-struct-cl--generic-method-tags) t))
+  (macroexp-let2 macroexp-copyable-p x x
+  (list 'and (list 'memq (list 'type-of x) 'cl-struct-cl--generic-method-tags) t)))
 (defun cl--generic-method-specializers--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--struct-cl--generic-method-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--struct-cl--generic-method-p x)))
-        (list 'aref x 1)))
+                    (list 'list ''cl--generic-method x)))
+        (list 'aref x 1))))
 (defun cl--generic-method-qualifiers--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--struct-cl--generic-method-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--struct-cl--generic-method-p x)))
-        (list 'aref x 2)))
+                    (list 'list ''cl--generic-method x)))
+        (list 'aref x 2))))
 (defun cl--generic-method-call-con--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--struct-cl--generic-method-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--struct-cl--generic-method-p x)))
-        (list 'aref x 3)))
+                    (list 'list ''cl--generic-method x)))
+        (list 'aref x 3))))
 (defun cl--generic-method-function--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--struct-cl--generic-method-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--struct-cl--generic-method-p x)))
-        (list 'aref x 4)))
+                    (list 'list ''cl--generic-method x)))
+        (list 'aref x 4))))
 (defun cl--struct-cl--generic-p--inliner (form x)
-  (list 'and (list 'memq (list 'type-of x) 'cl-struct-cl--generic-tags) t))
+  (macroexp-let2 macroexp-copyable-p x x
+  (list 'and (list 'memq (list 'type-of x) 'cl-struct-cl--generic-tags) t)))
 (defun cl--generic-name--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--struct-cl--generic-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--struct-cl--generic-p x)))
-        (list 'aref x 1)))
+                    (list 'list ''cl--generic x)))
+        (list 'aref x 1))))
 (defun cl--generic-dispatches--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--struct-cl--generic-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--struct-cl--generic-p x)))
-        (list 'aref x 2)))
+                    (list 'list ''cl--generic x)))
+        (list 'aref x 2))))
 (defun cl--generic-method-table--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--struct-cl--generic-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--struct-cl--generic-p x)))
-        (list 'aref x 3)))
+                    (list 'list ''cl--generic x)))
+        (list 'aref x 3))))
 (defun cl--generic-options--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--struct-cl--generic-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--struct-cl--generic-p x)))
-        (list 'aref x 4)))
+                    (list 'list ''cl--generic x)))
+        (list 'aref x 4))))
 (defun cl--generic-lazy-function--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'cl--struct-cl--generic-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''cl--struct-cl--generic-p x)))
-        (list 'aref x 5)))
+                    (list 'list ''cl--generic x)))
+        (list 'aref x 5))))
 (defun oclosure--class-p--inliner (form x)
-  (list 'and (list 'memq (list 'type-of x) 'cl-struct-oclosure--class-tags) t))
+  (macroexp-let2 macroexp-copyable-p x x
+  (list 'and (list 'memq (list 'type-of x) 'cl-struct-oclosure--class-tags) t)))
 (defun oclosure--class-name--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'oclosure--class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''oclosure--class-p x)))
-        (list 'aref x 1)))
+                    (list 'list ''oclosure--class x)))
+        (list 'aref x 1))))
 (defun oclosure--class-docstring--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'oclosure--class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''oclosure--class-p x)))
-        (list 'aref x 2)))
+                    (list 'list ''oclosure--class x)))
+        (list 'aref x 2))))
 (defun oclosure--class-parents--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'oclosure--class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''oclosure--class-p x)))
-        (list 'aref x 3)))
+                    (list 'list ''oclosure--class x)))
+        (list 'aref x 3))))
 (defun oclosure--class-slots--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'oclosure--class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''oclosure--class-p x)))
-        (list 'aref x 4)))
+                    (list 'list ''oclosure--class x)))
+        (list 'aref x 4))))
 (defun oclosure--class-index-table--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'oclosure--class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''oclosure--class-p x)))
-        (list 'aref x 5)))
+                    (list 'list ''oclosure--class x)))
+        (list 'aref x 5))))
 (defun oclosure--class-allparents--inliner (form x)
+  (macroexp-let2 macroexp-copyable-p x x
   (list 'progn
         (list 'or (list 'oclosure--class-p x)
               (list 'signal ''wrong-type-argument
-                    (list 'list ''oclosure--class-p x)))
-        (list 'aref x 6)))
+                    (list 'list ''oclosure--class x)))
+        (list 'aref x 6))))
 (defun cl-struct-p--inliner (form x)
-  (list 'and (list 'memq (list 'type-of x) 'cl-struct-cl-structure-object-tags) t))
-(defun cl--generic-make--cmacro (form &rest _args) form)
-(defun cl--generic-make-method--cmacro (form &rest _args) form)
-(defun cl--make-slot-descriptor--cmacro (form &rest _args) form)
-(defun cl-generic-make-generalizer--cmacro (form &rest _args) form)
-(defun cl--struct-new-class--cmacro (form &rest _args) form)
+  (macroexp-let2 macroexp-copyable-p x x
+  (list 'and (list 'memq (list 'type-of x) 'cl-struct-cl-structure-object-tags) t)))
+;; GNU cl-defsubst constructor compiler-macros: the cmacro binds each
+;; constructor arg to its slot name inside `cl-block NAME' and emits
+;; the raw `record' literal (function slots bind (function …) values).
+(defun cl--generic-make--cmacro (_cl-whole name)
+  `(let* ((name ,name))
+     (cl-block cl--generic-make (record 'cl--generic name nil nil nil nil))))
+(defun cl--generic-make-method--cmacro (_cl-whole specializers qualifiers call-con function)
+  `(let ((specializers ,specializers) (qualifiers ,qualifiers)
+         (call-con ,call-con) #',function)
+     (cl-block cl--generic-make-method
+       (record 'cl--generic-method specializers qualifiers call-con function))))
+(defun cl--make-slot-descriptor--cmacro (cl-whole-arg name &optional initform type props)
+  `(let ((name ,name) (initform ,initform) (type ,type) (props ,props))
+     (cl-block cl--make-slot-descriptor
+       (record 'cl-slot-descriptor name initform type props))))
+(defun cl-generic-make-generalizer--cmacro (cl-whole-arg name priority tagcode-function specializers-function)
+  `(let ((name ,name) (priority ,priority)
+         (tagcode-function ,tagcode-function)
+         (specializers-function ,specializers-function))
+     (cl-block cl-generic-make-generalizer
+       (record 'cl--generic-generalizer
+               name priority tagcode-function specializers-function))))
+(defun cl--struct-new-class--cmacro (cl-whole-arg name docstring parents type named slots index-table children-sym tag print)
+  ;; GNU binds in ctor order but lays the record out in slot order.
+  `(let ((name ,name) (docstring ,docstring) (parents ,parents)
+         (type ,type) (named ,named) (slots ,slots)
+         (index-table ,index-table) (children-sym ,children-sym)
+         (tag ,tag) (print ,print))
+     (cl-block cl--struct-new-class
+       (record 'cl-structure-class
+               name docstring parents slots index-table tag type named
+               print children-sym))))
 
 ;; `cl-deftype' is an autoload to cl-macs in GNU; call the registrar
 ;; directly (now that `cl--define-derived-type' is defined).

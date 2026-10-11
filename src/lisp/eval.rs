@@ -193,9 +193,6 @@ pub struct Interp {
     pub quit_flag: bool,
     /// Values pushed by `throw` for debugging — not needed.
     pub catch_tags: Vec<Value>,
-    /// Set by `append-next-kill': the next kill appends to the last
-    /// kill-ring entry.
-    pub append_next_kill: bool,
     /// `inhibit-read-only` dynamic override.
     pub standard_output_sym: SymId,
     /// SymId of `undo-inhibit-record-point' — its dynamic value is
@@ -389,9 +386,12 @@ pub struct Interp {
     pub charsets: Vec<(String, Value)>,
     /// Charset alias → canonical name (`define-charset-alias`).
     pub charset_aliases: Vec<(String, String)>,
+    /// GNU `iso_charset_table' overrides installed by `set-iso-charset'
+    /// — (dimension, chars-96-flag, final-char) → charset name.
+    pub iso_charset_overrides: Vec<(i64, bool, i64, String)>,
     /// Lazily parsed `etc/charsets/*.map' tables and maps installed
     /// by `unify-charset' (key `charset:NAME'); see builtins/charset.rs.
-    pub charset_maps: std::cell::RefCell<
+    pub(crate) charset_maps: std::cell::RefCell<
         HashMap<
             String,
             std::rc::Rc<crate::lisp::builtins::charset::CharsetTable>,
@@ -408,12 +408,21 @@ pub struct Interp {
     /// Current `keyboard-coding-system' value (no-conversion after
     /// set-nil).
     pub keyboard_coding: Value,
-    /// Key events queued by `execute-kbd-macro`; the key loop replays
+    /// Key events queued by `execute-kbd-macro'; the key loop replays
     /// them ahead of real input.
     pub macro_replay: std::collections::VecDeque<i128>,
     /// Whether the key currently being dispatched came from macro
     /// replay (replayed keys are not re-recorded).
     pub macro_replaying: bool,
+    /// A command error while replaying a macro aborts the macro with
+    /// the error (GNU `command_loop_2' propagates the signal out of
+    /// `execute-kbd-macro').  `dispatch_key_core' stashes the flow
+    /// here; the drainer (or the front-end loop) then propagates it.
+    pub macro_pending_flow: Option<crate::lisp::error::Flow>,
+    /// True while `f_execute_kbd_macro' is draining the replay queue
+    /// synchronously (batch + nested calls).  Errors are stashed to
+    /// `macro_pending_flow' instead of only echoed.
+    pub macro_strict: bool,
     /// Events recorded for the keyboard macro being defined.
     pub kbd_macro_events: Vec<Value>,
     /// `kbd_macro_events` length at the last command boundary; used by
@@ -484,18 +493,31 @@ pub struct Interp {
     /// defalt; it shows in `#^[...]' printing and feeds
     /// `char-table-range' misses.
     pub char_table_defalts: Vec<(usize, std::rc::Weak<std::cell::RefCell<Vec<Value>>>, Value)>,
-    /// Fingerprint seen by the last `frame-or-buffer-changed-p' call.
-    pub frame_state_seen: Option<u64>,
+    /// State snapshot from the last nil-arg `frame-or-buffer-changed-p'
+    /// call (GNU `frame_and_buffer_state'): frame+buffer identity/flags,
+    /// not a tick hash — see `frame_buffer_state' in builtins/misc.rs.
+    pub frame_state_seen: Option<Vec<Value>>,
     /// Cached debug env vars — reading them per eval/call showed up
     /// hot (getenv does a linear environ scan + OsString alloc).
     /// Checked once at `Interp::new'.
     pub dbg_flags: u32,
     /// Cached REMACS_BT_AT limit (0 = unset).
     pub bt_at_limit: usize,
+    /// Per-subr wall-time accumulator, enabled by REMACS_SUBR_PROF.
+    /// (name → (calls, total ns)).
+    pub subr_prof: std::collections::HashMap<&'static str, (u64, u128)>,
     /// Live Lisp call frames `(FUNCTION . ARGS)', outermost first.
     /// Pushed by `apply' so `mapbacktrace'/backtrace internals can
     /// walk the stack like GNU's specpdl entries do.
     pub lisp_stack: Vec<(Value, Argv)>,
+    /// Bound names for compiled lambdas that were `defalias'd while
+    /// nameless (`#[...]' literals from `.elc' files).  Entries pair
+    /// a `Weak' with the name: `Weak::upgrade' failing means the
+    /// pointer was freed and reused, so stale names never reattach
+    /// to a different lambda.
+    pub compiled_fn_names: std::cell::RefCell<
+        Vec<(std::rc::Weak<Lambda>, String)>,
+    >,
     /// Debug: the raw form whose head symbol call is in progress.
     pub cur_head_form: Value,
     /// `lisp_stack' snapshot taken when the last signal was raised —
@@ -850,6 +872,7 @@ impl Interp {
         let mut interp = Interp {
             obarray,
             specbind: Vec::new(),
+            catch_tags: Vec::new(),
             lexenv: None,
             file_declared: RefCell::new(HashSet::default()),
             dbg_flags: {
@@ -900,9 +923,6 @@ impl Interp {
             eval_depth: 0,
             explicit_eval_depth: 0,
             quit_flag: false,
-            catch_tags: Vec::new(),
-
-            append_next_kill: false,
             standard_output_sym,
             undo_inhibit_sym: 0,
             bfn_sym: 0,
@@ -957,6 +977,7 @@ impl Interp {
             char_charset_cache: std::cell::RefCell::new(HashMap::default()),
             var_alias_prop: 0,
             charset_aliases: Vec::new(),
+            iso_charset_overrides: Vec::new(),
             charset_maps: std::cell::RefCell::new(HashMap::default()),
             extra_coding_systems: Vec::new(),
             extra_coding_aliases: Vec::new(),
@@ -964,6 +985,8 @@ impl Interp {
             keyboard_coding: Value::Nil,
             macro_replay: std::collections::VecDeque::new(),
             macro_replaying: false,
+            macro_pending_flow: None,
+            macro_strict: false,
             kbd_macro_events: Vec::new(),
             kbd_macro_mark: 0,
             char_code_props: Vec::new(),
@@ -997,6 +1020,8 @@ impl Interp {
             char_table_defalts: Vec::new(),
             frame_state_seen: None,
             lisp_stack: Vec::new(),
+            compiled_fn_names: std::cell::RefCell::new(Vec::new()),
+            subr_prof: std::collections::HashMap::new(),
             cur_head_form: Value::Nil,
             last_error_stack: std::cell::RefCell::new(Vec::new()),
             cpu_profiler: false,
@@ -1009,7 +1034,11 @@ impl Interp {
             string_props: HashMap::default(),
             zero_vector: Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(Vec::new()))),
         };
+        let _init_t0 = std::time::Instant::now();
         crate::lisp::builtins::install(&mut interp);
+        if std::env::var_os("REMACS_BOOT_PROF").is_some() {
+            eprintln!("[init] builtins::install: {}ms", _init_t0.elapsed().as_millis());
+        }
         crate::buffer::install_primitives(&mut interp);
         interp.define_error_conditions();
         interp.define_special_variables();
@@ -1023,7 +1052,7 @@ impl Interp {
         // The initial buffers every Emacs session has, in GNU's
         // buffer-list order: (scratch Minibuf-0 Messages load
         // Warnings). New buffers append at the end of the order.
-        let scratch = interp.buffers.create_exact("*scratch*");
+        let scratch = interp.buffers.create_exact_nolast("*scratch*");
         interp.set_current_buffer(scratch);
         {
             // GNU's `*scratch*' carries buffer-local `lexical-binding'
@@ -1041,7 +1070,9 @@ impl Interp {
         }
         let minibuf = interp.buffers.create_exact(" *Minibuf-0*");
         let messages = interp.buffers.create_exact("*Messages*");
-        interp.buffers.create_exact(" *load*");
+// No ` *load*' buffer: GNU streams loads off the file descriptor
+// (`readevalloop'), so `buffer-list' at -Q holds only
+// scratch/Minibuf-0/Messages.
         // GNU does not create `*Warnings*' at startup; `display-warning'
         // makes it lazily (with messages-buffer-mode) on first warning.
         // GNU seeds the startup buffers' buffer-local major modes; its
@@ -1070,9 +1101,25 @@ impl Interp {
         // emacs-lisp-mode-syntax-table → lisp-data-mode-syntax-table
         // → prog-mode-syntax-table → standard-syntax-table.  Every
         // other buffer resolves to `standard-syntax-table'.
-        // Locale-derived tty defaults (GNU: utf-8 with unix EOL).
-        let u8u = interp.intern("utf-8-unix");
-        interp.terminal_coding = Value::Sym(u8u);
+        // Locale-derived tty defaults: UTF-8 locales → utf-8-unix,
+        // C/POSIX → no-conversion (mirrors GNU's locale coding init —
+        // the diff harness runs under LC_ALL=C).
+        let locale = std::env::var("LC_ALL")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| std::env::var("LC_CTYPE").ok().filter(|s| !s.is_empty()))
+            .or_else(|| std::env::var("LANG").ok())
+            .unwrap_or_default();
+        let kbd = if locale.to_ascii_lowercase().contains("utf") || locale.is_empty() {
+            "utf-8-unix"
+        } else {
+            "no-conversion"
+        };
+        let u8u = interp.intern(kbd);
+        // GNU: a non-UTF-8 tty defaults to `undecided', which
+        // `terminal-coding-system' reports as nil (coding.c:10736).
+        let tcd = interp.intern(if kbd == "utf-8-unix" { "utf-8-unix" } else { "undecided" });
+        interp.terminal_coding = Value::Sym(tcd);
         interp.keyboard_coding = Value::Sym(u8u);
         // Load the Lisp prelude (subr.el subset). Errors here indicate a
         // broken prelude, but don't abort startup.
@@ -1605,6 +1652,25 @@ impl Interp {
                 "xml-mode-hook",
                 "xml-mode-map",
                 "xml-mode-syntax-table",
+                // ucs-normalize.el's `eval-when-compile' tables/vars:
+                // GNU's dump computes them at compile time, so the
+                // non-`ucs-normalize-' helper bindings are void at -Q
+                // (the `ucs-normalize-*' globals are real defvars —
+                // they stay bound).
+                "check-range",
+                "combining-chars",
+                "decomposition-pair-to-composition",
+                "hfs-nfd-alist",
+                "hfs-nfd-quick-check-list",
+                "hfs-nfc-quick-check-list",
+                "nfd-alist",
+                "nfd-quick-check-list",
+                "nfc-quick-check-list",
+                "nfkc-quick-check-list",
+                "nfkd-alist",
+                "nfkd-quick-check-list",
+                "non-starter-decompositions",
+                "ucs-normalize-composition-exclusions",
 ];
         // Same treatment for prelude-folded *functions* GNU
         // leaves void at -Q (they live in dumped loaddefs
@@ -2271,6 +2337,20 @@ impl Interp {
                 // The interpreted `(setf cl--find-class)' fallback in
                 // cl-preloaded.el — GNU -Q has no such function.
                 "(setf cl--find-class)",
+                // ucs-normalize.el's `eval-when-compile'-only helpers:
+                // GNU's dump runs them at compile time only, so they are
+                // void at -Q; our source-level load defines them.
+                "alist-list-to-vector",
+                "decomposition-char-recursively",
+                "decomposition-translation-alist",
+                "hfs-nfd",
+                "nfd",
+                "nfkd",
+                "quick-check-composition-list-to-regexp",
+                "quick-check-decomposition-list-to-regexp",
+                "quick-check-list",
+                "quick-check-list-to-regexp",
+
 ];
 
 
@@ -2306,7 +2386,18 @@ impl Interp {
                     reader.set_position(pos);
                     match reader.read() {
                         Ok(f) => f.map(|v| (v, reader.position())),
-                        Err(_) => None,
+                        Err(f) => {
+                            eprintln!(
+                                "[prelude] read error @{pos}: {:?} {}",
+                                f,
+                                match &f {
+                                    crate::lisp::Flow::Signal(s, d, _) => interp
+                                        .print_to_string(&Value::cons(s.clone(), d.clone())),
+                                    _ => String::new(),
+                                }
+                            );
+                            None
+                        }
                     }
                 };
                 match next {
@@ -2360,6 +2451,9 @@ impl Interp {
             // defaults to t, so `eval_str' installs a `(t)' root env
             // and it evals lexically like GNU's dump does.
             let t_prelude = std::time::Instant::now();
+            if std::env::var_os("REMACS_BOOT_PROF").is_some() {
+                eprintln!("[init] pre-prelude: {}ms", _init_t0.elapsed().as_millis());
+            }
             // Definitions during the prelude attach to
             // `current-load-list' (GNU's LOADHIST_ATTACH) — bind it so
             // those pushes die with the unwind; the real history entry
@@ -2544,14 +2638,48 @@ impl Interp {
                     let is_macro = matches!(&f, Value::Lambda(l) if l.is_macro)
                         || matches!(&f, Value::Cons(c)
                             if interp.sym_is(&c.borrow().car, sym::MACRO));
-                    if !is_macro && !matches!(f, Value::Subr(_)) {
+                    // A symbol-valued cell is a `defalias' shim (GNU's
+                    // `not'/`beep'/`rplaca'/... aliases): don't replace
+                    // it with our Rust subr — GNU's -Q shows the alias
+                    // chain, not a direct subr.
+                    let is_alias = matches!(&f, Value::Sym(s) if *s != sym::UNBOUND);
+                    if !is_macro && !is_alias && !matches!(f, Value::Subr(_)) {
                         interp.fset(id, Value::Subr(s));
                     }
                 }
             }
-            // seq.el is in GNU's dump too (loadup.el line 252): its
-            // `seq-let' defmacro replaces the raw-subr placeholder so
-            // `(macrop 'seq-let)' reports t like GNU.
+            // oclosure.el is in GNU's dump (loadup.el:198, right after
+            // cl-preloaded — "Used by cl-generic"): interpreted closures
+            // now carry GNU's docstring/env slot view, so the real file
+            // provides `oclosure-define', `oclosure-lambda',
+            // `oclosure--copy' & the `accessor--*' OClosure accessors
+            // that cl-generic's `cl--generic-nnm' relies on.
+            let _ = boot_lib(&mut interp, "oclosure");
+            // help.el is dumped by GNU's loadup.el at line 202 — before
+            // cl-generic (250).  `cl-defgeneric'/`cl-defmethod' forms in
+            // cl-generic, seq, subr-x and register call
+            // `help-add-fundoc-usage' → `help--docstring-quote' during
+            // eager macro-expansion; loading help first keeps those
+            // expansions bound like GNU's dump order.
+            let _ = boot_lib(&mut interp, "help");
+            // cl-generic.el is in GNU's dump (the `cl-generic' feature
+            // is pre-registered): its `cl-defmethod' forms install the
+            // real generalizer methods (`cl-generic-generalizers' for
+            // `t', `eql', `head', `typeof', ...) that the vendored
+            // machinery in subr-x needs to register any specialized
+            // method.  Loading it here — after the dump-fn snapshot so
+            // the cl-loaddefs autoloads pulled by its `(require
+            // 'cl-lib)' cannot corrupt the stash — mirrors GNU's dump
+            // order (loadup.el: cl-generic before seq/nadvice; its
+            // `(require 'subr-x)' is eval-when-compile only, so neither
+            // the .el nor the .elc needs subr-x loaded), and keeps
+            // later cl-defmethod uses (icons, map, register, send-to)
+            // from hitting an empty method table.
+            let _ = boot_lib(&mut interp, "cl-generic");
+            // seq.el is in GNU's dump too (loadup.el line 252, right
+            // after cl-generic — its `.elc' calls cl-generic-define):
+            // its `seq-let' defmacro replaces the raw-subr placeholder
+            // so `(macrop 'seq-let)' reports t like GNU.
             let _ = boot_lib(&mut interp, "seq");
             // env.el is preloaded into GNU's dump (loadup.el): its
             // feature is already registered, but the definitions must
@@ -2567,6 +2695,13 @@ impl Interp {
             // same reasoning as env — the feature mark alone would
             // make `require' skip the definitions.
             let _ = boot_lib(&mut interp, "tabulated-list");
+            // register.el before subr-x.el: subr-x's compiled
+            // `cl-defmethod register-val-jump-to ((val registerv) ...)'
+            // errors "Unknown specializer registerv" unless the
+            // `cl-defstruct' here has already registered the type.
+            // (GNU dodges this by never dumping subr-x — it's pure
+            // autoloads; we need its functions at -Q, so order wins.)
+            let _ = boot_lib(&mut interp, "register");
             // subr-x.el is also in GNU's dump: it holds the accumulated
             // GNU-verbatim compatibility definitions (string trim/pad,
             // fringe helpers, paren/select/vc/dnd support, …).
@@ -2640,25 +2775,6 @@ impl Interp {
                     }
                 }
             }
-            // oclosure.el is in GNU's dump (loadup.el:198, right after
-            // cl-preloaded — "Used by cl-generic"): interpreted closures
-            // now carry GNU's docstring/env slot view, so the real file
-            // provides `oclosure-define', `oclosure-lambda',
-            // `oclosure--copy' & the `accessor--*' OClosure accessors
-            // that cl-generic's `cl--generic-nnm' relies on.
-            let _ = boot_lib(&mut interp, "oclosure");
-            // cl-generic.el is in GNU's dump (the `cl-generic' feature
-            // is pre-registered): its `cl-defmethod' forms install the
-            // real generalizer methods (`cl-generic-generalizers' for
-            // `t', `eql', `head', `typeof', ...) that the vendored
-            // machinery in subr-x needs to register any specialized
-            // method.  Loading it here — after the dump-fn snapshot so
-            // the cl-loaddefs autoloads pulled by its `(require
-            // 'cl-lib)' cannot corrupt the stash, and after subr-x so
-            // its `(require 'subr-x)' short-circuits — mirrors GNU's
-            // .elc, and keeps later cl-defmethod uses (icons, map,
-            // register, send-to) from hitting an empty method table.
-            let _ = boot_lib(&mut interp, "cl-generic");
             // nadvice.el is dumped by loadup.el right after cl-generic
             // (loadup.el:253): its `oclosure-define' builds the real
             // `advice' OClosure accessors (`advice--car',
@@ -2669,6 +2785,20 @@ impl Interp {
             // oclosure-interactive-form' needs cl-generic's method
             // table already installed.
             let _ = boot_lib(&mut interp, "nadvice");
+            // easymenu.el is in GNU's dump (loadup.el, right after
+            // widget): every dumped library that calls
+            // `easy-menu-define'/`easy-menu-add' (prog-mode,
+            // replace, text-mode, newcomment, isearch, menu-bar)
+            // needs its macros already real.
+            let _ = boot_lib(&mut interp, "easymenu");
+            // custom.el + cus-start.el are in GNU's dump (loadup.el
+            // loads them right after mule): `defcustom'/`defgroup'/
+            // `defface' must be real functions before later dumped
+            // libraries (image/tab-bar/ns-win/mwheel) expand their
+            // calls, and cus-start's `define-minor-mode' uses need
+            // custom.el first.
+            let _ = boot_lib(&mut interp, "custom");
+            let _ = boot_lib(&mut interp, "cus-start");
             // loaddefs.el is loaded by loadup.el right after subr.el:
             // it installs the (autoload ...) cells for every preloaded
             // library's entry points and provides the `loaddefs'
@@ -2782,7 +2912,13 @@ impl Interp {
                 "mouse",
                 "prog-mode",
                 "regexp-opt",
-                "register",
+                // "register" moved before "subr-x" earlier: its
+                // `cl-defstruct registerv' must exist before
+                // subr-x.elc's `cl-defmethod ... ((val registerv))'
+                // registers — a second load here would just re-run.
+                // minibuffer.el is dumped too (loadup.el): binds
+                // `minibuffer-beginning-of-buffer' & friends at -Q.
+                "minibuffer",
                 "replace",
                 "scroll-bar",
                 "text-mode",
@@ -2807,6 +2943,13 @@ impl Interp {
             // `ns-handle-nxopen', `ns-parse-geometry',
             // `x-handle-args', `x-decompose-font-name' & co. must be
             // bound at -Q.
+            // ucs-normalize.el is in GNU's dump (loadup.el, only when
+            // uni-*.el exist — they do): its `define-translation-table'
+            // calls register ucs-normalize-{nfd,nfkd,hfs-nfd}-table in
+            // `translation-table-vector'.  The `ucs-normalize' feature
+            // is pre-registered, so `(require 'ucs-normalize)' inside
+            // ns-win would skip it — load explicitly like ns-win.
+            let _ = boot_lib(&mut interp, "ucs-normalize");
             let _ = boot_lib(&mut interp, "ns-win");
             let _ = boot_lib(&mut interp, "common-win");
             let _ = boot_lib(&mut interp, "fontset");
@@ -2816,6 +2959,11 @@ impl Interp {
             // `define-minor-mode' function and the variable gets t via
             // :init-value, matching GNU -Q where the mode is on.
             let _ = boot_lib(&mut interp, "mwheel");
+            // GNU's dump includes leim/leim-list.el (loadup.el): its
+            // `register-input-method' calls populate
+            // `input-method-alist' so `activate-input-method' /
+            // `read-multilingual-string' find the quail methods.
+            let _ = boot_lib(&mut interp, "leim-list");
             // Loading cconv.el interpretively expands its
             // `define-inline' call, which pulls in inline.el — GNU's
             // dump had it compiled away, so -Q keeps `define-inline'
@@ -2899,7 +3047,7 @@ impl Interp {
                    (fset 'makefile-makepp-mode '(autoload \"make-mode\" \"Major mode for Makeppfiles.\" t nil)) \
                    (fset 'makefile-bsdmake-mode '(autoload \"make-mode\" \"Major mode for BSD makefiles.\" t nil)) \
                    (fset 'makefile-imake-mode '(autoload \"make-mode\" \"Major mode for Imakefiles.\" t nil)) \
-                   (fset 'change-log-mode '(autoload \"add-log\" \"Major mode for editing change logs.\" t nil))) \
+                   (fset 'change-log-mode '(autoload \"add-log\" \"Major mode for editing change logs.\" t nil)) \
                    (fset '2C-associate-buffer '(autoload \"two-column\" \"Associate another BUFFER with this one in two-column minor mode.\\nCan also be used to associate a just previously visited file, by\\naccepting the proposed default buffer.\\n\\n(See  \\\\[describe-mode] .)\\n\\n(fn BUFFER)\" t nil)) \
                    (fset '2C-command '(autoload \"two-column\" nil t keymap)) \
                    (fset '2C-split '(autoload \"two-column\" \"Split a two-column text at point, into two buffers in two-column minor mode.\\nPoint becomes the local value of `2C-window-width'.  Only lines that\\nhave the ARG same preceding characters at that column get split.  The\\nARG preceding characters without any leading whitespace become the local\\nvalue for `2C-separator'.  This way lines that continue across both\\ncolumns remain untouched in the first buffer.\\n\\nThis function can be used with a prototype line, to set up things.  You\\nwrite the first line of each column and then split that line.  E.g.:\\n\\nFirst column's text    sSs  Second column's text\\n		       \\\\___/\\\\\\n			/    \\\\\\n   5 character Separator      You type  M-5 \\\\[2C-split]  with the point here.\\n\\n(See  \\\\[describe-mode] .)\\n\\n(fn ARG)\" t nil)) \
@@ -3832,10 +3980,6 @@ explicitly overridden.
                     // identity) means the prelude-folded def is still
                     // in place and GNU's autoload replaces it.
                     let live = interp.obarray.symbol(name).function.clone();
-                    let live_is_autoload = matches!(
-                        &live,
-                        Value::Cons(c) if matches!(&c.borrow().car, Value::Sym(s) if *s == auto_id)
-                    );
                     // Only a Lisp-level definition counts as "re-defined
                     // after loaddefs": a Subr cell predates loaddefs
                     // (builtins register before the prelude), so GNU's
@@ -4156,11 +4300,11 @@ command-line arguments.\" \
                     s
                 });
                 let iname = interp.intern("invocation-name");
-                interp.set_symbol(iname, Value::string(name));
+                let _ = interp.set_symbol(iname, Value::string(name));
                 let idir = interp.intern("invocation-directory");
-                interp.set_symbol(idir, dir.map(Value::string).unwrap_or(Value::Nil));
+                let _ = interp.set_symbol(idir, dir.map(Value::string).unwrap_or(Value::Nil));
                 let cla = interp.intern("command-line-args");
-                interp.set_symbol(
+                let _ = interp.set_symbol(
                     cla,
                     Value::list(argv.iter().map(|a| Value::string(a.clone())).collect()),
                 );
@@ -4339,12 +4483,60 @@ command-line arguments.\" \
                 }
             }
         }
+        // GNU parity fixups that must land after every boot library:
+        //
+        // * `registerv-data' & friends are cl-defstruct accessors —
+        //   GNU's compiled accessors check `registerv-p' first and
+        //   signal `wrong-type-argument (registerv X)'; our subset
+        //   generator emits bare `(aref v N)' which reports
+        //   `args-out-of-range'.  Redefine them checked.
+        // * `search-emacs-glossary' is a native subr in GNU 31's
+        //   dump, so its wrong-number-of-arguments datum is the
+        //   symbol, not our byte-code `(0 . 0)' pair — rebind it to
+        //   the Rust subr (its body still routes through `info').
+        // * GNU's dumped image carries a stale search_regs leftover
+        //   `(0 3)' — `(match-data)', `match-substitute-replacement'
+        //   and `prettify-symbols--compose-symbol' on a fresh -Q all
+        //   see it; prime ours identically.
+        if std::env::var("REMACS_NO_PRELUDE").is_err() {
+            let _ = interp.eval_str(
+                "(progn \
+                   (defun registerv-data (v) \
+                     (if (registerv-p v) (aref v 1) \
+                       (signal 'wrong-type-argument (list 'registerv v)))) \
+                   (defun registerv-print-func (v) \
+                     (if (registerv-p v) (aref v 2) \
+                       (signal 'wrong-type-argument (list 'registerv v)))) \
+                   (defun registerv-jump-func (v) \
+                     (if (registerv-p v) (aref v 3) \
+                       (signal 'wrong-type-argument (list 'registerv v)))) \
+                   (defun registerv-insert-func (v) \
+                     (if (registerv-p v) (aref v 4) \
+                       (signal 'wrong-type-argument (list 'registerv v)))))",
+            );
+            if let Some(s) = crate::editor::winxtra::SUBRS
+                .iter()
+                .find(|s| s.name == "search-emacs-glossary")
+            {
+                let id = interp.intern("search-emacs-glossary");
+                interp.fset(id, Value::Subr(s));
+            }
+            interp.match_data = Some(MatchData {
+                regs: vec![Some(0), Some(3)],
+                in_buffer: false,
+                base: 0,
+                buffer: None,
+            });
+        }
         // The backquote machinery must be fmakunbound-immune exactly like
         // GNU's bytecompiled backquote.el (a user `(fmakunbound 'car)'
         // can't break `Bcar' opcodes): bind `backquote'/`backquote-list*'
         // and the helper defuns to Rust subrs after every library load,
         // so prelude/Lisp redefinitions can't re-expose the cells.
         crate::lisp::builtins::backquote::install_macros(&mut interp);
+        if std::env::var_os("REMACS_BOOT_PROF").is_some() {
+            eprintln!("[init] total Interp::new: {}ms", _init_t0.elapsed().as_millis());
+        }
         interp
     }
 
@@ -4372,6 +4564,11 @@ command-line arguments.\" \
     }
 
     pub fn symbol_name(&self, id: SymId) -> String {
+        // SymId::MAX = an `intern_soft' miss; an absent symbol's name
+        // resolves to "" (never interned, never equal to a real name).
+        if id == u32::MAX {
+            return String::new();
+        }
         self.obarray.name(id).to_string()
     }
 
@@ -4400,6 +4597,9 @@ command-line arguments.\" \
     /// Global (default) value of a symbol.
     /// Follow `defvaralias' chains: return the ultimate base symbol.
     pub fn var_alias_target(&self, id: SymId) -> SymId {
+        if id == u32::MAX {
+            return id; // intern_soft miss sentinel: no alias chain
+        }
         let mut cur = id;
         for _ in 0..64 {
             match self.obarray.symbol(cur).var_alias {
@@ -4415,6 +4615,9 @@ command-line arguments.\" \
         // Buffer-local binding in current buffer wins. `try_borrow`:
         // primitives that hold the buffer mutably borrowed may still
         // consult variables (they see the global binding).
+        if id == u32::MAX {
+            return Value::Nil; // intern_soft miss — unbound is nil
+        }
         if let Some(b) = self.buffers.get(self.current_buffer) {
             if let Ok(bb) = b.try_borrow() {
                 if let Some(v) = bb.locals.get(&id) {
@@ -4743,28 +4946,6 @@ command-line arguments.\" \
         }
     }
 
-    fn dumped_runtime_helper(&self, id: SymId) -> bool {
-        let name = self.obarray.name(id);
-        name.starts_with("(setf ")
-            || name.starts_with("rx--")
-            || matches!(
-                name,
-                "cl--generic-dispatch"
-                    | "cl--advice--apply"
-                    | "cl--advice--link"
-                    | "cl--add-function"
-                    | "cl--check-keys"
-                    | "cl--method-fn"
-                    | "cl--method-more-specific-p"
-                    | "cl--methods-with-qual"
-                    | "cl--spec-applicable-p"
-                    | "cl--spec-more-specific-p"
-                    | "cl--type-parents"
-                    | "cl-typep"
-                    | "gv-deref"
-            )
-    }
-
     /// Hidden dump-time definition for SYM, if one was stashed while its
     /// public function cell was voided for GNU -Q compatibility.
     fn dumped_function(&mut self, id: SymId) -> Option<Value> {
@@ -4838,12 +5019,20 @@ command-line arguments.\" \
 
     /// `get` — symbol property.
     pub fn get_prop(&self, id: SymId, prop: SymId) -> Value {
+        // `intern_soft` misses surface as SymId::MAX at ~40 call sites —
+        // an absent symbol has no properties.
+        if id == u32::MAX || prop == u32::MAX {
+            return Value::Nil;
+        }
         let plist = &self.obarray.symbol(id).plist;
         plist_get(plist, prop)
     }
 
     /// `put` — set symbol property, returns value.
     pub fn put_prop(&mut self, id: SymId, prop: SymId, val: Value) {
+        if id == u32::MAX || prop == u32::MAX {
+            return; // see get_prop: intern_soft miss sentinel
+        }
         self.macro_gen += 1;
         if prop == self.var_alias_prop {
             self.obarray.symbol_mut(id).var_alias = match val {
@@ -4974,6 +5163,30 @@ command-line arguments.\" \
         }
     }
 
+    /// GNU `default_toplevel_binding': the first (outermost) global
+    /// specbind entry for `id`.  Used by `defvar' to detect a `let'
+    /// shadowing a still-void default binding.
+    pub fn specbind_outermost_unbound(&self, id: SymId) -> bool {
+        self.specbind.iter().any(|sb| {
+            sb.sym == id
+                && sb.buf.is_none()
+                && matches!(&sb.old, Some(Value::Sym(s)) if *s == sym::UNBOUND)
+        })
+    }
+
+    /// GNU `set_specpdl_old_value' on the outermost global specbind
+    /// for `id` — installing a value that surfaces as the default when
+    /// the shadowing `let' unwinds.
+    pub fn set_specbind_outermost_old(&mut self, id: SymId, val: Value) {
+        if let Some(sb) = self
+            .specbind
+            .iter_mut()
+            .find(|sb| sb.sym == id && sb.buf.is_none())
+        {
+            sb.old = Some(val);
+        }
+    }
+
     /// `buffer-local-toplevel-value': the toplevel buffer-local binding in
     /// `buf`, ignoring `let' frames. None when no toplevel local exists.
     pub fn buffer_local_toplevel_value(&self, id: SymId, buf: usize) -> Option<Value> {
@@ -5014,8 +5227,16 @@ command-line arguments.\" \
     /// `(signal sym (data...))` where data is already a list.
     pub fn signal(&self, sym_id: SymId, data: Value) -> Flow {
         *self.last_error_stack.borrow_mut() = self.lisp_stack.clone();
-        if self.dbg_flags & 0x400000 != 0 && sym_id == sym::END_OF_FILE {
-            eprintln!("=== SIGNAL end-of-file {} ===\n{}", self.prin1_to_string(&data), std::backtrace::Backtrace::capture());
+        if std::env::var_os("QUITDBG").is_some() && sym_id == sym::QUIT {
+            let names: Vec<String> = self
+                .lisp_stack
+                .iter()
+                .rev()
+                .take(24)
+                .map(|(f, _)| self.prin1_to_string(f))
+                .collect();
+            eprintln!("SIGQUIT stack={names:?}");
+            eprintln!("{}", std::backtrace::Backtrace::capture());
         }
         Flow::Signal(Value::Sym(sym_id), data, false)
     }
@@ -5023,6 +5244,17 @@ command-line arguments.\" \
     /// `(signal sym data-list-from-vec)`.
     pub fn signal_data(&self, sym_id: SymId, data: Vec<Value>) -> Flow {
         *self.last_error_stack.borrow_mut() = self.lisp_stack.clone();
+        if std::env::var_os("QUITDBG").is_some() && sym_id == sym::QUIT {
+            let names: Vec<String> = self
+                .lisp_stack
+                .iter()
+                .rev()
+                .take(24)
+                .map(|(f, _)| self.prin1_to_string(f))
+                .collect();
+            eprintln!("SIGQUIT(stack)={names:?}");
+            eprintln!("{}", std::backtrace::Backtrace::capture());
+        }
         if let Some(filter) = (self.dbg_flags & 0x800000 != 0)
             .then(|| std::env::var("REMACS_BT_ERR").unwrap_or_default())
         {
@@ -5055,6 +5287,22 @@ command-line arguments.\" \
     /// `(error "fmt" args...)` — signals `error` with a formatted message.
     pub fn error(&self, msg: impl Into<String>) -> Flow {
         self.signal_data(sym::ERROR, vec![Value::string(msg.into())])
+    }
+
+    /// GNU C `error (FMT, ...)': doprnt translates FMT's `like this'
+    /// quotes per `text-quoting-style' — never the `%s' arguments.
+    pub fn error_q(&self, fmt: &str, args: &[&str]) -> Flow {
+        let fmt = crate::lisp::builtins::evalfn::translate_message_quotes(self, fmt);
+        let mut args = args.iter();
+        let mut out = String::with_capacity(fmt.len());
+        let mut rest = fmt.as_str();
+        while let Some(p) = rest.find("%s") {
+            out.push_str(&rest[..p]);
+            out.push_str(args.next().copied().unwrap_or_default());
+            rest = &rest[p + 2..];
+        }
+        out.push_str(rest);
+        self.error(out)
     }
 
     /// `wrong-type-argument` signal: pred, value.
@@ -5278,6 +5526,53 @@ command-line arguments.\" \
             None => Ok(Value::Nil),
         }
     }
+
+    /// Evaluate every top-level form in SRC, returning the last
+    /// form's value — GNU `--eval' processes the whole string
+    /// (command-line-1 → readevalloop-style iteration).
+    pub fn eval_forms(&mut self, src: &str) -> EvalResult {
+        let mut pos = 0usize;
+        let mut last = Value::Nil;
+        loop {
+            let (form, end) = match self.read_from_string(src, pos) {
+                Ok(v) => v,
+                Err(Flow::Signal(sym, data, r)) => {
+                    // A read error past the last real form behaves
+                    // like EOF: trailing whitespace/comments only.
+                    let is_eof = matches!(&sym, Value::Sym(id) if {
+                        let n = self.symbol_name(*id);
+                        n == "end-of-file"
+                    });
+                    if is_eof {
+                        break;
+                    }
+                    return Err(Flow::Signal(sym, data, r));
+                }
+                Err(f) => return Err(f),
+            };
+            if end <= pos {
+                break; // reader made no progress — done
+            }
+            pos = end;
+            let mark = self.specbind_depth();
+            let lb = self.intern("lexical-binding");
+            let _ = self.specbind(lb, Value::t());
+            let saved_lexenv = std::mem::replace(&mut self.lexenv, lexenv_root());
+            let r = self.eval(&form);
+            self.lexenv = saved_lexenv;
+            self.unbind_to(mark)?;
+            match r {
+                Ok(v) => last = v,
+                Err(Flow::Throw(tag, val)) => {
+                    let nc = self.intern("no-catch");
+                    return Err(self.signal_data(nc, vec![tag, val]));
+                }
+                Err(f) => return Err(f),
+            }
+        }
+        Ok(last)
+    }
+
 
     /// `read-from-string` core: read one object, return it + end position.
     pub fn read_from_string(&mut self, src: &str, start: usize) -> Result<(Value, usize), Flow> {
@@ -5509,11 +5804,16 @@ command-line arguments.\" \
         if id == sym::NIL {
             return Ok(Value::Nil);
         }
-        // Lexical lookup first (only when the symbol isn't special).
-        if !self.obarray.symbol(id).special {
-            if let Some(v) = lexenv_lookup(&self.lexenv, id) {
-                return Ok(v);
-            }
+        // Lexical lookup first — GNU `eval_sub' does `Fassq (form,
+        // internal-interpreter-environment)' unconditionally ("we do not
+        // pay attention to the declared_special flag here"): a closure
+        // parameter that became special AFTER capture (e.g. via
+        // `internal--define-uninitialized-variable', as
+        // `custom-initialize-after-file-load' does) still reads the
+        // lexical binding, matching byte-compiled GNU code where the
+        // parameter is a stack slot.
+        if let Some(v) = lexenv_lookup(&self.lexenv, id) {
+            return Ok(v);
         }
         let v = self.symbol_value(id);
         if let Value::Sym(s) = &v {
@@ -5553,6 +5853,16 @@ command-line arguments.\" \
     fn eval_form(&mut self, form: &Value) -> EvalResult {
         if self.quit_flag {
             self.quit_flag = false;
+            if std::env::var_os("QUITDBG").is_some() {
+                let names: Vec<String> = self
+                    .lisp_stack
+                    .iter()
+                    .rev()
+                    .take(24)
+                    .map(|(f, _)| self.prin1_to_string(f))
+                    .collect();
+                eprintln!("QUIT-AT stack={names:?}");
+            }
             return Err(Flow::Quit);
         }
         let cons = match form {
@@ -5637,7 +5947,16 @@ command-line arguments.\" \
                         _ => self.raw_list_length(&args)?,
                     };
                     if n < min {
-                        return Err(self.wrong_number_of_args(&Value::Sym(id), n));
+                        // GNU's `defun'/`defmacro' are byte-coded
+                        // macros: their too-few-args error carries the
+                        // trampoline arity `(2 . 2)' as the function
+                        // datum, not the symbol.
+                        let fun = if id == sym::DEFUN || id == sym::DEFMACRO {
+                            Value::cons(Value::Int(2), Value::Int(2))
+                        } else {
+                            Value::Sym(id)
+                        };
+                        return Err(self.wrong_number_of_args(&fun, n));
                     }
                     return sf(self, args);
                 }
@@ -5648,6 +5967,16 @@ command-line arguments.\" \
                 let fun = self.form_function(id);
                 if let Value::Sym(s) = &fun {
                     if *s == sym::UNBOUND {
+                        if std::env::var_os("REMACS_TRACE_SETF").is_some() {
+                            eprintln!(
+                                "void head: {} in form {}",
+                                self.symbol_name(id),
+                                self.prin1_to_string(&form)
+                                    .chars()
+                                    .take(200)
+                                    .collect::<String>()
+                            );
+                        }
                         return Err(self.signal_data(sym::VOID_FUNCTION, vec![Value::Sym(id)]));
                     }
                 }
@@ -5716,9 +6045,12 @@ command-line arguments.\" \
                     _ => unreachable!(),
                 };
                 if self.sym_is(&b, sym::LAMBDA) {
-                    let lambda = self.lambda_from_form(&head, None)?;
+                    // GNU `eval_sub': `((lambda ...) ARGS)' calls
+                    // `funcall_lambda' on the RAW form — dynamic
+                    // binding, no closure conversion, `invalid-
+                    // function'/`wna' data is the form itself.
                     let argv = self.eval_args_len(&args, spine_len)?;
-                    return self.apply(&Value::Lambda(Rc::new(lambda)), argv);
+                    return self.call_lambda_form(&head, argv);
                 }
                 // GNU uses the cons HEAD itself as the function object:
                 // `(lambda ...)'/`(closure ...)'/`(macro . f)' are
@@ -5903,6 +6235,24 @@ command-line arguments.\" \
                     let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
                     self.check_arity_lambda_n(l, n, &shown)?;
                 }
+                // Dumped `#[ARGDESC ...]' twins (compiled, no parsed
+                // arglist) get the same early check — GNU's nativecomp
+                // signal data is the called symbol, while apply/funcall
+                // truncate excess args instead (exec() does that).
+                if !l.dumped_doc && l.compiled {
+                    if let Some(items) = &l.bc_items {
+                        if super::bytecode::is_byte_code(&items.borrow()) {
+                            let n = if spine_len >= 0 {
+                                spine_len
+                            } else {
+                                self.raw_list_length(args)?
+                            };
+                            let shown =
+                                sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
+                            super::bytecode::check_argdesc(self, &items.borrow(), n.max(0) as usize, &shown)?;
+                        }
+                    }
+                }
                 let argv = self.eval_args_len(args, spine_len)?;
                 let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
                 self.apply_resolved(&fun, argv, shown)
@@ -5922,13 +6272,14 @@ command-line arguments.\" \
                     let expansion = self.eval_macro_expand(&cdr, args)?;
                     return self.eval(&expansion);
                 }
-                if self.sym_is(&car, sym::LAMBDA) || self.sym_is(&car, sym::QUOTE_FUNCTION) {
-                    let lambda = Rc::new(self.lambda_from_form(&fun, sym_name)?);
+                if self.sym_is(&car, sym::LAMBDA) {
+                    // Symbol-function indirection's cons form: GNU
+                    // `funcall_lambda' on `(lambda ...)'.  `((function
+                    // (lambda ...)))' (QUOTE_FUNCTION head) is NOT a
+                    // lambda call — `function' is no macro here, so GNU
+                    // `invalid-function' on the cons.
                     let argv = self.eval_args_len(args, spine_len)?;
-                    let shown = sym_name
-                        .map(Value::Sym)
-                        .unwrap_or_else(|| Value::Lambda(lambda.clone()));
-                    return self.apply_resolved(&Value::Lambda(lambda), argv, shown);
+                    return self.call_lambda_form(&fun, argv);
                 }
                 let auto_id = self.intern("autoload");
                 if self.sym_is(&car, auto_id) {
@@ -6151,13 +6502,39 @@ command-line arguments.\" \
                 }
                 _ => {
                     self.check_arity_subr(s, &argv, None)?;
+                    let prof = self.dbg_flags & 0x1000000 != 0;
+                    let t0 = prof.then(std::time::Instant::now);
                     self.lisp_stack.push((shown, argv.clone()));
                     let r = (s.func)(self, argv);
                     self.lisp_stack.pop();
+                    if let Some(t0) = t0 {
+                        let e = self.subr_prof.entry(s.name).or_default();
+                        e.0 += 1;
+                        e.1 += t0.elapsed().as_nanos();
+                    }
                     r
                 }
             },
             Value::Lambda(l) => {
+                // Dumped definitions stand in for GNU's nativecomp'd
+                // subrs, and `funcall_subr' hands one with more than 8
+                // parameters to its n-adic entry without an upper-bound
+                // check: surplus args are dropped.  Call forms already
+                // checked arity (`call_function_len', like `eval_sub');
+                // bytecode twins get this in `bytecode::exec'.
+                let max = l.required.len() + l.optional.len();
+                let argv = if l.dumped_doc
+                    && !l.is_macro
+                    && !l.bad_arglist
+                    && !l.is_bytecode()
+                    && l.rest.is_none()
+                    && max > 8
+                    && argv.len() > max
+                {
+                    Argv::new(argv[..max].to_vec())
+                } else {
+                    argv
+                };
                 self.lisp_stack.push((shown.clone(), argv.clone()));
                 let r = self.call_lambda(l, argv, &shown);
                 self.lisp_stack.pop();
@@ -6173,9 +6550,11 @@ command-line arguments.\" \
                     (b.car.clone(), b.cdr.clone())
                 };
                 if self.sym_is(&car, sym::LAMBDA) {
-                    let lambda = self.lambda_from_form(fun, None)?;
+                    // GNU `Ffuncall' calls the raw cons directly via
+                    // `funcall_lambda' — no closure conversion, dynamic
+                    // binding, `invalid-function' datum is the form.
                     self.lisp_stack.push((shown.clone(), argv.clone()));
-                    let r = self.call_lambda(&Rc::new(lambda), argv, &shown);
+                    let r = self.call_lambda_form(fun, argv);
                     self.lisp_stack.pop();
                     return r;
                 }
@@ -6473,7 +6852,37 @@ command-line arguments.\" \
     /// `defalias'-level write to SYM's function cell: when SYM carries
     /// advice, the new definition substitutes the chain's base (GNU's
     /// `advice--defalias-fset'); otherwise a plain `fset'.
+    /// Record the bound name for a compiled lambda that doesn't carry
+    /// one — `#[...]' literals read from `.elc' files arrive nameless,
+    /// and `defalias' is the point where GNU's nativecomp loads learn
+    /// the bound symbol (`#<subr NAME>' print + wna datum).  Keyed on
+    /// the Rc pointer since `Lambda' is not Clone.
+    fn name_compiled_lambda(&mut self, id: SymId, def: &Value) {
+        if let Value::Lambda(l) = def {
+            if l.name.is_none() && l.compiled {
+                self.compiled_fn_names
+                    .borrow_mut()
+                    .push((Rc::downgrade(l), self.symbol_name(id)));
+            }
+        }
+    }
+
+    /// Effective display name of a lambda: `l.name' plus the
+    /// `defalias'-stamped name for `.elc' twins.
+    pub(crate) fn lambda_name(&self, l: &Rc<Lambda>) -> Option<String> {
+        if let Some(n) = &l.name {
+            return Some(n.clone());
+        }
+        let ptr = Rc::as_ptr(l);
+        let names = self.compiled_fn_names.borrow();
+        names.iter().find_map(|(w, n)| {
+            (w.upgrade().is_some_and(|r| Rc::as_ptr(&r) == ptr))
+                .then(|| n.clone())
+        })
+    }
+
     pub fn fset_defalias(&mut self, id: SymId, def: Value) -> Result<(), Flow> {
+        self.name_compiled_lambda(id, &def);
         if self.advice_bases.iter().any(|(s, _)| *s == id) {
             if let Some(pos) = self.advice_bases.iter().position(|(s, _)| *s == id) {
                 self.advice_bases[pos].1 = def;
@@ -6513,16 +6922,37 @@ command-line arguments.\" \
     /// Returns None for any unrecognized shape so ordinary arity
     /// checking reports the usual error.
     fn unidata_bc_dispatch(&mut self, l: &Rc<Lambda>, argv: &[Value]) -> Option<EvalResult> {
+        // Only bare `#[...]' literals read from the dumped uni-*.el data
+        // route here.  `make-closure' products splice their captured env
+        // into consts[0..]; a mutated box can masquerade as an alist and
+        // would be short-circuited into Nil, skipping the real bytecode
+        // (seq-reduce's acc cell hit exactly this).
+        if l.bc_closure {
+            return None;
+        }
         if !matches!(&l.arglist, Some(Value::Int(_))) {
             return None;
         }
         let items = l.bc_items.as_ref()?.borrow();
+        // Only the uni-*.el literals: argdesc 257 (1 arg) or 771 (3
+        // args).  A generic guard — without it any `#[...]' closure
+        // whose consts happen to look like an alist (e.g.
+        // `case-table-get-table's ((up . 0) ...) table) gets its
+        // 1-arg calls hijacked into `assq' lookups instead of the
+        // real byte code / arity error.
+        let argdesc_n = match items.first() {
+            Some(Value::Int(n)) => *n,
+            _ => return None,
+        };
+        if argdesc_n != 257 && argdesc_n != 771 {
+            return None;
+        }
         let consts = match items.get(2) {
             Some(Value::Vec(v)) => v.borrow().clone(),
             _ => return None,
         };
         let cts = self.intern("char-table-extra-slot");
-        if argv.len() == 3 {
+        if argv.len() == 3 && argdesc_n == 771 {
             let (ch, raw, tbl) = (&argv[0], &argv[1], &argv[2]);
             let Value::Int(n) = ch else { return None };
             if !crate::lisp::builtins::misc::is_char_table(self, tbl) {
@@ -6567,7 +6997,7 @@ command-line arguments.\" \
             }
             return None;
         }
-        if argv.len() == 1 {
+        if argv.len() == 1 && argdesc_n == 257 {
             if consts.is_empty() {
                 return None;
             }
@@ -6599,12 +7029,18 @@ command-line arguments.\" \
                     Value::Vec(vv) => vv.borrow().clone(),
                     _ => Vec::new(),
                 };
-                // Require a proper alist: every element a cons pair.
-                // `make-closure' products splice closure vars into
-                // consts[0..] — a dispatch list like (0 GEN ...) is a
-                // Cons but not an alist, and must fall through to the
-                // real byte-code interpreter.
-                if !elems.iter().all(|e| matches!(e, Value::Cons(_))) {
+                // Require a unidata-style alist: every element a cons
+                // pair `(KEY . STRING)' — uni-*.el tables map property
+                // keys to description strings.  `make-closure'
+                // products splice closure vars into consts[0..] and
+                // arbitrary `#[257]' literals (byte-compiled lambdas
+                // whose consts[0] happens to be a list, e.g. the
+                // `oclosure--lambda' mapcar helper with consts[0] =
+                // ((progn nil))) must fall through to the real VM.
+                let is_unidata_alist = elems.iter().all(|e| {
+                    matches!(e, Value::Cons(p) if matches!(&p.borrow().cdr, Value::Str(_)))
+                });
+                if !is_unidata_alist {
                     return None;
                 }
                 for e in elems {
@@ -6620,82 +7056,251 @@ command-line arguments.\" \
         None
     }
 
-    fn call_lambda_inner(&mut self, l: &Rc<Lambda>, argv: Argv, shown: &Value) -> EvalResult {
+    /// GNU `funcall_lambda' on a raw `(lambda ...)' cons — the
+    /// `funcall'/`apply' path, which never converts the form to a
+    /// closure.  Args bind dynamically (`lexenv' is nil for raw forms);
+    /// `(lambda)', `(lambda . X)', `(lambda a ...)' and dotted/non-
+    /// symbol arglist elements all signal `invalid-function FORM'
+    /// (datum is the form itself, not a closure).  The body runs as
+    /// GNU's `Fprogn (XCDR (XCDR fun))': cons elements evaluate, a
+    /// non-cons tail ends evaluation silently.
+    fn call_lambda_form(&mut self, fun: &Value, argv: Argv) -> EvalResult {
+        let cdr = match fun {
+            Value::Cons(c) => c.borrow().cdr.clone(),
+            _ => unreachable!(),
+        };
+        let arglist = match &cdr {
+            Value::Cons(c) => c.borrow().car.clone(),
+            _ => {
+                return Err(self.signal_data(sym::INVALID_FUNCTION, vec![fun.clone()]));
+            }
+        };
+        let body = match &cdr {
+            Value::Cons(c) => c.borrow().cdr.clone(),
+            _ => Value::Nil,
+        };
+        // Dynamic binding, no lexical env (GNU: `lexenv = Qnil').
+        let saved_lex = std::mem::replace(&mut self.lexenv, None);
+        let mark = self.specbind_depth();
+        let bind_result =
+            self.bind_lambda_walk(&arglist, &argv, fun, |i, s, v| i.specbind(s, v));
+        let result = match bind_result {
+            Ok(()) => {
+                // `Fprogn' on the raw body: walk conses only; a dotted
+                // or atom tail just ends the body (returns last/nil).
+                let mut last = Value::Nil;
+                let mut cur = body.clone();
+                loop {
+                    match cur.clone() {
+                        Value::Cons(c) => {
+                            let (form, next) = {
+                                let b = c.borrow();
+                                (b.car.clone(), b.cdr.clone())
+                            };
+                            match self.eval(&form) {
+                                Ok(v) => last = v,
+                                Err(e) => {
+                                    self.lexenv = saved_lex;
+                                    self.unbind_to(mark)?;
+                                    return Err(e);
+                                }
+                            }
+                            cur = next;
+                        }
+                        _ => break,
+                    }
+                }
+                Ok(last)
+            }
+            Err(e) => Err(e),
+        };
+        self.lexenv = saved_lex;
+        self.unbind_to(mark)?;
+        result
+    }
+
+    /// GNU `funcall_lambda's binding loop over the RAW arglist:
+    /// `&optional'/`&rest' are the only keywords; each element must be
+    /// a bare symbol (`invalid-function FUN' otherwise — FUN is the
+    /// closure for closures, the `(lambda ...)' cons for raw forms);
+    /// a second `&optional', `&optional' after `&rest', a second
+    /// `&rest', a bare trailing keyword, or a non-nil dotted tail all
+    /// signal `invalid-function FUN'; too few required args signal
+    /// `wna FUN N' mid-walk, too many after it.  `bind' is either
+    /// specbind (dynamic) or frame binding (lexical — GNU binds EVERY
+    /// param into the closure env, specials included).
+    fn bind_lambda_walk(
+        &mut self,
+        arglist: &Value,
+        argv: &[Value],
+        fun: &Value,
+        mut bind: impl FnMut(&mut Interp, SymId, Value) -> Result<(), Flow>,
+    ) -> Result<(), Flow> {
+        let inv = |i: &Interp| -> Flow {
+            i.signal_data(sym::INVALID_FUNCTION, vec![fun.clone()])
+        };
+        let wna = |i: &Interp, n: usize| -> Flow {
+            i.signal_data(
+                sym::WRONG_NUMBER_OF_ARGUMENTS,
+                vec![fun.clone(), Value::Int(n as i128)],
+            )
+        };
+        let opt_kw = sym::OPTIONAL;
+        let rest_kw = sym::REST;
+        let mut syms = arglist.clone();
+        let mut arg_i = 0usize;
+        let mut optional = false;
+        let mut rest = false;
+        let mut previous_rest = false;
+        loop {
+            let (elt, next) = match &syms {
+                Value::Cons(c) => {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                }
+                _ => break,
+            };
+            let s = match self.sym_id(&elt) {
+                Some(s) => s,
+                None => return Err(inv(self)),
+            };
+            if s == rest_kw {
+                if rest || previous_rest {
+                    return Err(inv(self));
+                }
+                rest = true;
+                previous_rest = true;
+            } else if s == opt_kw {
+                if optional || rest || previous_rest {
+                    return Err(inv(self));
+                }
+                optional = true;
+            } else {
+                let arg = if rest {
+                    // GNU `Flist (nargs - i, &arg_vector[i])'.
+                    let v = Value::list(argv[arg_i..].to_vec());
+                    arg_i = argv.len();
+                    v
+                } else if arg_i < argv.len() {
+                    let v = argv[arg_i].clone();
+                    arg_i += 1;
+                    v
+                } else if !optional {
+                    return Err(wna(self, argv.len()));
+                } else {
+                    Value::Nil
+                };
+                bind(self, s, arg)?;
+                previous_rest = false;
+            }
+            syms = next;
+        }
+        if !syms.is_nil() || previous_rest {
+            return Err(inv(self));
+        }
+        if arg_i < argv.len() {
+            return Err(wna(self, argv.len()));
+        }
+        Ok(())
+    }
+
+    fn call_lambda_inner(&mut self, l: &Rc<Lambda>, argv: Argv, _shown: &Value) -> EvalResult {
         if let Some(items) = &l.bc_items {
             if let Some(r) = self.unidata_bc_dispatch(l, &argv) {
                 return r;
             }
-            // `#[ARGDESC BYTESTR CONSTS DEPTH]' shape → the byte-code
-            // interpreter (also reached by `#[...]' literals read from
-            // `.elc' files).
+            // `#[ARGDESC ...]' shape → the byte-code interpreter (also
+            // reached by `#[...]' literals read from `.elc' files).
+            // GNU exec_byte_code reports `(MIN . NONREST)' in wna data
+            // — byte-code twins keep `who' nil so exec emits the argdesc
+            // pair; only compiled *non-bytecode* twins (native-subr
+            // stand-ins) report the shown function like GNU's
+            // `#<subr>' wna datum.
             if super::bytecode::is_byte_code(&items.borrow()) {
-                return super::bytecode::exec(self, l, argv);
+                // Named compiled twins are GNU nativecomp's subrs —
+                // report `shown' (the lambda object from funcall, the
+                // calling symbol from eval) as the wna datum.  Only
+                // nameless `#[...]' literals keep `None' so exec emits
+                // the `(MIN . NONREST)' pair.
+                // Datum rule (nativecomp): a *named* twin reports the
+                // `#<subr NAME>' object (funcall) / called symbol
+                // (eval path already emitted); an anonymous `#[...]'
+                // byte-code literal (macro expanders included) reports
+                // its `(MIN . NONREST)' argdesc pair.  `who' carries
+                // the *resolved* object so funcall shows `#<subr>'.
+                let named = self.lambda_name(l).is_some()
+                    || (l.compiled && !l.is_bytecode());
+                let funv = Value::Lambda(l.clone());
+                let who = if named && self.macroexp_call_depth == 0 {
+                    Some(&funv)
+                } else {
+                    None
+                };
+                return super::bytecode::exec(self, l, argv, who, named);
             }
         }
-        // Arity.
-        let (min, max_ok) = (l.required.len(), l.rest.is_some());
-        if argv.len() < min || (!max_ok && argv.len() > min + l.optional.len()) {
-            // GNU byte-code lambdas report (MIN . MAX) where MAX counts
-            // only non-rest params (e.g. `when' (cond &rest body) →
-            // (1 . 1)); interpreted lambdas report the lambda object.
-            let who = if l.compiled {
-                Value::cons(Value::Int(min as i128), Value::Int((min + l.optional.len()) as i128))
-            } else {
-                shown.clone()
-            };
-            return Err(self.wrong_number_of_args(&who, argv.len() as i128));
-        }
-
-        // Dynamic (non-macro) functions with extended `(var init)'
-        // parameters are invalid to call, like Emacs's interpreted
-        // functions — the arity check above still runs first.
-        // GNU: extended `(var init)' parameters are invalid to call in
-        // interpreted functions AND macros alike — defmacro's `((a b) c)'
-        // destructuring arglist signals `invalid-function' on the macro
-        // call, not at expansion bind time.
-        if l.bad_arglist {
-            return Err(self.signal_data(sym::INVALID_FUNCTION, vec![Value::Lambda(l.clone())]));
-        }
+        // GNU's wna datum is `(MIN . NONREST)' for byte-code calls
+        // (exec_byte_code) and the function object for `funcall_lambda'.
+        // Under nativecomp, named dumped functions are native subrs:
+        // their wna datum is the `#<subr NAME>' object (funcall) or the
+        // calling symbol (eval) — so a *named* compiled twin takes that
+        // arm regardless of its bytecode twin's argdesc; the
+        // `(MIN . NONREST)' pair is only for anonymous `#[...]' literals.
+        // GNU's wna datum is `(MIN . NONREST)' for byte-code calls
+        // (exec_byte_code) and the function object for `funcall_lambda'.
+        // Under nativecomp, named dumped functions are native subrs:
+        // `funcall' shows the `#<subr NAME>' object — our compiled
+        // Lambda prints that way (see print.rs) — while the eval path
+        // already reported the calling symbol in check_argdesc.
+        // The `(MIN . NONREST)' pair stays for anonymous `#[...]'
+        // literals only.
+        let fun = if self.lambda_name(l).is_some()
+            || (l.compiled && !l.is_bytecode())
+        {
+            Value::Lambda(l.clone())
+        } else {
+            match &l.bc_items {
+                Some(items) if l.is_bytecode() => match items.borrow().first() {
+                    Some(Value::Int(desc)) => {
+                        let (req, max, _rest, _) =
+                            super::bytecode::parse_argdesc(self, &Value::Int(*desc));
+                        Value::cons(Value::Int(req as i128), Value::Int(max as i128))
+                    }
+                    _ => Value::Lambda(l.clone()),
+                },
+                _ => Value::Lambda(l.clone()),
+            }
+        };
+        let arglist = l.arglist.clone().unwrap_or(Value::Nil);
 
         if l.env.is_some() {
-            // Lexical closure: extend captured env.  GNU's
-            // `funcall_lambda' binds every parameter lexically — even
-            // `defvar'd specials and scoped-declared names — since
+            // Lexical closure: GNU's `funcall_lambda' pushes EVERY
+            // `(param . arg)' pair onto the closure env — `defvar'd
+            // specials, scoped-declared names, even nil/t — since
             // `internal-interpreter-environment' is not consulted here.
-            // GNU specbinds `internal-interpreter-environment' to the
-            // env — NOT `lexical-binding': the variable keeps its
-            // 31.1), and `set' on it must persist past the call (this
-            // is how `hack-local-variables' applies `lexical-binding').
-            // Macro expanders invoked from this body see `t' via the
-            // `specbind' in `eval_macro_expand' instead.
             let frame = Rc::new(LexFrame {
                 vars: RefCell::new(Vec::new()),
                 declared: RefCell::new(Vec::new()),
                 parent: l.env.clone(),
             });
             let saved = std::mem::replace(&mut self.lexenv, Some(frame.clone()));
-            let bind_result = self.bind_lambda_args_lexical(&l.clone(), &argv, &frame);
+            let bind_result = self.bind_lambda_walk(&arglist, &argv, &fun, |_i, s, v| {
+                lexframe_bind(&frame, s, v);
+                Ok(())
+            });
             let r = match bind_result {
-                Ok(()) => self.fill_optional_defaults(l, &argv, &frame),
+                Ok(()) => self.eval_body(&l.body),
                 Err(e) => Err(e),
             };
-            match r {
-                Ok(()) => {
-                    let result = self.eval_body(&l.body);
-                    self.lexenv = saved;
-                    result
-                }
-                Err(e) => {
-                    self.lexenv = saved;
-                    Err(e)
-                }
-            }
+            self.lexenv = saved;
+            r
         } else {
             // Dynamic: specbind each parameter, and make sure no lexical
             // env leaks in — dynamic functions can't see callers' lexvars.
             let saved_lex = std::mem::replace(&mut self.lexenv, None);
             let mark = self.specbind_depth();
-            let bind_result = self.bind_lambda_args_result(&l.clone(), &argv);
+            let bind_result =
+                self.bind_lambda_walk(&arglist, &argv, &fun, |i, s, v| i.specbind(s, v));
             let result = match bind_result {
                 Ok(()) => self.eval_body(&l.body),
                 Err(e) => Err(e),
@@ -6704,81 +7309,6 @@ command-line arguments.\" \
             self.unbind_to(mark)?;
             result
         }
-    }
-
-    /// For lexical closures: evaluate `&optional` defaults inside the
-    /// already-created frame for params not supplied.
-    fn fill_optional_defaults(
-        &mut self,
-        l: &Rc<Lambda>,
-        argv: &[Value],
-        frame: &Rc<LexFrame>,
-    ) -> Result<(), Flow> {
-        let supplied = argv.len().min(l.required.len() + l.optional.len());
-        let mut i = l.required.len();
-        for opt in &l.optional {
-            if i >= supplied {
-                let v = match &opt.default {
-                    Some(d) => self.eval(d)?,
-                    None => Value::Nil,
-                };
-                if self.obarray.symbol(opt.sym).special {
-                    self.specbind(opt.sym, v)?;
-                } else {
-                    lexframe_bind(frame, opt.sym, v);
-                }
-            }
-            i += 1;
-        }
-        Ok(())
-    }
-
-    /// Lexical-closure argument binding: every param goes into the new
-    /// frame's `vars' — like GNU's `funcall_lambda', which pushes
-    /// `(param . arg)' pairs unconditionally when the closure is lexical.
-    fn bind_lambda_args_lexical(
-        &mut self,
-        l: &Rc<Lambda>,
-        argv: &[Value],
-        frame: &Rc<LexFrame>,
-    ) -> Result<(), Flow> {
-        let bind = |i: &mut Self, sym: SymId, val: Value| -> Result<(), Flow> {
-            // Like `let': `defvar'd specials specbind dynamically even
-            // in lexical functions (GNU `funcall_lambda').
-            if i.obarray.symbol(sym).special {
-                i.specbind(sym, val)
-            } else {
-                lexframe_bind(frame, sym, val);
-                Ok(())
-            }
-        };
-        let mut i = 0;
-        for s in l.required.iter().copied() {
-            bind(self, s, argv[i].clone())?;
-            i += 1;
-        }
-        for opt in l.optional.iter() {
-            let given = i < argv.len();
-            let v = if given {
-                argv[i].clone()
-            } else {
-                opt.default.clone().unwrap_or(Value::Nil)
-            };
-            bind(self, opt.sym, v)?;
-            if let Some(sp) = opt.supplied {
-                bind(self, sp, Value::from_bool(given))?;
-            }
-            i += 1;
-        }
-        if let Some(rest) = l.rest {
-            let tail = if i < argv.len() {
-                Value::list(argv[i..].to_vec())
-            } else {
-                Value::Nil
-            };
-            bind(self, rest, tail)?;
-        }
-        Ok(())
     }
 
     #[allow(dead_code)]
@@ -6811,40 +7341,6 @@ command-line arguments.\" \
             };
             f(rest, tail);
         }
-    }
-
-    /// Specbind version that evaluates `&optional` defaults properly.
-    fn bind_lambda_args_result(&mut self, l: &Rc<Lambda>, argv: &[Value]) -> Result<(), Flow> {
-        let mut i = 0;
-        for s in &l.required {
-            self.specbind(*s, argv[i].clone())?;
-            i += 1;
-        }
-        for opt in &l.optional {
-            let given = i < argv.len();
-            let v = if given {
-                argv[i].clone()
-            } else {
-                match &opt.default {
-                    Some(d) => self.eval(d)?,
-                    None => Value::Nil,
-                }
-            };
-            self.specbind(opt.sym, v)?;
-            if let Some(sp) = opt.supplied {
-                self.specbind(sp, Value::from_bool(given))?;
-            }
-            i += 1;
-        }
-        if let Some(rest) = l.rest {
-            let tail = if i < argv.len() {
-                Value::list(argv[i..].to_vec())
-            } else {
-                Value::Nil
-            };
-            self.specbind(rest, tail)?;
-        }
-        Ok(())
     }
 
     pub fn unbind_to(&mut self, mark: usize) -> Result<(), Flow> {
@@ -6964,15 +7460,67 @@ command-line arguments.\" \
                     self.macroexp_call_depth -= 1;
                     return self.macro_expand_call(&cdr, args);
                 }
-                self.apply(mac, argv)
+                self.apply(mac, argv).map_err(|f| self.macroexp_wna(mac, f))
             }
-            _ => self.apply(mac, argv),
+            _ => self.apply(mac, argv).map_err(|f| self.macroexp_wna(mac, f)),
         };
         if unadvise {
             self.expand_unadvised_depth -= 1;
         }
         self.macroexp_call_depth -= 1;
         result
+    }
+
+    /// `macro_expand_call' wna datum: GNU's expander is a byte-code
+    /// object, so `exec_byte_code' reports `(MIN . NONREST)' — not the
+    /// function.  remacs stores dumped expanders as `Subr's; translate
+    /// a `wrong-number-of-arguments' from the expander call to the same
+    /// cons datum (`when' expands to ((1 . 1) 0) like GNU's 0x181
+    /// argdesc — `Arity::Many' has no nonrest, so min serves).
+    fn macroexp_wna(&mut self, mac: &Value, f: Flow) -> Flow {
+        if let Flow::Signal(sig, data, _) = &f {
+            if matches!(sig, Value::Sym(s) if *s == sym::WRONG_NUMBER_OF_ARGUMENTS) {
+                if let Some((min, max)) = match mac {
+                    Value::Subr(s) => match s.arity {
+                        Arity::Range { min, max } => Some((min, max)),
+                        Arity::Many { min } => Some((min, min)),
+                        Arity::Unevalled => None,
+                    },
+                    // `#[ARGDESC ...]' byte-code expander (`.elc' twin):
+                    // GNU exec_byte_code reports `(MIN . NONREST)' —
+                    // `when' → ((1 . 1) 0) from argdesc 385.
+                    Value::Lambda(l) => match &l.bc_items {
+                        Some(items) if super::bytecode::is_byte_code(&items.borrow()) => {
+                            let items = items.borrow();
+                            match items.first() {
+                                Some(argdesc) => {
+                                    let (req, max, _rest, _) =
+                                        super::bytecode::parse_argdesc(self, argdesc);
+                                    Some((req as u16, max as u16))
+                                }
+                                None => None,
+                            }
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                } {
+                    let n = data
+                        .list_to_vec()
+                        .ok()
+                        .and_then(|v| v.get(1).cloned())
+                        .unwrap_or(Value::Int(0));
+                    return self.signal_data(
+                        sym::WRONG_NUMBER_OF_ARGUMENTS,
+                        vec![
+                            Value::cons(Value::Int(min as i128), Value::Int(max as i128)),
+                            n,
+                        ],
+                    );
+                }
+            }
+        }
+        f
     }
 
     /// `macroexpand`: repeatedly expand while the form is a macro call.
@@ -7127,6 +7675,178 @@ command-line arguments.\" \
         self.parse_lambda(&items[1], &items[2..], name)
     }
 
+    /// Convert the cdr of a `(lambda CDR...)' form into a `Lambda`,
+    /// mirroring GNU's `Ffunction'/`Fmake_interpreted_closure':
+    ///
+    /// - ARGLIST is `Fcar (cdr)' — a non-cons non-nil atom signals
+    ///   `wrong-type-argument (listp ATOM)' (`(lambda a)' under
+    ///   dynamic eval, `(function (lambda . 5))' alike).
+    /// - A leading string is a docstring only when more forms follow
+    ///   (else it's the sole body form); `(:documentation FORM)' is
+    ///   evaluated at closure-construction time like GNU.
+    /// - `(interactive ...)' — any cons starting `interactive' — is the
+    ///   interactive spec; `(interactive . X)' signals listp X via
+    ///   GNU's `CHECK_LIST (iform)'.
+    /// - An empty body normalizes to `(nil)' ("make sure the body is
+    ///   never empty").
+    /// - With a lexical env GNU routes through `internal-make-closure'
+    ///   (cconv.el): `cl-assert (consp body)' then `(listp args)',
+    ///   yielding `cl-assertion-failed' errors; the dynamic
+    ///   `Fmake_interpreted_closure' signals `wta consp'/`listp' on the
+    ///   same operands.
+    pub fn lambda_from_function_form(&mut self, cdr: &Value) -> Result<Lambda, Flow> {
+        // `cdr' is FCDR of the `(lambda ...)' form — the spine check in
+        // eval_form already ensured it's a proper list or atom.
+        let arglist = match cdr {
+            Value::Nil => Value::Nil,
+            Value::Cons(c) => c.borrow().car.clone(),
+            // GNU `Fcar' on an atom signals listp ATOM (the `5' of
+            // `(lambda . 5)').
+            other => return Err(self.wrong_type_mut("listp", other)),
+        };
+        let mut body = match cdr {
+            Value::Nil | Value::Cons(_) => match cdr {
+                Value::Nil => Value::Nil,
+                Value::Cons(c) => c.borrow().cdr.clone(),
+                _ => unreachable!(),
+            },
+            _ => Value::Nil,
+        };
+        let mut docstring = Value::Nil;
+        let mut iform = Value::Nil;
+        // GNU: a leading string is the docstring iff a body follows.
+        if let Value::Cons(c) = &body {
+            let (first, rest) = {
+                let b = c.borrow();
+                (b.car.clone(), b.cdr.clone())
+            };
+            match &first {
+                Value::Str(s) => {
+                    if !rest.is_nil() {
+                        docstring = first.clone();
+                        body = rest;
+                    } else {
+                        let _ = s;
+                    }
+                }
+                Value::Cons(cc) => {
+                    // `(:documentation FORM)': evaluate FORM now; nil or
+                    // a non-consp cdr means it isn't a docstring at all.
+                    let is_doc = {
+                        let b = cc.borrow();
+                        matches!(&b.car, Value::Sym(s)
+                            if self.symbol_name(*s) == ":documentation")
+                    };
+                    if is_doc {
+                        let form = {
+                            let b = cc.borrow();
+                            match &b.cdr {
+                                Value::Cons(a) => a.borrow().car.clone(),
+                                _ => Value::Nil,
+                            }
+                        };
+                        let v = self.eval(&form)?;
+                        if !v.is_nil() {
+                            docstring = v;
+                            body = rest;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        // `(interactive ...)' in the (post-docstring) front slot.
+        if let Value::Cons(c) = &body {
+            let (first, rest) = {
+                let b = c.borrow();
+                (b.car.clone(), b.cdr.clone())
+            };
+            let is_interactive = match &first {
+                Value::Cons(cc) => {
+                    let b = cc.borrow();
+                    self.sym_is(&b.car, sym::INTERACTIVE)
+                }
+                _ => false,
+            };
+            if is_interactive {
+                iform = first.clone();
+                body = rest;
+            }
+        }
+        if body.is_nil() {
+            body = Value::list(vec![Value::Nil]);
+        }
+        // The make-interpreted-closure checks.  GNU's dynamic path
+        // (Fmake_interpreted_closure) uses CHECK_CONS/CHECK_LIST; the
+        // lexical path goes through `internal-make-closure' whose
+        // `cl-assert's produce `cl-assertion-failed' instead.
+        if self.lexenv.is_some() {
+            if !matches!(body, Value::Cons(_)) {
+                let assert_id = self.intern("cl-assertion-failed");
+                let consp_id = self.intern("consp");
+                let body_id = self.intern("body");
+                return Err(self.signal_data(
+                    assert_id,
+                    vec![Value::list(vec![
+                        Value::Sym(consp_id),
+                        Value::Sym(body_id),
+                    ])],
+                ));
+            }
+            let arglist_ok = matches!(arglist, Value::Cons(_) | Value::Nil);
+            if !arglist_ok {
+                let assert_id = self.intern("cl-assertion-failed");
+                let listp_id = self.intern("listp");
+                let args_id = self.intern("args");
+                return Err(self.signal_data(
+                    assert_id,
+                    vec![Value::list(vec![
+                        Value::Sym(listp_id),
+                        Value::Sym(args_id),
+                    ])],
+                ));
+            }
+        } else {
+            if !matches!(body, Value::Cons(_)) {
+                return Err(self.wrong_type_mut("consp", &body));
+            }
+            if !matches!(arglist, Value::Cons(_) | Value::Nil) {
+                return Err(self.wrong_type_mut("listp", &arglist));
+            }
+        }
+        // CHECK_LIST (iform): a dotted `(interactive . X)' tails out.
+        let mut tail = iform.clone();
+        while let Value::Cons(c) = &tail {
+            let next = c.borrow().cdr.clone();
+            tail = next;
+        }
+        if !tail.is_nil() {
+            return Err(self.wrong_type_mut("listp", &tail));
+        }
+        let body_vec = match body.list_to_vec() {
+            Ok(v) => v,
+            Err(crate::lisp::value::ListError::Dotted(t)) => {
+                return Err(self.wrong_type_mut("listp", &t))
+            }
+            Err(_) => return Err(self.wrong_type_mut("listp", &body)),
+        };
+        let mut lambda = self.parse_lambda(&arglist, &body_vec, None)?;
+        lambda.env = self.lambda_env();
+        lambda.doc_value = if docstring.is_nil() {
+            None
+        } else {
+            Some(docstring.clone())
+        };
+        lambda.doc = match &docstring {
+            Value::Str(s) => Some(s.borrow().clone()),
+            _ => lambda.doc.clone(),
+        };
+        if !iform.is_nil() {
+            lambda.interactive = Some(iform);
+        }
+        Ok(lambda)
+    }
+
     /// Build a `Lambda` from a param list and body forms.
     pub fn parse_lambda(
         &mut self,
@@ -7136,16 +7856,24 @@ command-line arguments.\" \
     ) -> Result<Lambda, Flow> {
         let mut required = Vec::new();
         let mut optional = Vec::new();
-        let mut rest = None;
         let mut bad_arglist = false;
-        let mut mode = 0u8; // 0 = required, 1 = optional, 2 = rest done
-        // `&body' is GNU's `&rest' synonym, legal in macro arglists
-        // (defmacro/cl-defmacro) — treat it identically here.
-        let body_kw = self.intern("&body");
+        let mut rest = None;
+        // GNU's `funcall_lambda' rest/optional state: `&rest' seen but
+        // its parameter not yet bound (`rest_seen && rest.is_none()' =
+        // GNU's `previous_rest').
+        let mut rest_seen = false;
+        let mut mode = 0u8; // 0 = required, 1 = optional, 2 = post-&rest
+        // GNU's `funcall_lambda' only knows `&optional'/`&rest' — every
+        // other `&'-prefixed name (`&body', `&key', `&whole', ...) is an
+        // ordinary parameter symbol.  A second keyword, `&optional'
+        // after `&rest', or a bare `&rest'/`&optional' at the tail makes
+        // the arglist call-invalid rather than a parse error.
         let plist = params;
         let mut cur = plist.clone();
         loop {
-            match cur {
+            // Clone for the match: the `other' arm compares `cur' to
+            // `plist' after the match scrutinee consumes the clone.
+            match cur.clone() {
                 Value::Nil => break,
                 Value::Cons(c) => {
                     let (car, next) = {
@@ -7153,8 +7881,22 @@ command-line arguments.\" \
                         (b.car.clone(), b.cdr.clone())
                     };
                     match self.sym_id(&car) {
-                        Some(s) if s == sym::OPTIONAL => mode = 1,
-                        Some(s) if s == sym::REST || s == body_kw => {
+                        Some(s) if s == sym::OPTIONAL => {
+                            // GNU: `&optional' after `&rest' or a
+                            // second `&optional' → call-invalid.
+                            if mode != 0 {
+                                bad_arglist = true;
+                            }
+                            mode = 1;
+                        }
+                        Some(s) if s == sym::REST => {
+                            // GNU: a second `&rest' → call-invalid.
+                            // `rest_seen' latches on the keyword itself
+                            // so a bare trailing `&rest' is invalid.
+                            if rest_seen {
+                                bad_arglist = true;
+                            }
+                            rest_seen = true;
                             mode = 2;
                         }
                         _ => match mode {
@@ -7205,32 +7947,65 @@ command-line arguments.\" \
                                 }
                             }
                             _ => {
+                                // GNU `funcall_lambda': after `&rest'
+                                // consumed the arg list (i = nargs),
+                                // further symbols bind nil; a non-symbol
+                                // element is call-invalid.
                                 if rest.is_none() {
                                     if let Some(s) = self.sym_id(&car) {
                                         rest = Some(s);
                                     } else {
-                                        return Err(self.error("bad &rest parameter"));
+                                        // `(&rest 5)': invalid at call.
+                                        bad_arglist = true;
                                     }
-                                } else {
-                                    return Err(self.error("multiple &rest parameters"));
+                                } else if self.sym_id(&car).is_none() {
+                                    // `(&rest a 5)': invalid at call.
+                                    bad_arglist = true;
                                 }
+                                // Post-`&rest' symbols need no slot:
+                                // GNU binds them nil at call time
+                                // (`i = nargs' fast path), which the
+                                // raw-arglist call walk reproduces.
                             }
                         },
                     }
                     cur = next;
                 }
-                // A dotted tail `(a . b)' names the rest parameter —
-                // GNU accepts `(lambda a ...)' and `(lambda (a . b) ...)'
-                // alike, binding the full/remaining arg list to it.
-                Value::Sym(s) => {
-                    if rest.is_none() {
-                        rest = Some(s);
-                        break;
-                    }
-                    return Err(self.error("multiple &rest parameters"));
+                // A dotted tail: GNU's `funcall_lambda' rejects ANY
+                // non-nil tail at call time (`!NILP (syms_left)' →
+                // invalid-function), symbol tails like `(a . b)'
+                // included.  The closure still builds; the arglist
+                // prints verbatim.
+                Value::Sym(_) => {
+                    bad_arglist = true;
+                    break;
                 }
-                _ => return Err(self.error("dotted lambda list")),
+                _ => {
+                    // `cur == plist' only when the ARGLIST itself is
+                    // this atom: internal-make-closure asserts
+                    // `(listp args)' → `cl-assertion-failed'.
+                    if crate::lisp::builtins::eq_values(&cur, plist) {
+                        let assert_id = self.intern("cl-assertion-failed");
+                        let listp_id = self.intern("listp");
+                        let args_id = self.intern("args");
+                        return Err(self.signal_data(
+                            assert_id,
+                            vec![Value::list(vec![
+                                Value::Sym(listp_id),
+                                Value::Sym(args_id),
+                            ])],
+                        ));
+                    }
+                    // Mid-list non-symbol tail `(a . 2)': call-invalid.
+                    bad_arglist = true;
+                    break;
+                }
             }
+        }
+        // GNU's `previous_rest' end state: a `&rest' keyword with no
+        // following parameter name is call-invalid.
+        if rest_seen && rest.is_none() {
+            bad_arglist = true;
         }
 
         // Extract docstring and interactive spec from the body front.
@@ -7278,7 +8053,13 @@ command-line arguments.\" \
                     start = i + 1;
                     break;
                 }
-                if self.sym_is(&b.car, self.intern_soft("declare").unwrap_or(SymId::MAX)) {
+                // `(declare ...)' specs are a `defun'/`defmacro'
+                // facility — `macroexp-parse-body' strips them there.
+                // A bare `lambda' has no declaration handling (GNU
+                // `Ffunction' keeps them in the body).
+                if name.is_some()
+                    && self.sym_is(&b.car, self.intern_soft("declare").unwrap_or(SymId::MAX))
+                {
                     start = i + 1;
                     continue;
                 }
@@ -7303,6 +8084,8 @@ command-line arguments.\" \
             compiled: self.loading_dumped || self.dumped_call_depth > 0,
             advice_link: None,
             bc_items: None,
+            bc_closure: false,
+            bc_prog: std::cell::RefCell::new(None),
             doc_value,
             env_value: None,
         })
@@ -7612,7 +8395,23 @@ command-line arguments.\" \
         ] {
             put(self, name, conds);
         }
-
+        // `target-idx' properties from syms_of_coding (coding.c):
+        // `find-operation-coding-system' picks its TARGET argument via
+        // the operation symbol's `target-idx' plist entry.
+        {
+            let tidx = self.intern("target-idx");
+            for (op, n) in [
+                ("insert-file-contents", 0i128),
+                ("write-region", 2),
+                ("call-process", 0),
+                ("call-process-region", 2),
+                ("start-process", 2),
+                ("open-network-stream", 3),
+            ] {
+                let s = self.intern(op);
+                self.put_prop(s, tidx, Value::Int(n));
+            }
+        }
         // Tree-sitter errors (treesit.c): a `treesit-error' parent so
         // `ignore-errors'/`condition-case error' catches them — GNU's
         // `treesit-query-valid-p' relies on that to probe grammars.
@@ -8285,7 +9084,9 @@ command-line arguments.\" \
             "term-setup-hook",
             "translation-table-for-input",
             "unicode-category-table",
+            "unread-command-events",
             "unread-input-method-events",
+            "unread-post-input-method-events",
             "use-file-dialog",
             "user-emacs-directory",
             "user-real-login-name",
@@ -8390,6 +9191,11 @@ command-line arguments.\" \
             "font-lock-defaults",
             "current-input-method",
             "text-property-default-nonsticky",
+            // GNU marks `fontification-functions' local-if-set:
+            // `local-variable-p' stays nil until set, but
+            // `local-variable-if-set-p' is t, so `add-hook LOCAL' does
+            // not prepend `t' to the fresh local value.
+            "fontification-functions",
         ];
         for name in &auto_locals {
             let id = self.intern(name);
@@ -8718,6 +9524,26 @@ command-line arguments.\" \
             ("buffer-undo-list", Value::Nil),
             ("mark-ring", Value::Nil),
             ("text-quoting-style", Value::Nil),
+            // GNU main() seeds this from `using_utf8 ()' (the
+            // LC_ALL > LC_CTYPE > LANG codeset); startup.el forces it
+            // to t for interactive sessions.  nil makes a nil
+            // `text-quoting-style' behave as `grave'.
+            (
+                "internal--text-quoting-flag",
+                // GNU main() seeds this from `using_utf8 ()' — the
+                // LC_ALL > LC_CTYPE > LANG codeset — and startup.el
+                // itself forces t for interactive sessions, so batch
+                // under a non-UTF-8 locale must stay nil (grave).
+                Value::from_bool({
+                    let loc = ["LC_ALL", "LC_CTYPE", "LANG"]
+                        .iter()
+                        .filter_map(|k| std::env::var(k).ok())
+                        .find(|v| !v.is_empty())
+                        .unwrap_or_default()
+                        .to_ascii_lowercase();
+                    loc.contains("utf-8") || loc.contains("utf8")
+                }),
+            ),
             ("transient-mark-mode", Value::Nil),
             ("mark-even-if-inactive", Value::t()),
             ("use-empty-active-region", Value::Nil),
@@ -9104,7 +9930,7 @@ command-line arguments.\" \
             ("load-read-function", Value::Sym(self.intern("read"))),
             ("obarray-size", Value::Int(15121)),
             ("max-image-size", Value::float(10.0)),
-            ("image-scaling-factor", Value::string("auto")),
+            ("image-scaling-factor", Value::Sym(self.intern("auto"))),
             ("use-short-answers", Value::Nil),
             ("yes-or-no-prompt", Value::string("(yes or no) ")),
             ("async-shell-command-display-buffer", Value::Sym(sym::T)),
@@ -9140,7 +9966,10 @@ command-line arguments.\" \
             ("installation-directory", Value::Nil),
             ("invocation-name", Value::string("remacs")),
             ("invocation-directory", Value::Nil),
-            ("source-directory", Value::Nil),
+            (
+                "source-directory",
+                Value::string(env!("CARGO_MANIFEST_DIR")),
+            ),
             ("emacs-program-version", Value::string("31.1")),
             ("emacs-major-version", Value::Int(31)),
             ("keyboard-type", Value::Sym(self.intern("pc"))),
@@ -9444,17 +10273,36 @@ command-line arguments.\" \
             ),
             (
                 "initial-scratch-message",
+                // GNU startup.el stores the RAW `\[find-file]' form;
+                // `get-scratch-buffer-create' runs it through
+                // substitute-command-keys at insertion time, which adds
+                // the `...' quoting and help-key-binding text props.
                 Value::string(
-                    ";; This buffer is for text that is not saved, and for Lisp evaluation.\n;; To create a file, visit it with C-x C-f and enter text in its buffer.\n\n",
+                    ";; This buffer is for text that is not saved, and for Lisp evaluation.\n;; To create a file, visit it with `\\[find-file]' and enter text in its buffer.\n\n",
                 ),
             ),
             ("inhibit-startup-screen", Value::Nil),
-            ("user-full-name", Value::string("user")),
-            ("user-login-name", Value::string("user")),
+            (
+                // GNU init_editfns: getenv("NAME") if set, else the
+                // GECOS full name of the effective user (getpwuid when
+                // the claimed env name matches the real one).
+                "user-full-name",
+                Value::string(crate::lisp::builtins::misc::boot_user_full_name()),
+            ),
+            (
+                // GNU init_editfns: LOGNAME, then USER, then
+                // getpwuid(geteuid()).
+                "user-login-name",
+                Value::string(crate::lisp::builtins::misc::boot_user_login_name()),
+            ),
             ("user-mail-address", Value::string("user@localhost")),
-            ("user-real-login-name", Value::string("user")),
-            ("user-uid", Value::Int(1000)),
-            ("user-real-uid", Value::Int(1000)),
+            (
+                // getpwuid(getuid()) — environment ignored.
+                "user-real-login-name",
+                Value::string(crate::lisp::builtins::misc::boot_user_real_login_name()),
+            ),
+            ("user-uid", Value::Int(crate::lisp::builtins::misc::boot_geteuid())),
+            ("user-real-uid", Value::Int(crate::lisp::builtins::misc::boot_getuid())),
             ("history-add-new-input", Value::t()),
             ("save-abbrevs", Value::t()),
             ("debug-on-error", Value::Nil),
@@ -9910,25 +10758,32 @@ command-line arguments.\" \
                 }
                 continue;
             }
-            // print/princ byte-chars: `\NNN' escapes into multibyte
-            // text, the eight-bit char itself into unibyte text.
-            let b = print_eight_bit_byte(c)
-                .or_else(|| eight_bit_byte(c))
-                .or_else(|| raw_byte_marker(c));
-            match (b, mb) {
-                (Some(b), true) => {
+            // print/prin1 byte-chars: `\NNN' escapes into multibyte
+            // text; PRINC's plain `eight_bit_byte'/`raw_byte_marker'
+            // chars stay as the eight-bit char itself (GNU princ →
+            // the char, prin1 → the escape), so they don't double-
+            // escape when the result is later printed.
+            if let Some(b) = print_eight_bit_byte(c) {
+                if mb {
                     let _ = std::fmt::Write::write_fmt(
                         &mut out,
                         format_args!("\\{:03o}", b),
                     );
+                } else if let Some(p) = char::from_u32(EIGHT_BIT_BASE + b as u32) {
+                    // Unibyte sink: downgrade the sentinel to the
+                    // eight-bit char (0xF0080+b), not the sentinel.
+                    out.push(p);
                 }
-                (Some(b), false) => {
-                    if let Some(p) = char::from_u32(EIGHT_BIT_BASE + b as u32) {
-                        out.push(p);
-                    }
-                }
-                (None, _) => out.push(c),
+                continue;
             }
+            // PRINC emitted the byte-char itself; keep the char —
+            // rewriting to `\NNN' text here double-escapes it when
+            // the message string is printed again (GNU stores bytes).
+            if let Some(_b) = eight_bit_byte(c).or_else(|| raw_byte_marker(c)) {
+                out.push(c);
+                continue;
+            }
+            out.push(c);
         }
         std::borrow::Cow::Owned(out)
     }
@@ -9941,8 +10796,8 @@ command-line arguments.\" \
 
     /// GNU printchar's function-stream argument: princ of a unibyte
     /// byte-char passes the raw byte, prin1 and write-char pass the
-    /// eight-bit char code (0x3FFF80+b); everything else is the char's
-    /// own code.
+    /// eight-bit char code (0x3FFF00+byte, so byte 0x80 → 0x3FFF80);
+    /// everything else is the char's own code.
     fn fn_stream_code(c: char) -> i128 {
         use crate::lisp::value::{
             eight_bit_byte, print_eight_bit_byte, raw_byte_marker,
@@ -9951,7 +10806,7 @@ command-line arguments.\" \
         if let Some(b) = write_char_eight_bit_byte(c)
             .or_else(|| print_eight_bit_byte(c))
         {
-            0x3FFF80 + b as i128
+            0x3FFF00 + b as i128
         } else if let Some(b) = eight_bit_byte(c).or_else(|| raw_byte_marker(c)) {
             b as i128
         } else {
@@ -9976,8 +10831,16 @@ command-line arguments.\" \
         };
         match &dest {
             Value::Buffer(b) => {
-                let bid = b.borrow().id;
-                let text = Self::sink_text(s);
+                let bb = b.borrow();
+                let bid = bb.id;
+                let ems = self.intern("enable-multibyte-characters");
+                let mb = bb
+                    .locals
+                    .get(&ems)
+                    .map(|v| v.truthy())
+                    .unwrap_or_else(|| self.symbol_value(ems).truthy());
+                drop(bb);
+                let text = Self::sink_text_mb(s, mb);
                 crate::buffer::primitives::chg_with_buffer(self, bid, |i| {
                     crate::buffer::primitives::chg_insert_pt(i, &text, false)
                 })?;
@@ -9989,7 +10852,19 @@ command-line arguments.\" \
                 if let Some(buf_id) = mm.buffer {
                     let pos = mm.position;
                     drop(mm);
-                    let text = Self::sink_text(s);
+                    let ems = self.intern("enable-multibyte-characters");
+                    let mb = self
+                        .buffers
+                        .get(buf_id)
+                        .map(|b| {
+                            let bb = b.borrow();
+                            bb.locals
+                                .get(&ems)
+                                .map(|v| v.truthy())
+                                .unwrap_or_else(|| self.symbol_value(ems).truthy())
+                        })
+                        .unwrap_or(true);
+                    let text = Self::sink_text_mb(s, mb);
                     if self.buffers.get(buf_id).is_some() {
                         crate::buffer::primitives::chg_with_buffer(self, buf_id, |i| {
                             crate::buffer::primitives::chg_insert(i, pos, &text)
@@ -10022,7 +10897,11 @@ command-line arguments.\" \
                     self.apply(&dest, vec![Value::Int(Self::fn_stream_code(ch))])?;
                 }
             }
-            _ => {
+            // GNU `printcharfun': any non-nil/t, non-buffer, non-marker,
+            // non-function value is treated as a FUNCTION name — ints,
+            // strings, vectors, non-function lists, hash-tables all die
+            // in funcall with (invalid-function VALUE).
+            Value::Nil | Value::Sym(_) => {
                 // nil or t: the real print destination — echo area
                 // interactively, stdout in batch.
                 match &self.output {
@@ -10059,24 +10938,25 @@ command-line arguments.\" \
                                     bytes.extend_from_slice(
                                         &crate::lisp::value::mule_high_bytes(code),
                                     );
-                                } else if let Some(b) =
-                                    crate::lisp::value::eight_bit_byte(c)
-                                {
-                                    // princ content byte: raw byte.
-                                    bytes.push(b);
-                                } else if let Some(b) =
-                                    crate::lisp::value::print_eight_bit_byte(c)
-                                        .or_else(|| crate::lisp::value::write_char_eight_bit_byte(c))
-                                {
-                                    // prin1/write-char: GNU's overlong
-                                    // two-byte encoding.
-                                    bytes.push(0xC0 + ((b >> 6) & 1));
-                                    bytes.push(0x80 + (b & 0x3F));
                                 } else {
-                                    let mut tmp = [0u8; 4];
-                                    bytes.extend_from_slice(
-                                        c.encode_utf8(&mut tmp).as_bytes(),
-                                    );
+                                    let b = crate::lisp::value::eight_bit_byte(c)
+                                        .or_else(|| crate::lisp::value::print_eight_bit_byte(c))
+                                        .or_else(|| crate::lisp::value::write_char_eight_bit_byte(c));
+                                    match b {
+                                        // every eight-bit char class
+                                        // goes out as GNU's overlong
+                                        // two-byte encoding
+                                        Some(b) => {
+                                            bytes.push(0xC0 + ((b >> 6) & 1));
+                                            bytes.push(0x80 + (b & 0x3F));
+                                        }
+                                        None => {
+                                            let mut tmp = [0u8; 4];
+                                            bytes.extend_from_slice(
+                                                c.encode_utf8(&mut tmp).as_bytes(),
+                                            );
+                                        }
+                                    }
                                 }
                             }
                             use std::io::Write;
@@ -10089,6 +10969,14 @@ command-line arguments.\" \
                         self.stderr_need_newline = true;
                     }
                     None => self.echo_message.push_str(&Self::sink_text(s)),
+                }
+            }
+            _ => {
+                // Non-nil/t, non-buffer/marker/function values are
+                // function NAMES — apply yields the GNU errors
+                // ((invalid-function 5) / ((invalid-function (1)) etc).
+                for ch in s.chars() {
+                    self.apply(&dest, vec![Value::Int(Self::fn_stream_code(ch))])?;
                 }
             }
         }
@@ -10881,16 +11769,13 @@ command-line arguments.\" \
             .unwrap_or(Value::Nil)
     }
 
-    /// `wrong-type-argument` where pred is a value (used by builtins that
-    /// pass arbitrary predicates).
+    /// `(error "MSG" DATA)' — GNU signal2(Qerror, build_string(MSG),
+    /// DATA): the object travels as error data, NOT concatenated into
+    /// the message string.
     pub fn error_obj(&self, msg: &str, v: &Value) -> Flow {
         self.signal_data(
             sym::ERROR,
-            vec![Value::string(format!(
-                "{}: {}",
-                msg,
-                self.princ_to_string(v)
-            ))],
+            vec![Value::string(msg), v.clone()],
         )
     }
 
@@ -10930,6 +11815,15 @@ command-line arguments.\" \
         // autoload cells; applying the raw `(autoload ...)' cons would
         // hit apply's bare-cons `symbolp' check ("No file chosen" path
         // in dired's mouse command, M-x on autoloaded commands).
+        // GNU command_execute: string/vector commands are keyboard
+        // macros — `Fexecute_kbd_macro' on them (batch runs it too:
+        // `(command-execute "a")' self-inserts `a' like GNU).
+        if matches!(cmd, Value::Str(_) | Value::Vec(_)) {
+            return crate::editor::f_execute_kbd_macro_pub(
+                self,
+                vec![cmd.clone()].into(),
+            );
+        }
         let fun = match cmd {
             Value::Sym(id) => {
                 let mut f = self.symbol_function(*id);
@@ -10944,23 +11838,18 @@ command-line arguments.\" \
         };
         self.interactive_call_depth += 1;
         let res = (|| {
-            // Interactive spec: evaluate it to get args (simplified — the
-            // editor drives real prompting; batch mode uses defaults).
-            if let Some(l) = fun.as_lambda() {
-                let spec = l.interactive.clone().or_else(|| {
-                    crate::lisp::builtins::data::bc_interactive_form(self, l)
-                });
-                if let Some(spec) = spec {
-                    let argv = self.eval_interactive_spec(&spec)?;
-                    return self.apply(&fun, argv);
-                }
-            }
-            // Subrs: honor the declared interactive spec, if any.
-            if let Value::Subr(s) = &fun {
-                if let Some(spec_form) = subr_interactive_form(self, s.name) {
-                    let argv = self.eval_interactive_spec(&spec_form)?;
-                    return self.apply(&fun, argv);
-                }
+            // Interactive spec: GNU Fcall_interactively uses
+            // `interactive-form' for every function kind — lambdas,
+            // `#[...]' byte-code objects, oclosures (via
+            // `oclosure-interactive-form') and subrs — so a single
+            // `f_interactive_form' dispatch covers them all.
+            let spec = crate::lisp::builtins::data::f_interactive_form(
+                self,
+                vec![fun.clone()].into(),
+            )?;
+            if !spec.is_nil() {
+                let argv = self.eval_interactive_spec(&spec)?;
+                return self.apply(&fun, argv);
             }
             self.apply(&fun, vec![])
         })();
@@ -10983,23 +11872,81 @@ command-line arguments.\" \
                 let chars: Vec<char> = s.borrow().chars().collect();
                 let mut out = Vec::new();
                 let mut pos = 0usize;
+                // GNU callint.c: each spec line's prompt text is
+                // Fformat_message'd with the args collected so far —
+                // BEFORE the control letter is dispatched.  A `%'
+                // sequence with too few args signals
+                // "Not enough arguments for format string" even when
+                // the letter itself would be invalid or the prompt
+                // text is unused ('r'/'d'/'p' &co).
+                let take_fmt = |i: &mut Interp,
+                                chars: &[char],
+                                pos: &mut usize,
+                                out: &[Value]|
+                 -> Result<String, Flow> {
+                    let prompt = take_prompt(chars, pos);
+                    let mut argv = vec![Value::string(prompt)];
+                    argv.extend_from_slice(out);
+                    match crate::lisp::builtins::strfn::f_format_message(
+                        i,
+                        crate::lisp::Argv::from(argv),
+                    )? {
+                        Value::Str(fs) => Ok(fs.borrow().clone()),
+                        _ => Ok(String::new()),
+                    }
+                };
+                // GNU callint.c: leading `+' (reserved), `*'
+                // (read-only barf), `-' (ignored), `@'/`^' (mouse
+                // selection hooks — no-ops in batch) are stripped at
+                // offset 0 only; elsewhere they fall through to the
+                // invalid-letter error.
                 while pos < chars.len() {
+                    if pos == 0 {
+                        match chars[pos] {
+                            '+' => {
+                                return Err(self.error(
+                                    "\u{2018}+\u{2019} is not used in \u{2018}interactive\u{2019} for ordinary commands",
+                                ))
+                            }
+                            '*' => {
+                                crate::buffer::primitives::check_writable(self)?;
+                                pos += 1;
+                                continue;
+                            }
+                            '-' | '@' | '^' => {
+                                pos += 1;
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
                     let c = chars[pos];
                     pos += 1;
+                    // GNU callint.c formats the prompt text BEFORE
+                    // dispatching the letter — format errors (and the
+                    // prompt's consumption) precede even an
+                    // invalid-letter report.
+                    let prompt = take_fmt(self, &chars, &mut pos, &out)?;
                     match c {
-                        // Prefix modifiers and prompt separators produce
-                        // no argument.
-                        '*' | '^' | '@' | '\n' => {}
                         'r' => {
+                            // GNU callint 'r' = region-beginning +
+                            // region-end: no mark set → "The mark is
+                            // not set now, so there is no region".
                             let (p, m) = self
                                 .current_buffer_ref()
                                 .map(|b| {
                                     let bb = b.borrow();
-                                    (bb.point, bb.mark_position().unwrap_or(bb.point))
+                                    (bb.point, bb.mark_position())
                                 })
-                                .unwrap_or((0, 0));
-                            // `r' yields region-beginning/region-end
-                            // (ordered) like Emacs.
+                                .unwrap_or((0, None));
+                            let m = match m {
+                                Some(m) => m,
+                                None => {
+                                    return Err(self.error(
+                                        "The mark is not set now, so there is no region",
+                                    ));
+                                }
+                            };
                             let (beg, end) = if p <= m { (p, m) } else { (m, p) };
                             out.push(Value::Int(beg as i128 + 1));
                             out.push(Value::Int(end as i128 + 1));
@@ -11038,10 +11985,8 @@ command-line arguments.\" \
                             } else {
                                 out.push(pa);
                             }
-                            skip_prompt(&chars, &mut pos);
                         }
                         'n' | 'N' => {
-                            let prompt = take_prompt(&chars, &mut pos);
                             let pa = self.prefix_arg();
                             // `N' uses a supplied prefix; `n' always
                             // prompts (GNU callint.c).
@@ -11055,7 +12000,6 @@ command-line arguments.\" \
                             }
                         }
                         'b' | 'B' => {
-                            let prompt = take_prompt(&chars, &mut pos);
                             if let Some(v) = self.command_args.first() {
                                 out.push(v.clone());
                             } else {
@@ -11082,7 +12026,6 @@ command-line arguments.\" \
                             }
                         }
                         's' | 'M' => {
-                            let prompt = take_prompt(&chars, &mut pos);
                             if let Some(v) = self.command_args.first() {
                                 out.push(v.clone());
                             } else {
@@ -11091,7 +12034,6 @@ command-line arguments.\" \
                             }
                         }
                         'F' | 'f' | 'D' | 'G' => {
-                            let prompt = take_prompt(&chars, &mut pos);
                             if let Some(v) = self.command_args.first() {
                                 out.push(v.clone());
                             } else {
@@ -11102,7 +12044,6 @@ command-line arguments.\" \
                             }
                         }
                         'z' | 'Z' => {
-                            let prompt = take_prompt(&chars, &mut pos);
                             if let Some(v) = self.command_args.first() {
                                 out.push(v.clone());
                             } else {
@@ -11113,7 +12054,6 @@ command-line arguments.\" \
                             }
                         }
                         'a' | 'C' | 'S' | 'v' => {
-                            let prompt = take_prompt(&chars, &mut pos);
                             if let Some(v) = self.command_args.first() {
                                 out.push(v.clone());
                             } else if let Some(s) = self.spec_line(&prompt)? {
@@ -11123,7 +12063,6 @@ command-line arguments.\" \
                             }
                         }
                         'k' | 'K' => {
-                            let prompt = take_prompt(&chars, &mut pos);
                             if let Some(v) = self.command_args.first() {
                                 out.push(v.clone());
                             } else if self.minibuf_reader.is_some() {
@@ -11168,7 +12107,6 @@ command-line arguments.\" \
                             }
                         }
                         'x' | 'X' => {
-                            let prompt = take_prompt(&chars, &mut pos);
                             if let Some(v) = self.command_args.first() {
                                 out.push(v.clone());
                             } else {
@@ -11184,7 +12122,6 @@ command-line arguments.\" \
                             }
                         }
                         'c' | 'e' => {
-                            let prompt = take_prompt(&chars, &mut pos);
                             if let Some(v) = self.command_args.first() {
                                 out.push(v.clone());
                             } else if self.minibuf_reader.is_some() {
@@ -11208,9 +12145,15 @@ command-line arguments.\" \
                             }
                         }
                         _ => {
-                            // Unknown/prompting code → nil in batch.
-                            skip_prompt(&chars, &mut pos);
-                            out.push(Value::Nil);
+                            // GNU callint.c `default:': any unknown
+                            // letter (including `+') signals —
+                            // silently skipping it makes bogus specs
+                            // like "~" return nil.
+                            let letter = c as i128;
+                            return Err(self.error_q(&format!(
+                                "Invalid control letter \u{2018}{}\u{2019} (#o{:03o}, #x{:04x}) in interactive calling string",
+                                c, letter, letter
+                            ), &[]));
                         }
                     }
                 }
@@ -11235,7 +12178,7 @@ command-line arguments.\" \
 /// produce history items, so the set must be broader than
 /// `(defun . name)' pairs.  Cycles and shared tails are bounded by a
 /// visited-cons counter.
-fn collect_item_syms(i: &Interp, v: &Value, out: &mut HashSet<SymId>) {
+fn collect_item_syms(_i: &Interp, v: &Value, out: &mut HashSet<SymId>) {
     let mut work = vec![v.clone()];
     let mut steps = 0usize;
     while let Some(x) = work.pop() {
@@ -12076,6 +13019,7 @@ pub(crate) fn subr_interactive(name: &str) -> Option<&'static str> {
             "sRun after delay (seconds): \nNRepeat interval: \naFunction: ",
         ),
         ("save-buffer", "p"),
+        ("search-emacs-glossary", "\u{1}nil"),
         ("save-buffers-kill-emacs", "P"),
         ("save-buffers-kill-terminal", "P"),
         ("save-some-buffers", "P"),
@@ -12314,11 +13258,6 @@ fn take_prompt(chars: &[char], pos: &mut usize) -> String {
     p
 }
 
-/// Skip an interactive-spec prompt without capturing it.
-fn skip_prompt(chars: &[char], pos: &mut usize) {
-    let _ = take_prompt(chars, pos);
-}
-
 /// Saved point/buffer for `save-excursion` (marker-based, like GNU).
 pub struct ExcursionState {
     pub buffer: usize,
@@ -12471,6 +13410,44 @@ pub fn plist_get_v(plist: &Value, prop: &Value) -> Value {
     }
 }
 
+/// `plist_lookup' with an arbitrary (eq-compared) key — overlay
+/// plists aren't restricted to symbol keys either.
+pub fn plist_lookup_v(plist: &Value, prop: &Value) -> Option<Value> {
+    let mut cur = plist.clone();
+    let mut n = 0;
+    loop {
+        match cur {
+            Value::Cons(c) => {
+                let (car, next) = {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                if crate::lisp::builtins::eq_values(&car, prop) {
+                    if let Value::Cons(c2) = &next {
+                        return Some(c2.borrow().car.clone());
+                    }
+                    return Some(Value::Nil);
+                }
+                match next {
+                    Value::Cons(c2) => {
+                        let n2 = {
+                            let b = c2.borrow();
+                            b.cdr.clone()
+                        };
+                        cur = n2;
+                    }
+                    _ => return None,
+                }
+                n += 1;
+                if n > 10000 {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+    }
+}
+
 pub fn plist_put_v(plist: &Value, prop: &Value, val: Value) -> Value {
     let mut cur = plist.clone();
     let mut last_pair_end: Option<super::value::ConsRef> = None;
@@ -12510,6 +13487,30 @@ pub fn plist_put_v(plist: &Value, prop: &Value, val: Value) -> Value {
         }
         None => Value::cons(prop.clone(), Value::cons(val, Value::Nil)),
     }
+}
+
+/// `overlay-put`-style plist write: existing prop updates in place;
+/// a NEW prop conses onto the FRONT (GNU Foverlay_put, buffer.c).
+pub fn plist_put_front(plist: &Value, prop: &Value, val: Value) -> Value {
+    let mut cur = plist.clone();
+    while let Value::Cons(c) = cur {
+        let (car, next) = {
+            let b = c.borrow();
+            (b.car.clone(), b.cdr.clone())
+        };
+        if crate::lisp::builtins::eq_values(&car, prop) {
+            if let Value::Cons(vc) = &next {
+                vc.borrow_mut().car = val;
+            }
+            return plist.clone();
+        }
+        if let Value::Cons(pair) = next {
+            cur = pair.borrow().cdr.clone();
+        } else {
+            break;
+        }
+    }
+    Value::cons(prop.clone(), Value::cons(val, plist.clone()))
 }
 
 /// `put` on a plist value — returns a new plist with prop set.
