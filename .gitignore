@@ -5,7 +5,36 @@ mtf*
 pfx*
 remacs-*.profraw
 .#*
+# Editor and Finder artifacts
+*~
+\#*\#
+.DS_Store
 tests/diff/sandbox/
 tests/diff/*.out
 tests/diff/*.err
 tests/diff/report.txt
+# differential sweep artifacts (regenerable)
+tests/diff/.slice_*.el
+tests/diff/calls.el
+tests/diff/runner.el
+tests/diff/autoskip-*.[0-9].txt
+tests/diff/*.out
+tests/diff/*.err
+tests/diff/clusters/
+tests/diff/clusters2/
+tests/diff/sbx*/
+tests/diff/sbhome*/
+tests/diff/sandbox-*/
+tests/diff/aEb4*
+tests/diff/driver-forms.txt
+tests/diff/difrepro.el
+tests/diff/dump-subrs.el
+tests/diff/subrs.*.txt
+tests/diff/syms-*.txt
+tests/diff/symdiff
+tests/diff/report*.txt
+tests/diff/sbhome*
+tests/diff/skip-dynamic.txt
+tests/diff/symdump.el
+tests/diff/loop-*.log
+tests/diff/.loop-run

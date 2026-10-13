@@ -42,7 +42,8 @@ fn window_sizes() {
     assert_eq!(ev("(window-height)"), "24");
     assert_eq!(ev("(window-width)"), "80");
     assert_eq!(ev("(window-total-height)"), "24");
-    assert_eq!(ev("(window-text-height)"), "24");
+    // GNU -Q batch tty: the text area excludes the mode line.
+    assert_eq!(ev("(window-text-height)"), "23");
     assert_eq!(ev("(window-pixel-width)"), "80");
     assert_eq!(ev("(window-pixel-height)"), "24");
 }
@@ -67,22 +68,18 @@ fn split_and_delete() {
     // 'right split is unshifted — the menu-bar line only materializes
     // on a *vertical* split.
     assert_eq!(
-        ev(
-            "(let ((w2 (split-window nil nil 'right)))
+        ev("(let ((w2 (split-window nil nil 'right)))
               (list (length (window-list-1))
                     (window-edges (selected-window))
-                    (window-edges w2)))"
-        ),
+                    (window-edges w2)))"),
         "(2 (0 0 40 24) (40 0 80 24))"
     );
     // Deleting the new window leaves the original.
     assert_eq!(
-        ev(
-            "(let ((w2 (split-window nil nil 'right)))
+        ev("(let ((w2 (split-window nil nil 'right)))
               (delete-window-internal w2)
               (list (length (window-list-1))
-                    (window-live-p w2)))"
-        ),
+                    (window-live-p w2)))"),
         "(1 nil)"
     );
 }
@@ -153,9 +150,11 @@ fn get_buffer_window_list() {
     );
     // `window-normalize-buffer' errors on dead/missing buffers.
     assert_eq!(
-        ev("(condition-case e (progn (get-buffer-window-list \"no-such-xyz\")
+        ev(
+            "(condition-case e (progn (get-buffer-window-list \"no-such-xyz\")
                                     :noerr)
-               (error (car e)))"),
+               (error (car e)))"
+        ),
         "error"
     );
     assert_eq!(

@@ -94,6 +94,11 @@ fn print_stack_key(v: &Value) -> Option<usize> {
         Value::Vec(r) => Some(std::rc::Rc::as_ptr(r) as usize),
         Value::Record(r) => Some(std::rc::Rc::as_ptr(r) as usize),
         Value::Hash(r) => Some(std::rc::Rc::as_ptr(r) as usize),
+        // Lambdas print their `[ARGS BODY ENV ...]' slots — a closure
+        // whose env captures a `let' binding referencing the closure
+        // itself (gv-ref's setter: `(ref . (getter . SETTER))')
+        // recurses forever without the being-printed check.
+        Value::Lambda(r) => Some(std::rc::Rc::as_ptr(r) as usize),
         _ => None,
     }
 }
@@ -114,6 +119,21 @@ fn gensym_circle_key(i: &Interp, v: &Value) -> Option<usize> {
     Some(*id as usize | (1usize << (usize::BITS - 1)))
 }
 
+/// GNU `print_circle_candidate_p' (print.c): only these object kinds
+/// participate in `print-circle' numbering — notably EMPTY strings and
+/// EMPTY vectors are excluded, which keeps literal `""'s from
+/// sprouting `#N=' labels.
+fn print_circle_candidate(i: &Interp, v: &Value) -> bool {
+    match v {
+        Value::Cons(_) => true,
+        Value::Str(s) => !s.borrow().is_empty(),
+        Value::Sym(_) => gensym_circle_key(i, v).is_some(),
+        Value::Vec(r) => !r.borrow().is_empty(),
+        Value::Record(_) | Value::Hash(_) | Value::Lambda(_) => true,
+        _ => false,
+    }
+}
+
 /// GNU's `print_preprocess' pass: depth-first walk of the object
 /// graph (car before cdr, like GNU's recursion), numbering each
 /// shared/cyclic object when it is encountered a second time.
@@ -121,6 +141,11 @@ fn gensym_circle_key(i: &Interp, v: &Value) -> Option<usize> {
 fn count_print_refs(i: &Interp, v: &Value, ctx: &mut CircleCtx) {
     let mut stack = vec![v.clone()];
     while let Some(x) = stack.pop() {
+        // GNU's print_circle_candidate_p gate: empty strings/vectors
+        // never participate in print-circle numbering.
+        if !print_circle_candidate(i, &x) {
+            continue;
+        }
         let Some(k) = print_stack_key(&x).or_else(|| gensym_circle_key(i, &x)) else {
             continue;
         };
@@ -183,40 +208,56 @@ fn circle_counted(k: usize) -> bool {
             .unwrap_or(false)
     })
 }
+thread_local! {
+    /// GNU print.c's `print_number_index': persists across print
+    /// calls while `print-continuous-numbering' is non-nil.
+    static PRINT_NUMBER_INDEX: std::cell::Cell<i64> =
+        const { std::cell::Cell::new(0) };
+}
 
-/// `print-number-table' substitution for a heap object.
-///
-/// GNU lets a non-nil table replace what an object prints as: a
-/// string value is emitted verbatim (bytecomp's `#$' filename
-/// placeholder), an integer value is a pre-assigned label printed
-/// `#N=' on first occurrence.  After `#N=' prints we rewrite the
-/// entry to a `(N . printed)' marker so later occurrences print
-/// `#N#' — GNU keeps the same flag inside its table.
-fn number_table_subst(i: &Interp, v: &Value) -> Option<String> {
+/// `print-number-table' outcome for a heap object under print-circle.
+enum NtSubst {
+    /// Emit this text and print the object's contents after it
+    /// (GNU's negative-index `#N=' prefix).
+    Prefix(String),
+    /// Emit this text INSTEAD of the object (a `#N#' back-reference
+    /// or a verbatim substitution string).
+    Replace(String),
+}
+
+/// `print-number-table' substitution for a heap object (GNU's
+/// `Fgethash' in `print_object' under `print-circle'): a string
+/// prints verbatim, a negative index prints `#N=' then flips to its
+/// positive, a positive index prints `#N#' and consumes the object.
+/// The caller uses Some(_) to suppress the ctx labels too — the
+/// table is authoritative for objects it contains.
+fn number_table_subst(i: &Interp, v: &Value) -> Option<NtSubst> {
+    if !i.print_var("print-circle").truthy() {
+        return None;
+    }
+    // Without `print-continuous-numbering' GNU resets the table at
+    // every top-level print — a user-bound table is ignored.
+    if !i.print_var("print-continuous-numbering").truthy() {
+        return None;
+    }
     let nt = i.print_var("print-number-table");
     let Value::Hash(h) = nt else {
         return None;
     };
-    let key = crate::lisp::builtins::hashfn::hash_key_for(
-        i,
-        v,
-        crate::lisp::value::HashTest::Eq,
-    );
+    let key = crate::lisp::builtins::hashfn::hash_key_for(i, v, crate::lisp::value::HashTest::Eq);
     let found = h.borrow().map.get(&key).cloned()?;
     match &found {
-        Value::Str(s) => Some(s.borrow().clone()),
+        Value::Str(s) => Some(NtSubst::Replace(s.borrow().clone())),
         Value::Int(n) => {
             let n = *n;
-            let marker = Value::cons(Value::Int(n), Value::t());
-            h.borrow_mut().map.insert(key, marker);
-            Some(format!("#{n}="))
-        }
-        Value::Cons(c) => {
-            let n = match &c.borrow().car {
-                Value::Int(n) => *n,
-                _ => return None,
-            };
-            Some(format!("#{n}#"))
+            if n < 0 {
+                // First print of a labeled object: emit the prefix
+                // and mark it printed (GNU stores the positive).
+                h.borrow_mut().map.insert(key, Value::Int(-n));
+                Some(NtSubst::Prefix(format!("#{}=", -n)))
+            } else {
+                Some(NtSubst::Replace(format!("#{n}#")))
+            }
         }
         _ => None,
     }
@@ -370,8 +411,14 @@ impl Interp {
         let key = print_stack_key(v).or_else(|| gensym_circle_key(self, v));
         if let Some(k) = key {
             if let Some(sub) = number_table_subst(self, v) {
-                out.push_str(&sub);
-                return;
+                match sub {
+                    NtSubst::Replace(t) => {
+                        out.push_str(&t);
+                        return;
+                    }
+                    // `#N=' prefix, then print the object body.
+                    NtSubst::Prefix(t) => out.push_str(&t),
+                }
             }
             if circle_active() {
                 // `print-circle': shared/cyclic objects print `#N='
@@ -536,9 +583,7 @@ impl Interp {
                     out.push_str("#(");
                 }
                 out.push('"');
-                let na = self
-                    .print_var("print-escape-nonascii")
-                    .truthy();
+                let na = self.print_var("print-escape-nonascii").truthy();
                 if self.is_unibyte_str(s) {
                     // GNU print_object: unibyte byte-chars ≥0x80 print
                     // as `\NNN' only under print-escape-nonascii;
@@ -548,8 +593,7 @@ impl Interp {
                     for c in s.borrow().chars() {
                         let byte = crate::lisp::value::eight_bit_byte(c)
                             .or_else(|| crate::lisp::value::raw_byte_marker(c))
-                            .or_else(|| ((c as u32) >= 0x80)
-                                .then(|| (c as u32) as u8 & 0xFF));
+                            .or_else(|| ((c as u32) >= 0x80).then(|| (c as u32) as u8 & 0xFF));
                         match (byte, na) {
                             (Some(b), true) => {
                                 let _ = write!(out, "\\{:03o}", b);
@@ -560,9 +604,7 @@ impl Interp {
                                 // eight-bit code 0x3FFF80+b.
                                 out.push(crate::lisp::value::print_eight_bit_char(b));
                             }
-                            (None, _) => {
-                                escape_char_for_string(c, out, nl, mb, cc)
-                            }
+                            (None, _) => escape_char_for_string(c, out, nl, mb, cc),
                         }
                     }
                 } else {
@@ -663,6 +705,18 @@ impl Interp {
                 let _ = write!(out, "#<subr {}>", s.name);
             }
             Value::Lambda(l) => {
+                // GNU nativecomp prints named compiled functions as
+                // `#<subr NAME>' — our compiled twins (dumped defs,
+                // `#[...]' read from a bundled .elc) carry `name' or,
+                // when `.elc' loading left it nameless, a name stamped
+                // by `defalias' in `compiled_fn_names'.
+                if l.compiled {
+                    let nm = self.lambda_name(l);
+                    if let Some(n) = nm {
+                        let _ = write!(out, "#<subr {}>", n);
+                        return;
+                    }
+                }
                 out.push_str("#[");
                 if let Some(bc) = &l.bc_items {
                     // Byte-code objects print as their raw slots like
@@ -776,8 +830,13 @@ impl Interp {
     fn princ_inner(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
         if let Some(k) = print_stack_key(v) {
             if let Some(sub) = number_table_subst(self, v) {
-                out.push_str(&sub);
-                return;
+                match sub {
+                    NtSubst::Replace(t) => {
+                        out.push_str(&t);
+                        return;
+                    }
+                    NtSubst::Prefix(t) => out.push_str(&t),
+                }
             }
             if circle_active() {
                 match circle_label(k) {
@@ -876,7 +935,10 @@ impl Interp {
             Value::Record(items) => {
                 self.print_record(items, out, depth, bq, true);
             }
-            _ => self.prin1_inner(v, out, depth, bq),
+            // Lambdas/subrs would re-hit the being-printed check in
+            // `prin1_inner' (the outer `princ_inner' already pushed
+            // this object) and emit `#N' — call the raw printer.
+            _ => self.prin1_inner_obj(v, out, depth, bq),
         }
     }
 
@@ -996,6 +1058,65 @@ impl Interp {
                 // Char tables print `#^[defalt parent purpose
                 // ascii contents[64] extras...]' — GNU's
                 // pseudovector layout.
+                // Font objects are GNU `font' pseudovectors and print
+                // `#<font-spec SLOTS...>' (13 property slots); our
+                // record keeps a plist in slot 1 — map the known keys
+                // to their font.c slot positions and put the rest in
+                // the extras list.
+                if self.symbol_name(*t) == "font-spec" {
+                    out.push_str("#<font-spec");
+                    const SLOT_KEYS: [&str; 12] = [
+                        ":type",
+                        ":foundry",
+                        ":family",
+                        ":adstyle",
+                        ":registry",
+                        ":weight",
+                        ":slant",
+                        ":width",
+                        ":size",
+                        ":dpi",
+                        ":spacing",
+                        ":avgwidth",
+                    ];
+                    let mut slots: Vec<Option<Value>> = vec![None; 13];
+                    let mut extras: Vec<Value> = Vec::new();
+                    let mut cur = rr.get(1).cloned().unwrap_or(Value::Nil);
+                    while let Value::Cons(c) = cur {
+                        let (car, cdr) = {
+                            let b = c.borrow();
+                            (b.car.clone(), b.cdr.clone())
+                        };
+                        if let Value::Cons(c2) = cdr {
+                            let (val, next) = {
+                                let b = c2.borrow();
+                                (b.car.clone(), b.cdr.clone())
+                            };
+                            let key: String = match &car {
+                                Value::Sym(s) => self.symbol_name(*s).to_string(),
+                                _ => String::new(),
+                            };
+                            match SLOT_KEYS.iter().position(|k| *k == key) {
+                                Some(idx) => slots[idx] = Some(val),
+                                None if matches!(car, Value::Sym(_)) => {
+                                    extras.push(Value::cons(car, val))
+                                }
+                                None => {}
+                            }
+                            cur = next;
+                        } else {
+                            break;
+                        }
+                    }
+                    for slot in slots.iter_mut().take(12) {
+                        out.push(' ');
+                        inner!(slot.as_ref().unwrap_or(&Value::Nil));
+                    }
+                    out.push(' ');
+                    inner!(&Value::list(extras));
+                    out.push('>');
+                    return;
+                }
                 if self.symbol_name(*t) == "char-table" {
                     if let Some(Value::Vec(slots)) = rr.get(2) {
                         let ptr = std::rc::Rc::as_ptr(items) as usize;
@@ -1508,4 +1629,85 @@ pub fn format_float(f: f64) -> String {
         s.push_str(".0");
     }
     s
+}
+
+/// GNU print.c `Fprint_preprocess': when `print-circle' is non-nil,
+/// fill `print-number-table' — each `print-circle-candidate' gets t
+/// at its first encounter and `-N' (bumping `print_number_index') at
+/// the second; the `t' singles are left in (the top-level `print'
+/// removes them for its own pass).  No-op when print-circle is nil.
+pub fn f_print_preprocess(i: &mut Interp, a: crate::lisp::Argv) -> crate::lisp::error::EvalResult {
+    if !i.print_var("print-circle").truthy() {
+        return Ok(Value::Nil);
+    }
+    PRINT_NUMBER_INDEX.with(|c| c.set(0));
+    let nt_id = i.intern("print-number-table");
+    let mut nt = i.symbol_value(nt_id);
+    if !matches!(nt, Value::Hash(_)) {
+        nt = Value::Hash(Rc::new(RefCell::new(crate::lisp::value::LispHash::new(
+            crate::lisp::value::HashTest::Eq,
+        ))));
+        let _ = i.set_symbol(nt_id, nt.clone());
+    }
+    let Value::Hash(h) = nt else {
+        return Ok(Value::Nil);
+    };
+    let mut stack = vec![a[0].clone()];
+    while let Some(x) = stack.pop() {
+        if !print_circle_candidate(i, &x) {
+            continue;
+        }
+        let key =
+            crate::lisp::builtins::hashfn::hash_key_for(i, &x, crate::lisp::value::HashTest::Eq);
+        let cur = h.borrow().map.get(&key).cloned();
+        match cur {
+            Some(Value::Sym(s)) if s == crate::lisp::sym::T => {
+                let n = PRINT_NUMBER_INDEX.with(|c| {
+                    c.set(c.get() + 1);
+                    c.get()
+                });
+                h.borrow_mut().map.insert(key, Value::Int(-(n as i128)));
+            }
+            // Under `print-continuous-numbering' an uninterned symbol
+            // always gets a number (GNU's byte-compile-output-docform
+            // special).
+            None => {
+                let gensym = gensym_circle_key(i, &x).is_some();
+                if gensym && i.print_var("print-continuous-numbering").truthy() {
+                    let n = PRINT_NUMBER_INDEX.with(|c| {
+                        c.set(c.get() + 1);
+                        c.get()
+                    });
+                    h.borrow_mut().map.insert(key, Value::Int(-(n as i128)));
+                } else {
+                    h.borrow_mut()
+                        .map
+                        .insert(key, Value::Sym(crate::lisp::sym::T));
+                }
+                match &x {
+                    Value::Cons(c) => {
+                        let (car, cdr) = {
+                            let b = c.borrow();
+                            (b.car.clone(), b.cdr.clone())
+                        };
+                        stack.push(cdr);
+                        stack.push(car);
+                    }
+                    Value::Vec(r) | Value::Record(r) => {
+                        stack.extend(r.borrow().iter().rev().cloned());
+                    }
+                    Value::Hash(hh) => {
+                        let h2 = hh.borrow();
+                        for (_, orig) in h2.keys.iter() {
+                            stack.push(orig.clone());
+                        }
+                        stack.extend(h2.map.values().cloned());
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(Value::Nil)
 }

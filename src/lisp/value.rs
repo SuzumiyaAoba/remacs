@@ -5,8 +5,8 @@
 //! can leak — acceptable for now, and the architecture note in AGENTS.md
 //! documents this as a deliberate simplification over Emacs's mark-and-sweep.
 
-use std::cell::RefCell;
 use rustc_hash::FxHashMap as HashMap;
+use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
 
@@ -287,7 +287,6 @@ impl From<Vec<Value>> for Argv {
     }
 }
 
-
 /// An interpreted function (or macro) defined in Lisp.
 pub struct Lambda {
     /// `Some` for macros: body returns a form to re-evaluate.
@@ -335,6 +334,19 @@ pub struct Lambda {
     /// keep the original element list so `aref'/`length' see GNU's
     /// [args body env] slots; `nil' for ordinary lambdas.
     pub bc_items: Option<Rc<std::cell::RefCell<Vec<Value>>>>,
+    /// True when this byte-code object was produced by `make-closure'
+    /// (env slots spliced into the constants vector), as opposed to a
+    /// bare `#[...]' literal read from data — e.g. the `#[...]' byte-code
+    /// in uni-*.el char-table extra slots, which `unidata_bc_dispatch'
+    /// routes natively and must not confuse with closures whose captured
+    /// variables happen to sit in consts[0].
+    pub bc_closure: bool,
+    /// Cached decoded program for `#[...]' byte-code objects
+    /// (instruction bytes + argdesc + consts snapshot).  Rebuilt by
+    /// `bytecode::exec' when `bc_items[0..3]' change identity — GNU
+    /// permits `aset' on the element vector, so the cache validates
+    /// against the slot values, never just presence.
+    pub(crate) bc_prog: RefCell<Option<Rc<crate::lisp::bytecode::BcProg>>>,
     /// GNU closure slot 4: the docstring *value* — a string for
     /// documented functions, but `(:documentation FORM)' may produce
     /// any value (oclosure.el stores its type symbol there).

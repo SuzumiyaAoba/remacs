@@ -58,8 +58,12 @@ Registration rules:
 
 ## Startup profile (release build, `REMACS_BOOT_PROF=1`)
 
-Warm `--batch` startup is ~1.2 s: prelude eval ~290 ms + ~910 ms of
-`boot_lib` loads.  The backquote expander is a Rust port
+Warm `--batch` startup is ~0.85 s: prelude eval ~250 ms + ~350 ms of
+`boot_lib` loads.  Boot libraries are AOT byte-compiled by GNU Emacs
+into `lisp-elc/*.elc` (see below); `load_library` prefers an embedded
+`.elc' twin over the `.el' source while `boot_loading', and the
+`REMACS_NO_ELC' env var drops back to interpreted source for parity
+debugging.  The backquote expander is a Rust port
 (`src/lisp/builtins/backquote.rs`) — GNU byte-compiles backquote.el, so
 an interpreted copy both cost ~700 ms of macroexpansion per boot and
 broke on `(fmakunbound 'car)' (its `car' calls are `Bcar' opcodes in
@@ -83,7 +87,7 @@ with `wrong-type-argument stringp t'.
 `autoload_do_load' before interactive-spec lookup — GNU's
 call-interactively does the same via `indirect_function'; without it,
 
-## AOT .elc twins (opt-in, `src/lisp/embedded_elc.rs` + `lisp-elc/`)
+## AOT .elc twins (`src/lisp/embedded_elc.rs` + `lisp-elc/`)
 
 `tools/gen_boot_elc.py` runs GNU Emacs's `byte-compile-file' over the
 boot libraries and emits `lisp-elc/<stem>.elc' blobs plus a Rust table
@@ -94,16 +98,36 @@ reads the real `.el' so `symbol-file'/`load-history' stay right.
 `eval_src_opts' detects the `;ELC\x1f\0\0\0' magic and sets
 `Interp::reading_elc' for that eval; `make_interpreted_closure' then
 marks `#[...]' objects `compiled' so `subrp'/`type-of'/`func-arity'
-report GNU's nativecomp surface.  Opt-in while QA's green via
-`REMACS_USE_ELC=1' — several twins (`cl-macs' in particular) still
-poison later `.el' loads: `(load "nadvice")' signals
-`void-variable car' after `cl-macs.elc' runs because its compiled
-macro definitions leave shared macroexpand state divergent from the
-source path.  `REMACS_NO_ELC' bypasses twins entirely (parity
-debugging); `SKIP' in tools/gen_boot_elc.py lists files whose
-compiled form currently fails QA (`nadvice', `tex-mode', `cl-lib',
-`cl-generic', `loaddefs' — plus `pcase'/`seq'/`subr-x' which need
-the prelude's `fboundp'-guarded fallbacks).
+report GNU's nativecomp surface.
+
+Gotcha: `Lambda.bc_closure' distinguishes `make-closure' products
+(env spliced into the constants vector) from bare `#[...]' literals.
+`unidata_bc_dispatch' must skip `bc_closure' objects — a mutated
+capture box can turn consts[0] into a proper alist of conses, which
+the `unidata-describe-*' alist arm then short-circuits to nil,
+silently skipping the real bytecode (this broke every `cl-defgeneric'
+method that closes over a box — e.g. `seq-reduce').
+
+`REMACS_NO_ELC' bypasses twins entirely (parity debugging); `SKIP' in
+tools/gen_boot_elc.py lists files GNU marks `no-byte-compile'
+(charprop) plus remacs-only files without a GNU counterpart.  The
+`.elc' files are committed; regenerate when a booted `lisp/*.el'
+changes — stale twins silently diverge from the source.
+
+`lisp/subr-x.el' is NOT GNU's subr-x: it amalgamates the dump-time
+compatibility definitions (~2300, loaded once at boot) with GNU's
+subr-x.  Post-boot `subr-x' loads — `(require 'subr-x)', the
+`string-pad'/`string-fill'/... autoloads, any `.el' source whose
+`eval-when-compile' requires it (xref, project, ...) — evaluate GNU's
+verbatim copy `lisp/emacs-lisp-subr-x.el' instead (`load_library_opts_msg'
+→ `eval_gnu_subr_x'), then `keep_live_definitions' restores any name
+it redefined that already had a live (non-void, non-autoload) cell.
+Re-reading the amalgam used to replace ~2300 live definitions (Rust
+subr shadows, replace.el's `replace-highlight', ...) and re-run its
+top-level `setq'/`defconst'/`add-hook' forms (reset
+`file-name-handler-alist', `electric-quote-string').  So edits to the
+amalgam only take effect through the boot load; `tests/qa_subrx3.el'
+pins the post-boot behavior.
 
 
 
@@ -540,6 +564,124 @@ qa-xf back to qa and watch it go XPASS→pass):
   call (and likewise in `f_syntax_after').
 
 Total: ~5000 GNU-verified checks; run all: `cargo test --test qa`.
+
+
+## Differential sweep (`tools/difftest.py` + `tests/diff/`)
+
+GNU Emacs 31.1 was used as the oracle: every `fboundp` symbol
+(~5.6k targets incl. Lisp fns, `targets.el`/`targets-sf.el` generated
+by `dump-subrs.el` against GNU) is called via `apply` with 4–6
+deterministic arities — min args, min+seeded corpus picks, and the
+min-args buf-context variant (`dif--call-buf` runs inside a fresh
+fixture buffer holding 3 lines of text, point at 9).  Each call is
+`condition-case`-wrapped; the row payload is `dif--norm`'d
+(objects → `(marker pos hasbuf)`/`(buf name)`/`(hash test count)`
+shapes; wna payloads → `(wna ARGC)` since GNU's datum carries the
+function object while remacs carries `(MIN . NONREST)` conses for
+byte-code expanders).  A `ZZstate` row after every target reports
+point-max/point/mark/current-buffer/local-leaks so buffer-state
+drift attributes to the causing target instead of poisoning later
+payloads.
+
+Run: after `cargo build --release`, `python3 tools/difftest.py`
+(`--only a,b` or `DIFF_ONLY`, `--side gnu|remacs`, `--timeout SEC`
+(900), `--no-regen`, `--no-resume`, `--gnu`/`--remacs PATH`).  Unless
+`--no-regen', `tests/diff/targets.el' is regenerated from GNU (every
+non-special-form `subrp' symbol plus its `subr-arity').  Each side runs
+`driver.el' with cwd `tests/diff/sandbox/' (recreated per attempt;
+TZ=UTC, LC_ALL=C, empty EMACSLOADPATH) and `message's
+`DIF|NAME|SEQ|ok/err/unbound|PAYLOAD' rows into
+`tests/diff/{gnu,remacs}.err', with a `DMARK NAME SEQ' line before
+each call.  A hang/crash autoskips the in-flight name (appended to
+`tests/diff/autoskip-<side>.txt', reused next run unless
+`--no-resume') and resumes after it via DIFF_FROM.
+`tests/diff/report.txt' lists `DIVERG'/`KNOWN' names (remacs-only
+autoskips count as DIVERG); exit 1 iff a non-known divergence remains.
+`known.txt' lines are a whole NAME or `NAME|SUBSTRING' (matched
+against `TAG|PAYLOAD' on both sides) — no `*' wildcards, so entries
+like `registerv-*' are inert.  Never-called names (exit/hang/
+destructive, `signal-process' included) live in driver.el's
+`dif--skip'/`dif--skip-prefix'/`dif--skip-noarg'.
+
+Fixed divergences so far (all regression-covered in qa_*.el):
+
+- `set-buffer-modified-p`/`restore-buffer-modified-p`/`not-modified`
+  never actually set the flag (`note_modified` parked save_tick at
+  mod_tick; GNU restores `SAVE_MODIFF = MODIFF - 1`).  Also broke
+  indirect-buffer modified sharing — both live in SharedText now.
+- `kill-buffer`/bury/`replace-buffer-in-windows`/`quit-window` picked
+  `*scratch*` (visible) instead of a non-displayed buffer: GNU
+  `other_buffer` prefers not-shown buffers unless VISIBLE-OK — the
+  `buffers.other` helper gained the two-pass rule
+  (`other_visible_pref`), and `other-buffer` arg2/arg3 got the right
+  order (VISIBLE-OK, FRAME).
+- `select-window` recorded every selection: GNU records only when
+  NORECORD is nil (`switch-to-buffer` passes norecord through).
+- `wrong-number-of-arguments` datums: byte-code macro expanders
+  (`.elc`-twin `Lambda`s) now emit GNU's `(MIN . NONREST)` cons —
+  `macroexp_wna` translates at `macro_expand_call` sites and
+  `call_lambda_inner` picks the argdesc pair for `is_bytecode`
+  lambdas, the name for other `compiled` twins, the object for
+  interpreted lambdas.
+- `subr-arity`/`byte-code-function-p` accepted compiled/Subr values
+  GNU rejects — subrs are not byte-code (`apply-partially` results
+  now signal `wrong-type-argument` like GNU).
+- `display-message-or-buffer` only accepted strings: a buffer arg is
+  legal in GNU (returns t) and is the `shell-command` output path.
+- `args-out-of-range` payloads were uniformly `(POS POS)`; GNU's
+  shape varies per entry point — `get-pos-property` `(POS-1 POS-1)`,
+  `get-char-property*`/`field-*`/`next-single-char-property-change`
+  bare `(POS)`, `previous-single-char-property-change` `(POS-1)`,
+  `get-text-property`/`text-properties-at`/`next-property-change`
+  `(POS POS)`.  `want_pos_in_buf_dup`'s `dup` arg carries the shape.
+- `cl-struct--pcase-macroexpander` (subr-x vendored) only consulted
+  the `cl-struct--pcase-info` symbol property; `(cl-struct X ...)` in
+  a `pcase` failed "X is not a known cl-struct type" for any struct
+  registered class-only (xref structs inside `(require 'xref)` loads,
+  `lisp-indent-state`, ...).  It now falls back to the
+  `cl-structure-class` object via `cl--find-class`, deriving the
+  tag-list predicate and slot offsets from the class record.  The
+  manually-defined `lisp-indent-state` is also class-registered
+  (`cl--struct-register-class`) like GNU's `cl-defstruct` expansion.
+- `unrecord-window-buffer` was a no-op stub with the wrong signature
+  `(window buffer &optional all-frames)`; replaced with the GNU
+  window.el body (`&optional window buffer all` →
+  `window-normalize-window` + `window-discard-buffer-from-window`).
+- `japanese-katakana/hiragana/hankaku/zenkaku-region` vendored copies
+  used `(goto-char from)` + a `(while (< (point) to))` scan instead
+  of GNU's `(save-restriction (narrow-to-region from to))` +
+  `re-search-forward` — floats silently passed, out-of-range region
+  bounds gave the wrong error.  Replaced with verbatim GNU bodies.
+- `register--get-method-type` vendored stub never consulted the
+  generic function (GENFUN arg unchecked); deleted so register.el's
+  real definition (per-type specializer walk via `cl-find-method`)
+  survives — a non-symbol genfun now signals `symbolp` like GNU.
+- `make-ppss` keyword-error format used `%s` for the bad key —
+  GNU prints `%S`, so buffer/symbol keys render differently.
+- vendored `subr-x.el` `--inliner` defuns quoted the *predicate*
+  name (`''cl-slot-descriptor-p` etc.) as the
+  `wrong-type-argument` datum; GNU emits the struct name
+  (`''cl-slot-descriptor`).  Fixed for cl-structure-class /
+  cl-slot-descriptor / cl--class / cl--generic{,-generalizer,-method}
+  / oclosure--class accessors — observable via `setf`/`cl-callf`
+  expansion (e.g. `cl--copy-slot-descriptor`'s
+  `(cl-callf copy-alist ...)').
+
+Open divergence classes under triage:
+
+- `.elc`-twin objects print `#[...]` where GNU prints `#<subr>` and
+  `(macro . #[...])` where GNU's `when` cell is `(macro . byte-code)`.
+  `subrp`/`type-of`/`byte-code-function-p` on `when`'s cdr can't be
+  t AND nil — one cell can't split into two kinds; wna datum was
+  still normalized to the argdesc cons since that's the observable
+  datum GNU callers see.
+- `describe-register-1` sweep rows signal `symbolp (null byte-not)`
+  inside remacs only — some `.elc`-consts path evaluates the
+  `(null byte-not)` datum; unreproducible in isolation, parked.
+- `describe-buffer-case-table`, `describe-key--helper`,
+  `search-emacs-glossary`: remacs hangs somewhere inside the full
+  sweep (fine standalone) — likely an earlier corpus object (a
+  case-table/`[0 ...]` literal) reaching a non-terminating loop.
 
 ## Verification recipe
 

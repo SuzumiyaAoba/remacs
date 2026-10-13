@@ -165,6 +165,19 @@
 (qa (let ((b (generate-new-buffer "qab-ob")))
       (prog1 (eq (other-buffer b) b) (kill-buffer b)))
     nil)
+;; Killing the current buffer switches to a NON-displayed buffer
+;; (GNU kill_buffer → replace_buffer_in_windows uses other-buffer's
+;; "prefer not shown in windows" rule).
+(qa (let ((b (get-buffer-create "qab-kb"))
+          (shown (window-buffer (selected-window))))
+      (prog2 (set-buffer b)
+          (progn (kill-buffer b)
+                 (and shown
+                      (not (eq (current-buffer)
+                               (window-buffer (selected-window))))))
+        nil))
+    t)
+
 
 ;; == buffer-file-name / modified ==
 (qa (with-temp-buffer (buffer-file-name)) nil)

@@ -3,6 +3,9 @@
 
 pub mod builtins;
 pub(crate) mod bytecode;
+// Generated charset map data: the SJIS/JISX0201/BIG5-1/BIG5-2/VISCII
+// tables aren't wired to a decoder yet, but stay with the rest of the set.
+#[allow(dead_code)]
 pub(crate) mod cjk_tables;
 pub(crate) mod ctdata;
 pub mod dynlib;

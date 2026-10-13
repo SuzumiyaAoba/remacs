@@ -8,7 +8,9 @@
 //!   3. a `/nix/store` scan for `*-<pkg>*/lib/<basename>' — nixpkgs
 //!      libraries are not on the default search path.
 
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::ffi::OsString;
+use std::sync::{LazyLock, Mutex};
 
 /// Try to load a library. `names` are tried literally first (absolute
 /// paths or bare sonames like "libgnutls.dylib"), then
@@ -19,6 +21,7 @@ pub fn open_library(
     nix_pkg_prefix: &str,
     nix_basename: &str,
 ) -> Option<libloading::Library> {
+    let _dbg = std::env::var_os("REMACS_BOOT_PROF").is_some();
     if let Ok(p) = std::env::var(env_var) {
         if !p.is_empty() {
             if let Ok(l) = unsafe { libloading::Library::new(&p) } {
@@ -31,7 +34,17 @@ pub fn open_library(
             return Some(l);
         }
     }
-    if let Some(p) = nix_store_lib(nix_pkg_prefix, nix_basename) {
+    let t = _dbg.then(std::time::Instant::now);
+    let found = nix_store_lib(nix_pkg_prefix, nix_basename);
+    if let Some(t) = t {
+        eprintln!(
+            "[nix-scan {}] {}ms found={}",
+            nix_pkg_prefix,
+            t.elapsed().as_millis(),
+            found.is_some()
+        );
+    }
+    if let Some(p) = found {
         if let Ok(l) = unsafe { libloading::Library::new(&p) } {
             return Some(l);
         }
@@ -40,28 +53,45 @@ pub fn open_library(
 }
 
 /// Scan `/nix/store' for the first `*-<prefix>-*/lib/<basename>' that
-/// exists.  Deterministic: sorted directory iteration.
+/// exists.  Deterministic: sorted candidate iteration.
 fn nix_store_lib(prefix: &str, basename: &str) -> Option<String> {
     if basename.is_empty() {
         return None;
     }
-    static STORE: OnceLock<Vec<String>> = OnceLock::new();
-    let entries = STORE.get_or_init(|| {
-        let mut v: Vec<String> = Vec::new();
+    // One `read_dir' over /nix/store amortized across every optional
+    // library: keep the raw `OsString' names (no per-entry `String'
+    // alloc, no global sort — the old code spent ~650 ms doing both)
+    // and derive each prefix's short sorted candidate list lazily.
+    static ENTRIES: LazyLock<Vec<OsString>> = LazyLock::new(|| {
+        let mut v = Vec::new();
         if let Ok(rd) = std::fs::read_dir("/nix/store") {
             for e in rd.flatten() {
-                v.push(e.file_name().to_string_lossy().into_owned());
+                v.push(e.file_name());
             }
         }
-        v.sort();
         v
     });
-    for e in entries {
-        // Match names like "kvn…-gnutls-3.8.13" for prefix "gnutls".
-        if !e.contains(&format!("-{}", prefix)) {
-            continue;
+    static CANDIDATES: LazyLock<Mutex<HashMap<String, Vec<OsString>>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    let needle = format!("-{}", prefix);
+    let cands = {
+        let mut m = CANDIDATES.lock().unwrap_or_else(|e| e.into_inner());
+        match m.get(&needle) {
+            Some(v) => v.clone(),
+            None => {
+                let mut v: Vec<OsString> = ENTRIES
+                    .iter()
+                    .filter(|n| n.to_string_lossy().contains(&needle))
+                    .cloned()
+                    .collect();
+                v.sort();
+                m.insert(needle.clone(), v.clone());
+                v
+            }
         }
-        let cand = format!("/nix/store/{}/lib/{}", e, basename);
+    };
+    for e in cands {
+        let cand = format!("/nix/store/{}/lib/{}", e.to_string_lossy(), basename);
         if std::path::Path::new(&cand).exists() {
             return Some(cand);
         }

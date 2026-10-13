@@ -15,12 +15,14 @@
 //!   - goto/pushcatch/pushconditioncase/constant2/stack-set2: u16 LE.
 //!   - listN/concatN/insertN/stack-set/discardN: u8.
 
+use super::EvalResult;
 use super::builtins::{eq_values, equal_values};
 use super::error::Flow;
 use super::eval::{ExcursionState, Interp, RestrictionState};
 use super::obarray::sym;
-use super::value::{lisp_char_code, Lambda, SymId, Value};
-use super::EvalResult;
+use super::value::{Lambda, SymId, Value, lisp_char_code};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// One `specpdl'-style record pushed by varbind/save-*/unwind-protect
 /// and popped by `byte-unbind'.
@@ -58,11 +60,69 @@ pub(crate) fn is_byte_code(items: &[Value]) -> bool {
         && matches!(&items[2], Value::Vec(_))
         && items[3].int().is_some()
 }
+/// Decoded byte-code program cached on `Lambda::bc_prog'.  Built once
+/// per `bc_items' contents; identity of the argdesc/code/consts slots
+/// is recorded so a Lisp `aset' on the element vector forces a rebuild.
+pub(crate) struct BcProg {
+    /// Identity of `items[0]' (argdesc) for staleness checks.
+    argdesc_key: usize,
+    /// Identity of `items[1]' (byte string) for staleness checks.
+    code_key: usize,
+    /// Decoded instruction bytes.
+    code: Vec<u8>,
+    /// `parse_argdesc' results.
+    req: usize,
+    max: usize,
+    has_rest: bool,
+    dyn_names: Option<Rc<Vec<SymId>>>,
+}
+
+/// Cheap identity for cache validation: Rc payloads compare by
+/// pointer, immediates by value bits.  A false hit only skips
+/// validation work — the slot Values are still compared structurally
+/// cheap — so collisions merely rebuild.
+fn slot_key(v: &Value) -> usize {
+    match v {
+        Value::Cons(r) => Rc::as_ptr(r) as usize,
+        Value::Str(r) => Rc::as_ptr(r) as usize,
+        Value::Vec(r) => Rc::as_ptr(r) as usize,
+        Value::Lambda(r) => Rc::as_ptr(r) as usize,
+        Value::Hash(r) => Rc::as_ptr(r) as usize,
+        Value::Record(r) => Rc::as_ptr(r) as usize,
+        Value::Int(n) => (*n as usize) ^ 0x9e37_79b9,
+        Value::Nil => 0,
+        Value::Sym(s) => (*s as usize) | 1,
+        _ => usize::MAX,
+    }
+}
+
+/// Arity check for a `#[ARGDESC ...]' literal before its arguments
+/// are evaluated — GNU's compiled-call contract.  `who' is the symbol
+/// shown in `wrong-number-of-arguments' (nativecomp surface).
+pub(crate) fn check_argdesc(
+    i: &mut Interp,
+    items: &[Value],
+    n: usize,
+    who: &Value,
+) -> Result<(), Flow> {
+    let argdesc = items.first().cloned().unwrap_or(Value::Nil);
+    let (req, max, has_rest, _) = parse_argdesc(i, &argdesc);
+    if n < req || (!has_rest && n > max) {
+        return Err(i.wrong_number_of_args(who, n as i128));
+    }
+    Ok(())
+}
 
 /// Execute a `#[ARGDESC BYTESTR CONSTS DEPTH ...]' byte-code object.
 /// `l' is the Lambda built by `make-byte-code'/the `#[...]' reader;
 /// `argv' are the already-evaluated call arguments.
-pub(crate) fn exec(i: &mut Interp, l: &Lambda, argv: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn exec(
+    i: &mut Interp,
+    l: &Lambda,
+    argv: crate::lisp::Argv,
+    who: Option<&Value>,
+    named: bool,
+) -> EvalResult {
     let items = l
         .bc_items
         .as_ref()
@@ -71,6 +131,40 @@ pub(crate) fn exec(i: &mut Interp, l: &Lambda, argv: crate::lisp::Argv) -> EvalR
     let argdesc = items.first().cloned().unwrap_or(Value::Nil);
     let bytestr = items.get(1).cloned().unwrap_or(Value::Nil);
     let consts = items.get(2).cloned().unwrap_or(Value::Nil);
+    // Cached decoded program, keyed on the identity of the argdesc and
+    // code slots — a Lisp `aset' on the element vector writes a new
+    // Value (new Rc) and forces a rebuild.  The constants vector is
+    // passed by reference and read live per `konst', so in-place
+    // `aset' on it is visible mid-call like GNU.
+    let prog = {
+        let key_a = slot_key(&argdesc);
+        let key_c = slot_key(&bytestr);
+        let hit = l
+            .bc_prog
+            .borrow()
+            .as_ref()
+            .is_some_and(|p| p.argdesc_key == key_a && p.code_key == key_c);
+        if hit {
+            l.bc_prog.borrow().clone().unwrap()
+        } else {
+            let code = match code_bytes(i, &bytestr) {
+                Ok(c) => c,
+                Err(e) => return Err(e),
+            };
+            let (req, max, has_rest, dyn_names) = parse_argdesc(i, &argdesc);
+            let p = Rc::new(BcProg {
+                argdesc_key: key_a,
+                code_key: key_c,
+                code,
+                req,
+                max,
+                has_rest,
+                dyn_names: dyn_names.map(Rc::new),
+            });
+            *l.bc_prog.borrow_mut() = Some(p.clone());
+            p
+        }
+    };
     // Depth guard for debugging runaway bytecode recursion
     // (REMACS_BC_DEPTH=N dumps recent frames and aborts).
     if let Some(d) = std::env::var("REMACS_BC_DEPTH")
@@ -85,44 +179,73 @@ pub(crate) fn exec(i: &mut Interp, l: &Lambda, argv: crate::lisp::Argv) -> EvalR
             }
             std::process::exit(3);
         }
-        let r = run(i, &argdesc, &bytestr, &consts, &argv);
+        let r = run(i, &prog, &consts, &argv, who, named);
         i.bc_depth -= 1;
         return r;
     }
-    run(i, &argdesc, &bytestr, &consts, &argv)
+    run(i, &prog, &consts, &argv, who, named)
 }
 
 /// `(byte-code BYTESTR CONSTVEC DEPTH)' entry point — no arguments.
 pub(crate) fn exec_raw(i: &mut Interp, bytestr: &Value, consts: &Value) -> EvalResult {
-    run(i, &Value::Int(0), bytestr, consts, &[])
+    let code = code_bytes(i, bytestr)?;
+    let (req, max, has_rest, dyn_names) = parse_argdesc(i, &Value::Int(0));
+    let prog = BcProg {
+        argdesc_key: 0,
+        code_key: 0,
+        code,
+        req,
+        max,
+        has_rest,
+        dyn_names: dyn_names.map(Rc::new),
+    };
+    run(i, &prog, consts, &[], None, false)
 }
 
 fn run(
     i: &mut Interp,
-    argdesc: &Value,
-    bytestr: &Value,
+    prog: &BcProg,
     consts: &Value,
     argv: &[Value],
+    who: Option<&Value>,
+    named: bool,
 ) -> EvalResult {
-    let code = code_bytes(i, bytestr)?;
-    let consts = match consts {
-        Value::Vec(v) => v.borrow().clone(),
-        _ => return Err(i.wrong_type_mut("vectorp", consts)),
+    let Value::Vec(consts) = consts else {
+        return Err(i.wrong_type_mut("vectorp", consts));
     };
-    // Arity check against the args-description.
-    let (req, max, has_rest, dyn_names) = parse_argdesc(i, argdesc);
+    let (req, max, has_rest, dyn_names) =
+        (prog.req, prog.max, prog.has_rest, prog.dyn_names.as_deref());
+    // GNU `funcall_subr' passes ALL supplied args to an n-adic subr
+    // (`maxargs == MANY || maxargs > 8' -> `aMANY (numargs, args)');
+    // the native trampoline then reads only its declared signature,
+    // silently dropping the tail — e.g. `(funcall 'cl--struct-new-class
+    // <11 args>)' succeeds while `add-abbrev' (max 3) still wnas.
+    // `named' marks the dumped-native-twin surface (GNU's
+    // funcall_subr passes all args to an aMANY trampoline).
+    let short_argv: Vec<Value>;
+    let argv = if named && !has_rest && max > 8 && argv.len() > max {
+        short_argv = argv[..max].to_vec();
+        &short_argv[..]
+    } else {
+        argv
+    };
     if argv.len() < req || (!has_rest && argv.len() > max) {
-        // GNU exec_byte_code signals ((MIN . NONREST) NARGS) where
-        // NONREST is the raw `desc>>8' max field — always an int
-        // (e.g. dumped `when' (cond &rest body) reports (1 . 1)).
-        let desc = Value::cons(Value::Int(req as i128), Value::Int(max as i128));
+        // GNU exec_byte_code signals ((MIN . NONREST) NARGS) for
+        // anonymous `#[...]' literals.  Under nativecomp a *named*
+        // compiled function shows its `#<subr NAME>' object — our
+        // compiled twins reach exec through call_lambda_inner, so the
+        // datum is the lambda itself; only nameless literals keep
+        // the pair.
+        let desc = who
+            .cloned()
+            .unwrap_or_else(|| Value::cons(Value::Int(req as i128), Value::Int(max as i128)));
         return Err(i.wrong_number_of_args(&desc, argv.len() as i128));
     }
     let specmark = i.specbind_depth();
     // Dynamic-style argdesc (a list of names): each parameter name is
     // specbind'd to its argument — GNU binds them in order, &rest
     // takes the tail as a list.
-    if let Some(names) = &dyn_names {
+    if let Some(names) = dyn_names {
         let mut idx = 0usize;
         for name in names {
             let v = if idx < argv.len() {
@@ -168,7 +291,14 @@ fn run(
     // subr call from inside byte code sees it like a Lisp-level `catch'
     // (GNU's Bpushcatch pushes onto the same handlerlist Fthrow scans).
     let catch_depth = i.catch_tags.len();
-    let r = dispatch(i, &code, &consts, &mut stack, &mut unwinds, &mut handlers);
+    let r = dispatch(
+        i,
+        &prog.code,
+        consts.as_ref(),
+        &mut stack,
+        &mut unwinds,
+        &mut handlers,
+    );
     i.catch_tags.truncate(catch_depth);
     // Any unwind records still open (a nonlocal exit or an unbalanced
     // `unbind' count) get cleaned here — GNU's specpdl does the same.
@@ -204,7 +334,7 @@ fn unwind_one(i: &mut Interp, u: Unwind) {
 fn dispatch(
     i: &mut Interp,
     code: &[u8],
-    consts: &[Value],
+    consts: &RefCell<Vec<Value>>,
     stack: &mut Vec<Value>,
     unwinds: &mut Vec<Unwind>,
     handlers: &mut Vec<BcHandler>,
@@ -238,7 +368,10 @@ fn dispatch(
                     .map(|v| i.princ_to_string(v))
                     .unwrap_or_default();
                 eprintln!("[bc]   CALL nargs={} fn={}", nargs, fnv);
-                if !matches!(stack.get(fpos), Some(Value::Sym(_)) | Some(Value::Subr(_)) | Some(Value::Lambda(_))) {
+                if !matches!(
+                    stack.get(fpos),
+                    Some(Value::Sym(_)) | Some(Value::Subr(_)) | Some(Value::Lambda(_))
+                ) {
                     let dump: Vec<String> = stack
                         .iter()
                         .map(|v| i.princ_to_string(v).chars().take(24).collect())
@@ -326,7 +459,7 @@ enum Step {
 fn step_op(
     i: &mut Interp,
     code: &[u8],
-    consts: &[Value],
+    consts: &RefCell<Vec<Value>>,
     stack: &mut Vec<Value>,
     unwinds: &mut Vec<Unwind>,
     handlers: &mut Vec<BcHandler>,
@@ -374,7 +507,7 @@ fn step_op(
     }
     macro_rules! konst {
         ($n:expr) => {
-            consts.get($n).cloned().unwrap_or(Value::Nil)
+            consts.borrow().get($n).cloned().unwrap_or(Value::Nil)
         };
     }
     macro_rules! csym {
@@ -467,6 +600,7 @@ fn step_op(
                         .map(|v| i.princ_to_string(v).chars().take(60).collect())
                         .collect();
                     let cs: Vec<String> = consts
+                        .borrow()
                         .iter()
                         .map(|v| i.princ_to_string(v).chars().take(60).collect())
                         .collect();
@@ -797,7 +931,10 @@ fn step_op(
         166 => scall!("%", 2),
         167 => {
             let v = pop!();
-            push!(Value::from_bool(matches!(v, Value::Int(_) | Value::Float(_))));
+            push!(Value::from_bool(matches!(
+                v,
+                Value::Int(_) | Value::Float(_)
+            )));
         }
         168 => {
             let v = pop!();
@@ -879,10 +1016,7 @@ fn step_op(
 /// `required | (&rest << 7) | ((required+optional) << 8)'; a list is
 /// the literal (dynamic-binding) arglist; nil means zero arguments.
 /// Returns (required, max-positional, has-rest, dynamic-names).
-fn parse_argdesc(
-    i: &mut Interp,
-    a: &Value,
-) -> (usize, usize, bool, Option<Vec<SymId>>) {
+pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> (usize, usize, bool, Option<Vec<SymId>>) {
     match a {
         Value::Int(n) => {
             let req = (*n & 0x7f).max(0) as usize;

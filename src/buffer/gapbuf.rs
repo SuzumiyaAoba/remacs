@@ -21,8 +21,9 @@ pub struct GapBuffer {
     lines: RefCell<Option<(u64, Rc<Vec<usize>>)>>,
 }
 
-const GAP_INIT: usize = 64;
-
+// GNU `GAP_INIT' (buffer.c): a fresh buffer starts with a 20-byte
+// gap — here 20 chars (our gap is char-indexed).
+const GAP_INIT: usize = 20;
 
 impl GapBuffer {
     pub fn new() -> Self {
@@ -50,8 +51,13 @@ impl GapBuffer {
         }
     }
 
-    fn gap_size(&self) -> usize {
+    pub fn gap_size(&self) -> usize {
         self.gap_end - self.gap_start
+    }
+
+    /// The gap's leading edge in logical chars (GNU `GPT').
+    pub fn gap_position(&self) -> usize {
+        self.gap_start
     }
 
     /// Move the gap so it starts at logical position `pos`.
@@ -78,16 +84,18 @@ impl GapBuffer {
         let _ = gsize;
     }
 
-    /// Grow the gap so at least `need` chars fit.
+    /// Grow the gap so at least `need` chars fit, GNU make_gap_larger
+    /// style: grow by `GAP_BYTES_DFL' (2000) minimum so a fresh
+    /// 20-char gap reports (gap-size) => 2000 after any insert.
     fn ensure_gap(&mut self, need: usize) {
         if self.gap_size() >= need {
             return;
         }
-        let grow = need.max(64);
+        const GAP_BYTES_DFL: usize = 2000;
+        let grow = need.max(GAP_BYTES_DFL);
         let old_len = self.buf.len();
         self.buf.resize(old_len + grow, 0 as char);
         // Move post-gap text to the new end.
-        let _post = old_len - self.gap_end;
         self.buf
             .copy_within(self.gap_end..old_len, self.gap_end + grow);
         self.gap_end += grow;
@@ -325,12 +333,21 @@ impl SharedText {
         }
     }
 
-
     /// Total character count (text length).
     pub fn len(&self) -> usize {
         self.inner.borrow().len()
     }
 
+    /// The unused gap between `gap_start' and `gap_end' (GNU
+    /// `gap-size'; grows only — deletions don't shrink it).
+    pub fn gap_size(&self) -> usize {
+        self.inner.borrow().gap_size()
+    }
+
+    /// The gap's leading edge in logical chars (GNU `GPT').
+    pub fn gap_position(&self) -> usize {
+        self.inner.borrow().gap_position()
+    }
     /// Char at logical index `i` (0-based).
     pub fn char_at(&self, i: usize) -> char {
         self.inner.borrow().char_at(i)

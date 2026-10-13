@@ -231,18 +231,19 @@ which then stands for (SYM SYM).
 Each EXP can refer to symbols specified earlier in the binding list.
 
 TEST has to be a symbol, and if it is nil it can be omitted."
-  (declare (indent 2))
+  (declare (indent 2) (debug (sexp (&rest (sexp form)) body)))
   (when (consp test) ;; `test' was omitted.
     (push bindings body)
     (setq bindings test)
     (setq test nil))
-  (if (null bindings)
-      (macroexp-progn body)
-    (let* ((hd (car bindings))
-           (var (if (consp hd) (car hd) hd))
-           (exp (if (consp hd) (cadr hd) var)))
-      `(macroexp-let2 ,test ,var ,exp
-         (macroexp-let2* ,test ,(cdr bindings) ,@body)))))
+  ;; GNU macroexp.el: pcase-exhaustive over BINDINGS — a non-list
+  ;; binding list signals "No clause matching" (pcase), not listp.
+  (pcase-exhaustive bindings
+    ('nil (macroexp-progn body))
+    (`(,(or `(,var ,exp) (and (pred symbolp) var (let exp var)))
+       . ,tl)
+     `(macroexp-let2 ,test ,var ,exp
+        (macroexp-let2* ,test ,tl ,@body)))))
 
 (defun macroexp--maxsize (exp size)
   (cond ((< size 0) size)
@@ -412,11 +413,12 @@ syntax, so it only looks for the presence of symbols in SEXP."
 (provide 'macroexp)
 
 (defvar remacs-coding-system-priorities
-  '(utf-8 iso-2022-jp japanese-iso-8bit japanese-shift-jis
-    iso-2022-jp-2 iso-2022-7bit iso-latin-1 iso-2022-8bit-ss2
-    emacs-mule raw-text in-is13194-devanagari utf-8-auto
+  '(utf-8 iso-2022-7bit iso-latin-1 iso-2022-7bit-lock
+    iso-2022-8bit-ss2 emacs-mule raw-text iso-2022-jp
+    in-is13194-devanagari chinese-iso-8bit utf-8-auto
     utf-8-with-signature utf-16 utf-16be-with-signature
-    utf-16le-with-signature utf-16be utf-16le chinese-big5 undecided)
+    utf-16le-with-signature utf-16be utf-16le
+    japanese-shift-jis chinese-big5 undecided)
   "Coding systems ordered by priority, one representative per category.
 Updated by `set-coding-system-priority'; seeded to GNU's -Q state.")
 
@@ -809,10 +811,14 @@ Value is what BODY returns."
 
 ;; GNU case-table.el.
 (defun char-uppercase-p (char)
-  "Return non-nil if CHAR is an uppercase character."
-  (and (characterp char)
-       (not (eq (downcase char) char))
-       (eq (upcase char) char)))
+  "Return non-nil if CHAR is an upper-case character.
+A character is considered upper-case if there's a corresponding
+lower-case character.
+If the Unicode tables are not yet available, e.g. during bootstrap,
+this function gives correct return values only for ASCII characters."
+  (cond ((unicode-property-table-internal 'lowercase)
+         (characterp (get-char-code-property char 'lowercase)))
+        ((<= ?A char ?Z))))
 
 ;; `copy-case-table' is a subr in GNU 31 (the case-table.el defun is
 ;; dead code there — its `dotimes (i 4)' overruns the 3 extra slots).
@@ -1109,26 +1115,15 @@ The elements of LIST are not required to be strings."
 (defvar hard-newline (propertize "\n" 'hard t 'rear-nonsticky '(hard))
   "Propertized newline representing a \"hard\" newline.")
 
-(defvar next-line-add-newlines nil
-  "Non-nil means `next-line' inserts newlines when called at the end of a buffer."
-  :type 'boolean
-  :group 'editing-basics)
+(defvar next-line-add-newlines nil "Non-nil means `next-line' inserts newlines when called at the end of a buffer.")
 
-(defvar track-eol nil
-  "Non-nil means vertical motion starting at end of line keeps to ends of lines.
+(defvar track-eol nil "Non-nil means vertical motion starting at end of line keeps to ends of lines.
 This means moving to the end of each line moved onto.
 The beginning of a blank line does not count as the end of a line.
-This has no effect when the variable `line-move-visual' is non-nil."
-  :type 'boolean
-  :group 'editing-basics)
+This has no effect when the variable `line-move-visual' is non-nil.")
 
-(defvar goal-column nil
-  "Semipermanent goal column for vertical motion, as set by \\[set-goal-column], or nil.
-A non-nil setting overrides the variable `line-move-visual', which see."
-  :type '(choice integer
-		 (const :tag "None" nil))
-  :local t
-  :group 'editing-basics)
+(defvar goal-column nil "Semipermanent goal column for vertical motion, as set by \\[set-goal-column], or nil.
+A non-nil setting overrides the variable `line-move-visual', which see.")
 
 (defvar temporary-goal-column 0
   "Current goal column for vertical motion.
@@ -1143,20 +1138,16 @@ columns by which window is scrolled from left margin.
 When the `track-eol' feature is doing its job, the value is
 `most-positive-fixnum'.")
 
-(defvar line-move-ignore-invisible t
-  "Non-nil means commands that move by lines ignore invisible newlines.
+(defvar line-move-ignore-invisible t "Non-nil means commands that move by lines ignore invisible newlines.
 When this option is non-nil, \\[next-line], \\[previous-line], \\[move-end-of-line], and \\[move-beginning-of-line] behave
 as if newlines that are invisible didn't exist, and count
 only visible newlines.  Thus, moving across 2 newlines
 of which one is invisible will move point to the second visible newline.
 \(This is the default, because it is behavior users expect.)
 Note that this option does not affect motion commands that are invoked
-via `line-move', like \\[move-end-of-line] and \\[move-beginning-of-line]."
-  :type 'boolean
-  :group 'editing-basics)
+via `line-move', like \\[move-end-of-line] and \\[move-beginning-of-line].")
 
-(defvar line-move-visual t
-  "When non-nil, `line-move' moves point by visual lines.
+(defvar line-move-visual t "When non-nil, `line-move' moves point by visual lines.
 This movement is based on where the cursor is displayed on the
 screen, instead of relying on buffer contents alone.  It takes
 into account variable-width characters and line continuation.
@@ -1164,14 +1155,9 @@ If nil, `line-move' moves point by logical lines.
 A non-nil setting of `goal-column' overrides the value of this variable
 and forces movement by logical lines.
 A window that is horizontally scrolled also forces movement by logical
-lines."
-  :type 'boolean
-  :group 'editing-basics)
+lines.")
 
-(defvar auto-window-vscroll t
-  "Non-nil means to automatically adjust `window-vscroll' to view tall lines."
-  :type 'boolean
-  :group 'windows)
+(defvar auto-window-vscroll t "Non-nil means to automatically adjust `window-vscroll' to view tall lines.")
 
 (defvar overflow-newline-into-fringe nil
   "Non-nil means to display the newline on right fringe in a truncated line.")
@@ -1698,11 +1684,59 @@ is supplied, or Transient Mark mode is enabled and the mark is active."
 (defun set-mark-command (arg)
   "Set the mark at point, or jump to the mark with a prefix argument."
   (interactive "P")
-  (if arg
-      (when (mark)
-        (goto-char (mark))
-        (deactivate-mark))
-    (push-mark)))
+  (cond ((eq transient-mark-mode 'lambda)
+         (kill-local-variable 'transient-mark-mode))
+        ((eq (car-safe transient-mark-mode) 'only)
+         (deactivate-mark)))
+  (cond
+   ((and (consp arg) (> (prefix-numeric-value arg) 4))
+    (push-mark-command nil))
+   ((not (eq this-command 'set-mark-command))
+    (if arg
+        (pop-to-mark-command)
+      (push-mark-command t)))
+   ((and set-mark-command-repeat-pop
+         (eq last-command 'pop-global-mark)
+         (not arg))
+    (setq this-command 'pop-global-mark)
+    (pop-global-mark))
+   ((or (and set-mark-command-repeat-pop
+             (eq last-command 'pop-to-mark-command))
+        arg)
+    (setq this-command 'pop-to-mark-command)
+    (pop-to-mark-command))
+   ((eq last-command 'set-mark-command)
+    (if (region-active-p)
+        (progn
+          (deactivate-mark)
+          (message "Mark deactivated"))
+      (activate-mark)
+      (message "Mark activated")))
+   (t
+    (push-mark-command nil))))
+
+(defun pop-to-mark-command ()
+  "Jump to mark, and pop a new position for mark off the ring.
+\(Does not affect global mark ring)."
+  (interactive)
+  (if (null (mark t))
+      (user-error "No mark set in this buffer")
+    (if (= (point) (mark t))
+        (message "Mark popped"))
+    (goto-char (mark t))
+    (pop-mark)))
+
+(defun push-mark-command (arg &optional nomsg)
+  "Set mark at where point is.
+If no prefix ARG and mark is already set there, just activate it.
+Display `Mark set' unless the optional second arg NOMSG is non-nil."
+  (interactive "P")
+  (let ((mark (mark t)))
+    (if (or arg (null mark) (/= mark (point)))
+        (push-mark nil nomsg t)
+      (activate-mark 'no-tmm)
+      (unless nomsg
+        (message "Mark activated")))))
 
 (defun keyboard-quit ()
   "Signal a `quit' condition (C-g)."
@@ -1710,9 +1744,23 @@ is supplied, or Transient Mark mode is enabled and the mark is active."
   (signal 'quit nil))
 
 (defun keyboard-escape-quit ()
-  "Abort the current operation (ESC ESC ESC)."
+  "Exit the current \"mode\" (in a generalized sense of the word)."
   (interactive)
-  (signal 'quit nil))
+  (cond ((eq last-command 'mode-exited) nil)
+	((region-active-p)
+	 (deactivate-mark))
+	((> (minibuffer-depth) 0)
+	 (abort-recursive-edit))
+	(current-prefix-arg
+	 nil)
+	((> (recursion-depth) 0)
+	 (exit-recursive-edit))
+	(buffer-quit-function
+	 (funcall buffer-quit-function))
+	((not (one-window-p t))
+	 (delete-other-windows))
+	((string-match "^ \\*" (buffer-name (current-buffer)))
+	 (bury-buffer))))
 
 (defun mark-word (&optional arg allow-extend)
   "Set mark ARG words from point or move mark one word.
@@ -1775,18 +1823,43 @@ set ARG sexps from point."
 	    (point))
 	  nil t))))
 
-(defun mark-paragraph (&optional arg)
-  "Put mark at end of this paragraph, point at beginning."
-  (interactive "P")
-  (forward-paragraph (or arg 1))
-  (push-mark nil t t)
-  (backward-paragraph))
+(defun mark-paragraph (&optional arg allow-extend)
+  "Put point at beginning of this paragraph, mark at end.
+The paragraph marked is the one that contains point or follows point.
+
+With argument ARG, puts mark at end of a following paragraph, so that
+the number of paragraphs marked equals ARG.
+
+If ARG is negative, point is put at end of this paragraph, mark is put
+at beginning of this or a previous paragraph.
+
+Interactively (or if ALLOW-EXTEND is non-nil), if this command is
+repeated or (in Transient Mark mode) if the mark is active,
+it marks the next ARG paragraphs after the ones already marked."
+  (interactive "p\np")
+  (unless arg (setq arg 1))
+  (when (zerop arg)
+    (error "Cannot mark zero paragraphs"))
+  (cond ((and allow-extend
+	      (or (and (eq last-command this-command) (mark t))
+		  (and transient-mark-mode mark-active)))
+	 (set-mark
+	  (save-excursion
+	    (goto-char (mark))
+	    (forward-paragraph arg)
+	    (point))))
+	(t
+	 (forward-paragraph arg)
+	 (push-mark nil t t)
+	 (backward-paragraph arg))))
 
 (defun back-to-indentation ()
   "Move point to the first non-whitespace character on this line."
   (interactive "^")
-  (beginning-of-line)
-  (skip-chars-forward " \t"))
+  (beginning-of-line 1)
+  (skip-syntax-forward " " (line-end-position))
+  ;; Move back over chars that have whitespace syntax but have the p flag.
+  (backward-prefix-chars))
 
 (defun goto-line (line)
   "Go to LINE, counting from line 1 at beginning of buffer."
@@ -1853,10 +1926,25 @@ each new line through `indent-line-function'."
                                                  ".")))))
                  (point)))))
 
-(defun transpose-sexps (arg)
-  "Like \\[transpose-chars] (`transpose-chars'), but applies to sexps."
-  (interactive "*p")
-  (transpose-subr 'transpose-sexps-default-function arg 'special))
+(defvar transpose-sexps-function #'transpose-sexps-default-function
+  "If non-nil, `transpose-sexps' delegates to this function.")
+
+(defun transpose-sexps (arg &optional interactive)
+  "Like \\[transpose-chars] (`transpose-chars'), but applies to sexps.
+Unlike `transpose-words', point must be between the two sexps and not
+in the middle of a sexp to be transposed.
+With non-zero prefix arg ARG, effect is to take the sexp before point
+and drag it forward past ARG other sexps (backward if ARG is negative).
+If ARG is zero, the sexps ending at or after point and at or after mark
+are interchanged.
+If INTERACTIVE is non-nil, as it is interactively,
+report errors as appropriate for this kind of usage."
+  (interactive "*p\nd")
+  (if interactive
+      (condition-case nil
+          (transpose-sexps arg nil)
+        (scan-error (user-error "Not between two complete sexps")))
+    (transpose-subr transpose-sexps-function arg 'special)))
 
 (defun transpose-subr-1 (pos1 pos2)
   (unless (and pos1 pos2)
@@ -2996,10 +3084,33 @@ an auto-save file."
     (insert-file-contents file-name (not auto-save-p)
                           nil nil 'if-regular))))
 
+(defun insert-file-1 (filename insert-func)
+  ;; GNU files.el verbatim: a directory signals `file-error' before
+  ;; the oversized-file abort, then a visiting modified buffer warns.
+  (if (file-directory-p filename)
+      (signal 'file-error (list "Opening input file" "Is a directory"
+                                filename)))
+  (abort-if-file-too-large (file-attribute-size (file-attributes filename))
+                           "insert" filename)
+  (let* ((buffer (find-buffer-visiting (abbreviate-file-name (file-truename filename))
+                                       #'buffer-modified-p))
+         (tem (funcall insert-func filename)))
+    (push-mark (+ (point) (car (cdr tem))))
+    (when buffer
+      (message "File %s already visited and modified in buffer %s"
+               filename (buffer-name buffer)))
+    nil))
+
 (defun insert-file (filename)
-  "Insert the contents of FILENAME into the buffer after point."
+  "Insert contents of file FILENAME into buffer after point.
+Set mark after the inserted text."
   (interactive "*fInsert file: ")
-  (insert-file-contents filename))
+  (insert-file-1 filename #'insert-file-contents))
+
+(defun insert-file-literally (filename)
+  "Insert contents of file FILENAME into buffer after point with no conversion."
+  (interactive "*fInsert file literally: ")
+  (insert-file-1 filename #'insert-file-contents-literally))
 
 (defun read-only-mode (&optional arg)
   "Toggle whether the buffer is read-only."
@@ -4203,11 +4314,13 @@ The line number is relative to the start of the page."
   "Return the *Help* buffer."
   (get-buffer-create "*Help*"))
 
+;Remacs: `window-normalize-buffer-to-switch-to' gives GNU's exact arg
+;semantics — nil → other-buffer, buffer → itself, else
+;`get-buffer-create' (stringp on non-strings).
 (defun pop-to-buffer (buffer &optional _action _norecord)
   "Select BUFFER in some window, preferring the current one."
   (interactive "bPop to buffer: ")
-  (let ((b (get-buffer-create (if (stringp buffer) buffer
-                                (buffer-name buffer)))))
+  (let ((b (window-normalize-buffer-to-switch-to buffer)))
     (set-window-buffer (selected-window) b)
     (set-buffer b)
     b))
@@ -4215,8 +4328,7 @@ The line number is relative to the start of the page."
 (defun switch-to-buffer (buffer-or-name &optional norecord force-same-window)
   "Select BUFFER-OR-NAME in the current window."
   (interactive "BSwitch to buffer: ")
-  (let ((b (get-buffer-create (if (stringp buffer-or-name) buffer-or-name
-                                (buffer-name buffer-or-name)))))
+  (let ((b (window-normalize-buffer-to-switch-to buffer-or-name)))
     (set-window-buffer (selected-window) b)
     (set-buffer b)
     b))
@@ -4274,27 +4386,6 @@ The line number is relative to the start of the page."
     (pop-to-buffer b)
     nil))
 
-(defun describe-bindings (&optional prefix buffer)
-  "Display a list of key bindings."
-  (interactive "P")
-  (let ((b (help-buffer)))
-    (with-current-buffer b
-      (erase-buffer)
-      (insert "key             binding\n---             -------\n")
-      (dolist (cell (cdr (current-global-map)))
-        (when (consp cell)
-          (let ((k (car cell)))
-            (insert (cond ((eq k t) "default")
-                          ;; Range binding (FROM . TO).
-                          ((consp k)
-                           (concat (single-key-description (car k))
-                                   ".."
-                                   (single-key-description (cdr k))))
-                          (t (single-key-description k)))
-                    "\t\t"
-                    (prin1-to-string (cdr cell)) "\n")))))
-    (pop-to-buffer b)
-    nil))
 
 (defun describe-mode (&optional buffer)
   "Display the current buffer's mode."
@@ -4706,43 +4797,58 @@ after saving the buffers."
       (when switched-buffer
         (pop-to-buffer-same-window switched-buffer)))))
 
-(defun save-buffers-kill-emacs (&optional arg)
+(defun save-buffers-kill-emacs (&optional arg restart)
   "Offer to save each buffer, then kill Emacs."
   (interactive "P")
   (save-some-buffers arg)
   (kill-emacs))
 
-(defun isearch-forward (regexp-p string)
+(defun isearch-forward (&optional regexp-p no-recursive-edit)
   "Search forward; prompts for a string (line-input fallback)."
   (interactive "P\nsI-search: ")
-  (when (> (length string) 0)
-    (if regexp-p
-        (re-search-forward string nil t)
-      (search-forward string nil t)))
-  string)
+  ;; GNU's isearch.el defun calls `isearch-mode'; the TUI interactive
+  ;; spec passes the search string as arg2, which takes the
+  ;; line-input fallback path instead.
+  (if (stringp no-recursive-edit)
+      (progn
+        (when (> (length no-recursive-edit) 0)
+          (if regexp-p
+              (re-search-forward no-recursive-edit nil t)
+            (search-forward no-recursive-edit nil t)))
+        no-recursive-edit)
+    (isearch-mode t (not (null regexp-p)) nil (not no-recursive-edit))))
 
-(defun isearch-backward (regexp-p string)
+(defun isearch-backward (&optional regexp-p no-recursive-edit)
   "Search backward; prompts for a string (line-input fallback)."
   (interactive "P\nsI-search backward: ")
-  (when (> (length string) 0)
-    (if regexp-p
-        (re-search-backward string nil t)
-      (search-backward string nil t)))
-  string)
+  (if (stringp no-recursive-edit)
+      (progn
+        (when (> (length no-recursive-edit) 0)
+          (if regexp-p
+              (re-search-backward no-recursive-edit nil t)
+            (search-backward no-recursive-edit nil t)))
+        no-recursive-edit)
+    (isearch-mode nil (not (null regexp-p)) nil (not no-recursive-edit))))
 
-(defun isearch-forward-regexp (string)
+(defun isearch-forward-regexp (&optional not-regexp no-recursive-edit)
   "Incremental regexp search forward (line-input fallback)."
-  (interactive "sI-search regexp: ")
-  (when (> (length string) 0)
-    (re-search-forward string nil t))
-  string)
+  (interactive "P\nsI-search regexp: ")
+  (if (stringp not-regexp)
+      (progn
+        (when (> (length not-regexp) 0)
+          (re-search-forward not-regexp nil t))
+        not-regexp)
+    (isearch-mode t (null not-regexp) nil (not no-recursive-edit))))
 
-(defun isearch-backward-regexp (string)
+(defun isearch-backward-regexp (&optional not-regexp no-recursive-edit)
   "Incremental regexp search backward (line-input fallback)."
-  (interactive "sI-search backward regexp: ")
-  (when (> (length string) 0)
-    (re-search-backward string nil t))
-  string)
+  (interactive "P\nsI-search backward regexp: ")
+  (if (stringp not-regexp)
+      (progn
+        (when (> (length not-regexp) 0)
+          (re-search-backward not-regexp nil t))
+        not-regexp)
+    (isearch-mode nil (null not-regexp) nil (not no-recursive-edit))))
 
 (defvar isearch-mode-map (make-sparse-keymap)
   "Keymap for `isearch-mode'.")
@@ -5155,21 +5261,47 @@ GNU indent.el verbatim."
     (insert comment-start)))
 
 (defun insert-parentheses (&optional arg)
-  "Enclose following ARG sexps in parentheses."
-  (interactive "P")
-  (or arg (setq arg 0))
-  (insert ?\()
-  (save-excursion
-    (or (eq arg 0)
-        (forward-sexp arg))
-    (insert ?\))))
+  "Enclose following ARG sexps in parentheses.
+Leave point after open-paren.
+A negative ARG encloses the preceding ARG sexps instead.
+No argument is equivalent to zero: just insert `()' and leave point between.
+If `parens-require-spaces' is non-nil, this command also inserts a space
+before and after, depending on the surrounding characters.
+If region is active, insert enclosing characters at region boundaries.
 
+This command assumes point is not in a string or comment."
+  (interactive "P")
+  (insert-pair arg ?\( ?\)))
+
+;;Remacs: real GNU indent.el 31.1 defun — prelude's stub returned the
+;; raw `skip-chars-forward' count (0) where GNU returns nil when the
+;; fill-prefix/adaptive-fill tail matches nothing.
 (defun beginning-of-line-text (&optional n)
   "Move to the beginning of the text on this line.
-This is like `beginning-of-line', but skips past a comment prefix."
+
+With optional argument N, move forward N-1 lines first.
+
+From the beginning of the line, moves past the `left-margin'
+indentation, the `fill-prefix', and any indentation used for
+centering or right-justifying the line, but does not move past
+any whitespace that was explicitly inserted (such as a tab used
+to indent the first line of a paragraph)."
   (interactive "^p")
   (beginning-of-line n)
-  (skip-chars-forward " \t"))
+  (skip-chars-forward " \t")
+  ;; Skip over fill-prefix.
+  (if (and fill-prefix
+	   (not (string-equal fill-prefix "")))
+      (if (equal fill-prefix
+		 (buffer-substring
+		  (point) (min (point-max) (+ (length fill-prefix) (point)))))
+	  (forward-char (length fill-prefix)))
+    (if (and adaptive-fill-mode adaptive-fill-regexp
+	     (looking-at adaptive-fill-regexp))
+	(goto-char (match-end 0))))
+  ;; Skip centering or flushright indentation
+  (if (memq (current-justification) '(center right))
+      (skip-chars-forward " \t")))
 
 (defun fixup-whitespace ()
   "Fixup white space between objects around point.
@@ -5185,31 +5317,110 @@ Leave one space or none, according to the context."
 
 ;; ---------- named-function-key commands ----------
 (defun left-char (&optional n)
-  "Move point N characters to the left (to the right if N is negative)."
+  "Move point N characters to the left (to the right if N is negative).
+On reaching beginning or end of buffer, stop and signal error."
   (interactive "^p")
-  (forward-char (- (prefix-numeric-value n))))
+  ;Remacs: GNU native-compiled left-char validates N with
+  ;number-or-marker before the forward/backward call (a bare
+  ;`fixnump' check wouldn't accept a marker, yet GNU does).
+  (when (and n (not (number-or-marker-p n)))
+    (signal 'wrong-type-argument (list 'number-or-marker-p n)))
+  (if visual-order-cursor-movement
+      (dotimes (_ (if (numberp n) (abs n) 1))
+        (move-point-visually (if (and (numberp n) (< n 0)) 1 -1)))
+    (if (eq (current-bidi-paragraph-direction) 'left-to-right)
+        (backward-char n)
+      (forward-char n))))
 
 (defun right-char (&optional n)
-  "Move point N characters to the right (to the left if N is negative)."
-  (interactive "^p")
-  (forward-char (prefix-numeric-value n)))
+  "Move point N characters to the right (to the left if N is negative).
+On reaching beginning or end of buffer, stop and signal error.
 
-(defun delete-forward-char (&optional n killflag)
+If `visual-order-cursor-movement' is non-nil, this always moves
+to the right on display, wherever that is in the buffer.
+Otherwise, depending on the bidirectional context, this may move
+one position either forward or backward in the buffer.  This is
+in contrast with \\[forward-char] and \\[backward-char], which
+see."
+  (interactive "^p")
+  (if visual-order-cursor-movement
+      (dotimes (_ (if (numberp n) (abs n) 1))
+        (move-point-visually (if (and (numberp n) (< n 0)) -1 1)))
+    (if (eq (current-bidi-paragraph-direction) 'left-to-right)
+        (forward-char n)
+      (backward-char n))))
+
+(defun delete-forward-char (n &optional killflag)
   "Delete the following N characters (previous if N is negative)."
   (interactive "p\nP")
-  (delete-char (prefix-numeric-value n) killflag))
+  (unless (integerp n)
+    (signal 'wrong-type-argument (list 'integerp n)))
+  (cond ((and (use-region-p)
+	      delete-active-region
+	      (= n 1))
+	 (if (eq delete-active-region 'kill)
+	     (kill-region (region-beginning) (region-end) 'region)
+	   (funcall region-extract-function 'delete-only)))
+        ((>= n 1)
+         (let ((pos (point))
+               start cmp)
+           (setq start pos)
+           (while (> n 0)
+             (setq cmp (find-composition pos))
+             (setq pos
+                   (if cmp
+                       (let ((from (car cmp))
+                             (to (cadr cmp)))
+                         (cond
+                          ((and (= (length cmp) 3)
+                                (booleanp (nth 2 cmp)))
+                           to)
+                          ((<= to pos)
+                           (1+ pos))
+                          (t
+                           (lgstring-glyph-boundary (nth 2 cmp)
+                                                    from (1+ pos)))))
+                     (1+ pos)))
+             (setq n (1- n)))
+           (delete-char (- pos start) killflag)))
+	(t (delete-char n killflag))))
 
 (defun overwrite-mode (&optional arg)
-  "Placeholder for Emacs compatibility; no-op in this editor."
-  (interactive "P")
-  nil)
+  "Toggle Overwrite mode.
+
+When Overwrite mode is enabled, printing characters typed in
+replace existing text on a one-for-one basis, rather than pushing
+it to the right.  At the end of a line, such characters extend
+the line.  Before a tab, such characters insert until the tab is
+filled in.  \\[quoted-insert] still inserts characters in
+overwrite mode; this is supposed to make it easier to insert
+characters when necessary."
+  (interactive (list (if current-prefix-arg
+                         (prefix-numeric-value current-prefix-arg)
+                       'toggle)))
+  ;; GNU simple.el: `(define-minor-mode overwrite-mode ... :variable
+  ;; (overwrite-mode . (lambda (v) (setq overwrite-mode (if v
+  ;; 'overwrite-mode-textual))))'.
+  (setq overwrite-mode
+        (if (cond ((eq arg 'toggle) (not overwrite-mode))
+                  (t (not (and (numberp arg) (< arg 1)))))
+            'overwrite-mode-textual))
+  (when (boundp 'local-minor-modes)
+    (if overwrite-mode
+        (add-to-list 'local-minor-modes 'overwrite-mode)
+      (setq local-minor-modes (delq 'overwrite-mode local-minor-modes))))
+  (run-hooks 'overwrite-mode-hook
+             (if overwrite-mode 'overwrite-mode-on-hook
+               'overwrite-mode-off-hook))
+  (force-mode-line-update)
+  overwrite-mode)
 
 (defun help-command (key &optional flag)
   "Placeholder help dispatcher."
   (interactive "KHelp: \np")
   nil)
 
-(defun menu-bar-open (&optional frame)
+(defun menu-bar-open (&optional frame initial-x)
   "Placeholder menu-bar opener."
   (interactive "i\nF")
   nil)
@@ -6326,11 +6537,30 @@ The normal global definition of the character ESC indirects to this keymap.")
 
 ;; ---------- interactive commands ----------
 
-(defun find-alternate-file (filename)
+;; GNU files.el signature: (FILENAME &optional WILDCARDS) — the
+;; prelude's 1-arg shim predates the real file's load and is now
+;; stale; match the arity and the kill-buffer-query check.
+(defun find-alternate-file (filename &optional wildcards)
   "Visit FILENAME, replacing the current buffer's contents (C-x C-v)."
   (interactive "fFind alternate file: ")
-  (kill-buffer (current-buffer))
-  (find-file filename))
+  (unless (run-hook-with-args-until-failure 'kill-buffer-query-functions)
+    (user-error "Aborted"))
+  (when (and (buffer-modified-p) buffer-file-name
+             (not (yes-or-no-p
+                   (format "Kill and replace buffer `%s' without saving it? "
+                           (buffer-name)))))
+    (user-error "Aborted"))
+  ;; GNU renames to " **lose**" and visits via `find-file-noselect'
+  ;; (with WILDCARDS passed through) before killing the old buffer.
+  (let ((obuf (current-buffer)))
+    (rename-buffer " **lose**")
+    (unwind-protect
+        (let ((newbuf (find-file-noselect filename nil nil wildcards)))
+          (switch-to-buffer (if (consp newbuf) (car newbuf) newbuf)))
+      (when (eq obuf (current-buffer))
+        (rename-buffer (buffer-name obuf))))
+    (unless (eq (current-buffer) obuf)
+      (kill-buffer obuf))))
 
 
 ;; ---------- misc.el / subr.el / simple.el ports ----------
@@ -6631,8 +6861,9 @@ Reset the `defvar' and `defcustom' variables to the initial value."
 	(t form)))
 
 (defun eval-expression--debug (err)
-  "Signal ERR (stand-in for entering the debugger)."
-  (signal (car err) (cdr err)))
+  ;; Remacs: GNU calls the debugger with 'error; in batch our `debug'
+  ;; prints "Debugger entered--Lisp error" and returns nil like GNU.
+  (funcall debugger 'error err :backtrace-base #'eval-expression--debug))
 
 (defun elisp--eval-defun ()
   "Evaluate defun that point is in or before.
@@ -6790,12 +7021,36 @@ WINDOW must be a valid window and defaults to the selected one."
   (and (frame-live-p frame) frame))
 
 (defun window--maybe-raise-frame (frame)
-  "Raise FRAME if needed.  No-op on the single-frame tty model."
-  frame)
+  "Raise FRAME if needed.  No-op on the single-frame tty model.
+GNU window.el calls `make-frame-visible' — CHECK_LIVE_FRAME →
+`wrong-type-argument frame-live-p' on non-frames."
+  (if (or (null frame) (and (framep frame) (frame-live-p frame)))
+      frame
+    (signal 'wrong-type-argument (list 'frame-live-p frame))))
 
-(defun window--even-window-sizes (_window)
-  "Even window sizes — a no-op in the flat window model."
-  nil)
+;; GNU window.el `window--even-window-sizes', verbatim.
+(defun window--even-window-sizes (window)
+  "Even sizes of WINDOW and selected window.
+Even only if these windows are the only children of their parent,
+`even-window-sizes' has the appropriate value and the selected
+window is larger than WINDOW."
+  (when (and (= (window-child-count (window-parent window)) 2)
+             (eq (window-parent) (window-parent window)))
+    (cond
+     ((and (not (memq even-window-sizes '(nil height-only)))
+           (window-combined-p window t)
+           (> (window-total-width) (window-total-width window)))
+      (condition-case nil
+          (enlarge-window
+           (/ (- (window-total-width window) (window-total-width)) 2) t)
+        (error nil)))
+     ((and (not (memq even-window-sizes '(nil width-only)))
+           (window-combined-p window)
+           (> (window-total-height) (window-total-height window)))
+      (condition-case nil
+          (enlarge-window
+           (/ (- (window-total-height window) (window-total-height)) 2))
+        (error nil))))))
 
 ;; GNU window.el `display-buffer--lru-window' (verbatim).
 (defun display-buffer--lru-window (alist)
@@ -6923,7 +7178,12 @@ Return the window used to display BUFFER, like GNU's
   ;; GNU-verbatim interactive spec (window.el).
   (interactive (list (read-buffer "Display buffer: " (other-buffer))
 		     (if current-prefix-arg t)))
-  (let* ((buffer (get-buffer-create buffer-or-name))
+  (let* ((buffer (if (bufferp buffer-or-name)
+                     buffer-or-name
+                   ;; GNU window.el display-buffer uses get-buffer
+                   ;; (NOT create) on a name — nil then trips
+                   ;; `display-buffer-assq-regexp'/'Invalid buffer'.
+                   (get-buffer buffer-or-name)))
          (window nil))
     ;; GNU tries `display-buffer-overriding-action' (then the user
     ;; action lists) before the fallback actions.  Each entry is
@@ -6940,6 +7200,9 @@ Return the window used to display BUFFER, like GNU's
               (when (and fun (functionp fun)
                          (setq window (funcall fun buffer alist)))
                 (throw 'done window)))))))
+    ;; GNU window.el: dead/missing buffer names signal "Invalid buffer".
+    (unless (buffer-live-p buffer)
+      (error "Invalid buffer"))
     (unless window
       ;; `display-buffer-reuse-window': a window already showing
       ;; BUFFER (selected window first, then any frame window).
@@ -7325,6 +7588,99 @@ whose value is such a string."
 		(setcdr found nil)
 		(nconc found (list (cons toggle keymap)) rest))
 	    (push (cons toggle keymap) minor-mode-map-alist)))))))
+
+;; minor convenience feature for handling of an obsolete Rmail file format.
+(defmacro define-obsolete-function-alias (obsolete-name current-name when
+                                          &optional docstring)
+  "Set OBSOLETE-NAME's function definition to CURRENT-NAME and mark it obsolete.
+WHEN should be a string indicating when the function was first
+made obsolete, for example a date or a release number."
+  (declare (doc-string 4) (indent defun))
+  `(progn
+     (defalias ,obsolete-name ,current-name ,docstring)
+     (make-obsolete ,obsolete-name ,current-name ,when)))
+
+;; GNU byte-run.el: advertised calling conventions.  Needed early —
+;; `define-obsolete-function-alias' call sites with an
+;; `advertised-calling-convention' declare spec (e.g. tabulated-list)
+;; expand to `set-advertised-calling-convention' calls.
+(defvar advertised-signature-table (make-hash-table :test 'eq :weakness 'key))
+
+(defun set-advertised-calling-convention (function signature _when)
+  "Set the advertised SIGNATURE of FUNCTION.
+This will allow the byte-compiler to warn the programmer when she uses
+an obsolete calling convention.  WHEN specifies since when the calling
+convention was modified."
+  (puthash (indirect-function function) signature advertised-signature-table))
+
+(defun get-advertised-calling-convention (function)
+  "Get the advertised SIGNATURE of FUNCTION.
+Return t if there isn't any."
+  (gethash function advertised-signature-table t))
+
+;; GNU byte-run.el: `define-obsolete-variable-alias' is a macro whose
+;; expansion runs `defvaralias', copies `saved-value'/
+;; `saved-variable-comment' props for Customize, then
+;; `make-obsolete-variable' writes (CURRENT ACCESS-TYPE WHEN) on
+;; `byte-obsolete-variable'.
+(defmacro define-obsolete-variable-alias (obsolete-name current-name when
+                                          &optional docstring)
+  "Make OBSOLETE-NAME a variable alias for CURRENT-NAME and mark it obsolete.
+WHEN should be a string indicating when the variable was first
+made obsolete, for example a date or a release number."
+  (declare (doc-string 4) (indent defun))
+  `(progn
+     (defvaralias ,obsolete-name ,current-name ,docstring)
+     ;; See Bug#4706.
+     (dolist (prop '(saved-value saved-variable-comment))
+       (and (get ,obsolete-name prop)
+            (null (get ,current-name prop))
+            (put ,current-name prop (get ,obsolete-name prop))))
+     (put ,obsolete-name 'saved-var-name ,current-name)
+     (make-obsolete-variable ,obsolete-name ,current-name ,when)))
+
+;; GNU faces.el: face aliases record `face-alias' + `obsolete-face'
+;; properties (used by emacs-authors-mode et al.).
+(defmacro define-obsolete-face-alias (obsolete-face current-face when)
+  "Make OBSOLETE-FACE a face alias for CURRENT-FACE and mark it obsolete.
+WHEN should be a string indicating when the face was first made
+obsolete, for example a date or a release number."
+  `(progn (put ,obsolete-face 'face-alias ,current-face)
+          (put ,obsolete-face 'obsolete-face (or ,when t))))
+
+;; make-obsolete cluster (moved before easy-mmode autoloads,
+;; which evaluate define-obsolete-function-alias at load time).
+(defun make-obsolete-variable (obsolete-name current-name when
+                                             &optional access-type)
+  "Make the byte-compiler warn that OBSOLETE-NAME is obsolete.
+The warning will say that CURRENT-NAME should be used instead.
+WHEN should be a string indicating when the variable
+was first made obsolete, for example a date or a release number.
+ACCESS-TYPE if non-nil should specify the kind of access that will trigger
+  obsolescence warnings; it can be either `get' or `set'."
+  (byte-run--constant-obsolete-warning obsolete-name)
+  (put obsolete-name 'byte-obsolete-variable
+       ;; GNU byte-run.el order: (CURRENT ACCESS-TYPE WHEN).
+       (list current-name access-type when))
+  obsolete-name)
+
+(defun byte-run--constant-obsolete-warning (obsolete-name)
+  (if (memq obsolete-name '(nil t))
+      (error "Can't make `%s' obsolete; did you forget a quote mark?"
+             obsolete-name)))
+
+(defun make-obsolete (obsolete-name current-name when)
+  "Make the byte-compiler warn that OBSOLETE-NAME is obsolete.
+The warning will say that CURRENT-NAME should be used instead.
+If CURRENT-NAME is a string, that is the `replacement' text.
+WHEN should be a string indicating when the function
+was first made obsolete, for example a date or a release number."
+  (byte-run--constant-obsolete-warning obsolete-name)
+  (put obsolete-name 'byte-obsolete-info
+       ;; The second entry used to hold the `byte-compile' handler, but
+       ;; is not used any more nowadays.
+       (list current-name nil when))
+  obsolete-name)
 
 ;; GNU registers these as autoload cells; calling them loads the
 ;; library from lisp/ (see load-path handling in load.rs).
@@ -8061,8 +8417,9 @@ not the default value itself.
 DEFAULT is stored as SYMBOL's standard value, in SYMBOL's property
 `standard-value'.  At the same time, SYMBOL's property `force-value'
 is set to nil, as the value is no longer rogue."
-  (unless (symbolp symbol)
-    (error "Invalid variable name `%s'" symbol))
+  ;; GNU has no symbolp guard here: `(put nil 'standard-value ..)'
+  ;; succeeds (nil IS a symbol), then `make-variable-buffer-local'
+  ;; on nil trips `setting-constant' — keep that exact error path.
   (put symbol 'standard-value (list default))
   ;; Maybe this option was rogue in an earlier version.  It no longer is.
   (when (get symbol 'force-value)
@@ -8841,6 +9198,36 @@ Like `customize-set-variable', but records VALUE as `saved-value'."
   value)
 
 (defalias 'custom-add-frequent-value #'custom-add-option)
+
+;; GNU's C-defined aliases (subr.el/loadup name shims): symbol-function
+;; resolves through to the canonical subr, so `-Q' shows `other:symbol'
+;; — `subr-arity' reads the target's arity.
+(defalias 'beep #'ding)
+(defalias 'error-type #'car)
+(defalias 'int-to-string #'number-to-string)
+(defalias 'join-line #'delete-indentation)
+(defalias 'not #'null)
+(defalias 'purecopy #'identity)
+(defalias 'rplaca #'setcar)
+(defalias 'rplacd #'setcdr)
+(defalias 'send-region #'process-send-region)
+(defalias 'send-string #'process-send-string)
+(defalias 'split-window-horizontally #'split-window-right)
+(defalias 'split-window-vertically #'split-window-below)
+(defalias 'sxhash #'sxhash-equal)
+(defalias 'time-to-seconds #'float-time)
+(defalias 'wholenump #'natnump)
+(defalias 'x-color-values #'color-values)
+(defalias 'frame-pixel-height #'frame-native-height)
+(defalias 'frame-pixel-width #'frame-native-width)
+(defalias 'indent-relative-maybe #'indent-relative-first-indent-point)
+(defalias 'javascript-mode #'js-mode)
+(defalias 'window-height #'window-total-height)
+(defalias 'window-width #'window-body-width)
+(defalias 'window-inside-edges #'window-body-edges)
+(defalias 'window-inside-pixel-edges #'window-body-pixel-edges)
+(defalias 'window-inside-absolute-pixel-edges #'window-absolute-body-pixel-edges)
+(defalias 'xml-mode #'nxml-mode)
 
 (defun custom-unlispify-menu-entry (symbol &optional no-suffix)
   "Convert SYMBOL into a menu-friendly version."
@@ -10202,19 +10589,26 @@ it is active only when the current buffer is read-only."
 (defalias 'cl-incf 'incf)
 
 ;; ---------- simple.el / timer.el / subr.el additions ----------
-
 (defun transient-mark-mode (&optional arg)
   "Toggle Transient Mark mode.
-With positive numeric ARG, enable; with non-positive, disable;
-with no ARG (or 'toggle), toggle."
-  (interactive (list (or current-prefix-arg 'toggle)))
-  ;; GNU's minor-mode body is a plain setq on the global variable; it is
-  ;; `activate-mark' (via setq-local) that creates buffer-local values.
+
+Transient Mark mode is a global minor mode.  When enabled, the
+region is highlighted with the `region' face whenever the mark
+is active."
+  (interactive (list (if current-prefix-arg
+                         (prefix-numeric-value current-prefix-arg)
+                       'toggle)))
+  ;; GNU simple.el: `(define-minor-mode transient-mark-mode ... :global t
+  ;; :variable (default-value 'transient-mark-mode))' — a global mode
+  ;; whose value is the new (default) value of the variable.
   (setq transient-mark-mode
         (cond ((eq arg 'toggle) (not transient-mark-mode))
-              ((null arg) t)
-              (t (> (prefix-numeric-value arg) 0))))
-  nil)
+              (t (not (and (numberp arg) (< arg 1))))))
+  (run-hooks 'transient-mark-mode-hook
+             (if transient-mark-mode 'transient-mark-mode-on-hook
+               'transient-mark-mode-off-hook))
+  (force-mode-line-update)
+  transient-mark-mode)
 
 ;; GNU simple.el: extraction/insertion of region contents is indirected
 ;; through these variables so rectangular regions can hook in.
@@ -10432,27 +10826,6 @@ Value is a list of one or more cons cells of the form (START . END)."
   "<remap> <next-line>"               #'rectangle-next-line
   "<remap> <previous-line>"           #'rectangle-previous-line)
 
-(define-minor-mode rectangle-mark-mode
-  "Toggle the region as rectangular.
-
-Activates the region if it's inactive and Transient Mark mode is
-on.  Only lasts until the region is next deactivated."
-  :lighter nil
-  (rectangle--reset-crutches)
-  (when rectangle-mark-mode
-    ;; rect.el installs these at load; here first activation is the
-    ;; load-equivalent point.
-    (add-function :around region-extract-function
-                  #'rectangle--extract-region)
-    (add-function :around region-insert-function
-                  #'rectangle--insert-region)
-    (advice-add 'region-beginning :around #'rectangle--region-beginning)
-    (advice-add 'region-end :around #'rectangle--region-end)
-    (add-hook 'deactivate-mark-hook
-              (lambda () (rectangle-mark-mode -1)))
-    (unless (region-active-p)
-      (push-mark (point) t t)
-      (message "Mark set (rectangle mode)"))))
 
 (defun rectangle-exchange-point-and-mark (&optional arg)
   "Like `exchange-point-and-mark' but cycles through the rectangle's corners."
@@ -10932,12 +11305,10 @@ do that, use `get-text-property' and `get-char-property'."
 ;; GNU keyboard.c `mouse-event-p': a list whose head's `event-kind'
 ;; is mouse-click, mouse-movement or mouse-wheel.
 (defun mouse-event-p (object)
-  "Return non-nil if OBJECT is a mouse event."
-  (and (consp object)
-       (symbolp (car object))
-       (memq (get (car object) 'event-kind)
-             '(mouse-click mouse-movement mouse-wheel))
-       t))
+  "Return non-nil if OBJECT is a mouse click event."
+  ;; GNU subr.el: memq on event-basic-type, which reaches
+  ;; integer-or-marker-p on non-symbol non-list atoms.
+  (memq (event-basic-type object) '(mouse-1 mouse-2 mouse-3 mouse-movement)))
 
 ;; GNU window.el `display-buffer-override-next-command'.
 (defun display-buffer-override-next-command (pre-function &optional post-function echo)
@@ -11035,13 +11406,7 @@ to deactivate this overriding action."
 
 (defvar next-error-follow-last-line nil)
 
-(define-minor-mode next-error-follow-minor-mode
-  "Minor mode for compilation, occur and diff modes."
-  :group 'next-error :init-value nil :lighter " Fol"
-  (if (not next-error-follow-minor-mode)
-      (remove-hook 'post-command-hook 'next-error-follow-mode-post-command-hook t)
-    (add-hook 'post-command-hook 'next-error-follow-mode-post-command-hook nil t)
-    (make-local-variable 'next-error-follow-last-line)))
+
 
 (defvar compilation-context-lines 0)
 (defvar compilation-current-error nil)
@@ -11131,10 +11496,12 @@ overriding the setting of this variable to t in `goto-history-element'.")
   (apply #'call-process shell-file-name infile destination display
          (list shell-command-switch command)))
 
-(defun call-shell-region (&optional start end command delete destination)
-  "Deprecated.  Use `call-process-region' with the shell as PROGRAM."
-  (apply #'call-process-region start end shell-file-name
-         delete destination nil (list shell-command-switch command)))
+(defun call-shell-region (start end command &optional delete buffer)
+  "Send text from START to END as input to an inferior shell running COMMAND.
+Delete the text if fourth arg DELETE is non-nil."
+  ;Remacs: GNU subr.el calls call-process-region directly.
+  (call-process-region start end shell-file-name delete buffer nil
+                       shell-command-switch command))
 
 (defun start-process-shell-command (name buffer command)
   "Start a program in a subprocess.  Return the process object for it."
@@ -12676,37 +13043,6 @@ Also see `completion-category-overrides' and `completion-category-get'.")
 
 ;; ---------- minibuffer.el completion machinery (GNU ports) ----------
 
-(defun make-obsolete-variable (obsolete-name current-name when
-                                             &optional access-type)
-  "Make the byte-compiler warn that OBSOLETE-NAME is obsolete.
-The warning will say that CURRENT-NAME should be used instead.
-WHEN should be a string indicating when the variable
-was first made obsolete, for example a date or a release number.
-ACCESS-TYPE if non-nil should specify the kind of access that will trigger
-  obsolescence warnings; it can be either `get' or `set'."
-  (byte-run--constant-obsolete-warning obsolete-name)
-  (put obsolete-name 'byte-obsolete-variable
-       ;; GNU byte-run.el order: (CURRENT ACCESS-TYPE WHEN).
-       (list current-name access-type when))
-  obsolete-name)
-
-(defun byte-run--constant-obsolete-warning (obsolete-name)
-  (if (memq obsolete-name '(nil t))
-      (error "Can't make `%s' obsolete; did you forget a quote mark?"
-             obsolete-name)))
-
-(defun make-obsolete (obsolete-name current-name when)
-  "Make the byte-compiler warn that OBSOLETE-NAME is obsolete.
-The warning will say that CURRENT-NAME should be used instead.
-If CURRENT-NAME is a string, that is the `replacement' text.
-WHEN should be a string indicating when the function
-was first made obsolete, for example a date or a release number."
-  (byte-run--constant-obsolete-warning obsolete-name)
-  (put obsolete-name 'byte-obsolete-info
-       ;; The second entry used to hold the `byte-compile' handler, but
-       ;; is not used any more nowadays.
-       (list current-name nil when))
-  obsolete-name)
 
 ;; GNU defaults: (basic partial-completion emacs22).
 (setq completion-styles '(basic partial-completion emacs22))
@@ -12818,6 +13154,11 @@ a `let' form, except that the list of symbols can be computed at run-time."
                      (list 'funcall ,bodyfun)))))))
 
 ;; (require 'pcase) is deferred to just after the `cl' machinery
+
+
+
+
+
 ;; block: pcase's `with-eval-after-load 'cl-preloaded' fires
 ;; immediately here (cl-preloaded is a pre-registered feature) and
 ;; calls `pcase--subtype-bitsets', which needs `built-in-class-p' —
@@ -13024,6 +13365,40 @@ If an element of this list is a cons cell, the completion ignores
 filenames ending with the `car' of the cell only when its `cdr' is
 non-nil.  Elements should have lower-case names (because of
 `completion-ignored-extensions' being a regexp).")
+
+;; GNU bindings.el: the default extension ignore list (POSIX tail —
+;; the ms-dos/windows-nt head doesn't apply here).
+(setq completion-ignored-extensions
+      '(".o" "~" ".bin" ".lbin" ".so"
+        ".a" ".ln" ".blg" ".bbl"
+        ".elc" ".lof"
+        ".glo" ".idx" ".lot"
+        ;; VCS metadata directories
+        ".svn/" ".hg/" ".git/" ".bzr/" "CVS/" "_darcs/" "_MTN/"
+        ;; TeX-related
+        ".fmt" ".tfm"
+        ;; Java compiled
+        ".class"
+        ;; CLISP
+        ".fas" ".lib" ".mem"
+        ;; CMUCL
+        ".x86f" ".sparcf"
+        ;; OpenMCL / Clozure CL
+        ".dfsl" ".pfsl" ".d64fsl" ".p64fsl" ".lx64fsl" ".lx32fsl"
+        ".dx64fsl" ".dx32fsl" ".fx64fsl" ".fx32fsl" ".sx64fsl"
+        ".sx32fsl" ".wx64fsl" ".wx32fsl"
+        ;; Other CL implementations (Allegro, LispWorks)
+        ".fasl" ".ufsl" ".fsl" ".dxl"
+        ;; Libtool
+        ".lo" ".la"
+        ;; Gettext
+        ".gmo" ".mo"
+        ;; Texinfo-related
+        ".toc" ".aux"
+        ".cp" ".fn" ".ky" ".pg" ".tp" ".vr"
+        ".cps" ".fns" ".kys" ".pgs" ".tps" ".vrs"
+        ;; Python byte-compiled
+        ".pyc" ".pyo"))
 
 (defvar minibuffer--original-buffer nil
   "Buffer that was current when `completing-read' was called.")
@@ -14420,36 +14795,7 @@ Run by `minibuffer-exit-hook'."
   (remove-hook 'after-change-functions #'minibuffer--regexp-after-change t)
   (remove-hook 'post-self-insert-hook #'minibuffer--regexp-post-self-insert t))
 
-(define-minor-mode minibuffer-regexp-mode
-  "Minor mode for editing regular expressions in the minibuffer.
-Highlight parens via `show-paren-mode' and `blink-matching-paren'
-in a user-friendly way, avoid reporting alleged paren mismatches
-and make sexp navigation more intuitive.
 
-The list of prompts activating this mode in specific minibuffer
-interactions is customizable via `minibuffer-regexp-prompts'."
-  :global t
-  :initialize #'custom-initialize-after-file-load
-  :init-value t
-  (if minibuffer-regexp-mode
-      (progn
-        (add-hook 'minibuffer-setup-hook #'minibuffer--regexp-setup)
-        (add-hook 'minibuffer-exit-hook #'minibuffer--regexp-exit))
-    ;; Clean up - why is Vminibuffer_list not available in Lisp?
-    (dolist (buffer (buffer-list))
-      (when (and (minibufferp)
-                 parse-sexp-lookup-properties
-                 (with-current-buffer buffer
-                   (save-excursion
-                     (goto-char (point-min))
-                     (looking-at minibuffer--regexp-prompt-regexp))))
-        (with-current-buffer buffer
-          (with-silent-modifications
-            (remove-text-properties
-             (point-min) (point-max) '(syntax-table nil)))
-          (setq-local parse-sexp-lookup-properties t))))
-    (remove-hook 'minibuffer-setup-hook #'minibuffer--regexp-setup)
-    (remove-hook 'minibuffer-exit-hook #'minibuffer--regexp-exit)))
 
 ;; `minibuffer-nonselected-mode' (GNU minibuffer.el).
 
@@ -14518,27 +14864,7 @@ window's buffer equals the buffer of the active minibuffer window."
     (remove-hook 'window-state-change-functions
 		 #'minibuffer--nonselected-check)))
 
-(define-minor-mode minibuffer-nonselected-mode
-  "Minor mode to warn about non-selected active minibuffer window.
-Use the face `minibuffer-nonselected' to highlight the contents of the
-minibuffer window when the minibuffer remains active but its window is
-no longer selected."
-  :global t
-  :initialize #'custom-initialize-after-file-load
-  :init-value t
-  :version "31.1"
-  (if minibuffer-nonselected-mode
-      (progn
-	(add-hook 'minibuffer-setup-hook #'minibuffer--nonselected-setup)
-	(add-hook 'minibuffer-exit-hook #'minibuffer--nonselected-exit)
-	(when (active-minibuffer-window)
-	  (minibuffer--nonselected-check (selected-frame))))
-    (remove-hook 'minibuffer-setup-hook #'minibuffer--nonselected-setup)
-    (remove-hook 'minibuffer-exit-hook #'minibuffer--nonselected-exit)
-    (remove-hook 'window-state-change-functions
-		 #'minibuffer--nonselected-check)
-    (when (overlayp minibuffer--nonselected-overlay)
-      (delete-overlay minibuffer--nonselected-overlay))))
+
 
 ;; File-name shadow mode (GNU rfn-eshadow.el).
 
@@ -14700,33 +15026,7 @@ been set up by `rfn-eshadow-setup-minibuffer'."
     ;; `substitute-in-file-name' can fail on partial input.
     (error nil)))
 
-(define-minor-mode file-name-shadow-mode
-  "Toggle file-name shadowing in minibuffers (File-Name Shadow mode).
 
-File-Name Shadow mode is a global minor mode.  When enabled, any
-part of a filename being read in the minibuffer that would be
-ignored (because the result is passed through
-`substitute-in-file-name') is given the properties in
-`file-name-shadow-properties', which can be used to make that
-portion dim, invisible, or otherwise less visually noticeable."
-  :global t
-  ;; At the point where the defcustom is evaluated,
-  ;; the corresponding function isn't defined yet, so
-  ;; custom-initialize-set signals an error.
-  :initialize #'custom-initialize-after-file-load
-  :init-value t
-  :group 'minibuffer
-  :version "22.1"
-  (if file-name-shadow-mode
-      ;; Enable the mode
-      (add-hook 'minibuffer-setup-hook 'rfn-eshadow-setup-minibuffer)
-    ;; Disable the mode
-    (remove-hook 'minibuffer-setup-hook 'rfn-eshadow-setup-minibuffer)
-    ;; Remove our entry from any post-command-hook variable's it's still in
-    (dolist (minibuf rfn-eshadow-frobbed-minibufs)
-      (with-current-buffer minibuf
-	(remove-hook 'post-command-hook #'rfn-eshadow-update-overlay t)))
-    (setq rfn-eshadow-frobbed-minibufs nil)))
 
 ;; Minibuffer message plumbing (GNU minibuffer.el).
 
@@ -14907,10 +15207,21 @@ on a given display are of the same type."
       (framep terminal)
       (framep (car (frames-on-display-list terminal)))))
 
-(defun frames-on-display-list (&optional terminal)
-  "Return a list of all live frames on TERMINAL."
-  (cond ((framep terminal) (list terminal))
-        ((terminal-live-p terminal) (frame-list))))
+;Remacs: GNU frame.el definition — DEVICE is validated through
+;`get-device-terminal' so bogus display names/ids signal.
+(defun frames-on-display-list (&optional device)
+  "Return a list of all frames on DEVICE.
+
+DEVICE should be a terminal, a frame,
+or a name of an X display or tty (a string of the form
+HOST:SERVER.SCREEN).
+
+If DEVICE is omitted or nil, it defaults to the selected
+frame's terminal device."
+  (let* ((terminal (get-device-terminal device))
+	 (func #'(lambda (frame)
+		   (eq (frame-terminal frame) terminal))))
+    (filtered-frame-list func)))
 
 (defun device-class (frame name)
   "Return the class of the device NAME for an event generated on FRAME.
@@ -15286,62 +15597,6 @@ More precisely, a char with closeparen syntax is self-inserted.")
           ;; `sit-for'. That's also the reason it get a `priority' prop
           ;; of 100.
           'append)
-
-;; GNU's hook installation order: simple.el installs its three hooks at
-;; load; minibuffer.el installs `minibuffer-restore-windows' and the
-;; on-screen-keyboard pair at load; the three global minor modes are
-;; activated by `custom-initialize-after-file-load' after their files
-;; load — `after-load-functions' prepends, so `minibuffer-nonselected-mode'
-;; activates before `minibuffer-regexp-mode', and `file-name-shadow-mode'
-;; (in rfn-eshadow.el, loaded last) activates last.
-(add-hook 'minibuffer-setup-hook 'minibuffer-history-initialize)
-(add-hook 'minibuffer-setup-hook 'minibuffer-history-isearch-setup)
-(add-hook 'minibuffer-setup-hook 'minibuffer-error-initialize)
-(add-hook 'minibuffer-exit-hook 'minibuffer-restore-windows)
-(add-hook 'minibuffer-setup-hook #'minibuffer-setup-on-screen-keyboard)
-(add-hook 'minibuffer-exit-hook #'minibuffer-exit-on-screen-keyboard)
-(minibuffer-nonselected-mode)
-(minibuffer-regexp-mode)
-(file-name-shadow-mode)
-
-;; GNU help.el: override the C default once help is loaded.
-(when (eq command-error-function #'command-error-default-function)
-  (setq command-error-function
-        #'help-command-error-confusable-suggestions))
-
-;; ---------- minibuffer.el: minibuffer major modes + keymap ----------
-
-(defvar minibuffer-beginning-of-buffer-movement nil
-  "If non-nil, `minibuffer-beginning-of-buffer' moves to `point-min'
-when point is before or at the prompt, else to
-`minibuffer-prompt-end'.")
-
-(defun minibuffer-beginning-of-buffer (&optional arg)
-  "Move to the logical beginning of the minibuffer.
-This command behaves like `beginning-of-buffer', but if point is
-after the end of the prompt, move to the end of the prompt.
-Otherwise move to the start of the buffer."
-  (declare (interactive-only "use `(goto-char (point-min))' instead."))
-  (interactive "^P")
-  (or (consp arg)
-      (region-active-p)
-      (push-mark))
-  (goto-char (cond
-              ;; We want to go N/10th of the way from the beginning.
-              ((and arg (not (consp arg)))
-	       (+ (point-min) 1
-		  (/ (* (- (point-max) (point-min))
-                        (prefix-numeric-value arg))
-                     10)))
-              ;; Go to the start of the buffer.
-              ((or (null minibuffer-beginning-of-buffer-movement)
-                   (<= (point) (minibuffer-prompt-end)))
-	       (point-min))
-              ;; Go to the end of the minibuffer.
-              (t
-               (minibuffer-prompt-end))))
-  (when (and arg (not (consp arg)))
-    (forward-line 1)))
 
 ;; GNU minibuffer.el installs these bindings on `minibuffer-local-map'
 ;; at load (RET last so \\[exit-minibuffer] prefers it over C-j).
@@ -16059,33 +16314,7 @@ if there was no valid completion, else t."
 
 (defvar completion-in-region-mode nil)  ;Explicit defvar, i.s.o defcustom.
 
-(define-minor-mode completion-in-region-mode
-  "Transient minor mode used during `completion-in-region'."
-  :global t
-  :group 'minibuffer
-  ;; Prevent definition of a custom-variable since it makes no sense to
-  ;; customize this variable.
-  :variable completion-in-region-mode
-  ;; (remove-hook 'pre-command-hook #'completion-in-region--prech)
-  (remove-hook 'post-command-hook #'completion-in-region--postch)
-  (setq minor-mode-overriding-map-alist
-        (delq (assq 'completion-in-region-mode minor-mode-overriding-map-alist)
-              minor-mode-overriding-map-alist))
-  (if (null completion-in-region-mode)
-      (progn
-        (setq completion-in-region--data nil)
-        (unless (equal "*Completions*" (buffer-name (window-buffer)))
-          (minibuffer-hide-completions)))
-    ;; (add-hook 'pre-command-hook #'completion-in-region--prech)
-    (cl-assert completion-in-region-mode-predicate)
-    (setq completion-in-region-mode--predicate
-	  completion-in-region-mode-predicate)
-    (setq-local minibuffer-completion-auto-choose nil)
-    (add-hook 'post-command-hook #'completion-in-region--postch)
-    (let* ((keymap completion-in-region-mode-map)
-           (keymap (minibuffer-visible-completions--maybe-compose-map keymap)))
-      (push `(completion-in-region-mode . ,keymap)
-            minor-mode-overriding-map-alist))))
+
 
 ;; Define-minor-mode added our keymap to minor-mode-map-alist, but we want it
 ;; on minor-mode-overriding-map-alist instead.
@@ -16348,13 +16577,16 @@ display too."
 
 (defun completion--insert-strings (strings &optional group-fun)
   "Insert a list of STRINGS into the current buffer, column-wise."
-  (let ((count 0))
-    (dolist (str strings)
-      (setq count (1+ count))
-      (let ((s (copy-sequence (format "%s" str))))
-        (insert s)
-        (insert "  ")))
-    (terpri)))
+  ;; Remacs: GNU's minibuffer.el version wraps everything in
+  ;; (when (consp strings) ...) — a non-list argument is a no-op.
+  (when (consp strings)
+    (let ((count 0))
+      (dolist (str strings)
+        (setq count (1+ count))
+        (let ((s (copy-sequence (format "%s" str))))
+          (insert s)
+          (insert "  ")))
+      (terpri))))
 
 (defun read-answer (question answers)
   "Read an answer to QUESTION among ANSWERS.
@@ -16417,7 +16649,7 @@ ARGS, list the commands in the *Command History* buffer."
   "Non-nil means delete excess backup versions silently.")
 (defvar backup-directory-alist nil
   "Alist of filename patterns and backup directory names.")
-(defvar backup-enable-predicate #'file-writable-p
+(defvar backup-enable-predicate 'normal-backup-enable-predicate
   "Predicate that looks at a file name to decide backup worthiness.")
 
 (defun backup-file-name-p (file)
@@ -16439,25 +16671,56 @@ position of the last `~' in FILE."
 This calls the function that `make-backup-file-name-function' specifies."
   (funcall make-backup-file-name-function file))
 
-(defalias 'make-backup-file-name-1 'make-backup-file-name)
+(defun make-backup-file-name-1 (file)
+  "Subroutine of `make-backup-file-name--default-function'.
+GNU's files.c defines this as a subr that returns FILE unchanged."
+  file)
 
-(defun find-backup-file-name (filename)
-  "Return a list of potential backup file names for FILENAME.
-The list is ordered most recent first; the first name is the one that
-would be used for a new backup."
-  (if (or (eq version-control t) (eq version-control 'always))
-      (let* ((dir (file-name-directory filename))
-             (base (file-name-nondirectory filename))
-             (existing (and dir (directory-files
-                                 dir nil
-                                 (concat "^" (regexp-quote base)
-                                         "\\.~[0-9]+~$"))))
-             (hi 0))
-        (dolist (f existing)
-          (when (string-match "\\.~\\([0-9]+\\)~$" f)
-            (setq hi (max hi (string-to-number (match-string 1 f))))))
-        (list (concat filename ".~" (number-to-string (1+ hi)) "~")))
-    (list (make-backup-file-name filename))))
+(defvar backup-extract-version-start)
+
+(defun find-backup-file-name (fn)
+  ;; GNU files.el: handler first (CHECK_STRING via find-file-name-handler),
+  ;; then version-control/backup-directory logic.
+  (let ((handler (find-file-name-handler fn 'find-backup-file-name)))
+    ;; Run a handler for this function so that ange-ftp can refuse to do it.
+    (if handler
+	(funcall handler 'find-backup-file-name fn)
+      (if (or (eq version-control 'never)
+	      (and (eq system-type 'ms-dos)
+		   (not (msdos-long-file-names))))
+	  (list (make-backup-file-name fn))
+	(let* ((basic-name (make-backup-file-name-1 fn))
+	       (base-versions (concat (file-name-nondirectory basic-name)
+				      ".~"))
+	       (backup-extract-version-start (length base-versions))
+	       (high-water-mark 0)
+	       (number-to-delete 0)
+	       possibilities deserve-versions-p versions)
+	  (condition-case ()
+	      (setq possibilities (file-name-all-completions
+				   base-versions
+				   (file-name-directory basic-name))
+		    versions (sort (mapcar #'backup-extract-version
+					   possibilities)
+				   #'<)
+		    high-water-mark (apply 'max 0 versions)
+		    deserve-versions-p (or version-control
+					   (> high-water-mark 0))
+		    number-to-delete (- (length versions)
+					kept-old-versions
+					kept-new-versions
+					-1))
+	    (file-error (setq possibilities nil)))
+	  (if (not deserve-versions-p)
+	      (list (make-backup-file-name fn))
+	    (cons (format "%s.~%d~" basic-name (1+ high-water-mark))
+		  (if (and (> number-to-delete 0)
+			   (>= (+ kept-new-versions kept-old-versions -1) 0))
+		      (mapcar (lambda (n)
+				(format "%s.~%d~" basic-name n))
+			      (let ((v (nthcdr kept-old-versions versions)))
+				(rplacd (nthcdr (1- number-to-delete) v) ())
+				v))))))))))
 
 (defun file-backup-file-names (filename)
   "Return a list of backup files for FILENAME, newest first.
@@ -16507,27 +16770,34 @@ LIMIT is the maximum number of links to chase (default: unlimited)."
     name))
 
 (defun locate-dominating-file (file name)
-  "Look up the directory hierarchy from FILE for a directory containing NAME.
-FILE can be a file or directory name; if it is a directory name, the
-search starts in that directory, otherwise in its parent directory.
-NAME can be a file name, or a predicate function called with one
-argument (the directory name); the predicate should return non-nil
-for a match.  Return the absolute directory name, or nil."
-  (let ((dir (if (file-directory-p file)
-                 (file-name-as-directory file)
-               (or (file-name-directory file)
-                   (file-name-as-directory file))))
-        (found nil) (prev nil))
-    (while (and dir (not found) (not (equal dir prev)))
-      (if (if (functionp name)
-              (funcall name dir)
-            (file-exists-p (concat dir name)))
-          (setq found dir)
-        (setq prev dir
-              dir (let ((parent (file-name-directory
-                                 (directory-file-name dir))))
-                    (and parent (file-name-as-directory parent))))))
-    found))
+  "Starting at FILE, look up directory hierarchy for directory containing NAME.
+FILE can be a file or a directory.  If it's a file, its directory will
+serve as the starting point for searching the hierarchy of directories.
+Stop at the first parent directory containing a file NAME,
+and return the directory.  Return nil if not found.
+Instead of a string, NAME can also be a predicate taking one argument
+\(a directory) and returning a non-nil value if that directory is the one for
+which we're looking.  The predicate will be called with every file/directory
+the function needs to examine, starting with FILE."
+  ;; GNU files.el verbatim.
+  (setq file (abbreviate-file-name (expand-file-name file)))
+  (when (and (not (directory-name-p file))
+	     (file-directory-p file))
+    (setq file (file-name-as-directory file)))
+  (let ((root nil)
+        try)
+    (while (not (or root
+                    (null file)
+                    (string-match locate-dominating-stop-dir-regexp file)))
+      (setq file (file-name-directory file)
+            try (if (stringp name)
+                    (file-exists-p (expand-file-name name file))
+                  (funcall name file)))
+      (cond (try (setq root file))
+            ((equal file (setq file (file-name-directory
+                                     (directory-file-name file))))
+             (setq file nil))))
+    (if root (file-name-as-directory root))))
 
 ;; ---------- minor-mode commands ----------
 
@@ -16537,45 +16807,26 @@ for a match.  Return the absolute directory name, or nil."
 ;; no `global-minor-modes' entry); the mode's state lives in the C-ish
 ;; frame parameter, exposed as the `scroll-bar-mode' variable.
 (defvar scroll-bar-mode 'right)
-(define-minor-mode scroll-bar-mode "Toggle scroll bars."
-  :variable ((get-scroll-bar-mode)
-             . (lambda (v) (set-scroll-bar-mode
-			    (if v (or previous-scroll-bar-mode
-				      default-frame-scroll-bars))))))
-(define-minor-mode horizontal-scroll-bar-mode
-  "Toggle horizontal scroll bars." :global t)
-(define-minor-mode display-time-mode "Toggle display of time."
-  :global t)
-(define-minor-mode size-indication-mode
-  "Toggle buffer size display in the mode line." :global t)
-(define-minor-mode line-number-mode "Toggle line number display."
-  :global t :init-value t)
-(define-minor-mode column-number-mode "Toggle column number display."
-  :global t)
-(define-minor-mode display-battery-mode "Toggle battery display."
-  :global t)
-(define-minor-mode delete-selection-mode
-  "Delete the selection when typing." :global t)
-(define-minor-mode auto-compression-mode
-  "Transparently handle compressed files." :global t :init-value t)
-(define-minor-mode auto-encryption-mode
-  "Transparently handle encrypted files." :global t :init-value t)
+
+
+
+
+
+
+
+
+
+
 ;; GNU composite.el: `auto-composition-mode' is a per-buffer C variable
 ;; (default t) used as the `:variable' of both mode functions — so
 ;; neither registers on `global-minor-modes'.
 (defvar auto-composition-mode t
   "Non-nil if Auto Composition mode is enabled in the current buffer.")
 (make-variable-buffer-local 'auto-composition-mode)
-(define-minor-mode auto-composition-mode
-  "Toggle automatic character composition."
-  :variable auto-composition-mode)
-(define-minor-mode global-auto-composition-mode
-  "Toggle Auto Composition mode in all buffers."
-  :global t :variable (default-value 'auto-composition-mode))
-(define-minor-mode mouse-wheel-mode "Toggle mouse wheel support."
-  :global t :init-value t)
-(define-minor-mode show-paren-mode
-  "Highlight matching parens." :global t :init-value t)
+
+
+
+
 ;; Forward decl: electric.el's `electric-indent-actions' defcustom runs
 ;; its :set when the stub below already enabled `electric-indent-mode'.
 ;; GNU-verbatim copy of electric.el's helper.
@@ -16589,31 +16840,12 @@ for a match.  Return the absolute directory name, or nil."
     (when (memq 'before-save electric-indent-actions)
       (add-hook 'before-save-hook #'electric-indent-save-hook))))
 
-(define-minor-mode electric-indent-mode
-  "Toggle on-the-fly reindentation of text lines (Electric Indent mode)."
-  :global t :group 'electricity
-  :initialize #'custom-initialize-after-file-load
-  :init-value t
-  (if (not electric-indent-mode)
-      (unless (catch 'found
-                (dolist (buf (buffer-list))
-                  (with-current-buffer buf
-                    (if electric-indent-mode (throw 'found t)))))
-        (remove-hook 'post-self-insert-hook
-                     #'electric-indent-post-self-insert-function))
 
-    (add-hook 'post-self-insert-hook
-              #'electric-indent-post-self-insert-function
-              60)))
-;; GNU activates `electric-indent-mode' via
-;; `custom-initialize-after-file-load' after electric.el loads.
-(electric-indent-mode)
-(define-minor-mode electric-pair-mode
-  "Toggle automatic pairing of brackets." :global t)
-(define-minor-mode blink-cursor-mode "Toggle cursor blinking."
-  :global t)
-(define-minor-mode menu-bar-mode "Toggle the menu bar." :global t)
-(define-minor-mode tool-bar-mode "Toggle the tool bar." :global t)
+
+
+
+
+
 ;; GNU eldoc.el: `global-eldoc-mode' installs `eldoc-schedule-timer'
 ;; buffer-locally on `post-command-hook'; in `-Q --batch' it is only
 ;; observed in `*scratch*' (verified).  The real eldoc library is not
@@ -16628,8 +16860,7 @@ for a match.  Return the absolute directory name, or nil."
 (defun tooltip-hide (&optional _ignored)
   "Hide the tooltip (stub; no GUI tooltips in batch)."
   nil)
-(define-minor-mode eldoc-mode "Toggle echo-area documentation."
-  :init-value t)
+
 ;; GNU simple.el: visual-line-mode's keymap lands the mode on
 ;; `minor-mode-map-alist'.
 (defvar visual-line-mode-map
@@ -16638,17 +16869,40 @@ for a match.  Return the absolute directory name, or nil."
     (define-key map [remap move-beginning-of-line] 'beginning-of-visual-line)
     (define-key map [remap move-end-of-line]  'end-of-visual-line)
     map))
-(define-minor-mode visual-line-mode "Toggle visual word wrapping."
-  :keymap visual-line-mode-map
-  :lighter " Wrap")
+
 ;; GNU lacks `diff-auto-refine-mode' as a defined symbol.
-;; `binary-overwrite-mode' is a plain obsolete command, not a mode var.
+;; GNU simple.el: `(define-minor-mode binary-overwrite-mode ...
+;; :variable (overwrite-mode . (lambda (v) (setq overwrite-mode (if v
+;; 'overwrite-mode-binary))))'.
 (defun binary-overwrite-mode (&optional arg)
-  "Toggle Binary Overwrite mode (obsolete).
-When enabled, actual binary text editing is done via `overwrite-mode'."
-  (interactive (list (or current-prefix-arg 'toggle)))
-  (overwrite-mode arg)
-  (setq overwrite-mode 'overwrite-mode-binary)
+  "Toggle Binary Overwrite mode.
+
+When Binary Overwrite mode is enabled, printing characters typed in
+replace existing text.  Newlines are not treated specially, so
+typing at the end of a line joins the line to the next, with the
+typed character between them.  Typing before a tab character
+simply replaces the tab with the character typed.
+\\[quoted-insert] replaces the text at the cursor, just as
+ordinary typing characters do.
+
+Note that Binary Overwrite mode is not its own minor mode; it is
+a specialization of overwrite mode, entered by setting the
+`overwrite-mode' variable to `overwrite-mode-binary'."
+  (interactive (list (if current-prefix-arg
+                         (prefix-numeric-value current-prefix-arg)
+                       'toggle)))
+  (setq overwrite-mode
+        (if (cond ((eq arg 'toggle) (not overwrite-mode))
+                  (t (not (and (numberp arg) (< arg 1)))))
+            'overwrite-mode-binary))
+  (when (boundp 'local-minor-modes)
+    (if overwrite-mode
+        (add-to-list 'local-minor-modes 'binary-overwrite-mode)
+      (setq local-minor-modes (delq 'binary-overwrite-mode local-minor-modes))))
+  (run-hooks 'binary-overwrite-mode-hook
+             (if overwrite-mode 'binary-overwrite-mode-on-hook
+               'binary-overwrite-mode-off-hook))
+  (force-mode-line-update)
   overwrite-mode)
 
 ;; GNU keeps these as autoloads into their libraries; the real
@@ -16678,17 +16932,22 @@ When enabled, actual binary text editing is done via `overwrite-mode'."
 (autoload 'flyspell-prog-mode "flyspell" "Flyspell for comments." t)
 (defvar flyspell-mode nil)
 (autoload 'global-eldoc-mode "eldoc" "Global eldoc." t)
-(define-globalized-minor-mode global-visual-line-mode visual-line-mode
-  (lambda () (visual-line-mode 1)))
+
 
 ;; Plain commands that GNU defines at startup.
+;; GNU frame.el: the toggles read `(frame-parameter frame 'fullscreen)'
+;; → decode_any_frame — non-frame args get `framep' wta.
 (defun toggle-frame-maximized (&optional frame)
   "Toggle maximization of FRAME (subset: no frame state yet)."
   (interactive)
+  (unless (or (null frame) (framep frame))
+    (signal 'wrong-type-argument (list 'framep frame)))
   frame)
 (defun toggle-frame-fullscreen (&optional frame)
   "Toggle fullscreen of FRAME (subset: no frame state yet)."
   (interactive)
+  (unless (or (null frame) (framep frame))
+    (signal 'wrong-type-argument (list 'framep frame)))
   frame)
 (defun fringe-mode (&optional mode)
   "Set the default fringe appearance (subset: returns MODE)."
@@ -16995,6 +17254,11 @@ vendored machinery is available."
   "Define a method for generic function NAME.
 ARGS is [QUALIFIER...] ARGLIST BODY where ARGLIST elements may be
 VAR, (VAR TYPE), or (VAR (eql FORM))."
+  ;; GNU cl-generic: `(setf FOO)' method names resolve through
+  ;; `gv-setter' to the interned "(setf FOO)" symbol — our prelude
+  ;; has no gv, so intern directly (gv-setter's interning rule).
+  (when (eq 'setf (car-safe name))
+    (setq name (intern (format "(setf %s)" (cadr name)))))
   (let ((quallist nil))
     ;; GNU collects every leading non-list item as a qualifier
     ;; (e.g. `:extra TAG'); the CLOS-style combination qualifier is
@@ -17043,7 +17307,14 @@ VAR, (VAR TYPE), or (VAR (eql FORM))."
              ;; replaces the dispatcher in the function cell.
              (cl-generic-define-method
               #',name ',(nreverse quallist) ',arglist nil
-              (lambda ,params ,@(and doc (list doc)) ,@mbody))
+              ;; GNU `cl--generic-lambda' macroexpand-alls the body so
+              ;; `with-slots' and friends resolve at definition time.
+              (lambda ,params ,@(and doc (list doc))
+                     ,@(let ((expanded
+                              (macroexpand-all
+                               `(progn ,@mbody)
+                               macroexpand-all-environment)))
+                         (cdr expanded))))
            (unless (fboundp ',name)
              ;; GNU's cl-generic installs the dispatcher implicitly
              ;; when the first `cl-defmethod' lands — no
@@ -17152,11 +17423,23 @@ The elements of LIST are not copied, just the list structure itself."
       (setq tail (cdr tail)))
     (nreverse res)))
 
-(defun cl-pairlis (keys values &optional alist)
-  "Prepend (KEY . VALUE) pairs to ALIST."
-  (while keys
-    (push (cons (pop keys) (pop values)) alist))
-  alist)
+(defun cl-pairlis (keys vals &optional alist)
+  "Make an alist from KEYS and VALS; prepend the pairs to ALIST.
+The pairing stops as soon as KEYS or VALS run out (GNU cl-lib.el)."
+  ;;Remacs: GNU does (nconc (cl-mapcar 'cons keys values) alist);
+  ;; cl-mapcar isn't bound at prelude time, so inline the same
+  ;; shortest-list walk while preserving pair order.  The arg is named
+  ;; `vals', not `values' — `values' is defvar'd, and `pop' on a
+  ;; defun param of that name loses the setq under our dynbind path.
+  ;;Remacs: GNU uses cl-mapcar which CHECK_SEQUENCEs both — a
+  ;; non-sequence KEYS/VALS signals `sequencep', not `listp'.
+  ;; `append SEQ nil' coerces strings/vectors to lists with the same
+  ;; check; bare non-sequences (sym, float) error the same way.
+  (setq keys (append keys nil) vals (append vals nil))
+  (let ((pairs nil))
+    (while (and keys vals)
+      (push (cons (pop keys) (pop vals)) pairs))
+    (nconc (nreverse pairs) alist)))
 
 (defun cl--keyfn (keys)
   "The :key function from KEYS (default `identity')."
@@ -17532,6 +17815,10 @@ To define new types, see `cl-deftype'."
   ;; extraction forms wrapping (cl-block NAME ...).
   (let ((eargs nil) (lets nil) (keys nil) (kws nil) (aux nil)
         (restsym nil) (clrest nil) (restseen nil) (state 'req)
+        ;; `popping': once a spec'd/pattern optional starts popping
+        ;; from --cl-rest--, every LATER optional pops too (GNU
+        ;; `cl--do-arglist' consumes the leftover serially).
+        (popping nil)
         (allow-other nil) (defs nil) (nargs 0))
     ;; `&cl-defs (DEF . DEFS)': GNU strips the marker and its
     ;; default-default spec from the arglist; DEF supplies the
@@ -17542,6 +17829,15 @@ To define new types, see `cl-deftype'."
         (setq defs (cadr p))
         (setq args (delq '&cl-defs (cl-copy-list args)))
         (setq args (delq defs args))))
+    ;; GNU `cl--transform-lambda' absorbs a `&optional' run into the
+    ;; plain arglist only while it reaches the arglist END — a
+    ;; following `&aux', `&rest', or `&body' feeds the tail to
+    ;; `cl--do-arglist', which always emits `&rest --cl-rest--'.
+    ;; (`&key' goes through the `cl--keys' restvar already.)
+    (when (and (memq '&optional args)
+               (or (memq '&aux args) (memq '&rest args)
+                   (memq '&body args)))
+      (setq clrest (make-symbol "cl-rest")))
     (dolist (a args)
       (cond
        ((eq a '&optional) (setq state 'opt))
@@ -17552,15 +17848,18 @@ To define new types, see `cl-deftype'."
        ;; &allow-other-keys is declared.
        ((eq a '&allow-other-keys) (setq allow-other t))
        ((eq state 'rest)
-        (if clrest
-            ;; `&rest' after a collapsed optional tail binds the
-            ;; post-pop remainder of --cl-rest--.
-            (push (list a clrest) lets)
-          (if (consp a)
-              (let ((g (make-symbol "rest")))
-                (setq restsym g)
-                (push (list a g) lets))
-            (setq restsym a)))
+        ;; GNU emits `&rest A' for a plain symbol — A sees the WHOLE
+        ;; tail UNLESS spec'd optionals already popped it (`popping'),
+        ;; where GNU aliases A to the --cl-rest-- remainder inside
+        ;; let*.  Pattern args always destructure over
+        ;; --cl-rest--/gensym.
+        (if (consp a)
+            (let ((g (make-symbol "rest")))
+              (setq restsym g)
+              (push (list a (or clrest g)) lets))
+          (setq restsym a)
+          (when (and clrest popping)
+            (push (list a clrest) lets)))
         (setq restseen t)
         (setq state 'done))
        ((eq state 'key)
@@ -17596,8 +17895,12 @@ To define new types, see `cl-deftype'."
         ;; (or a destructuring one) collapses itself and every later
         ;; arg into `&rest --cl-rest--' plus let* pops — plain `defun'
         ;; arglists reject the `(var init)' form outright.
-        (if (or clrest (consp a) defs)
+        (if (or (and clrest (or popping (consp a) defs)) (consp a))
             (let ((spec (if (consp a) a (list a))))
+              ;; Once a spec'd/pattern optional pops from
+              ;; --cl-rest--, every later bare optional pops too
+              ;; (GNU do-arglist processes the leftover serially).
+              (setq popping t)
               (unless clrest (setq clrest (make-symbol "cl-rest")))
               ;; `(var init svar)': svar binds the supplied-p flag
               ;; BEFORE the pop consumes it.
@@ -17623,6 +17926,17 @@ To define new types, see `cl-deftype'."
           (push a eargs)))
        (t (setq nargs (1+ nargs))
           (push a eargs))))
+    ;; GNU `cl--transform-lambda': `&aux' items bind in the emitted
+    ;; let* only — no `&rest', no extra guard of their own.  When an
+    ;; earlier `&optional'/`&key' produced `&rest --cl-rest--', the
+    ;; shared leftover guard below covers extras (`func-arity' →
+    ;; `many' comes from that `&rest', not from `&aux').
+    (when (and clrest restseen (symbolp restsym))
+      ;; `&rest A' (plain symbol) owns the arglist slot; --cl-rest--
+      ;; aliases A so the spec'd-optional pops and the leftover
+      ;; guard read the same list.  This binding runs FIRST (inner
+      ;; `let' via cl-destructuring-bind at the bottom of `lets').
+      (setq lets (append lets (list (list clrest restsym)))))
     (when (and clrest (not restseen) (not keys))
       ;; GNU emits the same `wrong-number-of-arguments' guard after
       ;; the optional pops: arity is req+opt params total.
@@ -17636,7 +17950,11 @@ To define new types, see `cl-deftype'."
         `(,kind ,name ,args (cl-block ,name ,@body))
       ;; &rest binds the target symbol/pattern-gensym directly;
       ;; &key extraction reads it via a cl--keys alias.
-      (let* ((restvar (or clrest restsym (and keys 'cl--keys)))
+      ;; GNU emits `&rest R' when the `&rest' arg is a plain symbol —
+      ;; the let* binding over --cl-rest-- then re-binds R to the
+      ;; post-pop remainder (pattern args stay on the gensym).
+      (let* ((restvar (or (and restseen (symbolp restsym) restsym)
+                          clrest restsym (and keys 'cl--keys)))
              (inner `(let* ,(append (when (and keys (or clrest restsym))
                                       (list (list 'cl--keys (or clrest restsym))))
                                     (nreverse keys) (nreverse aux))
@@ -18610,30 +18928,126 @@ NAME and the slots, as in GNU's `cl-defstruct'."
            defs)
           ;; GNU registers the predicate as the type's
           ;; `cl-deftype-satisfies' so (cl-typep X 'NAME) works.
-          (push `(put ',n 'cl-deftype-satisfies #',pred) defs))))
+          (push `(put ',n 'cl-deftype-satisfies #',pred) defs)
+          ;; GNU wraps the predicate in `define-inline', so a
+          ;; PRED--inliner compiler-macro exists too (see the accessor
+          ;; inliners below).
+          (let ((inl (intern (concat (symbol-name pred) "--inliner"))))
+            (push `(defun ,inl (inline--form x)
+                     (ignore inline--form)
+                     (macroexp-let2 macroexp-copyable-p x x
+                       ,(cond
+                         ((eq type 'vector)
+                          ``(progn
+                              (and (vectorp ,x)
+                                   (>= (length ,x) ,(1+ (length slots)))
+                                   (memq (aref ,x 0) ,',tags)
+                                   t)))
+                         ((eq type 'list)
+                          ``(progn
+                              (and (consp ,x)
+                                   (memq (car ,x) ,',tags)
+                                   t)))
+                         (t ``(progn
+                               (and (memq (type-of ,x) ,',tags) t))))))
+                    defs)
+            (push `(put ',pred 'compiler-macro ',inl) defs)))))
     ;; Copier.
     (let ((co (funcall opt :copier)))
       (when (or (not co) (cadr co))
         (let ((copier (if co (cadr co)
                         (intern (concat "copy-" (symbol-name n))))))
           (push `(defun ,copier (ob) (copy-sequence ob)) defs))))
-    ;; Accessors (with their `(setf ACC)' setters, GNU-style).
-    (let ((i base))
+    ;; Accessors (with their `(setf ACC)' setters, GNU-style).  GNU
+    ;; cl-macs emits a `pred-check' inside each accessor whenever the
+    ;; struct has a predicate (records: `(memq (type-of X) TAGS)' i.e.
+    ;; the `NAME-p' inline; vector/list structs check the tag slot)
+    ;; and safety>0 — a mismatched X signals
+    ;; `(wrong-type-argument NAME X)', not a bare aref error.
+    (let* ((i base)
+           ;; GNU `cl--safety': accessors lose the pred-check only at
+           ;; safety 0 *at byte-compile time* — interpreted expansion
+           ;; always counts safety 3.  `macroexp-compiling-p' is nil
+           ;; under our interpreted loadup so a leaked global
+           ;; `cl--optimize-safety' (eieio-core's safety-0 declaim)
+           ;; must not strip checks from later files' structs.
+           (accsafe (not (and (macroexp-compiling-p)
+                              (boundp 'cl--optimize-safety)
+                              (eq cl--optimize-safety 0))))
+           (accpred
+           (and accsafe
+                (let ((po (funcall opt :predicate)))
+                  (cond ((and po (cadr po)) (cadr po))
+                        ((and po (null (cadr po)))
+                         ;; `(:predicate nil)' on an unnamed struct: no
+                         ;; check emitted.
+                         (and named
+                              (intern (concat "cl--struct-" (symbol-name n)
+                                              "-p"))))
+                        (named (intern (concat (symbol-name n) "-p")))
+                        (t nil))))))
       (dolist (slot slots)
         (let* ((sn (if (consp slot) (car slot) slot))
                (acc (intern (concat (if conc (symbol-name conc) "")
                                     (symbol-name sn)))))
           (push `(defun ,acc (ob)
-                   ,(if (eq type 'list) `(nth ,i ob) `(aref ob ,i)))
+                   ,(if accpred
+                        `(progn
+                           (or (,accpred ob)
+                               (signal 'wrong-type-argument
+                                       (list ',n ob)))
+                           ,(if (eq type 'list) `(nth ,i ob)
+                              `(aref ob ,i)))
+                      (if (eq type 'list) `(nth ,i ob) `(aref ob ,i))))
                 defs)
+          ;; GNU's byte-compiled setters carry the same pred-check
+          ;; as the accessor — a mismatched OB signals
+          ;; `(wrong-type-argument NAME OB)', not aset's `arrayp'.
           (push
            `(fset (intern (concat "(setf " (symbol-name ',acc) ")"))
                   ,(if (eq type 'list)
-                       `(lambda (v ob) (setcar (nthcdr ,i ob) v))
-                     `(lambda (v ob) (aset ob ,i v))))
-           defs))
+                       `(lambda (v ob)
+                          ,@(if accpred
+                                `((or (,accpred ob)
+                                      (signal 'wrong-type-argument
+                                              (list ',n ob)))))
+                          (setcar (nthcdr ,i ob) v))
+                     `(lambda (v ob)
+                        ,@(if accpred
+                              `((or (,accpred ob)
+                                    (signal 'wrong-type-argument
+                                            (list ',n ob)))))
+                        (aset ob ,i v))))
+           defs)
+          ;; GNU's `define-inline' twins: each accessor gets a
+          ;; NAME--inliner function (compiler-macro) whose expansion
+          ;; binds non-copyable args via `macroexp-let2' — that emits
+          ;; `(let* ((x ARG)) ...)' so side-effecting arguments are
+          ;; evaluated exactly once.  With a predicate at safety>0 the
+          ;; expansion carries the same `NAME-p' check as the defun.
+          (push `(defun ,(intern (concat (symbol-name acc) "--inliner"))
+                        (inline--form x)
+                   (ignore inline--form)
+                   (macroexp-let2 macroexp-copyable-p x x
+                     ,(if accpred
+                          ``(progn
+                              (or (,',accpred ,x)
+                                  (signal 'wrong-type-argument
+                                          (list ',',n ,x)))
+                              ,(if (eq ',type 'list)
+                                   `(nth ,,i ,x)
+                                 `(aref ,x ,,i)))
+                        (if (eq ',type 'list)
+                            ``(progn (nth ,,i ,x))
+                          ``(progn (aref ,x ,,i))))))
+                defs)
+          ;; `declare (compiler-macro CM-NAME)' on the GNU defun
+          ;; registers the inliner as the accessor's compiler-macro
+          ;; property — keep `(get ACC 'compiler-macro)' parity.
+          (push `(put ',acc 'compiler-macro
+                      ',(intern (concat (symbol-name acc) "--inliner")))
+                defs)
         (setq i (1+ i))))
-    ;; Publish the effective (inherited + own) slot specs so a child
     ;; `cl-defstruct' with (:include N) can inherit them.
     (push `(put ',n 'cl--defstruct-slots ',slots) defs)
     (push `(put ',n 'cl--defstruct-named ',named) defs)
@@ -18687,7 +19101,7 @@ NAME and the slots, as in GNU's `cl-defstruct'."
             defs)
       (push `(defconst ,tagsymname (cl--find-class ',n)) defs)
       (push `(fset ',tagsymname :quick-object-witness-check) defs))
-    `(progn ,@(nreverse defs) ',n)))
+    `(progn ,@(nreverse defs) ',n))))
 
 ;; ---------- cl-struct introspection (GNU cl-macs API) ----------
 ;; GNU keeps struct metadata in cl-structure-class objects
@@ -18846,6 +19260,12 @@ Simplified `cl-struct-define': builds the class record, populates the
 slot-descriptor vector and index table, links into the parent chain,
 and stores it under `cl--class'."
   (when (eq type 'record) (setq type nil))
+  ;; GNU `cl-struct-define' drops the leading `cl-tag-slot' descriptor
+  ;; from SLOTS for records (the tag lives at index 0 but is not a
+  ;; user slot): keeping it shifts every slot's index-table entry and
+  ;; makes `cl--struct-class-slots' read the table itself.
+  (and (null type) (consp (car slots)) (eq (caar slots) 'cl-tag-slot)
+       (setq slots (cdr slots)))
   (let* ((parent-class
           (cond (parent (cl--struct-get-class parent))
                 ((eq type 'list) (cl--find-class 'cons))
@@ -19075,6 +19495,10 @@ and stores it under `cl--class'."
 (cl--define-built-in-type obarray atom)
 (cl--define-built-in-type sequence t "Abstract supertype of sequences.")
 (cl--define-built-in-type list sequence)
+;; GNU cl-macs.el writes this same pair literally; keep a literal copy
+;; here so the rollback collector pairs it with prelude state instead
+;; of stripping it (macroexpanded puts are invisible to the scan).
+(put 'list 'cl-deftype-satisfies #'listp)
 (cl--define-built-in-type array (sequence atom)
   "Abstract supertype of arrays.")
 (cl--define-built-in-type number (number-or-marker)
@@ -19146,15 +19570,24 @@ and stores it under `cl--class'."
 
 (defun cl--define-derived-type (name expander predicate &optional parents)
   "Register derived type with NAME for method dispatching."
-  (setf (cl--find-class name)
-        (record 'cl-derived-type-class
-                name nil
-                (delq nil (mapcar (lambda (p) (cl--find-class p))
-                                  parents))
-                (vector) (make-hash-table :test 'eq)))
-  (put name 'cl-deftype-handler expander)
-  (when predicate
-    (put name 'cl-deftype-satisfies predicate)))
+  ;; GNU cl-preloaded.el: calls `function-documentation' on EXPANDER
+  ;; (a void symbol expander therefore signals `void-function'), and
+  ;; errors when NAME's existing class is not a cl-derived-type-class.
+  (let* ((class (cl--find-class name)))
+    (when class
+      (or (cl-derived-type-class-p class)
+          (error "Type %S already in another class: %S" name (type-of class))))
+    (setf (cl--find-class name)
+          (record 'cl-derived-type-class
+                  name
+                  (and (fboundp 'function-documentation)
+                       (function-documentation expander))
+                  (delq nil (mapcar (lambda (p) (cl--find-class p))
+                                    parents))
+                  (vector) (make-hash-table :test 'eq)))
+    (put name 'cl-deftype-handler expander)
+    (when predicate
+      (put name 'cl-deftype-satisfies predicate))))
 
 (defmacro cl-deftype (name arglist &rest body)
   "Define NAME as a new data type (subset of GNU `cl-deftype').
@@ -19224,6 +19657,289 @@ otherwise (GNU `cl-deftype').  A `declare' spec of the form
 ;; AFTER `built-in-class-p' is defined — keeps its eager
 ;; `pcase--subtype-bitsets' upgrade from crashing on a void function.
 (require 'pcase)
+
+;; `ensure-empty-lines' (GNU subr.el).
+(defun ensure-empty-lines (&optional lines)
+  "Ensure that there are LINES number of empty lines before point.
+If LINES is nil or omitted, ensure that there is a single empty
+line before point.
+
+If called interactively, LINES is given by the prefix argument.
+
+If there are more than LINES empty lines before point, the number
+of empty lines is reduced to LINES.
+
+If point is not at the beginning of a line, a newline character
+is inserted before adjusting the number of empty lines."
+  (interactive "p")
+  (unless (bolp)
+    (insert "\n"))
+  (let ((lines (or lines 1))
+        (start (save-excursion
+                 (if (re-search-backward "[^\n]" nil t)
+                     (+ (point) 2)
+                   (point-min)))))
+    (cond
+     ((> (- (point) start) lines)
+      (delete-region (point) (- (point) (- (point) start lines))))
+     ((< (- (point) start) lines)
+      (insert (make-string (- lines (- (point) start)) ?\n))))))
+
+;; Moved after `(require 'pcase)': `define-minor-mode' and
+;; `define-globalized-minor-mode' expand through easy-mmode's
+;; pcase keyword dispatch, which needs the cl machinery above
+;; (same reason `rectangle-mark-mode' sits here).
+(define-minor-mode file-name-shadow-mode
+  "Toggle file-name shadowing in minibuffers (File-Name Shadow mode).
+
+File-Name Shadow mode is a global minor mode.  When enabled, any
+part of a filename being read in the minibuffer that would be
+ignored (because the result is passed through
+`substitute-in-file-name') is given the properties in
+`file-name-shadow-properties', which can be used to make that
+portion dim, invisible, or otherwise less visually noticeable."
+  :global t
+  ;; At the point where the defcustom is evaluated,
+  ;; the corresponding function isn't defined yet, so
+  ;; custom-initialize-set signals an error.
+  :initialize #'custom-initialize-after-file-load
+  :init-value t
+  :group 'minibuffer
+  :version "22.1"
+  (if file-name-shadow-mode
+      ;; Enable the mode
+      (add-hook 'minibuffer-setup-hook 'rfn-eshadow-setup-minibuffer)
+    ;; Disable the mode
+    (remove-hook 'minibuffer-setup-hook 'rfn-eshadow-setup-minibuffer)
+    ;; Remove our entry from any post-command-hook variable's it's still in
+    (dolist (minibuf rfn-eshadow-frobbed-minibufs)
+      (with-current-buffer minibuf
+	(remove-hook 'post-command-hook #'rfn-eshadow-update-overlay t)))
+    (setq rfn-eshadow-frobbed-minibufs nil)))
+
+(define-minor-mode completion-in-region-mode
+  "Transient minor mode used during `completion-in-region'."
+  :global t
+  :group 'minibuffer
+  ;; Prevent definition of a custom-variable since it makes no sense to
+  ;; customize this variable.
+  :variable completion-in-region-mode
+  ;; (remove-hook 'pre-command-hook #'completion-in-region--prech)
+  (remove-hook 'post-command-hook #'completion-in-region--postch)
+  (setq minor-mode-overriding-map-alist
+        (delq (assq 'completion-in-region-mode minor-mode-overriding-map-alist)
+              minor-mode-overriding-map-alist))
+  (if (null completion-in-region-mode)
+      (progn
+        (setq completion-in-region--data nil)
+        (unless (equal "*Completions*" (buffer-name (window-buffer)))
+          (minibuffer-hide-completions)))
+    ;; (add-hook 'pre-command-hook #'completion-in-region--prech)
+    (cl-assert completion-in-region-mode-predicate)
+    (setq completion-in-region-mode--predicate
+	  completion-in-region-mode-predicate)
+    (setq-local minibuffer-completion-auto-choose nil)
+    (add-hook 'post-command-hook #'completion-in-region--postch)
+    (let* ((keymap completion-in-region-mode-map)
+           (keymap (minibuffer-visible-completions--maybe-compose-map keymap)))
+      (push `(completion-in-region-mode . ,keymap)
+            minor-mode-overriding-map-alist))))
+
+(define-minor-mode scroll-bar-mode "Toggle scroll bars."
+  :variable ((get-scroll-bar-mode)
+             . (lambda (v) (set-scroll-bar-mode
+			    (if v (or previous-scroll-bar-mode
+				      default-frame-scroll-bars))))))
+
+(define-minor-mode horizontal-scroll-bar-mode
+  "Toggle horizontal scroll bars." :global t)
+
+(define-minor-mode display-time-mode "Toggle display of time."
+  :global t)
+
+(define-minor-mode size-indication-mode
+  "Toggle buffer size display in the mode line." :global t)
+
+(define-minor-mode line-number-mode "Toggle line number display."
+  :global t :init-value t)
+
+(define-minor-mode column-number-mode "Toggle column number display."
+  :global t)
+
+(define-minor-mode display-battery-mode "Toggle battery display."
+  :global t)
+
+(define-minor-mode delete-selection-mode
+  "Delete the selection when typing." :global t)
+
+(define-minor-mode auto-compression-mode
+  "Transparently handle compressed files." :global t :init-value t)
+
+(define-minor-mode auto-encryption-mode
+  "Transparently handle encrypted files." :global t :init-value t)
+
+(define-minor-mode auto-composition-mode
+  "Toggle automatic character composition."
+  :variable auto-composition-mode)
+
+(define-minor-mode global-auto-composition-mode
+  "Toggle Auto Composition mode in all buffers."
+  :global t :variable (default-value 'auto-composition-mode))
+
+(define-minor-mode mouse-wheel-mode "Toggle mouse wheel support."
+  :global t :init-value t)
+
+(define-minor-mode show-paren-mode
+  "Highlight matching parens." :global t :init-value t)
+
+(define-minor-mode electric-indent-mode
+  "Toggle on-the-fly reindentation of text lines (Electric Indent mode)."
+  :global t :group 'electricity
+  :initialize #'custom-initialize-after-file-load
+  :init-value t
+  (if (not electric-indent-mode)
+      (unless (catch 'found
+                (dolist (buf (buffer-list))
+                  (with-current-buffer buf
+                    (if electric-indent-mode (throw 'found t)))))
+        (remove-hook 'post-self-insert-hook
+                     #'electric-indent-post-self-insert-function))
+
+    (add-hook 'post-self-insert-hook
+              #'electric-indent-post-self-insert-function
+              60)))
+
+(define-minor-mode electric-pair-mode
+  "Toggle automatic pairing of brackets." :global t)
+
+(define-minor-mode blink-cursor-mode "Toggle cursor blinking."
+  :global t)
+
+(define-minor-mode menu-bar-mode "Toggle the menu bar." :global t)
+
+(define-minor-mode tool-bar-mode "Toggle the tool bar." :global t)
+
+(define-minor-mode eldoc-mode "Toggle echo-area documentation."
+  :init-value t)
+
+(define-minor-mode visual-line-mode "Toggle visual word wrapping."
+  :keymap visual-line-mode-map
+  :lighter " Wrap")
+
+(define-globalized-minor-mode global-visual-line-mode visual-line-mode
+  (lambda () (visual-line-mode 1)))
+
+;; Moved after `(require 'pcase)': `define-minor-mode' expands
+;; through pcase keyword dispatch, which needs the cl machinery
+;; above (same reason `rectangle-mark-mode' sits here).
+(define-minor-mode next-error-follow-minor-mode
+  "Minor mode for compilation, occur and diff modes."
+  :group 'next-error :init-value nil :lighter " Fol"
+  (if (not next-error-follow-minor-mode)
+      (remove-hook 'post-command-hook 'next-error-follow-mode-post-command-hook t)
+    (add-hook 'post-command-hook 'next-error-follow-mode-post-command-hook nil t)
+    (make-local-variable 'next-error-follow-last-line)))
+
+(define-minor-mode minibuffer-regexp-mode
+  "Minor mode for editing regular expressions in the minibuffer.
+Highlight parens via `show-paren-mode' and `blink-matching-paren'
+in a user-friendly way, avoid reporting alleged paren mismatches
+and make sexp navigation more intuitive.
+
+The list of prompts activating this mode in specific minibuffer
+interactions is customizable via `minibuffer-regexp-prompts'."
+  :global t
+  :initialize #'custom-initialize-after-file-load
+  :init-value t
+  (if minibuffer-regexp-mode
+      (progn
+        (add-hook 'minibuffer-setup-hook #'minibuffer--regexp-setup)
+        (add-hook 'minibuffer-exit-hook #'minibuffer--regexp-exit))
+    ;; Clean up - why is Vminibuffer_list not available in Lisp?
+    (dolist (buffer (buffer-list))
+      (when (and (minibufferp)
+                 parse-sexp-lookup-properties
+                 (with-current-buffer buffer
+                   (save-excursion
+                     (goto-char (point-min))
+                     (looking-at minibuffer--regexp-prompt-regexp))))
+        (with-current-buffer buffer
+          (with-silent-modifications
+            (remove-text-properties
+             (point-min) (point-max) '(syntax-table nil)))
+          (setq-local parse-sexp-lookup-properties t))))
+    (remove-hook 'minibuffer-setup-hook #'minibuffer--regexp-setup)
+    (remove-hook 'minibuffer-exit-hook #'minibuffer--regexp-exit)))
+
+(define-minor-mode minibuffer-nonselected-mode
+  "Minor mode to warn about non-selected active minibuffer window.
+Use the face `minibuffer-nonselected' to highlight the contents of the
+minibuffer window when the minibuffer remains active but its window is
+no longer selected."
+  :global t
+  :initialize #'custom-initialize-after-file-load
+  :init-value t
+  :version "31.1"
+  (if minibuffer-nonselected-mode
+      (progn
+	(add-hook 'minibuffer-setup-hook #'minibuffer--nonselected-setup)
+	(add-hook 'minibuffer-exit-hook #'minibuffer--nonselected-exit)
+	(when (active-minibuffer-window)
+	  (minibuffer--nonselected-check (selected-frame))))
+    (remove-hook 'minibuffer-setup-hook #'minibuffer--nonselected-setup)
+    (remove-hook 'minibuffer-exit-hook #'minibuffer--nonselected-exit)
+    (remove-hook 'window-state-change-functions
+		 #'minibuffer--nonselected-check)
+    (when (overlayp minibuffer--nonselected-overlay)
+      (delete-overlay minibuffer--nonselected-overlay))))
+;; `define-minor-mode' expands through pcase (easy-mmode keyword
+;; dispatch), which needs the cl machinery above — GNU's rect.el
+;; likewise loads long after cl-preloaded, so the mode definition
+;; was moved here from the rect helpers block.
+
+(define-minor-mode rectangle-mark-mode
+  "Toggle the region as rectangular.
+
+Activates the region if it's inactive and Transient Mark mode is
+on.  Only lasts until the region is next deactivated."
+  :lighter nil
+  (rectangle--reset-crutches)
+  (when rectangle-mark-mode
+    ;; rect.el installs these at load; here first activation is the
+    ;; load-equivalent point.
+    (add-function :around region-extract-function
+                  #'rectangle--extract-region)
+    (add-function :around region-insert-function
+                  #'rectangle--insert-region)
+    (advice-add 'region-beginning :around #'rectangle--region-beginning)
+    (advice-add 'region-end :around #'rectangle--region-end)
+    (add-hook 'deactivate-mark-hook
+              (lambda () (rectangle-mark-mode -1)))
+    (unless (region-active-p)
+      (push-mark (point) t t)
+      (message "Mark set (rectangle mode)"))))
+
+;; Moved with their definitions: prelude-time mode activations.
+;; GNU's hook installation order: simple.el installs its three hooks at
+;; load; minibuffer.el installs `minibuffer-restore-windows' and the
+;; on-screen-keyboard pair at load; the three global minor modes are
+;; activated by `custom-initialize-after-file-load' after their files
+;; load — `after-load-functions' prepends, so `minibuffer-nonselected-mode'
+;; activates before `minibuffer-regexp-mode', and `file-name-shadow-mode'
+;; (in rfn-eshadow.el, loaded last) activates last.
+(add-hook 'minibuffer-setup-hook 'minibuffer-history-initialize)
+(add-hook 'minibuffer-setup-hook 'minibuffer-history-isearch-setup)
+(add-hook 'minibuffer-setup-hook 'minibuffer-error-initialize)
+(add-hook 'minibuffer-exit-hook 'minibuffer-restore-windows)
+(add-hook 'minibuffer-setup-hook #'minibuffer-setup-on-screen-keyboard)
+(add-hook 'minibuffer-exit-hook #'minibuffer-exit-on-screen-keyboard)
+(minibuffer-nonselected-mode)
+(minibuffer-regexp-mode)
+(file-name-shadow-mode)
+;; GNU activates `electric-indent-mode' via
+;; `custom-initialize-after-file-load' after electric.el loads.
+(electric-indent-mode)
+
 
 (defun append-to-register (register start end &optional delete-flag)
   "Append region text to REGISTER."
@@ -22173,17 +22889,17 @@ for use at QPOS."
                    (if (not (stringp (car-safe unquoted-result)))
                        unquoted-result
                      (completion--twq-try
-                      ',string ',ustring
+                      string ustring
                       (car unquoted-result) (cdr unquoted-result)
-                      ',unquote ',requote)))
+                      unquote requote)))
                   (2 ;;all
                    (let* ((last (last unquoted-result))
                           (base (or (cdr last) 0)))
                      (when last
                        (setcdr last nil)
-                       (completion--twq-all ',string ',ustring
+                       (completion--twq-all string ustring
                                             unquoted-result base
-                                            ',unquote ',requote))))))))))))
+                                            unquote requote))))))))))))
 
 (defun completion--twq-try (string ustring completion point
                                    unquote requote)
@@ -22604,14 +23320,19 @@ when it still points at `standard-syntax-table', and
            `((defvar ,abbrev)
              (unless (boundp ',abbrev)
                (put ',abbrev 'definition-name ',variant)
-               ;; `make-abbrev-table' at obarray level (it is defined
-               ;; later in the prelude than most mode declarations).
+               ;; GNU derived.el: `(defvar ,abbrev (progn
+               ;;   (define-abbrev-table ',abbrev nil) ,abbrev))'.
+               ;; `define-abbrev-table' both installs the obarray and
+               ;; pushes the name onto `abbrev-table-name-list'; the
+               ;; fboundp check keeps macroexpansion order safe.
                (defvar ,abbrev
-                 (let ((remacs--ab (obarray-make)))
-                   (let ((s (intern "" remacs--ab)))
-                     (set s nil)
-                     (setplist s (list :abbrev-table-modiff 0)))
-                   remacs--ab)))))
+                 (if (fboundp 'define-abbrev-table)
+                     (progn (define-abbrev-table ',abbrev nil) ,abbrev)
+                   (let ((remacs--ab (obarray-make)))
+                     (let ((s (intern "" remacs--ab)))
+                       (set s nil)
+                       (setplist s (list :abbrev-table-modiff 0)))
+                     remacs--ab))))))
        (defvar ,hook-sym nil)
        (defun ,variant ()
          ,@(when docstring (list docstring))
@@ -22641,6 +23362,94 @@ when it still points at `standard-syntax-table', and
        ,@(when parent
            `((derived-mode-set-parent ',variant ',parent)))
        ',variant)))
+
+;;; Abbrev machinery — hoisted before the `define-derived-mode' users so
+;;; derived-mode abbrev declarations call the real `define-abbrev-table'
+;;; (which also registers on `abbrev-table-name-list', like GNU derived.el).
+
+(defun obarray-get (ob name)
+  "Return symbol named NAME if it is contained in obarray OB.
+Return nil otherwise."
+  (intern-soft name ob))
+
+(defun obarray-put (ob name)
+  "Return symbol named NAME from obarray OB.
+Creates and adds the symbol if it doesn't exist."
+  (intern name ob))
+
+(defun abbrev-table-get (table prop)
+  "Get the property PROP of abbrev table TABLE."
+  (let ((sym (obarray-get table "")))
+    (if sym (get sym prop))))
+
+(defun abbrev-table-put (table prop val)
+  "Set the property PROP of abbrev table TABLE to VAL."
+  (let ((sym (obarray-put table "")))
+    (set sym nil)          ; Make sure it won't be confused for an abbrev.
+    (put sym prop val)))
+
+(defvar abbrev-table-name-list '(fundamental-mode-abbrev-table
+                                 global-abbrev-table)
+  "List of symbols whose values are abbrev tables.")
+
+(defun make-abbrev-table (&optional props)
+  "Create a new, empty abbrev table object.
+PROPS is a list of properties."
+  (let ((table (obarray-make)))
+    ;; Each abbrev-table has a `modiff' counter which can be used to detect
+    ;; when an abbreviation was added.  An example of use would be to
+    ;; construct :regexp dynamically as the union of all abbrev names, so
+    ;; `modiff' can let us detect that an abbrev was added and hence :regexp
+    ;; needs to be refreshed.
+    ;; The presence of `modiff' entry is also used as a tag indicating this
+    ;; vector is really an abbrev-table.
+    (abbrev-table-put table :abbrev-table-modiff 0)
+    (while (consp props)
+      (abbrev-table-put table (pop props) (pop props)))
+    table))
+
+(defun define-abbrev-table (tablename definitions
+                                     &optional docstring &rest props)
+  "Define TABLENAME (a symbol) as an abbrev table name.
+Define abbrevs in it according to DEFINITIONS, which is a list of elements
+of the form (ABBREVNAME EXPANSION ...) that are passed to `define-abbrev'.
+PROPS is a property list to apply to the table.
+Properties with special meaning:
+- `:parents' contains a list of abbrev tables from which this table inherits
+  abbreviations.
+- `:case-fixed' non-nil means that abbreviations are looked up without
+  case-folding, and the expansion is not capitalized/upcased.
+- `:regexp' is a regular expression that specifies how to extract the
+  name of the abbrev before point.  The submatch 1 is treated
+  as the potential name of an abbrev.  If `:regexp' is nil, the default
+  behavior uses `backward-word' and `forward-word' to extract the name
+  of the abbrev, which can therefore by default only be a single word.
+- `:enable-function' can be set to a function of no arguments which returns
+  non-nil if and only if the abbrevs in this table should be used for this
+  instance of `expand-abbrev'."
+  (declare (doc-string 3) (indent defun))
+  ;; We used to manually add the docstring, but we also want to record this
+  ;; location as the definition of the variable (in load-history), so we may
+  ;; as well just use `defvar'.
+  (when (and docstring props (symbolp docstring))
+    ;; There is really no docstring, instead the docstring arg
+    ;; is a property name.
+    (push docstring props) (setq docstring nil))
+  (defvar-1 tablename nil docstring)
+  (let ((table (if (boundp tablename) (symbol-value tablename))))
+    (unless table
+      (setq table (make-abbrev-table))
+      (set tablename table)
+      (unless (memq tablename abbrev-table-name-list)
+        (push tablename abbrev-table-name-list)))
+    ;; We used to just pass them to `make-abbrev-table', but that fails
+    ;; if the table was pre-existing as is the case if it was created by
+    ;; loading the user's abbrev file.
+    (while (consp props)
+      (unless (cdr props) (error "Missing value for property %S" (car props)))
+      (abbrev-table-put table (pop props) (pop props)))
+    (dolist (elt definitions)
+      (apply #'define-abbrev table elt))))
 
 (defun merge-ordered-lists (lists &optional error-function)
   "Merge LISTS in a consistent order (C3 linearization).
@@ -22747,28 +23556,37 @@ list is used."
   (put mode 'derived-mode-extra-parents extra-parents)
   (derived-mode--flush mode))
 
-(defun modify-face (face &optional foreground background stipple bold-p
-                         italic-p underline-p inverse-p frame)
-  "Change the display attributes of FACE.
-Obsolete: use `set-face-attribute' instead."
+;; GNU faces.el `modify-face': FACE nil → interactive prompt; non-nil
+;; delegates to `set-face-attribute' (its CHECK_SYMBOL on FACE is the
+;; first failure for non-symbol args).  ;Remacs: prelude copy.
+(defun modify-face (&optional face foreground background stipple bold-p
+                              italic-p underline-p inverse-p frame)
+  "Modify attributes of faces interactively.
+If optional argument FRAME is nil or omitted, modify the face used
+for newly created frame, i.e. the global face.
+For non-interactive use, `set-face-attribute' is preferred.
+When called from Lisp, if FACE is nil, all arguments but FRAME are ignored
+and the face and its settings are obtained by querying the user."
   (interactive)
   (declare (obsolete set-face-attribute "22.1"))
-  (unless (memq face (face-list))
-    (signal 'error (list 'Invalid 'face face)))
-  (when foreground
-    (set-face-attribute face frame :foreground foreground))
-  (when background
-    (set-face-attribute face frame :background background))
-  (when stipple
-    (set-face-attribute face frame :stipple stipple))
-  (when bold-p
-    (set-face-attribute face frame :weight (if bold-p 'bold 'normal)))
-  (when italic-p
-    (set-face-attribute face frame :slant (if italic-p 'italic 'normal)))
-  (when underline-p
-    (set-face-attribute face frame :underline underline-p))
-  (when inverse-p
-    (set-face-attribute face frame :inverse-video inverse-p)))
+  (if face
+      (set-face-attribute face frame
+                          :foreground (or foreground 'unspecified)
+                          :background (or background 'unspecified)
+                          :stipple stipple
+                          :weight (if bold-p 'bold 'normal)
+                          :slant (if italic-p 'italic 'normal)
+                          :underline underline-p
+                          :inverse-video inverse-p)
+    (setq face (read-face-name "Modify face" (face-at-point t)))
+    (apply #'set-face-attribute face frame
+           :foreground (or foreground 'unspecified)
+           :background (or background 'unspecified)
+           :stipple stipple
+           :weight (if bold-p 'bold 'normal)
+           :slant (if italic-p 'italic 'normal)
+           :underline underline-p
+           :inverse-video inverse-p)))
 
 ;; `defface' is defined earlier with the custom.el core (it calls
 ;; `custom-declare-face').
@@ -24041,10 +24859,7 @@ be used to try to determine whether syntax-tables should be trusted
 to understand comments or not in the given buffer.
 Major modes should set this variable.")
 
-(defvar comment-fill-column nil
-  "Column to use for `comment-indent'.  If nil, use `fill-column' instead."
-  :type '(choice (const nil) integer)
-  :group 'comment)
+(defvar comment-fill-column nil "Column to use for `comment-indent'.  If nil, use `fill-column' instead.")
 
 (defvar comment-end-skip nil
   "Regexp to match the end of a comment plus everything back to its body.")
@@ -24153,63 +24968,37 @@ INDENT specifies that the `comment-start' markers should not be put at the
 If INDENT is `multi-char', that means indent multi-character
   comment starters, but not one-character comment starters.")
 
-(defvar comment-style 'indent
-  "Style to be used for `comment-region'.
-See `comment-styles' for a list of available styles."
-  :type (if (boundp 'comment-styles)
-	    `(choice
-              ,@(mapcar (lambda (s)
-                          `(const :tag ,(format "%s: %s" (car s) (nth 5 s))
-                                  ,(car s)))
-                        comment-styles))
-	  'symbol)
-  :version "23.1"
-  :group 'comment)
+(defvar comment-style 'indent "Style to be used for `comment-region'.
+See `comment-styles' for a list of available styles.")
 
-(defvar comment-padding " "
-  "Padding string that `comment-region' puts between comment chars and text.
+(defvar comment-padding " " "Padding string that `comment-region' puts between comment chars and text.
 Can also be an integer which will be automatically turned into a string
 of the corresponding number of spaces.
 
 Extra spacing between the comment characters and the comment text
-makes the comment easier to read.  Default is 1.  nil means 0."
-  :type '(choice string integer (const nil))
-  :group 'comment)
+makes the comment easier to read.  Default is 1.  nil means 0.")
 
-(defvar comment-inline-offset 1
-  "Inline comments have to be preceded by at least this many spaces.
+(defvar comment-inline-offset 1 "Inline comments have to be preceded by at least this many spaces.
 This is useful when style-conventions require a certain minimal offset.
 Python's PEP8 for example recommends two spaces, so you could do:
 
 \(add-hook \\='python-mode-hook
    (lambda () (setq-local comment-inline-offset 2)))
 
-See `comment-padding' for whole-line comments."
-  :version "24.3"
-  :type 'integer
-  :group 'comment)
+See `comment-padding' for whole-line comments.")
 
-(defvar comment-multi-line nil
-  "Non-nil means `comment-indent-new-line' continues comments.
+(defvar comment-multi-line nil "Non-nil means `comment-indent-new-line' continues comments.
 That is, it inserts no new terminator or starter.
 This affects `auto-fill-mode', which is the main reason to
 customize this variable.
 
 It also affects \\[indent-new-comment-line].  However, if you want this
-behavior for explicit filling, you might as well use \\[newline-and-indent]."
-  :type 'boolean
-  :safe #'booleanp
-  :group 'comment)
+behavior for explicit filling, you might as well use \\[newline-and-indent].")
 
-(defvar comment-empty-lines nil
-  "If nil, `comment-region' does not comment out empty lines.
+(defvar comment-empty-lines nil "If nil, `comment-region' does not comment out empty lines.
 If t, it always comments out empty lines.
 If `eol', it only comments out empty lines if comments are
-terminated by the end of line (i.e., `comment-end' is empty)."
-  :type '(choice (const :tag "Never" nil)
-                 (const :tag "Always" t)
-                 (const :tag "EOL-terminated" eol))
-  :group 'comment)
+terminated by the end of line (i.e., `comment-end' is empty).")
 
 (defvar comment-setup-function #'ignore
   "Function to set up variables needed by commenting functions.")
@@ -24222,11 +25011,8 @@ described by the syntax-tables (or where `font-lock-syntax-table' is radically
 different from the main syntax table) can set this to nil,
 then `syntax-ppss' cache won't be used in comment-related routines.")
 
-(defvar comment-auto-fill-only-comments nil
-  "Non-nil means to only auto-fill inside comments.
-This has no effect in modes that do not define a comment syntax."
-  :type 'boolean
-  :group 'comment)
+(defvar comment-auto-fill-only-comments nil "Non-nil means to only auto-fill inside comments.
+This has no effect in modes that do not define a comment syntax.")
 
 (defvar comment-combine-change-calls t
   "If non-nil (the default), use `combine-change-calls' around
@@ -26260,8 +27046,7 @@ Just \\[universal-argument] as argument means to use the current column."
 ;; `lisp-indent-function' (the variable) already defaults to the
 ;; function of the same name; declared by the C side.
 (defvar-local lisp-indent-function 'lisp-indent-function)
-(defvar calculate-lisp-indent-last-sexp nil
-  "Dynamically bound during `calculate-lisp-indent'.")
+(defvar calculate-lisp-indent-last-sexp)
 
 (defun lisp-ppss (&optional pos)
   "Return Parse-Partial-Sexp State at POS, defaulting to point.
@@ -26393,39 +27178,53 @@ Faithful port of GNU's algorithm in lisp-mode.el."
               (t normal-indent))))))
 
 (defun lisp--local-defform-body-p (state)
-  "Non-nil when at a local definition body per STATE (subset)."
-  (condition-case nil
-      (let ((start (nth 1 state)))
-        (when start
-          (let* ((parents (nth 9 state))
-                 (first-cons-after (cdr parents))
-                 (second-cons-after (cdr first-cons-after))
-                 first-order-parent second-order-parent)
-            (while second-cons-after
-              (when (= start (car second-cons-after))
-                (setq second-order-parent (pop parents)
-                      first-order-parent (pop parents)
-                      second-cons-after nil))
-              (pop second-cons-after)
-              (pop parents))
-            (when second-order-parent
-              (let (local-definitions-starting-point)
-                (and (save-excursion
-                       (goto-char (1+ second-order-parent))
-                       (let ((head (ignore-errors (read (current-buffer)))))
-                         (when (memq head '(cl-flet cl-labels cl-macrolet
-                                            cl-flet* cl-symbol-macrolet))
-                           (setq local-definitions-starting-point
-                                 (progn
-                                   (parse-partial-sexp
-                                    (point) first-order-parent nil t)
-                                   (point)))
-                           local-definitions-starting-point)))
-                     (save-excursion
-                       (when (ignore-errors (backward-up-list 2) t)
-                         (= local-definitions-starting-point
-                            (point))))))))))
-    (error nil)))
+  "Return non-nil when at local definition body according to STATE.
+STATE is the `parse-partial-sexp' state for current position.
+GNU lisp-mode.el — `nth' on a non-list STATE signals
+`wrong-type-argument listp' (no error suppression)."
+  (when-let* ((start-of-innermost-containing-list (nth 1 state)))
+    (let* ((parents (nth 9 state))
+           (first-cons-after (cdr parents))
+           (second-cons-after (cdr first-cons-after))
+           first-order-parent second-order-parent)
+      (while second-cons-after
+        (when (= start-of-innermost-containing-list
+                 (car second-cons-after))
+          (setq second-order-parent (pop parents)
+                first-order-parent (pop parents)
+                ;; Leave the loop.
+                second-cons-after nil))
+        (pop second-cons-after)
+        (pop parents))
+      (when second-order-parent
+        (let (local-definitions-starting-point)
+          (and (save-excursion
+                 (goto-char (1+ second-order-parent))
+                 (when-let* ((head (ignore-errors
+                                     ;; FIXME: This does not distinguish
+                                     ;; between reading nil and a read error.
+                                     ;; We don't care but still, better fix this.
+                                     (read (current-buffer)))))
+                   (when (memq head '( cl-flet cl-labels cl-macrolet
+                                       cl-flet* cl-symbol-macrolet))
+                     ;; In what follows, we rely on (point) returning non-nil.
+                     (setq local-definitions-starting-point
+                           (progn
+                             (parse-partial-sexp
+                              (point) first-order-parent nil
+                              ;; From docstring of `parse-partial-sexp':
+                              ;; Fourth arg non-nil means stop
+                              ;; when we come to any character
+                              ;; that starts a sexp.
+                              t)
+                             (point))))))
+               (save-excursion
+                 (when (ignore-errors
+                         ;; We rely on `backward-up-list' working
+                         ;; even when sexp is incomplete “to the right”.
+                         (backward-up-list 2)
+                         t)
+                   (= local-definitions-starting-point (point))))))))))
 
 (defun lisp-indent-function (indent-point state)
   "This function is the normal value of `lisp-indent-function'.
@@ -26843,7 +27642,11 @@ all RULES in total." (declare (debug (&rest &or symbolp (def-form &rest (numberp
        (t (forward-char 1)))))))
 
 (define-derived-mode special-mode nil "Special"
-  "Major mode for buffers containing read-only text.")
+  "Parent major mode from which special major modes should inherit.
+
+A special major mode is intended to view specially formatted data
+rather than files.  These modes usually use read-only buffers."
+  (setq buffer-read-only t))
 
 ;; GNU simple.el's `special-mode-map' (defvar-keymap), verbatim.
 (defvar-keymap special-mode-map
@@ -27648,15 +28451,28 @@ to the ARGth following beginning of defun."
       (narrow-to-region beg end))))
 
 (defun split-line (&optional arg)
-  "Split current line at point into two lines, first indenting the
-second so it aligns with the text that follows point."
+  "Split current line, moving portion beyond point vertically down.
+If the current line starts with `fill-prefix', insert it on the new
+line as well.  With prefix ARG, don't insert `fill-prefix' on new line.
+
+When called from Lisp code, ARG may be a prefix string to copy."
   (interactive "*P")
-  (let ((col (current-column))
-        (pos (point)))
-    (newline (prefix-numeric-value arg))
-    (goto-char pos)
-    (indent-to col)
-    (goto-char (1+ pos))))
+  (skip-chars-forward " \t")
+  (let* ((col (current-column))
+	 (pos (point))
+	 ;; What prefix should we check for (nil means don't).
+	 (prefix (cond ((stringp arg) arg)
+		       (arg nil)
+		       (t fill-prefix)))
+	 ;; Does this line start with it?
+	 (have-prfx (and prefix
+			 (save-excursion
+			   (beginning-of-line)
+			   (looking-at (regexp-quote prefix))))))
+    (newline 1)
+    (if have-prfx (insert-and-inherit prefix))
+    (indent-to col 0)
+    (goto-char pos)))
 
 (defun indent-next-tab-stop (column &optional prev)
   "Return the next tab stop after COLUMN.
@@ -27707,15 +28523,9 @@ If PREV is non-nil, return the previous one instead."
   (declare (obsolete "obarrays now grow automatically." "30.1"))
   obarray-default-size)
 
-(defun obarray-get (ob name)
-  "Return symbol named NAME if it is contained in obarray OB.
-Return nil otherwise."
-  (intern-soft name ob))
-
-(defun obarray-put (ob name)
-  "Return symbol named NAME from obarray OB.
-Creates and adds the symbol if it doesn't exist."
-  (intern name ob))
+;; `obarray-get'/`obarray-put' live with the early abbrev machinery
+;; (before `define-derived-mode's first use) since `define-abbrev-table'
+;; needs them during the mode declarations below.
 
 (defun obarray-remove (ob name)
   "Remove symbol named NAME if it is contained in obarray OB.
@@ -28159,16 +28969,6 @@ A prefix argument means don't query; expand all abbrevs."
 
 ;;; Abbrev properties.
 
-(defun abbrev-table-get (table prop)
-  "Get the property PROP of abbrev table TABLE."
-  (let ((sym (obarray-get table "")))
-    (if sym (get sym prop))))
-
-(defun abbrev-table-put (table prop val)
-  "Set the property PROP of abbrev table TABLE to VAL."
-  (let ((sym (obarray-put table "")))
-    (set sym nil)          ; Make sure it won't be confused for an abbrev.
-    (put sym prop val)))
 
 (defalias 'abbrev-get #'get
   "Get the property PROP of abbrev ABBREV
@@ -28184,25 +28984,6 @@ See `define-abbrev' for the effect of some special properties.
 
 ;;; Code that used to be implemented in src/abbrev.c
 
-(defvar abbrev-table-name-list '(fundamental-mode-abbrev-table
-                                 global-abbrev-table)
-  "List of symbols whose values are abbrev tables.")
-
-(defun make-abbrev-table (&optional props)
-  "Create a new, empty abbrev table object.
-PROPS is a list of properties."
-  (let ((table (obarray-make)))
-    ;; Each abbrev-table has a `modiff' counter which can be used to detect
-    ;; when an abbreviation was added.  An example of use would be to
-    ;; construct :regexp dynamically as the union of all abbrev names, so
-    ;; `modiff' can let us detect that an abbrev was added and hence :regexp
-    ;; needs to be refreshed.
-    ;; The presence of `modiff' entry is also used as a tag indicating this
-    ;; vector is really an abbrev-table.
-    (abbrev-table-put table :abbrev-table-modiff 0)
-    (while (consp props)
-      (abbrev-table-put table (pop props) (pop props)))
-    table))
 
 (defun abbrev-table-p (object)
   "Return non-nil if OBJECT is an abbrev table."
@@ -28880,48 +29661,6 @@ are omitted unless SYSTEM is non-nil."
               table)
     symbols))
 
-(defun define-abbrev-table (tablename definitions
-                                      &optional docstring &rest props)
-  "Define TABLENAME (a symbol) as an abbrev table name.
-Define abbrevs in it according to DEFINITIONS, which is a list of elements
-of the form (ABBREVNAME EXPANSION ...) that are passed to `define-abbrev'.
-PROPS is a property list to apply to the table.
-Properties with special meaning:
-- `:parents' contains a list of abbrev tables from which this table inherits
-  abbreviations.
-- `:case-fixed' non-nil means that abbreviations are looked up without
-  case-folding, and the expansion is not capitalized/upcased.
-- `:regexp' is a regular expression that specifies how to extract the
-  name of the abbrev before point.  The submatch 1 is treated
-  as the potential name of an abbrev.  If `:regexp' is nil, the default
-  behavior uses `backward-word' and `forward-word' to extract the name
-  of the abbrev, which can therefore by default only be a single word.
-- `:enable-function' can be set to a function of no arguments which returns
-  non-nil if and only if the abbrevs in this table should be used for this
-  instance of `expand-abbrev'."
-  (declare (doc-string 3) (indent defun))
-  ;; We used to manually add the docstring, but we also want to record this
-  ;; location as the definition of the variable (in load-history), so we may
-  ;; as well just use `defvar'.
-  (when (and docstring props (symbolp docstring))
-    ;; There is really no docstring, instead the docstring arg
-    ;; is a property name.
-    (push docstring props) (setq docstring nil))
-  (defvar-1 tablename nil docstring)
-  (let ((table (if (boundp tablename) (symbol-value tablename))))
-    (unless table
-      (setq table (make-abbrev-table))
-      (set tablename table)
-      (unless (memq tablename abbrev-table-name-list)
-        (push tablename abbrev-table-name-list)))
-    ;; We used to just pass them to `make-abbrev-table', but that fails
-    ;; if the table was pre-existing as is the case if it was created by
-    ;; loading the user's abbrev file.
-    (while (consp props)
-      (unless (cdr props) (error "Missing value for property %S" (car props)))
-      (abbrev-table-put table (pop props) (pop props)))
-    (dolist (elt definitions)
-      (apply #'define-abbrev table elt))))
 
 ;; GNU's lisp-mode.el / elisp-mode.el define these tables explicitly;
 ;; `define-derived-mode's auto-declaration leaves them bound either
@@ -29030,11 +29769,52 @@ Use \\[edit-tab-stops] to edit them interactively."
                 (forward-char -1))
               (delete-region (point) before)))))))
 
-(defun count-screen-lines (&optional beg end _min-flag _window)
-  "Count screen lines between BEG and END (batch: count-lines).
-GNU takes MIN-FLAG and WINDOW too; font geometry is irrelevant on a
-batch terminal so both are ignored."
-  (count-lines (or beg (point-min)) (or end (point-max))))
+;; GNU window.el verbatim — the `=' and `char-before' on the edge
+;; positions produce GNU's exact error shapes (number-or-marker-p nil
+;; when finish lands past point-max, etc.).
+(defun count-screen-lines (&optional beg end count-final-newline window)
+  "Return the number of screen lines in the region.
+The number of screen lines may be different from the number of actual lines,
+due to line breaking, display table, etc.
+
+Optional arguments BEG and END default to `point-min' and `point-max'
+respectively.
+
+If region ends with a newline, ignore it unless optional third argument
+COUNT-FINAL-NEWLINE is non-nil.
+
+The optional fourth argument WINDOW specifies the window used for obtaining
+parameters such as width, horizontal scrolling, and so on.  The default is
+to use the selected window's parameters."
+  (unless beg
+    (setq beg (point-min)))
+  (unless end
+    (setq end (point-max)))
+  (if (= beg end)
+      0
+    (let ((start (min beg end))
+          (finish (max beg end))
+          count end-invisible-p)
+      ;; When END is invisible because lines are truncated in WINDOW,
+      ;; vertical-motion returns a number that is 1 larger than it
+      ;; should.  We need to fix that.
+      (setq end-invisible-p
+            (and (or truncate-lines (truncated-partial-width-window-p window))
+                 (save-excursion
+                   (goto-char finish)
+                   (> (- (current-column) (window-hscroll window))
+                      (window-body-width window)))))
+      (save-excursion
+        (save-restriction
+          (widen)
+          (narrow-to-region start
+                            (if (and (not count-final-newline)
+                                     (= ?\n (char-before finish)))
+                                (1- finish)
+                              finish))
+          (goto-char start)
+          (setq count (vertical-motion (buffer-size) window))
+          (if end-invisible-p count (1+ count)))))))
 
 ;; window.el cluster (verbatim GNU where possible).
 
@@ -29222,10 +30002,30 @@ SLOT may be a number from 0 to 17 inclusive, or a slot name (symbol)."
     ;; tall as they are wide.
     (> (frame-width frame) (* 2 (frame-height frame)))))
 
-(defun walk-window-tree (fun &optional frame _any-window nomini _all-frames)
-  "Call FUN on each live window of FRAME (flat model: `window-list')."
-  (dolist (window (window-list frame (if nomini nil t)))
-    (funcall fun window)))
+(defun walk-window-tree (fun &optional frame any minibuf)
+  "Call FUN on each live window of FRAME (flat model: `window-list').
+GNU 31 makes this a primitive; its FRAME check is `frame-live-p' (a
+wrong-type-argument), not `window-normalize-frame''s error.  MINIBUF
+means the same as for `window-list': nil/omit excludes the minibuffer
+window, t includes it (GNU default: excluded)."
+  (when (and frame (not (framep frame)))
+    (signal 'wrong-type-argument (list 'frame-live-p frame)))
+  (dolist (window (window-list frame minibuf))
+    (funcall fun window))
+  nil)
+
+(defun window--resize-apply-p (frame &optional horizontal)
+  "Return t when a window on FRAME shall be resized vertically.
+Optional argument HORIZONTAL non-nil means return t when a window
+shall be resized horizontally."
+  (catch 'apply
+    (walk-window-tree
+     (lambda (window)
+       (unless (= (window-new-pixel window)
+		  (window-size window horizontal t))
+	 (throw 'apply t)))
+     frame t t)
+    nil))
 
 (defun split-window-sensibly (&optional window)
   "Split WINDOW in a way suitable for `display-buffer'."
@@ -29410,12 +30210,18 @@ On error, location of point is unspecified."
   (interactive "^p\nd\nd")
   (up-list (- (or arg 1)) escape-strings no-syntax-crossing))
 
+(defvar up-list-function nil
+  "If non-nil, `up-list' delegates to this function.
+Should take the same arguments and behave similarly to `up-list'.")
+
 (defun up-list (&optional arg escape-strings no-syntax-crossing)
   "Move forward out of one level of parentheses.
 This command will also work on other parentheses-like expressions
 defined by the current language mode.  With ARG, do this that
-many times.  A negative argument means move backward but still to
-a less deep spot.
+many times.  A negative argument means move backward but still
+to a less deep spot.
+
+Calls `up-list-function' to do the work, if that is non-nil.
 
 If ESCAPE-STRINGS is non-nil (as it is interactively), move out
 of enclosing strings as well.
@@ -29426,6 +30232,12 @@ end of a list broken across multiple strings.
 
 On error, location of point is unspecified."
   (interactive "^p\nd\nd")
+  (if up-list-function
+      (funcall up-list-function arg escape-strings no-syntax-crossing)
+    (up-list-default-function arg escape-strings no-syntax-crossing)))
+
+(defun up-list-default-function (&optional arg escape-strings no-syntax-crossing)
+  "Default function for `up-list-function'."
   (or arg (setq arg 1))
   (let ((inc (if (> arg 0) 1 -1))
         (pos nil))
@@ -29450,7 +30262,9 @@ On error, location of point is unspecified."
                            (scan-error (point-max)))
                        (forward-comment 1)
                        (point)))))))
-            (if (null forward-sexp-function)
+            ;; FIXME: Comparing functions is a code smell.
+            (if (memq forward-sexp-function
+                      '(nil forward-sexp-default-function))
                 (goto-char (or (scan-lists (point) inc 1)
                                (buffer-end arg)))
               (condition-case err
@@ -29468,7 +30282,7 @@ On error, location of point is unspecified."
             ;; we're inside a string: if so, just go to the beginning
             ;; or end of that string.
             (and escape-strings
-                 (or syntax (setq syntax (syntax-ppss)))
+                 (or syntax (setf syntax (syntax-ppss)))
                  (nth 3 syntax)
                  (goto-char (nth 8 syntax))
                  (progn (when (> inc 0)
@@ -29479,16 +30293,16 @@ On error, location of point is unspecified."
             ;; that we're out of syntax.  Try again from beginning or
             ;; end of the comment.
             (and no-syntax-crossing
-                 (or syntax (setq syntax (syntax-ppss)))
+                 (or syntax (setf syntax (syntax-ppss)))
                  (nth 4 syntax)
                  (goto-char (nth 8 syntax))
                  (or (< inc 0)
                      (forward-comment 1))
-                 (setq arg (+ arg inc)))
+                 (setf arg (+ arg inc)))
             (if no-syntax-crossing
                 ;; Assume called interactively; don't signal an error.
                 (user-error "At top level")
-              (signal (car err) (cdr err)))))))
+              (signal err))))))
       (setq arg (- arg inc)))))
 
 ;; ---------- files.el: auto-mode & local variables (GNU port) ----------
@@ -29501,64 +30315,6 @@ On error, location of point is unspecified."
 (put 'buffer-saved-size 'permanent-local t)
 (put 'buffer-backed-up 'permanent-local t)
 
-;; minor convenience feature for handling of an obsolete Rmail file format.
-(defmacro define-obsolete-function-alias (obsolete-name current-name when
-                                          &optional docstring)
-  "Set OBSOLETE-NAME's function definition to CURRENT-NAME and mark it obsolete.
-WHEN should be a string indicating when the function was first
-made obsolete, for example a date or a release number."
-  (declare (doc-string 4) (indent defun))
-  `(progn
-     (defalias ,obsolete-name ,current-name ,docstring)
-     (make-obsolete ,obsolete-name ,current-name ,when)))
-
-;; GNU byte-run.el: advertised calling conventions.  Needed early —
-;; `define-obsolete-function-alias' call sites with an
-;; `advertised-calling-convention' declare spec (e.g. tabulated-list)
-;; expand to `set-advertised-calling-convention' calls.
-(defvar advertised-signature-table (make-hash-table :test 'eq :weakness 'key))
-
-(defun set-advertised-calling-convention (function signature _when)
-  "Set the advertised SIGNATURE of FUNCTION.
-This will allow the byte-compiler to warn the programmer when she uses
-an obsolete calling convention.  WHEN specifies since when the calling
-convention was modified."
-  (puthash (indirect-function function) signature advertised-signature-table))
-
-(defun get-advertised-calling-convention (function)
-  "Get the advertised SIGNATURE of FUNCTION.
-Return t if there isn't any."
-  (gethash function advertised-signature-table t))
-
-;; GNU byte-run.el: `define-obsolete-variable-alias' is a macro whose
-;; expansion runs `defvaralias', copies `saved-value'/
-;; `saved-variable-comment' props for Customize, then
-;; `make-obsolete-variable' writes (CURRENT ACCESS-TYPE WHEN) on
-;; `byte-obsolete-variable'.
-(defmacro define-obsolete-variable-alias (obsolete-name current-name when
-                                          &optional docstring)
-  "Make OBSOLETE-NAME a variable alias for CURRENT-NAME and mark it obsolete.
-WHEN should be a string indicating when the variable was first
-made obsolete, for example a date or a release number."
-  (declare (doc-string 4) (indent defun))
-  `(progn
-     (defvaralias ,obsolete-name ,current-name ,docstring)
-     ;; See Bug#4706.
-     (dolist (prop '(saved-value saved-variable-comment))
-       (and (get ,obsolete-name prop)
-            (null (get ,current-name prop))
-            (put ,current-name prop (get ,obsolete-name prop))))
-     (put ,obsolete-name 'saved-var-name ,current-name)
-     (make-obsolete-variable ,obsolete-name ,current-name ,when)))
-
-;; GNU faces.el: face aliases record `face-alias' + `obsolete-face'
-;; properties (used by emacs-authors-mode et al.).
-(defmacro define-obsolete-face-alias (obsolete-face current-face when)
-  "Make OBSOLETE-FACE a face alias for CURRENT-FACE and mark it obsolete.
-WHEN should be a string indicating when the face was first made
-obsolete, for example a date or a release number."
-  `(progn (put ,obsolete-face 'face-alias ,current-face)
-          (put ,obsolete-face 'obsolete-face (or ,when t))))
 
 (defvar file-name-version-regexp
   "\\(?:~\\|\\.~[-[:alnum:]:#@^._]+\\(?:~[[:digit:]]+\\)?~\\)"
@@ -29717,14 +30473,37 @@ into NEWNAME instead."
 ;; coding.c: return a coding system like CS with the given eol type.
 ;; Our coding systems are BASE-EOL symbols (utf-8-unix), as in GNU names.
 (defun coding-system-change-eol-conversion (coding-system eol-type)
-  "Return a coding system like CODING-SYSTEM but with EOL-TYPE.
-EOL-TYPE is `unix', `dos', `mac', or 0, 1, 2 respectively."
-  (let ((eol (cond ((memq eol-type '(unix 0)) "unix")
-                   ((memq eol-type '(dos 1)) "dos")
-                   ((memq eol-type '(mac 2)) "mac")
-                   (t "unix")))
-        (base (coding-system-base coding-system)))
-    (intern (concat (symbol-name base) "-" eol))))
+  "Return a coding system which differs from CODING-SYSTEM in EOL conversion.
+The returned coding system converts end-of-line by EOL-TYPE
+but text as the same way as CODING-SYSTEM.
+EOL-TYPE should be `unix', `dos', `mac', or nil.
+If EOL-TYPE is nil, the returned coding system detects
+how end-of-line is formatted automatically while decoding.
+
+EOL-TYPE can be specified by an integer 0, 1, or 2.
+They means `unix', `dos', and `mac' respectively."
+  ;; mule-cmds.el, verbatim GNU.
+  (if (symbolp eol-type)
+      (setq eol-type (cond ((eq eol-type 'unix) 0)
+                           ((eq eol-type 'dos) 1)
+                           ((eq eol-type 'mac) 2)
+                           (t eol-type))))
+  ;; We call `coding-system-base' before `coding-system-eol-type',
+  ;; because the coding-system may not be initialized until then.
+  (let* ((base (coding-system-base coding-system))
+         (orig-eol-type (coding-system-eol-type coding-system)))
+    (cond ((vectorp orig-eol-type)
+           (if (not eol-type)
+               coding-system
+             (aref orig-eol-type eol-type)))
+          ((not eol-type)
+           base)
+          ((= eol-type orig-eol-type)
+           coding-system)
+          ((progn (setq orig-eol-type (coding-system-eol-type base))
+                  (vectorp orig-eol-type))
+           (aref orig-eol-type eol-type)))))
+
 
 ;; files.el: insert-directory cluster (verbatim GNU).
 ;; files.el 1287.
@@ -31822,12 +32601,6 @@ already the major mode."
         ((symbolp exp) (or (keywordp exp) (memq exp '(nil t))))
         (t t)))
 
-(defun set-buffer-major-mode (buffer)
-  "Set an appropriate major mode for BUFFER.
-For the *scratch* buffer, use `initial-major-mode', otherwise
-choose the mode specified by the default value of `major-mode'."
-  (with-current-buffer buffer
-    (funcall (or (default-value 'major-mode) 'fundamental-mode))))
 
 ;; files.el: directory-local variables (.dir-locals.el), verbatim GNU
 ;; except `dir-locals--load-mode-if-needed' (pcase-dolist → dolist) and
@@ -32332,18 +33105,16 @@ SEQUENCE2 may be a list, vector, or string."
   "Non-nil means read .dir-locals.el files.")
 
 ;; Mode stubs: correct mode symbol/name for `set-auto-mode' selection;
-;; bodies are prog/text/special-derived approximations.
-(define-derived-mode c-mode prog-mode "C")
-(define-derived-mode c++-mode prog-mode "C++")
-(define-derived-mode objc-mode prog-mode "ObjC")
-(define-derived-mode java-mode prog-mode "Java")
-(define-derived-mode javascript-mode prog-mode "Javascript")
-(define-derived-mode js-json-mode prog-mode "JSON")
-(define-derived-mode css-mode prog-mode "CSS")
-(define-derived-mode mhtml-mode prog-mode "MHTML")
-(define-derived-mode sgml-mode text-mode "SGML")
-(define-derived-mode xml-mode prog-mode "XML")
-;; GNU conf-mode.el autoload cookies (loaddefs.el).
+;; bodies are prog/text/special-derived approximations.  GNU gives every
+;; one of these a `loaddefs' autoload (or a defalias / real dump
+;; definition) instead of an eager definition, so the whole block defers
+;; until `loaddefs' installs its cells — symbols still unbound after
+;; that are the ones GNU leaves void (their `unless' fires like GNU's).
+(with-eval-after-load 'loaddefs
+;; GNU aliases (js.el / nxml-mode install these cells): plain symbol
+;; aliasing so `javascript-mode'→`js-mode', `xml-mode'→`nxml-mode'.
+(defalias 'javascript-mode 'js-mode)
+(defalias 'xml-mode 'nxml-mode)
 (autoload 'conf-mode "conf-mode" "Conf Mode starter." t)
 (autoload 'conf-unix-mode "conf-mode"
   "Conf Mode starter for Unix style Conf files." t)
@@ -32365,74 +33136,13 @@ SEQUENCE2 may be a list, vector, or string."
   "Conf Mode starter for .desktop files." t)
 (autoload 'conf-npmrc-mode "conf-mode"
   "Conf Mode starter for npmrc files." t)
-(define-derived-mode makefile-mode prog-mode "Makefile")
-(define-derived-mode makefile-gmake-mode prog-mode "GNUmakefile")
-(define-derived-mode makefile-bsdmake-mode prog-mode "Makefile[BSD]")
-(define-derived-mode makefile-imake-mode prog-mode "Makefile[imake]")
-(define-derived-mode makefile-makepp-mode prog-mode "Makefile[makepp]")
-(define-derived-mode makefile-automake-mode prog-mode "Makefile[automake]")
-(define-derived-mode sh-mode prog-mode "Shell-script")
 (defalias 'shell-script-mode 'sh-mode)
-(define-derived-mode perl-mode prog-mode "Perl")
-(define-derived-mode prolog-mode prog-mode "Prolog")
-(define-derived-mode scheme-mode prog-mode "Scheme")
-(define-derived-mode dsssl-mode prog-mode "DSSSL")
-(define-derived-mode tcl-mode prog-mode "Tcl")
-(define-derived-mode verilog-mode prog-mode "Verilog")
-(define-derived-mode vhdl-mode prog-mode "VHDL")
-(define-derived-mode metafont-mode prog-mode "Metafont")
-(define-derived-mode metapost-mode prog-mode "MetaPost")
-(define-derived-mode simula-mode prog-mode "Simula")
-(define-derived-mode opascal-mode prog-mode "OPascal")
-(define-derived-mode m2-mode prog-mode "Modula-2")
-(define-derived-mode icon-mode prog-mode "Icon")
-(define-derived-mode dcl-mode prog-mode "DCL")
-(define-derived-mode fortran-mode prog-mode "Fortran")
-(define-derived-mode f90-mode prog-mode "F90")
-(define-derived-mode antlr-mode prog-mode "Antlr")
-(define-derived-mode antlr-v4-mode prog-mode "Antlr-v4")
-(define-derived-mode python-mode prog-mode "Python")
-(define-derived-mode ruby-mode prog-mode "Ruby")
-(define-derived-mode diff-mode prog-mode "Diff")
-(define-derived-mode dns-mode prog-mode "DNS")
-(define-derived-mode sql-mode prog-mode "SQL")
-(define-derived-mode tex-mode text-mode "TeX")
-(define-derived-mode latex-mode tex-mode "LaTeX")
-(define-derived-mode doctex-mode tex-mode "DocTeX")
-(define-derived-mode plain-tex-mode tex-mode "TeX")
-(define-derived-mode slitex-mode tex-mode "SliTeX")
-(define-derived-mode texinfo-mode text-mode "Texinfo")
-(define-derived-mode nroff-mode text-mode "Nroff")
-(define-derived-mode scribe-mode text-mode "Scribe")
-(define-derived-mode mail-mode text-mode "Mail")
-(define-derived-mode bibtex-mode text-mode "BibTeX")
-
-(define-derived-mode change-log-mode text-mode "ChangeLog")
-(define-derived-mode org-mode prog-mode "Org")
-(define-derived-mode ps-mode prog-mode "PostScript")
-(define-derived-mode mixal-mode prog-mode "MIXAL")
-(define-derived-mode ses-mode prog-mode "SES")
-(define-derived-mode sieve-mode prog-mode "Sieve")
-;; `lisp-data-mode' has a real definition earlier in this file (with
-;; comment/imenu setup); don't clobber it with an empty stub here.
-(define-derived-mode compilation-mode prog-mode "Compilation")
-(define-derived-mode ebrowse-tree-mode prog-mode "Ebrowse-Tree")
-(define-derived-mode erts-mode prog-mode "Erts")
-(define-derived-mode gdb-script-mode prog-mode "GDB-Script")
-
-(define-derived-mode bovine-grammar-mode prog-mode "Bovine-Grammar")
-(define-derived-mode wisent-grammar-mode prog-mode "Wisent-Grammar")
-(define-derived-mode srecode-template-mode prog-mode "SRecode")
-(define-derived-mode snmp-mode prog-mode "SNMP")
-(define-derived-mode snmpv2-mode prog-mode "SNMPv2")
-(define-derived-mode authinfo-mode prog-mode "Authinfo")
-(define-derived-mode archive-mode special-mode "Archive")
-(define-derived-mode tar-mode special-mode "Tar")
-(define-derived-mode image-mode special-mode "Image")
-(define-derived-mode doc-view-mode special-mode "DocView")
-(defun doc-view-mode-maybe ()
-  "Stub: `doc-view-mode' approximation."
-  (doc-view-mode))
+;; GNU's `doc-view-mode-maybe' has a loaddefs autoload; the stub only
+;; fills the (GNU-side void) leftover.
+(unless (fboundp 'doc-view-mode-maybe)
+  (defun doc-view-mode-maybe ()
+    "Stub: `doc-view-mode' approximation."
+    (doc-view-mode)))
 (put 'doc-view-mode-maybe 'safe-local-eval-function nil)
 
 ;; remaining auto-mode symbols (fboundp-guarded stubs)
@@ -32505,7 +33215,8 @@ SEQUENCE2 may be a list, vector, or string."
     (if (fboundp 'elixir-mode) (funcall 'elixir-mode) (prog-mode))))
 (unless (fboundp 'emacs-lisp-mode)
   (define-derived-mode emacs-lisp-mode prog-mode "Emacs-Lisp"))
-(unless (fboundp 'epa-file) (defun epa-file () "Stub: `epa-file'." nil))
+;; GNU leaves `epa-file'/`jka-compr'/`scribe-mode' void at -Q (no
+;; autoload, no dump definition): no stub — same void-function on call.
 (unless (fboundp 'erts-mode)
   (define-derived-mode erts-mode prog-mode "Erts"))
 (unless (fboundp 'f90-mode)
@@ -32538,7 +33249,6 @@ SEQUENCE2 may be a list, vector, or string."
   (define-derived-mode java-mode prog-mode "Java"))
 (unless (fboundp 'javascript-mode)
   (define-derived-mode javascript-mode prog-mode "Javascript"))
-(unless (fboundp 'jka-compr) (defun jka-compr () "Stub: `jka-compr'." nil))
 (unless (fboundp 'js-json-mode)
   (define-derived-mode js-json-mode prog-mode "Js-Json"))
 (unless (fboundp 'js-mode)
@@ -32616,8 +33326,6 @@ SEQUENCE2 may be a list, vector, or string."
     (if (fboundp 'rust-mode) (funcall 'rust-mode) (prog-mode))))
 (unless (fboundp 'scheme-mode)
   (define-derived-mode scheme-mode prog-mode "Scheme"))
-(unless (fboundp 'scribe-mode)
-  (define-derived-mode scribe-mode text-mode "Scribe"))
 (unless (fboundp 'scss-mode)
   (define-derived-mode scss-mode prog-mode "SCSS"))
 (unless (fboundp 'ses-mode)
@@ -32667,6 +33375,7 @@ SEQUENCE2 may be a list, vector, or string."
 (unless (fboundp 'yaml-ts-mode-maybe)
   (defun yaml-ts-mode-maybe () "Stub for `yaml-ts-mode-maybe'."
     (if (fboundp 'yaml-mode) (funcall 'yaml-mode) (prog-mode))))
+) ;; with-eval-after-load 'loaddefs
 
 ;; ---------- GNU replace.el: occur subsystem (verbatim port) ----------
 
@@ -35726,12 +36435,16 @@ for the selected window."
    (t
     (error "%s is not a valid window" window))))
 
-;; GNU tracks a preserved window size across resize operations; remacs
-;; doesn't yet, so this reports nil like GNU does when nothing is
-;; preserved.
+;; GNU's defun runs `window-normalize-window window t' first (plain
+;; "N is not a live window" on bad args) then reads the
+;; `window-preserved-size' parameter; our windows don't track
+;; preserved sizes, so the parameter lookup always yields nil.
 (defun window-preserved-size (&optional window horizontal)
   "Return preserved size of WINDOW."
-  nil)
+  (setq window (window-normalize-window window t))
+  (let ((parameter (window-parameter window 'window-preserved-size)))
+    (when (eq (nth 0 parameter) (window-buffer window))
+      (nth (if horizontal 1 2) parameter))))
 
 (defun window-swap-states (&optional window-1 window-2 size)
   "Swap the states of live windows WINDOW-1 and WINDOW-2.
@@ -37617,8 +38330,6 @@ The `temp-buffer-window-setup-hook' hook is called."
     ["Customize" help-customize
      :help "Customize variable or face"]))
 
-(defvar context-menu-functions nil
-  "Abnormal hook run to add entries to context menus.")
 
 (defun help-mode-context-menu (menu click)
   "Populate MENU with Help mode commands at CLICK."
@@ -38509,33 +39220,6 @@ help buffer by other means."
 ;; GNU's `cl-find-class' lives in eieio; our class lookup is `find-class'.
 (defalias 'cl-find-class #'find-class
   "Return the class named SYM, or nil.")
-
-;; `ensure-empty-lines' (GNU subr.el).
-(defun ensure-empty-lines (&optional lines)
-  "Ensure that there are LINES number of empty lines before point.
-If LINES is nil or omitted, ensure that there is a single empty
-line before point.
-
-If called interactively, LINES is given by the prefix argument.
-
-If there are more than LINES empty lines before point, the number
-of empty lines is reduced to LINES.
-
-If point is not at the beginning of a line, a newline character
-is inserted before adjusting the number of empty lines."
-  (interactive "p")
-  (unless (bolp)
-    (insert "\n"))
-  (let ((lines (or lines 1))
-        (start (save-excursion
-                 (if (re-search-backward "[^\n]" nil t)
-                     (+ (point) 2)
-                   (point-min)))))
-    (cond
-     ((> (- (point) start) lines)
-      (delete-region (point) (- (point) (- (point) start lines))))
-     ((< (- (point) start) lines)
-      (insert (make-string (- lines (- (point) start)) ?\n))))))
 
 ;; ---------- lossage (help.el) ----------
 
@@ -44750,7 +45434,7 @@ global-mode-string display.")
 It has one extra slot whose value is a list of script symbols.")
 
 (defvar menu-bar-manuals-menu (make-sparse-keymap "Manuals")
-  "Keymap for the "Manuals" menu in the menu bar.")
+  "Keymap for the \"Manuals\" menu in the menu bar.")
 
 ;; fringe.el's real setter runs on frames with fringes; keep a no-op
 ;; for batch parity so defcustoms like bookmark's can evaluate.
@@ -49331,6 +50015,19 @@ included; callers should bind `case-fold-search' to t."
 (put 'use-hard-newlines 'permanent-local t)
 (defvar use-hard-newlines-hook nil
   "Hook run when `use-hard-newlines' mode is toggled.")
+
+;; coding.c in GNU: these are real C variables (registered in
+;; cus-start.el for customization), consulted by mule.el's
+;; `coding-system-eol-type-mnemonic'.  GNU -Q defaults come straight
+;; from coding.c: unix's mnemonic is ":", dos "(DOS)", mac "(Mac)".
+(defvar eol-mnemonic-undecided ":"
+  "Mnemonic indicating end-of-line type is not yet decided.")
+(defvar eol-mnemonic-unix ":"
+  "Mnemonic indicating Unix-like end-of-line format.")
+(defvar eol-mnemonic-dos "(DOS)"
+  "Mnemonic indicating DOS-like end-of-line format.")
+(defvar eol-mnemonic-mac "(Mac)"
+  "Mnemonic indicating Mac-like end-of-line format.")
 (defun use-hard-newlines (&optional arg _insert)
   "Toggle between hard and soft newlines in the current buffer."
   (interactive (list (or current-prefix-arg 'toggle) nil))
@@ -49338,7 +50035,10 @@ included; callers should bind `case-fold-search' to t."
         (if (eq arg 'toggle)
             (not use-hard-newlines)
           (> (prefix-numeric-value arg) 0)))
-  (run-hooks 'use-hard-newlines-hook))
+  (run-hooks 'use-hard-newlines-hook)
+  ;; GNU `define-minor-mode' bodies end with the mode variable —
+  ;; callers see the new state, not run-hooks' nil.
+  use-hard-newlines)
 
 ;; loadup.el in GNU.  Without native compilation the fixup is a
 ;; no-op; the vars are bound nil as in GNU -Q.
@@ -49357,16 +50057,43 @@ included; callers should bind `case-fold-search' to t."
   "Insert the tail of the fancy startup screen (no-op in batch)."
   ;; Not interactive in GNU's startup.el.
   nil)
-(defun fit-frame-to-buffer (&optional _frame _max-height _min-height _max-width _min-width _preserve-size)
-  "Fit the selected frame to its buffer (no-op without GUI frames)."
+(defun fit-frame-to-buffer (&optional frame _max-height _min-height _max-width _min-width _only)
+  "Adjust size of FRAME to display the contents of its buffer exactly.
+GNU window.el normalizes FRAME via `window-normalize-frame' first —
+a non-live frame is a plain \"N is not a live frame\" error."
   (interactive)
-  nil)
+  (if (or (null frame) (and (framep frame) (frame-live-p frame)))
+      nil
+    (error "%s is not a live frame" frame)))
 
-;; isearch.elc in GNU.  At -Q (no isearch state) GNU produces the
-;; default backward prompt; approximate that.
-(defun isearch-message (&optional _c-q-hack _ellipsis)
-  "Return the current isearch prompt (approximation)."
-  (propertize "I-search backward: " 'face 'minibuffer-prompt 'read-only t))
+;; isearch.el is in the boot set, but the prelude's folded definition
+;; must match GNU's defun body exactly — the restore pass re-installs
+;; prelude defs over the library copy.
+(defun isearch-message (&optional c-q-hack ellipsis)
+  "Generate and print the message string."
+
+  ;; N.B.: This function should always be called with point at the
+  ;; search point, because in certain (rare) circumstances, undesired
+  ;; scrolling can happen when point is elsewhere.  These
+  ;; circumstances are when follow-mode is active, the search string
+  ;; spans two (or several) windows, and the message about to be
+  ;; displayed will cause the echo area to expand.
+  (let ((cursor-in-echo-area ellipsis)
+	(m isearch-message)
+	(fail-pos (isearch-fail-pos t)))
+    ;; Highlight failed part
+    (when fail-pos
+      (setq m (copy-sequence m))
+      (add-text-properties fail-pos (length m) '(face isearch-fail) m)
+      ;; Highlight failed trailing whitespace
+      (when (string-match " +$" m)
+	(add-text-properties (match-beginning 0) (match-end 0)
+			     '(face trailing-whitespace) m)))
+    (setq m (concat
+	     (isearch-message-prefix ellipsis isearch-nonincremental)
+	     m
+	     (isearch-message-suffix c-q-hack)))
+    (if c-q-hack m (let ((message-log-max nil)) (message "%s" m)))))
 
 ;; cl-print-object is NOT defined here: GNU keeps it a pure autoload
 ;; (registered in loaddefs from cl-print.el), so `cl-defmethod' uses
@@ -49573,3 +50300,33 @@ abbreviating it with ellipses to fit within a size limit."
 ;; `macroexpand-all' try (and fail to resolve) the unbound handler.
 (put 'warning-levels 'risky-local-variable t)
 (put 'warning-series 'risky-local-variable t)
+
+;; eieio-core.el wraps its `cl-defstruct (eieio--class ...)' in
+;; `(eval-when-compile (cl-declaim (optimize (safety 0))))' — GNU
+;; byte-compiles the file so the generated accessors lose their
+;; `eieio--class-p' tag check (byte-compile-delete-errors) and behave
+;; as bare `aref's: foreign records return slot junk, short objects
+;; signal args-out-of-range (never wrong-type-argument).  Remacs
+;; interprets eieio-core so the check survives; rebind the accessors
+;; to the GNU-compiled shape after eieio-core loads.
+(with-eval-after-load 'eieio-core
+  (let ((slots '((eieio--class-name . 1)
+                 (eieio--class-docstring . 2)
+                 (eieio--class-parents . 3)
+                 (eieio--class-slots . 4)
+                 (eieio--class-index-table . 5)
+                 (eieio--class-children . 6)
+                 (eieio--class-initarg-tuples . 7)
+                 (eieio--class-class-slots . 8)
+                 (eieio--class-class-allocation-values . 9)
+                 (eieio--class-default-object-cache . 10)
+                 (eieio--class-options . 11))))
+    (dolist (s slots)
+      (fset (car s)
+            (let ((i (cdr s)))
+              (lambda (ob) (aref ob i))))
+      ;; `setf' on the accessor was already a plain aset in GNU's
+      ;; compiled twin too — keep ours in sync.
+      (fset (intern (concat "(setf " (symbol-name (car s)) ")"))
+            (let ((i (cdr s)))
+              (lambda (v ob) (aset ob i v)))))))

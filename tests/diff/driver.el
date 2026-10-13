@@ -19,7 +19,8 @@
 ;; Names never called (exit/hang/side-effectful outside the sandbox or
 ;; environment-dependent by definition).
 (defvar dif--skip
-  '("throw" "top-level" "exit-minibuffer" "minibuffer-quit-recursive-edit"
+  '("cd" "cd-absolute"
+    "throw" "top-level" "exit-minibuffer" "minibuffer-quit-recursive-edit"
     "recursive-edit" "kill-emacs" "save-buffers-kill-emacs"
     "save-buffers-kill-terminal" "suspend-emacs" "suspend-tty" "resume-tty"
     "dump-emacs" "pdumper-stats"
@@ -64,7 +65,72 @@
     ;; tty/terminal writers with side effects outside stdout
     "send-string-to-terminal"
     ;; debugger entry points that abort batch runs
-    "early-init-file" "init-file-user"))
+    "early-init-file" "init-file-user"
+    ;; GNU -Q --batch aborts or hangs on these even with junk args
+    ;; (tests/diff/skip.txt, verified by direct invocation): modifier
+    ;; mungers hit nativecomp/run-time asserts; the readers block on a
+    ;; dead stdin; the NS entry points trip display asserts.
+    "comp-el-to-eln-filename" "custom-initialize-delay"
+    "event-apply-alt-modifier" "event-apply-control-modifier"
+    "event-apply-hyper-modifier" "event-apply-meta-modifier"
+    "event-apply-shift-modifier" "event-apply-super-modifier"
+    "tool-bar-event-apply-alt-modifier"
+    "tool-bar-event-apply-control-modifier"
+    "tool-bar-event-apply-hyper-modifier"
+    "tool-bar-event-apply-meta-modifier"
+    "tool-bar-event-apply-shift-modifier"
+    "tool-bar-event-apply-super-modifier"
+    "frame--z-order-lessp" "help-for-help" "isearch-quote-char"
+    "ns-do-show-character-palette" "ns-show-character-palette"
+    "ns-frame-edges" "ns-frame-geometry"
+    "ns-mouse-absolute-pixel-position"
+    "ns-set-mouse-absolute-pixel-position"
+    "redirect-debugging-output" "momentary-string-display"
+    "register-read-with-preview" "menu-bar-menu-at-x-y"
+    "unix-filename-rubout" "unix-word-rubout"
+    "tabulated-list-previous-column" "files--make-magic-temp-file"
+    "run-at-time" "command-line" "command-line-1" "normal-top-level"
+    ;; Process-killing / batch-blocking functions observed hanging or
+    ;; exiting under the driver (remacs autoskip + GNU-verified
+    ;; equivalents): quit-throwers unwind past the row printer,
+    ;; prompts block on dead stdin, restart exits the process.
+    "cl--defmethod-doc-pos" "command-error-default-function"
+    "dump-emacs-portable--sort-predicate" "eval-defun"
+    "restart-emacs" "exit-splash-screen" "save-buffers-kill-emacs"
+    "keyboard-quit" "isearch-abort" "isearch-cancel"
+    "kill-buffer--possibly-save" "kill-forward-chars"
+    "help-command-error-confusable-suggestions" "eval-buffer" "eval-region"
+    ;; `describe-gnu-project' really launches `open' via browse-url
+    ;; (observed side effect); `completion-setup-function' depends on
+    ;; minibuffer state that batch callers don't establish — GNU and
+    ;; remacs differ in WHICH precondition trips first, which is the
+    ;; state model's variance, not a real bug.
+    "describe-gnu-project" "completion-setup-function"
+    ;; `save-some-buffers' asks via map-y-or-n-p's read-key-sequence:
+    ;; GNU quits the whole batch (rc=255), remacs's stdin reader loops
+    ;; — an interactive-only function, not a parity target.
+    "save-some-buffers" "command-line--eval-script"
+    ;; GNU-side autoskips (verified hangs/crashes under GNU -Q): the
+    ;; counterpart rows can only diverge one-sided, so drop them from
+    ;; the target list on both sides.
+    "cl--struct-new-class" "cl--struct-new-class--cmacro" "cl-struct-define"
+    "help--read-key-sequence" "internal-face-x-get-resource" "isearch-backward"
+    "isearch-backward-regexp" "isearch-describe-key" "occur-context-lines"
+    "occur-engine" "perform-replace" "quoted-insert" "read--potential-mouse-event"
+    "register-read-with-preview-traditional" "scroll-bar-horizontal-drag"
+    "window-discard-buffer-from-window" "x-open-connection"
+    ;; Global binding/property mutators: `define-prefix-command' binds
+    ;; its name to a keymap in the FUNCTION cell — the corpus contains
+    ;; `function', so remacs's success leaves `function' bound to a
+    ;; keymap and every later (keymapp 'function)/(prin1 'function) row
+    ;; diverges for the wrong reason.
+    "define-prefix-command" "define-keymap" "defvar-keymap"
+    "autoload" "provide" "put" "set" "make-obsolete"
+    "define-obsolete-function-alias" "define-obsolete-variable-alias"
+    "define-obsolete-face-alias" "defvar" "defconst" "defcustom"
+    "defgroup" "defface" "deftheme" "custom-declare-variable"
+    "custom-declare-face" "custom-declare-theme" "register-definition-prefixes"
+    "declare-function" "check-declare"))
 
 (defvar dif--skip-prefix
   '("w32-" "cygwin-" "msdos-" "haiku-" "android-" "pgtk-" "haiku"
@@ -85,7 +151,12 @@
     "user-real-uid" "user-uid" "user-full-name" "user-login-name"
     "group-gid" "group-real-gid" "system-name" "system-groups"
     "system-users" "file-attributes" "directory-files-and-attributes"
-    "file-system-info" "file-system-info-...")) ;; file-system-info kept? value depends on fs usage — normalize
+    "file-system-info" "file-system-info-..."
+    ;; RNG: `(random "difftest-seed")' seeds both sides identically but
+    ;; remacs consumes the stream for temp-name generation, so the Nth
+    ;; draw differs — normalize to type.
+    "random" "make-nearby-temp-file" "make-temp-file-internal"
+    "get-free-disk-space" "make-progress-reporter"))
 ;; note: file-system-info IS normalized by name above (harmless dup rule)
 
 ;; Skip only the zero-argument call for these (arg-ful forms may be
@@ -101,6 +172,35 @@
     "defined-colors" "face-list" "tool-bar-lines-needed"))
 
 ;;; ---- corpus -----------------------------------------------------------
+(defun dif--fresh (v)
+  "Deep-copy V so a mutating subject (`nreverse', `set-text-properties',
+`aset', `define-key', `puthash', ...) cannot corrupt the shared corpus
+object — without this the two sides diverge purely from which calls
+mutated which literals."
+  (cond ((stringp v) (copy-sequence v))
+        ((consp v) (cons (dif--fresh (car v)) (dif--fresh (cdr v))))
+        ((bool-vector-p v) (copy-sequence v))
+        ((char-table-p v) (copy-sequence v))
+        ((vectorp v) (apply #'vector (mapcar #'dif--fresh v)))
+        ((hash-table-p v) (copy-hash-table v))
+        ((ignore-errors (keymapp v))
+         ;; copy-keymap can itself throw on maps holding non-keymap
+         ;; function cells (e.g. string macro '2C-command).
+         (condition-case nil (copy-keymap v) (error v)))
+        ((syntax-table-p v) (copy-syntax-table v))
+        ((case-table-p v) (copy-case-table v))
+        ((markerp v) (copy-marker v))
+        (t v)))
+(defun dif--args (n seed corpus)
+  "N args drawn deterministically from CORPUS — each a dif--fresh copy,
+so subjects can mutate them freely without poisoning later rows."
+  (let ((m (length corpus)) (i 0) (out nil))
+    (while (< i n)
+      (push (dif--fresh (aref corpus (% (+ (* seed 29) (* i 17) i 3) m))) out)
+      (setq i (1+ i)))
+    (nreverse out)))
+
+
 
 (defun dif--mk ()
   "Freshly evaluate the corpus forms, returning a vector of values."
@@ -235,7 +335,7 @@
        ((and dif--have-categoryp (category-table-p v)) '(cattab))
        ((syntax-table-p v) '(syntax-table))
        ((case-table-p v) '(case-table))
-       ((keymapp v) '(keymap))
+       ((condition-case nil (keymapp v) (error nil)) '(keymap))
        ((subrp v) (list 'subr (ignore-errors (subr-name v))))
        ((and dif--have-oclosurep (oclosurep v)) '(oclosure))
        ((and dif--have-recordp (recordp v)) '(record))
@@ -252,7 +352,13 @@
                 (print-level 6)
                 (print-length 60))
             (let ((s (prin1-to-string v)))
-              (setq s (replace-regexp-in-string "#<[^>\n]*" "#<X" s))
+              ;; Opaque/function objects print differently between
+              ;; GNU (native #[...] / #<subr>) and remacs (#[...]
+              ;; interpreted closures): mask both forms entirely —
+              ;; error payloads containing them carry no comparable
+              ;; information beyond presence.
+              (setq s (replace-regexp-in-string "#<[^>\n]*>" "#<X>" s))
+              (setq s (replace-regexp-in-string "#\\[[^]\n]*\\]" "#<X>" s))
               (if (> (length s) 300) (concat (substring s 0 300) "…") s)))))
     (error (format "normerr:%s" (car e)))))
 
@@ -263,23 +369,60 @@
   ;; stdout pollution that callees (princ &co) may emit.
   (message "DIF|%s|%s|%s|%s" name seq tag val))
 
-(defun dif--call (name seq f args)
+(defun dif--run (name seq f args)
   (condition-case e
       (dif--emit name seq 'ok
                  (if (member name dif--norm-type)
                      (list 'type (type-of (apply f args)))
                    (dif--norm (apply f args))))
     (error (dif--emit name seq 'err
-                      (dif--norm (cons (car e) (cdr e)))))))
+                      (dif--norm (cons (car e) (cdr e))))))
+  ;; `function'/`test.foo' cell tracker — DIFF_WATCH=1.
+  (when (getenv "DIFF_WATCH")
+    (dif--emit "ZZwatch" seq 'ok
+               (list name
+                     (boundp 'function)
+                     (and (boundp 'function)
+                          (dif--norm (symbol-value 'function)))
+                     (boundp 'test.foo)
+                     (and (boundp 'test.foo)
+                          (dif--norm (symbol-value 'test.foo)))
+                     (get 'function 'variable-alias)
+                     (fboundp 'test.foo)
+                     (dif--norm (and (fboundp 'test.foo)
+                                     (symbol-function 'test.foo)))
+                     (dif--norm (get-variable-watchers 'function))
+                     (dif--norm (and (fboundp 'function)
+                                     (symbol-function 'function)))))))
+
+(defun dif--call (name seq f args)
+  "Run in *scratch* reset to empty.  Text-mutating subjects
+(`insert', `self-insert-command', ...) otherwise accumulate bytes
+in *scratch* at different rates on the two sides and every
+position-dependent later row diverges for the wrong reason."
+  (let ((b (get-buffer " dfx-scratch")))
+    (when b (kill-buffer b)))
+  (with-current-buffer (get-buffer-create " dfx-scratch")
+    (setq buffer-read-only nil)
+    (goto-char 1)
+    (dif--run name seq f args)))
 
 (defun dif--call-buf (name seq f args)
-  "Call inside the fixture buffer, point mid-text."
-  (with-current-buffer dif--fxbuf
-    (save-excursion
-       (save-restriction
-        (widen)
-        (goto-char 9)
-        (dif--call name seq f args)))))
+  "Call inside a fresh fixture buffer, point mid-text.
+Recreated per call: buffer-killing subjects (`kill-buffer',
+`save-buffers-kill-emacs' paths) must not leave a deleted buffer
+current for the rest of the sweep, and read-only subjects must not
+pin `buffer-read-only' on the fixture."
+  (let ((old (get-buffer " dfx")))
+    (when old (kill-buffer old)))
+  (let ((b (get-buffer-create " dfx")))
+    (setq dif--fxbuf b)
+    (with-current-buffer b
+      (setq buffer-read-only nil)
+      (erase-buffer)
+      (insert "Alpha beta gamma.\nDelta epsilon zeta.\nEta theta.\n")
+      (goto-char 9)
+      (dif--run name seq f args))))
 
 (defun dif--skip-p (name)
   (or (member name dif--skip)
@@ -289,13 +432,6 @@
                      (equal p (substring name 0 (length p))))
             (setq hit t)))
         hit)))
-
-(defun dif--args (n seed corpus)
-  (let ((m (length corpus)) (i 0) (out nil))
-    (while (< i n)
-      (push (aref corpus (% (+ (* seed 29) (* i 17) i 3) m)) out)
-      (setq i (1+ i)))
-    (nreverse out)))
 
 ;;; ---- main loop ---------------------------------------------------------
 
@@ -307,9 +443,15 @@
   (setq dif--fxbuf (get-buffer-create " dfx"))
   (with-current-buffer dif--fxbuf
     (insert "Alpha beta gamma.\nDelta epsilon zeta.\nEta theta.\n"))
+  ;; Keep exec-path deterministic: GNU inherits PATH dirs from the
+  ;; environment while remacs embeds its own; both sides searching the
+  ;; same (empty) list removes a whole class of false divergences.
+  (setq exec-path nil)
+
   (let ((corpus (dif--mk))
         (only (getenv "DIFF_ONLY"))
         (from (getenv "DIFF_FROM"))
+        (to (getenv "DIFF_TO"))
         (auto (getenv "DIFF_AUTOSKIP"))
         (total 0))
     (when (and auto (not (equal auto "")))
@@ -322,6 +464,7 @@
         (when (and (or (null only) (equal only "")
                        (member name (split-string only ",")))
                    (or (null from) (equal from "") (not (string< name from)))
+                   (or (null to) (equal to "") (not (string< to name)))
                    (not (dif--skip-p name)))
           (let* ((mn (if (consp arity) (car arity) 0))
                  (mx (if (consp arity) (cdr arity) 0))

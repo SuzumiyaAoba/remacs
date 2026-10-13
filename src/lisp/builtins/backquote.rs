@@ -13,10 +13,10 @@
 //! already applies a macro-marked subr to the raw argument list.
 
 use super::S;
+use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, SymId, Value};
-use crate::lisp::Interp;
 
 fn car(v: &Value) -> Value {
     match v {
@@ -149,11 +149,7 @@ fn bq_process(i: &mut Interp, s: &Value, level: i64, syms: &BqSyms) -> Result<Va
                 if h == syms.unquote {
                     if level <= 0 {
                         if list_length(i, s)? > 2 {
-                            return Err(bq_error(
-                                i,
-                                "Multiple args to , are not supported: ",
-                                s,
-                            ));
+                            return Err(bq_error(i, "Multiple args to , are not supported: ", s));
                         }
                         let qid = i.intern("quote");
                         let inner = nth(s, 1);
@@ -165,11 +161,7 @@ fn bq_process(i: &mut Interp, s: &Value, level: i64, syms: &BqSyms) -> Result<Va
                 if h == syms.splice {
                     if level <= 0 {
                         if list_length(i, s)? > 2 {
-                            return Err(bq_error(
-                                i,
-                                "Multiple args to ,@ are not supported: ",
-                                s,
-                            ));
+                            return Err(bq_error(i, "Multiple args to ,@ are not supported: ", s));
                         }
                         return Ok(Value::cons(Value::Int(2), nth(s, 1)));
                     }
@@ -250,7 +242,11 @@ fn bq_process(i: &mut Interp, s: &Value, level: i64, syms: &BqSyms) -> Result<Va
                 expression
             };
             let qid = i.intern("quote");
-            let tag = if i.sym_is(&car(&expression), qid) { 0 } else { 1 };
+            let tag = if i.sym_is(&car(&expression), qid) {
+                0
+            } else {
+                1
+            };
             Ok(Value::cons(Value::Int(tag), expression))
         }
         _ => {
@@ -278,16 +274,8 @@ fn bq_process(i: &mut Interp, s: &Value, level: i64, syms: &BqSyms) -> Result<Va
 }
 
 /// Port of `backquote-delay-process'.
-fn bq_delay_process(
-    i: &mut Interp,
-    s: &Value,
-    level: i64,
-    syms: &BqSyms,
-) -> Result<Value, Flow> {
-    let head_item = Value::cons(
-        Value::Int(0),
-        Value::list(vec![quote_sym(i), car(s)]),
-    );
+fn bq_delay_process(i: &mut Interp, s: &Value, level: i64, syms: &BqSyms) -> Result<Value, Flow> {
+    let head_item = Value::cons(Value::Int(0), Value::list(vec![quote_sym(i), car(s)]));
     let tail = bq_process(i, &cdr(s), level, syms)?;
     let exp = bq_listify(i, &Value::list(vec![head_item]), &tail, syms)?;
     let qid = i.intern("quote");
@@ -359,14 +347,81 @@ fn f_backquote_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     bq_process(i, &a[0], level, &syms)
 }
 
-/// `backquote-listify' subr: (LIST OLD-TAIL).
+// ---------- GNU DEFUN entry checks (backquote.c) ----------
+
+/// GNU CHECK_LIST: proper-list check; the first non-nil non-cons cdr
+/// is reported with `wrong-type-argument listp'.
+fn bq_check_list(i: &mut Interp, v: &Value) -> Result<(), Flow> {
+    let mut cur = v.clone();
+    loop {
+        match &cur {
+            Value::Nil => return Ok(()),
+            Value::Cons(c) => {
+                let cdr = c.borrow().cdr.clone();
+                cur = cdr;
+            }
+            other => return Err(i.wrong_type_mut("listp", other)),
+        }
+    }
+}
+
+/// GNU CHECK_LIST_CAR: every element of `list` must itself be a
+/// proper list.
+fn bq_check_list_car(i: &mut Interp, list: &Value) -> Result<(), Flow> {
+    let mut cur = list.clone();
+    loop {
+        match &cur {
+            Value::Nil => return Ok(()),
+            Value::Cons(c) => {
+                let (car_v, cdr_v) = {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                bq_check_list(i, &car_v)?;
+                cur = cdr_v;
+            }
+            other => return Err(i.wrong_type_mut("listp", other)),
+        }
+    }
+}
+
+/// GNU CHECK_NUMBER_OR_MARKER.
+fn bq_check_num_or_mark(i: &mut Interp, v: &Value) -> Result<(), Flow> {
+    match v {
+        Value::Int(_) | Value::Marker(_) => Ok(()),
+        other => Err(i.wrong_type_mut("number-or-marker-p", other)),
+    }
+}
+
+/// `backquote-listify' subr: (LIST OLD-TAIL).  GNU entry checks:
+/// CHECK_LIST on LIST, CHECK_LIST_CAR on its elements, old_tail must
+/// be nil-or-cons (`listp' error — GNU CHECK_CONS uses Qlistp), and
+/// CHECK_NUMBER_OR_CAR: a cons old_tail's car (or a non-cons old_tail
+/// itself) must satisfy number-or-marker-p.
 fn f_backquote_listify(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU's listify reads the TAIL first: `(backquote-listify "a" "b")'
+    // signals listp "b", not listp "a".  Syms count as lists here.
+    match &a[1] {
+        Value::Cons(_) | Value::Nil => {}
+        other => return Err(i.wrong_type_mut("listp", other)),
+    }
+    bq_check_list(i, &a[0])?;
+    bq_check_list_car(i, &a[0])?;
+    match &a[1] {
+        Value::Cons(c) => {
+            let car_v = c.borrow().car.clone();
+            bq_check_num_or_mark(i, &car_v)?;
+        }
+        Value::Nil => bq_check_num_or_mark(i, &Value::Nil)?,
+        other => return Err(i.wrong_type_mut("listp", other)),
+    }
     let syms = bq_syms(i);
     bq_listify(i, &a[0], &a[1], &syms)
 }
 
-/// `backquote-delay-process' subr: (S LEVEL).
+/// `backquote-delay-process' subr: (S LEVEL).  GNU CHECK_LISTs S.
 fn f_backquote_delay_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    bq_check_list(i, &a[0])?;
     let syms = bq_syms(i);
     let level = a.get(1).and_then(|v| v.int()).unwrap_or(0) as i64;
     bq_delay_process(i, &a[0], level, &syms)
@@ -433,9 +488,27 @@ static BQ_LISTSTAR_MACRO: Subr = S!(
 );
 
 pub(crate) static SUBRS: &[Subr] = &[
-    S!("backquote-process", 1, 2, f_backquote_process, "Process a backquote body (internal)"),
-    S!("backquote-listify", 2, 2, f_backquote_listify, "Combine backquote pieces (internal)"),
-    S!("backquote-delay-process", 2, 2, f_backquote_delay_process, "Nested backquote piece (internal)"),
+    S!(
+        "backquote-process",
+        1,
+        2,
+        f_backquote_process,
+        "Process a backquote body (internal)"
+    ),
+    S!(
+        "backquote-listify",
+        2,
+        2,
+        f_backquote_listify,
+        "Combine backquote pieces (internal)"
+    ),
+    S!(
+        "backquote-delay-process",
+        2,
+        2,
+        f_backquote_delay_process,
+        "Nested backquote piece (internal)"
+    ),
     S!(
         "backquote-list*-function",
         many 1,

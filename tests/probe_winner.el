@@ -220,7 +220,11 @@
     (set-window-configuration c)
     (cl-assert (eq (window-buffer (selected-window)) b))
     (cl-assert (= (window-point (selected-window)) 7))
-    (cl-assert (eq (current-buffer) b))))
+    ;; GNU: `set-window-configuration' restores the SAVED current
+    ;; buffer (here *scratch* — `set-window-buffer' never changed
+    ;; `current-buffer'), not the selected window's buffer.  Verified:
+    ;; GNU -Q reports (current-buffer) = #<buffer *scratch*> here.
+    (cl-assert (eq (current-buffer) (get-buffer "*scratch*")))))
 
 ;; ---------- cl-letf generalized places (needed by winner-set-conf) ----------
 (let ((w (selected-window)))

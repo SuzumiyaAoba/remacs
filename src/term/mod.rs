@@ -124,19 +124,16 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
                 let new_start = if pt_line < start_line {
                     let up = start_line - pt_line;
                     if up > text_rows {
-                        bb.text
-                            .line_start(pt_line.saturating_sub(text_rows / 2))
+                        bb.text.line_start(pt_line.saturating_sub(text_rows / 2))
                     } else {
                         bb.text.line_start(pt_line)
                     }
                 } else if pt_line >= start_line + text_rows {
                     let down = pt_line - (start_line + text_rows - 1);
                     if down > text_rows {
-                        bb.text
-                            .line_start(pt_line.saturating_sub(text_rows / 2))
+                        bb.text.line_start(pt_line.saturating_sub(text_rows / 2))
                     } else {
-                        bb.text
-                            .line_start(pt_line + 1 - text_rows)
+                        bb.text.line_start(pt_line + 1 - text_rows)
                     }
                 } else {
                     start
@@ -502,6 +499,11 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
         };
         dispatch_key(&term, i, key, &mut keys, &mut arg_mode)?;
         i.macro_replaying = false;
+        // A command error while replaying a macro aborts the rest of
+        // the replay; the queue was already cleared.
+        if let Some(f) = i.macro_pending_flow.take() {
+            report_flow(i, f);
+        }
     }
     Ok(())
 }
@@ -514,7 +516,7 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
 /// input path.  `isearch` intercepts the four incremental-search
 /// commands (TUI passes a closure that re-reads keys; the canned
 /// reader supplies `None` so isearch runs as an ordinary command).
-fn dispatch_key_core(
+pub fn dispatch_key_core(
     i: &mut Interp,
     key: i128,
     keys: &mut Vec<i128>,
@@ -618,26 +620,42 @@ fn dispatch_key_core(
                             // Inside read_minibuf's catch: a quit aborts
                             // the read — hand the flow to minibuf_loop.
                             i.minibuf_pending_flow = Some(crate::lisp::error::Flow::Quit);
+                        } else if i.macro_replaying || i.macro_strict {
+                            // GNU: a quit inside execute-kbd-macro aborts
+                            // the macro and propagates.
+                            i.macro_replay.clear();
+                            i.macro_pending_flow = Some(crate::lisp::error::Flow::Quit);
                         } else {
                             i.message("Quit");
                         }
                     }
-                    Err(crate::lisp::error::Flow::Signal(sym, data, _)) => {
-                        let name = match &sym {
-                            Value::Sym(id) => i.symbol_name(*id),
-                            _ => "error".into(),
-                        };
-                        let msg = format!(
-                            "{}: {}",
-                            name,
-                            data.list_to_vec()
-                                .unwrap_or_default()
-                                .iter()
-                                .map(|v| i.princ_to_string(v))
-                                .collect::<Vec<_>>()
-                                .join(" ")
-                        );
-                        i.message(&msg);
+                    Err(e @ crate::lisp::error::Flow::Signal(..)) => {
+                        if i.macro_replaying || i.macro_strict {
+                            // GNU `command_loop_2': an error during a
+                            // macro iteration terminates the macro and
+                            // propagates out of `execute-kbd-macro'.
+                            i.macro_replay.clear();
+                            i.macro_pending_flow = Some(e);
+                        } else {
+                            let crate::lisp::error::Flow::Signal(sym, data, _) = e else {
+                                unreachable!()
+                            };
+                            let name = match &sym {
+                                Value::Sym(id) => i.symbol_name(*id),
+                                _ => "error".into(),
+                            };
+                            let msg = format!(
+                                "{}: {}",
+                                name,
+                                data.list_to_vec()
+                                    .unwrap_or_default()
+                                    .iter()
+                                    .map(|v| i.princ_to_string(v))
+                                    .collect::<Vec<_>>()
+                                    .join(" ")
+                            );
+                            i.message(&msg);
+                        }
                     }
                     Err(crate::lisp::error::Flow::Throw(tag, v)) => {
                         let is_exit = matches!(&tag, Value::Sym(s) if i.symbol_name(*s) == "exit");
@@ -673,6 +691,11 @@ fn dispatch_key_core(
                             // A throw for another tag unwinds past the
                             // `exit' catch — abort the read with it.
                             i.minibuf_pending_flow = Some(crate::lisp::error::Flow::Throw(tag, v));
+                        } else if i.macro_replaying || i.macro_strict {
+                            // Uncaught throw aborts the macro (GNU
+                            // command_loop_2 → `no-catch' signal).
+                            i.macro_replay.clear();
+                            i.macro_pending_flow = Some(crate::lisp::error::Flow::Throw(tag, v));
                         } else {
                             i.message(&format!("No catch for tag: {}", i.princ_to_string(&tag)));
                         }
@@ -765,6 +788,67 @@ fn dispatch_key_core(
         }
     }
     Ok(())
+}
+
+/// Drain the replay queue synchronously, dispatching each queued event
+/// through `dispatch_key_core` — the batch/nested path of
+/// `execute-kbd-macro` (GNU `command_loop_2' inside `Fexecute_kbd_macro').
+/// `stop` is the queue length at which to stop: a nested
+/// `execute-kbd-macro' call passes the length it found on entry so the
+/// outer call's still-queued events are left for the outer drain.
+/// Stops early when a command error set `macro_pending_flow'.
+pub fn replay_macro_events(i: &mut Interp, stop: usize) {
+    let mut keys: Vec<i128> = Vec::new();
+    let mut arg_mode = false;
+    // Events consumed in this drain — GNU's executing_kbd_macro_index,
+    // the number already read from the current iteration.
+    let mut idx: i128 = 0;
+    while i.macro_replay.len() > stop {
+        let Some(k) = i.macro_replay.pop_front() else {
+            break;
+        };
+        let eki = i.intern("executing-kbd-macro-index");
+        let _ = i.set_symbol(eki, Value::Int(idx));
+        idx += 1;
+        i.macro_replaying = true;
+        if dispatch_key_core(i, k, &mut keys, &mut arg_mode, None).is_err() {
+            i.macro_replaying = false;
+            return;
+        }
+        i.macro_replaying = false;
+        if i.macro_pending_flow.is_some() || i.quit_editor {
+            return;
+        }
+    }
+}
+
+/// Echo a deferred command flow (abort/uncaught-throw from a macro
+/// replay) the same way `dispatch_key_core' reports live errors.
+fn report_flow(i: &mut Interp, f: crate::lisp::error::Flow) {
+    match f {
+        crate::lisp::error::Flow::Quit => i.message("Quit"),
+        crate::lisp::error::Flow::Signal(sym, data, _) => {
+            let name = match &sym {
+                Value::Sym(id) => i.symbol_name(*id),
+                _ => "error".into(),
+            };
+            let msg = format!(
+                "{}: {}",
+                name,
+                data.list_to_vec()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|v| i.princ_to_string(v))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+            i.message(&msg);
+        }
+        crate::lisp::error::Flow::Throw(tag, _) => {
+            i.message(&format!("No catch for tag: {}", i.princ_to_string(&tag)));
+        }
+        crate::lisp::error::Flow::Exit(_) => i.quit_editor = true,
+    }
 }
 
 fn dispatch_key<T: KeyIo>(
@@ -1621,7 +1705,38 @@ mod tests {
         }));
         let r = i.minibuf_read("Pick: ", Default::default());
         let _ = i.unbind_to(mark);
-        let got = r.unwrap();
+        let got = match r {
+            Ok(v) => v,
+            Err(f) => {
+                let d = match &f {
+                    crate::lisp::error::Flow::Signal(s, data, _) => format!(
+                        "signal {} {}",
+                        i.prin1_to_string(s),
+                        i.prin1_to_string(data)
+                    ),
+                    other => format!("{other:?}"),
+                };
+                let msgs = i
+                    .buffers
+                    .by_name("*Messages*")
+                    .and_then(|id| i.buffers.get(id))
+                    .map(|b| {
+                        let t = b.borrow().text.text();
+                        t.chars()
+                            .rev()
+                            .take(800)
+                            .collect::<String>()
+                            .chars()
+                            .rev()
+                            .collect::<String>()
+                    })
+                    .unwrap_or_default();
+                panic!(
+                    "minibuf_read failed: {d}\necho: {}\nmessages-tail: {msgs}",
+                    String::from_utf8_lossy(&out.borrow())
+                );
+            }
+        };
         assert!(
             got == "alpha" || got == "alpine",
             "expected flex match, got: {got:?}"

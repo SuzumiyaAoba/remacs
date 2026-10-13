@@ -616,7 +616,7 @@ cl--generic-typeof-generalizer cl--generic-oclosure-generalizer)"
                                  (cl--generic 'cl-generic-generalizers)))
                         (length (cl--generic-method-table
                                  (cl--generic 'register-val-jump-to)))))"),
-        "(6 4)"
+        "(7 4)"
     );
     // End-to-end dispatch: integer specializer beats t, (eql 'z) beats
     // integer-less fallback, :before runs first (GNU-verified output).

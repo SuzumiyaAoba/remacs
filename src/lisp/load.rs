@@ -78,13 +78,6 @@ fn pick_existing(paths: Vec<PathBuf>, prefer_newer: bool) -> Option<Found> {
     best.map(|(p, _)| Found::File(p.to_string_lossy().into_owned()))
 }
 
-pub(crate) fn locate(i: &mut Interp, name: &str) -> Option<String> {
-    match locate_full(i, name, false, false) {
-        Some(Found::File(p)) => Some(p),
-        _ => None,
-    }
-}
-
 /// `locate' honoring `load''s NOSUFFIX/MUST-SUFFIX arguments.
 pub(crate) fn locate_opts(
     i: &mut Interp,
@@ -111,13 +104,22 @@ pub(crate) fn locate_full(
     // newest of the candidates inside a dir wins before the next dir.
     let prefer_newer = !nosuffix
         && !mustsuffix
-        && i
-            .symbol_value(i.intern_soft("load-prefer-newer").unwrap_or(0))
+        && i.symbol_value(i.intern_soft("load-prefer-newer").unwrap_or(0))
             .truthy();
     // GNU's `openp' on "" stats "" and misses (ENOENT) — never a hit.
     if name.is_empty() {
         return None;
     }
+    // GNU's `openp' expand-file-name's `~/`/`~user/` names up front —
+    // an existing `~' directory must surface as Found::Dir so `load'
+    // reports "Is a directory" instead of ENOENT.
+    let expanded;
+    let name = if name.starts_with('~') {
+        expanded = crate::editor::expand_file_name_str(i, name);
+        expanded.as_str()
+    } else {
+        name
+    };
     let p = Path::new(name);
     if p.is_absolute() || name.contains('/') || name.contains(std::path::MAIN_SEPARATOR) {
         if let Some(hit) = pick_existing(
@@ -159,8 +161,7 @@ pub(crate) fn locate_full(
     }
     // Search load-path (a list of strings).
     for dir in search_dirs(i) {
-        if let Some(hit) =
-            pick_existing(candidates(&dir, name, nosuffix, mustsuffix), prefer_newer)
+        if let Some(hit) = pick_existing(candidates(&dir, name, nosuffix, mustsuffix), prefer_newer)
         {
             return Some(hit);
         }
@@ -252,6 +253,10 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("repeat", include_str!("../../lisp/repeat.el")),
     ("ring", include_str!("../../lisp/ring.el")),
     ("subr-x", include_str!("../../lisp/subr-x.el")),
+    (
+        "emacs-lisp-subr-x",
+        include_str!("../../lisp/emacs-lisp-subr-x.el"),
+    ), // not in GNU tree (adapted/remacs-specific)
     ("thingatpt", include_str!("../../lisp/thingatpt.el")),
     ("thunk", include_str!("../../lisp/thunk.el")),
     ("time-date", include_str!("../../lisp/time-date.el")),
@@ -2790,9 +2795,7 @@ fn eval_src_opts(
         let mut kept = Vec::new();
         for e in cur.list_to_vec().unwrap_or_default() {
             let same = match &e {
-                Value::Cons(c) => {
-                    crate::lisp::builtins::equal_values(i, &c.borrow().car, &fname)
-                }
+                Value::Cons(c) => crate::lisp::builtins::equal_values(i, &c.borrow().car, &fname),
                 _ => false,
             };
             if !same {
@@ -2853,6 +2856,7 @@ fn eval_str_for_load(i: &mut Interp, file: &str, src: &str) -> EvalResult {
                 if pos >= chars.len() {
                     break 'load Ok(last);
                 }
+                let _rt = std::time::Instant::now();
                 let mut reader = crate::lisp::reader::Reader::with_chars(i, chars.clone());
                 reader.set_position(pos);
                 // GNU's `readevalloop' source is the load buffer —
@@ -2864,7 +2868,13 @@ fn eval_str_for_load(i: &mut Interp, file: &str, src: &str) -> EvalResult {
                 // dynamically bound (e.g. by `byte-compile-from-buffer').
                 match reader.read() {
                     Err(f) => break 'load Err(f),
-                    Ok(Some(f)) => Some((f, reader.position())),
+                    Ok(Some(f)) => {
+                        let e = _rt.elapsed().as_micros();
+                        if std::env::var_os("LOAD_TIME_SPLIT").is_some() && e > 3000 {
+                            eprintln!("[read {}@{}] {}us", file, pos, e);
+                        }
+                        Some((f, reader.position()))
+                    }
                     Ok(None) => None,
                 }
             } else {
@@ -2925,7 +2935,14 @@ fn eval_str_for_load(i: &mut Interp, file: &str, src: &str) -> EvalResult {
         };
         if i.dbg_flags & 0x8000 != 0 {
             if let Some((form, end)) = &next {
-                eprintln!("[load-pos] {}: {}..{} len={} head={}", file, pos, end, chars.len(), i.princ_to_string(form).chars().take(60).collect::<String>());
+                eprintln!(
+                    "[load-pos] {}: {}..{} len={} head={}",
+                    file,
+                    pos,
+                    end,
+                    chars.len(),
+                    i.princ_to_string(form).chars().take(60).collect::<String>()
+                );
             }
         }
         match next {
@@ -3234,11 +3251,84 @@ pub(crate) enum LoadOutcome {
     Dir(String),
 }
 
-/// Load library NAME; returns Ok(Loaded(resolved-path)) on success.
-pub(crate) fn load_library(
+/// Evaluate GNU's verbatim subr-x.el (`lisp/emacs-lisp-subr-x.el') as
+/// FILE: the on-disk copy, or the embedded source for `builtin:' names.
+fn eval_gnu_subr_x(
     i: &mut Interp,
-    name: &str,
+    file: &str,
+    dumped_like: bool,
 ) -> Result<LoadOutcome, crate::lisp::Flow> {
+    if !file.starts_with("builtin:") {
+        return eval_file_lex_dumped(i, file, false, dumped_like)
+            .map(|_| LoadOutcome::Loaded(file.to_string()));
+    }
+    match embedded("emacs-lisp-subr-x") {
+        Some(src) => eval_src(i, file, src, false).map(|_| LoadOutcome::Loaded(file.to_string())),
+        None => Ok(LoadOutcome::Missing),
+    }
+}
+
+/// Every live (non-void, non-autoload) function cell.
+fn live_definitions(i: &Interp) -> std::collections::HashMap<crate::lisp::SymId, Value> {
+    let autoload = i.intern_soft("autoload");
+    i.obarray
+        .all_ids()
+        .into_iter()
+        .filter_map(|id| {
+            let f = &i.obarray.symbol(id).function;
+            let live = match f {
+                Value::Nil => false,
+                Value::Sym(s) => *s != crate::lisp::sym::UNBOUND,
+                Value::Cons(c) => !matches!(&c.borrow().car, Value::Sym(s) if Some(*s) == autoload),
+                _ => true,
+            };
+            live.then(|| (id, f.clone()))
+        })
+        .collect()
+}
+
+/// GNU's subr-x only fills cells that are void or autoloads at -Q.
+/// Names it redefines that already had a live definition here (Rust
+/// subr shadows, dump-time compiled twins) keep it, so loading subr-x
+/// never swaps a working function for another implementation.  FILE's
+/// `(defun . NAME)' load-history items list what the load defined.
+fn keep_live_definitions(
+    i: &mut Interp,
+    file: &str,
+    live: &std::collections::HashMap<crate::lisp::SymId, Value>,
+) {
+    let lh = i.intern("load-history");
+    let defun = i.intern("defun");
+    let entry = i
+        .symbol_value(lh)
+        .list_to_vec()
+        .unwrap_or_default()
+        .into_iter()
+        .find(|e| {
+            matches!(e, Value::Cons(c)
+                     if matches!(&c.borrow().car, Value::Str(s) if s.borrow().as_str() == file))
+        });
+    let Some(Value::Cons(entry)) = entry else {
+        return;
+    };
+    let items = entry.borrow().cdr.list_to_vec().unwrap_or_default();
+    for item in items {
+        let Value::Cons(c) = &item else { continue };
+        let (car, cdr) = {
+            let b = c.borrow();
+            (b.car.clone(), b.cdr.clone())
+        };
+        if !matches!(car, Value::Sym(s) if s == defun) {
+            continue;
+        }
+        if let Some(old) = i.sym_id(&cdr).and_then(|id| live.get(&id).map(|v| (id, v))) {
+            i.obarray.symbol_mut(old.0).function = old.1.clone();
+        }
+    }
+}
+
+/// Load library NAME; returns Ok(Loaded(resolved-path)) on success.
+pub(crate) fn load_library(i: &mut Interp, name: &str) -> Result<LoadOutcome, crate::lisp::Flow> {
     load_library_opts_msg(i, name, false, false, true, false)
 }
 
@@ -3268,7 +3358,9 @@ pub(crate) fn load_library_opts_msg(
 ) -> Result<LoadOutcome, crate::lisp::Flow> {
     let t0 = std::time::Instant::now();
     let announce = |i: &mut Interp, file: &str| {
-        if nomessage {
+        // Boot-library loads stand in for GNU's loadup.el, which runs at
+        // dump time — `emacs -Q --batch' echoes none of them.
+        if nomessage || i.boot_loading {
             return;
         }
         let fmt = if file.ends_with(".el") {
@@ -3293,8 +3385,28 @@ pub(crate) fn load_library_opts_msg(
     let bundled = embedded(stem).is_some();
     let gc = i.intern("gensym-counter");
     let saved_gc = bundled.then(|| i.symbol_value(gc));
+    // Post-boot `subr-x' reads GNU's verbatim subr-x.el, not the
+    // bundled lisp/subr-x.el: that file amalgamates the dump-time
+    // compatibility definitions (loaded once at boot) with GNU's
+    // subr-x, so re-reading it re-ran ~2300 definitions and its
+    // top-level setq/defconst/add-hook forms — replacing subr shadows
+    // and later libraries' definitions (replace.el's
+    // `replace-highlight') and resetting live state
+    // (`file-name-handler-alist', `electric-quote-string').
+    let gnu_subr_x = !i.boot_loading && stem == "subr-x" && !name.contains('/');
+    let live_defs = gnu_subr_x.then(|| live_definitions(i));
     let result = match locate_full(i, name, nosuffix, mustsuffix) {
         Some(Found::Dir(d)) => Ok(LoadOutcome::Dir(d)),
+        Some(Found::File(path)) if gnu_subr_x && path_in_builtin_dirs(&path) => {
+            let real = Path::new(&path).with_file_name("emacs-lisp-subr-x.el");
+            let file = if real.is_file() {
+                real.to_string_lossy().into_owned()
+            } else {
+                "builtin:subr-x".to_string()
+            };
+            announce(i, &file);
+            eval_gnu_subr_x(i, &file, bundled)
+        }
         Some(Found::File(path)) => {
             // Bundled tree: an on-disk `.el' of a boot library stands in
             // for the same file GNU dumped byte-compiled — the
@@ -3303,16 +3415,14 @@ pub(crate) fn load_library_opts_msg(
             // `load-prefer-newer' treats it as stale.  `REMACS_NO_ELC'
             // drops the twin back to source for debugging/parity
             // AOT `lisp-elc/STEM.elc' twins exist for the dump-time
-            // libraries, but they still poison the post-boot runtime:
-            // e.g. `cl-macs.elc' leaves `cl-defstruct' macros in a
-            // state that makes `(load "nadvice")' signal
-            // `void-variable car' (the .el fallback also dies).  Keep
-            // the mechanism behind an opt-in escape hatch until the
-            // byte-code VM's load-order semantics fully match GNU's
-            // `Fload' — the .el interpreter path is the default.
+            // libraries.  They are loaded only at boot (`boot_loading')
+            // so their macroexpansion state never leaks into the user
+            // session — the load-order cascade that used to poison
+            // `(load "nadvice")' post-boot can't trigger outside this
+            // window.  `REMACS_NO_ELC' drops back to interpreted
+            // source for debugging/parity.
             let use_elc = can_elc
                 && i.boot_loading
-                && std::env::var_os("REMACS_USE_ELC").is_some()
                 && std::env::var_os("REMACS_NO_ELC").is_none()
                 && !nosuffix
                 && !mustsuffix
@@ -3321,7 +3431,9 @@ pub(crate) fn load_library_opts_msg(
                 && !name.ends_with(".el")
                 && path_in_builtin_dirs(&path)
                 && embedded_elc(stem).is_some()
-                && !i.symbol_value(i.intern_soft("load-prefer-newer").unwrap_or(0)).truthy();
+                && !i
+                    .symbol_value(i.intern_soft("load-prefer-newer").unwrap_or(0))
+                    .truthy();
             if use_elc {
                 let src = embedded_elc(stem).unwrap();
                 let virtual_path = format!("builtin:{}", stem);
@@ -3345,14 +3457,18 @@ pub(crate) fn load_library_opts_msg(
                         // Fall back to the interpreted `.el' source,
                         // which carries the prelude's compat shims.
                         if std::env::var_os("REMACS_DEBUG_ELC").is_some() {
-                            eprintln!("[elc-fail] {stem}: {} | head={}",
+                            eprintln!(
+                                "[elc-fail] {stem}: {} | head={}",
                                 match &f {
-                                    crate::lisp::Flow::Signal(s, d, _) => format!("{} {}",
-                                        i.prin1_to_string(s), i.prin1_to_string(d)),
+                                    crate::lisp::Flow::Signal(s, d, _) =>
+                                        format!("{} {}", i.prin1_to_string(s), i.prin1_to_string(d)),
                                     o => format!("{o:?}"),
                                 },
                                 i.princ_to_string(&i.cur_head_form)
-                                    .chars().take(160).collect::<String>());
+                                    .chars()
+                                    .take(160)
+                                    .collect::<String>()
+                            );
                         }
                         announce(i, &path);
                         eval_file_lex_dumped(i, &path, false, bundled)
@@ -3374,11 +3490,17 @@ pub(crate) fn load_library_opts_msg(
         }
         // Fall back to the embedded copy of a built-in library, so that
         // autoloads work even when the lisp/ dir isn't reachable by path.
-        // A `lisp-elc' blob wins over embedded source during boot only
-        // when REMACS_USE_ELC opts in (see the Found::File arm above —
-        // the twins still poison post-boot evaluation of the .el
-        // fallback path); `REMACS_NO_ELC' disables it entirely.
-        None => match embedded_elc(stem).filter(|_| can_elc && i.boot_loading && std::env::var_os("REMACS_USE_ELC").is_some() && std::env::var_os("REMACS_NO_ELC").is_none()) {
+        // A `lisp-elc' blob wins over embedded source during boot
+        // (`boot_loading' scopes it, so the compiled twin can't leak
+        // state into the post-boot session — the .el-fallback path it
+        // used to poison is gone); `REMACS_NO_ELC' disables it.
+        None if gnu_subr_x => {
+            announce(i, name);
+            eval_gnu_subr_x(i, "builtin:subr-x", bundled)
+        }
+        None => match embedded_elc(stem)
+            .filter(|_| can_elc && i.boot_loading && std::env::var_os("REMACS_NO_ELC").is_none())
+        {
             Some(src) => {
                 announce(i, name);
                 let virtual_path = format!("builtin:{}", stem);
@@ -3411,6 +3533,9 @@ pub(crate) fn load_library_opts_msg(
             },
         },
     };
+    if let (Some(live), Ok(LoadOutcome::Loaded(file))) = (&live_defs, &result) {
+        keep_live_definitions(i, file, live);
+    }
     if let Some(saved) = &saved_gc {
         // A file that DEFVARs `gensym-counter' itself (subr.el does)
         // legitimately changes the cell from UNBOUND: restoring would

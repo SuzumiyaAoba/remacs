@@ -17,7 +17,6 @@ use super::obarray::sym;
 use super::reader::Reader;
 use super::value::{Argv, Arity, Cons, Lambda, Marker, SymId, Value};
 
-
 /// A saved dynamic binding (specbind entry).
 struct SpecBind {
     sym: SymId,
@@ -56,8 +55,6 @@ pub fn lexframe_bind(frame: &LexFrame, sym: SymId, val: Value) {
         vars.push((sym, val));
     }
 }
-
-
 
 /// GNU's `internal-interpreter-environment' as a Lisp value: a flat
 /// alist of `(sym . val)' conses, innermost bindings first (specbind
@@ -297,8 +294,7 @@ pub struct Interp {
     /// Each entry stores the input form so its `Rc' keeps the cons —
     /// and its address — alive, preventing a recycled cons pointer
     /// from matching a stale entry.
-    pub macroexpand_all_cache:
-        std::cell::RefCell<(u64, HashMap<usize, (Value, Value)>)>,
+    pub macroexpand_all_cache: std::cell::RefCell<(u64, HashMap<usize, (Value, Value)>)>,
     /// GNU's `noninteractive_need_newline`: set when batch stdout was
     /// written, so the next stderr message is preceded by a newline.
     pub stderr_need_newline: bool,
@@ -331,6 +327,11 @@ pub struct Interp {
     /// Index 0 (` *Minibuf-0*') is the never-active null minibuffer;
     /// a `usize::MAX` slot is a not-yet-created buffer.
     pub minibuf_list: Vec<usize>,
+    /// Command-loop level (remacs: `recursion_depth') recorded when the
+    /// minibuffer at each depth was opened — GNU's
+    /// `Vcommand_loop_level_list'.  `minibuffer-innermost-command-loop-p'
+    /// compares entry N against the current level.
+    pub minibuf_cll: Vec<usize>,
     /// Prompt strings of in-progress minibuffer reads, innermost
     /// last — GNU's `minibuf_prompt' (saved per level in
     /// `minibuf_save_list').
@@ -392,10 +393,7 @@ pub struct Interp {
     /// Lazily parsed `etc/charsets/*.map' tables and maps installed
     /// by `unify-charset' (key `charset:NAME'); see builtins/charset.rs.
     pub(crate) charset_maps: std::cell::RefCell<
-        HashMap<
-            String,
-            std::rc::Rc<crate::lisp::builtins::charset::CharsetTable>,
-        >,
+        HashMap<String, std::rc::Rc<crate::lisp::builtins::charset::CharsetTable>>,
     >,
     /// Coding systems defined via `define-coding-system-internal`.
     pub extra_coding_systems: Vec<String>,
@@ -515,9 +513,7 @@ pub struct Interp {
     /// a `Weak' with the name: `Weak::upgrade' failing means the
     /// pointer was freed and reused, so stale names never reattach
     /// to a different lambda.
-    pub compiled_fn_names: std::cell::RefCell<
-        Vec<(std::rc::Weak<Lambda>, String)>,
-    >,
+    pub compiled_fn_names: std::cell::RefCell<Vec<(std::rc::Weak<Lambda>, String)>>,
     /// Debug: the raw form whose head symbol call is in progress.
     pub cur_head_form: Value,
     /// `lisp_stack' snapshot taken when the last signal was raised —
@@ -545,12 +541,10 @@ pub struct Interp {
     /// like GNU's unibyte strings.  The Weak guards against address
     /// reuse: a dead entry never upgrades, so a fresh allocation at
     /// the same address is never mis-marked.
-    pub unibyte_strings:
-        HashMap<usize, std::rc::Weak<std::cell::RefCell<String>>>,
+    pub unibyte_strings: HashMap<usize, std::rc::Weak<std::cell::RefCell<String>>>,
     /// Strings produced by multibyte decoders — `multibyte-string-p'
     /// is t for them even when their contents are pure ASCII.
-    pub multibyte_strings:
-        HashMap<usize, std::rc::Weak<std::cell::RefCell<String>>>,
+    pub multibyte_strings: HashMap<usize, std::rc::Weak<std::cell::RefCell<String>>>,
     /// Text properties attached to string objects: pointer identity →
     /// (weak backref, sorted disjoint intervals (start, end, plist)).
     /// GNU keeps dead interval boundaries after property removal, so
@@ -712,18 +706,18 @@ fn boot_lib(i: &mut Interp, name: &str) {
     if let Err(e) = &r {
         // Print symbol names, not SymIds, so boot failures are legible.
         let msg = match e {
-            crate::lisp::Flow::Signal(s, data, _) => format!(
-                "{} {}",
-                i.prin1_to_string(s),
-                i.prin1_to_string(data)
-            ),
+            crate::lisp::Flow::Signal(s, data, _) => {
+                format!("{} {}", i.prin1_to_string(s), i.prin1_to_string(data))
+            }
             other => format!("{other:?}"),
         };
-        eprintln!("[boot-err] {name}: {msg} | head={}",
+        eprintln!(
+            "[boot-err] {name}: {msg} | head={}",
             i.princ_to_string(&i.cur_head_form)
                 .chars()
                 .take(200)
-                .collect::<String>());
+                .collect::<String>()
+        );
     }
     let _ = r;
 }
@@ -876,7 +870,6 @@ impl Interp {
             lexenv: None,
             file_declared: RefCell::new(HashSet::default()),
             dbg_flags: {
-
                 let mut f = 0u32;
                 for (var, bit) in [
                     ("DBG_FUNCALL", 0x01u32),
@@ -961,6 +954,7 @@ impl Interp {
             batch_stdin: None,
             minibuf_level: 0,
             minibuf_list: Vec::new(),
+            minibuf_cll: Vec::new(),
             minibuf_prompts: Vec::new(),
             minibuf_catching_exit: false,
             minibuf_exited: false,
@@ -1037,7 +1031,10 @@ impl Interp {
         let _init_t0 = std::time::Instant::now();
         crate::lisp::builtins::install(&mut interp);
         if std::env::var_os("REMACS_BOOT_PROF").is_some() {
-            eprintln!("[init] builtins::install: {}ms", _init_t0.elapsed().as_millis());
+            eprintln!(
+                "[init] builtins::install: {}ms",
+                _init_t0.elapsed().as_millis()
+            );
         }
         crate::buffer::install_primitives(&mut interp);
         interp.define_error_conditions();
@@ -1070,9 +1067,9 @@ impl Interp {
         }
         let minibuf = interp.buffers.create_exact(" *Minibuf-0*");
         let messages = interp.buffers.create_exact("*Messages*");
-// No ` *load*' buffer: GNU streams loads off the file descriptor
-// (`readevalloop'), so `buffer-list' at -Q holds only
-// scratch/Minibuf-0/Messages.
+        // No ` *load*' buffer: GNU streams loads off the file descriptor
+        // (`readevalloop'), so `buffer-list' at -Q holds only
+        // scratch/Minibuf-0/Messages.
         // GNU does not create `*Warnings*' at startup; `display-warning'
         // makes it lazily (with messages-buffer-mode) on first warning.
         // GNU seeds the startup buffers' buffer-local major modes; its
@@ -1118,7 +1115,11 @@ impl Interp {
         let u8u = interp.intern(kbd);
         // GNU: a non-UTF-8 tty defaults to `undecided', which
         // `terminal-coding-system' reports as nil (coding.c:10736).
-        let tcd = interp.intern(if kbd == "utf-8-unix" { "utf-8-unix" } else { "undecided" });
+        let tcd = interp.intern(if kbd == "utf-8-unix" {
+            "utf-8-unix"
+        } else {
+            "undecided"
+        });
         interp.terminal_coding = Value::Sym(tcd);
         interp.keyboard_coding = Value::Sym(u8u);
         // Load the Lisp prelude (subr.el subset). Errors here indicate a
@@ -1135,1224 +1136,1222 @@ impl Interp {
         // GNU -Q reports all of these unbound; the final pass in
         // `new' voids their value cells (and buffer-local copies).
         const GNU_VOID_VARS: &[&str] = &[
-                "after-insert-file-set-coding-functions",
-                "antlr-mode-abbrev-table",
-                "antlr-mode-hook",
-                "antlr-mode-map",
-                "antlr-mode-syntax-table",
-                "antlr-v4-mode-abbrev-table",
-                "antlr-v4-mode-hook",
-                "antlr-v4-mode-map",
-                "antlr-v4-mode-syntax-table",
-                "archive-mode-abbrev-table",
-                "archive-mode-hook",
-                "archive-mode-map",
-                "archive-mode-syntax-table",
-                "ask-about-buffer-names",
-                "authinfo-mode-abbrev-table",
-                "authinfo-mode-hook",
-                "authinfo-mode-map",
-                "authinfo-mode-syntax-table",
-                "auto-save-mode",
-                "awk-mode-abbrev-table",
-                "awk-mode-hook",
-                "awk-mode-map",
-                "awk-mode-syntax-table",
-                "before-load-history",
-                "bibtex-mode-abbrev-table",
-                "bibtex-mode-hook",
-                "bibtex-mode-map",
-                "bibtex-mode-syntax-table",
-                "bovine-grammar-mode-abbrev-table",
-                "bovine-grammar-mode-hook",
-                "bovine-grammar-mode-map",
-                "bovine-grammar-mode-syntax-table",
-                "buffer-face-mode",
-                "cl-print-object",
-                "cl-old-struct-compat-mode-hook",
-                "internal-lisp-face-attributes",
-                "buffer-face-mode-face",
-                // Prelude-folded cells from files GNU doesn't run at
-                // dump time (cl-macs/cl-lib constants, pcase caches,
-                // rect vars) — GNU -Q leaves their value cells void.
-                "cl--active-block-names",
-                "cl--cnm",
-                "cl--cnm-args",
-                "cl--cnm-name",
-                "cl--cnm-ok",
-                "cl--labels-convert-cache",
-                "cl--labels-magic",
-                "cl--lambda-list-keywords",
-                "cl--loop--into-vars",
-                "cl--loop-keywords",
-                "cl--safe-funcs",
-                "cl--simple-funcs",
-                "cl-float-epsilon",
-                "cl-float-negative-epsilon",
-                "cl-least-negative-float",
-                "cl-least-negative-normalized-float",
-                "cl-least-positive-float",
-                "cl-least-positive-normalized-float",
-                "cl-most-negative-float",
-                "cl-most-positive-float",
-                "cl-struct-built-in-class",
-                "cl-struct-cl--class",
-                "cl-struct-cl--generic",
-                "cl-struct-cl--generic-generalizer",
-                "cl-struct-cl--generic-method",
-                "cl-struct-cl-derived-type-class",
-                "cl-struct-cl-slot-descriptor",
-                "cl-struct-cl-structure-class",
-                "cl-struct-cl-structure-object",
-                "cl-struct-oclosure--class",
-                "cl-struct-registerv",
-                "cl-struct-timer",
-                "cl-struct-xref-elisp-location",
-                "pcase--dontcare-upats",
-                "pcase--dontwarn-upats",
-                "pcase--find-macro-def-regexp",
-                "pcase--memoize",
-                "pcase--subtype-bitsets",
-                "rectangle--mark-crutches",
-                "rectangle-mark-mode-hook",
-                "rectangle-mark-mode-map",
-                "rectangle-mark-mode",
-                "buffer-face-mode-hook",
-                "buffer-face-mode-remapping",
-                "button-mode-map",
-                "byte-compile-call-tree-sort",
-                "byte-compile-cond-use-jump-table",
-                "byte-compile-debug",
-                "byte-compile-delete-errors",
-                "byte-compile-docstring-max-column",
-                "byte-compile-dynamic",
-                "byte-compile-dynamic-docstrings",
-                "byte-compile-error-on-warn",
-                "byte-compile-generate-call-tree",
-                "byte-compile-optimize",
-                "byte-compile-verbose",
-                "byte-compile-warnings",
-                "c++-mode-abbrev-table",
-                "c++-mode-hook",
-                "c++-mode-map",
-                "c++-mode-syntax-table",
-                "c-mode-abbrev-table",
-                "c-mode-hook",
-                "c-mode-map",
-                "c-mode-syntax-table",
-                "calculate-lisp-indent-last-sexp",
-                "change-log-mode-abbrev-table",
-                "change-log-mode-hook",
-                "change-log-mode-map",
-                "change-log-mode-syntax-table",
-                "command-args",
-                "command-line-normalized-file-name",
-                "compilation-context-lines",
-                "compilation-current-error",
-                "compilation-mode-abbrev-table",
-                "compilation-mode-map",
-                "compilation-mode-syntax-table",
-                "connection-local-criteria",
-                "connection-local-criteria-alist",
-                "connection-local-default-application",
-                "connection-local-profile-alist",
-                "connection-local-profile-name-for-setq",
-                "connection-local-variables-alist",
-                "csharp-mode-abbrev-table",
-                "csharp-mode-hook",
-                "csharp-mode-map",
-                "csharp-mode-syntax-table",
-                "css-mode-abbrev-table",
-                "css-mode-hook",
-                "css-mode-map",
-                "css-mode-syntax-table",
-                "daemon-socket",
-                "dcl-mode-abbrev-table",
-                "dcl-mode-hook",
-                "dcl-mode-map",
-                "dcl-mode-syntax-table",
-                "delete-selection-mode-hook",
-                "describe-symbol-backends",
-                "diff-mode-abbrev-table",
-                "diff-mode-hook",
-                "diff-mode-map",
-                "diff-mode-syntax-table",
-                "display-battery-mode-hook",
-                "display-time-mode-hook",
-                "dns-mode-abbrev-table",
-                "dns-mode-hook",
-                "dns-mode-map",
-                "dns-mode-syntax-table",
-                "doc-view-mode-abbrev-table",
-                "doc-view-mode-hook",
-                "doc-view-mode-map",
-                "doc-view-mode-syntax-table",
-                "doctex-mode-abbrev-table",
-                "doctex-mode-hook",
-                "doctex-mode-map",
-                "doctex-mode-syntax-table",
-                "dsssl-mode-abbrev-table",
-                "dsssl-mode-hook",
-                "dsssl-mode-map",
-                "dsssl-mode-syntax-table",
-                "ebrowse-tree-mode-abbrev-table",
-                "ebrowse-tree-mode-hook",
-                "ebrowse-tree-mode-map",
-                "ebrowse-tree-mode-syntax-table",
-                "emacs--start-time",
-                "emacs-program-version",
-                "erts-mode-abbrev-table",
-                "erts-mode-hook",
-                "erts-mode-map",
-                "erts-mode-syntax-table",
-                "eval-depth",
-                "f90-mode-abbrev-table",
-                "f90-mode-hook",
-                "f90-mode-map",
-                "f90-mode-syntax-table",
-                "fancy-about-tail",
-                "fancy-startup-tail",
-                "fill-nospace-between-words",
-                "find-alias-regexp",
-                "find-face-regexp",
-                "find-feature-regexp",
-                "find-function--read-history-face",
-                "find-function--read-history-function",
-                "find-function--read-history-library",
-                "find-function--read-history-variable",
-                "find-function-C-source-directory",
-                "find-function-after-hook",
-                "find-function-recenter-line",
-                "find-function-regexp",
-                "find-function-regexp-alist",
-                "find-function-space-re",
-                "find-library-include-other-files",
-                "find-library-source-path",
-                "find-variable-regexp",
-                "font-lock-maximum-size",
-                "fontification-error",
-                "fontification-missing",
-                "fortran-mode-abbrev-table",
-                "fortran-mode-hook",
-                "fortran-mode-map",
-                "fortran-mode-syntax-table",
-                "frame-initial-frame-alist",
-                "functions-exhausted",
-                "gc-message-percentage",
-                "gdb-script-mode-abbrev-table",
-                "gdb-script-mode-hook",
-                "gdb-script-mode-map",
-                "gdb-script-mode-syntax-table",
-                "global-text-scale-adjust--default-height",
-                "global-text-scale-adjust--increment-factor",
-                "global-text-scale-adjust-limits",
-                "global-text-scale-adjust-resizes-frames",
-                "handle-shift-selection",
-                "help-back-label",
-                "help-clean-buttons",
-                "help-for-help-use-variable-pitch",
-                "help-forward-label",
-                "help-mode--current-data",
-                "help-mode-abbrev-table",
-                "help-mode-hook",
-                "help-mode-map",
-                "help-mode-menu",
-                "help-mode-syntax-table",
-                "help-mode-tool-bar-map",
-                "help-xref-customization-group-regexp",
-                "help-xref-following",
-                "help-xref-forward-stack",
-                "help-xref-forward-stack-item",
-                "help-xref-info-regexp",
-                "help-xref-man-regexp",
-                "help-xref-mule-regexp",
-                "help-xref-stack",
-                "help-xref-stack-forward-item",
-                "help-xref-stack-item",
-                "help-xref-symbol-regexp",
-                "help-xref-url-regexp",
-                "icon-mode-abbrev-table",
-                "icon-mode-hook",
-                "icon-mode-map",
-                "icon-mode-syntax-table",
-                "icon-preference",
-                "idl-mode-abbrev-table",
-                "idl-mode-hook",
-                "idl-mode-map",
-                "idl-mode-syntax-table",
-                "ido-ignore-item-temp-list",
-                "image-mode-abbrev-table",
-                "image-mode-hook",
-                "image-mode-map",
-                "image-mode-syntax-table",
-                "inhibit-variable-watchers",
-                "input-method-inactivate-hook",
-                "java-mode-abbrev-table",
-                "java-mode-hook",
-                "java-mode-map",
-                "java-mode-syntax-table",
-                "javascript-mode-abbrev-table",
-                "javascript-mode-hook",
-                "javascript-mode-map",
-                "javascript-mode-syntax-table",
-                "js-json-mode-abbrev-table",
-                "js-json-mode-hook",
-                "js-json-mode-map",
-                "js-json-mode-syntax-table",
-                "js-mode-abbrev-table",
-                "js-mode-hook",
-                "js-mode-map",
-                "js-mode-syntax-table",
-                "latex-mode-abbrev-table",
-                "latex-mode-hook",
-                "latex-mode-map",
-                "latex-mode-syntax-table",
-                "less-css-mode-abbrev-table",
-                "less-css-mode-hook",
-                "less-css-mode-map",
-                "less-css-mode-syntax-table",
-                "load--fixup-all-elns",
-                "load-convert-to-unibyte",
-                "loadhist-unload-filename",
-                "lua-mode-abbrev-table",
-                "lua-mode-hook",
-                "lua-mode-map",
-                "lua-mode-syntax-table",
-                "m2-mode-abbrev-table",
-                "m2-mode-hook",
-                "m2-mode-map",
-                "m2-mode-syntax-table",
-                "mail-citation-prefix",
-                "mail-mode-abbrev-table",
-                "mail-mode-hook",
-                "mail-mode-map",
-                "mail-mode-syntax-table",
-                "mail-send-hook",
-                "makefile-automake-mode-abbrev-table",
-                "makefile-automake-mode-hook",
-                "makefile-automake-mode-map",
-                "makefile-automake-mode-syntax-table",
-                "makefile-bsdmake-mode-abbrev-table",
-                "makefile-bsdmake-mode-hook",
-                "makefile-bsdmake-mode-map",
-                "makefile-bsdmake-mode-syntax-table",
-                "makefile-gmake-mode-abbrev-table",
-                "makefile-gmake-mode-hook",
-                "makefile-gmake-mode-map",
-                "makefile-gmake-mode-syntax-table",
-                "makefile-imake-mode-abbrev-table",
-                "makefile-imake-mode-hook",
-                "makefile-imake-mode-map",
-                "makefile-imake-mode-syntax-table",
-                "makefile-makepp-mode-abbrev-table",
-                "makefile-makepp-mode-hook",
-                "makefile-makepp-mode-map",
-                "makefile-makepp-mode-syntax-table",
-                "makefile-mode-abbrev-table",
-                "makefile-mode-hook",
-                "makefile-mode-map",
-                "makefile-mode-syntax-table",
-                "metafont-mode-abbrev-table",
-                "metafont-mode-hook",
-                "metafont-mode-map",
-                "metafont-mode-syntax-table",
-                "metapost-mode-abbrev-table",
-                "metapost-mode-hook",
-                "metapost-mode-map",
-                "metapost-mode-syntax-table",
-                "mhtml-mode-abbrev-table",
-                "mhtml-mode-hook",
-                "mhtml-mode-map",
-                "mhtml-mode-syntax-table",
-                "minibuffer-inactive-mode",
-                "mixal-mode-abbrev-table",
-                "mixal-mode-hook",
-                "mixal-mode-map",
-                "mixal-mode-syntax-table",
-                "mouse-wheel-down-alternate-event",
-                "mouse-wheel-left-alternate-event",
-                "mouse-wheel-right-alternate-event",
-                "mouse-wheel-up-alternate-event",
-                "native-comp-driver-options",
-                "network-security-level",
-                "nroff-mode-abbrev-table",
-                "nroff-mode-hook",
-                "nroff-mode-map",
-                "nroff-mode-syntax-table",
-                "obarray-size",
-                "objc-mode-abbrev-table",
-                "objc-mode-hook",
-                "objc-mode-map",
-                "objc-mode-syntax-table",
-                "octave-mode-abbrev-table",
-                "octave-mode-hook",
-                "octave-mode-map",
-                "octave-mode-syntax-table",
-                "opascal-mode-abbrev-table",
-                "opascal-mode-hook",
-                "opascal-mode-map",
-                "opascal-mode-syntax-table",
-                "org-mode-abbrev-table",
-                "org-mode-hook",
-                "org-mode-map",
-                "org-mode-syntax-table",
-                "overriding-text-conversion-style",
-                "pascal-mode-abbrev-table",
-                "pascal-mode-hook",
-                "pascal-mode-map",
-                "pascal-mode-syntax-table",
-                "perl-mode-abbrev-table",
-                "perl-mode-hook",
-                "perl-mode-map",
-                "perl-mode-syntax-table",
-                "pike-mode-abbrev-table",
-                "pike-mode-hook",
-                "pike-mode-map",
-                "pike-mode-syntax-table",
-                "plain-tex-mode-abbrev-table",
-                "plain-tex-mode-hook",
-                "plain-tex-mode-map",
-                "plain-tex-mode-syntax-table",
-                "print-readably",
-                "print-unreadable",
-                "prolog-mode-abbrev-table",
-                "prolog-mode-hook",
-                "prolog-mode-map",
-                "prolog-mode-syntax-table",
-                "ps-mode-abbrev-table",
-                "ps-mode-hook",
-                "ps-mode-map",
-                "ps-mode-syntax-table",
-                "python-mode-abbrev-table",
-                "python-mode-hook",
-                "python-mode-map",
-                "python-mode-syntax-table",
-                "read-symbol-positions-list",
-                "redisplay--variables",
-                "redisplay-dont-pause",
-                "revert-buffer-preserve-modes",
-                "rst-mode-abbrev-table",
-                "rst-mode-hook",
-                "rst-mode-map",
-                "rst-mode-syntax-table",
-                "ruby-mode-abbrev-table",
-                "ruby-mode-hook",
-                "ruby-mode-map",
-                "ruby-mode-syntax-table",
-                "scheme-mode-abbrev-table",
-                "scheme-mode-hook",
-                "scheme-mode-map",
-                "scheme-mode-syntax-table",
-                "scribe-mode-abbrev-table",
-                "scribe-mode-hook",
-                "scribe-mode-map",
-                "scribe-mode-syntax-table",
-                "scroll-lock-mode",
-                "scss-mode-abbrev-table",
-                "scss-mode-hook",
-                "scss-mode-map",
-                "scss-mode-syntax-table",
-                "seconds-to-string",
-                "ses-mode-abbrev-table",
-                "ses-mode-hook",
-                "ses-mode-map",
-                "ses-mode-syntax-table",
-                "sgml-mode-abbrev-table",
-                "sgml-mode-hook",
-                "sgml-mode-map",
-                "sgml-mode-syntax-table",
-                "sh-mode-abbrev-table",
-                "sh-mode-hook",
-                "sh-mode-map",
-                "sh-mode-syntax-table",
-                "shell-command-mode-hook",
-                "sieve-mode-abbrev-table",
-                "sieve-mode-hook",
-                "sieve-mode-map",
-                "sieve-mode-syntax-table",
-                "simula-mode-abbrev-table",
-                "simula-mode-hook",
-                "simula-mode-map",
-                "simula-mode-syntax-table",
-                "slitex-mode-abbrev-table",
-                "slitex-mode-hook",
-                "slitex-mode-map",
-                "slitex-mode-syntax-table",
-                "snmp-mode-abbrev-table",
-                "snmp-mode-hook",
-                "snmp-mode-map",
-                "snmp-mode-syntax-table",
-                "snmpv2-mode-abbrev-table",
-                "snmpv2-mode-hook",
-                "snmpv2-mode-map",
-                "snmpv2-mode-syntax-table",
-                "sort-numeric-base",
-                "sql-mode-abbrev-table",
-                "sql-mode-hook",
-                "sql-mode-map",
-                "sql-mode-syntax-table",
-                "srecode-template-mode-abbrev-table",
-                "srecode-template-mode-hook",
-                "srecode-template-mode-map",
-                "srecode-template-mode-syntax-table",
-                "tabify-regexp",
-                "tar-mode-abbrev-table",
-                "tar-mode-hook",
-                "tar-mode-map",
-                "tar-mode-syntax-table",
-                "tcl-mode-abbrev-table",
-                "tcl-mode-hook",
-                "tcl-mode-map",
-                "tcl-mode-syntax-table",
-                "tex-mode-abbrev-table",
-                "tex-mode-hook",
-                "tex-mode-map",
-                "tex-mode-syntax-table",
-                "texinfo-mode-abbrev-table",
-                "texinfo-mode-hook",
-                "texinfo-mode-map",
-                "texinfo-mode-syntax-table",
-                "text-scale--pinch-start-scale",
-                "text-scale-mode",
-                "text-scale-mode-amount",
-                "text-scale-mode-hook",
-                "text-scale-mode-lighter",
-                "text-scale-mode-remapping",
-                "text-scale-mode-step",
-                "text-scale-remap-header-line",
-                "unload-feature-special-hooks",
-                "unload-function-defs-list",
-                "unsafep--safe-functions",
-                "user-real-uid",
-                "user-uid",
-                "vc-mode-line-hook",
-                "vera-mode-abbrev-table",
-                "vera-mode-hook",
-                "vera-mode-map",
-                "vera-mode-syntax-table",
-                "verilog-mode-abbrev-table",
-                "verilog-mode-hook",
-                "verilog-mode-map",
-                "verilog-mode-syntax-table",
-                "vhdl-mode-abbrev-table",
-                "vhdl-mode-hook",
-                "vhdl-mode-map",
-                "vhdl-mode-syntax-table",
-                "window-text-change-functions",
-                "wisent-grammar-mode-abbrev-table",
-                "wisent-grammar-mode-hook",
-                "wisent-grammar-mode-map",
-                "wisent-grammar-mode-syntax-table",
-                "x-create-frame",
-                "x-family-fonts",
-                "x-load-color-file",
-                "x-mouse-clip-rectangular",
-                "x-select-font",
-                "xml-mode-abbrev-table",
-                "xml-mode-hook",
-                "xml-mode-map",
-                "xml-mode-syntax-table",
-                // ucs-normalize.el's `eval-when-compile' tables/vars:
-                // GNU's dump computes them at compile time, so the
-                // non-`ucs-normalize-' helper bindings are void at -Q
-                // (the `ucs-normalize-*' globals are real defvars —
-                // they stay bound).
-                "check-range",
-                "combining-chars",
-                "decomposition-pair-to-composition",
-                "hfs-nfd-alist",
-                "hfs-nfd-quick-check-list",
-                "hfs-nfc-quick-check-list",
-                "nfd-alist",
-                "nfd-quick-check-list",
-                "nfc-quick-check-list",
-                "nfkc-quick-check-list",
-                "nfkd-alist",
-                "nfkd-quick-check-list",
-                "non-starter-decompositions",
-                "ucs-normalize-composition-exclusions",
-];
+            "after-insert-file-set-coding-functions",
+            "antlr-mode-abbrev-table",
+            "antlr-mode-hook",
+            "antlr-mode-map",
+            "antlr-mode-syntax-table",
+            "antlr-v4-mode-abbrev-table",
+            "antlr-v4-mode-hook",
+            "antlr-v4-mode-map",
+            "antlr-v4-mode-syntax-table",
+            "archive-mode-abbrev-table",
+            "archive-mode-hook",
+            "archive-mode-map",
+            "archive-mode-syntax-table",
+            "ask-about-buffer-names",
+            "authinfo-mode-abbrev-table",
+            "authinfo-mode-hook",
+            "authinfo-mode-map",
+            "authinfo-mode-syntax-table",
+            "auto-save-mode",
+            "awk-mode-abbrev-table",
+            "awk-mode-hook",
+            "awk-mode-map",
+            "awk-mode-syntax-table",
+            "before-load-history",
+            "bibtex-mode-abbrev-table",
+            "bibtex-mode-hook",
+            "bibtex-mode-map",
+            "bibtex-mode-syntax-table",
+            "bovine-grammar-mode-abbrev-table",
+            "bovine-grammar-mode-hook",
+            "bovine-grammar-mode-map",
+            "bovine-grammar-mode-syntax-table",
+            "buffer-face-mode",
+            "cl-print-object",
+            "cl-old-struct-compat-mode-hook",
+            "internal-lisp-face-attributes",
+            "buffer-face-mode-face",
+            // Prelude-folded cells from files GNU doesn't run at
+            // dump time (cl-macs/cl-lib constants, pcase caches,
+            // rect vars) — GNU -Q leaves their value cells void.
+            "cl--active-block-names",
+            "cl--cnm",
+            "cl--cnm-args",
+            "cl--cnm-name",
+            "cl--cnm-ok",
+            "cl--labels-convert-cache",
+            "cl--labels-magic",
+            "cl--lambda-list-keywords",
+            "cl--loop--into-vars",
+            "cl--loop-keywords",
+            "cl--safe-funcs",
+            "cl--simple-funcs",
+            "cl-float-epsilon",
+            "cl-float-negative-epsilon",
+            "cl-least-negative-float",
+            "cl-least-negative-normalized-float",
+            "cl-least-positive-float",
+            "cl-least-positive-normalized-float",
+            "cl-most-negative-float",
+            "cl-most-positive-float",
+            "cl-struct-built-in-class",
+            "cl-struct-cl--class",
+            "cl-struct-cl--generic",
+            "cl-struct-cl--generic-generalizer",
+            "cl-struct-cl--generic-method",
+            "cl-struct-cl-derived-type-class",
+            "cl-struct-cl-slot-descriptor",
+            "cl-struct-cl-structure-class",
+            "cl-struct-cl-structure-object",
+            "cl-struct-oclosure--class",
+            "cl-struct-registerv",
+            "cl-struct-timer",
+            "cl-struct-xref-elisp-location",
+            "pcase--dontcare-upats",
+            "pcase--dontwarn-upats",
+            "pcase--find-macro-def-regexp",
+            "pcase--memoize",
+            "pcase--subtype-bitsets",
+            "rectangle--mark-crutches",
+            "rectangle-mark-mode-hook",
+            "rectangle-mark-mode-map",
+            "rectangle-mark-mode",
+            "buffer-face-mode-hook",
+            "buffer-face-mode-remapping",
+            "button-mode-map",
+            "byte-compile-call-tree-sort",
+            "byte-compile-cond-use-jump-table",
+            "byte-compile-debug",
+            "byte-compile-delete-errors",
+            "byte-compile-docstring-max-column",
+            "byte-compile-dynamic",
+            "byte-compile-dynamic-docstrings",
+            "byte-compile-error-on-warn",
+            "byte-compile-generate-call-tree",
+            "byte-compile-optimize",
+            "byte-compile-verbose",
+            "byte-compile-warnings",
+            "c++-mode-abbrev-table",
+            "c++-mode-hook",
+            "c++-mode-map",
+            "c++-mode-syntax-table",
+            "c-mode-abbrev-table",
+            "c-mode-hook",
+            "c-mode-map",
+            "c-mode-syntax-table",
+            "calculate-lisp-indent-last-sexp",
+            "change-log-mode-abbrev-table",
+            "change-log-mode-hook",
+            "change-log-mode-map",
+            "change-log-mode-syntax-table",
+            "command-args",
+            "command-line-normalized-file-name",
+            "compilation-context-lines",
+            "compilation-current-error",
+            "compilation-mode-abbrev-table",
+            "compilation-mode-map",
+            "compilation-mode-syntax-table",
+            "connection-local-criteria",
+            "connection-local-criteria-alist",
+            "connection-local-default-application",
+            "connection-local-profile-alist",
+            "connection-local-profile-name-for-setq",
+            "connection-local-variables-alist",
+            "csharp-mode-abbrev-table",
+            "csharp-mode-hook",
+            "csharp-mode-map",
+            "csharp-mode-syntax-table",
+            "css-mode-abbrev-table",
+            "css-mode-hook",
+            "css-mode-map",
+            "css-mode-syntax-table",
+            "daemon-socket",
+            "dcl-mode-abbrev-table",
+            "dcl-mode-hook",
+            "dcl-mode-map",
+            "dcl-mode-syntax-table",
+            "delete-selection-mode-hook",
+            "describe-symbol-backends",
+            "diff-mode-abbrev-table",
+            "diff-mode-hook",
+            "diff-mode-map",
+            "diff-mode-syntax-table",
+            "display-battery-mode-hook",
+            "display-time-mode-hook",
+            "dns-mode-abbrev-table",
+            "dns-mode-hook",
+            "dns-mode-map",
+            "dns-mode-syntax-table",
+            "doc-view-mode-abbrev-table",
+            "doc-view-mode-hook",
+            "doc-view-mode-map",
+            "doc-view-mode-syntax-table",
+            "doctex-mode-abbrev-table",
+            "doctex-mode-hook",
+            "doctex-mode-map",
+            "doctex-mode-syntax-table",
+            "dsssl-mode-abbrev-table",
+            "dsssl-mode-hook",
+            "dsssl-mode-map",
+            "dsssl-mode-syntax-table",
+            "ebrowse-tree-mode-abbrev-table",
+            "ebrowse-tree-mode-hook",
+            "ebrowse-tree-mode-map",
+            "ebrowse-tree-mode-syntax-table",
+            "emacs--start-time",
+            "emacs-program-version",
+            "erts-mode-abbrev-table",
+            "erts-mode-hook",
+            "erts-mode-map",
+            "erts-mode-syntax-table",
+            "eval-depth",
+            "f90-mode-abbrev-table",
+            "f90-mode-hook",
+            "f90-mode-map",
+            "f90-mode-syntax-table",
+            "fancy-about-tail",
+            "fancy-startup-tail",
+            "fill-nospace-between-words",
+            "find-alias-regexp",
+            "find-face-regexp",
+            "find-feature-regexp",
+            "find-function--read-history-face",
+            "find-function--read-history-function",
+            "find-function--read-history-library",
+            "find-function--read-history-variable",
+            "find-function-C-source-directory",
+            "find-function-after-hook",
+            "find-function-recenter-line",
+            "find-function-regexp",
+            "find-function-regexp-alist",
+            "find-function-space-re",
+            "find-library-include-other-files",
+            "find-library-source-path",
+            "find-variable-regexp",
+            "font-lock-maximum-size",
+            "fontification-error",
+            "fontification-missing",
+            "fortran-mode-abbrev-table",
+            "fortran-mode-hook",
+            "fortran-mode-map",
+            "fortran-mode-syntax-table",
+            "frame-initial-frame-alist",
+            "functions-exhausted",
+            "gc-message-percentage",
+            "gdb-script-mode-abbrev-table",
+            "gdb-script-mode-hook",
+            "gdb-script-mode-map",
+            "gdb-script-mode-syntax-table",
+            "global-text-scale-adjust--default-height",
+            "global-text-scale-adjust--increment-factor",
+            "global-text-scale-adjust-limits",
+            "global-text-scale-adjust-resizes-frames",
+            "handle-shift-selection",
+            "help-back-label",
+            "help-clean-buttons",
+            "help-for-help-use-variable-pitch",
+            "help-forward-label",
+            "help-mode--current-data",
+            "help-mode-abbrev-table",
+            "help-mode-hook",
+            "help-mode-map",
+            "help-mode-menu",
+            "help-mode-syntax-table",
+            "help-mode-tool-bar-map",
+            "help-xref-customization-group-regexp",
+            "help-xref-following",
+            "help-xref-forward-stack",
+            "help-xref-forward-stack-item",
+            "help-xref-info-regexp",
+            "help-xref-man-regexp",
+            "help-xref-mule-regexp",
+            "help-xref-stack",
+            "help-xref-stack-forward-item",
+            "help-xref-stack-item",
+            "help-xref-symbol-regexp",
+            "help-xref-url-regexp",
+            "icon-mode-abbrev-table",
+            "icon-mode-hook",
+            "icon-mode-map",
+            "icon-mode-syntax-table",
+            "icon-preference",
+            "idl-mode-abbrev-table",
+            "idl-mode-hook",
+            "idl-mode-map",
+            "idl-mode-syntax-table",
+            "ido-ignore-item-temp-list",
+            "image-mode-abbrev-table",
+            "image-mode-hook",
+            "image-mode-map",
+            "image-mode-syntax-table",
+            "inhibit-variable-watchers",
+            "input-method-inactivate-hook",
+            "java-mode-abbrev-table",
+            "java-mode-hook",
+            "java-mode-map",
+            "java-mode-syntax-table",
+            "javascript-mode-abbrev-table",
+            "javascript-mode-hook",
+            "javascript-mode-map",
+            "javascript-mode-syntax-table",
+            "js-json-mode-abbrev-table",
+            "js-json-mode-hook",
+            "js-json-mode-map",
+            "js-json-mode-syntax-table",
+            "js-mode-abbrev-table",
+            "js-mode-hook",
+            "js-mode-map",
+            "js-mode-syntax-table",
+            "latex-mode-abbrev-table",
+            "latex-mode-hook",
+            "latex-mode-map",
+            "latex-mode-syntax-table",
+            "less-css-mode-abbrev-table",
+            "less-css-mode-hook",
+            "less-css-mode-map",
+            "less-css-mode-syntax-table",
+            "load--fixup-all-elns",
+            "load-convert-to-unibyte",
+            "loadhist-unload-filename",
+            "lua-mode-abbrev-table",
+            "lua-mode-hook",
+            "lua-mode-map",
+            "lua-mode-syntax-table",
+            "m2-mode-abbrev-table",
+            "m2-mode-hook",
+            "m2-mode-map",
+            "m2-mode-syntax-table",
+            "mail-citation-prefix",
+            "mail-mode-abbrev-table",
+            "mail-mode-hook",
+            "mail-mode-map",
+            "mail-mode-syntax-table",
+            "mail-send-hook",
+            "makefile-automake-mode-abbrev-table",
+            "makefile-automake-mode-hook",
+            "makefile-automake-mode-map",
+            "makefile-automake-mode-syntax-table",
+            "makefile-bsdmake-mode-abbrev-table",
+            "makefile-bsdmake-mode-hook",
+            "makefile-bsdmake-mode-map",
+            "makefile-bsdmake-mode-syntax-table",
+            "makefile-gmake-mode-abbrev-table",
+            "makefile-gmake-mode-hook",
+            "makefile-gmake-mode-map",
+            "makefile-gmake-mode-syntax-table",
+            "makefile-imake-mode-abbrev-table",
+            "makefile-imake-mode-hook",
+            "makefile-imake-mode-map",
+            "makefile-imake-mode-syntax-table",
+            "makefile-makepp-mode-abbrev-table",
+            "makefile-makepp-mode-hook",
+            "makefile-makepp-mode-map",
+            "makefile-makepp-mode-syntax-table",
+            "makefile-mode-abbrev-table",
+            "makefile-mode-hook",
+            "makefile-mode-map",
+            "makefile-mode-syntax-table",
+            "metafont-mode-abbrev-table",
+            "metafont-mode-hook",
+            "metafont-mode-map",
+            "metafont-mode-syntax-table",
+            "metapost-mode-abbrev-table",
+            "metapost-mode-hook",
+            "metapost-mode-map",
+            "metapost-mode-syntax-table",
+            "mhtml-mode-abbrev-table",
+            "mhtml-mode-hook",
+            "mhtml-mode-map",
+            "mhtml-mode-syntax-table",
+            "minibuffer-inactive-mode",
+            "mixal-mode-abbrev-table",
+            "mixal-mode-hook",
+            "mixal-mode-map",
+            "mixal-mode-syntax-table",
+            "mouse-wheel-down-alternate-event",
+            "mouse-wheel-left-alternate-event",
+            "mouse-wheel-right-alternate-event",
+            "mouse-wheel-up-alternate-event",
+            "native-comp-driver-options",
+            "network-security-level",
+            "nroff-mode-abbrev-table",
+            "nroff-mode-hook",
+            "nroff-mode-map",
+            "nroff-mode-syntax-table",
+            "obarray-size",
+            "objc-mode-abbrev-table",
+            "objc-mode-hook",
+            "objc-mode-map",
+            "objc-mode-syntax-table",
+            "octave-mode-abbrev-table",
+            "octave-mode-hook",
+            "octave-mode-map",
+            "octave-mode-syntax-table",
+            "opascal-mode-abbrev-table",
+            "opascal-mode-hook",
+            "opascal-mode-map",
+            "opascal-mode-syntax-table",
+            "org-mode-abbrev-table",
+            "org-mode-hook",
+            "org-mode-map",
+            "org-mode-syntax-table",
+            "overriding-text-conversion-style",
+            "pascal-mode-abbrev-table",
+            "pascal-mode-hook",
+            "pascal-mode-map",
+            "pascal-mode-syntax-table",
+            "perl-mode-abbrev-table",
+            "perl-mode-hook",
+            "perl-mode-map",
+            "perl-mode-syntax-table",
+            "pike-mode-abbrev-table",
+            "pike-mode-hook",
+            "pike-mode-map",
+            "pike-mode-syntax-table",
+            "plain-tex-mode-abbrev-table",
+            "plain-tex-mode-hook",
+            "plain-tex-mode-map",
+            "plain-tex-mode-syntax-table",
+            "print-readably",
+            "print-unreadable",
+            "prolog-mode-abbrev-table",
+            "prolog-mode-hook",
+            "prolog-mode-map",
+            "prolog-mode-syntax-table",
+            "ps-mode-abbrev-table",
+            "ps-mode-hook",
+            "ps-mode-map",
+            "ps-mode-syntax-table",
+            "python-mode-abbrev-table",
+            "python-mode-hook",
+            "python-mode-map",
+            "python-mode-syntax-table",
+            "read-symbol-positions-list",
+            "redisplay--variables",
+            "redisplay-dont-pause",
+            "revert-buffer-preserve-modes",
+            "rst-mode-abbrev-table",
+            "rst-mode-hook",
+            "rst-mode-map",
+            "rst-mode-syntax-table",
+            "ruby-mode-abbrev-table",
+            "ruby-mode-hook",
+            "ruby-mode-map",
+            "ruby-mode-syntax-table",
+            "scheme-mode-abbrev-table",
+            "scheme-mode-hook",
+            "scheme-mode-map",
+            "scheme-mode-syntax-table",
+            "scribe-mode-abbrev-table",
+            "scribe-mode-hook",
+            "scribe-mode-map",
+            "scribe-mode-syntax-table",
+            "scroll-lock-mode",
+            "scss-mode-abbrev-table",
+            "scss-mode-hook",
+            "scss-mode-map",
+            "scss-mode-syntax-table",
+            "seconds-to-string",
+            "ses-mode-abbrev-table",
+            "ses-mode-hook",
+            "ses-mode-map",
+            "ses-mode-syntax-table",
+            "sgml-mode-abbrev-table",
+            "sgml-mode-hook",
+            "sgml-mode-map",
+            "sgml-mode-syntax-table",
+            "sh-mode-abbrev-table",
+            "sh-mode-hook",
+            "sh-mode-map",
+            "sh-mode-syntax-table",
+            "shell-command-mode-hook",
+            "sieve-mode-abbrev-table",
+            "sieve-mode-hook",
+            "sieve-mode-map",
+            "sieve-mode-syntax-table",
+            "simula-mode-abbrev-table",
+            "simula-mode-hook",
+            "simula-mode-map",
+            "simula-mode-syntax-table",
+            "slitex-mode-abbrev-table",
+            "slitex-mode-hook",
+            "slitex-mode-map",
+            "slitex-mode-syntax-table",
+            "snmp-mode-abbrev-table",
+            "snmp-mode-hook",
+            "snmp-mode-map",
+            "snmp-mode-syntax-table",
+            "snmpv2-mode-abbrev-table",
+            "snmpv2-mode-hook",
+            "snmpv2-mode-map",
+            "snmpv2-mode-syntax-table",
+            "sort-numeric-base",
+            "sql-mode-abbrev-table",
+            "sql-mode-hook",
+            "sql-mode-map",
+            "sql-mode-syntax-table",
+            "srecode-template-mode-abbrev-table",
+            "srecode-template-mode-hook",
+            "srecode-template-mode-map",
+            "srecode-template-mode-syntax-table",
+            "tabify-regexp",
+            "tar-mode-abbrev-table",
+            "tar-mode-hook",
+            "tar-mode-map",
+            "tar-mode-syntax-table",
+            "tcl-mode-abbrev-table",
+            "tcl-mode-hook",
+            "tcl-mode-map",
+            "tcl-mode-syntax-table",
+            "tex-mode-abbrev-table",
+            "tex-mode-hook",
+            "tex-mode-map",
+            "tex-mode-syntax-table",
+            "texinfo-mode-abbrev-table",
+            "texinfo-mode-hook",
+            "texinfo-mode-map",
+            "texinfo-mode-syntax-table",
+            "text-scale--pinch-start-scale",
+            "text-scale-mode",
+            "text-scale-mode-amount",
+            "text-scale-mode-hook",
+            "text-scale-mode-lighter",
+            "text-scale-mode-remapping",
+            "text-scale-mode-step",
+            "text-scale-remap-header-line",
+            "unload-feature-special-hooks",
+            "unload-function-defs-list",
+            "unsafep--safe-functions",
+            "user-real-uid",
+            "user-uid",
+            "vc-mode-line-hook",
+            "vera-mode-abbrev-table",
+            "vera-mode-hook",
+            "vera-mode-map",
+            "vera-mode-syntax-table",
+            "verilog-mode-abbrev-table",
+            "verilog-mode-hook",
+            "verilog-mode-map",
+            "verilog-mode-syntax-table",
+            "vhdl-mode-abbrev-table",
+            "vhdl-mode-hook",
+            "vhdl-mode-map",
+            "vhdl-mode-syntax-table",
+            "window-text-change-functions",
+            "wisent-grammar-mode-abbrev-table",
+            "wisent-grammar-mode-hook",
+            "wisent-grammar-mode-map",
+            "wisent-grammar-mode-syntax-table",
+            "x-create-frame",
+            "x-family-fonts",
+            "x-load-color-file",
+            "x-mouse-clip-rectangular",
+            "x-select-font",
+            "xml-mode-abbrev-table",
+            "xml-mode-hook",
+            "xml-mode-map",
+            "xml-mode-syntax-table",
+            // ucs-normalize.el's `eval-when-compile' tables/vars:
+            // GNU's dump computes them at compile time, so the
+            // non-`ucs-normalize-' helper bindings are void at -Q
+            // (the `ucs-normalize-*' globals are real defvars —
+            // they stay bound).
+            "check-range",
+            "combining-chars",
+            "decomposition-pair-to-composition",
+            "hfs-nfd-alist",
+            "hfs-nfd-quick-check-list",
+            "hfs-nfc-quick-check-list",
+            "nfd-alist",
+            "nfd-quick-check-list",
+            "nfc-quick-check-list",
+            "nfkc-quick-check-list",
+            "nfkd-alist",
+            "nfkd-quick-check-list",
+            "non-starter-decompositions",
+            "ucs-normalize-composition-exclusions",
+        ];
         // Same treatment for prelude-folded *functions* GNU
         // leaves void at -Q (they live in dumped loaddefs
         // autoloads or real files — rebind on `require').
         const GNU_VOID_FNS_LATE: &[&str] = &[
-                "`--pcase-macroexpander",
-                "abbrev--expand-body",
-                "abbrev--expand-wrapped",
-                "add-remove--display-text-property",
-                "advice--make-how-alist",
-                "append-to-list",
-                "apply-on-rectangle",
-                "bidi--char-in-category-p",
-                "bool-vector-length",
-                "buffer-face-mode-invoke",
-                "buffer-name-as-string",
-                "buffer-substring-with-properties",
-                "buffer-word-at-point",
-                "byte-compile-warn-x",
-                "car-or-marker-p",
-                "char-table",
-                "cl--add-function",
-                "cl--adjoin",
-                "cl--advice--apply",
-                "cl--advice--link",
-                "build-default-fontset-data",
-                "cl--advice-place-code",
-                "cl--alist-to-plist",
-                "cl--arglist-args",
-                // cl-macs inline helpers folded into the prelude —
-                // GNU keeps them void at -Q (cl-macs isn't dumped).
-                "cl--const-expr-p",
-                "cl--const-expr-val",
-                "cl--do-&aux",
-                "cl--do-arglist",
-                "cl--loop-intervals",
-                "cl--loop-keymap-pairs",
-                "cl--loop-keymap-seqs",
-                "cl--loop-obarray-symbols",
-                "cl--loop-overlays",
-                "cl--pop2",
-                "cl--sm-exp",
-                "cl--sm-shadow",
-                "cl--block-throw",
-                "cl--block-throw--cmacro",
-                "cl--block-wrapper",
-                "cl--block-wrapper--cmacro",
-                "cl--check-key",
-                "cl--check-keys",
-                "cl--check-match",
-                "cl--check-test",
-                "cl--check-test-nokey",
-                "cl--compile-time-too",
-                "cl--compiler-macro-adjoin",
-                "cl--compiler-macro-assoc",
-                "cl--compiler-macro-cXXr",
-                "cl--compiler-macro-list*",
-                "cl--compiler-macro-member",
-                "cl--compiling-file",
-                "cl--defalias",
-                "cl--defun-1",
-                "cl--delete-duplicates",
-                "cl--derived-type-generalizers",
-                "cl--do-proclaim",
-                "cl--do-remf",
-                "cl--do-subst",
-                "cl--expand-do-loop",
-                "cl--expr-contains",
-                "cl--expr-contains-any",
-                "cl--expr-depends-p",
-                "cl--find-class",
-                "cl--generic-dispatch",
-                "cl--generic-prefill-dispatchers",
-                "cl--keyfn",
-                "cl--labels-convert",
-                "cl--loop-action",
-                "cl--loop-cond",
-                "cl--loop-destruct",
-                "cl--loop-destruct-accessors",
-                "cl--loop-expand",
-                "cl--loop-hash-pairs",
-                "cl--map-intervals",
-                "cl--map-overlays",
-                "cl--mapcar-many",
-                "cl--method-fn",
-                "cl--method-more-specific-p",
-                "cl--methods-with-qual",
-                "cl--nsublis-rec",
-                "cl--old-struct-type-of",
-                "cl--optimize",
-                "cl--parsing-keywords",
-                "cl--position",
-                "cl--prog",
-                "cl--remove-function",
-                "cl--safe-expr-p",
-                "cl--self-tco",
-                "cl--self-tco-on-form",
-                "cl--set-buffer-substring",
-                "cl--set-frame-visible-p",
-                "cl--set-getf",
-                "cl--set-substring",
-                "cl--simple-expr-p",
-                "cl--simple-exprs-p",
-                "cl--sm-subst",
-                "cl--spec-applicable-p",
-                "cl--spec-more-specific-p",
-                "cl--struct-register-class",
-                "cl--struct-register-tag",
-                "cl--struct-tag-var",
-                "cl--sublis-rec",
-                "cl--take",
-                "cl--thread-expand",
-                "cl--tree-equal-rec",
-                "cl--type-parents",
-                "cl-acons",
-                "cl-adjoin",
-                "cl-assert",
-                "cl-assoc",
-                "cl-assoc-if",
-                "cl-assoc-if-not",
-                "cl-block",
-                "cl-caaaar",
-                "cl-caaadr",
-                "cl-caaar",
-                "cl-caadar",
-                "cl-caaddr",
-                "cl-caadr",
-                "cl-cadaar",
-                "cl-cadadr",
-                "cl-cadar",
-                "cl-caddar",
-                "cl-cadddr",
-                "cl-caddr",
-                "cl-callf",
-                "cl-callf2",
-                "cl-case",
-                "cl-cdaaar",
-                "cl-cdaadr",
-                "cl-cdaar",
-                "cl-cdadar",
-                "cl-cdaddr",
-                "cl-cdadr",
-                "cl-cddaar",
-                "cl-cddadr",
-                "cl-cddar",
-                "cl-cdddar",
-                "cl-cddddr",
-                "cl-cdddr",
-                "cl-ceiling",
-                "cl-check-type",
-                "cl-coerce",
-                "cl-compiler-macroexpand",
-                "cl-concatenate",
-                "cl-constantly",
-                "cl-copy-list",
-                "cl-copy-seq",
-                "cl-count",
-                "cl-count-if",
-                "cl-count-if-not",
-                "cl-decf",
-                "cl-declaim",
-                "cl-declare",
-                "cl-define-compiler-macro",
-                "cl-defmacro",
-                "cl-defstruct",
-                "cl-defsubst",
-                "cl-deftype",
-                "cl-defun",
-                "cl-delete",
-                "cl-delete-duplicates",
-                "cl-delete-if",
-                "cl-delete-if-not",
-                "cl-describe-type",
-                "cl-destructuring-bind",
-                "cl-digit-char-p",
-                "cl-do",
-                "cl-do*",
-                "cl-do-all-symbols",
-                "cl-do-symbols",
-                "cl-dolist",
-                "cl-dotimes",
-                "cl-ecase",
-                "cl-eighth",
-                "cl-endp",
-                "cl-equalp",
-                "cl-etypecase",
-                "cl-eval-when",
-                "cl-evenp",
-                "cl-every",
-                "cl-fifth",
-                "cl-fill",
-                "cl-find",
-                "cl-find-class",
-                "cl-find-if",
-                "cl-find-if-not",
-                "cl-first",
-                "cl-flet",
-                "cl-flet*",
-                "cl-float-limits",
-                "cl-floatp-safe",
-                "cl-floor",
-                "cl-fourth",
-                "cl-fresh-line",
-                "cl-function",
-                "cl-gcd",
-                "cl-gensym",
-                "cl-gentemp",
-                "cl-get",
-                "cl-getf",
-                "cl-intersection",
-                "cl-isqrt",
-                "cl-iter-defun",
-                "cl-labels",
-                "cl-lcm",
-                "cl-ldiff",
-                "cl-letf",
-                "cl-letf*",
-                "cl-list*",
-                "cl-list-length",
-                "cl-load-time-value",
-                "cl-locally",
-                "cl-loop",
-                "cl-macrolet",
-                "cl-make-random-state",
-                "cl-map",
-                "cl-mapc",
-                "cl-mapcan",
-                "cl-mapcar",
-                "cl-mapcon",
-                "cl-mapl",
-                "cl-maplist",
-                "cl-member",
-                "cl-member-if",
-                "cl-member-if-not",
-                "cl-merge",
-                "cl-minus",
-                "cl-minusp",
-                "cl-mismatch",
-                "cl-mod",
-                "cl-multiple-value-apply",
-                "cl-multiple-value-bind",
-                "cl-multiple-value-call",
-                "cl-multiple-value-list",
-                "cl-multiple-value-setq",
-                "cl-nintersection",
-                "cl-ninth",
-                "cl-notany",
-                "cl-notevery",
-                "cl-nreconc",
-                "cl-nset-difference",
-                "cl-nset-exclusive-or",
-                "cl-nsublis",
-                "cl-nsubst",
-                "cl-nsubst-if",
-                "cl-nsubst-if-not",
-                "cl-nsubstitute",
-                "cl-nsubstitute-if",
-                "cl-nsubstitute-if-not",
-                "cl-nth-value",
-                "cl-nunion",
-                "cl-oddp",
-                "cl-once-only",
-                "cl-pairlis",
-                "cl-parse-integer",
-                "cl-plus",
-                "cl-plusp",
-                "cl-position",
-                "cl-position-if",
-                "cl-position-if-not",
-                "cl-prettyexpand",
-                "cl-proclaim",
-                "cl-prog",
-                "cl-prog*",
-                "cl-progv",
-                "cl-psetf",
-                "cl-psetq",
-                "cl-pushnew",
-                "cl-random",
-                "cl-random-state-p",
-                "cl-rassoc",
-                "cl-rassoc-if",
-                "cl-rassoc-if-not",
-                "cl-reduce",
-                "cl-rem",
-                "cl-remf",
-                "cl-remove",
-                "cl-remove-duplicates",
-                "cl-remove-if",
-                "cl-remove-if-not",
-                "cl-remprop",
-                "cl-replace",
-                "cl-rest",
-                "cl-return",
-                "cl-return-from",
-                "cl-revappend",
-                "cl-rotatef",
-                "cl-round",
-                "cl-search",
-                "cl-second",
-                "cl-set-difference",
-                "cl-set-exclusive-or",
-                "cl-seventh",
-                "cl-shiftf",
-                "cl-signum",
-                "cl-sixth",
-                "cl-some",
-                "cl-sort",
-                "cl-stable-sort",
-                "cl-struct--pcase-macroexpander",
-                "cl-struct-built-in-class",
-                "cl-struct-cl--class",
-                "cl-struct-cl--generic",
-                "cl-struct-cl--generic-generalizer",
-                "cl-struct-cl--generic-method",
-                "cl-struct-cl-derived-type-class",
-                "cl-struct-cl-slot-descriptor",
-                "cl-struct-cl-structure-class",
-                "cl-struct-cl-structure-object",
-                "cl-struct-oclosure--class",
-                "cl-struct-registerv",
-                "cl-struct-sequence-type",
-                "cl-struct-set-slot-value",
-                "cl-struct-slot-info",
-                "cl-struct-slot-offset",
-                "cl-struct-slot-value",
-                "cl-struct-timer",
-                "cl-struct-xref-elisp-location",
-                "cl-sublis",
-                "cl-subseq",
-                "cl-subsetp",
-                "cl-subst",
-                "cl-subst-if",
-                "cl-subst-if-not",
-                "cl-substitute",
-                "cl-substitute-if",
-                "cl-substitute-if-not",
-                "cl-svref",
-                "cl-symbol-macrolet",
-                "cl-tagbody",
-                "cl-tailp",
-                "cl-tenth",
-                "cl-the",
-                "cl-third",
-                "cl-times",
-                "cl-tree-equal",
-                "cl-truncate",
-                "cl-type--pcase-macroexpander",
-                "cl-typecase",
-                "cl-typep",
-                "cl-union",
-                "cl-values",
-                "cl-values-list",
-                "cl-with-accessors",
-                "cl-with-gensyms",
-                "clear-rectangle-line",
-                "clear-vector",
-                "connection-local-criteria-for-default-directory",
-                "connection-local-get-profile-variables",
-                "connection-local-get-profiles",
-                "connection-local-normalize-criteria",
-                "connection-local-profile-name-for-criteria",
-                "copy-seq",
-                "custom--settings-delete",
-                "custom--theme-entry-delete",
-                "custom-face-state",
-                "custom-face-tag",
-                "custom-group-list",
-                "custom-group-tag",
-                "custom-theme-load-themes",
-                "custom-unlispify-menu-entry",
-                "custom-variable-state",
-                "custom-variable-tag",
-                "declare-functionp",
-                "decoded-time--defslot",
-                "define-icon",
-                "delete-extract-rectangle-line",
-                "delete-rectangle-line",
-                "delete-whitespace-rectangle-line",
-                "dir-locals-to-string",
-                "display-buffer-mark-dedicated",
-                "easy-mmode--next",
-                "easy-mmode--prev",
-                "easy-mmode--globalized-predicate-p",
-                "easy-mmode-define-navigation",
-                "easy-mmode-pretty-mode-name",
-                "emacs-build-time",
-                "emacs-etc--hide-local-variables",
-                "epa-file",
-                "event-apply--modifier",
-                "extract-rectangle-bounds",
-                "extract-rectangle-line",
-                "face-attrs--make-indirect-safe",
-                "face-attrs-more-relative-p",
-                "face-remap--clear-remappings",
-                "face-remap--remap-face",
-                "face-remap-order",
-                "face-remap-remove-relative",
-                "feature-file",
-                "feature-symbols",
-                "file-dependents",
-                "file-loadhist-lookup",
-                "file-provides",
-                "file-requires",
-                "file-set-intersect",
-                "find-function--any-subform-p",
-                "find-function--defface",
-                "find-function--search-by-expanding-macros",
-                "find-function--try-macroexpand",
-                "find-function-C-source",
-                "find-function-advised-original",
-                "find-function-do-it",
-                "find-function-library",
-                "find-function-on-key-do-it",
-                "find-function-read",
-                "find-library--from-load-history",
-                "find-library--load-name",
-                "find-library-name",
-                "find-library-suffixes",
-                "forward-line-command",
-                "frame--list-z-order",
-                "gv--defsetter",
-                "gv-delay-error",
-                "gv-deref",
-                "gv-setter",
-                "gv-synthetic-place",
-                "gv-synthetic-place--anon-cmacro",
-                "handle-change-group",
-                "hash-table-empty-p",
-                "hash-table-keys",
-                "hash-table-values",
-                "help-button-action",
-                "help-customize",
-                "help-do-xref",
-                "help-follow",
-                "help-follow-mouse",
-                "help-follow-symbol",
-                "help-function-def--button-function",
-                "help-go-back",
-                "help-go-forward",
-                "help-goto-info",
-                "help-goto-lispref-info",
-                "help-goto-next-page",
-                "help-goto-previous-page",
-                "help-insert-string",
-                "help-mode-context-menu",
-                "help-mode-menu",
-                "help-mode-revert-buffer",
-                "help-view-source",
-                "help-xref--navigation-buttons",
-                "help-xref-go-back",
-                "help-xref-go-forward",
-                "icon-complete-spec",
-                "icon-documentation",
-                "icon-elements",
-                "icon-spec-keywords",
-                "icon-spec-values",
-                "icon-string",
-                "iconp",
-                "icons--copy-spec",
-                "icons--create",
-                "icons--describe-spec",
-                "icons--merge-spec",
-                "icons--register",
-                "icons--spec",
-                "insert-directory-adj-pos",
-                "jka-compr",
-                "kmacro-end-or-call-macro-repeat",
-                "let--pcase-macroexpander",
-                "list-length",
-                "list-tail",
-                "make-help-screen",
-                "make-obsolete-generalized-variable",
-                "make-prop-match",
-                "map--pcase-macroexpander",
-                "map--pcase-map-elt",
-                "map--plist-p",
-                "map-let",
-                "map-put",
-                "member-if-not",
-                "modify-dir-local-variable",
-                "modify-file-local-variable",
-                "modify-file-local-variable-message",
-                "modify-file-local-variable-prop-line",
-                "open-rectangle-line",
-                "operate-on-rectangle",
-                "output-switches",
-                "overlays-at-point",
-                "pcase--and",
-                "pcase--app-subst-match",
-                "pcase--app-subst-rest",
-                "pcase--edebug-match-pat-args",
-                "pcase--eval",
-                "pcase--expand",
-                "pcase--expand-`",
-                "pcase--flip",
-                "pcase--funcall",
-                "pcase--get-macroexpander",
-                "pcase--if",
-                "pcase--let*",
-                "pcase--macroexpand",
-                "pcase--mark-used",
-                "pcase--match",
-                "pcase--mutually-exclusive-p",
-                "pcase--self-quoting-p",
-                "pcase--small-branch-p",
-                "pcase--split-equal",
-                "pcase--split-match",
-                "pcase--split-member",
-                "pcase--split-pred",
-                "pcase--split-rest",
-                "pcase--subtype-bitsets",
-                "pcase--trivial-upat-p",
-                "pcase--u",
-                "pcase--u1",
-                "pcase-compile-patterns",
-                "progv",
-                "prop-match-p",
-                "prop-match-value",
-                "pushnew",
-                "read-dir-locals-file",
-                "read-feature",
-                "read-file-local-variable",
-                "read-file-local-variable-mode",
-                "read-file-local-variable-value",
-                "read-library-name--find-files",
-                "rectangle--*-char",
-                "rectangle--col-pos",
-                "rectangle--crutches",
-                "rectangle--default-line-number-format",
-                "rectangle--extract-region",
-                "rectangle--insert-for-yank",
-                "rectangle--insert-region",
-                "rectangle--point-col",
-                "rectangle--pos-cols",
-                "rectangle--region-beginning",
-                "rectangle--region-end",
-                "rectangle--reset-crutches",
-                "rectangle--reset-point-crutches",
-                "rectangle--space-to",
-                "rectangle--string-erase-preview",
-                "rectangle--string-flush-preview",
-                "rectangle--string-preview",
-                "rectangle-backward-char",
-                "rectangle-dimensions",
-                "rectangle-exchange-point-and-mark",
-                "rectangle-forward-char",
-                "rectangle-intersect-p",
-                "rectangle-left-char",
-                "rectangle-next-line",
-                "rectangle-number-line-callback",
-                "rectangle-position-as-coordinates",
-                "rectangle-previous-line",
-                "rectangle-right-char",
-                "repos-count-screen-lines",
-                "repos-count-screen-lines-signed",
-                "rx--all-string-branches-p",
-                "rx--atomic-regexp",
-                "rx--bracket",
-                "rx--char-alt-union",
-                "rx--check-repeat-arg",
-                "rx--collect-or-strings",
-                "rx--condense-intervals",
-                "rx--control-greedy",
-                "rx--empty",
-                "rx--enclose",
-                "rx--expand-def-form",
-                "rx--expand-def-symbol",
-                "rx--expand-eval",
-                "rx--expand-template",
-                "rx--extend-local-defs",
-                "rx--foldl",
-                "rx--generate-alt",
-                "rx--human-readable",
-                "rx--intersection-intervals",
-                "rx--interval-set-complement",
-                "rx--interval-set-intersection",
-                "rx--interval-set-union",
-                "rx--lookup-def",
-                "rx--make-binding",
-                "rx--make-named-binding",
-                "rx--normalize-char-pattern",
-                "rx--optimize-or-args",
-                "rx--parse-any",
-                "rx--pcase-transform",
-                "rx--reduce-right",
-                "rx--reduce-to-char-alt",
-                "rx--sequence",
-                "rx--string-to-intervals",
-                "rx--substitute",
-                "rx--to-expr",
-                "rx--translate",
-                "rx--translate-**",
-                "rx--translate-=",
-                "rx--translate->=",
-                "rx--translate-any",
-                "rx--translate-backref",
-                "rx--translate-bounded-repetition",
-                "rx--translate-category",
-                "rx--translate-char-alt",
-                "rx--translate-compat-form",
-                "rx--translate-compat-form-entry",
-                "rx--translate-compat-symbol-entry",
-                "rx--translate-counted-repetition",
-                "rx--translate-eval",
-                "rx--translate-form",
-                "rx--translate-group",
-                "rx--translate-group-n",
-                "rx--translate-intersection",
-                "rx--translate-literal",
-                "rx--translate-not",
-                "rx--translate-or",
-                "rx--translate-regexp",
-                "rx--translate-rep",
-                "rx--translate-repeat",
-                "rx--translate-seq",
-                "rx--translate-symbol",
-                "rx--translate-syntax",
-                "rx-submatch-n",
-                "same-names-p",
-                "scribe-mode",
-                "seq",
-                "seq-last",
-                "sequence",
-                "set-translation-table",
-                "shell-command-mode",
-                "spaces-string",
-                "string-aref",
-                "string-compare",
-                "string-rectangle-line",
-                "string-remove-prefix",
-                "string-remove-suffix",
-                "string-to-sequence",
-                "text-property--find-end-backward",
-                "text-property--find-end-forward",
-                "text-property--match-p",
-                "text-property-search-backward",
-                "text-scale--refresh",
-                "text-scale-max-amount",
-                "text-scale-min-amount",
-                "text-scale-mode",
-                "thread-first",
-                "thread-last",
-                "timer--defslot",
-                "timer-p",
-                "toggle-read-only",
-                "unload--set-major-mode",
-                "unsafep--check",
-                "values",
-                "window-has-parameters",
-                "window-inside-absolute-body-pixel-edges",
-                "window-left-char",
-                "window-line",
-                "with-buffer-unmodified-if-unchanged",
-                "work-buffer--get",
-                "work-buffer--prepare-pixelwise",
-                // GNU leaves these internal cells void at -Q: the
-                // subr/`defun' here is a remacs convenience, so the
-                // definition stays reachable via `remacs--dump-fn'.
-                "internal-doc-string-p",
-                "internal--set-subr-doc",
-                "internal--thread-argument",
-                "internal-make-interpreted-closure-function",
-                "ucs-normalize--ensure-loaded",
-                // The interpreted `(setf cl--find-class)' fallback in
-                // cl-preloaded.el — GNU -Q has no such function.
-                "(setf cl--find-class)",
-                // ucs-normalize.el's `eval-when-compile'-only helpers:
-                // GNU's dump runs them at compile time only, so they are
-                // void at -Q; our source-level load defines them.
-                "alist-list-to-vector",
-                "decomposition-char-recursively",
-                "decomposition-translation-alist",
-                "hfs-nfd",
-                "nfd",
-                "nfkd",
-                "quick-check-composition-list-to-regexp",
-                "quick-check-decomposition-list-to-regexp",
-                "quick-check-list",
-                "quick-check-list-to-regexp",
-
-];
-
+            "`--pcase-macroexpander",
+            "abbrev--expand-body",
+            "abbrev--expand-wrapped",
+            "add-remove--display-text-property",
+            "advice--make-how-alist",
+            "append-to-list",
+            "apply-on-rectangle",
+            "bidi--char-in-category-p",
+            "bool-vector-length",
+            "buffer-face-mode-invoke",
+            "buffer-name-as-string",
+            "buffer-substring-with-properties",
+            "buffer-word-at-point",
+            "byte-compile-warn-x",
+            "car-or-marker-p",
+            "char-table",
+            "cl--add-function",
+            "cl--adjoin",
+            "cl--advice--apply",
+            "cl--advice--link",
+            "build-default-fontset-data",
+            "cl--advice-place-code",
+            "cl--alist-to-plist",
+            "cl--arglist-args",
+            // cl-macs inline helpers folded into the prelude —
+            // GNU keeps them void at -Q (cl-macs isn't dumped).
+            "cl--const-expr-p",
+            "cl--const-expr-val",
+            "cl--do-&aux",
+            "cl--do-arglist",
+            "cl--loop-intervals",
+            "cl--loop-keymap-pairs",
+            "cl--loop-keymap-seqs",
+            "cl--loop-obarray-symbols",
+            "cl--loop-overlays",
+            "cl--pop2",
+            "cl--sm-exp",
+            "cl--sm-shadow",
+            "cl--block-throw",
+            "cl--block-throw--cmacro",
+            "cl--block-wrapper",
+            "cl--block-wrapper--cmacro",
+            "cl--check-key",
+            "cl--check-keys",
+            "cl--check-match",
+            "cl--check-test",
+            "cl--check-test-nokey",
+            "cl--compile-time-too",
+            "cl--compiler-macro-adjoin",
+            "cl--compiler-macro-assoc",
+            "cl--compiler-macro-cXXr",
+            "cl--compiler-macro-list*",
+            "cl--compiler-macro-member",
+            "cl--compiling-file",
+            "cl--defalias",
+            "cl--defun-1",
+            "cl--delete-duplicates",
+            "cl--derived-type-generalizers",
+            "cl--do-proclaim",
+            "cl--do-remf",
+            "cl--do-subst",
+            "cl--expand-do-loop",
+            "cl--expr-contains",
+            "cl--expr-contains-any",
+            "cl--expr-depends-p",
+            "cl--find-class",
+            "cl--generic-dispatch",
+            "cl--generic-prefill-dispatchers",
+            "cl--keyfn",
+            "cl--labels-convert",
+            "cl--loop-action",
+            "cl--loop-cond",
+            "cl--loop-destruct",
+            "cl--loop-destruct-accessors",
+            "cl--loop-expand",
+            "cl--loop-hash-pairs",
+            "cl--map-intervals",
+            "cl--map-overlays",
+            "cl--mapcar-many",
+            "cl--method-fn",
+            "cl--method-more-specific-p",
+            "cl--methods-with-qual",
+            "cl--nsublis-rec",
+            "cl--old-struct-type-of",
+            "cl--optimize",
+            "cl--parsing-keywords",
+            "cl--position",
+            "cl--prog",
+            "cl--remove-function",
+            "cl--safe-expr-p",
+            "cl--self-tco",
+            "cl--self-tco-on-form",
+            "cl--set-buffer-substring",
+            "cl--set-frame-visible-p",
+            "cl--set-getf",
+            "cl--set-substring",
+            "cl--simple-expr-p",
+            "cl--simple-exprs-p",
+            "cl--sm-subst",
+            "cl--spec-applicable-p",
+            "cl--spec-more-specific-p",
+            "cl--struct-register-class",
+            "cl--struct-register-tag",
+            "cl--struct-tag-var",
+            "cl--sublis-rec",
+            "cl--take",
+            "cl--thread-expand",
+            "cl--tree-equal-rec",
+            "cl--type-parents",
+            "cl-acons",
+            "cl-adjoin",
+            "cl-assert",
+            "cl-assoc",
+            "cl-assoc-if",
+            "cl-assoc-if-not",
+            "cl-block",
+            "cl-caaaar",
+            "cl-caaadr",
+            "cl-caaar",
+            "cl-caadar",
+            "cl-caaddr",
+            "cl-caadr",
+            "cl-cadaar",
+            "cl-cadadr",
+            "cl-cadar",
+            "cl-caddar",
+            "cl-cadddr",
+            "cl-caddr",
+            "cl-callf",
+            "cl-callf2",
+            "cl-case",
+            "cl-cdaaar",
+            "cl-cdaadr",
+            "cl-cdaar",
+            "cl-cdadar",
+            "cl-cdaddr",
+            "cl-cdadr",
+            "cl-cddaar",
+            "cl-cddadr",
+            "cl-cddar",
+            "cl-cdddar",
+            "cl-cddddr",
+            "cl-cdddr",
+            "cl-ceiling",
+            "cl-check-type",
+            "cl-coerce",
+            "cl-compiler-macroexpand",
+            "cl-concatenate",
+            "cl-constantly",
+            "cl-copy-list",
+            "cl-copy-seq",
+            "cl-count",
+            "cl-count-if",
+            "cl-count-if-not",
+            "cl-decf",
+            "cl-declaim",
+            "cl-declare",
+            "cl-define-compiler-macro",
+            "cl-defmacro",
+            "cl-defstruct",
+            "cl-defsubst",
+            "cl-deftype",
+            "cl-defun",
+            "cl-delete",
+            "cl-delete-duplicates",
+            "cl-delete-if",
+            "cl-delete-if-not",
+            "cl-describe-type",
+            "cl-destructuring-bind",
+            "cl-digit-char-p",
+            "cl-do",
+            "cl-do*",
+            "cl-do-all-symbols",
+            "cl-do-symbols",
+            "cl-dolist",
+            "cl-dotimes",
+            "cl-ecase",
+            "cl-eighth",
+            "cl-endp",
+            "cl-equalp",
+            "cl-etypecase",
+            "cl-eval-when",
+            "cl-evenp",
+            "cl-every",
+            "cl-fifth",
+            "cl-fill",
+            "cl-find",
+            "cl-find-class",
+            "cl-find-if",
+            "cl-find-if-not",
+            "cl-first",
+            "cl-flet",
+            "cl-flet*",
+            "cl-float-limits",
+            "cl-floatp-safe",
+            "cl-floor",
+            "cl-fourth",
+            "cl-fresh-line",
+            "cl-function",
+            "cl-gcd",
+            "cl-gensym",
+            "cl-gentemp",
+            "cl-get",
+            "cl-getf",
+            "cl-intersection",
+            "cl-isqrt",
+            "cl-iter-defun",
+            "cl-labels",
+            "cl-lcm",
+            "cl-ldiff",
+            "cl-letf",
+            "cl-letf*",
+            "cl-list*",
+            "cl-list-length",
+            "cl-load-time-value",
+            "cl-locally",
+            "cl-loop",
+            "cl-macrolet",
+            "cl-make-random-state",
+            "cl-map",
+            "cl-mapc",
+            "cl-mapcan",
+            "cl-mapcar",
+            "cl-mapcon",
+            "cl-mapl",
+            "cl-maplist",
+            "cl-member",
+            "cl-member-if",
+            "cl-member-if-not",
+            "cl-merge",
+            "cl-minus",
+            "cl-minusp",
+            "cl-mismatch",
+            "cl-mod",
+            "cl-multiple-value-apply",
+            "cl-multiple-value-bind",
+            "cl-multiple-value-call",
+            "cl-multiple-value-list",
+            "cl-multiple-value-setq",
+            "cl-nintersection",
+            "cl-ninth",
+            "cl-notany",
+            "cl-notevery",
+            "cl-nreconc",
+            "cl-nset-difference",
+            "cl-nset-exclusive-or",
+            "cl-nsublis",
+            "cl-nsubst",
+            "cl-nsubst-if",
+            "cl-nsubst-if-not",
+            "cl-nsubstitute",
+            "cl-nsubstitute-if",
+            "cl-nsubstitute-if-not",
+            "cl-nth-value",
+            "cl-nunion",
+            "cl-oddp",
+            "cl-once-only",
+            "cl-pairlis",
+            "cl-parse-integer",
+            "cl-plus",
+            "cl-plusp",
+            "cl-position",
+            "cl-position-if",
+            "cl-position-if-not",
+            "cl-prettyexpand",
+            "cl-proclaim",
+            "cl-prog",
+            "cl-prog*",
+            "cl-progv",
+            "cl-psetf",
+            "cl-psetq",
+            "cl-pushnew",
+            "cl-random",
+            "cl-random-state-p",
+            "cl-rassoc",
+            "cl-rassoc-if",
+            "cl-rassoc-if-not",
+            "cl-reduce",
+            "cl-rem",
+            "cl-remf",
+            "cl-remove",
+            "cl-remove-duplicates",
+            "cl-remove-if",
+            "cl-remove-if-not",
+            "cl-remprop",
+            "cl-replace",
+            "cl-rest",
+            "cl-return",
+            "cl-return-from",
+            "cl-revappend",
+            "cl-rotatef",
+            "cl-round",
+            "cl-search",
+            "cl-second",
+            "cl-set-difference",
+            "cl-set-exclusive-or",
+            "cl-seventh",
+            "cl-shiftf",
+            "cl-signum",
+            "cl-sixth",
+            "cl-some",
+            "cl-sort",
+            "cl-stable-sort",
+            "cl-struct--pcase-macroexpander",
+            "cl-struct-built-in-class",
+            "cl-struct-cl--class",
+            "cl-struct-cl--generic",
+            "cl-struct-cl--generic-generalizer",
+            "cl-struct-cl--generic-method",
+            "cl-struct-cl-derived-type-class",
+            "cl-struct-cl-slot-descriptor",
+            "cl-struct-cl-structure-class",
+            "cl-struct-cl-structure-object",
+            "cl-struct-oclosure--class",
+            "cl-struct-registerv",
+            "cl-struct-sequence-type",
+            "cl-struct-set-slot-value",
+            "cl-struct-slot-info",
+            "cl-struct-slot-offset",
+            "cl-struct-slot-value",
+            "cl-struct-timer",
+            "cl-struct-xref-elisp-location",
+            "cl-sublis",
+            "cl-subseq",
+            "cl-subsetp",
+            "cl-subst",
+            "cl-subst-if",
+            "cl-subst-if-not",
+            "cl-substitute",
+            "cl-substitute-if",
+            "cl-substitute-if-not",
+            "cl-svref",
+            "cl-symbol-macrolet",
+            "cl-tagbody",
+            "cl-tailp",
+            "cl-tenth",
+            "cl-the",
+            "cl-third",
+            "cl-times",
+            "cl-tree-equal",
+            "cl-truncate",
+            "cl-type--pcase-macroexpander",
+            "cl-typecase",
+            "cl-typep",
+            "cl-union",
+            "cl-values",
+            "cl-values-list",
+            "cl-with-accessors",
+            "cl-with-gensyms",
+            "clear-rectangle-line",
+            "clear-vector",
+            "connection-local-criteria-for-default-directory",
+            "connection-local-get-profile-variables",
+            "connection-local-get-profiles",
+            "connection-local-normalize-criteria",
+            "connection-local-profile-name-for-criteria",
+            "copy-seq",
+            "custom--settings-delete",
+            "custom--theme-entry-delete",
+            "custom-face-state",
+            "custom-face-tag",
+            "custom-group-list",
+            "custom-group-tag",
+            "custom-theme-load-themes",
+            "custom-unlispify-menu-entry",
+            "custom-variable-state",
+            "custom-variable-tag",
+            "declare-functionp",
+            "decoded-time--defslot",
+            "define-icon",
+            "delete-extract-rectangle-line",
+            "delete-rectangle-line",
+            "delete-whitespace-rectangle-line",
+            "dir-locals-to-string",
+            "display-buffer-mark-dedicated",
+            "easy-mmode--next",
+            "easy-mmode--prev",
+            "easy-mmode--globalized-predicate-p",
+            "easy-mmode-define-navigation",
+            "easy-mmode-pretty-mode-name",
+            "emacs-build-time",
+            "emacs-etc--hide-local-variables",
+            "epa-file",
+            "event-apply--modifier",
+            "extract-rectangle-bounds",
+            "extract-rectangle-line",
+            "face-attrs--make-indirect-safe",
+            "face-attrs-more-relative-p",
+            "face-remap--clear-remappings",
+            "face-remap--remap-face",
+            "face-remap-order",
+            "face-remap-remove-relative",
+            "feature-file",
+            "feature-symbols",
+            "file-dependents",
+            "file-loadhist-lookup",
+            "file-provides",
+            "file-requires",
+            "file-set-intersect",
+            "find-function--any-subform-p",
+            "find-function--defface",
+            "find-function--search-by-expanding-macros",
+            "find-function--try-macroexpand",
+            "find-function-C-source",
+            "find-function-advised-original",
+            "find-function-do-it",
+            "find-function-library",
+            "find-function-on-key-do-it",
+            "find-function-read",
+            "find-library--from-load-history",
+            "find-library--load-name",
+            "find-library-name",
+            "find-library-suffixes",
+            "forward-line-command",
+            "frame--list-z-order",
+            "gv--defsetter",
+            "gv-delay-error",
+            "gv-deref",
+            "gv-setter",
+            "gv-synthetic-place",
+            "gv-synthetic-place--anon-cmacro",
+            "handle-change-group",
+            "hash-table-empty-p",
+            "hash-table-keys",
+            "hash-table-values",
+            "help-button-action",
+            "help-customize",
+            "help-do-xref",
+            "help-follow",
+            "help-follow-mouse",
+            "help-follow-symbol",
+            "help-function-def--button-function",
+            "help-go-back",
+            "help-go-forward",
+            "help-goto-info",
+            "help-goto-lispref-info",
+            "help-goto-next-page",
+            "help-goto-previous-page",
+            "help-insert-string",
+            "help-mode-context-menu",
+            "help-mode-menu",
+            "help-mode-revert-buffer",
+            "help-view-source",
+            "help-xref--navigation-buttons",
+            "help-xref-go-back",
+            "help-xref-go-forward",
+            "icon-complete-spec",
+            "icon-documentation",
+            "icon-elements",
+            "icon-spec-keywords",
+            "icon-spec-values",
+            "icon-string",
+            "iconp",
+            "icons--copy-spec",
+            "icons--create",
+            "icons--describe-spec",
+            "icons--merge-spec",
+            "icons--register",
+            "icons--spec",
+            "insert-directory-adj-pos",
+            "jka-compr",
+            "kmacro-end-or-call-macro-repeat",
+            "let--pcase-macroexpander",
+            "list-length",
+            "list-tail",
+            "make-help-screen",
+            "make-obsolete-generalized-variable",
+            "make-prop-match",
+            "map--pcase-macroexpander",
+            "map--pcase-map-elt",
+            "map--plist-p",
+            "map-let",
+            "map-put",
+            "member-if-not",
+            "modify-dir-local-variable",
+            "modify-file-local-variable",
+            "modify-file-local-variable-message",
+            "modify-file-local-variable-prop-line",
+            "open-rectangle-line",
+            "operate-on-rectangle",
+            "output-switches",
+            "overlays-at-point",
+            "pcase--and",
+            "pcase--app-subst-match",
+            "pcase--app-subst-rest",
+            "pcase--edebug-match-pat-args",
+            "pcase--eval",
+            "pcase--expand",
+            "pcase--expand-`",
+            "pcase--flip",
+            "pcase--funcall",
+            "pcase--get-macroexpander",
+            "pcase--if",
+            "pcase--let*",
+            "pcase--macroexpand",
+            "pcase--mark-used",
+            "pcase--match",
+            "pcase--mutually-exclusive-p",
+            "pcase--self-quoting-p",
+            "pcase--small-branch-p",
+            "pcase--split-equal",
+            "pcase--split-match",
+            "pcase--split-member",
+            "pcase--split-pred",
+            "pcase--split-rest",
+            "pcase--subtype-bitsets",
+            "pcase--trivial-upat-p",
+            "pcase--u",
+            "pcase--u1",
+            "pcase-compile-patterns",
+            "progv",
+            "prop-match-p",
+            "prop-match-value",
+            "pushnew",
+            "read-dir-locals-file",
+            "read-feature",
+            "read-file-local-variable",
+            "read-file-local-variable-mode",
+            "read-file-local-variable-value",
+            "read-library-name--find-files",
+            "rectangle--*-char",
+            "rectangle--col-pos",
+            "rectangle--crutches",
+            "rectangle--default-line-number-format",
+            "rectangle--extract-region",
+            "rectangle--insert-for-yank",
+            "rectangle--insert-region",
+            "rectangle--point-col",
+            "rectangle--pos-cols",
+            "rectangle--region-beginning",
+            "rectangle--region-end",
+            "rectangle--reset-crutches",
+            "rectangle--reset-point-crutches",
+            "rectangle--space-to",
+            "rectangle--string-erase-preview",
+            "rectangle--string-flush-preview",
+            "rectangle--string-preview",
+            "rectangle-backward-char",
+            "rectangle-dimensions",
+            "rectangle-exchange-point-and-mark",
+            "rectangle-forward-char",
+            "rectangle-intersect-p",
+            "rectangle-left-char",
+            "rectangle-next-line",
+            "rectangle-number-line-callback",
+            "rectangle-position-as-coordinates",
+            "rectangle-previous-line",
+            "rectangle-right-char",
+            "repos-count-screen-lines",
+            "repos-count-screen-lines-signed",
+            "rx--all-string-branches-p",
+            "rx--atomic-regexp",
+            "rx--bracket",
+            "rx--char-alt-union",
+            "rx--check-repeat-arg",
+            "rx--collect-or-strings",
+            "rx--condense-intervals",
+            "rx--control-greedy",
+            "rx--empty",
+            "rx--enclose",
+            "rx--expand-def-form",
+            "rx--expand-def-symbol",
+            "rx--expand-eval",
+            "rx--expand-template",
+            "rx--extend-local-defs",
+            "rx--foldl",
+            "rx--generate-alt",
+            "rx--human-readable",
+            "rx--intersection-intervals",
+            "rx--interval-set-complement",
+            "rx--interval-set-intersection",
+            "rx--interval-set-union",
+            "rx--lookup-def",
+            "rx--make-binding",
+            "rx--make-named-binding",
+            "rx--normalize-char-pattern",
+            "rx--optimize-or-args",
+            "rx--parse-any",
+            "rx--pcase-transform",
+            "rx--reduce-right",
+            "rx--reduce-to-char-alt",
+            "rx--sequence",
+            "rx--string-to-intervals",
+            "rx--substitute",
+            "rx--to-expr",
+            "rx--translate",
+            "rx--translate-**",
+            "rx--translate-=",
+            "rx--translate->=",
+            "rx--translate-any",
+            "rx--translate-backref",
+            "rx--translate-bounded-repetition",
+            "rx--translate-category",
+            "rx--translate-char-alt",
+            "rx--translate-compat-form",
+            "rx--translate-compat-form-entry",
+            "rx--translate-compat-symbol-entry",
+            "rx--translate-counted-repetition",
+            "rx--translate-eval",
+            "rx--translate-form",
+            "rx--translate-group",
+            "rx--translate-group-n",
+            "rx--translate-intersection",
+            "rx--translate-literal",
+            "rx--translate-not",
+            "rx--translate-or",
+            "rx--translate-regexp",
+            "rx--translate-rep",
+            "rx--translate-repeat",
+            "rx--translate-seq",
+            "rx--translate-symbol",
+            "rx--translate-syntax",
+            "rx-submatch-n",
+            "same-names-p",
+            "scribe-mode",
+            "seq",
+            "seq-last",
+            "sequence",
+            "set-translation-table",
+            "shell-command-mode",
+            "spaces-string",
+            "string-aref",
+            "string-compare",
+            "string-rectangle-line",
+            "string-remove-prefix",
+            "string-remove-suffix",
+            "string-to-sequence",
+            "text-property--find-end-backward",
+            "text-property--find-end-forward",
+            "text-property--match-p",
+            "text-property-search-backward",
+            "text-scale--refresh",
+            "text-scale-max-amount",
+            "text-scale-min-amount",
+            "text-scale-mode",
+            "thread-first",
+            "thread-last",
+            "timer--defslot",
+            "timer-p",
+            "toggle-read-only",
+            "unload--set-major-mode",
+            "unsafep--check",
+            "values",
+            "window-has-parameters",
+            "window-inside-absolute-body-pixel-edges",
+            "window-left-char",
+            "window-line",
+            "with-buffer-unmodified-if-unchanged",
+            "work-buffer--get",
+            "work-buffer--prepare-pixelwise",
+            // GNU leaves these internal cells void at -Q: the
+            // subr/`defun' here is a remacs convenience, so the
+            // definition stays reachable via `remacs--dump-fn'.
+            "internal-doc-string-p",
+            "internal--set-subr-doc",
+            "internal--thread-argument",
+            "internal-make-interpreted-closure-function",
+            "ucs-normalize--ensure-loaded",
+            // The interpreted `(setf cl--find-class)' fallback in
+            // cl-preloaded.el — GNU -Q has no such function.
+            "(setf cl--find-class)",
+            // ucs-normalize.el's `eval-when-compile'-only helpers:
+            // GNU's dump runs them at compile time only, so they are
+            // void at -Q; our source-level load defines them.
+            "alist-list-to-vector",
+            "decomposition-char-recursively",
+            "decomposition-translation-alist",
+            "hfs-nfd",
+            "nfd",
+            "nfkd",
+            "quick-check-composition-list-to-regexp",
+            "quick-check-decomposition-list-to-regexp",
+            "quick-check-list",
+            "quick-check-list-to-regexp",
+        ];
 
         // Plist snapshot from before ANY Lisp runs: the cl chain
         // (gv→cl-lib→cl-loaddefs→cl-macs) loads *inside* the prelude
@@ -2391,8 +2390,8 @@ impl Interp {
                                 "[prelude] read error @{pos}: {:?} {}",
                                 f,
                                 match &f {
-                                    crate::lisp::Flow::Signal(s, d, _) => interp
-                                        .print_to_string(&Value::cons(s.clone(), d.clone())),
+                                    crate::lisp::Flow::Signal(s, d, _) =>
+                                        interp.print_to_string(&Value::cons(s.clone(), d.clone())),
                                     _ => String::new(),
                                 }
                             );
@@ -2432,10 +2431,8 @@ impl Interp {
                                     "  [{}ms] ERR {:?}",
                                     tf.elapsed().as_millis(),
                                     interp.print_to_string(&match &f {
-                                        crate::lisp::Flow::Signal(s, d, _) => Value::cons(
-                                            s.clone(),
-                                            d.clone(),
-                                        ),
+                                        crate::lisp::Flow::Signal(s, d, _) =>
+                                            Value::cons(s.clone(), d.clone(),),
                                         _ => Value::Nil,
                                     })
                                 );
@@ -2528,8 +2525,7 @@ impl Interp {
             // those files, so everything they touch — function cells,
             // value cells, plists — is restored from this snapshot after
             // the loads finish below.
-        let pre_boot_syms: HashMap<SymId, (Value, Value, Value, bool, bool, bool)> =
-            interp
+            let pre_boot_syms: HashMap<SymId, (Value, Value, Value, bool, bool, bool)> = interp
                 .obarray
                 .all_ids()
                 .iter()
@@ -3132,10 +3128,18 @@ impl Interp {
             // producing `((setf cond) ...)' expansions that signal
             // invalid-function — killing `advice-remove' and thus
             // `electric-indent-mode' init.
-            const ROLLED_LIBS: &[&str] =
-                &["rect", "send-to", "map", "cl-macs", "cl-lib",
-                  "cl-loaddefs", "pcase", "help-macro",
-                  "remacs-compat", "inline"];
+            const ROLLED_LIBS: &[&str] = &[
+                "rect",
+                "send-to",
+                "map",
+                "cl-macs",
+                "cl-lib",
+                "cl-loaddefs",
+                "pcase",
+                "help-macro",
+                "remacs-compat",
+                "inline",
+            ];
             // Symbols every kept library's load-history items mention —
             // restoring these would clobber post-snapshot work.
             let mut kept_syms: HashSet<SymId> = HashSet::default();
@@ -3195,30 +3199,32 @@ impl Interp {
                                     Value::Sym(t)
                                         if matches!(
                                             interp.obarray.name(*t),
-                                            "defun" | "defmacro"
+                                            "defun"
+                                                | "defmacro"
                                                 | "cl-defgeneric"
-                                                | "autoload" | "t"
-                                                | "defvar" | "defconst"
-                                                | "defcustom" | "defalias"
-                                                | "defsubst" | "defvar-local"
-                                                | "defface" | "defgroup"
-                                                | "cl-defun" | "cl-defmacro"
-                                                | "cl-defsubst" | "cl-deftype"
-                                                | "cl-defstruct" | "defstruct"
+                                                | "autoload"
+                                                | "t"
+                                                | "defvar"
+                                                | "defconst"
+                                                | "defcustom"
+                                                | "defalias"
+                                                | "defsubst"
+                                                | "defvar-local"
+                                                | "defface"
+                                                | "defgroup"
+                                                | "cl-defun"
+                                                | "cl-defmacro"
+                                                | "cl-defsubst"
+                                                | "cl-deftype"
+                                                | "cl-defstruct"
+                                                | "defstruct"
                                         ) =>
                                     {
                                         push_sym(&ib.cdr);
                                     }
-                                    Value::Sym(t)
-                                        if interp.obarray.name(*t)
-                                            == "cl-defmethod" =>
-                                    {
-                                        if let Value::Cons(d) =
-                                            &ib.cdr
-                                        {
-                                            push_sym(
-                                                &d.borrow().car,
-                                            );
+                                    Value::Sym(t) if interp.obarray.name(*t) == "cl-defmethod" => {
+                                        if let Value::Cons(d) = &ib.cdr {
+                                            push_sym(&d.borrow().car);
                                         }
                                     }
                                     _ => {}
@@ -3305,48 +3311,48 @@ impl Interp {
             // A name the rolled file itself *defined* (defun/defmacro/
             // defvar/defalias) is voided even when the snapshot holds a
             // prelude-folded copy: GNU -Q has no definition for it at
-                if interp.dbg_flags & 0x800 != 0 {
-                    let pb = interp.intern("byte-run--parse-body");
-                    let bq = interp.intern("`");
-                    let md = interp.intern("macroexp--dynvars");
+            if interp.dbg_flags & 0x800 != 0 {
+                let pb = interp.intern("byte-run--parse-body");
+                let bq = interp.intern("`");
+                let md = interp.intern("macroexp--dynvars");
+                eprintln!(
+                    "[pre-restore] pb kept={} file={} tch={} | ` kept={} file={} tch={} rst={} | mdyn kept={} file={} tch={} rst={} snapv={:?}",
+                    kept_syms.contains(&pb),
+                    file_syms.contains(&pb),
+                    touched.contains(&pb),
+                    kept_syms.contains(&bq),
+                    file_syms.contains(&bq),
+                    touched.contains(&bq),
+                    restore_set.contains(&bq),
+                    kept_syms.contains(&md),
+                    file_syms.contains(&md),
+                    touched.contains(&md),
+                    restore_set.contains(&md),
+                    pre_boot_syms.get(&md).map(|t| t.1.clone())
+                );
+            }
+            if interp.dbg_flags & 0x800 != 0 {
+                for nm in [
+                    "pcase--memoize",
+                    "killed-rectangle",
+                    "cl--do-arglist",
+                    "cl--lambda-list-keywords",
+                    "cl-float-epsilon",
+                    "cl-struct-timer",
+                    "rectangle-mark-mode-map",
+                ] {
+                    let q = interp.intern(nm);
                     eprintln!(
-                        "[pre-restore] pb kept={} file={} tch={} | ` kept={} file={} tch={} rst={} | mdyn kept={} file={} tch={} rst={} snapv={:?}",
-                        kept_syms.contains(&pb),
-                        file_syms.contains(&pb),
-                        touched.contains(&pb),
-                        kept_syms.contains(&bq),
-                        file_syms.contains(&bq),
-                        touched.contains(&bq),
-                        restore_set.contains(&bq),
-                        kept_syms.contains(&md),
-                        file_syms.contains(&md),
-                        touched.contains(&md),
-                        restore_set.contains(&md),
-                        pre_boot_syms.get(&md).map(|t| t.1.clone())
+                        "[pre-restore] {nm} defs={} kept={} file={} tch={} rst={} snapfn={:?}",
+                        rolled_defs.contains(&q),
+                        kept_syms.contains(&q),
+                        file_syms.contains(&q),
+                        touched.contains(&q),
+                        restore_set.contains(&q),
+                        pre_boot_syms.get(&q).map(|t| t.0.clone())
                     );
                 }
-                if interp.dbg_flags & 0x800 != 0 {
-                    for nm in [
-                        "pcase--memoize",
-                        "killed-rectangle",
-                        "cl--do-arglist",
-                        "cl--lambda-list-keywords",
-                        "cl-float-epsilon",
-                        "cl-struct-timer",
-                        "rectangle-mark-mode-map",
-                    ] {
-                        let q = interp.intern(nm);
-                        eprintln!(
-                            "[pre-restore] {nm} defs={} kept={} file={} tch={} rst={} snapfn={:?}",
-                            rolled_defs.contains(&q),
-                            kept_syms.contains(&q),
-                            file_syms.contains(&q),
-                            touched.contains(&q),
-                            restore_set.contains(&q),
-                            pre_boot_syms.get(&q).map(|t| t.0.clone())
-                        );
-                    }
-                }
+            }
             // all.  Its plist likewise came from cl-loaddefs/declare
             // writes inside the cl chain — restore the pre-prelude
             // plist.  The `remacs--dump-fn' stash below keeps the
@@ -3363,8 +3369,7 @@ impl Interp {
                         false,
                     )
                 };
-                let (f, v, p, sp, cn, ml) =
-                    pre_boot_syms.get(&sid).cloned().unwrap_or_else(fresh);
+                let (f, v, p, sp, cn, ml) = pre_boot_syms.get(&sid).cloned().unwrap_or_else(fresh);
                 // A name the rolled file *defined* voids unless a kept
                 // file also defines it: prelude's own defs were already
                 // subtracted from `rolled_defs' above, so what remains
@@ -3373,19 +3378,21 @@ impl Interp {
                 // eval-when-compile run during the prelude
                 // (pcase--memoize).  Names GNU voids that prelude folds
                 // (cl-*) are re-voided by GNU_VOID_FNS_LATE after this.
-                let force_void =
-                    rolled_defs.contains(&sid) && !kept_syms.contains(&sid);
+                let force_void = rolled_defs.contains(&sid) && !kept_syms.contains(&sid);
                 {
                     let s = interp.obarray.symbol_mut(sid);
-                    s.function =
-                        if force_void { Value::Sym(sym::UNBOUND) } else { f };
-                    s.value =
-                        if force_void { Value::Sym(sym::UNBOUND) } else { v };
+                    s.function = if force_void {
+                        Value::Sym(sym::UNBOUND)
+                    } else {
+                        f
+                    };
+                    s.value = if force_void {
+                        Value::Sym(sym::UNBOUND)
+                    } else {
+                        v
+                    };
                     s.plist = if force_void {
-                        pre_prelude_plists
-                            .get(&sid)
-                            .cloned()
-                            .unwrap_or(Value::Nil)
+                        pre_prelude_plists.get(&sid).cloned().unwrap_or(Value::Nil)
                     } else {
                         p
                     };
@@ -3518,17 +3525,12 @@ impl Interp {
             // `gv-expander' unregistered (boot-reeval of
             // `electric-indent-mode' broke this way).
             {
-                let rolled_ids: HashSet<SymId> = ROLLED_LIBS
-                    .iter()
-                    .map(|l| interp.intern(l))
-                    .collect();
+                let rolled_ids: HashSet<SymId> =
+                    ROLLED_LIBS.iter().map(|l| interp.intern(l)).collect();
                 interp.features.retain(|f| !rolled_ids.contains(f));
                 let fid = interp.intern("features");
                 if let Value::Cons(_) = interp.symbol_value(fid) {
-                    let items = interp
-                        .symbol_value(fid)
-                        .list_to_vec()
-                        .unwrap_or_default();
+                    let items = interp.symbol_value(fid).list_to_vec().unwrap_or_default();
                     let kept: Vec<Value> = items
                         .into_iter()
                         .filter(|v| {
@@ -3821,9 +3823,7 @@ explicitly overridden.
             // (GNU-bound) definition calls these, so void their
             // function cells to match GNU's boot state.  The real
             // lisp/*.el files still rebind them on `require'.
-            const GNU_VOID_FNS: &[&str] = &[
-                "cl--advice--apply",
-            ];
+            const GNU_VOID_FNS: &[&str] = &["cl--advice--apply"];
             for name in GNU_VOID_FNS {
                 let sid = interp.intern(name);
                 let old = interp.obarray.symbol(sid).function.clone();
@@ -3889,7 +3889,9 @@ explicitly overridden.
                             }
                             other => {
                                 if interp.dbg_flags & 0x800 != 0 {
-                                    eprintln!("[loaddefs-reinstall] reader stopped at {pos}: {other:?}");
+                                    eprintln!(
+                                        "[loaddefs-reinstall] reader stopped at {pos}: {other:?}"
+                                    );
                                 }
                                 break;
                             }
@@ -4069,9 +4071,7 @@ explicitly overridden.
                                 let b = c.borrow();
                                 if matches!(&b.car, Value::Sym(s) if *s == quote_id) {
                                     match &b.cdr {
-                                        Value::Cons(tail) => {
-                                            tail.borrow().car.clone()
-                                        }
+                                        Value::Cons(tail) => tail.borrow().car.clone(),
                                         _ => arg.clone(),
                                     }
                                 } else {
@@ -4138,9 +4138,7 @@ explicitly overridden.
                 let _ = interp.eval_str("(prefer-coding-system 'utf-8-unix)");
                 // `set-language-environment' also seeds
                 // default-sendmail-coding-system from the locale.
-                let _ = interp.eval_str(
-                    "(setq default-sendmail-coding-system 'utf-8-unix)",
-                );
+                let _ = interp.eval_str("(setq default-sendmail-coding-system 'utf-8-unix)");
             }
             // GNU's `native-compile'/`native-compile-async' live in
             // comp.el/comp-run.el over the LIMPLE→libgccjit pipeline.
@@ -4238,8 +4236,7 @@ command-line arguments.\" \
             let eld = interp.intern("eldoc-mode");
             let lmm = interp.intern("local-minor-modes");
             br.locals.insert(eld, Value::t());
-            br.locals
-                .insert(lmm, Value::list(vec![Value::Sym(eld)]));
+            br.locals.insert(lmm, Value::list(vec![Value::Sym(eld)]));
         }
         let tooltip_hide = interp.intern("tooltip-hide");
         interp.obarray.symbol_mut(prech).value = Value::list(vec![Value::Sym(tooltip_hide)]);
@@ -4356,9 +4353,7 @@ command-line arguments.\" \
                     interp.get_prop(sid, pk),
                     v if v.is_nil() || matches!(v, Value::Sym(s) if s == sym::UNBOUND)
                 );
-                if !matches!(old, Value::Sym(s) if s == sym::UNBOUND)
-                    && !is_autoload
-                    && !have_stash
+                if !matches!(old, Value::Sym(s) if s == sym::UNBOUND) && !is_autoload && !have_stash
                 {
                     interp.put_prop(sid, pk, old);
                 }
@@ -4408,9 +4403,7 @@ command-line arguments.\" \
                     interp.get_prop(sid, pk),
                     v if v.is_nil() || matches!(v, Value::Sym(s) if s == sym::UNBOUND)
                 );
-                if !matches!(old, Value::Sym(s) if s == sym::UNBOUND)
-                    && !is_autoload
-                    && !have_stash
+                if !matches!(old, Value::Sym(s) if s == sym::UNBOUND) && !is_autoload && !have_stash
                 {
                     interp.put_prop(sid, pk, old);
                 }
@@ -4435,14 +4428,13 @@ command-line arguments.\" \
                     interp.obarray.symbol(sid).function,
                     Value::Sym(s) if s == sym::UNBOUND
                 ) {
-                    interp.obarray.symbol_mut(sid).function =
-                        Value::list(vec![
-                            Value::Sym(auto_id),
-                            Value::string(file),
-                            Value::Nil,
-                            Value::Nil,
-                            Value::Nil,
-                        ]);
+                    interp.obarray.symbol_mut(sid).function = Value::list(vec![
+                        Value::Sym(auto_id),
+                        Value::string(file),
+                        Value::Nil,
+                        Value::Nil,
+                        Value::Nil,
+                    ]);
                 }
             }
             // `comp--#$': comp.el's `(defvar comp--#$ "#$")' reads in
@@ -4535,7 +4527,10 @@ command-line arguments.\" \
         // so prelude/Lisp redefinitions can't re-expose the cells.
         crate::lisp::builtins::backquote::install_macros(&mut interp);
         if std::env::var_os("REMACS_BOOT_PROF").is_some() {
-            eprintln!("[init] total Interp::new: {}ms", _init_t0.elapsed().as_millis());
+            eprintln!(
+                "[init] total Interp::new: {}ms",
+                _init_t0.elapsed().as_millis()
+            );
         }
         interp
     }
@@ -4818,12 +4813,27 @@ command-line arguments.\" \
         let id = self.var_alias_target(id);
         let constant = self.obarray.symbol(id).constant;
         if self.dbg_flags & 0x100 != 0 && constant {
-            eprintln!("[setconst {} = {}] caller={:?}", self.symbol_name(id),
-                      self.princ_to_string(&val).chars().take(80).collect::<String>(),
-                      std::panic::Location::caller());
+            eprintln!(
+                "[setconst {} = {}] caller={:?}",
+                self.symbol_name(id),
+                self.princ_to_string(&val)
+                    .chars()
+                    .take(80)
+                    .collect::<String>(),
+                std::panic::Location::caller()
+            );
             for (f, a) in self.lisp_stack.iter().rev().take(20).rev() {
-                eprintln!("  {} {}", self.princ_to_string(f).chars().take(100).collect::<String>(),
-                          self.princ_to_string(&Value::list(a.as_slice().to_vec())).chars().take(160).collect::<String>());
+                eprintln!(
+                    "  {} {}",
+                    self.princ_to_string(f)
+                        .chars()
+                        .take(100)
+                        .collect::<String>(),
+                    self.princ_to_string(&Value::list(a.as_slice().to_vec()))
+                        .chars()
+                        .take(160)
+                        .collect::<String>()
+                );
             }
         }
         if constant && id != sym::NIL && id != sym::T {
@@ -4835,9 +4845,23 @@ command-line arguments.\" \
         }
         let sym = self.obarray.symbol(id);
         let is_auto_local = sym.make_local_if_set || sym.always_local;
-        if let Some(b) = self.buffers.get(self.current_buffer) {
-            if let Ok(mut bb) = b.try_borrow_mut() {
-                if is_auto_local || bb.locals.contains_key(&id) {
+        let local = is_auto_local
+            || self
+                .buffers
+                .get(self.current_buffer)
+                .and_then(|b| {
+                    b.try_borrow()
+                        .ok()
+                        .map(|bb| bb.locals.contains_key(&id))
+                })
+                .unwrap_or(false);
+        // GNU's set_internal fires variable watchers BEFORE the store:
+        // a signalling watcher aborts the write entirely and observers
+        // inside the watcher still see the old value.
+        self.fire_var_watchers(id, &val, "set", local.then_some(self.current_buffer))?;
+        if local {
+            if let Some(b) = self.buffers.get(self.current_buffer) {
+                if let Ok(mut bb) = b.try_borrow_mut() {
                     bb.locals.insert(id, val.clone());
                     if id == self.bfn_sym {
                         // Mirror the BVAR write into the buffer slot.
@@ -4846,14 +4870,13 @@ command-line arguments.\" \
                             _ => None,
                         };
                     }
-                    drop(bb);
-                    return self.fire_var_watchers(id, &val, "set", Some(self.current_buffer));
                 }
             }
+            return Ok(());
         }
         self.obarray.symbol_mut(id).value = val.clone();
         self.sync_undo_inhibit(id, &val);
-        self.fire_var_watchers(id, &val, "set", None)
+        Ok(())
     }
 
     /// Mirror `undo-inhibit-record-point' writes into the shared cell
@@ -4866,11 +4889,14 @@ command-line arguments.\" \
 
     /// Set the global (default) value regardless of buffer-local bindings.
     pub fn set_symbol_default(&mut self, id: SymId, val: Value) -> Result<(), Flow> {
+        // GNU `Fset_default' walks the variable-alias chain first:
+        // `(set-default 'alias v)' writes BASE's default cell, leaving
+        // the alias's own cell a legacy remnant readers ignore.
+        let id = self.var_alias_target(id);
         if self.obarray.symbol(id).constant {
             return Err(self.signal_data(sym::SETTING_CONSTANT, vec![self.sym(id)]));
         }
-        if self.dbg_flags & 0x40000 != 0
-            && self.symbol_name(id) == "default-terminal-coding-system"
+        if self.dbg_flags & 0x40000 != 0 && self.symbol_name(id) == "default-terminal-coding-system"
         {
             eprintln!(
                 "[WATCH set-default] -> {} \n{}",
@@ -4878,9 +4904,12 @@ command-line arguments.\" \
                 std::backtrace::Backtrace::capture()
             );
         }
+        // GNU's set_internal fires variable watchers BEFORE the store:
+        // a signalling watcher leaves the default cell untouched.
+        self.fire_var_watchers(id, &val, "set", None)?;
         self.obarray.symbol_mut(id).value = val.clone();
         self.sync_undo_inhibit(id, &val);
-        self.fire_var_watchers(id, &val, "set", None)
+        Ok(())
     }
 
     /// `functionp' on a value: subrs, lambdas, `(lambda ...)' conses,
@@ -4996,13 +5025,11 @@ command-line arguments.\" \
         }
         // GNU fboundp: a nil or unbound cell is void.  (defalias 'x nil)
         // stores nil, dropping fboundp but leaving symbol-function nil.
-        !matches!(
-            self.obarray.symbol(id).function,
-            Value::Nil
-        ) && !matches!(
-            self.obarray.symbol(id).function,
-            Value::Sym(s) if s == sym::UNBOUND
-        )
+        !matches!(self.obarray.symbol(id).function, Value::Nil)
+            && !matches!(
+                self.obarray.symbol(id).function,
+                Value::Sym(s) if s == sym::UNBOUND
+            )
     }
     pub fn fset(&mut self, id: SymId, def: Value) {
         // GNU stores `(macro . fn)' as the literal function cell, so
@@ -5052,12 +5079,27 @@ command-line arguments.\" \
     pub fn specbind(&mut self, id: SymId, val: Value) -> Result<(), Flow> {
         if self.obarray.symbol(id).constant {
             if self.dbg_flags & 0x100 != 0 {
-                eprintln!("[bindconst {}] head_form={} caller={:?}", self.symbol_name(id),
-                          self.princ_to_string(&self.cur_head_form).chars().take(400).collect::<String>(),
-                          std::panic::Location::caller());
+                eprintln!(
+                    "[bindconst {}] head_form={} caller={:?}",
+                    self.symbol_name(id),
+                    self.princ_to_string(&self.cur_head_form)
+                        .chars()
+                        .take(400)
+                        .collect::<String>(),
+                    std::panic::Location::caller()
+                );
                 for (f, a) in self.lisp_stack.iter().rev().take(20).rev() {
-                    eprintln!("  {} {}", self.princ_to_string(f).chars().take(100).collect::<String>(),
-                              self.princ_to_string(&Value::list(a.as_slice().to_vec())).chars().take(160).collect::<String>());
+                    eprintln!(
+                        "  {} {}",
+                        self.princ_to_string(f)
+                            .chars()
+                            .take(100)
+                            .collect::<String>(),
+                        self.princ_to_string(&Value::list(a.as_slice().to_vec()))
+                            .chars()
+                            .take(160)
+                            .collect::<String>()
+                    );
                 }
             }
             return Err(self.signal_data(sym::SETTING_CONSTANT, vec![self.sym(id)]));
@@ -5070,9 +5112,24 @@ command-line arguments.\" \
         // `with-temp-buffer' wrapper holding the buffer).  GNU binds
         // the local slot; when we can't borrow we must not panic —
         // fall back to the global binding for the duration.
-        if let Some(b) = self.buffers.get(self.current_buffer) {
-            if let Ok(mut bb) = b.try_borrow_mut() {
-                if is_auto_local || bb.locals.contains_key(&id) {
+        let local_here = is_auto_local
+            || self
+                .buffers
+                .get(self.current_buffer)
+                .and_then(|b| {
+                    b.try_borrow()
+                        .ok()
+                        .map(|bb| bb.locals.contains_key(&id))
+                })
+                .unwrap_or(false);
+        // GNU's set_internal fires watchers BEFORE the store: a
+        // signalling watcher aborts the binding push entirely.  The
+        // specpdl entry still goes on first — an erroring watcher
+        // leaves the binding popped by unwind, same as GNU.
+        self.fire_var_watchers(id, &val, "let", local_here.then_some(self.current_buffer))?;
+        if local_here {
+            if let Some(b) = self.buffers.get(self.current_buffer) {
+                if let Ok(mut bb) = b.try_borrow_mut() {
                     let old = bb.locals.insert(id, val.clone());
                     if id == self.bfn_sym {
                         // BVAR: the buffer slot is the binding.
@@ -5101,7 +5158,7 @@ command-line arguments.\" \
                 old: Some(old),
             });
         }
-        self.fire_var_watchers(id, &val, "let", bound_buf)
+        Ok(())
     }
 
     /// Pop `n` specbind entries, restoring values.
@@ -5573,7 +5630,6 @@ command-line arguments.\" \
         Ok(last)
     }
 
-
     /// `read-from-string` core: read one object, return it + end position.
     pub fn read_from_string(&mut self, src: &str, start: usize) -> Result<(Value, usize), Flow> {
         self.read_from_string_pos(src, start, None)
@@ -5629,10 +5685,7 @@ command-line arguments.\" \
 
     pub fn eval(&mut self, form: &Value) -> EvalResult {
         self.eval_depth += 1;
-        if self.dbg_flags & 0x02 != 0
-            && self.eval_depth > 0
-            && self.eval_depth % 200 == 0
-        {
+        if self.dbg_flags & 0x02 != 0 && self.eval_depth > 0 && self.eval_depth % 200 == 0 {
             eprintln!(
                 "[depth={}] {}",
                 self.eval_depth,
@@ -5657,9 +5710,7 @@ command-line arguments.\" \
                 // GNU eval.c: the depth cap signals `excessive-lisp-nesting'
                 // (subordinate to `recursion-error'), not a generic `error'.
                 let nsym = self.intern("excessive-lisp-nesting");
-                let msg = Value::string(
-                    "Lisp nesting exceeds `max-lisp-eval-depth'",
-                );
+                let msg = Value::string("Lisp nesting exceeds `max-lisp-eval-depth'");
                 return Err(self.signal_data(nsym, vec![msg]));
             }
         }
@@ -5929,10 +5980,12 @@ command-line arguments.\" \
             spine_len
         };
 
-
-
         if self.dbg_flags & 0x80 != 0 {
-            eprintln!("[eval_form head={} args={}]", self.princ_to_string(&head), self.princ_to_string(&args));
+            eprintln!(
+                "[eval_form head={} args={}]",
+                self.princ_to_string(&head),
+                self.princ_to_string(&args)
+            );
         }
         match &head {
             Value::Sym(id) => {
@@ -6067,11 +6120,7 @@ command-line arguments.\" \
 
     /// Evaluate each element of a list form, using PRE_LEN when the
     /// caller already counted the spine (eval_form's check walk).
-    pub fn eval_args_len(
-        &mut self,
-        args: &Value,
-        pre_len: i128,
-    ) -> Result<Argv, Flow> {
+    pub fn eval_args_len(&mut self, args: &Value, pre_len: i128) -> Result<Argv, Flow> {
         // Raw-pointer spine walk: GNU's `eval_sub' reads the cdr AFTER
         // evaluating the car, so a `setcdr' by an argument is seen.
         // Cells stay alive through `args' while the walk runs.
@@ -6247,9 +6296,13 @@ command-line arguments.\" \
                             } else {
                                 self.raw_list_length(args)?
                             };
-                            let shown =
-                                sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
-                            super::bytecode::check_argdesc(self, &items.borrow(), n.max(0) as usize, &shown)?;
+                            let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
+                            super::bytecode::check_argdesc(
+                                self,
+                                &items.borrow(),
+                                n.max(0) as usize,
+                                &shown,
+                            )?;
                         }
                     }
                 }
@@ -6323,7 +6376,6 @@ command-line arguments.\" \
     /// cells in its spine.  A dotted tail is not counted; a circular
     /// list signals `circular-list' like GNU's `Flength'.
     pub(crate) fn raw_list_length(&mut self, args: &Value) -> Result<i128, Flow> {
-
         // Raw-pointer walk — same tortoise/hare logic as before, minus
         // a `Value` clone + drop per spine cell.
         let mut n = 0i128;
@@ -6414,7 +6466,10 @@ command-line arguments.\" \
                 if !(self.sym_is(&car, sym::LAMBDA) || self.sym_is(&car, sym::MACRO)) {
                     eprintln!(
                         "[apply-raw {}]\n{}",
-                        self.princ_to_string(fun).chars().take(150).collect::<String>(),
+                        self.princ_to_string(fun)
+                            .chars()
+                            .take(150)
+                            .collect::<String>(),
                         std::backtrace::Backtrace::capture()
                     );
                 }
@@ -6435,10 +6490,9 @@ command-line arguments.\" \
                             if next == sym::UNBOUND {
                                 // GNU `Ffuncall' reports the called
                                 // symbol, not the alias chain's tail.
-                                return Err(self.signal_data(
-                                    sym::VOID_FUNCTION,
-                                    vec![Value::Sym(*id)],
-                                ));
+                                return Err(
+                                    self.signal_data(sym::VOID_FUNCTION, vec![Value::Sym(*id)])
+                                );
                             }
                             if seen.is_none() {
                                 seen = Some(vec![cur]);
@@ -6495,10 +6549,7 @@ command-line arguments.\" \
                     // GNU: special forms cannot be funcalled/applied;
                     // the error data is the #<subr> object, not the
                     // calling symbol.
-                    Err(self.signal_data(
-                        sym::INVALID_FUNCTION,
-                        vec![Value::Subr(s)],
-                    ))
+                    Err(self.signal_data(sym::INVALID_FUNCTION, vec![Value::Subr(s)]))
                 }
                 _ => {
                     self.check_arity_subr(s, &argv, None)?;
@@ -6602,10 +6653,7 @@ command-line arguments.\" \
                 if fun.is_nil() {
                     // The void report is `shown' (the symbol that was
                     // called), not the nil cell.
-                    return Err(self.signal_data(
-                        sym::VOID_FUNCTION,
-                        vec![shown.clone()],
-                    ));
+                    return Err(self.signal_data(sym::VOID_FUNCTION, vec![shown.clone()]));
                 }
                 Err(self.signal_data(sym::INVALID_FUNCTION, vec![shown.clone()]))
             }
@@ -6812,22 +6860,96 @@ command-line arguments.\" \
             // `symbol-function'.
             for s in crate::lisp::builtins::collect() {
                 match s.name {
-                    "car" | "cdr" | "cons" | "list" | "nth" | "nthcdr" | "memq" | "member"
-                    | "assq" | "elt" | "length" | "aref" | "aset" | "nreverse" | "setcar"
-                    | "setcdr" | "nconc" | "concat" | "substring" | "get" | "set" | "fset"
-                    | "symbolp" | "consp" | "stringp" | "listp" | "not" | "null" | "eq"
-                    | "equal" | "symbol-value" | "symbol-function" | "symbol-name"
-                    | "eqlsign" | "gtr" | "lss" | "leq" | "geq" | "+" | "-" | "*" | "/"
-                    | "%" | "max" | "min" | "=" | "<" | ">" | "<=" | ">=" | "point"
-                    | "point-max" | "point-min" | "goto-char" | "insert" | "char-after"
-                    | "char-before" | "following-char" | "preceding-char" | "current-column"
-                    | "indent-to" | "eolp" | "eobp" | "bolp" | "bobp" | "current-buffer"
-                    | "set-buffer" | "forward-char" | "forward-word" | "skip-chars-forward"
-                    | "skip-chars-backward" | "forward-line" | "char-syntax"
-                    | "buffer-substring" | "delete-region" | "narrow-to-region" | "widen"
-                    | "end-of-line" | "set-marker" | "match-beginning" | "match-end"
-                    | "upcase" | "downcase" | "string=" | "string<" | "numberp"
-                    | "integerp" | "car-safe" | "cdr-safe" | "interactive-p" => {
+                    "car"
+                    | "cdr"
+                    | "cons"
+                    | "list"
+                    | "nth"
+                    | "nthcdr"
+                    | "memq"
+                    | "member"
+                    | "assq"
+                    | "elt"
+                    | "length"
+                    | "aref"
+                    | "aset"
+                    | "nreverse"
+                    | "setcar"
+                    | "setcdr"
+                    | "nconc"
+                    | "concat"
+                    | "substring"
+                    | "get"
+                    | "set"
+                    | "fset"
+                    | "symbolp"
+                    | "consp"
+                    | "stringp"
+                    | "listp"
+                    | "not"
+                    | "null"
+                    | "eq"
+                    | "equal"
+                    | "symbol-value"
+                    | "symbol-function"
+                    | "symbol-name"
+                    | "eqlsign"
+                    | "gtr"
+                    | "lss"
+                    | "leq"
+                    | "geq"
+                    | "+"
+                    | "-"
+                    | "*"
+                    | "/"
+                    | "%"
+                    | "max"
+                    | "min"
+                    | "="
+                    | "<"
+                    | ">"
+                    | "<="
+                    | ">="
+                    | "point"
+                    | "point-max"
+                    | "point-min"
+                    | "goto-char"
+                    | "insert"
+                    | "char-after"
+                    | "char-before"
+                    | "following-char"
+                    | "preceding-char"
+                    | "current-column"
+                    | "indent-to"
+                    | "eolp"
+                    | "eobp"
+                    | "bolp"
+                    | "bobp"
+                    | "current-buffer"
+                    | "set-buffer"
+                    | "forward-char"
+                    | "forward-word"
+                    | "skip-chars-forward"
+                    | "skip-chars-backward"
+                    | "forward-line"
+                    | "char-syntax"
+                    | "buffer-substring"
+                    | "delete-region"
+                    | "narrow-to-region"
+                    | "widen"
+                    | "end-of-line"
+                    | "set-marker"
+                    | "match-beginning"
+                    | "match-end"
+                    | "upcase"
+                    | "downcase"
+                    | "string="
+                    | "string<"
+                    | "numberp"
+                    | "integerp"
+                    | "car-safe"
+                    | "cdr-safe"
+                    | "interactive-p" => {
                         let id = self.intern(s.name);
                         m.insert(id, s);
                     }
@@ -6876,8 +6998,7 @@ command-line arguments.\" \
         let ptr = Rc::as_ptr(l);
         let names = self.compiled_fn_names.borrow();
         names.iter().find_map(|(w, n)| {
-            (w.upgrade().is_some_and(|r| Rc::as_ptr(&r) == ptr))
-                .then(|| n.clone())
+            (w.upgrade().is_some_and(|r| Rc::as_ptr(&r) == ptr)).then(|| n.clone())
         })
     }
 
@@ -7037,9 +7158,9 @@ command-line arguments.\" \
                 // whose consts[0] happens to be a list, e.g. the
                 // `oclosure--lambda' mapcar helper with consts[0] =
                 // ((progn nil))) must fall through to the real VM.
-                let is_unidata_alist = elems.iter().all(|e| {
-                    matches!(e, Value::Cons(p) if matches!(&p.borrow().cdr, Value::Str(_)))
-                });
+                let is_unidata_alist = elems.iter().all(
+                    |e| matches!(e, Value::Cons(p) if matches!(&p.borrow().cdr, Value::Str(_))),
+                );
                 if !is_unidata_alist {
                     return None;
                 }
@@ -7082,8 +7203,7 @@ command-line arguments.\" \
         // Dynamic binding, no lexical env (GNU: `lexenv = Qnil').
         let saved_lex = std::mem::replace(&mut self.lexenv, None);
         let mark = self.specbind_depth();
-        let bind_result =
-            self.bind_lambda_walk(&arglist, &argv, fun, |i, s, v| i.specbind(s, v));
+        let bind_result = self.bind_lambda_walk(&arglist, &argv, fun, |i, s, v| i.specbind(s, v));
         let result = match bind_result {
             Ok(()) => {
                 // `Fprogn' on the raw body: walk conses only; a dotted
@@ -7136,9 +7256,7 @@ command-line arguments.\" \
         fun: &Value,
         mut bind: impl FnMut(&mut Interp, SymId, Value) -> Result<(), Flow>,
     ) -> Result<(), Flow> {
-        let inv = |i: &Interp| -> Flow {
-            i.signal_data(sym::INVALID_FUNCTION, vec![fun.clone()])
-        };
+        let inv = |i: &Interp| -> Flow { i.signal_data(sym::INVALID_FUNCTION, vec![fun.clone()]) };
         let wna = |i: &Interp, n: usize| -> Flow {
             i.signal_data(
                 sym::WRONG_NUMBER_OF_ARGUMENTS,
@@ -7228,8 +7346,7 @@ command-line arguments.\" \
                 // byte-code literal (macro expanders included) reports
                 // its `(MIN . NONREST)' argdesc pair.  `who' carries
                 // the *resolved* object so funcall shows `#<subr>'.
-                let named = self.lambda_name(l).is_some()
-                    || (l.compiled && !l.is_bytecode());
+                let named = self.lambda_name(l).is_some() || (l.compiled && !l.is_bytecode());
                 let funv = Value::Lambda(l.clone());
                 let who = if named && self.macroexp_call_depth == 0 {
                     Some(&funv)
@@ -7254,9 +7371,7 @@ command-line arguments.\" \
         // already reported the calling symbol in check_argdesc.
         // The `(MIN . NONREST)' pair stays for anonymous `#[...]'
         // literals only.
-        let fun = if self.lambda_name(l).is_some()
-            || (l.compiled && !l.is_bytecode())
-        {
+        let fun = if self.lambda_name(l).is_some() || (l.compiled && !l.is_bytecode()) {
             Value::Lambda(l.clone())
         } else {
             match &l.bc_items {
@@ -7787,10 +7902,7 @@ command-line arguments.\" \
                 let body_id = self.intern("body");
                 return Err(self.signal_data(
                     assert_id,
-                    vec![Value::list(vec![
-                        Value::Sym(consp_id),
-                        Value::Sym(body_id),
-                    ])],
+                    vec![Value::list(vec![Value::Sym(consp_id), Value::Sym(body_id)])],
                 ));
             }
             let arglist_ok = matches!(arglist, Value::Cons(_) | Value::Nil);
@@ -7800,10 +7912,7 @@ command-line arguments.\" \
                 let args_id = self.intern("args");
                 return Err(self.signal_data(
                     assert_id,
-                    vec![Value::list(vec![
-                        Value::Sym(listp_id),
-                        Value::Sym(args_id),
-                    ])],
+                    vec![Value::list(vec![Value::Sym(listp_id), Value::Sym(args_id)])],
                 ));
             }
         } else {
@@ -7826,7 +7935,7 @@ command-line arguments.\" \
         let body_vec = match body.list_to_vec() {
             Ok(v) => v,
             Err(crate::lisp::value::ListError::Dotted(t)) => {
-                return Err(self.wrong_type_mut("listp", &t))
+                return Err(self.wrong_type_mut("listp", &t));
             }
             Err(_) => return Err(self.wrong_type_mut("listp", &body)),
         };
@@ -7990,10 +8099,7 @@ command-line arguments.\" \
                         let args_id = self.intern("args");
                         return Err(self.signal_data(
                             assert_id,
-                            vec![Value::list(vec![
-                                Value::Sym(listp_id),
-                                Value::Sym(args_id),
-                            ])],
+                            vec![Value::list(vec![Value::Sym(listp_id), Value::Sym(args_id)])],
                         ));
                     }
                     // Mid-list non-symbol tail `(a . 2)': call-invalid.
@@ -8120,22 +8226,12 @@ command-line arguments.\" \
         put(
             self,
             "underflow-error",
-            &[
-                "underflow-error",
-                "range-error",
-                "arith-error",
-                "error",
-            ],
+            &["underflow-error", "range-error", "arith-error", "error"],
         );
         put(
             self,
             "singularity-error",
-            &[
-                "singularity-error",
-                "domain-error",
-                "arith-error",
-                "error",
-            ],
+            &["singularity-error", "domain-error", "arith-error", "error"],
         );
         put(
             self,
@@ -8309,16 +8405,19 @@ command-line arguments.\" \
                 "cyclic-variable-indirection",
                 &["cyclic-variable-indirection", "error"][..],
             ),
-            ("file-date-error", &["file-date-error", "file-error", "error"]),
+            (
+                "file-date-error",
+                &["file-date-error", "file-error", "error"],
+            ),
             (
                 "file-notify-error",
                 &["file-notify-error", "file-error", "error"],
             ),
-            ("remote-file-error", &["remote-file-error", "file-error", "error"]),
             (
-                "inhibited-interaction",
-                &["inhibited-interaction", "error"],
+                "remote-file-error",
+                &["remote-file-error", "file-error", "error"],
             ),
+            ("inhibited-interaction", &["inhibited-interaction", "error"]),
             ("invalid-arity", &["invalid-arity", "error"]),
             (
                 "malformed-keyword-arg-list",
@@ -8332,7 +8431,11 @@ command-line arguments.\" \
             ("module-load-failed", &["module-load-failed", "error"]),
             (
                 "missing-module-init-function",
-                &["missing-module-init-function", "module-load-failed", "error"],
+                &[
+                    "missing-module-init-function",
+                    "module-load-failed",
+                    "error",
+                ],
             ),
             (
                 "module-init-failed",
@@ -8366,7 +8469,11 @@ command-line arguments.\" \
             ),
             (
                 "native-lisp-wrong-reloc",
-                &["native-lisp-wrong-reloc", "native-lisp-load-failed", "error"],
+                &[
+                    "native-lisp-wrong-reloc",
+                    "native-lisp-load-failed",
+                    "error",
+                ],
             ),
             (
                 "wrong-register-subr-call",
@@ -8376,10 +8483,7 @@ command-line arguments.\" \
                     "error",
                 ],
             ),
-            (
-                "comp-sanitizer-error",
-                &["comp-sanitizer-error", "error"],
-            ),
+            ("comp-sanitizer-error", &["comp-sanitizer-error", "error"]),
             ("protected-field", &["protected-field", "error"]),
             ("thread-buffer-killed", &["thread-buffer-killed", "error"]),
             ("trapping-constant", &["trapping-constant", "error"]),
@@ -8549,10 +8653,7 @@ command-line arguments.\" \
                 "Module does not export an initialization function",
             ),
             ("module-init-failed", "Module initialization failed"),
-            (
-                "module-not-gpl-compatible",
-                "Module is not GPL compatible",
-            ),
+            ("module-not-gpl-compatible", "Module is not GPL compatible"),
             ("module-open-failed", "Module could not be opened"),
             ("module-out-of-memory", "Module out of memory"),
             ("native-compiler-error", "Native compiler error"),
@@ -8576,7 +8677,10 @@ command-line arguments.\" \
             ),
             ("protected-field", "Attempt to modify a protected field"),
             ("thread-buffer-killed", "Thread's current buffer killed"),
-            ("trapping-constant", "Attempt to trap writes to a constant symbol"),
+            (
+                "trapping-constant",
+                "Attempt to trap writes to a constant symbol",
+            ),
             ("type-mismatch", "Types do not match"),
             ("user-search-failed", "Search failed"),
             ("sqlite-error", "Database error"),
@@ -9119,9 +9223,22 @@ command-line arguments.\" \
             let id = self.intern(name);
             self.obarray.symbol_mut(id).value = Value::t();
         }
-        // defvar'd to nil in GNU (simple.el).
-        let id = self.intern("filter-buffer-substring-function");
-        self.obarray.symbol_mut(id).value = Value::Nil;
+        // GNU simple.el defvars these to function names.
+        for (name, val) in [
+            (
+                "filter-buffer-substring-function",
+                "buffer-substring--filter",
+            ),
+            ("revert-buffer-function", "revert-buffer--default"),
+            ("forward-sexp-function", "forward-sexp-default-function"),
+            (
+                "hack-read-symbol-shorthands-function",
+                "hack-read-symbol-shorthands",
+            ),
+        ] {
+            let id = self.intern(name);
+            self.obarray.symbol_mut(id).value = Value::Sym(self.intern(val));
+        }
         for name in ["print-gensym", "print-escape-newlines", "print-circle"] {
             let id = self.intern(name);
             self.obarray.symbol_mut(id).value = Value::Nil;
@@ -9489,18 +9606,20 @@ command-line arguments.\" \
             // the same for files on disk.
             (
                 "load-path",
-                Value::list(crate::lisp::load::builtin_dirs()
-                    .iter()
-                    .filter(|d| {
-                        let p = std::path::Path::new(d);
-                        p.is_dir()
-                    })
-                    .filter_map(|d| {
-                        std::fs::canonicalize(d)
-                            .ok()
-                            .map(|p| Value::string(p.to_string_lossy().into_owned()))
-                    })
-                    .collect()),
+                Value::list(
+                    crate::lisp::load::builtin_dirs()
+                        .iter()
+                        .filter(|d| {
+                            let p = std::path::Path::new(d);
+                            p.is_dir()
+                        })
+                        .filter_map(|d| {
+                            std::fs::canonicalize(d)
+                                .ok()
+                                .map(|p| Value::string(p.to_string_lossy().into_owned()))
+                        })
+                        .collect(),
+                ),
             ),
             // GNU: `load-file-name' is a C variable bound to nil
             // outside of `load' (Vload_file_name), so it is always
@@ -9512,9 +9631,11 @@ command-line arguments.\" \
             (
                 "default-directory",
                 Value::string({
-                    let mut d = std::env::current_dir()
-                        .map(|p| p.to_string_lossy().into_owned())
-                        .unwrap_or_else(|_| "/".to_string());
+                    // GNU `emacs_wd' (sysdep.c): the logical cwd —
+                    // $PWD wins when it stat-matches getcwd, else
+                    // physical getcwd.  So `cd /tmp' (a symlink on
+                    // macOS) reports /tmp, not /private/tmp.
+                    let mut d = crate::editor::emacs_wd();
                     if !d.ends_with('/') {
                         d.push('/');
                     }
@@ -9628,11 +9749,14 @@ command-line arguments.\" \
             ("before-change-functions", Value::Nil),
             ("after-change-functions", Value::Nil),
             ("inhibit-modification-hooks", Value::Nil),
-            ("inhibit-point-motion-hooks", Value::Nil),
+            ("inhibit-point-motion-hooks", Value::Sym(sym::T)),
             ("inhibit-field-text-motion", Value::Nil),
             ("focus-in-hook", Value::Nil),
             ("focus-out-hook", Value::Nil),
-            ("after-focus-change-function", Value::Nil),
+            (
+                "after-focus-change-function",
+                Value::Sym(self.intern("ignore")),
+            ),
             ("minor-mode-map-alist", Value::Nil),
             ("emulation-mode-map-alists", Value::Nil),
             ("overriding-terminal-local-map", Value::Nil),
@@ -9653,7 +9777,7 @@ command-line arguments.\" \
             ("hscroll-margin", Value::Int(5)),
             ("hscroll-step", Value::Int(0)),
             ("auto-hscroll-mode", Value::Sym(sym::T)),
-            ("polling-period", Value::float(0.5)),
+            ("polling-period", Value::float(2.0)),
             ("visible-bell", Value::Nil),
             ("ring-bell-function", Value::Nil),
             ("cursor-type", Value::Sym(sym::T)),
@@ -9718,7 +9842,7 @@ command-line arguments.\" \
             ("find-file-visit-truename", Value::Nil),
             ("gc-cons-percentage", Value::float(1.0)),
             ("idle-update-delay", Value::float(0.5)),
-            ("input-method-function", Value::Nil),
+            ("input-method-function", Value::Sym(self.intern("list"))),
             ("insert-default-directory", Value::Sym(sym::T)),
             ("isearch-allow-scroll", Value::Nil),
             ("isearch-case-fold-search", Value::Nil),
@@ -9766,7 +9890,7 @@ command-line arguments.\" \
             ("auto-window-vscroll", Value::Sym(sym::T)),
             ("line-move-visual", Value::Sym(sym::T)),
             ("line-move-ignore-invisible", Value::Sym(sym::T)),
-            ("overflow-newline-into-fringe", Value::Nil),
+            ("overflow-newline-into-fringe", Value::Sym(sym::T)),
             (
                 "uniquify-buffer-name-style",
                 Value::Sym(self.intern("post-forward-angle-brackets")),
@@ -9863,10 +9987,7 @@ command-line arguments.\" \
                 Value::string("[-–!|#%;>*·•‣⁃◦ \t]*"),
             ),
             // GNU fill.el: `adaptive-fill-function' defaults to `ignore'.
-            (
-                "adaptive-fill-function",
-                Value::Sym(self.intern("ignore")),
-            ),
+            ("adaptive-fill-function", Value::Sym(self.intern("ignore"))),
             (
                 "adaptive-fill-first-line-regexp",
                 Value::string("\\`[ \t]*\\'"),
@@ -9883,14 +10004,15 @@ command-line arguments.\" \
             ("search-nonincremental-instead", Value::Sym(sym::T)),
             ("isearch-hide-immediately", Value::Sym(sym::T)),
             ("isearch-resume-in-command-history", Value::Nil),
-            ("isearch-allow-prefix", Value::Nil),
+            ("isearch-allow-prefix", Value::Sym(sym::T)),
             ("isearch-push-state-function", Value::Nil),
             ("lazy-highlight-initial-delay", Value::float(0.25)),
             ("lazy-highlight-interval", Value::Int(0)),
-            ("lazy-highlight-max-at-a-time", Value::Int(20)),
+            ("lazy-highlight-max-at-a-time", Value::Nil),
             ("lazy-highlight-cleanup", Value::Sym(sym::T)),
             ("lazy-highlight-no-delay-length", Value::Int(3)),
-            ("query-replace-from-to-separator", Value::Nil),
+            // GNU replace.el: " → " (U+2192 with spaces).
+            ("query-replace-from-to-separator", Value::string(" → ")),
             ("query-replace-lazy-highlight", Value::Sym(sym::T)),
             ("query-replace-show-replacement", Value::Sym(sym::T)),
             ("query-replace-skip-read-only", Value::Nil),
@@ -9924,8 +10046,30 @@ command-line arguments.\" \
             ("gc-message-percentage", Value::Nil),
             ("user-emacs-directory", Value::string("~/.emacs.d/")),
             ("native-comp-driver-options", Value::Nil),
-            ("module-file-suffix", Value::string(".so")),
+            (
+                "module-file-suffix",
+                Value::string(if cfg!(target_os = "macos") {
+                    ".dylib"
+                } else {
+                    ".so"
+                }),
+            ),
             ("dynamic-library-alist", Value::Nil),
+            // GNU xdisp.c/xfaces.c defaults verified -Q: t /
+            // `completions-highlight' (not nil / t).
+            ("inhibit-x-resources", Value::Sym(sym::T)),
+            (
+                "completions-highlight-face",
+                Value::Sym(self.intern("completions-highlight")),
+            ),
+            // GNU's pre-redisplay-functions -Q value (window.el installs
+            // this hook function in its dump).
+            (
+                "pre-redisplay-functions",
+                Value::list(vec![Value::Sym(
+                    self.intern("redisplay--update-region-highlight"),
+                )]),
+            ),
             ("load-prefer-newer", Value::Nil),
             ("load-read-function", Value::Sym(self.intern("read"))),
             ("obarray-size", Value::Int(15121)),
@@ -9938,7 +10082,7 @@ command-line arguments.\" \
                 "shell-command-default-error-buffer",
                 Value::string("*Shell Command Error*"),
             ),
-            ("shell-command-prompt-show-cwd", Value::Sym(sym::T)),
+            ("shell-command-prompt-show-cwd", Value::Nil),
             (
                 "exec-suffixes",
                 // GNU: '("") on non-DOS/Windows systems.
@@ -9980,25 +10124,16 @@ command-line arguments.\" \
             ("glyph-table", Value::Nil),
             (
                 "charset-list",
+                // GNU `Vcharset_list' is Fcons-prepend order: only the
+                // five C builtins live here at init, oldest-first at
+                // the tail (charset.c init order: ascii, iso-8859-1,
+                // unicode, emacs, eight-bit); every later
+                // `define-charset-internal' prepends.
                 Value::list(
-                    [
-                        "ascii",
-                        "unicode",
-                        "emacs",
-                        "eight-bit",
-                        "ucs",
-                        "iso-8859-1",
-                        "latin-iso8859-1",
-                        "eight-bit-control",
-                        "eight-bit-graphic",
-                        "control-1",
-                        "mule-unicode-0100-24ff",
-                        "mule-unicode-2500-33ff",
-                        "mule-unicode-e000-ffff",
-                    ]
-                    .iter()
-                    .map(|n| Value::Sym(self.intern(n)))
-                    .collect(),
+                    ["eight-bit", "emacs", "unicode", "iso-8859-1", "ascii"]
+                        .iter()
+                        .map(|n| Value::Sym(self.intern(n)))
+                        .collect(),
                 ),
             ),
             ("charset-map-path", Value::Nil),
@@ -10011,7 +10146,7 @@ command-line arguments.\" \
             ("default-input-method", Value::Nil),
             (
                 "input-method-verbose-flag",
-                Value::Sym(self.intern("complex-only")),
+                Value::Sym(self.intern("default")),
             ),
             ("input-method-highlight-flag", Value::Sym(sym::T)),
             ("input-method-activate-hook", Value::Nil),
@@ -10043,10 +10178,14 @@ command-line arguments.\" \
                 Value::Sym(self.intern("tooltip-show-help")),
             ),
             ("delete-trailing-lines", Value::Sym(sym::T)),
-            (
-                "keyboard-coding-system",
-                Value::Sym(self.intern("utf-8-unix")),
-            ),
+            // GNU -Q: `keyboard-coding-system' is nil (the *terminal's*
+            // kbd coding — `keyboard-coding-system' the subr — is what
+            // carries no-conversion/utf-8-unix).  Seeding the var with
+            // utf-8-unix made mule.el's defcustom :set run
+            // `set-keyboard-coding-system' on the seed at load, which
+            // overrode the locale-derived no-conversion under LC_ALL=C.
+            // `set-locale-environment' assigns the real value at boot.
+            ("keyboard-coding-system", Value::Nil),
             (
                 "default-process-coding-system",
                 Value::cons(
@@ -10056,7 +10195,7 @@ command-line arguments.\" \
             ),
             ("emacs-basic-display", Value::Nil),
             // GNU's files.el/mule.el initial contents (verified at -Q).
-            ("auto-coding-alist", Value::Nil),   // set from Lisp below
+            ("auto-coding-alist", Value::Nil), // set from Lisp below
             ("auto-coding-functions", Value::Nil),
             ("auto-coding-regexp-alist", Value::Nil), // set below
             ("set-auto-coding-function", Value::Nil),
@@ -10165,7 +10304,21 @@ command-line arguments.\" \
             ("command-line-processed", Value::Sym(sym::T)),
             ("command-switch-alist", Value::Nil),
             ("command-line-functions", Value::Nil),
-            ("command-line-default-directory", Value::Nil),
+            // GNU init_cmdargs: `Vcommand_line_default_directory' is
+            // the cwd at startup (with trailing slash) — same value
+            // `default-directory' is seeded with.
+            (
+                "command-line-default-directory",
+                Value::string({
+                    // Same logical-cwd rule as `default-directory'
+                    // (`emacs_wd' prefers $PWD when stat-equal).
+                    let mut d = crate::editor::emacs_wd();
+                    if !d.ends_with('/') {
+                        d.push('/');
+                    }
+                    d
+                }),
+            ),
             ("command-line-args-left", Value::Nil),
             ("command-line-normalized-file-name", Value::Nil),
             ("emacs-startup-hook", Value::Nil),
@@ -10301,8 +10454,14 @@ command-line arguments.\" \
                 "user-real-login-name",
                 Value::string(crate::lisp::builtins::misc::boot_user_real_login_name()),
             ),
-            ("user-uid", Value::Int(crate::lisp::builtins::misc::boot_geteuid())),
-            ("user-real-uid", Value::Int(crate::lisp::builtins::misc::boot_getuid())),
+            (
+                "user-uid",
+                Value::Int(crate::lisp::builtins::misc::boot_geteuid()),
+            ),
+            (
+                "user-real-uid",
+                Value::Int(crate::lisp::builtins::misc::boot_getuid()),
+            ),
             ("history-add-new-input", Value::t()),
             ("save-abbrevs", Value::t()),
             ("debug-on-error", Value::Nil),
@@ -10328,6 +10487,22 @@ command-line arguments.\" \
         for (name, val) in defs {
             let id = self.intern(name);
             self.obarray.symbol_mut(id).value = val.clone();
+        }
+
+        // GNU binds `main-thread' to the main thread object at -Q
+        // (threads.c); our thread table's slot 0 is that object.
+        {
+            let id = self.intern("main-thread");
+            self.obarray.symbol_mut(id).value =
+                Value::Thread(self.threads[self.current_thread].clone());
+        }
+        // GNU binds `keyboard-translate-table' to a fresh char-table in
+        // keyboard.c's syms_of_keyboard; it starts nil.
+        {
+            let id = self.intern("keyboard-translate-table");
+            let ktt =
+                crate::lisp::builtins::seq::make_char_table_raw(self, Value::Sym(id), Value::Nil);
+            self.obarray.symbol_mut(id).value = ktt;
         }
 
         // GNU seeds auto-coding tables at dump (files.el/mule.el).
@@ -10737,8 +10912,8 @@ command-line arguments.\" \
     /// char codes).
     pub(crate) fn sink_text_mb(s: &str, mb: bool) -> std::borrow::Cow<'_, str> {
         use crate::lisp::value::{
-            eight_bit_byte, print_eight_bit_byte, raw_byte_marker,
-            write_char_eight_bit_byte, EIGHT_BIT_BASE,
+            EIGHT_BIT_BASE, eight_bit_byte, print_eight_bit_byte, raw_byte_marker,
+            write_char_eight_bit_byte,
         };
         if !s.chars().any(|c| {
             eight_bit_byte(c).is_some()
@@ -10765,10 +10940,7 @@ command-line arguments.\" \
             // escape when the result is later printed.
             if let Some(b) = print_eight_bit_byte(c) {
                 if mb {
-                    let _ = std::fmt::Write::write_fmt(
-                        &mut out,
-                        format_args!("\\{:03o}", b),
-                    );
+                    let _ = std::fmt::Write::write_fmt(&mut out, format_args!("\\{:03o}", b));
                 } else if let Some(p) = char::from_u32(EIGHT_BIT_BASE + b as u32) {
                     // Unibyte sink: downgrade the sentinel to the
                     // eight-bit char (0xF0080+b), not the sentinel.
@@ -10800,12 +10972,9 @@ command-line arguments.\" \
     /// everything else is the char's own code.
     fn fn_stream_code(c: char) -> i128 {
         use crate::lisp::value::{
-            eight_bit_byte, print_eight_bit_byte, raw_byte_marker,
-            write_char_eight_bit_byte,
+            eight_bit_byte, print_eight_bit_byte, raw_byte_marker, write_char_eight_bit_byte,
         };
-        if let Some(b) = write_char_eight_bit_byte(c)
-            .or_else(|| print_eight_bit_byte(c))
-        {
+        if let Some(b) = write_char_eight_bit_byte(c).or_else(|| print_eight_bit_byte(c)) {
             0x3FFF00 + b as i128
         } else if let Some(b) = eight_bit_byte(c).or_else(|| raw_byte_marker(c)) {
             b as i128
@@ -10905,9 +11074,7 @@ command-line arguments.\" \
                 // nil or t: the real print destination — echo area
                 // interactively, stdout in batch.
                 match &self.output {
-                    Some(OutputSink::Buffer(buf)) => {
-                        buf.borrow_mut().push_str(&Self::sink_text(s))
-                    }
+                    Some(OutputSink::Buffer(buf)) => buf.borrow_mut().push_str(&Self::sink_text(s)),
                     Some(OutputSink::Function(f)) => {
                         let f = f.clone();
                         let arg = Value::string(Self::sink_text(s).as_ref());
@@ -10928,20 +11095,18 @@ command-line arguments.\" \
                         }) {
                             let mut bytes = Vec::with_capacity(s.len());
                             for c in s.chars() {
-                                if let Some(b) =
-                                    crate::lisp::value::raw_byte_marker(c)
-                                {
+                                if let Some(b) = crate::lisp::value::raw_byte_marker(c) {
                                     bytes.push(b);
-                                } else if let Some(code) =
-                                    crate::lisp::value::mule_seq_code(c)
-                                {
-                                    bytes.extend_from_slice(
-                                        &crate::lisp::value::mule_high_bytes(code),
-                                    );
+                                } else if let Some(code) = crate::lisp::value::mule_seq_code(c) {
+                                    bytes.extend_from_slice(&crate::lisp::value::mule_high_bytes(
+                                        code,
+                                    ));
                                 } else {
                                     let b = crate::lisp::value::eight_bit_byte(c)
                                         .or_else(|| crate::lisp::value::print_eight_bit_byte(c))
-                                        .or_else(|| crate::lisp::value::write_char_eight_bit_byte(c));
+                                        .or_else(|| {
+                                            crate::lisp::value::write_char_eight_bit_byte(c)
+                                        });
                                     match b {
                                         // every eight-bit char class
                                         // goes out as GNU's overlong
@@ -11243,6 +11408,13 @@ command-line arguments.\" \
         let depth = self.minibuf_level.max(0) as usize + 1;
         let mb_id = self.get_minibuffer(depth);
         self.minibuf_level += 1;
+        // GNU `get_minibuffer': `Vcommand_loop_level_list[depth]' ←
+        // `command_loop_level' (remacs `recursion_depth').  Rewritten
+        // on every read, not just when the buffer is created.
+        while self.minibuf_cll.len() <= depth {
+            self.minibuf_cll.push(0);
+        }
+        self.minibuf_cll[depth] = self.recursion_depth;
         let saved_buf = self.current_buffer;
 
         // minibuf_save_list vars (per-level dynamic state).
@@ -11364,7 +11536,10 @@ command-line arguments.\" \
                         match self.minibuf_input(prompt, false) {
                             Ok(MinibufInput::Key(k)) => {
                                 if let Err(e) = crate::term::minibuf_dispatch_key(
-                                    self, k, &mut keys, &mut arg_mode,
+                                    self,
+                                    k,
+                                    &mut keys,
+                                    &mut arg_mode,
                                 ) {
                                     break Err(e);
                                 }
@@ -11773,10 +11948,7 @@ command-line arguments.\" \
     /// DATA): the object travels as error data, NOT concatenated into
     /// the message string.
     pub fn error_obj(&self, msg: &str, v: &Value) -> Flow {
-        self.signal_data(
-            sym::ERROR,
-            vec![Value::string(msg), v.clone()],
-        )
+        self.signal_data(sym::ERROR, vec![Value::string(msg), v.clone()])
     }
 
     /// Execute a command by name (M-x dispatch entry point).
@@ -11819,10 +11991,7 @@ command-line arguments.\" \
         // macros — `Fexecute_kbd_macro' on them (batch runs it too:
         // `(command-execute "a")' self-inserts `a' like GNU).
         if matches!(cmd, Value::Str(_) | Value::Vec(_)) {
-            return crate::editor::f_execute_kbd_macro_pub(
-                self,
-                vec![cmd.clone()].into(),
-            );
+            return crate::editor::f_execute_kbd_macro_pub(self, vec![cmd.clone()].into());
         }
         let fun = match cmd {
             Value::Sym(id) => {
@@ -11843,10 +12012,8 @@ command-line arguments.\" \
             // `#[...]' byte-code objects, oclosures (via
             // `oclosure-interactive-form') and subrs — so a single
             // `f_interactive_form' dispatch covers them all.
-            let spec = crate::lisp::builtins::data::f_interactive_form(
-                self,
-                vec![fun.clone()].into(),
-            )?;
+            let spec =
+                crate::lisp::builtins::data::f_interactive_form(self, vec![fun.clone()].into())?;
             if !spec.is_nil() {
                 let argv = self.eval_interactive_spec(&spec)?;
                 return self.apply(&fun, argv);
@@ -11942,9 +12109,8 @@ command-line arguments.\" \
                             let m = match m {
                                 Some(m) => m,
                                 None => {
-                                    return Err(self.error(
-                                        "The mark is not set now, so there is no region",
-                                    ));
+                                    return Err(self
+                                        .error("The mark is not set now, so there is no region"));
                                 }
                             };
                             let (beg, end) = if p <= m { (p, m) } else { (m, p) };
@@ -12144,6 +12310,10 @@ command-line arguments.\" \
                                 out.push(Value::Nil);
                             }
                         }
+                        // GNU callint.c: the up-event a `k'/`K' read
+                        // stored after a mouse down-event, else nil —
+                        // our key reads never split down/up pairs.
+                        'U' => out.push(Value::Nil),
                         _ => {
                             // GNU callint.c `default:': any unknown
                             // letter (including `+') signals —
@@ -12345,10 +12515,7 @@ fn collect_form_targets(
         // form — collect the whole form deeply for those).
         let name_is_sym = matches!(&items.get(1), Some(Value::Sym(_)));
         let name_is_quote = matches!(&items.get(1), Some(Value::Cons(_)));
-        if h.starts_with("def")
-            || h.starts_with("define-")
-            || h.starts_with("cl-def")
-        {
+        if h.starts_with("def") || h.starts_with("define-") || h.starts_with("cl-def") {
             if h == "defstruct" || h == "defclass" || h == "cl-defstruct" {
                 collect_item_syms(i, &x, out);
                 if std::env::var_os("REMACS_TRACE_COLLECT").is_some() {
@@ -12427,8 +12594,7 @@ fn collect_form_targets(
         };
         match h {
             // (quote SYM) / #'SYM appearing as a *form*: irrelevant.
-            "quote" | "function" | "provide" | "require" | "declare"
-            | "declare-function" => {}
+            "quote" | "function" | "provide" | "require" | "declare" | "declare-function" => {}
             // Literal `(put 'SYM 'KEY ...)'/`function-put': strip just
             // that prop key (a nil value is `remprop' — removing is
             // still correct).  A non-literal key forces a whole-plist
@@ -12463,13 +12629,11 @@ fn collect_form_targets(
             }
             "make-obsolete-generalized-variable" => {
                 if let Some(s) = sym_arg(1) {
-                    prop_out
-                        .insert((s, i.intern("byte-obsolete-generalized-variable")));
+                    prop_out.insert((s, i.intern("byte-obsolete-generalized-variable")));
                 }
             }
             // All three write the `gv-expander' prop.
-            "gv-define-setter" | "gv-define-simple-setter"
-            | "gv-define-expander" => {
+            "gv-define-setter" | "gv-define-simple-setter" | "gv-define-expander" => {
                 if let Some(s) = sym_arg(1) {
                     prop_out.insert((s, i.intern("gv-expander")));
                 }
@@ -12482,8 +12646,7 @@ fn collect_form_targets(
             }
             "set-advertised-calling-convention" => {
                 if let Some(s) = sym_arg(1) {
-                    prop_out
-                        .insert((s, i.intern("advertised-calling-convention")));
+                    prop_out.insert((s, i.intern("advertised-calling-convention")));
                 }
             }
             // `pcase-defmacro' writes NAME's `pcase-macroexpander'
@@ -13156,70 +13319,199 @@ pub(crate) fn subr_interactive(name: &str) -> Option<&'static str> {
         ("yank", "*P"),
         ("yank-in-context", "*P"),
         ("yank-pop", "p"),
-            ("append-to-buffer", "(list (read-buffer \"Append to buffer: \" (other-buffer (current-buffer) t)) (region-beginning) (region-end))"),
+        (
+            "append-to-buffer",
+            "(list (read-buffer \"Append to buffer: \" (other-buffer (current-buffer) t)) (region-beginning) (region-end))",
+        ),
         ("balance-windows", "\u{1}nil"),
         ("bury-buffer", "\u{1}nil"),
-        ("capitalize-region", "(list (region-beginning) (region-end) (region-noncontiguous-p))"),
-        ("clone-buffer", "(progn (if buffer-file-name (error \"Cannot clone a file-visiting buffer\")) (if (get major-mode 'no-clone) (error \"Cannot clone a buffer in %s mode\" mode-name)) (list (if current-prefix-arg (read-buffer \"Name of new cloned buffer: \" (current-buffer))) t))"),
-        ("clone-indirect-buffer", "(progn (if (get major-mode 'no-clone-indirect) (error \"Cannot indirectly clone a buffer in %s mode\" mode-name)) (list (if current-prefix-arg (read-buffer \"Name of indirect buffer: \" (current-buffer))) t))"),
+        (
+            "capitalize-region",
+            "(list (region-beginning) (region-end) (region-noncontiguous-p))",
+        ),
+        (
+            "clone-buffer",
+            "(progn (if buffer-file-name (error \"Cannot clone a file-visiting buffer\")) (if (get major-mode 'no-clone) (error \"Cannot clone a buffer in %s mode\" mode-name)) (list (if current-prefix-arg (read-buffer \"Name of new cloned buffer: \" (current-buffer))) t))",
+        ),
+        (
+            "clone-indirect-buffer",
+            "(progn (if (get major-mode 'no-clone-indirect) (error \"Cannot indirectly clone a buffer in %s mode\" mode-name)) (list (if current-prefix-arg (read-buffer \"Name of indirect buffer: \" (current-buffer))) t))",
+        ),
         ("copy-region-as-kill", "(list (mark) (point) 'region)"),
-        ("delete-directory", "(let* ((trashing (and delete-by-moving-to-trash (null current-prefix-arg))) (dir (expand-file-name (read-directory-name (if trashing \"Move directory to trash: \" \"Delete directory: \") default-directory default-directory nil nil)))) (list dir (if (directory-files dir nil directory-files-no-dot-files-regexp) (y-or-n-p (format-message \"Directory `%s' is not empty, really %s? \" dir (if trashing \"trash\" \"delete\"))) nil) (null current-prefix-arg)))"),
-        ("delete-file", "(list (read-file-name (if (and delete-by-moving-to-trash (null current-prefix-arg)) \"Move file to trash: \" \"Delete file: \") nil default-directory (confirm-nonexistent-file-or-buffer)) (null current-prefix-arg))"),
-        ("delete-indentation", "(progn (barf-if-buffer-read-only) (cons current-prefix-arg (and (use-region-p) (list (region-beginning) (region-end)))))"),
+        (
+            "delete-directory",
+            "(let* ((trashing (and delete-by-moving-to-trash (null current-prefix-arg))) (dir (expand-file-name (read-directory-name (if trashing \"Move directory to trash: \" \"Delete directory: \") default-directory default-directory nil nil)))) (list dir (if (directory-files dir nil directory-files-no-dot-files-regexp) (y-or-n-p (format-message \"Directory `%s' is not empty, really %s? \" dir (if trashing \"trash\" \"delete\"))) nil) (null current-prefix-arg)))",
+        ),
+        (
+            "delete-file",
+            "(list (read-file-name (if (and delete-by-moving-to-trash (null current-prefix-arg)) \"Move file to trash: \" \"Delete file: \") nil default-directory (confirm-nonexistent-file-or-buffer)) (null current-prefix-arg))",
+        ),
+        (
+            "delete-indentation",
+            "(progn (barf-if-buffer-read-only) (cons current-prefix-arg (and (use-region-p) (list (region-beginning) (region-end)))))",
+        ),
         ("delete-minibuffer-contents", "\u{1}nil"),
         ("delete-process", "(list 'message)"),
-        ("delete-trailing-whitespace", "(progn (barf-if-buffer-read-only) (if (use-region-p) (list (region-beginning) (region-end)) (list nil nil)))"),
+        (
+            "delete-trailing-whitespace",
+            "(progn (barf-if-buffer-read-only) (if (use-region-p) (list (region-beginning) (region-end)) (list nil nil)))",
+        ),
         ("delete-window", "\u{1}nil"),
-        ("delete-windows-on", "(let ((frame (cond ((and (numberp current-prefix-arg) (zerop current-prefix-arg)) 0) (current-prefix-arg t)))) (list (read-buffer \"Delete windows on (buffer): \" nil nil (lambda (buf) (get-buffer-window (if (consp buf) (car buf) buf) (cond ((null frame) t) ((numberp frame) frame))))) frame))"),
-        ("display-buffer", "(list (read-buffer \"Display buffer: \" (other-buffer)) (if current-prefix-arg t))"),
-        ("downcase-region", "(list (region-beginning) (region-end) (region-noncontiguous-p))"),
+        (
+            "delete-windows-on",
+            "(let ((frame (cond ((and (numberp current-prefix-arg) (zerop current-prefix-arg)) 0) (current-prefix-arg t)))) (list (read-buffer \"Delete windows on (buffer): \" nil nil (lambda (buf) (get-buffer-window (if (consp buf) (car buf) buf) (cond ((null frame) t) ((numberp frame) frame))))) frame))",
+        ),
+        (
+            "display-buffer",
+            "(list (read-buffer \"Display buffer: \" (other-buffer)) (if current-prefix-arg t))",
+        ),
+        (
+            "downcase-region",
+            "(list (region-beginning) (region-end) (region-noncontiguous-p))",
+        ),
         ("exit-minibuffer", "\u{1}nil"),
-        ("find-file", "(find-file-read-args \"Find file: \" (confirm-nonexistent-file-or-buffer))"),
+        (
+            "find-file",
+            "(find-file-read-args \"Find file: \" (confirm-nonexistent-file-or-buffer))",
+        ),
         ("fit-window-to-buffer", "\u{1}nil"),
         ("fundamental-mode", "\u{1}nil"),
-        ("global-set-key", "(let* ((menu-prompting nil) (key (read-key-sequence \"Set key globally: \" nil t))) (list key (read-command (format \"Set key %s to command: \" (key-description key)))))"),
-        ("goto-char", "(goto-char--read-natnum-interactive \"Go to char: \")"),
+        (
+            "global-set-key",
+            "(let* ((menu-prompting nil) (key (read-key-sequence \"Set key globally: \" nil t))) (list key (read-command (format \"Set key %s to command: \" (key-description key)))))",
+        ),
+        (
+            "goto-char",
+            "(goto-char--read-natnum-interactive \"Go to char: \")",
+        ),
         ("ignore", "\u{1}nil"),
-        ("insert-char", "(list (read-char-by-name \"Insert character (Unicode name or hex): \") (prefix-numeric-value current-prefix-arg) t)"),
-        ("invert-face", "(list (read-face-name \"Invert face\" (face-at-point t)))"),
-        ("join-line", "(progn (barf-if-buffer-read-only) (cons current-prefix-arg (and (use-region-p) (list (region-beginning) (region-end)))))"),
+        (
+            "insert-char",
+            "(list (read-char-by-name \"Insert character (Unicode name or hex): \") (prefix-numeric-value current-prefix-arg) t)",
+        ),
+        (
+            "invert-face",
+            "(list (read-face-name \"Invert face\" (face-at-point t)))",
+        ),
+        (
+            "join-line",
+            "(progn (barf-if-buffer-read-only) (cons current-prefix-arg (and (use-region-p) (list (region-beginning) (region-end)))))",
+        ),
         ("kill-buffer-and-window", "\u{1}nil"),
-        ("kill-process", "(list (read-process-name \"Kill process\"))"),
+        (
+            "kill-process",
+            "(list (read-process-name \"Kill process\"))",
+        ),
         ("kill-ring-save", "(list (mark) (point) 'region)"),
         ("list-processes", "\u{1}nil"),
-        ("load-file", "(list (let ((completion-ignored-extensions (remove module-file-suffix (remove \".elc\" completion-ignored-extensions)))) (read-file-name \"Load file: \" nil nil 'lambda)))"),
+        (
+            "load-file",
+            "(list (let ((completion-ignored-extensions (remove module-file-suffix (remove \".elc\" completion-ignored-extensions)))) (read-file-name \"Load file: \" nil nil 'lambda)))",
+        ),
         ("locate-library", "(list (read-library-name) nil nil t)"),
-        ("lossage-size", "(list (read-number \"Set maximum keystrokes to: \" (lossage-size)))"),
-        ("make-directory", "(list (read-file-name \"Make directory: \" default-directory default-directory nil nil) t)"),
-        ("make-face", "(list (read-from-minibuffer \"Make face: \" nil nil t 'face-name-history))"),
+        (
+            "lossage-size",
+            "(list (read-number \"Set maximum keystrokes to: \" (lossage-size)))",
+        ),
+        (
+            "make-directory",
+            "(list (read-file-name \"Make directory: \" default-directory default-directory nil nil) t)",
+        ),
+        (
+            "make-face",
+            "(list (read-from-minibuffer \"Make face: \" nil nil t 'face-name-history))",
+        ),
         ("make-frame", "\u{1}nil"),
         ("maximize-window", "\u{1}nil"),
         ("minimize-window", "\u{1}nil"),
-        ("remove-hook", "(let* ((default (and (symbolp (variable-at-point)) (symbol-name (variable-at-point)))) (hook (intern (completing-read (format-prompt \"Hook variable\" default) obarray #'boundp t nil nil default))) (local (and (local-variable-p hook) (symbol-value hook) (or (not (default-value hook)) (y-or-n-p (format \"%s has a buffer-local binding, use that? \" hook))))) (fn-alist (mapcar (lambda (x) (cons (with-output-to-string (prin1 x)) x)) (if local (symbol-value hook) (default-value hook)))) (function (alist-get (completing-read (format \"%s hook to remove: \" (if local \"Buffer-local\" \"Global\")) fn-alist nil t nil 'set-variable-value-history) fn-alist nil nil #'string=))) (list hook function local))"),
-        ("rename-buffer", "(list (read-string \"Rename buffer (to new name): \" nil 'buffer-name-history (buffer-name (current-buffer))) current-prefix-arg)"),
-        ("replace-region-contents", "(list (if (use-region-p) (region-beginning) (point-min)) (if (use-region-p) (region-end) (point-max)) (get-buffer (read-buffer-to-switch \"Source buffer: \")))"),
+        (
+            "remove-hook",
+            "(let* ((default (and (symbolp (variable-at-point)) (symbol-name (variable-at-point)))) (hook (intern (completing-read (format-prompt \"Hook variable\" default) obarray #'boundp t nil nil default))) (local (and (local-variable-p hook) (symbol-value hook) (or (not (default-value hook)) (y-or-n-p (format \"%s has a buffer-local binding, use that? \" hook))))) (fn-alist (mapcar (lambda (x) (cons (with-output-to-string (prin1 x)) x)) (if local (symbol-value hook) (default-value hook)))) (function (alist-get (completing-read (format \"%s hook to remove: \" (if local \"Buffer-local\" \"Global\")) fn-alist nil t nil 'set-variable-value-history) fn-alist nil nil #'string=))) (list hook function local))",
+        ),
+        (
+            "rename-buffer",
+            "(list (read-string \"Rename buffer (to new name): \" nil 'buffer-name-history (buffer-name (current-buffer))) current-prefix-arg)",
+        ),
+        (
+            "replace-region-contents",
+            "(list (if (use-region-p) (region-beginning) (point-min)) (if (use-region-p) (region-end) (point-max)) (get-buffer (read-buffer-to-switch \"Source buffer: \")))",
+        ),
         ("self-insert-and-exit", "\u{1}nil"),
-        ("set-face-background", "(read-face-and-attribute :background)"),
-        ("set-face-extend", "(let ((list (read-face-and-attribute :extend))) (list (car list) (if (cadr list) t)))"),
-        ("set-file-modes", "(let ((file (read-file-name \"File: \"))) (list file (read-file-modes nil file)))"),
-        ("set-frame-font", "(let* ((completion-ignore-case t) (default (frame-parameter nil 'font)) (font (completing-read (format-prompt \"Font name\" default) (x-list-fonts \"*\" nil (selected-frame)) nil nil nil nil default))) (list font current-prefix-arg nil))"),
-        ("set-frame-height", "(set-frame-property--interactive \"Frame height: \" (frame-height))"),
-        ("set-frame-width", "(set-frame-property--interactive \"Frame width: \" (frame-width))"),
+        (
+            "set-face-background",
+            "(read-face-and-attribute :background)",
+        ),
+        (
+            "set-face-extend",
+            "(let ((list (read-face-and-attribute :extend))) (list (car list) (if (cadr list) t)))",
+        ),
+        (
+            "set-file-modes",
+            "(let ((file (read-file-name \"File: \"))) (list file (read-file-modes nil file)))",
+        ),
+        (
+            "set-frame-font",
+            "(let* ((completion-ignore-case t) (default (frame-parameter nil 'font)) (font (completing-read (format-prompt \"Font name\" default) (x-list-fonts \"*\" nil (selected-frame)) nil nil nil nil default))) (list font current-prefix-arg nil))",
+        ),
+        (
+            "set-frame-height",
+            "(set-frame-property--interactive \"Frame height: \" (frame-height))",
+        ),
+        (
+            "set-frame-width",
+            "(set-frame-property--interactive \"Frame width: \" (frame-width))",
+        ),
         ("shrink-window-if-larger-than-buffer", "\u{1}nil"),
-        ("signal-process", "(list (read-string \"Process (name or number): \") (read-signal-name))"),
-        ("split-window-below", "(list (when current-prefix-arg (prefix-numeric-value current-prefix-arg)) (selected-window))"),
-        ("split-window-horizontally", "(list (when current-prefix-arg (prefix-numeric-value current-prefix-arg)) (selected-window))"),
-        ("split-window-right", "(list (when current-prefix-arg (prefix-numeric-value current-prefix-arg)) (selected-window))"),
-        ("split-window-vertically", "(list (when current-prefix-arg (prefix-numeric-value current-prefix-arg)) (selected-window))"),
-        ("switch-to-buffer-other-frame", "(list (read-buffer-to-switch \"Switch to buffer in other frame: \"))"),
-        ("switch-to-buffer-other-window", "(list (read-buffer-to-switch \"Switch to buffer in other window: \"))"),
-        ("transpose-regions", "(if (< (length mark-ring) 2) (error \"Other region must be marked before transposing two regions\") (let* ((num (if current-prefix-arg (prefix-numeric-value current-prefix-arg) 0)) (ring-length (length mark-ring)) (eltnum (mod num ring-length)) (eltnum2 (mod (1+ num) ring-length))) (list (point) (mark) (elt mark-ring eltnum) (elt mark-ring eltnum2))))"),
+        (
+            "signal-process",
+            "(list (read-string \"Process (name or number): \") (read-signal-name))",
+        ),
+        (
+            "split-window-below",
+            "(list (when current-prefix-arg (prefix-numeric-value current-prefix-arg)) (selected-window))",
+        ),
+        (
+            "split-window-horizontally",
+            "(list (when current-prefix-arg (prefix-numeric-value current-prefix-arg)) (selected-window))",
+        ),
+        (
+            "split-window-right",
+            "(list (when current-prefix-arg (prefix-numeric-value current-prefix-arg)) (selected-window))",
+        ),
+        (
+            "split-window-vertically",
+            "(list (when current-prefix-arg (prefix-numeric-value current-prefix-arg)) (selected-window))",
+        ),
+        (
+            "switch-to-buffer-other-frame",
+            "(list (read-buffer-to-switch \"Switch to buffer in other frame: \"))",
+        ),
+        (
+            "switch-to-buffer-other-window",
+            "(list (read-buffer-to-switch \"Switch to buffer in other window: \"))",
+        ),
+        (
+            "transpose-regions",
+            "(if (< (length mark-ring) 2) (error \"Other region must be marked before transposing two regions\") (let* ((num (if current-prefix-arg (prefix-numeric-value current-prefix-arg) 0)) (ring-length (length mark-ring)) (eltnum (mod num ring-length)) (eltnum2 (mod (1+ num) ring-length))) (list (point) (mark) (elt mark-ring eltnum) (elt mark-ring eltnum2))))",
+        ),
         ("unbury-buffer", "\u{1}nil"),
-        ("upcase-initials-region", "(list (region-beginning) (region-end) (region-noncontiguous-p))"),
-        ("upcase-region", "(list (region-beginning) (region-end) (region-noncontiguous-p))"),
+        (
+            "upcase-initials-region",
+            "(list (region-beginning) (region-end) (region-noncontiguous-p))",
+        ),
+        (
+            "upcase-region",
+            "(list (region-beginning) (region-end) (region-noncontiguous-p))",
+        ),
         ("what-line", "\u{1}nil"),
-        ("write-file", "(list (if buffer-file-name (read-file-name \"Write file: \" nil nil nil nil) (read-file-name \"Write file: \" default-directory (expand-file-name (file-name-nondirectory (buffer-name)) default-directory) nil nil)) (not current-prefix-arg))"),
-        ("zap-to-char", "(list (prefix-numeric-value current-prefix-arg) (read-char-from-minibuffer \"Zap to char: \" nil 'read-char-history) t)"),
+        (
+            "write-file",
+            "(list (if buffer-file-name (read-file-name \"Write file: \" nil nil nil nil) (read-file-name \"Write file: \" default-directory (expand-file-name (file-name-nondirectory (buffer-name)) default-directory) nil nil)) (not current-prefix-arg))",
+        ),
+        (
+            "zap-to-char",
+            "(list (prefix-numeric-value current-prefix-arg) (read-char-from-minibuffer \"Zap to char: \" nil 'read-char-history) t)",
+        ),
     ];
     T.iter().find(|(n, _)| *n == name).map(|(_, s)| *s)
 }

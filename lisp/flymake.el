@@ -12,12 +12,34 @@
 (defvar flymake-mode nil)
 (defvar-local flymake--diagnostics nil)
 
-(defun flymake-log (level msg &rest args)
+(defun flymake--log-1 (level sublog msg &rest args)
+  "Do actual work for `flymake-log' (remacs stub backend)."
+  (let ((warning-minimum-level :emergency)
+        (warning-type-format
+         (format " [%s %s]"
+                 (or sublog 'flymake)
+                 (replace-regexp-in-string "%" "%%"
+                                           (buffer-name (current-buffer))))))
+    (display-warning (list 'flymake sublog)
+                     (apply #'format-message msg args)
+                     (if (numberp level)
+                         (or (nth level '(:emergency :error :warning :debug :debug))
+                             :error)
+                       level)
+                     "*Flymake log*")))
+
+(defmacro flymake-log (level msg &rest args)
   "Log, at level LEVEL, the message MSG formatted with ARGS.
-LEVEL is passed to `warning-minimum-level' filtering; this stub
-routes the message through `message' at high verbosity only."
-  (when (>= (or (bound-and-true-p flymake-log-level) 0) (or level 0))
-    (apply #'message msg args)))
+Expands to `flymake--log-1' like GNU; MSG/ARGS are evaluated."
+  (let* ((file (if (fboundp 'macroexp-file-name)
+                   (macroexp-file-name)
+                 (and (not load-file-name)
+                      (bound-and-true-p byte-compile-current-file))))
+         (sublog (if (stringp file)
+                     (intern
+                      (file-name-nondirectory
+                       (file-name-sans-extension file))))))
+    `(flymake--log-1 ,level ',sublog ,msg ,@args)))
 
 (defun flymake-make-diagnostic (locus beg end type text &optional data _overlay-properties)
   "Make a Flymake diagnostic for LOCUS's region from BEG to END.

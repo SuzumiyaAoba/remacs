@@ -463,4 +463,25 @@
 ;; process-message? early perms check
 (qa (fboundp 'make-serial-process) t) ; exists in GNU 31.1
 
+
+;; == display-message-or-buffer accepts a buffer (shell-command path) ==
+;; GNU Fdisplay_message_or_buffer returns t for a buffer arg.
+(let ((qb (get-buffer-create "qap-dmb")))
+  (unwind-protect
+      (qa (display-message-or-buffer qb) t)
+    (kill-buffer qb)))
+;; shell-command with explicit output + error buffers
+(let ((ob (get-buffer-create "qap-sco"))
+      (eb (get-buffer-create "qap-sce")))
+  (unwind-protect
+      (progn
+        (with-current-buffer ob (erase-buffer))
+        (with-current-buffer eb (erase-buffer))
+        (shell-command "echo E >&2; echo O" ob eb)
+        (qa (list (with-current-buffer ob (buffer-string))
+                  (with-current-buffer eb (buffer-string)))
+            '("O\n" "E\n")))
+    (kill-buffer ob)
+    (kill-buffer eb)))
+
 (princ (qa--done))

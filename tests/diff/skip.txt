@@ -1,0 +1,51 @@
+
+# -- GNU batch aborts (SIGABRT, nativecomp/run-time checks) --------
+# -- GNU batch hangs (block forever) ------------------------------
+# -- harness poison ------------------------------------------------
+# Targets that GNU Emacs 31.1 aborts on or hangs forever in
+# Verified by direct invocation (see each probe below).
+# `-Q --batch` on this platform, even with junk args — calling them
+# kills the whole slice and hides every later row as MISSING-ROW.
+# redirects stderr → our '== idx name' hang markers vanish and the
+# rest of the slice looks like a crash on BOTH sides.
+comp-el-to-eln-filename      # aborts on corpus args under -Q --batch
+custom-initialize-delay      # aborts
+event-apply-alt-modifier
+event-apply-control-modifier
+event-apply-hyper-modifier
+event-apply-meta-modifier
+event-apply-meta-modifier    # hangs too (meta variant)
+event-apply-shift-modifier
+event-apply-shift-modifier  # GNU batch hang (shift variant)
+event-apply-super-modifier
+frame--z-order-lessp         # aborts
+help-for-help
+isearch-quote-char
+ns-do-show-character-palette # aborts (no NS display in batch anyway)
+ns-frame-edges              # aborts GNU batch (NS frame geometry)
+ns-frame-geometry           # aborts GNU batch (SIGABRT)
+ns-mouse-absolute-pixel-position
+ns-set-mouse-absolute-pixel-position
+read-quoted-char
+redirect-debugging-output
+tool-bar-event-apply-alt-modifier
+tool-bar-event-apply-control-modifier
+tool-bar-event-apply-hyper-modifier
+tool-bar-event-apply-meta-modifier
+tool-bar-event-apply-shift-modifier
+tool-bar-event-apply-shift-modifier  # GNU batch hang
+tool-bar-event-apply-super-modifier
+momentary-string-display     # GNU batch hang (waits for input)
+read-key-sequence            # GNU batch hang (waits for input)
+read-key-sequence-vector     # GNU batch hang
+run-at-time                  # timer list is nondeterministic (wall clock)
+files--make-magic-temp-file  # random suffix differs per process
+ns-show-character-palette    # aborts GNU batch (NS palette panel)
+register-read-with-preview  # GNU batch hang (reads a key)
+menu-bar-menu-at-x-y        # GNU batch hang (x-popup-menu reads batch stdin)
+unix-filename-rubout        # GNU batch hang: forward-unix-word loops on huge args
+unix-word-rubout            # GNU batch hang: same loop family
+tabulated-list-previous-column  # GNU batch hang on huge arg
+command-line               # GNU replays the startup arg list — nested
+command-line-1             #   d--run recursion floods the row stream
+normal-top-level           # GNU: same replay via command-line inside

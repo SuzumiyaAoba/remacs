@@ -8,8 +8,8 @@ pub mod primitives;
 
 pub use primitives::install_primitives;
 
-use std::cell::RefCell;
 use rustc_hash::FxHashMap as HashMap;
+use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 
 use crate::lisp::value::{BufferRef, Marker, MarkerRef, SymId, Value};
@@ -297,8 +297,10 @@ impl Buffer {
             file_modtime_size: -1,
             file_lock_name: None,
             create_lockfiles: true,
-            // GNU sets last_name to the creation name; renames and
-            // kill update it (Frename_buffer, kill_buffer).
+            // GNU get-buffer-create sets last_name to the creation
+            // name (renames/kill update it later); only `*scratch*',
+            // born via init_buffer, keeps nil — see
+            // `create_exact_nolast'.
             last_name: Some(name),
             inhibit_buffer_hooks: false,
         }
@@ -307,7 +309,9 @@ impl Buffer {
     /// GNU `BUFFER_MODIFIED_P': the shared MODIFF vs our SAVE_MODIFF —
     /// edits through any buffer sharing this text count.
     pub fn is_modified(&self) -> bool {
-        self.text.mod_tick.get() > self.text.save_tick.get()
+        // `internal--set-buffer-modified-tick' stores raw fixnums
+        // (negatives included), so compare as signed.
+        self.text.mod_tick.get() as i64 > self.text.save_tick.get() as i64
     }
 
     /// GNU `modiff_incr': MODIFF grows logarithmically with the number
@@ -331,10 +335,13 @@ impl Buffer {
         let already = self.is_modified();
         let mod_tick = self.text.mod_tick.get();
         if flag {
-            if self.text.save_tick.get() >= mod_tick {
-                // Park the old MODIFF in SAVE_MODIFF.
-                self.text.mod_tick.set(mod_tick + 1);
-                self.text.save_tick.set(mod_tick);
+            // GNU Frestore_buffer_modified_p: becoming modified sets
+            // SAVE_MODIFF to MODIFF - 1 — the flag is the strict
+            // `SAVE_MODIFF < MODIFF' comparison, so parking the
+            // current tick keeps `modified-p' nil.  MODIFF itself
+            // is untouched (the bump belongs to modiff_incr).
+            if !already {
+                self.text.save_tick.set(mod_tick.wrapping_sub(1));
             }
         } else {
             self.text.save_tick.set(mod_tick);
@@ -761,7 +768,7 @@ impl Buffer {
             _ => true,
         };
         // First change since save gets a timestamp record.
-        if self.text.mod_tick.get() <= self.text.save_tick.get() {
+        if self.text.mod_tick.get() as i64 <= self.text.save_tick.get() as i64 {
             self.record_first_change();
         }
         // Right after a boundary, record where point was before the
@@ -848,7 +855,7 @@ impl Buffer {
         if self.undo_disabled() {
             return;
         }
-        if self.text.mod_tick.get() <= self.text.save_tick.get() {
+        if self.text.mod_tick.get() as i64 <= self.text.save_tick.get() as i64 {
             self.record_first_change();
         }
         let entry = Value::cons(
@@ -878,7 +885,7 @@ impl Buffer {
     /// the first change since save) + `MODIFF += 1'.  CHARS_MODIFF is
     /// not touched.
     pub fn note_prop_modified(&mut self) {
-        if self.text.mod_tick.get() <= self.text.save_tick.get() {
+        if self.text.mod_tick.get() as i64 <= self.text.save_tick.get() as i64 {
             self.record_first_change();
         }
         self.text.mod_tick.set(self.text.mod_tick.get() + 1);
@@ -1001,14 +1008,28 @@ impl BufferSet {
     }
 
     /// Create a buffer with exactly this name (kills none; used at init).
+    /// `last_name' is the creation name (GNU get-buffer-create).
     pub fn create_exact(&mut self, name: &str) -> usize {
+        self.create_exact_named(name, true)
+    }
+
+    /// Boot-time `*scratch*'-only variant: GNU `init_buffer' leaves
+    /// `b->last_name' nil, so `(buffer-last-name " *scratch*")' is nil.
+    pub fn create_exact_nolast(&mut self, name: &str) -> usize {
+        self.create_exact_named(name, false)
+    }
+
+    fn create_exact_named(&mut self, name: &str, with_last: bool) -> usize {
         let id = self.bufs.len();
-        let buf = Buffer::new(
+        let mut buf = Buffer::new(
             id,
             name.to_string(),
             self.undo_sym,
             self.undo_inhibit.clone(),
         );
+        if !with_last {
+            buf.last_name = None;
+        }
         let rc = Rc::new(RefCell::new(buf));
         rc.borrow().text.add_viewer(&rc);
         self.bufs.push(Some(rc));
@@ -1111,21 +1132,60 @@ impl BufferSet {
             .filter(|&id| self.get(id).is_some())
             .collect()
     }
-
-    /// The next non-internal buffer in the order (for
-    /// `other-buffer`; Emacs skips buffers with space-prefixed
-    /// names).
+    /// GNU `other_buffer' (buffer.c): scan the buffer list starting
+    /// just PAST `exclude', wrapping around to the head — never from
+    /// position 0.  `exclude = usize::MAX' scans the whole list.
+    fn other_scan(&self, exclude: usize, pred: &dyn Fn(usize) -> bool) -> Option<usize> {
+        let n = self.order.len();
+        let start = match self.order.iter().position(|&id| id == exclude) {
+            Some(p) => p + 1,
+            None => 0,
+        };
+        (0..n)
+            .map(|k| self.order[(start + k) % n])
+            .find(|&id| id != exclude && pred(id))
+    }
+    /// First live non-space-named buffer (scan from `exclude'+1).
     pub fn other(&self, exclude: usize) -> Option<usize> {
-        self.order.iter().copied().find(|&id| {
-            id != exclude
-                && self
-                    .get(id)
-                    .map(|b| !b.borrow().name.starts_with(' '))
-                    .unwrap_or(false)
+        self.other_scan(exclude, &|id| self.live_user_buffer(id))
+    }
+    /// Live non-space buffer not in `shown', preferring the
+    /// after-`exclude' scan order.
+    pub fn other_unshown(
+        &self,
+        exclude: usize,
+        shown: &std::collections::HashSet<usize>,
+    ) -> Option<usize> {
+        self.other_scan(exclude, &|id| {
+            self.live_user_buffer(id) && !shown.contains(&id)
         })
     }
 
-    /// Generate a unique buffer name based on `base`.
+    fn live_user_buffer(&self, id: usize) -> bool {
+        self.get(id)
+            .map(|b| {
+                let bb = b.borrow();
+                bb.live && !bb.name.starts_with(' ')
+            })
+            .unwrap_or(false)
+    }
+
+    /// GNU `other_buffer' (buffer.c): prefer a buffer not shown in any
+    /// window of the frame; fall back to the first candidate when all
+    /// are displayed.  `visible_ok' is Fother_buffer's VISIBLE-OK arg.
+    pub fn other_visible_pref(
+        &self,
+        exclude: usize,
+        shown: &std::collections::HashSet<usize>,
+        visible_ok: bool,
+    ) -> Option<usize> {
+        if !visible_ok {
+            if let Some(id) = self.other_unshown(exclude, shown) {
+                return Some(id);
+            }
+        }
+        self.other(exclude)
+    }
     pub fn unique_name(&self, base: &str) -> String {
         if !self.name_map.contains_key(base) {
             return base.to_string();

@@ -98,9 +98,13 @@
   (qa (slot-exists-p o 'nosuch) nil))
 
 ;; == with-slots ==
+;; NOTE: `qa' evals a quoted form dynamically, so the symbol-macrolet
+;; bindings of `with-slots' don't reach `(+ x y)' — verify the bindings
+;; resolve by evaluating the sum inline (30 on both impls) and checking
+;; the slots through slot-value.
 (let ((o (make-instance 'pt :x 10 :y 20)))
-  (with-slots (x y) o
-    (qa (+ x y) 30)))
+  (qa (with-slots (x y) o (+ x y)) 30)
+  (qa (with-slots (x y) o (setq x (+ x 1)) (list x y)) '(11 20)))
 
 ;; == find-class returns a class object (not eieio-object-p) ==
 (let ((cls (find-class 'pt)))

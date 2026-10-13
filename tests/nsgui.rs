@@ -127,7 +127,6 @@ fn window_system_errors_and_nils() {
         "(ns-get-resource \"a\" \"b\")",
         "(ns-hide-emacs nil)",
         "(ns-set-resource \"a\" \"b\" \"c\")",
-        "(ns-begin-drag '(a) 'b nil)",
     ] {
         let r = ev(&format!("(condition-case e {form} (error (car (cdr e))))"));
         assert_eq!(
@@ -135,6 +134,17 @@ fn window_system_errors_and_nils() {
             "{form}"
         );
     }
+    // `ns-begin-drag': nil PBOARD first, then the window-system frame
+    // decode (GNU-verified).
+    assert_eq!(
+        ev(
+            "(list (condition-case e (ns-begin-drag 5 nil nil) (error e))
+                  (condition-case e (ns-begin-drag '(a) 'b nil) (error e))
+                  (condition-case e (ns-begin-drag nil 'b nil) (error e)))"
+        ),
+        "((error \"Empty pasteboard\") (wrong-type-argument frame-live-p (a)) \
+(error \"Window system frame should be used\"))"
+    );
     // These legitimately return nil without a window system.
     assert_eq!(
         ev("(list (ns-badge nil) (ns-request-user-attention nil)

@@ -40,46 +40,57 @@ mod coverage_tests {
             #[test]
             fn $name() {
                 probe_stack(|| {
-                let _lock = PROBE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-                let mut i = Interp::new();
-                let src = include_str!(concat!("../tests/", $file));
-                match i.eval_str(src) {
-                    Ok(_) => {}
-                    Err(f) => {
-                        // Bisect to the failing top-level form so
-                        // flaky failures identify themselves.
-                        let chars: std::rc::Rc<Vec<char>> = std::rc::Rc::new(src.chars().collect());
-                        let mut pos = 0usize;
-                        let mut report = String::new();
-                        loop {
-                            let next = {
-                                let mut r =
-                                    crate::lisp::reader::Reader::with_chars(&mut i, chars.clone());
-                                r.set_position(pos);
-                                match r.read() {
-                                    Ok(Some(_)) => r.position(),
-                                    _ => break,
+                    let _lock = PROBE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut i = Interp::new();
+                    let src = include_str!(concat!("../tests/", $file));
+                    match i.eval_str(src) {
+                        Ok(_) => {}
+                        Err(f) => {
+                            // Bisect to the failing top-level form so
+                            // flaky failures identify themselves.
+                            let chars: std::rc::Rc<Vec<char>> =
+                                std::rc::Rc::new(src.chars().collect());
+                            let mut pos = 0usize;
+                            let mut report = String::new();
+                            loop {
+                                let next = {
+                                    let mut r = crate::lisp::reader::Reader::with_chars(
+                                        &mut i,
+                                        chars.clone(),
+                                    );
+                                    r.set_position(pos);
+                                    match r.read() {
+                                        Ok(Some(_)) => r.position(),
+                                        _ => break,
+                                    }
+                                };
+                                let form_src = &src[pos..next];
+                                let form = {
+                                    let mut r = crate::lisp::reader::Reader::new(&mut i, form_src);
+                                    match r.read() {
+                                        Ok(Some(v)) => v,
+                                        _ => break,
+                                    }
+                                };
+                                match i.eval(&form) {
+                                    Err(e) => {
+                                        report = format!(" at byte {pos}: {form_src} => {e:?}");
+                                        break;
+                                    }
+                                    Ok(_) => pos = next,
                                 }
-                            };
-                            let form_src = &src[pos..next];
-                            let form = {
-                                let mut r = crate::lisp::reader::Reader::new(&mut i, form_src);
-                                match r.read() {
-                                    Ok(Some(v)) => v,
-                                    _ => break,
-                                }
-                            };
-                            match i.eval(&form) {
-                                Err(e) => {
-                                    report = format!(" at byte {pos}: {form_src} => {e:?}");
-                                    break;
-                                }
-                                Ok(_) => pos = next,
                             }
+                            let flow_desc = match &f {
+                                crate::lisp::Flow::Signal(s, d, _) => format!(
+                                    "signal {} {}",
+                                    i.prin1_to_string(s),
+                                    i.prin1_to_string(d)
+                                ),
+                                other => format!("{other:?}"),
+                            };
+                            panic!("probe {} failed: {}{}", $file, flow_desc, report);
                         }
-                        panic!("probe {} failed: {:?}{}", $file, f, report);
                     }
-                }
                 });
             }
         };
@@ -131,19 +142,20 @@ mod coverage_tests {
     /// with known args.
     #[test]
     fn u_interactive_spec_command_args() {
-        probe_stack(|| {        let mut i = Interp::new();
-        i.command_args = vec![crate::lisp::Value::Int(42)];
-        for code in [
-            "s", "B", "b", "F", "f", "D", "z", "Z", "a", "C", "S", "v", "k", "K", "c", "e", "x",
-            "X", "n", "N",
-        ] {
-            i.eval_str(&format!(
-                "(progn (defun g (x) (interactive \"{}In: \") x)
+        probe_stack(|| {
+            let mut i = Interp::new();
+            i.command_args = vec![crate::lisp::Value::Int(42)];
+            for code in [
+                "s", "B", "b", "F", "f", "D", "z", "Z", "a", "C", "S", "v", "k", "K", "c", "e",
+                "x", "X", "n", "N",
+            ] {
+                i.eval_str(&format!(
+                    "(progn (defun g (x) (interactive \"{}In: \") x)
                         (call-interactively 'g) (fmakunbound 'g))",
-                code
-            ))
-            .unwrap();
-        }
+                    code
+                ))
+                .unwrap();
+            }
         });
     }
 
@@ -152,81 +164,83 @@ mod coverage_tests {
     /// tests/interactive.rs but lands inside the instrumented libtest.
     #[test]
     fn u_interactive_spec_reader() {
-        probe_stack(|| {        use crate::lisp::MinibufInput;
-        use std::cell::RefCell;
-        use std::collections::VecDeque;
-        use std::rc::Rc;
-        let mut i = Interp::new();
-        let answers = RefCell::new(VecDeque::from([
-            MinibufInput::Text("5".into()),       // n
-            MinibufInput::Text("str".into()),     // s
-            MinibufInput::Text("".into()),        // b → current buffer
-            MinibufInput::Text("mksym".into()),   // a → symbol
-            MinibufInput::Text("seq".into()),     // k
-            MinibufInput::Text("(+ 1 2)".into()), // x → evals
-            MinibufInput::Text("(+ 1 2)".into()), // X → evals+prints
-            MinibufInput::Key(65),                // c → char code
-            MinibufInput::Text("txt".into()),     // c → Text arm
-        ]));
-        i.minibuf_reader = Some(Rc::new(move |_, _, _| {
-            answers
-                .borrow_mut()
-                .pop_front()
-                .ok_or(crate::lisp::Flow::Quit)
-        }));
-        for code in ["n", "s", "b", "a", "k", "x", "X", "c", "c"] {
-            i.eval_str(&format!(
-                "(progn (defun g (x) (interactive \"{}In: \") x)
+        probe_stack(|| {
+            use crate::lisp::MinibufInput;
+            use std::cell::RefCell;
+            use std::collections::VecDeque;
+            use std::rc::Rc;
+            let mut i = Interp::new();
+            let answers = RefCell::new(VecDeque::from([
+                MinibufInput::Text("5".into()),       // n
+                MinibufInput::Text("str".into()),     // s
+                MinibufInput::Text("".into()),        // b → current buffer
+                MinibufInput::Text("mksym".into()),   // a → symbol
+                MinibufInput::Text("seq".into()),     // k
+                MinibufInput::Text("(+ 1 2)".into()), // x → evals
+                MinibufInput::Text("(+ 1 2)".into()), // X → evals+prints
+                MinibufInput::Key(65),                // c → char code
+                MinibufInput::Text("txt".into()),     // c → Text arm
+            ]));
+            i.minibuf_reader = Some(Rc::new(move |_, _, _| {
+                answers
+                    .borrow_mut()
+                    .pop_front()
+                    .ok_or(crate::lisp::Flow::Quit)
+            }));
+            for code in ["n", "s", "b", "a", "k", "x", "X", "c", "c"] {
+                i.eval_str(&format!(
+                    "(progn (defun g (x) (interactive \"{}In: \") x)
                         (call-interactively 'g) (fmakunbound 'g))",
-                code
-            ))
-            .unwrap();
-        }
+                    code
+                ))
+                .unwrap();
+            }
         });
     }
 
     #[test]
     fn u_output_sinks() {
-        probe_stack(|| {        use crate::lisp::OutputSink;
-        use std::cell::RefCell;
-        use std::rc::Rc;
+        probe_stack(|| {
+            use crate::lisp::OutputSink;
+            use std::cell::RefCell;
+            use std::rc::Rc;
 
-        // Buffer sink captures princ and message output.
-        let mut i = Interp::new();
-        i.noninteractive = false;
-        let sink = Rc::new(RefCell::new(String::new()));
-        i.output = Some(OutputSink::Buffer(sink.clone()));
-        i.eval_str("(princ \"into-sink\")").unwrap();
-        i.message("logged-msg");
-        let got = sink.borrow().clone();
-        assert!(got.contains("into-sink"), "{}", got);
-        // GNU routes `message' to the echo area + the *Messages* log,
-        // NOT to the princ/output sink (a *Messages* with leading space
-        // is a separate buffer; the real log is `*Messages*').
-        assert!(!got.contains("logged-msg"), "{}", got);
-        assert_eq!(i.echo_message, "logged-msg");
-        let msgs = i
-            .eval_str("(with-current-buffer \"*Messages*\" (buffer-string))")
-            .unwrap();
-        assert!(i.princ_to_string(&msgs).contains("logged-msg\n"));
+            // Buffer sink captures princ and message output.
+            let mut i = Interp::new();
+            i.noninteractive = false;
+            let sink = Rc::new(RefCell::new(String::new()));
+            i.output = Some(OutputSink::Buffer(sink.clone()));
+            i.eval_str("(princ \"into-sink\")").unwrap();
+            i.message("logged-msg");
+            let got = sink.borrow().clone();
+            assert!(got.contains("into-sink"), "{}", got);
+            // GNU routes `message' to the echo area + the *Messages* log,
+            // NOT to the princ/output sink (a *Messages* with leading space
+            // is a separate buffer; the real log is `*Messages*').
+            assert!(!got.contains("logged-msg"), "{}", got);
+            assert_eq!(i.echo_message, "logged-msg");
+            let msgs = i
+                .eval_str("(with-current-buffer \"*Messages*\" (buffer-string))")
+                .unwrap();
+            assert!(i.princ_to_string(&msgs).contains("logged-msg\n"));
 
-        // Function sink is invoked with each printed string.
-        let mut i2 = Interp::new();
-        i2.eval_str("(setq seen \"\")").unwrap();
-        i2.eval_str("(defun collect-s (s) (setq seen (concat seen s)))")
-            .unwrap();
-        let sid = i2.intern("collect-s");
-        let f = i2.symbol_function(sid);
-        i2.output = Some(OutputSink::Function(f));
-        i2.eval_str("(princ \"via-fn\")").unwrap();
-        let vsym = i2.intern("seen");
-        let seen = i2.symbol_value(vsym);
-        assert_eq!(i2.princ_to_string(&seen), "via-fn");
+            // Function sink is invoked with each printed string.
+            let mut i2 = Interp::new();
+            i2.eval_str("(setq seen \"\")").unwrap();
+            i2.eval_str("(defun collect-s (s) (setq seen (concat seen s)))")
+                .unwrap();
+            let sid = i2.intern("collect-s");
+            let f = i2.symbol_function(sid);
+            i2.output = Some(OutputSink::Function(f));
+            i2.eval_str("(princ \"via-fn\")").unwrap();
+            let vsym = i2.intern("seen");
+            let seen = i2.symbol_value(vsym);
+            assert_eq!(i2.princ_to_string(&seen), "via-fn");
 
-        // Stdout sink prints (can't capture; just exercise the path).
-        let mut i3 = Interp::new();
-        i3.output = Some(OutputSink::Stdout);
-        i3.eval_str("(princ \"to-stdout\")").unwrap();
+            // Stdout sink prints (can't capture; just exercise the path).
+            let mut i3 = Interp::new();
+            i3.output = Some(OutputSink::Stdout);
+            i3.eval_str("(princ \"to-stdout\")").unwrap();
         });
     }
 

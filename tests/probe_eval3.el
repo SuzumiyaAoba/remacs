@@ -136,8 +136,11 @@
     (prin1 (with-current-buffer " *sout*" (buffer-string))))
   (let ((standard-output t))
     (princ "echo-area"))
-  (let ((standard-output (marker-position (point-marker))))
-    (princ "mrk"))
+  ;; GNU signals `invalid-function' for an integer standard-output.
+  (condition-case e
+      (let ((standard-output (marker-position (point-marker))))
+        (princ "mrk"))
+    (error (prin1 (car e))))
   ;; ---- syntax codes --------------------------------------------------------------
   (prin1 (char-syntax ?a))
   (prin1 (char-syntax ?\())

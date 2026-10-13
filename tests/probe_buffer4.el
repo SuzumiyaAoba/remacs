@@ -358,13 +358,13 @@
   (delete-field)
   (buffer-string)
   (constrain-to-field nil 1)
-  (constrain-to-field 1 5))
+  (condition-case e (constrain-to-field 1 5) (error e)))
 (with-temp-buffer
   (insert "line1\nline2\nline3")
   (goto-char 1)
   (vertical-motion 1)
   (vertical-motion -1)
-  (compute-motion 1 '(1 . 0) 20 '(0 . 0) 80 0 nil))
+  (condition-case e (compute-motion 1 '(1 . 0) 20 '(0 . 0) 80 0 nil) (error e)))
 (with-temp-buffer
   (insert "abc")
   (add-face-text-property 1 3 'bold)

@@ -213,22 +213,32 @@ fn mpuz_puzzle_board_shape() {
 
 #[test]
 fn dotted_rest_lambda() {
-    // GNU accepts `(lambda (a . b) ...)' and `(lambda a ...)'
-    // alike; verified on GNU 31.1.
+    // GNU 31.1 rejects a dotted arglist tail when the closure is called
+    // (`invalid-function'), and a bare-symbol arglist when the closure
+    // is built: cconv's `(cl-assert (listp args))' under lexical
+    // binding, Fmake_interpreted_closure's CHECK_LIST otherwise.
     assert_eq!(
-        ev("(list (funcall (lambda (a . b) (list a b)) 1 2 3)
-                  (funcall (lambda a a) 1 2)
-                  (funcall (lambda (a b . c) (list a b c)) 1 2 3 4))"),
-        "((1 (2 3)) (1 2) (1 2 (3 4)))"
+        ev(
+            "(list (condition-case e (eval '(funcall (lambda (a . b) (list a b)) 1 2 3) t)
+                    (error (car e)))
+                  (condition-case e (eval '(funcall (lambda a a) 1 2) t) (error e))
+                  (condition-case e (eval '(funcall (lambda a a) 1 2) nil) (error e))
+                  (condition-case e (eval '(funcall (lambda (a b . c) (list a b c)) 1 2 3 4) t)
+                    (error (car e))))"
+        ),
+        "(invalid-function (cl-assertion-failed (listp args)) \
+(wrong-type-argument listp a) invalid-function)"
     );
 }
 
 #[test]
 fn dotted_rest_defun() {
+    // GNU 31.1: `defun' itself trips over the dotted tail.
     assert_eq!(
-        ev("(progn (defun drest (a . b) (cons a b))
-                  (drest 1 2 3))"),
-        "(1 2 3)"
+        ev("(condition-case e
+               (eval '(progn (defun drest (a . b) (cons a b)) (drest 1 2 3)) t)
+             (error e))"),
+        "(wrong-type-argument listp b)"
     );
 }
 
@@ -1844,13 +1854,11 @@ fn load_optional_arguments() {
               (delete-file f)))",
     );
     assert_eq!(out, "", "load messages must not hit stdout");
-    let msgs = ev(
-        "(let ((f (make-temp-file \"remacs-load\" nil \".el\")))
+    let msgs = ev("(let ((f (make-temp-file \"remacs-load\" nil \".el\")))
             (unwind-protect
                 (progn (load f) (load f nil t)
                        (with-current-buffer \"*Messages*\" (buffer-string)))
-              (delete-file f)))",
-    );
+              (delete-file f)))");
     assert!(
         msgs.contains("Loading ") && msgs.contains("(source)..."),
         "expected `Loading FILE (source)...' in *Messages*, got: {msgs}"

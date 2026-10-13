@@ -362,16 +362,22 @@ fn equality() {
     // which made `byte-compile-get-constant' dedup distinct lambda
     // prototypes into one constant.)
     assert_eq!(
-        ev("(equal (car (read-from-string \"#[257 \\\"a\\\" [] 2]\")) (car (read-from-string \"#[257 \\\"a\\\" [] 2]\")))"),
+        ev(
+            "(equal (car (read-from-string \"#[257 \\\"a\\\" [] 2]\")) (car (read-from-string \"#[257 \\\"a\\\" [] 2]\")))"
+        ),
         "t"
     );
     assert_eq!(
-        ev("(equal (car (read-from-string \"#[257 \\\"a\\\" [] 2]\")) (car (read-from-string \"#[514 \\\"a\\\" [] 4]\")))"),
+        ev(
+            "(equal (car (read-from-string \"#[257 \\\"a\\\" [] 2]\")) (car (read-from-string \"#[514 \\\"a\\\" [] 4]\")))"
+        ),
         "nil"
     );
     // `equal'-test hash tables accept byte-code/record keys by content.
     assert_eq!(
-        ev("(let ((h (make-hash-table :test 'equal))) (puthash (car (read-from-string \"#[257 \\\"a\\\" [] 2]\")) 'yes h) (list (gethash (car (read-from-string \"#[257 \\\"a\\\" [] 2]\")) h) (gethash (car (read-from-string \"#[257 \\\"b\\\" [] 2]\")) h)))"),
+        ev(
+            "(let ((h (make-hash-table :test 'equal))) (puthash (car (read-from-string \"#[257 \\\"a\\\" [] 2]\")) 'yes h) (list (gethash (car (read-from-string \"#[257 \\\"a\\\" [] 2]\")) h) (gethash (car (read-from-string \"#[257 \\\"b\\\" [] 2]\")) h)))"
+        ),
         "(yes nil)"
     );
 }

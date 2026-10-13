@@ -20,9 +20,17 @@ fn differential_vs_gnu() {
         .map(str::to_string)
         .unwrap_or_else(|| "target/debug/remacs".into());
     let status = std::process::Command::new("python3")
-        .args(["tools/difftest.py", "--timeout", "1800",
-               "--remacs", &remacs])
+        .args([
+            "tools/difftest.py",
+            "--timeout",
+            "1800",
+            "--remacs",
+            &remacs,
+        ])
         .status()
         .expect("difftest.py failed to spawn");
-    assert!(status.success(), "differential run found divergences (see tests/diff/report.txt)");
+    assert!(
+        status.success(),
+        "differential run found divergences (see tests/diff/report.txt)"
+    );
 }

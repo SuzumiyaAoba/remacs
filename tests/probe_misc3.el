@@ -496,7 +496,7 @@ process-environment
 (time-subtract '(5 6) '(1 2))
 (current-time)
 (float-time '(100 200 300 0))
-(float-time '(ticks . hz))
+(condition-case e (float-time '(ticks . hz)) (error e))
 (condition-case e (float-time "x") (error e))
 (secure-hash 'md5 "abc")
 (secure-hash 'sha1 "abc")

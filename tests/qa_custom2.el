@@ -46,10 +46,11 @@
 (qa (consp (custom-variable-p 'myvar)) t)
 ;; custom-type recorded
 (qa (get 'myvar 'custom-type) 'integer)
-;; standard-value is a list with one deferred eval form
+;; standard-value is a list with one entry — the quoted STANDARD
+;; form (this file is not lexical-binding, so no funcall thunk)
 (let ((sv (get 'myvar 'standard-value)))
   (qa (listp sv) t)
-  (qa (consp (car sv)) t))
+  (qa (car sv) 42))
 ;; :group stores on the PARENT, not the variable itself
 (qa (get 'myvar 'custom-group) nil)
 ;; the GROUP's custom-group lists registered members

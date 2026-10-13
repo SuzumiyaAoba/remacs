@@ -3,12 +3,12 @@
 //! Like Emacs's `DEFUN`s in C. Each subr is a static `Subr` with a name,
 //! arity, and a `fn(&mut Interp, Vec<Value>) -> EvalResult`.
 
-pub(crate) mod backquote;
 pub(crate) mod arith;
+pub(crate) mod backquote;
 pub(crate) mod bidi_table;
 pub(crate) mod charset;
-pub(crate) mod csl_table;
 pub(crate) mod comp;
+pub(crate) mod csl_table;
 pub(crate) mod data;
 pub(crate) mod dbus;
 pub(crate) mod enc_tables;
@@ -32,7 +32,7 @@ pub(crate) mod xml;
 use super::Interp;
 use super::error::Flow;
 use super::obarray::sym;
-use super::value::{Arity, Subr, SymId, Value, FIXNUM_MAX, FIXNUM_MIN};
+use super::value::{Arity, FIXNUM_MAX, FIXNUM_MIN, Subr, SymId, Value};
 
 /// Declare a subr entry.
 macro_rules! S {
@@ -102,24 +102,47 @@ pub(crate) fn collect() -> Vec<&'static Subr> {
 
 /// Intern every subr name and bind its function cell.
 pub fn install(interp: &mut Interp) {
+    let _t = std::env::var_os("REMACS_BOOT_PROF")
+        .is_some()
+        .then(std::time::Instant::now);
     for s in collect() {
         let id = interp.intern(s.name);
         interp.fset(id, Value::Subr(s));
     }
+    if let Some(t) = _t {
+        eprintln!("[install] collect+fset: {}ms", t.elapsed().as_millis());
+    }
+    let _t = std::env::var_os("REMACS_BOOT_PROF")
+        .is_some()
+        .then(std::time::Instant::now);
     // Special forms are subrs in Emacs: `symbol-function'/'subrp'/'fboundp'
     // must see them. Calling one through funcall signals invalid-function.
     for s in SPECIAL_FORM_SUBRS {
         let id = interp.intern(s.name);
         interp.fset(id, Value::Subr(s));
     }
-    sqlite::install(interp);
-    lcms::install(interp);
-    filenotify::install(interp);
-    gnutls::install(interp);
-    dbus::install(interp);
-    comp::install(interp);
-    crate::lisp::process::install(interp);
-    install_aliases(interp);
+    if let Some(t) = _t {
+        eprintln!("[install] special: {}ms", t.elapsed().as_millis());
+    }
+    macro_rules! timed {
+        ($f:expr, $n:literal) => {{
+            let _t2 = std::env::var_os("REMACS_BOOT_PROF")
+                .is_some()
+                .then(std::time::Instant::now);
+            $f;
+            if let Some(t2) = _t2 {
+                eprintln!("[install] {}: {}ms", $n, t2.elapsed().as_millis());
+            }
+        }};
+    }
+    timed!(sqlite::install(interp), "sqlite");
+    timed!(lcms::install(interp), "lcms");
+    timed!(filenotify::install(interp), "filenotify");
+    timed!(gnutls::install(interp), "gnutls");
+    timed!(dbus::install(interp), "dbus");
+    timed!(comp::install(interp), "comp");
+    timed!(crate::lisp::process::install(interp), "process");
+    timed!(install_aliases(interp), "aliases");
 }
 
 /// Re-register runtime (dlopen-gated) features after the post-boot
@@ -132,8 +155,10 @@ pub fn register_extlib_features(interp: &mut Interp) {
     comp::install(interp);
 }
 
-fn sf_cannot_call(i: &mut Interp, a: crate::lisp::Argv) -> super::error::EvalResult { let _ = a;
-Err(i.signal_data(sym::INVALID_FUNCTION, vec![Value::Nil])) }
+fn sf_cannot_call(i: &mut Interp, a: crate::lisp::Argv) -> super::error::EvalResult {
+    let _ = a;
+    Err(i.signal_data(sym::INVALID_FUNCTION, vec![Value::Nil]))
+}
 
 /// Special forms (dispatch lives in `lisp::special`).
 static SPECIAL_FORM_SUBRS: &[Subr] = &[
@@ -225,7 +250,6 @@ static SPECIAL_FORM_SUBRS: &[Subr] = &[
     // `with-current-buffer', `save-mark-and-excursion', `backquote'
     // are Lisp macros — no Unevalled subr registration, or
     // `special-form-p'/indirect-function would see a special.
-
     Subr {
         name: "while",
         arity: Arity::Unevalled,
@@ -311,9 +335,41 @@ pub(crate) fn want_int(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
 /// the error predicate is `fixnump' — `aref', `elt', `string-as-unibyte',
 /// `aset' and friends all use it.
 pub(crate) fn want_fixnum(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
+    // GNU CHECK_FIXNUM: fixnums are signed 62-bit (MOST_POSITIVE_FIXNUM
+    // = 2^61-1); larger integers (bignum literals) signal too.
+    match v {
+        Value::Int(n) if (-(1i128 << 61)..=((1i128 << 61) - 1)).contains(n) => Ok(*n),
+        _ => Err(i.wrong_type_mut("fixnump", v)),
+    }
+}
+
+/// GNU `integer_or_marker' / `decode_buffer_position': ints pass
+/// through, markers yield their position (+1 bias), other values
+/// signal `wrong-type-argument integer-or-marker-p'.
+/// GNU CHECK_FIXNUM_COERCE_MARKER: a marker with no buffer signals
+/// "Marker does not point anywhere"; a live marker yields its 1-based
+/// position; anything else signals `wrong-type-argument
+/// integer-or-marker-p'.
+pub(crate) fn want_int_or_mark(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
     match v {
         Value::Int(n) => Ok(*n),
-        _ => Err(i.wrong_type_mut("fixnump", v)),
+        Value::Marker(m) if m.borrow().buffer.is_some() => Ok(m.borrow().position as i128 + 1),
+        Value::Marker(_) => Err(i.error("Marker does not point anywhere")),
+        other => Err(i.wrong_type_mut("integer-or-marker-p", other)),
+    }
+}
+
+/// GNU `number_or_marker' path (count-lines & friends): ints and
+/// floats pass, live markers yield their position (detached markers
+/// signal "Marker does not point anywhere"), others signal
+/// `wrong-type-argument number-or-marker-p'.
+pub(crate) fn want_num_or_mark(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
+    match v {
+        Value::Int(n) => Ok(*n),
+        Value::Marker(m) if m.borrow().buffer.is_some() => Ok(m.borrow().position as i128 + 1),
+        Value::Marker(_) => Err(i.error("Marker does not point anywhere")),
+        Value::Float(f) => Ok(**f as i128),
+        other => Err(i.wrong_type_mut("number-or-marker-p", other)),
     }
 }
 
@@ -322,9 +378,7 @@ pub(crate) fn want_num(i: &mut Interp, v: &Value) -> Result<f64, Flow> {
         Value::Int(n) => Ok(*n as f64),
         Value::Float(f) => Ok(**f),
         // GNU CHECK_NUMBER_OR_MARKER_COERCE: dead markers error.
-        Value::Marker(m) if m.borrow().buffer.is_some() => {
-            Ok(m.borrow().position as f64 + 1.0)
-        }
+        Value::Marker(m) if m.borrow().buffer.is_some() => Ok(m.borrow().position as f64 + 1.0),
         Value::Marker(_) => Err(i.error("Marker does not point anywhere")),
         _ => Err(i.wrong_type_mut("number-or-marker-p", v)),
     }
@@ -382,9 +436,7 @@ pub fn eq_values(a: &Value, b: &Value) -> bool {
         // an inline i128 with no object identity; the fixnum-range check
         // gives the right answer for every pair of distinct objects —
         // the only divergence left is (eq x x) on a single bignum.
-        (Value::Int(x), Value::Int(y)) => {
-            x == y && (FIXNUM_MIN..=FIXNUM_MAX).contains(x)
-        }
+        (Value::Int(x), Value::Int(y)) => x == y && (FIXNUM_MIN..=FIXNUM_MAX).contains(x),
         // Emacs floats are heap objects: `eq' compares object identity.
         (Value::Float(x), Value::Float(y)) => std::rc::Rc::ptr_eq(x, y),
         (Value::Sym(x), Value::Sym(y)) => x == y,

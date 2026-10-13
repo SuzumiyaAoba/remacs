@@ -199,9 +199,16 @@ fn metadata_surface() {
     assert!(r.ends_with("t)"), "commandp: {r}");
     // Built-in subr → t (not a lambda list).
     assert_eq!(ev("(subr-native-lambda-list (symbol-function 'car))"), "t");
-    // comp--subr-signature matches GNU: (NAME MIN . MAX).
-    assert_eq!(ev("(comp--subr-signature 'car)"), "(car 1 . 1)");
-    assert_eq!(ev("(comp--subr-signature 'apply)"), "(apply 1 . many)");
+    // comp--subr-signature takes the subr object and matches GNU:
+    // "NAME(MIN . MAX)" (a symbol signals `(wrong-type-argument subrp)').
+    assert_eq!(
+        ev("(comp--subr-signature (symbol-function 'car))"),
+        "\"car(1 . 1)\""
+    );
+    assert_eq!(
+        ev("(comp--subr-signature (symbol-function 'apply))"),
+        "\"apply(1 . many)\""
+    );
 }
 
 // ---------------------------------------------------------------
@@ -213,14 +220,24 @@ fn error_paths() {
     if !avail() {
         return;
     }
-    // Missing source file.
+    // Missing source file: the first pass's `insert-file-contents' error
+    // with the input appended (GNU-verified).
     assert_eq!(
-        ev_err("(native-compile \"/nonexistent-dir-zz/nope.el\")"),
-        "error"
+        ev("(condition-case e (native-compile \"/nonexistent-dir-zz/nope.el\") (error e))"),
+        "(file-missing \"Opening input file\" \"No such file or directory\" \
+\"/nonexistent-dir-zz/nope.el\" \"/nonexistent-dir-zz/nope.el\")"
+    );
+    // Neither a function nor a file name.
+    assert_eq!(
+        ev("(condition-case e (native-compile 42) (error e))"),
+        "(native-compiler-error \"Not a function symbol or file\" 42)"
     );
     // Loading a non-.eln file errors cleanly.
     let p = scratch("noteln.txt", "hello");
-    assert_eq!(ev_err(&format!("(native-elisp-load {p:?})")), "error");
+    assert_eq!(
+        ev_err(&format!("(native-elisp-load {p:?})")),
+        "native-lisp-load-failed"
+    );
     // native-comp-function-p of ordinary objects.
     assert_eq!(ev("(native-comp-function-p 'car)"), "nil");
     assert_eq!(ev("(native-comp-function-p (lambda (x) x))"), "nil");

@@ -12,29 +12,168 @@
 use html5ever::tendril::TendrilSink;
 
 use super::{S, arg};
-use crate::buffer::primitives::pos_idx;
+
 use crate::lisp::error::Flow;
 use crate::lisp::value::{Subr, Value};
 use crate::lisp::{EvalResult, Interp};
 
-/// Extract START..END (1-based, either may be nil) as a string.
+/// GNU `parse_region': START/END are coerced via integer-or-marker-p
+/// (in argument order, so arg0's error wins), nil defaults to
+/// BEGV_pos/ZV_pos.  The coerced *positions* are checked against the
+/// accessible range — with the low/high pair swapped, so a reversed
+/// but in-range region is legal — and violations signal
+/// `args-out-of-range' with (BUFFER START END) where each slot is the
+/// arg object, or the coerced integer default when the arg was nil.
+/// Returns START..END as a string.
 fn region_text(i: &mut Interp, a: &[Value]) -> Result<String, Flow> {
     let b = i
         .current_buffer_ref()
         .ok_or_else(|| i.error("No current buffer"))?;
     let bb = b.borrow();
-    let len = bb.text.len();
-    let s = match &arg(a, 0) {
-        Value::Nil => bb.begv,
-        Value::Int(n) => pos_idx(len, *n),
-        v => return Err(i.wrong_type_mut("integer-or-marker-p", v)),
+    // 1-based positions: begv/zv are 0-based char indices.
+    let lo_pos = bb.begv as i128 + 1;
+    let hi_pos = bb.zv as i128 + 1;
+    let coerce = |i: &mut Interp, v: &Value, default: i128| -> Result<i128, Flow> {
+        match v {
+            Value::Nil => Ok(default),
+            Value::Int(n) => Ok(*n),
+            Value::Marker(m) => {
+                // GNU only reads the marker's position; its buffer is
+                // irrelevant (a foreign-buffer marker still indexes
+                // into the current buffer).
+                let mm = m.borrow();
+                if mm.buffer.is_some() {
+                    Ok(mm.position as i128 + 1)
+                } else {
+                    Err(i.error("Marker does not point anywhere"))
+                }
+            }
+            _ => Err(i.wrong_type_mut("integer-or-marker-p", v)),
+        }
     };
-    let e = match &arg(a, 1) {
-        Value::Nil => bb.zv,
-        Value::Int(n) => pos_idx(len, *n),
-        v => return Err(i.wrong_type_mut("integer-or-marker-p", v)),
-    };
-    Ok(bb.text.substring(s.min(e), s.max(e)))
+    let s = coerce(i, &arg(a, 0), lo_pos)?;
+    let e = coerce(i, &arg(a, 1), hi_pos)?;
+    if s.min(e) < lo_pos || s.max(e) > hi_pos {
+        let sym = i.intern("args-out-of-range");
+        let or_int = |v: Value, n: i128| {
+            if matches!(v, Value::Nil) {
+                Value::Int(n)
+            } else {
+                v
+            }
+        };
+        let data = vec![
+            Value::Buffer(b.clone()),
+            or_int(arg(a, 0), s),
+            or_int(arg(a, 1), e),
+        ];
+        return Err(i.signal_data(sym, data));
+    }
+    Ok(bb
+        .text
+        .substring(s.min(e) as usize - 1, s.max(e) as usize - 1))
+}
+
+/// GNU `parse_region' also CHECK_STRINGs BASE-URL when non-nil (after
+/// the region checks); the value itself is unused.
+fn check_base_url(i: &mut Interp, a: &[Value]) -> Result<(), Flow> {
+    match arg(a, 2) {
+        Value::Nil | Value::Str(_) => Ok(()),
+        v => Err(i.wrong_type_mut("stringp", &v)),
+    }
+}
+
+// ---------- HTML via html5ever + rcdom ----------
+
+fn html_node(
+    i: &mut Interp,
+    h: &markup5ever_rcdom::Handle,
+    src_has_tbody: bool,
+    drop_comments: bool,
+    out: &mut Vec<Value>,
+) {
+    use markup5ever_rcdom::NodeData;
+    match &h.data {
+        NodeData::Element { name, attrs, .. } => {
+            let mut kids = Vec::new();
+            for c in h.children.borrow().iter() {
+                html_node(i, c, src_has_tbody, drop_comments, &mut kids);
+            }
+            // libxml2 doesn't materialize an empty <head>; drop it.
+            if &*name.local == "head" && kids.is_empty() {
+                return;
+            }
+            // html5ever implies <tbody> like HTML5; libxml2 doesn't.
+            // When the source has no tbody tag, unwrap it into the parent.
+            if &*name.local == "tbody" && !src_has_tbody {
+                out.extend(kids);
+                return;
+            }
+            let attr_list: Vec<Value> = attrs
+                .borrow()
+                .iter()
+                .map(|a| attr_cons(i, a.name.local.as_ref(), &a.value))
+                .collect();
+            let mut node = vec![
+                Value::Sym(i.intern(name.local.as_ref())),
+                Value::list(attr_list),
+            ];
+            node.extend(kids);
+            out.push(Value::list(node));
+        }
+        NodeData::Text { contents } => {
+            out.push(Value::string(contents.borrow().to_string()));
+        }
+        NodeData::Comment { contents } => {
+            if drop_comments {
+                return;
+            }
+            out.push(Value::list(vec![
+                Value::Sym(i.intern("comment")),
+                Value::Nil,
+                Value::string(contents.to_string()),
+            ]));
+        }
+        NodeData::ProcessingInstruction { .. } => out.push(Value::Nil),
+        _ => {}
+    }
+}
+
+fn parse_html(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
+    let dom = html5ever::parse_document(markup5ever_rcdom::RcDom::default(), Default::default())
+        .one(text.to_string());
+    let lower = text.to_lowercase();
+    let src_has_tbody = lower.contains("<tbody");
+    let mut out = Vec::new();
+    for c in dom.document.children.borrow().iter() {
+        html_node(i, c, src_has_tbody, drop_comments, &mut out);
+    }
+    match out.as_slice() {
+        [single] => single.clone(),
+        _ => {
+            let mut top = vec![Value::Sym(i.intern("top")), Value::Nil];
+            top.extend(out);
+            Value::list(top)
+        }
+    }
+}
+
+fn f_libxml_parse_xml_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let text = region_text(i, &a)?;
+    check_base_url(i, &a)?;
+    let drop_comments = arg(&a, 3).truthy();
+    Ok(parse_xml(i, &text, drop_comments))
+}
+
+fn f_libxml_parse_html_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let text = region_text(i, &a)?;
+    check_base_url(i, &a)?;
+    // GNU libxml2: an empty (whitespace-only) document yields nil.
+    if text.trim().is_empty() {
+        return Ok(Value::Nil);
+    }
+    let drop_comments = arg(&a, 3).truthy();
+    Ok(parse_html(i, &text, drop_comments))
 }
 
 fn attr_cons(i: &mut Interp, name: &str, val: &str) -> Value {
@@ -230,84 +369,6 @@ fn parse_xml(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
     }
 }
 
-// ---------- HTML via html5ever + rcdom ----------
-
-fn html_node(
-    i: &mut Interp,
-    h: &markup5ever_rcdom::Handle,
-    src_has_tbody: bool,
-    out: &mut Vec<Value>,
-) {
-    use markup5ever_rcdom::NodeData;
-    match &h.data {
-        NodeData::Element { name, attrs, .. } => {
-            let mut kids = Vec::new();
-            for c in h.children.borrow().iter() {
-                html_node(i, c, src_has_tbody, &mut kids);
-            }
-            // libxml2 doesn't materialize an empty <head>; drop it.
-            if &*name.local == "head" && kids.is_empty() {
-                return;
-            }
-            // html5ever implies <tbody> like HTML5; libxml2 doesn't.
-            // When the source has no tbody tag, unwrap it into the parent.
-            if &*name.local == "tbody" && !src_has_tbody {
-                out.extend(kids);
-                return;
-            }
-            let attr_list: Vec<Value> = attrs
-                .borrow()
-                .iter()
-                .map(|a| attr_cons(i, a.name.local.as_ref(), &a.value))
-                .collect();
-            let mut node = vec![
-                Value::Sym(i.intern(name.local.as_ref())),
-                Value::list(attr_list),
-            ];
-            node.extend(kids);
-            out.push(Value::list(node));
-        }
-        NodeData::Text { contents } => {
-            out.push(Value::string(contents.borrow().to_string()));
-        }
-        NodeData::Comment { contents } => {
-            out.push(Value::list(vec![
-                Value::Sym(i.intern("comment")),
-                Value::Nil,
-                Value::string(contents.to_string()),
-            ]));
-        }
-        NodeData::ProcessingInstruction { .. } => out.push(Value::Nil),
-        _ => {}
-    }
-}
-
-fn parse_html(i: &mut Interp, text: &str) -> Value {
-    let dom = html5ever::parse_document(markup5ever_rcdom::RcDom::default(), Default::default())
-        .one(text.to_string());
-    let lower = text.to_lowercase();
-    let src_has_tbody = lower.contains("<tbody");
-    let mut out = Vec::new();
-    for c in dom.document.children.borrow().iter() {
-        html_node(i, c, src_has_tbody, &mut out);
-    }
-    match out.as_slice() {
-        [single] => single.clone(),
-        _ => {
-            let mut top = vec![Value::Sym(i.intern("top")), Value::Nil];
-            top.extend(out);
-            Value::list(top)
-        }
-    }
-}
-
-fn f_libxml_parse_xml_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let text = region_text(i, &a)?;
-let drop_comments = arg(&a, 3).truthy();
-Ok(parse_xml(i, &text, drop_comments)) }
-
-fn f_libxml_parse_html_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let text = region_text(i, &a)?;
-Ok(parse_html(i, &text)) }
-
 pub(crate) static SUBRS: &[Subr] = &[
     S!(
         "libxml-parse-xml-region",
@@ -321,6 +382,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         0,
         4,
         f_libxml_parse_html_region,
-        "Parse the region as an HTML document.\nSTART and END default to the accessible portion of the buffer.\nReturns a DOM list with implied html/body structure."
+        "Parse the region as an HTML document.\nSTART and END default to the accessible portion of the buffer.\nBASE-URL is ignored; DISCARD-COMMENTS drops comment nodes like GNU.\nReturns a DOM list with implied html/body structure."
     ),
 ];

@@ -367,6 +367,25 @@
   ;; restore-buffer-modified-p returns its argument
   (qa (restore-buffer-modified-p t) t)
   (qa (buffer-modified-p) t))
+;; set-buffer-modified-p t actually flips the flag (was broken:
+;; save_tick = mod_tick kept modified-p nil)
+(with-temp-buffer
+  (qa (set-buffer-modified-p t) nil)
+  (qa (buffer-modified-p) t)
+  (qa (set-buffer-modified-p nil) nil)
+  (qa (buffer-modified-p) nil))
+;; indirect buffer shares the modified state with its base
+(let* ((b (get-buffer-create "qa2b-mod"))
+       (i2 (make-indirect-buffer b "qa2b-mod-i")))
+  (unwind-protect
+      (progn
+        (with-current-buffer i2 (set-buffer-modified-p t))
+        (qa (buffer-modified-p b) t)
+        (with-current-buffer i2 (set-buffer-modified-p nil))
+        (qa (buffer-modified-p b) nil))
+    (kill-buffer i2)
+    (kill-buffer b)))
+
 ;; ticks: both bump on a char insert; set-buffer-modified-p does NOT
 (with-temp-buffer
   (let ((t1 (buffer-modified-tick))

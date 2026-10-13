@@ -32044,6 +32044,11 @@ This can be used to detect if xterm-mouse-mode was explicitly set.")
 (register-definition-prefixes "zone" '("zone-"))
 
 ;Remacs: GNU loaddefs.el side-effect forms the generator missed.
+;; Mail user-agent registrations (GNU loaddefs lines 15469/21607/21790/30108).
+(define-mail-user-agent 'gnus-user-agent 'gnus-msg-mail 'message-send-and-exit 'message-kill-buffer 'message-send-hook)
+(define-mail-user-agent 'message-user-agent 'message-mail 'message-send-and-exit 'message-kill-buffer 'message-send-hook)
+(define-mail-user-agent 'mh-e-user-agent 'mh-user-agent-compose 'mh-send-letter 'mh-fully-kill-draft 'mh-before-send-letter-hook)
+(define-mail-user-agent 'sendmail-user-agent #'sendmail-user-agent-compose #'mail-send-and-exit)
 (function-put 'defadvice 'doc-string-elt 3)
 (make-obsolete 'defadvice '"use `advice-add' or `define-advice'" "30.1")
 (define-obsolete-function-alias 'outlinify-sticky #'allout-outlinify-sticky "29.1")
@@ -32247,6 +32252,2433 @@ ARG is the number of times to execute the item.")
 (put 'global-word-wrap-whitespace-mode 'globalized-minor-mode t)
 (define-obsolete-function-alias 'xref-pop-marker-stack #'xref-go-back "29.1")
 (put 'global-xref-mouse-mode 'globalized-minor-mode t)
+
+;;Remacs: GNU loaddefs autoloads for modes the prelude stub-fallbacks
+;; used to shadow — the unless-fboundp stub only fires when GNU itself
+;; left the symbol unbound, so the autoloads keep GNU parity on fboundp.
+(autoload 'change-log-mode "add-log"
+"Major mode for editing change logs; like Indented Text mode.
+Prevents numeric backups and sets `left-margin' to 8 and `fill-column' to 74.
+New log entries are usually made with \\[add-change-log-entry] or \\[add-change-log-entry-other-window].
+Each entry behaves as a paragraph, and the entries for one day as a page.
+Runs `change-log-mode-hook'.
+
+\\{change-log-mode-map}" t)
+
+(autoload 'antlr-mode "antlr-mode"
+"Major mode for editing ANTLR grammar files.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `antlr-mode-hook', as the final or penultimate
+step during initialization.
+
+\\{antlr-mode-map}" t)
+
+(autoload 'antlr-v4-mode "antlr-mode"
+"Major mode for editing ANTLR v4 grammar files.
+
+In addition to any hooks its parent mode `antlr-mode' might have run,
+this mode runs the hook `antlr-v4-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{antlr-v4-mode-map}" t)
+
+(autoload 'archive-mode "arc-mode"
+"Major mode for viewing an archive file in a dired-like way.
+You can move around using the usual cursor motion commands.
+Letters no longer insert themselves.\\<archive-mode-map>
+Type \\[archive-extract] to pull a file out of the archive and into its own buffer;
+or click mouse-2 on the file's line in the archive mode buffer.
+
+If you edit a sub-file of this archive (as with the \\[archive-extract] command) and
+save it, the contents of that buffer will be saved back into the
+archive.
+
+\\{archive-mode-map}
+
+(fn &optional FORCE)")
+
+(autoload 'asm-mode "asm-mode"
+"Major mode for editing typical assembler code.
+Features a private abbrev table and the following bindings:
+
+\\[asm-colon]	outdent a preceding label, tab to next tab stop.
+\\[tab-to-tab-stop]	tab to next tab stop.
+\\[newline-and-indent]	newline, then tab to next tab stop.
+\\[asm-comment]	smart placement of assembler comments.
+
+The character used for making comments is set by the variable
+`asm-comment-char' (which defaults to `?\\;').
+Alternatively, you may set this variable in `asm-mode-hook'.
+
+Turning on Asm mode runs the hook `asm-mode-hook' at the end of initialization.
+
+Special commands:
+\\{asm-mode-map}" t)
+
+(autoload 'authinfo-mode "auth-source"
+"Mode for editing .authinfo/.netrc files.
+
+This is just like `fundamental-mode', but has basic syntax
+highlighting and hides passwords.  Passwords are revealed when
+point is moved into the passwords (see `authinfo-hide-elements').
+
+\\{authinfo-mode-map}
+
+This mode runs the hook `authinfo-mode-hook', as the final or
+penultimate step during initialization." t)
+
+(autoload 'autoconf-mode "autoconf"
+"Major mode for editing Autoconf configure.ac files.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `autoconf-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{autoconf-mode-map}" t)
+
+(autoload 'bat-mode "bat-mode"
+"Major mode for editing DOS/Windows batch files.
+Start a new script from `bat-template'.  Read help pages for DOS commands
+with `bat-cmd-help'.  Navigate between sections using `imenu'.
+Run script using `bat-run' and `bat-run-args'.
+
+\\{bat-mode-map}
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `bat-mode-hook', as the final or penultimate
+step during initialization." t)
+
+(autoload 'bibtex-mode "bibtex"
+"Major mode for editing BibTeX files.
+
+General information on working with BibTeX mode:
+
+Use commands such as \\<bibtex-mode-map>\\[bibtex-Book] to get a template for a specific entry.
+Then fill in all desired fields using \\[bibtex-next-field] to jump from field
+to field.  After having filled in all desired fields in the entry, clean the
+new entry with the command \\[bibtex-clean-entry].
+
+Some features of BibTeX mode are available only by setting the variable
+`bibtex-maintain-sorted-entries' to non-nil.  However, then BibTeX mode
+works only with buffers containing valid (syntactically correct) and sorted
+entries.  This is usually the case, if you have created a buffer completely
+with BibTeX mode and finished every new entry with \\[bibtex-clean-entry].
+
+For third party BibTeX files, call the command \\[bibtex-convert-alien]
+to fully take advantage of all features of BibTeX mode.
+
+
+Special information:
+
+A command such as \\[bibtex-Book] outlines the fields for a BibTeX book entry.
+
+The names of optional fields start with the string OPT, and are thus ignored
+by BibTeX.  The names of alternative fields from which only one is required
+start with the string ALT.  The OPT or ALT string may be removed from
+the name of a field with \\[bibtex-remove-OPT-or-ALT].
+\\[bibtex-make-field] inserts a new field after the current one.
+\\[bibtex-kill-field] kills the current field entirely.
+\\[bibtex-yank] yanks the last recently killed field after the current field.
+\\[bibtex-remove-delimiters] removes the double-quotes or braces around the text of the current field.
+\\[bibtex-empty-field] replaces the text of the current field with the default \"\" or {}.
+\\[bibtex-find-text] moves point to the end of the current field.
+\\[completion-at-point] completes word fragment before point according to context.
+
+The command \\[bibtex-clean-entry] cleans the current entry, i.e. it removes OPT/ALT
+from the names of all non-empty optional or alternative fields, checks that
+no required fields are empty, and does some formatting dependent on the value
+of `bibtex-entry-format'.  Furthermore, it can automatically generate a key
+for the BibTeX entry, see `bibtex-generate-autokey'.
+Note: some functions in BibTeX mode depend on entries being in a special
+format (all fields beginning on separate lines), so it is usually a bad
+idea to remove `realign' from `bibtex-entry-format'.
+
+BibTeX mode supports Imenu and hideshow minor mode (`hs-minor-mode').
+
+----------------------------------------------------------
+Entry to BibTeX mode calls the value of `bibtex-mode-hook'
+if that value is non-nil.
+
+\\{bibtex-mode-map}" t)
+
+(autoload 'bibtex-style-mode "bibtex-style"
+"Major mode for editing BibTeX style files.
+
+This mode runs the hook `bibtex-style-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{bibtex-style-mode-map}" t)
+
+(autoload 'c-mode "cc-mode"
+"Major mode for editing C code.
+
+To submit a problem report, enter `\\[c-submit-bug-report]' from a
+`c-mode' buffer.  This automatically sets up a mail buffer with version
+information already added.  You just need to add a description of the
+problem, including a reproducible test case, and send the message.
+
+To see what version of CC Mode you are running, enter `\\[c-version]'.
+
+The hook `c-mode-common-hook' is run with no args at mode
+initialization, then `c-mode-hook'.
+
+Key bindings:
+\\{c-mode-map}" t)
+
+(autoload 'c-or-c++-mode "cc-mode"
+"Analyze buffer and enable either C or C++ mode.
+
+Some people and projects use .h extension for C++ header files
+which is also the one used for C header files.  This makes
+matching on file name insufficient for detecting major mode that
+should be used.
+
+This function attempts to use file contents to determine whether
+the code is C or C++ and based on that chooses whether to enable
+`c-mode' or `c++-mode'." t)
+
+(autoload 'c++-mode "cc-mode"
+"Major mode for editing C++ code.
+To submit a problem report, enter `\\[c-submit-bug-report]' from a
+c++-mode buffer.  This automatically sets up a mail buffer with
+version information already added.  You just need to add a description
+of the problem, including a reproducible test case, and send the
+message.
+
+To see what version of CC Mode you are running, enter `\\[c-version]'.
+
+The hook `c-mode-common-hook' is run with no args at mode
+initialization, then `c++-mode-hook'.
+
+Key bindings:
+\\{c++-mode-map}" t)
+
+(autoload 'objc-mode "cc-mode"
+"Major mode for editing Objective C code.
+To submit a problem report, enter `\\[c-submit-bug-report]' from an
+`objc-mode' buffer.  This automatically sets up a mail buffer with
+version information already added.  You just need to add a description
+of the problem, including a reproducible test case, and send the
+message.
+
+To see what version of CC Mode you are running, enter `\\[c-version]'.
+
+The hook `c-mode-common-hook' is run with no args at mode
+initialization, then `objc-mode-hook'.
+
+Key bindings:
+\\{objc-mode-map}" t)
+
+(autoload 'java-mode "cc-mode"
+"Major mode for editing Java code.
+To submit a problem report, enter `\\[c-submit-bug-report]' from a
+`java-mode' buffer.  This automatically sets up a mail buffer with
+version information already added.  You just need to add a description
+of the problem, including a reproducible test case, and send the
+message.
+
+To see what version of CC Mode you are running, enter `\\[c-version]'.
+
+The hook `c-mode-common-hook' is run with no args at mode
+initialization, then `java-mode-hook'.
+
+Key bindings:
+\\{java-mode-map}" t)
+
+(autoload 'idl-mode "cc-mode"
+"Major mode for editing CORBA's IDL, PSDL and CIDL code.
+To submit a problem report, enter `\\[c-submit-bug-report]' from an
+`idl-mode' buffer.  This automatically sets up a mail buffer with
+version information already added.  You just need to add a description
+of the problem, including a reproducible test case, and send the
+message.
+
+To see what version of CC Mode you are running, enter `\\[c-version]'.
+
+The hook `c-mode-common-hook' is run with no args at mode
+initialization, then `idl-mode-hook'.
+
+Key bindings:
+\\{idl-mode-map}" t)
+
+(autoload 'pike-mode "cc-mode"
+"Major mode for editing Pike code.
+To submit a problem report, enter `\\[c-submit-bug-report]' from a
+`pike-mode' buffer.  This automatically sets up a mail buffer with
+version information already added.  You just need to add a description
+of the problem, including a reproducible test case, and send the
+message.
+
+To see what version of CC Mode you are running, enter `\\[c-version]'.
+
+The hook `c-mode-common-hook' is run with no args at mode
+initialization, then `pike-mode-hook'.
+
+Key bindings:
+\\{pike-mode-map}" t)
+
+(autoload 'awk-mode "cc-mode"
+"Major mode for editing AWK code.
+To submit a problem report, enter `\\[c-submit-bug-report]' from an
+`awk-mode' buffer.  This automatically sets up a mail buffer with version
+information already added.  You just need to add a description of the
+problem, including a reproducible test case, and send the message.
+
+To see what version of CC Mode you are running, enter `\\[c-version]'.
+
+The hook `c-mode-common-hook' is run with no args at mode
+initialization, then `awk-mode-hook'.
+
+Key bindings:
+\\{awk-mode-map}" t)
+
+(autoload 'cmake-ts-mode-maybe "cmake-ts-mode"
+"Enable `cmake-ts-mode' when its grammar is available.
+Also propose to install the grammar when `treesit-enabled-modes'
+is t or contains the mode name.")
+
+(autoload 'compilation-mode "compile"
+"Major mode for compilation log buffers.
+\\<compilation-mode-map>To visit the source for a line-numbered error,
+move point to the error message line and type \\[compile-goto-error].
+To kill the compilation, type \\[kill-compilation].
+
+Runs `compilation-mode-hook' with `run-mode-hooks' (which see).
+
+\\{compilation-mode-map}
+
+(fn &optional NAME-OF-MODE)" t)
+
+(autoload 'csharp-mode "csharp-mode"
+"Major mode for editing Csharp code.
+
+Key bindings:
+\\{csharp-mode-map}
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `csharp-mode-hook', as the final or
+penultimate step during initialization." t)
+
+(autoload 'css-mode "css-mode"
+"Major mode to edit Cascading Style Sheets (CSS).
+\\<css-mode-map>
+This mode provides syntax highlighting, indentation, completion,
+and documentation lookup for CSS.
+
+Use `\\[completion-at-point]' to complete CSS properties, property values,
+pseudo-elements, pseudo-classes, at-rules, bang-rules, and HTML
+tags, classes and IDs.  Completion candidates for HTML class
+names and IDs are found by looking through open HTML mode
+buffers.
+
+Use `\\[info-lookup-symbol]' to look up documentation of CSS properties, at-rules,
+pseudo-classes, and pseudo-elements on the Mozilla Developer
+Network (MDN).
+
+Use `\\[fill-paragraph]' to reformat CSS declaration blocks.  It can also
+be used to fill comments.
+
+\\{css-mode-map}
+
+In addition to any hooks its parent mode `css-base-mode' might have
+run, this mode runs the hook `css-mode-hook', as the final or
+penultimate step during initialization." t)
+
+(autoload 'scss-mode "css-mode"
+"Major mode to edit \"Sassy CSS\" files.
+
+In addition to any hooks its parent mode `css-mode' might have run,
+this mode runs the hook `scss-mode-hook', as the final or penultimate
+step during initialization.
+
+\\{scss-mode-map}" t)
+
+(autoload 'dcl-mode "dcl-mode"
+"Major mode for editing DCL-files.
+
+This mode indents command lines in blocks.  (A block is commands between
+THEN-ELSE-ENDIF and between lines matching dcl-block-begin-regexp and
+dcl-block-end-regexp.)
+
+Labels are indented to a fixed position unless they begin or end a block.
+Whole-line comments (matching dcl-comment-line-regexp) are not indented.
+Data lines are not indented.
+
+Key bindings:
+
+\\{dcl-mode-map}
+Commands not usually bound to keys:
+
+\\[dcl-save-nondefault-options]		Save changed options
+\\[dcl-save-all-options]		Save all options
+\\[dcl-save-option]			Save any option
+\\[dcl-save-mode]			Save buffer mode
+
+Variables controlling indentation style and extra features:
+
+ dcl-basic-offset
+    Extra indentation within blocks.
+
+ dcl-continuation-offset
+    Extra indentation for continued lines.
+
+ dcl-margin-offset
+    Indentation for the first command line in a file or SUBROUTINE.
+
+ dcl-margin-label-offset
+    Indentation for a label.
+
+ dcl-comment-line-regexp
+    Lines matching this regexp will not be indented.
+
+ dcl-block-begin-regexp
+ dcl-block-end-regexp
+    Regexps that match command lines that begin and end, respectively,
+    a block of command lines that will be given extra indentation.
+    Command lines between THEN-ELSE-ENDIF are always indented; these variables
+    make it possible to define other places to indent.
+    Set to nil to disable this feature.
+
+ dcl-calc-command-indent-function
+    Can be set to a function that customizes indentation for command lines.
+    Two such functions are included in the package:
+	dcl-calc-command-indent-multiple
+	dcl-calc-command-indent-hang
+
+ dcl-calc-cont-indent-function
+    Can be set to a function that customizes indentation for continued lines.
+    One such function is included in the package:
+	dcl-calc-cont-indent-relative    (set by default)
+
+ dcl-tab-always-indent
+    If t, pressing TAB always indents the current line.
+    If nil, pressing TAB indents the current line if point is at the left
+    margin.
+
+ dcl-electric-characters
+    Non-nil causes lines to be indented at once when a label, ELSE or ENDIF is
+    typed.
+
+ dcl-electric-reindent-regexps
+    Use this variable and function dcl-electric-character to customize
+    which words trigger electric indentation.
+
+ dcl-tempo-comma
+ dcl-tempo-left-paren
+ dcl-tempo-right-paren
+    These variables control the look of expanded templates.
+
+ dcl-imenu-generic-expression
+    Default value for `imenu-generic-expression'.  The default includes
+    SUBROUTINE labels in the main listing and sub-listings for
+    other labels, CALL, GOTO and GOSUB statements.
+
+ dcl-imenu-label-labels
+ dcl-imenu-label-goto
+ dcl-imenu-label-gosub
+ dcl-imenu-label-call
+    Change the text that is used as sub-listing labels in imenu.
+
+Turning on DCL mode calls the value of the variable `dcl-mode-hook'
+with no args, if that value is non-nil.
+
+
+The following example uses the default values for all variables:
+
+$! This is a comment line that is not indented (it matches
+$! dcl-comment-line-regexp)
+$! Next follows the first command line.  It is indented dcl-margin-offset.
+$       i = 1
+$       ! Other comments are indented like command lines.
+$       ! A margin label indented dcl-margin-label-offset:
+$ label:
+$       if i.eq.1
+$       then
+$           ! Lines between THEN-ELSE and ELSE-ENDIF are
+$           ! indented dcl-basic-offset
+$           loop1: ! This matches dcl-block-begin-regexp...
+$               ! ...so this line is indented dcl-basic-offset
+$               text = \"This \" + - ! is a continued line
+                       \"lined up with the command line\"
+$               type sys$input
+Data lines are not indented at all.
+$           endloop1: ! This matches dcl-block-end-regexp
+$       endif
+$
+
+
+There is some minimal font-lock support (see vars
+`dcl-font-lock-defaults' and `dcl-font-lock-keywords')." t)
+
+(autoload 'diff-mode "diff-mode"
+"Major mode for viewing/editing context diffs.
+Supports unified and context diffs as well as, to a lesser extent, diffs
+in the old \"normal\" format.  (Unified diffs have become the standard,
+most commonly encountered format.)  If you edit the buffer manually,
+`diff-mode' will try to update the hunk headers for you on-the-fly.
+
+You can also switch between context diff and unified diff with \\[diff-context->unified],
+or vice versa with \\[diff-unified->context] and you can also reverse the direction of
+a diff with \\[diff-reverse-direction].
+
+\\{diff-mode-map}
+In read-only buffers the following bindings are also available:
+\\{diff-read-only-map}
+
+This mode runs the hook `diff-mode-hook', as the final or penultimate
+step during initialization." t)
+
+(autoload 'dns-mode "dns-mode"
+"Major mode for viewing and editing DNS master files.
+This mode is derived from text mode.  It adds syntax
+highlighting, and some commands for handling DNS master files.
+Its keymap inherits from `text-mode' and it has the same
+variables for customizing indentation.  It has its own abbrev
+table and its own syntax table.
+
+Turning on DNS mode runs `dns-mode-hook'.
+
+\\{dns-mode-map}" t)
+
+(autoload 'doc-view-mode-maybe "doc-view"
+"Switch to `doc-view-mode' if possible.
+If the required external tools are not available, then fallback
+to the next best mode.")
+
+(autoload 'dockerfile-ts-mode-maybe "dockerfile-ts-mode"
+"Enable `dockerfile-ts-mode' when its grammar is available.
+Also propose to install the grammar when `treesit-enabled-modes'
+is t or contains the mode name.")
+
+(autoload 'ebrowse-tree-mode "ebrowse"
+"Major mode for Ebrowse class tree buffers.
+Each line corresponds to a class in a class tree.
+Letters do not insert themselves, they are commands.
+File operations in the tree buffer work on class tree data structures.
+E.g. \\[save-buffer] writes the tree to the file it was loaded from.
+
+Tree mode key bindings:
+\\{ebrowse-tree-mode-map}
+
+In addition to any hooks its parent mode `special-mode' might have
+run, this mode runs the hook `ebrowse-tree-mode-hook', as the final or
+penultimate step during initialization." t)
+
+(autoload 'editorconfig-conf-mode "editorconfig-conf-mode"
+"Major mode for editing .editorconfig files.
+
+In addition to any hooks its parent mode `conf-unix-mode' might have
+run, this mode runs the hook `editorconfig-conf-mode-hook', as the
+final or penultimate step during initialization.
+
+\\{editorconfig-conf-mode-map}" t)
+
+(autoload 'elixir-ts-mode-maybe "elixir-ts-mode"
+"Enable `elixir-ts-mode' when its grammar is available.
+Also propose to install the grammar when `treesit-enabled-modes'
+is t or contains the mode name.")
+
+(autoload 'erts-mode "erts-mode"
+"Major mode for editing erts (Emacs testing) files.
+This mode mainly provides some font locking.
+
+\\{erts-mode-map}
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `erts-mode-hook', as the final or penultimate
+step during initialization." t)
+
+(autoload 'f90-mode "f90"
+"Major mode for editing Fortran 90,95 code in free format.
+For fixed format code, use `fortran-mode'.
+
+\\[f90-indent-line] indents the current line.
+\\[f90-indent-new-line] indents current line and creates a new indented line.
+\\[f90-indent-subprogram] indents the current subprogram.
+
+Type \\=`? or \\=`\\[help-command] to display a list of built-in abbrevs for F90 keywords.
+
+Key definitions:
+\\{f90-mode-map}
+
+Variables controlling indentation style and extra features:
+
+`f90-do-indent'
+  Extra indentation within do blocks (default 3).
+`f90-if-indent'
+  Extra indentation within if/select/where/forall blocks (default 3).
+`f90-type-indent'
+  Extra indentation within type/enum/interface/block-data blocks (default 3).
+`f90-program-indent'
+  Extra indentation within program/module/subroutine/function blocks
+  (default 2).
+`f90-associate-indent'
+  Extra indentation within associate blocks (default 2).
+`f90-critical-indent'
+  Extra indentation within critical/block blocks (default 2).
+`f90-continuation-indent'
+  Extra indentation applied to continuation lines (default 5).
+`f90-comment-region'
+  String inserted by function \\[f90-comment-region] at start of each
+  line in region (default \"!!!$\").
+`f90-indented-comment-re'
+  Regexp determining the type of comment to be intended like code
+  (default \"!\").
+`f90-directive-comment-re'
+  Regexp of comment-like directive like \"!HPF\\\\$\", not to be indented
+  (default \"!hpf\\\\$\").
+`f90-break-delimiters'
+  Regexp holding list of delimiters at which lines may be broken
+  (default \"[-+*/><=,% \\t]\").
+`f90-break-before-delimiters'
+  Non-nil causes `f90-do-auto-fill' to break lines before delimiters
+  (default t).
+`f90-beginning-ampersand'
+  Automatic insertion of `&' at beginning of continuation lines (default t).
+`f90-smart-end'
+  From an END statement, check and fill the end using matching block start.
+  Allowed values are `blink', `no-blink', and nil, which determine
+  whether to blink the matching beginning (default `blink').
+`f90-auto-keyword-case'
+  Automatic change of case of keywords (default nil).
+  The possibilities are `downcase-word', `upcase-word', `capitalize-word'.
+`f90-leave-line-no'
+  Do not left-justify line numbers (default nil).
+
+Turning on F90 mode calls the value of the variable `f90-mode-hook'
+with no args, if that value is non-nil." t)
+
+(autoload 'fortran-mode "fortran"
+"Major mode for editing Fortran code in fixed format.
+For free format code, use `f90-mode'.
+
+\\[fortran-indent-line] indents the current Fortran line correctly.
+Note that DO statements must not share a common CONTINUE.
+
+Type ;? or ;\\[help-command] to display a list of built-in abbrevs for Fortran keywords.
+
+Key definitions:
+\\{fortran-mode-map}
+
+Variables controlling indentation style and extra features:
+
+`fortran-comment-line-start'
+  To use comments starting with `!', set this to the string \"!\".
+`fortran-do-indent'
+  Extra indentation within DO blocks (default 3).
+`fortran-if-indent'
+  Extra indentation within IF blocks (default 3).
+`fortran-structure-indent'
+  Extra indentation within STRUCTURE, UNION, MAP and INTERFACE blocks.
+  (default 3)
+`fortran-continuation-indent'
+  Extra indentation applied to continuation statements (default 5).
+`fortran-comment-line-extra-indent'
+  Amount of extra indentation for text in full-line comments (default 0).
+`fortran-comment-indent-style'
+  How to indent the text in full-line comments.  Allowed values are:
+  nil         don't change the indentation
+  `fixed'     indent to `fortran-comment-line-extra-indent' beyond the
+              value of either
+                `fortran-minimum-statement-indent-fixed' (fixed format) or
+                `fortran-minimum-statement-indent-tab' (TAB format),
+              depending on the continuation format in use.
+  `relative'  indent to `fortran-comment-line-extra-indent' beyond the
+              indentation for a line of code.
+  (default `fixed')
+`fortran-comment-indent-char'
+  Single-character string to be inserted instead of space for
+  full-line comment indentation (default \" \").
+`fortran-minimum-statement-indent-fixed'
+  Minimum indentation for statements in fixed format mode (default 6).
+`fortran-minimum-statement-indent-tab'
+  Minimum indentation for statements in TAB format mode (default 9).
+`fortran-line-number-indent'
+  Maximum indentation for line numbers (default 1).  A line number will
+  get less than this much indentation if necessary to avoid reaching
+  column 5.
+`fortran-check-all-num-for-matching-do'
+  Non-nil causes all numbered lines to be treated as possible \"continue\"
+  statements (default nil).
+`fortran-blink-matching-if'
+  Non-nil causes \\[fortran-indent-line] on an ENDIF (or ENDDO) statement
+  to blink on the matching IF (or DO [WHILE]).  (default nil)
+`fortran-continuation-string'
+  Single-character string to be inserted in column 5 of a continuation
+  line (default \"$\").
+`fortran-comment-region'
+  String inserted by \\[fortran-comment-region] at start of each line in
+  the region (default \"c$$$\").
+`fortran-electric-line-number'
+  Non-nil causes line number digits to be moved to the correct column
+  as typed (default t).
+`fortran-break-before-delimiters'
+  Non-nil causes lines to be broken before delimiters (default t).
+
+Turning on Fortran mode calls the value of the variable `fortran-mode-hook'
+with no args, if that value is non-nil." t)
+
+(autoload 'go-ts-mode-maybe "go-ts-mode"
+"Enable `go-ts-mode' when its grammar is available.
+Also propose to install the grammar when `treesit-enabled-modes'
+is t or contains the mode name.")
+
+(autoload 'go-mod-ts-mode-maybe "go-ts-mode"
+"Enable `go-mod-ts-mode' when its grammar is available.
+Also propose to install the grammar when `treesit-enabled-modes'
+is t or contains the mode name.")
+
+(autoload 'go-work-ts-mode-maybe "go-ts-mode"
+"Enable `go-work-ts-mode' when its grammar is available.
+Also propose to install the grammar when `treesit-enabled-modes'
+is t or contains the mode name.")
+
+(autoload 'wisent-grammar-mode "semantic/wisent/grammar"
+"Major mode for editing Wisent grammars.
+
+In addition to any hooks its parent mode `semantic-grammar-mode' might
+have run, this mode runs the hook `wisent-grammar-mode-hook', as the
+final or penultimate step during initialization.
+
+\\{wisent-grammar-mode-map}" t)
+
+(autoload 'bovine-grammar-mode "semantic/bovine/grammar"
+"Major mode for editing Bovine grammars.
+
+In addition to any hooks its parent mode `semantic-grammar-mode' might
+have run, this mode runs the hook `bovine-grammar-mode-hook', as the
+final or penultimate step during initialization.
+
+\\{bovine-grammar-mode-map}" t)
+
+(autoload 'gdb-script-mode "gud"
+"Major mode for editing GDB scripts.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `gdb-script-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{gdb-script-mode-map}" t)
+
+(autoload 'heex-ts-mode-maybe "heex-ts-mode"
+"Enable `heex-ts-mode' when its grammar is available.
+Also propose to install the grammar when `treesit-enabled-modes'
+is t or contains the mode name.")
+
+(autoload 'icon-mode "icon"
+"Major mode for editing Icon code.
+Expression and list commands understand all Icon brackets.
+Tab indents for Icon code.
+Paragraphs are separated by blank lines only.
+Delete converts tabs to spaces as it moves back.
+\\{icon-mode-map}
+Variables controlling indentation style:
+ icon-tab-always-indent
+    Non-nil means TAB in Icon mode should always reindent the current line,
+    regardless of where in the line point is when the TAB command is used.
+ icon-auto-newline
+    Non-nil means automatically newline before and after braces
+    inserted in Icon code.
+ icon-indent-level
+    Indentation of Icon statements within surrounding block.
+    The surrounding block's indentation is the indentation
+    of the line on which the open-brace appears.
+ icon-continued-statement-offset
+    Extra indentation given to a substatement, such as the
+    then-clause of an if or body of a while.
+ icon-continued-brace-offset
+    Extra indentation given to a brace that starts a substatement.
+    This is in addition to `icon-continued-statement-offset'.
+ icon-brace-offset
+    Extra indentation for line if it starts with an open brace.
+ icon-brace-imaginary-offset
+    An open brace following other text is treated as if it were
+    this far to the right of the start of its line.
+
+Turning on Icon mode calls the value of the variable `icon-mode-hook'
+with no args, if that value is non-nil." t)
+
+(autoload 'image-mode "image-mode"
+"Major mode for image files.
+You can use \\<image-mode-map>\\[image-toggle-display] or \\[image-toggle-hex-display] to toggle between display
+as an image and display as text or hex.
+
+Key bindings:
+\\{image-mode-map}" t)
+
+(autoload 'js-mode "js"
+"Major mode for editing JavaScript.
+
+In addition to any hooks its parent mode `js-base-mode' might have
+run, this mode runs the hook `js-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{js-mode-map}" t)
+
+(autoload 'js-json-mode "js"
+"Major mode derived from `prog-mode' by `define-derived-mode'.
+It inherits all of the parent's attributes, but has its own keymap,
+abbrev table and syntax table:
+
+  `js-json-mode-map', `js-json-mode-abbrev-table' and
+`js-mode-syntax-table'
+
+which more-or-less shadow prog-mode's corresponding tables.
+
+In addition to any hooks its parent mode might have run, this mode
+runs the hook `js-json-mode-hook', as the final or penultimate step
+during initialization.
+
+\\{js-json-mode-map}" t)
+
+(autoload 'ld-script-mode "ld-script"
+"A major mode to edit GNU ld script files.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `ld-script-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{ld-script-mode-map}" t)
+
+(autoload 'less-css-mode "less-css-mode"
+"Major mode for editing Less files (https://lesscss.org/).
+Special commands:
+\\{less-css-mode-map}
+
+In addition to any hooks its parent mode `css-mode' might have run,
+this mode runs the hook `less-css-mode-hook', as the final or
+penultimate step during initialization." t)
+
+(autoload 'lua-mode "lua-mode"
+"Major mode for editing Lua code.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `lua-mode-hook', as the final or penultimate
+step during initialization.
+
+\\{lua-mode-map}" t)
+
+(autoload 'm4-mode "m4-mode"
+"A major mode to edit m4 macro files.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `m4-mode-hook', as the final or penultimate
+step during initialization.
+
+\\{m4-mode-map}" t)
+
+(autoload 'makefile-automake-mode "make-mode"
+"An adapted `makefile-mode' that knows about automake.
+
+In addition to any hooks its parent mode might have run, this mode
+runs the hook `makefile-automake-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{makefile-automake-mode-map}" t)
+
+(autoload 'makefile-gmake-mode "make-mode"
+"An adapted `makefile-mode' that knows about gmake.
+
+In addition to any hooks its parent mode might have run, this mode
+runs the hook `makefile-gmake-mode-hook', as the final or penultimate
+step during initialization.
+
+\\{makefile-gmake-mode-map}" t)
+
+(autoload 'makefile-makepp-mode "make-mode"
+"An adapted `makefile-mode' that knows about makepp.
+
+In addition to any hooks its parent mode might have run, this mode
+runs the hook `makefile-makepp-mode-hook', as the final or penultimate
+step during initialization.
+
+\\{makefile-makepp-mode-map}" t)
+
+(autoload 'makefile-bsdmake-mode "make-mode"
+"An adapted `makefile-mode' that knows about BSD make.
+
+In addition to any hooks its parent mode might have run, this mode
+runs the hook `makefile-bsdmake-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{makefile-bsdmake-mode-map}" t)
+
+(autoload 'makefile-imake-mode "make-mode"
+"An adapted `makefile-mode' that knows about imake.
+
+In addition to any hooks its parent mode might have run, this mode
+runs the hook `makefile-imake-mode-hook', as the final or penultimate
+step during initialization.
+
+\\{makefile-imake-mode-map}" t)
+
+(autoload 'metafont-mode "meta-mode"
+"Major mode for editing Metafont sources.
+
+In addition to any hooks its parent mode `meta-common-mode' might have
+run, this mode runs the hook `metafont-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{metafont-mode-map}" t)
+
+(autoload 'metapost-mode "meta-mode"
+"Major mode for editing MetaPost sources.
+
+In addition to any hooks its parent mode `meta-common-mode' might have
+run, this mode runs the hook `metapost-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{metapost-mode-map}" t)
+
+(autoload 'mhtml-mode "mhtml-mode"
+"Major mode based on `html-mode', but works with embedded JS and CSS.
+
+Code inside a <script> element is indented using the rules from
+`js-mode'; and code inside a <style> element is indented using
+the rules from `css-mode'.
+
+In addition to any hooks its parent mode might have run, this mode
+runs the hook `mhtml-mode-hook', as the final or penultimate step
+during initialization.
+
+\\{mhtml-mode-map}" t)
+
+(autoload 'mixal-mode "mixal-mode"
+"Major mode for the mixal asm language.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `mixal-mode-hook', as the final or penultimate
+step during initialization.
+
+\\{mixal-mode-map}" t)
+
+(autoload 'm2-mode "modula2"
+"This is a mode intended to support program development in Modula-2.
+All control constructs of Modula-2 can be reached by typing C-c
+followed by the first character of the construct.
+\\<m2-mode-map>
+  \\[m2-begin] begin         \\[m2-case] case
+  \\[m2-definition] definition    \\[m2-else] else
+  \\[m2-for] for           \\[m2-header] header
+  \\[m2-if] if            \\[m2-module] module
+  \\[m2-loop] loop          \\[m2-or] or
+  \\[m2-procedure] procedure     Control-c Control-w with
+  \\[m2-record] record        \\[m2-stdio] stdio
+  \\[m2-type] type          \\[m2-until] until
+  \\[m2-var] var           \\[m2-while] while
+  \\[m2-export] export        \\[m2-import] import
+  \\[m2-begin-comment] begin-comment \\[m2-end-comment] end-comment
+  \\[suspend-emacs] suspend Emacs     \\[m2-toggle] toggle
+  \\[m2-compile] compile           \\[m2-next-error] next-error
+  \\[m2-link] link
+
+   `m2-indent' controls the number of spaces for each indentation.
+   `m2-compile-command' holds the command to compile a Modula-2 program.
+   `m2-link-command' holds the command to link a Modula-2 program.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `m2-mode-hook', as the final or penultimate
+step during initialization." t)
+
+(autoload 'nroff-mode "nroff-mode"
+"Major mode for editing text intended for nroff to format.
+\\{nroff-mode-map}
+Turning on Nroff mode runs `text-mode-hook', then `nroff-mode-hook'.
+Also, try `nroff-electric-mode', for automatically inserting
+closing requests for requests that are used in matched pairs." t)
+
+(autoload 'octave-maybe-mode "octave"
+"Select `octave-mode' if the current buffer seems to hold Octave code.")
+
+(autoload 'octave-mode "octave"
+"Major mode for editing Octave code.
+
+Octave is a high-level language, primarily intended for numerical
+computations.  It provides a convenient command line interface
+for solving linear and nonlinear problems numerically.  Function
+definitions can also be stored in files and used in batch mode.
+
+See Info node `(octave-mode) Using Octave Mode' for more details.
+
+Key bindings:
+\\{octave-mode-map}
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `octave-mode-hook', as the final or
+penultimate step during initialization." t)
+
+(autoload 'opascal-mode "opascal"
+"Major mode for editing OPascal code.
+\\<opascal-mode-map>
+\\[opascal-find-unit]	- Search for a OPascal source file.
+\\[opascal-fill-comment]	- Fill the current comment.
+\\[opascal-new-comment-line]	- If in a // comment, do a new comment line.
+
+\\[indent-region] also works for indenting a whole region.
+
+Customization:
+
+ `opascal-indent-level'                (default 3)
+    Indentation of OPascal statements with respect to containing block.
+ `opascal-compound-block-indent'       (default 0)
+    Extra indentation for blocks in compound statements.
+ `opascal-case-label-indent'           (default 0)
+    Extra indentation for case statement labels.
+ `opascal-search-path'                 (default .)
+    Directories to search when finding external units.
+ `opascal-verbose'                     (default nil)
+    If true then OPascal token processing progress is reported to the user.
+
+Coloring:
+
+ `opascal-keyword-face'                (default `font-lock-keyword-face')
+    Face used to color OPascal keywords.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `opascal-mode-hook', as the final or
+penultimate step during initialization." t)
+
+(autoload 'org-mode "org"
+"Outline-based notes management and organizer, alias
+\"Carsten's outline-mode for keeping track of everything.\"
+
+Org mode develops organizational tasks around a NOTES file which
+contains information about projects as plain text.  Org mode is
+implemented on top of Outline mode, which is ideal to keep the content
+of large files well structured.  It supports ToDo items, deadlines and
+time stamps, which magically appear in the diary listing of the Emacs
+calendar.  Tables are easily created with a built-in table editor.
+Plain text URL-like links connect to websites, emails (VM), Usenet
+messages (Gnus), BBDB entries, and any files related to the project.
+For printing and sharing of notes, an Org file (or a part of it)
+can be exported as a structured ASCII or HTML file.
+
+The following commands are available:
+
+\\{org-mode-map}
+
+In addition to any hooks its parent mode `outline-mode' might have
+run, this mode runs the hook `org-mode-hook', as the final or
+penultimate step during initialization." t)
+
+(autoload 'pascal-mode "pascal"
+"Major mode for editing Pascal code.
+\\<pascal-mode-map>
+TAB indents for Pascal code.  Delete converts tabs to spaces as it moves back.
+
+\\[completion-at-point] completes the word around current point with respect to position in code
+\\[completion-help-at-point] shows all possible completions at this point.
+
+Other useful functions are:
+
+\\[pascal-mark-defun]	- Mark function.
+\\[pascal-insert-block]	- insert begin ... end;
+\\[pascal-star-comment]	- insert (* ... *)
+\\[pascal-comment-area]	- Put marked area in a comment, fixing nested comments.
+\\[pascal-uncomment-area]	- Uncomment an area commented with \\[pascal-comment-area].
+\\[pascal-beg-of-defun]	- Move to beginning of current function.
+\\[pascal-end-of-defun]	- Move to end of current function.
+\\[pascal-goto-defun]	- Goto function prompted for in the minibuffer.
+\\[pascal-outline-mode]	- Enter `pascal-outline-mode'.
+
+Variables controlling indentation/edit style:
+
+ `pascal-indent-level' (default 3)
+    Indentation of Pascal statements with respect to containing block.
+ `pascal-case-indent' (default 2)
+    Indentation for case statements.
+ `pascal-auto-newline' (default nil)
+    Non-nil means automatically newline after semicolons and the punctuation
+    mark after an end.
+ `pascal-indent-nested-functions' (default t)
+    Non-nil means nested functions are indented.
+ `pascal-tab-always-indent' (default t)
+    Non-nil means TAB in Pascal mode should always reindent the current line,
+    regardless of where in the line point is when the TAB command is used.
+ `pascal-auto-endcomments' (default t)
+    Non-nil means a comment { ... } is set after the ends which ends cases and
+    functions.  The name of the function or case will be set between the braces.
+ `pascal-auto-lineup' (default t)
+    List of contexts where auto lineup of :'s or ='s should be done.
+
+See also the user variables `pascal-type-keywords', `pascal-start-keywords' and
+`pascal-separator-keywords'.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `pascal-mode-hook', as the final or
+penultimate step during initialization." t)
+
+(autoload 'perl-mode "perl-mode"
+"Major mode for editing Perl code.
+Expression and list commands understand all Perl brackets.
+Tab indents for Perl code.
+Comments are delimited with # ... \\n.
+Paragraphs are separated by blank lines only.
+Delete converts tabs to spaces as it moves back.
+\\{perl-mode-map}
+Variables controlling indentation style:
+ `perl-tab-always-indent'
+    Non-nil means TAB in Perl mode should always indent the current line,
+    regardless of where in the line point is when the TAB command is used.
+ `perl-tab-to-comment'
+    Non-nil means that for lines which don't need indenting, TAB will
+    either delete an empty comment, indent an existing comment, move
+    to end-of-line, or if at end-of-line already, create a new comment.
+ `perl-nochange'
+    Lines starting with this regular expression are not auto-indented.
+ `perl-indent-level'
+    Indentation of Perl statements within surrounding block.
+    The surrounding block's indentation is the indentation
+    of the line on which the open-brace appears.
+ `perl-continued-statement-offset'
+    Extra indentation given to a substatement, such as the
+    then-clause of an if or body of a while.
+ `perl-continued-brace-offset'
+    Extra indentation given to a brace that starts a substatement.
+    This is in addition to `perl-continued-statement-offset'.
+ `perl-brace-offset'
+    Extra indentation for line if it starts with an open brace.
+ `perl-brace-imaginary-offset'
+    An open brace following other text is treated as if it were
+    this far to the right of the start of its line.
+ `perl-label-offset'
+    Extra indentation for line that is a label.
+ `perl-indent-continued-arguments'
+    Offset of argument lines relative to usual indentation.
+
+Various indentation styles:       K&R  BSD  BLK  GNU  LW
+  perl-indent-level                5    8    0    2    4
+  perl-continued-statement-offset  5    8    4    2    4
+  perl-continued-brace-offset      0    0    0    0   -4
+  perl-brace-offset               -5   -8    0    0    0
+  perl-brace-imaginary-offset      0    0    4    0    0
+  perl-label-offset               -5   -8   -2   -2   -2
+
+Turning on Perl mode runs the normal hook `perl-mode-hook'." t)
+
+(autoload 'php-ts-mode-maybe "php-ts-mode"
+"Enable `php-ts-mode' when its grammar is available.
+Also propose to install the grammar when `treesit-enabled-modes'
+is t or contains the mode name.")
+
+(autoload 'prolog-mode "prolog"
+"Major mode for editing Prolog code.
+
+Blank lines and `%%...' separate paragraphs.  `%'s starts a comment
+line and comments can also be enclosed in /* ... */.
+
+If an optional argument SYSTEM is non-nil, set up mode for the given system.
+
+To find out what version of Prolog mode you are running, enter
+\\[prolog-mode-version].
+
+Commands:
+\\{prolog-mode-map}
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `prolog-mode-hook', as the final or
+penultimate step during initialization." t)
+
+(autoload 'ps-mode "ps-mode"
+"Major mode for editing PostScript with GNU Emacs.
+
+Entry to this mode calls `ps-mode-hook'.
+
+The following variables hold user options, and can
+be set through the `customize' command:
+
+  `ps-mode-tab'
+  `ps-mode-paper-size'
+  `ps-mode-print-function'
+  `ps-run-prompt'
+  `ps-run-font-lock-keywords-2'
+  `ps-run-x'
+  `ps-run-dumb'
+  `ps-run-init'
+  `ps-run-error-line-numbers'
+  `ps-run-tmp-dir'
+
+Type \\[describe-variable] for documentation on these options.
+
+
+\\{ps-mode-map}
+
+
+When starting an interactive PostScript process with \\[ps-run-start],
+a second window will be displayed, and `ps-run-mode-hook' will be called.
+The keymap for this second window is:
+
+\\{ps-run-mode-map}
+
+
+When Ghostscript encounters an error it displays an error message
+with a file position.  Clicking mouse-2 on this number will bring
+point to the corresponding spot in the PostScript window, if input
+to the interpreter was sent from that window.
+Typing \\<ps-run-mode-map>\\[ps-run-goto-error] when the cursor is at the number has the same effect." t)
+
+(autoload 'python-mode "python"
+"Major mode for editing Python files.
+
+\\{python-mode-map}
+
+In addition to any hooks its parent mode `python-base-mode' might have
+run, this mode runs the hook `python-mode-hook', as the final or
+penultimate step during initialization." t)
+
+(autoload 'rst-mode "rst"
+"Major mode for editing reStructuredText documents.
+\\<rst-mode-map>
+
+Turning on `rst-mode' calls the normal hooks `text-mode-hook'
+and `rst-mode-hook'.  This mode also supports font-lock
+highlighting.
+
+\\{rst-mode-map}" t)
+
+(autoload 'ruby-mode "ruby-mode"
+"Major mode for editing Ruby code.
+
+In addition to any hooks its parent mode `ruby-base-mode' might have
+run, this mode runs the hook `ruby-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{ruby-mode-map}" t)
+
+(autoload 'rust-ts-mode-maybe "rust-ts-mode"
+"Enable `rust-ts-mode' when its grammar is available.
+Also propose to install the grammar when `treesit-enabled-modes'
+is t or contains the mode name.")
+
+(autoload 'scheme-mode "scheme"
+"Major mode for editing Scheme code.
+Editing commands are similar to those of `lisp-mode'.
+
+In addition, if an inferior Scheme process is running, some additional
+commands will be defined, for evaluating expressions and controlling
+the interpreter, and the state of the process will be displayed in the
+mode line of all Scheme buffers.  The names of commands that interact
+with the Scheme process start with \"xscheme-\" if you use the MIT
+Scheme-specific `xscheme' package; for more information see the
+documentation for `xscheme-interaction-mode'.  Use \\[run-scheme] to
+start an inferior Scheme using the more general `cmuscheme' package.
+
+Commands:
+Delete converts tabs to spaces as it moves back.
+Blank lines separate paragraphs.  Semicolons start comments.
+\\{scheme-mode-map}
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `scheme-mode-hook', as the final or
+penultimate step during initialization." t)
+
+(autoload 'dsssl-mode "scheme"
+"Major mode for editing DSSSL code.
+Editing commands are similar to those of `lisp-mode'.
+
+Commands:
+Delete converts tabs to spaces as it moves back.
+Blank lines separate paragraphs.  Semicolons start comments.
+\\{scheme-mode-map}
+Entering this mode runs the hooks `scheme-mode-hook' and then
+`dsssl-mode-hook' and inserts the value of `dsssl-sgml-declaration' if
+that variable's value is a string." t)
+
+(autoload 'mail-mode "sendmail"
+"Major mode for editing mail to be sent.
+Like Text Mode but with these additional commands:
+
+\\[mail-send]  `mail-send' (send the message)
+\\[mail-send-and-exit]  `mail-send-and-exit' (send the message and exit)
+
+Here are commands that move to a header field (and create it if there isn't):
+	 \\[mail-to]  move to To:	\\[mail-subject]  move to Subj:
+	 \\[mail-bcc]  move to Bcc:	\\[mail-cc]  move to Cc:
+	 \\[mail-fcc]  move to Fcc:	\\[mail-reply-to] move to Reply-To:
+         \\[mail-mail-reply-to]  move to Mail-Reply-To:
+         \\[mail-mail-followup-to] move to Mail-Followup-To:
+\\[mail-text]  move to message text.
+\\[mail-signature]  `mail-signature' (insert `mail-signature-file' file).
+\\[mail-yank-original]  `mail-yank-original' (insert current message, in Rmail).
+\\[mail-fill-yanked-message]  `mail-fill-yanked-message' (fill what was yanked).
+\\[mail-insert-file] insert a text file into the message.
+\\[mail-add-attachment] attach to the message a file as binary attachment.
+Turning on Mail mode runs the normal hooks `text-mode-hook' and
+`mail-mode-hook' (in that order)." t)
+
+(autoload 'ses-mode "ses"
+"Major mode for Simple Emacs Spreadsheet.
+
+When you invoke SES in a new buffer, it is divided into cells
+that you can enter data into.  You can navigate the cells with
+the arrow keys and add more cells with the tab key.  The contents
+of these cells can be numbers, text, or Lisp expressions.  (To
+enter text, enclose it in double quotes.)
+
+In an expression, you can use cell coordinates to refer to the
+contents of another cell.  For example, you can sum a range of
+cells with `(+ A1 A2 A3)'.  There are specialized functions like
+`ses+' (addition for ranges with empty cells), `ses-average' (for
+performing calculations on cells), and `ses-range' and `ses-select'
+(for extracting ranges of cells).
+
+Each cell also has a print function that controls how it is
+displayed.
+
+Each SES buffer is divided into a print area and a data area.
+Normally, you can simply use SES to look at and manipulate the print
+area, and let SES manage the data area outside the visible region.
+
+See \"ses-example.ses\" (in `data-directory') for an example
+spreadsheet, and the Info node `(ses)Top.'
+
+In the following, note the separate keymaps for cell editing mode
+and print mode specifications.  Key definitions:
+
+\\{ses-mode-map}
+These key definitions are active only in the print area (the visible
+part):
+\\{ses-mode-print-map}
+These are active only in the minibuffer, when entering or editing a
+formula:
+\\{ses-mode-edit-map}" t)
+
+(autoload 'sgml-mode "sgml-mode"
+"Major mode for editing SGML documents.
+Makes > match <.
+Keys <, &, SPC within <>, \", / and \\=' can be electric depending on
+`sgml-quick-keys'.
+
+An argument of N to a tag-inserting command means to wrap it around
+the next N words.  In Transient Mark mode, when the mark is active,
+N defaults to -1, which means to wrap it around the current region.
+
+If you like upcased tags, put (setq sgml-transformation-function \\='upcase)
+in your init file.
+
+Use \\[sgml-validate] to validate your document with an SGML parser.
+
+Do \\[describe-variable] sgml- SPC to see available variables.
+Do \\[describe-key] on the following bindings to discover what they do.
+\\{sgml-mode-map}
+
+In addition to any hooks its parent mode `text-mode' might have run,
+this mode runs the hook `sgml-mode-hook', as the final or penultimate
+step during initialization." t)
+
+(autoload 'sh-mode "sh-script"
+"Major mode for editing shell scripts.
+This mode works for many shells, since they all have roughly the same syntax,
+as far as commands, arguments, variables, pipes, comments etc. are concerned.
+Unless the file's magic number indicates the shell, your usual shell is
+assumed.  Since filenames rarely give a clue, they are not further analyzed.
+
+This mode adapts to the variations between shells (see `sh-set-shell') by
+means of an inheritance based feature lookup (see `sh-feature').  This
+mechanism applies to all variables (including skeletons) that pertain to
+shell-specific features.  Shell script files can use the `sh-shell' local
+variable to indicate the shell variant to be used for the file.
+
+The default style of this mode is that of Rosenblatt's Korn shell book.
+The syntax of the statements varies with the shell being used.  The
+following commands are available, based on the current shell's syntax:
+\\<sh-mode-map>
+\\[sh-case]	 case statement
+\\[sh-for]	 for loop
+\\[sh-function]	 function definition
+\\[sh-if]	 if statement
+\\[sh-indexed-loop]	 indexed loop from 1 to n
+\\[sh-while-getopts]	 while getopts loop
+\\[sh-repeat]	 repeat loop
+\\[sh-select]	 select loop
+\\[sh-until]	 until loop
+\\[sh-while]	 while loop
+
+For sh and rc shells indentation commands are:
+\\[smie-config-show-indent]	Show the rules controlling this line's indentation.
+\\[smie-config-set-indent]	Change the rules controlling this line's indentation.
+\\[smie-config-guess]  Try to tweak the indentation rules so the
+buffer indents as it currently is indented.
+
+
+\\[backward-delete-char-untabify]	 Delete backward one position, even if it was a tab.
+\\[sh-end-of-command]	 Go to end of successive commands.
+\\[sh-beginning-of-command]	 Go to beginning of successive commands.
+\\[sh-set-shell]	 Set this buffer's shell, and maybe its magic number.
+\\[sh-execute-region]	 Have optional header and region be executed in a subshell.
+
+`sh-electric-here-document-mode' controls whether insertion of two
+unquoted < insert a here document.  You can control this behavior by
+modifying `sh-mode-hook'.
+
+If you generally program a shell different from your login shell you can
+set `sh-shell-file' accordingly.  If your shell's file name doesn't correctly
+indicate what shell it is use `sh-alias-alist' to translate.
+
+If your shell gives error messages with line numbers, you can use \\[executable-interpret]
+with your script for an edit-interpret-debug cycle." t)
+
+(autoload 'sieve-mode "sieve-mode"
+"Major mode for editing Sieve code.
+Turning on Sieve mode runs `sieve-mode-hook'.
+
+\\{sieve-mode-map}" t)
+
+(autoload 'simula-mode "simula"
+"Major mode for editing SIMULA code.
+\\{simula-mode-map}
+Variables controlling indentation style:
+ `simula-indent-level'
+    Indentation of SIMULA statements with respect to containing block.
+ `simula-substatement-offset'
+    Extra indentation after DO, THEN, ELSE, WHEN and OTHERWISE.
+ `simula-continued-statement-offset' 3
+    Extra indentation for lines not starting a statement or substatement,
+    e.g. a nested FOR-loop.  If value is a list, each line in a multiple-
+    line continued statement will have the car of the list extra indentation
+    with respect to the previous line of the statement.
+ `simula-label-offset' -4711
+    Offset of SIMULA label lines relative to usual indentation.
+ `simula-if-indent' (0 . 0)
+    Extra indentation of THEN and ELSE with respect to the starting IF.
+    Value is a cons cell, the car is extra THEN indentation and the cdr
+    extra ELSE indentation.  IF after ELSE is indented as the starting IF.
+ `simula-inspect-indent' (0 . 0)
+    Extra indentation of WHEN and OTHERWISE with respect to the
+    corresponding INSPECT.  Value is a cons cell, the car is
+    extra WHEN indentation and the cdr extra OTHERWISE indentation.
+ `simula-electric-indent' nil
+    If this variable is non-nil, `simula-indent-line'
+    will check the previous line to see if it has to be reindented.
+ `simula-abbrev-keyword' `upcase'
+    Determine how SIMULA keywords will be expanded.  Value is one of
+    the symbols `upcase', `downcase', `capitalize', (as in) `abbrev-table',
+    or nil if they should not be changed.
+ `simula-abbrev-stdproc' `abbrev-table'
+    Determine how standard SIMULA procedure and class names will be
+    expanded.  Value is one of the symbols `upcase', `downcase', `capitalize',
+    (as in) `abbrev-table', or nil if they should not be changed.
+
+Turning on SIMULA mode calls the value of the variable simula-mode-hook
+with no arguments, if that value is non-nil." t)
+
+(autoload 'snmp-mode "snmp-mode"
+"Major mode for editing SNMP MIBs.
+Expression and list commands understand all C brackets.
+Tab indents for C code.
+Comments start with -- and end with newline or another --.
+Delete converts tabs to spaces as it moves back.
+\\{snmp-mode-map}
+Turning on `snmp-mode' runs the hooks in `snmp-common-mode-hook', then
+`snmp-mode-hook'." t)
+
+(autoload 'snmpv2-mode "snmp-mode"
+"Major mode for editing SNMPv2 MIBs.
+Expression and list commands understand all C brackets.
+Tab indents for C code.
+Comments start with -- and end with newline or another --.
+Delete converts tabs to spaces as it moves back.
+\\{snmp-mode-map}
+Turning on `snmp-mode' runs the hooks in `snmp-common-mode-hook',
+then `snmpv2-mode-hook'." t)
+
+(autoload 'sql-mode "sql"
+"Major mode to edit SQL.
+
+You can send SQL statements to the SQLi buffer using
+\\[sql-send-region].  Such a buffer must exist before you can do this.
+See `sql-help' on how to create SQLi buffers.
+
+\\{sql-mode-map}
+Customization: Entry to this mode runs the `sql-mode-hook'.
+
+When you put a buffer in SQL mode, the buffer stores the last SQLi
+buffer created as its destination in the variable `sql-buffer'.  This
+will be the buffer \\[sql-send-region] sends the region to.  If this
+SQLi buffer is killed, \\[sql-send-region] is no longer able to
+determine where the strings should be sent to.  You can set the
+value of `sql-buffer' using \\[sql-set-sqli-buffer].
+
+For information on how to create multiple SQLi buffers, see
+`sql-interactive-mode'.
+
+Note that SQL doesn't have an escape character unless you specify
+one.  If you specify backslash as escape character in SQL, you
+must tell Emacs.  Here's how to do that in your init file:
+
+(add-hook \\='sql-mode-hook
+          (lambda ()
+	    (modify-syntax-entry ?\\\\ \"\\\\\" sql-mode-syntax-table)))" t)
+
+(autoload 'srecode-template-mode "srecode/srt-mode"
+"Major-mode for writing SRecode macros.
+
+This mode runs the hook `srecode-template-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{srecode-template-mode-map}" t)
+
+(autoload 'tar-mode "tar-mode"
+"Major mode for viewing a tar file as a dired-like listing of its contents.
+You can move around using the usual cursor motion commands.
+Letters no longer insert themselves.\\<tar-mode-map>
+Type \\[tar-extract] to pull a file out of the tar file and into its own buffer;
+or click mouse-2 on the file's line in the Tar mode buffer.
+Type \\[tar-copy] to copy an entry from the tar file into another file on disk.
+
+If you edit a sub-file of this archive (as with the \\[tar-extract] command) and
+save it with \\[save-buffer], the contents of that buffer will be
+saved back into the tar-file buffer; in this way you can edit a file
+inside of a tar archive without extracting it and re-archiving it.
+
+See also: variables `tar-update-datestamp' and `tar-anal-blocksize'.
+\\{tar-mode-map}
+
+In addition to any hooks its parent mode `special-mode' might have
+run, this mode runs the hook `tar-mode-hook', as the final or
+penultimate step during initialization." t)
+
+(autoload 'tcl-mode "tcl"
+"Major mode for editing Tcl code.
+Expression and list commands understand all Tcl brackets.
+Tab indents for Tcl code.
+Paragraphs are separated by blank lines only.
+Delete converts tabs to spaces as it moves back.
+
+Variables controlling indentation style:
+  `tcl-indent-level'
+    Indentation of Tcl statements within surrounding block.
+  `tcl-continued-indent-level'
+    Indentation of continuation line relative to first line of command.
+
+Variables controlling user interaction with mode (see variable
+documentation for details):
+  `tcl-tab-always-indent'
+    Controls action of TAB key.
+  `tcl-auto-newline'
+    Non-nil means automatically newline before and after braces, brackets,
+    and semicolons inserted in Tcl code.
+  `tcl-use-smart-word-finder'
+    If not nil, use a smarter, Tcl-specific way to find the current
+    word when looking up help on a Tcl command.
+
+Turning on Tcl mode runs `tcl-mode-hook'.  Read the documentation for
+`tcl-mode-hook' to see what kinds of interesting hook functions
+already exist.
+
+\\{tcl-mode-map}" t)
+
+(autoload 'tex-mode "tex-mode"
+"Major mode for editing files of input for TeX, LaTeX, or SliTeX.
+This is the shared parent mode of several submodes.
+Tries to determine (by looking at the beginning of the file) whether
+this file is for plain TeX, LaTeX, or SliTeX and calls `plain-tex-mode',
+`latex-mode', or `slitex-mode', accordingly.  If it cannot be determined,
+such as if there are no commands in the file, the value of `tex-default-mode'
+says which mode to use.
+
+In addition to any hooks its parent mode `text-mode' might have run,
+this mode runs the hook `tex-mode-hook', as the final or penultimate
+step during initialization.
+
+\\{tex-mode-map}" t)
+
+(autoload 'latex-mode "tex-mode"
+"Major mode for editing files of input for LaTeX.
+Makes $ and } display the characters they match.
+Makes \" insert \\=`\\=` when it seems to be the beginning of a quotation,
+and \\='\\=' when it appears to be the end; it inserts \" only after a \\.
+
+Use \\[tex-region] to run LaTeX on the current region, plus the preamble
+copied from the top of the file (containing \\documentstyle, etc.),
+running LaTeX under a special subshell.  \\[tex-buffer] does the whole buffer.
+\\[tex-file] saves the buffer and then processes the file.
+\\[tex-print] prints the .dvi file made by any of these.
+\\[tex-view] previews the .dvi file made by any of these.
+\\[tex-bibtex-file] runs bibtex on the file of the current buffer.
+
+Use \\[tex-validate-buffer] to check buffer for paragraphs containing
+mismatched $'s or braces.
+
+Special commands:
+\\{latex-mode-map}
+
+Mode variables:
+latex-run-command
+	Command string used by \\[tex-region] or \\[tex-buffer].
+tex-directory
+	Directory in which to create temporary files for LaTeX jobs
+	run by \\[tex-region] or \\[tex-buffer].
+tex-dvi-print-command
+	Command string used by \\[tex-print] to print a .dvi file.
+tex-alt-dvi-print-command
+	Alternative command string used by \\[tex-print] (when given a prefix
+	argument) to print a .dvi file.
+tex-dvi-view-command
+	Command string used by \\[tex-view] to preview a .dvi file.
+tex-show-queue-command
+	Command string used by \\[tex-show-print-queue] to show the print
+	queue that \\[tex-print] put your job on.
+
+Entering Latex mode runs the hook `text-mode-hook', then
+`tex-mode-hook', and finally `latex-mode-hook'.  When the special
+subshell is initiated, `tex-shell-hook' is run." t)
+
+(autoload 'doctex-mode "tex-mode"
+"Major mode to edit DocTeX files.
+
+In addition to any hooks its parent mode `latex-mode' might have run,
+this mode runs the hook `doctex-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{doctex-mode-map}" t)
+
+(autoload 'texinfo-mode "texinfo"
+"Major mode for editing Texinfo files.
+
+  It has these extra commands:
+\\{texinfo-mode-map}
+
+  These are files that are used as input for TeX to make printed manuals
+and also to be turned into Info files with \\[makeinfo-buffer] or
+the `makeinfo' program.  These files must be written in a very restricted and
+modified version of TeX input format.
+
+  Editing commands are like `text-mode' except that the syntax table is
+set up so expression commands skip Texinfo bracket groups.  To see
+what the Info version of a region of the Texinfo file will look like,
+use \\[makeinfo-region], which runs `makeinfo' on the current region.
+
+  You can show the structure of a Texinfo file with \\[texinfo-show-structure].
+This command shows the structure of a Texinfo file by listing the
+lines with the @-sign commands for @chapter, @section, and the like.
+These lines are displayed in another window called the *Occur* window.
+In that window, you can position the cursor over one of the lines and
+use \\[occur-mode-goto-occurrence], to jump to the corresponding spot
+in the Texinfo file.
+
+  In addition, Texinfo mode provides commands that insert various
+frequently used @-sign commands into the buffer.  You can use these
+commands to save keystrokes.  And you can insert balanced braces with
+\\[texinfo-insert-braces] and later use the command \\[up-list] to
+move forward past the closing brace.
+
+Also, Texinfo mode provides functions for automatically creating or
+updating menus and node pointers.  These functions
+
+  * insert the `Next', `Previous' and `Up' pointers of a node,
+  * insert or update the menu for a section, and
+  * create a master menu for a Texinfo source file.
+
+Here are the functions:
+
+    `texinfo-update-node'                \\[texinfo-update-node]
+    `texinfo-every-node-update'          \\[texinfo-every-node-update]
+    `texinfo-sequential-node-update'
+
+    `texinfo-make-menu'                  \\[texinfo-make-menu]
+    `texinfo-all-menus-update'           \\[texinfo-all-menus-update]
+    `texinfo-master-menu'
+
+    `texinfo-indent-menu-description' (column &optional region-p)
+
+The `texinfo-column-for-description' variable specifies the column to
+which menu descriptions are indented.
+
+Passed an argument (a prefix argument, if interactive), the
+`texinfo-update-node' and `texinfo-make-menu' functions do their jobs
+in the region.
+
+To use the updating commands, you must structure your Texinfo file
+hierarchically, such that each `@node' line, with the exception of the
+Top node, is accompanied by some kind of section line, such as an
+`@chapter' or `@section' line.
+
+If the file has a `top' node, it must be called `top' or `Top' and
+be the first node in the file.
+
+Entering Texinfo mode calls the value of `text-mode-hook', and then the
+value of `texinfo-mode-hook'." t)
+
+(autoload 'typescript-ts-mode-maybe "typescript-ts-mode"
+"Enable `typescript-ts-mode' when its grammar is available.
+Also propose to install the grammar when `treesit-enabled-modes'
+is t or contains the mode name.")
+
+(autoload 'tsx-ts-mode-maybe "typescript-ts-mode"
+"Enable `tsx-ts-mode' when its grammar is available.
+Also propose to install the grammar when `treesit-enabled-modes'
+is t or contains the mode name.")
+
+(autoload 'vera-mode "vera-mode"
+"Major mode for editing Vera code.
+
+Usage:
+------
+
+  INDENTATION:  Typing `TAB' at the beginning of a line indents the line.
+    The amount of indentation is specified by option `vera-basic-offset'.
+    Indentation can be done for an entire region (`M-C-\\') or buffer (menu).
+    `TAB' always indents the line if option `vera-intelligent-tab' is nil.
+
+  WORD/COMMAND COMPLETION:  Typing `TAB' after a (not completed) word looks
+    for a word in the buffer or a Vera keyword that starts alike, inserts it
+    and adjusts case.  Re-typing `TAB' toggles through alternative word
+    completions.
+
+    Typing `TAB' after a non-word character inserts a tabulator stop (if not
+    at the beginning of a line).  `M-TAB' always inserts a tabulator stop.
+
+  COMMENTS:  `C-c C-c' comments out a region if not commented out, and
+    uncomments a region if already commented out.
+
+  HIGHLIGHTING (fontification):  Vera keywords, predefined types and
+    constants, function names, declaration names, directives, as well as
+    comments and strings are highlighted using different colors.
+
+  VERA VERSION:  OpenVera 1.4 and Vera version 6.2.8.
+
+
+Maintenance:
+------------
+
+To submit a bug report, use the corresponding menu entry within Vera Mode.
+Add a description of the problem and include a reproducible test case.
+
+Feel free to send questions and enhancement requests to <reto@gnu.org>.
+
+Official distribution is at
+URL `https://www.iis.ee.ethz.ch/~zimmi/emacs/vera-mode.html'
+
+
+                                                  The Vera Mode Maintainer
+                                               Reto Zimmermann <reto@gnu.org>
+
+Key bindings:
+-------------
+
+\\{vera-mode-map}
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `vera-mode-hook', as the final or penultimate
+step during initialization." t)
+
+(autoload 'verilog-mode "verilog-mode"
+"Major mode for editing Verilog code.
+\\<verilog-mode-map>
+See \\[describe-function] verilog-auto (\\[verilog-auto]) for details on how
+AUTOs can improve coding efficiency.
+
+Use \\[verilog-faq] for a pointer to frequently asked questions.
+
+NEWLINE, TAB indents for Verilog code.
+Delete converts tabs to spaces as it moves back.
+
+Supports highlighting.
+
+Turning on Verilog mode calls the value of the variable `verilog-mode-hook'
+with no args, if that value is non-nil.
+
+Variables controlling indentation/edit style:
+
+ variable `verilog-indent-level'      (default 3)
+   Indentation of Verilog statements with respect to containing block.
+ `verilog-indent-level-module'        (default 3)
+   Absolute indentation of Module level Verilog statements.
+   Set to 0 to get initial and always statements lined up
+   on the left side of your screen.
+ `verilog-indent-level-declaration'   (default 3)
+   Indentation of declarations with respect to containing block.
+   Set to 0 to get them list right under containing block.
+ `verilog-indent-level-behavioral'    (default 3)
+   Indentation of first begin in a task or function block
+   Set to 0 to get such code to lined up underneath the task or
+   function keyword.
+ `verilog-indent-level-directive'     (default 1)
+   Indentation of \\=`ifdef/\\=`endif blocks.
+ `verilog-indent-ignore-multiline-defines' (default t)
+   Non-nil means ignore indentation on lines that are part of a multiline
+   define.
+ `verilog-indent-ignore-regexp'     (default nil
+   Regexp that matches lines that should be ignored for indentation.
+ `verilog-cexp-indent'              (default 1)
+   Indentation of Verilog statements broken across lines i.e.:
+      if (a)
+        begin
+ `verilog-case-indent'              (default 2)
+   Indentation for case statements.
+ `verilog-auto-newline'             (default nil)
+   Non-nil means automatically newline after semicolons and the punctuation
+   mark after an end.
+ `verilog-auto-indent-on-newline'   (default t)
+   Non-nil means automatically indent line after newline.
+ `verilog-tab-always-indent'        (default t)
+   Non-nil means TAB in Verilog mode should always reindent the current line,
+   regardless of where in the line point is when the TAB command is used.
+ `verilog-indent-begin-after-if'    (default t)
+   Non-nil means to indent begin statements following a preceding
+   if, else, while, for and repeat statements, if any.  Otherwise,
+   the begin is lined up with the preceding token.  If t, you get:
+      if (a)
+         begin // amount of indent based on `verilog-cexp-indent'
+   otherwise you get:
+      if (a)
+      begin
+ `verilog-indent-class-inside-pkg'  (default t)
+   Non-nil means indent classes inside packages.
+   Otherwise, classes have zero indentation.
+ `verilog-auto-endcomments'         (default t)
+   Non-nil means a comment /* ... */ is set after the ends which ends
+   cases, tasks, functions and modules.
+   The type and name of the object will be set between the braces.
+ `verilog-minimum-comment-distance' (default 10)
+   Minimum distance (in lines) between begin and end required before a comment
+   will be inserted.  Setting this variable to zero results in every
+   end acquiring a comment; the default avoids too many redundant
+   comments in tight quarters.
+ `verilog-align-decl-expr-comments' (default t)
+   Non-nil means align declaration and expressions comments.
+ `verilog-align-comment-distance'   (default 1)
+   Distance (in spaces) between longest declaration and comments.
+   Only works if `verilog-align-decl-expr-comments' is non-nil.
+ `verilog-align-assign-expr'        (default nil)
+   Non-nil means align expressions of continuous assignments.
+ `verilog-align-typedef-regexp'     (default nil)
+   Regexp that matches user typedefs for declaration alignment.
+ `verilog-align-typedef-words'      (default nil)
+   List of words that match user typedefs for declaration alignment.
+ `verilog-auto-lineup'              (default `declarations')
+   List of contexts where auto lineup of code should be done.
+
+Variables controlling other actions:
+
+ `verilog-linter'                   (default `none')
+   Unix program to call to run the lint checker.  This is the default
+   command for \\[compile-command] and \\[verilog-auto-save-compile].
+
+See \\[customize] for the complete list of variables.
+
+AUTO expansion functions are, in part:
+
+    \\[verilog-auto]  Expand AUTO statements.
+    \\[verilog-delete-auto]  Remove the AUTOs.
+    \\[verilog-inject-auto]  Insert AUTOs for the first time.
+
+Some other functions are:
+
+    \\[completion-at-point]    Complete word with appropriate possibilities.
+    \\[verilog-mark-defun]  Mark function.
+    \\[verilog-beg-of-defun]  Move to beginning of current function.
+    \\[verilog-end-of-defun]  Move to end of current function.
+    \\[verilog-label-be]  Label matching begin ... end, fork ... join, etc
+                          statements.
+
+    \\[verilog-comment-region]  Put marked area in a comment.
+    \\[verilog-uncomment-region]  Uncomment an area commented with
+                                  \\[verilog-comment-region].
+    \\[verilog-insert-block]  Insert begin ... end.
+    \\[verilog-star-comment]    Insert /* ... */.
+
+    \\[verilog-sk-always]  Insert an always @(AS) begin .. end block.
+    \\[verilog-sk-begin]  Insert a begin .. end block.
+    \\[verilog-sk-case]  Insert a case block, prompting for details.
+    \\[verilog-sk-for]  Insert a for (...) begin .. end block, prompting for
+                        details.
+    \\[verilog-sk-generate]  Insert a generate .. endgenerate block.
+    \\[verilog-sk-header]  Insert a header block at the top of file.
+    \\[verilog-sk-initial]  Insert an initial begin .. end block.
+    \\[verilog-sk-fork]  Insert a fork begin .. end .. join block.
+    \\[verilog-sk-module]  Insert a module .. (/*AUTOARG*/);.. endmodule block.
+    \\[verilog-sk-ovm-class]  Insert an OVM Class block.
+    \\[verilog-sk-uvm-object]  Insert an UVM Object block.
+    \\[verilog-sk-uvm-component]  Insert an UVM Component block.
+    \\[verilog-sk-primitive]  Insert a primitive .. (.. );.. endprimitive block.
+    \\[verilog-sk-repeat]  Insert a repeat (..) begin .. end block.
+    \\[verilog-sk-specify]  Insert a specify .. endspecify block.
+    \\[verilog-sk-task]  Insert a task .. begin .. end endtask block.
+    \\[verilog-sk-while]  Insert a while (...) begin .. end block,
+                       prompting for details.
+    \\[verilog-sk-casex]  Insert a casex (...) item: begin.. end endcase block,
+                       prompting for details.
+    \\[verilog-sk-casez]  Insert a casez (...) item: begin.. end endcase block,
+                       prompting for details.
+    \\[verilog-sk-if]  Insert an if (..) begin .. end block.
+    \\[verilog-sk-else-if]  Insert an else if (..) begin .. end block.
+    \\[verilog-sk-comment]  Insert a comment block.
+    \\[verilog-sk-assign]  Insert an assign .. = ..; statement.
+    \\[verilog-sk-function]  Insert a function .. begin .. end endfunction
+                             block.
+    \\[verilog-sk-input]  Insert an input declaration, prompting for details.
+    \\[verilog-sk-output]  Insert an output declaration, prompting for details.
+    \\[verilog-sk-state-machine]  Insert a state machine definition, prompting
+                                  for details.
+    \\[verilog-sk-inout]  Insert an inout declaration, prompting for details.
+    \\[verilog-sk-wire]  Insert a wire declaration, prompting for details.
+    \\[verilog-sk-reg]  Insert a register declaration, prompting for details.
+    \\[verilog-sk-define-signal]  Define signal under point as a register at
+                                  the top of the module.
+
+All key bindings can be seen in a Verilog-buffer with \\[describe-bindings].
+Key bindings specific to `verilog-mode-map' are:
+
+\\{verilog-mode-map}" t)
+
+(autoload 'vhdl-mode "vhdl-mode"
+"Major mode for editing VHDL code.
+
+Usage:
+------
+
+  TEMPLATE INSERTION (electrification):
+    After typing a VHDL keyword and entering `SPC', you are prompted for
+    arguments while a template is generated for that VHDL construct.  Typing
+    `RET' or `C-g' at the first (mandatory) prompt aborts the current
+    template generation.  Optional arguments are indicated by square
+    brackets and removed if the queried string is left empty.  Prompts for
+    mandatory arguments remain in the code if the queried string is left
+    empty.  They can be queried again by `C-c C-t C-q'.  Enabled
+    electrification is indicated by `/e' in the mode line.
+
+      Typing `M-SPC' after a keyword inserts a space without calling the
+    template generator.  Automatic template generation (i.e.
+    electrification) can be disabled (enabled) by typing `C-c C-m C-e' or by
+    setting option `vhdl-electric-mode' (see OPTIONS).
+
+      Template generators can be invoked from the VHDL menu, by key
+    bindings, by typing `C-c C-i C-c' and choosing a construct, or by typing
+    the keyword (i.e. first word of menu entry not in parenthesis) and
+    `SPC'.  The following abbreviations can also be used: arch, attr, cond,
+    conf, comp, cons, func, inst, pack, sig, var.
+
+      Template styles can be customized in customization group
+    `vhdl-template' (see OPTIONS).
+
+
+  HEADER INSERTION:
+    A file header can be inserted by `C-c C-t C-h'.  A file footer
+    (template at the end of the file) can be inserted by `C-c C-t C-f'.
+    See customization group `vhdl-header'.
+
+
+  STUTTERING:
+    Double striking of some keys inserts cumbersome VHDL syntax elements.
+    Stuttering can be disabled (enabled) by typing `C-c C-m C-s' or by
+    option `vhdl-stutter-mode'.  Enabled stuttering is indicated by `/s' in
+    the mode line.  The stuttering keys and their effects are:
+
+      ;;   -->  \" : \"       [   -->  (        --    -->  comment
+      ;;;  -->  \" := \"      [[  -->  [        --CR  -->  comment-out code
+      ..   -->  \" => \"      ]   -->  )        ---   -->  horizontal line
+      ,,   -->  \" <= \"      ]]  -->  ]        ----  -->  display comment
+      ==   -->  \" == \"      \\='\\='  -->  \\\"
+
+
+  WORD COMPLETION:
+    Typing `TAB' after a (not completed) word looks for a VHDL keyword or a
+    word in the buffer that starts alike, inserts it and adjusts case.
+    Re-typing `TAB' toggles through alternative word completions.  This also
+    works in the minibuffer (i.e. in template generator prompts).
+
+      Typing `TAB' after `(' looks for and inserts complete parenthesized
+    expressions (e.g. for array index ranges).  All keywords as well as
+    standard types and subprograms of VHDL have predefined abbreviations
+    (e.g., type \"std\" and `TAB' will toggle through all standard types
+    beginning with \"std\").
+
+      Typing `TAB' after a non-word character indents the line if at the
+    beginning of a line (i.e. no preceding non-blank characters), and
+    inserts a tabulator stop otherwise.  `M-TAB' always inserts a tabulator
+    stop.
+
+
+  COMMENTS:
+        `--'       puts a single comment.
+        `---'      draws a horizontal line for separating code segments.
+        `----'     inserts a display comment, i.e. two horizontal lines
+                   with a comment in between.
+        `--CR'     comments out code on that line.  Re-hitting CR comments
+                   out following lines.
+        `C-c C-c'  comments out a region if not commented out,
+                   uncomments a region if already commented out.  Option
+                   `comment-style' defines where the comment characters
+                   should be placed (beginning of line, indent, etc.).
+
+      You are prompted for comments after object definitions (i.e. signals,
+    variables, constants, ports) and after subprogram and process
+    specifications if option `vhdl-prompt-for-comments' is non-nil.
+    Comments are automatically inserted as additional labels (e.g. after
+    begin statements) and as help comments if `vhdl-self-insert-comments' is
+    non-nil.
+
+      Inline comments (i.e. comments after a piece of code on the same line)
+    are indented at least to `vhdl-inline-comment-column'.  Comments go at
+    maximum to `vhdl-end-comment-column'.  `RET' after a space in a comment
+    will open a new comment line.  Typing beyond `vhdl-end-comment-column'
+    in a comment automatically opens a new comment line.  `M-q' re-fills
+    multi-line comments.
+
+
+  INDENTATION:
+    `TAB' indents a line if at the beginning of the line.  The amount of
+    indentation is specified by option `vhdl-basic-offset'.  `C-c C-i C-l'
+    always indents the current line (is bound to `TAB' if option
+    `vhdl-intelligent-tab' is nil).  If a region is active, `TAB' indents
+    the entire region.
+
+      Indentation can be done for a group of lines (`C-c C-i C-g'), a region
+    (`M-C-\\') or the entire buffer (menu).  Argument and port lists are
+    indented normally (nil) or relative to the opening parenthesis (non-nil)
+    according to option `vhdl-argument-list-indent'.
+
+      If option `vhdl-indent-tabs-mode' is nil, spaces are used instead of
+    tabs.  \\[tabify] and \\[untabify] allow the conversion of spaces to
+    tabs and vice versa.
+
+      Syntax-based indentation can be very slow in large files.  Option
+    `vhdl-indent-syntax-based' allows you to use faster but simpler indentation.
+
+      Option `vhdl-indent-comment-like-next-code-line' controls whether
+    comment lines are indented like the preceding or like the following code
+    line.
+
+
+  ALIGNMENT:
+    The alignment functions align operators, keywords, and inline comments
+    to beautify the code.  `C-c C-a C-a' aligns a group of consecutive lines
+    separated by blank lines, `C-c C-a C-i' a block of lines with same
+    indent.  `C-c C-a C-l' aligns all lines belonging to a list enclosed by
+    a pair of parentheses (e.g. port clause/map, argument list), and `C-c
+    C-a C-d' all lines within the declarative part of a design unit.  `C-c
+    C-a M-a' aligns an entire region.  `C-c C-a C-c' aligns inline comments
+    for a group of lines, and `C-c C-a M-c' for a region.
+
+      If option `vhdl-align-groups' is non-nil, groups of code lines
+    separated by special lines (see option `vhdl-align-group-separate') are
+    aligned individually.  If option `vhdl-align-same-indent' is non-nil,
+    blocks of lines with same indent are aligned separately.  Some templates
+    are automatically aligned after generation if option `vhdl-auto-align'
+    is non-nil.
+
+      Alignment tries to align inline comments at
+    `vhdl-inline-comment-column' and tries inline comment not to exceed
+    `vhdl-end-comment-column'.
+
+      `C-c C-x M-w' fixes up whitespace in a region.  That is, operator
+    symbols are surrounded by one space, and multiple spaces are eliminated.
+
+
+  CODE FILLING:
+    Code filling allows you to condense code (e.g. sensitivity lists or port
+    maps) by removing comments and newlines and re-wrapping so that all
+    lines are maximally filled (block filling).  `C-c C-f C-f' fills a list
+    enclosed by parenthesis, `C-c C-f C-g' a group of lines separated by
+    blank lines, `C-c C-f C-i' a block of lines with same indent, and
+    `C-c C-f M-f' an entire region.
+
+
+  CODE BEAUTIFICATION:
+    `C-c M-b' and `C-c C-b' beautify the code of a region or of the entire
+    buffer respectively.  This includes indentation, alignment, and case
+    fixing.  Code beautification can also be run non-interactively using the
+    command:
+
+      emacs -batch -l ~/.emacs filename.vhd -f vhdl-beautify-buffer
+
+
+  PORT TRANSLATION:
+    Generic and port clauses from entity or component declarations can be
+    copied (`C-c C-p C-w') and pasted as entity and component declarations,
+    as component instantiations and corresponding internal constants and
+    signals, as a generic map with constants as actual generics, and as
+    internal signal initializations (menu).
+
+      To include formals in component instantiations, see option
+    `vhdl-association-list-with-formals'.  To include comments in pasting,
+    see options `vhdl-include-...-comments'.
+
+      A clause with several generic/port names on the same line can be
+    flattened (`C-c C-p C-f') so that only one name per line exists.  The
+    direction of ports can be reversed (`C-c C-p C-r'), i.e., inputs become
+    outputs and vice versa, which can be useful in testbenches.  (This
+    reversion is done on the internal data structure and is only reflected
+    in subsequent paste operations.)
+
+      Names for actual ports, instances, testbenches, and
+    design-under-test instances can be derived from existing names according
+    to options `vhdl-...-name'.  See customization group `vhdl-port'.
+
+
+  SUBPROGRAM TRANSLATION:
+    Similar functionality exists for copying/pasting the interface of
+    subprograms (function/procedure).  A subprogram interface can be copied
+    and then pasted as a subprogram declaration, body or call (uses
+    association list with formals).
+
+
+  TESTBENCH GENERATION:
+    A copied port can also be pasted as a testbench.  The generated
+    testbench includes an entity, an architecture, and an optional
+    configuration.  The architecture contains the component declaration and
+    instantiation of the DUT as well as internal constant and signal
+    declarations.  Additional user-defined templates can be inserted.  The
+    names used for entity/architecture/configuration/DUT as well as the file
+    structure to be generated can be customized. See customization group
+   `vhdl-testbench'.
+
+
+  KEY BINDINGS:
+    Key bindings (`C-c ...') exist for most commands (see in menu).
+
+
+  VHDL MENU:
+    All commands can be found in the VHDL menu including their key bindings.
+
+
+  FILE BROWSER:
+    The speedbar allows browsing of directories and file contents.  It can
+    be accessed from the VHDL menu and is automatically opened if option
+    `vhdl-speedbar-auto-open' is non-nil.
+
+      In speedbar, open files and directories with `mouse-2' on the name and
+    browse/rescan their contents with `mouse-2'/`S-mouse-2' on the `+'.
+
+
+  DESIGN HIERARCHY BROWSER:
+    The speedbar can also be used for browsing the hierarchy of design units
+    contained in the source files of the current directory or the specified
+    projects (see option `vhdl-project-alist').
+
+      The speedbar can be switched between file, directory hierarchy and
+    project hierarchy browsing mode in the speedbar menu or by typing `f',
+    `h' or `H' in speedbar.
+
+      In speedbar, open design units with `mouse-2' on the name and browse
+    their hierarchy with `mouse-2' on the `+'.  Ports can directly be copied
+    from entities and components (in packages).  Individual design units and
+    complete designs can directly be compiled (\"Make\" menu entry).
+
+      The hierarchy is automatically updated upon saving a modified source
+    file when option `vhdl-speedbar-update-on-saving' is non-nil.  The
+    hierarchy is only updated for projects that have been opened once in the
+    speedbar.  The hierarchy is cached between Emacs sessions in a file (see
+    options in group `vhdl-speedbar').
+
+      Simple design consistency checks are done during scanning, such as
+    multiple declarations of the same unit or missing primary units that are
+    required by secondary units.
+
+
+  STRUCTURAL COMPOSITION:
+    Enables simple structural composition.  `C-c C-m C-n' creates a skeleton
+    for a new component.  Subcomponents (i.e. component declaration and
+    instantiation) can be automatically placed from a previously read port
+    (`C-c C-m C-p') or directly from the hierarchy browser (`P').  Finally,
+    all subcomponents can be automatically connected using internal signals
+    and ports (`C-c C-m C-w') following these rules:
+      - subcomponent actual ports with same name are considered to be
+        connected by a signal (internal signal or port)
+      - signals that are only inputs to subcomponents are considered as
+        inputs to this component -> input port created
+      - signals that are only outputs from subcomponents are considered as
+        outputs from this component -> output port created
+      - signals that are inputs to AND outputs from subcomponents are
+        considered as internal connections -> internal signal created
+
+      Purpose:  With appropriate naming conventions it is possible to
+    create higher design levels with only a few mouse clicks or key
+    strokes.  A new design level can be created by simply generating a new
+    component, placing the required subcomponents from the hierarchy
+    browser, and wiring everything automatically.
+
+      Note: Automatic wiring only works reliably on templates of new
+    components and component instantiations that were created by VHDL mode.
+
+      Component declarations can be placed in a components package (option
+    `vhdl-use-components-package') which can be automatically generated for
+    an entire directory or project (`C-c C-m M-p').  The VHDL'93 direct
+    component instantiation is also supported (option
+    `vhdl-use-direct-instantiation').
+
+      Configuration declarations can automatically be generated either from
+    the menu (`C-c C-m C-f') (for the architecture the cursor is in) or from
+    the speedbar menu (for the architecture under the cursor).  The
+    configurations can optionally be hierarchical (i.e. include all
+    component levels of a hierarchical design, option
+    `vhdl-compose-configuration-hierarchical') or include subconfigurations
+    (option `vhdl-compose-configuration-use-subconfiguration').  For
+    subcomponents in hierarchical configurations, the most-recently-analyzed
+    (mra) architecture is selected.  If another architecture is desired, it
+    can be marked as most-recently-analyzed (speedbar menu) before
+    generating the configuration.
+
+      Note: Configurations of subcomponents (i.e. hierarchical configuration
+    declarations) are currently not considered when displaying
+    configurations in speedbar.
+
+      See the options group `vhdl-compose' for all relevant user options.
+
+
+  SOURCE FILE COMPILATION:
+    The syntax of the current buffer can be analyzed by calling a VHDL
+    compiler (menu, `C-c C-k').  The compiler to be used is specified by
+    option `vhdl-compiler'.  The available compilers are listed in option
+    `vhdl-compiler-alist' including all required compilation command,
+    command options, compilation directory, and error message syntax
+    information.  New compilers can be added.
+
+      All the source files of an entire design can be compiled by the `make'
+    command (menu, `C-c M-C-k') if an appropriate Makefile exists.
+
+
+  MAKEFILE GENERATION:
+    Makefiles can be generated automatically by an internal generation
+    routine (`C-c M-k').  The library unit dependency information is
+    obtained from the hierarchy browser.  Makefile generation can be
+    customized for each compiler in option `vhdl-compiler-alist'.
+
+      Makefile generation can also be run non-interactively using the
+    command:
+
+        emacs -batch -l ~/.emacs -l vhdl-mode
+              [-compiler compilername] [-project projectname]
+              -f vhdl-generate-makefile
+
+      The Makefile's default target \"all\" compiles the entire design, the
+    target \"clean\" removes it and the target \"library\" creates the
+    library directory if not existent.  These target names can be customized
+    by option `vhdl-makefile-default-targets'.  The Makefile also includes a
+    target for each primary library unit which allows selective compilation
+    of this unit, its secondary units and its subhierarchy (example:
+    compilation of a design specified by a configuration).  User specific
+    parts can be inserted into a Makefile with option
+    `vhdl-makefile-generation-hook'.
+
+    Limitations:
+      - Only library units and dependencies within the current library are
+        considered.  Makefiles for designs that span multiple libraries are
+        not (yet) supported.
+      - Only one-level configurations are supported (also hierarchical),
+        but configurations that go down several levels are not.
+      - The \"others\" keyword in configurations is not supported.
+
+
+  PROJECTS:
+    Projects can be defined in option `vhdl-project-alist' and a current
+    project be selected using option `vhdl-project' (permanently) or from
+    the menu or speedbar (temporarily).  For each project, title and
+    description strings (for the file headers), source files/directories
+    (for the hierarchy browser and Makefile generation), library name, and
+    compiler-dependent options, exceptions and compilation directory can be
+    specified.  Compilation settings overwrite the settings of option
+    `vhdl-compiler-alist'.
+
+      Project setups can be exported (i.e. written to a file) and imported.
+    Imported setups are not automatically saved in `vhdl-project-alist' but
+    can be saved afterwards in its customization buffer.  When starting
+    Emacs with VHDL Mode (i.e. load a VHDL file or use \"emacs -l
+    vhdl-mode\") in a directory with an existing project setup file, it is
+    automatically loaded and its project activated if option
+    `vhdl-project-autoload' is non-nil.  Names/paths of the project setup
+    files can be specified in option `vhdl-project-file-name'.  Multiple
+    project setups can be automatically loaded from global directories.
+    This is an alternative to specifying project setups with option
+    `vhdl-project-alist'.
+
+
+  SPECIAL MENUS:
+    As an alternative to the speedbar, an index menu can be added (set
+    option `vhdl-index-menu' to non-nil) or made accessible as a mouse menu
+    (e.g. add \"(global-set-key [S-down-mouse-3] \\='imenu)\" to your start-up
+    file) for browsing the file contents (is not populated if buffer is
+    larger than 256000).  Also, a source file menu can be
+    added (set option `vhdl-source-file-menu' to non-nil) for browsing the
+    current directory for VHDL source files.
+
+
+  VHDL STANDARDS:
+    The VHDL standards to be used are specified in option `vhdl-standard'.
+    Available standards are: VHDL'87/'93(02)/'08, VHDL-AMS, and Math Packages.
+
+
+  KEYWORD CASE:
+    Lower and upper case for keywords and standardized types, attributes,
+    and enumeration values is supported.  If the option
+    `vhdl-upper-case-keywords' is set to non-nil, keywords can be typed in
+    lower case and are converted into upper case automatically (not for
+    types, attributes, and enumeration values).  The case of keywords,
+    types, attributes,and enumeration values can be fixed for an entire
+    region (menu) or buffer (`C-c C-x C-c') according to the options
+    `vhdl-upper-case-{keywords,types,attributes,enum-values}'.
+
+
+  HIGHLIGHTING (fontification):
+    Keywords and standardized types, attributes, enumeration values, and
+    function names (controlled by option `vhdl-highlight-keywords'), as well
+    as comments, strings, and template prompts are highlighted using
+    different colors.  Unit, subprogram, signal, variable, constant,
+    parameter and generic/port names in declarations as well as labels are
+    highlighted if option `vhdl-highlight-names' is non-nil.
+
+      Additional reserved words or words with a forbidden syntax (e.g. words
+    that should be avoided) can be specified in option
+    `vhdl-forbidden-words' or `vhdl-forbidden-syntax' and be highlighted in
+    a warning color (option `vhdl-highlight-forbidden-words').  Verilog
+    keywords are highlighted as forbidden words if option
+    `vhdl-highlight-verilog-keywords' is non-nil.
+
+      Words with special syntax can be highlighted by specifying their
+    syntax and color in option `vhdl-special-syntax-alist' and by setting
+    option `vhdl-highlight-special-words' to non-nil.  This allows you to
+    establish some naming conventions (e.g. to distinguish different kinds
+    of signals or other objects by using name suffices) and to support them
+    visually.
+
+      Option `vhdl-highlight-case-sensitive' can be set to non-nil in order
+    to support case-sensitive highlighting.  However, keywords are then only
+    highlighted if written in lower case.
+
+      Code between \"translate_off\" and \"translate_on\" pragmas is
+    highlighted using a different background color if option
+    `vhdl-highlight-translate-off' is non-nil.
+
+      For documentation and customization of the used colors see
+    customization group `vhdl-highlight-faces' (\\[customize-group]).  For
+    highlighting of matching parenthesis, see customization group
+    `paren-showing'.  Automatic buffer highlighting is turned on/off by
+    option `global-font-lock-mode' (`font-lock-auto-fontify' in XEmacs).
+
+
+  USER MODELS:
+    VHDL models (templates) can be specified by the user and made accessible
+    in the menu, through key bindings (`C-c C-m ...'), or by keyword
+    electrification.  See option `vhdl-model-alist'.
+
+
+  HIDE/SHOW:
+    The code of blocks, processes, subprograms, component declarations and
+    instantiations, generic/port clauses, and configuration declarations can
+    be hidden using the `Hide/Show' menu or by pressing `S-mouse-2' within
+    the code (see customization group `vhdl-menu').  XEmacs: limited
+    functionality due to old `hideshow.el' package.
+
+
+  CODE UPDATING:
+    - Sensitivity List: `C-c C-u C-s' updates the sensitivity list of the
+      current process, `C-c C-u M-s' of all processes in the current buffer.
+      Limitations:
+        - Only declared local signals (ports, signals declared in
+          architecture and blocks) are automatically inserted.
+        - Global signals declared in packages are not automatically inserted.
+          Insert them once manually (will be kept afterwards).
+        - Out parameters of procedures are considered to be read.
+      Use option `vhdl-entity-file-name' to specify the entity file name
+      (used to obtain the port names).
+      Use option `vhdl-array-index-record-field-in-sensitivity-list' to
+      specify whether to include array indices and record fields in
+      sensitivity lists.
+
+
+  CODE FIXING:
+    `C-c C-x C-p' fixes the closing parenthesis of a generic/port clause
+    (e.g., if the closing parenthesis is on the wrong line or is missing).
+
+
+  PRINTING:
+    PostScript printing with different faces (an optimized set of faces is
+    used if `vhdl-print-customize-faces' is non-nil) or colors (if
+    `ps-print-color-p' is non-nil) is possible using the standard Emacs
+    PostScript printing commands.  Option `vhdl-print-two-column' defines
+    appropriate default settings for nice landscape two-column printing.
+    The paper format can be set by option `ps-paper-type'.  Do not forget to
+    switch `ps-print-color-p' to nil for printing on black-and-white
+    printers.
+
+
+  OPTIONS:
+    User options allow customization of VHDL Mode.  All options are
+    accessible from the \"Options\" menu entry.  Simple options (switches
+    and choices) can directly be changed, while for complex options a
+    customization buffer is opened.  Changed options can be saved for future
+    sessions using the \"Save Options\" menu entry.
+
+      Options and their detailed descriptions can also be accessed by using
+    the \"Customize\" menu entry or the command \\[customize-option]
+    (\\[customize-group] for groups).  Some customizations only take effect
+    after some action (read the NOTE in the option documentation).
+    Customization can also be done globally (i.e. site-wide, read the
+    INSTALL file).
+
+      Not all options are described in this documentation, so go and see
+    what other useful user options there are (\\[vhdl-customize] or menu)!
+
+
+  FILE EXTENSIONS:
+    As default, files with extensions \".vhd\" and \".vhdl\" are
+    automatically recognized as VHDL source files.  To add an extension
+    \".xxx\", add the following line to your Emacs start-up file (`.emacs'):
+
+      (push \\='(\"\\\\.xxx\\\\\\='\" . vhdl-mode) auto-mode-alist)
+
+
+  HINTS:
+    - To start Emacs with open VHDL hierarchy browser without having to load
+      a VHDL file first, use the command:
+
+        emacs -l vhdl-mode -f speedbar-frame-mode
+
+    - Type `C-g C-g' to interrupt long operations or if Emacs hangs.
+
+    - Some features only work on properly indented code.
+
+
+  RELEASE NOTES:
+    See also the release notes (menu) for added features in new releases.
+
+
+Maintenance:
+------------
+
+To submit a bug report, enter \\[vhdl-submit-bug-report] within VHDL Mode.
+Add a description of the problem and include a reproducible test case.
+
+Questions and enhancement requests can be sent to <reto@gnu.org>.
+
+The `vhdl-mode-announce' mailing list informs about new VHDL Mode releases.
+The `vhdl-mode-victims' mailing list informs about new VHDL Mode beta
+releases.  You are kindly invited to participate in beta testing.  Subscribe
+to above mailing lists by sending an email to <reto@gnu.org>.
+
+VHDL Mode is officially distributed at
+https://guest.iis.ee.ethz.ch/~zimmi/emacs/vhdl-mode.html
+where the latest version can be found.
+
+
+Known problems:
+---------------
+
+- XEmacs: Incorrect start-up when automatically opening speedbar.
+- XEmacs: Indentation in XEmacs 21.4 (and higher).
+- Indentation incorrect for new `postponed' VHDL keyword.
+- Indentation incorrect for `protected body' construct.
+
+
+                                                The VHDL Mode Authors
+                                            Reto Zimmermann and Rod Whitby
+
+Key bindings:
+-------------
+
+\\{vhdl-mode-map}
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `vhdl-mode-hook', as the final or penultimate
+step during initialization." t)
+
+(autoload 'yaml-ts-mode-maybe "yaml-ts-mode"
+"Enable `yaml-ts-mode' when its grammar is available.
+Also propose to install the grammar when `treesit-enabled-modes'
+is t or contains the mode name.")
 
 (provide 'loaddefs)
 

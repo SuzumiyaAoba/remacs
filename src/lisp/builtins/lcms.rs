@@ -382,147 +382,166 @@ fn want_wp_and_vc(
     Ok(vc)
 }
 
-fn f_lcms_cie_de2000(i: &mut crate::lisp::eval::Interp, a: crate::lisp::Argv) -> EvalResult { let g = need(i)?;
-let lab1 = match parse_lab(&arg(&a, 0)) {
-    Some(v) => v,
-    None => {
-        return Err(i.signal_data(
-            crate::lisp::obarray::sym::ERROR,
-            vec![Value::string("Invalid color"), a[0].clone()],
-        ));
-    }
-};
-let lab2 = match parse_lab(&arg(&a, 1)) {
-    Some(v) => v,
-    None => {
-        return Err(i.signal_data(
-            crate::lisp::obarray::sym::ERROR,
-            vec![Value::string("Invalid color"), a[1].clone()],
-        ));
-    }
-};
-let mut opt_k =
-    |v: &Value| -> Result<f64, Flow> { if v.is_nil() { Ok(1.0) } else { want_num(i, v) } };
-let kl = opt_k(&arg(&a, 2))?;
-let kc = opt_k(&arg(&a, 3))?;
-let kh = opt_k(&arg(&a, 4))?;
-Ok(fl(unsafe { (g.cie2000)(&lab1, &lab2, kl, kc, kh) })) }
-
-fn f_lcms_xyz_to_jch(i: &mut crate::lisp::eval::Interp, a: crate::lisp::Argv) -> EvalResult { need(i)?;
-let xyz = match parse_xyz(&arg(&a, 0)) {
-    Some(v) => v,
-    None => {
-        return Err(i.signal_data(
-            crate::lisp::obarray::sym::ERROR,
-            vec![Value::string("Invalid color"), a[0].clone()],
-        ));
-    }
-};
-let vc = want_wp_and_vc(i, &arg(&a, 1), &arg(&a, 2))?;
-let jch = xyz_to_jch(&xyz, &vc);
-Ok(list3(fl(jch.j), fl(jch.c), fl(jch.h))) }
-
-fn f_lcms_jch_to_xyz(i: &mut crate::lisp::eval::Interp, a: crate::lisp::Argv) -> EvalResult { need(i)?;
-let jch = match parse_jch(&arg(&a, 0)) {
-    Some(v) => v,
-    None => {
-        return Err(i.signal_data(
-            crate::lisp::obarray::sym::ERROR,
-            vec![Value::string("Invalid color"), a[0].clone()],
-        ));
-    }
-};
-let vc = want_wp_and_vc(i, &arg(&a, 1), &arg(&a, 2))?;
-let xyz = jch_to_xyz(&jch, &vc);
-Ok(list3(
-    fl(xyz.x / 100.0),
-    fl(xyz.y / 100.0),
-    fl(xyz.z / 100.0),
-)) }
-
-fn f_lcms_jch_to_jab(i: &mut crate::lisp::eval::Interp, a: crate::lisp::Argv) -> EvalResult { need(i)?;
-let jch = match parse_jch(&arg(&a, 0)) {
-    Some(v) => v,
-    None => {
-        return Err(i.signal_data(
-            crate::lisp::obarray::sym::ERROR,
-            vec![Value::string("Invalid color"), a[0].clone()],
-        ));
-    }
-};
-let vc = want_wp_and_vc(i, &arg(&a, 1), &arg(&a, 2))?;
-let fl_ = fl_factor(vc.la);
-let jab = jch_to_jab(&jch, fl_, 0.007, 0.0228);
-Ok(list3(fl(jab.j), fl(jab.a), fl(jab.b))) }
-
-fn f_lcms_jab_to_jch(i: &mut crate::lisp::eval::Interp, a: crate::lisp::Argv) -> EvalResult { need(i)?;
-let jabv = match parse_jab(&arg(&a, 0)) {
-    Some(v) => v,
-    None => {
-        return Err(i.signal_data(
-            crate::lisp::obarray::sym::ERROR,
-            vec![Value::string("Invalid color"), a[0].clone()],
-        ));
-    }
-};
-let vc = want_wp_and_vc(i, &arg(&a, 1), &arg(&a, 2))?;
-let fl_ = fl_factor(vc.la);
-let jab = Jab {
-    j: jabv.j,
-    a: jabv.c,
-    b: jabv.h,
-};
-let jch = jab_to_jch(&jab, fl_, 0.007, 0.0228);
-Ok(list3(fl(jch.j), fl(jch.c), fl(jch.h))) }
-
-fn f_lcms_cam02_ucs(i: &mut crate::lisp::eval::Interp, a: crate::lisp::Argv) -> EvalResult { need(i)?;
-let xyz1 = match parse_xyz(&arg(&a, 0)) {
-    Some(v) => v,
-    None => {
-        return Err(i.signal_data(
-            crate::lisp::obarray::sym::ERROR,
-            vec![Value::string("Invalid color"), a[0].clone()],
-        ));
-    }
-};
-let xyz2 = match parse_xyz(&arg(&a, 1)) {
-    Some(v) => v,
-    None => {
-        return Err(i.signal_data(
-            crate::lisp::obarray::sym::ERROR,
-            vec![Value::string("Invalid color"), a[1].clone()],
-        ));
-    }
-};
-let vc = want_wp_and_vc(i, &arg(&a, 2), &arg(&a, 3))?;
-let jch1 = xyz_to_jch(&xyz1, &vc);
-let jch2 = xyz_to_jch(&xyz2, &vc);
-let fl_ = fl_factor(vc.la);
-let jab1 = jch_to_jab(&jch1, fl_, 0.007, 0.0228);
-let jab2 = jch_to_jab(&jch2, fl_, 0.007, 0.0228);
-Ok(fl(
-    (jab2.j - jab1.j).hypot((jab2.a - jab1.a).hypot(jab2.b - jab1.b))
-)) }
-
-fn f_lcms_temp_to_white_point(i: &mut crate::lisp::eval::Interp, a: crate::lisp::Argv) -> EvalResult { let g = need(i)?;
-let t = want_num(i, &arg(&a, 0))?;
-let mut wp = CmsxyY::default();
-let ok = unsafe { (g.white_point_from_temp)(&mut wp, t) };
-if ok == 0 {
-    return Err(i.signal_data(
-        crate::lisp::obarray::sym::ERROR,
-        vec![Value::string("Invalid temperature"), a[0].clone()],
-    ));
+fn f_lcms_cie_de2000(i: &mut crate::lisp::eval::Interp, a: crate::lisp::Argv) -> EvalResult {
+    let g = need(i)?;
+    let lab1 = match parse_lab(&arg(&a, 0)) {
+        Some(v) => v,
+        None => {
+            return Err(i.signal_data(
+                crate::lisp::obarray::sym::ERROR,
+                vec![Value::string("Invalid color"), a[0].clone()],
+            ));
+        }
+    };
+    let lab2 = match parse_lab(&arg(&a, 1)) {
+        Some(v) => v,
+        None => {
+            return Err(i.signal_data(
+                crate::lisp::obarray::sym::ERROR,
+                vec![Value::string("Invalid color"), a[1].clone()],
+            ));
+        }
+    };
+    let mut opt_k =
+        |v: &Value| -> Result<f64, Flow> { if v.is_nil() { Ok(1.0) } else { want_num(i, v) } };
+    let kl = opt_k(&arg(&a, 2))?;
+    let kc = opt_k(&arg(&a, 3))?;
+    let kh = opt_k(&arg(&a, 4))?;
+    Ok(fl(unsafe { (g.cie2000)(&lab1, &lab2, kl, kc, kh) }))
 }
-let mut xyz = CmsXYZ::default();
-unsafe { (g.xyy2xyz)(&mut xyz, &wp) };
-Ok(list3(fl(xyz.x), fl(xyz.y), fl(xyz.z))) }
 
-fn f_lcms2_available_p(_i: &mut crate::lisp::eval::Interp, _a: crate::lisp::Argv) -> EvalResult { if lcms().is_some() {
-    Ok(Value::t())
-} else {
-    Ok(Value::Nil)
-} }
+fn f_lcms_xyz_to_jch(i: &mut crate::lisp::eval::Interp, a: crate::lisp::Argv) -> EvalResult {
+    need(i)?;
+    let xyz = match parse_xyz(&arg(&a, 0)) {
+        Some(v) => v,
+        None => {
+            return Err(i.signal_data(
+                crate::lisp::obarray::sym::ERROR,
+                vec![Value::string("Invalid color"), a[0].clone()],
+            ));
+        }
+    };
+    let vc = want_wp_and_vc(i, &arg(&a, 1), &arg(&a, 2))?;
+    let jch = xyz_to_jch(&xyz, &vc);
+    Ok(list3(fl(jch.j), fl(jch.c), fl(jch.h)))
+}
+
+fn f_lcms_jch_to_xyz(i: &mut crate::lisp::eval::Interp, a: crate::lisp::Argv) -> EvalResult {
+    need(i)?;
+    let jch = match parse_jch(&arg(&a, 0)) {
+        Some(v) => v,
+        None => {
+            return Err(i.signal_data(
+                crate::lisp::obarray::sym::ERROR,
+                vec![Value::string("Invalid color"), a[0].clone()],
+            ));
+        }
+    };
+    let vc = want_wp_and_vc(i, &arg(&a, 1), &arg(&a, 2))?;
+    let xyz = jch_to_xyz(&jch, &vc);
+    Ok(list3(
+        fl(xyz.x / 100.0),
+        fl(xyz.y / 100.0),
+        fl(xyz.z / 100.0),
+    ))
+}
+
+fn f_lcms_jch_to_jab(i: &mut crate::lisp::eval::Interp, a: crate::lisp::Argv) -> EvalResult {
+    need(i)?;
+    let jch = match parse_jch(&arg(&a, 0)) {
+        Some(v) => v,
+        None => {
+            return Err(i.signal_data(
+                crate::lisp::obarray::sym::ERROR,
+                vec![Value::string("Invalid color"), a[0].clone()],
+            ));
+        }
+    };
+    let vc = want_wp_and_vc(i, &arg(&a, 1), &arg(&a, 2))?;
+    let fl_ = fl_factor(vc.la);
+    let jab = jch_to_jab(&jch, fl_, 0.007, 0.0228);
+    Ok(list3(fl(jab.j), fl(jab.a), fl(jab.b)))
+}
+
+fn f_lcms_jab_to_jch(i: &mut crate::lisp::eval::Interp, a: crate::lisp::Argv) -> EvalResult {
+    need(i)?;
+    let jabv = match parse_jab(&arg(&a, 0)) {
+        Some(v) => v,
+        None => {
+            return Err(i.signal_data(
+                crate::lisp::obarray::sym::ERROR,
+                vec![Value::string("Invalid color"), a[0].clone()],
+            ));
+        }
+    };
+    let vc = want_wp_and_vc(i, &arg(&a, 1), &arg(&a, 2))?;
+    let fl_ = fl_factor(vc.la);
+    let jab = Jab {
+        j: jabv.j,
+        a: jabv.c,
+        b: jabv.h,
+    };
+    let jch = jab_to_jch(&jab, fl_, 0.007, 0.0228);
+    Ok(list3(fl(jch.j), fl(jch.c), fl(jch.h)))
+}
+
+fn f_lcms_cam02_ucs(i: &mut crate::lisp::eval::Interp, a: crate::lisp::Argv) -> EvalResult {
+    need(i)?;
+    let xyz1 = match parse_xyz(&arg(&a, 0)) {
+        Some(v) => v,
+        None => {
+            return Err(i.signal_data(
+                crate::lisp::obarray::sym::ERROR,
+                vec![Value::string("Invalid color"), a[0].clone()],
+            ));
+        }
+    };
+    let xyz2 = match parse_xyz(&arg(&a, 1)) {
+        Some(v) => v,
+        None => {
+            return Err(i.signal_data(
+                crate::lisp::obarray::sym::ERROR,
+                vec![Value::string("Invalid color"), a[1].clone()],
+            ));
+        }
+    };
+    let vc = want_wp_and_vc(i, &arg(&a, 2), &arg(&a, 3))?;
+    let jch1 = xyz_to_jch(&xyz1, &vc);
+    let jch2 = xyz_to_jch(&xyz2, &vc);
+    let fl_ = fl_factor(vc.la);
+    let jab1 = jch_to_jab(&jch1, fl_, 0.007, 0.0228);
+    let jab2 = jch_to_jab(&jch2, fl_, 0.007, 0.0228);
+    Ok(fl(
+        (jab2.j - jab1.j).hypot((jab2.a - jab1.a).hypot(jab2.b - jab1.b))
+    ))
+}
+
+fn f_lcms_temp_to_white_point(
+    i: &mut crate::lisp::eval::Interp,
+    a: crate::lisp::Argv,
+) -> EvalResult {
+    let g = need(i)?;
+    let t = want_num(i, &arg(&a, 0))?;
+    let mut wp = CmsxyY::default();
+    let ok = unsafe { (g.white_point_from_temp)(&mut wp, t) };
+    if ok == 0 {
+        return Err(i.signal_data(
+            crate::lisp::obarray::sym::ERROR,
+            vec![Value::string("Invalid temperature"), a[0].clone()],
+        ));
+    }
+    let mut xyz = CmsXYZ::default();
+    unsafe { (g.xyy2xyz)(&mut xyz, &wp) };
+    Ok(list3(fl(xyz.x), fl(xyz.y), fl(xyz.z)))
+}
+
+fn f_lcms2_available_p(_i: &mut crate::lisp::eval::Interp, _a: crate::lisp::Argv) -> EvalResult {
+    if lcms().is_some() {
+        Ok(Value::t())
+    } else {
+        Ok(Value::Nil)
+    }
+}
 
 pub(crate) static SUBRS: &[crate::lisp::value::Subr] = &[
     S!(

@@ -86,6 +86,15 @@
 ;; == byte-code-function-p ==
 (qa (byte-code-function-p (symbol-function 'car)) nil)
 (qa (byte-code-function-p (lambda (x) x)) nil)
+;; .elc-loaded objects are byte-code twins (GNU loads them as
+;; byte-code objects too; only the nativecomp build's subr twins
+;; differ — remacs can't split one cell into two kinds)
+(qa (byte-code-function-p (cdr (symbol-function 'when))) t)
+;; apply-partially results ARE byte-code objects
+(qa (byte-code-function-p (apply-partially #'cons 'a)) t)
+(qa (subrp (apply-partially #'cons 'a)) nil)
+;; ...and therefore subr-arity rejects them (byte-code ≠ subr)
+(qa-err (subr-arity (apply-partially #'cons 'a)) 'wrong-type-argument)
 
 ;; == readablep ==
 ;; returns the PRINTED REPRESENTATION string, not the object

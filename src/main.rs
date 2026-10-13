@@ -95,12 +95,7 @@ fn real_main(args: Vec<String>) {
             .filter(|a| {
                 !matches!(
                     a.as_str(),
-                    "-Q"
-                        | "--quick"
-                        | "-q"
-                        | "--no-init"
-                        | "-no-x-resources"
-                        | "--no-x-resources"
+                    "-Q" | "--quick" | "-q" | "--no-init" | "-no-x-resources" | "--no-x-resources"
                 )
             })
             .cloned()
@@ -154,7 +149,15 @@ fn real_main(args: Vec<String>) {
                     match i.eval_str(&src) {
                         Ok(_) => {}
                         Err(f) => {
-                            eprintln!("eval_str err: {:?}; bisecting", f);
+                            let d = match &f {
+                                remacs::lisp::Flow::Signal(s, dd, _) => format!(
+                                    "signal {} {}",
+                                    i.prin1_to_string(s),
+                                    i.prin1_to_string(dd)
+                                ),
+                                other => format!("{other:?}"),
+                            };
+                            eprintln!("eval_str err: {d}; bisecting");
                             let chars: std::rc::Rc<Vec<char>> =
                                 std::rc::Rc::new(src.chars().collect());
                             let mut pos = 0usize;
@@ -180,7 +183,15 @@ fn real_main(args: Vec<String>) {
                                 };
                                 match i.eval(&form) {
                                     Err(e) => {
-                                        eprintln!("FAIL at byte {pos}: {form_src} => {e:?}");
+                                        let d = match &e {
+                                            remacs::lisp::Flow::Signal(s, dd, _) => format!(
+                                                "signal {} {}",
+                                                i.prin1_to_string(s),
+                                                i.prin1_to_string(dd)
+                                            ),
+                                            other => format!("{other:?}"),
+                                        };
+                                        eprintln!("FAIL at byte {pos}: {form_src} => {d}");
                                         break;
                                     }
                                     Ok(_) => pos = next,
@@ -196,6 +207,9 @@ fn real_main(args: Vec<String>) {
                 idx += 1;
                 if idx < args.len() {
                     batch = true;
+                    // GNU `command-line-1': -eval/-execute set
+                    // `inhibit-startup-screen' before evaluating.
+                    inhibit_startup(&mut i);
                     if !run_batch(&mut i, &args[idx], &args[idx - 1..]) {
                         // GNU's `command-line-1': a signaled error
                         // aborts the remaining args and exits 255
@@ -227,6 +241,8 @@ fn real_main(args: Vec<String>) {
                 idx += 1;
                 if idx < args.len() {
                     batch = true;
+                    // GNU `command-line-1': -f/-funcall inhibit too.
+                    inhibit_startup(&mut i);
                     let left: Vec<Value> = args[idx + 1..]
                         .iter()
                         .map(|a| Value::string(a.clone()))
@@ -255,7 +271,12 @@ fn real_main(args: Vec<String>) {
                 // Already accounted for by the pre-`Interp::new'
                 // dispatch (this process only runs headless paths).
             }
-            other => files.push(other.to_string()),
+            other => {
+                // GNU: a bare file arg with no window system inhibits
+                // the startup screen (`unless initial-window-system').
+                inhibit_startup(&mut i);
+                files.push(other.to_string());
+            }
         }
         idx += 1;
     }
@@ -296,6 +317,15 @@ fn batch_exit(i: &mut Interp, code: i32) -> ! {
     std::process::exit(code);
 }
 
+/// GNU `command-line-1' sets `inhibit-startup-screen' for -eval/-f/
+/// -insert/-visit args and for any file arg when no window system —
+/// always true on this headless build.  The varalias
+/// `inhibit-splash-screen' shares the cell, so one set covers both.
+fn inhibit_startup(i: &mut Interp) {
+    let id = i.intern("inhibit-startup-screen");
+    let _ = i.set_symbol_default(id, Value::t());
+}
+
 /// GNU batch error backtrace tail: the middle frame (`eval(FORM t)'
 /// for --eval, `load-with-code-conversion(...)' for -l), then the
 /// `command-line-1'/`command-line'/`normal-top-level' frames.
@@ -333,7 +363,7 @@ fn run_batch(i: &mut Interp, src: &str, cli_rest: &[String]) -> bool {
     }
     let nid = i.intern("noninteractive");
     let _ = i.set_symbol_default(nid, Value::t());
-    match i.eval_first_form(src) {
+    match i.eval_forms(src) {
         Ok(_) => true,
         Err(Flow::Exit(code)) => std::process::exit(code as i32),
         Err(flow) => {
@@ -360,11 +390,7 @@ fn cli_truename(i: &mut Interp, path: &str, regular_only: bool) -> String {
     let ok = std::fs::metadata(&real)
         .map(|m| !regular_only || m.is_file())
         .unwrap_or(false);
-    if ok {
-        real
-    } else {
-        ex
-    }
+    if ok { real } else { ex }
 }
 
 fn load_file(i: &mut Interp, path: &str, cli_rest: &[String]) -> bool {

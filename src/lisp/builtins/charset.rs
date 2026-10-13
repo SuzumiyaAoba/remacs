@@ -85,45 +85,116 @@ fn ensure_charset(i: &mut Interp, name: &str) {
     }
 }
 
-fn f_charsetp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let name = match &a[0] {
-    Value::Sym(s) => i.symbol_name(*s),
-    _ => return Ok(Value::Nil),
-};
-Ok(Value::from_bool(charset_defined(i, &name))) }
+fn f_charsetp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let name = match &a[0] {
+        Value::Sym(s) => i.symbol_name(*s),
+        _ => return Ok(Value::Nil),
+    };
+    Ok(Value::from_bool(charset_defined(i, &name)))
+}
 
-fn f_define_charset(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // (name info-vector &rest props) — keep name + plist.
-let sid = want_sym(i, &a[0])?;
-if !matches!(a[1], Value::Vec(_)) {
-    // GNU reports a generic error for malformed INFO, not wrong-type.
-    return Err(i.error("Attribute :invalid-code must be specified"));
+fn f_define_charset(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU mule.el `define-charset' (the defun whose calls land here
+    // under our subr-shadowed cell): NAME is CHECK_SYMBOL; PROPS is a
+    // plist — a dotted tail signals `plistp' (GNU's plist-put).
+    let sid = want_sym(i, &a[0])?;
+    let name = i.symbol_name(sid);
+    let _ = name;
+    let docstring = a.get(1).cloned().unwrap_or(Value::Nil);
+    let mut props: Vec<Value> = if a.len() > 2 {
+        a[2..].to_vec()
+    } else {
+        Vec::new()
+    };
+    if props.len() % 2 == 1 {
+        return Err(i.wrong_type_mut("plistp", &Value::list(props.clone())));
+    }
+    let prop_ix = |i: &Interp, props: &[Value], key: &str| -> Option<usize> {
+        props
+            .chunks_exact(2)
+            .position(|kv| matches!(&kv[0], Value::Sym(s) if i.symbol_name(*s) == key))
+            .map(|ix| ix * 2 + 1)
+    };
+    let attr = |i: &Interp, props: &[Value], key: &str| -> Option<Value> {
+        prop_ix(i, props, key).map(|ix| props[ix].clone())
+    };
+    // :dimension defaults from :code-space (len/2, default 4).
+    if attr(i, &props, ":dimension").is_none() {
+        let dim = match attr(i, &props, ":code-space") {
+            Some(Value::Vec(v)) => (v.borrow().len() / 2) as i128,
+            Some(other) => {
+                if !matches!(other, Value::Cons(_) | Value::Nil | Value::Str(_)) {
+                    return Err(i.wrong_type_mut("sequencep", &other));
+                }
+                0
+            }
+            None => 4,
+        };
+        props.push(symv(i, ":dimension"));
+        props.push(Value::Int(dim));
+    }
+    // :code-space defaults to an 8-vector [0 FF] × dimension.
+    if attr(i, &props, ":code-space").is_none() {
+        let dim = attr(i, &props, ":dimension")
+            .and_then(|v| v.int())
+            .unwrap_or(4)
+            .clamp(0, 4) as usize;
+        let mut cs = Vec::with_capacity(8);
+        for d in 0..4 {
+            cs.push(Value::Int(0));
+            cs.push(Value::Int(if d < dim { 0xFF } else { 0 }));
+        }
+        props.push(symv(i, ":code-space"));
+        props.push(Value::Vec(Rc::new(RefCell::new(cs))));
+    }
+    // Pad :code-space to 8 elements (GNU vconcats zeros).
+    if let Some(ix) = prop_ix(i, &props, ":code-space") {
+        if let Value::Vec(v) = &props[ix] {
+            let mut vv = v.borrow_mut();
+            while vv.len() < 8 {
+                vv.push(Value::Int(0));
+            }
+        }
+    }
+    // Assemble define-charset-internal's 17-arg call: the fixed attr
+    // order plus PLIST = (:name NAME :docstring DOC . PROPS).
+    let keys = [
+        ":dimension",
+        ":code-space",
+        ":min-code",
+        ":max-code",
+        ":iso-final-char",
+        ":iso-revision-number",
+        ":emacs-mule-id",
+        ":ascii-compatible-p",
+        ":supplementary-p",
+        ":invalid-code",
+        ":code-offset",
+        ":map",
+        ":subset",
+        ":superset",
+        ":unify-map",
+    ];
+    let mut argv: Vec<Value> = Vec::with_capacity(17);
+    argv.push(Value::Sym(sid));
+    for k in keys {
+        argv.push(attr(i, &props, k).unwrap_or(Value::Nil));
+    }
+    let mut plist_items = vec![
+        symv(i, ":name"),
+        Value::Sym(sid),
+        symv(i, ":docstring"),
+        docstring,
+    ];
+    plist_items.extend(props.iter().cloned());
+    argv.push(Value::list(plist_items));
+    define_charset_internal_impl(i, &argv)
 }
-let name = i.symbol_name(sid);
-let plist = if a.len() > 2 {
-    Value::list(a[2..].to_vec())
-} else {
-    Value::Nil
-};
-// GNU requires one of :code-offset, :map, :parents to map code points.
-let has_mapping = a[2..].chunks(2).any(|kv| {
-    matches!(kv.first(), Some(Value::Sym(s)) if {
-        let n = i.symbol_name(*s);
-        n == ":code-offset" || n == ":map" || n == ":parents"
-    })
-});
-if !has_mapping {
-    return Err(i.error("None of :code-offset, :map, :parents are specified"));
-}
-if let Some(e) = i.charsets.iter_mut().find(|(n, _)| *n == name) {
-    e.1 = plist;
-} else {
-    i.charsets.push((name.clone(), plist));
-    charset_ordered_insert(i, &name);
-}
-invalidate_char_charset_cache(i);
-Ok(Value::Nil) }
 
-fn f_charset_plist(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let name = want_charset(i, &a[0])?;
-Ok(effective_charset_plist(i, &name)) }
+fn f_charset_plist(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let name = want_charset(i, &a[0])?;
+    Ok(effective_charset_plist(i, &name))
+}
 
 /// GNU's synthesized attribute plist for the C builtins
 /// (`define_charset_internal' in syms_of_charset): `(:name N
@@ -137,13 +208,16 @@ fn builtin_charset_plist(i: &mut Interp, name: &str) -> Option<Value> {
         match name {
             "ascii" => (1, [(0, 127), (0, 0), (0, 0), (0, 0)], 66, 0, true, 0),
             "iso-8859-1" => (1, [(0, 255), (0, 0), (0, 0), (0, 0)], -1, -1, true, 0),
-            "unicode" | "ucs" => {
-                (3, [(0, 255), (0, 255), (0, 16), (0, 0)], -1, -1, true, 0)
-            }
+            "unicode" | "ucs" => (3, [(0, 255), (0, 255), (0, 16), (0, 0)], -1, -1, true, 0),
             "emacs" => (3, [(0, 255), (0, 255), (0, 63), (0, 0)], -1, -1, true, 0),
-            "eight-bit" => {
-                (1, [(128, 255), (0, 0), (0, 0), (0, 0)], -1, -1, false, 0x3FFF80)
-            }
+            "eight-bit" => (
+                1,
+                [(128, 255), (0, 0), (0, 0), (0, 0)],
+                -1,
+                -1,
+                false,
+                0x3FFF80,
+            ),
             _ => return None,
         };
     let mut spacev = Vec::with_capacity(8);
@@ -159,9 +233,17 @@ fn builtin_charset_plist(i: &mut Interp, name: &str) -> Option<Value> {
         symv(i, ":code-space"),
         Value::Vec(Rc::new(RefCell::new(spacev))),
         symv(i, ":iso-final-char"),
-        if fin < 0 { Value::Nil } else { Value::Int(fin.into()) },
+        if fin < 0 {
+            Value::Nil
+        } else {
+            Value::Int(fin.into())
+        },
         symv(i, ":emacs-mule-id"),
-        if mule < 0 { Value::Nil } else { Value::Int(mule.into()) },
+        if mule < 0 {
+            Value::Nil
+        } else {
+            Value::Int(mule.into())
+        },
         symv(i, ":ascii-compatible-p"),
         Value::from_bool(compat),
         symv(i, ":code-offset"),
@@ -174,7 +256,9 @@ fn builtin_charset_plist(i: &mut Interp, name: &str) -> Option<Value> {
 /// for the C builtins overlaid with every `put-charset-property' value
 /// stored later, in the stored list's order.
 fn effective_charset_plist(i: &mut Interp, name: &str) -> Value {
-    let stored = charset_entry(i, name).map(|e| e.1.clone()).unwrap_or(Value::Nil);
+    let stored = charset_entry(i, name)
+        .map(|e| e.1.clone())
+        .unwrap_or(Value::Nil);
     match builtin_charset_plist(i, name) {
         Some(base) => {
             let mut merged = base.list_to_vec().unwrap_or_default();
@@ -209,103 +293,124 @@ fn effective_charset_plist(i: &mut Interp, name: &str) -> Value {
     }
 }
 
-fn f_set_charset_plist(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let name = want_charset(i, &a[0])?;
-ensure_charset(i, &name);
-if let Some(e) = i.charsets.iter_mut().find(|(n, _)| *n == name) {
-    e.1 = a[1].clone();
-}
-invalidate_char_charset_cache(i);
-Ok(Value::Nil) }
-
-fn f_get_charset_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let name = want_charset(i, &a[0])?;
-let prop = want_sym(i, &a[1])?;
-let plist = effective_charset_plist(i, &name);
-Ok(crate::lisp::eval::plist_get(&plist, prop)) }
-
-fn f_put_charset_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let name = want_charset(i, &a[0])?;
-let prop = want_sym(i, &a[1])?;
-ensure_charset(i, &name);
-if let Some(e) = i.charsets.iter_mut().find(|(n, _)| *n == name) {
-    e.1 = crate::lisp::eval::plist_put(&e.1, prop, a[2].clone());
-}
-invalidate_char_charset_cache(i);
-Ok(a[2].clone()) }
-
-fn f_define_charset_alias(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let aid = want_sym(i, &a[0])?;
-let tid = want_sym(i, &a[1])?;
-let alias = i.symbol_name(aid);
-let target = i.symbol_name(tid);
-i.charset_aliases.push((alias, target));
-Ok(Value::Nil) }
-
-fn f_unify_charset(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // (charset &optional unify-map deunify) — GNU charset.c: only
-// OFFSET-method charsets whose :code-offset reaches the
-// emacs-mule area (>= #x110000) can be unified; everything else
-// (ascii, unicode, :map/:subset carriers) gets
-// "Can't unify charset: X".  Unifying installs the charset's
-// :unify-map table (parsed from etc/charsets/*.map) so later
-// `decode-char'/`map-charset-chars' produce real Unicode chars.
-let name = want_charset(i, &a[0])?;
-let deunify = a.get(2).is_some_and(|v| !v.is_nil());
-let offset = charset_entry(i, &name).and_then(|e| {
-    let mut cur = e.1.clone();
-    loop {
-        let (k, v, rest) = match &cur {
-            Value::Cons(c) => {
-                let b = c.borrow();
-                match &b.cdr {
-                    Value::Cons(c2) => {
-                        let b2 = c2.borrow();
-                        (b.car.clone(), b2.car.clone(), b2.cdr.clone())
-                    }
-                    _ => break None,
-                }
-            }
-            _ => break None,
-        };
-        if matches!(&k, Value::Sym(s) if i.symbol_name(*s) == ":code-offset") {
-            break Some(v);
-        }
-        cur = rest;
+fn f_set_charset_plist(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let name = want_charset(i, &a[0])?;
+    ensure_charset(i, &name);
+    if let Some(e) = i.charsets.iter_mut().find(|(n, _)| *n == name) {
+        e.1 = a[1].clone();
     }
-});
-let unified = !deunify && matches!(offset, Some(v) if v.int().is_some_and(|n| n >= 0x110000));
-if !unified {
-    return Err(i.error(format!("Can't unify charset: {name}")));
-}
-let key = format!("charset:{name}");
-if deunify {
-    i.charset_maps.borrow_mut().remove(&key);
     invalidate_char_charset_cache(i);
-    return Ok(Value::Nil);
+    Ok(Value::Nil)
 }
-// GNU: UNIFY-MAP defaults to the charset's :unify-map property;
-// a string names etc/charsets/NAME.map, a vector is
-// [CODE-1 CHAR-1 CODE-2 CHAR-2 ...].
-let mapval = match a.get(1) {
-    Some(v @ (Value::Str(_) | Value::Vec(_))) => Some(v.clone()),
-    _ => None,
+
+fn f_get_charset_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let name = want_charset(i, &a[0])?;
+    let prop = want_sym(i, &a[1])?;
+    let plist = effective_charset_plist(i, &name);
+    Ok(crate::lisp::eval::plist_get(&plist, prop))
 }
-.or_else(|| {
-    let plist = charset_entry(i, &name).map(|e| e.1.clone())?;
-    let v = charset_prop(i, &plist, ":unify-map");
-    (!v.is_nil()).then_some(v)
-});
-match mapval {
-    Some(Value::Str(s)) => {
-        if let Some(t) = charset_table(i, &s.borrow()) {
-            i.charset_maps.borrow_mut().insert(key, t);
+
+fn f_put_charset_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let name = want_charset(i, &a[0])?;
+    let prop = want_sym(i, &a[1])?;
+    ensure_charset(i, &name);
+    if let Some(e) = i.charsets.iter_mut().find(|(n, _)| *n == name) {
+        e.1 = crate::lisp::eval::plist_put(&e.1, prop, a[2].clone());
+    }
+    invalidate_char_charset_cache(i);
+    Ok(a[2].clone())
+}
+
+fn f_define_charset_alias(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU Fdefine_charset_alias: CHARSET (arg 2) is validated first via
+    // CHECK_CHARSET_GET_ATTR — any non-charset object signals
+    // `charsetp'.  ALIAS is a bare hash-table key: Fputhash accepts any
+    // object, so non-symbol aliases register nothing and return nil.
+    let target = want_charset(i, &a[1])?;
+    if let Value::Sym(aid) = &a[0] {
+        let alias = i.symbol_name(*aid);
+        i.charset_aliases.push((alias, target));
+        // GNU Fdefine_charset_alias: `Vcharset_list = Fcons (alias,
+        // Vcharset_list)' — aliases prepend just like real charsets
+        // (that's how `ucs' enters the list in mule-conf).
+        let cl = i.intern("charset-list");
+        let cur = i.symbol_value(cl);
+        let cell = Value::cons(a[0].clone(), cur);
+        let _ = i.set_symbol_default(cl, cell);
+    }
+    Ok(Value::Nil)
+}
+
+fn f_unify_charset(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // (charset &optional unify-map deunify) — GNU charset.c: only
+    // OFFSET-method charsets whose :code-offset reaches the
+    // emacs-mule area (>= #x110000) can be unified; everything else
+    // (ascii, unicode, :map/:subset carriers) gets
+    // "Can't unify charset: X".  Unifying installs the charset's
+    // :unify-map table (parsed from etc/charsets/*.map) so later
+    // `decode-char'/`map-charset-chars' produce real Unicode chars.
+    let name = want_charset(i, &a[0])?;
+    let deunify = a.get(2).is_some_and(|v| !v.is_nil());
+    let offset = charset_entry(i, &name).and_then(|e| {
+        let mut cur = e.1.clone();
+        loop {
+            let (k, v, rest) = match &cur {
+                Value::Cons(c) => {
+                    let b = c.borrow();
+                    match &b.cdr {
+                        Value::Cons(c2) => {
+                            let b2 = c2.borrow();
+                            (b.car.clone(), b2.car.clone(), b2.cdr.clone())
+                        }
+                        _ => break None,
+                    }
+                }
+                _ => break None,
+            };
+            if matches!(&k, Value::Sym(s) if i.symbol_name(*s) == ":code-offset") {
+                break Some(v);
+            }
+            cur = rest;
         }
+    });
+    let unified = !deunify && matches!(offset, Some(v) if v.int().is_some_and(|n| n >= 0x110000));
+    if !unified {
+        return Err(i.error(format!("Can't unify charset: {name}")));
     }
-    Some(v @ Value::Vec(_)) => {
-        i.charset_maps
-            .borrow_mut()
-            .insert(key, Rc::new(vec_map_table(&v)));
+    let key = format!("charset:{name}");
+    if deunify {
+        i.charset_maps.borrow_mut().remove(&key);
+        invalidate_char_charset_cache(i);
+        return Ok(Value::Nil);
     }
-    _ => {}
+    // GNU: UNIFY-MAP defaults to the charset's :unify-map property;
+    // a string names etc/charsets/NAME.map, a vector is
+    // [CODE-1 CHAR-1 CODE-2 CHAR-2 ...].
+    let mapval = match a.get(1) {
+        Some(v @ (Value::Str(_) | Value::Vec(_))) => Some(v.clone()),
+        _ => None,
+    }
+    .or_else(|| {
+        let plist = charset_entry(i, &name).map(|e| e.1.clone())?;
+        let v = charset_prop(i, &plist, ":unify-map");
+        (!v.is_nil()).then_some(v)
+    });
+    match mapval {
+        Some(Value::Str(s)) => {
+            if let Some(t) = charset_table(i, &s.borrow()) {
+                i.charset_maps.borrow_mut().insert(key, t);
+            }
+        }
+        Some(v @ Value::Vec(_)) => {
+            i.charset_maps
+                .borrow_mut()
+                .insert(key, Rc::new(vec_map_table(&v)));
+        }
+        _ => {}
+    }
+    invalidate_char_charset_cache(i);
+    Ok(Value::Nil)
 }
-invalidate_char_charset_cache(i);
-Ok(Value::Nil) }
 
 /// GNU's `Vcharset_ordered_list' insertion for a freshly defined
 /// charset: non-supplementary charsets go before the first
@@ -322,13 +427,15 @@ fn charset_ordered_insert(i: &mut Interp, name: &str) {
         st.0.push(name.to_string());
         return;
     }
-    let pos = st
-        .0
-        .iter()
-        .position(|n| {
-            matches!(n.as_str(), "emacs" | "eight-bit" | "eight-bit-control" | "eight-bit-graphic")
-        })
-        .unwrap_or(st.0.len());
+    let pos =
+        st.0.iter()
+            .position(|n| {
+                matches!(
+                    n.as_str(),
+                    "emacs" | "eight-bit" | "eight-bit-control" | "eight-bit-graphic"
+                )
+            })
+            .unwrap_or(st.0.len());
     st.0.insert(pos, name.to_string());
 }
 
@@ -371,34 +478,36 @@ fn vec_map_table(v: &Value) -> CharsetTable {
     CharsetTable { dec, enc }
 }
 
-fn f_charset_after(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU Fcharset_after: POS is a 1-based buffer position
-// (integer-or-marker-p, default point); out of range → nil.
-let pos: Option<i128> = match a.first() {
-    None | Some(Value::Nil) => None,
-    Some(Value::Int(n)) => Some(*n),
-    Some(Value::Marker(m)) => Some(m.borrow().position as i128 + 1),
-    Some(v) => return Err(i.wrong_type_mut("integer-or-marker-p", v)),
-};
-let bid = i.current_buffer;
-let ch = i.buffers.get(bid).and_then(|b| {
-    let bb = b.borrow();
-    let at = match pos {
-        Some(p) if p >= 1 && (p as usize) <= bb.text_len() => (p - 1) as usize,
-        Some(_) => return None,
-        None => bb.point(),
+fn f_charset_after(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU Fcharset_after: POS is a 1-based buffer position
+    // (integer-or-marker-p, default point); out of range → nil.
+    let pos: Option<i128> = match a.first() {
+        None | Some(Value::Nil) => None,
+        Some(Value::Int(n)) => Some(*n),
+        Some(Value::Marker(m)) => Some(m.borrow().position as i128 + 1),
+        Some(v) => return Err(i.wrong_type_mut("integer-or-marker-p", v)),
     };
-    bb.text.text().chars().nth(at)
-});
-Ok(match ch {
-    None => Value::Nil,
-    Some(c) => {
-        let code = lisp_char_code(c) as i64;
-        match char_charset(i, code, &[]) {
-            Some(name) => symv(i, &name),
-            None => Value::Nil,
+    let bid = i.current_buffer;
+    let ch = i.buffers.get(bid).and_then(|b| {
+        let bb = b.borrow();
+        let at = match pos {
+            Some(p) if p >= 1 && (p as usize) <= bb.text_len() => (p - 1) as usize,
+            Some(_) => return None,
+            None => bb.point(),
+        };
+        bb.text.text().chars().nth(at)
+    });
+    Ok(match ch {
+        None => Value::Nil,
+        Some(c) => {
+            let code = lisp_char_code(c) as i64;
+            match char_charset(i, code, &[]) {
+                Some(name) => symv(i, &name),
+                None => Value::Nil,
+            }
         }
-    }
-}) }
+    })
+}
 
 fn find_charset_of_chars(i: &mut Interp, chars: impl Iterator<Item = char>) -> Value {
     // GNU picks, for each char, the highest-priority charset containing
@@ -420,37 +529,66 @@ fn find_charset_of_chars(i: &mut Interp, chars: impl Iterator<Item = char>) -> V
     Value::list(names.iter().map(|n| symv(i, n)).collect())
 }
 
-fn f_find_charset_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match &a[0] {
-    Value::Str(s) => {
-        let text = s.borrow().clone();
-        Ok(find_charset_of_chars(i, text.chars()))
+fn f_find_charset_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    match &a[0] {
+        Value::Str(s) => {
+            let text = s.borrow().clone();
+            Ok(find_charset_of_chars(i, text.chars()))
+        }
+        _ => Err(i.wrong_type_mut("stringp", &a[0])),
     }
-    _ => Err(i.wrong_type_mut("stringp", &a[0])),
-} }
+}
 
-fn f_find_charset_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let bid = i.current_buffer;
-let text = i
-    .buffers
-    .get(bid)
-    .map(|b| b.borrow().text.text())
-    .unwrap_or_default();
-let (lo, hi) = match (
-    a.first().and_then(|v| v.int()),
-    a.get(1).and_then(|v| v.int()),
-) {
-    (Some(s), Some(e)) => ((s - 1).max(0) as usize, (e - 1).max(0) as usize),
-    _ => (0, text.chars().count()),
-};
-let sub: String = text.chars().skip(lo).take(hi.saturating_sub(lo)).collect();
-Ok(find_charset_of_chars(i, sub.chars())) }
+fn f_find_charset_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let bid = i.current_buffer;
+    let text = i
+        .buffers
+        .get(bid)
+        .map(|b| b.borrow().text.text())
+        .unwrap_or_default();
+    // GNU Ffind_charset_region: BEG/END via integer-or-marker-p; nil
+    // means the whole buffer; out-of-range or detached markers signal
+    // `args-out-of-range (BUFFER BEG END)'.
+    let zv1 = text.chars().count() as i128 + 1;
+    let mut dec = |v: Option<&Value>| -> Result<Option<i128>, Flow> {
+        match v {
+            Some(v) if !v.is_nil() => match v {
+                Value::Int(n) => Ok(Some(*n)),
+                Value::Marker(m) if m.borrow().buffer.is_some() => {
+                    Ok(Some(m.borrow().position as i128 + 1))
+                }
+                Value::Marker(_) => Err(i.error("Marker does not point anywhere")),
+                _ => Err(i.wrong_type_mut("integer-or-marker-p", v)),
+            },
+            _ => Ok(None),
+        }
+    };
+    let lo_opt = dec(a.first())?;
+    let hi_opt = dec(a.get(1))?;
+    let (lo1, hi1) = (lo_opt.unwrap_or(1), hi_opt.unwrap_or(zv1));
+    if lo1 < 1 || lo1 > zv1 || hi1 < 1 || hi1 > zv1 || lo1 > hi1 {
+        let buf = Value::Buffer(crate::buffer::primitives::cur(i));
+        let a0 = a.first().cloned().unwrap_or(Value::Nil);
+        let a1 = a.get(1).cloned().unwrap_or(Value::Nil);
+        return Err(crate::editor::err_sym(
+            i,
+            "args-out-of-range",
+            vec![buf, a0, a1],
+        ));
+    }
+    let (lo, hi) = ((lo1 - 1) as usize, (hi1 - 1) as usize);
+    let sub: String = text.chars().skip(lo).take(hi.saturating_sub(lo)).collect();
+    Ok(find_charset_of_chars(i, sub.chars()))
+}
 
-fn f_char_resolve_modifiers(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match &a[0] {
-    // GNU returns CHAR with resolvable modifiers folded into the
-    // character code; unresolvable ones (like meta on a letter)
-    // stay, so the common cases are identity.
-    Value::Int(_) => Ok(a[0].clone()),
-    _ => Err(i.wrong_type_mut("characterp", &a[0])),
-} }
+fn f_char_resolve_modifiers(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    match &a[0] {
+        // GNU CHECK_FIXNUM (any integer — out-of-range modifiers are
+        // folded by char_resolve_modifier_mask), not CHECK_CHARACTER.
+        Value::Int(_) => Ok(a[0].clone()),
+        _ => Err(i.wrong_type_mut("fixnump", &a[0])),
+    }
+}
 
 // ---------- char-code properties ----------
 
@@ -480,31 +618,33 @@ fn register_prop_alist(i: &mut Interp, name: &str, backing: Value) {
     }
 }
 
-fn f_define_char_code_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let sid = want_sym(i, &a[0])?;
-let name = i.symbol_name(sid);
-match &a[1] {
-    v if is_char_table(i, v) => {
-        // Keep the char-table as the property's backing store.
-        prop_table(i, &name);
-        i.char_code_prop_tables.retain(|(n, _)| n != &name);
-        i.char_code_prop_tables.push((name.clone(), v.clone()));
-        register_prop_alist(i, &name, v.clone());
-        Ok(Value::Nil)
+fn f_define_char_code_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let sid = want_sym(i, &a[0])?;
+    let name = i.symbol_name(sid);
+    match &a[1] {
+        v if is_char_table(i, v) => {
+            // Keep the char-table as the property's backing store.
+            prop_table(i, &name);
+            i.char_code_prop_tables.retain(|(n, _)| n != &name);
+            i.char_code_prop_tables.push((name.clone(), v.clone()));
+            register_prop_alist(i, &name, v.clone());
+            Ok(Value::Nil)
+        }
+        Value::Str(_) => {
+            // File-based property table. GNU keeps the file name as the
+            // backing; any put/get then signals char-table-p — mirror that
+            // by registering the string as the backing table.
+            i.char_code_prop_tables.retain(|(n, _)| n != &name);
+            i.char_code_prop_tables.push((name.clone(), a[1].clone()));
+            register_prop_alist(i, &name, a[1].clone());
+            Ok(Value::Nil)
+        }
+        other => Err(i.error(format!(
+            "Not a char-table nor a file name: {}",
+            i.print_to_string(other)
+        ))),
     }
-    Value::Str(_) => {
-        // File-based property table. GNU keeps the file name as the
-        // backing; any put/get then signals char-table-p — mirror that
-        // by registering the string as the backing table.
-        i.char_code_prop_tables.retain(|(n, _)| n != &name);
-        i.char_code_prop_tables.push((name.clone(), a[1].clone()));
-        register_prop_alist(i, &name, a[1].clone());
-        Ok(Value::Nil)
-    }
-    other => Err(i.error(format!(
-        "Not a char-table nor a file name: {}",
-        i.print_to_string(other)
-    ))),
-} }
+}
 
 /// Extra slot N of a char-table record (`char-table-extra-slot').
 fn ct_extra(tbl: &Value, n: usize) -> Value {
@@ -839,7 +979,8 @@ fn load_file_backed_prop(i: &mut Interp, prop: &str) {
             }
         });
     if let Some(file) = file {
-        let _ = crate::lisp::load::load_library_opts(i, &file, false, false, true);
+        // GNU uniprop_table loads the table file with NOMESSAGE = t.
+        let _ = crate::lisp::load::load_library_opts_msg(i, &file, false, false, true, true);
     }
 }
 
@@ -928,14 +1069,16 @@ fn builtin_char_prop(i: &mut Interp, ch: i64, prop: &str) -> Value {
     }
 }
 
-fn f_get_char_code_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let ch = match &a[0] {
-    Value::Int(n) => *n as i64,
-    _ => return Err(i.wrong_type_mut("characterp", &a[0])),
-};
-let pid2 = want_sym(i, &a[1])?;
-let prop = i.symbol_name(pid2);
-check_prop_backing(i, &prop)?;
-Ok(get_char_prop(i, ch, &prop)) }
+fn f_get_char_code_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let ch = match &a[0] {
+        Value::Int(n) => *n as i64,
+        _ => return Err(i.wrong_type_mut("characterp", &a[0])),
+    };
+    let pid2 = want_sym(i, &a[1])?;
+    let prop = i.symbol_name(pid2);
+    check_prop_backing(i, &prop)?;
+    Ok(get_char_prop(i, ch, &prop))
+}
 
 /// GNU `put-unicode-property-internal' without the arg checking:
 /// a fixnum in extra slot 2 selects a C encoder — 0 requires a
@@ -970,313 +1113,330 @@ fn put_unicode_internal(i: &mut Interp, tbl: &Value, ch: u32, val: Value) -> Eva
     Ok(Value::Nil)
 }
 
-fn f_put_char_code_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let ch = match &a[0] {
-    Value::Int(n) => *n as i64,
-    _ => return Err(i.wrong_type_mut("characterp", &a[0])),
-};
-let pid2 = want_sym(i, &a[1])?;
-let prop = i.symbol_name(pid2);
-check_prop_backing(i, &prop)?;
-let tbl = unicode_prop_table(i, &prop);
-if is_char_table(i, &tbl) {
-    match ct_extra(&tbl, 2) {
-        Value::Int(_) | Value::Nil => {
-            put_unicode_internal(i, &tbl, ch.max(0) as u32, a[2].clone())?;
-        }
-        _ => {
-            // GNU `(funcall X2 CH VAL TABLE)' — a `unidata-put-*'
-            // Lisp function: decode the current block first (so
-            // its memoization can't clobber VAL), then `aset'.
-            let raw = misc::char_table_ref(i, &tbl, ch.max(0) as usize);
-            if let Value::Str(s) = &raw {
-                if s.borrow().chars().next() == Some('\0') {
-                    uniprop_lookup(i, &tbl, ch.max(0) as u32, raw);
-                }
+fn f_put_char_code_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let ch = match &a[0] {
+        Value::Int(n) => *n as i64,
+        _ => return Err(i.wrong_type_mut("characterp", &a[0])),
+    };
+    let pid2 = want_sym(i, &a[1])?;
+    let prop = i.symbol_name(pid2);
+    check_prop_backing(i, &prop)?;
+    let tbl = unicode_prop_table(i, &prop);
+    if is_char_table(i, &tbl) {
+        match ct_extra(&tbl, 2) {
+            Value::Int(_) | Value::Nil => {
+                put_unicode_internal(i, &tbl, ch.max(0) as u32, a[2].clone())?;
             }
-            misc::ct_set(i, &tbl, ch.max(0) as u32, a[2].clone());
+            _ => {
+                // GNU `(funcall X2 CH VAL TABLE)' — a `unidata-put-*'
+                // Lisp function: decode the current block first (so
+                // its memoization can't clobber VAL), then `aset'.
+                let raw = misc::char_table_ref(i, &tbl, ch.max(0) as usize);
+                if let Value::Str(s) = &raw {
+                    if s.borrow().chars().next() == Some('\0') {
+                        uniprop_lookup(i, &tbl, ch.max(0) as u32, raw);
+                    }
+                }
+                misc::ct_set(i, &tbl, ch.max(0) as u32, a[2].clone());
+            }
         }
+        return Ok(a[2].clone());
     }
-    return Ok(a[2].clone());
+    // Non-table property: GNU stores into `char-code-property-table'
+    // plists; our overlay keeps the same get-side semantics.
+    let store = prop_table(i, &prop);
+    if let Some(e) = store.iter_mut().find(|(c, _)| *c == ch) {
+        e.1 = a[2].clone();
+    } else {
+        store.push((ch, a[2].clone()));
+    }
+    Ok(a[2].clone())
 }
-// Non-table property: GNU stores into `char-code-property-table'
-// plists; our overlay keeps the same get-side semantics.
-let store = prop_table(i, &prop);
-if let Some(e) = store.iter_mut().find(|(c, _)| *c == ch) {
-    e.1 = a[2].clone();
-} else {
-    store.push((ch, a[2].clone()));
-}
-Ok(a[2].clone()) }
 
-fn f_char_code_property_description(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pid2 = want_sym(i, &a[0])?;
-let vid = want_sym(i, &a[1])?;
-let prop = i.symbol_name(pid2);
-let val = i.symbol_name(vid);
-check_prop_backing(i, &prop)?;
-if prop == "general-category" {
-    let desc = match val.as_str() {
-        "Lu" => "Letter, Uppercase",
-        "Ll" => "Letter, Lowercase",
-        "Lt" => "Letter, Titlecase",
-        "Lm" => "Letter, Modifier",
-        "Lo" => "Letter, Other",
-        "Mn" => "Mark, Nonspacing",
-        "Mc" => "Mark, Spacing Combining",
-        "Me" => "Mark, Enclosing",
-        "Nd" => "Number, Decimal Digit",
-        "Nl" => "Number, Letter",
-        "No" => "Number, Other",
-        "Pc" => "Punctuation, Connector",
-        "Pd" => "Punctuation, Dash",
-        "Ps" => "Punctuation, Open",
-        "Pe" => "Punctuation, Close",
-        "Pi" => "Punctuation, Initial quote",
-        "Pf" => "Punctuation, Final quote",
-        "Po" => "Punctuation, Other",
-        "Sm" => "Symbol, Math",
-        "Sc" => "Symbol, Currency",
-        "Sk" => "Symbol, Modifier",
-        "So" => "Symbol, Other",
-        "Zs" => "Separator, Space",
-        "Zl" => "Separator, Line",
-        "Zp" => "Separator, Paragraph",
-        "Cc" => "Other, Control",
-        "Cf" => "Other, Format",
-        "Cs" => "Other, Surrogate",
-        "Co" => "Other, Private Use",
-        "Cn" => "Other, Not Assigned",
-        _ => return Ok(Value::Nil),
+fn f_char_code_property_description(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU: non-symbol
+    // args (and unknown props/values) → nil, no checks at all.
+    let (Some(pid2), Some(vid)) = (i.sym_id(&a[0]), i.sym_id(&a[1])) else {
+        return Ok(Value::Nil);
     };
-    return Ok(Value::string(desc));
+    let prop = i.symbol_name(pid2);
+    let val = i.symbol_name(vid);
+    if prop == "general-category" {
+        let desc = match val.as_str() {
+            "Lu" => "Letter, Uppercase",
+            "Ll" => "Letter, Lowercase",
+            "Lt" => "Letter, Titlecase",
+            "Lm" => "Letter, Modifier",
+            "Lo" => "Letter, Other",
+            "Mn" => "Mark, Nonspacing",
+            "Mc" => "Mark, Spacing Combining",
+            "Me" => "Mark, Enclosing",
+            "Nd" => "Number, Decimal Digit",
+            "Nl" => "Number, Letter",
+            "No" => "Number, Other",
+            "Pc" => "Punctuation, Connector",
+            "Pd" => "Punctuation, Dash",
+            "Ps" => "Punctuation, Open",
+            "Pe" => "Punctuation, Close",
+            "Pi" => "Punctuation, Initial quote",
+            "Pf" => "Punctuation, Final quote",
+            "Po" => "Punctuation, Other",
+            "Sm" => "Symbol, Math",
+            "Sc" => "Symbol, Currency",
+            "Sk" => "Symbol, Modifier",
+            "So" => "Symbol, Other",
+            "Zs" => "Separator, Space",
+            "Zl" => "Separator, Line",
+            "Zp" => "Separator, Paragraph",
+            "Cc" => "Other, Control",
+            "Cf" => "Other, Format",
+            "Cs" => "Other, Surrogate",
+            "Co" => "Other, Private Use",
+            "Cn" => "Other, Not Assigned",
+            _ => return Ok(Value::Nil),
+        };
+        return Ok(Value::string(desc));
+    }
+    if prop == "bidi-class" {
+        let desc = match val.as_str() {
+            "L" => "Left-to-Right",
+            "R" => "Right-to-Left",
+            "AL" => "Right-to-Left Arabic",
+            "EN" => "European Number",
+            "ES" => "European Number Separator",
+            "ET" => "European Number Terminator",
+            "AN" => "Arabic Number",
+            "CS" => "Common Number Separator",
+            "NSM" => "Non-Spacing Mark",
+            "BN" => "Boundary Neutral",
+            "B" => "Paragraph Separator",
+            "S" => "Segment Separator",
+            "WS" => "Whitespace",
+            "ON" => "Other Neutrals",
+            "LRE" => "Left-to-Right Embedding",
+            "LRO" => "Left-to-Right Override",
+            "RLE" => "Right-to-Left Embedding",
+            "RLO" => "Right-to-Left Override",
+            "PDF" => "Pop Directional Format",
+            "LRI" => "Left-to-Right Isolate",
+            "RLI" => "Right-to-Left Isolate",
+            "FSI" => "First Strong Isolate",
+            "PDI" => "Pop Directional Isolate",
+            _ => return Ok(Value::Nil),
+        };
+        return Ok(Value::string(desc));
+    }
+    Ok(Value::Nil)
 }
-if prop == "bidi-class" {
-    let desc = match val.as_str() {
-        "L" => "Left-to-Right",
-        "R" => "Right-to-Left",
-        "AL" => "Right-to-Left Arabic",
-        "EN" => "European Number",
-        "ES" => "European Number Separator",
-        "ET" => "European Number Terminator",
-        "AN" => "Arabic Number",
-        "CS" => "Common Number Separator",
-        "NSM" => "Non-Spacing Mark",
-        "BN" => "Boundary Neutral",
-        "B" => "Paragraph Separator",
-        "S" => "Segment Separator",
-        "WS" => "Whitespace",
-        "ON" => "Other Neutrals",
-        "LRE" => "Left-to-Right Embedding",
-        "LRO" => "Left-to-Right Override",
-        "RLE" => "Right-to-Left Embedding",
-        "RLO" => "Right-to-Left Override",
-        "PDF" => "Pop Directional Format",
-        "LRI" => "Left-to-Right Isolate",
-        "RLI" => "Right-to-Left Isolate",
-        "FSI" => "First Strong Isolate",
-        "PDI" => "Pop Directional Isolate",
-        _ => return Ok(Value::Nil),
-    };
-    return Ok(Value::string(desc));
-}
-Ok(Value::Nil) }
 
 // ---------- translation tables ----------
 
-fn f_make_translation_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU mule.el: each arg is a list of (FROM . TO) pairs.  A prior
-// mapping TO -> TO-ALT makes FROM also map to TO-ALT, and chars
-// that mapped to FROM are updated to map to TO (tracked by
-// REVLIST, an alist (TO . (FROM ...))).
-let tag = symv(i, "translation-table");
-let t = misc::make_ct(i, tag, Value::Nil, vec![Value::Nil; 2]);
-let mut revlist: Vec<(i128, Vec<i128>)> = vec![];
-for arg in a.iter() {
-    let mut elts = Vec::new();
-    arg.each_car(|v| elts.push(v.clone()));
-    for elt in elts {
-        let (from, to) = match &elt {
-            Value::Cons(c) => {
-                let b = c.borrow();
-                (b.car.clone(), b.cdr.clone())
+fn f_make_translation_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU mule.el: each arg is a list of (FROM . TO) pairs.  A prior
+    // mapping TO -> TO-ALT makes FROM also map to TO-ALT, and chars
+    // that mapped to FROM are updated to map to TO (tracked by
+    // REVLIST, an alist (TO . (FROM ...))).
+    let tag = symv(i, "translation-table");
+    let t = misc::make_ct(i, tag, Value::Nil, vec![Value::Nil; 2]);
+    let mut revlist: Vec<(i128, Vec<i128>)> = vec![];
+    for arg in a.iter() {
+        let mut elts = Vec::new();
+        arg.each_car(|v| elts.push(v.clone()));
+        for elt in elts {
+            let (from, to) = match &elt {
+                Value::Cons(c) => {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                }
+                _ => continue,
+            };
+            let (Value::Int(f), Value::Int(t0)) = (&from, &to) else {
+                return Err(i.wrong_type_mut("fixnump", &from));
+            };
+            let (f, mut to_c) = (*f, *t0);
+            // (if (setq to-alt (aref table to)) (setq to to-alt))
+            if let Value::Int(ta) = misc::char_table_ref(i, &t, to_c as usize) {
+                to_c = ta;
             }
-            _ => continue,
-        };
-        let (Value::Int(f), Value::Int(t0)) = (&from, &to) else {
-            return Err(i.wrong_type_mut("fixnump", &from));
-        };
-        let (f, mut to_c) = (*f, *t0);
-        // (if (setq to-alt (aref table to)) (setq to to-alt))
-        if let Value::Int(ta) = misc::char_table_ref(i, &t, to_c as usize) {
-            to_c = ta;
-        }
-        misc::ct_set(i, &t, f as u32, Value::Int(to_c));
-        // Chars previously mapped to FROM now map to TO.
-        let mut rev_from: Vec<i128> = vec![];
-        if let Some(pos) = revlist.iter().position(|(k, _)| *k == f) {
-            let (_, list) = revlist.remove(pos);
-            for e in &list {
-                misc::ct_set(i, &t, *e as u32, Value::Int(to_c));
+            misc::ct_set(i, &t, f as u32, Value::Int(to_c));
+            // Chars previously mapped to FROM now map to TO.
+            let mut rev_from: Vec<i128> = vec![];
+            if let Some(pos) = revlist.iter().position(|(k, _)| *k == f) {
+                let (_, list) = revlist.remove(pos);
+                for e in &list {
+                    misc::ct_set(i, &t, *e as u32, Value::Int(to_c));
+                }
+                rev_from = list;
             }
-            rev_from = list;
-        }
-        match revlist.iter_mut().find(|(k, _)| *k == to_c) {
-            Some((_, l)) => {
-                let mut nl = vec![f];
-                nl.append(l);
-                nl.extend(rev_from);
-                *l = nl;
-            }
-            None => {
-                let mut l = vec![f];
-                l.extend(rev_from);
-                revlist.push((to_c, l));
+            match revlist.iter_mut().find(|(k, _)| *k == to_c) {
+                Some((_, l)) => {
+                    let mut nl = vec![f];
+                    nl.append(l);
+                    nl.extend(rev_from);
+                    *l = nl;
+                }
+                None => {
+                    let mut l = vec![f];
+                    l.extend(rev_from);
+                    revlist.push((to_c, l));
+                }
             }
         }
     }
+    // GNU sets extra slot 1 to 1 (max-lookup).
+    if let Value::Record(r) = &t {
+        r.borrow_mut()[4] = Value::Int(1);
+    }
+    Ok(t)
 }
-// GNU sets extra slot 1 to 1 (max-lookup).
-if let Value::Record(r) = &t {
-    r.borrow_mut()[4] = Value::Int(1);
-}
-Ok(t) }
 
-fn f_define_translation_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU mule.el: a `translation-table' char-table arg is used
-// directly; other args go to `make-translation-table'.  Registers
-// (SYMBOL . TABLE) in `translation-table-vector' and sets the
-// `translation-table'/`translation-table-id' properties.
-let id = want_sym(i, &a[0])?;
-let table = match a.get(1) {
-    Some(v)
-        if misc::is_char_table(i, v)
-            && matches!(v, Value::Record(r)
+fn f_define_translation_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU mule.el: a `translation-table' char-table arg is used
+    // directly; other args go to `make-translation-table'.  Registers
+    // (SYMBOL . TABLE) in `translation-table-vector' and sets the
+    // `translation-table'/`translation-table-id' properties.
+    let id = want_sym(i, &a[0])?;
+    let table = match a.get(1) {
+        Some(v)
+            if misc::is_char_table(i, v)
+                && matches!(v, Value::Record(r)
                 if matches!(r.borrow().get(1), Some(Value::Sym(s)) if i.symbol_name(*s) == "translation-table")) =>
-    {
-        v.clone()
-    }
-    _ => f_make_translation_table(i, a[1..].to_vec().into())?,
-};
-let ttv = i.intern("translation-table-vector");
-let mut vec = match i.symbol_value(ttv) {
-    Value::Vec(v) => v.borrow().clone(),
-    _ => Vec::new(),
-};
-if vec.is_empty() {
-    vec = vec![Value::Nil; 16];
-}
-let mut tid = 0usize;
-loop {
-    if tid >= vec.len() {
-        let n = vec.len();
-        vec.extend(std::iter::repeat(Value::Nil).take(n));
-    }
-    let use_slot = match &vec[tid] {
-        Value::Nil => true,
-        Value::Cons(c) => matches!(&c.borrow().car, Value::Sym(s) if *s == id),
-        _ => false,
-    };
-    if use_slot {
-        break;
-    }
-    tid += 1;
-}
-vec[tid] = Value::cons(Value::Sym(id), table.clone());
-let _ = i.set_symbol(
-    ttv,
-    Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec))),
-);
-let prop = i.intern("translation-table");
-i.put_prop(id, prop, table);
-let tidp = i.intern("translation-table-id");
-i.put_prop(id, tidp, Value::Int(tid as i128));
-Ok(Value::Int(tid as i128)) }
-
-fn f_make_translation_table_from_vector(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // (make-translation-table-from-vector VEC) — VEC is a 256-element array
-// mapping unibyte codes to multibyte chars.
-let slots: Vec<Value> = match &a[0] {
-    Value::Vec(v) => {
-        let v = v.borrow();
-        if v.len() != 256 {
-            let s = i.intern("args-out-of-range");
-            return Err(i.signal_data(s, vec![a[0].clone(), Value::Int(v.len() as i128)]));
+        {
+            v.clone()
         }
-        v.clone()
+        _ => f_make_translation_table(i, a[1..].to_vec().into())?,
+    };
+    let ttv = i.intern("translation-table-vector");
+    let mut vec = match i.symbol_value(ttv) {
+        Value::Vec(v) => v.borrow().clone(),
+        _ => Vec::new(),
+    };
+    if vec.is_empty() {
+        vec = vec![Value::Nil; 16];
     }
-    _ => return Err(i.wrong_type_mut("vectorp", &a[0])),
-};
-let tag = symv(i, "translation-table");
-let t = misc::make_ct(i, tag, Value::Nil, vec![]);
-for (k, v) in slots.iter().enumerate() {
-    if !v.is_nil() {
-        misc::ct_set(i, &t, k as u32, v.clone());
+    let mut tid = 0usize;
+    loop {
+        if tid >= vec.len() {
+            let n = vec.len();
+            vec.extend(std::iter::repeat(Value::Nil).take(n));
+        }
+        let use_slot = match &vec[tid] {
+            Value::Nil => true,
+            Value::Cons(c) => matches!(&c.borrow().car, Value::Sym(s) if *s == id),
+            _ => false,
+        };
+        if use_slot {
+            break;
+        }
+        tid += 1;
     }
+    vec[tid] = Value::cons(Value::Sym(id), table.clone());
+    let _ = i.set_symbol(
+        ttv,
+        Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec))),
+    );
+    let prop = i.intern("translation-table");
+    i.put_prop(id, prop, table);
+    let tidp = i.intern("translation-table-id");
+    i.put_prop(id, tidp, Value::Int(tid as i128));
+    Ok(Value::Int(tid as i128))
 }
-Ok(t) }
 
-fn f_set_translation_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let _ = &a;
-let _ = i;
-Ok(Value::Nil) }
+fn f_make_translation_table_from_vector(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // (make-translation-table-from-vector VEC) — VEC is a 256-element array
+    // mapping unibyte codes to multibyte chars.
+    let slots: Vec<Value> = match &a[0] {
+        Value::Vec(v) => {
+            let v = v.borrow();
+            if v.len() != 256 {
+                let s = i.intern("args-out-of-range");
+                return Err(i.signal_data(s, vec![a[0].clone(), Value::Int(v.len() as i128)]));
+            }
+            v.clone()
+        }
+        _ => return Err(i.wrong_type_mut("vectorp", &a[0])),
+    };
+    let tag = symv(i, "translation-table");
+    let t = misc::make_ct(i, tag, Value::Nil, vec![]);
+    for (k, v) in slots.iter().enumerate() {
+        if !v.is_nil() {
+            misc::ct_set(i, &t, k as u32, v.clone());
+        }
+    }
+    Ok(t)
+}
+
+fn f_set_translation_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let _ = &a;
+    let _ = i;
+    Ok(Value::Nil)
+}
 
 // ---------- coding systems ----------
 
-fn f_coding_system_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let name = match &a[0] {
-    Value::Sym(s) => i.symbol_name(*s),
-    Value::Nil => "undecided".to_string(),
-    _ => return Err(i.wrong_type_mut("coding-system-p", &a[0])),
-};
-let base = name
-    .strip_suffix("-unix")
-    .or_else(|| name.strip_suffix("-dos"))
-    .or_else(|| name.strip_suffix("-mac"))
-    .unwrap_or(&name);
-// GNU signals `coding-system-error` for undefined coding systems.
-if !matches!(&a[0], Value::Nil) && coding_known(i, &a[0]).is_none() {
-    let s = i.intern("coding-system-error");
-    return Err(i.signal_data(s, vec![a[0].clone()]));
+pub(crate) fn f_coding_system_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let name = match &a[0] {
+        Value::Sym(s) => i.symbol_name(*s),
+        // GNU treats nil as `no-conversion' here.
+        Value::Nil => "no-conversion".to_string(),
+        _ => return Err(i.wrong_type_mut("symbolp", &a[0])),
+    };
+    let base = name
+        .strip_suffix("-unix")
+        .or_else(|| name.strip_suffix("-dos"))
+        .or_else(|| name.strip_suffix("-mac"))
+        .unwrap_or(&name);
+    // GNU signals `coding-system-error` for undefined coding systems.
+    if !matches!(&a[0], Value::Nil) && coding_known(i, &a[0]).is_none() {
+        let s = i.intern("coding-system-error");
+        return Err(i.signal_data(s, vec![a[0].clone()]));
+    }
+    // GNU's coding-system types: charset is the default for the
+    // single-byte/dos codepage families; iso-2022 covers euc/cjk escapes.
+    let ty = match base {
+        "no-conversion" | "no-conversion-multibyte" | "raw-text" | "binary" => "raw-text",
+        "undecided" | "prefer-utf-8" => "undecided",
+        "emacs-mule" => "emacs-mule",
+        s if s.starts_with("utf-16") => "utf-16",
+        s if s.starts_with("utf-8")
+            || s.starts_with("utf-7")
+            || s == "mule-utf-8"
+            || s == "hz"
+            || s == "chinese-hz" =>
+        {
+            "utf-8"
+        }
+        s if s.starts_with("sjis")
+            || s.starts_with("shift-jis")
+            || s.starts_with("shift_jis")
+            || s.starts_with("japanese-shift") =>
+        {
+            "shift-jis"
+        }
+        s if s.contains("big5") => "big5",
+        s if s.starts_with("iso-2022")
+            || s.starts_with("euc-")
+            || s.starts_with("eucjp")
+            || s == "gb2312"
+            || s == "cn-gb-2312"
+            || s == "hz-gb-2312"
+            || s.starts_with("compound-text")
+            || s.starts_with("ctext")
+            || s.starts_with("x-ctext")
+            || s == "old-jis"
+            || s == "junet"
+            || s == "iso-safe"
+            || s == "chinese-iso-7bit"
+            || s == "chinese-iso-8bit"
+            || s.starts_with("japanese-iso-")
+            || s.starts_with("korean-iso-") =>
+        {
+            "iso-2022"
+        }
+        _ => "charset",
+    };
+    Ok(symv(i, ty))
 }
-// GNU's coding-system types: charset is the default for the
-// single-byte/dos codepage families; iso-2022 covers euc/cjk escapes.
-let ty = match base {
-    "no-conversion" | "no-conversion-multibyte" | "raw-text" | "binary" => "raw-text",
-    "undecided" | "prefer-utf-8" => "undecided",
-    "emacs-mule" => "emacs-mule",
-    s if s.starts_with("utf-16") => "utf-16",
-    s if s.starts_with("utf-8")
-        || s.starts_with("utf-7")
-        || s == "mule-utf-8"
-        || s == "hz"
-        || s == "chinese-hz" =>
-    {
-        "utf-8"
-    }
-    s if s.starts_with("sjis")
-        || s.starts_with("shift-jis")
-        || s.starts_with("shift_jis")
-        || s.starts_with("japanese-shift") =>
-    {
-        "shift-jis"
-    }
-    s if s.contains("big5") => "big5",
-    s if s.starts_with("iso-2022")
-        || s.starts_with("euc-")
-        || s.starts_with("eucjp")
-        || s == "gb2312"
-        || s == "cn-gb-2312"
-        || s == "hz-gb-2312"
-        || s.starts_with("compound-text")
-        || s.starts_with("ctext")
-        || s.starts_with("x-ctext")
-        || s == "old-jis"
-        || s == "junet"
-        || s == "iso-safe"
-        || s == "chinese-iso-7bit"
-        || s == "chinese-iso-8bit"
-        || s.starts_with("japanese-iso-")
-        || s.starts_with("korean-iso-") =>
-    {
-        "iso-2022"
-    }
-    _ => "charset",
-};
-Ok(symv(i, ty)) }
 
 /// A charset's attribute plist entry as i64 (`:iso-final-char',
 /// `:emacs-mule-id', `:code-offset'), consulting builtin attrs too.
@@ -1396,71 +1556,180 @@ pub(crate) fn coding_system_charset_names(i: &mut Interp, v: &Value) -> Value {
     }
 }
 
-fn f_coding_system_charset_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match &a[0] {
-    Value::Sym(_) => {}
-    v => return Err(i.wrong_type_mut("coding-system-p", v)),
+fn f_coding_system_charset_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    match &a[0] {
+        Value::Sym(_) => {}
+        v => return Err(i.wrong_type_mut("symbolp", v)),
+    }
+    if coding_known(i, &a[0]).is_none() {
+        // GNU signals coding-system-error on an undefined coding system.
+        let cs = i.intern("coding-system-error");
+        return Err(i.signal_data(cs, vec![a[0].clone()]));
+    }
+    // The Lisp function returns the raw :charset-list attribute — a
+    // list of charsets, or the `iso-2022'/`emacs-mule' marker symbols.
+    Ok(coding_charset_list_attr(i, &a[0]))
 }
-if coding_known(i, &a[0]).is_none() {
-    // GNU signals coding-system-error on an undefined coding system.
-    let cs = i.intern("coding-system-error");
-    return Err(i.signal_data(cs, vec![a[0].clone()]));
-}
-// The Lisp function returns the raw :charset-list attribute — a
-// list of charsets, or the `iso-2022'/`emacs-mule' marker symbols.
-Ok(coding_charset_list_attr(i, &a[0])) }
 
-fn f_set_coding_system_priority(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // Move each named coding system to the front of the priority
-// table, preserving argument order (GNU rebuilds the per-category
-// table the same way).
-let var = i.intern("remacs-coding-system-priorities");
-let mut rest = Vec::new();
-{
-    let mut cur = i.symbol_value(var);
+/// GNU `CODING_ATTR_CATEGORY'/`CODING_ATTR_BASE_NAME' for a known
+/// coding system: (category-symbol, base-name) resolved through the
+/// alias chain and `remacs-coding-system-plists'.
+fn coding_category_member(i: &mut Interp, v: &Value) -> Option<(String, String)> {
+    let table_id = i.intern("remacs-coding-system-plists");
+    let table = i.symbol_value(table_id);
+    let name = coding_known(i, v)?;
+    let key = coding_plist_key(i, &name);
+    let keysym = i.intern(&key);
+    let mut cur = table;
     while let Value::Cons(c) = cur {
         let (car, cdr) = {
             let b = c.borrow();
             (b.car.clone(), b.cdr.clone())
         };
-        if !a.iter().any(|x| eq_values(x, &car)) {
-            rest.push(car);
+        if let Value::Cons(pair) = &car {
+            let (k, pl) = {
+                let b = pair.borrow();
+                (b.car.clone(), b.cdr.clone())
+            };
+            if matches!(&k, Value::Sym(s) if *s == keysym) {
+                let cat = crate::lisp::eval::plist_get(&pl, i.intern(":category"));
+                let base = crate::lisp::eval::plist_get(&pl, i.intern(":name"));
+                let cat = match cat {
+                    Value::Sym(s) => i.symbol_name(s).to_string(),
+                    _ => return None,
+                };
+                let base = match base {
+                    Value::Sym(s) => i.symbol_name(s).to_string(),
+                    _ => key.clone(),
+                };
+                return Some((cat, base));
+            }
         }
         cur = cdr;
     }
+    None
 }
-let mut new_list: Vec<Value> = a.as_slice().to_vec();
-new_list.extend(rest);
-let _ = i.set_symbol(var, Value::list(new_list));
-Ok(Value::Nil) }
 
-fn f_set_keyboard_coding_system_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU: decode_live_terminal(TERMINAL), CHECK_SYMBOL, nil means
-// `no-conversion', anything else must be a coding system.
-if let Some(t) = a.get(1) {
-    match t {
-        Value::Nil | Value::Frame(_) => {}
-        other => return Err(i.wrong_type_mut("terminal-live-p", other)),
+fn f_set_coding_system_priority(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU
+    // Fset_coding_system_priority is CATEGORY-based: each argument must
+    // name a coding system (symbolp then coding-system-error), gets
+    // deduplicated by category (first wins), becomes that category's
+    // member (replacing the previous one), and the touched categories move
+    // to the front of the priority order — member names never move.
+    for v in a.iter() {
+        want_sym(i, v)?;
+        if coding_known(i, v).is_none() {
+            let cs = i.intern("coding-system-error");
+            return Err(i.signal_data(cs, vec![v.clone()]));
+        }
     }
+    let mut seen: Vec<String> = Vec::new();
+    let mut moved: Vec<Value> = Vec::new();
+    for v in a.iter() {
+        let Some((cat, base)) = coding_category_member(i, v) else {
+            continue;
+        };
+        if seen.iter().any(|c| *c == cat) {
+            continue;
+        }
+        seen.push(cat);
+        moved.push(symv(i, &base));
+    }
+    if !moved.is_empty() {
+        let var = i.intern("remacs-coding-system-priorities");
+        let mut rest = Vec::new();
+        let mut cur = i.symbol_value(var);
+        while let Value::Cons(c) = cur {
+            let (car, cdr) = {
+                let b = c.borrow();
+                (b.car.clone(), b.cdr.clone())
+            };
+            // Drop members moved to the front AND members whose category
+            // was reassigned (the category's slot takes the new base name,
+            // so the old member disappears — assigning iso-2022-jp-2004
+            // evicts iso-2022-jp).
+            if moved.iter().any(|m| eq_values(m, &car)) {
+                cur = cdr;
+                continue;
+            }
+            if let Some((ccat, _)) = coding_category_member(i, &car) {
+                if seen.iter().any(|c| *c == ccat) {
+                    cur = cdr;
+                    continue;
+                }
+            }
+            rest.push(car);
+            cur = cdr;
+        }
+        moved.extend(rest);
+        let _ = i.set_symbol(var, Value::list(moved));
+    }
+    Ok(Value::Nil)
 }
-let _ = want_sym(i, &a[0])?;
-if !a[0].is_nil() && super::misc::coding_known(i, &a[0]).is_none() {
-    let e = i.intern("coding-system-error");
-    return Err(i.signal_data(e, vec![a[0].clone()]));
-}
-Ok(Value::Nil) }
 
-fn f_find_coding_systems_region_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU validates START/END against the buffer first.
-let s = a[0].int().unwrap_or(1).max(1);
-let e = a[1].int().unwrap_or(s).max(1);
-let max = i
-    .buffers
-    .get(i.current_buffer)
-    .map(|b| b.borrow().text_len() as i128 + 1)
-    .unwrap_or(1);
-if s > max || e > max || s > e {
-    let sid = i.intern("args-out-of-range");
-    return Err(i.signal(sid, Value::list(vec![a[0].clone(), a[1].clone()])));
+fn f_set_keyboard_coding_system_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU: decode_live_terminal(TERMINAL), CHECK_SYMBOL, nil means
+    // `no-conversion', anything else must be a coding system.  The
+    // name is stored verbatim — GNU's `setup_coding_system' resolves
+    // the given coding system itself (no `-unix' munging here; the
+    // Lisp wrapper's `coding-system-change-eol-conversion' does that).
+    if let Some(t) = a.get(1) {
+        match t {
+            Value::Nil | Value::Frame(_) => {}
+            other => return Err(i.wrong_type_mut("terminal-live-p", other)),
+        }
+    }
+    let _ = want_sym(i, &a[0])?;
+    if !a[0].is_nil() && super::misc::coding_known(i, &a[0]).is_none() {
+        let e = i.intern("coding-system-error");
+        return Err(i.signal_data(e, vec![a[0].clone()]));
+    }
+    let sym = if a[0].is_nil() {
+        Value::Sym(i.intern("no-conversion"))
+    } else {
+        a[0].clone()
+    };
+    i.keyboard_coding = sym.clone();
+    // `keyboard-coding-system' is ALSO a defcustom that the mule.el
+    // wrapper setqs; keep it in sync so the var and the subr agree.
+    let kc = i.intern("keyboard-coding-system");
+    if i.bound_p(kc) {
+        let _ = i.set_symbol(kc, sym.clone());
+    }
+    Ok(Value::Nil)
 }
-// GNU returns t for regions any coding system can encode.
-Ok(Value::t()) }
+
+fn f_find_coding_systems_region_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU Ffind_coding_systems_region_internal: a STRING START returns t
+    // for ASCII/unibyte strings without looking at END; otherwise START
+    // and END go through fix_position — non-integer/marker args signal
+    // wrong-type-argument integer-or-marker-p BEFORE the bounds check.
+    if let Value::Str(s) = &a[0] {
+        let s = s.borrow();
+        // Unibyte or pure-ASCII: every coding system can encode it → t.
+        if s.is_ascii() {
+            return Ok(Value::t());
+        }
+        // Multibyte non-ASCII: any-codable approximation (we don't track
+        // per-coding charset coverage here).
+        return Ok(Value::t());
+    }
+    let s = crate::lisp::builtins::want_int_or_mark(i, &a[0])?;
+    let e = crate::lisp::builtins::want_int_or_mark(i, &a[1])?;
+    let zv = i
+        .buffers
+        .get(i.current_buffer)
+        .map(|b| b.borrow().text_len() as i128 + 1)
+        .unwrap_or(1);
+    // GNU: !(BEG <= s && s <= e && e <= Z) → args-out-of-range.
+    if !(1 <= s && s <= e && e <= zv) {
+        let sid = i.intern("args-out-of-range");
+        return Err(i.signal(sid, Value::list(vec![a[0].clone(), a[1].clone()])));
+    }
+    // GNU returns t for regions any coding system can encode.
+    Ok(Value::t())
+}
 
 // ---------- charset ids / priority / unicode property tables ----------
 
@@ -1480,15 +1749,22 @@ fn charset_id(i: &Interp, name: &str) -> i128 {
     }
     i.charsets
         .iter()
-        .filter(|(n, _)| !matches!(n.as_str(), "ascii" | "iso-8859-1" | "unicode" | "ucs" | "emacs" | "eight-bit"))
+        .filter(|(n, _)| {
+            !matches!(
+                n.as_str(),
+                "ascii" | "iso-8859-1" | "unicode" | "ucs" | "emacs" | "eight-bit"
+            )
+        })
         .position(|(n, _)| n == name)
         .map(|p| 5 + p as i128)
         .unwrap_or(-1)
 }
 
-fn f_charset_id_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU: nil/missing arg or unknown name → wrong-type-argument charsetp.
-let name = want_charset(i, &arg(&a, 0))?;
-Ok(Value::Int(charset_id(i, &name))) }
+fn f_charset_id_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU: nil/missing arg or unknown name → wrong-type-argument charsetp.
+    let name = want_charset(i, &arg(&a, 0))?;
+    Ok(Value::Int(charset_id(i, &name)))
+}
 
 /// GNU 31's `(charset-priority-list)' order at -Q.
 pub(crate) const GNU_CHARSET_PRIORITY: &[&str] = &[
@@ -1747,10 +2023,7 @@ pub(crate) fn make_char(i: &mut Interp, name: &str, codes: &[Value]) -> Result<i
                     Value::Int(n) if *n >= 0 => {
                         if *n >= 0x100 {
                             let sym = i.intern("args-out-of-range");
-                            return Err(i.signal_data(
-                                sym,
-                                vec![Value::Int(0xFF), other.clone()],
-                            ));
+                            return Err(i.signal_data(sym, vec![Value::Int(0xFF), other.clone()]));
                         }
                         *n as i64
                     }
@@ -1795,10 +2068,7 @@ pub(crate) fn cons_to_u64(v: &Value) -> Option<u64> {
                     };
                     match (&mid, &tail) {
                         (Value::Int(m), Value::Int(lo))
-                            if *m >= 0
-                                && *m < (1 << 24)
-                                && *lo >= 0
-                                && *lo < (1 << 16) =>
+                            if *m >= 0 && *m < (1 << 24) && *lo >= 0 && *lo < (1 << 16) =>
                         {
                             if hi > u64::MAX >> 40 {
                                 None
@@ -1815,19 +2085,12 @@ pub(crate) fn cons_to_u64(v: &Value) -> Option<u64> {
                         }
                     }
                 }
-                Value::Int(lo) if *lo >= 0 && *lo < (1 << 16) => {
-                    Some((hi << 16) | *lo as u64)
-                }
+                Value::Int(lo) if *lo >= 0 && *lo < (1 << 16) => Some((hi << 16) | *lo as u64),
                 _ => None,
             }
         }
         _ => None,
     }
-}
-
-/// The effective plist of a charset (public wrapper for strfn.rs).
-pub(crate) fn charset_plist_of(i: &mut Interp, name: &str) -> Value {
-    effective_charset_plist(i, name)
 }
 
 /// A charset's `:dimension' (or code-space/2) — the number of packed
@@ -1870,7 +2133,6 @@ pub(crate) fn char_charset(i: &Interp, ch: i64, order: &[String]) -> Option<Stri
                 break;
             }
             if ix + 1 == boundary && ch <= 0x10FFFF {
-
                 winner = Some("unicode".to_string());
                 break;
             }
@@ -1893,98 +2155,197 @@ pub(crate) fn char_charset(i: &Interp, ch: i64, order: &[String]) -> Option<Stri
         .cloned()
 }
 
-fn f_charset_priority_list(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { let names = charsets_ordered(i);
-Ok(Value::list(names.iter().map(|n| symv(i, n)).collect())) }
+fn f_charset_priority_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU Fcharset_priority_list: a non-nil HIGHEST arg
+    // returns just the HIGHEST-PRIORITY-CHARSET itself (a symbol), not a
+    // list — regardless of what the arg names.
+    let names = charsets_ordered(i);
+    if !arg(&a, 0).is_nil() {
+        return Ok(symv(i, &names[0]));
+    }
+    Ok(Value::list(names.iter().map(|n| symv(i, n)).collect()))
+}
 
-fn f_sort_charsets(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU sorts by position in `Vcharset_ordered_list'.
-let items = super::want_list(i, &a[0])?;
-let order = charsets_ordered(i);
-let mut keyed: Vec<(usize, Value)> = Vec::with_capacity(items.len());
-for v in items.into_iter() {
-    let pos = match &v {
-        Value::Sym(s) => {
-            let n = canonical_charset(i, &i.symbol_name(*s));
-            order.iter().position(|o| *o == n).unwrap_or(usize::MAX)
+fn f_sort_charsets(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU sorts by position in `Vcharset_ordered_list'.
+    let items = super::want_list(i, &a[0])?;
+    let order = charsets_ordered(i);
+    let mut keyed: Vec<(usize, Value)> = Vec::with_capacity(items.len());
+    for v in items.into_iter() {
+        let pos = match &v {
+            Value::Sym(s) => {
+                let n = canonical_charset(i, &i.symbol_name(*s));
+                order.iter().position(|o| *o == n).unwrap_or(usize::MAX)
+            }
+            _ => usize::MAX,
+        };
+        keyed.push((pos, v));
+    }
+    keyed.sort_by_key(|(p, _)| *p);
+    Ok(Value::list(keyed.into_iter().map(|(_, v)| v).collect()))
+}
+
+fn f_set_charset_priority(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU: each arg must be a charset; args present in the ordered
+    // list move to the head in argument order; the rest of the old
+    // list (which becomes the non-preferred head) follows.
+    let mut new_order: Vec<String> = Vec::with_capacity(a.len());
+    let mut old = charsets_ordered(i);
+    for v in a.iter() {
+        // GNU drops an arg already moved to the new head (Fdelq +
+        // memq): duplicate arguments produce a single entry.
+        let n = want_charset(i, v)?;
+        if let Some(pos) = old.iter().position(|x| *x == n) {
+            old.remove(pos);
+            new_order.push(n);
         }
-        _ => usize::MAX,
+    }
+    let boundary = new_order.len();
+    new_order.append(&mut old);
+    *i.charset_order.borrow_mut() = (new_order, boundary);
+    invalidate_char_charset_cache(i);
+    Ok(Value::Nil)
+}
+
+/// GNU `check_iso_charset_parameter': fixnum DIMENSION (1..3) and
+/// CHARS (94→false / 96→true), CHARACTERP FINAL-CHAR in `0'..`~'.
+/// Returns the chars-96 flag used as the table index.
+fn iso_check(i: &mut Interp, a: &[Value]) -> Result<(i64, bool, i64), Flow> {
+    let dim = crate::lisp::builtins::want_fixnum(i, &a[0])? as i64;
+    let chars = crate::lisp::builtins::want_fixnum(i, &a[1])? as i64;
+    let fc = match &a[2] {
+        Value::Int(n) if (0..=0x3f_ffff).contains(n) => *n as i64,
+        other => return Err(i.wrong_type_mut("characterp", other)),
     };
-    keyed.push((pos, v));
-}
-keyed.sort_by_key(|(p, _)| *p);
-Ok(Value::list(keyed.into_iter().map(|(_, v)| v).collect())) }
-
-fn f_set_charset_priority(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // GNU: each arg must be a charset; args present in the ordered
-// list move to the head in argument order; the rest of the old
-// list (which becomes the non-preferred head) follows.
-let mut new_order: Vec<String> = Vec::with_capacity(a.len());
-let mut old = charsets_ordered(i);
-for v in a.iter() {
-    // GNU drops an arg already moved to the new head (Fdelq +
-    // memq): duplicate arguments produce a single entry.
-    let n = want_charset(i, v)?;
-    if let Some(pos) = old.iter().position(|x| *x == n) {
-        old.remove(pos);
-        new_order.push(n);
+    if !(1..=3).contains(&dim) {
+        return Err(i.error(format!("Invalid DIMENSION {dim}, it should be 1, 2, or 3")));
     }
+    let chars96 = match chars {
+        94 => false,
+        96 => true,
+        _ => return Err(i.error(format!("Invalid CHARS {chars}, it should be 94 or 96"))),
+    };
+    if !(48..=126).contains(&fc) {
+        let c = char::from_u32(fc as u32).unwrap_or('\u{fffd}');
+        return Err(i.error_q(
+            "Invalid FINAL-CHAR `%s', it should be `0'..`~'",
+            &[&c.to_string()],
+        ));
+    }
+    Ok((dim, chars96, fc))
 }
-let boundary = new_order.len();
-new_order.append(&mut old);
-*i.charset_order.borrow_mut() = (new_order, boundary);
-invalidate_char_charset_cache(i);
-Ok(Value::Nil) }
 
-fn f_get_unused_iso_final_char(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { Err(i.error("No unused ISO final char available")) }
-
-fn f_iso_charset(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // (iso-charset CODING-SYSTEM DIMENSION FINAL-CHAR)
-if coding_known(i, &a[0]).is_none() {
-    return Err(i.wrong_type_mut("coding-system-p", &a[0]));
-}
-Ok(Value::Nil) }
-
-fn f_map_charset_chars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // (map-charset-chars FUNCTION CHARSET &optional ARG FROM TO)
-// GNU calls FUNCTION once per run of contiguous Emacs characters
-// with `(FROM . TO)' and ARG.  FROM/TO bound the *charset code
-// points* visited (big-endian packed per the :code-space dims),
-// clamped to the charset's min/max code like GNU's
-// Fmap_charset_chars.
-let name = want_charset(i, &a[1])?;
-// Resolve FUNCTION's symbol cell once: per-range `apply' would
-// redo the alias/`indirect_function' walk thousands of times
-// inside characters.el's category seeding.
-let function = match &a[0] {
-    Value::Sym(_) => {
-        let f = i.indirect_function_value(&a[0]);
-        if matches!(f, Value::Sym(s) if s == crate::lisp::sym::UNBOUND) {
-            return Err(i.signal_data(
-                crate::lisp::sym::VOID_FUNCTION,
-                vec![a[0].clone()],
-            ));
+/// The `chars' flag of a charset: GNU `iso_chars_96' is
+/// `code_space[2] == 96' — the character count of the LAST dimension
+/// (`:code-space' is LSB-first pairs).  `dims' here is MSB-first, so
+/// the last dim's span is the flag.
+fn iso_chars_96(i: &mut Interp, plist: &Value) -> bool {
+    if let Some(dims) = charset_dims(i, plist) {
+        if let Some(&(lo, hi)) = dims.last() {
+            return hi - lo + 1 == 96;
         }
-        f
     }
-    other => other.clone(),
-};
-let arg = a.get(2).cloned().unwrap_or(Value::Nil);
-let mut read_bound = |v: Option<&Value>| -> Result<Option<i64>, Flow> {
-    match v {
-        None | Some(Value::Nil) => Ok(None),
-        Some(Value::Int(n)) if *n >= 0 => Ok(Some(*n as i64)),
-        Some(v) => Err(i.wrong_type_mut("wholenump", v)),
+    false
+}
+
+/// `iso-charset' + `set-iso-charset' lookup: every charset whose
+/// `:iso-final-char' matches FC, `:dimension' matches DIM, and whose
+/// chars flag matches — last definition wins; explicit
+/// `iso_charset_overrides' entries win over all.
+fn iso_charset_lookup(i: &mut Interp, dim: i64, chars96: bool, fc: i64) -> Option<String> {
+    let mut found: Option<String> = None;
+    for name in charsets_ordered(i) {
+        let plist = effective_charset_plist(i, &name);
+        let fin = prop_int(&charset_prop(i, &plist, ":iso-final-char"));
+        if fin != Some(fc) {
+            continue;
+        }
+        let pdim = prop_int(&charset_prop(i, &plist, ":dimension"))
+            .or_else(|| charset_dims(i, &plist).map(|d| d.len() as i64));
+        if pdim != Some(dim) || iso_chars_96(i, &plist) != chars96 {
+            continue;
+        }
+        found = Some(name);
     }
-};
-let from_req = read_bound(a.get(3))?;
-let to_req = read_bound(a.get(4))?;
-let plist = charset_entry(i, &name)
-    .map(|e| e.1.clone())
-    .unwrap_or(Value::Nil);
-let dims = charset_dims(i, &plist).unwrap_or_else(|| vec![(0, 127)]);
-let pack = |sel: usize| -> i64 {
-    dims.iter().fold(0i64, |c, d| (c << 8) | if sel == 0 { d.0 } else { d.1 })
-};
-// GNU Fmap_charset_chars clamps the arguments to min/max code.
-let from = from_req.unwrap_or_else(|| pack(0)).max(pack(0));
-let to = to_req.unwrap_or_else(|| pack(1)).min(pack(1));
-map_cc(i, &name, from, to, &function, &arg, 0) }
+    if let Some((_, _, _, n)) = i
+        .iso_charset_overrides
+        .iter()
+        .rev()
+        .find(|(d, c, f, _)| *d == dim && *c == chars96 && *f == fc)
+    {
+        found = Some(n.clone());
+    }
+    found
+}
+
+fn f_iso_charset(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU `Fiso_charset': (DIMENSION
+    // CHARS FINAL-CHAR) indexes iso_charset_table, NOT a coding system.
+    let (dim, chars96, fc) = iso_check(i, &a)?;
+    match iso_charset_lookup(i, dim, chars96, fc) {
+        Some(name) => Ok(symv(i, &name)),
+        None => Ok(Value::Nil),
+    }
+}
+
+fn f_get_unused_iso_final_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU `Fget_unused_iso_final_char': first `0'..`?' whose slot is empty.
+    let (dim, chars96, _) = iso_check(i, &[a[0].clone(), a[1].clone(), Value::Int(48)])?;
+    for fc in 48i64..=63 {
+        if iso_charset_lookup(i, dim, chars96, fc).is_none() {
+            return Ok(Value::Int(fc as i128));
+        }
+    }
+    Ok(Value::Nil)
+}
+
+// NB: GNU's Fset_iso_charset exists in charset.c but is NOT bound in
+// this 31.1 -Q build — remacs mirrors the unbound state.
+
+fn f_map_charset_chars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // (map-charset-chars FUNCTION CHARSET &optional ARG FROM TO)
+    // GNU calls FUNCTION once per run of contiguous Emacs characters
+    // with `(FROM . TO)' and ARG.  FROM/TO bound the *charset code
+    // points* visited (big-endian packed per the :code-space dims),
+    // clamped to the charset's min/max code like GNU's
+    // Fmap_charset_chars.
+    let name = want_charset(i, &a[1])?;
+    // Resolve FUNCTION's symbol cell once: per-range `apply' would
+    // redo the alias/`indirect_function' walk thousands of times
+    // inside characters.el's category seeding.
+    let function = match &a[0] {
+        Value::Sym(_) => {
+            let f = i.indirect_function_value(&a[0]);
+            if matches!(f, Value::Sym(s) if s == crate::lisp::sym::UNBOUND) {
+                return Err(i.signal_data(crate::lisp::sym::VOID_FUNCTION, vec![a[0].clone()]));
+            }
+            f
+        }
+        other => other.clone(),
+    };
+    let arg = a.get(2).cloned().unwrap_or(Value::Nil);
+    let mut read_bound = |v: Option<&Value>| -> Result<Option<i64>, Flow> {
+        match v {
+            None | Some(Value::Nil) => Ok(None),
+            Some(Value::Int(n)) if *n >= 0 => Ok(Some(*n as i64)),
+            Some(v) => Err(i.wrong_type_mut("wholenump", v)),
+        }
+    };
+    let from_req = read_bound(a.get(3))?;
+    let to_req = read_bound(a.get(4))?;
+    let plist = charset_entry(i, &name)
+        .map(|e| e.1.clone())
+        .unwrap_or(Value::Nil);
+    let dims = charset_dims(i, &plist).unwrap_or_else(|| vec![(0, 127)]);
+    let pack = |sel: usize| -> i64 {
+        dims.iter()
+            .fold(0i64, |c, d| (c << 8) | if sel == 0 { d.0 } else { d.1 })
+    };
+    // GNU Fmap_charset_chars clamps the arguments to min/max code.
+    let from = from_req.unwrap_or_else(|| pack(0)).max(pack(0));
+    let to = to_req.unwrap_or_else(|| pack(1)).min(pack(1));
+    map_cc(i, &name, from, to, &function, &arg, 0)
+}
 
 /// GNU `map_charset_chars': recurse through :subset/:superset
 /// composition and, at a leaf charset, walk the encoder (ascending
@@ -2009,7 +2370,8 @@ fn map_cc(
         .unwrap_or(Value::Nil);
     let dims = charset_dims(i, &plist).unwrap_or_else(|| vec![(0, 127)]);
     let pack = |sel: usize| -> i64 {
-        dims.iter().fold(0i64, |c, d| (c << 8) | if sel == 0 { d.0 } else { d.1 })
+        dims.iter()
+            .fold(0i64, |c, d| (c << 8) | if sel == 0 { d.0 } else { d.1 })
     };
     // GNU does not re-clamp from/to on internal recursion — they are
     // used as-is for the `partial' test (own min/max) and the emit.
@@ -2062,8 +2424,7 @@ fn map_cc(
     // the whole walk, shared old→new cache).  Any deviation — advice,
     // alias, non-integer ARG, explicit-table callers — falls back to
     // `apply', preserving GNU's semantics and error behavior.
-    let mut mce_fast =
-        crate::lisp::builtins::misc::mce_fast_for(i, function, arg);
+    let mut mce_fast = crate::lisp::builtins::misc::mce_fast_for(i, function, arg);
     let mut emit = |i: &mut Interp, lo: i64, hi: i64| -> EvalResult {
         if let Some(mf) = &mut mce_fast {
             mf.emit(i, lo, hi);
@@ -2116,14 +2477,14 @@ fn map_cc(
             // range check — degenerate ranges like (144 . 127) still
             // get emitted).
             let sig = {
-                let s = dims
-                    .iter()
-                    .position(|d| d.1 > 0)
-                    .unwrap_or(dims.len());
-                if s >= dims.len() { &dims[..] } else { &dims[s..] }
+                let s = dims.iter().position(|d| d.1 > 0).unwrap_or(dims.len());
+                if s >= dims.len() {
+                    &dims[..]
+                } else {
+                    &dims[s..]
+                }
             };
-            let linear =
-                sig.len() == 1 || sig[1..].iter().all(|d| d.1 - d.0 == 255);
+            let linear = sig.len() == 1 || sig[1..].iter().all(|d| d.1 - d.0 == 255);
             let fi = if linear {
                 Some(from - min_code)
             } else {
@@ -2189,16 +2550,43 @@ fn map_cc(
     Ok(Value::Nil)
 }
 
-fn f_declare_equiv_charset(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let _ = want_charset(i, &a[0])?;
-// GNU checks the FINAL-CHAR arg as fixnum, then as charset.
-match &a[3] {
-    Value::Int(_) => {}
-    other => return Err(i.wrong_type_mut("fixnump", other)),
+fn f_declare_equiv_charset(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU Fdeclare_equiv_charset (DIMENSION CHARS FINAL-CHAR CHARSET):
+    // the charset arg is validated first, then check_iso_charset_parameter.
+    let _ = want_charset(i, &a[3])?;
+    match &a[0] {
+        Value::Int(d) => {
+            if !(1..=3).contains(d) {
+                return Err(i.error(format!("Invalid DIMENSION {}, it should be 1, 2, or 3", d)));
+            }
+        }
+        other => return Err(i.wrong_type_mut("fixnump", other)),
+    }
+    match &a[1] {
+        Value::Int(c) => {
+            if *c != 94 && *c != 96 {
+                return Err(i.error(format!("Invalid CHARS {}, it should be 94 or 96", c)));
+            }
+        }
+        other => return Err(i.wrong_type_mut("fixnump", other)),
+    }
+    match &a[2] {
+        Value::Int(f) => {
+            if !('0' as i128..='~' as i128).contains(f) {
+                return Err(i.error(format!(
+                    "Invalid FINAL-CHAR `{}', it should be `0'..`~'",
+                    char::from_u32(*f as u32).unwrap_or('\u{fffd}')
+                )));
+            }
+        }
+        other => return Err(i.wrong_type_mut("characterp", other)),
+    }
+    Ok(Value::Nil)
 }
-let _ = want_charset(i, &a[3])?;
-Ok(Value::Nil) }
 
-fn f_clear_charset_maps(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { Ok(Value::Nil) }
+fn f_clear_charset_maps(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    Ok(Value::Nil)
+}
 
 /// Entry `(prop . TABLE)' in `char-code-property-alist', or nil.
 fn prop_alist_entry(i: &mut Interp, prop: &str) -> Value {
@@ -2310,9 +2698,14 @@ pub(crate) fn unicode_prop_table(i: &mut Interp, prop: &str) -> Value {
     }
 }
 
-fn f_unicode_property_table_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let pid = want_sym(i, &a[0])?;
-let prop = i.symbol_name(pid);
-Ok(unicode_prop_table(i, &prop)) }
+fn f_unicode_property_table_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU: non-symbol PROP → nil (chartab.c returns Qnil, no check).
+    let Some(pid) = i.sym_id(&a[0]) else {
+        return Ok(Value::Nil);
+    };
+    let prop = i.symbol_name(pid);
+    Ok(unicode_prop_table(i, &prop))
+}
 
 /// Property name a table was registered under (identity match).
 fn unicode_table_prop(i: &Interp, tbl: &Value) -> Option<String> {
@@ -2322,39 +2715,43 @@ fn unicode_table_prop(i: &Interp, tbl: &Value) -> Option<String> {
         .map(|(n, _)| n.clone())
 }
 
-fn f_get_unicode_property_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if !is_char_table(i, &a[0]) {
-    return Err(i.wrong_type_mut("char-table-p", &a[0]));
-}
-let ch = match &a[1] {
-    Value::Int(n) => *n as i64,
-    _ => return Err(i.wrong_type_mut("characterp", &a[1])),
-};
-// GNU `get_unicode_property': CHAR_TABLE_REF (which lazily
-// uncompresses leaf strings) plus the C decoder selected by a
-// fixnum in extra slot 1.  A Lisp decoder there is NOT applied
-// here — only `get-char-code-property' funcalls it.
-let raw = misc::char_table_ref(i, &a[0], ch.max(0) as usize);
-let val = match ct_extra(&a[0], 1) {
-    Value::Int(0) => uniprop_decode_run_length(&a[0], raw),
-    _ => raw,
-};
-if val.is_nil() {
-    if let Some(prop) = unicode_table_prop(i, &a[0]) {
-        // An absent value shows the built-in default, matching
-        // GNU where every property slot is populated.
-        return Ok(builtin_char_prop(i, ch, &prop));
+fn f_get_unicode_property_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    if !is_char_table(i, &a[0]) {
+        return Err(i.wrong_type_mut("char-table-p", &a[0]));
     }
+    let ch = match &a[1] {
+        Value::Int(n) => *n as i64,
+        _ => return Err(i.wrong_type_mut("characterp", &a[1])),
+    };
+    // GNU `get_unicode_property': CHAR_TABLE_REF (which lazily
+    // uncompresses leaf strings) plus the C decoder selected by a
+    // fixnum in extra slot 1.  A Lisp decoder there is NOT applied
+    // here — only `get-char-code-property' funcalls it.
+    let raw = misc::char_table_ref(i, &a[0], ch.max(0) as usize);
+    let val = match ct_extra(&a[0], 1) {
+        Value::Int(0) => uniprop_decode_run_length(&a[0], raw),
+        _ => raw,
+    };
+    if val.is_nil() {
+        if let Some(prop) = unicode_table_prop(i, &a[0]) {
+            // An absent value shows the built-in default, matching
+            // GNU where every property slot is populated.
+            return Ok(builtin_char_prop(i, ch, &prop));
+        }
+    }
+    Ok(val)
 }
-Ok(val) }
 
-fn f_put_unicode_property_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { if !is_char_table(i, &a[0]) {
-    return Err(i.wrong_type_mut("char-table-p", &a[0]));
+fn f_put_unicode_property_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    if !is_char_table(i, &a[0]) {
+        return Err(i.wrong_type_mut("char-table-p", &a[0]));
+    }
+    let ch = match &a[1] {
+        Value::Int(n) if *n >= 0 => *n as usize,
+        _ => return Err(i.wrong_type_mut("characterp", &a[1])),
+    };
+    put_unicode_internal(i, &a[0], ch as u32, a[2].clone())
 }
-let ch = match &a[1] {
-    Value::Int(n) if *n >= 0 => *n as usize,
-    _ => return Err(i.wrong_type_mut("characterp", &a[1])),
-};
-put_unicode_internal(i, &a[0], ch as u32, a[2].clone()) }
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!("charsetp", 1, 1, f_charsetp, "t if OBJECT names a charset."),
@@ -2409,12 +2806,16 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Charset of char after POS."
     ),
     S!(
-        "find-charset-string", 1, 2,
+        "find-charset-string",
+        1,
+        2,
         f_find_charset_string,
         "Charsets needed for STRING."
     ),
     S!(
-        "find-charset-region", 2, 3,
+        "find-charset-region",
+        2,
+        3,
         f_find_charset_region,
         "Charsets needed for region."
     ),
@@ -2462,8 +2863,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!(
         "define-translation-table",
-        1,
-        3,
+        // GNU mule.el: (symbol &rest args) → (1 . many).
+        many 1,
         f_define_translation_table,
         "Define SYMBOL as translation table."
     ),
@@ -2504,7 +2905,9 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Set keyboard coding system."
     ),
     S!(
-        "find-coding-systems-region-internal", 2, 3,
+        "find-coding-systems-region-internal",
+        2,
+        3,
         f_find_coding_systems_region_internal,
         "Coding systems covering region."
     ),
@@ -2701,10 +3104,8 @@ fn charset_decode_at(i: &Interp, name: &str, code: i64, depth: u8) -> Option<i64
     ) {
         return decode_charset_code(&name, code);
     }
-    decode_charset_code(&name, code)
-        .or_else(|| charset_decode_plist(i, &name, code, depth))
+    decode_charset_code(&name, code).or_else(|| charset_decode_plist(i, &name, code, depth))
 }
-
 
 /// A charset map table parsed from `etc/charsets/*.map': each entry
 /// (LO,HI,BASE) maps codes LO..=HI to chars BASE..=BASE+(HI-LO).
@@ -2734,7 +3135,10 @@ fn table_lookup(tab: &[(i64, i64, i64)], x: i64) -> Option<i64> {
 
 fn parse_charset_map(text: &str) -> CharsetTable {
     let hex = |s: &str| -> Option<i64> {
-        let s = s.trim().strip_prefix("0x").or_else(|| s.trim().strip_prefix("0X"))?;
+        let s = s
+            .trim()
+            .strip_prefix("0x")
+            .or_else(|| s.trim().strip_prefix("0X"))?;
         i64::from_str_radix(s, 16).ok()
     };
     let mut dec = Vec::new();
@@ -2785,7 +3189,11 @@ fn charset_map_dirs() -> Vec<std::path::PathBuf> {
 /// empty table so we don't rescan per character.
 fn charset_table(i: &Interp, mapname: &str) -> Option<Rc<CharsetTable>> {
     if let Some(t) = i.charset_maps.borrow().get(mapname) {
-        return if t.dec.is_empty() { None } else { Some(t.clone()) };
+        return if t.dec.is_empty() {
+            None
+        } else {
+            Some(t.clone())
+        };
     }
     for d in charset_map_dirs() {
         let p = d.join(format!("{mapname}.map"));
@@ -2816,13 +3224,6 @@ fn charset_prop(i: &Interp, plist: &Value, key: &str) -> Value {
 
 fn prop_int(v: &Value) -> Option<i64> {
     v.int().map(|n| n as i64)
-}
-
-fn prop_str(v: &Value) -> Option<String> {
-    match v {
-        Value::Str(s) => Some(s.borrow().clone()),
-        _ => None,
-    }
 }
 
 /// `:code-space' vector → per-dimension (lo,hi) pairs.  GNU lists the
@@ -2916,9 +3317,7 @@ fn superset_list(i: &Interp, plist: &Value) -> Vec<(String, i64)> {
             Value::Cons(c) => {
                 let b = c.borrow();
                 match (&b.car, &b.cdr) {
-                    (Value::Sym(s), off) => {
-                        Some((i.symbol_name(*s), prop_int(off)?))
-                    }
+                    (Value::Sym(s), off) => Some((i.symbol_name(*s), prop_int(off)?)),
                     _ => None,
                 }
             }
@@ -2933,7 +3332,9 @@ fn charset_decode_plist(i: &Interp, name: &str, code: i64, depth: u8) -> Option<
     if depth > 8 || code < 0 {
         return None;
     }
-    let plist = charset_entry(i, name).map(|e| e.1.clone()).unwrap_or(Value::Nil);
+    let plist = charset_entry(i, name)
+        .map(|e| e.1.clone())
+        .unwrap_or(Value::Nil);
     // GNU DECODE_CHAR: reject codes outside [MIN-CODE, MAX-CODE] first;
     // these default to the packed :code-space extremes and can be
     // narrowed by :min-code/:max-code.
@@ -3003,7 +3404,9 @@ fn charset_encode_plist(i: &Interp, name: &str, ch: i64, depth: u8) -> Option<i6
     if depth > 8 {
         return None;
     }
-    let plist = charset_entry(i, name).map(|e| e.1.clone()).unwrap_or(Value::Nil);
+    let plist = charset_entry(i, name)
+        .map(|e| e.1.clone())
+        .unwrap_or(Value::Nil);
     // GNU ENCODE_CHAR order: deunify (unified offset charsets map the
     // char through the installed unify map) → subset → superset →
     // map/offset leaf.
@@ -3064,7 +3467,6 @@ fn charset_encode_plist(i: &Interp, name: &str, ch: i64, depth: u8) -> Option<i6
     None
 }
 
-
 /// `encode-char CH CHARSET` semantics: nil when CH has no code in CHARSET.
 pub(crate) fn encode_charset_code(name: &str, ch: i64) -> Option<i64> {
     if !(0..0x400000).contains(&ch) {
@@ -3106,8 +3508,7 @@ fn charset_encode_at(i: &Interp, name: &str, ch: i64, depth: u8) -> Option<i64> 
     ) {
         return encode_charset_code(&name, ch);
     }
-    encode_charset_code(&name, ch)
-        .or_else(|| charset_encode_plist(i, &name, ch, depth))
+    encode_charset_code(&name, ch).or_else(|| charset_encode_plist(i, &name, ch, depth))
 }
 
 /// GNU `big5' charset: code-space [64-254][161-254], code-offset
@@ -3271,156 +3672,525 @@ fn invalid_code(i: &mut Interp, code: i64) -> Flow {
     i.error(format!("Invalid code: {code}"))
 }
 
-fn f_decode_big5_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let code = want_wholenum_c(i, &a[0])?;
-if code < 0x80 {
-    return Ok(Value::Int(code.into()));
-}
-// GNU checks the low byte masked to 7 bits (coding.c Fdecode_big5_char):
-// valid iff b1 in [0xA1,0xFE] and (code & 0x7F) in [0x40,0x7E], which
-// admits full byte2 in [0x40,0x7E] u [0xC0,0xFE].
-let b1 = code >> 8;
-let b2m = code & 0x7f;
-if !(0xa1..=0xfe).contains(&b1) || !(0x40..=0x7e).contains(&b2m) {
-    return Err(invalid_code(i, code));
-}
-match big5_decode(code as u32) {
-    Some(c) => Ok(Value::Int(c.into())),
-    None => Err(invalid_code(i, code)),
-} }
-
-fn f_encode_big5_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let ch = want_char_c(i, &a[0])?;
-if ch < 0x80 {
-    return Ok(Value::Int(ch.into()));
-}
-match big5_encode(ch as u32) {
-    Some(c) => Ok(Value::Int(c.into())),
-    None => Err(i.error(format!("Can't encode by Big5 encoding: {ch}"))),
-} }
-
-fn f_decode_sjis_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let code = want_wholenum_c(i, &a[0])?;
-if code < 0x80 {
-    return Ok(Value::Int(code.into()));
-}
-// Halfwidth kana: GNU takes 0xA0..0xDE through charset jisx0201 at
-// code-0x80; 0xA0 lands outside the charset's space and fails.
-if (0xa0..0xdf).contains(&code) {
-    if code == 0xa0 {
+fn f_decode_big5_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let code = want_wholenum_c(i, &a[0])?;
+    if code < 0x80 {
+        return Ok(Value::Int(code.into()));
+    }
+    // GNU checks the low byte masked to 7 bits (coding.c Fdecode_big5_char):
+    // valid iff b1 in [0xA1,0xFE] and (code & 0x7F) in [0x40,0x7E], which
+    // admits full byte2 in [0x40,0x7E] u [0xC0,0xFE].
+    let b1 = code >> 8;
+    let b2m = code & 0x7f;
+    if !(0xa1..=0xfe).contains(&b1) || !(0x40..=0x7e).contains(&b2m) {
         return Err(invalid_code(i, code));
     }
-    return Ok(Value::Int((code + 0xfec0).into()));
-}
-let c1 = code >> 8;
-let c2 = code & 0xff;
-if (!(0x81..=0x9f).contains(&c1) && !(0xe0..=0xef).contains(&c1))
-    || !(0x40..=0xfc).contains(&c2)
-    || c2 == 0x7f
-{
-    return Err(invalid_code(i, code));
-}
-let (j1, j2) = sjis_to_jis(code);
-match jisx0213_1_decode(((j1 << 8) | j2) as u32) {
-    Some(c) => Ok(Value::Int(c.into())),
-    None => Err(invalid_code(i, code)),
-} }
-
-fn f_encode_sjis_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let ch = want_char_c(i, &a[0])?;
-if ch < 0x80 {
-    return Ok(Value::Int(ch.into()));
-}
-// GNU runs halfwidth kana through JIS_TO_SJIS on their jisx0201 code,
-// which produces 0x70NN values that are not real shift_jis.
-if (0xff61..=0xff9f).contains(&ch) {
-    return Ok(Value::Int(jis_to_sjis(ch - 0xff40).into()));
-}
-// GNU's Vsjis_coding_system ends as shift_jis-2004: charsets
-// (ascii katakana-jisx0201 jisx0213.2004-1 jisx0213-2).  Plane-2
-// chars get plain JIS_TO_SJIS, producing nonstandard codes as GNU.
-let jis = jisx0213_1_encode(ch as u32).or_else(|| jisx0213_2_encode(ch as u32));
-match jis {
-    Some(jis) => Ok(Value::Int(jis_to_sjis(jis).into())),
-    None => Err(i.error(format!("Can't encode by shift_jis encoding: {ch}"))),
-} }
-
-fn f_define_charset_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // (define-charset-internal NAME DIMENSION CODE-SPACE MIN-CODE MAX-CODE
-//  ISO-FINAL-CHAR ISO-REVISION-NUMBER EMACS-MULE-ID ASCII-COMPATIBLE-P
-//  SUPPLEMENTARY-P INVALID-CODE CODE-OFFSET MAP SUBSET SUPERSET
-//  UNIFY-MAP PLIST) — mule.el's `define-charset' packs all attrs into
-//  PLIST; GNU keeps them as the charset's attribute list.
-let sid = want_sym(i, &a[0])?;
-let name = i.symbol_name(sid);
-let plist = a.get(16).cloned().unwrap_or(Value::Nil);
-let supp = a.get(9).is_some_and(|v| v.truthy());
-if let Some(e) = i.charsets.iter_mut().find(|(n, _)| *n == name) {
-    if e.1.is_nil() && !plist.is_nil() {
-        e.1 = plist;
+    match big5_decode(code as u32) {
+        Some(c) => Ok(Value::Int(c.into())),
+        None => Err(invalid_code(i, code)),
     }
-} else {
-    i.charsets.push((name.clone(), plist));
-    if supp {
-        let mut st = i.charset_order.borrow_mut();
-        if !st.0.is_empty() {
-            st.0.push(name.clone());
+}
+
+fn f_encode_big5_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let ch = want_char_c(i, &a[0])?;
+    if ch < 0x80 {
+        return Ok(Value::Int(ch.into()));
+    }
+    match big5_encode(ch as u32) {
+        Some(c) => Ok(Value::Int(c.into())),
+        None => Err(i.error(format!("Can't encode by Big5 encoding: {ch}"))),
+    }
+}
+
+fn f_decode_sjis_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let code = want_wholenum_c(i, &a[0])?;
+    if code < 0x80 {
+        return Ok(Value::Int(code.into()));
+    }
+    // Halfwidth kana: GNU takes 0xA0..0xDE through charset jisx0201 at
+    // code-0x80; 0xA0 lands outside the charset's space and fails.
+    if (0xa0..0xdf).contains(&code) {
+        if code == 0xa0 {
+            return Err(invalid_code(i, code));
         }
-    } else {
-        charset_ordered_insert(i, &name);
+        return Ok(Value::Int((code + 0xfec0).into()));
+    }
+    let c1 = code >> 8;
+    let c2 = code & 0xff;
+    if (!(0x81..=0x9f).contains(&c1) && !(0xe0..=0xef).contains(&c1))
+        || !(0x40..=0xfc).contains(&c2)
+        || c2 == 0x7f
+    {
+        return Err(invalid_code(i, code));
+    }
+    let (j1, j2) = sjis_to_jis(code);
+    match jisx0213_1_decode(((j1 << 8) | j2) as u32) {
+        Some(c) => Ok(Value::Int(c.into())),
+        None => Err(invalid_code(i, code)),
     }
 }
-invalidate_char_charset_cache(i);
-Ok(Value::Nil) }
 
-fn f_define_coding_system_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { // (define-coding-system-internal NAME MNEMONIC CODING-TYPE CHARSET-LIST
-//  ASCII-COMPATIBLE-P DECODE-TT ENCODE-TT POST-READ PRE-WRITE
-//  DEFAULT-CHAR FOR-UNIBYTE PLIST EOL-TYPE . SPEC-ATTRS) — register
-//  the name so `coding-system-p` sees it.
-let sid = want_sym(i, &a[0])?;
-let name = i.symbol_name(sid);
-if !i.extra_coding_systems.iter().any(|n| *n == name) {
-    i.extra_coding_systems.push(name.clone());
-}
-// GNU: define-coding-system-internal `add-to-coding-system-list's
-// the name, and — when EOL-TYPE is a 3-vector — registers the three
-// subsidiary coding systems too (parents land before their
-// subsidiaries since equal mnemonics insert after equal keys).
-crate::lisp::builtins::misc::add_to_coding_system_list(i, &name)?;
-// GNU coding.c Fdefine_coding_system_internal pushes
-// `(SYMBOL-NAME . nil)' onto `coding-system-alist' when absent
-// (subsidiary eol names get the same treatment below).
-let alist_sym = i.intern("coding-system-alist");
-let push_alist = |i: &mut Interp, name: &str| -> Result<(), Flow> {
-    let cur = i.symbol_value(alist_sym).list_to_vec().unwrap_or_default();
-    let present = cur.iter().any(|v| match v {
-        Value::Cons(c) => matches!(&c.borrow().car, Value::Str(s) if *s.borrow() == *name),
-        _ => false,
-    });
-    if !present {
-        let mut items = vec![Value::cons(Value::string(name), Value::Nil)];
-        items.extend(cur);
-        i.set_symbol(alist_sym, Value::list(items))?;
+fn f_encode_sjis_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let ch = want_char_c(i, &a[0])?;
+    if ch < 0x80 {
+        return Ok(Value::Int(ch.into()));
     }
-    Ok(())
-};
-push_alist(i, &name)?;
-if let Some(eol) = a.get(12) {
-    if let Value::Vec(v) = eol {
-        let subs: Vec<String> = v
-            .borrow()
-            .iter()
-            .filter_map(|x| match x {
-                Value::Sym(s) => Some(i.symbol_name(*s)),
-                _ => None,
-            })
-            .collect();
-        if subs.len() == 3 {
-            // GNU var order is parent, MAC, DOS, UNIX — the vector
-            // order is (UNIX DOS MAC), so register in reverse.
-            for sub in subs.iter().rev() {
-                if !i.extra_coding_systems.iter().any(|n| n == sub) {
-                    i.extra_coding_systems.push(sub.clone());
+    // GNU runs halfwidth kana through JIS_TO_SJIS on their jisx0201 code,
+    // which produces 0x70NN values that are not real shift_jis.
+    if (0xff61..=0xff9f).contains(&ch) {
+        return Ok(Value::Int(jis_to_sjis(ch - 0xff40).into()));
+    }
+    // GNU's Vsjis_coding_system ends as shift_jis-2004: charsets
+    // (ascii katakana-jisx0201 jisx0213.2004-1 jisx0213-2).  Plane-2
+    // chars get plain JIS_TO_SJIS, producing nonstandard codes as GNU.
+    let jis = jisx0213_1_encode(ch as u32).or_else(|| jisx0213_2_encode(ch as u32));
+    match jis {
+        Some(jis) => Ok(Value::Int(jis_to_sjis(jis).into())),
+        None => Err(i.error(format!("Can't encode by shift_jis encoding: {ch}"))),
+    }
+}
+
+fn f_define_charset_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU charset.c Fdefine_charset_internal: exactly charset_arg_max
+    // (17) args, and the in-function check conses NAME . NARGS (a
+    // dotted pair, unlike the dispatcher's list).
+    if a.len() != 17 {
+        let wna = i.intern("wrong-number-of-arguments");
+        let who = symv(i, "define-charset-internal");
+        return Err(i.signal(wna, Value::cons(who, Value::Int(a.len() as i128))));
+    }
+    define_charset_internal_impl(i, &a)
+}
+
+/// GNU `Faref' on args[2]-style inputs: vectors and strings index;
+/// anything else signals `arrayp', out-of-bounds signals
+/// (args-out-of-range ARRAY INDEX).
+fn dci_aref(i: &mut Interp, v: &Value, idx: usize) -> Result<Value, Flow> {
+    match v {
+        Value::Vec(vec) => {
+            let vv = vec.borrow();
+            match vv.get(idx) {
+                Some(x) => Ok(x.clone()),
+                None => {
+                    drop(vv);
+                    let s = i.intern("args-out-of-range");
+                    Err(i.signal_data(s, vec![v.clone(), Value::Int(idx as i128)]))
                 }
-                crate::lisp::builtins::misc::add_to_coding_system_list(i, sub)?;
-                push_alist(i, sub)?;
+            }
+        }
+        Value::Str(s) => {
+            let sv = s.borrow();
+            match sv.chars().nth(idx) {
+                Some(c) => Ok(Value::Int(c as i128)),
+                None => {
+                    drop(sv);
+                    let s2 = i.intern("args-out-of-range");
+                    Err(i.signal_data(s2, vec![v.clone(), Value::Int(idx as i128)]))
+                }
+            }
+        }
+        other => Err(i.wrong_type_mut("arrayp", other)),
+    }
+}
+
+/// GNU `check_integer_range': non-integers signal `integerp';
+/// out-of-range signals (args-out-of-range X LO HI).
+fn check_int_range(i: &mut Interp, v: &Value, lo: i128, hi: i128) -> Result<i128, Flow> {
+    match v {
+        Value::Int(n) => {
+            if *n < lo || *n > hi {
+                let s = i.intern("args-out-of-range");
+                Err(i.signal_data(s, vec![v.clone(), Value::Int(lo), Value::Int(hi)]))
+            } else {
+                Ok(*n)
+            }
+        }
+        other => Err(i.wrong_type_mut("integerp", other)),
+    }
+}
+
+/// GNU data.c `cons_to_unsigned': integer, integral float, or the
+/// legacy (HI MID . LO) cons packing; anything else or out of range
+/// signals the plain `error' below.
+fn cons_to_unsigned(v: &Value) -> Option<u128> {
+    const UINT_MAX: u128 = u32::MAX as u128;
+    match v {
+        Value::Int(n) if *n >= 0 && *n <= UINT_MAX as i128 => Some(*n as u128),
+        Value::Float(f) => {
+            let d = **f;
+            if d >= 0.0 && d < 1.0 + UINT_MAX as f64 && d.fract() == 0.0 {
+                Some(d as u128)
+            } else {
+                None
+            }
+        }
+        Value::Cons(c) => {
+            let (car, cdr) = {
+                let b = c.borrow();
+                (b.car.clone(), b.cdr.clone())
+            };
+            let top = match &car {
+                Value::Int(n) if *n >= 0 && (*n as u128) <= (u128::MAX >> 40) => *n as u128,
+                _ => return None,
+            };
+            match &cdr {
+                Value::Cons(r) => {
+                    let (mid, low) = {
+                        let rb = r.borrow();
+                        (rb.car.clone(), rb.cdr.clone())
+                    };
+                    match (&mid, &low) {
+                        (Value::Int(m), Value::Int(l))
+                            if *m >= 0 && *m < (1 << 24) && *l >= 0 && *l < (1 << 16) =>
+                        {
+                            let val = (top << 40) | ((*m as u128) << 16) | (*l as u128);
+                            if val <= UINT_MAX { Some(val) } else { None }
+                        }
+                        _ => None,
+                    }
+                }
+                Value::Int(l) if *l >= 0 && *l < (1 << 16) => {
+                    let val = (top << 16) | (*l as u128);
+                    if val <= UINT_MAX { Some(val) } else { None }
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Shared by `define-charset-internal' and the `define-charset' Lisp
+/// wrapper's call: GNU's Fdefine_charset_internal validation order.
+fn define_charset_internal_impl(i: &mut Interp, a: &[Value]) -> EvalResult {
+    // NAME — CHECK_SYMBOL.
+    let sid = want_sym(i, &a[0])?;
+    // CODE-SPACE — Faref pairs (MIN MAX) × 4 dims; each byte is
+    // check_integer_range 0..255.
+    let mut mins = [0i128; 4];
+    let mut maxs = [0i128; 4];
+    let mut dim_auto = 0usize;
+    for d in 0..4 {
+        let minv = dci_aref(i, &a[2], d * 2)?;
+        let maxv = dci_aref(i, &a[2], d * 2 + 1)?;
+        let mn = check_int_range(i, &minv, 0, 255)?;
+        let mx = check_int_range(i, &maxv, mn, 255)?;
+        mins[d] = mn;
+        maxs[d] = mx;
+        if mx > 0 {
+            dim_auto = d + 1;
+        }
+    }
+    // DIMENSION — nil or integer 1..4.
+    if !a[1].is_nil() {
+        check_int_range(i, &a[1], 1, 4)?;
+    }
+    let min_code: u128 = (mins[0] as u128)
+        | ((mins[1] as u128) << 8)
+        | ((mins[2] as u128) << 16)
+        | ((mins[3] as u128) << 24);
+    let max_code: u128 = (maxs[0] as u128)
+        | ((maxs[1] as u128) << 8)
+        | ((maxs[2] as u128) << 16)
+        | ((maxs[3] as u128) << 24);
+    // MIN-CODE / MAX-CODE — nil or cons_to_unsigned within the space.
+    // MIN-CODE / MAX-CODE — nil or cons_to_unsigned within the space;
+    // GNU applies them (they override the code-space extremes).
+    let mut min_code = min_code;
+    let mut max_code = max_code;
+    for (arg, is_min) in [(&a[3], true), (&a[4], false)] {
+        if !arg.is_nil() {
+            let code = cons_to_unsigned(arg).ok_or_else(|| {
+                i.error("Not an in-range integer, integral float, or cons of integers")
+            })?;
+            if code < min_code || code > max_code {
+                // GNU's reversed args_out_of_range_3 order:
+                // (MIN-CODE MAX-CODE VAL).
+                let s = i.intern("args-out-of-range");
+                return Err(i.signal_data(
+                    s,
+                    vec![
+                        Value::Int(min_code as i128),
+                        Value::Int(max_code as i128),
+                        arg.clone(),
+                    ],
+                ));
+            }
+            if is_min {
+                min_code = code;
+            } else {
+                max_code = code;
             }
         }
     }
+    // INVALID-CODE — nil defaults to 0 (min>0) or max+1; max ==
+    // UINT_MAX with no attribute → "Attribute :invalid-code must be
+    // specified".  Non-nil must be a valid code integer.
+    if a[10].is_nil() {
+        if min_code == 0 && max_code == u32::MAX as u128 {
+            return Err(i.error("Attribute :invalid-code must be specified"));
+        }
+    } else if cons_to_unsigned(&a[10]).is_none() {
+        return Err(i.error("Not an in-range integer, integral float, or cons of integers"));
+    }
+    // ISO-FINAL-CHAR — nil or fixnum 48..127.
+    if !a[5].is_nil() {
+        match &a[5] {
+            Value::Int(fc) if (48..=127).contains(fc) => {}
+            Value::Int(fc) => return Err(i.error(format!("Invalid iso-final-char: {}", fc))),
+            other => return Err(i.wrong_type_mut("fixnump", other)),
+        }
+    }
+    // ISO-REVISION-NUMBER — nil or integer -1..63.
+    if !a[6].is_nil() {
+        check_int_range(i, &a[6], -1, 63)?;
+    }
+    // EMACS-MULE-ID — nil or fixnat not in 1..=128 and < 256.
+    if !a[7].is_nil() {
+        match &a[7] {
+            Value::Int(mid) if *mid >= 0 => {
+                if (*mid > 0 && *mid <= 128) || *mid >= 256 {
+                    return Err(i.error(format!("Invalid emacs-mule-id: {}", mid)));
+                }
+            }
+            other => return Err(i.wrong_type_mut("wholenump", other)),
+        }
+    }
+    // Method: CODE-OFFSET > MAP > SUBSET > SUPERSET > error.
+    if !a[11].is_nil() {
+        // CHECK_CHARACTER: integer in the character range.
+        match &a[11] {
+            Value::Int(n) if (0..=crate::lisp::builtins::misc::CT_MAX_CHAR as i128).contains(n) => {
+                // GNU charset.c: i = CODE_POINT_TO_INDEX(max_code);
+                // the check is `MAX_CHAR - offset < i'.  For linear
+                // charsets i = max_code - min_code; otherwise
+                // Σ ((byte_d - min_d) * Π ranges of lower dims)
+                // minus char_index_offset (from :min-code, else 0).
+                let idx: u128 = {
+                    let linear = dim_auto == 1
+                        || (maxs[0] - mins[0] == 255
+                            && (dim_auto == 2
+                                || (maxs[1] - mins[1] == 255
+                                    && (dim_auto == 3 || maxs[2] - mins[2] == 255))));
+                    if linear {
+                        max_code - min_code
+                    } else {
+                        // Decompose the effective max_code into bytes;
+                        // weight each by the product of the lower
+                        // dimensions' ranges (GNU nchars[]).
+                        let mut idx = 0u128;
+                        let mut span = 1u128;
+                        for d in 0..4usize {
+                            let byte = ((max_code >> (8 * d)) & 0xFF) as u128;
+                            let min = mins[d] as u128;
+                            let max = maxs[d] as u128;
+                            idx += byte.saturating_sub(min) * span;
+                            span *= max - min + 1;
+                        }
+                        idx
+                    }
+                };
+                // GNU stores `i' as `int': a saturated 0xFFFFFFFF
+                // index reads back as -1, so `MAX_CHAR - offset < i'
+                // fails and the charset registers anyway.  Mirror the
+                // truncation — a full [0 255]*4 :code-space is what
+                // GNU's default :dimension-4 charsets look like.
+                let idx_i = idx as u32 as i32 as i128;
+                let off = *n;
+                if (crate::lisp::builtins::misc::CT_MAX_CHAR as i128 - off) < idx_i {
+                    return Err(i.error(format!(
+                        "Unsupported max char: {} + {}d > MAX_CHAR ({})",
+                        idx_i,
+                        off,
+                        crate::lisp::builtins::misc::CT_MAX_CHAR
+                    )));
+                }
+            }
+            other => return Err(i.wrong_type_mut("characterp", other)),
+        }
+    } else if !a[12].is_nil() {
+        // MAP: a string names a charset-map file loaded lazily by
+        // `load-charset'; GNU validates nothing here (mule-conf's
+        // dumped :map "8859-2" must not touch the filesystem).
+    } else if !a[13].is_nil() {
+        // SUBSET — (PARENT MIN-CODE MAX-CODE OFFSET): car must name a
+        // charset, the next two are wholenump, offset a fixnum.
+        let items = a[13].list_to_vec().unwrap_or_default();
+        let parent = items.first().cloned().unwrap_or(Value::Nil);
+        let _ = want_charset(i, &parent)?;
+        for idx in [1usize, 2] {
+            if let Some(v) = items.get(idx) {
+                match v {
+                    Value::Int(n) if *n >= 0 => {}
+                    other => return Err(i.wrong_type_mut("wholenump", other)),
+                }
+            }
+        }
+        if let Some(v) = items.get(3) {
+            match v {
+                Value::Int(_) => {}
+                other => return Err(i.wrong_type_mut("fixnump", other)),
+            }
+        }
+    } else if !a[14].is_nil() {
+        // SUPERSET — Fcopy_sequence first (sequencep), then each elt is
+        // a charset symbol or (CHARSET . INT-OFFSET) cons.
+        let mut cur = a[14].clone();
+        match &cur {
+            Value::Cons(_) | Value::Nil | Value::Vec(_) | Value::Str(_) => {}
+            other => return Err(i.wrong_type_mut("sequencep", other)),
+        }
+        loop {
+            match cur {
+                Value::Cons(c) => {
+                    let (elt, rest) = {
+                        let b = c.borrow();
+                        (b.car.clone(), b.cdr.clone())
+                    };
+                    match &elt {
+                        Value::Cons(cc) => {
+                            let (car_part, cdr_part) = {
+                                let b = cc.borrow();
+                                (b.car.clone(), b.cdr.clone())
+                            };
+                            let _ = want_charset(i, &car_part)?;
+                            let _ =
+                                check_int_range(i, &cdr_part, i32::MIN as i128, i32::MAX as i128)?;
+                        }
+                        _ => {
+                            let _ = want_charset(i, &elt)?;
+                        }
+                    }
+                    cur = rest;
+                }
+                Value::Nil => break,
+                other => return Err(i.wrong_type_mut("listp", &other)),
+            }
+        }
+    } else {
+        return Err(i.error("None of :code-offset, :map, :parents are specified"));
+    }
+    // UNIFY-MAP — nil, string, or vector.
+    if !a[15].is_nil() && !matches!(a[15], Value::Str(_)) && !matches!(a[15], Value::Vec(_)) {
+        return Err(i.wrong_type_mut("vectorp", &a[15]));
+    }
+    // PLIST — CHECK_LIST.
+    if !matches!(a[16], Value::Cons(_) | Value::Nil) {
+        return Err(i.wrong_type_mut("listp", &a[16]));
+    }
+    let plist = a[16].clone();
+    let supp = a[9].truthy();
+    let name = i.symbol_name(sid);
+    if let Some(e) = i.charsets.iter_mut().find(|(n, _)| *n == name) {
+        if e.1.is_nil() && !plist.is_nil() {
+            e.1 = plist;
+        }
+    } else {
+        i.charsets.push((name.clone(), plist));
+        // GNU Fdefine_charset_internal: `Vcharset_list = Fcons (name,
+        // Vcharset_list)' — newest definitions prepend; the seed in
+        // eval.rs holds the builtins oldest-first at the tail.
+        {
+            let cl = i.intern("charset-list");
+            let cur = i.symbol_value(cl);
+            let cell = Value::cons(Value::Sym(sid), cur);
+            let _ = i.set_symbol_default(cl, cell);
+        }
+        if supp {
+            let mut st = i.charset_order.borrow_mut();
+            if !st.0.is_empty() {
+                st.0.push(name.clone());
+            }
+        } else {
+            charset_ordered_insert(i, &name);
+        }
+    }
+    invalidate_char_charset_cache(i);
+    Ok(Value::Nil)
 }
-Ok(Value::Nil) }
+
+fn f_define_coding_system_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // (define-coding-system-internal NAME MNEMONIC CODING-TYPE CHARSET-LIST
+    //  ASCII-COMPATIBLE-P DECODE-TT ENCODE-TT POST-READ PRE-WRITE
+    //  DEFAULT-CHAR FOR-UNIBYTE PLIST EOL-TYPE . SPEC-ATTRS) — register
+    //  the name so `coding-system-p` sees it.
+    let sid = want_sym(i, &a[0])?;
+    // GNU coding.c: MNEMONIC is CHECK_STRING_OR_CHAR first — nil or
+    // non-char non-string signals characterp.
+    match &a[1] {
+        Value::Int(_) | Value::Str(_) => {}
+        other => return Err(i.wrong_type_mut("characterp", other)),
+    }
+    // Then CODING-TYPE must name one of the builtin types.
+    const CS_TYPES: &[&str] = &[
+        "charset",
+        "utf-8",
+        "utf-16",
+        "iso-2022",
+        "emacs-mule",
+        "ccl",
+        "raw-text",
+        "undecided",
+        "shift-jis",
+        "big5",
+        "utf-7",
+        "ebcdic",
+    ];
+    if let Value::Sym(s) = &a[2] {
+        let n = i.symbol_name(*s);
+        if !CS_TYPES.contains(&n.as_str()) {
+            return Err(i.error(format!("Invalid coding system type: {}", n)));
+        }
+    }
+    let name = i.symbol_name(sid);
+    if !i.extra_coding_systems.iter().any(|n| *n == name) {
+        i.extra_coding_systems.push(name.clone());
+    }
+    // GNU: define-coding-system-internal `add-to-coding-system-list's
+    // the name, and — when EOL-TYPE is a 3-vector — registers the three
+    // subsidiary coding systems too (parents land before their
+    // subsidiaries since equal mnemonics insert after equal keys).
+    crate::lisp::builtins::misc::add_to_coding_system_list(i, &name)?;
+    // GNU coding.c Fdefine_coding_system_internal pushes
+    // `(SYMBOL-NAME . nil)' onto `coding-system-alist' when absent
+    // (subsidiary eol names get the same treatment below).
+    let alist_sym = i.intern("coding-system-alist");
+    let push_alist = |i: &mut Interp, name: &str| -> Result<(), Flow> {
+        let cur = i.symbol_value(alist_sym).list_to_vec().unwrap_or_default();
+        let present = cur.iter().any(|v| match v {
+            Value::Cons(c) => matches!(&c.borrow().car, Value::Str(s) if *s.borrow() == *name),
+            _ => false,
+        });
+        if !present {
+            let mut items = vec![Value::cons(Value::string(name), Value::Nil)];
+            items.extend(cur);
+            i.set_symbol(alist_sym, Value::list(items))?;
+        }
+        Ok(())
+    };
+    push_alist(i, &name)?;
+    if let Some(eol) = a.get(12) {
+        if let Value::Vec(v) = eol {
+            let subs: Vec<String> = v
+                .borrow()
+                .iter()
+                .filter_map(|x| match x {
+                    Value::Sym(s) => Some(i.symbol_name(*s)),
+                    _ => None,
+                })
+                .collect();
+            if subs.len() == 3 {
+                // GNU var order is parent, MAC, DOS, UNIX — the vector
+                // order is (UNIX DOS MAC), so register in reverse.
+                for sub in subs.iter().rev() {
+                    if !i.extra_coding_systems.iter().any(|n| n == sub) {
+                        i.extra_coding_systems.push(sub.clone());
+                    }
+                    crate::lisp::builtins::misc::add_to_coding_system_list(i, sub)?;
+                    push_alist(i, sub)?;
+                }
+            }
+        }
+    }
+    Ok(Value::Nil)
+}

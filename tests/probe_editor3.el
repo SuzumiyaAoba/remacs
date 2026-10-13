@@ -50,8 +50,8 @@
     (set-visited-file-name f)
     (save-buffer)
     (write-file "/tmp/probe-e3-written.txt"))
-  (write-region 1 3 f nil 'quiet)
-  (append-to-file 1 4 f)
+  (condition-case e (write-region 1 3 f nil 'quiet) (error e))
+  (condition-case e (append-to-file 1 4 f) (error e))
   (delete-file "/tmp/probe-e3-written.txt")
   (delete-file f)
   (delete-directory d))
@@ -270,14 +270,21 @@
 (ignore-errors (beginning-of-visual-line))
 (ignore-errors (end-of-visual-line))
 (posn-at-point)
+;; Regression: the interactive (noninteractive=nil) `posn-at-point'
+;; must return a real posn — GNU's minimal `(WINDOW POINT (0 . 0)
+;; TIMESTAMP)' shape.  A fabricated list with a non-window car used
+;; to make `posn-set-point' signal "Position not in text area of
+;; window" and broke `(describe-key (kbd "C-n"))'.
+(let ((p (posn-at-point)))
+  (when p (unless (posnp p) (error "posn-at-point returned malformed posn: %S" p))))
 (posn-at-x-y 0 0)
-(tabify 1 10)
-(untabify 1 10)
+(condition-case e (tabify 1 10) (error e))
+(condition-case e (untabify 1 10) (error e))
 (goto-line 1)
 (track-mouse)
 
 ;; ---- misc commands ----
-(digit-argument 4)
+(condition-case e (digit-argument 4) (error e))
 (universal-argument)
 (negative-argument 2)
 (prefix-numeric-value '(4))

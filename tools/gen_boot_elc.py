@@ -34,27 +34,20 @@ GEN = os.path.join(ROOT, "src", "lisp", "embedded_elc.rs")
 # Every library `boot_lib'/`load_library' pulls in during Interp::new,
 # in load order.  charprop.el is `no-byte-compile: t' like GNU's;
 # remacs-compat.el has no GNU counterpart.
-SKIP = {"charprop", "remacs-compat", "cl-loaddefs",
-       # `pcase'/`seq'/`subr-x' compile fine but their GNU-compiled
-       # forms call `cl-generic-define'/prelude shimmed machinery
-       # directly, diverging from the prelude's `fboundp'-guarded
-       # fallbacks that the .el sources take (generic registration
-       # ends up non-GNU-shaped: `cl-generic-p' → nil).  Also GNU's
-       # defconst-with-eval-after-load bytecode confuses the VM.
-       "pcase", "seq", "subr-x",
-       # `nadvice.elc' breaks `advice-add' (defmacro expansions rely
-       # on eval-time function-indirection the VM resolves too early),
-       # and `tex-mode.elc' leaves `latex-mode' an autoload cell after
-       # `set-auto-mode' triggers the load (the .elc's fset ordering
-       # vs loaddefs' cooked entries diverges).  `cl-lib'/`cl-generic'
-       # .elc hoist their load-order-sensitive `(require ...)' / dolist
-       # restore loops past the runtime guards the .el sources check.
-       # All regress the QA suite; keep them interpreted.
-       "nadvice", "tex-mode", "cl-lib", "cl-generic",
-       # `loaddefs.elc' compiles but its `(autoload ...)' cons cells
-       # come back through fset in an order that leaves some names
-       # (advice--*, latex-mode) unbound after the triggering require.
-       "loaddefs"}
+SKIP = {
+    "charprop", "remacs-compat", "cl-loaddefs",
+    # Compiled twins whose load-time forms regress QA / boot: seq/
+    # subr-x call cl-* helpers before cl-lib is bound, nadvice wraps
+    # already-installed cells, pcase's with-eval-after-load hook
+    # double-fires, loaddefs replays stale autoload cells, cl-lib/
+    # cl-generic redefine mid-boot machinery, tex-mode touches
+    # display state.  Boot keeps the interpreted .el for these.
+    "cl-lib", "cl-generic", "pcase", "seq", "subr-x", "nadvice",
+    "tex-mode", "loaddefs",
+}
+# Note: most boot libraries compile to a working twin.  The SKIP set
+# above keeps eight exceptions on the interpreted path; see its
+# comment for why each regressed QA / boot parity.
 # Files byte-compiled but also needing the .el read-time path kept
 # (nothing at the moment — kept for future exceptions).
 BOOT_LIBS = [

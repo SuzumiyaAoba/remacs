@@ -232,9 +232,7 @@ impl<'a> Reader<'a> {
                 if items.is_empty() {
                     Ok(self.interp.zero_vector.clone())
                 } else {
-                    Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-                        items,
-                    ))))
+                    Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(items))))
                 }
             }
             Some('\'') => {
@@ -447,8 +445,7 @@ impl<'a> Reader<'a> {
                         // Eight-bit proxy chars (from \NNN octal/\xNN
                         // escapes ≤0xFF) are raw bytes — they keep the
                         // literal unibyte like GNU.
-                        if ((c as u32) > 0xFF
-                            && crate::lisp::value::eight_bit_byte(c).is_none())
+                        if ((c as u32) > 0xFF && crate::lisp::value::eight_bit_byte(c).is_none())
                             || uni_escape
                         {
                             multibyte = true;
@@ -1015,8 +1012,7 @@ impl<'a> Reader<'a> {
                     }
                     Some(Value::Cons(_)) => {
                         // Interpreted: constants (env) cons or nil.
-                        size > 2
-                            && matches!(items.get(2), Some(Value::Nil) | Some(Value::Cons(_)))
+                        size > 2 && matches!(items.get(2), Some(Value::Nil) | Some(Value::Cons(_)))
                     }
                     _ => false,
                 };

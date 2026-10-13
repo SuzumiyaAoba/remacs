@@ -520,6 +520,22 @@ recurse, everything else is returned as-is for prin1."
                                         (mapcar #'buffer-name
                                                 (buffer-list)))))))))))
 
+          ;; `function'/`test.foo' cell tracker — DIFF_WATCH=1.
+          ;; Attributes whichever target leaks a stale binding (the
+          ;; add-hook/defconst/remove-hook chain reads `function''s
+          ;; value cell).
+          (when (getenv "DIFF_WATCH")
+            (dif--emit "ZZwatch" seq 'ok
+                       (list name
+                             (boundp 'function)
+                             (and (boundp 'function)
+                                  (dif--norm (symbol-value 'function)))
+                             (boundp 'test.foo)
+                             (and (boundp 'test.foo)
+                                  (dif--norm (symbol-value 'test.foo)))
+                             (get 'function 'variable-alias)
+                             (get 'test.foo 'variable-alias))))
+
 
 (defconst dif--guard-fns
   '(funcall apply eval fset fdefalias defalias

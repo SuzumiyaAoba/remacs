@@ -185,16 +185,21 @@
   (cl-assert (eq probe-cv 8))
   (cl-assert (equal (get 'probe-cv 'saved-value) '(8)))
   (cl-assert (equal (get 'probe-cv 'saved-variable-comment) "sc"))
-  ;; custom-set-minor-mode calls the function with 1/-1.
+  ;; custom-set-minor-mode calls the function with 1/0 (GNU-verified:
+  ;; `(funcall variable (if value 1 0))' in custom.el).
   (defun probe-mm (&optional arg) (setq probe-mm-arg arg))
   (custom-set-minor-mode 'probe-mm t)
   (cl-assert (eq probe-mm-arg 1))
   (custom-set-minor-mode 'probe-mm nil)
-  (cl-assert (eq probe-mm-arg -1)))
+  (cl-assert (eq probe-mm-arg 0)))
 
 ;; ---------- misc ----------
 (progn
-  (cl-assert (equal (custom-quote '(a (custom-quote (+ 1 2)) c)) '(a 3 c)))
+  ;; GNU custom.el `custom-quote' never evaluates nested sexp — it
+  ;; only wraps the whole thing in `quote'.  Verified: GNU -Q returns
+  ;; '(a (custom-quote (+ 1 2)) c) for this input.
+  (cl-assert (equal (custom-quote '(a (custom-quote (+ 1 2)) c))
+                    '(quote (a (custom-quote (+ 1 2)) c))))
   (custom-note-var-changed 'probe-cv)
   (cl-assert (equal (get 'probe-cv 'customized-value) '(8)))
   ;; GNU's cus-edit `custom-variable-state' is (SYMBOL VAL) and

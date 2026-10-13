@@ -64,8 +64,8 @@ struct CharSet {
     ranges: Vec<(char, char)>,
     singles: Vec<char>,
     posix: Vec<(String, bool)>, // (class-name, negated?)
-    syntax: Vec<(u8, bool)>,          // (syntax code, negated?)
-    cats: Vec<(u8, bool)>,            // (category bit, negated?) — \cX / \CX
+    syntax: Vec<(u8, bool)>,    // (syntax code, negated?)
+    cats: Vec<(u8, bool)>,      // (category bit, negated?) — \cX / \CX
 }
 
 impl CharSet {
@@ -160,8 +160,22 @@ fn posix_match(name: &str, c: char, syn: SynFn) -> bool {
 
 /// Class names GNU accepts inside `[:...:]'.
 const KNOWN_POSIX: &[&str] = &[
-    "alnum", "alpha", "digit", "xdigit", "upper", "lower", "space", "punct",
-    "graph", "print", "cntrl", "blank", "word", "ascii", "nonascii", "unibyte",
+    "alnum",
+    "alpha",
+    "digit",
+    "xdigit",
+    "upper",
+    "lower",
+    "space",
+    "punct",
+    "graph",
+    "print",
+    "cntrl",
+    "blank",
+    "word",
+    "ascii",
+    "nonascii",
+    "unibyte",
     "multibyte",
 ];
 
@@ -345,9 +359,7 @@ impl Parser {
                         if minv > RE_DUP_MAX
                             || matches!(max, Some(mv) if mv > RE_DUP_MAX || mv < minv)
                         {
-                            return Err(RegexError(
-                                "invalid interval bound".into(),
-                            ));
+                            return Err(RegexError("invalid interval bound".into()));
                         }
                         node = Ast::Repeat {
                             node: Box::new(node),
@@ -564,9 +576,7 @@ impl Parser {
                 }
                 if ok {
                     if !KNOWN_POSIX.contains(&name.as_str()) {
-                        return Err(RegexError(
-                            "Invalid character class name".into(),
-                        ));
+                        return Err(RegexError("Invalid character class name".into()));
                     }
                     set.posix.push((name, neg));
                 } else {
@@ -800,9 +810,7 @@ fn check_backrefs(node: &Ast, closed: &mut [bool]) -> Result<(), RegexError> {
             check_backrefs(inner, closed)?;
             closed[*g] = true;
         }
-        Ast::ShyGroup(inner) | Ast::Repeat { node: inner, .. } => {
-            check_backrefs(inner, closed)?
-        }
+        Ast::ShyGroup(inner) | Ast::Repeat { node: inner, .. } => check_backrefs(inner, closed)?,
         Ast::Alt(bs) | Ast::Concat(bs) => {
             for b in bs {
                 check_backrefs(b, closed)?;
@@ -921,8 +929,7 @@ fn run(
                     _ => return None,
                 };
                 let n = e - s;
-                if sp + n <= cap
-                    && (0..n).all(|k| char_eq(text[sp + k], text[s + k], re.case_fold))
+                if sp + n <= cap && (0..n).all(|k| char_eq(text[sp + k], text[s + k], re.case_fold))
                 {
                     sp += n;
                     pc += 1;
@@ -1050,9 +1057,7 @@ fn run(
                 pc += 1;
             }
             // end_cap == NO_END means "no end constraint".
-            Inst::Match => {
-                return (end_cap == usize::MAX || sp == end_cap).then_some(regs)
-            }
+            Inst::Match => return (end_cap == usize::MAX || sp == end_cap).then_some(regs),
         }
     }
 }
@@ -1265,4 +1270,3 @@ pub fn looking_at(
         match_at(re, text, pos, syn, cat, point)
     }
 }
-

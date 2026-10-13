@@ -28,15 +28,9 @@ fn run(file: &'static str) {
             match i.eval_str(&src) {
                 Ok(_) => {
                     let o = out.borrow();
-                    assert!(
-                        o.contains("checks passed"),
-                        "qa {file} summary: {o}"
-                    );
+                    assert!(o.contains("checks passed"), "qa {file} summary: {o}");
                 }
-                Err(_f) => panic!(
-                    "qa {file} eval error; captured output:\n{}",
-                    out.borrow()
-                ),
+                Err(_f) => panic!("qa {file} eval error; captured output:\n{}", out.borrow()),
             }
         })
         .unwrap()
@@ -173,6 +167,7 @@ qa!(qa_strings2, "qa_strings2.el");
 qa!(qa_subrinfo, "qa_subrinfo.el");
 qa!(qa_subrx, "qa_subrx.el");
 qa!(qa_subrx2, "qa_subrx2.el");
+qa!(qa_subrx3, "qa_subrx3.el");
 qa!(qa_symbol, "qa_symbol.el");
 qa!(qa_syntax, "qa_syntax.el");
 qa!(qa_syntax2, "qa_syntax2.el");
@@ -182,6 +177,7 @@ qa!(qa_tablist, "qa_tablist.el");
 qa!(qa_textprops, "qa_textprops.el");
 qa!(qa_thing, "qa_thing.el");
 qa!(qa_thing2, "qa_thing2.el");
+qa!(qa_diffface, "qa_diffface.el");
 qa!(qa_time, "qa_time.el");
 qa!(qa_timefmt, "qa_timefmt.el");
 qa!(qa_timer, "qa_timer.el");

@@ -495,4 +495,27 @@
     1)
 (qa-err-data (insert ?a "b" '(?c)) 'wrong-type-argument '(char-or-string-p (99)))
 
+
+;; == args-out-of-range payload shapes (GNU per-entry-point) ==
+(with-temp-buffer
+  ;; get-pos-property reports POS-1 twice (the raw offset pair)
+  (qa-err-data (get-pos-property 500 'x) 'args-out-of-range '(499 499))
+  ;; get-char-property and get-char-property-and-overlay → bare POS
+  (qa-err-data (get-char-property 500 'x) 'args-out-of-range '(500))
+  (qa-err-data (get-char-property-and-overlay 500 'x) 'args-out-of-range '(500))
+  ;; get-text-property / text-properties-at → (POS POS)
+  (qa-err-data (get-text-property 500 'x) 'args-out-of-range '(500 500))
+  (qa-err-data (text-properties-at 500) 'args-out-of-range '(500 500))
+  ;; next/previous-property-change → (POS POS)
+  (qa-err-data (next-property-change 500) 'args-out-of-range '(500 500))
+  ;; single-char variants: next reports POS, previous reports POS-1
+  (qa-err-data (next-single-char-property-change 500 'x)
+               'args-out-of-range '(500))
+  (qa-err-data (previous-single-char-property-change 500 'x)
+               'args-out-of-range '(499))
+  ;; field-* validate the position themselves → bare POS
+  (qa-err-data (field-end 500) 'args-out-of-range '(500))
+  (qa-err-data (field-beginning 500) 'args-out-of-range '(500))
+  (qa-err-data (field-string 500) 'args-out-of-range '(500)))
+
 (princ (qa--done))

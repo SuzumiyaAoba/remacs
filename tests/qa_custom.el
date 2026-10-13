@@ -17,9 +17,11 @@
 (qa qacu-v 5)
 (qa (symbol-value 'qacu-v) 5)
 (qa (default-value 'qacu-v) 5)
-;; custom-variable-p returns the standard-value list, not t
+;; custom-variable-p returns the standard-value list, not t.
+;; This file has no lexical-binding cookie, so defcustom stores the
+;; quoted STANDARD form — GNU's car is the raw expression 5.
 (qa (length (custom-variable-p 'qacu-v)) 1)
-(qa (caar (custom-variable-p 'qacu-v)) 'funcall)
+(qa (car (custom-variable-p 'qacu-v)) 5)
 (qa (length (get 'qacu-v 'standard-value)) 1)
 ;; the stored standard value is an evaluated funcall thunk → eval → 5
 (qa (eval (car (get 'qacu-v 'standard-value)) t) 5)

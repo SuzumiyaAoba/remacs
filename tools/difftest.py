@@ -74,7 +74,10 @@ def last_dmark(path):
 
 def done_flag(path):
     try:
-        return "DIFDONE" in open(path, errors="replace").read()
+        # Must be the literal final marker line — a load backtrace
+        # echoes the driver source, which also contains the text
+        # `DIFDONE %d rows' and would fake completion.
+        return any(l.startswith("DIFDONE") for l in open(path, errors="replace"))
     except OSError:
         return False
 
@@ -154,10 +157,20 @@ def is_known(name, payload, rules):
     for r in rules:
         if "|" in r:
             n, pat = r.split("|", 1)
-            if name == n and pat in payload:
+            if rule_match(n, name) and pat in payload:
                 return True
-        elif name == r:
+        elif rule_match(r, name):
             return True
+    return False
+
+def rule_match(pat, name):
+    if pat.startswith("*") and pat.endswith("*") and len(pat) > 2:
+        return pat[1:-1] in name
+    if pat.startswith("*"):
+        return name.endswith(pat[1:])
+    if pat.endswith("*"):
+        return name.startswith(pat[:-1])
+    return pat == name
     return False
 
 def main():
@@ -169,32 +182,42 @@ def main():
     ap.add_argument("--timeout", type=int, default=900)
     ap.add_argument("--no-regen", action="store_true")
     ap.add_argument("--no-resume", action="store_true")
+    ap.add_argument("--diff-only", action="store_true",
+                    help="skip runs; re-diff existing gnu.err/remacs.err")
     ap.add_argument("--remacs", default=os.path.join(ROOT, "target/release/remacs"))
     ap.add_argument("--gnu", default="emacs")
     a = ap.parse_args()
+    # run_side() chdirs into the sandbox; relative binary paths die.
+    a.remacs = os.path.abspath(a.remacs)
+    if os.path.sep in a.gnu:
+        a.gnu = os.path.abspath(a.gnu)
 
     only = a.only or os.environ.get("DIFF_ONLY", "")
     env = dict(os.environ, TZ="UTC", LC_ALL="C",
                DIFF_DIR=DIFF, EMACSLOADPATH="", EMACSPATH="",
                DIFF_ONLY=only)
-    if not a.no_regen:
-        gen_targets(a.gnu)
 
     resume = not a.no_resume and not only
     st, last, dt, gskip, gatt = "SKIP", "", 0, set(), 0
     st2, last2, dt2, rskip, ratt = "SKIP", "", 0, set(), 0
-    if a.side in ("both", "gnu"):
-        print(f"[difftest] running GNU {a.gnu} ...", flush=True)
-        st, last, dt, gskip, gatt = run_side(a.gnu, ["-Q", "--batch"], "gnu",
-                                           a.timeout, env, resume)
-        print(f"[difftest] GNU {st} in {dt:.0f}s attempts={gatt} "
-              f"autoskipped={sorted(gskip)} last={last}", flush=True)
-    if a.side in ("both", "remacs"):
-        print(f"[difftest] running remacs {a.remacs} ...", flush=True)
-        st2, last2, dt2, rskip, ratt = run_side(a.remacs, ["--batch"], "remacs",
-                                              a.timeout, env, resume)
-        print(f"[difftest] remacs {st2} in {dt2:.0f}s attempts={ratt} "
-              f"autoskipped={sorted(rskip)} last={last2}", flush=True)
+    if a.diff_only:
+        st = st2 = "cached"
+        gskip, rskip = load_autoskip("gnu"), load_autoskip("remacs")
+    else:
+        if not a.no_regen:
+            gen_targets(a.gnu)
+        if a.side in ("both", "gnu"):
+            print(f"[difftest] running GNU {a.gnu} ...", flush=True)
+            st, last, dt, gskip, gatt = run_side(a.gnu, ["-Q", "--batch"], "gnu",
+                                               a.timeout, env, resume)
+            print(f"[difftest] GNU {st} in {dt:.0f}s attempts={gatt} "
+                  f"autoskipped={sorted(gskip)} last={last}", flush=True)
+        if a.side in ("both", "remacs"):
+            print(f"[difftest] running remacs {a.remacs} ...", flush=True)
+            st2, last2, dt2, rskip, ratt = run_side(a.remacs, ["--batch"], "remacs",
+                                                  a.timeout, env, resume)
+            print(f"[difftest] remacs {st2} in {dt2:.0f}s attempts={ratt} "
+                  f"autoskipped={sorted(rskip)} last={last2}", flush=True)
 
     grow, gorder = parse_rows(os.path.join(DIFF, "gnu.err"))
     rrow, rorder = parse_rows(os.path.join(DIFF, "remacs.err"))
@@ -202,13 +225,17 @@ def main():
 
     divs = {}
     missing_g, missing_r = [], []
+    # A side that autoskipped NAME emits no rows; the other side's rows
+    # are not a divergence, they're a one-sided skip.
     for k in gorder:
         if k not in rrow:
-            missing_r.append(k); continue
+            if k[0] not in rskip:
+                missing_r.append(k)
+            continue
         if grow[k] != rrow[k]:
             divs.setdefault(k[0], []).append((k, grow[k], rrow[k]))
     for k in rorder:
-        if k not in grow:
+        if k not in grow and k[0] not in gskip:
             missing_g.append(k)
 
     rep = []

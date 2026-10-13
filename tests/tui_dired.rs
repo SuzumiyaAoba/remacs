@@ -96,9 +96,16 @@ fn tui_dired_select_file() {
         script.extend([C_X, 3]);
         let echoes = Rc::new(RefCell::new(Vec::new()));
         let grids = Rc::new(RefCell::new(Vec::new()));
-        let io = ScriptIo { keys: script.into(), echoes: echoes.clone(), grids: grids.clone() };
+        let io = ScriptIo {
+            keys: script.into(),
+            echoes: echoes.clone(),
+            grids: grids.clone(),
+        };
         remacs::term::run_editor_with(io, &mut i).expect("editor loop");
-        let bn = i.buffers.get(i.current_buffer).map(|b| b.borrow().name.clone());
+        let bn = i
+            .buffers
+            .get(i.current_buffer)
+            .map(|b| b.borrow().name.clone());
         eprintln!("final buffer: {bn:?}");
         for e in echoes.borrow().iter() {
             eprintln!("  {e:?}");
@@ -109,7 +116,13 @@ fn tui_dired_select_file() {
                 eprintln!("  |{r}");
             }
         }
-        assert!(!echoes.borrow().iter().any(|e| e.contains("wrong-type-argument")),
-                "dired selection signaled: {:?}", echoes.borrow());
+        assert!(
+            !echoes
+                .borrow()
+                .iter()
+                .any(|e| e.contains("wrong-type-argument")),
+            "dired selection signaled: {:?}",
+            echoes.borrow()
+        );
     })
 }

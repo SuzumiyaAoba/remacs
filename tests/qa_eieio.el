@@ -137,7 +137,10 @@
   (qa (child-of-class-p 'qaee-shape 'qaee-circle) nil)
   (qa (child-of-class-p 'qaee-shape 'qaee-shape) t)  ;; reflexive
   (qa (child-of-class-p (find-class 'qaee-circle) 'qaee-shape) t)
-  ;; first arg must be a class name/object, NOT an instance
+  ;; GNU's dumped eieio accessors run at (safety 0) — the
+  ;; `eieio--class-p' typecheck is compiled out, so `eieio--class-object'
+  ;; returns the instance and `cl-check-type' reaches `args-out-of-range'.
+  ;; remacs reproduces this via the safety-0 accessor shim in prelude.el.
   (qa-err (child-of-class-p c 'qaee-shape) 'args-out-of-range)
   (qa (object-of-class-p c 'qaee-shape) t)   ;; transitive
   (qa (object-of-class-p c 'qaee-circle) t)
@@ -162,7 +165,11 @@
 (qa (mapcar (lambda (c) (and (eieio--class-p c) (eieio-class-name c)))
             (class-precedence-list 'qaee-mi3))
     '(qaee-mi3 qaee-mi1 qaee-mi2 eieio-default-superclass nil nil nil))
-(qa (eieio--class-name (nth 3 (class-precedence-list 'qaee-circle))) 'record)
+;; ditto for the accessor guard inside `eieio--class-name': GNU's
+;; compiled eieio--class-name reads slot 1 of any record, including a
+;; built-in-class -> 'record; remacs's prelude shim is a bare aref.
+(qa (eieio--class-name (nth 3 (class-precedence-list 'qaee-circle)))
+    'record)
 (qa-err (eieio-class-name (nth 3 (class-precedence-list 'qaee-circle)))
         'wrong-type-argument)
 (qa (mapcar #'eieio-class-name (eieio-class-parents 'qaee-circle))

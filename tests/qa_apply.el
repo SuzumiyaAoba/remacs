@@ -622,4 +622,22 @@
   (remove-hook 'qaap-h20 #'ignore t)
   (qa qaap-h20 '(cdr t)))
 
+;; == wna data shapes (GNU datum conventions) ==
+;; byte-code macro expander → (MIN . NONREST) cons datum
+(qa-err-data (funcall (cdr (symbol-function 'when)))
+             'wrong-number-of-arguments '((1 . 1) 0))
+;; macroexpand-1 path reports the same argdesc cons
+(qa-err-data (macroexpand-1 '(when))
+             'wrong-number-of-arguments '((1 . 1) 0))
+;; plain subr → the function object itself is the datum
+(qa (let ((v (condition-case e (funcall (symbol-function 'car) 1 2)
+               (error e))))
+      (eq (cadr v) (symbol-function 'car)))
+    t)
+;; interpreted lambda → the lambda object itself is the datum
+(qa (let ((v (condition-case e (funcall (lambda (x) x))
+               (error e))))
+      (functionp (cadr v)))
+    t)
+
 (princ (qa--done))

@@ -18,12 +18,10 @@ fn occur_buffer_contents() {
         out,
         "2 matches for \"foo\" in buffer:  *temp*\n      2:foo a\n      4:foo b\n"
     );
-    let log = ev(
-        "(with-temp-buffer
+    let log = ev("(with-temp-buffer
            (insert \"x\\nfoo a\\ny\\nfoo b\\n\")
            (occur \"foo\")
-           (with-current-buffer \"*Messages*\" (buffer-string)))",
-    );
+           (with-current-buffer \"*Messages*\" (buffer-string)))");
     // prin1 escapes the inner quotes: "foo" appears as \"foo\".
     assert!(log.contains("Searched 1 buffer; 2 matches for \\\"foo\\\""));
 }
@@ -53,26 +51,40 @@ fn occur_single_match_grammar() {
 #[test]
 fn append_next_kill_merges_entries() {
     // append-next-kill makes the next kill append to the current entry.
+    // GNU-verified: only kill commands (`kill-region' via `last-command')
+    // append — a bare `kill-new' always pushes a new entry.
+    assert_eq!(
+        ev("(with-temp-buffer
+             (insert \"one two\")
+             (goto-char 1)
+             (kill-word 1)
+             (append-next-kill)
+             (kill-word 1)
+             (list (car kill-ring) (length kill-ring)))"),
+        "(\"one two\" 1)"
+    );
     assert_eq!(
         ev("(progn
              (kill-new \"one\")
              (append-next-kill)
              (kill-new \"two\")
              (list (car kill-ring) (length kill-ring)))"),
-        "(\"onetwo\" 1)"
+        "(\"two\" 2)"
     );
 }
 
 #[test]
 fn append_next_kill_consumed_once() {
     assert_eq!(
-        ev("(progn
-             (kill-new \"one\")
+        ev("(with-temp-buffer
+             (insert \"one two\")
+             (goto-char 1)
+             (kill-word 1)
              (append-next-kill)
-             (kill-new \"two\")
+             (kill-word 1)
              (kill-new \"three\")
              (list (car kill-ring) (cadr kill-ring) (length kill-ring)))"),
-        "(\"three\" \"onetwo\" 2)"
+        "(\"three\" \"one two\" 2)"
     );
 }
 

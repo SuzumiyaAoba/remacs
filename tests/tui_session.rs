@@ -102,50 +102,49 @@ fn run_on_big_stack(f: impl FnOnce() + Send + 'static) {
 #[test]
 fn tui_session_find_file_mx_switch_save_quit() {
     run_on_big_stack(move || {
-    let file = std::env::temp_dir().join("remacs_tui_session.txt");
-    let _ = std::fs::remove_file(&file);
-    let mut i = Interp::new();
+        let file = std::env::temp_dir().join("remacs_tui_session.txt");
+        let _ = std::fs::remove_file(&file);
+        let mut i = Interp::new();
 
-    let mut script = Vec::new();
-    // C-x C-f <abs path> RET — visits the file.
-    script.extend([C_X, 6]);
-    keys(&mut script, &file.to_string_lossy());
-    script.push(RET);
-    // Self-insert text into the visited file's buffer, then save.
-    keys(&mut script, "hello-remacs");
-    script.extend([C_X, 19]); // C-x C-s
-    // C-x b *scratch* RET — must-match buffer-name completion.
-    script.extend([C_X, b'b' as i128]);
-    keys(&mut script, "*scratch*");
-    script.push(RET);
-    // M-x forward-word RET — read-extended-command completion.
-    script.push(META | 120);
-    keys(&mut script, "forward-word");
-    script.push(RET);
-    // C-x C-c quits.
-    script.extend([C_X, 3]);
+        let mut script = Vec::new();
+        // C-x C-f <abs path> RET — visits the file.
+        script.extend([C_X, 6]);
+        keys(&mut script, &file.to_string_lossy());
+        script.push(RET);
+        // Self-insert text into the visited file's buffer, then save.
+        keys(&mut script, "hello-remacs");
+        script.extend([C_X, 19]); // C-x C-s
+        // C-x b *scratch* RET — must-match buffer-name completion.
+        script.extend([C_X, b'b' as i128]);
+        keys(&mut script, "*scratch*");
+        script.push(RET);
+        // M-x forward-word RET — read-extended-command completion.
+        script.push(META | 120);
+        keys(&mut script, "forward-word");
+        script.push(RET);
+        // C-x C-c quits.
+        script.extend([C_X, 3]);
 
-    let echoes = run(script, &mut i);
+        let echoes = run(script, &mut i);
 
-    // Ended in *scratch* after the buffer switch; quit flag set.
-    let bn = i
-        .buffers
-        .get(i.current_buffer)
-        .map(|b| b.borrow().name.clone());
-    assert_eq!(bn.as_deref(), Some("*scratch*"));
-    assert!(i.quit_editor);
-    // The minibuffer showed "Find file: " with the default directory
-    // pre-inserted (rfn-eshadow's {} marker or the dir text itself).
-    assert!(
-        echoes.borrow().iter().any(|e| e.contains("Find file: ")),
-        "echoes: {:?}",
-        echoes.borrow()
-    );
-    // The visited file was really written by C-x C-s.
-    let written = std::fs::read_to_string(&file).unwrap_or_default();
-    assert!(written.contains("hello-remacs"), "got: {written:?}");
-    let _ = std::fs::remove_file(&file);
-
+        // Ended in *scratch* after the buffer switch; quit flag set.
+        let bn = i
+            .buffers
+            .get(i.current_buffer)
+            .map(|b| b.borrow().name.clone());
+        assert_eq!(bn.as_deref(), Some("*scratch*"));
+        assert!(i.quit_editor);
+        // The minibuffer showed "Find file: " with the default directory
+        // pre-inserted (rfn-eshadow's {} marker or the dir text itself).
+        assert!(
+            echoes.borrow().iter().any(|e| e.contains("Find file: ")),
+            "echoes: {:?}",
+            echoes.borrow()
+        );
+        // The visited file was really written by C-x C-s.
+        let written = std::fs::read_to_string(&file).unwrap_or_default();
+        assert!(written.contains("hello-remacs"), "got: {written:?}");
+        let _ = std::fs::remove_file(&file);
     })
 }
 
@@ -154,22 +153,21 @@ fn tui_session_find_file_mx_switch_save_quit() {
 #[test]
 fn tui_find_file_tab_completion_runs() {
     run_on_big_stack(move || {
-    let mut i = Interp::new();
-    let mut script = vec![C_X, 6];
-    keys(&mut script, "/tmp/");
-    script.push(TAB); // minibuffer-complete over /tmp/ entries
-    keys(&mut script, "zz_tui_tab.txt");
-    script.push(RET);
-    script.extend([C_X, 3]);
-    run(script, &mut i);
-    let bn = i
-        .buffers
-        .get(i.current_buffer)
-        .map(|b| b.borrow().name.clone());
-    // The read finished and the file was visited.
-    assert_eq!(bn.as_deref(), Some("zz_tui_tab.txt"));
-    let _ = std::fs::remove_file(std::env::temp_dir().join("zz_tui_tab.txt"));
-
+        let mut i = Interp::new();
+        let mut script = vec![C_X, 6];
+        keys(&mut script, "/tmp/");
+        script.push(TAB); // minibuffer-complete over /tmp/ entries
+        keys(&mut script, "zz_tui_tab.txt");
+        script.push(RET);
+        script.extend([C_X, 3]);
+        run(script, &mut i);
+        let bn = i
+            .buffers
+            .get(i.current_buffer)
+            .map(|b| b.borrow().name.clone());
+        // The read finished and the file was visited.
+        assert_eq!(bn.as_deref(), Some("zz_tui_tab.txt"));
+        let _ = std::fs::remove_file(std::env::temp_dir().join("zz_tui_tab.txt"));
     })
 }
 
@@ -178,20 +176,19 @@ fn tui_find_file_tab_completion_runs() {
 #[test]
 fn tui_find_file_quit_aborts_read() {
     run_on_big_stack(move || {
-    let mut i = Interp::new();
-    let mut script = vec![C_X, 6];
-    keys(&mut script, "/tmp/nope-xyz");
-    script.push(7); // C-g → throw 'exit
-    script.extend([C_X, 3]);
-    run(script, &mut i);
-    let bn = i
-        .buffers
-        .get(i.current_buffer)
-        .map(|b| b.borrow().name.clone());
-    // No file buffer was visited; we're back at the startup buffer.
-    assert_ne!(bn.as_deref(), Some("nope-xyz"));
-    assert!(i.quit_editor);
-
+        let mut i = Interp::new();
+        let mut script = vec![C_X, 6];
+        keys(&mut script, "/tmp/nope-xyz");
+        script.push(7); // C-g → throw 'exit
+        script.extend([C_X, 3]);
+        run(script, &mut i);
+        let bn = i
+            .buffers
+            .get(i.current_buffer)
+            .map(|b| b.borrow().name.clone());
+        // No file buffer was visited; we're back at the startup buffer.
+        assert_ne!(bn.as_deref(), Some("nope-xyz"));
+        assert!(i.quit_editor);
     })
 }
 
@@ -205,27 +202,26 @@ fn tui_find_file_quit_aborts_read() {
 #[test]
 fn tui_find_file_directory_opens_dired() {
     run_on_big_stack(move || {
-    let mut i = Interp::new();
-    let mut script = vec![C_X, 6];
-    keys(&mut script, "/tmp/");
-    script.push(RET);
-    script.extend([C_X, 3]);
-    run(script, &mut i);
-    let bn = i
-        .buffers
-        .get(i.current_buffer)
-        .map(|b| b.borrow().name.clone());
-    assert_eq!(bn.as_deref(), Some("tmp"));
-    let mode = i
-        .eval_str("(buffer-local-value 'major-mode (current-buffer))")
-        .expect("major-mode eval");
-    assert!(
-        matches!(&mode, remacs::lisp::Value::Sym(s) if i.symbol_name(*s) == "dired-mode"),
-        "mode: {:?}",
-        mode
-    );
-    assert!(i.quit_editor);
-
+        let mut i = Interp::new();
+        let mut script = vec![C_X, 6];
+        keys(&mut script, "/tmp/");
+        script.push(RET);
+        script.extend([C_X, 3]);
+        run(script, &mut i);
+        let bn = i
+            .buffers
+            .get(i.current_buffer)
+            .map(|b| b.borrow().name.clone());
+        assert_eq!(bn.as_deref(), Some("tmp"));
+        let mode = i
+            .eval_str("(buffer-local-value 'major-mode (current-buffer))")
+            .expect("major-mode eval");
+        assert!(
+            matches!(&mode, remacs::lisp::Value::Sym(s) if i.symbol_name(*s) == "dired-mode"),
+            "mode: {:?}",
+            mode
+        );
+        assert!(i.quit_editor);
     })
 }
 
@@ -237,68 +233,67 @@ fn tui_find_file_directory_opens_dired() {
 #[test]
 fn tui_window_scrolls_to_keep_point_visible() {
     run_on_big_stack(move || {
-    let mut i = Interp::new();
-    i.eval_str(
-        "(with-current-buffer \"*scratch*\"
+        let mut i = Interp::new();
+        i.eval_str(
+            "(with-current-buffer \"*scratch*\"
            (erase-buffer)
            (dotimes (n 60) (insert (format \"line-%02d\\n\" n)))
            (goto-char (point-min)))",
-    )
-    .expect("fill scratch");
+        )
+        .expect("fill scratch");
 
-    // 30× C-n puts point on line-30 — past the last text row of an
-    // 80×24 screen (body 23, one mode line → 22 text rows).
-    let mut script = vec![14; 30];
-    script.extend([C_X, 3]);
-    let (_, grids) = run_capture(script, &mut i);
+        // 30× C-n puts point on line-30 — past the last text row of an
+        // 80×24 screen (body 23, one mode line → 22 text rows).
+        let mut script = vec![14; 30];
+        script.extend([C_X, 3]);
+        let (_, grids) = run_capture(script, &mut i);
 
-    let last = grids.borrow().last().expect("a rendered grid").clone();
-    assert_eq!(last.rows[0].trim(), "line-09");
-    assert_eq!(last.rows[21].trim(), "line-30");
-    assert_eq!(last.cursor, Some((0, 21)), "cursor: {:?}", last.cursor);
-    // Mode line (row 22) reports the new point line.
-    assert!(
-        last.rows[22].contains("L31"),
-        "mode line: {:?}",
-        last.rows[22]
-    );
+        let last = grids.borrow().last().expect("a rendered grid").clone();
+        assert_eq!(last.rows[0].trim(), "line-09");
+        assert_eq!(last.rows[21].trim(), "line-30");
+        assert_eq!(last.cursor, Some((0, 21)), "cursor: {:?}", last.cursor);
+        // Mode line (row 22) reports the new point line.
+        assert!(
+            last.rows[22].contains("L31"),
+            "mode line: {:?}",
+            last.rows[22]
+        );
 
-    // Moving point far above the window recenters it (M-<).
-    i.quit_editor = false;
-    let mut script = vec![META | b'<' as i128];
-    script.extend([C_X, 3]);
-    let (_, grids) = run_capture(script, &mut i);
-    let last = grids.borrow().last().expect("a rendered grid").clone();
-    assert_eq!(last.rows[0].trim(), "line-00");
-    assert_eq!(last.rows[1].trim(), "line-01");
-    assert_eq!(last.cursor, Some((0, 0)), "cursor: {:?}", last.cursor);
+        // Moving point far above the window recenters it (M-<).
+        i.quit_editor = false;
+        let mut script = vec![META | b'<' as i128];
+        script.extend([C_X, 3]);
+        let (_, grids) = run_capture(script, &mut i);
+        let last = grids.borrow().last().expect("a rendered grid").clone();
+        assert_eq!(last.rows[0].trim(), "line-00");
+        assert_eq!(last.rows[1].trim(), "line-01");
+        assert_eq!(last.cursor, Some((0, 0)), "cursor: {:?}", last.cursor);
 
-    // Point beyond the right edge scrolls the window horizontally
-    // (line truncation model: hscroll follows the cursor column).
-    i.eval_str(
-        "(with-current-buffer \"*scratch*\"
+        // Point beyond the right edge scrolls the window horizontally
+        // (line truncation model: hscroll follows the cursor column).
+        i.eval_str(
+            "(with-current-buffer \"*scratch*\"
            (erase-buffer)
            (insert (make-string 120 ?x))
            (goto-char (point-min)))",
-    )
-    .expect("long line");
-    i.quit_editor = false;
-    let mut script = vec![5]; // C-e → column 120
-    script.extend([C_X, 3]);
-    let (_, grids) = run_capture(script, &mut i);
-    let last = grids.borrow().last().expect("a rendered grid").clone();
-    assert_eq!(last.rows[0].trim(), "x".repeat(79));
-    assert_eq!(last.cursor, Some((79, 0)), "cursor: {:?}", last.cursor);
+        )
+        .expect("long line");
+        i.quit_editor = false;
+        let mut script = vec![5]; // C-e → column 120
+        script.extend([C_X, 3]);
+        let (_, grids) = run_capture(script, &mut i);
+        let last = grids.borrow().last().expect("a rendered grid").clone();
+        assert_eq!(last.rows[0].trim(), "x".repeat(79));
+        assert_eq!(last.cursor, Some((79, 0)), "cursor: {:?}", last.cursor);
 
-    // C-a back to column 0 scrolls the window back to column 0.
-    i.quit_editor = false;
-    let mut script = vec![1]; // C-a
-    script.extend([C_X, 3]);
-    let (_, grids) = run_capture(script, &mut i);
-    let last = grids.borrow().last().expect("a rendered grid").clone();
-    assert_eq!(last.rows[0].trim(), "x".repeat(80));
-    assert_eq!(last.cursor, Some((0, 0)), "cursor: {:?}", last.cursor);
-
+        // C-a back to column 0 scrolls the window back to column 0.
+        i.quit_editor = false;
+        let mut script = vec![1]; // C-a
+        script.extend([C_X, 3]);
+        let (_, grids) = run_capture(script, &mut i);
+        let last = grids.borrow().last().expect("a rendered grid").clone();
+        assert_eq!(last.rows[0].trim(), "x".repeat(80));
+        assert_eq!(last.cursor, Some((0, 0)), "cursor: {:?}", last.cursor);
     })
 }
 
@@ -315,55 +310,58 @@ fn tui_window_scrolls_to_keep_point_visible() {
 #[test]
 fn tui_scroll_up_command_scrolls_and_moves_point() {
     run_on_big_stack(move || {
-    let mut i = Interp::new();
-    i.eval_str(
-        "(with-current-buffer \"*scratch*\"
+        let mut i = Interp::new();
+        i.eval_str(
+            "(with-current-buffer \"*scratch*\"
            (erase-buffer)
            (dotimes (n 200) (insert (format \"line-%03d\\n\" n)))
            (goto-char (point-min)))",
-    )
-    .expect("fill scratch");
+        )
+        .expect("fill scratch");
 
-    // C-v then C-x C-c.  text_rows = 22, context 2 → start +20.
-    let script = vec![22, C_X, 3];
-    let (_, grids) = run_capture(script, &mut i);
-    let last = grids.borrow().last().expect("a rendered grid").clone();
-    assert_eq!(last.rows[0].trim(), "line-020", "first row: {:?}", last.rows[0]);
-    // Point is on the first visible line (GNU behavior).
-    assert_eq!(last.cursor, Some((0, 0)), "cursor: {:?}", last.cursor);
-    assert!(
-        last.rows[22].contains("L21"),
-        "mode line: {:?}",
-        last.rows[22]
-    );
+        // C-v then C-x C-c.  text_rows = 22, context 2 → start +20.
+        let script = vec![22, C_X, 3];
+        let (_, grids) = run_capture(script, &mut i);
+        let last = grids.borrow().last().expect("a rendered grid").clone();
+        assert_eq!(
+            last.rows[0].trim(),
+            "line-020",
+            "first row: {:?}",
+            last.rows[0]
+        );
+        // Point is on the first visible line (GNU behavior).
+        assert_eq!(last.cursor, Some((0, 0)), "cursor: {:?}", last.cursor);
+        assert!(
+            last.rows[22].contains("L21"),
+            "mode line: {:?}",
+            last.rows[22]
+        );
 
-    // A second C-v scrolls another page — the window is not stuck.
-    i.quit_editor = false;
-    let script = vec![22, C_X, 3];
-    let (_, grids) = run_capture(script, &mut i);
-    let last = grids.borrow().last().expect("a rendered grid").clone();
-    assert_eq!(last.rows[0].trim(), "line-040");
+        // A second C-v scrolls another page — the window is not stuck.
+        i.quit_editor = false;
+        let script = vec![22, C_X, 3];
+        let (_, grids) = run_capture(script, &mut i);
+        let last = grids.borrow().last().expect("a rendered grid").clone();
+        assert_eq!(last.rows[0].trim(), "line-040");
 
-    // M-v (`scroll-down-command`) scrolls back a page; point (line-040)
-    // stays inside the window, so it keeps its position (GNU only
-    // moves point when the scroll would leave it outside).
-    i.quit_editor = false;
-    let script = vec![META | b'v' as i128, C_X, 3];
-    let (_, grids) = run_capture(script, &mut i);
-    let last = grids.borrow().last().expect("a rendered grid").clone();
-    assert_eq!(last.rows[0].trim(), "line-020");
-    assert_eq!(last.cursor, Some((0, 20)), "cursor: {:?}", last.cursor);
+        // M-v (`scroll-down-command`) scrolls back a page; point (line-040)
+        // stays inside the window, so it keeps its position (GNU only
+        // moves point when the scroll would leave it outside).
+        i.quit_editor = false;
+        let script = vec![META | b'v' as i128, C_X, 3];
+        let (_, grids) = run_capture(script, &mut i);
+        let last = grids.borrow().last().expect("a rendered grid").clone();
+        assert_eq!(last.rows[0].trim(), "line-020");
+        assert_eq!(last.cursor, Some((0, 20)), "cursor: {:?}", last.cursor);
 
-    // A numeric prefix scrolls that many lines (C-u 5 C-v); point
-    // (line-040) remains visible → unchanged.
-    i.quit_editor = false;
-    let script = vec![21, b'5' as i128, 22, C_X, 3];
-    let (_, grids) = run_capture(script, &mut i);
-    let last = grids.borrow().last().expect("a rendered grid").clone();
-    assert_eq!(last.rows[0].trim(), "line-025");
-    assert_eq!(last.cursor, Some((0, 15)), "cursor: {:?}", last.cursor);
-
-
+        // A numeric prefix scrolls that many lines (C-u 5 C-v); point
+        // (line-040) remains visible → unchanged.
+        i.quit_editor = false;
+        let script = vec![21, b'5' as i128, 22, C_X, 3];
+        let (_, grids) = run_capture(script, &mut i);
+        let last = grids.borrow().last().expect("a rendered grid").clone();
+        assert_eq!(last.rows[0].trim(), "line-025");
+        assert_eq!(last.cursor, Some((0, 15)), "cursor: {:?}", last.cursor);
     })
 }
 
@@ -377,58 +375,57 @@ fn tui_scroll_up_command_scrolls_and_moves_point() {
 #[test]
 fn tui_hscroll_suspends_until_point_moves() {
     run_on_big_stack(move || {
-    let mut i = Interp::new();
-    i.eval_str(
-        "(with-current-buffer \"*scratch*\"
+        let mut i = Interp::new();
+        i.eval_str(
+            "(with-current-buffer \"*scratch*\"
            (erase-buffer)
            (insert (make-string 120 ?x))
            (goto-char (point-min)))",
-    )
-    .expect("long line");
+        )
+        .expect("long line");
 
-    // One render to settle hscroll=0 at point 0.  Then scroll-left
-    // 60 via eval (same path as C-x > through the subr) and render
-    // again: the view must stay scrolled, cursor clamped to col 0.
-    let script = vec![C_X, 3];
-    let (_, grids) = run_capture(script, &mut i);
-    assert_eq!(grids.borrow().last().unwrap().cursor, Some((0, 0)));
+        // One render to settle hscroll=0 at point 0.  Then scroll-left
+        // 60 via eval (same path as C-x > through the subr) and render
+        // again: the view must stay scrolled, cursor clamped to col 0.
+        let script = vec![C_X, 3];
+        let (_, grids) = run_capture(script, &mut i);
+        assert_eq!(grids.borrow().last().unwrap().cursor, Some((0, 0)));
 
-    i.quit_editor = false;
-    i.eval_str("(scroll-left 60)").expect("scroll-left");
-    let script = vec![C_X, 3];
-    let (_, grids) = run_capture(script, &mut i);
-    let last = grids.borrow().last().expect("a rendered grid").clone();
-    assert_eq!(
-        last.rows[0].trim(),
-        "x".repeat(60), // cols 60..120 of the 120-char line
-        "row0: {:?}",
-        last.rows[0]
-    );
-    // Cursor: point col 0 is left of hscroll=60 → clamped to col 0.
-    assert_eq!(last.cursor, Some((0, 0)), "cursor: {:?}", last.cursor);
+        i.quit_editor = false;
+        i.eval_str("(scroll-left 60)").expect("scroll-left");
+        let script = vec![C_X, 3];
+        let (_, grids) = run_capture(script, &mut i);
+        let last = grids.borrow().last().expect("a rendered grid").clone();
+        assert_eq!(
+            last.rows[0].trim(),
+            "x".repeat(60), // cols 60..120 of the 120-char line
+            "row0: {:?}",
+            last.rows[0]
+        );
+        // Cursor: point col 0 is left of hscroll=60 → clamped to col 0.
+        assert_eq!(last.cursor, Some((0, 0)), "cursor: {:?}", last.cursor);
 
-    // scroll-right partially restores; suspension still holds.
-    i.quit_editor = false;
-    i.eval_str("(scroll-right 20)").expect("scroll-right");
-    let script = vec![C_X, 3];
-    let (_, grids) = run_capture(script, &mut i);
-    let last = grids.borrow().last().expect("a rendered grid").clone();
-    assert_eq!(
-        last.rows[0].trim(),
-        "x".repeat(80), // cols 40..120
-        "row0: {:?}",
-        last.rows[0]
-    );
+        // scroll-right partially restores; suspension still holds.
+        i.quit_editor = false;
+        i.eval_str("(scroll-right 20)").expect("scroll-right");
+        let script = vec![C_X, 3];
+        let (_, grids) = run_capture(script, &mut i);
+        let last = grids.borrow().last().expect("a rendered grid").clone();
+        assert_eq!(
+            last.rows[0].trim(),
+            "x".repeat(80), // cols 40..120
+            "row0: {:?}",
+            last.rows[0]
+        );
 
-    // Moving point (C-f) lifts the suspension → auto-hscroll puts
-    // the cursor back inside the window.
-    i.quit_editor = false;
-    let script = vec![6, C_X, 3]; // C-f
-    let (_, grids) = run_capture(script, &mut i);
-    let last = grids.borrow().last().expect("a rendered grid").clone();
-    // Point col 1, auto-hscroll re-shows it: hscroll drops back to
-    // the point column and the cursor sits at column 0.
-    assert_eq!(last.cursor, Some((0, 0)), "cursor: {:?}", last.cursor);
-
+        // Moving point (C-f) lifts the suspension → auto-hscroll puts
+        // the cursor back inside the window.
+        i.quit_editor = false;
+        let script = vec![6, C_X, 3]; // C-f
+        let (_, grids) = run_capture(script, &mut i);
+        let last = grids.borrow().last().expect("a rendered grid").clone();
+        // Point col 1, auto-hscroll re-shows it: hscroll drops back to
+        // the point column and the cursor sits at column 0.
+        assert_eq!(last.cursor, Some((0, 0)), "cursor: {:?}", last.cursor);
     })
 }

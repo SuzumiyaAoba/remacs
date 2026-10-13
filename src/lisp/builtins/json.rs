@@ -51,19 +51,33 @@ struct Opts {
     false_obj: Value,
 }
 
-fn plist_args(i: &mut Interp, args: &[Value]) -> Result<Vec<(String, Value)>, Flow> {
+fn plist_args(i: &mut Interp, args: &[Value]) -> Result<Vec<(Value, Value)>, Flow> {
+    // GNU json_parse_args: odd arg count → `wta plistp' on the whole
+    // arg list BEFORE any keyword check; keys are NOT type-checked
+    // (a non-keyword pair falls into `wrong_choice' below).
     if args.len() % 2 != 0 {
         return Err(i.wrong_type_mut("plistp", &Value::list(args.to_vec())));
     }
     let mut out = Vec::new();
     for kv in args.chunks(2) {
-        let name = match &kv[0] {
-            Value::Sym(s) => i.symbol_name(*s).to_string(),
-            other => return Err(i.wrong_type_mut("plistp", other)),
-        };
-        out.push((name, kv[1].clone()));
+        out.push((kv[0].clone(), kv[1].clone()));
     }
     Ok(out)
+}
+
+/// GNU `wrong_choice (choices, wrong)': signals `error' whose data is
+/// ("One of A, B or C should be specified" WRONG).
+fn json_wrong_choice(i: &mut Interp, choices: &[&str], wrong: &Value) -> Flow {
+    let mut msg = String::from("One of ");
+    for (k, c) in choices.iter().enumerate() {
+        if k > 0 {
+            msg.push_str(if k + 1 == choices.len() { " or " } else { ", " });
+        }
+        msg.push_str(c);
+    }
+    msg.push_str(" should be specified");
+    let e = i.intern("error");
+    i.signal_data(e, vec![Value::string(msg), wrong.clone()])
 }
 
 fn parse_opts(i: &mut Interp, rest: &[Value], for_serialize: bool) -> Result<Opts, Flow> {
@@ -73,82 +87,57 @@ fn parse_opts(i: &mut Interp, rest: &[Value], for_serialize: bool) -> Result<Opt
         null_obj: Value::Sym(i.intern(":null")),
         false_obj: Value::Sym(i.intern(":false")),
     };
-    let mut bad_obj: Option<Value> = None;
-    let mut bad_arr: Option<Value> = None;
-    // For serialize: the value of the last :object-type/:array-type
-    // keyword in argument order (GNU rejects them there outright).
-    let mut last_ser_key: Option<Value> = None;
-    for (k, v) in plist_args(i, rest)? {
-        match k.as_str() {
-            ":object-type" => {
-                last_ser_key = Some(v.clone());
-                let t = i.sym_id(&v).map(|s| i.symbol_name(s).to_string());
-                match t.as_deref() {
-                    Some("hash-table") => o.obj = ObjType::Hash,
-                    Some("alist") => o.obj = ObjType::Alist,
-                    Some("plist") => o.obj = ObjType::Plist,
-                    _ => bad_obj = Some(v),
+    let pairs = plist_args(i, rest)?;
+    let obj_type = i.intern(":object-type");
+    let array_type = i.intern(":array-type");
+    let null_object = i.intern(":null-object");
+    let false_object = i.intern(":false-object");
+    // GNU json_parse_args iterates BACKWARD so keyword values appearing
+    // first take precedence — the FIRST signal from the tail wins.
+    for (key, value) in pairs.into_iter().rev() {
+        if !for_serialize && i.sym_is(&key, obj_type) {
+            let t = i.sym_id(&value).map(|s| i.symbol_name(s).to_string());
+            match t.as_deref() {
+                Some("hash-table") => o.obj = ObjType::Hash,
+                Some("alist") => o.obj = ObjType::Alist,
+                Some("plist") => o.obj = ObjType::Plist,
+                _ => {
+                    return Err(json_wrong_choice(
+                        i,
+                        &["hash-table", "alist", "plist"],
+                        &value,
+                    ));
                 }
             }
-            ":array-type" => {
-                last_ser_key = Some(v.clone());
-                let t = i.sym_id(&v).map(|s| i.symbol_name(s).to_string());
-                match t.as_deref() {
-                    Some("array") => o.array_list = false,
-                    Some("list") => o.array_list = true,
-                    _ => bad_arr = Some(v),
-                }
+        } else if !for_serialize && i.sym_is(&key, array_type) {
+            let t = i.sym_id(&value).map(|s| i.symbol_name(s).to_string());
+            match t.as_deref() {
+                Some("array") => o.array_list = false,
+                Some("list") => o.array_list = true,
+                _ => return Err(json_wrong_choice(i, &["array", "list"], &value)),
             }
-            ":null-object" => o.null_obj = v,
-            ":false-object" => o.false_obj = v,
-            // GNU rejects unknown keywords outright.
-            _ => {
-                let e = i.intern("error");
-                return Err(i.signal_data(
-                    e,
-                    vec![
-                        Value::string(format!(
-                            "Keyword argument {} not one of (:object-type :array-type :null-object :false-object)",
-                            k
-                        )),
-                    ],
-                ));
-            }
-        }
-    }
-    // GNU validates in this order: bad object-type first, then the
-    // serialize restriction, then bad array-type.
-    if let Some(v) = bad_obj {
-        let e = i.intern("error");
-        return Err(i.signal_data(
-            e,
-            vec![
-                Value::string("One of hash-table, alist or plist should be specified"),
-                v,
-            ],
-        ));
-    }
-    // json-serialize accepts only :null-object and :false-object;
-    // a present :object-type/:array-type errors with its value
-    // (the last one in argument order when both appear).
-    if for_serialize {
-        if let Some(v) = last_ser_key {
-            let e = i.intern("error");
-            return Err(i.signal_data(
-                e,
-                vec![
-                    Value::string("One of :null-object or :false-object should be specified"),
-                    v,
+        } else if i.sym_is(&key, null_object) {
+            o.null_obj = value;
+        } else if i.sym_is(&key, false_object) {
+            o.false_obj = value;
+        } else if !for_serialize {
+            return Err(json_wrong_choice(
+                i,
+                &[
+                    ":object-type",
+                    ":array-type",
+                    ":null-object",
+                    ":false-object",
                 ],
+                &value,
+            ));
+        } else {
+            return Err(json_wrong_choice(
+                i,
+                &[":null-object", ":false-object"],
+                &value,
             ));
         }
-    }
-    if let Some(v) = bad_arr {
-        let e = i.intern("error");
-        return Err(i.signal_data(
-            e,
-            vec![Value::string("One of array or list should be specified"), v],
-        ));
     }
     Ok(o)
 }
@@ -583,66 +572,72 @@ impl<'a> Parser<'a> {
     }
 }
 
-fn f_json_parse_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let src = match &a[0] {
-    Value::Str(s) => s.borrow().clone(),
-    other => return Err(i.wrong_type_mut("stringp", other)),
-};
-let o = parse_opts(i, &a[1..], false)?;
-let mut p = Parser {
-    s: src.chars().collect(),
-    pos: 0,
-    line: 1,
-    base: 0,
-    i,
-    o: &o,
-};
-let v = p.value()?;
-p.ws();
-if p.pos != p.s.len() {
-    // GNU: leftover input after a valid value is a dedicated
-    // `json-trailing-content' error with (LINE nil POS) data.
-    let (pos, line) = (p.pos + 1, p.line as i128);
-    drop(p);
-    let e = i.intern("json-trailing-content");
-    json_cond_chain(i, e);
-    return Err(i.signal_data(
-        e,
-        vec![Value::Int(line), Value::Nil, Value::Int(pos as i128)],
-    ));
-}
-Ok(v) }
-
-fn f_json_parse_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let o = parse_opts(i, &a[..], false)?;
-let buf = i.current_buffer;
-let (text, point) = {
-    let Some(b) = i.buffers.get(buf) else {
-        return Ok(Value::Nil);
+fn f_json_parse_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let src = match &a[0] {
+        Value::Str(s) => s.borrow().clone(),
+        other => return Err(i.wrong_type_mut("stringp", other)),
     };
-    let bb = b.borrow();
-    (bb.text.text(), bb.point)
-};
-let chars: Vec<char> = text.chars().collect();
-let start = point.min(chars.len());
-// GNU `buffer_byte_to_line' counts newlines inside the parsed
-// span only, so error LINE starts at 1 at point like POSITION
-// starts at 0.
-let mut p = Parser {
-    s: chars,
-    pos: start,
-    line: 1,
-    base: start,
-    i,
-    o: &o,
-};
-let v = p.value()?;
-if let Some(b) = p.i.buffers.get(buf) {
-    b.borrow_mut().set_point(p.pos);
+    let o = parse_opts(i, &a[1..], false)?;
+    let mut p = Parser {
+        s: src.chars().collect(),
+        pos: 0,
+        line: 1,
+        base: 0,
+        i,
+        o: &o,
+    };
+    let v = p.value()?;
+    p.ws();
+    if p.pos != p.s.len() {
+        // GNU: leftover input after a valid value is a dedicated
+        // `json-trailing-content' error with (LINE nil POS) data.
+        let (pos, line) = (p.pos + 1, p.line as i128);
+        drop(p);
+        let e = i.intern("json-trailing-content");
+        json_cond_chain(i, e);
+        return Err(i.signal_data(
+            e,
+            vec![Value::Int(line), Value::Nil, Value::Int(pos as i128)],
+        ));
+    }
+    Ok(v)
 }
-Ok(v) }
 
-fn f_json_insert(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let s = serialize(i, &a[0], &a[1..])?;
-crate::buffer::primitives::chg_insert_pt(i, &s, false)?;
-Ok(Value::Nil) }
+fn f_json_parse_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let o = parse_opts(i, &a[..], false)?;
+    let buf = i.current_buffer;
+    let (text, point) = {
+        let Some(b) = i.buffers.get(buf) else {
+            return Ok(Value::Nil);
+        };
+        let bb = b.borrow();
+        (bb.text.text(), bb.point)
+    };
+    let chars: Vec<char> = text.chars().collect();
+    let start = point.min(chars.len());
+    // GNU `buffer_byte_to_line' counts newlines inside the parsed
+    // span only, so error LINE starts at 1 at point like POSITION
+    // starts at 0.
+    let mut p = Parser {
+        s: chars,
+        pos: start,
+        line: 1,
+        base: start,
+        i,
+        o: &o,
+    };
+    let v = p.value()?;
+    if let Some(b) = p.i.buffers.get(buf) {
+        b.borrow_mut().set_point(p.pos);
+    }
+    Ok(v)
+}
+
+fn f_json_insert(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let s = serialize(i, &a[0], &a[1..])?;
+    crate::buffer::primitives::chg_insert_pt(i, &s, false)?;
+    Ok(Value::Nil)
+}
 
 // ---------- serializer ----------
 
@@ -677,11 +672,9 @@ fn ser_value(i: &mut Interp, v: &Value, o: &Opts, out: &mut String) -> Result<()
             if !f.is_finite() {
                 return Err(json_value_err(i, v));
             }
-            let mut s = format!("{}", f);
-            if !s.contains('.') && !s.contains('e') && !s.contains('E') {
-                s.push_str(".0");
-            }
-            out.push_str(&s);
+            // GNU serializes floats via the print.c shortest-%g path:
+            // 1e300 is "1e+300", not the raw decimal expansion.
+            out.push_str(&crate::lisp::print::format_float(**f));
         }
         Value::Str(s) => esc_into(&s.borrow(), out),
         Value::Sym(id) => {
@@ -739,7 +732,9 @@ fn ser_value(i: &mut Interp, v: &Value, o: &Opts, out: &mut String) -> Result<()
                     if !matches!(cdr, Value::Cons(_)) {
                         return Err(i.wrong_type_mut("consp", &cdr));
                     }
-                    let Value::Cons(vcons) = cdr.clone() else { unreachable!() };
+                    let Value::Cons(vcons) = cdr.clone() else {
+                        unreachable!()
+                    };
                     value = vcons.borrow().car.clone();
                     tail = cdr;
                 }
@@ -816,11 +811,13 @@ fn serialize(i: &mut Interp, v: &Value, rest: &[Value]) -> Result<String, Flow> 
     Ok(out)
 }
 
-fn f_json_serialize(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { let s = serialize(i, &a[0], &a[1..])?;
-// GNU's jansson-backed serializer returns a UNIBYTE string holding
-// the UTF-8 output bytes (jansson emits UTF-8).
-let v = Value::string(s.bytes().map(|b| b as char).collect::<String>());
-if let Value::Str(r) = &v {
-    i.mark_unibyte(r);
+fn f_json_serialize(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let s = serialize(i, &a[0], &a[1..])?;
+    // GNU's jansson-backed serializer returns a UNIBYTE string holding
+    // the UTF-8 output bytes (jansson emits UTF-8).
+    let v = Value::string(s.bytes().map(|b| b as char).collect::<String>());
+    if let Value::Str(r) = &v {
+        i.mark_unibyte(r);
+    }
+    Ok(v)
 }
-Ok(v) }
