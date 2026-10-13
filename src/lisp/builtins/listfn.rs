@@ -449,7 +449,7 @@ pub(crate) fn nthcdr_of(v: &Value, n: usize) -> Value {
     cur
 }
 
-/// cdr N times the way GNU does: Cons → cdr, nil → stays nil,
+/// cdr N times the way GNU does: Cons → cdr, nil → return nil,
 /// any other atom → wrong-type-argument.  GNU's CHECK_LIST_CONS
 /// reports the whole list argument, not the offending tail.
 pub(crate) fn nthcdr_strict(i: &mut Interp, v: &Value, n: usize) -> Result<Value, Flow> {
@@ -460,7 +460,7 @@ pub(crate) fn nthcdr_strict(i: &mut Interp, v: &Value, n: usize) -> Result<Value
                 let next = c.borrow().cdr.clone();
                 cur = next;
             }
-            Value::Nil => {}
+            Value::Nil => return Ok(Value::Nil),
             _ => return Err(i.wrong_type_mut("listp", v)),
         }
     }
