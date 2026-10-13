@@ -707,9 +707,12 @@ Open divergence classes under triage:
   inside remacs only — some `.elc`-consts path evaluates the
   `(null byte-not)` datum; unreproducible in isolation, parked.
 - `describe-buffer-case-table`, `describe-key--helper`,
-  `search-emacs-glossary`: remacs hangs somewhere inside the full
-  sweep (fine standalone) — likely an earlier corpus object (a
-  case-table/`[0 ...]` literal) reaching a non-terminating loop.
+  `search-emacs-glossary`: *previously* listed as remacs hangs inside
+  the full sweep — re-verified clean standalone at 60-120 s (2026-10);
+  the apparent hangs were the stale `autoskip-remacs.txt` masking
+  slow-but-finite targets.  The autoskip file was purged (it had
+  collected ~840 entries from before the `cl--loop-expand`/`equal`
+  fixes); the harness re-records genuine offenders.
 
 ## Verification recipe
 

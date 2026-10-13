@@ -1722,6 +1722,30 @@ fn macroexpand_all_inner(i: &mut Interp, form: &Value) -> EvalResult {
                         }
                         return Ok(Value::list(out));
                     }
+                    sym::COND => {
+                        // GNU `macroexp--expand-all': `(cond CLAUSES...)'
+                        // runs `macroexp--all-clauses' (skip 0) — every
+                        // element of every clause, test included, gets
+                        // expanded.  Without this arm the generic path
+                        // descends only into clause bodies, leaving a
+                        // `cl-macrolet'-bound call in test position
+                        // unexpanded (comp-cstr's `with-comp-cstr-
+                        // accessors' inside `cond' broke on this).
+                        let mut out = vec![items[0].clone()];
+                        for clause in &items[1..] {
+                            if let Value::Cons(_) = clause {
+                                let parts = clause.list_to_vec().unwrap_or_default();
+                                let mut nc = Vec::with_capacity(parts.len());
+                                for p in &parts {
+                                    nc.push(macroexpand_all(i, p)?);
+                                }
+                                out.push(Value::list(nc));
+                            } else {
+                                out.push(clause.clone());
+                            }
+                        }
+                        return Ok(Value::list(out));
+                    }
                     _ => {}
                 }
             }
@@ -1749,6 +1773,12 @@ fn macroexpand_all_inner(i: &mut Interp, form: &Value) -> EvalResult {
                     }
                     return Ok(Value::list(res));
                 }
+            }
+            if i.sym_id(&items[0]).is_none() {
+                // GNU `macroexp--expand-all' falls through to `(_ form)'
+                // for a non-symbol, non-lambda head: the whole form —
+                // arguments included — passes through unexpanded.
+                return Ok(expanded);
             }
             let mut out = Vec::with_capacity(items.len());
             // The head position is a function/macro name, not a variable:

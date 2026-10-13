@@ -130,4 +130,37 @@
 (qa (face-underline-p 'underline) t)
 (qa (face-underline-p 'default) nil)
 
+;; == `reset' is a pseudo-value accepted for every attribute ==
+;; GNU xfaces.c check_lface_attrs treats `reset' like `unspecified';
+;; elisp-mode.el's defface relies on it (`:foreground reset').
+(let ((f (make-empty-face 'qa-reset-face)))
+  (qa (condition-case e
+          (progn (set-face-attribute f nil :foreground 'reset) 'ok)
+        (error (car e)))
+      'ok)
+  (qa (condition-case e
+          (progn (set-face-attribute f nil :underline 'reset) 'ok)
+        (error (car e)))
+      'ok)
+  (qa (condition-case e
+          (progn (set-face-attribute f nil :weight 'reset) 'ok)
+        (error (car e)))
+      'ok))
+;; == FRAME=0 means "all frames plus new-frame defaults" ==
+;; GNU set-face-attribute rewrites nil→0 internally (faces.el:861);
+;; internal-set-lisp-face-attribute must accept fixnum 0 directly.
+(let ((f (make-empty-face 'qa-frame0-face)))
+  (qa (condition-case e
+          (progn (set-face-attribute f 0 :slant 'italic) 'ok)
+        (error (car e)))
+      'ok)
+  (qa (condition-case e
+          (progn (internal-set-lisp-face-attribute f :background "red" 0)
+                 'ok)
+        (error (car e)))
+      'ok)
+  ;; ...and the write is visible through the spec layer.
+  (qa (face-attribute f :slant) 'italic)
+  (qa (face-attribute f :background) "red"))
+
 (princ (qa--done))

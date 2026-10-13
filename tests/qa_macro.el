@@ -155,4 +155,22 @@
       (macroexpand-1 '(qa-m-bq 1 2)))
     '(\` ((\, x) (\, 2))))
 
+;; == macroexpand-all: `cond' clause tests expand too ==
+;; GNU `macroexp--all-clauses' expands every element of each clause —
+;; including the test.  Regression: remacs used to leave test-position
+;; macro calls raw (comp.el's `with-comp-cstr-accessors' inside `cond').
+(qa (macroexpand-all '(cond ((when a b)) (t c)))
+    '(cond ((if a (progn b))) (t c)))
+(qa (macroexpand '(cl-macrolet ((foo (x) `(+ ,x 1)))
+                     (cond ((foo a)) (t b))))
+    '(cond ((+ a 1)) (t b)))
+(qa (macroexpand-all '(cond ((and a b) (when c d))))
+    '(cond ((and a b) (if c (progn d)))))
+;; A non-symbol non-lambda head makes the whole form verbatim in GNU
+;; (`macroexp--expand-all' `_' arm) — args are NOT descended into.
+(qa (macroexpand '(cl-macrolet ((foo (x) `(+ ,x 1)))
+                     ((foo a) (foo b))))
+    '((foo a) (foo b)))
+(qa (macroexpand-all '((if x y))) '((if x y)))
+
 (princ (qa--done))

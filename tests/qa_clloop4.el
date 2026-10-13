@@ -5,17 +5,11 @@
 (require 'cl-lib)
 
 ;; == for VAR being the … ==
-;; remacs: `elements' is not in prelude's cl-loop being-clause table —
-;; eager macroexpand fails, so skip under remacs (still run under GNU).
-(unless qa--remacs
-  (qa (eval '(cl-loop for x being the elements of '(1 2 3) collect x)) '(1 2 3))
-  (qa (eval '(cl-loop for x being the elements of [1 2] collect (* x 2))) '(2 4))
-  (qa (eval '(cl-loop for x being the elements of "ab" collect x)) '(97 98))
-  (qa (eval '(cl-loop for x being the elements of nil collect x)) nil))
-(when qa--remacs
-  (push '(SKIP (cl-loop for x being the elements of '(1 2 3) collect x)
-               nil "remacs: elements being-clause unsupported")
-        qa--xfails))
+;; `being the elements' works now (the skip pin was stale).
+(qa (eval '(cl-loop for x being the elements of '(1 2 3) collect x)) '(1 2 3))
+(qa (eval '(cl-loop for x being the elements of [1 2] collect (* x 2))) '(2 4))
+(qa (eval '(cl-loop for x being the elements of "ab" collect x)) '(97 98))
+(qa (eval '(cl-loop for x being the elements of nil collect x)) nil)
 (let ((h (make-hash-table)))
   (puthash 'a 1 h) (puthash 'b 2 h)
   (qa (cl-loop for k being the hash-keys of h count t) 2)
@@ -26,13 +20,8 @@
                collect (list k v))
       '((a 1) (b 2))))
 (qa (cl-loop for k being the hash-keys of (make-hash-table) collect k) nil)
-(unless qa--remacs
-  (qa (> (eval '(cl-loop for x being the symbols of obarray count t)) 1000) t)
-  (qa (eval '(cl-loop for x being the overlays of (current-buffer) collect x)) nil)
-  (qa (> (eval '(cl-loop for x being the key-codes of (current-global-map) count t)) 100) t))
-(when qa--remacs
-  (push '(SKIP (cl-loop for x being the symbols of obarray count t)
-               nil "remacs: symbols/key-codes/overlays unsupported")
-        qa--xfails))
+(qa (> (eval '(cl-loop for x being the symbols of obarray count t)) 1000) t)
+(qa (eval '(cl-loop for x being the overlays of (current-buffer) collect x)) nil)
+(qa (> (eval '(cl-loop for x being the key-codes of (current-global-map) count t)) 100) t)
 (qa (>= (cl-loop for x being the buffers count t) 3) t)
 (princ (qa--done))

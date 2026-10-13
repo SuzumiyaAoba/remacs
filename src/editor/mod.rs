@@ -2509,6 +2509,12 @@ fn face_frame_live(i: &mut Interp, v: &Value) -> Result<(), Flow> {
             Ok(())
         }
         Value::Sym(s) if *s == sym::T => Ok(()),
+        // GNU `check_lface_frame' also accepts fixnum 0: "all frames
+        // plus new-frame defaults" — Lisp `set-face-attribute' rewrites
+        // a nil FRAME to 0 before calling `internal-set-lisp-face-
+        // attribute' (faces.el:861), so integer 0 is the common batch
+        // path once the real faces.el definition shadows the subr.
+        Value::Int(0) => Ok(()),
         other => Err(i.wrong_type_mut("frame-live-p", other)),
     }
 }
@@ -19671,10 +19677,12 @@ fn f_internal_set_lisp_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> E
     }
     // FRAME=t (4th arg) → new-frame defaults (face_t_table), mirrored
     // into the global lface inside `face--new-frame-defaults' like
-    // GNU (which stores the lface directly); a real frame or nil →
-    // the spec/realized layer.
+    // GNU (which stores the lface directly); `frame' 0 → the defaults
+    // AND every existing frame — both layers in our flat model; a
+    // real frame or nil → the spec/realized layer only.
     let to_t = matches!(arg(&a, 3), Value::Sym(s) if s == sym::T);
-    if to_t {
+    let zero = matches!(arg(&a, 3), Value::Int(0));
+    if to_t || zero {
         face_register_global(i, &name);
         if !i.face_t_table.iter().any(|(n, _)| *n == name) {
             i.face_t_table.push((name.clone(), Value::Nil));
@@ -19684,7 +19692,8 @@ fn f_internal_set_lisp_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> E
             *plist = crate::lisp::eval::plist_put(plist, kw, a[2].clone());
         }
         face_global_update(i, &name, &attr, a[2].clone());
-    } else {
+    }
+    if !to_t {
         set_face_attr(i, &name, &attr, a[2].clone());
     }
     Ok(Value::Nil)
@@ -19713,8 +19722,10 @@ fn f_set_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             vec![Value::string("Invalid face".to_string()), a[0].clone()],
         ));
     }
-    // FRAME (2nd arg) t → new-frame defaults; anything else → spec.
+    // FRAME (2nd arg) t → new-frame defaults; 0 → defaults AND the
+    // spec layer (all frames); anything else → spec only.
     let to_t = matches!(&a[1], Value::Sym(s) if *s == sym::T);
+    let zero = matches!(&a[1], Value::Int(0));
     for kv in a[2..].chunks(2) {
         if let (Some(k), Some(v)) = (i.sym_id(&kv[0]), kv.get(1)) {
             let attr = i.symbol_name(k);
@@ -19722,14 +19733,15 @@ fn f_set_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             // when the pair is stored — `unspecified'/`undefined'
             // pass for every attribute.
             check_face_value(i, &name, &attr, v)?;
-            if to_t {
+            if to_t || zero {
                 if !i.face_t_table.iter().any(|(n, _)| *n == name) {
                     i.face_t_table.push((name.clone(), Value::Nil));
                 }
                 if let Some((_, plist)) = i.face_t_table.iter_mut().find(|(n, _)| *n == name) {
                     *plist = crate::lisp::eval::plist_put(plist, k, v.clone());
                 }
-            } else {
+            }
+            if !to_t {
                 set_face_attr(i, &name, &attr, v.clone());
             }
         }
@@ -19744,7 +19756,10 @@ fn f_set_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn check_face_value(i: &mut Interp, name: &str, attr: &str, v: &Value) -> Result<(), Flow> {
     if let Value::Sym(s) = v {
         let n = i.symbol_name(*s);
-        if n == "unspecified" || n == "undefined" {
+        // GNU xfaces.c treats `reset' like `unspecified'/`undefined' —
+        // a per-attr pseudo-value legal everywhere (used by defface
+        // specs, e.g. elisp-mode's `:foreground reset').
+        if n == "unspecified" || n == "undefined" || n == "reset" {
             return Ok(());
         }
     }
@@ -19871,7 +19886,13 @@ fn check_face_value(i: &mut Interp, name: &str, attr: &str, v: &Value) -> Result
             }
         }
         ":box" => {
-            if !matches!(v, Value::Nil | Value::Int(_) | Value::Str(_) | Value::Cons(_)) {
+            // GNU check_lface_attrs: :box takes UNSPECIFIED, RESET,
+            // SYMBOLP (t = default-attributes box), STRINGP, FIXNUMP
+            // or CONSP — `Invalid face box' only for other types.
+            if !matches!(
+                v,
+                Value::Nil | Value::Int(_) | Value::Str(_) | Value::Cons(_) | Value::Sym(_)
+            ) {
                 return Err(i.signal_data(
                     sym::ERROR,
                     vec![Value::string(format!("Invalid face box {}", i.prin1_to_string(v)))],
