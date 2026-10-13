@@ -80,13 +80,16 @@ impl KeyIo for ChanIo {
     }
 
     fn draw_echo(&mut self, text: &str) -> io::Result<()> {
-        let mut grid = self.last.clone().unwrap_or(Grid {
-            rows: vec![String::new(); self.rows],
-            mode_rows: Vec::new(),
-            cursor: None,
-        });
+        let mut grid = self
+            .last
+            .clone()
+            .unwrap_or_else(|| Grid::blank(self.cols, self.rows));
         if let Some(last) = grid.rows.last_mut() {
             *last = format!("{text:<width$}", width = self.cols);
+        }
+        if let Some(last) = grid.attrs.last_mut() {
+            last.iter_mut()
+                .for_each(|c| *c = crate::term::CellStyle::default());
         }
         let cx = text.chars().count().min(self.cols.saturating_sub(1));
         grid.cursor = Some((cx, self.rows.saturating_sub(1)));
@@ -181,11 +184,7 @@ impl EditorView {
         EditorView {
             tx,
             focus: cx.focus_handle(),
-            grid: Grid {
-                rows: Vec::new(),
-                mode_rows: Vec::new(),
-                cursor: None,
-            },
+            grid: Grid::blank(0, 0),
             cols: 80,
             rows: 24,
         }
@@ -230,21 +229,79 @@ impl Render for EditorView {
             })
             .child(canvas(
                 move |_bounds, window, _cx| {
+                    // One TextRun per contiguous same-style span so
+                    // face attributes (colors, bold, underline, …)
+                    // land on the cells that carry them.
                     let shaped: Vec<_> = grid
                         .rows
                         .iter()
-                        .map(|row| {
-                            window.text_system().shape_line(
-                                row.clone().into(),
-                                font_size,
-                                &[TextRun {
-                                    len: row.len(),
+                        .enumerate()
+                        .map(|(y, row)| {
+                            let cells = grid.attrs.get(y);
+                            let mut runs: Vec<TextRun> = Vec::new();
+                            let mut cur: Option<crate::term::CellStyle> = None;
+                            let mut run_bytes = 0usize;
+                            let mut push_run = |st: crate::term::CellStyle, len: usize| {
+                                if len == 0 {
+                                    return;
+                                }
+                                let (fg, bg) = style_colors(st);
+                                let mut f = text_font.clone();
+                                if st.bold {
+                                    f = f.bold();
+                                }
+                                if st.italic {
+                                    f = f.italic();
+                                }
+                                runs.push(TextRun {
+                                    len,
+                                    font: f,
+                                    color: fg,
+                                    background_color: bg,
+                                    underline: st.underline.then(|| UnderlineStyle {
+                                        thickness: px(1.0),
+                                        color: None,
+                                        wavy: false,
+                                    }),
+                                    strikethrough: st.strike.then(|| StrikethroughStyle {
+                                        thickness: px(1.0),
+                                        color: None,
+                                    }),
+                                });
+                            };
+                            for (x, ch) in row.chars().enumerate() {
+                                let st = cells
+                                    .and_then(|c| c.get(x))
+                                    .copied()
+                                    .unwrap_or_default();
+                                match cur {
+                                    Some(c) if c == st => run_bytes += ch.len_utf8(),
+                                    _ => {
+                                        if let Some(c) = cur {
+                                            push_run(c, run_bytes);
+                                        }
+                                        cur = Some(st);
+                                        run_bytes = ch.len_utf8();
+                                    }
+                                }
+                            }
+                            if let Some(c) = cur {
+                                push_run(c, run_bytes);
+                            }
+                            if runs.is_empty() {
+                                runs.push(TextRun {
+                                    len: 0,
                                     font: text_font.clone(),
                                     color: rgb(FG).into(),
                                     background_color: None,
                                     underline: None,
                                     strikethrough: None,
-                                }],
+                                });
+                            }
+                            window.text_system().shape_line(
+                                row.clone().into(),
+                                font_size,
+                                &runs,
                                 None,
                             )
                         })
@@ -280,6 +337,21 @@ impl Render for EditorView {
                     }
                 },
             ))
+    }
+}
+
+/// CellStyle → (foreground, background) for gpui; `:inverse-video'
+/// swaps the two (default palette entries stand in for unset sides).
+fn style_colors(st: crate::term::CellStyle) -> (Hsla, Option<Hsla>) {
+    let cc = |c: crate::term::CellColor| -> Hsla {
+        rgb(((c.0 as u32) << 16) | ((c.1 as u32) << 8) | c.2 as u32).into()
+    };
+    let fg = st.fg.map(cc).unwrap_or_else(|| rgb(FG).into());
+    let bg = st.bg.map(cc);
+    if st.inverse {
+        (bg.unwrap_or_else(|| rgb(BG).into()), Some(fg))
+    } else {
+        (fg, bg)
     }
 }
 
@@ -611,26 +683,22 @@ mod tests {
     fn chanio_send_grid_latest_wins_and_closed() {
         let (mut io, _tx, grx) = chan_pair();
         // Bounded(1) + force_send: newest displaces the queued frame.
-        io.send_grid(Grid {
-            rows: vec!["old".into()],
-            mode_rows: vec![],
-            cursor: None,
-        })
+        {
+            let mut g = Grid::blank(0, 0);
+            g.rows = vec!["old".into()];
+            io.send_grid(g)
+        }
         .unwrap();
-        io.send_grid(Grid {
-            rows: vec!["new".into()],
-            mode_rows: vec![],
-            cursor: None,
-        })
+        {
+            let mut g = Grid::blank(0, 0);
+            g.rows = vec!["new".into()];
+            io.send_grid(g)
+        }
         .unwrap();
         assert_eq!(grx.try_recv().unwrap().rows[0], "new");
         drop(grx);
         assert!(
-            io.send_grid(Grid {
-                rows: vec![],
-                mode_rows: vec![],
-                cursor: None
-            })
+            io.send_grid(Grid::blank(0, 0))
             .is_err()
         );
     }
@@ -712,15 +780,14 @@ mod tests {
             _ => panic!("expected a resize report"),
         }
         // Push a grid and repaint: exercises the canvas paint path.
-        let grid = Grid {
-            rows: vec![
-                "line one".to_string(),
-                "line two".to_string(),
-                "--mode".to_string(),
-            ],
-            mode_rows: vec![2],
-            cursor: Some((3, 1)),
-        };
+        let mut grid = Grid::blank(10, 3);
+        grid.rows = vec![
+            "line one".to_string(),
+            "line two".to_string(),
+            "--mode".to_string(),
+        ];
+        grid.mode_rows = vec![2];
+        grid.cursor = Some((3, 1));
         view.update(cx, |v, cx| {
             v.grid = grid;
             cx.notify();
@@ -738,11 +805,10 @@ mod tests {
         let (gtx, grx) = smol::channel::bounded::<Grid>(1);
         let handle = app_cx.add_window(|window, cx| build_editor_view(window, cx, tx, grx));
         // A grid pushed through the channel is applied by the pump.
-        gtx.force_send(Grid {
-            rows: vec!["pumped".to_string()],
-            mode_rows: vec![],
-            cursor: Some((1, 0)),
-        })
+        let mut g = Grid::blank(10, 1);
+        g.rows = vec!["pumped".to_string()];
+        g.cursor = Some((1, 0));
+        gtx.force_send(g)
         .unwrap();
         app_cx.run_until_parked();
         let text = handle

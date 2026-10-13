@@ -410,6 +410,34 @@ buffer-locally per window (t default).  `scroll-left'/`-right' are
 Regression: `tui_hscroll_suspends_until_point_moves' in
 tests/tui_session.rs.
 
+Faces: `render_grid' also emits `Grid.attrs[y][x]` (a `CellStyle' per
+cell — fg/bg RGB, bold/italic/underline/overline/strike/inverse/
+extend).  `style_at_pos' merges GNU's `compute_char_face' order:
+`default' seeds, the active `region' face, `face'/'font-lock-face'
+text props (later runs win), then overlays sorted by ascending
+`priority' (a `window' property restricts an overlay to its window;
+nil = all).  `FaceCtx::named' merges `face_t_table' (new-frame
+defaults) under `face_table' (defface/spec layer) over
+`builtin_face_defaults' — the `(t ...)'/`((type tty) (class mono)
+...)' fallbacks of GNU's defface specs for faces whose files aren't
+booted (`isearch'→inverse, `lazy-highlight'→underline, `region'→
+gray bg + extend, `highlight'/`match'→inverse, mode-line faces→
+inverse/bold).  Colors come from `#rgb`/`#rrggbb` or
+`color-name-rgb-alist' + the eight tty-standard names;
+`:distant-foreground' fills fg only when no real :foreground (GNU
+drops it when it blends in); `:inherit' chains through
+`face-resolve' (face-alias aware).  The crossterm front-end emits
+true-color SGR escapes (fg default → SGR 39); gpui maps styles to
+highlights incl. a `defhighlight' cache for font-lock runs.
+`isearch_loop' itself installs real overlays after each key —
+`isearch' face + priority 1001 on the current match,
+`lazy-highlight' + priority 1000 + `window' on other visible matches
+(isearch.el isn't booted, so the step logic lives in Rust;
+`search-highlight'/`isearch-lazy-highlight' gate it, unbound→t).
+Regression: `isearch_extends_match_in_place_and_overlays_paint',
+`tui_isearch_highlights_matches', `tui_face_text_props_and_region_paint'.
+
+
 ## GNU-compat QA suite (`tests/qa.rs` + `tests/qa_*.el`)
 
 Each `qa_*.el` file is a flat list of `(qa FORM EXPECTED)` checks driven

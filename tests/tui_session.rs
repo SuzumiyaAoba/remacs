@@ -429,3 +429,125 @@ fn tui_hscroll_suspends_until_point_moves() {
         assert_eq!(last.cursor, Some((0, 0)), "cursor: {:?}", last.cursor);
     })
 }
+
+/// C-s must paint the match like GNU isearch: the current match gets
+/// the `isearch' face (inverse on this tty) and every other visible
+/// match gets `lazy-highlight' (underline).  Regression: render_grid
+/// ignored faces entirely, so hits stayed invisible.
+#[test]
+fn tui_isearch_highlights_matches() {
+    run_on_big_stack(move || {
+        let mut i = Interp::new();
+        i.eval_str(
+            "(with-current-buffer \"*scratch*\"
+           (erase-buffer)
+           (insert \"xxx yyy xxx\\n\")
+           (goto-char (point-min)))",
+        )
+        .expect("fill scratch");
+
+        // C-s x x x RET C-x C-c
+        let mut script = vec![19];
+        keys(&mut script, "xxx");
+        script.push(RET);
+        script.extend([C_X, 3]);
+        let (_, grids) = run_capture(script, &mut i);
+
+        // Find the frame rendered while the search was still open:
+        // the last one whose row 0 cells carry the highlights.
+        let all = grids.borrow();
+        let hit = all
+            .iter()
+            .rev()
+            .find(|g| g.attrs[0][..3].iter().all(|c| c.inverse))
+            .expect("no frame showed the current isearch match")
+            .clone();
+        assert_eq!(hit.rows[0].trim(), "xxx yyy xxx");
+        // Current match "xxx" (cols 0..3): isearch face = inverse.
+        assert!(
+            hit.attrs[0][..3].iter().all(|c| c.inverse),
+            "current match cells: {:?}",
+            &hit.attrs[0][..5]
+        );
+        assert!(!hit.attrs[0][3].inverse, "gap char not highlighted");
+        // Second match (cols 8..11): lazy-highlight face = underline.
+        assert!(
+            hit.attrs[0][8..11].iter().all(|c| c.underline),
+            "lazy match cells: {:?}",
+            &hit.attrs[0][8..11]
+        );
+        assert!(!hit.attrs[0][8].inverse);
+
+        // After RET the overlays are gone — no stray highlighting.
+        let last = grids.borrow().last().unwrap().clone();
+        assert!(
+            last.attrs[0].iter().all(|c| !c.inverse && !c.underline),
+            "leftover highlight: {:?}",
+            &last.attrs[0][..8]
+        );
+
+        // A failing search leaves no current-match overlay either.
+        let mut i = Interp::new();
+        i.eval_str(
+            "(with-current-buffer \"*scratch*\"
+           (erase-buffer)
+           (insert \"abc\\n\")
+           (goto-char (point-min)))",
+        )
+        .expect("fill scratch");
+        let mut script = vec![19];
+        keys(&mut script, "zz");
+        script.push(7); // C-g
+        script.extend([C_X, 3]);
+        let (_, grids) = run_capture(script, &mut i);
+        let last = grids.borrow().last().unwrap().clone();
+        assert!(
+            last.attrs[0].iter().all(|c| !c.inverse && !c.underline),
+            "failed search left highlight: {:?}",
+            &last.attrs[0][..8]
+        );
+    })
+}
+
+/// Text-property and anonymous-list faces paint their cells too —
+/// `render_grid' resolves the `face' prop the same way overlay
+/// faces resolve.
+#[test]
+fn tui_face_text_props_and_region_paint() {
+    run_on_big_stack(move || {
+        let mut i = Interp::new();
+        i.eval_str(
+            "(with-current-buffer \"*scratch*\"
+           (erase-buffer)
+           (insert \"abcdef\\n\")
+           (put-text-property 1 3 'face '(:foreground \"red\" :underline t))
+           (let ((ov (make-overlay 4 6)))
+             (overlay-put ov 'face '(bold)))
+           (set-mark 7)
+           (goto-char 2)
+           (setq mark-active t))",
+        )
+        .expect("set props");
+        let grid = render_grid(&i, 80, 24);
+        // 'face text prop: anonymous plist face — fg red + underline.
+        let c0 = grid.attrs[0][0];
+        assert_eq!(c0.fg, Some(remacs::term::CellColor(255, 0, 0)));
+        assert!(c0.underline, "prop face underline: {c0:?}");
+        assert!(!grid.attrs[0][2].underline);
+        // Overlay 'face '(bold).
+        assert!(grid.attrs[0][3].bold, "overlay face: {:?}", grid.attrs[0][3]);
+        assert!(grid.attrs[0][4].bold);
+        assert!(!grid.attrs[0][5].bold);
+        // Active region mark(7)→point(2) covers cols 1..6: bg gray.
+        for x in 1..6 {
+            assert_eq!(
+                grid.attrs[0][x].bg,
+                Some(remacs::term::CellColor(190, 190, 190)),
+                "region cell {x}: {:?}",
+                grid.attrs[0][x]
+            );
+        }
+        assert!(grid.attrs[0][0].bg.is_none(), "cell 0 outside region");
+        assert!(grid.attrs[0][6].bg.is_none(), "cell 6 outside region");
+    })
+}

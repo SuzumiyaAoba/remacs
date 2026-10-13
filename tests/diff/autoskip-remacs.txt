@@ -809,3 +809,10 @@ tab-bar-new-tab
 version-list-<=
 text-properties-at
 prog-fill-reindent-defun
+isearch--highlight-regexp-or-lines
+window-bump-use-time
+vc-mode-line-state
+isearch-complete
+tab-bar-tab-group-face-default
+complete-symbol
+elisp-byte-compile-buffer

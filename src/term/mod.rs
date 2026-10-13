@@ -6,6 +6,7 @@
 //! interleave with repaints because `sit-for`/`sleep-for` hand control
 //! back to this loop rather than blocking inside the evaluator.
 
+use std::collections::HashMap;
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
@@ -17,6 +18,7 @@ use crossterm::{
     terminal::{self},
 };
 
+use crate::buffer::Buffer;
 use crate::editor::{CHAR_CTL, CHAR_HYPER, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
 use crate::lisp::Interp;
 use crate::lisp::value::Value;
@@ -39,15 +41,575 @@ pub trait KeyIo {
     fn size(&self) -> (usize, usize);
 }
 
+/// A terminal color: RGB. Face color specs (names, `#rgb' forms) are
+/// resolved to this at render time; the crossterm front-end emits
+/// true-color SGR, the gpui front-end paints it directly.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct CellColor(pub u8, pub u8, pub u8);
+
+/// The merged face attributes for one screen cell.  `Option' fields
+/// are tri-state during merging (None = unspecified, Some(false) =
+/// explicitly cleared) and collapsed to plain bools once merged.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct CellStyle {
+    pub fg: Option<CellColor>,
+    pub bg: Option<CellColor>,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub overline: bool,
+    pub strike: bool,
+    /// `:inverse-video': swap foreground/background.  Front-ends invert
+    /// themselves (so a colored inverse cell keeps its colors swapped
+    /// rather than emitting SGR 7 on top of them).
+    pub inverse: bool,
+    /// The face's `:extend' flag: the face's background covers the
+    /// empty cells past the end of the line (region-face semantics).
+    pub extend: bool,
+}
+
+/// Builder state for CellStyle while face specs merge — each field is
+/// Option so an explicitly-nil attribute clears a lower layer.
+#[derive(Clone, Copy, Default)]
+struct StyleMix {
+    fg: Option<CellColor>,
+    bg: Option<CellColor>,
+    bold: Option<bool>,
+    italic: Option<bool>,
+    underline: Option<bool>,
+    overline: Option<bool>,
+    strike: Option<bool>,
+    inverse: Option<bool>,
+    extend: Option<bool>,
+}
+
+impl StyleMix {
+    /// Later (higher-priority) layer wins wherever it specifies a value.
+    fn merge(&mut self, other: &StyleMix) {
+        macro_rules! m {
+            ($($f:ident),*) => {
+                $(if let Some(v) = other.$f { self.$f = Some(v); })*
+            };
+        }
+        m!(fg, bg, bold, italic, underline, overline, strike, inverse, extend);
+    }
+
+    fn finish(&self) -> CellStyle {
+        CellStyle {
+            fg: self.fg,
+            bg: self.bg,
+            bold: self.bold.unwrap_or(false),
+            italic: self.italic.unwrap_or(false),
+            underline: self.underline.unwrap_or(false),
+            overline: self.overline.unwrap_or(false),
+            strike: self.strike.unwrap_or(false),
+            inverse: self.inverse.unwrap_or(false),
+            extend: self.extend.unwrap_or(false),
+        }
+    }
+}
+
+impl PartialEq for StyleMix {
+    fn eq(&self, o: &Self) -> bool {
+        self.fg == o.fg
+            && self.bg == o.bg
+            && self.bold == o.bold
+            && self.italic == o.italic
+            && self.underline == o.underline
+            && self.overline == o.overline
+            && self.strike == o.strike
+            && self.inverse == o.inverse
+            && self.extend == o.extend
+    }
+}
+
 /// A text-mode screen snapshot produced by `render_grid`: one string
-/// per row, which rows are mode lines (drawn inverted), and the
-/// hardware cursor position. Both front-ends share it — the terminal
-/// writes it, gpui draws it.
+/// per row, the per-cell face attributes (same shape as `rows`), which
+/// rows are mode lines, and the hardware cursor position.  Both
+/// front-ends share it — the terminal writes it, gpui draws it.
 #[derive(Clone)]
 pub struct Grid {
     pub rows: Vec<String>,
+    /// Cell styles, `attrs[y][x]` alongside `rows[y]`'s chars.
+    pub attrs: Vec<Vec<CellStyle>>,
     pub mode_rows: Vec<usize>,
     pub cursor: Option<(usize, usize)>,
+}
+
+impl Grid {
+    /// An all-default grid of WIDTH × HEIGHT cells.
+    pub fn blank(width: usize, height: usize) -> Grid {
+        Grid {
+            rows: vec![String::new(); height],
+            attrs: vec![vec![CellStyle::default(); width]; height],
+            mode_rows: Vec::new(),
+            cursor: None,
+        }
+    }
+}
+// ---------- face resolution ----------
+//
+// GNU realizes faces in xfaces.c (`realize_face' +
+// `compute_char_face'): the `default' face seeds every cell, the
+// active region and `face'/`font-lock-face' text properties overlay
+// it, and overlays stack on top by ascending `priority'.  The face
+// attribute layers here are the same: defface specs land in
+// `Interp::face_table' via `internal-set-lisp-face-attribute'/the
+// prelude's `face-spec-set', `(set-face-attribute FACE t ...)' goes to
+// `face_t_table', and `face-alias' links resolve like GNU's
+// `lface_from_face_name'.
+
+/// Per-render face computation: symbol/keyword ids looked up once,
+/// the color name table from `color-name-rgb-alist', and a cache of
+/// already-resolved named faces.
+struct FaceCtx {
+    // Symbol ids for property names (SymId::MAX = missing).
+    face: u32,
+    font_lock_face: u32,
+    priority: u32,
+    window: u32,
+    mark_active: u32,
+    inherit: u32,
+    /// `color-name-rgb-alist' folded into (canonical name -> rgb).
+    colors: HashMap<String, (u8, u8, u8)>,
+    /// Resolved face name -> merged StyleMix.
+    cache: HashMap<String, StyleMix>,
+}
+
+impl FaceCtx {
+    fn new(i: &Interp) -> FaceCtx {
+        let sym = |n: &str| i.intern_soft(n).unwrap_or(u32::MAX);
+        let mut colors: HashMap<String, (u8, u8, u8)> = HashMap::new();
+        // The eight standard colors come from tty-standard-colors so
+        // they resolve even if color-name-rgb-alist never loads.
+        for (n, r, g, b) in [
+            ("black", 0u32, 0u32, 0u32),
+            ("red", 65535, 0, 0),
+            ("green", 0, 65535, 0),
+            ("yellow", 65535, 65535, 0),
+            ("blue", 0, 0, 65535),
+            ("magenta", 65535, 0, 65535),
+            ("cyan", 0, 65535, 65535),
+            ("white", 65535, 65535, 65535),
+        ] {
+            colors.insert(n.to_string(), ((r / 256) as u8, (g / 256) as u8, (b / 256) as u8));
+        }
+        if let Value::Cons(_) = i.symbol_value(sym("color-name-rgb-alist")) {
+            let alist = i.symbol_value(sym("color-name-rgb-alist"));
+            if let Ok(entries) = alist.list_to_vec() {
+                for e in entries {
+                    if let Value::Cons(c) = &e {
+                        let (k, v) = {
+                            let cb = c.borrow();
+                            (cb.car.clone(), cb.cdr.clone())
+                        };
+                        if let Value::Str(name) = &k {
+                            if let Ok(rgb) = v.list_to_vec() {
+                                let mut c8 = [0u8; 3];
+                                let mut ok = rgb.len() >= 3;
+                                for (n, x) in rgb.iter().take(3).enumerate() {
+                                    match x {
+                                        Value::Int(v) => {
+                                            c8[n] = ((*v).clamp(0, 65535) / 256) as u8;
+                                        }
+                                        _ => ok = false,
+                                    }
+                                }
+                                if ok {
+                                    colors.insert(
+                                        name.borrow().to_lowercase().replace(' ', ""),
+                                        (c8[0], c8[1], c8[2]),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        FaceCtx {
+            face: sym("face"),
+            font_lock_face: sym("font-lock-face"),
+            priority: sym("priority"),
+            window: sym("window"),
+            mark_active: sym("mark-active"),
+            inherit: sym(":inherit"),
+            colors,
+            cache: HashMap::new(),
+        }
+    }
+
+    /// GNU `tty_color_standard_values' + `tty-color-canonicalize':
+    /// `#rgb'/`#rrggbb' parse directly, else the canonicalized name is
+    /// looked up in the color-name alist.
+    fn color(&self, v: &Value) -> Option<CellColor> {
+        let Value::Str(s) = v else {
+            return None;
+        };
+        let t = s.borrow();
+        if let Some(hex) = t.strip_prefix('#') {
+            let parse = |h: &str| u8::from_str_radix(h, 16).ok();
+            return match hex.len() {
+                6 => Some(CellColor(
+                    parse(&hex[0..2])?,
+                    parse(&hex[2..4])?,
+                    parse(&hex[4..6])?,
+                )),
+                3 => {
+                    let mut it = hex.chars().filter_map(|c| c.to_digit(16).map(|d| d as u8));
+                    let (r, g, b) = (it.next()?, it.next()?, it.next()?);
+                    Some(CellColor(r * 17, g * 17, b * 17))
+                }
+                _ => None,
+            };
+        }
+        let canon = t.to_lowercase().replace(' ', "");
+        self.colors
+            .get(&canon)
+            .map(|&(r, g, b)| CellColor(r, g, b))
+    }
+
+    /// Merge one named face's attributes (spec layer first, then the
+    /// new-frame defaults layer like GNU's realize_default_face, then
+    /// the compiled-in basic-face fallbacks).
+    fn named(&mut self, i: &Interp, name: &str, depth: u32) -> StyleMix {
+        if let Some(s) = self.cache.get(name) {
+            return *s;
+        }
+        // The realized value: face_table plist (defface/theme layer)
+        // over the new-frame defaults layer over built-in defaults.
+        let mut mix = builtin_face_defaults(i, name);
+        if let Some((_, plist)) = i.face_t_table.iter().find(|(n, _)| n == name) {
+            mix.merge(&self.face_plist(i, plist, depth));
+        }
+        if let Some((_, plist)) = i.face_table.iter().find(|(n, _)| n == name) {
+            mix.merge(&self.face_plist(i, plist, depth));
+        }
+        self.cache.insert(name.to_string(), mix);
+        mix
+    }
+
+    /// One face's attribute plist: :inherit expands first (GNU merge
+    /// order), then the face's own attributes override it.
+    fn face_plist(&mut self, i: &Interp, plist: &Value, depth: u32) -> StyleMix {
+        let mut mix = StyleMix::default();
+        if depth >= 16 {
+            return mix;
+        }
+        let inherit = crate::lisp::eval::plist_get(plist, self.inherit);
+        if inherit.truthy() {
+            mix.merge(&self.face_value(i, &inherit, depth + 1));
+        }
+        mix.merge(&self.attrs(i, plist));
+        mix
+    }
+
+    /// The attribute keywords of a plist, without :inherit.
+    /// The attribute keywords of a plist, without :inherit.
+    fn attrs(&mut self, i: &Interp, plist: &Value) -> StyleMix {
+        let mut mix = StyleMix::default();
+        let mut distant_fg = None;
+        let Ok(items) = plist.list_to_vec() else {
+            return mix;
+        };
+        for kv in items.chunks(2) {
+            let (Some(k), Some(v)) = (i.sym_id(&kv[0]), kv.get(1)) else {
+                continue;
+            };
+            match i.symbol_name(k).as_str() {
+                ":foreground" => {
+                    if let Some(c) = self.color(v) {
+                        mix.fg = Some(c);
+                    }
+                }
+                ":distant-foreground" => distant_fg = self.color(v),
+                ":background" => {
+                    if let Some(c) = self.color(v) {
+                        mix.bg = Some(c);
+                    }
+                }
+                ":weight" => mix.bold = Some(weight_bold(i, v)),
+                ":slant" => mix.italic = Some(slant_italic(i, v)),
+                ":underline" => mix.underline = Some(v.truthy()),
+                ":overline" => mix.overline = Some(v.truthy()),
+                ":strike-through" => mix.strike = Some(v.truthy()),
+                ":inverse-video" => mix.inverse = Some(v.truthy()),
+                ":extend" => mix.extend = Some(v.truthy()),
+                _ => {}
+            }
+        }
+        // :distant-foreground is only used when it contrasts with the
+        // background; on this coarse model it fills fg when the face
+        // sets no real :foreground (GNU drops it when it blends in).
+        if mix.fg.is_none() {
+            mix.fg = distant_fg;
+        }
+        mix
+    }
+
+    /// A `face' property value: a symbol/string names a face, a list
+    /// whose car is a keyword is an anonymous face plist, any other
+    /// list merges each element in order, and
+    /// (foreground-color . C)/(background-color . C) pairs set colors.
+    fn face_value(&mut self, i: &Interp, v: &Value, depth: u32) -> StyleMix {
+        if depth >= 16 {
+            return StyleMix::default();
+        }
+        match v {
+            Value::Sym(s) => {
+                let name = i.symbol_name(*s);
+                match crate::editor::face_resolve(i, &name) {
+                    Some(t) => self.named(i, &t, depth + 1),
+                    None => StyleMix::default(),
+                }
+            }
+            Value::Str(s) => {
+                let name = s.borrow().clone();
+                match crate::editor::face_resolve(i, &name) {
+                    Some(t) => self.named(i, &t, depth + 1),
+                    None => StyleMix::default(),
+                }
+            }
+            Value::Cons(_) => {
+                let Ok(items) = v.list_to_vec() else {
+                    // Dotted pair: (foreground-color . COLOR) /
+                    // (background-color . COLOR).
+                    let (car, cdr) = {
+                        let Value::Cons(c) = v else {
+                            return StyleMix::default();
+                        };
+                        let cb = c.borrow();
+                        (cb.car.clone(), cb.cdr.clone())
+                    };
+                    let mut mix = StyleMix::default();
+                    if let Some(cs) = i.sym_id(&car).map(|s| i.symbol_name(s)) {
+                        if let Some(c) = self.color(&cdr) {
+                            match cs.as_str() {
+                                "foreground-color" => mix.fg = Some(c),
+                                "background-color" => mix.bg = Some(c),
+                                _ => {}
+                            }
+                        }
+                    }
+                    return mix;
+                };
+                let is_plist = i
+                    .sym_id(&items[0])
+                    .map(|s| i.symbol_name(s).starts_with(':'))
+                    .unwrap_or(false);
+                if is_plist {
+                    // Anonymous face: a plist of attributes.
+                    self.face_plist(i, v, depth + 1)
+                } else {
+                    let mut mix = StyleMix::default();
+                    for it in items {
+                        mix.merge(&self.face_value(i, &it, depth + 1));
+                    }
+                    mix
+                }
+            }
+            _ => StyleMix::default(),
+        }
+    }
+}
+
+/// GNU weight mapping (xfaces.c `face_numeric_weight'): semi-bold and
+/// heavier render as bold on a tty.
+fn weight_bold(i: &Interp, v: &Value) -> bool {
+    let n: i128 = match v {
+        Value::Int(n) => *n,
+        Value::Sym(s) => match i.symbol_name(*s).as_str() {
+            "thin" => 200,
+            "ultra-light" | "extra-light" => 275,
+            "light" => 300,
+            "semi-light" | "book" => 380,
+            "semi-bold" | "demi-bold" | "demibold" => 600,
+            "bold" => 700,
+            "extra-bold" | "ultra-bold" | "extrabold" | "ultrabold" => 800,
+            "black" | "heavy" => 900,
+            _ => 400,
+        },
+        _ => 400,
+    };
+    n >= 600
+}
+
+/// GNU slant mapping: italic/oblique slant the text.
+fn slant_italic(i: &Interp, v: &Value) -> bool {
+    match v {
+        Value::Sym(s) => !matches!(
+            i.symbol_name(*s).as_str(),
+            "normal" | "roman" | "unspecified" | "reversed-oblique" | "reversed-italic"
+        ),
+        _ => false,
+    }
+}
+
+/// The attributes a face has even with no face_table row.  These
+/// mirror the `(t ...)'/`((type tty) (class mono) ...)' fallbacks in
+/// GNU's defface specs — what `face-spec-set' would leave on a
+/// monochrome tty — for the faces `lisp/faces.el'/`lisp/isearch.el'
+/// define but that aren't booted into `face_table'.
+fn builtin_face_defaults(i: &Interp, name: &str) -> StyleMix {
+    let mut mix = StyleMix::default();
+    match name {
+        "default" => {
+            mix.bold = Some(false);
+            mix.italic = Some(false);
+            mix.underline = Some(false);
+            mix.overline = Some(false);
+            mix.strike = Some(false);
+            mix.inverse = Some(false);
+            mix.extend = Some(false);
+        }
+        "bold" => mix.bold = Some(true),
+        "italic" => mix.italic = Some(true),
+        "bold-italic" => {
+            mix.bold = Some(true);
+            mix.italic = Some(true);
+        }
+        "underline" => mix.underline = Some(true),
+        // faces.el/isearch.el `(t :inverse-video t)' and
+        // `((type tty) (class mono)) :inverse-video t' entries.
+        "isearch" | "isearch-fail" | "highlight" | "secondary-selection"
+        | "trailing-whitespace" | "match" | "query-replace" | "mode-line"
+        | "mode-line-active" | "mode-line-inactive" => mix.inverse = Some(true),
+        "region" => {
+            // GNU's last-resort `(t :background "gray" :extend t)'.
+            mix.bg = Some(CellColor(190, 190, 190));
+            mix.extend = Some(true);
+        }
+        "lazy-highlight" => mix.underline = Some(true),
+        "isearch-group-1" | "isearch-group-2" => {
+            mix.merge(&builtin_face_defaults(i, "isearch"))
+        }
+        // `(t (:weight bold))' entries.
+        "mode-line-emphasis" | "mode-line-buffer-id" => mix.bold = Some(true),
+        _ => {}
+    }
+    mix
+}
+
+/// One window's face context for render_grid: the buffer's overlay
+/// faces and `face'/`font-lock-face' text-property runs collected
+/// once per render, and the active-region range.
+struct WindowFaces {
+    /// Overlay (start, end, face-value, priority, creation index),
+    /// applied low→high: ascending priority, oldest first.
+    overlays: Vec<(usize, usize, Value, i128, usize)>,
+    /// 'face/'font-lock-face' text-property runs: (start, end, value,
+    /// insertion index).  Later-inserted props merge on top (GNU's
+    /// interval "last write wins").
+    prop_faces: Vec<(usize, usize, Value, usize)>,
+    /// Active region as a half-open range when the mark is active.
+    region: Option<(usize, usize)>,
+}
+
+fn window_faces(
+    i: &Interp,
+    ctx: &FaceCtx,
+    b: &std::rc::Rc<std::cell::RefCell<Buffer>>,
+    win: &Value,
+) -> WindowFaces {
+    let bb = b.borrow();
+    // Region: GNU shows it between the mark and the buffer's point
+    // while `mark-active' is non-nil.
+    let region = {
+        let active = i
+            .buffer_local_toplevel_value(ctx.mark_active, bb.id)
+            .or_else(|| i.default_toplevel_value(ctx.mark_active))
+            .or_else(|| bb.locals.get(&ctx.mark_active).cloned())
+            .map(|v| v.truthy())
+            .unwrap_or(false);
+        let mark = bb.mark.as_ref().and_then(|m| {
+            let mm = m.borrow();
+            (mm.buffer == Some(bb.id)).then_some(mm.position)
+        });
+        match (active, mark) {
+            (true, Some(mk)) if mk != bb.point() => {
+                Some((mk.min(bb.point()), mk.max(bb.point())))
+            }
+            _ => None,
+        }
+    };
+    // Overlays covering this buffer, for this window (a `window'
+    // property restricts an overlay to one window — lazy-highlight
+    // uses it).  Merge order: ascending priority, oldest first —
+    // GNU's overlays_at sorted order reversed.
+    let mut overlays: Vec<(usize, usize, Value, i128, usize)> = bb
+        .overlays
+        .iter()
+        .enumerate()
+        .filter(|(_, ov)| {
+            if ov.buffer != Some(bb.id) || ov.start >= ov.end {
+                return false;
+            }
+            let wv = crate::lisp::eval::plist_get(&ov.plist, ctx.window);
+            // nil = all windows; non-nil must be this window object.
+            wv.is_nil() || crate::lisp::builtins::eq_values(&wv, win)
+        })
+        .filter_map(|(idx, ov)| {
+            let fv = crate::lisp::eval::plist_get(&ov.plist, ctx.face);
+            if fv.is_nil() {
+                return None;
+            }
+            Some((
+                ov.start,
+                ov.end,
+                fv,
+                crate::lisp::eval::plist_get(&ov.plist, ctx.priority)
+                    .int()
+                    .unwrap_or(0),
+                idx,
+            ))
+        })
+        .collect();
+    overlays.sort_by_key(|(_, _, _, p, idx)| (*p, *idx));
+    let prop_faces: Vec<(usize, usize, Value, usize)> = bb
+        .text
+        .props
+        .borrow()
+        .iter()
+        .enumerate()
+        .filter(|(_, tp)| tp.prop == ctx.face || tp.prop == ctx.font_lock_face)
+        .map(|(idx, tp)| (tp.start, tp.end, tp.value.clone(), idx))
+        .collect();
+    WindowFaces {
+        overlays,
+        prop_faces,
+        region,
+    }
+}
+
+/// The merged face style for buffer position POS under WF.  GNU
+/// `compute_char_face' order: `default' seeds, the active `region'
+/// face, then text-property faces (insertion order — last write
+/// wins), then overlays in ascending priority.
+fn style_at_pos(
+    i: &Interp,
+    ctx: &mut FaceCtx,
+    wf: &WindowFaces,
+    pos: usize,
+) -> CellStyle {
+    let mut mix = ctx.named(i, "default", 0);
+    if let Some((rs, re)) = wf.region {
+        if pos >= rs && pos < re {
+            mix.merge(&ctx.named(i, "region", 0));
+        }
+    }
+    for (s, e, v, _) in &wf.prop_faces {
+        if pos >= *s && pos < *e {
+            let v = v.clone();
+            mix.merge(&ctx.face_value(i, &v, 0));
+        }
+    }
+    for (s, e, fv, _, _) in &wf.overlays {
+        if pos >= *s && pos < *e {
+            let fv = fv.clone();
+            mix.merge(&ctx.face_value(i, &fv, 0));
+        }
+    }
+    mix.finish()
 }
 
 /// Compute the screen contents for the selected frame at `width` ×
@@ -57,6 +619,7 @@ pub struct Grid {
 /// than a window-height away (scrolling can't reach it cheaply).
 pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
     let mut rows = vec![String::new(); height];
+    let mut attrs = vec![vec![CellStyle::default(); width]; height];
     let mut mode_rows = Vec::new();
     let mut cursor_pos: Option<(usize, usize)> = None;
     let frame = match &i.selected_frame {
@@ -64,11 +627,13 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
         None => {
             return Grid {
                 rows,
+                attrs,
                 mode_rows,
                 cursor: cursor_pos,
             };
         }
     };
+    let mut fctx = FaceCtx::new(i);
     let fb = frame.borrow();
     let n_windows = fb.windows.len();
     let mini_height = 1usize;
@@ -174,21 +739,61 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
             }
             _ => (start, hscroll),
         };
-        let text_lines: Vec<String> = match i.buffers.get(buf_id) {
-            Some(b) => {
-                let bb = b.borrow();
-                let text = bb.text.substring(start, bb.text_len());
-                text.split('\n').map(|s| s.to_string()).collect()
-            }
-            None => vec![String::new()],
-        };
+        // Per-window face context (overlays, text props, region).
+        let wf = i
+            .buffers
+            .get(buf_id)
+            .map(|b| window_faces(i, &fctx, &b, &Value::Window(w.clone())));
         for row in 0..text_rows {
             let y = top + row;
             if y >= body_height {
                 break;
             }
-            let line = text_lines.get(row).cloned().unwrap_or_default();
-            let vis: String = line.chars().skip(hscroll).take(width).collect();
+            // Line-aligned rendering: `start' is a line start because
+            // the scroll code above always lands it on line_start().
+            let (line, line_pos) = match i.buffers.get(buf_id) {
+                Some(b) => {
+                    let bb = b.borrow();
+                    let ls = bb
+                        .text
+                        .line_start(bb.text.line_of_pos(start) + row);
+                    let le = bb.text.line_end(ls);
+                    (bb.text.substring(ls, le), ls)
+                }
+                None => (String::new(), 0),
+            };
+            let nvis = line.chars().count().saturating_sub(hscroll).min(width);
+            let mut vis = String::with_capacity(nvis);
+            // Characters visible in this row and their cells' styles.
+            for (x, ch) in line.chars().skip(hscroll).take(width).enumerate() {
+                vis.push(ch);
+                let pos = line_pos + hscroll + x;
+                if let Some(wf) = &wf {
+                    attrs[y][x] = style_at_pos(i, &mut fctx, wf, pos);
+                }
+            }
+            // Empty tail of the row: the line-end face extends its
+            // background over it iff the face's :extend holds (GNU
+            // extend_face_to_end_of_line).
+            if let Some(wf) = &wf {
+                let tail_pos = (line_pos + line.chars().count()).min(line_pos + hscroll + nvis);
+                let end_pos = line_pos + line.chars().count();
+                let tail = style_at_pos(i, &mut fctx, wf, tail_pos.max(end_pos));
+                if tail.extend {
+                    for x in nvis..width {
+                        let mut t = tail;
+                        t.fg = None;
+                        t.bold = false;
+                        t.italic = false;
+                        t.underline = false;
+                        t.overline = false;
+                        t.strike = false;
+                        t.inverse = false;
+                        t.extend = false;
+                        attrs[y][x] = t;
+                    }
+                }
+            }
             rows[y] = format!("{vis:<width$}", width = width);
         }
         // Mode line.
@@ -218,7 +823,24 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
                     ""
                 }
             );
+            // GNU draws mode lines under `mode-line-active' on the
+            // selected window, `mode-line-inactive' elsewhere — both
+            // resolve through `mode-line' (inverse on a mono tty).
+            // An unresolved (pre-faces.el) mode-line face falls back
+            // to plain inverse so the row still reads as a divider.
+            let ml_name = if std::rc::Rc::ptr_eq(w, &fb.selected) {
+                "mode-line-active"
+            } else {
+                "mode-line-inactive"
+            };
+            let mut ml = fctx.named(i, ml_name, 0).finish();
+            if ml == CellStyle::default() {
+                ml.inverse = true;
+            }
             rows[my] = format!("{mode:<width$}", width = width);
+            for cell in attrs[my].iter_mut() {
+                *cell = ml;
+            }
             mode_rows.push(my);
         }
         // Cursor for the selected window.
@@ -246,28 +868,77 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
             }
         }
     }
-    // Minibuffer / echo area (last row).
-    let mini_text = match fb
+    // Minibuffer / echo area (last row).  The minibuffer's own text
+    // properties apply (minibuffer-prompt's `face' prop colors the
+    // prompt); a plain echo message renders under `default'.
+    let mini_buf = fb
         .minibuffer
         .as_ref()
-        .and_then(|w| i.buffers.get(w.borrow().buffer))
-    {
+        .and_then(|w| i.buffers.get(w.borrow().buffer));
+    let mini_text = match &mini_buf {
         Some(b) => b.borrow().text.text(),
         None => String::new(),
     };
-    let msg = if mini_text.is_empty() {
-        i.echo_message.clone()
+    let (msg, styled) = if mini_text.is_empty() {
+        (i.echo_message.clone(), None)
     } else {
-        mini_text
+        (mini_text, mini_buf.as_ref())
     };
-    if let Some(last) = rows.last_mut() {
-        *last = format!("{msg:<width$}", width = width);
+    if let Some(y) = rows.len().checked_sub(1) {
+        let vis: String = msg.chars().take(width).collect();
+        rows[y] = format!("{vis:<width$}", width = width);
+        if let Some(b) = styled {
+            let wf = window_faces(i, &fctx, &b, &Value::Nil);
+            for (x, _) in msg.chars().take(width).enumerate() {
+                attrs[y][x] = style_at_pos(i, &mut fctx, &wf, x);
+            }
+        }
     }
     Grid {
         rows,
+        attrs,
         mode_rows,
         cursor: cursor_pos,
     }
+}
+
+/// Emit the SGR state for one cell style: reset, then foreground /
+/// background colors, then the attribute bits.  `:inverse-video'
+/// swaps the two colors; when only one side is set the terminal's
+/// own swap does the right thing via SGR 7, so the swap is done in
+/// the emitted colors only when both are explicit.
+fn emit_style(out: &mut dyn io::Write, st: CellStyle) -> io::Result<()> {
+    write!(out, "\x1b[0m")?;
+    let (fg, bg, rev) = if st.inverse && st.fg.is_some() && st.bg.is_some() {
+        (st.bg, st.fg, false)
+    } else {
+        (st.fg, st.bg, st.inverse)
+    };
+    if let Some(CellColor(r, g, b)) = fg {
+        write!(out, "\x1b[38;2;{r};{g};{b}m")?;
+    }
+    if let Some(CellColor(r, g, b)) = bg {
+        write!(out, "\x1b[48;2;{r};{g};{b}m")?;
+    }
+    if st.bold {
+        write!(out, "\x1b[1m")?;
+    }
+    if st.italic {
+        write!(out, "\x1b[3m")?;
+    }
+    if st.underline {
+        write!(out, "\x1b[4m")?;
+    }
+    if st.overline {
+        write!(out, "\x1b[53m")?;
+    }
+    if st.strike {
+        write!(out, "\x1b[9m")?;
+    }
+    if rev {
+        write!(out, "\x1b[7m")?;
+    }
+    Ok(())
 }
 
 /// The terminal screen.
@@ -341,13 +1012,36 @@ impl KeyIo for Terminal {
         let (width, height) = (self.width, self.height);
         let grid = render_grid(i, width, height);
         queue!(self.out, cursor::MoveTo(0, 0))?;
+        let default = CellStyle::default();
         for (y, row) in grid.rows.iter().enumerate() {
             queue!(self.out, cursor::MoveTo(0, y as u16))?;
-            if grid.mode_rows.contains(&y) {
-                let _ = write!(self.out, "\x1b[7m{}\x1b[0m", row);
-            } else {
-                let _ = write!(self.out, "{row}");
+            let cells = grid
+                .attrs
+                .get(y)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
+            // Emit contiguous same-style runs; SGR state resets at
+            // each boundary so only the style's own escapes are live.
+            let mut cur = None;
+            let mut run = String::new();
+            for (x, ch) in row.chars().enumerate() {
+                let st = cells.get(x).copied().unwrap_or(default);
+                if Some(st) != cur {
+                    if !run.is_empty() {
+                        emit_style(&mut self.out, cur.unwrap())?;
+                        let _ = write!(self.out, "{run}");
+                        run.clear();
+                    }
+                    cur = Some(st);
+                }
+                run.push(ch);
             }
+            if !run.is_empty() || cur.is_some() {
+                emit_style(&mut self.out, cur.unwrap_or(default))?;
+                let _ = write!(self.out, "{run}");
+            }
+            // Reset trailing state so nothing leaks past the row.
+            queue!(self.out, SetAttribute(Attribute::Reset))?;
         }
         if let Some((x, y)) = grid.cursor {
             queue!(self.out, cursor::MoveTo(x as u16, y as u16), cursor::Show)?;
@@ -889,23 +1583,29 @@ struct Isearch {
     query: String,
     /// History of match positions; last is the current match.
     positions: Vec<usize>,
+    /// Match spans (beg, end) parallel to `positions`.
+    spans: Vec<(usize, usize)>,
     failing: bool,
     start: usize,
     backward: bool,
     regexp: bool,
+    /// The `isearch' overlay on the current match (handle or None).
+    match_ov: Option<Value>,
+    /// `lazy-highlight' overlays on the other visible matches.
+    lazy_ovs: Vec<Value>,
 }
 
-/// Run one search; returns the new match point (or None when the
-/// query doesn't match from `from`). `from` is 0-based.
+/// Run one search; returns (point, match-beg, match-end) — all
+/// 0-based — or None when the query doesn't match from `from`.
 fn isearch_search(
     i: &mut Interp,
     query: &str,
     backward: bool,
     regexp: bool,
     from: usize,
-) -> Option<usize> {
+) -> Option<(usize, usize, usize)> {
     if query.is_empty() {
-        return Some(from);
+        return Some((from, from, from));
     }
     let mut esc = String::new();
     for c in query.chars() {
@@ -922,13 +1622,21 @@ fn isearch_search(
     };
     // +1 for the point→char offset used by these primitives.
     let src = format!(
-        "(progn (goto-char (min {} (point-max))) ({} \"{}\" nil t))",
+        "(progn (goto-char (min {} (point-max))) \
+           (and ({} \"{}\" nil t) \
+                (list (1- (point)) (1- (match-beginning 0)) (1- (match-end 0)))))",
         from + 1,
         fn_name,
         esc
     );
     match i.eval_str(&src) {
-        Ok(v) if !v.is_nil() => i.current_buffer_ref().map(|b| b.borrow().point()),
+        Ok(v) => {
+            let items = v.list_to_vec().ok()?;
+            let p = items.first()?.int()? as usize;
+            let b = items.get(1)?.int()? as usize;
+            let e = items.get(2)?.int()? as usize;
+            Some((p, b, e))
+        }
         _ => None,
     }
 }
@@ -954,10 +1662,13 @@ impl Isearch {
         Isearch {
             query: String::new(),
             positions: vec![start],
+            spans: vec![(start, start)],
             failing: false,
             start,
             backward,
             regexp,
+            match_ov: None,
+            lazy_ovs: Vec::new(),
         }
     }
 
@@ -993,8 +1704,9 @@ impl Isearch {
                 let back = key == 18;
                 let from = if back { cur.saturating_sub(1) } else { cur + 1 };
                 match isearch_search(i, &self.query, back, self.regexp, from) {
-                    Some(p) => {
+                    Some((p, b, e)) => {
                         self.positions.push(p);
+                        self.spans.push((b, e));
                         self.failing = false;
                         self.go_to(i, p);
                     }
@@ -1006,6 +1718,7 @@ impl Isearch {
             127 => {
                 if self.positions.len() > 1 {
                     self.positions.pop();
+                    self.spans.pop();
                     // If the tail of query grew since the last repeat,
                     // pop a char too.
                     if !self.query.is_empty() {
@@ -1026,19 +1739,36 @@ impl Isearch {
                 if let Some(ch) = char::from_u32(c as u32) {
                     self.query.push(ch);
                 }
-                // Extend the current match; fall back to a fresh
-                // search from the entry point when it no longer hits.
-                let from = if self.positions.len() > 1 {
-                    cur
+                // Extend the current match like GNU's
+                // `isearch-search-and-update': forward searches
+                // restart at the match's START (`isearch-other-end')
+                // so the match grows in place; backward searches try
+                // `looking-at' at the match start first (the new
+                // match must not reach past the entry point), else
+                // fall back to a real backward search.
+                let hit = if self.positions.len() > 1 {
+                    let (mb, me) = *self.spans.last().unwrap_or(&(cur, cur));
+                    if self.backward {
+                        match isearch_search(i, &self.query, false, self.regexp, mb) {
+                            Some((_, b, e)) if b == mb && e <= self.start => Some((b, b, e)),
+                            _ => isearch_search(
+                                i,
+                                &self.query,
+                                true,
+                                self.regexp,
+                                self.start.min(me + 1),
+                            ),
+                        }
+                    } else {
+                        isearch_search(i, &self.query, false, self.regexp, mb)
+                    }
                 } else {
-                    self.start
+                    isearch_search(i, &self.query, self.backward, self.regexp, self.start)
                 };
-                let hit = isearch_search(i, &self.query, self.backward, self.regexp, from).or_else(
-                    || isearch_search(i, &self.query, self.backward, self.regexp, self.start),
-                );
                 match hit {
-                    Some(p) => {
+                    Some((p, b, e)) => {
                         self.positions.push(p);
+                        self.spans.push((b, e));
                         self.failing = false;
                         self.go_to(i, p);
                     }
@@ -1062,6 +1792,152 @@ impl Isearch {
         let status = if self.failing { "Failing " } else { "" };
         format!("{}I-search{}{}: {}", status, dir, re, self.query)
     }
+
+    /// One `apply' of a Lisp helper; errors are ignored (highlighting
+    /// must never break the search itself).
+    fn call(i: &mut Interp, name: &str, args: Vec<Value>) {
+        let f = match i.intern_soft(name) {
+            Some(s) => Value::Sym(s),
+            None => return,
+        };
+        let _ = i.apply(&f, args);
+    }
+
+    /// Delete the highlight overlays (`isearch-dehighlight').
+    fn clear(&mut self, i: &mut Interp) {
+        if let Some(ov) = self.match_ov.take() {
+            Self::call(i, "delete-overlay", vec![ov]);
+        }
+        for ov in self.lazy_ovs.drain(..) {
+            Self::call(i, "delete-overlay", vec![ov]);
+        }
+    }
+
+    /// Rebuild the highlight overlays after each key like GNU's
+    /// `isearch-highlight'/`isearch-lazy-highlight-search':
+    /// `isearch' face + priority 1001 on the current match,
+    /// `lazy-highlight' + priority 1000 + `window' on the other
+    /// matches visible in the selected window.  `isearch.el' isn't
+    /// booted, so the faces resolve through render_grid's
+    /// compiled-in fallbacks.
+    fn refresh_overlays(&mut self, i: &mut Interp) {
+        // Where the last key left point (an abort may have moved it
+        // off the match); the lazy scan below must restore exactly
+        // this afterwards.
+        let restore = i
+            .current_buffer_ref()
+            .map(|b| b.borrow().point())
+            .unwrap_or(self.cur());
+        for ov in self.lazy_ovs.drain(..) {
+            Self::call(i, "delete-overlay", vec![ov]);
+        }
+        let span = *self.spans.last().unwrap_or(&(self.start, self.start));
+        // No highlight while the query is empty (GNU shows nothing
+        // until the first char); a failing search keeps the last
+        // match highlighted like GNU does.  `search-highlight' gates
+        // the current match, `isearch-lazy-highlight' the rest —
+        // both unbound → default t.
+        let hl_on = i
+            .intern_soft("search-highlight")
+            .map(|s| i.symbol_value(s).truthy())
+            .unwrap_or(true);
+        let lazy_on = i
+            .intern_soft("isearch-lazy-highlight")
+            .map(|s| i.symbol_value(s).truthy())
+            .unwrap_or(true);
+        let active = !self.query.is_empty() && span.0 < span.1 && hl_on;
+        match (self.match_ov.clone(), active) {
+            (Some(ov), true) => {
+                Self::call(
+                    i,
+                    "move-overlay",
+                    vec![
+                        ov,
+                        Value::Int(span.0 as i128 + 1),
+                        Value::Int(span.1 as i128 + 1),
+                    ],
+                );
+            }
+            (None, true) => {
+                let f = Value::Sym(i.intern("make-overlay"));
+                if let Ok(ov) = i.apply(
+                    &f,
+                    vec![
+                        Value::Int(span.0 as i128 + 1),
+                        Value::Int(span.1 as i128 + 1),
+                    ],
+                ) {
+                    let pri = Value::Sym(i.intern("priority"));
+                    let face = Value::Sym(i.intern("face"));
+                    let isearch = Value::Sym(i.intern("isearch"));
+                    Self::call(i, "overlay-put", vec![ov.clone(), pri, Value::Int(1001)]);
+                    Self::call(i, "overlay-put", vec![ov.clone(), face, isearch]);
+                    self.match_ov = Some(ov);
+                }
+            }
+            (Some(ov), false) => {
+                Self::call(i, "delete-overlay", vec![ov]);
+                self.match_ov = None;
+            }
+            (None, false) => {}
+        }
+        if !active || self.failing || !lazy_on {
+            return;
+        }
+        let sw = Value::Sym(i.intern("selected-window"));
+        let wv = match i.apply(&sw, vec![]) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        let ws_sym = i.intern("window-start");
+        let we_sym = i.intern("window-end");
+        let wstart = i
+            .apply(&Value::Sym(ws_sym), vec![wv.clone()])
+            .ok()
+            .and_then(|v| v.int())
+            .unwrap_or(1)
+            .max(1) as usize;
+        let wend = i
+            .apply(&Value::Sym(we_sym), vec![wv.clone(), Value::t()])
+            .ok()
+            .and_then(|v| v.int())
+            .map(|n| n.max(1) as usize)
+            .unwrap_or(usize::MAX);
+        let mut pos = wstart;
+        let mut count = 0usize;
+        let pri = Value::Sym(i.intern("priority"));
+        let face = Value::Sym(i.intern("face"));
+        let lazy = Value::Sym(i.intern("lazy-highlight"));
+        let winprop = Value::Sym(i.intern("window"));
+        while count < 200 {
+            let Some((_, b, e)) = isearch_search(i, &self.query, false, self.regexp, pos) else {
+                break;
+            };
+            if b >= wend || e <= b {
+                break;
+            }
+            pos = e;
+            if (b, e) == span {
+                continue;
+            }
+            let f = Value::Sym(i.intern("make-overlay"));
+            let Ok(ov) = i.apply(
+                &f,
+                vec![Value::Int(b as i128 + 1), Value::Int(e as i128 + 1)],
+            ) else {
+                break;
+            };
+            Self::call(i, "overlay-put", vec![ov.clone(), pri.clone(), Value::Int(1000)]);
+            Self::call(i, "overlay-put", vec![ov.clone(), face.clone(), lazy.clone()]);
+            Self::call(i, "overlay-put", vec![ov.clone(), winprop.clone(), wv.clone()]);
+            self.lazy_ovs.push(ov);
+            count += 1;
+        }
+        // The scan's searches moved point to the last visible match;
+        // put it back where the last key left it (GNU does the same
+        // through save-excursion).
+        self.go_to(i, restore);
+    }
 }
 
 /// Incremental search loop (C-s / C-r). Reads keys directly until the
@@ -1084,10 +1960,16 @@ fn isearch_loop<T: KeyIo>(
             .borrow_mut()
             .poll_key(Duration::from_secs(86400))?
             .unwrap_or(0);
-        match st.step(i, key) {
+        let action = st.step(i, key);
+        // Rebuild the isearch/lazy-highlight overlays so the next
+        // render paints the matches (GNU: isearch-update →
+        // isearch-highlight + lazy-highlight).
+        st.refresh_overlays(i);
+        match action {
             IsearchAction::Continue => {}
             IsearchAction::Abort | IsearchAction::Done => break,
             IsearchAction::ReDispatch(other) => {
+                st.clear(i);
                 let seq = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Int(
                     other,
                 )])));
@@ -1096,10 +1978,11 @@ fn isearch_loop<T: KeyIo>(
                         post_command_undo_boundary(i);
                     }
                 }
-                break;
+                return Ok(());
             }
         }
     }
+    st.clear(i);
     Ok(())
 }
 
@@ -1357,6 +2240,34 @@ mod tests {
         let s = String::from_utf8_lossy(&out.borrow()).to_string();
         assert!(s.contains("Prompt: abc"));
         assert!(s.contains("\x1b["), "uses cursor-move escapes");
+    }
+
+    #[test]
+    fn isearch_extends_match_in_place_and_overlays_paint() {
+        let mut i = interp_with_frame("xxx yyy xxx\n");
+        let mut st = Isearch::new(&i, false, false);
+        for c in "xxx".chars() {
+            st.step(&mut i, c as i128);
+        }
+        // GNU semantics: each char re-searches from the match's
+        // START (`isearch-other-end'), so the span grows in place.
+        assert_eq!(st.spans, vec![(0, 0), (0, 1), (0, 2), (0, 3)]);
+        assert_eq!(st.positions, vec![0, 1, 2, 3]);
+        st.refresh_overlays(&mut i);
+        let grid = render_grid(&i, 80, 24);
+        // Current match 0..3 inverse (isearch), the second xxx at
+        // 8..11 lazy-highlighted (underline).
+        assert!(
+            grid.attrs[0][..3].iter().all(|c| c.inverse),
+            "{:?}",
+            &grid.attrs[0][..4]
+        );
+        assert!(
+            grid.attrs[0][8..11].iter().all(|c| c.underline),
+            "{:?}",
+            &grid.attrs[0][8..11]
+        );
+        assert!(!grid.attrs[0][4].inverse && !grid.attrs[0][4].underline);
     }
 
     #[test]

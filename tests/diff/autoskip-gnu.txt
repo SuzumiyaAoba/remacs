@@ -22,3 +22,5 @@ isearch-forward-symbol
 isearch-forward-word
 isearch-mode
 isearch-char-by-name
+modify-face
+mouse-drag-secondary
