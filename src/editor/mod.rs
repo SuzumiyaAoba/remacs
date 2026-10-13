@@ -20805,50 +20805,62 @@ fn f_timer_event_handler(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_invisible_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU Finvisible_p: an integer/marker arg is a POSITION — the
-    // `invisible' text property there is the value checked; any other
-    // arg is treated as the prop value directly.  Then consult
-    // `buffer-invisibility-spec'.
-    let prop = match &a[0] {
-        Value::Int(_) | Value::Marker(_) => {
-            let pos = match &a[0] {
-                Value::Int(n) => *n,
-                Value::Marker(m) => m.borrow().position as i128 + 1,
-                _ => unreachable!(),
-            };
-            let inv = i.intern("invisible");
-            // GNU Finvisible_p consults overlays too — get-char-property
-            // semantics (out-of-range errors are bare POS, not POS..POS).
-            crate::buffer::primitives::f_get_char_property(
-                i,
-                vec![Value::Int(pos), Value::Sym(inv)].into(),
-            )?
-        }
-        other => other.clone(),
+    // GNU Finvisible_p treats only nonnegative fixnums and markers as
+    // positions. Negative integers and bignums are property values.
+    let prop = if matches!(&a[0], Value::Int(n) if (0..=crate::lisp::value::FIXNUM_MAX).contains(n))
+        || matches!(&a[0], Value::Marker(_))
+    {
+        let inv = i.intern("invisible");
+        crate::buffer::primitives::f_get_char_property(
+            i,
+            vec![a[0].clone(), Value::Sym(inv)].into(),
+        )?
+    } else {
+        a[0].clone()
     };
-    if prop.is_nil() {
-        return Ok(Value::Nil);
-    }
     let spec_id = i.intern("buffer-invisibility-spec");
     let spec = i.symbol_value(spec_id);
-    match &spec {
-        Value::Nil => Ok(Value::Nil),
-        Value::Sym(s) if *s == sym::T => Ok(Value::t()),
-        Value::Cons(_) => {
-            // member test: prop or (car prop) ∈ spec
-            let key = match &prop {
-                Value::Cons(c) => c.borrow().car.clone(),
-                _ => prop.clone(),
-            };
-            let hit = spec
-                .list_to_vec()
-                .unwrap_or_default()
-                .iter()
-                .any(|e| eq_values(e, &key));
-            Ok(Value::from_bool(hit))
-        }
-        _ => Ok(Value::Nil),
+    if matches!(&spec, Value::Sym(s) if *s == sym::T) {
+        return Ok(Value::from_bool(!prop.is_nil()));
     }
+
+    // GNU invisible_prop first matches the whole property by identity,
+    // then each of its list elements. The first spec match decides
+    // whether text is entirely hidden (t) or replaced by an ellipsis (2).
+    // Dotted tails of either list are ignored, as in GNU's CONSP walks.
+    fn in_spec(prop: &Value, spec: &Value) -> Option<Value> {
+        let mut tail = spec.clone();
+        while let Value::Cons(cell) = tail {
+            let cell = cell.borrow();
+            if eq_values(prop, &cell.car) {
+                return Some(Value::t());
+            }
+            if let Value::Cons(entry) = &cell.car {
+                let entry = entry.borrow();
+                if eq_values(prop, &entry.car) {
+                    return Some(if entry.cdr.is_nil() {
+                        Value::t()
+                    } else {
+                        Value::Int(2)
+                    });
+                }
+            }
+            tail = cell.cdr.clone();
+        }
+        None
+    }
+    if let Some(invisible) = in_spec(&prop, &spec) {
+        return Ok(invisible);
+    }
+    let mut tail = prop;
+    while let Value::Cons(cell) = tail {
+        let cell = cell.borrow();
+        if let Some(invisible) = in_spec(&cell.car, &spec) {
+            return Ok(invisible);
+        }
+        tail = cell.cdr.clone();
+    }
+    Ok(Value::Nil)
 }
 
 fn f_fringe_bitmaps_at_pos(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
