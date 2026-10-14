@@ -213,3 +213,5 @@ qa!(qa_window_dedication, "qa_window_dedication.el");
 qa!(qa_overlay_type, "qa_overlay_type.el");
 
 qa!(qa_gensym_counter, "qa_gensym_counter.el");
+
+qa!(qa_delete_char_bounds, "qa_delete_char_bounds.el");

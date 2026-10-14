@@ -6732,25 +6732,28 @@ fn f_open_line(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_delete_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let n = want_fixnum_nil_err(i, &arg(&a, 0))?;
-    check_writable(i)?;
+    if arg(&a, 1).truthy() {
+        // GNU delegates killing, including its range errors, to Lisp.
+        let kill = i.intern("kill-forward-chars");
+        i.apply(&Value::Sym(kill), vec![Value::Int(n)])?;
+        return Ok(Value::Nil);
+    }
     let (p, zv, begv) = {
         let b = cur(i);
         let bb = b.borrow();
-        (bb.point(), bb.text_len(), bb.begv)
+        (bb.point(), bb.zv, bb.begv)
     };
-    if n > 0 {
-        if p >= zv {
-            return Err(i.signal_data(sym::END_OF_BUFFER, vec![]));
-        }
-        let end = (p + n as usize).min(zv);
-        chg_delete(i, p, end)?;
-    } else if n < 0 {
-        if p <= begv {
-            return Err(i.signal_data(sym::BEGINNING_OF_BUFFER, vec![]));
-        }
-        let start = (p as i128 + n).max(begv as i128) as usize;
-        chg_delete(i, start, p)?;
+    // Check the entire requested range before write protection or hooks.
+    // The wide signed sum avoids truncating or wrapping large counts.
+    let target = p as i128 + n;
+    if target < begv as i128 {
+        return Err(i.signal_data(sym::BEGINNING_OF_BUFFER, vec![]));
     }
+    if target > zv as i128 {
+        return Err(i.signal_data(sym::END_OF_BUFFER, vec![]));
+    }
+    let target = target as usize;
+    chg_delete(i, p.min(target), p.max(target))?;
     Ok(Value::Nil)
 }
 
