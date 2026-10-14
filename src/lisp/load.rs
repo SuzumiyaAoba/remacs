@@ -2661,6 +2661,83 @@ fn eval_src_opts(
     force_lex: bool,
     dumped_like: bool,
 ) -> EvalResult {
+    // On-disk source loads use GNU's load-with-code-conversion buffer.
+    // Boot/embedded libraries model dumped code, and compiled streams
+    // have their own direct reader, so neither acquires this buffer.
+    // --script's distinct current-buffer/shebang rules stay on its existing path.
+    let source = !force_lex
+        && !i.boot_loading
+        && !file.starts_with("builtin:")
+        && !file.ends_with(".elc")
+        && !file.ends_with(".elc.gz")
+        && !src.starts_with(";ELC\u{1f}");
+    let load_buffer = if source {
+        let dir_sym = i.intern("default-directory");
+        let dir = i.symbol_value(dir_sym);
+        let generate = Value::Sym(i.intern("generate-new-buffer"));
+        let value = i.apply(&generate, vec![Value::string(" *load*")])?;
+        let Value::Buffer(buffer) = value else {
+            return Err(i.wrong_type_mut("bufferp", &value));
+        };
+        let multi = i.intern("enable-multibyte-characters");
+        {
+            let mut b = buffer.borrow_mut();
+            b.locals.insert(dir_sym, dir);
+            b.locals.insert(multi, Value::t());
+            b.insert(src);
+            b.set_point(0);
+            b.note_modified(false);
+        }
+        Some(buffer)
+    } else {
+        None
+    };
+    let saved_excursion = load_buffer.as_ref().map(|_| i.save_excursion_state(false));
+    let mark = i.specbind_depth();
+    let result = (|| {
+        if let Some(buffer) = &load_buffer {
+            let input = i.intern("standard-input");
+            let list = i.intern("eval-buffer-list");
+            let old = i.symbol_value(list);
+            i.specbind(input, Value::Buffer(buffer.clone()))?;
+            i.specbind(list, Value::cons(Value::Buffer(buffer.clone()), old))?;
+        }
+        eval_src_opts_inner(i, file, src, force_lex, dumped_like, load_buffer.as_ref())
+    })();
+    if let Some(saved) = saved_excursion {
+        i.restore_excursion_state(saved);
+    }
+    let unwind = i.unbind_to(mark);
+    if let Some(buffer) = load_buffer {
+        // As in mule.el's unwind-protect, suppress kill queries/hooks but
+        // retain ordinary buffer-list update notifications.
+        let cleanup_mark = i.specbind_depth();
+        let cleanup = (|| {
+            for name in ["kill-buffer-hook", "kill-buffer-query-functions"] {
+                let symbol = i.intern(name);
+                i.specbind(symbol, Value::Nil)?;
+            }
+            let kill = Value::Sym(i.intern("kill-buffer"));
+            i.apply(&kill, vec![Value::Buffer(buffer)])
+        })();
+        i.unbind_to(cleanup_mark)?;
+        cleanup?;
+    }
+    unwind?;
+    if result.is_ok() {
+        run_after_load(i, file);
+    }
+    result
+}
+
+fn eval_src_opts_inner(
+    i: &mut Interp,
+    file: &str,
+    src: &str,
+    force_lex: bool,
+    dumped_like: bool,
+    load_buffer: Option<&crate::lisp::value::BufferRef>,
+) -> EvalResult {
     let lfn = i.intern("load-file-name");
     let ltfn = i.intern("load-true-file-name");
     let lip = i.intern("load-in-progress");
@@ -2764,7 +2841,7 @@ fn eval_src_opts(
     let is_elc = src.starts_with(";ELC\u{1f}\u{0}\u{0}\u{0}");
     let was_elc = i.reading_elc;
     i.reading_elc = was_elc || is_elc;
-    let r = eval_str_for_load(i, file, &src);
+    let r = eval_str_for_load(i, file, &src, load_buffer);
     i.reading_elc = was_elc;
     i.loading_dumped = was_dumped;
     // File-scoped `defvar' declarations live on the root frame; merge
@@ -2805,12 +2882,6 @@ fn eval_src_opts(
         i.obarray.symbol_mut(lh).value = Value::cons(entry, Value::list(kept));
     }
     i.unbind_to(mark)?;
-    if r.is_ok() {
-        // GNU runs `do-after-load-evaluation' after the load's dynamic
-        // bindings unwind, so after-load hooks see the OUTER
-        // `load-file-name' (nil at top level).
-        run_after_load(i, file);
-    }
     r
 }
 
@@ -2830,8 +2901,16 @@ fn run_after_load(i: &mut Interp, file: &str) {
 /// GNU's `internal-macroexpand-for-load' does during `load'.  This is
 /// what resolves macro autoloads (e.g. `define-minor-mode') at load
 /// time rather than first call.
-fn eval_str_for_load(i: &mut Interp, file: &str, src: &str) -> EvalResult {
-    let chars: Rc<Vec<char>> = Rc::new(src.chars().collect());
+fn eval_str_for_load(
+    i: &mut Interp,
+    file: &str,
+    src: &str,
+    load_buffer: Option<&crate::lisp::value::BufferRef>,
+) -> EvalResult {
+    let mut chars: Rc<Vec<char>> = Rc::new(src.chars().collect());
+    // Refresh from the live buffer even before the first form: binding
+    // watchers may already have changed or narrowed the source.
+    let mut source_version = None;
     let mut pos = 0usize;
     let mut last = Value::Nil;
     let lrf_sym = i.intern("load-read-function");
@@ -2843,6 +2922,18 @@ fn eval_str_for_load(i: &mut Interp, file: &str, src: &str) -> EvalResult {
     // terminate.  Created lazily; killed when the load exits.
     let mut stream: Option<(usize, Rc<RefCell<crate::lisp::value::Marker>>)> = None;
     let result = 'load: loop {
+        if let Some(buffer) = load_buffer {
+            let b = buffer.borrow();
+            if !b.live {
+                break 'load Err(i.error("Reading from killed buffer"));
+            }
+            pos = b.point();
+            let version = (b.text.chars_mod_tick.get(), b.zv);
+            if source_version != Some(version) {
+                chars = Rc::new(b.text.text().chars().take(b.zv).collect());
+                source_version = Some(version);
+            }
+        }
         // GNU's `readevalloop' peeks at the stream itself; the
         // `load-read-function' is consulted only while content remains,
         // so a trailing-whitespace file never reaches it, and a custom
@@ -2876,6 +2967,30 @@ fn eval_str_for_load(i: &mut Interp, file: &str, src: &str) -> EvalResult {
                         Some((f, reader.position()))
                     }
                     Ok(None) => None,
+                }
+            } else if let Some(buffer) = load_buffer {
+                let mut p = pos;
+                loop {
+                    while p < chars.len()
+                        && matches!(chars[p], ' ' | '\t' | '\n' | '\x0C' | '\r' | '\u{A0}')
+                    {
+                        p += 1;
+                    }
+                    if p < chars.len() && chars[p] == ';' {
+                        while p < chars.len() && chars[p] != '\n' {
+                            p += 1;
+                        }
+                        continue;
+                    }
+                    break;
+                }
+                buffer.borrow_mut().set_point(p);
+                if p >= chars.len() {
+                    break 'load Ok(last);
+                }
+                match i.apply(&lrf, vec![Value::Buffer(buffer.clone())]) {
+                    Err(f) => break 'load Err(f),
+                    Ok(form) => Some((form, buffer.borrow().point())),
                 }
             } else {
                 let (_, mark) = match &stream {
@@ -2948,6 +3063,9 @@ fn eval_str_for_load(i: &mut Interp, file: &str, src: &str) -> EvalResult {
         match next {
             Some((form, end)) => {
                 pos = end;
+                if let Some(buffer) = load_buffer {
+                    buffer.borrow_mut().set_point(end);
+                }
                 let t0 = (i.dbg_flags & 0x200 != 0).then(std::time::Instant::now);
                 match eval_for_load(i, form.clone()) {
                     Ok(v) => {
