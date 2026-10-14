@@ -2801,7 +2801,13 @@ impl Interp {
             // calls, and cus-start's `define-minor-mode' uses need
             // custom.el first.
             let _ = boot_lib(&mut interp, "custom");
+            // GNU loadup only seeds defaults and safety metadata here.
+            // Full customization types/groups are installed on demand.
+            let preload = interp.intern("cus-start--preload");
+            let mark = interp.specbind_depth();
+            let _ = interp.specbind(preload, Value::t());
             let _ = boot_lib(&mut interp, "cus-start");
+            let _ = interp.unbind_to(mark);
             // loaddefs.el is loaded by loadup.el right after subr.el:
             // it installs the (autoload ...) cells for every preloaded
             // library's entry points and provides the `loaddefs'
@@ -9054,7 +9060,6 @@ command-line arguments.\" \
             "print-escape-newlines",
             "print-quoted",
             "print-unreadable",
-            "print-gensym-alist",
             "print-continuous-numbering",
             "print-number-table",
             "filter-buffer-substring-function",
@@ -9246,6 +9251,7 @@ command-line arguments.\" \
             "tab-always-indent",
             "tab-bar-mode",
             "term-setup-hook",
+            "text-quoting-style",
             "translation-table-for-input",
             "unicode-category-table",
             "unread-command-events",
