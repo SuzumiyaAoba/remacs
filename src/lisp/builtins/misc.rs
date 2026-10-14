@@ -5112,7 +5112,7 @@ fn f_set_time_zone(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 // ---------- hashing / base64 ----------
 
-fn hash_hex(algo: &str, bytes: &[u8]) -> Result<String, Flow> {
+fn hash_bytes(algo: &str, bytes: &[u8]) -> Result<Vec<u8>, Flow> {
     use sha2::Digest;
     let out = match algo {
         "md5" => md5::Md5::digest(bytes).to_vec(),
@@ -5127,10 +5127,18 @@ fn hash_hex(algo: &str, bytes: &[u8]) -> Result<String, Flow> {
         "sha3-512" => sha3::Sha3_512::digest(bytes).to_vec(),
         _ => return Err(Flow::Signal(Value::Nil, Value::Nil, false)),
     };
-    Ok(out.iter().map(|b| format!("{:02x}", b)).collect())
+    Ok(out)
 }
 
-fn secure_hash_str(i: &mut Interp, args: &[Value]) -> Result<String, Flow> {
+fn digest_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+fn hash_hex(algo: &str, bytes: &[u8]) -> Result<String, Flow> {
+    hash_bytes(algo, bytes).map(|digest| digest_hex(&digest))
+}
+
+fn secure_hash_bytes(i: &mut Interp, args: &[Value]) -> Result<Vec<u8>, Flow> {
     // GNU Fsecure_hash: CHECK_SYMBOL first — a non-symbol algorithm
     // signals `wrong-type-argument symbolp'.
     let algo_sym = match i.sym_id(&args[0]) {
@@ -5214,7 +5222,7 @@ fn secure_hash_str(i: &mut Interp, args: &[Value]) -> Result<String, Flow> {
         }
         bytes = bytes[start..end].to_vec();
     }
-    hash_hex(&algo, &bytes).map_err(|_| {
+    hash_bytes(&algo, &bytes).map_err(|_| {
         i.signal_data(
             sym::ERROR,
             vec![Value::string(format!("Invalid algorithm arg: {}", algo))],
@@ -5223,13 +5231,24 @@ fn secure_hash_str(i: &mut Interp, args: &[Value]) -> Result<String, Flow> {
 }
 
 fn f_secure_hash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::string(secure_hash_str(i, &args)?))
+    let digest = secure_hash_bytes(i, &args)?;
+    if arg(&args, 4).truthy() {
+        // Digest octets are unibyte characters, including NUL and 0x80..0xff.
+        let value = Value::string(digest.iter().map(|&byte| byte as char).collect::<String>());
+        if let Value::Str(string) = &value {
+            i.mark_unibyte(string);
+        }
+        Ok(value)
+    } else {
+        Ok(Value::string(digest_hex(&digest)))
+    }
 }
 
 fn f_md5(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let mut a = vec![Value::Sym(i.intern("md5"))];
     a.extend_from_slice(args.as_slice());
-    f_secure_hash(i, a.into())
+    // MD5's optional coding-system argument must not become BINARY.
+    Ok(Value::string(digest_hex(&secure_hash_bytes(i, &a)?)))
 }
 
 /// The byte sequence a Lisp string stands for: unibyte strings use
