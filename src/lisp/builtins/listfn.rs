@@ -391,34 +391,45 @@ fn f_length(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
 }
 fn f_safe_length(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU safe_length: tortoise advances every other step; stop when the
-    // walk lands back on it (covers circular lists without error).
-    let mut n = 0i128;
-    let mut cur = args[0].clone();
-    let mut halftail = args[0].clone();
-    loop {
-        match &cur {
-            Value::Cons(c) => {
-                if n > 0 && eq_values(&cur, &halftail) {
-                    break;
-                }
-                let next = {
-                    let b = c.borrow();
-                    b.cdr.clone()
-                };
-                n += 1;
-                cur = next;
-                if n % 2 == 0 {
-                    if let Value::Cons(h) = &halftail {
-                        let hnext = h.borrow().cdr.clone();
-                        halftail = hnext;
-                    }
-                }
+    // GNU safe_length: Brent's teleporting tortoise-hare walk —
+    // FOR_EACH_TAIL_SAFE with li = { tortoise=LIST, max=2, n=0, q=2 }.
+    // The count reaches the detection cons inclusive; on a cycle it
+    // can exceed the distinct-element count (GNU guarantees only "at
+    // least the number of distinct elements").
+    let mut len = 0i128;
+    let mut tail = args[0].clone();
+    let mut tortoise = args[0].clone();
+    let mut max: i64 = 2;
+    let mut n: i64 = 0;
+    let mut q: u16 = 2;
+    while matches!(tail, Value::Cons(_)) {
+        len += 1; // the loop body counts each cons first, then steps
+        // step: tail = cdr(tail)
+        tail = match &tail {
+            Value::Cons(c) => c.borrow().cdr.clone(),
+            other => other.clone(),
+        };
+        q = q.wrapping_sub(1);
+        let cyclep = if q != 0 {
+            // --q != 0 → check BASE_EQ
+            eq_values(&tail, &tortoise)
+        } else {
+            n -= 1;
+            if n > 0 {
+                eq_values(&tail, &tortoise)
+            } else {
+                max <<= 1;
+                q = max as u16; // li.q = li.n = (max <<= 1) first...
+                n = max >> 16; // ...then li.n >>= USHRT_WIDTH
+                tortoise = tail.clone();
+                false
             }
-            _ => break,
+        };
+        if cyclep {
+            break;
         }
     }
-    Ok(Value::Int(n))
+    Ok(Value::Int(len))
 }
 fn f_proper_list_p(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[0] {
@@ -734,9 +745,7 @@ fn f_reverse(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Record(_) if crate::lisp::builtins::misc::is_bool_vector(i, &args[0]) => {
             let mut bits = crate::lisp::builtins::misc::bool_vec_of(i, &args[0])?;
             bits.reverse();
-            return Ok(Value::list(
-                bits.into_iter().map(Value::from_bool).collect(),
-            ));
+            return Ok(crate::lisp::builtins::misc::make_bool_vector(i, bits));
         }
         Value::Nil => return Ok(Value::Nil),
         Value::Cons(_) => {

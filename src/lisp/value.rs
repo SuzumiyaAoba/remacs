@@ -450,13 +450,17 @@ pub fn surrogate_code(c: char) -> Option<u32> {
 }
 
 /// The GNU char code a string char stands for (proxies return their
-/// real code: 0x3FFFxx for eight-bit, 0xD8xx..0xDFxx for surrogates).
+/// real code: 0x3FFFxx for eight-bit, 0xD8xx..0xDFxx for surrogates,
+/// 0x110000..=0x3FFF7F for mule-seq proxies).
 pub fn lisp_char_code(c: char) -> i128 {
     if let Some(b) = eight_bit_byte(c) {
         return 0x3FFF00 + b as i128;
     }
     if let Some(s) = surrogate_code(c) {
         return s as i128;
+    }
+    if let Some(m) = mule_seq_code(c) {
+        return m as i128;
     }
     c as i128
 }
@@ -550,17 +554,27 @@ pub fn mule_seq_code(c: char) -> Option<u32> {
     }
 }
 
-/// The GNU mule byte sequence for a codepoint a Rust `char` can't
-/// hold (0x110000..=0x3FFF7F): 0xF8|(c>>24), then four 0x80|6-bit
-/// trail bytes — the same form GNU writes on stdout.
-pub fn mule_high_bytes(code: u32) -> [u8; 5] {
-    [
-        0xF8 + ((code >> 24) & 3) as u8,
-        0x80 + ((code >> 18) & 0x3F) as u8,
-        0x80 + ((code >> 12) & 0x3F) as u8,
-        0x80 + ((code >> 6) & 0x3F) as u8,
-        0x80 + (code & 0x3F) as u8,
-    ]
+/// The bytes GNU writes on stdout for a codepoint a Rust `char`
+/// can't hold (0x110000..=0x3FFF7F): old-style extended UTF-8 —
+/// four bytes 0xF0|(c>>18) + three 0x80|6-bit trails below 0x200000,
+/// five bytes 0xF8|(c>>24) + four trails at/above it.
+pub fn mule_high_bytes(code: u32) -> Vec<u8> {
+    if code < 0x200000 {
+        vec![
+            0xF0 + ((code >> 18) & 7) as u8,
+            0x80 + ((code >> 12) & 0x3F) as u8,
+            0x80 + ((code >> 6) & 0x3F) as u8,
+            0x80 + (code & 0x3F) as u8,
+        ]
+    } else {
+        vec![
+            0xF8 + ((code >> 24) & 3) as u8,
+            0x80 + ((code >> 18) & 0x3F) as u8,
+            0x80 + ((code >> 12) & 0x3F) as u8,
+            0x80 + ((code >> 6) & 0x3F) as u8,
+            0x80 + (code & 0x3F) as u8,
+        ]
+    }
 }
 
 impl Value {

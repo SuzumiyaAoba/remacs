@@ -117,6 +117,52 @@
   (qa (length mark-ring) 1)
   (qa mark-ring-max 16))
 
+;; == mark-ring cons sharing: pop-mark rotates IN PLACE ==
+;; GNU's pop-mark is (nconc mark-ring (list (copy-marker (mark-marker))))
+;; then (pop mark-ring): a reference captured before the call observes
+;; the appended copy, and the popped head marker is detached in place.
+(with-temp-buffer
+  (insert "abcdefghij")
+  (set-mark 5)
+  (push-mark 2 t)
+  (push-mark 8 t)
+  (setq mark-ring nil)
+  (push-mark 3 t)
+  (let ((captured mark-ring))
+    (qa (length captured) 1)
+    (qa (marker-position (car captured)) 8)
+    (pop-mark)
+    ;; The same cons now shows the old head detached + the appended
+    ;; copy of the new mark behind it.
+    (qa (length captured) 2)
+    (qa (marker-buffer (car captured)) nil)
+    (qa (marker-position (cadr captured)) 3)
+    (qa (length mark-ring) 1)
+    (qa (marker-position (car mark-ring)) 3)))
+
+;; == mark-ring-max truncation: in-place cut, marker stays live ==
+(with-temp-buffer
+  (insert "abcdefghij")
+  (let ((mark-ring-max 1)
+        (mark-ring nil))
+    (set-mark 4)
+    (push-mark 2 t)
+    ;; The shared cons chain: prepending truncates it in place.
+    (let ((captured mark-ring))
+      (push-mark 9 t)
+      ;; The ring holds the most recent OLD mark (position 2).
+      (qa (length mark-ring) 1)
+      (qa (marker-position (car mark-ring)) 2)
+      ;; GNU's truncation severs the chain at (nthcdr (1- MAX) ring);
+      ;; the captured head survives as a one-element list whose marker
+      ;; GNU does NOT detach — `old' is the old ring's element at
+      ;; index MAX, nil when the ring was short.
+      (qa (length captured) 1)
+      (qa (marker-position (car captured)) 4)
+      (qa (marker-buffer (car captured)) (current-buffer)))))
+
+
+
 ;; == the-region-bounds doesn't exist ==
 (qa (fboundp 'the-region-bounds) nil)
 

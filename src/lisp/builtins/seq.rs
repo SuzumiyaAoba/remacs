@@ -1305,6 +1305,15 @@ fn f_nreverse_seq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             }
             Ok(prev)
         }
+        Value::Record(_) if crate::lisp::builtins::misc::is_bool_vector(i, &args[0]) => {
+            // GNU Fnreverse reverses a bool-vector in place.
+            if let Value::Record(r) = &args[0] {
+                if let Some(Value::Vec(bv)) = r.borrow().get(1).cloned() {
+                    bv.borrow_mut().reverse();
+                }
+            }
+            Ok(args[0].clone())
+        }
         Value::Vec(v) => {
             v.borrow_mut().reverse();
             Ok(args[0].clone())

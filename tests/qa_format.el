@@ -129,4 +129,16 @@
 ;; == arity ==
 (qa-err (format) 'wrong-number-of-arguments)
 
+
+;; == %c accepts the full GNU char range [0, #x3FFFFF] ==
+;; Codes above #x10FFFF have no Unicode scalar; GNU stores them as
+;; private internal chars (mule codes) — the code must round-trip.
+(qa-err (format "%c" -1) 'wrong-type-argument)
+(qa-err (format "%c" #x400000) 'wrong-type-argument)
+(qa-err (format "%c" "a") 'error)
+(qa (format "%c" 65) "A")
+(qa (car (string-to-list (format "%c" #x110000))) #x110000)
+(qa (car (string-to-list (format "%c" #x3FFF7F))) #x3FFF7F)
+(qa (car (string-to-list (format "%c" #x3FFFFF))) #x3FFFFF)
+
 (princ (qa--done))

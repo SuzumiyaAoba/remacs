@@ -1022,7 +1022,7 @@ fn casify_region(i: &mut Interp, args: &[Value], op: CaseOp) -> EvalResult {
             i,
             start + 1,
             start + 1 + n_new,
-            old_len,
+            old_len as i128,
         )?;
     }
     Ok(Value::Nil)
@@ -1112,6 +1112,7 @@ fn number_prefix(t: &str) -> String {
         return String::new();
     }
     // Exponent: e[+-]?digits — only consumed when digits follow.
+    // GNU's `e+NaN'/`e+INF' literal tail is part of the number too.
     if matches!(cs.get(p), Some('e') | Some('E')) {
         let mut q = p + 1;
         if matches!(cs.get(q), Some('+') | Some('-')) {
@@ -1120,6 +1121,11 @@ fn number_prefix(t: &str) -> String {
         let ed = scan_digits(&cs, q);
         if ed > 0 {
             end = q + ed;
+        } else if cs.get(p + 1) == Some(&'+')
+            && (cs.get(q..q + 3) == Some(&['N', 'a', 'N'][..])
+                || cs.get(q..q + 3) == Some(&['I', 'N', 'F'][..]))
+        {
+            end = q + 3;
         }
     }
     cs[..end].iter().collect()
@@ -4472,18 +4478,24 @@ fn format_impl_spans(
             'c' => {
                 // GNU CHECK_CHARACTER: signals `characterp' outside
                 // [0, #x3fffff] (e.g. -1), and on non-integers.
+                // 0x110000..=0x3FFF7F can't be a Rust char — they
+                // surface as one mule-seq proxy char like GNU's code.
                 let n = match &a {
                     Value::Int(n) => *n,
                     _ => return Err(fmt_type_err(i)),
                 };
-                let ch = match crate::lisp::value::lisp_char(n as u32) {
-                    Some(ch) if (0..=0x3f_ffff).contains(&n) => ch,
-                    _ => {
-                        let pid = i.intern_soft("characterp").unwrap_or(0);
-                        return Err(i.signal_data(
-                            sym::WRONG_TYPE_ARGUMENT,
-                            vec![Value::Sym(pid), a.clone()],
-                        ));
+                let ch = if (0x11_0000..=0x3F_FF7F).contains(&n) {
+                    crate::lisp::value::mule_seq_char(n as u32)
+                } else {
+                    match crate::lisp::value::lisp_char(n as u32) {
+                        Some(ch) if (0..=0x3f_ffff).contains(&n) => ch,
+                        _ => {
+                            let pid = i.intern_soft("characterp").unwrap_or(0);
+                            return Err(i.signal_data(
+                                sym::WRONG_TYPE_ARGUMENT,
+                                vec![Value::Sym(pid), a.clone()],
+                            ));
+                        }
                     }
                 };
                 ch.to_string()

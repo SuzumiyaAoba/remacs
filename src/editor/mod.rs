@@ -10229,9 +10229,11 @@ fn file_attributes_at(i: &mut Interp, p: &str, id_format: &Value) -> EvalResult 
         Ok(m) => {
             // GNU order: type nlinks uid gid atime mtime ctime size
             // modes gidchg inode device.
-            let to_lisp_time = |r: std::io::Result<std::time::SystemTime>| match r {
+            let to_lisp_time = |i: &mut Interp,
+                                r: std::io::Result<std::time::SystemTime>| match r {
                 Ok(t) => match t.duration_since(std::time::UNIX_EPOCH) {
-                    Ok(d) => crate::lisp::builtins::misc::ns_to_lisp_time(
+                    Ok(d) => crate::lisp::builtins::misc::ns_to_lisp_time_i(
+                        i,
                         (d.as_secs() as i128) * 1_000_000_000 + d.subsec_nanos() as i128,
                     ),
                     Err(_) => Value::Nil,
@@ -10274,7 +10276,8 @@ fn file_attributes_at(i: &mut Interp, p: &str, id_format: &Value) -> EvalResult 
                         m.ino() as i128,
                         m.dev() as i128,
                         file_mode_string(mode, &m),
-                        crate::lisp::builtins::misc::ns_to_lisp_time(
+                        crate::lisp::builtins::misc::ns_to_lisp_time_i(
+                            i,
                             m.ctime() as i128 * 1_000_000_000 + m.ctime_nsec() as i128,
                         ),
                     )
@@ -10308,8 +10311,8 @@ fn file_attributes_at(i: &mut Interp, p: &str, id_format: &Value) -> EvalResult 
                 Value::Int(nlinks),
                 uid,
                 gid,
-                to_lisp_time(m.accessed()),
-                to_lisp_time(m.modified()),
+                to_lisp_time(i, m.accessed()),
+                to_lisp_time(i, m.modified()),
                 ctime,
                 Value::Int(m.len() as i128),
                 Value::string(modes),
@@ -12808,7 +12811,7 @@ fn f_find_file_noselect(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                         bb.note_modified(false);
                     }
                     let new_len = contents.chars().count();
-                    crate::lisp::builtins::evalfn::signal_after_change(i, 1, new_len + 1, old_len)
+                    crate::lisp::builtins::evalfn::signal_after_change(i, 1, new_len + 1, old_len as i128)
                 })?;
                 let mut bb = b.borrow_mut();
                 // GNU records the visited file's modtime+size so
@@ -13985,7 +13988,7 @@ fn f_shell_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                         bb.zv = bb.text.len();
                     }
                     let new_len = stdout.chars().count();
-                    crate::lisp::builtins::evalfn::signal_after_change(i, 1, new_len + 1, old_len)
+                    crate::lisp::builtins::evalfn::signal_after_change(i, 1, new_len + 1, old_len as i128)
                 })?;
             }
             // ERROR-BUFFER captures stderr separately.
@@ -14008,7 +14011,7 @@ fn f_shell_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                                 i,
                                 1,
                                 new_len + 1,
-                                old_len,
+                                old_len as i128,
                             )
                         })?;
                     }
@@ -14360,7 +14363,7 @@ fn region_op(i: &mut Interp, a: &[Value], op: crate::lisp::builtins::strfn::Case
             i,
             s + first + 1,
             s + first + span_new + 1,
-            last_old - first,
+            last_old as i128 - first as i128,
         )?;
     }
     Ok(Value::Nil)
@@ -14454,7 +14457,7 @@ fn word_op(i: &mut Interp, a: &[Value], op: crate::lisp::builtins::strfn::CaseOp
             i,
             s + first + 1,
             s + first + span_new + 1,
-            last_old - first,
+            last_old as i128 - first as i128,
         )?;
     }
     // GNU moves point over the changed words for positive args and
@@ -14688,7 +14691,7 @@ fn f_indent_rigidly(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
     }
     let e2 = cur(i).borrow().text.len().min(e.max(s));
-    crate::lisp::builtins::evalfn::signal_after_change(i, s + 1, e2 + 1, e - s)?;
+    crate::lisp::builtins::evalfn::signal_after_change(i, s + 1, e2 + 1, (e - s) as i128)?;
     Ok(Value::Nil)
 }
 
@@ -14706,6 +14709,11 @@ fn f_move_beginning_of_line(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
 
 fn f_move_end_of_line(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let n = num_or_mark(i, &arg(&a, 0))?;
+    // GNU simple.el: `(vertical-motion (cons 0 arg))' — a non-positive
+    // ARG leaves point in place rather than moving to this line's end.
+    if n <= 0 {
+        return Ok(Value::Nil);
+    }
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let line = bb.text.line_of_pos(bb.point());
@@ -18633,46 +18641,25 @@ fn f_overlays_at_point(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     f_overlays_at(i, vec![Value::Int(pos)].into())
 }
 fn f_next_overlay_change(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let pos = want_int(i, &a[0])?.max(1) as usize - 1;
+    // GNU Fnext_overlay_change: endpoints clamp into the accessible
+    // region [BEGV+1, ZV+1] (narrowing adjusts them lazily); no
+    // endpoint after POS → point-max.
+    let pos = crate::lisp::builtins::want_int_or_mark(i, &a[0])?.max(1);
     let b = cur(i);
     let bb = b.borrow();
-    let bid = bb.id;
-    let mut next: Option<usize> = None;
-    for ov in &bb.overlays {
-        if ov.buffer != Some(bid) {
-            continue;
-        }
-        for cand in [ov.start, ov.end] {
-            if cand > pos {
-                next = Some(next.map(|n| n.min(cand)).unwrap_or(cand));
-            }
-        }
-    }
-    match next {
-        Some(p) => Ok(Value::Int(p as i128 + 1)),
-        None => Ok(Value::Int(bb.text.len() as i128 + 1)),
-    }
+    Ok(Value::Int(
+        crate::buffer::primitives::next_ov_change(&bb, pos),
+    ))
 }
 fn f_prev_overlay_change(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let pos = want_int(i, &a[0])?.max(1) as usize - 1;
+    // GNU Fprevious_overlay_change: clamped endpoints before POS;
+    // none → point-min (never nil).
+    let pos = crate::lisp::builtins::want_int_or_mark(i, &a[0])?.max(1);
     let b = cur(i);
     let bb = b.borrow();
-    let bid = bb.id;
-    let mut prev: Option<usize> = None;
-    for ov in &bb.overlays {
-        if ov.buffer != Some(bid) {
-            continue;
-        }
-        for cand in [ov.start, ov.end] {
-            if cand < pos {
-                prev = Some(prev.map(|n| n.max(cand)).unwrap_or(cand));
-            }
-        }
-    }
-    match prev {
-        Some(p) => Ok(Value::Int(p as i128 + 1)),
-        None => Ok(Value::Int(1)),
-    }
+    Ok(Value::Int(
+        crate::buffer::primitives::prev_ov_change(&bb, pos),
+    ))
 }
 fn f_remove_overlays(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let b = cur(i);
@@ -18713,7 +18700,66 @@ fn f_remove_overlays(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_documentation_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
     let prop = want_sym(i, &a[1])?;
-    Ok(i.get_prop(sid, prop))
+    let mut tem = i.get_prop(sid, prop);
+    let vd = i.intern("variable-documentation");
+    if tem.is_nil() && prop == vd {
+        // GNU doc.c: a variable with no doc of its own falls through
+        // to its `variable-alias' target's property.
+        let ind = i.var_alias_target(sid);
+        if ind != sid {
+            tem = i.get_prop(ind, prop);
+        }
+        // C-defined variables carry their doc in the DOC file via a
+        // fixnum offset; remacs never plants those offsets, so resolve
+        // through the DOC index under "V<name>" instead.
+        if tem.is_nil() {
+            if let Some(text) =
+                crate::lisp::builtins::misc::doc_text(i, &format!("V{}", i.symbol_name(ind)))
+            {
+                tem = Value::string(text);
+            }
+        }
+    }
+    // GNU: fixnum 0 counts as no doc.
+    if matches!(&tem, Value::Int(n) if *n == 0) {
+        tem = Value::Nil;
+    }
+    // Fixnum (or `(FILE . POS)' cons) props index the DOC file.
+    match &tem {
+        Value::Int(off) => {
+            tem = match crate::lisp::builtins::misc::doc_text_at(i, *off as usize) {
+                Some(s) => Value::string(s),
+                None => Value::Nil,
+            };
+        }
+        Value::Cons(c) if matches!(c.borrow().cdr, Value::Int(_)) => {
+            let off = match &c.borrow().cdr {
+                Value::Int(n) => *n as usize,
+                _ => 0,
+            };
+            tem = match crate::lisp::builtins::misc::doc_text_at(i, off) {
+                Some(s) => Value::string(s),
+                None => Value::Nil,
+            };
+        }
+        // A non-string non-offset doc property is an eval form in GNU.
+        Value::Nil | Value::Str(_) => {}
+        other => {
+            let form = other.clone();
+            tem = i.eval(&form)?;
+        }
+    }
+    // RAW nil passes strings through `substitute-command-keys'.
+    let raw = a.get(2).map(|v| v.truthy()).unwrap_or(false);
+    if !raw {
+        if let Value::Str(s) = &tem {
+            let sck = Value::Sym(i.intern("substitute-command-keys"));
+            if let Ok(v) = i.apply(&sck, vec![Value::Str(s.clone())]) {
+                tem = v;
+            }
+        }
+    }
+    Ok(tem)
 }
 
 fn f_documentation(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -18727,6 +18773,18 @@ fn f_documentation(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             let v = i.symbol_function(*id);
             if v.is_nil() || matches!(v, Value::Sym(s) if s == crate::lisp::sym::UNBOUND) {
                 return Err(i.signal_data(crate::lisp::sym::VOID_FUNCTION, vec![a[0].clone()]));
+            }
+            // GNU Fdocumentation: a symbol's `function-documentation'
+            // property wins over the function's own docstring — this is
+            // how `defalias' with a DOC arg overrides the aliased
+            // function's text.
+            let fd = i.intern("function-documentation");
+            if !i.get_prop(*id, fd).is_nil() {
+                let mut dargs = vec![a[0].clone(), Value::Sym(fd)];
+                if let Some(raw) = a.get(1) {
+                    dargs.push(raw.clone());
+                }
+                return f_documentation_property(i, dargs.into());
             }
             v
         }
@@ -19696,6 +19754,21 @@ fn f_internal_set_lisp_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> E
     // real frame or nil → the spec/realized layer only.
     let to_t = matches!(arg(&a, 3), Value::Sym(s) if s == sym::T);
     let zero = matches!(arg(&a, 3), Value::Int(0));
+    // GNU FRAME=t stores :ignore-defface for `unspecified' so frame
+    // defaults ignore the defface layer.
+    let mut value = a[2].clone();
+    if to_t {
+        if let Value::Sym(s) = &value {
+            if i.symbol_name(*s) == "unspecified" {
+                value = Value::Sym(i.intern(":ignore-defface"));
+            }
+        }
+    }
+    // GNU stores :box t as fixnum 1.
+    if attr == ":box" && matches!(&value, Value::Sym(s) if *s == sym::T) {
+        value = Value::Int(1);
+    }
+    check_face_value(i, &name, &attr, &value)?;
     if to_t || zero {
         face_register_global(i, &name);
         if !i.face_t_table.iter().any(|(n, _)| *n == name) {
@@ -19703,12 +19776,12 @@ fn f_internal_set_lisp_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> E
         }
         let kw = i.intern(&attr);
         if let Some((_, plist)) = i.face_t_table.iter_mut().find(|(n, _)| *n == name) {
-            *plist = crate::lisp::eval::plist_put(plist, kw, a[2].clone());
+            *plist = crate::lisp::eval::plist_put(plist, kw, value.clone());
         }
-        face_global_update(i, &name, &attr, a[2].clone());
+        face_global_update(i, &name, &attr, value.clone());
     }
     if !to_t {
-        set_face_attr(i, &name, &attr, a[2].clone());
+        set_face_attr(i, &name, &attr, value);
     }
     Ok(Value::Nil)
 }
@@ -19743,10 +19816,31 @@ fn f_set_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     for kv in a[2..].chunks(2) {
         if let (Some(k), Some(v)) = (i.sym_id(&kv[0]), kv.get(1)) {
             let attr = i.symbol_name(k);
-            // GNU `check_face_attr' (xfaces.c) validates each value
-            // when the pair is stored — `unspecified'/`undefined'
-            // pass for every attribute.
-            check_face_value(i, &name, &attr, v)?;
+            // GNU set-face-attribute (faces.el) only dispatches
+            // :family/:foundry when the value is a string or
+            // `unspecified' — other values are silently dropped.
+            if attr == ":family" || attr == ":foundry" {
+                let is_unspec = matches!(v, Value::Sym(s) if {
+                    i.symbol_name(*s) == "unspecified"
+                });
+                if !matches!(v, Value::Str(_)) && !is_unspec {
+                    continue;
+                }
+            }
+            // GNU stores :box t as fixnum 1 and, when FRAME=t,
+            // `unspecified' as :ignore-defface.
+            let mut v = v.clone();
+            if to_t {
+                if let Value::Sym(s) = &v {
+                    if i.symbol_name(*s) == "unspecified" {
+                        v = Value::Sym(i.intern(":ignore-defface"));
+                    }
+                }
+            }
+            if attr == ":box" && matches!(&v, Value::Sym(s) if *s == sym::T) {
+                v = Value::Int(1);
+            }
+            check_face_value(i, &name, &attr, &v)?;
             if to_t || zero {
                 if !i.face_t_table.iter().any(|(n, _)| *n == name) {
                     i.face_t_table.push((name.clone(), Value::Nil));
@@ -19770,33 +19864,53 @@ fn f_set_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn check_face_value(i: &mut Interp, name: &str, attr: &str, v: &Value) -> Result<(), Flow> {
     if let Value::Sym(s) = v {
         let n = i.symbol_name(*s);
-        // GNU xfaces.c treats `reset' like `unspecified'/`undefined' —
-        // a per-attr pseudo-value legal everywhere (used by defface
-        // specs, e.g. elisp-mode's `:foreground reset').
-        if n == "unspecified" || n == "undefined" || n == "reset" {
+        // GNU xfaces.c treats `unspecified'/`reset'/`:ignore-defface'
+        // as per-attr pseudo-values legal everywhere; `undefined' is
+        // NOT among them (GNU signals Invalid face <attr> for it).
+        if n == "unspecified" || n == "reset" || n == ":ignore-defface" {
             return Ok(());
         }
     }
     match attr {
         ":foreground" | ":background" | ":distant-foreground" | ":distant-background" => {
+            // GNU: nil → `unspecified' via HANDLE_INVALID_NIL_VALUE
+            // (warns in *Messages*); a non-string is wta `stringp';
+            // an empty string is "Empty <attr> color value".
+            if v.is_nil() {
+                return Ok(());
+            }
             if !matches!(v, Value::Str(_)) {
                 return Err(i.wrong_type_mut("stringp", v));
             }
+            if matches!(v, Value::Str(s) if s.borrow().is_empty()) {
+                let label = match attr {
+                    ":foreground" => "Empty foreground color value",
+                    ":background" => "Empty background color value",
+                    ":distant-foreground" => "Empty distant-foreground color value",
+                    _ => "Empty distant-background color value",
+                };
+                return Err(face_value_err(i, label, v));
+            }
         }
         ":family" | ":foundry" => {
-            if !matches!(v, Value::Str(_) | Value::Nil) {
+            // Reached from internal-set-lisp-face-attribute (GNU
+            // CHECK_STRING); `set-face-attribute' skips non-string
+            // values itself before dispatching here.
+            if !matches!(v, Value::Str(_)) {
                 return Err(i.wrong_type_mut("stringp", v));
+            }
+            if matches!(v, Value::Str(s) if s.borrow().is_empty()) {
+                let label = if attr == ":family" {
+                    "Invalid face family"
+                } else {
+                    "Invalid face foundry"
+                };
+                return Err(face_value_err(i, label, v));
             }
         }
         ":font" => {
             if !matches!(v, Value::Str(_) | Value::Vec(_) | Value::Nil) {
-                return Err(i.signal_data(
-                    sym::ERROR,
-                    vec![Value::string(format!(
-                        "Invalid font or font-spec {}",
-                        i.prin1_to_string(v)
-                    ))],
-                ));
+                return Err(face_value_err(i, "Invalid font or font-spec", v));
             }
         }
         ":weight" | ":slant" | ":width" => {
@@ -19828,107 +19942,265 @@ fn check_face_value(i: &mut Interp, name: &str, attr: &str, v: &Value) -> Result
                     ":slant" => "Invalid face slant",
                     _ => "Invalid face width",
                 };
-                return Err(i.signal_data(
-                    sym::ERROR,
-                    vec![Value::string(format!("{} {}", label, i.prin1_to_string(v)))],
-                ));
+                return Err(face_value_err(i, label, v));
             }
         }
         ":height" => {
             // GNU check_face_attr: on `default' the height must be an
-            // absolute positive number; on other faces a symbol/lambda
-            // is also accepted (it must produce a positive integer —
-            // "Face height does not produce a positive integer V").
+            // absolute positive number; on other faces the value is
+            // test-merged against 10 — ints/floats >0, a symbol naming
+            // a real face, or a function/list producing a positive
+            // number pass (merge_face_heights).
             let is_default = name == "default";
+            // GNU merge_face_heights against a base of 10: fixnum
+            // passes through absolute; float scales; FUNCTIONP is
+            // safe_calln'd (symbol w/o function → invalid → error);
+            // nil and non-function conses produce `invalid' → error.
             let ok = match v {
-                Value::Int(n) => *n > 0 || !is_default && *n != 0,
-                Value::Float(f) => **f > 0.0 || !is_default,
-                Value::Sym(_) | Value::Cons(_) | Value::Vec(_) => !is_default,
+                Value::Int(n) => *n > 0,
+                Value::Float(f) => **f > 0.0,
+                Value::Sym(s) => {
+                    !is_default && {
+                        let fv = i.obarray.symbol(*s).function.clone();
+                        !matches!(&fv, Value::Sym(u) if *u == sym::UNBOUND)
+                    }
+                }
+                Value::Lambda(_) | Value::Subr(_) => !is_default,
+                Value::Cons(c) => {
+                    let is_lambda = matches!(
+                        &c.borrow().car,
+                        Value::Sym(s) if {
+                            let n = i.symbol_name(*s);
+                            n == "lambda" || n == "closure"
+                        }
+                    );
+                    !is_default && is_lambda
+                }
                 _ => false,
             };
             if !ok {
-                let msg = if is_default {
-                    format!(
-                        "Default face height not absolute and positive {}",
-                        i.prin1_to_string(v)
-                    )
+                let label = if is_default {
+                    "Default face height not absolute and positive"
                 } else {
-                    format!(
-                        "Face height does not produce a positive integer {}",
-                        i.prin1_to_string(v)
-                    )
+                    "Face height does not produce a positive integer"
                 };
-                return Err(i.signal_data(sym::ERROR, vec![Value::string(msg)]));
+                return Err(face_value_err(i, label, v));
             }
         }
-        ":inverse-video" | ":extend" | ":overline" | ":strike-through" | ":underline" => {
-            // GNU accepts nil, t, and `unspecified' for the boolean
-            // attrs; `:underline' also takes an attribute-list value.
-            let ok = match attr {
-                // GNU: :underline accepts t, nil, a color string, or a
-                // property list — bare symbols other than t fail.
-                ":underline" => matches!(v, Value::Nil | Value::Str(_) | Value::Cons(_))
-                    || matches!(v, Value::Sym(s) if *s == sym::T),
-                _ => {
-                    v.is_nil()
-                        || matches!(v, Value::Sym(s) if *s == sym::T)
-                }
+        ":inverse-video" | ":extend" => {
+            // GNU CHECK_SYMBOL first — non-symbols are wta `symbolp'
+            // (nil IS a symbol and passes); only t/nil survive.
+            if !matches!(v, Value::Sym(_) | Value::Nil) {
+                return Err(i.wrong_type_mut("symbolp", v));
+            }
+            let ok = v.is_nil() || matches!(v, Value::Sym(s) if *s == sym::T);
+            if !ok {
+                let label = if attr == ":inverse-video" {
+                    "Invalid inverse-video face attribute value"
+                } else {
+                    "Invalid extend face attribute value"
+                };
+                return Err(face_value_err(i, label, v));
+            }
+        }
+        ":overline" | ":strike-through" => {
+            // GNU: symbol must be t/nil; a non-symbol must be a
+            // nonempty string (color).
+            let ok = match v {
+                Value::Nil => true,
+                Value::Sym(s) => *s == sym::T,
+                Value::Str(s) => !s.borrow().is_empty(),
+                _ => false,
             };
             if !ok {
-                let label = match attr {
-                    ":inverse-video" => "Invalid inverse-video face attribute value",
-                    ":extend" => "Invalid extend face attribute value",
-                    ":overline" => "Invalid face overline",
-                    ":strike-through" => "Invalid face strike-through",
-                    _ => "Invalid face underline",
+                let label = if attr == ":overline" {
+                    "Invalid face overline"
+                } else {
+                    "Invalid face strike-through"
                 };
-                return Err(i.signal_data(
-                    sym::ERROR,
-                    vec![Value::string(format!("{} {}", label, i.prin1_to_string(v)))],
-                ));
+                return Err(face_value_err(i, label, v));
+            }
+        }
+        ":underline" => {
+            // GNU: t/nil, a nonempty color string, or a plist where
+            // :color is a nonempty string or `foreground-color',
+            // :style is line/double-line/wave/dots/dashes, nil values
+            // allowed only for :position; other keys' values pass.
+            let ok = match v {
+                Value::Nil => true,
+                Value::Sym(s) => *s == sym::T,
+                Value::Str(s) => !s.borrow().is_empty(),
+                Value::Cons(_) => face_underline_plist_ok(i, v),
+                _ => false,
+            };
+            if !ok {
+                return Err(face_value_err(i, "Invalid face underline", v));
             }
         }
         ":stipple" => {
             if !matches!(v, Value::Nil | Value::Str(_) | Value::Vec(_) | Value::Cons(_)) {
-                return Err(i.signal_data(
-                    sym::ERROR,
-                    vec![Value::string(format!(
-                        "Invalid stipple attribute {}",
-                        i.prin1_to_string(v)
-                    ))],
-                ));
+                return Err(face_value_err(i, "Invalid stipple attribute", v));
             }
         }
         ":box" => {
-            // GNU check_lface_attrs: :box takes UNSPECIFIED, RESET,
-            // SYMBOLP (t = default-attributes box), STRINGP, FIXNUMP
-            // or CONSP — `Invalid face box' only for other types.
-            if !matches!(
-                v,
-                Value::Nil | Value::Int(_) | Value::Str(_) | Value::Cons(_) | Value::Sym(_)
-            ) {
-                return Err(i.signal_data(
-                    sym::ERROR,
-                    vec![Value::string(format!("Invalid face box {}", i.prin1_to_string(v)))],
-                ));
+            // GNU xfaces.c merge_face_vectors :box arm: t is legal
+            // (stored as width 1), plus `unspecified', `reset' and
+            // `:ignore-defface' — other symbols are NOT.  Nonzero
+            // fixnums and nonempty strings pass; a cons must be an
+            // (INT . INT) pair or a plist of :line-width (nonzero
+            // int or (INT . INT) pair), :color (nonempty string),
+            // :style (nil/pressed-button/released-button/flat-button).
+            let ok = match v {
+                Value::Nil => true,
+                Value::Sym(s) => {
+                    *s == sym::T || {
+                        let n = i.symbol_name(*s);
+                        n == ":ignore-defface"
+                    }
+                }
+                Value::Int(n) => *n != 0,
+                Value::Str(s) => !s.borrow().is_empty(),
+                Value::Cons(c) => {
+                    let (car, cdr) = {
+                        let cc = c.borrow();
+                        (cc.car.clone(), cc.cdr.clone())
+                    };
+                    if matches!(car, Value::Int(_)) && matches!(cdr, Value::Int(_)) {
+                        true
+                    } else {
+                        face_box_plist_ok(i, v)
+                    }
+                }
+                _ => false,
+            };
+            if !ok {
+                return Err(face_value_err(i, "Invalid face box", v));
             }
         }
         ":inherit" => {
             let ok = matches!(v, Value::Nil | Value::Sym(_) | Value::Str(_) | Value::Cons(_));
             if !ok {
-                return Err(i.signal_data(
-                    sym::ERROR,
-                    vec![Value::string(format!(
-                        "Invalid face inheritance {}",
-                        i.prin1_to_string(v)
-                    ))],
-                ));
+                return Err(face_value_err(i, "Invalid face inheritance", v));
             }
         }
         _ => {}
     }
     Ok(())
 }
+
+/// GNU signal_error: `(error . (MSG . ARG))' where a proper-list ARG
+/// splices into the data tail and any other value is wrapped in a
+/// one-element list.
+fn face_value_err(i: &mut Interp, label: &str, v: &Value) -> Flow {
+    let tail = match v.list_to_vec() {
+        Ok(items) => Value::list(items),
+        Err(_) => Value::list(vec![v.clone()]),
+    };
+    i.signal_data(
+        sym::ERROR,
+        Value::cons(Value::string(label), tail).list_to_vec().unwrap_or_default(),
+    )
+}
+
+
+
+/// GNU xfaces.c :box plist arm: pairwise `(:key val)' scan where
+/// `:line-width' takes a nonzero fixnum or an (INT . INT) pair,
+/// `:color' a nonempty string, `:style' nil or one of
+/// pressed-button/released-button/flat-button — anything else
+/// (including an odd/dotted tail) invalidates the whole value.
+fn face_box_plist_ok(i: &mut Interp, v: &Value) -> bool {
+    let mut rest = v.clone();
+    loop {
+        let (k, tail) = match &rest {
+            Value::Cons(c) => {
+                let cc = c.borrow();
+                (cc.car.clone(), cc.cdr.clone())
+            }
+            _ => return rest.is_nil(),
+        };
+        let (val, next) = match &tail {
+            Value::Cons(c) => {
+                let cc = c.borrow();
+                (cc.car.clone(), cc.cdr.clone())
+            }
+            _ => return false,
+        };
+        let key = i.sym_id(&k).map(|s| i.symbol_name(s));
+        let good = match key.as_deref() {
+            Some(":line-width") => match &val {
+                Value::Int(n) => *n != 0,
+                Value::Cons(p) => {
+                    let pp = p.borrow();
+                    matches!(pp.car, Value::Int(a) if a != 0)
+                        && matches!(pp.cdr, Value::Int(b) if b != 0)
+                }
+                _ => false,
+            },
+            Some(":color") => match &val {
+                Value::Nil => false,
+                Value::Str(s) => !s.borrow().is_empty(),
+                _ => false,
+            },
+            Some(":style") => match &val {
+                Value::Nil => true,
+                Value::Sym(s) => {
+                    let n = i.symbol_name(*s);
+                    matches!(n.as_str(), "pressed-button" | "released-button" | "flat-button")
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        if !good {
+            return false;
+        }
+        rest = next;
+    }
+}
+
+/// GNU xfaces.c :underline plist arm: every key must be a symbol,
+/// nil values pass only for :position; :color must be a nonempty
+/// string or `foreground-color'; :style must be one of
+/// line/double-line/wave/dots/dashes.  Other keys pass unchecked.
+fn face_underline_plist_ok(i: &mut Interp, v: &Value) -> bool {
+    let mut rest = v.clone();
+    loop {
+        let (k, tail) = match &rest {
+            Value::Cons(c) => {
+                let cc = c.borrow();
+                (cc.car.clone(), cc.cdr.clone())
+            }
+            _ => return rest.is_nil(),
+        };
+        let (val, next) = match &tail {
+            Value::Cons(c) => {
+                let cc = c.borrow();
+                (cc.car.clone(), cc.cdr.clone())
+            }
+            _ => return true, // odd tail: CAR_SAFE nil val is OK for :position only; GNU treats missing val as nil
+        };
+        let key = i.sym_id(&k).map(|s| i.symbol_name(s));
+        let good = match (key.as_deref(), &val) {
+            (None, _) => false,
+            (Some(":color"), Value::Sym(s)) => i.symbol_name(*s) == "foreground-color",
+            (Some(":color"), Value::Str(s)) => !s.borrow().is_empty(),
+            (Some(":color"), _) => false,
+            (Some(":style"), Value::Sym(s)) => matches!(
+                i.symbol_name(*s).as_str(),
+                "line" | "double-line" | "wave" | "dots" | "dashes"
+            ),
+            (Some(":style"), _) => false,
+            (Some(_), Value::Nil) => key.as_deref() == Some(":position"),
+            _ => true,
+        };
+        if !good {
+            return false;
+        }
+        rest = next;
+    }
+}
+
 
 
 /// Route through the Lisp `face-attribute' (faces.el layering) so the

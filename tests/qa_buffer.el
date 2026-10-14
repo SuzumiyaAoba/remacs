@@ -256,4 +256,27 @@
         (mapc 'kill-buffer (list i b))))
     '(t nil t))
 
+
+;; == insert-byte: GNU BYTE8_TO_CHAR (insdel.c) ==
+;; bytes >=0x80 in a multibyte buffer become the eight-bit-graphic
+;; escape char 0x3FFF00+byte; in a unibyte buffer the raw byte lands.
+(qa (with-temp-buffer
+      (insert-byte 233 1)
+      (car (string-to-list (buffer-string))))
+    4194281)
+(qa (with-temp-buffer
+      (insert-byte 65 2)
+      (buffer-string))
+    "AA")
+(qa (with-temp-buffer
+      (set-buffer-multibyte nil)
+      (insert-byte 233 1)
+      (car (string-to-list (buffer-string))))
+    233)
+(qa (condition-case e (with-temp-buffer (insert-byte 256 1) :ok) (error (car e)))
+    'args-out-of-range)
+(qa (condition-case e (with-temp-buffer (insert-byte -1 1) :ok) (error (car e)))
+    'args-out-of-range)
+(qa (with-temp-buffer (insert-byte 200 2) (buffer-size)) 2)
+
 (princ (qa--done))

@@ -1904,7 +1904,7 @@ fn f_subr_arity(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         // `#[...]' byte-code lambdas loaded from .elc are not `subrp'
         // in GNU (byte-code objects report subrp nil, so subr-arity
         // signals wrong-type-argument — e.g. `apply-partially' results).
-        Value::Lambda(l) if l.compiled && !l.is_macro => lambda_arity(i, l),
+        Value::Lambda(l) if l.compiled && !l.is_macro && !l.is_bytecode() => lambda_arity(i, l),
         other => return Err(i.wrong_type_mut("subrp", other)),
     };
     let (min, max) = match arity {
@@ -4100,6 +4100,16 @@ pub(crate) fn ns_to_lisp_time(ns: i128) -> Value {
     ])
 }
 
+/// Like `ns_to_lisp_time` but honors `current-time-list' — GNU's
+/// `make_lisp_time' renders (TICKS . HZ) with ns ticks when the
+/// variable is nil.
+pub(crate) fn ns_to_lisp_time_i(i: &mut Interp, ns: i128) -> Value {
+    if !current_time_list(i) {
+        return Value::cons(Value::Int(ns), Value::Int(1_000_000_000));
+    }
+    ns_to_lisp_time(ns)
+}
+
 /// Like `lisp_time_to_ns`, but picosecond precision — GNU's native
 /// tick unit (hz = 10^12).
 pub(crate) fn lisp_time_to_ps(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
@@ -4676,7 +4686,7 @@ fn f_decode_time(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 /// `current-time-list': GNU defaults it to t; when the variable is
 /// unbound (or bound non-nil) timestamps render in (HI LO US PS)
 /// list form rather than (TICKS . HZ).
-fn current_time_list(i: &mut Interp) -> bool {
+pub(crate) fn current_time_list(i: &mut Interp) -> bool {
     let id = i.intern("current-time-list");
     !i.bound_p(id) || i.symbol_value(id).truthy()
 }
@@ -6589,7 +6599,19 @@ fn f_insert_byte(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         ));
     }
     let count = crate::lisp::builtins::want_fixnum(i, &a[1])?;
-    let ch = char::from_u32(byte as u32).unwrap_or('\u{fffd}');
+    // GNU insert_byte (insdel.c): in a multibyte buffer bytes ≥0x80 are
+    // inserted as the raw-byte escape char BYTE8_TO_CHAR(byte) =
+    // byte - 0x80 + 0x3FFF80 = 0x3FFF00 + byte (eight-bit-graphic
+    // charset; `lisp_char' returns the proxy char); bytes <0x80 are
+    // literal.  Unibyte buffers store the byte as-is (char byte).
+    let ems = i.intern("enable-multibyte-characters");
+    let mb = i.symbol_value(ems).truthy();
+    let code = if mb && byte >= 0x80 {
+        byte as u32 + 0x3FFF00
+    } else {
+        byte as u32
+    };
+    let ch = crate::lisp::value::lisp_char(code).unwrap_or('\u{fffd}');
     let s: String = std::iter::repeat_n(ch, count.max(0) as usize).collect();
     crate::buffer::primitives::chg_insert_pt(i, &s, false)?;
     Ok(Value::Nil)
@@ -9297,6 +9319,23 @@ pub(crate) fn doc_text(i: &mut Interp, key: &str) -> Option<String> {
 pub(crate) fn doc_offset(i: &mut Interp, key: &str) -> Option<usize> {
     let rc = doc_index(i)?;
     rc.1.get(key).copied()
+}
+
+/// DOC-entry text starting at byte offset OFF (GNU `get_doc_string'
+/// for `variable-documentation'/function cells that store raw
+/// positions).
+pub(crate) fn doc_text_at(i: &mut Interp, off: usize) -> Option<String> {
+    let rc = doc_index(i)?;
+    let (bytes, _map) = &*rc;
+    if off >= bytes.len() {
+        return None;
+    }
+    let end = bytes[off..]
+        .iter()
+        .position(|&b| b == 0x1f)
+        .map(|o| off + o)
+        .unwrap_or(bytes.len());
+    Some(String::from_utf8_lossy(&bytes[off..end]).into_owned())
 }
 
 fn f_function_documentation(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -15573,6 +15612,14 @@ fn f_seconds_to_time(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_time_since(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let from = lisp_time_to_us(i, &a[0])?;
     let now = lisp_time_to_us(i, &Value::Nil)?;
+    // GNU's nil second arg defers to `current-time-list' (t => `list');
+    // `list' yields the (HI LO US PS) form, otherwise (TICKS . HZ).
+    if !current_time_list(i) {
+        return Ok(Value::cons(
+            Value::Int((now - from) * 1000),
+            Value::Int(1_000_000_000),
+        ));
+    }
     Ok(us_to_lisp_time(now - from))
 }
 

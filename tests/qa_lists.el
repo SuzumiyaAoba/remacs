@@ -267,6 +267,18 @@
 (qa (reverse '(1 2 3)) '(3 2 1))
 (qa (reverse "abc") "cba")
 (qa (reverse [1 2 3]) [3 2 1])
+(qa (reverse (make-bool-vector 3 t)) (make-bool-vector 3 t))
+(qa (let ((v (make-bool-vector 4 nil))) (aset v 0 t) (reverse v))
+    (let ((w (make-bool-vector 4 nil))) (aset w 3 t) w))
+(qa (let ((v (make-bool-vector 4 nil))) (aset v 0 t) (nreverse v))
+    (let ((w (make-bool-vector 4 nil))) (aset w 3 t) w))
+;; GNU safe_length uses Brent's teleporting tortoise-hare walk — the
+;; count reaches the detection cons (may exceed the distinct count).
+(qa (let ((l (make-list 2 'a))) (setcdr (cdr l) l) (safe-length l)) 4)
+(qa (let ((l (make-list 3 'a))) (setcdr (nthcdr 2 l) l) (safe-length l)) 5)
+(qa (let ((l (make-list 4 'a))) (setcdr (nthcdr 2 l) l) (safe-length l)) 5)
+(qa (let ((l (make-list 5 'a))) (setcdr (nthcdr 4 l) l) (safe-length l)) 11)
+(qa (let ((l (make-list 7 'a))) (setcdr (nthcdr 3 l) l) (safe-length l)) 10)
 (qa-err-data (reverse 5) 'wrong-type-argument '(sequencep 5))
 (qa (nreverse (list 1 2 3)) '(3 2 1))
 (let ((v (vector 3 1 2)))
