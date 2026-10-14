@@ -113,6 +113,7 @@ qa!(qa_filelocal, "qa_filelocal.el");
 qa!(qa_filesys, "qa_filesys.el");
 qa!(qa_fill, "qa_fill.el");
 qa!(qa_fontlock, "qa_fontlock.el");
+qa!(qa_docstring_escape, "qa_docstring_escape.el");
 qa!(qa_format, "qa_format.el");
 qa!(qa_globdir, "qa_globdir.el");
 qa!(qa_gv, "qa_gv.el");

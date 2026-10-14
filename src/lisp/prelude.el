@@ -41789,7 +41789,8 @@ Defaults to the whole buffer.  END can be out of bounds."
          (,(concat "[`‘']\\(" "\\(?:\\w\\|\\s_\\|\\\\.\\)+" "\\)['’]")
           (1 'font-lock-constant-face prepend))
          ;; \\= tends to be an escape in doc strings.
-         (,"\\\\="
+         ;; ;Remacs: folded output of (rx "\\\\=").
+         (,"\\\\\\\\="
           (0 'font-lock-builtin-face prepend))
          ;; Constant values.
          (,(lambda (bound) (lisp-mode--search-key ":" bound))
