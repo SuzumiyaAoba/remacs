@@ -7095,7 +7095,14 @@ command-line arguments.\" \
             {
                 // `unidata-put-decomposition'/`unidata-put-name': flush
                 // the compressed block through the slot-1 getter first,
-                // then store VAL verbatim.
+                // then store VAL verbatim.  Their initial aref validates
+                // the original integer before any native narrowing.
+                if !ch.fixnump() {
+                    return Some(Err(self.wrong_type_mut("fixnump", ch)));
+                }
+                if !(0..=crate::lisp::builtins::misc::CT_MAX_CHAR as i128).contains(n) {
+                    return Some(Err(self.wrong_type_mut("characterp", ch)));
+                }
                 let cur =
                     crate::lisp::builtins::misc::char_table_ref(self, tbl, (*n).max(0) as usize);
                 if let Value::Str(s) = &cur {

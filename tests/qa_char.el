@@ -121,6 +121,45 @@
 (qa (get-char-code-property ?A 'general-category) 'Lu)
 (qa (get-char-code-property ?a 'general-category) 'Ll)
 
+;; Property writes accept all internal characters, but never wrap or
+;; clamp invalid integer codes into another character's table entry.
+(let* ((plain (make-symbol "qa58-plain"))
+       (registered (make-symbol "qa58-table"))
+       (table (make-char-table 'char-code-property-table))
+       (char-code-property-alist char-code-property-alist))
+  (set-char-table-extra-slot table 0 registered)
+  (define-char-code-property registered table)
+  (dolist (prop (list plain registered))
+    (dolist (ch '(0 1114111 1114112 4194303))
+      (let ((value (list 'qa58 ch)))
+        (qa (eq (put-char-code-property ch prop value) value) t)
+        (qa (eq (get-char-code-property ch prop) value) t)))
+    (let ((sentinel (list 'qa58-preserved)))
+      (put-char-code-property 0 prop sentinel)
+      (dolist (ch (list -1 4194304 4294967296 most-positive-fixnum))
+        (qa-err-data (put-char-code-property ch prop 'invalid)
+                     'wrong-type-argument (list 'characterp ch))
+        (qa (eq (get-char-code-property 0 prop) sentinel) t)))
+    (qa (put-char-code-property 4194303 prop nil) nil)
+    (qa (get-char-code-property 4194303 prop) nil))
+  (put-char-code-property 0 registered 'preserved)
+  (qa-err-data (put-char-code-property 18446744073709551616 registered 'invalid)
+               'wrong-type-argument '(characterp 18446744073709551616))
+  (qa (get-char-code-property 0 registered) 'preserved)
+  ;; User-defined setters decide their own valid domain; the native
+  ;; guards must not intercept arbitrary callbacks.
+  (let ((observed nil))
+    (set-char-table-extra-slot table 2
+                              (lambda (ch value table) (setq observed ch)))
+    (qa (put-char-code-property 4194304 registered 'callback-value) 'callback-value)
+    (qa observed 4194304)))
+(qa-err-data (put-char-code-property 4194304 'name "invalid")
+             'wrong-type-argument '(characterp 4194304))
+(qa-err-data (put-char-code-property -1 'name "invalid")
+             'wrong-type-argument '(characterp -1))
+(qa-err-data (put-char-code-property 18446744073709551616 'name "invalid")
+             'wrong-type-argument '(fixnump 18446744073709551616))
+
 ;; == ucs-normalize (autoloaded in 31.1) ==
 (qa (ucs-normalize-NFC-string "é") "é")           ; already composed
 (qa (ucs-normalize-NFC-string "é") "é")          ; e + combining acute → é

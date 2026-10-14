@@ -1115,12 +1115,18 @@ fn put_unicode_internal(i: &mut Interp, tbl: &Value, ch: u32, val: Value) -> Eva
 
 fn f_put_char_code_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let ch = match &a[0] {
-        Value::Int(n) => *n as i64,
+        Value::Int(n) => *n,
         _ => return Err(i.wrong_type_mut("characterp", &a[0])),
     };
     let pid2 = want_sym(i, &a[1])?;
     let prop = i.symbol_name(pid2);
     check_prop_backing(i, &prop)?;
+    // Validate the original integer before narrowing it for native storage.
+    // Otherwise negative or oversized codes can alias a valid table entry.
+    if !(0..=misc::CT_MAX_CHAR as i128).contains(&ch) {
+        return Err(i.wrong_type_mut("characterp", &a[0]));
+    }
+    let ch = ch as i64;
     let tbl = unicode_prop_table(i, &prop);
     if is_char_table(i, &tbl) {
         match ct_extra(&tbl, 2) {
@@ -2747,10 +2753,10 @@ fn f_put_unicode_property_internal(i: &mut Interp, a: crate::lisp::Argv) -> Eval
         return Err(i.wrong_type_mut("char-table-p", &a[0]));
     }
     let ch = match &a[1] {
-        Value::Int(n) if *n >= 0 => *n as usize,
+        Value::Int(n) if (0..=misc::CT_MAX_CHAR as i128).contains(n) => *n as u32,
         _ => return Err(i.wrong_type_mut("characterp", &a[1])),
     };
-    put_unicode_internal(i, &a[0], ch as u32, a[2].clone())
+    put_unicode_internal(i, &a[0], ch, a[2].clone())
 }
 
 pub(crate) static SUBRS: &[Subr] = &[
