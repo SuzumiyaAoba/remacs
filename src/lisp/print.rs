@@ -482,9 +482,7 @@ impl Interp {
         }
         match v {
             Value::Nil => out.push_str("nil"),
-            Value::Int(i) => {
-                let _ = write!(out, "{i}");
-            }
+            Value::Int(i) => self.print_integer(*i, out, true),
             Value::Float(f) => {
                 let _ = write!(out, "{}", self.format_float_output(**f));
             }
@@ -887,6 +885,7 @@ impl Interp {
             }
         }
         match v {
+            Value::Int(i) => self.print_integer(*i, out, false),
             Value::Str(s) => out.push_str(&s.borrow()),
             // princ prints symbol names raw — no backslash escapes.
             Value::Sym(id) => out.push_str(&self.symbol_name(*id)),
@@ -1302,17 +1301,63 @@ impl Interp {
         format_float(value)
     }
 
+    /// GNU print.c: only independent graphic characters and the six
+    /// common named escapes use character notation.  `princ' omits the
+    /// extra quoting for delimiter characters, but keeps named escapes.
+    fn print_integer(&self, n: i128, out: &mut String, escape: bool) {
+        if self.print_var("print-integers-as-characters").truthy() && (0..=0x10ffff).contains(&n) {
+            let named = match n {
+                8 => Some('b'),
+                9 => Some('t'),
+                10 => Some('n'),
+                12 => Some('f'),
+                13 => Some('r'),
+                32 => Some('s'),
+                _ => None,
+            };
+            let table = self.print_var("unicode-category-table");
+            let category = super::builtins::misc::char_table_ref(self, &table, n as usize);
+            let graphic = matches!(category, Value::Int(cat)
+                if (super::value::FIXNUM_MIN..=super::value::FIXNUM_MAX).contains(&cat)
+                    && !matches!(cat, 6..=8 | 23..=28 | 30));
+            if let Some(named) = named {
+                out.push('?');
+                out.push('\\');
+                out.push(named);
+                return;
+            }
+            if graphic {
+                if let Some(c) = char::from_u32(n as u32) {
+                    out.push('?');
+                    if escape
+                        && matches!(
+                            c,
+                            ';' | '"' | '\'' | '\\' | '(' | ')' | '{' | '}' | '[' | ']'
+                        )
+                    {
+                        out.push('\\');
+                    }
+                    out.push(c);
+                    return;
+                }
+            }
+        }
+        let _ = write!(out, "{n}");
+    }
+
     /// `print-length` (default nil): max elements printed per sequence.
     fn print_length_limit(&self) -> Option<usize> {
         self.print_var("print-length")
             .int()
-            .map(|n| n.max(0) as usize)
+            .filter(|n| (0..=super::value::FIXNUM_MAX).contains(n))
+            .map(|n| n as usize)
     }
 
     /// `print-level` (default nil): max nesting depth before "...".
     fn print_level_limit(&self) -> Option<usize> {
         self.print_var("print-level")
             .int()
+            .filter(|n| (super::value::FIXNUM_MIN..=super::value::FIXNUM_MAX).contains(n))
             .map(|n| n.max(0) as usize)
     }
 
