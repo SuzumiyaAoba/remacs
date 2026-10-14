@@ -173,6 +173,10 @@ pub struct Interp {
     /// The `lexical-binding` default (buffer-local in Emacs; we keep a
     /// default plus per-buffer locals).
     pub buffers: crate::buffer::BufferSet,
+    // Overlay handles currently use vectors; keep their type by identity,
+    // independently of buffer lifetime, attachment, or vector contents.
+    overlay_handles: HashMap<usize, std::rc::Weak<RefCell<Vec<Value>>>>,
+    overlay_cleanup_at: usize,
     pub current_buffer: usize,
     /// Symbols provided via `provide` (the `features` variable).
     pub features: Vec<SymId>,
@@ -908,6 +912,8 @@ impl Interp {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0),
             buffers: crate::buffer::BufferSet::new(),
+            overlay_handles: HashMap::default(),
+            overlay_cleanup_at: 256,
             current_buffer: 0,
             features: feature_syms,
             output: None,
@@ -4669,6 +4675,28 @@ command-line arguments.\" \
             };
         }
         None
+    }
+
+    pub(crate) fn register_overlay(&mut self, value: &Value) {
+        if let Value::Vec(handle) = value {
+            if self.overlay_handles.len() >= self.overlay_cleanup_at {
+                self.overlay_handles
+                    .retain(|_, weak| weak.strong_count() > 0);
+                self.overlay_cleanup_at = self.overlay_handles.len().saturating_mul(2).max(256);
+            }
+            self.overlay_handles
+                .insert(Rc::as_ptr(handle) as usize, Rc::downgrade(handle));
+        }
+    }
+
+    pub(crate) fn is_overlay(&self, value: &Value) -> bool {
+        let Value::Vec(handle) = value else {
+            return false;
+        };
+        self.overlay_handles
+            .get(&(Rc::as_ptr(handle) as usize))
+            .and_then(|weak| weak.upgrade())
+            .is_some_and(|registered| Rc::ptr_eq(&registered, handle))
     }
 
     /// Mark a string as unibyte (encoder output); `prin1' escapes

@@ -209,3 +209,5 @@ qa!(qa_xref, "qa_xref.el");
 qa!(qa_buffer_name_validation, "qa_buffer_name_validation.el");
 
 qa!(qa_window_dedication, "qa_window_dedication.el");
+
+qa!(qa_overlay_type, "qa_overlay_type.el");

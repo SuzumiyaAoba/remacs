@@ -708,6 +708,7 @@ fn f_type_of(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Window(_) => "window",
         Value::Frame(_) => "frame",
         Value::Str(_) => "string",
+        Value::Vec(_) if i.is_overlay(&args[0]) => "overlay",
         Value::Vec(_) => "vector",
         Value::Record(r) => {
             // `symbols-with-pos-enabled' objects are `symbol'.

@@ -18315,6 +18315,7 @@ pub(crate) fn f_make_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
         Value::Int(bid as i128),
         Value::Int(idx as i128),
     ])));
+    i.register_overlay(&handle);
     bb.overlays.push(crate::buffer::Overlay {
         start: s,
         end: e,
@@ -18512,17 +18513,7 @@ fn f_overlay_properties(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     })
 }
 fn f_overlayp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::from_bool(match overlay_of(i, &a[0]) {
-        // GNU OVERLAYP is a pure type check: a detached/deleted overlay
-        // — including one whose buffer was killed — still reports t.
-        Ok((bid, idx)) => match i.buffers.get(bid) {
-            // A killed buffer's overlays stay overlays (GNU keeps the
-            // object; only its buffer link is gone).
-            Some(b) => !b.borrow().live || b.borrow().overlays.get(idx).is_some(),
-            None => true,
-        },
-        _ => false,
-    }))
+    Ok(Value::from_bool(i.is_overlay(&a[0])))
 }
 
 /// 'priority' property of OV as an int (nil → 0), for GNU ordering.
@@ -20539,6 +20530,7 @@ fn f_copy_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Int(bid as i128),
         Value::Int(new_idx as i128),
     ])));
+    i.register_overlay(&handle);
     bb.overlays.push(crate::buffer::Overlay {
         handle: handle.clone(),
         ..ov
