@@ -7312,9 +7312,13 @@ fn buffer_substring_impl(i: &mut Interp, a: &[Value], with_props: bool) -> EvalR
     };
     drop(bb);
     let v = Value::string(text);
-    if unibyte {
-        if let Value::Str(sr) = &v {
+    if let Value::Str(sr) = &v {
+        if unibyte {
             i.mark_unibyte(sr);
+        } else {
+            // Buffer extraction preserves its representation even for empty,
+            // ASCII-only, or raw-byte text, where content inference cannot.
+            i.mark_multibyte(sr);
         }
     }
     if !ivs.is_empty() {
@@ -7367,27 +7371,13 @@ fn f_filter_buffer_substring(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
 }
 
 fn f_buffer_string(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    let unibyte = buffer_is_unibyte(i);
-    let b = cur(i);
-    let bb = b.borrow();
-    let (s, e) = (bb.begv, bb.text_len());
-    let text = bb.text.substring(s, e);
-    // GNU `buffer-string' copies the text properties like
-    // `buffer-substring' does.
-    let ivs = buf_props_as_ivs(&bb.text.props.borrow(), s, e);
-    drop(bb);
-    let v = Value::string(text);
-    if unibyte {
-        if let Value::Str(sr) = &v {
-            i.mark_unibyte(sr);
-        }
-    }
-    if !ivs.is_empty() {
-        if let Value::Str(sr) = &v {
-            i.set_str_props(sr, ivs);
-        }
-    }
-    Ok(v)
+    // GNU buffer-string is the property-preserving substring of BEGV..ZV.
+    let (beg, end) = {
+        let b = cur(i);
+        let bb = b.borrow();
+        (bb.begv + 1, bb.text_len() + 1)
+    };
+    buffer_substring_impl(i, &[Value::Int(beg as i128), Value::Int(end as i128)], true)
 }
 
 fn f_buffer_substring_with_bidi_context(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

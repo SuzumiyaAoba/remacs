@@ -231,3 +231,5 @@ qa!(qa_thread_bookkeeping, "qa_thread_bookkeeping.el");
 qa!(qa_file_replace, "qa_file_replace.el");
 
 qa!(qa_split_window_limits, "qa_split_window_limits.el");
+
+qa!(qa_buffer_string_flags, "qa_buffer_string_flags.el");
