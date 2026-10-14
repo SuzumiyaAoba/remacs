@@ -3569,6 +3569,74 @@ pub(crate) fn f_split_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     let Some(f) = sel_frame(i) else {
         return Err(i.error("No frame"));
     };
+    // Reject impossible splits before changing frame geometry, allocating a
+    // window, or recording a buffer display. Nil SIZE honors the preferred
+    // minimum; explicit SIZE is allowed down to the safe minimum.
+    {
+        let total = {
+            let wb = w.borrow();
+            (if hor { wb.width } else { wb.height }) as i128
+        };
+        let get_min = |i: &mut Interp, name: &str, default: i128| {
+            let id = i.intern(name);
+            i.symbol_value(id).int().unwrap_or(default)
+        };
+        let safe = if hor {
+            get_min(i, "window-safe-min-width", 2).max(1)
+        } else {
+            get_min(i, "window-safe-min-height", 1).max(1)
+        };
+        let too_small = match size {
+            Some(s) if s >= 0 => s < safe || s >= total || total - s < safe,
+            Some(s) => s
+                .checked_neg()
+                .is_none_or(|new| new < safe || total - new < safe),
+            None => {
+                let decorations = if hor {
+                    let margins = w.borrow().margins;
+                    margins.0 as i128 + margins.1 as i128
+                } else {
+                    let buffer = w.borrow().buffer;
+                    ["mode-line-format", "header-line-format", "tab-line-format"]
+                        .iter()
+                        .filter(|name| {
+                            let id = i.intern(name);
+                            i.buffers
+                                .get(buffer)
+                                .and_then(|b| b.borrow().locals.get(&id).cloned())
+                                .unwrap_or_else(|| i.obarray.symbol(id).value.clone())
+                                .truthy()
+                        })
+                        .count() as i128
+                };
+                let preferred = if hor {
+                    get_min(i, "window-min-width", 10)
+                } else {
+                    get_min(i, "window-min-height", 4)
+                }
+                .max(safe.saturating_add(decorations));
+                (total + 1) / 2 < preferred
+            }
+        };
+        if too_small {
+            let shown = i.princ_to_string(&Value::Window(w.clone()));
+            return Err(i.error(format!("Window {shown} too small for splitting")));
+        }
+        // The low-level splitter still requires one row / two columns,
+        // including when preferred and safe minima have been lowered.
+        let (old, new) = match size {
+            Some(s) if s >= 0 => (s, total - s),
+            Some(s) => (total + s, -s),
+            None => (total - total / 2, total / 2),
+        };
+        let floor = if hor { 2 } else { 1 };
+        if old < floor {
+            return Err(i.error("Resizing old window failed"));
+        }
+        if new < floor {
+            return Err(i.error("Size of new window too small (after split)"));
+        }
+    }
     // GNU batch/tty quirk: the first *vertical* split materializes the
     // menu-bar line — the content area shifts down one row and the
     // minibuffer window moves down with it (`frame-height' keeps
@@ -3619,7 +3687,7 @@ pub(crate) fn f_split_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
                     let n = (-s).max(0) as usize;
                     (total.saturating_sub(n), n.min(total))
                 }
-                None => (total / 2, total - total / 2),
+                None => (total - total / 2, total / 2),
             }
         } else {
             let total = wh;
@@ -3632,7 +3700,7 @@ pub(crate) fn f_split_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
                     let n = (-s).max(0) as usize;
                     (total.saturating_sub(n), n.min(total))
                 }
-                None => (total / 2, total - total / 2),
+                None => (total - total / 2, total / 2),
             }
         };
         if hor {
@@ -3651,52 +3719,6 @@ pub(crate) fn f_split_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
             ((wl, wt + sz, ww_, keep), (wl, wt, ww_, sz))
         }
     };
-    // GNU window.el `split-window': an explicit SIZE only runs the
-    // SAFE-minimum check — `safe-min' is 1 line / 2 cols unless the
-    // user raised window-safe-min-height/-width.
-    //
-    // SIZE >= 0 names the OLD window's new size; error when
-    // SIZE < safe-min, SIZE >= old-size, or (old - SIZE) < safe-min.
-    // SIZE < 0 names the NEW window's size (-SIZE); error when
-    // -SIZE < safe-min or (old - (-SIZE)) < safe-min.
-    // SIZE nil: halves the window — GNU's window-min-size check
-    // applies, but our flat geometry stays inside it whenever the
-    // window is splittable at all.
-    {
-        let get_min = |i: &mut Interp, name: &str, def: i128| {
-            let id = i.intern(name);
-            i.symbol_value(id).int().unwrap_or(def)
-        };
-        let safe_min = if hor {
-            (get_min(i, "window-safe-min-width", 2).max(1)) as usize
-        } else {
-            (get_min(i, "window-safe-min-height", 1).max(1)) as usize
-        };
-        let (old_w, old_h) = (w_new_geo.2 + n_geo.2, w_new_geo.3 + n_geo.3);
-        let old_sz = if hor { old_w } else { old_h };
-        let too_small = match size {
-            Some(s) if s >= 0 => {
-                let new_sz = old_sz.saturating_sub(s.max(0) as usize);
-                (s as usize) < safe_min || (s as usize) >= old_sz || new_sz < safe_min
-            }
-            Some(s) => {
-                let new_sz = (-s).max(0) as usize;
-                new_sz < safe_min || old_sz.saturating_sub(new_sz) < safe_min
-            }
-            None => false,
-        };
-        if too_small {
-            // GNU prints the effective window (selected when WINDOW
-            // is nil), never the literal "nil".
-            let shown = match &arg(&a, 0) {
-                Value::Nil => sel_window(i)
-                    .map(|sw| i.princ_to_string(&Value::Window(sw)))
-                    .unwrap_or_else(|| "nil".to_string()),
-                other => i.princ_to_string(other),
-            };
-            return Err(i.error(format!("Window {shown} too small for splitting")));
-        }
-    }
     {
         let mut wb = w.borrow_mut();
         let mut nw = new.borrow_mut();
