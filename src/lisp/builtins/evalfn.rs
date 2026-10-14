@@ -3961,6 +3961,8 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             j += 1;
         }
         let flags: Vec<char> = chars[flag_start..j].to_vec();
+        let uppercase = flags.contains(&'^');
+        let output_start = out.len();
         let pad = if flags.contains(&'-') {
             '-'
         } else if flags.contains(&'_') {
@@ -3989,7 +3991,18 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                 if nxt.is_ascii_alphabetic() {
                     let ext: String = chars[k..=k].iter().collect();
                     let spec2 = format!("{}{}", spec_text, ext);
-                    out.push_str(&super::misc::strftime_spec(&spec2, &tm, locale.as_deref()));
+                    // Preserve invalid GNU modifier combinations without
+                    // relying on libc's platform-specific literal fallback.
+                    let valid = if spec == Some('E') {
+                        "cnpqrstuxyzCPRTXYZ".contains(nxt)
+                    } else {
+                        "bdeghjklmnpqrstuwyzBCGHIMNPRSTUVWYZ".contains(nxt)
+                    };
+                    if uppercase && !valid {
+                        out.push_str(&spec2.to_ascii_uppercase());
+                    } else {
+                        out.push_str(&super::misc::strftime_spec(&spec2, &tm, locale.as_deref()));
+                    }
                     k += 1;
                     continue;
                 }
@@ -4055,6 +4068,11 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                 }
             };
         match spec {
+            // GNU treats a flagged percent as an invalid conversion.
+            Some('%') if uppercase => {
+                out.push_str(&spec_text[..spec_text.len() - 1]);
+                k = j; // GNU reprocesses the second percent as a new format.
+            }
             Some('P') => {
                 // glibc %P = lowercase %p; macOS strftime lacks it.
                 let p = super::misc::strftime_spec("%p", &tm, locale.as_deref());
@@ -4160,7 +4178,24 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                     out.push_str(&spec_text);
                 }
             }
-            None => out.push('%'),
+            None => out.push_str(&spec_text),
+        }
+        // Extensions such as named %Z bypass strftime.  Lowercase %P
+        // and %#p/%#Z take precedence over the uppercase flag.
+        if spec == Some('Z') && flags.contains(&'#') {
+            out[output_start..].make_ascii_lowercase();
+        } else if uppercase && spec != Some('P')
+            && !(spec == Some('p') && flags.contains(&'#'))
+        {
+            out[output_start..].make_ascii_uppercase();
+        }
+        if uppercase && matches!(spec, Some('P') | Some('Z')) {
+            let pad = flags.iter().rev().find(|c| matches!(c, '-' | '_' | '0'));
+            let len = out.len() - output_start;
+            if pad != Some(&'-') && width > len {
+                let ch = if pad == Some(&'0') { '0' } else { ' ' };
+                out.insert_str(output_start, &ch.to_string().repeat(width - len));
+            }
         }
     }
     Ok(Value::string(out))

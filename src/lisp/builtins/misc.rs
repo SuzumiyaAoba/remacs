@@ -4264,7 +4264,33 @@ pub(crate) fn strftime_spec(fmt: &str, tm: &Tm, locale: Option<&str>) -> String 
     INIT.call_once(|| unsafe {
         libc::setlocale(libc::LC_TIME, c"".as_ptr());
     });
-    let mut cfmt = fmt.as_bytes().to_vec();
+    // macOS strftime lacks GNU's uppercase flag.  Strip flag-position
+    // carets and apply ASCII byte casing, not Unicode case expansion.
+    let flag_end = fmt.as_bytes().iter().skip(1)
+        .take_while(|c| matches!(c, b'-' | b'_' | b'0' | b'^' | b'#'))
+        .count() + 1;
+    let flags = &fmt[..flag_end.min(fmt.len())];
+    let uppercase = flags.contains('^');
+    let lowercase = fmt.ends_with('P')
+        || (flags.contains('#') && (fmt.ends_with('p') || fmt.ends_with('Z')));
+    let width_end = flag_end + fmt.as_bytes()[flag_end.min(fmt.len())..].iter()
+        .take_while(|c| c.is_ascii_digit()).count();
+    let textual = uppercase && fmt.ends_with(|c: char| "aAbBhcpPxXrRTDZ".contains(c));
+    let native_fmt = if textual {
+        // Width and # are also libc extensions: for textual conversions
+        // use the portable base directive, then case and pad its result.
+        let base = &fmt[width_end..];
+        if base.ends_with('P') {
+            format!("%{}p", &base[..base.len() - 1])
+        } else {
+            format!("%{}", base)
+        }
+    } else if uppercase {
+        format!("{}{}", flags.replace(['^', '#'], ""), &fmt[flag_end..])
+    } else {
+        fmt.to_owned()
+    };
+    let mut cfmt = native_fmt.as_bytes().to_vec();
     cfmt.push(0);
     let mut buf = vec![0u8; 512];
     // Our `Tm' mirrors the POSIX `struct tm' layout used by strftime.
@@ -4294,7 +4320,27 @@ pub(crate) fn strftime_spec(fmt: &str, tm: &Tm, locale: Option<&str>) -> String 
             )
         }
     };
-    String::from_utf8_lossy(&buf[..n]).into_owned()
+    let mut result = String::from_utf8_lossy(&buf[..n]).into_owned();
+    if uppercase {
+        // libc echoes invalid conversions; retain their original flags.
+        if result == native_fmt {
+            result = fmt.to_owned();
+        }
+        if lowercase {
+            result.make_ascii_lowercase();
+        } else {
+            result.make_ascii_uppercase();
+        }
+        if textual {
+            let pad = flags.chars().rev().find(|c| matches!(c, '-' | '_' | '0'));
+            let width = fmt[flag_end..width_end].parse::<usize>().unwrap_or(0);
+            if pad != Some('-') && width > result.len() {
+                let ch = if pad == Some('0') { '0' } else { ' ' };
+                result.insert_str(0, &ch.to_string().repeat(width - result.len()));
+            }
+        }
+    }
+    result
 }
 
 /// Local-time breakdown under an explicit TZ spec (e.g. "Europe/Paris",
