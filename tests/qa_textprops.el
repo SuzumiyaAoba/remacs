@@ -479,6 +479,56 @@
       (save-restriction (narrow-to-region 3 9) (goto-char 7) (line-number-at-pos)))
     2)
 
+;; narrowing-aware property scans (GNU's narrowed interval tree):
+;; overlay endpoints clamp to [BEGV+1, ZV+1]; nscp caps its result at
+;; ZV+1 even when LIMIT lies past it; pscp reads the char before a
+;; boundary at BEGV+1 under a sub-point-min LIMIT, which GNU signals
+;; as args-out-of-range (BEGV).
+(qa (with-temp-buffer (insert "ab\ncd")
+      (save-restriction
+        (narrow-to-region 4 5)
+        (list (next-overlay-change 4)
+              (previous-overlay-change 5)
+              (next-single-char-property-change 4 'field)
+              (previous-single-char-property-change 5 'field)
+              (field-beginning) (field-end))))
+    '(5 4 5 4 4 5))
+(qa (with-temp-buffer (insert "ab\ncd")
+      (save-restriction
+        (narrow-to-region 4 5)
+        (list (next-single-char-property-change 4 'field nil 99)
+              (previous-single-char-property-change 5 'field nil 99)
+              (next-char-property-change 4 99)
+              (previous-char-property-change 5 99))))
+    '(5 99 5 99))
+(qa-err (with-temp-buffer (insert "ab\ncd")
+          (save-restriction
+            (narrow-to-region 4 5)
+            (previous-single-char-property-change 5 'face nil 3)))
+        'args-out-of-range)
+;; ppc: interval starts sit inside the restriction; the hidden-left
+;; run collapses to an empty interval, so pos at point-max finds no
+;; differing interval before it.
+(qa (with-temp-buffer (insert "abcdef")
+      (add-text-properties 2 4 '(face x))
+      (list (previous-property-change 6)
+            (previous-property-change 4)
+            (next-property-change 2)
+            (next-property-change 4)
+            ;; LIMIT t = the next raw interval start.
+            (next-property-change 1 nil t)
+            (next-property-change 3 nil t)))
+    '(4 2 4 nil 2 4))
+(qa (with-temp-buffer (insert "abcdef")
+      (add-text-properties 2 4 '(face x))
+      (save-restriction
+        (narrow-to-region 4 6)
+        (list (previous-property-change 6)
+              (previous-property-change 5 nil 1)
+              (next-property-change 4)
+              (next-property-change 5 nil t))))
+    '(nil 4 nil 6))
+
 ;; == delete / erase / insert variants ==
 (qa (with-temp-buffer (insert "abcde") (delete-region 2 4) (buffer-string)) "ade")
 (qa (with-temp-buffer (insert "abcde") (erase-buffer) (buffer-string)) "")
@@ -517,5 +567,7 @@
   (qa-err-data (field-end 500) 'args-out-of-range '(500))
   (qa-err-data (field-beginning 500) 'args-out-of-range '(500))
   (qa-err-data (field-string 500) 'args-out-of-range '(500)))
+(qa-err-data (put-text-property 1 2 'k 'v "a") 'args-out-of-range '(1 2))
+(qa-err-data (put-text-property 0 5 'k 'v "ab") 'args-out-of-range '(0 5))
 
 (princ (qa--done))

@@ -227,6 +227,22 @@ pub struct Interp {
     pub capture_output: bool,
     /// Registers from the last search (`match-data`).
     pub match_data: Option<MatchData>,
+    /// Pending `insert-behind-hooks' / `insert-in-front-hooks' lists
+    /// collected by `verify_interval_modification' (inside
+    /// `signal_before_change') and run by `report_interval_modification'
+    /// after the insertion lands — GNU's `interval_insert_*_hooks'
+    /// globals.
+    pub pending_insert_behind: Vec<Value>,
+    pub pending_insert_front: Vec<Value>,
+    /// `(hooklist . overlay-handle)` pairs collected during the before-
+    /// phase and replayed after — GNU's `last_overlay_modification_hooks'.
+    pub pending_overlay_hooks: Vec<(Value, Value)>,
+    /// `combine_after_change_list': deferred `(beg0, end0, delta)'
+    /// triples while `combine-after-change-calls' is bound.
+    pub combine_after_change_list: Vec<(usize, usize, i128)>,
+    /// `combine_after_change_buffer': which buffer the deferred changes
+    /// belong to.
+    pub combine_after_change_buffer: Option<usize>,
     /// True in `--batch`: `princ` goes to stdout, `message` to stderr.
     pub noninteractive: bool,
     /// The `obarray' variable's record value; its Rc identity marks the
@@ -237,6 +253,13 @@ pub struct Interp {
     /// is being evaluated — lambdas defined then get `dumped_doc' (their
     /// docstrings behave like GNU's .elc/DOC-file entries).
     pub loading_dumped: bool,
+    /// GNU's `Vloads_in_progress': resolved path identity of every
+    /// `load' currently evaluating (the `builtin:NAME' virtual path
+    /// for embedded libraries, `found' for disk files), outermost
+    /// last.  `autoload_do_load' compares its resolved target against
+    /// this — GNU's "Recursive load" check and the recursion that
+    /// would spin forever on self-autoloads.
+    pub loads_in_progress: Vec<String>,
     /// Number of currently-active dumped definitions.  GNU byte-compiles
     /// its dump, so macros called there need not remain visible at -Q;
     /// remacs stashes those cells and resolves hidden macros only while
@@ -935,11 +958,17 @@ impl Interp {
             output_buffer: String::new(),
             capture_output: false,
             match_data: None,
+            pending_insert_behind: Vec::new(),
+            pending_insert_front: Vec::new(),
+            pending_overlay_hooks: Vec::new(),
+            combine_after_change_list: Vec::new(),
+            combine_after_change_buffer: None,
             // `main' argv-scans --batch/--script before `Interp::new'
             // (GNU does the same in its C main), so startup-time Lisp
             // already sees the batch state.
             noninteractive: std::env::var_os("REMACS_NONINTERACTIVE").is_some(),
             default_obarray: None,
+            loads_in_progress: Vec::new(),
             loading_dumped: false,
             dumped_call_depth: 0,
             reading_elc: false,
@@ -1134,6 +1163,12 @@ impl Interp {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(usize::MAX);
+        // gv.el's post-rollback cells/props for the tail re-application
+        // (populated right before the boot-rollback block ends; used at
+        // the very end of `new' — the custom-reevaluate pass re-loads
+        // gv.el via `advice-remove''s `(setf ...)' expansion).
+        let mut gv_late_syms: Vec<(SymId, Value, Value, Value)> = Vec::new();
+        let mut gv_late_props: Vec<(SymId, SymId)> = Vec::new();
         // Prelude-folded vars for libraries GNU never dumps — the
         // `*-mode-map'/`*-mode-hook'/`*-mode-syntax-table'/
         // `*-mode-abbrev-table' quads from folded
@@ -3124,16 +3159,14 @@ impl Interp {
             // none are dumped, so their defs/props (`pcase--memoize',
             // `progn's `gv-expander') are void at -Q — but see below:
             // prelude-subtracted defs still restore from the snapshot.
-            // NOTE: `gv' is deliberately absent: GNU's loadup.el:195
-            // `(require 'gv)' runs before the dump, so gv.el's defs
-            // (`gv-get', `gv--defsetter', the `cond'/`if' gv-expander
-            // props) survive at -Q even though `featurep' is nil
-            // (its `provide' is dropped with the features reset at
-            // the end of `new').  Rolling it voided `gv--defsetter'
-            // while keeping `gv-get' bound (loaddefs history kept),
-            // producing `((setf cond) ...)' expansions that signal
-            // invalid-function — killing `advice-remove' and thus
-            // `electric-indent-mode' init.
+            // NOTE: `gv' was previously excluded — the stale reasoning
+            // below kept it.  Re-measured: GNU -Q has gv-get bound as an
+            // autoload but NO gv-expander props (the `(require 'gv)' in
+            // loadup.el is skipped when add-hook is already compiled,
+            // which is the distributed/nativecomp case).  Rolling it
+            // restores the prelude's `(autoload 'gv-get "gv")' cells,
+            // matching GNU's -Q surface: setf expansion autoloads gv.el
+            // on first use exactly like GNU.
             const ROLLED_LIBS: &[&str] = &[
                 "rect",
                 "send-to",
@@ -3142,6 +3175,7 @@ impl Interp {
                 "cl-lib",
                 "cl-loaddefs",
                 "pcase",
+                "gv",
                 "help-macro",
                 "remacs-compat",
                 "inline",
@@ -4091,6 +4125,38 @@ explicitly overridden.
                     interp.fset(name, Value::list(cell));
                 }
             }
+            // Snapshot gv.el's post-rollback state for the tail fixup:
+            // the custom-reevaluate pass below re-loads gv.el through
+            // `advice-remove''s `(setf ...)' expansion, so the GNU -Q
+            // cells must be re-applied at the very end of `new'.
+            {
+                let mut gv_names: HashSet<SymId> = HashSet::default();
+                let mut gp: HashSet<(SymId, SymId)> = HashSet::default();
+                let mut gd: HashSet<SymId> = HashSet::default();
+                if let Some(src) = crate::lisp::load::embedded("gv") {
+                    collect_source_syms(
+                        &mut interp,
+                        src,
+                        &mut gv_names,
+                        &mut gp,
+                        &mut gd,
+                    );
+                }
+                gv_names.extend(gd.iter().copied());
+                gv_late_syms = gv_names
+                    .iter()
+                    .map(|&sid| {
+                        let s = interp.obarray.symbol(sid);
+                        (
+                            sid,
+                            s.function.clone(),
+                            s.value.clone(),
+                            s.plist.clone(),
+                        )
+                    })
+                    .collect();
+                gv_late_props = gp.iter().copied().collect();
+            }
         }
         interp.loading_dumped = false;
         // Boot library loading is finished — `.elc' twins stop
@@ -4532,6 +4598,95 @@ command-line arguments.\" \
         // and the helper defuns to Rust subrs after every library load,
         // so prelude/Lisp redefinitions can't re-expose the cells.
         crate::lisp::builtins::backquote::install_macros(&mut interp);
+        // GNU -Q starts a session with `gensym-counter' at 0 and no
+        // interned `g<N>' symbols (its .elc boot never reads the let
+        // bindings named g0.. that remacs's source boot interns).
+        interp.obarray.unintern_boot_gensyms();
+        // GNU -Q never evaluated gv.el: loadup's `(require 'gv)' is
+        // gated on `add-hook' being interpreted, which is false for
+        // the distributed (compiled) build — so no `gv-expander' props
+        // and gv's entry points are autoload cells.  Remacs loads gv.el
+        // once mid-boot (rolled back above) and AGAIN near the end via
+        // `custom-reevaluate-setting' → electric-indent-mode →
+        // `advice-remove''s interpreted `(setf ...)' expansion, which
+        // lands past the rollback.  Reapply the rollback outcome here:
+        // gv.el's own definitions restore their pre-boot (prelude
+        // autoload) cells, and the prop keys its top-level forms wrote
+        // (`gv-expander' on car/if/nth/..., edebug specs, the `eq'
+        // obsolescence mark) are stripped.  `setf' still works: the
+        // autoload cell loads gv.el on first use, same as GNU.
+        {
+            // Reapply the post-rollback gv state captured above.
+            for (sid, f, v, p) in gv_late_syms.iter().cloned() {
+                let s = interp.obarray.symbol_mut(sid);
+                s.function = f;
+                s.value = v;
+                s.plist = p;
+            }
+            for (sid, key) in gv_late_props.iter().copied() {
+                if key == sym::NIL {
+                    continue;
+                }
+                let pl = interp.obarray.symbol(sid).plist.clone();
+                let mut kept: Vec<Value> = Vec::new();
+                let mut cur = pl;
+                while let Value::Cons(c) = cur {
+                    let (k, after_k) = {
+                        let b = c.borrow();
+                        (b.car.clone(), b.cdr.clone())
+                    };
+                    let (v, after_v) = match after_k {
+                        Value::Cons(c2) => {
+                            let b = c2.borrow();
+                            (b.car.clone(), b.cdr.clone())
+                        }
+                        _ => (Value::Nil, Value::Nil),
+                    };
+                    let is_target = matches!(&k, Value::Sym(s) if *s == key);
+                    if !is_target {
+                        kept.push(k);
+                        kept.push(v);
+                    }
+                    cur = after_v;
+                }
+                interp.obarray.symbol_mut(sid).plist = Value::list(kept);
+            }
+            let gv_id = interp.intern("gv");
+            interp.features.retain(|f| *f != gv_id);
+            let fid = interp.intern("features");
+            if let Value::Cons(_) = interp.symbol_value(fid) {
+                let items = interp.symbol_value(fid).list_to_vec().unwrap_or_default();
+                let kept: Vec<Value> = items
+                    .into_iter()
+                    .filter(|v| {
+                        !matches!(interp.sym_id(v), Some(id) if id == gv_id)
+                    })
+                    .collect();
+                let _ = interp.set_symbol(fid, Value::list(kept));
+            }
+            let lh = interp.intern("load-history");
+            let hist = interp.symbol_value(lh);
+            let mut items: Vec<Value> = Vec::new();
+            let mut cur = hist;
+            while let Value::Cons(c) = cur {
+                items.push(c.borrow().car.clone());
+                cur = c.borrow().cdr.clone();
+            }
+            items.retain(|entry| {
+                let file = match entry {
+                    Value::Cons(c) => c.borrow().car.clone(),
+                    _ => return true,
+                };
+                match &file {
+                    Value::Str(s) => {
+                        let f = s.borrow();
+                        !f.ends_with("/gv.el") && !f.ends_with("/gv.elc")
+                    }
+                    _ => true,
+                }
+            });
+            let _ = interp.set_symbol(lh, Value::list(items));
+        }
         if std::env::var_os("REMACS_BOOT_PROF").is_some() {
             eprintln!(
                 "[init] total Interp::new: {}ms",
@@ -9401,14 +9556,12 @@ command-line arguments.\" \
             "cache-long-scans",
             "case-fold-search",
             "change-major-mode-hook",
-            "char-property-alias-alist",
             "coding-system-for-read",
             "coding-system-for-write",
             "cursor-in-non-selected-windows",
             "cursor-type",
             "deactivate-mark",
             "default-directory",
-            "default-text-properties",
             "delayed-warnings-list",
             "delete-exited-processes",
             "display-fill-column-indicator",
@@ -9480,7 +9633,9 @@ command-line arguments.\" \
             "vertical-scroll-bar",
             "word-wrap",
             "wrap-prefix",
-        ];
+            "char-property-alias-alist",
+            "default-text-properties",
+];
         for name in builtin_locals {
             let id = self.intern(name);
             self.obarray.symbol_mut(id).builtin_variable = true;
@@ -10515,6 +10670,12 @@ command-line arguments.\" \
         for (name, val) in defs {
             let id = self.intern(name);
             self.obarray.symbol_mut(id).value = val.clone();
+        }
+        // GNU DEFVAR_LISP specials (plain dynamic vars): the
+        // lookup_char_property chain vars and the read-only bypass.
+        for name in ["char-property-alias-alist", "default-text-properties"] {
+            let id = self.intern(name);
+            self.obarray.symbol_mut(id).special = true;
         }
 
         // GNU binds `main-thread' to the main thread object at -Q

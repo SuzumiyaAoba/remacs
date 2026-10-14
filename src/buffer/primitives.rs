@@ -1486,7 +1486,8 @@ fn f_visited_file_modtime(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     if bb.file_modtime_ns < 0 {
         return Ok(Value::Int(-2 - bb.file_modtime_ns));
     }
-    Ok(crate::lisp::builtins::misc::ns_to_lisp_time(
+    Ok(crate::lisp::builtins::misc::ns_to_lisp_time_i(
+        i,
         bb.file_modtime_ns,
     ))
 }
@@ -2237,9 +2238,7 @@ pub(crate) fn chg_insert_pt(i: &mut Interp, s: &str, before_markers: bool) -> Ev
         return Ok(Value::Nil);
     }
     let p = cur(i).borrow().point();
-    if text_ro_insert(i, p) {
-        return Err(text_ro_error(i));
-    }
+    text_ro_insert(i, p)?;
     signal_before_change(i, p + 1, p + 1)?;
     let q = {
         let b = cur(i);
@@ -2263,12 +2262,10 @@ pub(crate) fn chg_delete(i: &mut Interp, s0: usize, e0: usize) -> Result<String,
     // GNU barf-if-buffer-read-only: kill/delete in a read-only buffer
     // signals `buffer-read-only' before touching text.
     check_writable(i)?;
-    if text_ro_range(i, s0, e0) {
-        return Err(text_ro_error(i));
-    }
+    text_ro_range(i, s0, e0)?;
     signal_before_change(i, s0 + 1, e0 + 1)?;
     let removed = cur(i).borrow_mut().delete_region(s0, e0);
-    signal_after_change(i, s0 + 1, s0 + 1, e0 - s0)?;
+    signal_after_change(i, s0 + 1, s0 + 1, (e0 - s0) as i128)?;
     Ok(removed)
 }
 
@@ -2278,9 +2275,10 @@ pub(crate) fn chg_delete(i: &mut Interp, s0: usize, e0: usize) -> Result<String,
 /// (S0+1, S0+1+N_INS, N_DEL) after.
 pub(crate) fn chg_replace(i: &mut Interp, s0: usize, e0: usize, s: &str) -> EvalResult {
     let n_ins = s.chars().count();
-    if (s0 < e0 && text_ro_range(i, s0, e0)) || text_ro_insert(i, s0) {
-        return Err(text_ro_error(i));
+    if s0 < e0 {
+        text_ro_range(i, s0, e0)?;
     }
+    text_ro_insert(i, s0)?;
     signal_before_change(i, s0 + 1, e0 + 1)?;
     let n_del = {
         let b = cur(i);
@@ -2292,7 +2290,7 @@ pub(crate) fn chg_replace(i: &mut Interp, s0: usize, e0: usize, s: &str) -> Eval
         bb.note_text_change(d + n_ins);
         d
     };
-    signal_after_change(i, s0 + 1, s0 + 1 + n_ins, n_del)
+    signal_after_change(i, s0 + 1, s0 + 1 + n_ins, n_del as i128)
 }
 
 /// Run F with BUF_IDX temporarily current — GNU change hooks fire in
@@ -2373,35 +2371,285 @@ fn rear_nonsticky_covers(i: &mut Interp, pos: usize, prop: u32) -> bool {
 /// GNU `verify_interval_modification' read-only gate for insertion at
 /// 0-based POS: insertion is blocked when `read-only' applies from
 /// the rear (the char at POS-1, unless `rear-nonsticky' covers it) or
-/// when the char at POS itself has `read-only' non-nil.
-/// `inhibit-read-only' bypasses the check.
-fn text_ro_insert(i: &mut Interp, pos: usize) -> bool {
-    let inh = i.intern("inhibit-read-only");
-    if i.symbol_value(inh).truthy() {
-        return false;
-    }
+/// when the char at POS itself has front-sticky `read-only'.
+/// Returns Err with the GNU `text_read_only' signal shape.
+/// `inhibit-read-only': t (or any non-list) bypasses everything; a
+/// list bypasses only the `read-only' VALUES it contains.
+pub(crate) fn text_ro_insert(i: &mut Interp, pos: usize) -> Result<(), Flow> {
     let ro = i.intern("read-only");
-    if pos > 0 && prop_at(i, pos - 1, ro).truthy() && !rear_nonsticky_covers(i, pos - 1, ro) {
-        return true;
+    let inh_id = i.intern("inhibit-read-only");
+    let cat = i.intern("category");
+    let front = i.intern("front-sticky");
+    let rear = i.intern("rear-nonsticky");
+    let inh = i.symbol_value(inh_id);
+    // GNU `!NILP(Vinhibit_read_only) && !CONSP' skips the checks.
+    if inh.truthy() && !matches!(inh, Value::Cons(_)) {
+        return Ok(());
     }
-    let len = cur(i).borrow().text.len();
-    pos < len && prop_at(i, pos, ro).truthy()
+    // `memq'-style per-value bypass when inhibit-read-only is a list.
+    let inh_memq = |v: &Value| -> bool {
+        matches!(&inh, Value::Cons(_)) && inh
+            .list_to_vec()
+            .map(|l| l.iter().any(|e| crate::lisp::builtins::eq_values(e, v)))
+            .unwrap_or(false)
+    };
+    let (begv, zv, props) = {
+        let b = cur(i);
+        let bb = b.borrow();
+        // GNU: `if (!intervals) return' — a buffer that never had a
+        // property interval skips all read-only checks, so
+        // `default-text-properties' alone can't gate it.
+        if !bb.text.had_intervals.get() {
+            return Ok(());
+        }
+        (bb.begv, bb.zv, bb.text.props.borrow().clone())
+    };
+    // Raw `plist_get' on the flat records (GNU's plist_get).
+    let direct = |pos: usize, prop: u32| -> Value {
+        for tp in props.iter().rev() {
+            if pos >= tp.start && pos < tp.end && tp.prop == prop {
+                return tp.value.clone();
+            }
+        }
+        Value::Nil
+    };
+    // GNU `textget' = lookup_char_property on the interval plist:
+    // direct hit → `category' symbol's plist → alias alist →
+    // `default-text-properties' (buffer lookups pass textprop=1).
+    let textget = |i: &Interp, pos: usize, prop: u32| -> Value {
+        let mut catval = Value::Nil;
+        for tp in props.iter().rev() {
+            if pos >= tp.start && pos < tp.end {
+                if tp.prop == prop {
+                    return tp.value.clone();
+                }
+                if tp.prop == cat && catval.is_nil() {
+                    catval = tp.value.clone();
+                }
+            }
+        }
+        if let Value::Sym(cs) = catval {
+            let v = i.get_prop(cs, prop);
+            if !v.is_nil() {
+                return v;
+            }
+        }
+        // char-property-alias-alist: plist_get on the flat records.
+        let alist = i.symbol_value(match i.intern_soft("char-property-alias-alist") {
+            Some(s) => s,
+            None => return Value::Nil,
+        });
+        if let Some(cell) = alist
+            .list_to_vec()
+            .unwrap_or_default()
+            .iter()
+            .find(|e| matches!(e, Value::Cons(c) if i.sym_id(&c.borrow().car) == Some(prop)))
+        {
+            if let Value::Cons(c) = cell {
+                for a in c.borrow().cdr.clone().list_to_vec().unwrap_or_default() {
+                    if let Some(aid) = i.sym_id(&a) {
+                        let v = direct(pos, aid);
+                        if !v.is_nil() {
+                            return v;
+                        }
+                    }
+                }
+            }
+        }
+        // lookup_char_property's textprop=1 tail: default-text-properties.
+        default_prop(i, prop)
+    };
+    // i == prev iff no property boundary at POS: GNU splits intervals
+    // at every property edge, so one record touching POS makes the
+    // before/after intervals differ.
+    let has_left = pos > begv;
+    let has_right = pos < zv;
+    // GNU's i != prev: prev is NULL at BEGV, i is NULL at ZV, and a
+    // property boundary at POS always splits the two intervals.
+    let boundary = pos == begv
+        || pos == zv
+        || props.iter().any(|tp| tp.start == pos || tp.end == pos);
+    if boundary {
+        // i != prev: check AFTER (right char) front-sticky read-only,
+        // then PREV (left char) rear-sticky read-only.
+        if has_right {
+            let after = textget(i, pos, ro);
+            if after.truthy() && !inh_memq(&after) {
+                let fst = textget(i, pos, front);
+                let ro_direct = !direct(pos, ro).is_nil();
+                if prop_list_covers(i, fst.clone(), ro)
+                    || (!ro_direct && prop_list_covers(i, fst, cat))
+                {
+                    return Err(text_ro_error(i, &after));
+                }
+            }
+        }
+        if has_left {
+            let before = textget(i, pos - 1, ro);
+            if before.truthy() && !inh_memq(&before) {
+                let rns = textget(i, pos - 1, rear);
+                let ro_direct = !direct(pos - 1, ro).is_nil();
+                if !prop_list_covers(i, rns.clone(), ro)
+                    && (ro_direct || !prop_list_covers(i, rns, cat))
+                {
+                    return Err(text_ro_error(i, &before));
+                }
+            }
+        }
+    } else if has_left && has_right {
+        // i == prev (both exist — not BEGV/ZV, no boundary): one
+        // interval spans the point; after must be read-only AND
+        // either front-sticky covers it or the rear isn't nonsticky.
+        let after = textget(i, pos, ro);
+        if after.truthy() && !inh_memq(&after) {
+            let fst = textget(i, pos, front);
+            if prop_list_covers(i, fst.clone(), ro)
+                || (!direct(pos, ro).is_nil() || prop_list_covers(i, fst, cat))
+            {
+                return Err(text_ro_error(i, &after));
+            }
+            let rns = textget(i, pos - 1, rear);
+            if !prop_list_covers(i, rns.clone(), ro)
+                && (!direct(pos - 1, ro).is_nil() || !prop_list_covers(i, rns, cat))
+            {
+                return Err(text_ro_error(i, &after));
+            }
+        }
+    }
+    Ok(())
 }
 
-/// Any `read-only' char in [S0,E0)?  Used for deletions/replacements.
-fn text_ro_range(i: &mut Interp, s0: usize, e0: usize) -> bool {
-    let inh = i.intern("inhibit-read-only");
-    if i.symbol_value(inh).truthy() {
-        return false;
-    }
+/// GNU `verify_interval_modification' range branch: each covering
+/// interval signals `text-read-only' (or `buffer-read-only' when the
+/// buffer is read-only and only implicitly writable).  Positions are
+/// 0-based [S0,E0).
+pub(crate) fn text_ro_range(i: &mut Interp, s0: usize, e0: usize) -> Result<(), Flow> {
     let ro = i.intern("read-only");
-    (s0..e0).any(|p| prop_at(i, p, ro).truthy())
+    let cat = i.intern("category");
+    let iro_prop = i.intern("inhibit-read-only");
+    let inh = i.symbol_value(iro_prop);
+    // GNU `!NILP(Vinhibit_read_only) && !CONSP' skips read-only checks.
+    let global_bypass = inh.truthy() && !matches!(inh, Value::Cons(_));
+    let inh_memq = |v: &Value| -> bool {
+        matches!(&inh, Value::Cons(_)) && inh
+            .list_to_vec()
+            .map(|l| l.iter().any(|e| crate::lisp::builtins::eq_values(e, v)))
+            .unwrap_or(false)
+    };
+    // GNU reads BVAR (current_buffer, read_only) && NILP(Vinhibit_read_only).
+    let bro = i.intern("buffer-read-only");
+    let buffer_ro = i.symbol_value(bro).truthy() && inh.is_nil();
+    let props = {
+        let b = cur(i);
+        let bb = b.borrow();
+        // GNU `if (!intervals) return'.
+        if !bb.text.had_intervals.get() {
+            return Ok(());
+        }
+        bb.text.props.borrow().clone()
+    };
+    // GNU walks the interval set one INTERVAL at a time; on the flat
+    // store an "interval" is a maximal span with constant record
+    // coverage — boundaries at every tp.start/tp.end inside [s0,e0).
+    let mut cuts: Vec<usize> = vec![s0];
+    for tp in &props {
+        if tp.start > s0 && tp.start < e0 {
+            cuts.push(tp.start);
+        }
+        if tp.end > s0 && tp.end < e0 {
+            cuts.push(tp.end);
+        }
+    }
+    cuts.sort_unstable();
+    cuts.dedup();
+    let direct = |pos: usize, prop: u32| -> Value {
+        for tp in props.iter().rev() {
+            if pos >= tp.start && pos < tp.end && tp.prop == prop {
+                return tp.value.clone();
+            }
+        }
+        Value::Nil
+    };
+    // textget: direct → category → alias → default-text-properties.
+    let textget = |i: &Interp, pos: usize, prop: u32| -> Value {
+        let mut catval = Value::Nil;
+        for tp in props.iter().rev() {
+            if pos >= tp.start && pos < tp.end {
+                if tp.prop == prop {
+                    return tp.value.clone();
+                }
+                if tp.prop == cat && catval.is_nil() {
+                    catval = tp.value.clone();
+                }
+            }
+        }
+        if let Value::Sym(cs) = catval {
+            let v = i.get_prop(cs, prop);
+            if !v.is_nil() {
+                return v;
+            }
+        }
+        let alist = i.symbol_value(match i.intern_soft("char-property-alias-alist") {
+            Some(s) => s,
+            None => return default_prop(i, prop),
+        });
+        if let Some(cell) = alist
+            .list_to_vec()
+            .unwrap_or_default()
+            .iter()
+            .find(|e| matches!(e, Value::Cons(c) if i.sym_id(&c.borrow().car) == Some(prop)))
+        {
+            if let Value::Cons(c) = cell {
+                for a in c.borrow().cdr.clone().list_to_vec().unwrap_or_default() {
+                    if let Some(aid) = i.sym_id(&a) {
+                        let v = direct(pos, aid);
+                        if !v.is_nil() {
+                            return v;
+                        }
+                    }
+                }
+            }
+        }
+        default_prop(i, prop)
+    };
+    let mut p = 0usize;
+    for &seg in &cuts {
+        // Segment [seg, next) — one GNU interval's coverage.
+        let read_only = textget(i, seg, ro);
+        let implied = read_only.is_nil() || global_bypass;
+        let express = {
+            let iro_v = direct(seg, iro_prop);
+            iro_v.truthy() || (read_only.truthy() && inh_memq(&read_only))
+        };
+        if !implied && !express {
+            return Err(text_ro_error(i, &read_only));
+        } else if !express && buffer_ro {
+            let bv = i.buffer_value(i.current_buffer).unwrap_or(Value::Nil);
+            return Err(i.signal_data(sym::BUFFER_READ_ONLY, vec![bv]));
+        }
+        p = cuts
+            .iter()
+            .find(|&&c| c > seg)
+            .copied()
+            .unwrap_or(e0);
+    }
+    // GNU: when the last writable interval does not reach END and the
+    // buffer is read-only.
+    if p < e0 && buffer_ro {
+        let bv = i.buffer_value(i.current_buffer).unwrap_or(Value::Nil);
+        return Err(i.signal_data(sym::BUFFER_READ_ONLY, vec![bv]));
+    }
+    Ok(())
 }
 
-/// Signal `text-read-only' (GNU signals the bare symbol).
-fn text_ro_error(i: &mut Interp) -> Flow {
+/// GNU `text_read_only': the error carries the read-only VALUE only
+/// when it is a string.
+pub(crate) fn text_ro_error(i: &mut Interp, propval: &Value) -> Flow {
     let s = i.intern("text-read-only");
-    i.signal_data(s, vec![])
+    match propval {
+        Value::Str(_) => i.signal_data(s, vec![propval.clone()]),
+        _ => i.signal_data(s, vec![]),
+    }
 }
 
 /// 0-based clamped index from an Emacs position arg.
@@ -2515,6 +2763,10 @@ fn f_get_buffer_create(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     match &a[0] {
         Value::Str(s) => {
             let name = s.borrow().clone();
+            // GNU `Fmake_buffer': empty buffer names are rejected.
+            if name.is_empty() {
+                return Err(i.error("Empty string for buffer name is not allowed"));
+            }
             let inhibit = a.get(1).map(|v| v.truthy()).unwrap_or(false);
             let id = match i.buffers.by_name(&name) {
                 Some(id) => id,
@@ -2545,6 +2797,10 @@ fn f_generate_new_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
+    // GNU `Fmake_buffer': empty buffer names are rejected.
+    if name.is_empty() {
+        return Err(i.error("Empty string for buffer name is not allowed"));
+    }
     // GNU generate-new-buffer (buffer.c): get-buffer-create on
     // (generate-new-buffer-name NAME) — space names pick up the
     // `-<random>' suffix here, not in the interned buffer registry.
@@ -6291,7 +6547,7 @@ pub(crate) fn copy_str_props(i: &mut Interp, s: &crate::lisp::value::StrRef, bas
         let mut k = plist.len();
         while k >= 2 {
             if let Some(p) = i.sym_id(&plist[k - 2]) {
-                bb.text.props.borrow_mut().push(TextProp {
+                bb.text.props_write().push(TextProp {
                     start: base + st,
                     end: base + en,
                     prop: p,
@@ -6435,7 +6691,7 @@ fn insert_impl(i: &mut Interp, a: &[Value], before_markers: bool, inherit: bool)
                         let b = cur(i);
                         let mut bb = b.borrow_mut();
                         for (st, en, p, val) in spans {
-                            bb.text.props.borrow_mut().push(TextProp {
+                            bb.text.props_write().push(TextProp {
                                 start: base + st,
                                 end: base + en,
                                 prop: p,
@@ -6446,7 +6702,8 @@ fn insert_impl(i: &mut Interp, a: &[Value], before_markers: bool, inherit: bool)
                     }
                 }
                 copy_str_props(i, s, base);
-                debug_assert_eq!(cur(i).borrow().point(), base + n);
+                // After-change hooks may have moved point; later args
+                // insert wherever it ended up, like GNU.
             }
             Value::Int(n) => {
                 let code = if unibyte { *n & 0xFF } else { *n };
@@ -6462,7 +6719,7 @@ fn insert_impl(i: &mut Interp, a: &[Value], before_markers: bool, inherit: bool)
                         let b = cur(i);
                         let mut bb = b.borrow_mut();
                         for (p, val) in inherited {
-                            bb.text.props.borrow_mut().push(TextProp {
+                            bb.text.props_write().push(TextProp {
                                 start: base,
                                 end: base + 1,
                                 prop: p,
@@ -6579,7 +6836,7 @@ fn f_insert_buffer_substring(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
         for mut tp in props {
             tp.start += base;
             tp.end += base;
-            bb.text.props.borrow_mut().push(tp);
+            bb.text.props_write().push(tp);
         }
         bb.note_prop_modified();
     }
@@ -7521,27 +7778,71 @@ fn f_push_mark(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     let ring_sym = i.intern_soft("mark-ring").unwrap_or(0);
     // GNU pushes the OLD mark onto mark-ring before installing the new
-    // one: (add-to-history 'mark-ring (copy-marker (mark-marker)) max).
+    // one, via (add-to-history 'mark-ring (copy-marker (mark-marker))
+    // mark-ring-max t): cons a fresh head cell (sharing the existing
+    // ring's conses), truncate by (setcdr (nthcdr (1- MAX) ring) nil)
+    // in place, and detach the marker at index MAX — the element that
+    // falls off a full ring.
     if let Some(old) = bb.mark_position() {
-        let mut items = bb
+        let old_ring = bb
             .locals
             .get(&ring_sym)
             .cloned()
-            .unwrap_or(Value::Nil)
-            .list_to_vec()
-            .unwrap_or_default();
+            .unwrap_or(Value::Nil);
+        let max = buf_var(i, &bb, i.intern_soft("mark-ring-max").unwrap_or(0))
+            .int()
+            .unwrap_or(16) as usize;
         let m = Rc::new(RefCell::new(Marker {
             buffer: Some(bb.id),
             position: old,
             insertion_type: false,
         }));
         bb.register_marker(&m);
-        items.insert(0, marker_value(m));
-        let max = buf_var(i, &bb, i.intern_soft("mark-ring-max").unwrap_or(0))
-            .int()
-            .unwrap_or(16) as usize;
-        items.truncate(max);
-        bb.locals.insert(ring_sym, Value::list(items));
+        let new_ring = Value::cons(marker_value(m), old_ring.clone());
+        // GNU's push-mark grabs (nth mark-ring-max mark-ring) BEFORE
+        // prepending and detaches it after: the element one past a
+        // FULL old ring, i.e. the same marker truncation drops.
+        let mut old_at_max = old_ring.clone();
+        for _ in 0..max {
+            let n = match &old_at_max {
+                Value::Cons(c) => c.borrow().cdr.clone(),
+                _ => Value::Nil,
+            };
+            if let Value::Cons(_) = n {
+                old_at_max = n;
+            } else {
+                old_at_max = Value::Nil;
+                break;
+            }
+        }
+        // add-to-history cuts the chain in place: (setcdr (nthcdr
+        // (1- MAX) new-ring) nil), so conses shared with a captured
+        // reference observe the truncation.
+        if max > 0 {
+            let mut cut = new_ring.clone();
+            for _ in 0..max - 1 {
+                let n = match &cut {
+                    Value::Cons(c) => c.borrow().cdr.clone(),
+                    _ => Value::Nil,
+                };
+                if let Value::Cons(_) = n {
+                    cut = n;
+                } else {
+                    break;
+                }
+            }
+            if let Value::Cons(c) = &cut {
+                if matches!(c.borrow().cdr, Value::Cons(_)) {
+                    c.borrow_mut().cdr = Value::Nil;
+                }
+            }
+            if let Value::Cons(c) = &old_at_max {
+                if let Value::Marker(mm) = c.borrow().car.clone() {
+                    mm.borrow_mut().buffer = None;
+                }
+            }
+        }
+        bb.locals.insert(ring_sym, new_ring);
     }
     bb.set_mark(p);
     // GNU pushes the new mark onto `global-mark-ring' unless its car is
@@ -7593,16 +7894,16 @@ fn f_pop_mark(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let ring_sym = i.intern_soft("mark-ring").unwrap_or(0);
-    let mut items = bb
+    let ring = bb
         .locals
         .get(&ring_sym)
         .cloned()
-        .unwrap_or(Value::Nil)
-        .list_to_vec()
-        .unwrap_or_default();
-    if !items.is_empty() {
-        // GNU: (nconc mark-ring (list (copy-marker (mark-marker)))) then
-        // take (car mark-ring) — the ring is a rotation, not a stack.
+        .unwrap_or(Value::Nil);
+    if let Value::Cons(_) = ring {
+        // GNU: (nconc mark-ring (list (copy-marker (mark-marker))))
+        // mutates the ring's LAST cons in place, so code holding a
+        // reference to the ring's head cons sees the appended copy —
+        // e.g. (prog1 (list mark-ring) (pop-mark)) prints it.
         if let Some(mpos) = bb.mark_position() {
             let m = Rc::new(RefCell::new(Marker {
                 buffer: Some(bb.id),
@@ -7610,18 +7911,46 @@ fn f_pop_mark(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
                 insertion_type: false,
             }));
             bb.register_marker(&m);
-            items.push(marker_value(m));
+            let mut tail = ring.clone();
+            loop {
+                let next = match &tail {
+                    Value::Cons(c) => c.borrow().cdr.clone(),
+                    _ => break,
+                };
+                match next {
+                    Value::Cons(_) => tail = next,
+                    _ => break,
+                }
+            }
+            if let Value::Cons(c) = &tail {
+                c.borrow_mut().cdr = Value::list(vec![marker_value(m)]);
+            }
         }
-        if let Value::Marker(mm) = &items[0] {
+        // (set-marker (mark-marker) (car mark-ring)): the ring's head
+        // marker becomes the buffer's mark.
+        let head_marker = match &ring {
+            Value::Cons(c) => match c.borrow().car.clone() {
+                Value::Marker(mm) => Some(mm),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(mm) = &head_marker {
             let len = bb.text.len();
             bb.set_mark(mm.borrow().position.min(len));
         }
-        // (set-marker (car mark-ring) nil): kill the popped marker.
-        if let Value::Marker(mm) = &items[0] {
+        // (set-marker (car mark-ring) nil): detach the popped marker —
+        // captured references then print it "in no buffer" like GNU.
+        if let Some(mm) = &head_marker {
             mm.borrow_mut().buffer = None;
         }
-        items.remove(0);
-        bb.locals.insert(ring_sym, Value::list(items));
+        // (pop mark-ring): rebind the variable to (cdr mark-ring); the
+        // head cons itself is untouched (its cdr keeps the rest).
+        let newring = match &ring {
+            Value::Cons(c) => c.borrow().cdr.clone(),
+            _ => Value::Nil,
+        };
+        bb.locals.insert(ring_sym, newring);
     }
     // GNU's pop-mark calls (deactivate-mark) unconditionally; it is
     // itself gated on (region-active-p).
@@ -8129,7 +8458,7 @@ fn rect_apply(
             final_point = bb.point();
         }
         let le2 = b.borrow().text.line_end(ls);
-        signal_after_change(i, ls + 1, le2 + 1, le - ls)?;
+        signal_after_change(i, ls + 1, le2 + 1, (le - ls) as i128)?;
     }
     // GNU wraps apply-on-rectangle in save-excursion.
     let restore = orig.min(b.borrow().text.len());
@@ -10413,7 +10742,14 @@ pub(crate) fn f_put_text_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
         let len = str_len(&s);
         let st = want_int(i, &a[0])?.max(0) as usize;
         let en = want_int(i, &a[1])?.max(0) as usize;
-        str_pos_ok(i, &a[4], st.max(en), len)?;
+        // GNU validate_interval_range signals (START END) on the
+        // raw int args, not (pos object).
+        if st.max(en) > len {
+            return Err(i.signal_data(
+                crate::lisp::obarray::sym::ARGS_OUT_OF_RANGE,
+                vec![a[0].clone(), a[1].clone()],
+            ));
+        }
         let (s0, e0) = (st.min(en), st.max(en));
         let prop = a[2].clone();
         let val = a[3].clone();
@@ -10483,23 +10819,45 @@ pub(crate) fn f_put_text_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
     }
     // GNU `set_text_properties_1': `modify_text_properties' (before-
     // change + MODIFF bump) and `signal_after_change' both fire
-    // unconditionally on the buffer path.
-    signal_before_change(i, s + 1, e + 1)?;
+    // unconditionally on the buffer path — with OBJECT made current
+    // (GNU `set_buffer_internal') so hooks and the read-only checks
+    // see the right buffer.
+    let bid = b.borrow().id;
+    let prop_v = a[2].clone();
+    let val = a[3].clone();
+    // GNU add_text_properties_1: when every interval in the range
+    // already has the pair with an `eq' value, modify_text_properties
+    // (and thus the read-only checks) never runs — even in a
+    // buffer-read-only buffer the call is a silent no-op.
     {
-        let mut bb = b.borrow_mut();
-        buf_record_prop(&mut bb, s, e, &a[2], prop, &a[3]);
-        push_prop(
-            &mut bb.text.props.borrow_mut(),
-            TextProp {
-                start: s,
-                end: e,
-                prop,
-                value: a[3].clone(),
-            },
-        );
-        bb.note_prop_modified();
+        let bb = b.borrow();
+        if !buf_needs_prop_change(i, &bb, s, e, &[(prop_v.clone(), val.clone())]) {
+            return Ok(Value::Nil);
+        }
     }
-    signal_after_change(i, s + 1, e + 1, e - s)?;
+    // GNU validate_interval_range(hard) creates the interval tree
+    // BEFORE verify — defaults/aliases gate prop writes too.
+    b.borrow().text.had_intervals.set(true);
+    chg_with_buffer(i, bid, |i| {
+        check_writable(i)?;
+        text_ro_range(i, s, e)?;
+        signal_before_change(i, s + 1, e + 1)?;
+        {
+            let mut bb = b.borrow_mut();
+            buf_record_prop(&mut bb, s, e, &prop_v, prop, &val);
+            push_prop(
+                &mut bb.text.props_write(),
+                TextProp {
+                    start: s,
+                    end: e,
+                    prop,
+                    value: val,
+                },
+            );
+            bb.note_prop_modified();
+        }
+        signal_after_change(i, s + 1, e + 1, (e - s) as i128)
+    })?;
     Ok(Value::Nil)
 }
 
@@ -10556,14 +10914,35 @@ fn str_plist_get_cat(pl: &[Value], id: u32, i: &Interp) -> Option<Value> {
     if let Some(v) = str_plist_get(pl, id, i) {
         return Some(v);
     }
-    let cat = i.intern_soft("category")?;
-    match str_plist_get(pl, cat, i) {
-        Some(Value::Sym(c)) => match i.get_prop(c, id) {
-            Value::Nil => None,
-            v => Some(v),
-        },
-        _ => None,
+    if let Some(cat) = i.intern_soft("category") {
+        if let Some(Value::Sym(c)) = str_plist_get(pl, cat, i) {
+            match i.get_prop(c, id) {
+                Value::Nil => {}
+                v => return Some(v),
+            }
+        }
     }
+    // GNU lookup_char_property: char-property-alias-alist aliases are
+    // consulted via raw plist_get (strings pass textprop=0, so
+    // default-text-properties is NOT checked here).
+    let alist = i.symbol_value(i.intern_soft("char-property-alias-alist").map(|s| s).unwrap_or(u32::MAX));
+    if let Some(cell) = alist
+        .list_to_vec()
+        .unwrap_or_default()
+        .iter()
+        .find(|e| matches!(e, Value::Cons(c) if i.sym_id(&c.borrow().car) == Some(id)))
+    {
+        if let Value::Cons(c) = cell {
+            for a in c.borrow().cdr.clone().list_to_vec().unwrap_or_default() {
+                if let Some(aid) = i.sym_id(&a) {
+                    if let Some(v) = str_plist_get(pl, aid, i) {
+                        return Some(v);
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// GNU plput: update in place when the prop exists, else prepend.
@@ -10808,18 +11187,40 @@ pub(crate) fn f_add_text_properties(i: &mut Interp, a: crate::lisp::Argv) -> Eva
         // Empty range: GNU returns nil, no hooks, no intervals.
         return Ok(Value::Nil);
     }
-    // GNU: unconditional before/after-change on the buffer path.
-    signal_before_change(i, s + 1, e + 1)?;
-    let changed = {
-        let mut bb = b.borrow_mut();
-        let r = buf_add_props(&mut bb, i, s, e, &plist, true);
-        if r.is_ok() {
-            bb.note_prop_modified();
+    // GNU `interval_has_all_properties' gates modify_text_properties:
+    // an add that would change nothing is a silent nil — no
+    // read-only check, no hooks.
+    {
+        let bb = b.borrow();
+        let pairs: Vec<(Value, Value)> = plist
+            .chunks_exact(2)
+            .map(|c| (c[0].clone(), c[1].clone()))
+            .collect();
+        if !buf_needs_prop_change(i, &bb, s, e, &pairs) {
+            return Ok(Value::Nil);
         }
-        r
-    };
-    signal_after_change(i, s + 1, e + 1, e - s)?;
-    changed
+    }
+    // GNU: unconditional before/after-change on the buffer path,
+    // run with OBJECT current (GNU `set_buffer_internal').
+    let bid = b.borrow().id;
+    // GNU validate_interval_range(hard) creates the interval tree
+    // BEFORE verify — defaults/aliases gate prop writes too.
+    b.borrow().text.had_intervals.set(true);
+    chg_with_buffer(i, bid, |i| {
+        check_writable(i)?;
+        text_ro_range(i, s, e)?;
+        signal_before_change(i, s + 1, e + 1)?;
+        let changed = {
+            let mut bb = b.borrow_mut();
+            let r = buf_add_props(&mut bb, i, s, e, &plist, true);
+            if r.is_ok() {
+                bb.note_prop_modified();
+            }
+            r
+        };
+        signal_after_change(i, s + 1, e + 1, (e - s) as i128)?;
+        changed
+    })
 }
 
 /// Buffer side of `add-text-properties': records undo entries for
@@ -10845,7 +11246,7 @@ fn buf_add_props(
                 buf_record_prop(bb, s, e, &plist[k], p, &plist[k + 1]);
             }
             push_prop(
-                &mut bb.text.props.borrow_mut(),
+                &mut bb.text.props_write(),
                 TextProp {
                     start: s,
                     end: e,
@@ -10861,6 +11262,67 @@ fn buf_add_props(
 
 /// True when every position in [S,E) already carries PROP == VAL
 /// (an absent PROP reads as nil).
+/// GNU `interval_has_all_properties' over [S,E): does every segment
+/// in the range hold each PLIST pair with an `eq' value?  When the
+/// answer is yes for the whole range, GNU's add/put path skips
+/// `modify_text_properties' entirely — meaning no read-only check and
+/// no change hooks.
+fn buf_needs_prop_change(
+    i: &Interp,
+    bb: &Buffer,
+    s: usize,
+    e: usize,
+    pairs: &[(Value, Value)],
+) -> bool {
+    if s >= e {
+        return false;
+    }
+    let props = bb.text.props.borrow();
+    let mut bounds: Vec<usize> = vec![s];
+    for tp in props.iter() {
+        if tp.start > s && tp.start < e {
+            bounds.push(tp.start);
+        }
+        if tp.end > s && tp.end < e {
+            bounds.push(tp.end);
+        }
+    }
+    bounds.sort_unstable();
+    bounds.dedup();
+    // Fail = "needs change": one segment lacking a pair or holding a
+    // non-`eq' value.  Segments with no record at all count as
+    // "property absent".
+    'seg: for &b in &bounds {
+        for (k, v) in pairs {
+            let kid = match i.sym_id(k) {
+                Some(id) => id,
+                None => {
+                    // A non-symbol key can never appear in records →
+                    // the pair is missing → change needed (GNU would
+                    // see it as absent on every interval too).
+                    return true;
+                }
+            };
+            let mut found = false;
+            for tp in props.iter() {
+                if tp.prop == kid && b >= tp.start && b < tp.end {
+                    found = true;
+                    // GNU compares with EQ.
+                    if !crate::lisp::builtins::eq_values(&tp.value, v) {
+                        return true;
+                    }
+                    break;
+                }
+            }
+            if !found {
+                return true;
+            }
+        }
+        continue 'seg;
+    }
+    false
+}
+
 fn buf_prop_uniform(bb: &Buffer, s: usize, e: usize, prop: u32, val: &Value) -> bool {
     let absent_ok = val.is_nil();
     let mut p = s;
@@ -11050,18 +11512,26 @@ pub(crate) fn f_remove_text_properties(i: &mut Interp, a: crate::lisp::Argv) -> 
     if !will_change {
         return Ok(Value::Nil);
     }
-    signal_before_change(i, s + 1, e + 1)?;
-    {
-        let mut bb = b.borrow_mut();
-        for (n, &p) in props.iter().enumerate() {
-            buf_record_prop(&mut bb, s, e, &plist[n * 2], p, &Value::Nil);
+    let bid = b.borrow().id;
+    // GNU validate_interval_range(hard) creates the interval tree
+    // BEFORE verify — defaults/aliases gate prop writes too.
+    b.borrow().text.had_intervals.set(true);
+    chg_with_buffer(i, bid, |i| {
+        check_writable(i)?;
+        text_ro_range(i, s, e)?;
+        signal_before_change(i, s + 1, e + 1)?;
+        {
+            let mut bb = b.borrow_mut();
+            for (n, &p) in props.iter().enumerate() {
+                buf_record_prop(&mut bb, s, e, &plist[n * 2], p, &Value::Nil);
+            }
+            clip_props(&mut bb.text.props_write(), s, e, |p| {
+                props.contains(&p)
+            });
+            bb.note_prop_modified();
         }
-        clip_props(&mut bb.text.props.borrow_mut(), s, e, |p| {
-            props.contains(&p)
-        });
-        bb.note_prop_modified();
-    }
-    signal_after_change(i, s + 1, e + 1, e - s)?;
+        signal_after_change(i, s + 1, e + 1, (e - s) as i128)
+    })?;
     Ok(Value::t())
 }
 
@@ -11134,16 +11604,35 @@ fn f_set_text_properties(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if s == e {
         return Ok(Value::Nil);
     }
-    // GNU `set_text_properties_1': unconditional hooks + MODIFF bump.
-    signal_before_change(i, s + 1, e + 1)?;
+    // GNU set_text_properties: when PROPERTIES is nil and the buffer
+    // has no interval tree, `validate_interval_range' soft-returns and
+    // the function exits BEFORE prepare_to_modify_buffer — no
+    // buffer-read-only check.  Any existing interval flips it.
     {
-        let mut bb = b.borrow_mut();
-        buf_record_set(&mut bb, i, s, e, &plist);
-        clip_props(&mut bb.text.props.borrow_mut(), s, e, |_| true);
-        buf_add_props(&mut bb, i, s, e, &plist, false)?;
-        bb.note_prop_modified();
+        let bb = b.borrow();
+        if plist.is_empty() && !bb.text.had_intervals.get() {
+            return Ok(Value::Nil);
+        }
     }
-    signal_after_change(i, s + 1, e + 1, e - s)?;
+    // GNU `set_text_properties_1': unconditional hooks + MODIFF bump,
+    // with OBJECT made current (GNU `set_buffer_internal').
+    let bid = b.borrow().id;
+    // GNU validate_interval_range(hard) creates the interval tree
+    // BEFORE verify — defaults/aliases gate prop writes too.
+    b.borrow().text.had_intervals.set(true);
+    chg_with_buffer(i, bid, |i| {
+        check_writable(i)?;
+        text_ro_range(i, s, e)?;
+        signal_before_change(i, s + 1, e + 1)?;
+        {
+            let mut bb = b.borrow_mut();
+            buf_record_set(&mut bb, i, s, e, &plist);
+            clip_props(&mut bb.text.props_write(), s, e, |_| true);
+            buf_add_props(&mut bb, i, s, e, &plist, false)?;
+            bb.note_prop_modified();
+        }
+        signal_after_change(i, s + 1, e + 1, (e - s) as i128)
+    })?;
     Ok(Value::t())
 }
 
@@ -11193,8 +11682,91 @@ fn buf_record_set(bb: &mut Buffer, i: &Interp, s: usize, e: usize, plist: &[Valu
     }
 }
 
-/// Text property PROP at 0-based POS in buffer B (last write wins,
-/// with GNU's `category' plist fallback).
+/// Raw (no category/alias/default) property lookup at 0-based POS —
+/// the flat analogue of GNU's `plist_get' on an interval plist.
+pub(crate) fn direct_prop_at_bb(
+    _i: &Interp,
+    bb: &crate::buffer::Buffer,
+    pos: usize,
+    prop: u32,
+) -> Value {
+    for tp in bb.text.props.borrow().iter().rev() {
+        if pos >= tp.start && pos < tp.end && tp.prop == prop {
+            return tp.value.clone();
+        }
+    }
+    Value::Nil
+}
+
+/// The tail of `char-property-alias-alist' for PROP: raw `plist_get'
+/// lookups against the flat records (GNU calls plist_get on the
+/// interval plist — no category recursion).
+fn alias_prop_at_bb(
+    i: &Interp,
+    bb: &crate::buffer::Buffer,
+    pos: usize,
+    prop: u32,
+) -> Value {
+    let alist = i.symbol_value(i.intern_soft("char-property-alias-alist").map(|s| s).unwrap_or(u32::MAX));
+    let mut found = Value::Nil;
+    if let Value::Cons(_) = alist {
+        // Fassq on the alist, then scan its cdr aliases in order.
+        if let Some(cell) = alist
+            .list_to_vec()
+            .unwrap_or_default()
+            .iter()
+            .find(|e| {
+                matches!(e, Value::Cons(c) if i.sym_id(&c.borrow().car) == Some(prop))
+            })
+        {
+            if let Value::Cons(c) = cell {
+                let aliases = c.borrow().cdr.clone();
+                for a in aliases.list_to_vec().unwrap_or_default() {
+                    if let Some(id) = i.sym_id(&a) {
+                        let v = direct_prop_at_bb(i, bb, pos, id);
+                        if !v.is_nil() {
+                            found = v;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    found
+}
+
+/// `plist_get' against `default-text-properties' (GNU's last
+/// lookup_char_property step, only for textprop lookups).
+fn default_prop(i: &Interp, prop: u32) -> Value {
+    let dtp = i.symbol_value(i.intern_soft("default-text-properties").unwrap_or(u32::MAX));
+    let mut cur = dtp;
+    while let Value::Cons(c) = &cur {
+        let (k, rest) = {
+            let b = c.borrow();
+            (b.car.clone(), b.cdr.clone())
+        };
+        if let Value::Cons(vc) = &rest {
+            let (v, tl) = {
+                let b = vc.borrow();
+                (b.car.clone(), b.cdr.clone())
+            };
+            if i.sym_id(&k) == Some(prop) {
+                return v;
+            }
+            cur = tl;
+        } else {
+            break;
+        }
+    }
+    Value::Nil
+}
+
+/// Text property PROP at 0-based POS in buffer B — GNU's
+/// `lookup_char_property' chain on the flat record store:
+/// covering direct records (last write wins) → `category' symbol's
+/// plist → `char-property-alias-alist' aliases →
+/// `default-text-properties'.
 pub(crate) fn prop_at_bb(
     i: &mut Interp,
     bb: &crate::buffer::Buffer,
@@ -11203,22 +11775,30 @@ pub(crate) fn prop_at_bb(
 ) -> Value {
     let cat = i.intern_soft("category");
     let mut catval = Value::Nil;
-    for tp in bb.text.props.borrow().iter().rev() {
-        if pos >= tp.start && pos < tp.end {
-            if tp.prop == prop {
-                return tp.value.clone();
-            }
-            if Some(tp.prop) == cat && catval.is_nil() {
-                catval = tp.value.clone();
+    {
+        let props = bb.text.props.borrow();
+        for tp in props.iter().rev() {
+            if pos >= tp.start && pos < tp.end {
+                if tp.prop == prop {
+                    return tp.value.clone();
+                }
+                if Some(tp.prop) == cat && catval.is_nil() {
+                    catval = tp.value.clone();
+                }
             }
         }
     }
-    if cat.is_some() {
-        if let Value::Sym(cs) = catval {
-            return i.get_prop(cs, prop);
+    if let Value::Sym(cs) = catval {
+        let v = i.get_prop(cs, prop);
+        if !v.is_nil() {
+            return v;
         }
     }
-    Value::Nil
+    let v = alias_prop_at_bb(i, bb, pos, prop);
+    if !v.is_nil() {
+        return v;
+    }
+    default_prop(i, prop)
 }
 
 pub(crate) fn prop_at(i: &mut Interp, pos: usize, prop: u32) -> Value {
@@ -11641,32 +12221,80 @@ pub(crate) fn f_next_property_change(i: &mut Interp, a: crate::lisp::Argv) -> Ev
         None => cur(i),
     };
     let bb = b.borrow();
-    let len = bb.text.len();
+    let zv = bb.zv;
+    let begv = bb.begv;
     let pos_v = crate::lisp::builtins::want_int_or_mark(i, &a[0])?;
-    if pos_v < bb.begv as i128 + 1 || pos_v > bb.zv as i128 + 1 {
+    if pos_v < begv as i128 + 1 || pos_v > zv as i128 + 1 {
         return Err(err_sym(
             i,
             "args-out-of-range",
             vec![a[0].clone(), a[0].clone()],
         ));
     }
-    let pos = pos_idx(len, pos_v);
-    // Any interval boundary strictly inside (pos, ZV) counts as a
-    // change.  GNU never reports point-max itself (ZV char index = len,
-    // lisp pos len+1) — the region past the last char has no property
-    // state to change from.
-    let mut next: Option<usize> = None;
+    let pos = pos_idx(zv, pos_v);
+    // GNU's interval tree sees only the accessible region: interval
+    // STARTS are {BEGV+1} ∪ {raw prop-run edges clamped into
+    // [BEGV+1, ZV+1]}.  `next_interval' walks starts > POS; the walk
+    // stops at the first interval whose plist differs from the one
+    // containing POS (intervals_equal compares against i, not
+    // pairwise neighbors).
+    let i_plist = bb.plist_at(pos.min(zv));
+    let differs_from_i = |bb: &crate::buffer::Buffer, s: i128| -> bool {
+        let l = bb.plist_at((s - 1).clamp(0, zv as i128) as usize);
+        l.len() != i_plist.len()
+            || l.iter().any(|(k, v)| {
+                !i_plist
+                    .get(k)
+                    .map(|rv| crate::lisp::builtins::eq_values(v, rv))
+                    .unwrap_or(false)
+            })
+            || i_plist.iter().any(|(k, _)| !l.contains_key(k))
+    };
+    // LIMIT t: GNU returns the NEXT INTERVAL'S start outright (or
+    // ZV+1 when POS is in the last interval) — the intervals_equal
+    // walk is skipped entirely.
+    if let Some(v) = a.get(2) {
+        if matches!(v, Value::Sym(s) if i.symbol_name(*s) == "t") {
+            let mut raw_next = zv as i128 + 1;
+            for tp in bb.text.props.borrow().iter() {
+                for e in [tp.start, tp.end] {
+                    let e1 = (e as i128 + 1).clamp(begv as i128 + 1, zv as i128 + 1);
+                    if e1 > pos_v && e1 < raw_next {
+                        raw_next = e1;
+                    }
+                }
+            }
+            return Ok(Value::Int(raw_next));
+        }
+    }
+    let lim_v = match a.get(2) {
+        Some(v) if v.truthy() => {
+            Some(crate::lisp::builtins::want_int_or_mark(i, v)?)
+        }
+        _ => None,
+    };
+    let mut next: Option<i128> = None;
     for tp in bb.text.props.borrow().iter() {
-        for cand in [tp.start, tp.end] {
-            if cand > pos && cand < len {
-                next = Some(next.map(|n| n.min(cand)).unwrap_or(cand));
+        for e in [tp.start, tp.end] {
+            let e1 = (e as i128 + 1).clamp(begv as i128 + 1, zv as i128 + 1);
+            // GNU: edges at/after LIMIT don't count — the
+            // `next->position < XFIXNUM(limit)' walk condition.
+            if e1 > pos_v
+                && lim_v.map(|l| e1 < l).unwrap_or(true)
+                && differs_from_i(&bb, e1)
+            {
+                next = Some(next.map(|n| n.min(e1)).unwrap_or(e1));
             }
         }
     }
     match next {
-        Some(p) => Ok(Value::Int(p as i128 + 1)),
+        Some(p) => Ok(Value::Int(p)),
         None => match a.get(2) {
-            Some(v) if v.truthy() => Ok(a[2].clone()),
+            // A marker LIMIT was coerced already; GNU returns its
+            // integer value, not the marker object.
+            Some(v) if v.truthy() => Ok(Value::Int(
+                crate::lisp::builtins::want_int_or_mark(i, v)?,
+            )),
             _ => Ok(Value::Nil),
         },
     }
@@ -11936,9 +12564,10 @@ fn f_next_single_property_change(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
 
 pub(crate) fn f_prev_property_change(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU Fprevious_property_change: LIMIT (a[2]) coerces
-    // integer-or-marker (`t' exempt) before POSITION is checked.
+    // integer-or-marker BEFORE POSITION is checked — `t' is NOT
+    // exempt here (only next-property-change has the Qt shortcut).
     if let Some(v) = a.get(2) {
-        if v.truthy() && !matches!(v, Value::Sym(s) if i.symbol_name(*s) == "t") {
+        if v.truthy() {
             crate::lisp::builtins::want_int_or_mark(i, v)?;
         }
     }
@@ -11951,25 +12580,23 @@ pub(crate) fn f_prev_property_change(i: &mut Interp, a: crate::lisp::Argv) -> Ev
         None => cur(i),
     };
     let bb = b.borrow();
-    let len = bb.text.len();
-    let pos = pos_idx(len, want_pos_in_buf(i, &a[0], &bb)?);
-    let mut prev: Option<usize> = None;
-    for tp in bb.text.props.borrow().iter() {
-        for cand in [tp.start, tp.end] {
-            // GNU never reports point-min (BEGV char index = begv,
-            // lisp pos begv+1): there is no earlier state to differ
-            // from.  `pos` is 0-based; boundary cand maps to pos+1.
-            if cand < pos && cand > bb.begv {
-                prev = Some(prev.map(|n| n.max(cand)).unwrap_or(cand));
-            }
-        }
+    let pos_v = want_pos_in_buf(i, &a[0], &bb)?;
+    // GNU: LIMIT floors the scan; nil → BEGV (point-min).
+    let lim = match a.get(2) {
+        Some(v) if v.truthy() => crate::lisp::builtins::want_int_or_mark(i, v)?,
+        _ => bb.begv as i128 + 1,
+    };
+    // GNU reports the end of the first interval before POS whose
+    // plist differs from the interval containing POS.
+    let prev = prev_prop_edge(i, &bb, pos_v, lim);
+    if prev > lim {
+        return Ok(Value::Int(prev));
     }
-    match prev {
-        Some(p) => Ok(Value::Int(p as i128 + 1)),
-        None => match a.get(2) {
-            Some(v) if v.truthy() => Ok(a[2].clone()),
-            _ => Ok(Value::Nil),
-        },
+    match a.get(2) {
+        Some(v) if v.truthy() => Ok(Value::Int(
+            crate::lisp::builtins::want_int_or_mark(i, v)?,
+        )),
+        _ => Ok(Value::Nil),
     }
 }
 
@@ -11981,6 +12608,191 @@ fn f_prev_single_property_change(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
 /// change: the effective PROP value at 1-based P is
 /// `get-char-property-and-overlay' (overlays win over text props).
 /// Mirrors single_prop_change's scan semantics and limit handling.
+/// 1-based next overlay endpoint strictly after 1-based POS in BB:
+/// GNU `Fnext_overlay_change' clamps every endpoint into
+/// [BEGV+1, ZV+1] (overlay.c does this because narrowing adjusts
+/// them lazily) and returns point-max when none follows.
+pub(crate) fn next_ov_change(bb: &crate::buffer::Buffer, pos: i128) -> i128 {
+    let (beg1, zv1) = (bb.begv as i128 + 1, bb.zv as i128 + 1);
+    let mut best = zv1;
+    for ov in &bb.overlays {
+        if ov.buffer != Some(bb.id) {
+            continue;
+        }
+        for e in [ov.start, ov.end] {
+            let e1 = (e as i128 + 1).clamp(beg1, zv1);
+            if e1 > pos && e1 < best {
+                best = e1;
+            }
+        }
+    }
+    best
+}
+
+/// 1-based previous overlay endpoint strictly before POS; defaults
+/// to point-min (GNU's Fprevious_overlay_change never answers nil).
+pub(crate) fn prev_ov_change(bb: &crate::buffer::Buffer, pos: i128) -> i128 {
+    let (beg1, zv1) = (bb.begv as i128 + 1, bb.zv as i128 + 1);
+    let mut best = beg1;
+    for ov in &bb.overlays {
+        if ov.buffer != Some(bb.id) {
+            continue;
+        }
+        for e in [ov.start, ov.end] {
+            let e1 = (e as i128 + 1).clamp(beg1, zv1);
+            if e1 < pos && e1 > best {
+                best = e1;
+            }
+        }
+    }
+    best
+}
+
+/// True when the whole PLIST changes across the boundary between
+/// One interval of GNU's narrowed tree, reduced to what the property
+/// scans observe: `(start, end, plist)` where positions are 1-based
+/// and `end` = `start + length` (the interval ENDS at position end).
+/// GNU clamps every raw edge into [BEGV+1, ZV+1] — hidden-region
+/// intervals collapse to empty [beg1, beg1)/[zv1, zv1) entries that
+/// `prev_interval'/`next_interval' still visit (in raw order) but
+/// `find_interval' skips.
+fn buf_intervals(
+    bb: &crate::buffer::Buffer,
+) -> Vec<(i128, i128, std::collections::BTreeMap<u32, Value>)> {
+    let (beg1, zv1) = (bb.begv as i128 + 1, bb.zv as i128 + 1);
+    // Raw boundaries from the prop runs (0-based char edges +1).
+    let mut bounds: Vec<i128> = vec![1, bb.text.len() as i128 + 1];
+    for tp in bb.text.props.borrow().iter() {
+        bounds.push(tp.start as i128 + 1);
+        bounds.push(tp.end as i128 + 1);
+    }
+    bounds.sort_unstable();
+    bounds.dedup();
+    let mut out = Vec::new();
+    for w in bounds.windows(2) {
+        let (s, e) = (w[0], w[1]);
+        // Plist of the raw segment = plist at its first char.
+        let pl = bb.plist_at((s - 1).max(0) as usize);
+        out.push((s.clamp(beg1, zv1), e.clamp(beg1, zv1), pl));
+    }
+    out
+}
+
+fn plist_maps_differ(
+    a: &std::collections::BTreeMap<u32, Value>,
+    b: &std::collections::BTreeMap<u32, Value>,
+) -> bool {
+    a.len() != b.len()
+        || a.iter().any(|(k, v)| {
+            !b.get(k)
+                .map(|rv| crate::lisp::builtins::eq_values(v, rv))
+                .unwrap_or(false)
+        })
+}
+
+/// GNU `find_interval': the interval whose [start, end) contains
+/// 1-based position CUR, skipping empties.  (Positions sit on the
+/// char INDEX; interval [s,e) covers s..e-1.)
+fn buf_interval_at(
+    ivs: &[(i128, i128, std::collections::BTreeMap<u32, Value>)],
+    cur: i128,
+) -> Option<usize> {
+    if let Some(ix) = ivs.iter().position(|(s, e, _)| *s <= cur && cur < *e) {
+        return Some(ix);
+    }
+    // CUR at/after the tree's end → the last non-empty interval.
+    ivs.iter().rposition(|(s, e, _)| *s < *e)
+}
+
+/// GNU `Fnext_property_change' internals: after the interval
+/// containing CUR, the start of the first interval whose plist
+/// differs — walking is capped by LIMIT (GNU's `next->position <
+/// XFIXNUM(limit)'); returns the found start, else LIMIT.
+fn next_prop_edge(i: &mut Interp, bb: &crate::buffer::Buffer, cur: i128, lim: i128) -> i128 {
+    let _ = i;
+    let ivs = buf_intervals(bb);
+    let Some(mut j) = buf_interval_at(&ivs, cur) else {
+        return lim;
+    };
+    let ipl = ivs[j].2.clone();
+    while let Some((s, _e, pl)) = ivs.get(j + 1) {
+        j += 1;
+        if *s >= lim {
+            return lim;
+        }
+        if plist_maps_differ(pl, &ipl) {
+            return *s;
+        }
+    }
+    lim
+}
+
+/// GNU `Fprevious_property_change' internals: the end of the first
+/// interval before CUR's whose plist differs from i's.  When CUR is
+/// i's own start, i steps one interval back first
+/// (`i->position == position').  Result floored by LIMIT.
+fn prev_prop_edge(i: &mut Interp, bb: &crate::buffer::Buffer, cur: i128, lim: i128) -> i128 {
+    let _ = i;
+    let ivs = buf_intervals(bb);
+    let Some(mut i_idx) = buf_interval_at(&ivs, cur) else {
+        return lim;
+    };
+    if ivs[i_idx].0 == cur && i_idx > 0 {
+        i_idx -= 1;
+    }
+    let ipl = ivs[i_idx].2.clone();
+    // `previous' walks down from i; the reported boundary is the
+    // candidate interval's own (clamped) end — the next interval's
+    // start.  Equal-plist intervals are transparent only while their
+    // end stays above the floor (GNU's walk condition).
+    let mut k = i_idx;
+    while k > 0 {
+        k -= 1;
+        let (_s, e, pl) = &ivs[k];
+        if !(*e > lim) {
+            break;
+        }
+        if plist_maps_differ(pl, &ipl) {
+            return *e;
+        }
+    }
+    lim
+}
+
+/// GNU `Fnext_char_property_change': scans forward from 1-based CUR
+/// for ANY property/overlay change, bounded by LIMIT (nil → ZV+1).
+/// The effective bound is `min(LIMIT, next-overlay-change)' — overlay
+/// endpoints clamped into the accessible region count as boundaries.
+pub(crate) fn next_char_prop_edge(
+    i: &mut Interp,
+    bb: &crate::buffer::Buffer,
+    cur: i128,
+    lim: i128,
+) -> i128 {
+    let temp = lim.min(next_ov_change(bb, cur));
+    next_prop_edge(i, bb, cur, temp)
+}
+
+/// GNU `Fprevious_char_property_change': scans backward from CUR,
+/// floored by `max(LIMIT, previous-overlay-change)'.
+pub(crate) fn prev_char_prop_edge(
+    i: &mut Interp,
+    bb: &crate::buffer::Buffer,
+    cur: i128,
+    lim: i128,
+) -> i128 {
+    let temp = lim.max(prev_ov_change(bb, cur));
+    prev_prop_edge(i, bb, cur, temp)
+}
+
+/// Overlay-aware variant used by next/previous-single-char-property-
+/// change: the effective PROP value at 1-based P is
+/// `get-char-property-and-overlay' (overlays win over text props).
+/// Ports GNU's textprop.c loop verbatim: the scan steps through
+/// `next/previous-char-property-change' boundaries and compares the
+/// PROP value at each against the initial one, so boundaries where
+/// only OTHER properties change still advance the walk (a run of
+/// equal-PROP intervals is transparent).
 fn single_char_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalResult {
     let object = a.get(2);
     let limit = a.get(3);
@@ -11991,7 +12803,8 @@ fn single_char_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalRe
         Some(Value::Str(_)) | Some(Value::Buffer(_)) | None | Some(Value::Nil) => {}
         Some(other) => return Err(i.wrong_type_mut("bufferp", other)),
     }
-    let pos_v = want_int(i, &a[0])?;
+    // GNU CHECK_FIXNUM_COERCE_MARKER accepts markers for POSITION.
+    let pos_v = want_int_or_mark(i, &a[0])?;
     let prop = if let Value::Sym(_) = a[1] {
         want_sym(i, &a[1])?
     } else {
@@ -12009,54 +12822,72 @@ fn single_char_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalRe
         Some(v) if v.truthy() => buf_of(i, v)?,
         _ => cur(i),
     };
-    let len = b.borrow().text.len() as i128;
-    let pos = {
+    let (beg1, zv1) = {
         let bb = b.borrow();
-        let (lo, hi) = (bb.begv as i128 + 1, bb.zv as i128 + 1);
-        drop(bb);
-        if pos_v < lo || pos_v > hi {
-            // GNU scans from position -1 backward: the reported
-            // position is pos for `next', pos-1 for `previous'.
-            let rep = if forward {
-                a[0].clone()
-            } else {
-                Value::Int(pos_v - 1)
-            };
-            return Err(err_sym(i, "args-out-of-range", vec![rep]));
-        }
-        pos_v
+        (bb.begv as i128 + 1, bb.zv as i128 + 1)
     };
-    let at = |i: &mut Interp, p: i128| -> Value {
-        if p < 1 || p > len {
-            return Value::Nil;
+    if pos_v < beg1 || pos_v > zv1 {
+        // GNU reports the read position: pos for `next', pos-1 for
+        // `previous' (via the Fget_char_property(pos-1) call).
+        let rep = if forward {
+            a[0].clone()
+        } else {
+            Value::Int(pos_v - 1)
+        };
+        return Err(err_sym(i, "args-out-of-range", vec![rep]));
+    }
+    // `get-char-property' at 1-based P on this buffer; reads outside
+    // [BEGV+1, ZV+1] signal args-out-of-range (P), matching GNU's
+    // Fget_char_property → validate_interval_range single-datum.
+    let at = |i: &mut Interp, p: i128| -> Result<Value, Flow> {
+        if p < beg1 || p > zv1 {
+            return Err(err_sym(i, "args-out-of-range", vec![Value::Int(p)]));
         }
         let bb = b.borrow();
-        char_prop_at_overlay(i, &bb, (p - 1) as usize, prop).0
+        Ok(char_prop_at_overlay(i, &bb, (p - 1) as usize, prop).0)
     };
-    let default_limit = if forward { len + 1 } else { 1 };
-    let lim = buf_lim.unwrap_or(default_limit);
-    // GNU Fnext/previous_single_char_property_change: in a buffer the
-    // no-change result is LIMIT — point-min/point-max+1 by default
-    // (unlike the non-char variants which yield nil).
-    let no_change = || Value::Int(lim);
     if forward {
-        let mut p = pos + 1;
-        while p <= lim && p <= len {
-            if !crate::lisp::builtins::eq_values(&at(i, p), &at(i, p - 1)) {
-                return Ok(Value::Int(p));
-            }
-            p += 1;
+        let lim = buf_lim.unwrap_or(zv1);
+        if pos_v >= lim {
+            // GNU: position = limit, capped at ZV when past it.
+            return Ok(Value::Int(lim.min(zv1)));
         }
-        Ok(no_change())
+        let initial = at(i, pos_v)?;
+        let mut p = pos_v;
+        loop {
+            let p2 = next_char_prop_edge(i, &b.borrow(), p, lim);
+            if p2 >= lim {
+                return Ok(Value::Int(lim));
+            }
+            if !crate::lisp::builtins::eq_values(&at(i, p2)?, &initial) {
+                return Ok(Value::Int(p2));
+            }
+            if p2 >= zv1 {
+                return Ok(Value::Int(p2));
+            }
+            p = p2;
+        }
     } else {
-        let mut p = pos - 1;
-        while p > lim && p >= 2 {
-            if !crate::lisp::builtins::eq_values(&at(i, p), &at(i, p - 1)) {
-                return Ok(Value::Int(p));
-            }
-            p -= 1;
+        let lim = buf_lim.unwrap_or(beg1);
+        if pos_v <= lim {
+            // GNU: position = limit, floored at BEGV when below it.
+            return Ok(Value::Int(lim.max(beg1)));
         }
-        Ok(no_change())
+        let initial = at(i, pos_v - 1)?;
+        let mut p = pos_v;
+        loop {
+            let p2 = prev_char_prop_edge(i, &b.borrow(), p, lim);
+            if p2 <= lim {
+                return Ok(Value::Int(lim));
+            }
+            // GNU reads the char BEFORE the boundary — a boundary at
+            // BEGV+1 under a sub-point-min LIMIT signals
+            // args-out-of-range(BEGV) through this very read.
+            if !crate::lisp::builtins::eq_values(&at(i, p2 - 1)?, &initial) {
+                return Ok(Value::Int(p2));
+            }
+            p = p2;
+        }
     }
 }
 
@@ -12086,18 +12917,34 @@ pub(crate) fn f_remove_list_of_text_properties(i: &mut Interp, a: crate::lisp::A
         let removed = str_remove_props(i, &a, names)?;
         return Ok(Value::from_bool(removed));
     }
-    let len = cur(i).borrow().text.len();
-    // GNU validates START/END against BEGV..ZV BEFORE the no-change
-    // shortcut — an out-of-range call must signal even when nothing
-    // would be removed.
-    let (sv, ev) = want_range_in_range(i, &a[0], &a[1])?;
+    // GNU accepts an OBJECT buffer arg — `buf_of' resolves it (nil →
+    // current); the hooks run with it current (GNU set_buffer_internal).
+    let b = match a.get(3) {
+        Some(v) => buf_of(i, v)?,
+        None => cur(i),
+    };
+    let len = b.borrow().text.len();
+    // GNU validates START/END against the OBJECT's BEGV..ZV BEFORE
+    // the no-change shortcut — an out-of-range call must signal even
+    // when nothing would be removed.
+    let (sv, ev) = (want_int(i, &a[0])?, want_int(i, &a[1])?);
+    {
+        let bb = b.borrow();
+        let (lo, hi) = (bb.begv as i128 + 1, bb.zv as i128 + 1);
+        if sv < lo || sv > hi || ev < lo || ev > hi {
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![a[0].clone(), a[1].clone()],
+            ));
+        }
+    }
     // GNU validate_region orders START/END.
     let (s, e) = (pos_idx(len, sv.min(ev)), pos_idx(len, sv.max(ev)));
     let props: Vec<u32> = names.iter().filter_map(|v| i.sym_id(v)).collect();
     // GNU's remove path is lazy: hooks + MODIFF bump only when a
     // property is actually removed.
     let will_change = {
-        let b = cur(i);
         let bb = b.borrow();
         bb.text
             .props
@@ -12108,19 +12955,26 @@ pub(crate) fn f_remove_list_of_text_properties(i: &mut Interp, a: crate::lisp::A
     if !will_change {
         return Ok(Value::Nil);
     }
-    signal_before_change(i, s + 1, e + 1)?;
-    {
-        let b = cur(i);
-        let mut bb = b.borrow_mut();
-        for (n, &p) in props.iter().enumerate() {
-            buf_record_prop(&mut bb, s, e, &names[n], p, &Value::Nil);
+    let bid = b.borrow().id;
+    // GNU validate_interval_range(hard) creates the interval tree
+    // BEFORE verify — defaults/aliases gate prop writes too.
+    b.borrow().text.had_intervals.set(true);
+    chg_with_buffer(i, bid, |i| {
+        check_writable(i)?;
+        text_ro_range(i, s, e)?;
+        signal_before_change(i, s + 1, e + 1)?;
+        {
+            let mut bb = b.borrow_mut();
+            for (n, &p) in props.iter().enumerate() {
+                buf_record_prop(&mut bb, s, e, &names[n], p, &Value::Nil);
+            }
+            clip_props(&mut bb.text.props_write(), s, e, |p| {
+                props.contains(&p)
+            });
+            bb.note_prop_modified();
         }
-        clip_props(&mut bb.text.props.borrow_mut(), s, e, |p| {
-            props.contains(&p)
-        });
-        bb.note_prop_modified();
-    }
-    signal_after_change(i, s + 1, e + 1, e - s)?;
+        signal_after_change(i, s + 1, e + 1, (e - s) as i128)
+    })?;
     Ok(Value::t())
 }
 
@@ -12337,7 +13191,7 @@ pub(crate) fn f_add_face_text_property(i: &mut Interp, a: crate::lisp::Argv) -> 
         });
     }
     {
-        let mut props = bb.text.props.borrow_mut();
+        let mut props = bb.text.props_write();
         clip_props(&mut props, s, e, |q| q == fid);
         props.extend(segs);
     }
@@ -12485,7 +13339,7 @@ fn undo_apply_one(
                     if bb.file_modtime_ns < 0 {
                         Value::Int(-2 - bb.file_modtime_ns)
                     } else {
-                        crate::lisp::builtins::misc::ns_to_lisp_time(bb.file_modtime_ns)
+                        crate::lisp::builtins::misc::ns_to_lisp_time_i(i, bb.file_modtime_ns)
                     }
                 };
                 if undo_time_equal(i, &cdr, &vft) {

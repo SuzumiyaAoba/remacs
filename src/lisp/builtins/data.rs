@@ -883,6 +883,14 @@ fn f_defalias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::cons(i.sym(defun_id), args[0].clone()),
     );
     i.fset_defalias(id, def)?;
+    // GNU: a non-nil DOCSTRING goes on SYMBOL's `function-documentation'
+    // property — what `documentation' reads through the alias.
+    if let Some(doc) = args.get(2) {
+        if doc.truthy() {
+            let fd = i.intern("function-documentation");
+            i.put_prop(id, fd, doc.clone());
+        }
+    }
     // Emacs returns the aliased symbol, not the definition.
     Ok(args[0].clone())
 }
@@ -1386,7 +1394,9 @@ pub(crate) fn is_default_obarray(i: &Interp, v: &Value) -> bool {
     }
 }
 
-/// The symbols interned in a custom (Record-based) obarray.
+/// The symbols interned in a custom (Record-based) obarray.  The vec
+/// is kept in GNU `map_obarray' order: bucket index ascending, and
+/// within a bucket most-recently-interned first (head insertion).
 pub(crate) fn obarray_syms(i: &Interp, ob: &Value) -> Vec<Value> {
     let _ = i;
     if let Value::Record(r) = ob {
@@ -1402,17 +1412,123 @@ pub(crate) fn obarray_syms(i: &Interp, ob: &Value) -> Vec<Value> {
     Vec::new()
 }
 
-fn obarray_push(i: &Interp, ob: &Value, sym: &Value) {
+/// GNU `obarray_index': hash_char_array + knuth_hash reduction.
+fn gnu_obarray_hash(name: &[u8], bits: u32) -> u32 {
+    let len = name.len() as u64;
+    let mut hash: u64 = len;
+    if name.len() >= 8 {
+        let step = std::cmp::max(8usize, name.len() >> 3);
+        let mut p = 0usize;
+        while p + 8 <= name.len() {
+            let c = u64::from_ne_bytes(name[p..p + 8].try_into().unwrap());
+            hash = hash.wrapping_shl(4).wrapping_add(hash >> 60).wrapping_add(c);
+            p += step;
+        }
+        // Tail: always hash the last 8 bytes (may overlap).
+        let c = u64::from_ne_bytes(name[name.len() - 8..].try_into().unwrap());
+        hash = hash.wrapping_shl(4).wrapping_add(hash >> 60).wrapping_add(c);
+    } else {
+        let mut tail: u64 = 0;
+        let mut p = 0usize;
+        if name.len() - p >= 4 {
+            let c = u32::from_ne_bytes(name[p..p + 4].try_into().unwrap());
+            tail = (tail << 32) + c as u64;
+            p += 4;
+        }
+        if name.len() - p >= 2 {
+            let c = u16::from_ne_bytes(name[p..p + 2].try_into().unwrap());
+            tail = (tail << 16) + c as u64;
+            p += 2;
+        }
+        if p < name.len() {
+            tail = (tail << 8) + name[p] as u64;
+        }
+        hash = hash.wrapping_shl(4).wrapping_add(hash >> 60).wrapping_add(tail);
+    }
+    let h32 = (hash ^ (hash >> 32)) as u32;
+    (((h32.wrapping_mul(2654435769)) as u64) >> (32 - bits)) as u32
+}
+
+fn obarray_bits(i: &Interp, ob: &Value) -> u32 {
+    let _ = i;
     if let Value::Record(r) = ob {
-        if let Some(Value::Vec(v)) = r.borrow().get(1) {
-            let mut v = v.borrow_mut();
-            if !v.iter().any(|x| eq_values(x, sym)) {
-                v.push(sym.clone());
-            }
-            return;
+        if let Some(Value::Int(b)) = r.borrow().get(2) {
+            return *b as u32;
         }
     }
-    let _ = i;
+    3
+}
+
+fn set_obarray_bits(ob: &Value, bits: u32) {
+    if let Value::Record(r) = ob {
+        let mut rr = r.borrow_mut();
+        if rr.len() > 2 {
+            rr[2] = Value::Int(bits as i128);
+        }
+    }
+}
+
+fn obarray_push(i: &Interp, ob: &Value, sym: &Value) {
+    let vrc = match ob {
+        Value::Record(r) => match r.borrow().get(1).cloned() {
+            Some(Value::Vec(v)) => Some(v),
+            _ => None,
+        },
+        _ => None,
+    };
+    let Some(vrc) = vrc else {
+        let _ = i;
+        return;
+    };
+    let mut v = vrc.borrow_mut();
+    if v.iter().any(|x| eq_values(x, sym)) {
+        return;
+    }
+    let bits = obarray_bits(i, ob);
+    let name = match sym {
+        Value::Sym(id) => i.symbol_name(*id).to_string(),
+        _ => String::new(),
+    };
+    let idx = gnu_obarray_hash(name.as_bytes(), bits);
+    // Head-insert into bucket `idx`: before the first
+    // element whose bucket is >= idx.
+    let mut at = v.len();
+    for (k, x) in v.iter().enumerate() {
+        let b = match x {
+            Value::Sym(id) => gnu_obarray_hash(i.symbol_name(*id).as_bytes(), bits),
+            _ => continue,
+        };
+        if b >= idx {
+            at = k;
+            break;
+        }
+    }
+    v.insert(at, sym.clone());
+    // GNU grows when count > size, rehashing head-to-tail.
+    if v.len() > (1usize << bits) && bits < 31 {
+        let nbits = bits + 1;
+        let old: Vec<Value> = v.drain(..).collect();
+        for x in old {
+            let b = match &x {
+                Value::Sym(id) => gnu_obarray_hash(i.symbol_name(*id).as_bytes(), nbits),
+                _ => 0,
+            };
+            let mut at = v.len();
+            for (k, y) in v.iter().enumerate() {
+                let yb = match y {
+                    Value::Sym(id) => gnu_obarray_hash(i.symbol_name(*id).as_bytes(), nbits),
+                    _ => continue,
+                };
+                if yb >= b {
+                    at = k;
+                    break;
+                }
+            }
+            v.insert(at, x);
+        }
+        drop(v);
+        set_obarray_bits(ob, nbits);
+    }
 }
 
 fn obarray_remove(i: &Interp, ob: &Value, sym: &Value) -> bool {
@@ -1793,21 +1909,31 @@ fn f_function_put(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(args[2].clone())
 }
 fn f_obarray_make(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU's growable obarrays always start at size 4 regardless of the
-    // SIZE argument, but a non-nil SIZE is CHECK_NATNUM'd → `wholenump'.
-    match args.get(0) {
-        None | Some(Value::Nil) => {}
-        Some(Value::Int(n)) if *n >= 0 => {}
+    // GNU Fobarray_make: SIZE nil -> 3 bits; else CHECK_FIXNAT and
+    // bits = elogb(n)+1 (0 -> 0, 1 -> 1, 7 -> 3, 8 -> 4).
+    // bits > obarray_max_bits (31) -> args-out-of-range.
+    let bits: u32 = match args.get(0) {
+        None | Some(Value::Nil) => 3,
+        Some(Value::Int(n)) if *n >= 0 => {
+            let n = *n as u64;
+            let b = if n == 0 { 0u32 } else { 64 - n.leading_zeros() };
+            if b > 31 {
+                // GNU: xsignal(Qargs_out_of_range, size) — the datum is
+                // the bare fixnum, so (cdr err) is the number itself.
+                return Err(i.signal(
+                    crate::lisp::obarray::sym::ARGS_OUT_OF_RANGE,
+                    args[0].clone(),
+                ));
+            }
+            b
+        }
         Some(v) => return Err(i.wrong_type_mut("wholenump", v)),
-    }
-    let n = 4usize;
+    };
     Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
         vec![
             obarray_tag(i),
-            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
-                Value::Nil;
-                n
-            ]))),
+            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(Vec::new()))),
+            Value::Int(bits as i128),
         ],
     ))))
 }
@@ -1830,6 +1956,8 @@ fn f_obarray_clear(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         if let Some(Value::Vec(v)) = r.borrow().get(1) {
             v.borrow_mut().clear();
         }
+        // GNU resets to the default size (8 buckets).
+        set_obarray_bits(&ob, 3);
     }
     Ok(Value::Nil)
 }

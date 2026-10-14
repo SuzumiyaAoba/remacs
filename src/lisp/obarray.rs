@@ -313,6 +313,27 @@ impl Obarray {
         self.make_symbol(&format!("{}{}", prefix, n))
     }
 
+    /// Unintern the `g<N>' strays interned while reading boot source
+    /// (`let' bindings named g0..): GNU's `.elc' boot never interns
+    /// them, so `gensym' would skip names it should hand out.
+    pub fn unintern_boot_gensyms(&mut self) {
+        let stray: Vec<String> = self
+            .map
+            .keys()
+            .filter(|k| {
+                k.len() > 1
+                    && k.starts_with('g')
+                    && k[1..].chars().all(|c| c.is_ascii_digit())
+            })
+            .cloned()
+            .collect();
+        for name in stray {
+            if let Some(id) = self.map.remove(&name) {
+                self.symbols[id as usize].uninterned = true;
+            }
+        }
+    }
+
     /// Remove a name mapping (for `unintern`). The symbol object itself
     /// stays — indices are stable — but `intern` on the name will create
     /// a fresh symbol.
