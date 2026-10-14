@@ -3497,6 +3497,10 @@ fn f_buffer_local_variables(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
 
 fn f_buffer_local_value(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
+    // Unlike optional buffer arguments, nil is not the current buffer.
+    if !matches!(a[1], Value::Buffer(_)) {
+        return Err(i.wrong_type_mut("bufferp", &a[1]));
+    }
     let b = buf_of(i, &a[1])?;
     if let Some(v) = b.borrow().locals.get(&sid) {
         if !matches!(v, Value::Sym(s) if *s == sym::UNBOUND) {
