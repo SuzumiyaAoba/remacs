@@ -163,6 +163,7 @@ qa!(qa_sort, "qa_sort.el");
 qa!(qa_special, "qa_special.el");
 qa!(qa_special2, "qa_special2.el");
 qa!(qa_string, "qa_string.el");
+qa!(qa_string_search, "qa_string_search.el");
 qa!(qa_strings, "qa_strings.el");
 qa!(qa_strings2, "qa_strings2.el");
 qa!(qa_subrinfo, "qa_subrinfo.el");

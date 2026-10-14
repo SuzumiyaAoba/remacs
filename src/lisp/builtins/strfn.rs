@@ -1824,17 +1824,22 @@ fn f_char_or_string_p(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_string_search(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let needle = want_string(i, &args[0])?;
     let hay = want_string(i, &args[1])?;
-    let start = args
-        .get(2)
-        .map(|v| want_int(i, v))
-        .transpose()?
-        .unwrap_or(0);
+    let start = match args.get(2) {
+        Some(v) if !v.is_nil() => super::want_fixnum(i, v)?,
+        _ => 0,
+    };
     let hchars: Vec<char> = hay.chars().collect();
+    // Validate in character positions before either an empty-needle
+    // return or conversion to usize, as GNU's Fstring_search does.
+    if !(0..=hchars.len() as i128).contains(&start) {
+        let sym = i.intern("args-out-of-range");
+        return Err(i.signal_data(sym, vec![Value::Int(start)]));
+    }
     let nchars: Vec<char> = needle.chars().collect();
     if nchars.is_empty() {
-        return Ok(Value::Int(start.min(hchars.len() as i128)));
+        return Ok(Value::Int(start));
     }
-    let mut idx = start.max(0) as usize;
+    let mut idx = start as usize;
     while idx + nchars.len() <= hchars.len() {
         if hchars[idx..idx + nchars.len()] == nchars[..] {
             return Ok(Value::Int(idx as i128));
