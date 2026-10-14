@@ -486,7 +486,7 @@ impl Interp {
                 let _ = write!(out, "{i}");
             }
             Value::Float(f) => {
-                let _ = write!(out, "{}", format_float(**f));
+                let _ = write!(out, "{}", self.format_float_output(**f));
             }
             Value::Sym(id) => {
                 if self.obarray.symbol(*id).uninterned && self.print_gensym() {
@@ -1291,6 +1291,17 @@ impl Interp {
             .unwrap_or(Value::Nil)
     }
 
+    /// Print a number using the dynamically bound GNU output descriptor.
+    pub(crate) fn format_float_output(&self, value: f64) -> String {
+        let format = self.print_var("float-output-format");
+        if let Value::Str(s) = format {
+            if let Some(output) = format_float_descriptor(value, &s.borrow()) {
+                return output;
+            }
+        }
+        format_float(value)
+    }
+
     /// `print-length` (default nil): max elements printed per sequence.
     fn print_length_limit(&self) -> Option<usize> {
         self.print_var("print-length")
@@ -1597,6 +1608,58 @@ fn format_g(x: f64, prec: usize) -> String {
         out.push_str(&frac);
     }
     out
+}
+
+/// GNU accepts only %.PRECISION followed by e, f or g, at most DBL_DIG
+/// digits of precision.  An absent precision is accepted too, as in C printf.
+fn format_float_descriptor(value: f64, descriptor: &str) -> Option<String> {
+    if !value.is_finite() {
+        return None;
+    }
+    // GNU validates the C string, so text after a NUL is not part of the spec.
+    let spec = descriptor.split('\0').next()?.as_bytes();
+    if !spec.starts_with(b"%.") {
+        return None;
+    }
+    let mut pos = 2;
+    let mut precision = None;
+    while let Some(digit @ b'0'..=b'9') = spec.get(pos) {
+        let n = precision.unwrap_or(0) * 10 + usize::from(*digit - b'0');
+        if n > 15 {
+            return None;
+        }
+        precision = Some(n);
+        pos += 1;
+    }
+    let kind = *spec.get(pos)?;
+    if pos + 1 != spec.len() || !matches!(kind, b'e' | b'f' | b'g') {
+        return None;
+    }
+    if precision == Some(0) && kind != b'f' {
+        return None;
+    }
+    let digits = precision.unwrap_or(0);
+    let mut output = match kind {
+        b'f' => format!("{:.*}", digits, value),
+        b'e' => {
+            let scientific = format!("{:.*e}", digits, value);
+            let (mantissa, exponent) = scientific.split_once('e')?;
+            let exponent: i32 = exponent.parse().ok()?;
+            format!(
+                "{}e{}{:02}",
+                mantissa,
+                if exponent < 0 { '-' } else { '+' },
+                exponent.abs()
+            )
+        }
+        b'g' => format_g(value, digits.max(1)),
+        _ => unreachable!(),
+    };
+    // Only an explicitly zero precision with f may print an integer token.
+    if precision != Some(0) && !output.contains('.') && !output.contains('e') {
+        output.push_str(".0");
+    }
+    Some(output)
 }
 
 /// Emacs-style float printing (`float_to_string`): shortest of
