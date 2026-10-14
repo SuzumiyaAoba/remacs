@@ -3707,7 +3707,7 @@ fn f_current_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
 }
 /// `current-time-zone' — (OFFSET NAME) for TIME under ZONE.  GNU's
 /// decode_time_zone: nil/`wall' = ambient local zone, t and
-/// "UTC"/"t" = Universal Time, integer = fixed seconds-east offset
+/// "UTC"/"t" and zero = Universal Time, nonzero integer = fixed seconds-east offset
 /// (named "+HH[MM[SS]]"), other strings name a TZ spec, a cons uses
 /// its car as the fixed offset (cadr as the name when a string).
 /// Anything else signals "Invalid time zone specification".
@@ -3730,6 +3730,8 @@ fn f_current_time_zone(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let t_sym = i.intern("t");
     let wall_sym = i.intern("wall");
     let (off, name) = match args.get(1) {
+        // GNU tzlookup treats numeric zero like t, not a named +00 offset.
+        Some(Value::Int(0)) => (0, "UTC".to_string()),
         Some(Value::Int(off)) => (*off as i64, offset_name(*off as i64)),
         Some(Value::Sym(s)) if *s == t_sym => (0, "UTC".to_string()),
         Some(Value::Sym(s)) if *s == wall_sym => {
@@ -3848,6 +3850,10 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let t_sym = i.intern("t");
     let wall_sym = i.intern("wall");
     let (tm, zlabel) = match args.get(2) {
+        Some(Value::Int(0)) => (
+            super::misc::gmt_tm(secs),
+            ZoneLabel::Named("UTC".to_string()),
+        ),
         Some(Value::Int(off)) => {
             let mut tm = super::misc::gmt_tm(secs + *off as i64);
             tm.tm_gmtoff = *off as i64;
@@ -4061,8 +4067,14 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             };
         match spec {
             // GNU treats a flagged percent as an invalid conversion.
-            Some('%') if uppercase => {
-                out.push_str(&spec_text[..spec_text.len() - 1]);
+            Some('%') if !flags.is_empty() || width > 0 || colons > 0 => {
+                let prefix = &spec_text[..spec_text.len() - 1];
+                let padding = flags.iter().rev().find(|c| matches!(c, '-' | '_' | '0'));
+                if padding != Some(&'-') && width > prefix.len() {
+                    let ch = if padding == Some(&'0') { '0' } else { ' ' };
+                    out.push_str(&ch.to_string().repeat(width - prefix.len()));
+                }
+                out.push_str(prefix);
                 k = j; // GNU reprocesses the second percent as a new format.
             }
             Some('P') => {

@@ -4127,6 +4127,7 @@ pub(crate) fn strftime_spec(fmt: &str, tm: &Tm, locale: Option<&str>) -> String 
     let width_end = flag_end + fmt.as_bytes()[flag_end.min(fmt.len())..].iter()
         .take_while(|c| c.is_ascii_digit()).count();
     let textual = uppercase && fmt.ends_with(|c: char| "aAbBhcpPxXrRTDZ".contains(c));
+    let no_padding = flags.chars().rev().find(|c| matches!(c, '-' | '_' | '0')) == Some('-');
     let native_fmt = if textual {
         // Width and # are also libc extensions: for textual conversions
         // use the portable base directive, then case and pad its result.
@@ -4137,7 +4138,12 @@ pub(crate) fn strftime_spec(fmt: &str, tm: &Tm, locale: Option<&str>) -> String 
             format!("%{}", base)
         }
     } else if uppercase {
-        format!("{}{}", flags.replace(['^', '#'], ""), &fmt[flag_end..])
+        let rest = if no_padding { width_end } else { flag_end };
+        format!("{}{}", flags.replace(['^', '#'], ""), &fmt[rest..])
+    } else if no_padding {
+        // GNU suppresses explicit field widths with the final '-' flag;
+        // libc strftime can still space-pad unless the width is removed.
+        format!("{}{}", flags, &fmt[width_end..])
     } else {
         fmt.to_owned()
     };
@@ -4172,11 +4178,12 @@ pub(crate) fn strftime_spec(fmt: &str, tm: &Tm, locale: Option<&str>) -> String 
         }
     };
     let mut result = String::from_utf8_lossy(&buf[..n]).into_owned();
+    // libc echoes invalid conversions; retain their original flags and
+    // widths even when normalization did not involve uppercasing.
+    if result == native_fmt {
+        result = fmt.to_owned();
+    }
     if uppercase {
-        // libc echoes invalid conversions; retain their original flags.
-        if result == native_fmt {
-            result = fmt.to_owned();
-        }
         if lowercase {
             result.make_ascii_lowercase();
         } else {
