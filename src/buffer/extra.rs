@@ -2863,9 +2863,9 @@ fn find_field(
     i: &mut Interp,
     pos_v: Option<i128>,
     merge_at_boundary: bool,
-    beg_limit: Option<i128>,
+    beg_limit: Option<&Value>,
     beg: Option<&mut i128>,
-    end_limit: Option<i128>,
+    end_limit: Option<&Value>,
     end: Option<&mut i128>,
 ) -> Result<(), Flow> {
     let pos = pos_v.unwrap_or_else(|| cur(i).borrow().point() as i128 + 1);
@@ -2894,28 +2894,28 @@ fn find_field(
             vec![Value::Int(p), Value::Sym(field_sym)].into(),
         )
     };
-    let next_change = |i: &mut Interp, p: i128, lim: Option<i128>| -> EvalResult {
+    let next_change = |i: &mut Interp, p: i128, lim: Option<&Value>| -> EvalResult {
+        let limit = match lim {
+            Some(v) if !v.is_nil() => {
+                Value::Int(crate::buffer::primitives::text_property_position(i, v)?.min(zv))
+            }
+            _ => Value::Nil,
+        };
         crate::buffer::primitives::f_next_single_char_property_change(
             i,
-            vec![
-                Value::Int(p),
-                Value::Sym(field_sym),
-                Value::Nil,
-                lim.map(Value::Int).unwrap_or(Value::Nil),
-            ]
-            .into(),
+            vec![Value::Int(p), Value::Sym(field_sym), Value::Nil, limit].into(),
         )
     };
-    let prev_change = |i: &mut Interp, p: i128, lim: Option<i128>| -> EvalResult {
+    let prev_change = |i: &mut Interp, p: i128, lim: Option<&Value>| -> EvalResult {
+        let limit = match lim {
+            Some(v) if !v.is_nil() => {
+                Value::Int(crate::buffer::primitives::text_property_position(i, v)?)
+            }
+            _ => Value::Nil,
+        };
         crate::buffer::primitives::f_prev_single_char_property_change(
             i,
-            vec![
-                Value::Int(p),
-                Value::Sym(field_sym),
-                Value::Nil,
-                lim.map(Value::Int).unwrap_or(Value::Nil),
-            ]
-            .into(),
+            vec![Value::Int(p), Value::Sym(field_sym), Value::Nil, limit].into(),
         )
     };
     let after_field = gcp(i, pos);
@@ -2982,44 +2982,54 @@ fn find_field_bounds(
     elim: Option<i128>,
 ) -> Result<(i128, i128), Flow> {
     let (mut b, mut e) = (0i128, 0i128);
-    find_field(i, pos_v, merge, blim, Some(&mut b), elim, Some(&mut e))?;
+    let blim = blim.map(Value::Int);
+    let elim = elim.map(Value::Int);
+    find_field(
+        i,
+        pos_v,
+        merge,
+        blim.as_ref(),
+        Some(&mut b),
+        elim.as_ref(),
+        Some(&mut e),
+    )?;
     Ok((b, e))
 }
 
 fn f_field_beginning(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU decode_position_or_default: a present non-nil POS must be an
-    // integer or marker — anything else signals integer-or-marker-p.
-    let pos = match a.get(0) {
-        Some(v) if !v.is_nil() => Some(match v {
-            Value::Int(n) => *n,
-            Value::Marker(m) if m.borrow().buffer.is_some() => m.borrow().position as i128 + 1,
-            Value::Marker(_) => return Err(i.error("Marker does not point anywhere")),
-            _ => return Err(i.wrong_type_mut("integer-or-marker-p", v)),
-        }),
+    let pos = match a.first() {
+        Some(v) if !v.is_nil() => Some(crate::buffer::primitives::text_property_position(i, v)?),
         _ => None,
     };
-    let merge = arg(&a, 1).truthy();
-    let lim = a.get(2).and_then(|v| v.int());
-    let (b, _) = find_field_bounds(i, pos, merge, lim, None)?;
-    Ok(Value::Int(b))
+    let mut beg = 0;
+    find_field(
+        i,
+        pos,
+        arg(&a, 1).truthy(),
+        a.get(2),
+        Some(&mut beg),
+        None,
+        None,
+    )?;
+    Ok(Value::Int(beg))
 }
 
 fn f_field_end(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU decode_position_or_default: a present non-nil POS must be an
-    // integer or marker — anything else signals integer-or-marker-p.
-    let pos = match a.get(0) {
-        Some(v) if !v.is_nil() => Some(match v {
-            Value::Int(n) => *n,
-            Value::Marker(m) if m.borrow().buffer.is_some() => m.borrow().position as i128 + 1,
-            Value::Marker(_) => return Err(i.error("Marker does not point anywhere")),
-            _ => return Err(i.wrong_type_mut("integer-or-marker-p", v)),
-        }),
+    let pos = match a.first() {
+        Some(v) if !v.is_nil() => Some(crate::buffer::primitives::text_property_position(i, v)?),
         _ => None,
     };
-    let merge = arg(&a, 1).truthy();
-    let lim = a.get(2).and_then(|v| v.int());
-    let (_, e) = find_field_bounds(i, pos, merge, None, lim)?;
-    Ok(Value::Int(e))
+    let mut end = 0;
+    find_field(
+        i,
+        pos,
+        arg(&a, 1).truthy(),
+        None,
+        None,
+        a.get(2),
+        Some(&mut end),
+    )?;
+    Ok(Value::Int(end))
 }
 
 fn f_field_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

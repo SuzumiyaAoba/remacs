@@ -10404,14 +10404,31 @@ fn f_regexp_opt_depth(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 // ---------- text properties ----------
 
+/// GNU fix_position: live markers become positions and integers saturate
+/// to fixnum bounds before interval/field validation.
+pub(crate) fn text_property_position(i: &mut Interp, value: &Value) -> Result<i128, Flow> {
+    let pos = crate::lisp::builtins::want_int_or_mark(i, value)?;
+    Ok(pos.clamp(-(1i128 << 61), (1i128 << 61) - 1))
+}
+
 pub(crate) fn f_put_text_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if let Some(Value::Str(s)) = a.get(4) {
         let s = s.clone();
         let len = str_len(&s);
-        let st = want_int(i, &a[0])?.max(0) as usize;
-        let en = want_int(i, &a[1])?.max(0) as usize;
-        str_pos_ok(i, &a[4], st.max(en), len)?;
-        let (s0, e0) = (st.min(en), st.max(en));
+        let st = text_property_position(i, &a[0])?;
+        let en = text_property_position(i, &a[1])?;
+        // GNU checks equal coerced endpoints before range validation.
+        if st == en {
+            return Ok(Value::Nil);
+        }
+        if st.min(en) < 0 || st.max(en) > len as i128 {
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![a[0].clone(), a[1].clone()],
+            ));
+        }
+        let (s0, e0) = (st.min(en) as usize, st.max(en) as usize);
         let prop = a[2].clone();
         let val = a[3].clone();
         let mut ivs = str_ivs_for_edit(i, &s);

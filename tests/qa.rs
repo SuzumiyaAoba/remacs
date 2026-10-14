@@ -193,6 +193,7 @@ qa!(qa_system, "qa_system.el");
 qa!(qa_tablist, "qa_tablist.el");
 qa!(qa_textprops, "qa_textprops.el");
 qa!(qa_object_intervals, "qa_object_intervals.el");
+qa!(qa_property_argument_checks, "qa_property_argument_checks.el");
 qa!(qa_thing, "qa_thing.el");
 qa!(qa_thing2, "qa_thing2.el");
 qa!(qa_diffface, "qa_diffface.el");
