@@ -1145,6 +1145,15 @@ fn f_copysign(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_logb(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    if let Value::Int(n) = &args[0] {
+        if *n == 0 {
+            return Ok(Value::float(f64::NEG_INFINITY));
+        }
+        // A float conversion can round an integer below a power of two
+        // up to that power.  Work on its magnitude directly, including
+        // i128::MIN, whose absolute value does not fit in a signed i128.
+        return Ok(Value::Int(n.unsigned_abs().ilog2() as i128));
+    }
     let x = want_number(i, &args[0])?;
     if x == 0.0 {
         return Ok(Value::float(f64::NEG_INFINITY));
