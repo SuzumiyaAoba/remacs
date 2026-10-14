@@ -101,6 +101,7 @@ qa!(qa_eieio2, "qa_eieio2.el");
 qa!(qa_err2, "qa_err2.el");
 qa!(qa_errors, "qa_errors.el");
 qa!(qa_eval, "qa_eval.el");
+qa!(qa_basic_faces, "qa_basic_faces.el");
 qa!(qa_face, "qa_face.el");
 qa!(qa_face3, "qa_face3.el");
 qa!(qa_faces2, "qa_faces2.el");

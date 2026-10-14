@@ -4260,6 +4260,31 @@ command-line arguments.\" \
         interp
             .face_table
             .retain(|(n, _)| n != "icon" && n != "icon-button");
+        interp
+            .face_t_table
+            .retain(|(n, _)| n != "icon" && n != "icon-button");
+        // Interactive boot can evaluate the real deffaces.  Roll their
+        // declarations and registration back with the realized faces,
+        // otherwise custom-declare-face skips recreating them on require.
+        for name in ["icon", "icon-button"] {
+            let face = interp.intern(name);
+            for property in ["face", "face-defface-spec", "face-override-spec"] {
+                let property = interp.intern(property);
+                interp.put_prop(face, property, Value::Nil);
+            }
+            if let Some(defaults) = interp.intern_soft("face--new-frame-defaults") {
+                if let Value::Hash(table) = interp.symbol_value(defaults) {
+                    let key = crate::lisp::builtins::hashfn::hash_key_for(
+                        &interp,
+                        &Value::Sym(face),
+                        crate::lisp::HashTest::Eq,
+                    );
+                    let mut table = table.borrow_mut();
+                    table.map.remove(&key);
+                    table.remove_key(&key);
+                }
+            }
+        }
         // GNU xfaces.c seeds Vface_new_frame_defaults during startup
         // face realization; mirror it: every known face gets an
         // (id . lface) entry so `face-list'/`frame-face-alist' see

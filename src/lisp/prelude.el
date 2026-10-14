@@ -36517,6 +36517,15 @@ not resized by this function."
 
 ;; ---------- basic faces needed by help/button ----------
 
+;; GNU faces.el basic fixed-pitch face, including its customizable spec.
+(defface fixed-pitch
+  '((t :family "Monospace"))
+  "The basic fixed-pitch face."
+  :group 'basic-faces)
+;; The folded declaration helper also seeds an override; this boot spec
+;; must remain a default so later themes can override the family.
+(put 'fixed-pitch 'face-override-spec nil)
+
 (defface shadow
   '((((class color grayscale) (min-colors 88) (background light))
      :foreground "grey50")

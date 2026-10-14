@@ -2816,14 +2816,6 @@ fn eval_src_opts_inner(
         }
     }
 
-    // Loading `icons' defines the `icon'/`icon-button' faces (GNU's
-    // icons.el does this via defface).
-    if !i.face_table.iter().any(|(n, _)| n == "icon") {
-        i.face_table.push(("icon".to_string(), Value::Nil));
-        i.face_table.push(("icon-button".to_string(), Value::Nil));
-        crate::editor::face_register_global(i, "icon");
-        crate::editor::face_register_global(i, "icon-button");
-    }
     // NOTE: `features' is a plain variable whose current (possibly
     // dynamically bound) value `provide' pushes onto — GNU has no
     // second feature set, so nothing is synced from `i.features' here.
