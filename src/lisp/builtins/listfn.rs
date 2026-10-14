@@ -520,7 +520,7 @@ fn f_last(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     //   (and list (nthcdr (1- (safe-length list)) list)))
     // `(>= n 0)' on a non-number signals `number-or-marker-p' BEFORE the
     // safe-length walk; a non-list arg returns itself (0 cells) when n
-    // is absent or positive, nil when n <= 0.
+    // is absent or nonnegative, nil when n < 0.
     match args.get(1) {
         None | Some(Value::Nil) => {
             if args[0].is_nil() {
@@ -528,6 +528,19 @@ fn f_last(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             }
             let m = safe_len(&args[0]);
             Ok(nthcdr_of(&args[0], (m - 1).max(0) as usize))
+        }
+        Some(Value::Float(n)) => {
+            // Comparisons accept floats, but subtraction retains the float
+            // type, so only the nthcdr branch rejects it as non-integer.
+            if n.is_nan() || **n < 0.0 {
+                return Ok(Value::Nil);
+            }
+            let m = safe_len(&args[0]) as f64;
+            if **n < m {
+                Err(i.wrong_type_mut("integerp", &Value::float(m - **n)))
+            } else {
+                Ok(args[0].clone())
+            }
         }
         Some(v) => {
             let n = crate::editor::want_num_or_mark(i, v)?;
@@ -1492,11 +1505,24 @@ fn plist_put(i: &mut Interp, args: crate::lisp::Argv, lax: bool) -> EvalResult {
 // ---------- take / ntake / flatten ----------
 
 fn f_take(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let n = want_int(i, &args[0])?.max(0) as usize;
-    // GNU Ftake is list-only (subr-x `take'): strings/vectors signal
-    // wrong-type-argument listp.
-    let items = want_list(i, &args[1])?;
-    Ok(Value::list(items.into_iter().take(n).collect()))
+    let mut remaining = want_int(i, &args[0])?;
+    let mut cur = args[1].clone();
+    let mut items = Vec::new();
+    // Only inspect the requested prefix. A dotted tail is an error only
+    // when more elements are requested; nonpositive N never checks LIST.
+    while remaining > 0 {
+        match cur {
+            Value::Cons(cell) => {
+                let cell = cell.borrow();
+                items.push(cell.car.clone());
+                cur = cell.cdr.clone();
+                remaining -= 1;
+            }
+            Value::Nil => break,
+            other => return Err(i.wrong_type_mut("listp", &other)),
+        }
+    }
+    Ok(Value::list(items))
 }
 
 fn f_ntake(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
