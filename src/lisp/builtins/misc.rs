@@ -11191,7 +11191,7 @@ fn f_window_display_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         // written when a buffer leaves a window (unshow_window), so this
         // path must NOT touch it.
         let mut wb = w.borrow_mut();
-        wb.dedicated = false;
+        wb.dedicated = Value::Nil;
         wb.buffer = bid;
         // A brand-new window's `next-buffers' entry.
         if !wb.next_buffers.is_nil() {
@@ -11239,18 +11239,18 @@ fn f_window_display_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             let wb = w.borrow();
             crate::lisp::eval::plist_get(&wb.params, side_sym).truthy()
         };
-        let dedicated = w.borrow().dedicated;
+        let dedicated = w.borrow().dedicated.truthy();
         if dedicated || (ty_name.as_deref() == Some("reuse") && !win_side) {
             // leave alone
         } else if let Some(v) = dedicated_entry {
-            w.borrow_mut().dedicated = v.truthy();
-        } else if i
-            .obarray
-            .intern_soft("display-buffer-mark-dedicated")
-            .map(|id| i.symbol_value(id).truthy())
-            .unwrap_or(false)
-        {
-            w.borrow_mut().dedicated = true;
+            w.borrow_mut().dedicated = v;
+        } else {
+            let flag = i
+                .obarray
+                .intern_soft("display-buffer-mark-dedicated")
+                .map(|id| i.symbol_value(id))
+                .unwrap_or(Value::Nil);
+            w.borrow_mut().dedicated = flag;
         }
         // (memq type '(window frame tab)) → (set-window-prev-buffers w nil)
         if matches!(

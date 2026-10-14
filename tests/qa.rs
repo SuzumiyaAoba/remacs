@@ -207,3 +207,5 @@ qa!(qa_winstate, "qa_winstate.el");
 qa!(qa_xref, "qa_xref.el");
 
 qa!(qa_buffer_name_validation, "qa_buffer_name_validation.el");
+
+qa!(qa_window_dedication, "qa_window_dedication.el");

@@ -1412,7 +1412,7 @@ fn some_window_candidates(i: &mut Interp, a: &[Value]) -> Vec<WindowRef> {
             .filter(|w| {
                 let wb = w.borrow();
                 !wb.minibuffer
-                    && (dedicated_ok || !wb.dedicated)
+                    && (dedicated_ok || !wb.dedicated.truthy())
                     && !(not_selected && sel.as_ref().map_or(false, |s| s.borrow().id == wb.id))
             })
             .cloned()

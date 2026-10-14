@@ -46,8 +46,8 @@ pub struct Window {
     /// GNU `min_hscroll': lower bound for auto-hscroll, set by
     /// interactive `scroll-left'/`-right' (SET-MINIMUM arg).
     pub min_hscroll: usize,
-    /// Dedicated windows refuse buffer switches.
-    pub dedicated: bool,
+    /// Lisp dedication flag: only t refuses explicit buffer switches.
+    pub dedicated: Value,
     /// Minibuffer windows are special.
     pub minibuffer: bool,
     /// This window's parameters alist.
@@ -159,7 +159,7 @@ impl Window {
             height: 24,
             left: 0,
             width: 80,
-            dedicated: false,
+            dedicated: Value::Nil,
             minibuffer: false,
             params: Value::Nil,
             margins: (0, 0),
@@ -2580,6 +2580,15 @@ pub(crate) fn f_set_window_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
         (wb.buffer, wb.start, pt)
     };
     if old_bid != bid {
+        if matches!(w.borrow().dedicated, Value::Sym(sym::T)) {
+            let name = i
+                .buffers
+                .get(old_bid)
+                .map(|b| b.borrow().name.clone())
+                .unwrap_or_default();
+            return Err(i.error_q("Window is dedicated to `%s'", &[&name]));
+        }
+        w.borrow_mut().dedicated = Value::Nil;
         // GNU `unshow_buffer': prepend a (buffer start point) entry
         // for the old buffer to `window-prev-buffers', deduplicated,
         // and drop the new buffer's own entry.
@@ -3021,7 +3030,7 @@ fn window_configuration(i: &mut Interp) -> Value {
                 Value::Int(wb.height as i128),
                 Value::Int(wb.left as i128),
                 Value::Int(wb.width as i128),
-                Value::from_bool(wb.dedicated),
+                wb.dedicated.clone(),
                 Value::from_bool(wb.minibuffer),
                 wb.params.clone(),
                 wb.prev_buffers.clone(),
@@ -3043,7 +3052,7 @@ fn window_configuration(i: &mut Interp) -> Value {
                 Value::Int(mb.height as i128),
                 Value::Int(mb.left as i128),
                 Value::Int(mb.width as i128),
-                Value::from_bool(mb.dedicated),
+                mb.dedicated.clone(),
                 Value::Sym(sym::T),
                 mb.params.clone(),
                 mb.prev_buffers.clone(),
@@ -3222,6 +3231,7 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -
             wb.height = spec_int(&v, 6).max(0) as usize;
             wb.left = spec_int(&v, 7).max(0) as usize;
             wb.width = spec_int(&v, 8).max(0) as usize;
+            wb.dedicated = v.get(9).cloned().unwrap_or(Value::Nil);
             wb.dead = false;
             mini_top = Some(spec_int(&v, 5));
         }
@@ -3284,7 +3294,7 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -
             // window's BODY height (total minus the mode-line row).
             wb.new_total = (nh - 1).max(0);
             wb.new_pixel = (nh - 1).max(0);
-            wb.dedicated = v.get(9).map(|x| x.truthy()).unwrap_or(false);
+            wb.dedicated = v.get(9).cloned().unwrap_or(Value::Nil);
             wb.params = v.get(11).cloned().unwrap_or(Value::Nil);
             wb.prev_buffers = v.get(12).cloned().unwrap_or(Value::Nil);
             wb.next_buffers = v.get(13).cloned().unwrap_or(Value::Nil);
@@ -4879,11 +4889,11 @@ fn f_pos_visible_in_window_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
 
 fn f_window_dedicated_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live(i, &arg(&a, 0))?;
-    Ok(Value::from_bool(w.borrow().dedicated))
+    Ok(w.borrow().dedicated.clone())
 }
 fn f_set_window_dedicated_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live(i, &arg(&a, 0))?;
-    w.borrow_mut().dedicated = a[1].truthy();
+    w.borrow_mut().dedicated = a[1].clone();
     Ok(a[1].clone())
 }
 fn f_window_parameter(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -15114,7 +15124,6 @@ fn leaf_buffer_state(
     ml: i128,
     mr: i128,
 ) -> Value {
-    let _ = w;
     let (buf_obj, point_obj, start_obj) = if writable {
         let name = i
             .buffers
@@ -15175,7 +15184,7 @@ fn leaf_buffer_state(
             Value::Nil,
         ]),
         ac_i(i, "vscroll", 0),
-        Value::list(vec![Value::Sym(i.intern("dedicated"))]),
+        ac(i, "dedicated", w.borrow().dedicated.clone()),
         ac(i, "point", point_obj),
         ac(i, "start", start_obj),
     ]);
@@ -15384,9 +15393,7 @@ fn win_state_materialize(
                 *selected = Some(w.clone());
             }
             if let Some(Value::Cons(d)) = state_assq(i, &state, "dedicated") {
-                if d.borrow().cdr.truthy() {
-                    w.borrow_mut().dedicated = true;
-                }
+                w.borrow_mut().dedicated = d.borrow().cdr.clone();
             }
         }
         if let Some(ps) = state_assq(i, &items[1..], "parameters") {
@@ -15475,8 +15482,8 @@ fn f_window_state_put(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                                 ("start", Some(s2)) => {
                                     w.borrow_mut().start = (s2.max(1) - 1) as usize;
                                 }
-                                ("dedicated", _) if val.truthy() => {
-                                    w.borrow_mut().dedicated = true;
+                                ("dedicated", _) => {
+                                    w.borrow_mut().dedicated = val.clone();
                                 }
                                 _ => {}
                             }
