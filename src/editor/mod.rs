@@ -11894,7 +11894,121 @@ fn f_copy_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 }
 
+/// REPLACE decoders inspect the entire accessible text, but only a character
+/// edit changes the count returned by insert-file-contents. Property-only
+/// changes and no-op decoders keep the size of the actual inserted middle.
+fn replace_file_transform(
+    i: &mut Interp,
+    fun: &Value,
+    visit: Option<Value>,
+) -> Result<Option<i128>, Flow> {
+    let b = cur(i);
+    let (point, len, tick) = {
+        let mut bb = b.borrow_mut();
+        let point = bb.point();
+        let len = bb.text_len() - bb.begv;
+        let tick = bb.text.chars_mod_tick.get();
+        let begv = bb.begv;
+        bb.set_point(begv);
+        (point, len, tick)
+    };
+    let format = visit.is_some();
+    let args = match visit {
+        Some(visit) => vec![Value::Nil, Value::Int(len as i128), visit],
+        None => vec![Value::Int(len as i128)],
+    };
+    let depth = i.specbind_depth();
+    let result = (|| {
+        let modifications = i.intern("inhibit-modification-hooks");
+        let motion = i.intern("inhibit-point-motion-hooks");
+        let undo = i.intern("buffer-undo-list");
+        i.specbind(modifications, Value::t())?;
+        i.specbind(motion, Value::t())?;
+        i.specbind(undo, Value::t())?;
+        i.apply(fun, args)
+    })();
+    i.unbind_to(depth)?;
+    let value = result?;
+    if value.is_nil() && !format {
+        return Ok(None);
+    }
+    let max = {
+        let bb = cur(i);
+        let bb = bb.borrow();
+        (bb.text_len() - bb.point()) as i128
+    };
+    let count = match value {
+        Value::Int(n) if n >= 0 && n <= max => n,
+        other => return Err(i.wrong_type_mut("inserted-chars", &other)),
+    };
+    let current = cur(i);
+    if current.borrow().text.chars_mod_tick.get() == tick {
+        current.borrow_mut().set_point(point);
+        Ok(None)
+    } else {
+        Ok(Some(count))
+    }
+}
+
 fn insert_file_contents_impl(i: &mut Interp, a: crate::lisp::Argv, literal: bool) -> EvalResult {
+    // GNU restores REPLACE's original point through a marker, including when
+    // a modification or post-insert hook signals an error.
+    let saved = a
+        .get(4)
+        .filter(|v| v.truthy())
+        .map(|_| i.save_excursion_state(false));
+    let mut windows = Vec::new();
+    let mut positions = Vec::new();
+    if let Some(saved) = &saved {
+        positions.push((saved.point.clone(), saved.point.borrow().position));
+        for frame in &i.frames {
+            for window in &frame.borrow().windows {
+                let w = window.borrow();
+                if !w.dead && !w.minibuffer && w.buffer == saved.buffer {
+                    let marker = Rc::new(RefCell::new(crate::lisp::value::Marker {
+                        buffer: Some(saved.buffer),
+                        position: w.point,
+                        insertion_type: false,
+                    }));
+                    cur(i).borrow_mut().register_marker(&marker);
+                    positions.push((marker.clone(), w.point));
+                    windows.push((window.clone(), marker, std::cell::Cell::new(w.point)));
+                }
+            }
+        }
+    }
+    let result = insert_file_contents_inner(i, a, literal, &positions, &windows);
+    for (window, marker, last_point) in windows {
+        if !window.borrow().dead
+            && window.borrow().point == last_point.get()
+            && marker.borrow().buffer == Some(window.borrow().buffer)
+        {
+            window.borrow_mut().point = marker.borrow().position;
+        }
+        marker.borrow_mut().buffer = None;
+    }
+    if let Some(saved) = saved {
+        if saved.point.borrow().buffer.is_none() {
+            return Err(i.error("Marker does not point anywhere"));
+        }
+        let position = saved.point.borrow().position;
+        cur(i).borrow_mut().set_point(position);
+        saved.point.borrow_mut().buffer = None;
+    }
+    result
+}
+
+fn insert_file_contents_inner(
+    i: &mut Interp,
+    a: crate::lisp::Argv,
+    literal: bool,
+    saved_positions: &[(crate::lisp::value::MarkerRef, usize)],
+    windows: &[(
+        WindowRef,
+        crate::lisp::value::MarkerRef,
+        std::cell::Cell<usize>,
+    )],
+) -> EvalResult {
     let path = want_filename(i, &a[0])?;
     let visit = a.get(1).map(|v| v.truthy()).unwrap_or(false);
     let beg = a.get(2).cloned().unwrap_or(Value::Nil);
@@ -11994,11 +12108,10 @@ fn insert_file_contents_impl(i: &mut Interp, a: crate::lisp::Argv, literal: bool
             .intern_soft("coding-system-for-read")
             .map(|symbol| i.symbol_value(symbol))
             .unwrap_or(Value::Nil);
-        let (decoded, coding) = crate::lisp::builtins::misc::decode_file_bytes(
-            i, slice, &requested, literal, lo == 0,
-        )?;
+        let (decoded, coding) =
+            crate::lisp::builtins::misc::decode_file_bytes(i, slice, &requested, literal, lo == 0)?;
         let contents = want_str(i, &decoded)?;
-        let n = contents.chars().count();
+        let mut n = contents.chars().count();
         let b = cur(i);
         // GNU: REPLACE bypasses the non-empty check for VISIT.
         let if_reg = i.intern_soft("if-regular").unwrap_or(u32::MAX);
@@ -12006,25 +12119,85 @@ fn insert_file_contents_impl(i: &mut Interp, a: crate::lisp::Argv, literal: bool
         if visit && !do_replace && b.borrow().text.len() > 0 {
             return Err(i.error("Cannot do file visiting in a non-empty buffer"));
         }
-        let inserted_at = if do_replace { 0 } else { b.borrow().point() };
-        if do_replace {
-            // GNU REPLACE swaps the buffer contents (approximated
-            // by erase+insert, which keeps point at BOB).
-            let len = b.borrow().text.len();
-            if len > 0 {
-                crate::buffer::primitives::chg_delete(i, 0, len)?;
+        crate::buffer::primitives::check_writable(i)?;
+        let (inserted_at, inserted_string) = if do_replace {
+            let (begv, end, old) = {
+                let bb = b.borrow();
+                (
+                    bb.begv,
+                    bb.text_len(),
+                    bb.text.substring(bb.begv, bb.text_len()),
+                )
+            };
+            let old: Vec<char> = old.chars().collect();
+            let new: Vec<char> = contents.chars().collect();
+            let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+            let suffix = old[prefix..]
+                .iter()
+                .rev()
+                .zip(new[prefix..].iter().rev())
+                .take_while(|(a, b)| a == b)
+                .count();
+            let start = begv + prefix;
+            let old_end = end - suffix;
+            let new_end = new.len() - suffix;
+            n = new_end - prefix;
+            let inserted = crate::lisp::builtins::strfn::f_substring(
+                i,
+                vec![
+                    decoded.clone(),
+                    Value::Int(prefix as i128),
+                    Value::Int(new_end as i128),
+                ]
+                .into(),
+            )?;
+            let middle = want_str(i, &inserted)?;
+            if start < old_end {
+                crate::buffer::primitives::chg_delete(i, start, old_end)?;
             }
-            crate::buffer::primitives::chg_insert_pt(i, &contents, false)?;
-            b.borrow_mut().set_point(0);
+            let multibyte = i.intern("enable-multibyte-characters");
+            let requested_name = i.sym_id(&requested).map(|id| i.symbol_name(id));
+            let raw_fast_path = literal
+                || (!i.symbol_value(multibyte).truthy()
+                    && requested_name.is_some_and(|name| {
+                        name == "no-conversion" || name == "binary" || name.ends_with("-unix")
+                    }));
+            if n == 0 && prefix < new.len() && !raw_fast_path {
+                // The decoded replacement path reports its empty insertion
+                // after deleting a middle before a preserved suffix.
+                b.borrow_mut().set_point(start);
+                crate::lisp::builtins::evalfn::signal_after_change(i, start + 1, start + 1, 0)?;
+            }
+            if n > 0 {
+                b.borrow_mut().set_point(start);
+                crate::buffer::primitives::chg_insert_pt(i, &middle, false)?;
+                b.borrow_mut().set_point(start);
+                // GNU gives point (unlike ordinary markers) proportional
+                // placement within the replaced middle (bug#19161).
+                for (marker, point) in saved_positions {
+                    if *point > start && *point <= old_end {
+                        let growth = n as f64 / (old_end - start) as f64;
+                        marker.borrow_mut().position =
+                            start + (growth * (*point - start) as f64) as usize;
+                    }
+                }
+            }
+            (start, inserted)
         } else {
             let start = b.borrow().point();
             crate::buffer::primitives::chg_insert_pt(i, &contents, false)?;
-            // GNU Finsert_file_contents leaves point BEFORE the
-            // inserted text (like `insert-before-markers').
-            let mut bb = b.borrow_mut();
-            bb.set_point(start);
+            // GNU Finsert_file_contents leaves point BEFORE the inserted text.
+            b.borrow_mut().set_point(start);
+            (start, decoded.clone())
+        };
+        for (window, marker, last_point) in windows {
+            if !window.borrow().dead && marker.borrow().buffer == Some(window.borrow().buffer) {
+                let point = marker.borrow().position;
+                window.borrow_mut().point = point;
+                last_point.set(point);
+            }
         }
-        if let Value::Str(string) = &decoded {
+        if let Value::Str(string) = &inserted_string {
             crate::buffer::primitives::copy_str_props(i, string, inserted_at);
         }
         if visit {
@@ -12080,7 +12253,13 @@ fn insert_file_contents_impl(i: &mut Interp, a: crate::lisp::Argv, literal: bool
                 let fd = i.intern_soft("format-decode");
                 if fd.is_some_and(|s| i.fbound_p(s)) {
                     let visitv = a.get(1).cloned().unwrap_or(Value::Nil);
-                    if let Value::Int(m) = i.apply(
+                    if do_replace {
+                        if let Some(m) =
+                            replace_file_transform(i, &Value::Sym(fd.unwrap()), Some(visitv))?
+                        {
+                            inserted_chars = m;
+                        }
+                    } else if let Value::Int(m) = i.apply(
                         &Value::Sym(fd.unwrap()),
                         vec![Value::Nil, Value::Int(inserted_chars), visitv],
                     )? {
@@ -12093,7 +12272,11 @@ fn insert_file_contents_impl(i: &mut Interp, a: crate::lisp::Argv, literal: bool
                     .and_then(|v| v.list_to_vec().ok())
                     .unwrap_or_default();
                 for f in fnlist {
-                    if let Value::Int(m) = i.apply(&f, vec![Value::Int(inserted_chars)])? {
+                    if do_replace {
+                        if let Some(m) = replace_file_transform(i, &f, None)? {
+                            inserted_chars = m;
+                        }
+                    } else if let Value::Int(m) = i.apply(&f, vec![Value::Int(inserted_chars)])? {
                         inserted_chars = m;
                     }
                 }

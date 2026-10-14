@@ -227,3 +227,5 @@ qa!(qa_time_spec_validation, "qa_time_spec_validation.el");
 qa!(qa_time_zero_zone, "qa_time_zero_zone.el");
 
 qa!(qa_thread_bookkeeping, "qa_thread_bookkeeping.el");
+
+qa!(qa_file_replace, "qa_file_replace.el");

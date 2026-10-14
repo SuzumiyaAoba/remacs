@@ -661,7 +661,7 @@ fn f_vconcat(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(out))))
 }
 
-fn f_substring(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_substring(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     substring_impl(i, args, true)
 }
 
