@@ -1560,7 +1560,7 @@ fn re_search_fwd(
                 regs,
                 in_buffer: true,
                 base: begv,
-                buffer: Some(i.current_buffer),
+                buffer: i.buffers.get(i.current_buffer),
             });
             cur(i).borrow_mut().set_point(begv + e);
             Ok(Value::t())

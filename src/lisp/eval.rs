@@ -13645,9 +13645,10 @@ pub struct MatchData {
     pub in_buffer: bool,
     /// Base offset of the searched text in the buffer (0 for strings).
     pub base: usize,
-    /// Buffer the match ran in (for `match-data' markers); None for
-    /// string searches or data installed via `set-match-data'.
-    pub buffer: Option<usize>,
+    /// The searched object remains identifiable after its buffer is killed,
+    /// as in GNU's last_thing_searched.  Markers then detach, but integer
+    /// match data still includes this dead buffer and retains raw positions.
+    pub buffer: Option<super::value::BufferRef>,
 }
 
 // `Symbol` extension: make-local-if-set flag stored in obarray? We need the

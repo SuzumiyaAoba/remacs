@@ -6345,7 +6345,7 @@ fn f_looking_back(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 regs,
                 in_buffer: true,
                 base,
-                buffer: Some(i.current_buffer),
+                buffer: i.buffers.get(i.current_buffer),
             });
             return Ok(Value::t());
         }
@@ -9353,7 +9353,7 @@ fn f_looking_at_impl(i: &mut Interp, a: crate::lisp::Argv, posix: bool) -> EvalR
                     regs,
                     in_buffer: true,
                     base: cur(i).borrow().begv,
-                    buffer: Some(i.current_buffer),
+                    buffer: i.buffers.get(i.current_buffer),
                 });
             }
             Ok(Value::t())
@@ -9608,7 +9608,7 @@ pub(crate) fn search_common(
                     regs,
                     in_buffer: true,
                     base: begv,
-                    buffer: Some(i.current_buffer),
+                    buffer: i.buffers.get(i.current_buffer),
                 });
             }
             Ok(Value::Int(landing as i128 + begv as i128 + 1))
@@ -9870,14 +9870,16 @@ fn f_match_data(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 for p in [s, e] {
                     let v = match p {
                         Some(p) if use_markers => {
-                            let bid = md.buffer.unwrap();
+                            let buffer = md.buffer.as_ref().unwrap();
+                            let live = buffer.borrow().live;
                             let m = Rc::new(RefCell::new(Marker {
-                                buffer: Some(bid),
-                                position: p + off - 1,
+                                buffer: live.then(|| buffer.borrow().id),
+                                // Fset_marker clamps against full buffer bounds, not narrowing.
+                                position: (p + off - 1).min(buffer.borrow().text.len()),
                                 insertion_type: false,
                             }));
-                            if let Some(b) = i.buffers.get(bid) {
-                                b.borrow_mut().register_marker(&m);
+                            if live {
+                                buffer.borrow_mut().register_marker(&m);
                             }
                             marker_value(m)
                         }
@@ -9890,10 +9892,8 @@ fn f_match_data(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             // GNU search.c `match_data': with INTEGERS non-nil and a
             // buffer match, the searched buffer trails the positions.
             if integers && md.in_buffer {
-                if let Some(bid) = md.buffer {
-                    if let Some(v) = i.buffer_value(bid) {
-                        items.push(v);
-                    }
+                if let Some(buffer) = &md.buffer {
+                    items.push(Value::Buffer(buffer.clone()));
                 }
             }
             Ok(Value::list(items))
@@ -9914,19 +9914,19 @@ fn f_set_match_data(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         other => return Err(i.wrong_type_mut("listp", other)),
     };
     let reseat = a.get(1).map(|v| v.truthy()).unwrap_or(false);
-    let mut last_thing: Option<usize> = None; // buffer id; None = string mode
+    let mut last_thing: Option<crate::lisp::value::BufferRef> = None;
     let mut regs: Vec<Option<usize>> = Vec::new();
     let mut k = 0;
     while k < items.len() {
         let start_el = &items[k];
         // A buffer object in a start slot ends the walk and names the buffer.
         if let Value::Buffer(bv) = start_el {
-            last_thing = Some(bv.borrow().id);
+            last_thing = Some(bv.clone());
             break;
         }
         let coerce = |v: &Value,
                       i: &mut Interp,
-                      last: &mut Option<usize>,
+                      last: &mut Option<crate::lisp::value::BufferRef>,
                       is_start: bool|
          -> Result<Option<usize>, Flow> {
             match v {
@@ -9942,7 +9942,7 @@ fn f_set_match_data(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                         None => Ok(Some(0)), // detached marker → 0
                         Some(bid) => {
                             if is_start {
-                                *last = Some(bid);
+                                *last = i.buffers.get(bid);
                             }
                             Ok(Some(mm.position))
                         }

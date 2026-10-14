@@ -131,6 +131,7 @@ qa!(qa_lists, "qa_lists.el");
 qa!(qa_lists2, "qa_lists2.el");
 qa!(qa_load, "qa_load.el");
 qa!(qa_load_buffer, "qa_load_buffer.el");
+qa!(qa_killed_match_markers, "qa_killed_match_markers.el");
 qa!(qa_logb, "qa_logb.el");
 qa!(qa_locvar, "qa_locvar.el");
 qa!(qa_macro, "qa_macro.el");
