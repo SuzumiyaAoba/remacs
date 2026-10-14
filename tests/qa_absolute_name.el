@@ -1,0 +1,23 @@
+;;; -*- lexical-binding: nil; -*-
+;; Issue #99: a named tilde component requires a real login with a home.
+(let ((known (concat "~" (user-login-name (user-uid))))
+      (unknown "~remacs-no-such-user-47e592fb99"))
+  (dolist (tail '("" "/" "/file" "//file" "/../file" "\0ignored" "/file\0ignored"))
+    (qa (file-name-absolute-p (concat "~" tail)) t)
+    (qa (file-name-absolute-p (concat known tail)) t)
+    (qa (file-name-absolute-p (concat unknown tail)) nil))
+  (qa (file-name-absolute-p (concat "/" unknown)) t)
+  (qa (file-name-absolute-p (concat "dir/" known)) nil)
+  (qa (file-name-absolute-p (concat unknown "~")) nil))
+(dolist (name '("/" "//" "///a" "/nonexistent/path" "/\0ignored"))
+  (qa (file-name-absolute-p name) t))
+(dolist (name '("" "." ".." "file" "./file" "../file" "dir/~" "C:/file"
+                "\0/absolute" "\0~" "~ root" "~~"))
+  (qa (file-name-absolute-p name) nil))
+(qa (file-name-absolute-p (propertize "~/file" 'face 'bold)) t)
+(qa-err-data (file-name-absolute-p nil) 'wrong-type-argument '(stringp nil))
+(qa-err-data (file-name-absolute-p 1) 'wrong-type-argument '(stringp 1))
+(qa-err-data (file-name-absolute-p 'file) 'wrong-type-argument '(stringp file))
+(qa-err (file-name-absolute-p) 'wrong-number-of-arguments)
+(qa-err (file-name-absolute-p "/" nil) 'wrong-number-of-arguments)
+(princ (qa--done))

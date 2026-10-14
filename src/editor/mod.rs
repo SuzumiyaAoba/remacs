@@ -10378,7 +10378,19 @@ fn f_set_file_modes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 fn f_file_name_absolute_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let s = want_str(i, &a[0])?;
-    Ok(Value::from_bool(s.starts_with('/') || s.starts_with('~')))
+    // GNU's predicate examines the NUL-terminated filename without
+    // expanding it.  A named tilde component needs a valid home;
+    // bare `~' and `~/' are absolute independently of HOME's value.
+    let s = s.split('\0').next().unwrap_or_default();
+    let absolute = if s.starts_with('/') {
+        true
+    } else if let Some(rest) = s.strip_prefix('~') {
+        let user = rest.split('/').next().unwrap_or_default();
+        user.is_empty() || tilde_user_home(user).is_some_and(|home| home.starts_with('/'))
+    } else {
+        false
+    };
+    Ok(Value::from_bool(absolute))
 }
 /// GNU `Fexpand_file_name(NAME, DIR)': an expandable `~' (or absolute
 /// path) in NAME ignores DIR entirely; otherwise NAME joins DIR

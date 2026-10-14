@@ -49,6 +49,7 @@ macro_rules! qa {
 
 qa!(qa_abbrev, "qa_abbrev.el");
 qa!(qa_abbrev2, "qa_abbrev2.el");
+qa!(qa_absolute_name, "qa_absolute_name.el");
 qa!(qa_advice, "qa_advice.el");
 qa!(qa_apply, "qa_apply.el");
 qa!(qa_apply2, "qa_apply2.el");
