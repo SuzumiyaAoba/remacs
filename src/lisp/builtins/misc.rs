@@ -6736,9 +6736,8 @@ fn f_format_mode_line(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 // ---------- category tables ----------
-// Record layout: [char-table, 'category-table, Vec contents, Vec
-// docstrings(128)]. GNU stores one extra slot (the docstring table);
-// ours is a plain Vec for simplicity.
+// Record layout: [char-table, 'category-table, Vec contents,
+// Vec docstrings(95), category-set hash].
 
 /// Build a category table value. `standard` populates GNU's ASCII
 /// membership and label docstrings.
@@ -6754,6 +6753,10 @@ pub(crate) fn make_category_table_value(i: &mut Interp, standard: bool) -> Value
         Value::Nil,
         vec![Value::Vec(docs.clone()), Value::Nil],
     );
+    // GNU init_category_once leaves raw entries nil, with a distinct
+    // empty category set as their inherited default.
+    let empty = make_bool_vector(i, vec![false; 128]);
+    i.set_char_table_defalt(&t, empty);
     if standard {
         // GNU's standard-category-table ASCII defaults.
         const DOCS: &[(usize, &str)] = &[
@@ -6914,7 +6917,14 @@ fn cat_docs(v: &Rc<RefCell<Vec<Value>>>) -> Rc<RefCell<Vec<Value>>> {
 }
 
 fn f_make_category_table(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    Ok(make_category_table_value(i, false))
+    let table = make_category_table_value(i, false);
+    let contents = char_table_vec(&table).unwrap();
+    // Unlike the standard table, GNU fills each top-level block with
+    // its own mutable set.  Its ASCII cache remains nil initially.
+    for slot in 1..=64 {
+        contents.borrow_mut()[slot] = make_bool_vector(i, vec![false; 128]);
+    }
+    Ok(table)
 }
 
 fn f_category_table_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -6944,28 +6954,27 @@ fn f_set_category_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_copy_category_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let src = want_category_table(i, &arg(&a, 0))?;
-    let t = ct_copy(i, &Value::Record(src));
-    // GNU `copy_category_table' additionally copies the docstring
-    // vector (extra slot 0) and the category-set hash (slot 1) —
-    // the copy is independent.
-    if let Value::Record(r) = &t {
-        let mut rr = r.borrow_mut();
-        if let Some(Value::Vec(d)) = rr.get(3) {
-            let d = Value::Vec(Rc::new(RefCell::new(d.borrow().clone())));
-            rr[3] = d;
-        }
-        if let Some(Value::Hash(h)) = rr.get(4) {
-            let mut nh = crate::lisp::value::LispHash::new(crate::lisp::value::HashTest::Equal);
-            {
-                let hm = h.borrow();
-                nh.map = hm.map.clone();
-                nh.keys = hm.keys.clone();
-            }
-            rr[4] = Value::Hash(Rc::new(RefCell::new(nh)));
+    let source = match a.first() {
+        None | Some(Value::Nil) => i.standard_category_table(),
+        Some(value) => Value::Record(want_category_table(i, value)?),
+    };
+    let table = ct_copy(i, &source);
+    // GNU copies mutable category sets and the documentation vector,
+    // but leaves the category-set interning hash shared.
+    let default = i.char_table_defalt(&table);
+    if !default.is_nil() {
+        let default = super::seq::f_copy_sequence(i, vec![default].into())?;
+        i.set_char_table_defalt(&table, default);
+    }
+    let docs = super::seq::f_copy_sequence(i, vec![ct_extra(&table, 0)].into())?;
+    ct_set_extra(&table, 0, docs);
+    for (from, to, value) in ct_effective_runs(i, &table, true) {
+        if !value.is_nil() {
+            let copied = super::seq::f_copy_sequence(i, vec![value].into())?;
+            ct_set_range(i, &table, from, to, copied);
         }
     }
-    Ok(t)
+    Ok(table)
 }
 
 fn f_define_category(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
