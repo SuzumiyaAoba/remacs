@@ -4770,14 +4770,19 @@ command-line arguments.\" \
     }
 
     /// Does a prop interval tree exist for this string?  GNU's
-    /// `object-intervals' returns nil before the first prop op but a
-    /// full nil-plist cover afterwards, so presence must be tracked
+    /// `object-intervals' distinguishes a missing tree from an existing
+    /// tree containing only nil plists, so presence must be tracked
     /// separately from the interval list.
     pub fn has_str_props(&self, s: &crate::lisp::value::StrRef) -> bool {
         self.string_props
             .get(&(std::rc::Rc::as_ptr(s) as usize))
             .map(|(w, _)| w.upgrade().is_some())
             .unwrap_or(false)
+    }
+
+    /// Drop the tree for a whole-string `set-text-properties' to nil.
+    pub fn clear_str_props(&mut self, s: &crate::lisp::value::StrRef) {
+        self.string_props.remove(&(std::rc::Rc::as_ptr(s) as usize));
     }
 
     /// Replace a string's prop intervals wholesale (copy ops).  An

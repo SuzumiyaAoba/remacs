@@ -5,6 +5,7 @@
 pub mod extra;
 mod gapbuf;
 pub mod primitives;
+pub(crate) mod textprops;
 
 pub use primitives::install_primitives;
 

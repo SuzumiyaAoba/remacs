@@ -3283,9 +3283,8 @@ fn f_next_prop_change_fwd(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 next = Some(cand);
             }
         };
-        for tp in bb.text.props.borrow().iter() {
-            take(tp.start);
-            take(tp.end);
+        for cand in bb.text.props.borrow().change_points(false) {
+            take(cand);
         }
         for ov in &bb.overlays {
             if ov.buffer == Some(bb.id) {
@@ -3334,9 +3333,8 @@ fn f_prev_prop_change(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 prev = Some(cand);
             }
         };
-        for tp in bb.text.props.borrow().iter() {
-            take(tp.start);
-            take(tp.end);
+        for cand in bb.text.props.borrow().change_points(false) {
+            take(cand);
         }
         for ov in &bb.overlays {
             if ov.buffer == Some(bb.id) {

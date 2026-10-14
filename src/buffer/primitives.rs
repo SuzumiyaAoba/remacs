@@ -2001,7 +2001,27 @@ fn f_object_intervals(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             emit(p, len, Vec::new());
             Ok(Value::list(out))
         }
-        Value::Buffer(_) => Ok(Value::Nil),
+        Value::Buffer(b) => {
+            let bb = b.borrow();
+            if !bb.live {
+                return Ok(Value::Nil);
+            }
+            let out = bb
+                .text
+                .props
+                .borrow()
+                .intervals()
+                .iter()
+                .map(|(s, e, pl)| {
+                    Value::list(vec![
+                        Value::Int(*s as i128),
+                        Value::Int(*e as i128),
+                        Value::list(pl.clone()),
+                    ])
+                })
+                .collect();
+            Ok(Value::list(out))
+        }
         other => Err(i.wrong_type_mut("buffer-or-string-p", other)),
     }
 }
@@ -6275,32 +6295,25 @@ fn insert_str_at_point(i: &mut Interp, s: &str, before_markers: bool) -> Result<
 /// string's properties verbatim (no inheritance from surrounding
 /// text — that is `insert-and-inherit's job).
 pub(crate) fn copy_str_props(i: &mut Interp, s: &crate::lisp::value::StrRef, base: usize) {
+    copy_str_props_inherit(i, s, base, false);
+}
+
+fn copy_str_props_inherit(
+    i: &mut Interp,
+    s: &crate::lisp::value::StrRef,
+    base: usize,
+    inherit: bool,
+) {
     if !i.has_str_props(s) {
         return;
     }
-    let ivs: Vec<(usize, usize, Vec<Value>)> = i.str_props(s).to_vec();
+    let ivs = str_ivs_for_edit(i, s);
     if ivs.is_empty() {
         return;
     }
     let b = cur(i);
     let mut bb = b.borrow_mut();
-    for (st, en, plist) in ivs {
-        // `insert' preserves the source plist order; since the
-        // buffer's emitted plist is newest-first (records scanned in
-        // reverse), push the pairs back-to-front.
-        let mut k = plist.len();
-        while k >= 2 {
-            if let Some(p) = i.sym_id(&plist[k - 2]) {
-                bb.text.props.borrow_mut().push(TextProp {
-                    start: base + st,
-                    end: base + en,
-                    prop: p,
-                    value: plist[k - 1].clone(),
-                });
-            }
-            k -= 2;
-        }
-    }
+    bb.text.props.borrow_mut().graft(base, &ivs, inherit);
     bb.note_prop_modified();
 }
 
@@ -6393,6 +6406,14 @@ fn insert_impl(i: &mut Interp, a: &[Value], before_markers: bool, inherit: bool)
                 }
                 let n = t.chars().count();
                 let base = cur(i).borrow().point();
+                let split_original = cur(i)
+                    .borrow()
+                    .text
+                    .props
+                    .borrow()
+                    .intervals()
+                    .iter()
+                    .any(|(a, b, _)| *a < base && base < *b);
                 let inherited = if inherit {
                     inherit_plist_at(i, base)
                 } else {
@@ -6445,13 +6466,29 @@ fn insert_impl(i: &mut Interp, a: &[Value], before_markers: bool, inherit: bool)
                         bb.note_prop_modified();
                     }
                 }
-                copy_str_props(i, s, base);
+                copy_str_props_inherit(i, s, base, inherit);
+                if inherit && !i.has_str_props(s) {
+                    cur(i)
+                        .borrow()
+                        .text
+                        .props
+                        .borrow_mut()
+                        .finish_inherited_insert(base, n, split_original);
+                }
                 debug_assert_eq!(cur(i).borrow().point(), base + n);
             }
             Value::Int(n) => {
                 let code = if unibyte { *n & 0xFF } else { *n };
                 if let Some(c) = crate::lisp::value::lisp_char(code as u32) {
                     let base = cur(i).borrow().point();
+                    let split_original = cur(i)
+                        .borrow()
+                        .text
+                        .props
+                        .borrow()
+                        .intervals()
+                        .iter()
+                        .any(|(a, b, _)| *a < base && base < *b);
                     let inherited = if inherit {
                         inherit_plist_at(i, base)
                     } else {
@@ -6470,6 +6507,14 @@ fn insert_impl(i: &mut Interp, a: &[Value], before_markers: bool, inherit: bool)
                             });
                         }
                         bb.note_prop_modified();
+                    }
+                    if inherit {
+                        cur(i)
+                            .borrow()
+                            .text
+                            .props
+                            .borrow_mut()
+                            .finish_inherited_insert(base, 1, split_original);
                     }
                 } else {
                     return Err(i.wrong_type_mut("char-or-string-p", v));
@@ -6556,31 +6601,14 @@ fn f_insert_buffer_substring(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     let sub: String = chars[lo..hi].iter().collect();
     // GNU copies the source range's text properties along with the
     // characters.
-    let props: Vec<TextProp> = src
-        .borrow()
-        .text
-        .props
-        .borrow()
-        .iter()
-        .filter(|tp| tp.start < hi && tp.end > lo)
-        .map(|tp| TextProp {
-            start: tp.start.max(lo) - lo,
-            end: tp.end.min(hi) - lo,
-            prop: tp.prop,
-            value: tp.value.clone(),
-        })
-        .collect();
+    let props = src.borrow().text.props.borrow().slice(lo, hi);
     check_writable(i)?;
     let base = cur(i).borrow().point();
     insert_str_at_point(i, &sub, false)?;
     if !props.is_empty() {
         let b = cur(i);
         let mut bb = b.borrow_mut();
-        for mut tp in props {
-            tp.start += base;
-            tp.end += base;
-            bb.text.props.borrow_mut().push(tp);
-        }
+        bb.text.props.borrow_mut().graft(base, &props, false);
         bb.note_prop_modified();
     }
     Ok(Value::Nil)
@@ -7134,50 +7162,16 @@ pub(crate) fn plist_pairs_rev(pl: &[Value]) -> Vec<Value> {
     out
 }
 
-fn buf_props_as_ivs(props: &[TextProp], s: usize, e: usize) -> Vec<(usize, usize, Vec<Value>)> {
+fn buf_props_as_ivs(
+    props: &crate::buffer::textprops::TextProperties,
+    s: usize,
+    e: usize,
+) -> Vec<(usize, usize, Vec<Value>)> {
+    // Buffer substring copies omit an entirely property-free tree.
     if !props.iter().any(|tp| tp.start < e && tp.end > s) {
         return Vec::new();
     }
-    let mut cuts: Vec<usize> = vec![s, e];
-    for tp in props {
-        if tp.start < e && tp.end > s {
-            cuts.push(tp.start.max(s));
-            cuts.push(tp.end.min(e));
-        }
-    }
-    cuts.sort_unstable();
-    cuts.dedup();
-    let mut ivs = Vec::new();
-    for w in cuts.windows(2) {
-        let (a, b) = (w[0], w[1]);
-        if a >= b {
-            continue;
-        }
-        // GNU's plist order is newest-first: `put-text-property'
-        // prepends each property, so the effective plist lists the
-        // most recently added props first.
-        let mut plist: Vec<Value> = Vec::new();
-        for tp in props.iter().rev() {
-            if tp.start <= a && tp.end >= b {
-                let psym = Value::Sym(tp.prop);
-                let mut dup = false;
-                let mut k = 0;
-                while k + 1 < plist.len() {
-                    if crate::lisp::builtins::eq_values(&plist[k], &psym) {
-                        dup = true;
-                        break;
-                    }
-                    k += 2;
-                }
-                if !dup {
-                    plist.push(psym);
-                    plist.push(tp.value.clone());
-                }
-            }
-        }
-        ivs.push((a - s, b - s, plist));
-    }
-    ivs
+    props.slice(s, e)
 }
 
 fn buffer_is_unibyte(i: &mut Interp) -> bool {
@@ -10420,29 +10414,17 @@ pub(crate) fn f_put_text_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
         let (s0, e0) = (st.min(en), st.max(en));
         let prop = a[2].clone();
         let val = a[3].clone();
-        let fill = if val.is_nil() {
-            None
-        } else {
-            Some(vec![prop.clone(), val.clone()])
-        };
-        let mut ivs = std::mem::take(i.str_props_mut(&s));
-        let ii: &Interp = i;
+        let mut ivs = str_ivs_for_edit(i, &s);
         iv_apply(
             &mut ivs,
             s0,
             e0,
-            |pl| {
-                if val.is_nil() {
-                    if let Some(id) = ii.sym_id(&prop) {
-                        str_plist_remove(pl, id, ii);
-                    }
-                } else {
-                    str_plist_put(pl, &prop, &val);
-                }
-            },
-            fill,
+            |pl| str_plist_put(pl, &prop, &val),
+            Some(vec![prop.clone(), val.clone()]),
         );
-        i.set_str_props(&s, ivs);
+        if !ivs.is_empty() {
+            i.set_str_props(&s, ivs);
+        }
         return Ok(Value::Nil);
     }
     // OBJECT may be nil, a buffer, or a string — GNU gates this via
@@ -10639,10 +10621,28 @@ fn iv_gap_in(ivs: &StrIvs, s: usize, e: usize) -> bool {
     p < e
 }
 
-/// Apply `f` to the plists of every interval inside [S,E); `fill`
-/// creates an interval on uncovered gaps.  Intervals whose plist
-/// becomes empty are kept — GNU preserves dead interval boundaries
-/// after property removal.
+/// Materialize the nil gaps of an existing string interval tree.
+fn str_ivs_for_edit(i: &Interp, s: &crate::lisp::value::StrRef) -> StrIvs {
+    if !i.has_str_props(s) {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut p = 0;
+    for (a, b, pl) in i.str_props(s) {
+        if p < *a {
+            out.push((p, *a, Vec::new()));
+        }
+        out.push((*a, *b, pl.clone()));
+        p = *b;
+    }
+    if p < str_len(s) {
+        out.push((p, str_len(s), Vec::new()));
+    }
+    out
+}
+
+/// Add/remove only split intervals whose plist actually changes.
+/// Nil-valued properties are entries, distinct from absent keys.
 fn iv_apply(
     ivs: &mut StrIvs,
     s: usize,
@@ -10650,30 +10650,81 @@ fn iv_apply(
     mut f: impl FnMut(&mut Vec<Value>),
     fill: Option<Vec<Value>>,
 ) {
-    iv_cut(ivs, s, e);
-    let mut covered: Vec<(usize, usize)> = Vec::new();
-    for iv in ivs.iter_mut() {
-        if iv.0 >= s && iv.1 <= e {
-            f(&mut iv.2);
-            covered.push((iv.0, iv.1));
-        }
+    iv_apply_changed(
+        ivs,
+        s,
+        e,
+        |pl| {
+            let old = pl.clone();
+            f(pl);
+            old.len() != pl.len()
+                || !old
+                    .iter()
+                    .zip(pl)
+                    .all(|(x, y)| crate::lisp::builtins::eq_values(x, y))
+        },
+        fill,
+    );
+}
+
+fn iv_apply_changed(
+    ivs: &mut StrIvs,
+    s: usize,
+    e: usize,
+    mut f: impl FnMut(&mut Vec<Value>) -> bool,
+    fill: Option<Vec<Value>>,
+) {
+    if s >= e {
+        return;
     }
-    if let Some(pl0) = fill {
-        if !pl0.is_empty() {
-            covered.sort();
-            let mut p = s;
-            for (a, b) in covered {
-                if p < a {
-                    ivs.push((p, a, pl0.clone()));
+    let mut out = Vec::new();
+    let mut p = s;
+    for (a, b, pl) in std::mem::take(ivs) {
+        if a >= e || b <= s {
+            out.push((a, b, pl));
+            continue;
+        }
+        if p < a {
+            if let Some(ref fill) = fill {
+                if !fill.is_empty() {
+                    out.push((p, a, fill.clone()));
                 }
-                p = p.max(b);
             }
-            if p < e {
-                ivs.push((p, e, pl0));
+        }
+        let mut changed = pl.clone();
+        if !f(&mut changed) {
+            out.push((a, b, pl));
+        } else {
+            if a < s {
+                out.push((a, s, pl.clone()));
             }
-            ivs.sort_by_key(|iv| iv.0);
+            out.push((a.max(s), b.min(e), changed));
+            if b > e {
+                out.push((e, b, pl));
+            }
+        }
+        p = p.max(b);
+    }
+    if p < e {
+        if let Some(fill) = fill {
+            if !fill.is_empty() {
+                out.push((p, e, fill));
+            }
         }
     }
+    out.sort_by_key(|iv| iv.0);
+    *ivs = out;
+}
+
+/// Set replaces all intervals in the range with one, even for equal plists.
+fn iv_set(ivs: &mut StrIvs, s: usize, e: usize, plist: Vec<Value>) {
+    if s >= e {
+        return;
+    }
+    iv_cut(ivs, s, e);
+    ivs.retain(|(a, b, _)| *b <= s || *a >= e);
+    ivs.push((s, e, plist));
+    ivs.sort_by_key(|iv| iv.0);
 }
 
 /// Char length of a string object.
@@ -10738,47 +10789,41 @@ pub(crate) fn f_add_text_properties(i: &mut Interp, a: crate::lisp::Argv) -> Eva
             .filter(|c| c.len() == 2)
             .map(|c| (c[0].clone(), c[1].clone()))
             .collect();
-        let fill: Vec<Value> = pairs
-            .iter()
-            .rev()
-            .filter(|(_, v)| !v.is_nil())
-            .flat_map(|(k, v)| [k.clone(), v.clone()])
-            .collect();
+        let mut fill = Vec::new();
+        for (key, value) in &pairs {
+            str_plist_put(&mut fill, key, value);
+        }
         let fill = if fill.is_empty() { None } else { Some(fill) };
-        let mut ivs = std::mem::take(i.str_props_mut(&s));
+        let mut ivs = str_ivs_for_edit(i, &s);
         // GNU returns t only when a property value actually changed.
         let mut changed = fill.is_some() && iv_gap_in(&ivs, s0, e0);
         let ii: &Interp = i;
         // GNU plput prepends new props per pair.
-        iv_apply(
+        iv_apply_changed(
             &mut ivs,
             s0,
             e0,
             |pl| {
+                let mut interval_changed = false;
                 for (k, v) in &pairs {
                     let id = ii.sym_id(k);
-                    if v.is_nil() {
-                        if let Some(id) = id {
-                            if str_plist_get(pl, id, ii).is_some() {
-                                changed = true;
-                            }
-                            str_plist_remove(pl, id, ii);
-                        }
-                    } else {
-                        let same = id
-                            .and_then(|id| str_plist_get(pl, id, ii))
-                            .map(|cur| crate::lisp::builtins::eq_values(&cur, v))
-                            .unwrap_or(false);
-                        if !same {
-                            changed = true;
-                            str_plist_put(pl, k, v);
-                        }
+                    let same = id
+                        .and_then(|id| str_plist_get(pl, id, ii))
+                        .map(|cur| crate::lisp::builtins::eq_values(&cur, v))
+                        .unwrap_or(false);
+                    if !same {
+                        changed = true;
+                        interval_changed = true;
+                        str_plist_put(pl, k, v);
                     }
                 }
+                interval_changed
             },
             fill,
         );
-        i.set_str_props(&s, ivs);
+        if !ivs.is_empty() {
+            i.set_str_props(&s, ivs);
+        }
         return Ok(Value::from_bool(changed));
     }
     let b = match a.get(3) {
@@ -10921,37 +10966,17 @@ fn prop_runs(props: &[TextProp], s: usize, e: usize, prop: u32) -> Vec<(usize, u
 /// those stay disjoint: the log then mirrors the live interval
 /// structure instead of growing with every write (lookups scan it, so
 /// repeated put/add over the same text went quadratic).
-fn push_prop(v: &mut Vec<TextProp>, tp: TextProp) {
-    let (s, e, p) = (tp.start, tp.end, tp.prop);
-    if v.iter().any(|o| o.prop == p && o.start < e && o.end > s) {
-        clip_props(v, s, e, |q| q == p);
-    }
-    v.push(tp);
+fn push_prop(v: &mut crate::buffer::textprops::TextProperties, tp: TextProp) {
+    v.put(tp);
 }
 
-/// GNU interval semantics: removing or replacing properties over
-/// [S,E) splits the covering intervals at the boundaries — the parts
-/// outside the range keep their properties.  PRED selects which prop
-/// names are cleared.
-fn clip_props(v: &mut Vec<TextProp>, s: usize, e: usize, pred: impl Fn(u32) -> bool) {
-    let mut out = Vec::with_capacity(v.len());
-    for tp in v.drain(..) {
-        if !pred(tp.prop) || tp.end <= s || tp.start >= e {
-            out.push(tp);
-            continue;
-        }
-        if tp.start < s {
-            let mut left = tp.clone();
-            left.end = s;
-            out.push(left);
-        }
-        if tp.end > e {
-            let mut right = tp;
-            right.start = e;
-            out.push(right);
-        }
-    }
-    *v = out;
+fn clip_props(
+    v: &mut crate::buffer::textprops::TextProperties,
+    s: usize,
+    e: usize,
+    pred: impl Fn(u32) -> bool,
+) {
+    v.remove(s, e, pred);
 }
 
 /// Shared string-object branch of remove-text-properties and
@@ -10972,7 +10997,7 @@ pub(crate) fn str_remove_props(
     str_pos_ok(i, &a[3], st.max(en), len)?;
     let (s0, e0) = (st.min(en), st.max(en));
     let ids: Vec<u32> = names.iter().filter_map(|v| i.sym_id(v)).collect();
-    let mut ivs = std::mem::take(i.str_props_mut(&s));
+    let mut ivs = str_ivs_for_edit(i, &s);
     let mut removed = false;
     let ii: &Interp = i;
     iv_apply(
@@ -10988,7 +11013,9 @@ pub(crate) fn str_remove_props(
         },
         None,
     );
-    i.set_str_props(&s, ivs);
+    if !ivs.is_empty() {
+        i.set_str_props(&s, ivs);
+    }
     Ok(removed)
 }
 
@@ -11096,14 +11123,16 @@ fn f_set_text_properties(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         str_pos_ok(i, &a[3], st.max(en), len)?;
         let (s0, e0) = (st.min(en), st.max(en));
         let plist = props.list_to_vec().unwrap_or_default();
-        let fill = if plist.is_empty() {
-            None
-        } else {
-            Some(plist.clone())
-        };
-        let mut ivs = std::mem::take(i.str_props_mut(&s));
-        // GNU replaces the interval's plist wholesale.
-        iv_apply(&mut ivs, s0, e0, |pl| *pl = plist.clone(), fill);
+        if a[0].int() == Some(0) && a[1].int() == Some(len as i128) && plist.is_empty() {
+            let existed = i.has_str_props(&s);
+            i.clear_str_props(&s);
+            return Ok(Value::from_bool(existed));
+        }
+        if s0 == e0 || (plist.is_empty() && !i.has_str_props(&s)) {
+            return Ok(Value::Nil);
+        }
+        let mut ivs = str_ivs_for_edit(i, &s);
+        iv_set(&mut ivs, s0, e0, plist);
         i.set_str_props(&s, ivs);
         return Ok(Value::t());
     }
@@ -11142,8 +11171,7 @@ fn f_set_text_properties(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     {
         let mut bb = b.borrow_mut();
         buf_record_set(&mut bb, i, s, e, &plist);
-        clip_props(&mut bb.text.props.borrow_mut(), s, e, |_| true);
-        buf_add_props(&mut bb, i, s, e, &plist, false)?;
+        bb.text.props.borrow_mut().set(s, e, plist);
         bb.note_prop_modified();
     }
     signal_after_change(i, s + 1, e + 1, e - s)?;
@@ -11654,16 +11682,13 @@ pub(crate) fn f_next_property_change(i: &mut Interp, a: crate::lisp::Argv) -> Ev
         ));
     }
     let pos = pos_idx(len, pos_v);
-    // Any interval boundary strictly inside (pos, ZV) counts as a
-    // change.  GNU never reports point-max itself (ZV char index = len,
-    // lisp pos len+1) — the region past the last char has no property
-    // state to change from.
+    // Normal searches skip dead/equal interval boundaries. LIMIT=t is
+    // GNU's special request for the next raw interval boundary.
+    let raw_intervals = matches!(a.get(2), Some(Value::Sym(s)) if *s == sym::T);
     let mut next: Option<usize> = None;
-    for tp in bb.text.props.borrow().iter() {
-        for cand in [tp.start, tp.end] {
-            if cand > pos && cand < len {
-                next = Some(next.map(|n| n.min(cand)).unwrap_or(cand));
-            }
+    for cand in bb.text.props.borrow().change_points(raw_intervals) {
+        if cand > pos && cand < len {
+            next = Some(next.map(|n| n.min(cand)).unwrap_or(cand));
         }
     }
     match next {
@@ -11957,14 +11982,12 @@ pub(crate) fn f_prev_property_change(i: &mut Interp, a: crate::lisp::Argv) -> Ev
     let len = bb.text.len();
     let pos = pos_idx(len, want_pos_in_buf(i, &a[0], &bb)?);
     let mut prev: Option<usize> = None;
-    for tp in bb.text.props.borrow().iter() {
-        for cand in [tp.start, tp.end] {
-            // GNU never reports point-min (BEGV char index = begv,
-            // lisp pos begv+1): there is no earlier state to differ
-            // from.  `pos` is 0-based; boundary cand maps to pos+1.
-            if cand < pos && cand > bb.begv {
-                prev = Some(prev.map(|n| n.max(cand)).unwrap_or(cand));
-            }
+    for cand in bb.text.props.borrow().change_points(false) {
+        // GNU never reports point-min (BEGV char index = begv,
+        // lisp pos begv+1): there is no earlier state to differ
+        // from.  `pos` is 0-based; boundary cand maps to pos+1.
+        if cand < pos && cand > bb.begv {
+            prev = Some(prev.map(|n| n.max(cand)).unwrap_or(cand));
         }
     }
     match prev {
@@ -12251,7 +12274,7 @@ pub(crate) fn f_add_face_text_property(i: &mut Interp, a: crate::lisp::Argv) -> 
         let en = want_int(i, &a[1])?.max(0) as usize;
         str_pos_ok(i, &a[4], st.max(en), len)?;
         let (s0, e0) = (st.min(en), st.max(en));
-        let mut ivs = std::mem::take(i.str_props_mut(&s));
+        let mut ivs = str_ivs_for_edit(i, &s);
         let ii: &Interp = i;
         let fid = ii.sym_id(&face_sym).unwrap_or(0);
         let fill = combine(&Value::Nil);
@@ -12275,7 +12298,9 @@ pub(crate) fn f_add_face_text_property(i: &mut Interp, a: crate::lisp::Argv) -> 
                 Some(vec![face_sym.clone(), fill])
             },
         );
-        i.set_str_props(&s, ivs);
+        if !ivs.is_empty() {
+            i.set_str_props(&s, ivs);
+        }
         return Ok(Value::Nil);
     }
     // GNU validate_interval_range checks `buffer-or-string-p' on OBJECT
@@ -12341,7 +12366,6 @@ pub(crate) fn f_add_face_text_property(i: &mut Interp, a: crate::lisp::Argv) -> 
     }
     {
         let mut props = bb.text.props.borrow_mut();
-        clip_props(&mut props, s, e, |q| q == fid);
         props.extend(segs);
     }
     Ok(Value::Nil)
@@ -12388,26 +12412,21 @@ fn f_propertize(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     .flat_map(|(k, v)| [k.clone(), v.clone()])
                     .collect();
                 let rpairs: Vec<(Value, Value)> = pairs.iter().rev().cloned().collect();
-                let ii: &Interp = i;
                 iv_apply(
                     &mut ivs,
                     0,
                     len,
                     |pl| {
                         for (k, v) in &rpairs {
-                            if v.is_nil() {
-                                if let Some(id) = ii.sym_id(k) {
-                                    str_plist_remove(pl, id, ii);
-                                }
-                            } else {
-                                str_plist_put(pl, k, v);
-                            }
+                            str_plist_put(pl, k, v);
                         }
                     },
                     Some(fill),
                 );
             }
-            i.set_str_props(&ns, ivs);
+            if !ivs.is_empty() {
+                i.set_str_props(&ns, ivs);
+            }
             Ok(out)
         }
         other => Err(i.wrong_type_mut("stringp", other)),
