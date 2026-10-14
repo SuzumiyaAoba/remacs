@@ -6944,6 +6944,11 @@ fn f_define_key(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !is_keymap(i, &map) {
         return Err(i.wrong_type_mut("keymapp", &a[0]));
     }
+    // GNU checks KEY after resolving KEYMAP, before interpreting events
+    // or changing any binding.  General sequences are not sufficient.
+    if !matches!(a[1], Value::Str(_) | Value::Vec(_)) {
+        return Err(i.wrong_type_mut("arrayp", &a[1]));
+    }
     // GNU's char-table keymaps support (LO . HI) range keys; our alist
     // model stores them as ((LO . HI) . DEF) pairs.
     if let Value::Vec(v) = &a[1] {
