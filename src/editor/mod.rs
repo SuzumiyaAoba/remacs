@@ -11821,21 +11821,6 @@ fn f_copy_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 }
 
-/// File bytes → the text `insert-file-contents-literally' inserts:
-/// each byte becomes a character (0x80..=0xFF become GNU eight-bit
-/// chars), so a multibyte buffer sees one char per byte.
-fn file_bytes_literal(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len());
-    for &b in bytes {
-        s.push(if b < 0x80 {
-            b as char
-        } else {
-            crate::lisp::value::lisp_char(0x3FFF00 + b as u32).unwrap()
-        });
-    }
-    s
-}
-
 fn insert_file_contents_impl(i: &mut Interp, a: crate::lisp::Argv, literal: bool) -> EvalResult {
     let path = want_filename(i, &a[0])?;
     let visit = a.get(1).map(|v| v.truthy()).unwrap_or(false);
@@ -11932,17 +11917,14 @@ fn insert_file_contents_impl(i: &mut Interp, a: crate::lisp::Argv, literal: bool
         let lo = (beg_offset as usize).min(raw.len());
         let hi = (end_offset as usize).min(raw.len());
         let slice = &raw[lo..hi.max(lo)];
-        let contents = if literal {
-            file_bytes_literal(slice)
-        } else {
-            let mut s = String::from_utf8_lossy(slice).into_owned();
-            // A UTF-8 signature at the start of the file is
-            // coding-system metadata, not text.
-            if lo == 0 && s.starts_with('\u{FEFF}') {
-                s.remove(0);
-            }
-            s
-        };
+        let requested = i
+            .intern_soft("coding-system-for-read")
+            .map(|symbol| i.symbol_value(symbol))
+            .unwrap_or(Value::Nil);
+        let (decoded, coding) = crate::lisp::builtins::misc::decode_file_bytes(
+            i, slice, &requested, literal, lo == 0,
+        )?;
+        let contents = want_str(i, &decoded)?;
         let n = contents.chars().count();
         let b = cur(i);
         // GNU: REPLACE bypasses the non-empty check for VISIT.
@@ -11951,6 +11933,7 @@ fn insert_file_contents_impl(i: &mut Interp, a: crate::lisp::Argv, literal: bool
         if visit && !do_replace && b.borrow().text.len() > 0 {
             return Err(i.error("Cannot do file visiting in a non-empty buffer"));
         }
+        let inserted_at = if do_replace { 0 } else { b.borrow().point() };
         if do_replace {
             // GNU REPLACE swaps the buffer contents (approximated
             // by erase+insert, which keeps point at BOB).
@@ -11967,6 +11950,9 @@ fn insert_file_contents_impl(i: &mut Interp, a: crate::lisp::Argv, literal: bool
             // inserted text (like `insert-before-markers').
             let mut bb = b.borrow_mut();
             bb.set_point(start);
+        }
+        if let Value::Str(string) = &decoded {
+            crate::buffer::primitives::copy_str_props(i, string, inserted_at);
         }
         if visit {
             // GNU Finsert_file_contents records the visited name,
@@ -12004,41 +11990,6 @@ fn insert_file_contents_impl(i: &mut Interp, a: crate::lisp::Argv, literal: bool
         // character count returned to the caller.
         let mut inserted_chars = n as i128;
         {
-            let csfr = i
-                .intern_soft("coding-system-for-read")
-                .map(|s| i.symbol_value(s))
-                .unwrap_or(Value::Nil);
-            let coding = if csfr.truthy() {
-                csfr
-            } else {
-                let utf8 = std::str::from_utf8(slice).is_ok();
-                let base = if literal || !utf8 {
-                    "no-conversion"
-                } else {
-                    "utf-8"
-                };
-                // GNU's detect-coding picks the EOL variant matching
-                // the dominant line ending in the decoded text.
-                let mut crlf = false;
-                let mut mac = false;
-                for k in 0..slice.len() {
-                    if slice[k] == b'\r' {
-                        if slice.get(k + 1) == Some(&b'\n') {
-                            crlf = true;
-                        } else {
-                            mac = true;
-                        }
-                    }
-                }
-                let suffix = if crlf && !mac {
-                    "-dos"
-                } else if mac && !crlf {
-                    "-mac"
-                } else {
-                    "-unix"
-                };
-                Value::Sym(i.intern(&format!("{}{}", base, suffix)))
-            };
             if let Some(lcs) = i.intern_soft("last-coding-system-used") {
                 i.set_symbol(lcs, coding)?;
             }

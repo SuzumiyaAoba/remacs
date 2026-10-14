@@ -12779,6 +12779,229 @@ fn attach_decode_charset_props(i: &mut Interp, r: &StrRef, canonical: &str) {
     }
 }
 
+/// File decoding keeps invalid input bytes as GNU eight-bit characters.
+/// Rust's lossy UTF-8 conversion would replace them irreversibly with U+FFFD.
+fn decode_file_utf8(mut bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len());
+    while !bytes.is_empty() {
+        match std::str::from_utf8(bytes) {
+            Ok(text) => {
+                out.push_str(text);
+                break;
+            }
+            Err(error) => {
+                let valid = error.valid_up_to();
+                out.push_str(std::str::from_utf8(&bytes[..valid]).unwrap());
+                let invalid = error.error_len().unwrap_or(bytes.len() - valid);
+                for &byte in &bytes[valid..valid + invalid] {
+                    out.push(crate::lisp::value::lisp_char(0x3FFF00 + byte as u32).unwrap());
+                }
+                bytes = &bytes[valid + invalid..];
+            }
+        }
+    }
+    out
+}
+
+/// GNU's initial file detector can leave a terminal sequence incomplete;
+/// the decoder subsequently preserves any invalid bytes in that sequence.
+fn file_utf8_candidate(bytes: &[u8]) -> bool {
+    let mut pos = 0;
+    while pos < bytes.len() {
+        let lead = bytes[pos];
+        pos += 1;
+        if lead < 0x80 {
+            continue;
+        }
+        let mut complete = false;
+        for width in 2..=5 {
+            if pos == bytes.len() {
+                return true;
+            }
+            let next = bytes[pos];
+            pos += 1;
+            if next & 0xC0 != 0x80 {
+                return false;
+            }
+            let leading = match width {
+                2 => lead & 0xE0 == 0xC0,
+                3 => lead & 0xF0 == 0xE0,
+                4 => lead & 0xF8 == 0xF0,
+                _ => lead & 0xFC == 0xF8 && lead < 0xF8,
+            };
+            if leading {
+                complete = true;
+                break;
+            }
+        }
+        if !complete {
+            return false;
+        }
+    }
+    true
+}
+
+/// Decode file bytes and return both the property-bearing text and the
+/// actual coding system. Character counts are computed after decoding by
+/// insert-file-contents; file offsets remain byte offsets.
+pub(crate) fn decode_file_bytes(
+    i: &mut Interp,
+    bytes: &[u8],
+    requested: &Value,
+    literal: bool,
+    at_file_start: bool,
+) -> Result<(Value, Value), Flow> {
+    let multibyte_id = i.intern("enable-multibyte-characters");
+    let multibyte = i.symbol_value(multibyte_id).truthy();
+    let coding = if literal {
+        Value::Sym(i.intern("no-conversion"))
+    } else if requested.is_nil() {
+        Value::Sym(i.intern("undecided"))
+    } else {
+        requested.clone()
+    };
+    f_check_coding_system(i, vec![coding.clone()].into())?;
+    let base = f_coding_system_base(i, vec![coding.clone()].into())?;
+    let mut canonical = i.symbol_name(i.sym_id(&base).unwrap()).to_string();
+    let original_base = canonical.clone();
+    let name = i.symbol_name(i.sym_id(&coding).unwrap()).to_string();
+    let alias = coding_alias_group(i, &coding)
+        .and_then(|group| group.into_iter().next())
+        .unwrap_or_else(|| name.clone());
+    let fixed_eol = eol_split(&alias).1.or(match name.as_str() {
+        "unix" => Some(0),
+        "dos" => Some(1),
+        "mac" => Some(2),
+        _ => None,
+    });
+    let binary = canonical == "no-conversion";
+    let bom = at_file_start && bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
+    if !multibyte && !binary {
+        // GNU suppresses character conversion in unibyte buffers, but
+        // still performs the requested EOL conversion.
+        canonical = "raw-text".to_string();
+    } else if canonical == "undecided" {
+        canonical = if bom {
+            "utf-8-with-signature".to_string()
+        } else if bytes.iter().all(|b| *b < 0x80) {
+            "undecided".to_string()
+        } else {
+            let priority_id = i.intern("remacs-coding-system-priorities");
+            let priorities = i
+                .symbol_value(priority_id)
+                .list_to_vec()
+                .unwrap_or_default();
+            let utf8 = file_utf8_candidate(bytes);
+            let latin1 = bytes.iter().all(|b| !(0x80..0xA0).contains(b));
+            priorities
+                .iter()
+                .find_map(|coding| {
+                    let base = coding_canonical(i, coding);
+                    match base.as_str() {
+                        "utf-8" | "utf-8-auto" if utf8 => Some("utf-8".to_string()),
+                        "iso-latin-1" if latin1 => Some(base),
+                        "raw-text" | "no-conversion" => Some(base),
+                        _ => None,
+                    }
+                })
+                .unwrap_or_else(|| if utf8 { "utf-8" } else { "raw-text" }.to_string())
+        };
+    }
+
+    let mut eols = [false; 3];
+    let mut pos = 0;
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'\r' if bytes.get(pos + 1) == Some(&b'\n') => {
+                eols[1] = true;
+                pos += 1;
+            }
+            b'\r' => eols[2] = true,
+            b'\n' => eols[0] = true,
+            _ => {}
+        }
+        pos += 1;
+    }
+    let detected_eol = match eols.iter().filter(|seen| **seen).count() {
+        0 => None,
+        1 => eols.iter().position(|seen| *seen),
+        _ => Some(0),
+    };
+    let eol = if binary {
+        Some(0)
+    } else {
+        fixed_eol.or(detected_eol)
+    };
+    let mut input = Vec::with_capacity(bytes.len());
+    let mut pos = 0;
+    while pos < bytes.len() {
+        if eol == Some(1) && bytes[pos..].starts_with(b"\r\n") {
+            input.push(b'\n');
+            pos += 2;
+        } else {
+            input.push(if eol == Some(2) && bytes[pos] == b'\r' {
+                b'\n'
+            } else {
+                bytes[pos]
+            });
+            pos += 1;
+        }
+    }
+    let strip_bom = bom && matches!(canonical.as_str(), "utf-8-with-signature" | "utf-8-auto");
+    let input = if strip_bom {
+        &input[3..]
+    } else {
+        input.as_slice()
+    };
+    let text = if !multibyte {
+        input.iter().map(|&byte| byte as char).collect()
+    } else if matches!(canonical.as_str(), "raw-text" | "no-conversion") {
+        input
+            .iter()
+            .map(|&byte| {
+                if byte < 0x80 {
+                    byte as char
+                } else {
+                    crate::lisp::value::lisp_char(0x3FFF00 + byte as u32).unwrap()
+                }
+            })
+            .collect()
+    } else if matches!(
+        canonical.as_str(),
+        "utf-8"
+            | "utf-8-auto"
+            | "utf-8-with-signature"
+            | "utf-8-emacs"
+            | "utf-8-hfs"
+            | "utf-8-nfd"
+            | "prefer-utf-8"
+            | "undecided"
+    ) {
+        decode_file_utf8(input)
+    } else {
+        decode_bytes(&canonical, input)
+    };
+    let decoded = Value::string(text);
+    if let Value::Str(string) = &decoded {
+        if multibyte {
+            i.mark_multibyte(string);
+            attach_decode_charset_props(i, string, &canonical);
+        } else {
+            i.mark_unibyte(string);
+        }
+    }
+    let used = if binary || (canonical == original_base && (fixed_eol.is_some() || eol.is_none())) {
+        coding
+    } else {
+        let name = match eol {
+            Some(index) => format!("{}-{}", canonical, ["unix", "dos", "mac"][index]),
+            None => canonical,
+        };
+        Value::Sym(i.intern(&name))
+    };
+    Ok((decoded, used))
+}
+
 fn f_decode_coding_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // (decode-coding-string STRING CODING-SYSTEM &optional NOCOPY BUFFER)
     let s = want_string(i, &a[0])?;

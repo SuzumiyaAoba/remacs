@@ -6278,7 +6278,7 @@ fn insert_str_at_point(i: &mut Interp, s: &str, before_markers: bool) -> Result<
 /// just-inserted range [base, base+len).  GNU `insert' copies the
 /// string's properties verbatim (no inheritance from surrounding
 /// text — that is `insert-and-inherit's job).
-fn copy_str_props(i: &mut Interp, s: &crate::lisp::value::StrRef, base: usize) {
+pub(crate) fn copy_str_props(i: &mut Interp, s: &crate::lisp::value::StrRef, base: usize) {
     if !i.has_str_props(s) {
         return;
     }
