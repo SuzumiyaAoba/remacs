@@ -105,4 +105,27 @@
 (qa (fboundp 'eol-mnemonic-unix) nil)
 (qa (coding-system-p (intern "utf-8-unix")) t)
 
+;; Issue #81: omitted COUNT defaults to nil, including when a hit exists.
+(with-temp-buffer
+  (insert "abcé文é")
+  (qa (unencodable-char-position 1 7 'us-ascii) 4)
+  (qa (unencodable-char-position 1 7 'us-ascii nil) 4)
+  (qa (unencodable-char-position 5 7 'us-ascii) 5)
+  (qa (unencodable-char-position 1 4 'us-ascii) nil)
+  (qa (unencodable-char-position 4 4 'us-ascii) nil)
+  (qa (unencodable-char-position 1 7 'utf-8) nil)
+  (qa (unencodable-char-position (copy-marker 1) (copy-marker 7) 'us-ascii) 4)
+  (qa (unencodable-char-position 1 7 'us-ascii 0) '(4 5 6))
+  (qa (unencodable-char-position 1 7 'us-ascii 1) '(4))
+  (qa (unencodable-char-position 1 7 'us-ascii 2) '(4 5))
+  (qa (unencodable-char-position 1 7 'us-ascii 10) '(4 5 6))
+  ;; Validation remains lazy: a bad COUNT matters only after finding a hit.
+  (qa (unencodable-char-position 1 4 'us-ascii t) nil)
+  (qa-err-data (unencodable-char-position 1 7 'us-ascii t)
+               'wrong-type-argument '(wholenump t))
+  (qa (funcall (byte-compile (lambda ()
+                  (unencodable-char-position 1 7 'us-ascii)))) 4))
+(qa (with-temp-buffer (unencodable-char-position 1 1 'us-ascii)) nil)
+(qa (unencodable-char-position 0 3 'us-ascii nil "aéb") 1)
+
 (princ (qa--done))

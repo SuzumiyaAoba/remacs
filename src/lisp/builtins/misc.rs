@@ -6235,7 +6235,7 @@ fn f_unencodable_char_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     if hits.is_empty() {
         return Ok(Value::Nil);
     }
-    match &a[3] {
+    match &arg(&a, 3) {
         Value::Nil => Ok(Value::Int(hits[0])),
         Value::Int(n) if *n >= 0 => {
             let take = if *n == 0 { usize::MAX } else { *n as usize };
