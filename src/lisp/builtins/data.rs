@@ -840,6 +840,7 @@ fn f_remove_variable_watcher(i: &mut Interp, args: crate::lisp::Argv) -> EvalRes
 }
 fn f_fset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
+    i.check_function_assignment(id, &args[1])?;
     let def = normalize_fn_def(i, args[1].clone());
     // GNU's fset writes the cell raw — an advice chain on SYM is
     // discarded entirely (only `defalias' substitutes the base).
@@ -1186,6 +1187,11 @@ fn f_text_quoting_style(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult 
 }
 fn f_fmakunbound(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
+    // Unlike fset, GNU refuses even a nil definition through fmakunbound.
+    // Keyword function cells remain mutable.
+    if id == sym::NIL || id == sym::T {
+        return Err(i.signal_data(sym::SETTING_CONSTANT, vec![args[0].clone()]));
+    }
     i.macro_gen += 1;
     i.obarray.symbol_mut(id).function = Value::Sym(sym::UNBOUND);
     Ok(args[0].clone())

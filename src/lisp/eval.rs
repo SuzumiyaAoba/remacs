@@ -5031,6 +5031,14 @@ command-line arguments.\" \
                 Value::Sym(s) if s == sym::UNBOUND
             )
     }
+    /// GNU permits function definitions on t and keywords, but nil must
+    /// retain a nil function cell. Check before replacing definitions or advice.
+    pub(crate) fn check_function_assignment(&mut self, id: SymId, def: &Value) -> Result<(), Flow> {
+        if id == sym::NIL && !def.is_nil() {
+            return Err(self.signal_data(sym::SETTING_CONSTANT, vec![Value::Nil]));
+        }
+        Ok(())
+    }
     pub fn fset(&mut self, id: SymId, def: Value) {
         // GNU stores `(macro . fn)' as the literal function cell, so
         // `symbol-function' returns that cons — a stable identity that
@@ -7003,6 +7011,7 @@ command-line arguments.\" \
     }
 
     pub fn fset_defalias(&mut self, id: SymId, def: Value) -> Result<(), Flow> {
+        self.check_function_assignment(id, &def)?;
         self.name_compiled_lambda(id, &def);
         if self.advice_bases.iter().any(|(s, _)| *s == id) {
             if let Some(pos) = self.advice_bases.iter().position(|(s, _)| *s == id) {

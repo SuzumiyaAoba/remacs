@@ -223,4 +223,84 @@
   (qa (documentation-property 'qasy-docvar 'variable-documentation) "my doc"))
 (makunbound 'qasy-docvar)
 
+;; Issue #97: nil's function cell cannot hold a non-nil definition.
+;; Restore the cell even on a failing pre-fix implementation.
+(unwind-protect
+    (progn
+      (qa-err-data (fset nil 'car) 'setting-constant '(nil))
+      (qa (symbol-function nil) nil)
+      (qa (fboundp nil) nil))
+  (fset nil nil))
+(unwind-protect
+    (progn
+      (qa-err-data (defalias nil 'car) 'setting-constant '(nil))
+      (qa (symbol-function nil) nil))
+  (fset nil nil))
+(unwind-protect
+    (progn
+      (qa-err-data (autoload nil "qa97-no-such-file") 'setting-constant '(nil))
+      (qa (symbol-function nil) nil))
+  (fset nil nil))
+;; Autoload's defalias path records its attempted definition before fset
+;; fails, but argument-validation failures do not change load history.
+(unwind-protect
+    (qa (let ((current-load-list (list "qa97.el")))
+          (condition-case nil (autoload nil "qa97-no-such-file") (error nil))
+          current-load-list)
+        '((defun) "qa97.el"))
+  (fset nil nil))
+(qa (let ((current-load-list (list "qa97.el")))
+      (condition-case nil (autoload nil 123) (error nil))
+      current-load-list)
+    '("qa97.el"))
+(qa (fset nil nil) nil)
+(qa (defalias nil nil) nil)
+(qa-err-data (fmakunbound nil) 'setting-constant '(nil))
+(qa-err-data (fmakunbound t) 'setting-constant '(t))
+;; Autoload validates arguments before attempting to install its definition.
+(qa-err-data (autoload nil 123) 'wrong-type-argument '(stringp 123))
+(qa-err-data (autoload 123 123) 'wrong-type-argument '(symbolp 123))
+(qa-err-data (fset 123 nil) 'wrong-type-argument '(symbolp 123))
+;; Existing defun validation and the shared defalias path stay protected.
+(unwind-protect
+    (progn
+      (qa-err (defun nil () t) 'error)
+      (qa (symbol-function nil) nil))
+  (fset nil nil))
+(unwind-protect
+    (progn
+      (qa-err-data (defmacro nil () t) 'setting-constant '(nil))
+      (qa (symbol-function nil) nil))
+  (fset nil nil))
+(unwind-protect
+    (qa-err-data (funcall (byte-compile (lambda (s) (fset s 'car))) nil)
+                 'setting-constant '(nil))
+  (fset nil nil))
+;; t and keywords are not protected against fset/defalias/autoload.
+(let ((old (symbol-function t)))
+  (unwind-protect
+      (progn
+        (qa (fset t 123) 123)
+        (qa (symbol-function t) 123)
+        (qa (defalias t 'car) t)
+        (qa (symbol-function t) 'car)
+        (qa (autoload t "qa97-no-such-file") nil)
+        (qa (symbol-function t) 'car)
+        (fset t nil)
+        (qa (autoload t "qa97-no-such-file") t)
+        (qa (autoloadp (symbol-function t)) t))
+    (fset t old)))
+(unwind-protect
+    (progn
+      (qa (fset :qa97-fn 123) 123)
+      (qa (defalias :qa97-fn 'car) :qa97-fn)
+      (qa (fmakunbound :qa97-fn) :qa97-fn)
+      (qa (autoload :qa97-fn "qa97-no-such-file") :qa97-fn))
+  (fmakunbound :qa97-fn))
+;; Checks use symbol identity, not the printed name.
+(dolist (name '("nil" "t" ":qa97"))
+  (let ((s (make-symbol name)))
+    (qa (fset s 'car) 'car)
+    (qa (eq (fmakunbound s) s) t)))
+
 (princ (qa--done))

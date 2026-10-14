@@ -3062,11 +3062,13 @@ fn f_autoload(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     for k in 2..5 {
         cell.push(args.get(k).cloned().unwrap_or(Value::Nil));
     }
-    i.fset(fid, Value::list(cell));
-    // GNU `Fautoload' installs the cell through `defalias' (eval.c),
-    // which LOADHIST_ATTACHes `(defun . SYM)'.
+    let definition = Value::list(cell);
+    // GNU `Fautoload' goes through defalias, recording load history even
+    // if fset then rejects a non-nil definition of nil.
     let defun_id = i.intern("defun");
     loadhist_attach(i, Value::cons(i.sym(defun_id), args[0].clone()));
+    i.check_function_assignment(fid, &definition)?;
+    i.fset(fid, definition);
     Ok(args[0].clone())
 }
 fn f_autoloadp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
