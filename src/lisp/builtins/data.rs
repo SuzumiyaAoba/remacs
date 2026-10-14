@@ -1415,18 +1415,16 @@ fn obarray_push(i: &Interp, ob: &Value, sym: &Value) {
 }
 
 fn obarray_remove(i: &Interp, ob: &Value, sym: &Value) -> bool {
-    let name = match sym {
-        Value::Sym(s) => i.symbol_name(*s),
-        Value::Str(s) => s.borrow().clone(),
-        _ => return false,
-    };
     if let Value::Record(r) = ob {
         if let Some(Value::Vec(v)) = r.borrow().get(1) {
             let mut v = v.borrow_mut();
-            if let Some(pos) = v
-                .iter()
-                .position(|x| matches!(x, Value::Sym(s) if i.symbol_name(*s) == name))
-            {
+            // Strings select by name; symbols (including positioned
+            // symbols) must be the actual member, not a same-name twin.
+            if let Some(pos) = v.iter().position(|candidate| match (sym, candidate) {
+                (Value::Str(name), Value::Sym(id)) => i.symbol_name(*id) == *name.borrow(),
+                (_, Value::Sym(id)) => i.sym_id(sym) == Some(*id),
+                _ => false,
+            }) {
                 v.remove(pos);
                 return true;
             }

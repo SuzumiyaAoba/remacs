@@ -148,6 +148,7 @@ qa!(qa_modes, "qa_modes.el");
 qa!(qa_narrow, "qa_narrow.el");
 qa!(qa_numbers, "qa_numbers.el");
 qa!(qa_obarray, "qa_obarray.el");
+qa!(qa_unintern_identity, "qa_unintern_identity.el");
 qa!(qa_overlay, "qa_overlay.el");
 qa!(qa_overlays, "qa_overlays.el");
 qa!(qa_pcase, "qa_pcase.el");
