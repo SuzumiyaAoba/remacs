@@ -17999,15 +17999,16 @@ const SYNTAX_CLASS_CHARS: [char; 16] = [
 ];
 
 fn f_syntax_class_to_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let class = match &a[0] {
-        Value::Int(n) => *n,
-        other => return Err(i.wrong_type_mut("fixnump", other)),
-    };
+    // GNU checks fixnump, then narrows to C int before the range test.
+    let class = crate::lisp::builtins::want_fixnum(i, &a[0])? as libc::c_int;
     match SYNTAX_CLASS_CHARS.get(class as usize) {
         Some(c) if class >= 0 => Ok(Value::Int(*c as i128)),
         _ => Err(i.signal_data(
             sym::ARGS_OUT_OF_RANGE,
-            vec![a[0].clone(), Value::Int(0), Value::Int(15)],
+            vec![
+                Value::Int(SYNTAX_CLASS_CHARS.len() as i128 - 1),
+                a[0].clone(),
+            ],
         )),
     }
 }

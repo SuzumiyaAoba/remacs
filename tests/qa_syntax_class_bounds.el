@@ -1,0 +1,22 @@
+;;; -*- lexical-binding: nil; -*-
+;; Issue #30: args-out-of-range carries (BOUND ORIGINAL-VALUE).
+(let ((letters " .w_()'\"$\\/<>@!|"))
+  (dotimes (class 16)
+    (qa (syntax-class-to-char class) (aref letters class)))
+  ;; GNU stores a checked fixnum in a C int before testing its bounds.
+  (dolist (offset '(-4294967296 0 4294967296 8589934592))
+    (dotimes (class 16)
+      (qa (syntax-class-to-char (+ offset class)) (aref letters class))))
+  (dolist (class '(-2147483648 -100 -1 16 99 119 2147483647))
+    (dolist (offset '(-4294967296 0 4294967296))
+      (let ((value (+ offset class)))
+        (qa-err-data (syntax-class-to-char value) 'args-out-of-range (list 15 value))))))
+(qa (syntax-class-to-char most-negative-fixnum) 32)
+(qa-err-data (syntax-class-to-char most-positive-fixnum)
+             'args-out-of-range (list 15 most-positive-fixnum))
+(dolist (value (list nil t 1.0 "2" '(2) [2] (make-marker)
+                     (1+ most-positive-fixnum) (1- most-negative-fixnum)
+                     (expt 2 80) (- (expt 2 80))))
+  (qa-err-data (syntax-class-to-char value) 'wrong-type-argument (list 'fixnump value)))
+(qa-err-data (syntax-class-to-char (char-syntax ?a)) 'args-out-of-range '(15 119))
+(princ (qa--done))

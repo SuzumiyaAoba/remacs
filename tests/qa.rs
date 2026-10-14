@@ -186,6 +186,7 @@ qa!(qa_subrx2, "qa_subrx2.el");
 qa!(qa_subrx3, "qa_subrx3.el");
 qa!(qa_symbol, "qa_symbol.el");
 qa!(qa_syntax, "qa_syntax.el");
+qa!(qa_syntax_class_bounds, "qa_syntax_class_bounds.el");
 qa!(qa_syntax2, "qa_syntax2.el");
 qa!(qa_syntaxtable, "qa_syntaxtable.el");
 qa!(qa_system, "qa_system.el");
