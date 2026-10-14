@@ -12051,11 +12051,30 @@ fn f_write_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     } else {
         let b = cur(i);
         let bb = b.borrow();
-        let len = bb.text.len();
-        let (s, e) = region_bounds(i, &a[0], &a[1], len)?;
-        bb.text.substring(s.min(e), s.max(e))
+        // Nil START writes the entire buffer and ignores END.
+        // Otherwise GNU validate_region accepts either endpoint order,
+        // but requires both positions to lie inside the restriction.
+        let (start, end) = if a[0].is_nil() {
+            (0, bb.text.len())
+        } else {
+            let start = want_int(i, &a[0])?;
+            let end = want_int(i, &a[1])?;
+            let (start, end) = (start.min(end), start.max(end));
+            if start < bb.begv as i128 + 1 || end > bb.zv as i128 + 1 {
+                return Err(i.signal_data(sym::ARGS_OUT_OF_RANGE,
+                    vec![Value::Buffer(b.clone()), a[0].clone(), a[1].clone()]));
+            }
+            (start as usize - 1, end as usize - 1)
+        };
+        bb.text.substring(start, end)
     };
     let path = want_filename(i, &a[2])?;
+    // Reject an invalid lock name before opening or truncating the file.
+    if let Some(lockname) = a.get(5) {
+        if !matches!(lockname, Value::Nil | Value::Str(_)) {
+            return Err(i.wrong_type_mut("stringp", lockname));
+        }
+    }
     write_file_string(i, &path, &text, &a)
 }
 
