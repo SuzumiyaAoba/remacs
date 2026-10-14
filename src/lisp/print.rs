@@ -299,7 +299,7 @@ impl Interp {
         }
         let puf = self.intern("print-unreadable-function");
         let f = self.symbol_value(puf);
-        if f.is_nil() {
+        if !super::builtins::data::functionp_val(self, &f) {
             return Ok(s);
         }
         // Splice right-to-left so recorded offsets stay valid.
@@ -327,7 +327,7 @@ impl Interp {
         }
         let puf = self.intern("print-unreadable-function");
         let f = self.symbol_value(puf);
-        if f.is_nil() {
+        if !super::builtins::data::functionp_val(self, &f) {
             return Ok(s);
         }
         for (lo, hi, obj) in hits.into_iter().rev() {
@@ -937,7 +937,7 @@ impl Interp {
             // Lambdas/subrs would re-hit the being-printed check in
             // `prin1_inner' (the outer `princ_inner' already pushed
             // this object) and emit `#N' — call the raw printer.
-            _ => self.prin1_inner_obj(v, out, depth, bq),
+            _ => self.prin1_inner_obj_raw(v, out, depth, bq),
         }
     }
 

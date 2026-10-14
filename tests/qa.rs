@@ -246,3 +246,5 @@ qa!(qa_file_replace, "qa_file_replace.el");
 qa!(qa_split_window_limits, "qa_split_window_limits.el");
 
 qa!(qa_buffer_string_flags, "qa_buffer_string_flags.el");
+
+qa!(qa_unreadable_callable, "qa_unreadable_callable.el");
