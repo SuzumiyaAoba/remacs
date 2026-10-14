@@ -1720,23 +1720,16 @@ fn f_gensym(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU: the numeric suffix comes from the `gensym-counter' variable,
     // which is incremented by each call (and may be set by the user).
     let counter_sym = i.intern("gensym-counter");
-    let mut n = match i.symbol_value(counter_sym) {
+    let n = match i.symbol_value(counter_sym) {
         Value::Int(n) => n,
         _ => 0,
     };
-    // GNU reads dumped libraries as .elc, so lexical `let' variables
-    // like composite.el's `g0' never enter the obarray; remacs reads
-    // source, so `g0'–`g3' ARE interned and a fresh `g0' symbol would
-    // be findable by `intern-soft'.  Skip interned names so the result
-    // is unfindable like GNU's.
-    loop {
-        let name = format!("{}{}", prefix, n);
-        n += 1;
-        if i.intern_soft(&name).is_none() {
-            i.obarray.symbol_mut(counter_sym).value = Value::Int(n);
-            return Ok(Value::Sym(i.obarray.make_symbol(&name)));
-        }
-    }
+    // GNU constructs an uninterned symbol even when its name is already
+    // interned.  Skipping existing names incorrectly advances the counter
+    // (including g0-g3 interned while loading our source libraries).
+    let name = format!("{}{}", prefix, n);
+    i.obarray.symbol_mut(counter_sym).value = Value::Int(n + 1);
+    Ok(Value::Sym(i.obarray.make_symbol(&name)))
 }
 
 /// A Lambda's `Arity': parsed arg fields for source closures, the
