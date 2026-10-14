@@ -11169,12 +11169,9 @@ fn f_file_name_completion(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if matches.is_empty() {
         return Ok(Value::Nil);
     }
-    let lcp = longest_common_prefix(&matches);
-    if lcp == file {
-        Ok(Value::t())
-    } else {
-        Ok(Value::string(lcp))
-    }
+    // Only the sole exact match above returns t.  An ambiguous
+    // completion is a string even when it cannot extend FILE.
+    Ok(Value::string(longest_common_prefix(&matches)))
 }
 
 fn longest_common_prefix(xs: &[String]) -> String {
