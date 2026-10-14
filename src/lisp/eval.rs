@@ -7047,10 +7047,9 @@ command-line arguments.\" \
     /// Dispatch for `#[ARGDESC BYTE-CODE CONSTANTS DEPTH FILE]' literals
     /// read from the dumped uni-*.el char-table extra slots.  GNU runs
     /// the embedded byte-code (unidata-gen.el's `unidata-get-*'/
-    /// `unidata-put-*'/describe helpers); we route each of the three
-    /// emitted shapes to the native equivalents in builtins::charset.
-    /// Returns None for any unrecognized shape so ordinary arity
-    /// checking reports the usual error.
+    /// `unidata-put-*'/describe helpers); we handle the get/put and
+    /// alist-description shapes here.  Other functions run through the
+    /// ordinary byte-code interpreter.
     fn unidata_bc_dispatch(&mut self, l: &Rc<Lambda>, argv: &[Value]) -> Option<EvalResult> {
         // Only bare `#[...]' literals read from the dumped uni-*.el data
         // route here.  `make-closure' products splice their captured env
@@ -7138,25 +7137,10 @@ command-line arguments.\" \
             if consts.is_empty() {
                 return None;
             }
-            let mconcat = self.intern("mapconcat");
-            if matches!(&consts[0], Value::Sym(s) if *s == mconcat) {
-                // `unidata-describe-decomposition': (mapconcat INNER
-                // VAL " ") where INNER renders symbols by name and
-                // characters as 'C' (compose-string display aside).
-                let parts: Vec<String> = argv[0]
-                    .list_to_vec()
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|x| match x {
-                        Value::Sym(s) => self.symbol_name(*s),
-                        Value::Int(n) => char::from_u32((*n).max(0) as u32)
-                            .map(|c| format!("'{}'", c))
-                            .unwrap_or_default(),
-                        _ => self.prin1_to_string(x),
-                    })
-                    .collect();
-                return Some(Ok(Value::string(parts.join(" "))));
-            }
+            // Decomposition's mapconcat bytecode must run normally:
+            // it validates sequences/elements and preserves composition
+            // properties.  A matching first constant is not enough to
+            // identify an arbitrary bytecode function as unidata either.
             // `unidata-describe-*' alist lookups: (cdr (assq VAL ALIST)).
             let alist = consts.first()?;
             if matches!(alist, Value::Cons(_) | Value::Vec(_)) {
