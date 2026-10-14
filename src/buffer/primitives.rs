@@ -2873,12 +2873,8 @@ pub(crate) fn kill_buffer_keep_current(i: &mut Interp, id: usize) -> Result<bool
 }
 
 fn f_kill_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let id = match a.get(0) {
-        None | Some(Value::Nil) => i.current_buffer,
-        Some(v) => i
-            .buffer_id_of(v)
-            .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&v))))?,
-    };
+    let buffer = buf_or_name(i, &arg(&a, 0))?;
+    let id = buffer.borrow().id;
     Ok(Value::from_bool(kill_buffer_impl(i, id)?))
 }
 
@@ -2973,17 +2969,13 @@ fn f_set_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_rename_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let name = match a.get(0) {
-        Some(Value::Str(s)) => s.borrow().clone(),
-        Some(v) if v.is_nil() => {
-            // rename to file name or keep
-            let b = cur(i);
-            let bb = b.borrow();
-            bb.name.clone()
-        }
-        Some(other) => return Err(i.wrong_type_mut("stringp", other)),
-        None => cur(i).borrow().name.clone(),
+    let name = match &a[0] {
+        Value::Str(s) => s.borrow().clone(),
+        other => return Err(i.wrong_type_mut("stringp", other)),
     };
+    if name.is_empty() {
+        return Err(i.error("Empty string is invalid as a buffer name"));
+    }
     let unique = a.get(1).map(|v| v.truthy()).unwrap_or(false);
     let actual = if unique {
         i.buffers.rename(i.current_buffer, &name)

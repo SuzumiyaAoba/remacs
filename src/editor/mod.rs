@@ -2557,9 +2557,17 @@ fn f_window_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 pub(crate) fn f_set_window_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live(i, &arg(&a, 0))?;
-    let bid = i
-        .buffer_id_of(&a[1])
-        .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&a[1]))))?;
+    // GNU resolves BUFFER-OR-NAME with Fget_buffer, then CHECK_BUFFER.
+    let bid = match &a[1] {
+        Value::Buffer(b) => b.borrow().id,
+        Value::Str(s) => {
+            let name = s.borrow().clone();
+            i.buffers
+                .by_name(&name)
+                .ok_or_else(|| i.wrong_type_mut("bufferp", &Value::Nil))?
+        }
+        other => return Err(i.wrong_type_mut("stringp", other)),
+    };
     // GNU Fset_window_buffer on a dead buffer signals "Attempt to
     // display deleted buffer" — without this the dead id lands in the
     // window's buffer slot and every subsequent window-buffer read lies.
