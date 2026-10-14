@@ -141,6 +141,7 @@ qa!(qa_match, "qa_match.el");
 qa!(qa_math, "qa_math.el");
 qa!(qa_minibuf, "qa_minibuf.el");
 qa!(qa_minibuffer, "qa_minibuffer.el");
+qa!(qa_set_minibuffer_window, "qa_set_minibuffer_window.el");
 qa!(qa_misc2, "qa_misc2.el");
 qa!(qa_misc3, "qa_misc3.el");
 qa!(qa_miscfn, "qa_miscfn.el");

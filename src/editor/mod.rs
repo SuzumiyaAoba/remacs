@@ -3485,9 +3485,11 @@ fn f_query_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_set_minibuffer_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU: WINDOW must be a window; ours is fixed.
+    // The minibuffer window is fixed in our frame model.  Validate
+    // its kind and return WINDOW itself, as GNU does.
     match &a[0] {
-        Value::Window(_) => Ok(Value::Nil),
+        Value::Window(window) if window.borrow().minibuffer => Ok(a[0].clone()),
+        Value::Window(_) => Err(i.error("Window is not a minibuffer window")),
         other => Err(i.wrong_type_mut("windowp", other)),
     }
 }
