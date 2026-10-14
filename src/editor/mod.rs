@@ -10194,7 +10194,13 @@ fn f_file_attributes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU expands FILENAME (tilde, `$HOME', relative paths resolve
     // against default-directory) before the lstat.
     let p = expand_file_name_str(i, &p);
-    match std::fs::symlink_metadata(&p) {
+    file_attributes_at(i, &p, &arg(&a, 1))
+}
+
+/// Read an already-resolved path without collapsing directory entries
+/// such as `alias/.' or `alias/sub/..' across a symbolic link.
+fn file_attributes_at(i: &mut Interp, p: &str, id_format: &Value) -> EvalResult {
+    match std::fs::symlink_metadata(p) {
         Ok(m) => {
             // GNU order: type nlinks uid gid atime mtime ctime size
             // modes gidchg inode device.
@@ -10211,10 +10217,10 @@ fn f_file_attributes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             // nil or `integer', else the looked-up name (numeric fallback
             // when the lookup fails).  Element 9 (GIDCHG) is always t in
             // this code path.
-            let str_ids = match a.get(1) {
-                None | Some(Value::Nil) => false,
-                Some(Value::Sym(s)) => i.symbol_name(*s) != "integer",
-                Some(_) => true,
+            let str_ids = match id_format {
+                Value::Nil => false,
+                Value::Sym(s) => i.symbol_name(*s) != "integer",
+                _ => true,
             };
             #[cfg(unix)]
             use std::os::unix::fs::MetadataExt;
@@ -10265,7 +10271,7 @@ fn f_file_attributes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 Value::t()
             } else if m.file_type().is_symlink() {
                 Value::string(
-                    std::fs::read_link(&p)
+                    std::fs::read_link(p)
                         .map(|t| t.to_string_lossy().into_owned())
                         .unwrap_or_default(),
                 )
@@ -10294,11 +10300,23 @@ fn f_file_attributes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 fn f_file_modes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let p = want_filename(i, &a[0])?;
+    // GNU expand_and_dir_to_file strips trailing slashes before stat,
+    // including when FLAG asks for the symlink's own mode.
+    let p = if p.chars().all(|c| c == '/') {
+        p.as_str()
+    } else {
+        p.trim_end_matches('/')
+    };
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        // GNU file-modes goes through file_attributes → lstat.
-        if let Ok(m) = std::fs::symlink_metadata(&p) {
+        // GNU treats every non-nil FLAG as `nofollow'.
+        let metadata = if arg(&a, 1).truthy() {
+            std::fs::symlink_metadata(p)
+        } else {
+            std::fs::metadata(p)
+        };
+        if let Ok(m) = metadata {
             return Ok(Value::Int((m.permissions().mode() & 0o7777) as i128));
         }
     }
@@ -11045,7 +11063,10 @@ fn f_directory_files_and_attributes(i: &mut Interp, a: crate::lisp::Argv) -> Eva
                 } else {
                     format!("{}/{}", dir, name)
                 };
-                f_file_attributes(i, vec![Value::string(path), arg(&a, 4)].into())?
+                // The directory has already been expanded.  Keep its
+                // entry suffix for the filesystem to resolve, like
+                // GNU's directory-relative attribute lookup.
+                file_attributes_at(i, &path, &arg(&a, 4))?
             }
             _ => Value::Nil,
         };
