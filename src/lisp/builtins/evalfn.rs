@@ -1794,7 +1794,7 @@ fn macroexpand_all_inner(i: &mut Interp, form: &Value) -> EvalResult {
     }
 }
 
-fn f_signal(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_signal(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU Fsignal: with DATA nil, a cons ERROR-SYMBOL unpacks to
     // (car as the symbol, cdr as the data) — `(signal err)' inside a
     // condition-case handler passes the caught (SYM . DATA) list this

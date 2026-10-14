@@ -421,7 +421,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         1,
         1,
         f_thread_live_p,
-        "t if THREAD is alive (not yet joined)."
+        "t if THREAD is alive (not yet exited)."
     ),
     S!(
         "make-thread",
@@ -7826,7 +7826,7 @@ fn f_thread_live_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_make_thread(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // (make-thread FUNCTION &optional NAME) — cooperative model: run
-    // the function now; the thread stays a zombie (live) until joined.
+    // the function now; completion ends its lifetime before returning.
     let fun = a[0].clone();
     let name = match a.get(1) {
         Some(Value::Str(s)) => Some(s.borrow().clone()),
@@ -7838,6 +7838,7 @@ fn f_make_thread(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         alive: true,
         result: None,
         last_error: None,
+        pending_signal: None,
         finished: false,
     }));
     i.threads.push(t.clone());
@@ -7849,6 +7850,7 @@ fn f_make_thread(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     {
         let mut tb = t.borrow_mut();
         tb.finished = true;
+        tb.alive = false;
         match r {
             Ok(v) => tb.result = Some(v),
             Err(Flow::Signal(s, d, _)) => {
@@ -7866,16 +7868,29 @@ fn f_make_thread(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_thread_join(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU: reaps the thread; returns the function result, or nil when
-    // it died with an error.
+    // Completed cooperative threads already hold their result.
     let t = want_thread(i, &a[0])?;
-    let mut tb = t.borrow_mut();
-    tb.alive = false;
-    Ok(tb.result.clone().unwrap_or(Value::Nil))
+    if std::rc::Rc::ptr_eq(&t, &i.threads[i.current_thread]) {
+        return Err(i.error("Cannot join current thread"));
+    }
+    let (pending, result) = {
+        let thread = t.borrow();
+        (thread.pending_signal.clone(), thread.result.clone())
+    };
+    if let Some((symbol, data)) = pending {
+        if !symbol.is_nil() {
+            return super::evalfn::f_signal(i, vec![symbol, data].into());
+        }
+    }
+    Ok(result.unwrap_or(Value::Nil))
 }
 
-fn f_thread_last_error(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    Ok(i.thread_last_error.clone())
+fn f_thread_last_error(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let error = i.thread_last_error.clone();
+    if arg(&a, 0).truthy() {
+        i.thread_last_error = Value::Nil;
+    }
+    Ok(error)
 }
 
 // ---------- mutexes and condition variables (cooperative model) ----------
@@ -12484,10 +12499,18 @@ fn f_window_preserve_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::list(vec![buf, Value::Nil, Value::Nil]))
 }
 
-/// `thread-signal' — threadp-check THREAD; nothing to deliver in our
-/// single-threaded evaluator.
+/// GNU delivers a signal to the current thread synchronously, with
+/// exactly the same validation and unwind behavior as `signal'.
 fn f_thread_signal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = want_thread(i, &a[0])?;
+    let thread = want_thread(i, &a[0])?;
+    if std::rc::Rc::ptr_eq(&thread, &i.threads[i.current_thread]) {
+        return super::evalfn::f_signal(i, a[1..].to_vec().into());
+    }
+    // No scheduling is needed to retain a signal for a completed target.
+    // GNU defers validation until join and keeps the signal for repeat joins.
+    if thread.borrow().finished {
+        thread.borrow_mut().pending_signal = Some((a[1].clone(), a[2].clone()));
+    }
     Ok(Value::Nil)
 }
 

@@ -1002,6 +1002,7 @@ impl Interp {
                     alive: true,
                     result: None,
                     last_error: None,
+                    pending_signal: None,
                     finished: false,
                 },
             ))],
