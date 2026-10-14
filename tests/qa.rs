@@ -158,6 +158,7 @@ qa!(qa_plists, "qa_plists.el");
 qa!(qa_point, "qa_point.el");
 qa!(qa_pp, "qa_pp.el");
 qa!(qa_printvars, "qa_printvars.el");
+qa!(qa_symbol_print_escape, "qa_symbol_print_escape.el");
 qa!(qa_process, "qa_process.el");
 qa!(qa_radix, "qa_radix.el");
 qa!(qa_read, "qa_read.el");

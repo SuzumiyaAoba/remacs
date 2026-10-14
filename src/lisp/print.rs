@@ -36,7 +36,6 @@ fn sym_char_needs_escape(c: char) -> bool {
         '(' | ')' | '[' | ']' | '\'' | '"' | '`' | ',' | ';' | '#' | '\\'
     ) || c.is_whitespace()
         || (c as u32) < 0x20
-        || c == '\u{7f}'
 }
 
 /// Print a symbol name, backslash-escaping special chars (`a\ b`, `\,`).
@@ -494,11 +493,12 @@ impl Interp {
                     out.push_str("#:");
                 }
                 let name = self.symbol_name(*id);
-                // Emacs escapes a symbol whose name would read back
-                // as a number (`\52') or one made solely of dots
-                // (`\.', `\..').
+                // GNU escapes number-like names, leading question marks,
+                // and a leading dot unless followed by an ASCII letter.
                 if super::reader::parse_number(&name).is_some()
-                    || (!name.is_empty() && name.chars().all(|c| c == '.'))
+                    || name.starts_with('?')
+                    || (name.starts_with('.')
+                        && !name.as_bytes().get(1).is_some_and(u8::is_ascii_alphabetic))
                 {
                     out.push('\\');
                 }
