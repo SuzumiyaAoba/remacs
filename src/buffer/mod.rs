@@ -1078,7 +1078,12 @@ impl BufferSet {
             // Emacs unchains markers on kill: they point nowhere.
             for w in &bb.markers {
                 if let Some(m) = w.upgrade() {
-                    m.borrow_mut().buffer = None;
+                    // Registration chains can retain a weak entry after a
+                    // marker has moved to another buffer.
+                    let mut marker = m.borrow_mut();
+                    if marker.buffer == Some(id) {
+                        marker.buffer = None;
+                    }
                 }
             }
             bb.markers.clear();

@@ -337,45 +337,19 @@ fn event_string(status: &str, code: i32) -> String {
     }
 }
 
-/// Run the sentinel for a status change, if any. With no sentinel GNU's
-/// `internal-default-process-sentinel` echoes "Process NAME EVENT" to the
-/// message stream (stderr in batch).
+/// Deliver a status change through the installed sentinel.
 fn run_sentinel(i: &mut Interp, pref: &ProcessRef, status: &str, code: i32) -> Result<(), Flow> {
-    let (sentinel, name) = {
-        let pb = pref.borrow();
-        (pb.sentinel.clone(), pb.name.clone())
-    };
-    let event = event_string(status, code);
-    if sentinel.truthy() {
-        i.apply(
-            &sentinel,
-            vec![Value::Process(pref.clone()), Value::string(event)],
-        )?;
-    } else if ![
-        // GNU's internal-default-process-sentinel skips routine
-        // status transitions; only abnormal/final events get a
-        // "Process NAME EVENT" message.
-        "open",
-        "run",
-        "listen",
-        "connect",
-        "closed",
-        "deleted",
-        "signal",
-        "hangup",
-        "killed",
-        "terminated",
-        "accept",
-        "failed",
-        "stop",
-        "continued",
-        "interrupt",
-    ]
-    .iter()
-    .any(|p| event.starts_with(p))
-    {
-        eprintln!("Process {name} {event}");
+    let mut sentinel = pref.borrow().sentinel.clone();
+    if sentinel.is_nil() {
+        sentinel = symv(i, "internal-default-process-sentinel");
     }
+    i.apply(
+        &sentinel,
+        vec![
+            Value::Process(pref.clone()),
+            Value::string(event_string(status, code)),
+        ],
+    )?;
     Ok(())
 }
 
@@ -608,7 +582,7 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     status: "open",
                     exit_status: 0,
                     buffer,
-                    mark: None,
+                    mark: Some(free_process_marker()),
                     filter,
                     sentinel,
                     plist,
@@ -662,7 +636,7 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     status: "open",
                     exit_status: 0,
                     buffer,
-                    mark: None,
+                    mark: Some(free_process_marker()),
                     filter,
                     sentinel,
                     plist,
@@ -708,6 +682,33 @@ pub(crate) fn poll_all(i: &mut Interp) -> Result<bool, Flow> {
 
 // ---------- constructors ----------
 
+fn free_process_marker() -> MarkerRef {
+    Rc::new(RefCell::new(Marker {
+        buffer: None,
+        position: 0,
+        insertion_type: false,
+    }))
+}
+
+/// Associate a process mark only when its new non-nil buffer differs.
+/// Detaching the process buffer does not detach or replace the marker.
+fn update_process_marker(i: &Interp, p: &mut Proc) {
+    let mark = p.mark.get_or_insert_with(free_process_marker).clone();
+    let Some(bid) = p.buffer else { return };
+    if mark.borrow().buffer == Some(bid) {
+        return;
+    }
+    let buffer = i.buffers.get(bid).filter(|b| b.borrow().live);
+    {
+        let mut m = mark.borrow_mut();
+        m.buffer = buffer.as_ref().map(|_| bid);
+        m.position = buffer.as_ref().map(|b| b.borrow().text_len()).unwrap_or(0);
+    }
+    if let Some(buffer) = buffer {
+        buffer.borrow_mut().register_marker(&mark);
+    }
+}
+
 fn base_proc(name: String, kind: &'static str, io: ProcIo) -> Proc {
     Proc {
         name,
@@ -718,7 +719,7 @@ fn base_proc(name: String, kind: &'static str, io: ProcIo) -> Proc {
         status: "run",
         exit_status: 0,
         buffer: None,
-        mark: None,
+        mark: Some(free_process_marker()),
         filter: Value::Nil,
         sentinel: Value::Nil,
         plist: Value::Nil,
@@ -760,20 +761,13 @@ fn finish_setup(
             },
         };
         p.buffer = Some(bid);
-        // Process mark sits at end of buffer.
-        let end = i
-            .buffers
-            .get(bid)
-            .map(|r| r.borrow().text_len())
-            .unwrap_or(0);
-        p.mark = Some(Rc::new(RefCell::new(Marker {
-            buffer: Some(bid),
-            position: end,
-            insertion_type: true,
-        })));
     }
+    update_process_marker(i, &mut p);
     p.filter = kw(i, args, ":filter");
     p.sentinel = kw(i, args, ":sentinel");
+    if p.sentinel.is_nil() {
+        p.sentinel = symv(i, "internal-default-process-sentinel");
+    }
     // GNU ignores :plist on `make-process' (child procs) but applies it
     // for pipe, network, and serial processes.
     if !want_command {
@@ -1557,32 +1551,17 @@ fn f_process_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_set_process_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let p = want_proc(i, &a[0])?;
-    let bid = if a[1].is_nil() {
-        None
-    } else {
-        Some(
-            i.buffer_id_of(&a[1])
-                .ok_or_else(|| i.error("No such buffer"))?,
-        )
+    let bid = match &a[1] {
+        Value::Nil => None,
+        Value::Buffer(b) => Some(b.borrow().id),
+        other => return Err(i.wrong_type_mut("bufferp", other)),
     };
     let mut pb = p.borrow_mut();
-    pb.buffer = bid;
-    let end = bid
-        .and_then(|b| i.buffers.get(b))
-        .map(|r| r.borrow().text_len());
-    if let (Some(b), Some(e)) = (bid, end) {
-        match &pb.mark {
-            Some(m) => m.borrow_mut().position = e,
-            None => {
-                pb.mark = Some(Rc::new(RefCell::new(Marker {
-                    buffer: Some(b),
-                    position: e,
-                    insertion_type: true,
-                })))
-            }
-        }
+    if pb.buffer != bid {
+        pb.buffer = bid;
+        update_process_marker(i, &mut pb);
     }
-    Ok(Value::Nil)
+    Ok(a[1].clone())
 }
 
 fn f_process_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -1625,34 +1604,12 @@ fn f_process_exit_status(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_process_mark(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let p = want_proc(i, &a[0])?;
-    // GNU lazily creates the mark in the current buffer when the
-    // process has none, and adopts that buffer as the process buffer.
-    let bid = {
-        let pb = p.borrow();
-        match pb.buffer {
-            Some(b) => Some(b),
-            None => {
-                drop(pb);
-                let bid = i.current_buffer;
-                p.borrow_mut().buffer = Some(bid);
-                Some(bid)
-            }
-        }
-    };
-    let mut pb = p.borrow_mut();
-    if let Some(m) = &pb.mark {
-        return Ok(Value::Marker(m.clone()));
-    }
-    if let Some(bid) = bid {
-        let m = Rc::new(RefCell::new(Marker {
-            buffer: Some(bid),
-            position: 0,
-            insertion_type: true,
-        }));
-        pb.mark = Some(m.clone());
-        return Ok(Value::Marker(m));
-    }
-    Ok(Value::Nil)
+    let mark = p
+        .borrow_mut()
+        .mark
+        .get_or_insert_with(free_process_marker)
+        .clone();
+    Ok(Value::Marker(mark))
 }
 
 fn f_process_contact(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -1757,8 +1714,13 @@ fn f_process_sentinel(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_set_process_sentinel(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let p = want_proc(i, &a[0])?;
-    p.borrow_mut().sentinel = a[1].clone();
-    Ok(a[1].clone())
+    let sentinel = if a[1].is_nil() {
+        symv(i, "internal-default-process-sentinel")
+    } else {
+        a[1].clone()
+    };
+    p.borrow_mut().sentinel = sentinel.clone();
+    Ok(sentinel)
 }
 
 fn f_process_tty_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -3265,11 +3227,66 @@ pub(crate) static SUBRS: &[Subr] = &[
 ];
 
 fn f_internal_default_process_sentinel(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU validates PROCESS is a process object before no-oping.
-    match &a[0] {
-        Value::Process(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("processp", other)),
+    let p = want_proc(i, &a[0])?;
+    let (bid, mark, name, status) = {
+        let pb = p.borrow();
+        (pb.buffer, pb.mark.clone(), pb.name.clone(), pb.status)
+    };
+    // GNU's internal run status covers live pipe/network "open" too.
+    if matches!(status, "run" | "open") {
+        return Ok(Value::Nil);
     }
+    let Some(bid) = bid else {
+        return Ok(Value::Nil);
+    };
+    let Some(buffer) = i.buffers.get(bid).filter(|b| b.borrow().live) else {
+        return Ok(Value::Nil);
+    };
+    crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
+        let old_point = buffer.borrow().point();
+        let at = mark
+            .as_ref()
+            .filter(|m| m.borrow().buffer.is_some())
+            .map(|m| m.borrow().position)
+            .unwrap_or_else(|| buffer.borrow().text_len());
+        buffer.borrow_mut().set_point(at);
+        let before = buffer.borrow().point();
+        let read_only = i.intern("buffer-read-only");
+        // GNU changes the buffer slot directly, without variable watchers.
+        let saved_read_only = buffer.borrow_mut().locals.insert(read_only, Value::Nil);
+        let insert = symv(i, "insert");
+        let result = i.apply(
+            &insert,
+            vec![Value::string(format!("\nProcess {name} ")), a[1].clone()],
+        );
+        let after = buffer.borrow().point();
+        match saved_read_only {
+            Some(value) => {
+                buffer.borrow_mut().locals.insert(read_only, value);
+            }
+            None => {
+                buffer.borrow_mut().locals.shift_remove(&read_only);
+            }
+        }
+        if buffer.borrow().live {
+            if result.is_ok() {
+                if let Some(mark) = &mark {
+                    {
+                        let mut m = mark.borrow_mut();
+                        m.buffer = Some(bid);
+                        m.position = after;
+                    }
+                    buffer.borrow_mut().register_marker(mark);
+                }
+            }
+            buffer.borrow_mut().set_point(if old_point >= before {
+                old_point + after.saturating_sub(before)
+            } else {
+                old_point
+            });
+        }
+        result.map(|_| Value::Nil)
+    })
 }
 
 /// GNU `make-network-process' advertises its capabilities through the

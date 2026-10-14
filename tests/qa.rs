@@ -61,6 +61,7 @@ qa!(qa_backup, "qa_backup.el");
 qa!(qa_buffer, "qa_buffer.el");
 qa!(qa_before_markers, "qa_before_markers.el");
 qa!(qa_float_output, "qa_float_output.el");
+qa!(qa_process_defaults, "qa_process_defaults.el");
 qa!(qa_fresh_buffer_locals, "qa_fresh_buffer_locals.el");
 qa!(qa_buffer_local_value_type, "qa_buffer_local_value_type.el");
 qa!(qa_buffer2, "qa_buffer2.el");
