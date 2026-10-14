@@ -5342,33 +5342,224 @@ fn scan_lists_gnu(
     Ok(Some(from))
 }
 
-/// Parse a skip-chars spec like " \t\n" or "^a-z" into a predicate set.
-fn char_set_pred(spec: &str) -> (Vec<(char, char)>, Vec<char>, bool) {
-    let mut ranges = Vec::new();
-    let mut singles = Vec::new();
-    let mut neg = false;
-    let chars: Vec<char> = spec.chars().collect();
-    let mut k = 0;
-    if chars.get(0) == Some(&'^') {
-        neg = true;
-        k = 1;
-    }
-    while k < chars.len() {
-        let c = chars[k];
-        if k + 2 < chars.len() && chars[k + 1] == '-' {
-            ranges.push((c, chars[k + 2]));
-            k += 3;
-        } else {
-            singles.push(c);
-            k += 1;
-        }
-    }
-    (ranges, singles, neg)
+/// GNU skip sets have their own grammar: classes need no outer brackets,
+/// backslashes quote one character, and ranges may have quoted endpoints.
+struct SkipChars {
+    ranges: Vec<(i128, i128)>,
+    singles: Vec<i128>,
+    classes: Vec<String>,
+    negate: bool,
 }
 
-fn char_set_contains(ranges: &[(char, char)], singles: &[char], neg: bool, c: char) -> bool {
-    let in_ = singles.contains(&c) || ranges.iter().any(|(lo, hi)| c >= *lo && c <= *hi);
-    in_ != neg
+impl SkipChars {
+    fn parse(spec: &str) -> Result<Self, &'static str> {
+        let chars: Vec<char> = spec.chars().collect();
+        let mut set = Self {
+            ranges: Vec::new(),
+            singles: Vec::new(),
+            classes: Vec::new(),
+            negate: chars.first() == Some(&'^'),
+        };
+        let mut k = usize::from(set.negate);
+        while k < chars.len() {
+            if chars[k..].starts_with(&['[', ':']) {
+                if let Some(end) = chars[k + 2..].windows(2).position(|w| w == [':', ']']) {
+                    let name: String = chars[k + 2..k + 2 + end].iter().collect();
+                    if !matches!(
+                        name.as_str(),
+                        "alnum"
+                            | "alpha"
+                            | "blank"
+                            | "cntrl"
+                            | "digit"
+                            | "graph"
+                            | "lower"
+                            | "print"
+                            | "punct"
+                            | "space"
+                            | "upper"
+                            | "xdigit"
+                            | "ascii"
+                            | "nonascii"
+                            | "unibyte"
+                            | "multibyte"
+                            | "word"
+                    ) {
+                        return Err("Invalid ISO C character class");
+                    }
+                    if !set.classes.contains(&name) {
+                        set.classes.push(name);
+                    }
+                    k += end + 4;
+                    continue;
+                }
+            }
+            let mut c = chars[k];
+            k += 1;
+            if c == '\\' {
+                if k == chars.len() {
+                    break;
+                }
+                c = chars[k];
+                k += 1;
+            }
+            if k + 1 < chars.len() && chars[k] == '-' {
+                k += 1;
+                let mut end = chars[k];
+                k += 1;
+                if end == '\\' && k < chars.len() {
+                    end = chars[k];
+                    k += 1;
+                }
+                set.ranges.push((
+                    crate::lisp::value::lisp_char_code(c),
+                    crate::lisp::value::lisp_char_code(end),
+                ));
+            } else {
+                set.singles.push(crate::lisp::value::lisp_char_code(c));
+            }
+        }
+        Ok(set)
+    }
+
+    fn contains(&self, i: &Interp, context: &SkipClassContext, c: char) -> bool {
+        let cp = crate::lisp::value::lisp_char_code(c);
+        let member = self.singles.contains(&cp)
+            || self.ranges.iter().any(|&(lo, hi)| lo <= cp && cp <= hi)
+            || self.classes.iter().any(|name| context.matches(i, name, c));
+        member != self.negate
+    }
+}
+
+/// Snapshot buffer tables before borrowing the buffer.  Like GNU skip_chars,
+/// class matching ignores syntax-table text properties and case-fold-search.
+struct SkipClassContext {
+    syntax: Option<crate::editor::SynTable>,
+    downcase: Value,
+    upcase: Value,
+    category: Value,
+}
+
+impl SkipClassContext {
+    fn new(i: &mut Interp, set: &SkipChars) -> Self {
+        let syntax = crate::editor::syntax_table_entries(i);
+        let downcase = if set.classes.iter().any(|n| n == "upper" || n == "lower") {
+            i.current_case_table()
+        } else {
+            Value::Nil
+        };
+        let upcase = crate::lisp::builtins::strfn::case_extra(&downcase, 0).unwrap_or(Value::Nil);
+        let category = if set
+            .classes
+            .iter()
+            .any(|n| matches!(n.as_str(), "alpha" | "alnum" | "blank" | "graph" | "print"))
+        {
+            let current = i
+                .intern_soft("unicode-category-table")
+                .map(|s| i.symbol_value(s))
+                .unwrap_or(Value::Nil);
+            if current.is_nil() {
+                crate::lisp::builtins::charset::unicode_prop_table(i, "general-category")
+            } else {
+                current
+            }
+        } else {
+            Value::Nil
+        };
+        Self {
+            syntax,
+            downcase,
+            upcase,
+            category,
+        }
+    }
+
+    fn matches(&self, i: &Interp, name: &str, c: char) -> bool {
+        use crate::lisp::builtins::misc;
+        let cp = crate::lisp::value::lisp_char_code(c) as usize;
+        let syntax = || {
+            if let Some(table) = &self.syntax {
+                if let Value::Cons(entry) = table.get(cp as u32) {
+                    if let Value::Int(code) = entry.borrow().car {
+                        // Only word and whitespace affect POSIX classes.
+                        return match code & 0xf {
+                            0 => b' ',
+                            2 => b'w',
+                            _ => b'.',
+                        };
+                    }
+                }
+            }
+            crate::lisp::regexp::syntax_code(c)
+        };
+        let changed = |table: &Value| {
+            matches!(misc::char_table_ref(i, table, cp),
+            Value::Int(n) if (0..=crate::lisp::value::FIXNUM_MAX).contains(&n) && n != cp as i128)
+        };
+        // GNU character.c reads raw enum IDs, not the property's Lisp
+        // decoder.  This also preserves behavior for customized tables.
+        let category = || match misc::char_table_ref(i, &self.category, cp) {
+            Value::Int(n)
+                if (crate::lisp::value::FIXNUM_MIN..=crate::lisp::value::FIXNUM_MAX)
+                    .contains(&n) =>
+            {
+                Some(n)
+            }
+            _ => None,
+        };
+        match name {
+            "ascii" => c.is_ascii(),
+            "nonascii" => !c.is_ascii(),
+            "unibyte" => cp <= 255,
+            "multibyte" => cp > 255,
+            "digit" => c.is_ascii_digit(),
+            "xdigit" => c.is_ascii_hexdigit(),
+            "cntrl" => cp < 32,
+            "space" => syntax() == b' ',
+            "word" => syntax() == b'w',
+            "punct" => {
+                if c.is_ascii() {
+                    c.is_ascii_punctuation()
+                } else {
+                    syntax() != b'w'
+                }
+            }
+            "upper" => changed(&self.downcase),
+            "lower" => !changed(&self.downcase) && changed(&self.upcase),
+            "blank" => {
+                if c.is_ascii() {
+                    c == ' ' || c == '\t'
+                } else {
+                    category() == Some(23)
+                }
+            }
+            "alpha" | "alnum" => {
+                if c.is_ascii() {
+                    c.is_ascii_alphabetic() || (name == "alnum" && c.is_ascii_digit())
+                } else {
+                    let cat = category();
+                    matches!(cat, Some(1..=8 | 10)) || (name == "alnum" && cat == Some(9))
+                }
+            }
+            "graph" => {
+                if cp <= 255 {
+                    cp > 32 && !(127..=160).contains(&cp)
+                } else {
+                    let cat = category();
+                    cat.is_some() && !matches!(cat, Some(23..=26 | 28 | 30))
+                }
+            }
+            "print" => {
+                if cp <= 255 {
+                    cp >= 32 && !(127..=159).contains(&cp)
+                } else {
+                    let cat = category();
+                    cat.is_some() && !matches!(cat, Some(26 | 28 | 30))
+                }
+            }
+            _ => false,
+        }
+    }
 }
 
 // ---------- parse-partial-sexp state machine (GNU scan_sexps_forward) ----------
@@ -5915,47 +6106,39 @@ pub(crate) fn scan_sexps_fwd(
 }
 
 fn f_skip_chars_forward(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let spec = match &a[0] {
-        Value::Str(s) => s.borrow().clone(),
-        other => return Err(i.wrong_type_mut("stringp", other)),
-    };
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let lim = match a.get(1) {
-        Some(v) if v.truthy() => pos_idx(bb.text.len(), want_int(i, v)?),
-        _ => bb.text_len(),
-    };
-    let (ranges, singles, neg) = char_set_pred(&spec);
-    let mut p = bb.point();
-    while p < lim.min(bb.text.len())
-        && char_set_contains(&ranges, &singles, neg, bb.text.char_at(p))
-    {
-        p += 1;
-    }
-    let moved = p as i128 - bb.point() as i128;
-    bb.set_point(p);
-    Ok(Value::Int(moved))
+    skip_chars(i, a, true)
 }
 
 fn f_skip_chars_backward(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let spec = match &a[0] {
-        Value::Str(s) => s.borrow().clone(),
-        other => return Err(i.wrong_type_mut("stringp", other)),
+    skip_chars(i, a, false)
+}
+
+fn skip_chars(i: &mut Interp, a: crate::lisp::Argv, forward: bool) -> EvalResult {
+    let spec = want_string(i, &a[0])?;
+    let limit = match a.get(1) {
+        Some(v) if v.truthy() => Some(want_int_or_mark(i, v)?),
+        _ => None,
     };
+    let set = SkipChars::parse(&spec).map_err(|message| i.error(message))?;
+    let context = SkipClassContext::new(i, &set);
     let b = cur(i);
     let mut bb = b.borrow_mut();
-    let lim = match a.get(1) {
-        Some(v) if v.truthy() => pos_idx(bb.text.len(), want_int(i, v)?),
-        _ => bb.begv,
-    };
-    let (ranges, singles, neg) = char_set_pred(&spec);
-    let mut p = bb.point();
-    while p > lim && char_set_contains(&ranges, &singles, neg, bb.text.char_at(p - 1)) {
-        p -= 1;
+    let lim = limit
+        .map(|n| (n.clamp(bb.begv as i128 + 1, bb.zv as i128 + 1) - 1) as usize)
+        .unwrap_or(if forward { bb.zv } else { bb.begv });
+    let start = bb.point();
+    let mut p = start;
+    if forward {
+        while p < lim && set.contains(i, &context, bb.text.char_at(p)) {
+            p += 1;
+        }
+    } else {
+        while p > lim && set.contains(i, &context, bb.text.char_at(p - 1)) {
+            p -= 1;
+        }
     }
-    let moved = p as i128 - bb.point() as i128;
     bb.set_point(p);
-    Ok(Value::Int(moved))
+    Ok(Value::Int(p as i128 - start as i128))
 }
 
 fn f_skip_syntax_forward(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
