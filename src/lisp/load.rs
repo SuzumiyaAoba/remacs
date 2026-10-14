@@ -2996,7 +2996,7 @@ fn eval_str_for_load(
                 let (_, mark) = match &stream {
                     Some(pair) => pair.clone(),
                     None => {
-                        let bid = i.buffers.create(" *load-read*");
+                        let bid = i.create_buffer(" *load-read*");
                         let mk = Rc::new(RefCell::new(crate::lisp::value::Marker {
                             buffer: Some(bid),
                             // GNU `readevalloop' shares one read

@@ -11,7 +11,7 @@ use crate::lisp::builtins::{want_int_or_mark, want_string};
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::eval::MatchData;
 use crate::lisp::obarray::sym;
-use crate::lisp::value::{Marker, Subr, SymId, Value};
+use crate::lisp::value::{Marker, Subr, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -2543,7 +2543,7 @@ fn f_get_buffer_create(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     // standard case table's extras if they aren't all
                     // char-tables (characters.el clears them at loadup).
                     crate::lisp::builtins::misc::heal_standard_case_table(i);
-                    let id = i.buffers.create(&name);
+                    let id = i.create_buffer(&name);
                     if inhibit {
                         if let Some(b) = i.buffers.get(id) {
                             b.borrow_mut().inhibit_buffer_hooks = true;
@@ -2570,7 +2570,7 @@ fn f_generate_new_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // `-<random>' suffix here, not in the interned buffer registry.
     let name = gen_unique_buffer_name(i, &name, None)?;
     crate::lisp::builtins::misc::heal_standard_case_table(i);
-    let id = i.buffers.create_exact(&name);
+    let id = i.create_buffer_exact(&name);
     if a.get(1).map(|v| v.truthy()).unwrap_or(false) {
         if let Some(b) = i.buffers.get(id) {
             b.borrow_mut().inhibit_buffer_hooks = true;
@@ -2679,7 +2679,7 @@ fn kill_buffer_teardown(i: &mut Interp, id: usize) -> bool {
     // replace_buffer_in_windows loop).
     let fallback = other_buffer_visible(i, id)
         .or_else(|| i.buffers.list().first().copied())
-        .unwrap_or_else(|| i.buffers.create("*scratch*"));
+        .unwrap_or_else(|| i.create_buffer("*scratch*"));
     let mut sel_next: Option<usize> = None;
     for f in i.frames.clone() {
         let sel = f.borrow().selected.borrow().id;
@@ -2687,6 +2687,7 @@ fn kill_buffer_teardown(i: &mut Interp, id: usize) -> bool {
             if !w.borrow().dead && !w.borrow().minibuffer && w.borrow().buffer == id {
                 let pick = window_prev_live(i, w, id).unwrap_or(fallback);
                 w.borrow_mut().buffer = pick;
+                crate::editor::record_buffer_display(i, pick);
                 if w.borrow().id == sel {
                     sel_next = Some(pick);
                 }
@@ -2864,7 +2865,7 @@ fn kill_buffer_impl(i: &mut Interp, id: usize) -> Result<bool, Flow> {
     if i.current_buffer == id {
         let other = other_buffer_visible(i, id)
             .or_else(|| i.buffers.other(id))
-            .unwrap_or_else(|| i.buffers.create("*scratch*"));
+            .unwrap_or_else(|| i.create_buffer("*scratch*"));
         i.set_current_buffer(other);
         if i.current_buffer == id {
             if std::env::var_os("REMACS_TRACE_KILL").is_some() {
@@ -3258,7 +3259,7 @@ fn f_make_indirect_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         bb.base_buffer.clone().unwrap_or_else(|| base.clone())
     };
     crate::lisp::builtins::misc::heal_standard_case_table(i);
-    let id = i.buffers.create_exact(&name);
+    let id = i.create_buffer_exact(&name);
     {
         let bb = base.borrow();
         let nb = i.buffers.get(id).unwrap();
@@ -3276,6 +3277,10 @@ fn f_make_indirect_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         // (in GNU the value is copied at creation and re-synced on
         // every buffer switch — see set_current_buffer).
         n.set_undo_list(bb.undo_list());
+        let multi = i.intern("enable-multibyte-characters");
+        if let Some(value) = bb.locals.get(&multi) {
+            n.locals.insert(multi, value.clone());
+        }
         if clone {
             // GNU clone_per_buffer_values: locals travel, but the
             // indirect buffer cannot visit a file.
@@ -3284,19 +3289,7 @@ fn f_make_indirect_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
             n.locals = bb.locals.clone();
             n.file_name = None;
-            for s in [
-                "buffer-file-name",
-                "buffer-file-truename",
-                "buffer-auto-save-file-name",
-                "buffer-backed-up",
-                "local-minor-modes",
-                "buffer-save-without-query",
-                "buffer-file-number",
-            ] {
-                n.locals.remove(&i.intern(s));
-            }
-            n.locals
-                .insert(i.intern("buffer-display-count"), Value::Int(0));
+            reset_cloned_indirect_slots(i, &mut n);
         }
     }
     if clone {
@@ -3324,6 +3317,28 @@ fn f_make_indirect_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// uniquified like `generate-new-buffer-name'.  `share' selects text
 /// aliasing (`clone-indirect-buffer') vs an independent copy
 /// (`clone-buffer').
+fn reset_cloned_indirect_slots(i: &mut Interp, buffer: &mut crate::buffer::Buffer) {
+    for name in [
+        "buffer-file-name",
+        "buffer-file-truename",
+        "buffer-auto-save-file-name",
+        "buffer-backed-up",
+        "local-minor-modes",
+        "buffer-save-without-query",
+        "buffer-file-number",
+    ] {
+        let symbol = i.intern(name);
+        if i.obarray.symbol(symbol).always_local {
+            buffer.locals.insert(symbol, Value::Nil);
+        } else {
+            buffer.locals.shift_remove(&symbol);
+        }
+    }
+    buffer
+        .locals
+        .insert(i.intern("buffer-display-count"), Value::Int(0));
+}
+
 fn clone_buffer(i: &mut Interp, name: &str, share: bool) -> Result<Value, Flow> {
     // GNU clone_indirect_buffer → Fmake_indirect_buffer(BASE of the
     // current buffer, NAME, CLONE=t): when the current buffer is
@@ -3341,7 +3356,7 @@ fn clone_buffer(i: &mut Interp, name: &str, share: bool) -> Result<Value, Flow> 
     let name = gen_unique_buffer_name(i, name, None)?;
     // `gen_unique_buffer_name' already resolved collisions —
     // `buffers.create' would uniquify a second time.
-    let id = i.buffers.create_exact(&name);
+    let id = i.create_buffer_exact(&name);
     {
         let bb = base.borrow();
         let nb = i.buffers.get(id).unwrap();
@@ -3366,6 +3381,7 @@ fn clone_buffer(i: &mut Interp, name: &str, share: bool) -> Result<Value, Flow> 
         // An indirect buffer cannot visit a file.
         if share {
             n.file_name = None;
+            reset_cloned_indirect_slots(i, &mut n);
         } else {
             n.file_name = bb.file_name.clone();
         }
@@ -3463,46 +3479,122 @@ fn f_set_buffer_major_mode(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 
+/// GNU buffer.h slot order, reversed by Fbuffer_local_variables.
+/// These slots are local even before Lisp creates a local binding.
+pub(crate) const ALWAYS_LOCAL_VARIABLES: &[&str] = &[
+    "buffer-undo-list",
+    "buffer-display-time",
+    "buffer-display-count",
+    "buffer-invisibility-spec",
+    "buffer-file-truename",
+    "point-before-scroll",
+    "buffer-auto-save-file-format",
+    "buffer-file-format",
+    "enable-multibyte-characters",
+    "mark-active",
+    "mode-name",
+    "local-minor-modes",
+    "major-mode",
+    "buffer-read-only",
+    "buffer-auto-save-file-name",
+    "buffer-saved-size",
+    "buffer-backed-up",
+    "default-directory",
+    "buffer-file-name",
+];
+
+// Optional C slots share the same physical slot ordering.
+const BUFFER_LOCAL_SLOT_ORDER: &[&str] = &[
+    "buffer-undo-list",
+    "cursor-in-non-selected-windows",
+    "text-conversion-style",
+    "line-spacing",
+    "cursor-type",
+    "scroll-down-aggressively",
+    "scroll-up-aggressively",
+    "buffer-display-time",
+    "fringe-cursor-alist",
+    "fringe-indicator-alist",
+    "indicate-buffer-boundaries",
+    "indicate-empty-lines",
+    "horizontal-scroll-bar",
+    "vertical-scroll-bar",
+    "scroll-bar-height",
+    "scroll-bar-width",
+    "fringes-outside-margins",
+    "right-fringe-width",
+    "left-fringe-width",
+    "right-margin-width",
+    "left-margin-width",
+    "buffer-display-count",
+    "buffer-invisibility-spec",
+    "buffer-file-truename",
+    "point-before-scroll",
+    "cache-long-scans",
+    "buffer-auto-save-file-format",
+    "buffer-file-format",
+    "buffer-file-coding-system",
+    "enable-multibyte-characters",
+    "mark-active",
+    "buffer-display-table",
+    "abbrev-mode",
+    "overwrite-mode",
+    "selective-display-ellipses",
+    "selective-display",
+    "bidi-paragraph-start-re",
+    "bidi-paragraph-separate-re",
+    "bidi-paragraph-direction",
+    "bidi-display-reordering",
+    "ctl-arrow",
+    "word-wrap",
+    "truncate-lines",
+    "auto-fill-function",
+    "left-margin",
+    "fill-column",
+    "tab-width",
+    "local-abbrev-table",
+    "tab-line-format",
+    "header-line-format",
+    "mode-line-format",
+    "mode-name",
+    "local-minor-modes",
+    "major-mode",
+    "buffer-read-only",
+    "buffer-auto-save-file-name",
+    "buffer-saved-size",
+    "buffer-backed-up",
+    "default-directory",
+    "buffer-file-name",
+];
+
 fn f_buffer_local_variables(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let b = buf_of(i, &arg(&a, 0))?;
-    let (locals, file_name) = {
-        let bb = b.borrow();
-        (bb.locals.clone(), bb.file_name.clone())
-    };
-    // GNU buffer.c: the DEFVAR_PER_BUFFER slots live in every buffer,
-    // so `buffer-local-variables' reports them (with the slot's
-    // effective value) even when Lisp never setq'd them. remacs marks
-    // those symbols `always_local' — merge them into the reported
-    // list, value = real local, else `buffer-file-name'/global default.
-    let bfn = i.intern("buffer-file-name");
-    let always: Vec<SymId> = i
-        .obarray
-        .all_ids()
-        .into_iter()
-        .filter(|id| {
-            let s = i.obarray.symbol(*id);
-            s.always_local && !locals.contains_key(id)
-        })
-        .collect();
-    let mut pairs: Vec<Value> = locals
-        .iter()
-        .map(|(s, v)| Value::cons(i.sym(*s), v.clone()))
-        .collect();
-    for id in always {
-        let val = if id == bfn {
-            match &file_name {
-                Some(f) => Value::string(f.clone()),
-                None => Value::Nil,
-            }
-        } else {
-            let v = i.obarray.symbol(id).value.clone();
-            if matches!(v, Value::Sym(s) if s == sym::UNBOUND) {
-                Value::Nil
+    let locals = b.borrow().locals.clone();
+    let mut pairs = Vec::new();
+    let mut slots = std::collections::HashSet::new();
+    for name in BUFFER_LOCAL_SLOT_ORDER {
+        let id = i.intern(name);
+        slots.insert(id);
+        if i.obarray.symbol(id).always_local || locals.contains_key(&id) {
+            let value = locals
+                .get(&id)
+                .cloned()
+                .unwrap_or_else(|| i.obarray.symbol(id).value.clone());
+            pairs.push(if matches!(value, Value::Sym(s) if s == sym::UNBOUND) {
+                i.sym(id)
             } else {
-                v
-            }
-        };
-        pairs.push(Value::cons(i.sym(id), val));
+                Value::cons(i.sym(id), value)
+            });
+        }
+    }
+    for (id, value) in &locals {
+        if !slots.contains(id) {
+            pairs.push(if matches!(value, Value::Sym(s) if *s == sym::UNBOUND) {
+                i.sym(*id)
+            } else {
+                Value::cons(i.sym(*id), value.clone())
+            });
+        }
     }
     Ok(Value::list(pairs))
 }
@@ -3583,10 +3675,22 @@ fn f_kill_local_variable(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // `buffer-file-name' is a BVAR: GNU's kill edits the buffer's
     // local-vars alist where the slot variable never appears — a
     // no-op (value AND `local-variable-p' survive; verified on 31.1).
-    if sid != i.bfn_sym {
-        cur(i).borrow_mut().locals.remove(&sid);
+    if !i.obarray.symbol(sid).always_local {
+        cur(i).borrow_mut().locals.shift_remove(&sid);
     }
     Ok(a[0].clone())
+}
+
+fn reset_mode_slots(i: &mut Interp, buffer: &mut crate::buffer::Buffer) {
+    let major = i.intern("major-mode");
+    let fundamental = i.intern("fundamental-mode");
+    buffer.locals.insert(major, Value::Sym(fundamental));
+    buffer
+        .locals
+        .insert(i.intern("mode-name"), Value::string("Fundamental"));
+    buffer
+        .locals
+        .insert(i.intern("buffer-invisibility-spec"), Value::t());
 }
 
 pub(crate) fn f_kill_all_local_variables(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -3602,7 +3706,8 @@ pub(crate) fn f_kill_all_local_variables(i: &mut Interp, a: crate::lisp::Argv) -
         // local: GNU keeps it across even `kill-all-local-variables t'
         // (verified on 31.1).  Re-mirror the slot after clearing.
         let keep_bfn = bb.file_name.clone();
-        bb.locals.clear();
+        bb.locals.retain(|s, _| i.obarray.symbol(*s).always_local);
+        reset_mode_slots(i, &mut bb);
         if i.bfn_sym != 0 {
             if let Some(f) = keep_bfn {
                 bb.locals.insert(i.bfn_sym, Value::string(f));
@@ -3634,7 +3739,9 @@ pub(crate) fn f_kill_all_local_variables(i: &mut Interp, a: crate::lisp::Argv) -
     if bb.file_name.is_some() && i.bfn_sym != 0 {
         keep_set.insert(i.bfn_sym);
     }
-    bb.locals.retain(|s, _| keep_set.contains(s));
+    bb.locals
+        .retain(|s, _| i.obarray.symbol(*s).always_local || keep_set.contains(s));
+    reset_mode_slots(i, &mut bb);
     bb.syntax_table = None;
     bb.case_table = None;
     bb.category_table = None;
@@ -7421,10 +7528,10 @@ fn deactivate_mark(i: &mut Interp, bb: &mut Buffer, force: bool) -> bool {
         // (if (eq tmm (default-value 'tmm)) (kill-local-variable 'tmm))
         let dv = i.obarray.symbol(tmm).value.clone();
         if crate::lisp::eq_values(&nv, &dv) {
-            bb.locals.remove(&tmm);
+            bb.locals.shift_remove(&tmm);
         }
     } else if matches!(&tmmv, Value::Sym(s) if *s == lambda) {
-        bb.locals.remove(&tmm);
+        bb.locals.shift_remove(&tmm);
     }
     bb.locals.insert(ma_id(i), Value::Nil);
     true

@@ -17,6 +17,10 @@ use crate::lisp::value::{BufferRef, Marker, MarkerRef, SymId, Value};
 
 pub use gapbuf::{GapBuffer, SharedText};
 
+/// Ordinary locals retain their creation order, as GNU's local-var alist does.
+pub type BufferLocals =
+    indexmap::IndexMap<SymId, Value, std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
+
 /// One editor buffer.
 pub struct Buffer {
     /// Unique id in the BufferSet.
@@ -37,7 +41,7 @@ pub struct Buffer {
     pub begv: usize,
     pub zv: usize,
     /// Buffer-local variable bindings.
-    pub locals: HashMap<SymId, Value>,
+    pub locals: BufferLocals,
     /// Markers pointing into this buffer.
     pub markers: Vec<Weak<RefCell<Marker>>>,
     /// Visited file name (or nil).
@@ -266,7 +270,7 @@ impl Buffer {
         undo_sym: SymId,
         undo_inhibit: Rc<std::cell::Cell<bool>>,
     ) -> Buffer {
-        let mut locals = HashMap::default();
+        let mut locals = indexmap::IndexMap::default();
         // Buffers with space-prefixed (internal) names start with undo
         // disabled, like GNU get-buffer-create (undo_list = Qt).
         if name.starts_with(' ') {
@@ -976,7 +980,7 @@ impl BufferSet {
             if bb.undo_sym != sym {
                 // Re-key the space-name `t' seed planted with sym 0.
                 let old = bb.undo_sym;
-                if let Some(v) = bb.locals.remove(&old) {
+                if let Some(v) = bb.locals.shift_remove(&old) {
                     bb.locals.insert(sym, v);
                 }
                 bb.undo_sym = sym;

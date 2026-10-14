@@ -58,6 +58,7 @@ qa!(qa_array, "qa_array.el");
 qa!(qa_backquote, "qa_backquote.el");
 qa!(qa_backup, "qa_backup.el");
 qa!(qa_buffer, "qa_buffer.el");
+qa!(qa_fresh_buffer_locals, "qa_fresh_buffer_locals.el");
 qa!(qa_buffer_local_value_type, "qa_buffer_local_value_type.el");
 qa!(qa_buffer2, "qa_buffer2.el");
 qa!(qa_bufferfile, "qa_bufferfile.el");

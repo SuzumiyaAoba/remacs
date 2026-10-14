@@ -2721,13 +2721,16 @@ fn f_buffer_swap_text(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     std::mem::swap(&mut mine.zv, &mut theirs.zv);
     // GNU swapfield_(undo_list), swapfield_(mark), swapfield_(mark_active).
     let undo_sym = mine.undo_sym;
-    let mu = mine.locals.remove(&undo_sym).unwrap_or(Value::Nil);
-    let tu = theirs.locals.remove(&undo_sym).unwrap_or(Value::Nil);
+    let mu = mine.locals.shift_remove(&undo_sym).unwrap_or(Value::Nil);
+    let tu = theirs.locals.shift_remove(&undo_sym).unwrap_or(Value::Nil);
     mine.locals.insert(undo_sym, tu);
     theirs.locals.insert(undo_sym, mu);
     std::mem::swap(&mut mine.mark, &mut theirs.mark);
     let ma = i.intern("mark-active");
-    let (mm_a, tm_a) = (mine.locals.remove(&ma), theirs.locals.remove(&ma));
+    let (mm_a, tm_a) = (
+        mine.locals.shift_remove(&ma),
+        theirs.locals.shift_remove(&ma),
+    );
     if let Some(v) = tm_a {
         mine.locals.insert(ma, v);
     }
@@ -2742,7 +2745,10 @@ fn f_buffer_swap_text(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         "bidi-paragraph-start-re",
     ] {
         let sid = i.intern(s);
-        let (mv, tv) = (mine.locals.remove(&sid), theirs.locals.remove(&sid));
+        let (mv, tv) = (
+            mine.locals.shift_remove(&sid),
+            theirs.locals.shift_remove(&sid),
+        );
         if let Some(v) = tv {
             mine.locals.insert(sid, v);
         }

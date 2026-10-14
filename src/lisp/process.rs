@@ -755,7 +755,7 @@ fn finish_setup(
         let bid = match i.buffer_id_of(&b) {
             Some(id) => id,
             None => match &b {
-                Value::Str(s) => i.buffers.create(&s.borrow()),
+                Value::Str(s) => i.create_buffer(&s.borrow()),
                 _ => return Err(i.error("No such buffer")),
             },
         };
@@ -1515,7 +1515,7 @@ fn f_list_processes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // with QUERY-ONLY it filters. Keep the display minimal: create the
     // buffer and return nil like GNU.
     let _ = a;
-    let bid = i.buffers.create("*Process List*");
+    let bid = i.create_buffer("*Process List*");
     let mut lines = String::from(
         "Proc         Status   Buffer         Tty         Command\n----         ------   ------         ---         -------\n",
     );

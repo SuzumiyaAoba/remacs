@@ -4585,6 +4585,20 @@ fn current_time_list(i: &mut Interp) -> bool {
     !i.bound_p(id) || i.symbol_value(id).truthy()
 }
 
+/// Current timestamp for C-style callers such as window display.
+/// GNU Fcurrent_time honors current-time-list and retains nanoseconds.
+pub(crate) fn current_time_value(i: &mut Interp) -> Value {
+    let ticks = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => duration.as_nanos() as i128,
+        Err(error) => -(error.duration().as_nanos() as i128),
+    };
+    if current_time_list(i) {
+        ticks_hz_list4(ticks, 1_000_000_000)
+    } else {
+        Value::cons(Value::Int(ticks), Value::Int(1_000_000_000))
+    }
+}
+
 /// Decode a Lisp time value to GNU's (TICKS . HZ) pair, per
 /// decode_lisp_time in timefns.c (CFORM_TICKS_HZ):
 ///   int N      -> (N . 1)
@@ -11126,6 +11140,8 @@ fn f_window_display_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         if !wb.next_buffers.is_nil() {
             wb.next_buffers = Value::Nil;
         }
+        drop(wb);
+        crate::editor::record_buffer_display(i, bid);
     }
     // (window-bump-use-time WINDOW) when ALIST has `bump-use-time'.
     {

@@ -4690,6 +4690,7 @@ dependencies = [
  "flate2",
  "gpui",
  "html5ever",
+ "indexmap",
  "libc",
  "libloading",
  "markup5ever_rcdom",

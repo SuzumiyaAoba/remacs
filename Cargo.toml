@@ -9,6 +9,7 @@ crossterm = "0.29.0"
 flate2 = "1.1.5"
 gpui = { version = "0.2.2", features = ["runtime_shaders"] }
 html5ever = "0.39"
+indexmap = "2.14.2"
 libc = "0.2.189"
 markup5ever_rcdom = "0.39.0"
 md-5 = "0.10.6"

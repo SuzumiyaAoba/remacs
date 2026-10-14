@@ -2555,6 +2555,22 @@ fn f_window_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(i.buffer_value(w.borrow().buffer).unwrap_or(Value::Nil))
 }
 
+/// GNU set_window_buffer updates display metadata even when the
+/// window already shows this buffer.  Merely selecting a buffer does not.
+pub(crate) fn record_buffer_display(i: &mut Interp, bid: usize) {
+    let count = i.intern("buffer-display-count");
+    let time = i.intern("buffer-display-time");
+    let now = crate::lisp::builtins::misc::current_time_value(i);
+    if let Some(buffer) = i.buffers.get(bid) {
+        let mut b = buffer.borrow_mut();
+        if let Some(Value::Int(value)) = b.locals.get(&count) {
+            let next = value.saturating_add(1);
+            b.locals.insert(count, Value::Int(next));
+        }
+        b.locals.insert(time, now);
+    }
+}
+
 pub(crate) fn f_set_window_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live(i, &arg(&a, 0))?;
     // GNU resolves BUFFER-OR-NAME with Fget_buffer, then CHECK_BUFFER.
@@ -2625,6 +2641,7 @@ pub(crate) fn f_set_window_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
         w.borrow_mut().point = 0;
         w.borrow_mut().start = 0;
     }
+    record_buffer_display(i, bid);
     // Displaying a buffer makes it most-recent in buffer-list order.
     i.buffers.touch(bid);
     Ok(Value::Nil)
@@ -3268,7 +3285,7 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -
                 i.buffers
                     .other(bid)
                     .or_else(|| i.buffers.list().first().copied())
-                    .unwrap_or_else(|| i.buffers.create("*scratch*"))
+                    .unwrap_or_else(|| i.create_buffer("*scratch*"))
             };
             let (nt, nh, nl, nw) = match &map {
                 Some(m) => m(
@@ -3584,6 +3601,7 @@ pub(crate) fn f_split_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     }
     let buf = w.borrow().buffer;
     let new = Window::new(buf);
+    record_buffer_display(i, buf);
     let (wl, wt, ww_, wh) = {
         let wb = w.borrow();
         (wb.left, wb.top, wb.width, wb.height)
@@ -7612,7 +7630,7 @@ fn f_use_local_map(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let mut bb = b.borrow_mut();
     let km_sym = i.intern_soft("local-keymap").unwrap_or(u32::MAX);
     if a[0].is_nil() {
-        bb.locals.remove(&km_sym);
+        bb.locals.shift_remove(&km_sym);
     } else {
         if !is_keymap(i, &a[0]) {
             return Err(i.wrong_type_mut("keymapp", &a[0]));
@@ -9828,7 +9846,7 @@ fn f_append_to_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             let name = s.borrow().clone();
             match i.buffers.by_name(&name) {
                 Some(id) => id,
-                None => i.buffers.create(&name),
+                None => i.create_buffer(&name),
             }
         }
         other => return Err(i.wrong_type_mut("stringp", other)),
@@ -12501,7 +12519,7 @@ fn f_set_visited_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             let ro = i.intern_soft("buffer-read-only").unwrap_or(u32::MAX);
             bb.locals.insert(ro, Value::Nil);
         }
-        bb.locals.remove(&vc);
+        bb.locals.shift_remove(&vc);
     }
     // GNU files.el set-visited-file-name tail: unless the mode is
     // `special', let the file name pick the major mode
@@ -12765,10 +12783,10 @@ fn f_find_file_noselect(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let bid = if i.fbound_p(cfb) {
         match i.apply(&Value::Sym(cfb), vec![Value::string(path.clone())])? {
             Value::Buffer(b) => b.borrow().id,
-            _ => i.buffers.create(&name),
+            _ => i.create_buffer(&name),
         }
     } else {
-        i.buffers.create(&name)
+        i.create_buffer(&name)
     };
     {
         let b = i.buffers.get(bid).unwrap();
@@ -12850,6 +12868,7 @@ fn f_find_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         i.set_current_buffer(id);
         if let Some(w) = sel_window(i) {
             w.borrow_mut().buffer = id;
+            record_buffer_display(i, id);
         }
     }
     Ok(buf)
@@ -13702,7 +13721,7 @@ fn f_call_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                         Some(b) => b,
                         None => {
                             if let Value::Str(s) = &real_dest {
-                                i.buffers.create(&s.borrow())
+                                i.create_buffer(&s.borrow())
                             } else {
                                 i.current_buffer
                             }
@@ -13940,7 +13959,7 @@ fn f_call_process_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 Some(b) => b,
                 None => {
                     if let Value::Str(s) = &real_dest {
-                        i.buffers.create(&s.borrow())
+                        i.create_buffer(&s.borrow())
                     } else {
                         i.current_buffer
                     }
@@ -13972,7 +13991,7 @@ fn f_shell_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             } else {
                 i.buffers
                     .by_name("*Shell Command Output*")
-                    .unwrap_or_else(|| i.buffers.create("*Shell Command Output*"))
+                    .unwrap_or_else(|| i.create_buffer("*Shell Command Output*"))
             };
             if i.buffers.get(bid).is_some() {
                 crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
@@ -15355,11 +15374,12 @@ fn win_state_materialize(
                 Value::Str(s) => i
                     .buffers
                     .by_name(&s.borrow())
-                    .or_else(|| Some(i.buffers.create(&s.borrow()))),
+                    .or_else(|| Some(i.create_buffer(&s.borrow()))),
                 _ => None,
             })
             .unwrap_or(i.current_buffer);
         let w = Window::new(bufid);
+        record_buffer_display(i, bufid);
         {
             let mut wb = w.borrow_mut();
             wb.left = l;
@@ -15466,6 +15486,7 @@ fn f_window_state_put(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     };
                     if let Some(bid) = bid {
                         w.borrow_mut().buffer = bid;
+                        record_buffer_display(i, bid);
                     }
                 }
                 for e in &state {
@@ -20256,7 +20277,7 @@ fn f_switch_to_buffer_other_window(i: &mut Interp, a: crate::lisp::Argv) -> Eval
                 Value::Str(s) => s.borrow().clone(),
                 other => return Err(i.wrong_type_mut("stringp", other)),
             };
-            i.buffers.create(&name)
+            i.create_buffer(&name)
         }
     };
     // GNU decode_live_buffer: a dead buffer object signals
@@ -20283,6 +20304,7 @@ fn f_switch_to_buffer_other_window(i: &mut Interp, a: crate::lisp::Argv) -> Eval
         }
     };
     target.borrow_mut().buffer = bid;
+    record_buffer_display(i, bid);
     f.borrow_mut().selected = target.clone();
     i.set_current_buffer(bid);
     i.buffers.touch(bid);
@@ -20366,6 +20388,7 @@ fn f_quit_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
             if let Some(other) = pick {
                 w.borrow_mut().buffer = other;
+                record_buffer_display(i, other);
                 // GNU `set-window-buffer-start-and-point': sync current
                 // only when the selected window was showing the current
                 // buffer (`and selected current').  Blindly selecting on
@@ -20411,7 +20434,7 @@ fn f_kill_buffer_and_window(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult
     f_delete_window(i, vec![Value::Nil].into())?;
     let next = crate::buffer::primitives::other_buffer_visible(i, bid)
         .or_else(|| i.buffers.list().first().copied())
-        .unwrap_or_else(|| i.buffers.create("*scratch*"));
+        .unwrap_or_else(|| i.create_buffer("*scratch*"));
     i.set_current_buffer(next);
     Ok(Value::Nil)
 }
@@ -20429,6 +20452,7 @@ fn f_replace_buffer_in_windows(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     for w in &f.borrow().windows {
         if w.borrow().buffer == bid && !w.borrow().dead {
             w.borrow_mut().buffer = other;
+            record_buffer_display(i, other);
         }
     }
     if i.current_buffer == bid && bid != other {
@@ -21113,8 +21137,9 @@ pub fn install_primitives(i: &mut Interp) {
         .buffers
         .by_name(" *Minibuf-0*")
         .or_else(|| i.buffers.by_name(" *Minibuf-0*"))
-        .unwrap_or_else(|| i.buffers.create(" *Minibuf-0*"));
+        .unwrap_or_else(|| i.create_buffer(" *Minibuf-0*"));
     let frame = Frame::new_tty(scratch, mb, 80, 25);
+    record_buffer_display(i, scratch);
     // Wire the frame's window buffer linkage.
     i.selected_frame = Some(frame.clone());
     i.frames.push(frame);

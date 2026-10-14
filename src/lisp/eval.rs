@@ -1055,7 +1055,7 @@ impl Interp {
         // The initial buffers every Emacs session has, in GNU's
         // buffer-list order: (scratch Minibuf-0 Messages load
         // Warnings). New buffers append at the end of the order.
-        let scratch = interp.buffers.create_exact_nolast("*scratch*");
+        let scratch = interp.create_buffer_nolast("*scratch*");
         interp.set_current_buffer(scratch);
         {
             // GNU's `*scratch*' carries buffer-local `lexical-binding'
@@ -1071,8 +1071,8 @@ impl Interp {
                 .locals
                 .insert(lb, Value::t());
         }
-        let minibuf = interp.buffers.create_exact(" *Minibuf-0*");
-        let messages = interp.buffers.create_exact("*Messages*");
+        let minibuf = interp.create_buffer_exact(" *Minibuf-0*");
+        let messages = interp.create_buffer_exact("*Messages*");
         // No ` *load*' buffer: GNU streams loads off the file descriptor
         // (`readevalloop'), so `buffer-list' at -Q holds only
         // scratch/Minibuf-0/Messages.
@@ -3447,7 +3447,7 @@ impl Interp {
                 }
                 for bid in interp.buffers.list() {
                     if let Some(b) = interp.buffers.get(bid) {
-                        b.borrow_mut().locals.remove(&sid);
+                        b.borrow_mut().locals.shift_remove(&sid);
                     }
                 }
             }
@@ -4342,7 +4342,7 @@ command-line arguments.\" \
                 }
                 for bid in interp.buffers.list() {
                     if let Some(b) = interp.buffers.get(bid) {
-                        b.borrow_mut().locals.remove(&sid);
+                        b.borrow_mut().locals.shift_remove(&sid);
                     }
                 }
             }
@@ -5218,7 +5218,7 @@ command-line arguments.\" \
                                 restored = v.clone();
                                 bb.locals.insert(sb.sym, v)
                             }
-                            None => bb.locals.remove(&sb.sym),
+                            None => bb.locals.shift_remove(&sb.sym),
                         };
                         if sb.sym == self.bfn_sym {
                             bb.file_name = match bb.locals.get(&sb.sym) {
@@ -9356,26 +9356,7 @@ command-line arguments.\" \
         // GNU `DEFVAR_PER_BUFFER' variables: a real slot in every
         // buffer, so `local-variable-p' is t even before any `setq'
         // (set verified against GNU 31.1 in a fresh buffer).
-        let per_buffer: &[&str] = &[
-            "buffer-auto-save-file-name",
-            "buffer-backed-up",
-            "buffer-display-count",
-            "buffer-file-format",
-            "buffer-file-name",
-            "buffer-file-truename",
-            "buffer-invisibility-spec",
-            "buffer-read-only",
-            "buffer-saved-size",
-            "buffer-undo-list",
-            "default-directory",
-            "enable-multibyte-characters",
-            "major-mode",
-            "mark-active",
-            "mode-name",
-            // DEFVAR_PER_BUFFER: GNU reports `local-variable-p' t in
-            // every buffer (e.g. `require-final-newline').
-            "require-final-newline",
-        ];
+        let per_buffer = crate::buffer::primitives::ALWAYS_LOCAL_VARIABLES;
         for name in per_buffer {
             let id = self.intern(name);
             self.obarray.symbol_mut(id).always_local = true;
@@ -9386,6 +9367,10 @@ command-line arguments.\" \
         // (the "Built-in variable may not be unbound" set, verified
         // against GNU 31.1).
         let builtin_locals: &[&str] = &[
+            "buffer-auto-save-file-format",
+            "buffer-display-time",
+            "local-minor-modes",
+            "point-before-scroll",
             "abbrev-mode",
             "after-change-functions",
             "before-change-functions",
@@ -9986,6 +9971,9 @@ command-line arguments.\" \
             ("redisplay--variables", Value::Nil),
             ("buffer-display-count", Value::Int(0)),
             ("buffer-display-time", Value::Nil),
+            ("buffer-auto-save-file-format", Value::t()),
+            ("point-before-scroll", Value::Nil),
+            ("local-minor-modes", Value::Nil),
             ("first-change-hook", Value::Nil),
             ("window-configuration-change-hook", Value::Nil),
             ("window-size-change-functions", Value::Nil),
@@ -10586,6 +10574,51 @@ command-line arguments.\" \
 
     pub fn buffer_name(&self, id: usize) -> Option<String> {
         self.buffers.get(id).map(|b| b.borrow().name.clone())
+    }
+
+    /// Initialize the fixed GNU buffer slots separately from mutable
+    /// default values.  In particular mode-name defaults to nil, but a
+    /// fresh buffer's own slot is always "Fundamental".
+    fn initialize_buffer_slots(&mut self, id: usize) {
+        let directory = self.intern("default-directory");
+        let dir = self.symbol_value(directory);
+        let multibyte = self.intern("enable-multibyte-characters");
+        let multi = self.obarray.symbol(multibyte).value.clone();
+        let fundamental = self.intern("fundamental-mode");
+        let buffer = self.buffers.get(id).expect("new buffer");
+        let undo = buffer.borrow().undo_list();
+        for name in crate::buffer::primitives::ALWAYS_LOCAL_VARIABLES {
+            let symbol = self.intern(name);
+            let value = match *name {
+                "default-directory" => dir.clone(),
+                "enable-multibyte-characters" => multi.clone(),
+                "major-mode" => Value::Sym(fundamental),
+                "mode-name" => Value::string("Fundamental"),
+                "buffer-undo-list" => undo.clone(),
+                "buffer-auto-save-file-format" | "buffer-invisibility-spec" => Value::t(),
+                "buffer-saved-size" | "buffer-display-count" => Value::Int(0),
+                _ => Value::Nil,
+            };
+            buffer.borrow_mut().locals.insert(symbol, value);
+        }
+    }
+
+    pub fn create_buffer(&mut self, name: &str) -> usize {
+        let id = self.buffers.create(name);
+        self.initialize_buffer_slots(id);
+        id
+    }
+
+    pub fn create_buffer_exact(&mut self, name: &str) -> usize {
+        let id = self.buffers.create_exact(name);
+        self.initialize_buffer_slots(id);
+        id
+    }
+
+    fn create_buffer_nolast(&mut self, name: &str) -> usize {
+        let id = self.buffers.create_exact_nolast(name);
+        self.initialize_buffer_slots(id);
+        id
     }
 
     pub fn set_current_buffer(&mut self, id: usize) {
@@ -11210,7 +11243,7 @@ command-line arguments.\" \
         let mb = match self.buffers.by_name("*Messages*") {
             Some(id) => id,
             None => {
-                let id = self.buffers.create("*Messages*");
+                let id = self.create_buffer("*Messages*");
                 // GNU message_dolog sets buffer-undo-list=t on a fresh
                 // *Messages* (it "doesn't have undo").
                 if let Some(b) = self.buffers.get(id) {
@@ -11353,7 +11386,7 @@ command-line arguments.\" \
             id = self
                 .buffers
                 .by_name(&name)
-                .unwrap_or_else(|| self.buffers.create(&name));
+                .unwrap_or_else(|| self.create_buffer(&name));
             self.minibuf_list[depth] = id;
         }
         id
@@ -11367,10 +11400,13 @@ command-line arguments.\" \
     /// Point `buf`'s frame minibuffer window at buffer `id`
     /// (GNU `set_window_buffer (minibuf_window, buf)').
     pub fn set_minibuf_window_buffer(&mut self, id: usize) {
-        if let Some(f) = &self.selected_frame {
-            if let Some(w) = &f.borrow().minibuffer {
-                w.borrow_mut().buffer = id;
-            }
+        let window = self
+            .selected_frame
+            .as_ref()
+            .and_then(|f| f.borrow().minibuffer.clone());
+        if let Some(w) = window {
+            w.borrow_mut().buffer = id;
+            crate::editor::record_buffer_display(self, id);
         }
     }
 

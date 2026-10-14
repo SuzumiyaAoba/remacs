@@ -2801,7 +2801,7 @@ fn f_remove_hook(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         // A local value of exactly (t) kills the local binding.
         if let Some(b) = i.buffers.get(i.current_buffer) {
             if let Ok(mut bb) = b.try_borrow_mut() {
-                bb.locals.remove(&hook_id);
+                bb.locals.shift_remove(&hook_id);
             }
         }
     } else {

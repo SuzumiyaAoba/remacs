@@ -203,7 +203,7 @@ fn f_with_output_to_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResul
     // may `(with-current-buffer standard-output ...)' (vc-git relies on
     // it), so a bare string capture is wrong.
     let body = Value::list(args.iter().cloned().collect());
-    let buf_id = i.buffers.create_exact(" *string-output*");
+    let buf_id = i.create_buffer_exact(" *string-output*");
     let buf_val = i
         .buffers
         .get(buf_id)
