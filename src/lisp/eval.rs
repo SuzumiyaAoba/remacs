@@ -12164,6 +12164,10 @@ command-line arguments.\" \
                     // invalid-letter report.
                     let prompt = take_fmt(self, &chars, &mut pos, &out)?;
                     match c {
+                        // GNU callint.c: `i' supplies an ignored argument,
+                        // always nil.  The rest of its line is prompt text,
+                        // already consumed/formatted above (not more codes).
+                        'i' => out.push(Value::Nil),
                         'r' => {
                             // GNU callint 'r' = region-beginning +
                             // region-end: no mark set → "The mark is
