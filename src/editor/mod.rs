@@ -18096,10 +18096,23 @@ fn f_char_syntax(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Int(n) if (0..=0x3f_ffff).contains(n) => *n as u32,
         other => return Err(i.wrong_type_mut("characterp", other)),
     };
-    match char::from_u32(c) {
-        Some(ch) => Ok(Value::Int(syntax_code_buf(i, ch) as i128)),
-        None => Ok(Value::Nil),
-    }
+    // Syntax tables cover all Emacs character codes, including surrogates
+    // and the non-Unicode internal range.  Do not narrow through Rust char.
+    let multibyte = i.intern("enable-multibyte-characters");
+    let c = if !i.symbol_value(multibyte).truthy() && (128..=255).contains(&c) {
+        c + 0x3fff00
+    } else {
+        c
+    };
+    let table = f_syntax_table(i, vec![].into())?;
+    let entry = crate::lisp::builtins::misc::char_table_ref(i, &table, c as usize);
+    let code = match entry {
+        Value::Cons(cell) => cell.borrow().car.int().unwrap_or(0) as usize & 0xff,
+        _ => 0,
+    };
+    Ok(Value::Int(
+        SYNTAX_CLASS_CHARS.get(code).copied().unwrap_or(' ') as i128,
+    ))
 }
 
 /// `standard-syntax-table': GNU's exact contents — including all
@@ -18261,16 +18274,19 @@ fn f_matching_paren(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Int(n) if (0..=0x3f_ffff).contains(n) => *n,
         other => return Err(i.wrong_type_mut("characterp", other)),
     };
-    let m = match char::from_u32(c as u32) {
-        Some('(') => ')',
-        Some(')') => '(',
-        Some('[') => ']',
-        Some(']') => '[',
-        Some('{') => '}',
-        Some('}') => '{',
-        _ => return Ok(Value::Nil),
-    };
-    Ok(Value::Int(m as i128))
+    let table = f_syntax_table(i, vec![].into())?;
+    let entry = crate::lisp::builtins::misc::char_table_ref(i, &table, c as usize);
+    if let Value::Cons(cell) = entry {
+        let cell = cell.borrow();
+        if cell
+            .car
+            .int()
+            .is_some_and(|code| matches!(code & 0xff, 4 | 5))
+        {
+            return Ok(cell.cdr.clone());
+        }
+    }
+    Ok(Value::Nil)
 }
 
 fn f_standard_syntax_table(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
