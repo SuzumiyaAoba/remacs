@@ -6541,6 +6541,18 @@ fn f_set_keymap_parent(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !parent.is_nil() && !is_keymap(i, &parent) {
         return Err(i.wrong_type_mut("keymapp", &parent));
     }
+    // Reject inheritance cycles before touching the child's spine.
+    // Embedded keymap elements are bindings, not parent links.
+    let mut ancestor = parent.clone();
+    let mut seen = std::collections::HashSet::new();
+    while let Value::Cons(cell) = &ancestor {
+        if crate::lisp::builtins::eq_values(&ancestor, &a[0])
+            || !seen.insert(Rc::as_ptr(cell) as usize)
+        {
+            return Err(i.error("Cyclic keymap inheritance"));
+        }
+        ancestor = f_keymap_parent(i, vec![ancestor].into())?;
+    }
     if let Value::Cons(c) = &a[0] {
         // GNU stores the parent as the improper tail of the cdr:
         // (keymap E1 ... En . PARENT). Own elements are preserved
