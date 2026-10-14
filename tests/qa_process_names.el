@@ -1,0 +1,101 @@
+;;; -*- lexical-binding: nil -*-
+;; Issue #55: names share one namespace and deletion releases registration.
+(defun qa55-process (kind name)
+ (cond ((eq kind 'make) (make-process :name name :command nil :noquery t))
+       ((eq kind 'start) (start-process name nil nil))
+       ((eq kind 'pipe) (make-pipe-process :name name :buffer nil :noquery t))
+       (t (make-network-process :name name :host "127.0.0.1" :server t :service 0 :noquery t))))
+(defun qa55-cleanup (processes)
+ (dolist (p processes) (set-process-sentinel p 'ignore) (delete-process p)))
+(dolist (base '("qa55-name" "" "éλ" "qa55<1>"))
+ (let ((processes nil))
+  (unwind-protect
+   (progn
+    (dolist (kind '(make start pipe server))
+     (push (qa55-process kind base) processes))
+    (qa (mapcar #'process-name (reverse processes))
+        (list base (concat base "<1>") (concat base "<2>") (concat base "<3>")))
+    (dolist (p processes)
+     (qa-same (get-process (process-name p)) p)
+     (qa (and (memq p (process-list)) t) t))
+    (let ((deleted (nth 2 processes)))
+     (delete-process deleted)
+     (qa (memq deleted (process-list)) nil)
+     (qa (get-process (concat base "<1>")) nil)
+     (let ((replacement (qa55-process 'make base)))
+      (push replacement processes)
+      (qa (process-name replacement) (concat base "<1>"))
+      (qa-same (get-process (process-name replacement)) replacement)))
+    (qa55-cleanup processes)
+    (dolist (p processes) (qa (memq p (process-list)) nil)))
+   (qa55-cleanup processes))))
+(let ((processes nil))
+ (unwind-protect
+  (progn
+   (dolist (name '("qa55-explicit" "qa55-explicit<1>" "qa55-explicit" "qa55-explicit<1>"))
+    (push (qa55-process 'make name) processes))
+   (qa (mapcar #'process-name (reverse processes))
+       '("qa55-explicit" "qa55-explicit<1>" "qa55-explicit<2>" "qa55-explicit<1><1>")))
+  (qa55-cleanup processes)))
+;; Full condition data and name/argument validation.
+(qa (make-process) nil)
+(dolist (form '((make-process :command '("x")) (make-process :buffer nil)))
+ (qa (condition-case e (eval form) (error e)) '(error "Missing :name keyword parameter")))
+(dolist (value '(nil t symbol 5 []))
+ (qa (condition-case e (make-process :name value) (error e)) '(error ":name value not a string")))
+(dolist (args '((:name) (:name "qa55-bad" :bogus)))
+ (qa (condition-case e (apply #'make-process args) (error e)) '(malformed-keyword-arg-list)))
+;; Failed creation cannot reserve the requested name or leak a process entry.
+(let ((count (length (process-list))))
+ (qa (condition-case nil (progn (make-process :name "qa55-failed" :buffer 5) nil) (error t)) t)
+ (qa (length (process-list)) count)
+ (let ((p (qa55-process 'make "qa55-failed")))
+  (unwind-protect (qa (process-name p) "qa55-failed") (delete-process p))))
+;; An ordinary deleted real child is no longer registered, without PID guesses.
+(let ((p (make-process :name "qa55-child" :command '("cat") :noquery t)))
+ (unwind-protect
+  (progn (delete-process p)
+         (qa (memq p (process-list)) nil)
+         (qa (get-process "qa55-child") nil)
+         (qa (process-name p) "qa55-child"))
+  (delete-process p)))
+;; Accepting connections must not register the listening object a second time.
+(defun qa55-occurrences (target values)
+ (let ((n 0)) (dolist (value values) (when (eq value target) (setq n (1+ n)))) n))
+(let* ((before (process-list))
+       (server (make-network-process :name "qa55-listener" :host "127.0.0.1"
+                                     :server t :service 0 :sentinel 'ignore :noquery t))
+       (client nil) (accepted nil))
+ (unwind-protect
+  (progn
+   (setq client (make-network-process :name "qa55-client" :host "127.0.0.1"
+                                     :service (process-contact server :service)
+                                     :sentinel 'ignore :noquery t))
+   (dotimes (_ 40)
+    (unless accepted
+     (accept-process-output nil 0.05)
+     (dolist (p (process-list))
+      (unless (or (memq p before) (eq p server) (eq p client)) (setq accepted p)))))
+   (qa (processp accepted) t)
+   (qa (qa55-occurrences server (process-list)) 1)
+   (qa (qa55-occurrences client (process-list)) 1)
+   (qa (qa55-occurrences accepted (process-list)) 1)
+   (delete-process server)
+   (qa (memq server (process-list)) nil)
+   (qa (get-process "qa55-listener") nil))
+  (dolist (p (list accepted client server))
+   (when (processp p) (set-process-sentinel p 'ignore) (delete-process p)))))
+;; Repeated deletion and dropping a deleted pipe must not close recycled FDs.
+(dolist (drop-old '(nil t))
+ (let ((old (make-pipe-process :name "qa55-old-pipe" :buffer nil :sentinel 'ignore :noquery t))
+       (new nil))
+  (unwind-protect
+   (progn
+    (delete-process old)
+    (setq new (make-pipe-process :name "qa55-new-pipe" :buffer nil :sentinel 'ignore :noquery t))
+    (if drop-old (progn (setq old nil) (garbage-collect)) (delete-process old))
+    (qa (process-send-string new "x") nil)
+    (qa (and (process-live-p new) t) t))
+   (when old (delete-process old))
+   (when new (delete-process new)))))
+(princ (qa--done)) (terpri)

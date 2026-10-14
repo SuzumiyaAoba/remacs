@@ -574,7 +574,7 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                 };
                 let child_proc = Rc::new(RefCell::new(Proc {
                     // GNU names the accepted process "<host:port>".
-                    name: format!("<{addr}>"),
+                    name: unique_process_name(i, &format!("<{addr}>")),
                     kind: "network",
                     command: Value::Nil,
                     io: ProcIo::Net(stream),
@@ -605,9 +605,6 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     gnutls_async_signalled: Value::Nil,
                 }));
                 i.processes.push(child_proc);
-                // GNU re-registers the server in process_alist on accept,
-                // so it can appear twice in `process-list`.
-                i.processes.push(pref.clone());
                 run_sentinel(i, pref, "open", 0)?;
             }
             Ev::AcceptedLocal(stream) => {
@@ -628,7 +625,7 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     (pb.filter.clone(), pb.sentinel.clone(), pb.plist.clone())
                 };
                 let child_proc = Rc::new(RefCell::new(Proc {
-                    name,
+                    name: unique_process_name(i, &name),
                     kind: "network",
                     command: Value::Nil,
                     io: ProcIo::LocalNet(stream),
@@ -659,7 +656,6 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     gnutls_async_signalled: Value::Nil,
                 }));
                 i.processes.push(child_proc);
-                i.processes.push(pref.clone());
                 run_sentinel(i, pref, "open", 0)?;
             }
         }
@@ -681,6 +677,21 @@ pub(crate) fn poll_all(i: &mut Interp) -> Result<bool, Flow> {
 }
 
 // ---------- constructors ----------
+
+/// Use the first available suffix, considering every registered process.
+fn unique_process_name(i: &Interp, requested: &str) -> String {
+    let used = |name: &str| i.processes.iter().any(|p| p.borrow().name == name);
+    if !used(requested) {
+        return requested.to_string();
+    }
+    for suffix in 1usize.. {
+        let candidate = format!("{requested}<{suffix}>");
+        if !used(&candidate) {
+            return candidate;
+        }
+    }
+    unreachable!()
+}
 
 fn free_process_marker() -> MarkerRef {
     Rc::new(RefCell::new(Marker {
@@ -814,6 +825,7 @@ fn finish_setup(
     if want_command {
         p.command = kw(i, args, ":command");
     }
+    p.name = unique_process_name(i, &p.name);
     Ok(Rc::new(RefCell::new(p)))
 }
 
@@ -833,12 +845,23 @@ fn f_make_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if a.is_empty() {
         return Ok(Value::Nil);
     }
+    if a.len() % 2 != 0 {
+        let error = i.intern("malformed-keyword-arg-list");
+        return Err(i.signal_data(error, vec![]));
+    }
+    let name_key = i.intern(":name");
+    if !a
+        .as_slice()
+        .chunks_exact(2)
+        .any(|pair| matches!(&pair[0], Value::Sym(id) if *id == name_key))
+    {
+        return Err(i.error("Missing :name keyword parameter"));
+    }
     let args = Value::list(a.as_slice().to_vec());
     let name_v = kw(i, &args, ":name");
     let name = match &name_v {
         Value::Str(s) => s.borrow().clone(),
-        Value::Sym(id) if name_v.truthy() => i.symbol_name(*id),
-        _ => return Err(i.error("Process name not given")),
+        _ => return Err(i.error(":name value not a string")),
     };
     // GNU quirk: a non-nil :stop on make-process signals
     // (wrong-type-argument null <value>); pipe processes accept :stop.
@@ -2430,6 +2453,11 @@ fn f_delete_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                         libc::close(*sink_fd);
                     }
                 }
+                // The process object can outlive deletion; never let its
+                // Drop or a repeated delete close recycled descriptors.
+                *read_fd = -1;
+                *child_wfd = -1;
+                *sink_fd = -1;
                 pb.status = "closed";
                 ("deleted", 0)
             }
