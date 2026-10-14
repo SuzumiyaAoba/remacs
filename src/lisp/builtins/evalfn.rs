@@ -3686,12 +3686,8 @@ fn f_current_time(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {
     Ok(super::misc::us_to_lisp_time(us))
 }
 fn f_current_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let t = match args.get(0) {
-        Some(v) => super::misc::lisp_time_to_us(i, v)?,
-        None => super::misc::lisp_time_to_us(i, &Value::Nil)?,
-    };
-    let secs = (t / 1_000_000) as i64;
-    let tm = super::misc::interp_local_tm(i, secs);
+    let secs = super::misc::lisp_time_seconds(i, &arg(&args, 0))?;
+    let tm = super::misc::time_tm(i, secs, &arg(&args, 1))?;
     let wday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][tm.tm_wday.clamp(0, 6) as usize];
     let mon = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -3730,11 +3726,7 @@ fn f_current_time_zone(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             format!("{}{:02}", sign, h)
         }
     }
-    let t = match args.get(0) {
-        Some(v) => super::misc::lisp_time_to_us(i, v)?,
-        None => super::misc::lisp_time_to_us(i, &Value::Nil)?,
-    };
-    let secs = t.div_euclid(1_000_000) as i64;
+    let secs = super::misc::lisp_time_seconds(i, &arg(&args, 0))?;
     let t_sym = i.intern("t");
     let wall_sym = i.intern("wall");
     let (off, name) = match args.get(1) {
