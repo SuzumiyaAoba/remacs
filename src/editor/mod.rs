@@ -10597,11 +10597,11 @@ fn f_file_name_nondirectory(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
 fn f_file_name_extension(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let s = want_str(i, &a[0])?;
     let base = s.rsplit('/').next().unwrap_or(&s);
+    let keep_dot = a.get(1).is_some_and(|v| v.truthy());
     match base.rfind('.') {
-        Some(idx) if idx > 0 => {
-            let keep_dot = a.get(1).map(|v| v.truthy()).unwrap_or(false);
-            Ok(Value::string(&base[idx + usize::from(!keep_dot)..]))
-        }
+        Some(idx) if idx > 0 => Ok(Value::string(&base[idx + usize::from(!keep_dot)..])),
+        // With PERIOD, GNU returns an empty string for no extension.
+        _ if keep_dot => Ok(Value::string("")),
         _ => Ok(Value::Nil),
     }
 }

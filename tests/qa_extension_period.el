@@ -1,0 +1,20 @@
+;;; -*- lexical-binding: nil; -*-
+;; Issue #52: PERIOD requests an empty string for extensionless names.
+(dolist (name '("" "plain" ".hidden" "." "/tmp/.a" "/d.e/plain"
+                "/a.b/" "/" "日本語" "/tmp/.日本"))
+  (qa (file-name-extension name) nil)
+  (qa (file-name-extension name nil) nil)
+  (dolist (period '(t 0 "" arbitrary))
+    (qa (file-name-extension name period) "")))
+(dolist (entry '(("a.b" "b" ".b") ("a.b.c" "c" ".c")
+                  ("x." "" ".") (".." "" ".")
+                  (".hidden.el" "el" ".el") ("/tmp/日本.語" "語" ".語")))
+  (qa (file-name-extension (car entry)) (nth 1 entry))
+  (qa (file-name-extension (car entry) t) (nth 2 entry)))
+(dolist (value '(nil t 1 [a]))
+  (qa-err-data (file-name-extension value t) 'wrong-type-argument (list 'stringp value)))
+(qa (progn (string-match "b" "abc")
+           (let ((before (match-data)))
+             (file-name-extension "/tmp/.a" t)
+             (equal before (match-data)))) t)
+(princ (qa--done))
