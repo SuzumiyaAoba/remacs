@@ -464,6 +464,20 @@
 (qa (fboundp 'make-serial-process) t) ; exists in GNU 31.1
 
 
+;; Batch display-message-or-buffer must not leave an echo-area message.
+(dolist (inhibit '(nil t))
+  (let ((inhibit-message inhibit))
+    (dolist (text '("qa159 short" "100% 日本語" ""))
+      (qa (display-message-or-buffer text) text)
+      (qa (current-message) nil)
+      (qa (message "%s" "qa159 later") "qa159 later")
+      (qa (current-message) nil))
+    (display-message-or-buffer "qa159 clear")
+    (message nil)
+    (qa (current-message) nil)
+    (message "")
+    (qa (current-message) nil)))
+
 ;; == display-message-or-buffer accepts a buffer (shell-command path) ==
 ;; GNU Fdisplay_message_or_buffer returns t for a buffer arg.
 (let ((qb (get-buffer-create "qap-dmb")))

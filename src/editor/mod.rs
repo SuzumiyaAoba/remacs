@@ -20738,7 +20738,10 @@ fn f_display_message_or_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     // returns the buffer like shell-command-on-region relies on).
     match &a[0] {
         Value::Str(s) => {
-            i.echo_message = s.borrow().clone();
+            // Batch output does not occupy the interactive echo area.
+            if !i.noninteractive {
+                i.echo_message = s.borrow().clone();
+            }
             Ok(a[0].clone())
         }
         Value::Int(_) => Ok(a[0].clone()),
