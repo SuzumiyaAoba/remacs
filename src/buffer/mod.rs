@@ -498,11 +498,15 @@ impl Buffer {
         self.record_insert(p, n);
         self.text.insert(p, s);
         self.point = p + n;
+        // Active BEGV is a buffer field, not an insertion marker.  Text
+        // inserted at point-min remains accessible even before markers.
+        let begv = self.begv;
         self.adjust_markers_insert(p, n, true);
+        self.begv = begv;
         let id = self.id;
         let text = self.text.clone();
         text.each_sibling(id, move |sib| {
-            if sib.point > p {
+            if sib.point >= p {
                 sib.point += n;
             }
             sib.adjust_markers_insert(p, n, true)
@@ -535,9 +539,9 @@ impl Buffer {
                 }
             }
         }
-        // GNU BEGV/ZV are markers in the shared text: ZV is a
-        // before-insert marker (text at ZV lands inside), BEGV an
-        // after-insert marker; `insert-before-markers' advances both.
+        // Inactive sibling restrictions are stored in markers: ZV advances
+        // at insertion, while BEGV advances at equality only before markers.
+        // Active before-markers insertion restores its field-valued BEGV.
         if self.zv >= pos {
             self.zv += n;
         }
