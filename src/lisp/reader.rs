@@ -1067,8 +1067,12 @@ impl<'a> Reader<'a> {
                 let (tok, _) = self.read_symbol_token();
                 Ok(Value::Sym(self.interp.intern(&tok)))
             }
-            Some('|') => Err(read_err_sym(self.interp, "#|")),
-            Some('<') => Err(read_err_sym(self.interp, "#<")),
+            Some('|') | Some('<') => {
+                // GNU's read point is past `#' when these signal.
+                self.pos += 1;
+                let c = if matches!(self.peek(), Some('|')) { "|" } else { "<" };
+                Err(read_err_sym(self.interp, &format!("#{c}")))
+            }
             Some('$') => {
                 // #$ — the name of the file being loaded
                 // (Emacs substitutes load-file-name, nil outside load).
@@ -1129,6 +1133,9 @@ impl<'a> Reader<'a> {
                         // the placeholder itself; GNU rejects it.
                         if let Value::Sym(s) = &obj {
                             if self.label_markers.get(&n) == Some(s) {
+                                // GNU signals with point on the
+                                // object's last char.
+                                self.pos = self.pos.saturating_sub(1);
                                 return Err(read_err(self.interp, "nonsensical self-reference"));
                             }
                         }
@@ -1148,20 +1155,37 @@ impl<'a> Reader<'a> {
                                     }
                                     Ok(Value::Sym(self.label_markers[&n]))
                                 } else {
+                                    // GNU signals with point on the
+                                    // trailing `#'.
+                                    self.pos = self.pos.saturating_sub(1);
                                     Err(read_err(self.interp, &format!("#{n}#")))
                                 }
                             }
                         }
                     }
                     other => {
-                        let c = other.unwrap_or(' ');
-                        Err(read_err_sym(self.interp, &format!("#{n}{c}")))
+                        // GNU signals with point on the consumed char
+                        // (or the stream tail at EOF) — error_pos
+                        // counts through pos.  At EOF the datum is
+                        // just "#N" — no phantom char.
+                        self.pos = self.pos.saturating_sub(1);
+                        match other {
+                            Some(c) => Err(read_err_sym(self.interp, &format!("#{n}{c}"))),
+                            None => Err(read_err_sym(self.interp, &format!("#{n}"))),
+                        }
                     }
                 }
             }
             other => {
-                let c = other.unwrap_or(' ');
-                Err(read_err_sym(self.interp, &format!("#{c}")))
+                // GNU's read point is already past `#' when the error
+                // surfaces — buffer-source errors then report the
+                // column one past ours.  Advance before signalling.
+                // At EOF GNU prints just "#" — no phantom char.
+                self.pos += 1;
+                match other {
+                    Some(c) => Err(read_err_sym(self.interp, &format!("#{c}"))),
+                    None => Err(read_err_sym(self.interp, "#")),
+                }
             }
         }
     }

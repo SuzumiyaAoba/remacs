@@ -556,7 +556,7 @@ fn content_is_multibyte(text: &str) -> bool {
     })
 }
 
-fn f_concat(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_concat(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let mut out = String::new();
     let mut ivs: Vec<(usize, usize, Vec<Value>)> = Vec::new();
     let mut saw_props = false;
@@ -1815,14 +1815,16 @@ fn f_string_equal_ignore_case(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
     Ok(Value::from_bool(a.to_lowercase() == b.to_lowercase()))
 }
 fn f_char_equal(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let a = match &args[0] {
-        Value::Int(n) => *n,
-        v => return Err(i.wrong_type_mut("characterp", v)),
+    // GNU CHECK_CHARACTER: int in [0, 0x3FFFFF]; anything else is
+    // `wrong-type-argument characterp'.
+    let mut check = |v: &Value| -> Result<i128, Flow> {
+        match v {
+            Value::Int(n) if (0..=0x3FFFFF).contains(n) => Ok(*n),
+            v => Err(i.wrong_type_mut("characterp", v)),
+        }
     };
-    let b = match &args[1] {
-        Value::Int(n) => *n,
-        v => return Err(i.wrong_type_mut("characterp", v)),
-    };
+    let a = check(&args[0])?;
+    let b = check(&args[1])?;
     // Emacs consults `case-fold-search' (default t in -Q).
     let fold = i
         .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))

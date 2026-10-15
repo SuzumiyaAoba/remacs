@@ -6501,6 +6501,27 @@ fn f_set_keymap_parent(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !parent.is_nil() && !is_keymap(i, &parent) {
         return Err(i.wrong_type_mut("keymapp", &parent));
     }
+    // GNU Fset_keymap_parent rejects cyclic inheritance: walking
+    // PARENT's parent chain that reaches KEYMAP signals
+    // "Cyclic keymap inheritance".  Guard against unbounded walks.
+    if !parent.is_nil() {
+        let mut cur = parent.clone();
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            if crate::lisp::builtins::eq_values(&cur, &a[0]) {
+                return Err(i.error("Cyclic keymap inheritance"));
+            }
+            cur = match cur.clone() {
+                Value::Cons(c) => {
+                    if !seen.insert(std::rc::Rc::as_ptr(&c) as usize) {
+                        return Err(i.error("Cyclic keymap inheritance"));
+                    }
+                    c.borrow().cdr.clone()
+                }
+                _ => break,
+            };
+        }
+    }
     if let Value::Cons(c) = &a[0] {
         // GNU stores the parent as the improper tail of the cdr:
         // (keymap E1 ... En . PARENT). Own elements are preserved
@@ -14700,7 +14721,11 @@ fn f_move_beginning_of_line(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let line = bb.text.line_of_pos(bb.point());
-    let target = (line as i128 + (n - 1)).max(0) as usize;
+    let last = bb.text.line_of_pos(bb.text.len());
+    // GNU line-move: moving past the last line stops at its
+    // beginning (forward-line fails there when there's no
+    // trailing newline); past BOB stops at point-min.
+    let target = (line as i128 + (n - 1)).clamp(0, last as i128) as usize;
     let p = bb.text.line_start(target);
     bb.set_point(p);
     // GNU's Lisp defun returns `(goto-char ...)' — the new point.
@@ -14709,15 +14734,25 @@ fn f_move_beginning_of_line(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
 
 fn f_move_end_of_line(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let n = num_or_mark(i, &arg(&a, 0))?;
-    // GNU simple.el: `(vertical-motion (cons 0 arg))' — a non-positive
-    // ARG leaves point in place rather than moving to this line's end.
-    if n <= 0 {
-        return Ok(Value::Nil);
-    }
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let line = bb.text.line_of_pos(bb.point());
-    let target = line + (n - 1).max(0) as usize;
+    if n <= 0 {
+        // GNU `move-end-of-line' runs `(line-move arg t)' which does
+        // forward-line(arg): arg<=0 goes to bol of line cur+arg-1 —
+        // past BOB, the line-0 bol (point-min).
+        let target = line as i128 + (n - 1);
+        let p = if target < 0 {
+            bb.text.line_start(0)
+        } else {
+            let ls = bb.text.line_start(target as usize);
+            bb.text.line_end(ls)
+        };
+        bb.set_point(p);
+        return Ok(Value::Nil);
+    }
+    let last = bb.text.line_of_pos(bb.text.len());
+    let target = (line + (n - 1).max(0) as usize).min(last);
     let ls = bb.text.line_start(target);
     let p = bb.text.line_end(ls);
     bb.set_point(p);

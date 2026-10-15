@@ -663,8 +663,27 @@ fn f_combine_after_change_execute(i: &mut Interp, _a: crate::lisp::Argv) -> Eval
 /// `translate-region-internal': TABLE is a string or a char-table of
 /// `translation-table' purpose; returns the number of chars changed.
 fn f_translate_region_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let (s, e) = beg_end(i, &a, 0, 1)?;
     check_writable(i)?;
+    // GNU: `translate-region-internal' runs `validate_region' (swap
+    // reversed pair, signal args-out-of-range out of bounds).
+    let (begv, zv) = {
+        let b = cur(i);
+        let bb = b.borrow();
+        (bb.begv as i128, bb.zv as i128)
+    };
+    let (s, e) = {
+        let x = crate::lisp::builtins::want_int_or_mark(i, &a[0])?;
+        let y = crate::lisp::builtins::want_int_or_mark(i, &a[1])?;
+        let (s, e) = if x > y { (y, x) } else { (x, y) };
+        if s < begv + 1 || e > zv + 1 {
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![Value::Buffer(cur(i)), Value::Int(s), Value::Int(e)],
+            ));
+        }
+        (s as usize - 1, e as usize - 1)
+    };
     Ok(Value::Int(translate_region_core(i, s, e, &a[2])?))
 }
 
@@ -2320,19 +2339,52 @@ fn f_replace_regexp_in_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
 
 fn f_transpose_regions(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     check_writable(i)?;
-    let (s1, e1) = beg_end(i, &a, 0, 1)?;
-    let (s2, e2) = beg_end(i, &a, 2, 3)?;
-    if s1 > s2 {
-        return f_transpose_regions(
+    // GNU editfns.c Ftranspose_regions: validate_region each pair
+    // (type check, swap within pair, bounds signal), then swap the two
+    // PAIRS when `start2 < end1', then signal `error' "Transposed
+    // regions overlap" when they still interleave.
+    let (begv, zv) = {
+        let b = cur(i);
+        let bb = b.borrow();
+        (bb.begv, bb.zv)
+    };
+    let mut valr = |x_idx: usize, y_idx: usize| -> Result<(usize, usize), Flow> {
+        let x = crate::lisp::builtins::want_int_or_mark(i, &a[x_idx])?;
+        let y = crate::lisp::builtins::want_int_or_mark(i, &a[y_idx])?;
+        let (s, e) = if x > y { (y, x) } else { (x, y) };
+        if s < begv as i128 + 1 || e > zv as i128 + 1 {
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![
+                    Value::Buffer(cur(i)),
+                    Value::Int(s),
+                    Value::Int(e),
+                ],
+            ));
+        }
+        Ok((s as usize - 1, e as usize - 1))
+    };
+    let (mut s1, mut e1) = valr(0, 1)?;
+    let (mut s2, mut e2) = valr(2, 3)?;
+    if s2 < e1 {
+        std::mem::swap(&mut s1, &mut s2);
+        std::mem::swap(&mut e1, &mut e2);
+    }
+    if s2 < e1 {
+        return Err(err_sym(
             i,
-            vec![a[2].clone(), a[3].clone(), a[0].clone(), a[1].clone()].into(),
-        );
+            "error",
+            vec![Value::string("Transposed regions overlap")],
+        ));
+    }
+    // Adjacent regions where one is empty: GNU returns early (no
+    // modification, nil).
+    if (s1 == e1 || s2 == e2) && e1 == s2 {
+        return Ok(Value::Nil);
     }
     let b = cur(i);
     let bb = b.borrow_mut();
-    if e1 > s2 {
-        return Err(err_sym(i, "error", vec![Value::string("Regions overlap")]));
-    }
     let t1 = bb.text.substring(s1, e1);
     let t2 = bb.text.substring(s2, e2);
     drop(bb);
@@ -2357,11 +2409,23 @@ fn f_subst_char_in_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let bb = b.borrow();
         (bb.begv as i128, bb.text_len() as i128)
     };
-    if s_raw < begv + 1 || e_raw > len + 1 || s_raw > e_raw {
+    // GNU validate_region swaps START/END when START>END first, so a
+    // reversed-but-in-range pair is legal and the out-of-range payload
+    // carries the NORMALIZED pair.
+    let (s_raw, e_raw) = if s_raw > e_raw {
+        (e_raw, s_raw)
+    } else {
+        (s_raw, e_raw)
+    };
+    if s_raw < begv + 1 || e_raw > len + 1 {
         return Err(err_sym(
             i,
             "args-out-of-range",
-            vec![Value::Buffer(cur(i)), a[0].clone(), a[1].clone()],
+            vec![
+                Value::Buffer(cur(i)),
+                Value::Int(s_raw),
+                Value::Int(e_raw),
+            ],
         ));
     }
     let (s, e) = (s_raw as usize - 1, e_raw as usize - 1);
@@ -2556,7 +2620,27 @@ fn translate_region_core(i: &mut Interp, s: usize, e: usize, table: &Value) -> R
 
 fn f_translate_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     check_writable(i)?;
-    let (s, e) = beg_end(i, &a, 0, 1)?;
+    // GNU mule `translate-region': same `validate_region' pattern —
+    // swap START/END when reversed, signal args-out-of-range when a
+    // bound escapes [BEGV, ZV] (no clamping like `beg_end').
+    let (begv, zv) = {
+        let b = cur(i);
+        let bb = b.borrow();
+        (bb.begv as i128, bb.zv as i128)
+    };
+    let (s, e) = {
+        let x = crate::lisp::builtins::want_int_or_mark(i, &a[0])?;
+        let y = crate::lisp::builtins::want_int_or_mark(i, &a[1])?;
+        let (s, e) = if x > y { (y, x) } else { (x, y) };
+        if s < begv + 1 || e > zv + 1 {
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![Value::Buffer(cur(i)), Value::Int(s), Value::Int(e)],
+            ));
+        }
+        (s as usize - 1, e as usize - 1)
+    };
     // GNU's Lisp `translate-region' resolves a SYMBOL table through
     // its `translation-table' property, then delegates to
     // `translate-region-internal'.
@@ -2835,8 +2919,10 @@ fn f_store_match_data(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             _ => v.int().map(|p| (p as usize).saturating_sub(off)),
         }
     };
+    // GNU stores only complete pairs — an odd tail is dropped.
+    let npairs = items.len() / 2;
     let mut k = 0;
-    while k < items.len() {
+    while k < 2 * npairs {
         let s = to_pos(&items[k]);
         let e = items.get(k + 1).and_then(|v| to_pos(v));
         regs.push(s);

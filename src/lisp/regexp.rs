@@ -317,61 +317,72 @@ impl Parser {
                 }
                 Some('\\') if self.chars.get(self.pos + 1) == Some(&'{') => {
                     // interval \{m,n\}
-                    let save = self.pos;
+                    // GNU re_compile_pattern for `\{': reads digits,
+                    // optional `,' + digits, then `\}'.  EOF before
+                    // the contents → "Unmatched \{"; non-digit junk
+                    // or n<m/>RE_DUP_MAX → "Invalid content of \{\}".
+                    // `\{,5\}' is `{0,5}'.
                     self.pos += 2;
-                    let mut min = String::new();
-                    while let Some(c) = self.peek() {
-                        if c.is_ascii_digit() {
-                            min.push(c);
-                            self.pos += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    let mut max = None;
-                    if self.peek() == Some(',') {
-                        self.pos += 1;
-                        let mut mx = String::new();
-                        while let Some(c) = self.peek() {
+                    let take_digits = |p: &mut Self| -> String {
+                        let mut s = String::new();
+                        while let Some(c) = p.peek() {
                             if c.is_ascii_digit() {
-                                mx.push(c);
-                                self.pos += 1;
+                                s.push(c);
+                                p.pos += 1;
                             } else {
                                 break;
                             }
                         }
-                        max = if mx.is_empty() {
-                            None
-                        } else {
-                            Some(mx.parse::<usize>().unwrap_or(usize::MAX))
-                        };
-                    } else if !min.is_empty() {
-                        max = min.parse::<usize>().ok();
-                    }
-                    if self.peek() == Some('\\') && self.chars.get(self.pos + 1) == Some(&'}') {
-                        self.pos += 2;
-                        let minv = min.parse::<usize>().unwrap_or(0);
-                        // GNU rejects `\{m,n\}' with n < m as invalid-regexp
-                        // at compile time (never a panic); bounds above
-                        // RE_DUP_MAX are likewise rejected, which also
-                        // keeps codegen from exploding on huge counts.
-                        const RE_DUP_MAX: usize = 32767;
-                        if minv > RE_DUP_MAX
-                            || matches!(max, Some(mv) if mv > RE_DUP_MAX || mv < minv)
-                        {
-                            return Err(RegexError("invalid interval bound".into()));
-                        }
-                        node = Ast::Repeat {
-                            node: Box::new(node),
-                            min: minv,
-                            max,
-                            greedy: true,
-                        };
+                        s
+                    };
+                    let min_s = take_digits(self);
+                    let max_s = if self.peek() == Some(',') {
+                        self.pos += 1;
+                        Some(take_digits(self))
                     } else {
-                        // not a valid interval — restore and treat \{ as literal
-                        self.pos = save;
-                        break;
+                        None
+                    };
+                    let closed = self.peek() == Some('\\')
+                        && self.chars.get(self.pos + 1) == Some(&'}');
+                    if closed {
+                        self.pos += 2;
                     }
+                    // At this point: `\{' then [digits] [, [digits]]
+                    // then optional `\}'.  GNU's grammar requires the
+                    // closer; without it, if the contents are still
+                    // junk it's "Invalid content", at bare EOF of a
+                    // clean prefix it's "Unmatched \{".
+                    let junk = !closed && self.peek().is_some();
+                    if junk {
+                        return Err(RegexError("Invalid content of \\{\\}".into()));
+                    }
+                    let min_empty = min_s.is_empty();
+                    let minv: usize = if min_empty {
+                        0
+                    } else {
+                        min_s.parse().unwrap_or(usize::MAX)
+                    };
+                    let maxv: Option<usize> = match &max_s {
+                        Some(s) if s.is_empty() => None, // \{N,\} = N..
+                        Some(s) => Some(s.parse().unwrap_or(usize::MAX)),
+                        None => Some(minv), // \{N\}, including \{\} = {0}
+                    };
+                    if !closed {
+                        // `\{' then clean digits then EOF: "Unmatched \{".
+                        return Err(RegexError("Unmatched \\{".into()));
+                    }
+                    const RE_DUP_MAX: usize = 65535;
+                    if minv > RE_DUP_MAX
+                        || matches!(maxv, Some(mv) if mv > RE_DUP_MAX || mv < minv)
+                    {
+                        return Err(RegexError("Invalid content of \\{\\}".into()));
+                    }
+                    node = Ast::Repeat {
+                        node: Box::new(node),
+                        min: minv,
+                        max: maxv,
+                        greedy: true,
+                    };
                 }
                 _ => break,
             }
@@ -382,7 +393,7 @@ impl Parser {
     /// atom := char | '.' | '^' | '$' | '[' class ']' | '\' escaped | '(' group ')'
     fn parse_atom(&mut self) -> Result<Ast, RegexError> {
         match self.next() {
-            None => Err(RegexError("unexpected end".into())),
+            None => Err(RegexError("Premature end of regular expression".into())),
             Some('.') => Ok(Ast::Any),
             Some('^') => Ok(Ast::Anchor('^')),
             Some('$') => Ok(Ast::Anchor('$')),
@@ -396,7 +407,7 @@ impl Parser {
 
     fn parse_escape(&mut self) -> Result<Ast, RegexError> {
         match self.next() {
-            None => Err(RegexError("trailing backslash".into())),
+            None => Err(RegexError("Trailing backslash".into())),
             Some('(') => {
                 // \( ... \) group; \(?: ... \) shy group; \(?N: ... \)
                 // numbered group (GNU Emacs 29+).
@@ -440,11 +451,11 @@ impl Parser {
                 // stray \) — the caller (parse_alt) should have stopped;
                 // put it back conceptually by erroring.
                 self.pos -= 1;
-                Err(RegexError("unmatched \\)".into()))
+                Err(RegexError("Unmatched ) or \\)".into()))
             }
             Some('|') => {
                 self.pos -= 1;
-                Err(RegexError("unmatched \\|".into()))
+                Err(RegexError("Unmatched \\| or \\|".into()))
             }
             Some('`') => Ok(Ast::Anchor('`')),
             Some('\'') => Ok(Ast::Anchor('\'')),
@@ -470,19 +481,19 @@ impl Parser {
             Some('w') => Ok(Ast::SyntaxClass(b'w', false)),
             Some('W') => Ok(Ast::SyntaxClass(b'w', true)),
             Some('s') => {
-                let code = self.next().ok_or(RegexError("\\s without code".into()))?;
+                let code = self.next().ok_or(RegexError("Premature end of regular expression".into()))?;
                 Ok(Ast::SyntaxClass(code as u8, false))
             }
             Some('S') => {
-                let code = self.next().ok_or(RegexError("\\S without code".into()))?;
+                let code = self.next().ok_or(RegexError("Premature end of regular expression".into()))?;
                 Ok(Ast::SyntaxClass(code as u8, true))
             }
             Some('c') => {
-                let code = self.next().ok_or(RegexError("\\c without code".into()))?;
+                let code = self.next().ok_or(RegexError("Premature end of regular expression".into()))?;
                 Ok(Ast::CategoryClass(code as u8, false))
             }
             Some('C') => {
-                let code = self.next().ok_or(RegexError("\\C without code".into()))?;
+                let code = self.next().ok_or(RegexError("Premature end of regular expression".into()))?;
                 Ok(Ast::CategoryClass(code as u8, true))
             }
             Some(d @ '1'..='9') => Ok(Ast::Backref(d as usize - '0' as usize)),
@@ -504,7 +515,8 @@ impl Parser {
             self.pos += 2;
             Ok(())
         } else {
-            Err(RegexError("unterminated group".into()))
+            // GNU re_compile_pattern: "Unmatched ( or \\(".
+            Err(RegexError("Unmatched ( or \\(".into()))
         }
     }
 
@@ -524,10 +536,11 @@ impl Parser {
         }
         // `]` as first char is literal.
         let mut first = true;
+        let mut no_posix_retry = false;
         let mut prev_char: Option<char> = None;
         loop {
             match self.peek() {
-                None => return Err(RegexError("unterminated char class".into())),
+                None => return Err(RegexError("Unmatched [ or [^".into())),
                 Some(']') if !first => {
                     self.pos += 1;
                     break;
@@ -550,7 +563,10 @@ impl Parser {
                 set.singles.push(c);
             }
             // POSIX [:name:] or [:^name:]
-            if self.peek() == Some('[') && self.chars.get(self.pos + 1) == Some(&':') {
+            if !no_posix_retry
+                && self.peek() == Some('[')
+                && self.chars.get(self.pos + 1) == Some(&':')
+            {
                 let save = self.pos;
                 self.pos += 2;
                 let neg = if self.peek() == Some('^') {
@@ -580,8 +596,14 @@ impl Parser {
                     }
                     set.posix.push((name, neg));
                 } else {
+                    // GNU `re_compile_pattern': `[:name' without a
+                    // `:]]' closer degrades to literal chars — `[[:bad]]'
+                    // is class `[:bad' followed by a literal `]'.
+                    // `no_posix_retry' keeps the same `[' from
+                    // re-entering this branch forever.
                     self.pos = save;
                     prev_char = Some('[');
+                    no_posix_retry = true;
                 }
                 continue;
             }
@@ -591,7 +613,7 @@ impl Parser {
             {
                 self.pos += 1;
                 let neg = self.next() == Some('S');
-                let code = self.next().ok_or(RegexError("bad \\s in class".into()))?;
+                let code = self.next().ok_or(RegexError("Premature end of regular expression".into()))?;
                 set.syntax.push((code as u8, neg));
                 continue;
             }
@@ -601,7 +623,7 @@ impl Parser {
             {
                 self.pos += 1;
                 let neg = self.next() == Some('C');
-                let code = self.next().ok_or(RegexError("bad \\c in class".into()))?;
+                let code = self.next().ok_or(RegexError("Premature end of regular expression".into()))?;
                 set.cats.push((code as u8, neg));
                 continue;
             }
@@ -617,7 +639,7 @@ impl Parser {
     /// inside [...] (only `[:posix:]' and `\s'/`\S' are special, and
     /// those are handled by the caller before this).
     fn class_char(&mut self) -> Result<char, RegexError> {
-        self.next().ok_or(RegexError("unterminated class".into()))
+        self.next().ok_or(RegexError("Unmatched [ or [^".into()))
     }
 }
 
@@ -829,6 +851,15 @@ pub fn compile_case(pattern: &str, case_fold: bool) -> Result<Regex, RegexError>
     };
     let ast = p.parse_alt()?;
     if p.pos != p.chars.len() {
+        // GNU re_compile_pattern: a leftover `\)' or `\|' is a
+        // paren/alternation error, not generic trailing garbage.
+        if p.chars.get(p.pos) == Some(&'\\') {
+            match p.chars.get(p.pos + 1) {
+                Some(')') => return Err(RegexError("Unmatched ) or \\)".into())),
+                Some('|') => return Err(RegexError("Unmatched \\| or \\|".into())),
+                _ => {}
+            }
+        }
         return Err(RegexError(format!(
             "trailing garbage in regexp at {}",
             p.pos

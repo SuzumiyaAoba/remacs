@@ -581,6 +581,11 @@ fn sf_setq(i: &mut Interp, args: Value) -> EvalResult {
 }
 
 fn sf_defvar(i: &mut Interp, args: Value) -> EvalResult {
+    // GNU eval.c: (defvar NAME [INIT [DOCSTRING]]) — a 4th argument
+    // signals `(error "Too many arguments")'.
+    if !cdr(&cdr(&cdr(&args))).is_nil() {
+        return Err(i.error("Too many arguments".to_string()));
+    }
     let name_v = car(&args);
     let sid = match i.sym_id(&name_v) {
         Some(s) => s,
@@ -628,6 +633,11 @@ fn sf_defvar(i: &mut Interp, args: Value) -> EvalResult {
 }
 
 fn sf_defconst(i: &mut Interp, args: Value) -> EvalResult {
+    // Same arg cap as `defvar' — `(defconst S V D X)' signals
+    // `(error "Too many arguments")'.
+    if !cdr(&cdr(&cdr(&args))).is_nil() {
+        return Err(i.error("Too many arguments".to_string()));
+    }
     let name_v = car(&args);
     let sid = match i.sym_id(&name_v) {
         Some(s) => s,
@@ -1027,7 +1037,14 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                                 return Err(e);
                             }
                         }
-                        let r = i.eval_progn(&hbody);
+                        // GNU Fprogn on an atom body (dotted handler
+                        // like `(error . v)') returns nil — atoms are
+                        // not evaluated.
+                        let r = if matches!(hbody, Value::Cons(_) | Value::Nil) {
+                            i.eval_progn(&hbody)
+                        } else {
+                            Ok(Value::Nil)
+                        };
                         if lex_frame.is_some() {
                             i.lexenv = saved_lex;
                         }
@@ -1078,7 +1095,13 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                                     return Err(e);
                                 }
                             }
-                            let r = i.eval_progn(&hbody);
+                            // GNU Fprogn on an atom handler body
+                            // (dotted `(error . v)') returns nil.
+                            let r = if matches!(hbody, Value::Cons(_) | Value::Nil) {
+                                i.eval_progn(&hbody)
+                            } else {
+                                Ok(Value::Nil)
+                            };
                             if lex_frame.is_some() {
                                 i.lexenv = saved_lex;
                             }

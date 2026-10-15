@@ -5371,6 +5371,24 @@ command-line arguments.\" \
         Ok(())
     }
 
+    /// GNU `let_shadows_buffer_binding_p': true when a `let' bound the
+    /// DEFAULT cell of a buffer-local-capable variable — i.e. our
+    /// specbind entry wrote the global slot (`buf' None) for a symbol
+    /// marked `make_local_if_set' or `always_local'.  `SPECPDL_LET_LOCAL'
+    /// entries (`buf' Some) don't count, matching GNU's `!=
+    /// SPECPDL_LET_LOCAL' check.
+    pub fn specbind_shadows_current(&self, id: SymId) -> bool {
+        let sym = self.obarray.symbol(id);
+        let can_local = sym.make_local_if_set || sym.always_local;
+        can_local && self.specbind.iter().any(|sb| sb.sym == id && sb.buf.is_none())
+    }
+
+    /// GNU `specpdl' walk for `defvaralias': any live `let' entry for
+    /// `id` (global or buffer-local) makes it let-bound.
+    pub fn specbind_for(&self, id: SymId) -> bool {
+        self.specbind.iter().any(|sb| sb.sym == id)
+    }
+
     /// Pop `n` specbind entries, restoring values.
     pub fn unbind(&mut self, n: usize) -> Result<(), Flow> {
         for _ in 0..n {
@@ -7755,8 +7773,9 @@ command-line arguments.\" \
         }
         // The macro's function receives raw forms.
         let result = match mac {
-            Value::Lambda(l) if l.is_macro => self.call_lambda(l, argv.into(), mac),
-            Value::Lambda(l) => self.call_lambda(l, argv.into(), mac),
+            Value::Lambda(l) => self
+                .call_lambda(l, argv.into(), mac)
+                .map_err(|f| self.macroexp_wna(mac, f)),
             Value::Cons(_) => {
                 let (car, _) = {
                     let c = match mac {
@@ -7805,20 +7824,30 @@ command-line arguments.\" \
                     },
                     // `#[ARGDESC ...]' byte-code expander (`.elc' twin):
                     // GNU exec_byte_code reports `(MIN . NONREST)' —
-                    // `when' → ((1 . 1) 0) from argdesc 385.
+                    // `when' → ((1 . 1) 0) from argdesc 385.  List-argdesc
+                    // twins (`#[(exp &rest cases) ...]') and interpreted
+                    // lambdas get the same `(MIN . NONREST)' shape.
                     Value::Lambda(l) => match &l.bc_items {
-                        Some(items) if super::bytecode::is_byte_code(&items.borrow()) => {
+                        Some(items) => {
                             let items = items.borrow();
                             match items.first() {
-                                Some(argdesc) => {
-                                    let (req, max, _rest, _) =
+                                Some(argdesc @ (Value::Int(_) | Value::Cons(_) | Value::Nil)) => {
+                                    let (req, _max, rest, _) =
                                         super::bytecode::parse_argdesc(self, argdesc);
-                                    Some((req as u16, max as u16))
+                                    Some((req as u16, if rest { 1 } else { _max as u16 }))
                                 }
-                                None => None,
+                                _ => None,
                             }
                         }
-                        _ => None,
+                        None => {
+                            let al = l.arglist.clone().unwrap_or(Value::Nil);
+                            crate::lisp::builtins::misc::raw_arglist_arity(self, &al)
+                                .map(|a| match a {
+                                    Arity::Range { min, max } => (min, max),
+                                    Arity::Many { min } => (min, 1),
+                                    Arity::Unevalled => (0, 1),
+                                })
+                        }
                     },
                     _ => None,
                 } {

@@ -92,6 +92,7 @@ qa!(qa_descr, "qa_descr.el");
 qa!(qa_doc, "qa_doc.el");
 qa!(qa_eieio, "qa_eieio.el");
 qa!(qa_eieio2, "qa_eieio2.el");
+qa!(qa_edge_semantics, "qa_edge_semantics.el");
 qa!(qa_err2, "qa_err2.el");
 qa!(qa_errors, "qa_errors.el");
 qa!(qa_eval, "qa_eval.el");

@@ -540,12 +540,16 @@ impl Buffer {
             }
         }
         // GNU BEGV/ZV are markers in the shared text: ZV is a
-        // before-insert marker (text at ZV lands inside), BEGV an
-        // after-insert marker; `insert-before-markers' advances both.
+        // before-insert marker (text at ZV lands inside), and BOTH
+        // advance strictly when the insert is past them — GNU's
+        // adjust_markers_for_insert uses `>' for BEGV and `>=' for
+        // ZV in the insert-before-markers path too, so a
+        // before-markers insert exactly at BEGV still lands *inside*
+        // the visible region (the text ends up after BEGV).
         if self.zv >= pos {
             self.zv += n;
         }
-        if self.begv > pos || (self.begv == pos && before_markers) {
+        if self.begv > pos {
             self.begv += n;
         }
         self.adjust_overlays_insert(pos, n, before_markers);

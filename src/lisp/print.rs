@@ -666,12 +666,22 @@ impl Interp {
             }
             Value::Hash(h) => {
                 // GNU: #s(hash-table) for defaults; `test' appears only
-                // when non-eql, `data' only when non-empty.
+                // when non-eql, `data' only when non-empty.  A named
+                // test (define-hash-table-test) prints its symbol.
                 let hh = h.borrow();
-                let test = match hh.test {
-                    crate::lisp::value::HashTest::Eq => Some("eq"),
-                    crate::lisp::value::HashTest::Eql => None,
-                    crate::lisp::value::HashTest::Equal => Some("equal"),
+                let test: Option<String> = if hh.test_name.truthy() {
+                    Some(match &hh.test_name {
+                        Value::Sym(id) => self.symbol_name(*id).to_string(),
+                        other => self.prin1_to_string(other),
+                    })
+                } else {
+                    match hh.test {
+                        crate::lisp::value::HashTest::Eq => Some("eq".to_string()),
+                        crate::lisp::value::HashTest::Eql => None,
+                        crate::lisp::value::HashTest::Equal => {
+                            Some("equal".to_string())
+                        }
+                    }
                 };
                 let empty = hh.keys.is_empty();
                 out.push_str("#s(hash-table");
@@ -778,7 +788,15 @@ impl Interp {
                             self.buffer_name_by_id(buf)
                         );
                     }
-                    None => out.push_str("#<marker in no buffer>"),
+                    None => {
+                        // GNU appends the insertion-type annotation
+                        // even for detached markers.
+                        if b.insertion_type {
+                            out.push_str("#<marker (moves after insertion) in no buffer>");
+                        } else {
+                            out.push_str("#<marker in no buffer>");
+                        }
+                    }
                 }
             }
             Value::Window(w) => {

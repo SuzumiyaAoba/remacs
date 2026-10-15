@@ -1755,10 +1755,76 @@ fn f_gensym(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         }
     }
 }
+/// GNU `lisp_func_arity' walk over a raw interpreted arglist:
+/// non-symbol elements and a bare `. tail' (not after `&rest') make
+/// the arglist malformed → None → invalid-function.
+pub(crate) fn raw_arglist_arity(i: &mut Interp, arglist_v: &Value) -> Option<Arity> {
+    let opt_sym = i.intern("&optional");
+    let rest_sym = i.intern("&rest");
+    let (mut min, mut max, mut many, mut mode) = (0u16, 0u16, false, 0);
+    let mut cur = arglist_v.clone();
+    let mut dotted = Value::Nil;
+    loop {
+        match cur {
+            Value::Cons(c) => {
+                let (hd, tl) = {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                let Some(id) = i.sym_id(&hd) else {
+                    return None;
+                };
+                if id == opt_sym {
+                    mode = 1;
+                } else if id == rest_sym {
+                    many = true;
+                    mode = 2;
+                } else if mode == 0 {
+                    min += 1;
+                    max += 1;
+                } else if mode == 1 {
+                    max += 1;
+                }
+                cur = tl;
+            }
+            Value::Nil => break,
+            other => {
+                dotted = other;
+                break;
+            }
+        }
+    }
+    // `(a . r)' is malformed; `(a &rest . r)' binds r as rest-arg —
+    // GNU reads it through `&rest', and the tail must name a symbol.
+    if !dotted.is_nil() && (!many || i.sym_id(&dotted).is_none()) {
+        return None;
+    }
+    Some(if many {
+        Arity::Many { min }
+    } else {
+        Arity::Range { min, max }
+    })
+}
 
 /// A Lambda's `Arity': parsed arg fields for source closures, the
 /// packed/list argdesc in `bc_items[0]' for `#[...]' byte-code objects.
-fn lambda_arity(i: &mut Interp, l: &std::rc::Rc<Lambda>) -> Arity {
+fn lambda_arity(i: &mut Interp, l: &std::rc::Rc<Lambda>) -> Option<Arity> {
+    // GNU `func_arity' consults the raw arglist for interpreted
+    // functions — `(b 1)' optional specs or a non-`&rest' dot make
+    // it malformed → invalid-function (only callable lambdas carry
+    // a parsed arity).
+    if let Some(al) = &l.arglist {
+        if al.is_nil() || matches!(al, Value::Cons(_)) {
+            return raw_arglist_arity(i, al);
+        }
+    }
+    if l.bad_arglist {
+        return None;
+    }
+    Some(lambda_arity_raw(i, l))
+}
+
+fn lambda_arity_raw(i: &mut Interp, l: &std::rc::Rc<Lambda>) -> Arity {
     if let Some(items) = &l.bc_items {
         match items.borrow().first() {
             Some(Value::Int(n)) => {
@@ -1850,47 +1916,19 @@ fn f_func_arity(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         if name != "lambda" {
             return None;
         }
-        let arglist_idx = 1;
-        let mut min = 0u16;
-        let mut max = 0u16;
-        let mut many = false;
-        let mut mode = 0;
-        let opt_sym = i.intern("&optional");
-        let rest_sym = i.intern("&rest");
-        for a in cells
-            .get(arglist_idx)
-            .map(|v| v.list_to_vec().unwrap_or_default())
-            .unwrap_or_default()
-        {
-            let Some(id) = i.sym_id(&a) else { continue };
-            if id == opt_sym {
-                mode = 1;
-            } else if id == rest_sym {
-                many = true;
-                mode = 2;
-            } else if mode == 0 {
-                min += 1;
-                max += 1;
-            } else if mode == 1 {
-                max += 1;
-            }
-        }
-        Some(if many {
-            Arity::Many { min }
-        } else {
-            Arity::Range { min, max }
-        })
+        raw_arglist_arity(i, cells.get(1).unwrap_or(&Value::Nil))
     };
 
     let arity = match &fun {
-        Value::Subr(s) => s.arity,
+        Value::Subr(s) => Some(s.arity),
         Value::Lambda(l) => lambda_arity(i, l),
-        v => match list_arity(v) {
-            Some(a) => a,
-            None => {
-                return Err(i.signal_data(sym::INVALID_FUNCTION, vec![args[0].clone()]));
-            }
-        },
+        v => list_arity(v),
+    };
+    let arity = match arity {
+        Some(a) => a,
+        None => {
+            return Err(i.signal_data(sym::INVALID_FUNCTION, vec![args[0].clone()]));
+        }
     };
     let (min, max) = match arity {
         Arity::Range { min, max } => (min, Value::Int(max as i128)),
@@ -1915,13 +1953,14 @@ fn f_subr_arity(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         // GNU 31.1 nativecomp: Lisp-defined functions report `subrp' t
         // and `subr-arity' returns their arglist-derived range.  remacs
         // marks dumped definitions `compiled' (`f_subrp'), so a compiled
-        // non-macro non-bytecode lambda must be accepted here too —
-        // subr.el's Lisp `special-form-p' calls this on any `subrp'-true
-        // object after its subr is shadowed by the ported defun.
-        // `#[...]' byte-code lambdas loaded from .elc are not `subrp'
-        // in GNU (byte-code objects report subrp nil, so subr-arity
-        // signals wrong-type-argument — e.g. `apply-partially' results).
-        Value::Lambda(l) if l.compiled && !l.is_macro && !l.is_bytecode() => lambda_arity(i, l),
+        // non-macro lambda must be accepted here too — and that INCLUDES
+        // `.elc'-twin `#[...]' objects, which GNU native-compiles to
+        // real subrs (their `subrp' is already t, so `subr-arity' must
+        // accept them or it contradicts `subrp').
+        // Only RAW `#[...]' literals (`compiled' false — e.g. what
+        // `apply-partially' returns or a reader byte-code vector) stay
+        // non-subrp and signal `wrong-type-argument' like GNU.
+        Value::Lambda(l) if l.compiled && !l.is_macro => lambda_arity_raw(i, l),
         other => return Err(i.wrong_type_mut("subrp", other)),
     };
     let (min, max) = match arity {
@@ -2817,11 +2856,22 @@ pub fn error_message(i: &mut Interp, obj: &Value) -> String {
     let errname_id = i.sym_id(&errname);
     let (errmsg, file_error, tail_list): (Value, bool, Vec<Value>);
     if errname_id == Some(sym::ERROR) {
-        // For `error`, the first data item is the message.
-        let items = data.list_to_vec().unwrap_or_default();
-        errmsg = items.first().cloned().unwrap_or(Value::Nil);
+        // For `error`, the first data item is the message — GNU takes
+        // XCAR(data) even when DATA is a dotted pair, and the tail is
+        // XCDR walked as a list (non-list tail contributes nothing).
+        errmsg = match &data {
+            Value::Cons(c) => c.borrow().car.clone(),
+            _ => Value::Nil,
+        };
         file_error = false;
-        tail_list = items.get(1..).map(|s| s.to_vec()).unwrap_or_default();
+        tail_list = match &data {
+            Value::Cons(c) => c
+                .borrow()
+                .cdr
+                .list_to_vec()
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
     } else {
         let mut msg = Value::Nil;
         let mut ferror = false;
@@ -3975,6 +4025,63 @@ fn f_special_variable_p(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 // Lisp time is (HIGH LOW MICRO PICO) or an integer seconds/ticks. We
 // convert to microseconds (i128) internally.
 
+/// Decode at most four timestamp fields.  Only a one-cons integer
+/// tail is a frequency; after HIGH/LOW, a dotted integer is MICRO.
+/// GNU ignores everything after PICO and non-cons tails after MICRO.
+fn time_cons_ticks(i: &mut Interp, v: &Value, scale: i128, seconds_only: bool) -> Result<i128, Flow> {
+    let Value::Cons(c) = v else { unreachable!() };
+    let (high, rest) = {
+        let c = c.borrow();
+        (c.car.clone(), c.cdr.clone())
+    };
+    let Value::Int(high) = high else {
+        return Err(i.error("Invalid time specification"));
+    };
+    if let Value::Int(hz) = rest {
+        if hz <= 0 {
+            return Err(i.error("Invalid time specification"));
+        }
+        return Ok((high * scale).div_euclid(hz));
+    }
+    let Value::Cons(low) = rest else {
+        return Err(i.error("Invalid time specification"));
+    };
+    let (low, rest) = {
+        let c = low.borrow();
+        (c.car.clone(), c.cdr.clone())
+    };
+    let Value::Int(low) = low else {
+        return Err(i.error("Invalid time specification"));
+    };
+    let secs = high * 65536 + low;
+    // decode-time uses only the seconds fields, without validating
+    // the discarded subsecond part.
+    if seconds_only {
+        return Ok(secs * scale);
+    }
+    let (micro, rest) = match rest {
+        Value::Nil => (Value::Int(0), Value::Nil),
+        Value::Int(n) => (Value::Int(n), Value::Nil),
+        Value::Cons(c) => {
+            let c = c.borrow();
+            (c.car.clone(), c.cdr.clone())
+        }
+        _ => return Err(i.error("Invalid time specification")),
+    };
+    let Value::Int(micro) = micro else {
+        return Err(i.error("Invalid time specification"));
+    };
+    let pico = match rest {
+        Value::Cons(c) => match c.borrow().car {
+            Value::Int(n) => n,
+            _ => return Err(i.error("Invalid time specification")),
+        },
+        _ => 0,
+    };
+    let subsecs = micro * 1_000_000 + pico;
+    Ok(secs * scale + subsecs.div_euclid(1_000_000_000_000 / scale))
+}
+
 pub(crate) fn lisp_time_to_us(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
     match v {
         Value::Nil => {
@@ -3983,109 +4090,17 @@ pub(crate) fn lisp_time_to_us(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
                 .unwrap_or_default();
             Ok(now.as_micros() as i128)
         }
-        Value::Int(n) => Ok(*n as i128 * 1_000_000),
+        Value::Int(n) => Ok(*n * 1_000_000),
         Value::Float(f) => Ok((**f * 1e6) as i128),
-        Value::Cons(_) => {
-            // Walk the conses — a dotted tail means (TICKS . HZ).
-            let mut elems: Vec<i128> = Vec::new();
-            let mut tail = v.clone();
-            let mut hz: Option<i128> = None;
-            loop {
-                let step = match &tail {
-                    Value::Cons(c) => {
-                        let (car, cdr) = {
-                            let b = c.borrow();
-                            (b.car.clone(), b.cdr.clone())
-                        };
-                        if let Value::Int(n) = car {
-                            elems.push(n as i128);
-                        }
-                        Some(cdr)
-                    }
-                    Value::Int(n) => {
-                        hz = Some(*n as i128);
-                        None
-                    }
-                    _ => None,
-                };
-                match step {
-                    Some(cdr) => tail = cdr,
-                    None => break,
-                }
-                if elems.len() > 4 {
-                    break;
-                }
-            }
-            if let Some(hz) = hz {
-                let ticks = elems.first().copied().unwrap_or(0);
-                return Ok(ticks * 1_000_000 / hz.max(1));
-            }
-            // GNU `lisp_time_argument' needs at least (HI LO) —
-            // a short or over-long plain list is an invalid time.
-            if elems.len() < 2 || elems.len() > 4 {
-                return Err(i.error("Invalid time specification"));
-            }
-            let n = |k: usize| elems.get(k).copied().unwrap_or(0);
-            let ticks = match elems.len() {
-                0 => 0,
-                1 => n(0),
-                _ => n(0) * 65536 + n(1),
-            };
-            Ok(ticks * 1_000_000 + n(2))
-        }
+        Value::Cons(_) => time_cons_ticks(i, v, 1_000_000, false),
         _ => Err(i.error("Invalid time specification")),
     }
 }
 
-/// Like `lisp_time_to_us`, but nanosecond precision (ps field / 1000).
+/// Like `lisp_time_to_us`, but nanosecond precision.
 pub(crate) fn lisp_time_to_ns(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
     match v {
-        Value::Cons(_) => {
-            // (hi lo us ps) or (TICKS . HZ) — reuse the µs walk for the
-            // (TICKS . HZ) case; for the 4-list take ps into account.
-            let mut elems: Vec<i128> = Vec::new();
-            let mut tail = v.clone();
-            let mut dotted_hz = false;
-            loop {
-                let step = match &tail {
-                    Value::Cons(c) => {
-                        let (car, cdr) = {
-                            let b = c.borrow();
-                            (b.car.clone(), b.cdr.clone())
-                        };
-                        if let Value::Int(n) = car {
-                            elems.push(n as i128);
-                        }
-                        Some(cdr)
-                    }
-                    Value::Int(n) => {
-                        elems.push(*n as i128);
-                        dotted_hz = true;
-                        None
-                    }
-                    _ => None,
-                };
-                match step {
-                    Some(cdr) => tail = cdr,
-                    None => break,
-                }
-                if elems.len() > 4 {
-                    break;
-                }
-            }
-            if dotted_hz && elems.len() == 2 {
-                let ticks = elems[0];
-                let hz = elems[1];
-                return Ok(ticks * 1_000_000_000 / hz.max(1));
-            }
-            let n = |k: usize| elems.get(k).copied().unwrap_or(0);
-            let ticks = match elems.len() {
-                0 => 0,
-                1 => n(0),
-                _ => n(0) * 65536 + n(1),
-            };
-            Ok(ticks * 1_000_000_000 + n(2) * 1000 + n(3) / 1000)
-        }
+        Value::Cons(_) => time_cons_ticks(i, v, 1_000_000_000, false),
         _ => Ok(lisp_time_to_us(i, v)? * 1000),
     }
 }
@@ -4131,54 +4146,7 @@ pub(crate) fn ns_to_lisp_time_i(i: &mut Interp, ns: i128) -> Value {
 /// tick unit (hz = 10^12).
 pub(crate) fn lisp_time_to_ps(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
     match v {
-        Value::Cons(_) => {
-            let mut elems: Vec<i128> = Vec::new();
-            let mut tail = v.clone();
-            let mut dotted_hz = false;
-            loop {
-                let step = match &tail {
-                    Value::Cons(c) => {
-                        let (car, cdr) = {
-                            let b = c.borrow();
-                            (b.car.clone(), b.cdr.clone())
-                        };
-                        if let Value::Int(n) = car {
-                            elems.push(n as i128);
-                        }
-                        Some(cdr)
-                    }
-                    Value::Int(n) => {
-                        elems.push(*n as i128);
-                        dotted_hz = true;
-                        None
-                    }
-                    _ => None,
-                };
-                match step {
-                    Some(cdr) => tail = cdr,
-                    None => break,
-                }
-                if elems.len() > 4 {
-                    break;
-                }
-            }
-            if dotted_hz && elems.len() == 2 {
-                let ticks = elems[0];
-                let hz = elems[1];
-                return Ok(ticks * 1_000_000_000_000 / hz.max(1));
-            }
-            // GNU `lisp_time_argument' needs at least (HI LO).
-            if elems.len() < 2 || elems.len() > 4 {
-                return Err(i.error("Invalid time specification"));
-            }
-            let n = |k: usize| elems.get(k).copied().unwrap_or(0);
-            let ticks = match elems.len() {
-                0 => 0,
-                1 => n(0),
-                _ => n(0) * 65536 + n(1),
-            };
-            Ok(ticks * 1_000_000_000_000 + n(2) * 1_000_000 + n(3))
-        }
+        Value::Cons(_) => time_cons_ticks(i, v, 1_000_000_000_000, false),
         Value::Float(f) => Ok((**f * 1e12) as i128),
         _ => Ok(lisp_time_to_us(i, v)? * 1_000_000),
     }
@@ -4186,6 +4154,7 @@ pub(crate) fn lisp_time_to_ps(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
 
 /// Minimal POSIX tm for `localtime_r` (macOS/Linux layout).
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub(crate) struct Tm {
     pub tm_sec: i32,
     pub tm_min: i32,
@@ -4441,28 +4410,92 @@ fn mktime_secs(
     tm.tm_mon = mon as i32 - 1;
     tm.tm_year = year as i32 - 1900;
     tm.tm_isdst = isdst;
-    if let Some(z) = tz {
-        // NUL inside the spec would panic std::env::set_var; a NUL
-        // string never names a real zone — fall back to UTC like
-        // tzset does for unparseable specs.
-        let z = if z.contains('\0') { "UTC0" } else { z };
-        let saved = std::env::var_os("TZ");
-        unsafe {
-            std::env::set_var("TZ", z);
-            tzset();
-        }
-        let r = unsafe { mktime(&mut tm) };
-        unsafe {
-            match saved {
-                Some(v) => std::env::set_var("TZ", v),
-                None => std::env::remove_var("TZ"),
+    // GNU's gnulib mktime normalizes a forced tm_isdst to the zone's
+    // real flag: an isdst=1 request in a non-DST zone (e.g. JST) must
+    // produce the standard-offset instant, not the blindly-shifted
+    // result libc mktime returns.  Pass 1 asks with the requested flag;
+    // pass 2 re-runs with the flag mktime resolved to, which GNU
+    // guarantees matches the zone's rule.
+    // Run `f' with TZ=Z (restored after).  Named-zone mktime and the
+    // roundtrip's localtime must share the same zone, so the TZ flip
+    // brackets both passes.
+    let with_tz = |z: Option<&str>, f: &mut dyn FnMut() -> i64| -> i64 {
+        if let Some(z) = z {
+            // NUL inside the spec would panic std::env::set_var; a NUL
+            // string never names a real zone — fall back to UTC like
+            // tzset does for unparseable specs.
+            let z = if z.contains('\0') { "UTC0" } else { z };
+            let saved = std::env::var_os("TZ");
+            unsafe {
+                std::env::set_var("TZ", z);
+                tzset();
             }
-            tzset();
+            let r = f();
+            unsafe {
+                match saved {
+                    Some(v) => std::env::set_var("TZ", v),
+                    None => std::env::remove_var("TZ"),
+                }
+                tzset();
+            }
+            r
+        } else {
+            f()
         }
-        r
-    } else {
-        unsafe { mktime(&mut tm) }
+    };
+    // GNU's gnulib mktime (lib/mktime.c): libc mktime on a forced
+    // isdst=1 blind-shifts -1h even when the zone never observes DST
+    // (e.g. Asia/Tokyo).  GNU resolves the request by probing
+    // localtime around the result: when the resolved isdst differs
+    // from the request, it scans ±1yr for an instant whose resolved
+    // flag matches and extrapolates back; none found → keep the
+    // zone's resolved interpretation.  Emulate: first pass asks libc,
+    // then a localtime roundtrip normalizes fields under the resolved
+    // flag; when the request is still unmet and the zone never shows
+    // DST at the probed instants, the resolved result stands.
+    let r = with_tz(tz, &mut || unsafe { mktime(&mut tm) });
+    if isdst >= 0 && (tm.tm_isdst > 0) != (isdst > 0) {
+        // Resolved flag disagrees with the request.  Find a nearby
+        // instant (gnulib probes ±1yr, stride 601200s) whose resolved
+        // flag matches the request; extrapolating its offset back is
+        // exactly what libc already did on pass 1, so KEEP r when a
+        // matching probe exists — the blind shift is the honored
+        // interpretation.  Otherwise re-run under the resolved flag.
+        let mut found = false;
+        for delta in (601200i64..366 * 86400 + 601200).step_by(601200) {
+            for dir in [-1i64, 1] {
+                let ot = r.saturating_add(delta.saturating_mul(dir));
+                let resolved = with_tz(tz, &mut || {
+                    let mut otm: Tm = unsafe { std::mem::zeroed() };
+                    unsafe { localtime_r(&ot, &mut otm) };
+                    otm.tm_isdst as i64
+                });
+                if (resolved > 0) == (isdst > 0) {
+                    found = true;
+                    break;
+                }
+            }
+            if found {
+                break;
+            }
+        }
+        if !found {
+            // Zone never shows the requested flag: return the
+            // zone-resolved interpretation — re-run with the flag
+            // libc resolved (fields were normalized in place, so
+            // rebuild the tm from the request first).
+            let mut tm2: Tm = unsafe { std::mem::zeroed() };
+            tm2.tm_sec = sec as i32;
+            tm2.tm_min = min as i32;
+            tm2.tm_hour = hour as i32;
+            tm2.tm_mday = day as i32;
+            tm2.tm_mon = mon as i32 - 1;
+            tm2.tm_year = year as i32 - 1900;
+            tm2.tm_isdst = if tm.tm_isdst > 0 { 1 } else { 0 };
+            return with_tz(tz, &mut || unsafe { mktime(&mut tm2) });
+        }
     }
+    r
 }
 
 /// How `encode-time' interprets ZONE: a fixed seconds-east-of-UTC
@@ -4573,6 +4606,9 @@ fn f_encode_time(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         let isdst = match items.get(7) {
             Some(Value::Int(n)) => (*n).clamp(-1, 1) as i32,
             Some(Value::Sym(s)) if *s == t_sym => 1,
+            // GNU list form: DST nil means "not in effect" (0), -1 asks
+            // mktime to guess; absent fields guess too.
+            Some(Value::Nil) => 0,
             _ => -1,
         };
         (zone, isdst)
@@ -4636,11 +4672,11 @@ fn f_encode_time(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_decode_time(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let t = match args.get(0) {
-        Some(v) => lisp_time_to_us(i, v)?,
-        None => lisp_time_to_us(i, &Value::Nil)?,
-    };
-    let secs = (t / 1_000_000) as i64;
+    let secs = match args.get(0) {
+        Some(v @ Value::Cons(_)) => time_cons_ticks(i, v, 1, true)?,
+        Some(v) => lisp_time_to_us(i, v)?.div_euclid(1_000_000),
+        None => lisp_time_to_us(i, &Value::Nil)?.div_euclid(1_000_000),
+    } as i64;
     // GNU decode_time_zone: nil/`wall' = local wall clock, t and
     // "UTC"/"Universal" = UTC, integer = fixed seconds-east offset,
     // other strings name a TZ spec, a (OFFSET . NAME) cons uses car.
@@ -4874,12 +4910,47 @@ fn f_time_subtract(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_time_less_p(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    // GNU time_cmp: eq args are equal; same-cdr conses compare cars
+    // only (hz left unvalidated — "(time-equal-p X X) does not signal
+    // an error if X is not a valid time value").
+    let a = &args[0];
+    let b = &args[1];
+    if eq_values(a, b) {
+        return Ok(Value::Nil);
+    }
+    if let (Value::Cons(ca), Value::Cons(cb)) = (a, b) {
+        let (acar, acdr, bcar, bcdr) = {
+            let (ba, bb) = (ca.borrow(), cb.borrow());
+            (ba.car.clone(), ba.cdr.clone(), bb.car.clone(), bb.cdr.clone())
+        };
+        if eq_values(&acdr, &bcdr) {
+            if let (Value::Int(x), Value::Int(y)) = (&acar, &bcar) {
+                return Ok(Value::from_bool(x < y));
+            }
+        }
+    }
     let a = lisp_time_to_ps(i, &args[0])?;
     let b = lisp_time_to_ps(i, &args[1])?;
     Ok(Value::from_bool(a < b))
 }
 
 fn f_time_equal_p(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    let a = &args[0];
+    let b = &args[1];
+    if eq_values(a, b) {
+        return Ok(Value::from_bool(true));
+    }
+    if let (Value::Cons(ca), Value::Cons(cb)) = (a, b) {
+        let (acar, acdr, bcar, bcdr) = {
+            let (ba, bb) = (ca.borrow(), cb.borrow());
+            (ba.car.clone(), ba.cdr.clone(), bb.car.clone(), bb.cdr.clone())
+        };
+        if eq_values(&acdr, &bcdr) {
+            if let (Value::Int(x), Value::Int(y)) = (&acar, &bcar) {
+                return Ok(Value::from_bool(x == y));
+            }
+        }
+    }
     let a = lisp_time_to_ps(i, &args[0])?;
     let b = lisp_time_to_ps(i, &args[1])?;
     Ok(Value::from_bool(a == b))
@@ -8280,8 +8351,18 @@ fn f_bool_vector_subsetp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let x = bool_vec_of(i, &a[0])?;
     let y = bool_vec_of(i, &a[1])?;
     if x.len() != y.len() {
-        let s = i.intern("args-out-of-range");
-        return Err(i.signal_data(s, vec![a[0].clone(), a[1].clone()]));
+        // GNU Fbool_vector_subsetp: (wrong-length-argument ALEN BLEN
+        // BLEN) — the trailing datum is B's length (where the walk
+        // stopped), not the vector objects.
+        let s = i.intern("wrong-length-argument");
+        return Err(i.signal_data(
+            s,
+            vec![
+                Value::Int(x.len() as i128),
+                Value::Int(y.len() as i128),
+                Value::Int(y.len() as i128),
+            ],
+        ));
     }
     Ok(Value::from_bool(
         x.iter().zip(&y).all(|(p, q)| !(*p && !*q)),
@@ -8302,8 +8383,11 @@ fn f_bool_vector_not(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             if let Some(Value::Vec(b)) = rr.get(1) {
                 let mut bb = b.borrow_mut();
                 if bb.len() != out.len() {
-                    let s = i.intern("args-out-of-range");
-                    return Err(i.signal_data(s, vec![target.clone()]));
+                    let s = i.intern("wrong-length-argument");
+                    return Err(i.signal_data(
+                        s,
+                        vec![Value::Int(out.len() as i128), Value::Int(bb.len() as i128)],
+                    ));
                 }
                 for (k, v) in bb.iter_mut().zip(&out) {
                     *k = Value::Int(if *v { 1 } else { 0 });
@@ -8319,8 +8403,11 @@ fn bv_binop(i: &mut Interp, a: &[Value], f: fn(bool, bool) -> bool) -> EvalResul
     let x = bool_vec_of(i, &a[0])?;
     let y = bool_vec_of(i, &a[1])?;
     if x.len() != y.len() {
-        let s = i.intern("args-out-of-range");
-        return Err(i.signal_data(s, vec![a[0].clone(), a[1].clone()]));
+        let s = i.intern("wrong-length-argument");
+        return Err(i.signal_data(
+            s,
+            vec![Value::Int(x.len() as i128), Value::Int(y.len() as i128)],
+        ));
     }
     let out: Vec<bool> = x.iter().zip(&y).map(|(p, q)| f(*p, *q)).collect();
     let target = arg(a, 2);
@@ -15358,8 +15445,24 @@ fn f_suppress_keymap(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !is_keymap(i, &a[0]) {
         return Err(i.wrong_type_mut("keymapp", &a[0]));
     }
-    // GNU returns the NODIGITS argument (nil by default) after
-    // rebinding printable chars to `undefined'.
+    // GNU remaps self-insert-command, preserving explicit bindings.
+    let nodigits = arg(&a, 1).truthy();
+    let define_key = Value::Sym(i.intern("define-key"));
+    let keys = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
+        Value::Sym(i.intern("remap")),
+        Value::Sym(i.intern("self-insert-command")),
+    ])));
+    let undefined = Value::Sym(i.intern("undefined"));
+    i.apply(&define_key, vec![a[0].clone(), keys, undefined])?;
+    if !nodigits {
+        let dig = Value::Sym(i.intern("digit-argument"));
+        for code in '0' as i128..='9' as i128 {
+            crate::editor::set_binding(i, &a[0], code, dig.clone());
+        }
+        let neg = Value::Sym(i.intern("negative-argument"));
+        crate::editor::set_binding(i, &a[0], '-' as i128, neg);
+    }
+    // GNU returns the NODIGITS argument (nil by default).
     Ok(arg(&a, 1))
 }
 

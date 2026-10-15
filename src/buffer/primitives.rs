@@ -3789,6 +3789,15 @@ fn f_make_local_variable(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // (`buffer-file-name') the buffer slot is the binding even before
     // `locals' has an entry, so the default cell would seed wrongly.
     let seed = i.symbol_value(sid);
+    // GNU let_shadows_buffer_binding_p: warn when a `let' binding of
+    // the default cell was made in the buffer that is now current.
+    // Our specbind `buf' marks exactly the binding's buffer scope
+    // (SPECPDL_LET_LOCAL let-bindings of an already-local var carry
+    // `buf == Some(_)' too and correctly warn like GNU).
+    if i.specbind_shadows_current(sid) {
+        let name = i.symbol_name(sid);
+        i.message(&format!("Making {} buffer-local while locally let-bound!", name));
+    }
     let b = cur(i);
     let mut bb = b.borrow_mut();
     if !bb.locals.contains_key(&sid) {
@@ -6764,7 +6773,12 @@ fn f_insert_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
         other => return Err(i.wrong_type_mut("characterp", other)),
     };
-    let count = a.get(1).and_then(|v| v.int()).unwrap_or(1).max(0);
+    // GNU CHECK_FIXNUM: non-fixnum COUNT signals fixnump.
+    let count = match a.get(1) {
+        Some(Value::Int(n)) => (*n).max(0),
+        Some(other) if !other.is_nil() => return Err(i.wrong_type_mut("fixnump", other)),
+        _ => 1,
+    };
     // GNU make_gap_larger: growth past BUF_BYTES_MAX (= MOST_POSITIVE_
     // FIXNUM - 1 on 64-bit) reports "Maximum buffer size exceeded".
     // Anything beyond our practical cap reports the same message — a
@@ -10150,8 +10164,12 @@ fn f_set_match_data(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let reseat = a.get(1).map(|v| v.truthy()).unwrap_or(false);
     let mut last_thing: Option<usize> = None; // buffer id; None = string mode
     let mut regs: Vec<Option<usize>> = Vec::new();
+    // GNU: only floor(len/2) complete pairs are read — an odd tail
+    // element is ignored entirely (the i >= length break fires before
+    // start[i] is assigned).
+    let npairs = items.len() / 2;
     let mut k = 0;
-    while k < items.len() {
+    while k < 2 * npairs {
         let start_el = &items[k];
         // A buffer object in a start slot ends the walk and names the buffer.
         if let Value::Buffer(bv) = start_el {
@@ -11067,11 +11085,14 @@ fn str_len(s: &std::rc::Rc<std::cell::RefCell<String>>) -> usize {
 }
 
 /// Check a 0-based string position index is inside [0,len].
-fn str_pos_ok(i: &Interp, obj: &Value, p: usize, len: usize) -> Result<(), Flow> {
-    if p > len {
+fn str_pos_ok(i: &Interp, s: i128, e: i128, len: usize) -> Result<(), Flow> {
+    // GNU validate_interval_range on a string OBJECT: bounds are
+    // [0, len] and the `args-out-of-range' datum is the RAW
+    // (START END) pair — not the object.
+    if s.min(e) < 0 || s.max(e) > len as i128 {
         Err(i.signal_data(
             crate::lisp::obarray::sym::ARGS_OUT_OF_RANGE,
-            vec![Value::Int(p as i128), obj.clone()],
+            vec![Value::Int(s), Value::Int(e)],
         ))
     } else {
         Ok(())
@@ -11113,10 +11134,10 @@ pub(crate) fn f_add_text_properties(i: &mut Interp, a: crate::lisp::Argv) -> Eva
     if let Some(Value::Str(s)) = a.get(3) {
         let s = s.clone();
         let len = str_len(&s);
-        let st = want_int(i, &a[0])?.max(0) as usize;
-        let en = want_int(i, &a[1])?.max(0) as usize;
-        str_pos_ok(i, &a[3], st.max(en), len)?;
-        let (s0, e0) = (st.min(en), st.max(en));
+        let st = want_int(i, &a[0])?;
+        let en = want_int(i, &a[1])?;
+        str_pos_ok(i, st, en, len)?;
+        let (s0, e0) = (st.min(en) as usize, st.max(en) as usize);
         let plist = a[2].list_to_vec().unwrap_or_default();
         let pairs: Vec<(Value, Value)> = plist
             .chunks(2)
@@ -11435,10 +11456,10 @@ pub(crate) fn str_remove_props(
     };
     let s = s.clone();
     let len = str_len(&s);
-    let st = want_int(i, &a[0])?.max(0) as usize;
-    let en = want_int(i, &a[1])?.max(0) as usize;
-    str_pos_ok(i, &a[3], st.max(en), len)?;
-    let (s0, e0) = (st.min(en), st.max(en));
+    let st = want_int(i, &a[0])?;
+    let en = want_int(i, &a[1])?;
+    str_pos_ok(i, st, en, len)?;
+    let (s0, e0) = (st.min(en) as usize, st.max(en) as usize);
     let ids: Vec<u32> = names.iter().filter_map(|v| i.sym_id(v)).collect();
     let mut ivs = std::mem::take(i.str_props_mut(&s));
     let mut removed = false;
@@ -11567,19 +11588,28 @@ fn f_set_text_properties(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if let Some(Value::Str(s)) = a.get(3) {
         let s = s.clone();
         let len = str_len(&s);
-        let st = want_int(i, &a[0])?.max(0) as usize;
-        let en = want_int(i, &a[1])?.max(0) as usize;
-        str_pos_ok(i, &a[3], st.max(en), len)?;
-        let (s0, e0) = (st.min(en), st.max(en));
+        let st = want_int(i, &a[0])?;
+        let en = want_int(i, &a[1])?;
+        str_pos_ok(i, st, en, len)?;
+        let (s0, e0) = (st.min(en) as usize, st.max(en) as usize);
         let plist = props.list_to_vec().unwrap_or_default();
-        let fill = if plist.is_empty() {
-            None
-        } else {
-            Some(plist.clone())
-        };
+        // GNU returns nil for an empty range or absent interval tree.
+        // An existing tree returns t even when its plist is unchanged.
+        if s0 == e0 || (plist.is_empty() && !i.has_str_props(&s)) {
+            return Ok(Value::Nil);
+        }
+        if s0 == 0 && e0 == len && plist.is_empty() {
+            i.string_props.remove(&(std::rc::Rc::as_ptr(&s) as usize));
+            return Ok(Value::t());
+        }
         let mut ivs = std::mem::take(i.str_props_mut(&s));
-        // GNU replaces the interval's plist wholesale.
-        iv_apply(&mut ivs, s0, e0, |pl| *pl = plist.clone(), fill);
+        iv_apply(
+            &mut ivs,
+            s0,
+            e0,
+            |pl| *pl = plist.clone(),
+            if plist.is_empty() { None } else { Some(plist.clone()) },
+        );
         i.set_str_props(&s, ivs);
         return Ok(Value::t());
     }
@@ -13107,10 +13137,10 @@ pub(crate) fn f_add_face_text_property(i: &mut Interp, a: crate::lisp::Argv) -> 
     if let Some(Value::Str(s)) = a.get(4) {
         let s = s.clone();
         let len = str_len(&s);
-        let st = want_int(i, &a[0])?.max(0) as usize;
-        let en = want_int(i, &a[1])?.max(0) as usize;
-        str_pos_ok(i, &a[4], st.max(en), len)?;
-        let (s0, e0) = (st.min(en), st.max(en));
+        let st = want_int(i, &a[0])?;
+        let en = want_int(i, &a[1])?;
+        str_pos_ok(i, st, en, len)?;
+        let (s0, e0) = (st.min(en) as usize, st.max(en) as usize);
         let mut ivs = std::mem::take(i.str_props_mut(&s));
         let ii: &Interp = i;
         let fid = ii.sym_id(&face_sym).unwrap_or(0);

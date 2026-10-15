@@ -895,18 +895,26 @@ fn f_defalias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(args[0].clone())
 }
 fn f_defvaralias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    // GNU eval.c Fdefvaralias ordering: CHECK_SYMBOL both, constant /
+    // forwarded / localized alias rejection, cyclic chain check on the
+    // BASE's indirection chain, bound-alias value propagation to an
+    // unbound BASE, let-bound-alias rejection, then install + mark
+    // both special + (possibly nil) docstring store.
     let newv = want_sym(i, &args[0])?;
-    let _base = want_sym(i, &args[1])?;
-    // GNU checks the alias chain at defvaralias time.
-    if let Value::Sym(start) = &args[1] {
+    let base = want_sym(i, &args[1])?;
+    if i.obarray.symbol(newv).constant {
+        let name = i.symbol_name(newv).to_string();
+        return Err(i.error(&format!("Cannot make a constant an alias: {}", name)));
+    }
+    {
         let mut seen: std::collections::HashSet<SymId> = std::collections::HashSet::new();
-        let mut cur = *start;
+        let mut cur = base;
         loop {
-            if cur == newv || !seen.insert(cur) {
-                if cur == newv {
-                    let sig = i.intern("cyclic-variable-indirection");
-                    return Err(i.signal_data(sig, vec![Value::Sym(newv)]));
-                }
+            if cur == newv {
+                let sig = i.intern("cyclic-variable-indirection");
+                return Err(i.signal_data(sig, vec![args[1].clone()]));
+            }
+            if !seen.insert(cur) {
                 break;
             }
             let alias_prop = i.intern("variable-alias");
@@ -916,28 +924,41 @@ fn f_defvaralias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             }
         }
     }
-    // GNU Fdefvaralias: a bound alias hands its value to BASE before
-    // the indirection is installed — afterwards the alias shares
-    // BASE's cell and its old value would otherwise be unreachable.
-    if let Value::Sym(base) = &args[1] {
-        let v = i.symbol_value(newv);
-        if !matches!(v, Value::Sym(s) if s == sym::UNBOUND) {
-            i.set_symbol(*base, v)?;
+    if i.obarray.symbol(newv).always_local
+        || i.obarray.symbol(newv).make_local_if_set
+        || i.buffers.list().iter().any(|bid| {
+            i.buffers.get(*bid).is_some_and(|b| b.borrow().locals.contains_key(&newv))
+        })
+    {
+        let name = i.symbol_name(newv).to_string();
+        return Err(i.error(&format!(
+            "Don’t know how to make a buffer-local variable an alias: {}",
+            name
+        )));
+    }
+    let nv = i.symbol_value(newv);
+    if !matches!(nv, Value::Sym(s) if s == sym::UNBOUND) {
+        let bv = i.symbol_value(base);
+        if matches!(bv, Value::Sym(s) if s == sym::UNBOUND) {
+            i.set_symbol(base, nv)?;
         }
+    }
+    if i.specbind_for(newv) {
+        let name = i.symbol_name(newv).to_string();
+        return Err(i.error(&format!(
+            "Don’t know how to make a let-bound variable an alias: {}",
+            name
+        )));
     }
     let prop = i.intern("variable-alias");
     i.put_prop(newv, prop, args[1].clone());
-    // GNU data.c: a non-nil DOCSTRING is stored on the ALIAS
-    // symbol's `variable-documentation' property.
-    if let Some(doc) = args.get(2) {
-        if doc.truthy() {
-            let vd = i.intern("variable-documentation");
-            i.put_prop(newv, vd, doc.clone());
-        }
-    }
-    // GNU eval.c `Fdefvaralias' LOADHIST_ATTACHes the bare alias symbol.
+    i.obarray.symbol_mut(newv).special = true;
+    i.obarray.symbol_mut(base).special = true;
+    // GNU stores docstring unconditionally — nil ERASES an old one.
+    let vd = i.intern("variable-documentation");
+    let doc = args.get(2).cloned().unwrap_or(Value::Nil);
+    i.put_prop(newv, vd, doc);
     crate::lisp::builtins::evalfn::loadhist_attach(i, args[0].clone());
-    // Emacs returns BASE-VARIABLE.
     Ok(args[1].clone())
 }
 

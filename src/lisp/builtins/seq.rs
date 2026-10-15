@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::listfn::err_circular;
-use super::{S, arg, eq_values, equal_values, want_fixnum, want_int, want_list, want_string};
+use super::{S, arg, eq_values, equal_values, want_fixnum, want_int, want_list};
 use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
@@ -794,34 +794,37 @@ fn f_mapcan(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         let argv: Vec<Value> = seqs.iter().map(|s| s[k].clone()).collect();
         results.push(i.apply(&fun, argv)?);
     }
-    // Splice each result's conses in, nconc-style: nil contributes
-    // nothing, a list is chained onto the accumulated tail, and any
-    // other atom signals (consp VALUE) — even for the last result.
     let mut out = Value::Nil;
-    // The last cons appended so far: the cell whose cdr we extend.
     let mut tail: Option<crate::lisp::value::ConsRef> = None;
-    for r in &results {
-        let mut cur = r.clone();
-        loop {
-            match &cur {
-                Value::Nil => break,
-                Value::Cons(c) => {
-                    let next = c.borrow().cdr.clone();
-                    match &tail {
-                        Some(t) => t.borrow_mut().cdr = cur.clone(),
-                        None => out = cur.clone(),
-                    }
-                    tail = Some(c.clone());
-                    cur = next;
-                }
-                // Dotted tail of a result list is ignored (nconc skips
-                // checking the last arg's tail).
-                _ => break,
+    for (k, r) in results.iter().enumerate() {
+        // The final nconc argument, including nil or an atom, replaces
+        // the accumulated tail verbatim.  Earlier dotted tails drop out.
+        if k + 1 == results.len() {
+            match &tail {
+                Some(t) => t.borrow_mut().cdr = r.clone(),
+                None => out = r.clone(),
             }
+            break;
         }
-        match r {
-            Value::Nil | Value::Cons(_) => {}
-            other => return Err(i.wrong_type_mut("consp", other)),
+        if r.is_nil() {
+            continue;
+        }
+        if !matches!(r, Value::Cons(_)) {
+            return Err(i.wrong_type_mut("consp", r));
+        }
+        match &tail {
+            Some(t) => t.borrow_mut().cdr = r.clone(),
+            None => out = r.clone(),
+        }
+        let mut cur = r.clone();
+        let mut seen = std::collections::HashSet::new();
+        while let Value::Cons(c) = cur {
+            if !seen.insert(std::rc::Rc::as_ptr(&c) as usize) {
+                return Err(i.error("circular list in mapcan"));
+            }
+            let next = c.borrow().cdr.clone();
+            tail = Some(c);
+            cur = next;
         }
     }
     Ok(out)
@@ -829,59 +832,19 @@ fn f_mapcan(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 
 fn f_mapconcat(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let fun = args[0].clone();
+    let sep = args.get(2).cloned().unwrap_or(Value::Nil);
     let mut parts = Vec::new();
     map_seq(i, &fun, &args[1], |i, v| {
         let r = i.apply(&fun, vec![v.clone()])?;
+        if !parts.is_empty() {
+            parts.push(sep.clone());
+        }
         parts.push(r);
         Ok(())
     })?;
-    let sep = args
-        .get(2)
-        .map(|v| want_string(i, v))
-        .transpose()?
-        .unwrap_or_default();
-    // GNU's mapconcat concatenates the mapped strings directly, so
-    // text properties of the parts are carried into the result.
-    let mut out = String::new();
-    let mut ivs: Vec<(usize, usize, Vec<Value>)> = Vec::new();
-    let mut saw_props = false;
-    for (k, p) in parts.iter().enumerate() {
-        if k > 0 {
-            out.push_str(&sep);
-        }
-        let off = out.chars().count();
-        if let Value::Str(s) = p {
-            if i.has_str_props(s) {
-                saw_props = true;
-                for (s0, e0, pl) in i.str_props(s) {
-                    ivs.push((
-                        s0 + off,
-                        e0 + off,
-                        crate::buffer::primitives::plist_pairs_rev(pl),
-                    ));
-                }
-            }
-            out.push_str(&s.borrow());
-        } else {
-            // GNU's mapconcat passes each result to `concat': non-string
-            // results must be sequences of characters (an int signals
-            // sequencep, a non-char element signals characterp).
-            for item in seq_to_vec(i, p)? {
-                match item {
-                    Value::Int(n) => match crate::lisp::value::lisp_char(n as u32) {
-                        Some(c) => out.push(c),
-                        None => return Err(i.wrong_type_mut("characterp", &item)),
-                    },
-                    _ => return Err(i.wrong_type_mut("characterp", &item)),
-                }
-            }
-        }
-    }
-    let ns = std::rc::Rc::new(std::cell::RefCell::new(out));
-    if saw_props {
-        i.set_str_props(&ns, ivs);
-    }
-    Ok(Value::Str(ns))
+    // GNU passes the interleaved results and separators to concat.
+    // This also preserves separator properties and multibyte status.
+    super::strfn::f_concat(i, parts.into())
 }
 
 fn f_maphash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {

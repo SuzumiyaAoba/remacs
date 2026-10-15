@@ -122,7 +122,9 @@ fn eq_key(v: &Value) -> HashKey {
     match v {
         Value::Nil => HashKey::Nil,
         Value::Int(n) => HashKey::Int(*n),
-        Value::Float(f) => HashKey::Float(f.to_bits()),
+        // GNU: floats are heap objects; `eq' is identity.
+        // Two literal `1.0's must NOT hash equal — key on the Rc.
+        Value::Float(f) => HashKey::Ptr(Rc::as_ptr(f) as usize),
         Value::Sym(s) => HashKey::Sym(*s),
         Value::Cons(c) => HashKey::Ptr(Rc::as_ptr(c) as usize),
         Value::Str(s) => HashKey::Ptr(Rc::as_ptr(s) as usize),

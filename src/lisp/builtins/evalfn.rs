@@ -4167,25 +4167,28 @@ fn sleep_firing_timers(i: &mut Interp, secs: f64) -> EvalResult {
 }
 
 fn f_sleep_for(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    // GNU checks seconds as a number and optional milliseconds as
+    // a fixnum; nil milliseconds means zero.
     let secs = match &args[0] {
         Value::Int(n) => *n as f64,
         Value::Float(f) => **f,
-        _ => 0.0,
-    } + args
-        .get(1)
-        .map(|v| match v {
-            Value::Int(n) => *n as f64 / 1000.0,
-            _ => 0.0,
-        })
-        .unwrap_or(0.0);
+        other => return Err(i.wrong_type_mut("numberp", other)),
+    } + match args.get(1) {
+        Some(Value::Int(n)) => *n as f64 / 1000.0,
+        Some(v) if v.is_nil() => 0.0,
+        Some(other) => return Err(i.wrong_type_mut("fixnump", other)),
+        None => 0.0,
+    };
     sleep_firing_timers(i, secs)
 }
 fn f_sit_for(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // Batch: no input to wait for — GNU sleeps the full time, firing timers.
+    // Batch: no input to wait for — GNU sleeps the full time, firing
+    // timers.  Arg is CHECK_NUMBER'd the same as `sleep-for'.
     let secs = match args.get(0) {
         Some(Value::Int(n)) => *n as f64,
         Some(Value::Float(f)) => **f,
-        _ => 0.0,
+        Some(other) => return Err(i.wrong_type_mut("numberp", other)),
+        None => 0.0,
     };
     sleep_firing_timers(i, secs)?;
     Ok(Value::t())
