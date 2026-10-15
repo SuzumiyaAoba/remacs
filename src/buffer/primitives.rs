@@ -6961,7 +6961,16 @@ fn self_insert_expand_abbrev(i: &mut Interp, c: char) -> Result<bool, Flow> {
 }
 
 fn f_newline(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1).max(1);
+    // GNU simple.el `newline': ARG goes through `prefix-numeric-value'
+    // ((4) -> 4, `- -> -1, non-number -> 1); negative is an error,
+    // 0 inserts nothing (no modification hooks run).
+    let n = crate::editor::prefix_numeric_value(i, &a.get(0).cloned().unwrap_or(Value::Nil));
+    if n < 0 {
+        return Err(i.error("Repetition argument has to be non-negative"));
+    }
+    if n == 0 {
+        return Ok(Value::Nil);
+    }
     // GNU make_gap_larger: growth past BUF_BYTES_MAX reports
     // "Maximum buffer size exceeded".
     if n > 0x7FFF_FFFF {

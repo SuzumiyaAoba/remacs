@@ -596,6 +596,33 @@
 (qa (boundp 'qa-gz-ok) t)
 (qa (load "/tmp/qa_load_gz.el.gz" nil t) t)
 
+;; == autoload target vs loading-file basename collision ==
+;; A file being loaded whose basename equals an autoload's library
+;; ("/tmp/qa_load_coll/sort.el" vs the bundled "sort") must not trip
+;; the recursion guard: GNU compares resolved paths in
+;; `Vloads_in_progress', never basenames.
+(make-directory "/tmp/qa_load_coll" t)
+(with-temp-file "/tmp/qa_load_coll/sort.el"
+  (insert "(setq qa-sort-file (with-temp-buffer
+                              (insert \"c\\na\\nb\\n\")
+                              (sort-lines nil (point-min) (point-max))
+                              (buffer-string)))\n"))
+(qa (load "/tmp/qa_load_coll/sort.el" nil t) t)
+(qa qa-sort-file "a\nb\nc\n")
+
+;; == Recursive load ==
+;; GNU Fload conses `found' onto Vloads_in_progress and signals
+;; "Recursive load" when the same path nests a 4th time.
+(with-temp-file "/tmp/qa_load_recur.el" (insert "(load \"/tmp/qa_load_recur.el\" nil t)\n"))
+(qa-err (load "/tmp/qa_load_recur.el" nil t) 'error)
+;; Three nested loads of the same file are allowed.
+(with-temp-file "/tmp/qa_load_recur2.el"
+  (insert "(setq qa-recur-depth (1+ (or (bound-and-true-p qa-recur-depth) 0)))
+(when (< qa-recur-depth 3) (load \"/tmp/qa_load_recur2.el\" nil t))\n"))
+(setq qa-recur-depth nil)
+(qa (load "/tmp/qa_load_recur2.el" nil t) t)
+(qa qa-recur-depth 3)
+
 ;; == cleanup ==
 (dolist (f '("/tmp/qa_load_np.el" "/tmp/qa_load_ovr.el" "/tmp/qa_load_ovr2.el"
              "/tmp/qa_load_b.el" "/tmp/qa_load_empty.el" "/tmp/qa_load_cmt.el"
@@ -612,8 +639,10 @@
              "/tmp/qa_load_hreq.el" "/tmp/qa_load_hc.el" "/tmp/qa_load_loc.el"
              "/tmp/qa_load_unl.el" "/tmp/qa_load_dep.el" "/tmp/qa_load_gz.el"
              "/tmp/qa_load_gz.el.gz" "/tmp/qa_load_sub/qa_sub.el"
-             "/tmp/qa_load_rfi.el"))
+             "/tmp/qa_load_rfi.el" "/tmp/qa_load_recur.el"
+             "/tmp/qa_load_recur2.el" "/tmp/qa_load_coll/sort.el"))
   (when (file-exists-p f) (delete-file f)))
 (delete-directory "/tmp/qa_load_sub" t)
+(delete-directory "/tmp/qa_load_coll" t)
 
 (princ (qa--done))

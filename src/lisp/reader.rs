@@ -435,18 +435,15 @@ impl<'a> Reader<'a> {
                     return Ok(v);
                 }
                 Some('\\') => {
-                    // `\u'/`\U' produce a real Unicode character — GNU
-                    // marks the string multibyte even when the code
-                    // fits in 0x80..0xFF (e.g. \u00A0 → NBSP), unlike
-                    // the octal \NNN escapes which stay raw bytes.
-                    let uni_escape = matches!(self.peek(), Some('u') | Some('U'));
-                    let c = self.read_string_escape()?;
+                    // The returned flag marks escapes GNU reads as real
+                    // characters (\u, \U, \N, \x with >2 digits); other
+                    // escapes producing eight-bit proxy chars (octal,
+                    // short \xNN ≤0xFF) stay raw bytes.
+                    let (c, force_mb) = self.read_string_escape()?;
                     if let Some(c) = c {
-                        // Eight-bit proxy chars (from \NNN octal/\xNN
-                        // escapes ≤0xFF) are raw bytes — they keep the
-                        // literal unibyte like GNU.
-                        if ((c as u32) > 0xFF && crate::lisp::value::eight_bit_byte(c).is_none())
-                            || uni_escape
+                        if force_mb
+                            || ((c as u32) > 0xFF
+                                && crate::lisp::value::eight_bit_byte(c).is_none())
                         {
                             multibyte = true;
                         }
@@ -463,44 +460,50 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// One escape inside a string. Returns None for `\<newline>` continuation.
-    fn read_string_escape(&mut self) -> Result<Option<char>, Flow> {
+    /// One escape inside a string. The bool forces multibyte (GNU
+    /// read_escape: \u/\U/\N and >2-digit \x escapes read real
+    /// characters even when they fit a byte).  None = `\<newline>'.
+    fn read_string_escape(&mut self) -> Result<(Option<char>, bool), Flow> {
         match self.next() {
             None => Err(eof_err(self.interp)),
-            Some('\n') => Ok(None),
-            Some(' ') => Ok(Some(' ')),
-            Some('a') => Ok(Some('\x07')),
-            Some('b') => Ok(Some('\x08')),
-            Some('d') => Ok(Some('\x7f')),
-            Some('e') => Ok(Some('\x1b')),
-            Some('f') => Ok(Some('\x0c')),
-            Some('n') => Ok(Some('\n')),
-            Some('r') => Ok(Some('\r')),
-            Some('s') => Ok(Some(' ')),
-            Some('t') => Ok(Some('\t')),
-            Some('v') => Ok(Some('\x0b')),
+            Some('\n') => Ok((None, false)),
+            Some(' ') => Ok((Some(' '), false)),
+            Some('a') => Ok((Some('\x07'), false)),
+            Some('b') => Ok((Some('\x08'), false)),
+            Some('d') => Ok((Some('\x7f'), false)),
+            Some('e') => Ok((Some('\x1b'), false)),
+            Some('f') => Ok((Some('\x0c'), false)),
+            Some('n') => Ok((Some('\n'), false)),
+            Some('r') => Ok((Some('\r'), false)),
+            Some('s') => Ok((Some(' '), false)),
+            Some('t') => Ok((Some('\t'), false)),
+            Some('v') => Ok((Some('\x0b'), false)),
             Some('x') => {
-                let n = self.read_hex_char_escape()?;
+                // GNU read_escape: \x with more than two hex digits
+                // always reads a *character* (multibyte), even when the
+                // value fits a byte — "\x00E9" is multibyte while
+                // "\xE9" is a raw byte8 char.
+                let (n, digits) = self.read_hex_char_escape()?;
                 if n & (CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT) != 0
                 {
                     return Err(read_err(self.interp, "Invalid modifier in string"));
                 }
-                Ok(crate::lisp::value::lisp_char(n as u32))
+                Ok((crate::lisp::value::lisp_char(n as u32), digits > 2))
             }
             Some('u') => {
                 let n = self.read_exact_hex(4)?;
-                Ok(char::from_u32(n as u32))
+                Ok((char::from_u32(n as u32), true))
             }
             Some('U') => {
                 let n = self.read_exact_hex(8)?;
                 if n > 0x10_ffff {
                     return Err(non_unicode_err(self.interp, n));
                 }
-                Ok(char::from_u32(n as u32))
+                Ok((char::from_u32(n as u32), true))
             }
             Some('N') => {
                 let n = self.read_named_char()?;
-                Ok(crate::lisp::value::lisp_char(n as u32))
+                Ok((crate::lisp::value::lisp_char(n as u32), true))
             }
             Some('C') if self.peek() == Some('-') => {
                 self.pos += 1;
@@ -523,7 +526,7 @@ impl<'a> Reader<'a> {
                 if v & CHAR_META != 0 && ch < 0x80 {
                     ch |= 0x80;
                 }
-                Ok(char::from_u32(ch as u32))
+                Ok((char::from_u32(ch as u32), false))
             }
             Some('M') if self.peek() == Some('-') => {
                 self.pos += 1;
@@ -532,17 +535,17 @@ impl<'a> Reader<'a> {
                 // 8-bit metafied chars), so key lookup sees M-x.
                 let base =
                     v & !(CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT);
-                Ok(char::from_u32(if base < 0x80 {
+                Ok((char::from_u32(if base < 0x80 {
                     base as u32 | 0x80
                 } else {
                     base as u32
-                }))
+                }), false))
             }
             Some('^') => match self.next() {
                 None => Err(eof_err(self.interp)),
-                Some(' ') => Ok(Some('\0')),
+                Some(' ') => Ok((Some('\0'), false)),
                 Some(c) => match ctrl_fold(c as i128) {
-                    Some(f) => Ok(char::from_u32(f as u32)),
+                    Some(f) => Ok((char::from_u32(f as u32), false)),
                     None => Err(read_err(self.interp, "Invalid modifier in string")),
                 },
             },
@@ -565,9 +568,9 @@ impl<'a> Reader<'a> {
                 if (0x80..0x100).contains(&n) {
                     n = 0x3F_FF00 + n;
                 }
-                Ok(crate::lisp::value::lisp_char(n as u32))
+                Ok((crate::lisp::value::lisp_char(n as u32), false))
             }
-            Some(c) => Ok(Some(c)),
+            Some(c) => Ok((Some(c), false)),
         }
     }
 
@@ -596,7 +599,7 @@ impl<'a> Reader<'a> {
     /// GNU `\x' escape: one or more hex digits. With 1–2 digits,
     /// values ≥ 0x80 become byte8 chars (BYTE8_TO_CHAR → 0x3FFFxx).
     /// Larger values may carry modifier bits.
-    fn read_hex_char_escape(&mut self) -> Result<i128, Flow> {
+    fn read_hex_char_escape(&mut self) -> Result<(i128, usize), Flow> {
         let mut val: i128 = 0;
         let mut count = 0usize;
         while let Some(c) = self.peek() {
@@ -630,7 +633,7 @@ impl<'a> Reader<'a> {
         if count < 3 && val >= 0x80 {
             val = 0x3F_FF00 + val;
         }
-        Ok(val)
+        Ok((val, count))
     }
 
     /// GNU `\u'/`\U' escapes need exactly N hex digits; a non-hex
@@ -747,7 +750,7 @@ impl<'a> Reader<'a> {
             Some('s') => Ok(32),
             Some('t') => Ok(9),
             Some('v') => Ok(11),
-            Some('x') => self.read_hex_char_escape(),
+            Some('x') => self.read_hex_char_escape().map(|(n, _)| n),
             Some('u') => {
                 let n = self.read_exact_hex(4)?;
                 if n > 0x10_ffff {
@@ -1441,12 +1444,22 @@ fn parse_float(tok: &str) -> Option<f64> {
         }
         // GNU's special literals: `[eE]+NaN' and `[eE]+INF' — the
         // exponent sign must be `+', the suffix is case-sensitive.
+        // `float_error' semantics: the mantissa's truncated value
+        // becomes the NaN payload (quiet bit excluded) and the
+        // literal's sign the NaN's sign, so `3.5e+NaN' prints back
+        // as `3.0e+NaN'.
         if exp_sign == Some(b'+') {
             let rest = &tok[i..];
             if rest == "NaN" || rest == "INF" {
                 let neg = tok.starts_with('-');
                 return Some(if rest == "NaN" {
-                    if neg { -f64::NAN } else { f64::NAN }
+                    let mantissa: f64 = tok[..i - 2].parse().unwrap_or(0.0);
+                    let payload = (mantissa.abs() as u64) & ((1u64 << 51) - 1);
+                    f64::from_bits(
+                        0x7ff8_0000_0000_0000
+                            | (neg as u64) << 63
+                            | payload,
+                    )
                 } else if neg {
                     f64::NEG_INFINITY
                 } else {

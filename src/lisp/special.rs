@@ -145,15 +145,12 @@ impl Interp {
         let is_special = self.obarray.symbol(sym).special
             || crate::lisp::eval::lexenv_declared(&self.lexenv, sym)
             || self.file_declared.borrow().contains(&sym);
-        // Constants (nil/t/keywords) are never dynamically bound —
-        // GNU binds them in the lexical env even when `special' would
-        // flag them (their defconst-ness isn't a defvar).
+        // Constants (nil/t/keywords) can never be bound: GNU's
+        // let_bind reaches specbind's `trapped_write == NOWRITE'
+        // check in both dynamic and lexical eval and signals
+        // `setting-constant'.
         if self.obarray.symbol(sym).constant {
-            if let Some(frame) = lex_vars {
-                crate::lisp::eval::lexframe_bind(frame, sym, val);
-                return Ok(());
-            }
-            return self.specbind(sym, val);
+            return Err(self.signal_data(sym::SETTING_CONSTANT, vec![self.sym(sym)]));
         }
         match (lex_vars, is_special) {
             (Some(frame), false) => {

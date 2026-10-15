@@ -1052,7 +1052,9 @@ fn f_string_to_number(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         .map(|v| crate::lisp::builtins::want_fixnum(i, v))
         .transpose()?
         .unwrap_or(10);
-    let t = s.trim();
+    // GNU Fstring_to_number skips only spaces and tabs (a leading
+    // newline or other whitespace stops the parse -> 0).
+    let t = s.trim_start_matches([' ', '\t']);
     if t.is_empty() {
         return Ok(Value::Int(0));
     }
@@ -1146,10 +1148,22 @@ fn f_number_to_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
 }
 fn f_string_to_char(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    Ok(Value::Int(
-        s.chars().next().map(lisp_char_code).unwrap_or(0),
-    ))
+    let Value::Str(s) = &args[0] else {
+        return Err(i.wrong_type_mut("stringp", &args[0]));
+    };
+    let Some(c) = s.borrow().chars().next() else {
+        return Ok(Value::Int(0));
+    };
+    // GNU Fstring_to_char on a unibyte string returns the raw byte
+    // value (0-255), same as `elt' — eight-bit proxy chars map back.
+    let code = if i.is_unibyte_str(s) {
+        crate::lisp::value::eight_bit_byte(c)
+            .map(|b| b as i128)
+            .unwrap_or(c as i128 & 0xFF)
+    } else {
+        lisp_char_code(c)
+    };
+    Ok(Value::Int(code))
 }
 fn f_char_to_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[0] {

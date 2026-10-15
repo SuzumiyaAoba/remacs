@@ -118,16 +118,25 @@ pub struct Buffer {
 /// exist, canonicalize resolves nothing — resolve the longest
 /// existing ancestor and reattach the missing tail instead.
 pub fn file_truename(path: &str) -> String {
+    // GNU keeps a trailing slash on the resolved name iff the input
+    // had one — `file-truename "/tmp/"' → "/private/tmp/".
+    let dirlike = path.ends_with('/');
     let mut missing: Vec<&str> = Vec::new();
     let mut rest = path;
     loop {
         if let Ok(real) = std::fs::canonicalize(rest) {
             let mut out = real.to_string_lossy().into_owned();
+            while out.ends_with('/') && out.len() > 1 {
+                out.pop();
+            }
             for c in missing.iter().rev() {
                 if !out.ends_with('/') {
                     out.push('/');
                 }
                 out.push_str(c);
+            }
+            if dirlike && !out.ends_with('/') {
+                out.push('/');
             }
             return out;
         }

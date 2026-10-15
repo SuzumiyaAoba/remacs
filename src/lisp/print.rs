@@ -1602,14 +1602,17 @@ fn format_g(x: f64, prec: usize) -> String {
 /// Emacs-style float printing (`float_to_string`): shortest of
 /// `%.15g`–`%.17g` that reads back to the same double.
 /// `1.5`, `1.0`, `1e+20`, `1.0e+INF`, `-1.0e+INF`, `0.0e+NaN`.
+/// NaNs print the numeric mantissa GNU derives from the NaN payload
+/// (`float_error' notation): `get_nan_payload' strips the quiet bit,
+/// and the payload value truncates to the printed integer — literals
+/// like `3.5e+NaN' read back as payload 3 and print `3.0e+NaN'.
 pub fn format_float(f: f64) -> String {
     if f.is_nan() {
-        return if f.is_sign_negative() {
-            "-0.0e+NaN"
-        } else {
-            "0.0e+NaN"
-        }
-        .into();
+        let payload = f.to_bits() & ((1u64 << 51) - 1);
+        let sign = if f.is_sign_negative() { "-" } else { "" };
+        // f64 prints payloads ≥2^53 exactly enough for the integral
+        // mantissa GNU emits.
+        return format!("{}{}.0e+NaN", sign, payload);
     }
     if f.is_infinite() {
         return if f > 0.0 { "1.0e+INF" } else { "-1.0e+INF" }.into();

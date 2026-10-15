@@ -1562,58 +1562,31 @@ pub(crate) fn resolve_obarray(i: &mut Interp, v: Option<&Value>) -> Result<Optio
         None | Some(Value::Nil) => Ok(None),
         Some(v) if is_obarray(i, v) => Ok(Some(v.clone())),
         Some(w @ Value::Vec(vec)) => {
-            // GNU `check_obarray': a vector promoted earlier (slot 0
-            // holds the obarray record) is used as-is.
-            if let Some(v0) = vec.borrow().first() {
-                if is_obarray(i, v0) {
-                    return Ok(Some(v0.clone()));
+            // GNU `check_obarray_slow': a non-empty vector is an
+            // obarray iff slot 0 is 0 (fresh obarray object is stored
+            // there) or an obarray already — the remaining slots are
+            // IGNORED entirely (no per-slot bucket validation).
+            let v0 = vec.borrow().first().cloned();
+            if let Some(v0) = v0 {
+                if is_obarray(i, &v0) {
+                    return Ok(Some(v0));
+                }
+                if matches!(v0, Value::Int(0)) {
+                    let rec = Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
+                        vec![
+                            obarray_tag(i),
+                            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
+                                Vec::new(),
+                            ))),
+                            // GNU uses make_obarray(0): one bucket.
+                            Value::Int(0),
+                        ],
+                    )));
+                    vec.borrow_mut()[0] = rec.clone();
+                    return Ok(Some(rec));
                 }
             }
-            // GNU `check_obarray_slow': a legacy vector is an obarray
-            // only when every slot is 0 or a symbol whose name hashes
-            // (mod size) to that bucket index.
-            let (valid, syms) = {
-                let vv = vec.borrow();
-                let size = vv.len() as u64;
-                let mut syms: Vec<Value> = Vec::new();
-                let mut valid = true;
-                for (idx, slot) in vv.iter().enumerate() {
-                    match slot {
-                        Value::Int(0) => {}
-                        Value::Sym(id) => {
-                            let name = i.symbol_name(*id);
-                            if crate::lisp::builtins::strfn::sxhash_char_array(name.as_bytes())
-                                % size
-                                != idx as u64
-                            {
-                                valid = false;
-                                break;
-                            }
-                            syms.push(slot.clone());
-                        }
-                        _ => {
-                            valid = false;
-                            break;
-                        }
-                    }
-                }
-                (valid, syms)
-            };
-            if !valid {
-                return Err(i.wrong_type_mut("obarrayp", w));
-            }
-            let mut vv = vec.borrow_mut();
-            // A size-0 vector is a valid but unusable obarray (GNU's
-            // check_obarray_slow accepts it; interning still fails).
-            if vv.is_empty() {
-                return Err(i.wrong_type_mut("obarrayp", w));
-            }
-            let rec = Value::Record(std::rc::Rc::new(std::cell::RefCell::new(vec![
-                obarray_tag(i),
-                Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(syms))),
-            ])));
-            vv[0] = rec.clone();
-            Ok(Some(rec))
+            Err(i.wrong_type_mut("obarrayp", w))
         }
         Some(v) => Err(i.wrong_type_mut("obarrayp", v)),
     }

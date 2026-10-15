@@ -220,6 +220,31 @@ fn path_in_builtin_dirs(path: &str) -> bool {
     })
 }
 
+/// Resolved-load identity for comparing against `loads_in_progress':
+/// `builtin:' names and on-disk hits under `builtin_dirs' whose stem
+/// is an embedded library all normalize to `builtin:<stem>' — the
+/// three spellings (virtual path, disk `.el', disk `.elc' twin
+/// fallback) one file can appear under while loading.  Everything
+/// else is the literal resolved path GNU's `Fequal' would compare.
+pub(crate) fn load_key(path: &str) -> String {
+    let stem_of = |s: &str| -> String {
+        let s = s.strip_prefix("builtin:").unwrap_or(s);
+        let base = s.rsplit('/').next().unwrap_or(s);
+        base.strip_suffix(".elc")
+            .or_else(|| base.strip_suffix(".el"))
+            .unwrap_or(base)
+            .to_string()
+    };
+    let stem = stem_of(path);
+    if path.starts_with("builtin:") {
+        return format!("builtin:{stem}");
+    }
+    if path_in_builtin_dirs(path) && embedded(&stem).is_some() {
+        return format!("builtin:{stem}");
+    }
+    path.to_string()
+}
+
 /// Built-in Lisp libraries embedded in the binary (the repo's lisp/ dir),
 /// so `load`/autoload works regardless of the process cwd.
 static EMBEDDED_LISP: &[(&str, &str)] = &[
@@ -2764,7 +2789,30 @@ fn eval_src_opts(
     let is_elc = src.starts_with(";ELC\u{1f}\u{0}\u{0}\u{0}");
     let was_elc = i.reading_elc;
     i.reading_elc = was_elc || is_elc;
+    // GNU lread.c Fload: `found' is consed onto Vloads_in_progress
+    // BEFORE the recursion check, so the signal's datum — `(found .
+    // loads-in-progress)' — contains the offending entry.  The error
+    // fires when the count exceeds 3 (the 4th nested load of the same
+    // path); files that never finish loading would otherwise recurse
+    // to max-lisp-eval-depth.
+    i.loads_in_progress.push(file.to_string());
+    if i.loads_in_progress.iter().filter(|f| *f == file).count() > 3 {
+        i.loads_in_progress.pop();
+        i.unbind_to(mark)?;
+        i.lexenv = saved_lexenv;
+        i.reading_elc = was_elc;
+        i.loading_dumped = was_dumped;
+        let mut data = vec![Value::string("Recursive load"), Value::string(file)];
+        // Vloads_in_progress is newest-first in GNU; our Vec pushes
+        // newest last, so iterate in reverse.
+        for f in i.loads_in_progress.iter().rev() {
+            data.push(Value::string(f.clone()));
+        }
+        return Err(i.signal_data(crate::lisp::sym::ERROR, data));
+    }
     let r = eval_str_for_load(i, file, &src);
+    let popped = i.loads_in_progress.pop();
+    debug_assert!(popped.as_deref() == Some(file));
     i.reading_elc = was_elc;
     i.loading_dumped = was_dumped;
     // File-scoped `defvar' declarations live on the root frame; merge
@@ -3479,9 +3527,13 @@ pub(crate) fn load_library_opts_msg(
                 announce(i, &path);
                 if can_elc && path.ends_with(".eln") {
                     // Native-compiled unit: register via dlopen instead of
-                    // evaluating source.
-                    crate::lisp::builtins::comp::native_load_file(i, &path)
-                        .map(|_| LoadOutcome::Loaded(path))
+                    // evaluating source.  GNU pushes `found' onto
+                    // Vloads_in_progress for these loads too.
+                    i.loads_in_progress.push(path.clone());
+                    let r = crate::lisp::builtins::comp::native_load_file(i, &path)
+                        .map(|_| LoadOutcome::Loaded(path.clone()));
+                    i.loads_in_progress.pop();
+                    r
                 } else {
                     eval_file_lex_dumped(i, &path, false, bundled)
                         .map(|_| LoadOutcome::Loaded(path))

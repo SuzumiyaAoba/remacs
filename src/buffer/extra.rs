@@ -655,8 +655,8 @@ fn f_replace_region_contents(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     Ok(Value::t())
 }
 
-fn f_combine_after_change_execute(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::Nil)
+fn f_combine_after_change_execute(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    crate::lisp::builtins::evalfn::combine_after_change_execute(i)
 }
 
 /// (translate-region-internal START END TABLE) — GNU
@@ -2409,7 +2409,7 @@ fn f_subst_char_in_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
         bb.note_text_change(e - first);
     }
-    crate::lisp::builtins::evalfn::signal_after_change(i, first + 1, last + 1, last - first)?;
+    crate::lisp::builtins::evalfn::signal_after_change(i, first + 1, last + 1, (last - first) as i128)?;
     Ok(Value::Nil)
 }
 
@@ -3255,46 +3255,31 @@ fn f_next_prop_change_fwd(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // POS is returned raw — then Fnext_overlay_change /
     // Fnext_property_change bounded by it.
     let pos_v = crate::lisp::builtins::want_int_or_mark(i, &a[0])?;
-    let len = cur(i).borrow().text_len();
-    let begv = cur(i).borrow().begv;
+    let (begv, zv) = {
+        let b = cur(i);
+        let bb = b.borrow();
+        (bb.begv, bb.zv)
+    };
     let explicit_lim = match a.get(1) {
         Some(v) if v.truthy() => Some(crate::lisp::builtins::want_int_or_mark(i, v)?),
         _ => None,
     };
-    if pos_v < begv as i128 + 1 || pos_v > len as i128 + 1 {
+    if pos_v < begv as i128 + 1 || pos_v > zv as i128 + 1 {
         return Err(err_sym(
             i,
             "args-out-of-range",
             vec![a[0].clone(), a[0].clone()],
         ));
     }
-    let pos = pos_idx(len, pos_v);
-    // 1-based LIMIT; an explicit value is capped at ZV but not at BEGV.
-    let lim = explicit_lim
-        .map(|l| l.min(len as i128 + 1))
-        .unwrap_or(len as i128 + 1);
-    let mut next: Option<usize> = None;
-    {
+    // LIMIT defaults to ZV+1; the effective bound is
+    // min(LIMIT, next-overlay-change) — see next_char_prop_edge.
+    let lim = explicit_lim.unwrap_or(zv as i128 + 1);
+    let res = {
         let b = cur(i);
         let bb = b.borrow();
-        let mut take = |cand: usize| {
-            // A boundary at 0-based index CAND is position CAND+1.
-            if cand > pos && cand as i128 + 1 <= lim && next.map(|n| cand < n).unwrap_or(true) {
-                next = Some(cand);
-            }
-        };
-        for tp in bb.text.props.borrow().iter() {
-            take(tp.start);
-            take(tp.end);
-        }
-        for ov in &bb.overlays {
-            if ov.buffer == Some(bb.id) {
-                take(ov.start);
-                take(ov.end);
-            }
-        }
-    }
-    Ok(Value::Int(next.map(|p| p as i128 + 1).unwrap_or(lim)))
+        crate::buffer::primitives::next_char_prop_edge(i, &bb, pos_v, lim)
+    };
+    Ok(Value::Int(res))
 }
 
 /// `previous-char-property-change' — like `previous-property-change'
@@ -3306,46 +3291,31 @@ fn f_prev_prop_change(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // range-checking POS, then clamps it only at BEGV — a LIMIT above
     // POS is returned raw.  Default LIMIT is point-min.
     let pos_v = crate::lisp::builtins::want_int_or_mark(i, &a[0])?;
-    let len = cur(i).borrow().text_len();
-    let begv = cur(i).borrow().begv;
+    let (begv, zv) = {
+        let b = cur(i);
+        let bb = b.borrow();
+        (bb.begv, bb.zv)
+    };
     let explicit_lim = match a.get(1) {
         Some(v) if v.truthy() => Some(crate::lisp::builtins::want_int_or_mark(i, v)?),
         _ => None,
     };
-    if pos_v < begv as i128 + 1 || pos_v > len as i128 + 1 {
+    if pos_v < begv as i128 + 1 || pos_v > zv as i128 + 1 {
         return Err(err_sym(
             i,
             "args-out-of-range",
             vec![a[0].clone(), a[0].clone()],
         ));
     }
-    let pos = pos_idx(len, pos_v);
-    // 1-based LIMIT; an explicit value is floored at BEGV but not
-    // capped at ZV.
-    let lim = explicit_lim
-        .map(|l| l.max(begv as i128 + 1))
-        .unwrap_or(begv as i128 + 1);
-    let mut prev: Option<usize> = None;
-    {
+    // LIMIT defaults to BEGV+1; the effective floor is
+    // max(LIMIT, previous-overlay-change) — see prev_char_prop_edge.
+    let lim = explicit_lim.unwrap_or(begv as i128 + 1);
+    let res = {
         let b = cur(i);
         let bb = b.borrow();
-        let mut take = |cand: usize| {
-            if cand < pos && cand as i128 + 1 >= lim && prev.map(|n| cand > n).unwrap_or(true) {
-                prev = Some(cand);
-            }
-        };
-        for tp in bb.text.props.borrow().iter() {
-            take(tp.start);
-            take(tp.end);
-        }
-        for ov in &bb.overlays {
-            if ov.buffer == Some(bb.id) {
-                take(ov.start);
-                take(ov.end);
-            }
-        }
-    }
-    Ok(Value::Int(prev.map(|p| p as i128 + 1).unwrap_or(lim)))
+        crate::buffer::primitives::prev_char_prop_edge(i, &bb, pos_v, lim)
+    };
+    Ok(Value::Int(res))
 }
 
 fn f_marker_last_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

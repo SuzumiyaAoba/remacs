@@ -473,8 +473,40 @@ pub fn eql_values(a: &Value, b: &Value) -> bool {
     }
 }
 
-/// `equal` — structural equality.
+/// `equal` — structural equality.  Mirrors GNU `internal_equal':
+/// below `EQUAL_NO_RECURSION_DEPTH` (=200) it recurses plainly; past
+/// that depth each in-progress object pair is memoized and a revisit
+/// coinductively reports true, so isomorphic cyclic structures
+/// (self-cdrs, vectors holding themselves) compare equal and
+/// mismatched cycles report nil — no recursion overflow, no guard cap.
 pub fn equal_values(interp: &Interp, a: &Value, b: &Value) -> bool {
+    let mut seen = None;
+    equal_values_1(interp, a, b, 0, &mut seen)
+}
+
+type EqualSeen = std::collections::HashSet<(usize, usize)>;
+
+/// Heap identity for the pair memo, mirroring GNU's object-pointer
+/// keys; atoms return None and take the plain branch.
+fn equal_obj_ptr(v: &Value) -> Option<usize> {
+    match v {
+        Value::Cons(x) => Some(std::rc::Rc::as_ptr(x) as usize),
+        Value::Vec(x) => Some(std::rc::Rc::as_ptr(x) as usize),
+        Value::Record(x) => Some(std::rc::Rc::as_ptr(x) as usize),
+        Value::Lambda(x) => Some(std::rc::Rc::as_ptr(x) as usize),
+        _ => None,
+    }
+}
+
+const EQUAL_NO_RECURSION_DEPTH: u32 = 200;
+
+fn equal_values_1(
+    interp: &Interp,
+    a: &Value,
+    b: &Value,
+    depth: u32,
+    seen: &mut Option<EqualSeen>,
+) -> bool {
     // Enabled sympos are atoms (symbols): compare by `eq' unwrapping,
     // not record slot contents (positions must not matter).
     if misc::as_sympos(a).is_some() || misc::as_sympos(b).is_some() {
@@ -486,6 +518,15 @@ pub fn equal_values(interp: &Interp, a: &Value, b: &Value) -> bool {
     if eq_values(a, b) {
         return true;
     }
+    if depth > EQUAL_NO_RECURSION_DEPTH {
+        if let (Some(pa), Some(pb)) = (equal_obj_ptr(a), equal_obj_ptr(b)) {
+            let set = seen.get_or_insert_with(EqualSeen::new);
+            if !set.insert((pa, pb)) {
+                // This pair is already being compared — coinduction.
+                return true;
+            }
+        }
+    }
     match (a, b) {
         (Value::Str(x), Value::Str(y)) => *x.borrow() == *y.borrow(),
         (Value::Marker(x), Value::Marker(y)) => {
@@ -495,17 +536,22 @@ pub fn equal_values(interp: &Interp, a: &Value, b: &Value) -> bool {
             xb.buffer == yb.buffer && xb.position == yb.position
         }
         (Value::Cons(_x), Value::Cons(_y)) => {
-            // Structural walk with cycle guard.
+            // Structural walk: like GNU's `while (CONSP(o1))' loop the
+            // tail does not consume stack; the depth check for cycle
+            // detection lives at the top of the next iteration.
             let mut ax = a.clone();
             let mut bx = b.clone();
-            let mut guard = 0usize;
             loop {
-                guard += 1;
-                if guard > 100_000 {
-                    return false;
-                }
                 match (&ax, &bx) {
                     (Value::Cons(ac), Value::Cons(bc)) => {
+                        if depth > EQUAL_NO_RECURSION_DEPTH {
+                            let pa = std::rc::Rc::as_ptr(ac) as usize;
+                            let pb = std::rc::Rc::as_ptr(bc) as usize;
+                            let set = seen.get_or_insert_with(EqualSeen::new);
+                            if !set.insert((pa, pb)) {
+                                return true;
+                            }
+                        }
                         let (acar, acdr) = {
                             let ab = ac.borrow();
                             (ab.car.clone(), ab.cdr.clone())
@@ -514,14 +560,14 @@ pub fn equal_values(interp: &Interp, a: &Value, b: &Value) -> bool {
                             let bb = bc.borrow();
                             (bb.car.clone(), bb.cdr.clone())
                         };
-                        if !equal_values(interp, &acar, &bcar) {
+                        if !equal_values_1(interp, &acar, &bcar, depth + 1, seen) {
                             return false;
                         }
                         ax = acdr;
                         bx = bcdr;
                     }
                     _ => {
-                        return equal_values(interp, &ax, &bx);
+                        return equal_values_1(interp, &ax, &bx, depth + 1, seen);
                     }
                 }
             }
@@ -534,7 +580,7 @@ pub fn equal_values(interp: &Interp, a: &Value, b: &Value) -> bool {
             }
             xv.iter()
                 .zip(yv.iter())
-                .all(|(a, b)| equal_values(interp, a, b))
+                .all(|(a, b)| equal_values_1(interp, a, b, depth + 1, seen))
         }
         (Value::Record(x), Value::Record(y)) => {
             let xv = x.borrow();
@@ -544,7 +590,7 @@ pub fn equal_values(interp: &Interp, a: &Value, b: &Value) -> bool {
             }
             xv.iter()
                 .zip(yv.iter())
-                .all(|(a, b)| equal_values(interp, a, b))
+                .all(|(a, b)| equal_values_1(interp, a, b, depth + 1, seen))
         }
         (Value::Lambda(x), Value::Lambda(y)) => {
             // `#[...]' byte-code objects are pseudovectors in GNU:
@@ -559,7 +605,7 @@ pub fn equal_values(interp: &Interp, a: &Value, b: &Value) -> bool {
                         && xi
                             .iter()
                             .zip(yi.iter())
-                            .all(|(a, b)| equal_values(interp, a, b))
+                            .all(|(a, b)| equal_values_1(interp, a, b, depth + 1, seen))
                         && x.env.is_none() == y.env.is_none();
                 }
                 (None, None) => {}
@@ -574,7 +620,7 @@ pub fn equal_values(interp: &Interp, a: &Value, b: &Value) -> bool {
                     a.sym == b.sym
                         && a.supplied == b.supplied
                         && match (&a.default, &b.default) {
-                            (Some(d), Some(e)) => equal_values(interp, d, e),
+                            (Some(d), Some(e)) => equal_values_1(interp, d, e, depth + 1, seen),
                             (None, None) => true,
                             _ => false,
                         }
@@ -583,7 +629,7 @@ pub fn equal_values(interp: &Interp, a: &Value, b: &Value) -> bool {
                 && x.body
                     .iter()
                     .zip(y.body.iter())
-                    .all(|(a, b)| equal_values(interp, a, b))
+                    .all(|(a, b)| equal_values_1(interp, a, b, depth + 1, seen))
                 && x.env.is_none() == y.env.is_none()
         }
         _ => eql_values(a, b),

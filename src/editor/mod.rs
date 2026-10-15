@@ -17298,17 +17298,24 @@ fn f_kmacro(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     i.apply(&Value::Sym(impl_id), a)
 }
 
-fn f_prefix_numeric_value(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match &a[0] {
-        Value::Int(n) => Ok(Value::Int(*n)),
-        // The bare `-` symbol means a negative prefix.
-        Value::Sym(s) if i.symbol_name(*s) == "-" => Ok(Value::Int(-1)),
-        Value::Cons(c) => match c.borrow().car.clone() {
-            Value::Int(n) => Ok(Value::Int(n)),
-            _ => Ok(Value::Int(1)),
+/// GNU callint.c `Fprefix_numeric_value': nil -> 1, `- -> -1,
+/// cons -> car when it's a fixnum, fixnum -> itself, else 1.
+/// The cons arm does NOT recurse: `((4))' -> 1.
+pub fn prefix_numeric_value(i: &Interp, v: &Value) -> i128 {
+    match v {
+        Value::Nil => 1,
+        Value::Sym(s) if i.symbol_name(*s) == "-" => -1,
+        Value::Cons(c) => match c.borrow().car {
+            Value::Int(n) => n,
+            _ => 1,
         },
-        _ => Ok(Value::Int(1)),
+        Value::Int(n) => *n,
+        _ => 1,
     }
+}
+
+fn f_prefix_numeric_value(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    Ok(Value::Int(prefix_numeric_value(i, &a[0])))
 }
 
 fn f_universal_argument(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
@@ -18770,14 +18777,12 @@ fn f_documentation(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             return Err(i.signal_data(crate::lisp::sym::VOID_FUNCTION, vec![a[0].clone()]));
         }
         Value::Sym(id) => {
-            let v = i.symbol_function(*id);
-            if v.is_nil() || matches!(v, Value::Sym(s) if s == crate::lisp::sym::UNBOUND) {
-                return Err(i.signal_data(crate::lisp::sym::VOID_FUNCTION, vec![a[0].clone()]));
-            }
             // GNU Fdocumentation: a symbol's `function-documentation'
-            // property wins over the function's own docstring — this is
-            // how `defalias' with a DOC arg overrides the aliased
-            // function's text.
+            // property is consulted even when the function cell is
+            // void (void-function only fires when there is no prop).
+            // The prop also wins over the function's own docstring —
+            // this is how `defalias' with a DOC arg overrides the
+            // aliased function's text.
             let fd = i.intern("function-documentation");
             if !i.get_prop(*id, fd).is_nil() {
                 let mut dargs = vec![a[0].clone(), Value::Sym(fd)];
@@ -18785,6 +18790,10 @@ fn f_documentation(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     dargs.push(raw.clone());
                 }
                 return f_documentation_property(i, dargs.into());
+            }
+            let v = i.symbol_function(*id);
+            if v.is_nil() || matches!(v, Value::Sym(s) if s == crate::lisp::sym::UNBOUND) {
+                return Err(i.signal_data(crate::lisp::sym::VOID_FUNCTION, vec![a[0].clone()]));
             }
             v
         }

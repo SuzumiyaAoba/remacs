@@ -260,6 +260,10 @@ pub struct SharedText {
     /// GNU `b->text->save_modiff': the modified flag is shared —
     /// `set-buffer-modified-p' on any view affects them all.
     pub save_tick: Rc<std::cell::Cell<u64>>,
+    /// GNU `buffer_intervals (buf) != NULL': once any text property
+    /// call has run the interval tree persists even if every property
+    /// is later removed.  `verify_interval_modification' consults it.
+    pub had_intervals: Rc<std::cell::Cell<bool>>,
 }
 
 impl SharedText {
@@ -273,6 +277,7 @@ impl SharedText {
             mod_tick: Rc::new(std::cell::Cell::new(1)),
             chars_mod_tick: Rc::new(std::cell::Cell::new(1)),
             save_tick: Rc::new(std::cell::Cell::new(1)),
+            had_intervals: Rc::new(std::cell::Cell::new(false)),
         }
     }
 
@@ -286,6 +291,7 @@ impl SharedText {
             mod_tick: Rc::new(std::cell::Cell::new(self.mod_tick.get())),
             chars_mod_tick: Rc::new(std::cell::Cell::new(self.chars_mod_tick.get())),
             save_tick: Rc::new(std::cell::Cell::new(self.save_tick.get())),
+            had_intervals: Rc::new(std::cell::Cell::new(self.had_intervals.get())),
         }
     }
 
@@ -310,6 +316,14 @@ impl SharedText {
         self.viewers
             .borrow_mut()
             .retain(|w| w.upgrade().is_some_and(|u| !Rc::ptr_eq(&u, b)));
+    }
+
+    /// Mutating handle to the property records — marks
+    /// `had_intervals' so `verify_interval_modification' keeps its
+    /// GNU `buffer_intervals != NULL' shape once any write happened.
+    pub fn props_write(&self) -> std::cell::RefMut<'_, Vec<crate::buffer::TextProp>> {
+        self.had_intervals.set(true);
+        self.props.borrow_mut()
     }
 
     /// `f' receives each OTHER live buffer sharing this text.  `self_id'

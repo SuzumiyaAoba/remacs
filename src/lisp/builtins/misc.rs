@@ -1720,9 +1720,26 @@ fn f_gensym(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU: the numeric suffix comes from the `gensym-counter' variable,
     // which is incremented by each call (and may be set by the user).
     let counter_sym = i.intern("gensym-counter");
-    let mut n = match i.symbol_value(counter_sym) {
-        Value::Int(n) => n,
-        _ => 0,
+    let counter_val = i.symbol_value(counter_sym);
+    // GNU's `1+' on gensym-counter accepts a marker too (its position
+    // is used); anything else signals (number-or-marker-p VAL).
+    // An unbound cell signals `void-variable' — Fgensym resolves the
+    // variable before the number check.
+    if matches!(counter_val, Value::Sym(s) if s == sym::UNBOUND) {
+        return Err(i.signal_data(sym::VOID_VARIABLE, vec![Value::Sym(counter_sym)]));
+    }
+    let mut n = match &counter_val {
+        Value::Int(n) => *n,
+        Value::Marker(m) => {
+            let m = m.borrow();
+            if m.buffer.is_none() {
+                return Err(i.wrong_type_mut("number-or-marker-p", &counter_val));
+            }
+            m.position as i128
+        }
+        _ => {
+            return Err(i.wrong_type_mut("number-or-marker-p", &counter_val));
+        }
     };
     // GNU reads dumped libraries as .elc, so lexical `let' variables
     // like composite.el's `g0' never enter the obarray; remacs reads
@@ -15164,7 +15181,9 @@ fn f_map_char_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // character is passed as a fixnum) — retained keys all end up
     // showing the final mutation; mirror that.
     let range = Value::cons(Value::Int(0), Value::Int(0));
+    let mut last: Option<(u32, u32)> = None;
     for (from, to, val) in runs.into_iter().filter(|(_, _, v)| !v.is_nil()) {
+        last = Some((from, to));
         let key = if from == to {
             Value::Int(from as i128)
         } else {
@@ -15181,6 +15200,17 @@ fn f_map_char_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             val
         };
         i.apply(&a[0], vec![key, val])?;
+    }
+    // GNU leaves its shared RANGE cons at `(FROM . TO)' where FROM is
+    // the block start after the last emitted run (i.e. last-to + 1,
+    // or the run's own `from' when it reached MAX_CHAR) and TO is
+    // MAX_CHAR — a callback that retains the cons sees this state.
+    if let Some((from, to)) = last {
+        if let Value::Cons(c) = &range {
+            let mut cc = c.borrow_mut();
+            cc.car = Value::Int(if to < CT_MAX_CHAR { to + 1 } else { from } as i128);
+            cc.cdr = Value::Int(CT_MAX_CHAR as i128);
+        }
     }
     Ok(Value::Nil)
 }

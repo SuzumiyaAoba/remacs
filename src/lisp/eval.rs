@@ -2407,6 +2407,15 @@ impl Interp {
             .iter()
             .map(|&id| (id, interp.obarray.symbol(id).plist.clone()))
             .collect();
+        // GNU's DEFVAR_INT("gensym-counter") binds the counter at C
+        // init — always bound when any Lisp runs.  The dump-parity
+        // reset below re-seeds it to 0 after boot; seed it here too so
+        // prelude/boot gensyms don't hit `void-variable'.
+        {
+            let gc = interp.intern("gensym-counter");
+            interp.obarray.symbol_mut(gc).value = Value::Int(0);
+        }
+
         interp.loading_dumped = true;
         if std::env::var("REMACS_NO_PRELUDE").is_ok() {
             // Debug escape: skip prelude evaluation entirely.
@@ -2692,6 +2701,21 @@ impl Interp {
             // `oclosure--copy' & the `accessor--*' OClosure accessors
             // that cl-generic's `cl--generic-nnm' relies on.
             let _ = boot_lib(&mut interp, "oclosure");
+            // GNU loadup.el:199-200 dumps obarray.el then abbrev.el
+            // right after cl-preloaded/oclosure and before help.
+            // obarray.el makes `obarray-size' & co ordinary functions;
+            // abbrev.el provides `make-abbrev-table' whose absence
+            // aborts cl-generic's eager `define-abbrev-table'
+            // expansion (and, under it, later boot files).
+            let _ = boot_lib(&mut interp, "obarray");
+            let _ = boot_lib(&mut interp, "abbrev");
+            // easymenu.el is in GNU's dump (loadup.el:83 — before
+            // register/textmodes): since remacs expands macros lazily
+            // at load, every dumped library that calls
+            // `easy-menu-define'/`easy-menu-add' (cl-generic, subr-x,
+            // replace, newcomment, isearch, menu-bar) needs its macros
+            // already real.
+            let _ = boot_lib(&mut interp, "easymenu");
             // help.el is dumped by GNU's loadup.el at line 202 — before
             // cl-generic (250).  `cl-defgeneric'/`cl-defmethod' forms in
             // cl-generic, seq, subr-x and register call
@@ -2822,11 +2846,6 @@ impl Interp {
             // oclosure-interactive-form' needs cl-generic's method
             // table already installed.
             let _ = boot_lib(&mut interp, "nadvice");
-            // easymenu.el is in GNU's dump (loadup.el, right after
-            // widget): every dumped library that calls
-            // `easy-menu-define'/`easy-menu-add' (prog-mode,
-            // replace, text-mode, newcomment, isearch, menu-bar)
-            // needs its macros already real.
             let _ = boot_lib(&mut interp, "easymenu");
             // custom.el + cus-start.el are in GNU's dump (loadup.el
             // loads them right after mule): `defcustom'/`defgroup'/

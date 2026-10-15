@@ -584,12 +584,24 @@ fn f_macroexpand(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU: (macroexpand FORM &optional ENVIRONMENT) consults only the
     // explicit ENVIRONMENT alist; the dynamic variable
     // `macroexpand-all-environment' is `macroexpand-all''s business.
+    // ENVIRONMENT must be nil or a list — GNU's Fmacroexpand runs
+    // CHECK_LIST on it.
     let env = args.get(1).cloned().unwrap_or(Value::Nil);
+    match &env {
+        Value::Nil | Value::Cons(_) => {}
+        other => return Err(i.wrong_type_mut("listp", other)),
+    }
     i.macroexpand_env(&args[0], &env)
 }
 
 fn f_macroexpand_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // single-step expansion
+    // single-step expansion.  GNU runs CHECK_LIST on ENVIRONMENT.
+    if let Some(env) = args.get(1) {
+        match env {
+            Value::Nil | Value::Cons(_) => {}
+            other => return Err(i.wrong_type_mut("listp", other)),
+        }
+    }
     let form = &args[0];
     match form {
         Value::Cons(c) => {
@@ -682,8 +694,12 @@ fn f_macroexpand_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_macroexpand_all(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU: ENVIRONMENT is passed through the dynamic variable
     // `macroexpand-all-environment'; macros such as `rx'/`rx-let'
-    // consult it for local definitions.
+    // consult it for local definitions.  CHECK_LIST like the others.
     let env = args.get(1).cloned().unwrap_or(Value::Nil);
+    match &env {
+        Value::Nil | Value::Cons(_) => {}
+        other => return Err(i.wrong_type_mut("listp", other)),
+    }
     let id = i.intern("macroexpand-all-environment");
     i.specbind(id, env)?;
     let r = macroexpand_all(i, &args[0]);
@@ -2379,57 +2395,539 @@ pub(crate) fn mod_hooks_inhibited(i: &Interp) -> bool {
         .unwrap_or(false)
 }
 
-/// GNU `signal_before_change': run `first-change-hook' (when the
-/// buffer was unmodified) then `before-change-functions' with the
-/// 1-based region about to change.  An error aborts the modification.
-pub(crate) fn signal_before_change(i: &mut Interp, beg1: usize, end1: usize) -> EvalResult {
-    if mod_hooks_inhibited(i) {
-        return Ok(Value::Nil);
-    }
-    let unmodified = !i
-        .buffers
-        .get(i.current_buffer)
-        .map(|b| b.borrow().is_modified())
-        .unwrap_or(false);
-    if unmodified {
-        let id = i.intern("first-change-hook");
-        let fns = hook_fns(i, &Value::Sym(id));
-        for f in fns {
-            i.apply(&f, vec![])?;
+/// GNU `textget (plist, prop)' on a buffer overlay: direct plist hit,
+/// else fall back through the `category' symbol's own plist like
+/// `Foverlay_get'.
+fn overlay_prop(i: &mut Interp, plist: &Value, prop: &str) -> Value {
+    let pid = i.intern(prop);
+    match crate::lisp::eval::plist_lookup_v(plist, &Value::Sym(pid)) {
+        Some(v) => v,
+        None => {
+            let cat = i.intern("category");
+            match crate::lisp::eval::plist_get(plist, cat) {
+                Value::Sym(cs) => i.get_prop(cs, pid),
+                _ => Value::Nil,
+            }
         }
     }
-    let args = vec![Value::Int(beg1 as i128), Value::Int(end1 as i128)];
-    let id = i.intern("before-change-functions");
-    let fns = hook_fns(i, &Value::Sym(id));
-    for f in fns {
-        i.apply(&f, args.clone())?;
+}
+
+/// GNU `call_mod_hooks': each element of LIST applied to (START END).
+/// A non-list tail signals like GNU's `Fcar'.
+fn call_mod_hooks(i: &mut Interp, list: &Value, beg1: usize, end1: usize) -> EvalResult {
+    let mut cur = list.clone();
+    loop {
+        match cur {
+            Value::Nil => return Ok(Value::Nil),
+            Value::Cons(c) => {
+                let (f, next) = {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                i.apply(&f, vec![Value::Int(beg1 as i128), Value::Int(end1 as i128)])?;
+                cur = next;
+            }
+            other => return Err(i.wrong_type_mut("listp", &other)),
+        }
+    }
+}
+
+/// Whether the buffer's shared text ever gained an interval tree
+/// (GNU `buffer_intervals (buf) != NULL' — it persists after all
+/// properties are removed).
+fn buffer_has_intervals(i: &Interp) -> bool {
+    i.buffers
+        .get(i.current_buffer)
+        .map(|b| {
+            let bb = b.borrow();
+            bb.text.had_intervals.get() || !bb.text.props.borrow().is_empty()
+        })
+        .unwrap_or(false)
+}
+
+fn buffer_has_overlays(i: &Interp) -> bool {
+    i.buffers
+        .get(i.current_buffer)
+        .map(|b| {
+            let bid = b.borrow().id;
+            b.borrow()
+                .overlays
+                .iter()
+                .any(|o| o.buffer == Some(bid))
+        })
+        .unwrap_or(false)
+}
+
+/// Push VAL onto LIST unless the tail element is `eq' (GNU's
+/// `! EQ (mod_hooks, prev_mod_hooks)' — consecutive intervals sharing
+/// one hook list collapse to a single call).
+fn push_dedup(list: &mut Vec<Value>, val: Value) {
+    if !val.is_nil()
+        && list
+            .last()
+            .map(|l| !super::eq_values(l, &val))
+            .unwrap_or(true)
+    {
+        list.push(val);
+    }
+}
+
+/// GNU `verify_interval_modification' insert branch: collect the
+/// `insert-behind-hooks' of props covering the char before POS and the
+/// `insert-in-front-hooks' of props covering the char at POS
+/// (0-based POS == GNU 1-based START).
+fn collect_insert_hooks(i: &mut Interp, pos: usize) {
+    // GNU reads textget on the two interval plists — full
+    // lookup_char_property (direct → category → alias → defaults),
+    // which `prop_at_bb' mirrors on the flat store.
+    let bh = i.intern("insert-behind-hooks");
+    let fh = i.intern("insert-in-front-hooks");
+    let Some(b) = i.buffers.get(i.current_buffer) else {
+        return;
+    };
+    let (begv, zv) = {
+        let bb = b.borrow();
+        (bb.begv, bb.zv)
+    };
+    if pos > begv {
+        let bb = b.borrow();
+        let v = crate::buffer::primitives::prop_at_bb(i, &bb, pos - 1, bh);
+        push_dedup(&mut i.pending_insert_behind, v);
+    }
+    if pos < zv {
+        let bb = b.borrow();
+        let v = crate::buffer::primitives::prop_at_bb(i, &bb, pos, fh);
+        push_dedup(&mut i.pending_insert_front, v);
+    }
+}
+
+/// GNU `verify_interval_modification' range branch: the
+/// `modification-hooks' lists of every prop record overlapping
+/// [S0,E0) (0-based), in position order with consecutive identical
+/// lists collapsed.
+fn collect_mod_hook_lists(i: &mut Interp, s0: usize, e0: usize) -> Vec<Value> {
+    let Some(b) = i.buffers.get(i.current_buffer) else {
+        return Vec::new();
+    };
+    let mh = i.intern("modification-hooks");
+    let bounds: Vec<usize> = {
+        let bb = b.borrow();
+        // GNU iterates the interval set; on the flat store an
+        // "interval" is a maximal span of constant coverage — segment
+        // starts at s0 plus every record boundary inside [S0,E0).
+        let mut cuts: Vec<usize> = vec![s0];
+        for tp in bb.text.props.borrow().iter() {
+            if tp.start > s0 && tp.start < e0 {
+                cuts.push(tp.start);
+            }
+            if tp.end > s0 && tp.end < e0 {
+                cuts.push(tp.end);
+            }
+        }
+        cuts.sort_unstable();
+        cuts.dedup();
+        cuts
+    };
+    let mut out = Vec::new();
+    for seg in bounds {
+        let bb = b.borrow();
+        // textget semantics: direct → category → alias → defaults.
+        let v = crate::buffer::primitives::prop_at_bb(i, &bb, seg, mh);
+        drop(bb);
+        push_dedup(&mut out, v);
+    }
+    out
+}
+
+/// GNU `report_overlay_modification' before-phase: collect the
+/// (hooklist . overlay) pairs the change will trigger.  Positions
+/// arrive 1-based; overlay bounds are 0-based offsets so GNU's
+/// `begin_arg == obegin' compares `beg1 == ov.start + 1'.
+fn collect_overlay_hooks(i: &mut Interp, beg1: usize, end1: usize) {
+    let insertion = beg1 == end1;
+    let bid = i.current_buffer;
+    let mut ovs: Vec<crate::buffer::Overlay> = i
+        .buffers
+        .get(bid)
+        .map(|b| {
+            let mut v: Vec<crate::buffer::Overlay> = b
+                .borrow()
+                .overlays
+                .iter()
+                .filter(|o| o.buffer == Some(bid))
+                .cloned()
+                .collect();
+            // GNU's itree iterates overlays in ascending position.
+            v.sort_by_key(|o| (o.start, o.end));
+            v
+        })
+        .unwrap_or_default();
+    let mut pending = Vec::new();
+    for ov in ovs.drain(..) {
+        let (os1, oe1) = (ov.start + 1, ov.end + 1);
+        if insertion && (beg1 == os1 || end1 == os1) {
+            let prop = overlay_prop(i, &ov.plist, "insert-in-front-hooks");
+            if !prop.is_nil() {
+                pending.push((prop, ov.handle.clone()));
+            }
+        }
+        if insertion && (beg1 == oe1 || end1 == oe1) {
+            let prop = overlay_prop(i, &ov.plist, "insert-behind-hooks");
+            if !prop.is_nil() {
+                pending.push((prop, ov.handle.clone()));
+            }
+        }
+        // Strict intersection — covers deletion/replace ranges and
+        // insertions strictly inside an overlay.
+        if end1 > os1 && beg1 < oe1 {
+            let prop = overlay_prop(i, &ov.plist, "modification-hooks");
+            if !prop.is_nil() {
+                pending.push((prop, ov.handle.clone()));
+            }
+        }
+    }
+    i.pending_overlay_hooks = pending;
+}
+
+/// Decode a `[overlay BID IDX]' handle without validating.
+fn overlay_handle_parts(i: &Interp, v: &Value) -> Option<(usize, usize)> {
+    if let Value::Vec(vec) = v {
+        let vv = vec.borrow();
+        if vv.len() == 3 {
+            if let (Value::Sym(tag), Value::Int(bid), Value::Int(idx)) =
+                (&vv[0], &vv[1], &vv[2])
+            {
+                if Some(*tag) == i.intern_soft("overlay") {
+                    return Some((*bid as usize, *idx as usize));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// GNU `call_overlay_mod_hooks' over the recorded pairs:
+/// (OVERLAY AFTER-P BEG END [&optional LEN]).  Entries whose overlay
+/// was detached (or belongs to another buffer) are skipped like GNU's
+/// `OVERLAY_BUFFER (overlay) == current_buffer' test.
+fn run_overlay_hooks(
+    i: &mut Interp,
+    after: bool,
+    beg1: usize,
+    end1: usize,
+    arg3: &Value,
+) -> EvalResult {
+    let pairs = i.pending_overlay_hooks.clone();
+    for (list, handle) in pairs {
+        let attached = overlay_handle_parts(i, &handle)
+            .and_then(|(bid, idx)| {
+                i.buffers
+                    .get(bid)
+                    .and_then(|b| b.borrow().overlays.get(idx).map(|o| o.buffer))
+            })
+            .map(|b| b == Some(i.current_buffer))
+            .unwrap_or(false);
+        if !attached {
+            continue;
+        }
+        let mut cur = list;
+        loop {
+            match cur {
+                Value::Nil => break,
+                Value::Cons(c) => {
+                    let (f, next) = {
+                        let b = c.borrow();
+                        (b.car.clone(), b.cdr.clone())
+                    };
+                    let mut argv = vec![
+                        handle.clone(),
+                        Value::from_bool(after),
+                        Value::Int(beg1 as i128),
+                        Value::Int(end1 as i128),
+                    ];
+                    if !arg3.is_nil() {
+                        argv.push(arg3.clone());
+                    }
+                    i.apply(&f, argv)?;
+                    cur = next;
+                }
+                other => return Err(i.wrong_type_mut("listp", &other)),
+            }
+        }
     }
     Ok(Value::Nil)
 }
 
-/// GNU `report_after_change': `after-change-functions' with
-/// (BEG END LEN); LEN is the char length of the replaced text.
-pub(crate) fn signal_after_change(
-    i: &mut Interp,
-    beg1: usize,
-    end1: usize,
-    len: usize,
-) -> EvalResult {
-    if mod_hooks_inhibited(i) {
-        return Ok(Value::Nil);
+/// GNU `report_interval_modification': after an insertion, run the
+/// `insert-behind-hooks' collected before it, then the
+/// `insert-in-front-hooks' (unless the lists are eq — one call total).
+fn report_interval_modification(i: &mut Interp, beg1: usize, end1: usize) -> EvalResult {
+    // GNU's interval_insert_*_hooks are globals: the values STAY SET
+    // after firing (only the next verify_interval_modification on a
+    // buffer with an interval tree resets them), so inserts into a
+    // property-free buffer replay whatever the last verify left —
+    // including in a different buffer.  Clone, don't take.
+    let behind = i.pending_insert_behind.clone();
+    let front = i.pending_insert_front.clone();
+    for list in behind.iter() {
+        call_mod_hooks(i, list, beg1, end1)?;
     }
-    let args = vec![
-        Value::Int(beg1 as i128),
-        Value::Int(end1 as i128),
-        Value::Int(len as i128),
-    ];
-    let id = i.intern("after-change-functions");
-    let fns = hook_fns(i, &Value::Sym(id));
-    for f in fns {
-        i.apply(&f, args.clone())?;
+    let same = behind.len() == front.len()
+        && behind
+            .iter()
+            .zip(front.iter())
+            .all(|(a, b)| super::eq_values(a, b));
+    if !same {
+        for list in front.iter() {
+            call_mod_hooks(i, list, beg1, end1)?;
+        }
     }
     Ok(Value::Nil)
 }
+
+/// GNU's `combine_after_change_calls' gate: deferrable only when
+/// `before-change-functions' is nil or the `(t syntax-ppss-flush-cache)'
+/// local shape with a nil default, and the buffer has no overlays.
+fn combine_gate_ok(i: &mut Interp) -> bool {
+    let cacc = match i.intern_soft("combine-after-change-calls") {
+        Some(s) => i.symbol_value(s).truthy(),
+        None => return false,
+    };
+    if !cacc {
+        return false;
+    }
+    let bcf_id = i.intern("before-change-functions");
+    let bcf = i.symbol_value(bcf_id);
+    let shape_ok = if bcf.is_nil() {
+        true
+    } else if let Value::Cons(c) = &bcf {
+        let (car, cdr) = {
+            let b = c.borrow();
+            (b.car.clone(), b.cdr.clone())
+        };
+        let car_t = i.sym_is(&car, sym::T);
+        let default_nil = match i.obarray.symbol(bcf_id).value {
+            Value::Nil => true,
+            Value::Sym(s) => s == sym::UNBOUND,
+            _ => false,
+        };
+        let ppss = i.intern("syntax-ppss-flush-cache");
+        let tail_ok = match &cdr {
+            Value::Cons(c2) => {
+                let b2 = c2.borrow();
+                i.sym_is(&b2.car, ppss) && b2.cdr.is_nil()
+            }
+            _ => false,
+        };
+        car_t && default_nil && tail_ok
+    } else {
+        false
+    };
+    shape_ok && !buffer_has_overlays(i)
+}
+
+/// GNU `Fcombine_after_change_execute': merge the deferred changes of
+/// the recorded buffer into one `signal_after_change' call.  The GNU
+/// record_unwind_protect(Fcombine_after_change_execute_1,
+/// Vcombine_after_change_calls) stores the CURRENT value back at
+/// unwind — it never binds the flag to nil, so while
+/// `combine-after-change-calls' stays bound the merged signal simply
+/// re-defers (observed: hooks never run inside the `let').  Calling
+/// `signal_after_change' directly reproduces that shape: under the
+/// binding we re-record a single merged entry; once the binding drops,
+/// the next real change flushes it.
+pub(crate) fn combine_after_change_execute(i: &mut Interp) -> EvalResult {
+    if i.combine_after_change_list.is_empty() {
+        return Ok(Value::Nil);
+    }
+    let live = i
+        .combine_after_change_buffer
+        .and_then(|bid| i.buffers.get(bid).map(|b| b.borrow().live))
+        .unwrap_or(false);
+    if !live {
+        i.combine_after_change_list.clear();
+        i.combine_after_change_buffer = None;
+        return Ok(Value::Nil);
+    }
+    let bid = i.combine_after_change_buffer.unwrap();
+    let old = i.current_buffer;
+    i.set_current_buffer(bid);
+    let zv0 = i
+        .buffers
+        .get(bid)
+        .map(|b| b.borrow().zv)
+        .unwrap_or(0);
+    let (mut beg, mut end, mut change) = (zv0, zv0, 0i128);
+    for (tb, te, tc) in &i.combine_after_change_list {
+        beg = beg.min(*tb);
+        end = end.min(*te);
+        change += *tc;
+    }
+    i.combine_after_change_list.clear();
+    i.combine_after_change_buffer = None;
+    // begpos0/endpos0 are the current 0-based bounds of the union
+    // (GNU begpos = BEG + beg, endpos = Z - end).
+    let (begpos0, endpos0) = (beg, zv0.saturating_sub(end));
+    let lenins = endpos0.saturating_sub(begpos0) as i128;
+    let lendel = lenins - change;
+    let r = signal_after_change(i, begpos0 + 1, endpos0 + 1, lendel);
+    i.set_current_buffer(old);
+    r
+}
+
+ /// GNU `signal_before_change': run `first-change-hook' (when the
+ /// buffer was unmodified) then `before-change-functions' with the
+ /// 1-based region about to change.  An error aborts the modification.
+/// Folded-in GNU `prepare_to_modify_buffer_1' pieces: the
+/// `barf-if-buffer-read-only' check, `verify_interval_modification'
+/// (text-property read-only, `modification-hooks' calls for
+/// deletions/replacements, insert-hook collection for insertions),
+/// and the overlay before-hooks — all under the GNU
+/// `specbind (inhibit-modification-hooks)' scope for the hook calls.
+ pub(crate) fn signal_before_change(i: &mut Interp, beg1: usize, end1: usize) -> EvalResult {
+    // GNU `prepare_to_modify_buffer_1': barf-if-buffer-read-only
+    // runs before any hook work, even under `inhibit-modification-hooks'.
+    crate::buffer::primitives::check_writable(i)?;
+    // `verify_interval_modification' — only when the buffer has an
+    // interval tree; resets the saved insert-hook lists either way.
+    if buffer_has_intervals(i) {
+        i.pending_insert_behind.clear();
+        i.pending_insert_front.clear();
+        if beg1 == end1 {
+            // Insertion: read-only stickiness around the position.
+            crate::buffer::primitives::text_ro_insert(i, beg1 - 1)?;
+            collect_insert_hooks(i, beg1 - 1);
+        } else {
+            crate::buffer::primitives::text_ro_range(i, beg1 - 1, end1 - 1)?;
+            if !mod_hooks_inhibited(i) {
+                for list in collect_mod_hook_lists(i, beg1 - 1, end1 - 1) {
+                    call_mod_hooks(i, &list, beg1, end1)?;
+                }
+            }
+        }
+    }
+     if mod_hooks_inhibited(i) {
+         return Ok(Value::Nil);
+     }
+    let mark = i.specbind_depth();
+    let imh = i.intern("inhibit-modification-hooks");
+    let _ = i.specbind(imh, Value::t());
+    let result = signal_before_change_inner(i, beg1, end1);
+    let _ = i.unbind_to(mark);
+    result
+}
+
+fn signal_before_change_inner(i: &mut Interp, beg1: usize, end1: usize) -> EvalResult {
+     let unmodified = !i
+         .buffers
+         .get(i.current_buffer)
+         .map(|b| b.borrow().is_modified())
+         .unwrap_or(false);
+     if unmodified {
+         let id = i.intern("first-change-hook");
+         let fns = hook_fns(i, &Value::Sym(id));
+         for f in fns {
+             i.apply(&f, vec![])?;
+         }
+     }
+     let args = vec![Value::Int(beg1 as i128), Value::Int(end1 as i128)];
+     let id = i.intern("before-change-functions");
+     let fns = hook_fns(i, &Value::Sym(id));
+     for f in fns {
+        if let Err(fl) = i.apply(&f, args.clone()) {
+            // GNU `reset_var_on_error': an erroring hook function
+            // clears `before-change-functions'.
+            let _ = i.set_symbol(id, Value::Nil);
+            return Err(fl);
+        }
+     }
+    if buffer_has_overlays(i) {
+        collect_overlay_hooks(i, beg1, end1);
+        run_overlay_hooks(i, false, beg1, end1, &Value::Nil)?;
+    }
+     Ok(Value::Nil)
+ }
+ 
+ /// GNU `report_after_change': `after-change-functions' with
+ /// (BEG END LEN); LEN is the char length of the replaced text.
+/// Handles the `combine-after-change-calls' deferral, replays the
+/// recorded overlay hooks, and — for pure insertions — runs the
+/// `insert-behind'/`insert-in-front' text-property hooks collected by
+/// `signal_before_change', all inside the GNU
+/// `specbind (inhibit-modification-hooks)' scope.
+ pub(crate) fn signal_after_change(
+     i: &mut Interp,
+     beg1: usize,
+     end1: usize,
+    lendel: i128,
+ ) -> EvalResult {
+     if mod_hooks_inhibited(i) {
+         return Ok(Value::Nil);
+     }
+    // GNU defers the whole after-report while
+    // `combine-after-change-calls' is bound and the gate conditions
+    // hold — the change just joins `combine_after_change_list'.
+    if combine_gate_ok(i) {
+        if !i.combine_after_change_list.is_empty()
+            && i.combine_after_change_buffer != Some(i.current_buffer)
+        {
+            combine_after_change_execute(i)?;
+        }
+        let zv0 = i
+            .buffers
+            .get(i.current_buffer)
+            .map(|b| b.borrow().zv)
+            .unwrap_or(0);
+        let lenins = (end1 - beg1) as i128;
+        i.combine_after_change_list.push((
+            beg1 - 1,
+            zv0 + 1 - end1 + lendel as usize,
+            lenins - lendel,
+        ));
+        i.combine_after_change_buffer = Some(i.current_buffer);
+        return Ok(Value::Nil);
+    }
+    // Saved across the after-change calls: hook functions could
+    // clobber the pending lists by modifying text properties.
+    let saved_behind = std::mem::take(&mut i.pending_insert_behind);
+    let saved_front = std::mem::take(&mut i.pending_insert_front);
+    if !i.combine_after_change_list.is_empty() {
+        combine_after_change_execute(i)?;
+    }
+    let mark = i.specbind_depth();
+    let imh = i.intern("inhibit-modification-hooks");
+    let _ = i.specbind(imh, Value::t());
+    let args = vec![
+        Value::Int(beg1 as i128),
+        Value::Int(end1 as i128),
+        Value::Int(lendel),
+    ];
+    let id = i.intern("after-change-functions");
+    let fns = hook_fns(i, &Value::Sym(id));
+    let mut result = Ok(Value::Nil);
+    for f in fns {
+        if let Err(fl) = i.apply(&f, args.clone()) {
+            // GNU `reset_var_on_error' clears the hook on error.
+            let _ = i.set_symbol(id, Value::Nil);
+            result = Err(fl);
+            break;
+        }
+    }
+    i.pending_insert_behind = saved_behind;
+    i.pending_insert_front = saved_front;
+    if result.is_ok() {
+        // GNU passes make_fixnum(lendel) — a fixnum 0 is not NILP, so
+        // insert-after hooks get five args with LEN=0, matching the
+        // before-phase's Qnil arg3 that yields four args.
+        let arg3 = Value::Int(lendel);
+        result = run_overlay_hooks(i, true, beg1, end1, &arg3);
+    }
+    if result.is_ok() && lendel == 0 {
+        result = report_interval_modification(i, beg1, end1);
+    }
+    let _ = i.unbind_to(mark);
+    result
+ }
 
 /// GNU `run_hook_with_args' with no args: apply each function bound
 /// on the hook variable NAME (buffer-local `t' splicing included).
@@ -3166,16 +3664,27 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
     // files are already expanded, so this cycle does not exist there.
     // Resolve the dump-time definition instead of recursively loading
     // the same file.
+    // GNU Fload compares the autoload's resolved FILE against
+    // Vloads_in_progress' resolved paths — never basenames: a user
+    // file named "sort.el" must not make `sort-lines' look recursive.
+    // The in-progress stack stores `builtin:NAME' virtual paths for
+    // embedded libraries and disk `found' paths otherwise, so resolve
+    // the target to the same key space (`load_key' normalizes
+    // bundled-dir hits to their `builtin:<stem>').
+    let resolved_key = match crate::lisp::load::locate_full(i, &name, false, false) {
+        Some(crate::lisp::load::Found::File(p)) => crate::lisp::load::load_key(&p),
+        Some(crate::lisp::load::Found::Dir(_)) => String::new(),
+        None => crate::lisp::load::load_key(&format!("builtin:{name}")),
+    };
+    let loading_same = i
+        .loads_in_progress
+        .iter()
+        .any(|f| crate::lisp::load::load_key(f) == resolved_key);
     let stem = |s: &str| {
         let s = s.strip_prefix("builtin:").unwrap_or(s);
         let base = s.rsplit('/').next().unwrap_or(s);
         let base = base.strip_suffix(".el").unwrap_or(base);
         base.strip_suffix(".elc").unwrap_or(base).to_string()
-    };
-    let lfn = i.intern("load-file-name");
-    let loading_same = match i.symbol_value(lfn) {
-        Value::Str(s) => stem(&s.borrow()) == stem(&name),
-        _ => false,
     };
     if let Some(id) = owner {
         let pk = i.intern("remacs--dump-fn");
@@ -3683,6 +4192,11 @@ fn f_sit_for(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 fn f_current_time(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {
     let us = super::misc::lisp_time_to_us(i, &Value::Nil)?;
+    // GNU `make_lisp_time': `current-time-list' nil renders as
+    // (TICKS . HZ) with nanosecond ticks.
+    if !super::misc::current_time_list(i) {
+        return Ok(Value::cons(Value::Int(us * 1000), Value::Int(1_000_000_000)));
+    }
     Ok(super::misc::us_to_lisp_time(us))
 }
 fn f_current_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {

@@ -114,6 +114,8 @@ qa!(qa_hash2, "qa_hash2.el");
 qa!(qa_help, "qa_help.el");
 qa!(qa_hook, "qa_hook.el");
 qa!(qa_hooks2, "qa_hooks2.el");
+qa!(qa_modhooks, "qa_modhooks.el");
+qa!(qa_readonly, "qa_readonly.el");
 qa!(qa_indent, "qa_indent.el");
 qa!(qa_indentcmds, "qa_indentcmds.el");
 qa!(qa_indentfill, "qa_indentfill.el");
