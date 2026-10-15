@@ -2181,13 +2181,13 @@ mod tests {
     /// An Interp with a tty frame displaying a buffer holding `text`.
     fn interp_with_frame(text: &str) -> crate::lisp::Interp {
         let mut i = crate::lisp::Interp::new();
-        let buf_id = i.buffers.create("test-buf");
+        let buf_id = i.create_buffer("test-buf");
         {
             let b = i.buffers.get(buf_id).unwrap();
             b.borrow_mut().insert(text);
             b.borrow_mut().set_point(0);
         }
-        let mb_id = i.buffers.create(" *Minibuf-0*");
+        let mb_id = i.create_buffer(" *Minibuf-0*");
         let frame = crate::editor::Frame::new_tty(buf_id, mb_id, 80, 25);
         i.selected_frame = Some(frame.clone());
         i.frames.push(frame);
@@ -2283,7 +2283,7 @@ mod tests {
         let mut i = interp_with_frame("w1");
         // Split the frame's window in two.
         let f = i.selected_frame.as_ref().unwrap().clone();
-        let buf2 = i.buffers.create("buf2");
+        let buf2 = i.create_buffer("buf2");
         i.buffers.get(buf2).unwrap().borrow_mut().insert("w2");
         let w2 = crate::editor::Window::new(buf2);
         {
@@ -2298,7 +2298,7 @@ mod tests {
     /// Interp whose current buffer holds `text`, point at start.
     fn isearch_interp(text: &str) -> crate::lisp::Interp {
         let mut i = crate::lisp::Interp::new();
-        let buf_id = i.buffers.create("s");
+        let buf_id = i.create_buffer("s");
         i.set_current_buffer(buf_id);
         i.buffers.get(buf_id).unwrap().borrow_mut().insert(text);
         i.buffers.get(buf_id).unwrap().borrow_mut().set_point(0);
@@ -2490,7 +2490,7 @@ mod tests {
     /// stack entry `minibuf_contents' reads.
     fn interp_with_minibuffer(prompt: &str) -> crate::lisp::Interp {
         let mut i = crate::lisp::Interp::new();
-        let mb = i.buffers.create(" *Minibuf-1*");
+        let mb = i.create_buffer(" *Minibuf-1*");
         let map = i
             .intern_soft("minibuffer-local-map")
             .map(|id| i.symbol_value(id))

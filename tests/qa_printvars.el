@@ -5,8 +5,8 @@
 ;;   - shared structure uses #N= only with print-circle=t.
 ;;   - print-level truncates nesting with "...".
 ;;   - print-length truncates list length.
-;;   - prin1-to-string on a CHARACTER returns the digit string (e.g. "97"
-;;     for ?a) — `?a' is a READER literal, not a print form.
+;;   - With print-integers-as-characters nil (the default), character
+;;     integers print numerically (e.g. "97" for ?a).
 ;;   - print-escape-newlines controls \n; \t is NOT escaped by default.
 ;;   - print-escape-nonascii is a NO-OP in GNU.
 ;;   - print-escape-multibyte uses \xHHHH notation.

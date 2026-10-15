@@ -661,7 +661,7 @@ fn f_vconcat(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(out))))
 }
 
-fn f_substring(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_substring(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     substring_impl(i, args, true)
 }
 
@@ -1143,7 +1143,7 @@ fn scan_digits(cs: &[char], mut p: usize) -> usize {
 fn f_number_to_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[0] {
         Value::Int(n) => Ok(Value::string(n.to_string())),
-        Value::Float(f) => Ok(Value::string(crate::lisp::print::format_float(**f))),
+        Value::Float(f) => Ok(Value::string(i.format_float_output(**f))),
         other => Err(i.wrong_type_mut("numberp", other)),
     }
 }

@@ -51,6 +51,7 @@ qa!(qa_abbrev, "qa_abbrev.el");
 qa!(qa_abbrev2, "qa_abbrev2.el");
 qa!(qa_absolute_name, "qa_absolute_name.el");
 qa!(qa_advice, "qa_advice.el");
+qa!(qa_interactive_ignore, "qa_interactive_ignore.el");
 qa!(qa_apply, "qa_apply.el");
 qa!(qa_apply2, "qa_apply2.el");
 qa!(qa_arith, "qa_arith.el");
@@ -58,6 +59,12 @@ qa!(qa_array, "qa_array.el");
 qa!(qa_backquote, "qa_backquote.el");
 qa!(qa_backup, "qa_backup.el");
 qa!(qa_buffer, "qa_buffer.el");
+qa!(qa_buffer_history, "qa_buffer_history.el");
+qa!(qa_before_markers, "qa_before_markers.el");
+qa!(qa_float_output, "qa_float_output.el");
+qa!(qa_process_defaults, "qa_process_defaults.el");
+qa!(qa_process_names, "qa_process_names.el");
+qa!(qa_fresh_buffer_locals, "qa_fresh_buffer_locals.el");
 qa!(qa_buffer_local_value_type, "qa_buffer_local_value_type.el");
 qa!(qa_buffer2, "qa_buffer2.el");
 qa!(qa_bufferfile, "qa_bufferfile.el");
@@ -70,6 +77,7 @@ qa!(
     "qa_decomposition_description.el"
 );
 qa!(qa_chartables, "qa_chartables.el");
+qa!(qa_category_defaults, "qa_category_defaults.el");
 qa!(qa_clloop, "qa_clloop.el");
 qa!(qa_clloop2, "qa_clloop2.el");
 qa!(qa_clloop3, "qa_clloop3.el");
@@ -96,6 +104,7 @@ qa!(qa_edge_semantics, "qa_edge_semantics.el");
 qa!(qa_err2, "qa_err2.el");
 qa!(qa_errors, "qa_errors.el");
 qa!(qa_eval, "qa_eval.el");
+qa!(qa_basic_faces, "qa_basic_faces.el");
 qa!(qa_face, "qa_face.el");
 qa!(qa_face3, "qa_face3.el");
 qa!(qa_faces2, "qa_faces2.el");
@@ -107,6 +116,9 @@ qa!(qa_filelocal, "qa_filelocal.el");
 qa!(qa_filesys, "qa_filesys.el");
 qa!(qa_fill, "qa_fill.el");
 qa!(qa_fontlock, "qa_fontlock.el");
+qa!(qa_docstring_escape, "qa_docstring_escape.el");
+qa!(qa_skip_classes, "qa_skip_classes.el");
+qa!(qa_tab_indent, "qa_tab_indent.el");
 qa!(qa_format, "qa_format.el");
 qa!(qa_globdir, "qa_globdir.el");
 qa!(qa_gv, "qa_gv.el");
@@ -125,6 +137,7 @@ qa!(qa_json, "qa_json.el");
 qa!(qa_kbd, "qa_kbd.el");
 qa!(qa_define_key_type, "qa_define_key_type.el");
 qa!(qa_keymap, "qa_keymap.el");
+qa!(qa_keymap_cycles, "qa_keymap_cycles.el");
 qa!(qa_keymap2, "qa_keymap2.el");
 qa!(qa_keymap3, "qa_keymap3.el");
 qa!(qa_kmacro, "qa_kmacro.el");
@@ -132,6 +145,8 @@ qa!(qa_list, "qa_list.el");
 qa!(qa_lists, "qa_lists.el");
 qa!(qa_lists2, "qa_lists2.el");
 qa!(qa_load, "qa_load.el");
+qa!(qa_load_buffer, "qa_load_buffer.el");
+qa!(qa_killed_match_markers, "qa_killed_match_markers.el");
 qa!(qa_logb, "qa_logb.el");
 qa!(qa_locvar, "qa_locvar.el");
 qa!(qa_macro, "qa_macro.el");
@@ -161,6 +176,8 @@ qa!(qa_plists, "qa_plists.el");
 qa!(qa_point, "qa_point.el");
 qa!(qa_pp, "qa_pp.el");
 qa!(qa_printvars, "qa_printvars.el");
+qa!(qa_print_variables, "qa_print_variables.el");
+qa!(qa_quoting_scope, "qa_quoting_scope.el");
 qa!(qa_symbol_print_escape, "qa_symbol_print_escape.el");
 qa!(qa_process, "qa_process.el");
 qa!(qa_radix, "qa_radix.el");
@@ -189,12 +206,18 @@ qa!(qa_subrx2, "qa_subrx2.el");
 qa!(qa_subrx3, "qa_subrx3.el");
 qa!(qa_symbol, "qa_symbol.el");
 qa!(qa_syntax, "qa_syntax.el");
+qa!(qa_syntax_lookup, "qa_syntax_lookup.el");
 qa!(qa_syntax_class_bounds, "qa_syntax_class_bounds.el");
 qa!(qa_syntax2, "qa_syntax2.el");
 qa!(qa_syntaxtable, "qa_syntaxtable.el");
 qa!(qa_system, "qa_system.el");
 qa!(qa_tablist, "qa_tablist.el");
 qa!(qa_textprops, "qa_textprops.el");
+qa!(qa_object_intervals, "qa_object_intervals.el");
+qa!(
+    qa_property_argument_checks,
+    "qa_property_argument_checks.el"
+);
 qa!(qa_thing, "qa_thing.el");
 qa!(qa_thing2, "qa_thing2.el");
 qa!(qa_diffface, "qa_diffface.el");
@@ -214,3 +237,66 @@ qa!(qa_buffer_name_validation, "qa_buffer_name_validation.el");
 qa!(qa_window_dedication, "qa_window_dedication.el");
 
 qa!(qa_overlay_type, "qa_overlay_type.el");
+
+qa!(qa_gensym_counter, "qa_gensym_counter.el");
+
+qa!(qa_delete_char_bounds, "qa_delete_char_bounds.el");
+
+qa!(qa_time_spec_validation, "qa_time_spec_validation.el");
+
+qa!(qa_time_zero_zone, "qa_time_zero_zone.el");
+
+qa!(qa_thread_bookkeeping, "qa_thread_bookkeeping.el");
+
+qa!(qa_file_replace, "qa_file_replace.el");
+
+qa!(qa_split_window_limits, "qa_split_window_limits.el");
+
+qa!(qa_buffer_string_flags, "qa_buffer_string_flags.el");
+
+qa!(qa_unreadable_callable, "qa_unreadable_callable.el");
+
+// Remacs-only logical frame lifecycle; GNU batch cannot create extra frames.
+#[test]
+fn qa_buffer_history_frames() {
+    std::thread::Builder::new().stack_size(64 << 20).spawn(|| {
+        let mut i = remacs::lisp::Interp::new();
+        i.noninteractive = false;
+        let source = r#"
+(progn
+ (setq qf-one (selected-frame)
+       qf-a (get-buffer-create "qf-a")
+       qf-b (get-buffer-create "qf-b"))
+ (switch-to-buffer qf-a)
+ (setq qf-two (make-frame) qf-two-window (frame-selected-window qf-two))
+ (select-frame qf-two t)
+ (switch-to-buffer qf-b)
+ (unless (eq (car (frame-parameter qf-two 'buffer-list)) qf-b) (error "second history"))
+ (unless (eq (car (frame-parameter qf-one 'buffer-list)) qf-a) (error "first history"))
+ (select-frame qf-one t)
+ (bury-buffer qf-b)
+ (unless (eq (car (frame-parameter qf-one 'buried-buffer-list)) qf-b) (error "buried first"))
+ (unless (eq (car (frame-parameter qf-two 'buffer-list)) qf-b) (error "burial leaked"))
+ (kill-buffer qf-b)
+ (when (memq qf-b (frame-parameter qf-one 'buried-buffer-list)) (error "kill buried cleanup"))
+ (when (memq qf-b (frame-parameter qf-two 'buffer-list)) (error "kill visited cleanup"))
+ (delete-frame qf-two)
+ (when (frame-live-p qf-two) (error "dead frame live"))
+ (when (window-live-p qf-two-window) (error "dead frame window live"))
+ (when (frame-parameter qf-two 'buffer-list) (error "dead frame history"))
+ (unless (condition-case nil (progn (other-buffer nil nil qf-two) nil) (wrong-type-argument t)) (error "dead frame accepted"))
+ (setq qf-two (make-frame))
+ (select-frame qf-two)
+ (delete-frame qf-two)
+ (unless (eq (selected-frame) qf-one) (error "selected deletion replacement"))
+ (unless (eq (current-buffer) (window-buffer)) (error "selected deletion buffer"))
+ (unless (condition-case nil (progn (delete-frame qf-one) nil) (error t)) (error "last frame deleted"))
+ 'ok)
+"#;
+        let result = i.eval_str(source);
+        match result {
+            Ok(v) => assert_eq!(i.prin1_to_string(&v), "ok"),
+            Err(_) => panic!("frame lifecycle assertion failed"),
+        }
+    }).unwrap().join().unwrap();
+}

@@ -37,13 +37,14 @@ pub type FinalizerRef = Rc<RefCell<Value>>;
 #[derive(Debug)]
 pub struct Thread {
     pub name: Option<String>,
-    /// GNU semantics: a finished thread stays "live" until reaped by
-    /// `thread-join' (it is a zombie holding its result).
+    /// True only while the thread function is running.
     pub alive: bool,
     /// Result of the thread's function, once finished.
     pub result: Option<Value>,
     /// Error the thread function died with, if any.
     pub last_error: Option<Value>,
+    /// A later signal to a completed thread, observed by `thread-join'.
+    pub pending_signal: Option<(Value, Value)>,
     /// True once the function has run to completion.
     pub finished: bool,
 }

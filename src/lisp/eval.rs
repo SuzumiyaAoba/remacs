@@ -1031,6 +1031,7 @@ impl Interp {
                     alive: true,
                     result: None,
                     last_error: None,
+                    pending_signal: None,
                     finished: false,
                 },
             ))],
@@ -1084,7 +1085,7 @@ impl Interp {
         // The initial buffers every Emacs session has, in GNU's
         // buffer-list order: (scratch Minibuf-0 Messages load
         // Warnings). New buffers append at the end of the order.
-        let scratch = interp.buffers.create_exact_nolast("*scratch*");
+        let scratch = interp.create_buffer_nolast("*scratch*");
         interp.set_current_buffer(scratch);
         {
             // GNU's `*scratch*' carries buffer-local `lexical-binding'
@@ -1100,8 +1101,8 @@ impl Interp {
                 .locals
                 .insert(lb, Value::t());
         }
-        let minibuf = interp.buffers.create_exact(" *Minibuf-0*");
-        let messages = interp.buffers.create_exact("*Messages*");
+        let minibuf = interp.create_buffer_exact(" *Minibuf-0*");
+        let messages = interp.create_buffer_exact("*Messages*");
         // No ` *load*' buffer: GNU streams loads off the file descriptor
         // (`readevalloop'), so `buffer-list' at -Q holds only
         // scratch/Minibuf-0/Messages.
@@ -2854,7 +2855,13 @@ impl Interp {
             // calls, and cus-start's `define-minor-mode' uses need
             // custom.el first.
             let _ = boot_lib(&mut interp, "custom");
+            // GNU loadup only seeds defaults and safety metadata here.
+            // Full customization types/groups are installed on demand.
+            let preload = interp.intern("cus-start--preload");
+            let mark = interp.specbind_depth();
+            let _ = interp.specbind(preload, Value::t());
             let _ = boot_lib(&mut interp, "cus-start");
+            let _ = interp.unbind_to(mark);
             // loaddefs.el is loaded by loadup.el right after subr.el:
             // it installs the (autoload ...) cells for every preloaded
             // library's entry points and provides the `loaddefs'
@@ -3500,7 +3507,7 @@ impl Interp {
                 }
                 for bid in interp.buffers.list() {
                     if let Some(b) = interp.buffers.get(bid) {
-                        b.borrow_mut().locals.remove(&sid);
+                        b.borrow_mut().locals.shift_remove(&sid);
                     }
                 }
             }
@@ -4344,6 +4351,31 @@ command-line arguments.\" \
         interp
             .face_table
             .retain(|(n, _)| n != "icon" && n != "icon-button");
+        interp
+            .face_t_table
+            .retain(|(n, _)| n != "icon" && n != "icon-button");
+        // Interactive boot can evaluate the real deffaces.  Roll their
+        // declarations and registration back with the realized faces,
+        // otherwise custom-declare-face skips recreating them on require.
+        for name in ["icon", "icon-button"] {
+            let face = interp.intern(name);
+            for property in ["face", "face-defface-spec", "face-override-spec"] {
+                let property = interp.intern(property);
+                interp.put_prop(face, property, Value::Nil);
+            }
+            if let Some(defaults) = interp.intern_soft("face--new-frame-defaults") {
+                if let Value::Hash(table) = interp.symbol_value(defaults) {
+                    let key = crate::lisp::builtins::hashfn::hash_key_for(
+                        &interp,
+                        &Value::Sym(face),
+                        crate::lisp::HashTest::Eq,
+                    );
+                    let mut table = table.borrow_mut();
+                    table.map.remove(&key);
+                    table.remove_key(&key);
+                }
+            }
+        }
         // GNU xfaces.c seeds Vface_new_frame_defaults during startup
         // face realization; mirror it: every known face gets an
         // (id . lface) entry so `face-list'/`frame-face-alist' see
@@ -4427,7 +4459,7 @@ command-line arguments.\" \
                 }
                 for bid in interp.buffers.list() {
                     if let Some(b) = interp.buffers.get(bid) {
-                        b.borrow_mut().locals.remove(&sid);
+                        b.borrow_mut().locals.shift_remove(&sid);
                     }
                 }
             }
@@ -4944,14 +4976,19 @@ command-line arguments.\" \
     }
 
     /// Does a prop interval tree exist for this string?  GNU's
-    /// `object-intervals' returns nil before the first prop op but a
-    /// full nil-plist cover afterwards, so presence must be tracked
+    /// `object-intervals' distinguishes a missing tree from an existing
+    /// tree containing only nil plists, so presence must be tracked
     /// separately from the interval list.
     pub fn has_str_props(&self, s: &crate::lisp::value::StrRef) -> bool {
         self.string_props
             .get(&(std::rc::Rc::as_ptr(s) as usize))
             .map(|(w, _)| w.upgrade().is_some())
             .unwrap_or(false)
+    }
+
+    /// Drop the tree for a whole-string `set-text-properties' to nil.
+    pub fn clear_str_props(&mut self, s: &crate::lisp::value::StrRef) {
+        self.string_props.remove(&(std::rc::Rc::as_ptr(s) as usize));
     }
 
     /// Replace a string's prop intervals wholesale (copy ops).  An
@@ -5405,7 +5442,7 @@ command-line arguments.\" \
                                 restored = v.clone();
                                 bb.locals.insert(sb.sym, v)
                             }
-                            None => bb.locals.remove(&sb.sym),
+                            None => bb.locals.shift_remove(&sb.sym),
                         };
                         if sb.sym == self.bfn_sym {
                             bb.file_name = match bb.locals.get(&sb.sym) {
@@ -8976,6 +9013,7 @@ command-line arguments.\" \
             "load-in-progress",
             "load-file-name",
             "user-init-file",
+            "float-output-format",
             "print-level",
             "print-length",
             "print-circle",
@@ -9225,7 +9263,6 @@ command-line arguments.\" \
             "print-escape-newlines",
             "print-quoted",
             "print-unreadable",
-            "print-gensym-alist",
             "print-continuous-numbering",
             "print-number-table",
             "filter-buffer-substring-function",
@@ -9417,6 +9454,7 @@ command-line arguments.\" \
             "tab-always-indent",
             "tab-bar-mode",
             "term-setup-hook",
+            "text-quoting-style",
             "translation-table-for-input",
             "unicode-category-table",
             "unread-command-events",
@@ -9554,26 +9592,7 @@ command-line arguments.\" \
         // GNU `DEFVAR_PER_BUFFER' variables: a real slot in every
         // buffer, so `local-variable-p' is t even before any `setq'
         // (set verified against GNU 31.1 in a fresh buffer).
-        let per_buffer: &[&str] = &[
-            "buffer-auto-save-file-name",
-            "buffer-backed-up",
-            "buffer-display-count",
-            "buffer-file-format",
-            "buffer-file-name",
-            "buffer-file-truename",
-            "buffer-invisibility-spec",
-            "buffer-read-only",
-            "buffer-saved-size",
-            "buffer-undo-list",
-            "default-directory",
-            "enable-multibyte-characters",
-            "major-mode",
-            "mark-active",
-            "mode-name",
-            // DEFVAR_PER_BUFFER: GNU reports `local-variable-p' t in
-            // every buffer (e.g. `require-final-newline').
-            "require-final-newline",
-        ];
+        let per_buffer = crate::buffer::primitives::ALWAYS_LOCAL_VARIABLES;
         for name in per_buffer {
             let id = self.intern(name);
             self.obarray.symbol_mut(id).always_local = true;
@@ -9584,6 +9603,10 @@ command-line arguments.\" \
         // (the "Built-in variable may not be unbound" set, verified
         // against GNU 31.1).
         let builtin_locals: &[&str] = &[
+            "buffer-auto-save-file-format",
+            "buffer-display-time",
+            "local-minor-modes",
+            "point-before-scroll",
             "abbrev-mode",
             "after-change-functions",
             "before-change-functions",
@@ -9826,6 +9849,7 @@ command-line arguments.\" \
             ("buffer-name-history", Value::Nil),
             ("kill-ring", Value::Nil),
             ("values", Value::Nil),
+            ("float-output-format", Value::Nil),
             ("print-level", Value::Nil),
             ("print-length", Value::Nil),
             ("print-circle", Value::Nil),
@@ -10184,6 +10208,9 @@ command-line arguments.\" \
             ("redisplay--variables", Value::Nil),
             ("buffer-display-count", Value::Int(0)),
             ("buffer-display-time", Value::Nil),
+            ("buffer-auto-save-file-format", Value::t()),
+            ("point-before-scroll", Value::Nil),
+            ("local-minor-modes", Value::Nil),
             ("first-change-hook", Value::Nil),
             ("window-configuration-change-hook", Value::Nil),
             ("window-size-change-functions", Value::Nil),
@@ -10790,6 +10817,51 @@ command-line arguments.\" \
 
     pub fn buffer_name(&self, id: usize) -> Option<String> {
         self.buffers.get(id).map(|b| b.borrow().name.clone())
+    }
+
+    /// Initialize the fixed GNU buffer slots separately from mutable
+    /// default values.  In particular mode-name defaults to nil, but a
+    /// fresh buffer's own slot is always "Fundamental".
+    fn initialize_buffer_slots(&mut self, id: usize) {
+        let directory = self.intern("default-directory");
+        let dir = self.symbol_value(directory);
+        let multibyte = self.intern("enable-multibyte-characters");
+        let multi = self.obarray.symbol(multibyte).value.clone();
+        let fundamental = self.intern("fundamental-mode");
+        let buffer = self.buffers.get(id).expect("new buffer");
+        let undo = buffer.borrow().undo_list();
+        for name in crate::buffer::primitives::ALWAYS_LOCAL_VARIABLES {
+            let symbol = self.intern(name);
+            let value = match *name {
+                "default-directory" => dir.clone(),
+                "enable-multibyte-characters" => multi.clone(),
+                "major-mode" => Value::Sym(fundamental),
+                "mode-name" => Value::string("Fundamental"),
+                "buffer-undo-list" => undo.clone(),
+                "buffer-auto-save-file-format" | "buffer-invisibility-spec" => Value::t(),
+                "buffer-saved-size" | "buffer-display-count" => Value::Int(0),
+                _ => Value::Nil,
+            };
+            buffer.borrow_mut().locals.insert(symbol, value);
+        }
+    }
+
+    pub fn create_buffer(&mut self, name: &str) -> usize {
+        let id = self.buffers.create(name);
+        self.initialize_buffer_slots(id);
+        id
+    }
+
+    pub fn create_buffer_exact(&mut self, name: &str) -> usize {
+        let id = self.buffers.create_exact(name);
+        self.initialize_buffer_slots(id);
+        id
+    }
+
+    fn create_buffer_nolast(&mut self, name: &str) -> usize {
+        let id = self.buffers.create_exact_nolast(name);
+        self.initialize_buffer_slots(id);
+        id
     }
 
     pub fn set_current_buffer(&mut self, id: usize) {
@@ -11414,7 +11486,7 @@ command-line arguments.\" \
         let mb = match self.buffers.by_name("*Messages*") {
             Some(id) => id,
             None => {
-                let id = self.buffers.create("*Messages*");
+                let id = self.create_buffer("*Messages*");
                 // GNU message_dolog sets buffer-undo-list=t on a fresh
                 // *Messages* (it "doesn't have undo").
                 if let Some(b) = self.buffers.get(id) {
@@ -11557,7 +11629,7 @@ command-line arguments.\" \
             id = self
                 .buffers
                 .by_name(&name)
-                .unwrap_or_else(|| self.buffers.create(&name));
+                .unwrap_or_else(|| self.create_buffer(&name));
             self.minibuf_list[depth] = id;
         }
         id
@@ -11571,10 +11643,13 @@ command-line arguments.\" \
     /// Point `buf`'s frame minibuffer window at buffer `id`
     /// (GNU `set_window_buffer (minibuf_window, buf)').
     pub fn set_minibuf_window_buffer(&mut self, id: usize) {
-        if let Some(f) = &self.selected_frame {
-            if let Some(w) = &f.borrow().minibuffer {
-                w.borrow_mut().buffer = id;
-            }
+        let window = self
+            .selected_frame
+            .as_ref()
+            .and_then(|f| f.borrow().minibuffer.clone());
+        if let Some(w) = window {
+            w.borrow_mut().buffer = id;
+            crate::editor::record_buffer_display(self, id);
         }
     }
 
@@ -12332,6 +12407,10 @@ command-line arguments.\" \
                     // invalid-letter report.
                     let prompt = take_fmt(self, &chars, &mut pos, &out)?;
                     match c {
+                        // GNU callint.c: `i' supplies an ignored argument,
+                        // always nil.  The rest of its line is prompt text,
+                        // already consumed/formatted above (not more codes).
+                        'i' => out.push(Value::Nil),
                         'r' => {
                             // GNU callint 'r' = region-beginning +
                             // region-end: no mark set → "The mark is
@@ -13813,9 +13892,10 @@ pub struct MatchData {
     pub in_buffer: bool,
     /// Base offset of the searched text in the buffer (0 for strings).
     pub base: usize,
-    /// Buffer the match ran in (for `match-data' markers); None for
-    /// string searches or data installed via `set-match-data'.
-    pub buffer: Option<usize>,
+    /// The searched object remains identifiable after its buffer is killed,
+    /// as in GNU's last_thing_searched.  Markers then detach, but integer
+    /// match data still includes this dead buffer and retains raw positions.
+    pub buffer: Option<super::value::BufferRef>,
 }
 
 // `Symbol` extension: make-local-if-set flag stored in obarray? We need the

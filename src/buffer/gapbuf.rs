@@ -252,7 +252,7 @@ pub struct SharedText {
     viewers: Rc<RefCell<Vec<std::rc::Weak<RefCell<crate::buffer::Buffer>>>>>,
     /// GNU `b->text->intervals': text properties belong to the shared
     /// text, not to the viewing buffer.
-    pub props: Rc<RefCell<Vec<crate::buffer::TextProp>>>,
+    pub props: Rc<RefCell<crate::buffer::textprops::TextProperties>>,
     /// GNU `b->text->modiff'.
     pub mod_tick: Rc<std::cell::Cell<u64>>,
     /// GNU `b->text->chars_modiff'.
@@ -271,7 +271,7 @@ impl SharedText {
         SharedText {
             inner: Rc::new(RefCell::new(GapBuffer::new())),
             viewers: Rc::new(RefCell::new(Vec::new())),
-            props: Rc::new(RefCell::new(Vec::new())),
+            props: Rc::new(RefCell::new(crate::buffer::textprops::TextProperties::new())),
             // Creation counts as the first modification (Emacs's fresh
             // buffers report buffer-modified-tick = 1).
             mod_tick: Rc::new(std::cell::Cell::new(1)),
@@ -321,7 +321,7 @@ impl SharedText {
     /// Mutating handle to the property records — marks
     /// `had_intervals' so `verify_interval_modification' keeps its
     /// GNU `buffer_intervals != NULL' shape once any write happened.
-    pub fn props_write(&self) -> std::cell::RefMut<'_, Vec<crate::buffer::TextProp>> {
+    pub fn props_write(&self) -> std::cell::RefMut<'_, crate::buffer::textprops::TextProperties> {
         self.had_intervals.set(true);
         self.props.borrow_mut()
     }
@@ -378,54 +378,11 @@ impl SharedText {
     /// covering interval (the new text is unpropertized); intervals
     /// starting at POS shift right wholesale.
     fn adjust_props_insert(&self, pos: usize, n: usize) {
-        let mut props = self.props.borrow_mut();
-        if props.is_empty() {
-            return;
-        }
-        let mut extra: Vec<crate::buffer::TextProp> = Vec::new();
-        for tp in props.iter_mut() {
-            if tp.end <= pos {
-                continue;
-            }
-            if tp.start >= pos {
-                tp.start += n;
-                tp.end += n;
-            } else {
-                // pos strictly inside [start, end): split.
-                extra.push(crate::buffer::TextProp {
-                    start: pos + n,
-                    end: tp.end + n,
-                    prop: tp.prop,
-                    value: tp.value.clone(),
-                });
-                tp.end = pos;
-            }
-        }
-        props.extend(extra);
+        self.props.borrow_mut().insert(pos, n);
     }
 
-    /// GNU `adjust_intervals_for_delete': boundaries inside the deleted
-    /// span clamp to START, those past END shift down; an interval left
-    /// empty is dropped.
     fn adjust_props_delete(&self, start: usize, end: usize) {
-        let mut props = self.props.borrow_mut();
-        if props.is_empty() {
-            return;
-        }
-        let n = end - start;
-        for tp in props.iter_mut() {
-            if tp.start >= end {
-                tp.start -= n;
-            } else if tp.start > start {
-                tp.start = start;
-            }
-            if tp.end >= end {
-                tp.end -= n;
-            } else if tp.end > start {
-                tp.end = start;
-            }
-        }
-        props.retain(|tp| tp.start < tp.end);
+        self.props.borrow_mut().delete(start, end);
     }
 
     /// Insert `text` at logical position `pos`.
@@ -460,7 +417,10 @@ impl SharedText {
 
     /// Replace whole contents.
     pub fn set_text(&self, s: &str) {
-        self.inner.borrow_mut().set_text(s)
+        self.inner.borrow_mut().set_text(s);
+        let mut props = crate::buffer::textprops::TextProperties::new();
+        props.insert(0, s.chars().count());
+        *self.props.borrow_mut() = props;
     }
 
     /// Which line `pos` is on (0-based).

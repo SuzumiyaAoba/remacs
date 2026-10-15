@@ -5,6 +5,7 @@
 pub mod extra;
 mod gapbuf;
 pub mod primitives;
+pub(crate) mod textprops;
 
 pub use primitives::install_primitives;
 
@@ -15,6 +16,10 @@ use std::rc::{Rc, Weak};
 use crate::lisp::value::{BufferRef, Marker, MarkerRef, SymId, Value};
 
 pub use gapbuf::{GapBuffer, SharedText};
+
+/// Ordinary locals retain their creation order, as GNU's local-var alist does.
+pub type BufferLocals =
+    indexmap::IndexMap<SymId, Value, std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
 
 /// One editor buffer.
 pub struct Buffer {
@@ -27,6 +32,10 @@ pub struct Buffer {
     pub text: SharedText,
     /// Point (0-based char offset). Emacs `point` = `self.point + 1`.
     pub point: usize,
+    /// Start remembered when this buffer was last removed from a window.
+    pub last_window_start: usize,
+    /// Last selected window still displaying this buffer (GNU point owner).
+    pub last_selected_window: Option<Weak<RefCell<crate::editor::Window>>>,
     /// The mark marker (GNU `buffer->mark'), if the mark was ever
     /// touched.  `mark-marker' hands this object out, so `set-marker'
     /// on it moves the mark.  A Some value with `buffer = None' is a
@@ -36,7 +45,7 @@ pub struct Buffer {
     pub begv: usize,
     pub zv: usize,
     /// Buffer-local variable bindings.
-    pub locals: HashMap<SymId, Value>,
+    pub locals: BufferLocals,
     /// Markers pointing into this buffer.
     pub markers: Vec<Weak<RefCell<Marker>>>,
     /// Visited file name (or nil).
@@ -274,7 +283,7 @@ impl Buffer {
         undo_sym: SymId,
         undo_inhibit: Rc<std::cell::Cell<bool>>,
     ) -> Buffer {
-        let mut locals = HashMap::default();
+        let mut locals = indexmap::IndexMap::default();
         // Buffers with space-prefixed (internal) names start with undo
         // disabled, like GNU get-buffer-create (undo_list = Qt).
         if name.starts_with(' ') {
@@ -285,6 +294,8 @@ impl Buffer {
             name: name.clone(),
             text: SharedText::new(),
             point: 0,
+            last_window_start: 0,
+            last_selected_window: None,
             mark: None,
             begv: 0,
             zv: 0,
@@ -502,11 +513,15 @@ impl Buffer {
         self.record_insert(p, n);
         self.text.insert(p, s);
         self.point = p + n;
+        // Active BEGV is a buffer field, not an insertion marker.  Text
+        // inserted at point-min remains accessible even before markers.
+        let begv = self.begv;
         self.adjust_markers_insert(p, n, true);
+        self.begv = begv;
         let id = self.id;
         let text = self.text.clone();
         text.each_sibling(id, move |sib| {
-            if sib.point > p {
+            if sib.point >= p {
                 sib.point += n;
             }
             sib.adjust_markers_insert(p, n, true)
@@ -539,17 +554,13 @@ impl Buffer {
                 }
             }
         }
-        // GNU BEGV/ZV are markers in the shared text: ZV is a
-        // before-insert marker (text at ZV lands inside), and BOTH
-        // advance strictly when the insert is past them — GNU's
-        // adjust_markers_for_insert uses `>' for BEGV and `>=' for
-        // ZV in the insert-before-markers path too, so a
-        // before-markers insert exactly at BEGV still lands *inside*
-        // the visible region (the text ends up after BEGV).
+        // Inactive sibling restrictions are stored in markers: ZV advances
+        // at insertion, while BEGV advances at equality only before markers.
+        // Active before-markers insertion restores its field-valued BEGV.
         if self.zv >= pos {
             self.zv += n;
         }
-        if self.begv > pos {
+        if self.begv > pos || (self.begv == pos && before_markers) {
             self.begv += n;
         }
         self.adjust_overlays_insert(pos, n, before_markers);
@@ -988,7 +999,7 @@ impl BufferSet {
             if bb.undo_sym != sym {
                 // Re-key the space-name `t' seed planted with sym 0.
                 let old = bb.undo_sym;
-                if let Some(v) = bb.locals.remove(&old) {
+                if let Some(v) = bb.locals.shift_remove(&old) {
                     bb.locals.insert(sym, v);
                 }
                 bb.undo_sym = sym;
@@ -1082,7 +1093,12 @@ impl BufferSet {
             // Emacs unchains markers on kill: they point nowhere.
             for w in &bb.markers {
                 if let Some(m) = w.upgrade() {
-                    m.borrow_mut().buffer = None;
+                    // Registration chains can retain a weak entry after a
+                    // marker has moved to another buffer.
+                    let mut marker = m.borrow_mut();
+                    if marker.buffer == Some(id) {
+                        marker.buffer = None;
+                    }
                 }
             }
             bb.markers.clear();
@@ -1145,25 +1161,15 @@ impl BufferSet {
             .filter(|&id| self.get(id).is_some())
             .collect()
     }
-    /// GNU `other_buffer' (buffer.c): scan the buffer list starting
-    /// just PAST `exclude', wrapping around to the head — never from
-    /// position 0.  `exclude = usize::MAX' scans the whole list.
+    /// GNU scans the global list from its head, skipping BUFFER by identity.
     fn other_scan(&self, exclude: usize, pred: &dyn Fn(usize) -> bool) -> Option<usize> {
-        let n = self.order.len();
-        let start = match self.order.iter().position(|&id| id == exclude) {
-            Some(p) => p + 1,
-            None => 0,
-        };
-        (0..n)
-            .map(|k| self.order[(start + k) % n])
-            .find(|&id| id != exclude && pred(id))
+        self.order.iter().copied().find(|&id| id != exclude && pred(id))
     }
-    /// First live non-space-named buffer (scan from `exclude'+1).
+    /// First live non-space-named buffer in selection order.
     pub fn other(&self, exclude: usize) -> Option<usize> {
         self.other_scan(exclude, &|id| self.live_user_buffer(id))
     }
-    /// Live non-space buffer not in `shown', preferring the
-    /// after-`exclude' scan order.
+    /// Live non-space buffer not in `shown', in selection order.
     pub fn other_unshown(
         &self,
         exclude: usize,

@@ -1037,3 +1037,29 @@ fn macroexpand_forms() {
         assert!(i.prin1_to_string(&v).contains("(1 2)"));
     })
 }
+
+#[test]
+fn interactive_i_ignores_input_and_command_args() {
+    common::on_big_stack(move || {
+        let (mut i, _) = interp();
+        let reads = Rc::new(std::cell::Cell::new(0));
+        let observed = reads.clone();
+        i.minibuf_reader = Some(Rc::new(move |_, _, _| {
+            observed.set(observed.get() + 1);
+            Err(Flow::Quit)
+        }));
+        i.command_args = vec![Value::Int(42)];
+        set(&mut i, "current-prefix-arg", Value::Int(7));
+        for text in ["i", "iP", "ii", "iPrompt"] {
+            let spec = Value::list(vec![
+                Value::Sym(i.intern("interactive")),
+                Value::string(text),
+            ]);
+            let result = i.eval_interactive_spec(&spec).unwrap();
+            assert_eq!(result.len(), 1);
+            assert!(result[0].is_nil());
+            assert_eq!(i.command_args[0].int(), Some(42));
+        }
+        assert_eq!(reads.get(), 0);
+    })
+}

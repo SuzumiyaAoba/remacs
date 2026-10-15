@@ -134,7 +134,7 @@
 ;; increments by 1
 (qa (let ((g (gensym)))
         (list (symbolp g)
-              (intern-soft (symbol-name g))
+              (eq (intern (symbol-name g)) g)
               (and (string-match "\\`g[0-9]+\\'" (symbol-name g)) t)))
     '(t nil t))
 (qa (let ((g2 (gensym)) (g3 (gensym)))

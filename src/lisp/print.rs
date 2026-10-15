@@ -299,7 +299,7 @@ impl Interp {
         }
         let puf = self.intern("print-unreadable-function");
         let f = self.symbol_value(puf);
-        if f.is_nil() {
+        if !super::builtins::data::functionp_val(self, &f) {
             return Ok(s);
         }
         // Splice right-to-left so recorded offsets stay valid.
@@ -327,7 +327,7 @@ impl Interp {
         }
         let puf = self.intern("print-unreadable-function");
         let f = self.symbol_value(puf);
-        if f.is_nil() {
+        if !super::builtins::data::functionp_val(self, &f) {
             return Ok(s);
         }
         for (lo, hi, obj) in hits.into_iter().rev() {
@@ -482,11 +482,9 @@ impl Interp {
         }
         match v {
             Value::Nil => out.push_str("nil"),
-            Value::Int(i) => {
-                let _ = write!(out, "{i}");
-            }
+            Value::Int(i) => self.print_integer(*i, out, true),
             Value::Float(f) => {
-                let _ = write!(out, "{}", format_float(**f));
+                let _ = write!(out, "{}", self.format_float_output(**f));
             }
             Value::Sym(id) => {
                 if self.obarray.symbol(*id).uninterned && self.print_gensym() {
@@ -905,6 +903,7 @@ impl Interp {
             }
         }
         match v {
+            Value::Int(i) => self.print_integer(*i, out, false),
             Value::Str(s) => out.push_str(&s.borrow()),
             // princ prints symbol names raw — no backslash escapes.
             Value::Sym(id) => out.push_str(&self.symbol_name(*id)),
@@ -956,7 +955,7 @@ impl Interp {
             // Lambdas/subrs would re-hit the being-printed check in
             // `prin1_inner' (the outer `princ_inner' already pushed
             // this object) and emit `#N' — call the raw printer.
-            _ => self.prin1_inner_obj(v, out, depth, bq),
+            _ => self.prin1_inner_obj_raw(v, out, depth, bq),
         }
     }
 
@@ -1309,17 +1308,74 @@ impl Interp {
             .unwrap_or(Value::Nil)
     }
 
+    /// Print a number using the dynamically bound GNU output descriptor.
+    pub(crate) fn format_float_output(&self, value: f64) -> String {
+        let format = self.print_var("float-output-format");
+        if let Value::Str(s) = format {
+            if let Some(output) = format_float_descriptor(value, &s.borrow()) {
+                return output;
+            }
+        }
+        format_float(value)
+    }
+
+    /// GNU print.c: only independent graphic characters and the six
+    /// common named escapes use character notation.  `princ' omits the
+    /// extra quoting for delimiter characters, but keeps named escapes.
+    fn print_integer(&self, n: i128, out: &mut String, escape: bool) {
+        if self.print_var("print-integers-as-characters").truthy() && (0..=0x10ffff).contains(&n) {
+            let named = match n {
+                8 => Some('b'),
+                9 => Some('t'),
+                10 => Some('n'),
+                12 => Some('f'),
+                13 => Some('r'),
+                32 => Some('s'),
+                _ => None,
+            };
+            let table = self.print_var("unicode-category-table");
+            let category = super::builtins::misc::char_table_ref(self, &table, n as usize);
+            let graphic = matches!(category, Value::Int(cat)
+                if (super::value::FIXNUM_MIN..=super::value::FIXNUM_MAX).contains(&cat)
+                    && !matches!(cat, 6..=8 | 23..=28 | 30));
+            if let Some(named) = named {
+                out.push('?');
+                out.push('\\');
+                out.push(named);
+                return;
+            }
+            if graphic {
+                if let Some(c) = char::from_u32(n as u32) {
+                    out.push('?');
+                    if escape
+                        && matches!(
+                            c,
+                            ';' | '"' | '\'' | '\\' | '(' | ')' | '{' | '}' | '[' | ']'
+                        )
+                    {
+                        out.push('\\');
+                    }
+                    out.push(c);
+                    return;
+                }
+            }
+        }
+        let _ = write!(out, "{n}");
+    }
+
     /// `print-length` (default nil): max elements printed per sequence.
     fn print_length_limit(&self) -> Option<usize> {
         self.print_var("print-length")
             .int()
-            .map(|n| n.max(0) as usize)
+            .filter(|n| (0..=super::value::FIXNUM_MAX).contains(n))
+            .map(|n| n as usize)
     }
 
     /// `print-level` (default nil): max nesting depth before "...".
     fn print_level_limit(&self) -> Option<usize> {
         self.print_var("print-level")
             .int()
+            .filter(|n| (super::value::FIXNUM_MIN..=super::value::FIXNUM_MAX).contains(n))
             .map(|n| n.max(0) as usize)
     }
 
@@ -1615,6 +1671,58 @@ fn format_g(x: f64, prec: usize) -> String {
         out.push_str(&frac);
     }
     out
+}
+
+/// GNU accepts only %.PRECISION followed by e, f or g, at most DBL_DIG
+/// digits of precision.  An absent precision is accepted too, as in C printf.
+fn format_float_descriptor(value: f64, descriptor: &str) -> Option<String> {
+    if !value.is_finite() {
+        return None;
+    }
+    // GNU validates the C string, so text after a NUL is not part of the spec.
+    let spec = descriptor.split('\0').next()?.as_bytes();
+    if !spec.starts_with(b"%.") {
+        return None;
+    }
+    let mut pos = 2;
+    let mut precision = None;
+    while let Some(digit @ b'0'..=b'9') = spec.get(pos) {
+        let n = precision.unwrap_or(0) * 10 + usize::from(*digit - b'0');
+        if n > 15 {
+            return None;
+        }
+        precision = Some(n);
+        pos += 1;
+    }
+    let kind = *spec.get(pos)?;
+    if pos + 1 != spec.len() || !matches!(kind, b'e' | b'f' | b'g') {
+        return None;
+    }
+    if precision == Some(0) && kind != b'f' {
+        return None;
+    }
+    let digits = precision.unwrap_or(0);
+    let mut output = match kind {
+        b'f' => format!("{:.*}", digits, value),
+        b'e' => {
+            let scientific = format!("{:.*e}", digits, value);
+            let (mantissa, exponent) = scientific.split_once('e')?;
+            let exponent: i32 = exponent.parse().ok()?;
+            format!(
+                "{}e{}{:02}",
+                mantissa,
+                if exponent < 0 { '-' } else { '+' },
+                exponent.abs()
+            )
+        }
+        b'g' => format_g(value, digits.max(1)),
+        _ => unreachable!(),
+    };
+    // Only an explicitly zero precision with f may print an integer token.
+    if precision != Some(0) && !output.contains('.') && !output.contains('e') {
+        output.push_str(".0");
+    }
+    Some(output)
 }
 
 /// Emacs-style float printing (`float_to_string`): shortest of

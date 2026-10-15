@@ -541,11 +541,17 @@ pub(crate) fn functionp_val(i: &mut Interp, arg: &Value) -> bool {
                 Value::Lambda(l) => !l.is_macro,
                 Value::Cons(c) => {
                     let b = c.borrow();
-                    // GNU `functionp' on a symbol resolves the
-                    // function cell: `(lambda ...)' and `(autoload ...)'
-                    // conses both count as functions.
+                    // Macro/keymap autoloads are not callable: GNU
+                    // FUNCTIONP accepts an autoload only with nil TYPE.
                     let auto_id = i.intern("autoload");
-                    i.sym_is(&b.car, sym::LAMBDA) || i.sym_is(&b.car, auto_id)
+                    if i.sym_is(&b.car, sym::LAMBDA) {
+                        true
+                    } else if i.sym_is(&b.car, auto_id) {
+                        let tail = super::listfn::nthcdr_of(&Value::Cons(c.clone()), 4);
+                        !matches!(tail, Value::Cons(t) if t.borrow().car.truthy())
+                    } else {
+                        false
+                    }
                 }
                 _ => false,
             }

@@ -1877,10 +1877,78 @@ it marks the next ARG paragraphs after the ones already marked."
   (interactive "*p")
   (insert-char (read-char) arg))
 
+;Remacs: GNU indent.el command dispatch, including completion and regions.
 (defun indent-for-tab-command (&optional arg)
-  "Indent the current line (inserts a tab in fundamental mode)."
+  "Indent the current line or region, or insert a tab, as appropriate.
+This function either inserts a tab, or indents the current line,
+or performs symbol completion, depending on `tab-always-indent'.
+The function called to actually indent the line or insert a tab
+is given by the variable `indent-line-function'.
+
+If a prefix argument is given (ARG), after this function indents the
+current line or inserts a tab, it also rigidly indents the entire
+balanced expression which starts at the beginning of the current
+line, to reflect the current line's indentation.
+
+In most major modes, if point was in the current line's
+indentation, it is moved to the first non-whitespace character
+after indenting; otherwise it stays at the same position relative
+to the text.
+
+If `transient-mark-mode' is turned on and the region is active,
+this function instead calls `indent-region'.  In this case, any
+prefix argument is ignored."
   (interactive "P")
-  (insert "\t"))
+  (cond
+   ;; The region is active, indent it.
+   ((use-region-p)
+    (indent-region (region-beginning) (region-end)))
+   ((or ;; indent-to-left-margin is only meant for indenting,
+	;; so we force it to always insert a tab here.
+	(eq indent-line-function 'indent-to-left-margin)
+	(and (not tab-always-indent)
+	     (or (> (current-column) (current-indentation))
+		 (eq this-command last-command))))
+    (insert-tab arg))
+   (t
+    (let ((old-tick (buffer-chars-modified-tick))
+          (old-point (point))
+	  (old-indent (current-indentation)))
+
+      ;; Indent the line.
+      (or (not (eq (indent--funcall-widened indent-line-function) 'noindent))
+          (indent--default-inside-comment)
+          (when (or (<= (current-column) (current-indentation))
+                    (not (eq tab-always-indent 'complete)))
+            (indent--funcall-widened (default-value 'indent-line-function))))
+
+      (cond
+       ;; If the text was already indented right, try completion.
+       ((and (eq tab-always-indent 'complete)
+             (eql old-point (point))
+             (eql old-tick (buffer-chars-modified-tick))
+             (or (eq last-command this-command)
+                 (let ((syn (syntax-class (syntax-after (point)))))
+                   (pcase tab-first-completion
+                     ('nil t)
+                     ('eol (eolp))
+                     ('word (not (eql 2 syn)))
+                     ('word-or-paren (not (memq syn '(2 4 5))))
+                     ('word-or-paren-or-punct (not (memq syn '(2 4 5 1))))))))
+        (completion-at-point))
+
+       ;; If a prefix argument was given, rigidly indent the following
+       ;; sexp to match the change in the current line's indentation.
+       (arg
+        (let ((end-marker
+               (save-excursion
+                 (forward-line 0) (forward-sexp) (point-marker)))
+              (indentation-change (- (current-indentation) old-indent)))
+          (save-excursion
+            (forward-line 1)
+            (when (and (not (zerop indentation-change))
+                       (< (point) end-marker))
+              (indent-rigidly (point) end-marker indentation-change))))))))))
 
 (defun newline-and-indent (&optional arg)
   "Insert a newline, then indent according to major mode.
@@ -4317,11 +4385,12 @@ The line number is relative to the start of the page."
 ;Remacs: `window-normalize-buffer-to-switch-to' gives GNU's exact arg
 ;semantics — nil → other-buffer, buffer → itself, else
 ;`get-buffer-create' (stringp on non-strings).
-(defun pop-to-buffer (buffer &optional _action _norecord)
+(defun pop-to-buffer (buffer &optional _action norecord)
   "Select BUFFER in some window, preferring the current one."
   (interactive "bPop to buffer: ")
   (let ((b (window-normalize-buffer-to-switch-to buffer)))
     (set-window-buffer (selected-window) b)
+    (select-window (selected-window) norecord)
     (set-buffer b)
     b))
 
@@ -4330,6 +4399,7 @@ The line number is relative to the start of the page."
   (interactive "BSwitch to buffer: ")
   (let ((b (window-normalize-buffer-to-switch-to buffer-or-name)))
     (set-window-buffer (selected-window) b)
+    (unless norecord (select-window (selected-window)))
     (set-buffer b)
     b))
 
@@ -27039,8 +27109,12 @@ Just \\[universal-argument] as argument means to use the current column."
 
 (defvar lisp-indent-offset nil
   "If non-nil, indent Lisp code by this many columns.")
-(defvar lisp-body-indent 2
-  "Number of columns to indent the second line of a `(def...)' form.")
+(defcustom lisp-body-indent 2
+  "Number of columns to indent the second line of a `(def...)' form."
+  :group 'lisp
+  :type 'integer
+  :safe #'integerp)
+
 (defvar-local lisp-indent-local-overrides nil
   "Alist of per-buffer indent overrides.")
 ;; `lisp-indent-function' (the variable) already defaults to the
@@ -36517,6 +36591,15 @@ not resized by this function."
 
 ;; ---------- basic faces needed by help/button ----------
 
+;; GNU faces.el basic fixed-pitch face, including its customizable spec.
+(defface fixed-pitch
+  '((t :family "Monospace"))
+  "The basic fixed-pitch face."
+  :group 'basic-faces)
+;; The folded declaration helper also seeds an override; this boot spec
+;; must remain a default so later themes can override the family.
+(put 'fixed-pitch 'face-override-spec nil)
+
 (defface shadow
   '((((class color grayscale) (min-colors 88) (background light))
      :foreground "grey50")
@@ -41780,7 +41863,8 @@ Defaults to the whole buffer.  END can be out of bounds."
          (,(concat "[`‘']\\(" "\\(?:\\w\\|\\s_\\|\\\\.\\)+" "\\)['’]")
           (1 'font-lock-constant-face prepend))
          ;; \\= tends to be an escape in doc strings.
-         (,"\\\\="
+         ;; ;Remacs: folded output of (rx "\\\\=").
+         (,"\\\\\\\\="
           (0 'font-lock-builtin-face prepend))
          ;; Constant values.
          (,(lambda (bound) (lisp-mode--search-key ":" bound))
@@ -50330,3 +50414,124 @@ abbreviating it with ellipses to fit within a size limit."
       (fset (intern (concat "(setf " (symbol-name (car s)) ")"))
             (let ((i (cdr s)))
               (lambda (v ob) (aset ob i v)))))))
+
+
+;; Buffer history commands from GNU window.el.
+(defun last-buffer (&optional buffer visible-ok frame)
+  "Return the last buffer in FRAME's buffer list.
+If BUFFER is the last buffer, return the preceding buffer
+instead.  Buffers not visible in windows are preferred to visible
+buffers, unless optional argument VISIBLE-OK is non-nil.
+Optional third argument FRAME nil or omitted means use the
+selected frame's buffer list.  If no such buffer exists, return
+the buffer `*scratch*', creating it if necessary."
+  (setq frame (or frame (selected-frame)))
+  (or (get-next-valid-buffer (nreverse (buffer-list frame))
+                         buffer visible-ok frame)
+      (get-scratch-buffer-create)))
+
+
+(defun bury-buffer (&optional buffer-or-name)
+  "Put BUFFER-OR-NAME at the end of the list of all buffers.
+There it is the least likely candidate for `other-buffer' to
+return; thus, the least likely buffer for \\[switch-to-buffer] to
+select by default.
+
+You can specify a buffer name as BUFFER-OR-NAME, or an actual
+buffer object.  If BUFFER-OR-NAME is nil or omitted, bury the
+current buffer.  Also, if BUFFER-OR-NAME is nil or omitted,
+remove the current buffer from the selected window if it is
+displayed there."
+  (interactive)
+  (let* ((buffer (window-normalize-buffer buffer-or-name)))
+    ;; If `buffer-or-name' is not on the selected frame we unrecord it
+    ;; although it's not "here" (call it a feature).
+    (bury-buffer-internal buffer)
+    ;; Handle case where `buffer-or-name' is nil and the current buffer
+    ;; is shown in the selected window.
+    (cond
+     ((or buffer-or-name
+          (not (eq buffer (window-buffer)))
+          ;; Don't try to delete the minibuffer window, undedicate it
+          ;; or switch to a previous buffer in it.
+          (window-minibuffer-p)))
+     ((window--delete nil t))
+     (t
+      ;; Switch to another buffer in window.
+      (set-window-dedicated-p nil nil)
+      (switch-to-prev-buffer nil 'bury)))
+    ;; Always return nil.
+    nil))
+
+
+(defun unbury-buffer ()
+  "Switch to the last buffer in the buffer list."
+  (interactive)
+  (switch-to-buffer (last-buffer)))
+
+(defun replace-buffer-in-windows (&optional buffer-or-name)
+  "Replace BUFFER-OR-NAME with some other buffer in all windows showing it.
+BUFFER-OR-NAME may be a buffer or the name of an existing buffer and
+defaults to the current buffer.
+
+If the option `kill-buffer-quit-windows' is nil, behave as follows: With
+the exception of side windows, when a window showing BUFFER-OR-NAME is
+dedicated, delete that window.  If that window is the only window on its
+frame, delete its frame when there are other frames left.  In any other
+case, call `switch-to-prev-buffer' to display some other buffer in that
+window.
+
+If `kill-buffer-quit-windows' is non-nil, call `quit-restore-window' for
+any window showing BUFFER-OR-NAME with the argument BURY-OR-KILL set to
+`killing' to avoid that the latter kills the buffer prematurely.
+
+In either case, remove the buffer denoted by BUFFER-OR-NAME from the
+lists of previous and next buffers of all windows and remove any
+`quit-restore' or `quit-restore-prev' parameters mentioning it.
+
+This function does not replace the buffer specified by BUFFER-OR-NAME in
+any minibuffer window showing it, nor does it delete minibuffer windows
+or minibuffer frames.  It removes, however, that buffer from the lists
+of previous and next buffers of all minibuffer windows.
+
+If, for any window showing BUFFER-OR-NAME running the abnormal hook
+`window-deletable-functions' returns nil, do not delete that window but
+show some other buffer in that window.
+
+This function is called by `kill-buffer' which effectively kills the
+buffer specified by `buffer-or-name' afterwards.  It never kills a
+buffer by itself."
+  (interactive "bBuffer to replace: ")
+  (let ((buffer (window-normalize-buffer buffer-or-name)))
+    ;; Scan all windows including minibuffer windows.  We have to
+    ;; unrecord BUFFER-OR-NAME even in those not showing it.
+    (dolist (window (window-list-1 nil t t))
+      (when (eq (window-buffer window) buffer)
+        (cond
+         ((window-minibuffer-p window))
+         (kill-buffer-quit-windows
+          ;; Try to preserve the current buffer set up by 'kill-buffer'
+          ;; before running the hooks on 'kill-buffer-hook' (Bug#75949).
+          (let ((current-buffer (current-buffer)))
+            (quit-restore-window window 'killing)
+            (when (buffer-live-p current-buffer)
+              (set-buffer current-buffer))))
+         (t
+          (let ((dedicated-side (eq (window-dedicated-p window) 'side)))
+            (when (or dedicated-side (not (window--delete window t 'kill)))
+              ;; Switch to another buffer in that window.
+              (set-window-dedicated-p window nil)
+              (if (switch-to-prev-buffer window 'kill)
+                  (and dedicated-side (set-window-dedicated-p window 'side))
+                (window--delete window nil 'kill)))))))
+
+      (when (window-live-p window)
+        ;; If the fourth elements of the 'quit-restore' or
+        ;; 'quit-restore-prev' parameters equal BUFFER, these
+        ;; parameters become useless - in 'quit-restore-window' the
+        ;; fourth element must equal the buffer of WINDOW in order to
+        ;; use that parameter.  If BUFFER is mentioned in the second
+        ;; element of the parameter, 'quit-restore-window' cannot
+        ;; possibly show BUFFER instead; so this parameter becomes
+        ;; useless too.
+        (unrecord-window-buffer window buffer t)))))

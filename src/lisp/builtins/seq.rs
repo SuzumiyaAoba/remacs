@@ -644,7 +644,7 @@ fn f_aset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
 }
 
-fn f_copy_sequence(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_copy_sequence(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[0] {
         Value::Cons(_) => {
             let items = want_list(i, &args[0])?;
