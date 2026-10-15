@@ -300,3 +300,5 @@ fn qa_buffer_history_frames() {
         }
     }).unwrap().join().unwrap();
 }
+
+qa!(qa_elisp_mode_name, "qa_elisp_mode_name.el");

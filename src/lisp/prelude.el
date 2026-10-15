@@ -28183,7 +28183,17 @@ determined at run time.")
   ;; GNU lisp-mode.el: case-folding on for Imenu in Common Lisp.
   (setq imenu-case-fold-search t))
 
-(define-derived-mode emacs-lisp-mode lisp-data-mode "Emacs-Lisp"
+;; Remacs: keep GNU's lexical/dynamic binding indicator and its live keymap.
+(define-derived-mode emacs-lisp-mode lisp-data-mode
+  `("Elisp"
+    (lexical-binding (:propertize "/l"
+                      help-echo "Using lexical-binding mode")
+                     (:propertize "/d"
+                      help-echo "Using old dynamic scoping mode\n\
+mouse-1: Enable lexical-binding mode"
+                      face warning
+                      mouse-face mode-line-highlight
+                      local-map ,elisp--dynlex-modeline-map)))
   "Major mode for editing Emacs Lisp code."
   (setq-local indent-line-function #'lisp-indent-line)
   (setq-local comment-start ";")
