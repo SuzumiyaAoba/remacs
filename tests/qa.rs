@@ -99,6 +99,7 @@ qa!(qa_custom2, "qa_custom2.el");
 qa!(qa_descr, "qa_descr.el");
 qa!(qa_doc, "qa_doc.el");
 qa!(qa_variable_documentation, "qa_variable_documentation.el");
+qa!(qa_vconcat_unibyte, "qa_vconcat_unibyte.el");
 qa!(qa_eieio, "qa_eieio.el");
 qa!(qa_eieio2, "qa_eieio2.el");
 qa!(qa_edge_semantics, "qa_edge_semantics.el");

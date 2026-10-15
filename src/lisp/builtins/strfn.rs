@@ -638,25 +638,9 @@ fn f_ngettext(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_vconcat(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let mut out: Vec<Value> = Vec::new();
     for a in args.iter() {
-        match a {
-            Value::Nil => {}
-            Value::Cons(_) => {
-                let items = super::want_list(i, a)?;
-                out.extend(items);
-            }
-            Value::Vec(v) => out.extend(v.borrow().iter().cloned()),
-            Value::Str(s) => {
-                for c in s.borrow().chars() {
-                    out.push(Value::Int(lisp_char_code(c)));
-                }
-            }
-            Value::Record(_) if super::misc::is_bool_vector(i, a) => {
-                for b in super::misc::bool_vec_of(i, a)? {
-                    out.push(Value::from_bool(b));
-                }
-            }
-            other => return Err(i.wrong_type_mut("sequencep", other)),
-        }
+        // Like append, preserve raw bytes in unibyte strings rather than
+        // decoding their storage proxies as multibyte eight-bit characters.
+        out.extend(super::seq::seq_to_vec(i, a)?);
     }
     Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(out))))
 }
