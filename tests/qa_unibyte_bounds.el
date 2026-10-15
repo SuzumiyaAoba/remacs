@@ -1,0 +1,42 @@
+;;; qa_unibyte_bounds.el --- Unibyte argument validation -*- lexical-binding: nil; -*-
+
+;; Check the entire condition, including its original offending value.
+(dolist (n '(-1 256 4194303 4194304 1152921504606846976 2305843009213693952))
+  (qa (condition-case e (unibyte-string n) (error e))
+      (list 'args-out-of-range n 0 255)))
+(dolist (value '(1.0 nil t "x"))
+  (qa (condition-case e (unibyte-string value) (error e))
+      (list 'wrong-type-argument 'integerp value)))
+(qa (condition-case e (unibyte-string 0 128 256 255) (error e))
+    '(args-out-of-range 256 0 255))
+(qa (condition-case e (unibyte-string -1 'bad) (error e))
+    '(args-out-of-range -1 0 255))
+(qa (condition-case e (unibyte-string 'bad -1) (error e))
+    '(wrong-type-argument integerp bad))
+(qa (length (unibyte-string)) 0)
+(qa (multibyte-string-p (unibyte-string)) nil)
+(qa (string-to-list (unibyte-string 0 127 128 255)) '(0 127 128 255))
+(qa (string-bytes (unibyte-string 0 127 128 255)) 4)
+(qa (multibyte-string-p (unibyte-string 0 127 128 255)) nil)
+
+;; CHECK_CHARACTER precedes the narrower unibyte range check.
+(dolist (n '(256 65535 4194303))
+  (qa (condition-case e (unibyte-char-to-multibyte n) (error e))
+      (list 'error (format "Not a unibyte character: %d" n))))
+(dolist (value '(-1 4194304 1152921504606846976 2305843009213693952 1.0 nil t "x"))
+  (qa (condition-case e (unibyte-char-to-multibyte value) (error e))
+      (list 'wrong-type-argument 'characterp value)))
+(qa (unibyte-char-to-multibyte 0) 0)
+(qa (unibyte-char-to-multibyte 127) 127)
+(qa (unibyte-char-to-multibyte 128) 4194176)
+(qa (unibyte-char-to-multibyte 255) 4194303)
+;; Exercise every valid byte, including both sides of the ASCII boundary.
+(qa (let ((n 0) (ok t))
+      (while (< n 256)
+        (unless (and (= (aref (unibyte-string n) 0) n)
+                     (= (multibyte-char-to-unibyte
+                         (unibyte-char-to-multibyte n)) n))
+          (setq ok nil))
+        (setq n (1+ n)))
+      ok) t)
+(princ (qa--done))

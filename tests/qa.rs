@@ -304,3 +304,5 @@ fn qa_buffer_history_frames() {
 }
 
 qa!(qa_elisp_mode_name, "qa_elisp_mode_name.el");
+
+qa!(qa_unibyte_bounds, "qa_unibyte_bounds.el");

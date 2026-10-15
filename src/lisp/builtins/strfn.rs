@@ -448,13 +448,13 @@ fn f_multibyte_char_to_unibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalR
 /// (0x3FFF00 + byte); out of range → error.
 fn f_unibyte_char_to_multibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let b = match &args[0] {
-        Value::Int(n) => *n,
+        Value::Int(n) if (0..=0x3FFFFF).contains(n) => *n,
         v => return Err(i.wrong_type_mut("characterp", v)),
     };
     match b {
         0..=127 => Ok(Value::Int(b)),
         128..=255 => Ok(Value::Int(0x3FFF00 + b)),
-        _ => Err(i.wrong_type_mut("characterp", &args[0])),
+        _ => Err(i.error(format!("Not a unibyte character: {b}"))),
     }
 }
 
@@ -5383,7 +5383,11 @@ fn f_unibyte_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let mut s = String::new();
     for a in args.iter() {
         let n = want_int(i, a)?;
-        let c = char::from_u32((n & 0xff) as u32).unwrap_or('\u{FFFD}');
+        if !(0..=255).contains(&n) {
+            let sym = i.intern("args-out-of-range");
+            return Err(i.signal_data(sym, vec![a.clone(), Value::Int(0), Value::Int(255)]));
+        }
+        let c = char::from_u32(n as u32).unwrap();
         s.push(c);
     }
     let v = Value::string(s);
