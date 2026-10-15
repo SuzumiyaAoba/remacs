@@ -19121,16 +19121,6 @@ fn f_documentation_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         if ind != sid {
             tem = i.get_prop(ind, prop);
         }
-        // C-defined variables carry their doc in the DOC file via a
-        // fixnum offset; remacs never plants those offsets, so resolve
-        // through the DOC index under "V<name>" instead.
-        if tem.is_nil() {
-            if let Some(text) =
-                crate::lisp::builtins::misc::doc_text(i, &format!("V{}", i.symbol_name(ind)))
-            {
-                tem = Value::string(text);
-            }
-        }
     }
     // GNU: fixnum 0 counts as no doc.
     if matches!(&tem, Value::Int(n) if *n == 0) {

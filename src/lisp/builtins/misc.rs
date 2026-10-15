@@ -8299,7 +8299,15 @@ fn f_cl_type_of(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             "record"
         }
         Value::Hash(_) => "hash-table",
-        Value::Subr(_) => "subr",
+        Value::Subr(s) => {
+            if matches!(s.arity, Arity::Unevalled) {
+                "special-form"
+            } else if crate::lisp::builtins::comp::is_native(s).is_some() {
+                "native-comp-function"
+            } else {
+                "primitive-function"
+            }
+        }
         Value::Lambda(l) => {
             if l.is_bytecode() {
                 "byte-code-function"
@@ -9445,13 +9453,38 @@ fn doc_index(
                 None => break,
             };
             let key = String::from_utf8_lossy(&bytes[name_start..nl]).into_owned();
-            map.insert(key, nl + 1);
+            // GNU Snarf-documentation ignores placeholder entries, including
+            // later duplicates, rather than replacing a real doc with SKIP.
+            if !bytes[nl + 1..].starts_with(b"SKIP") {
+                map.insert(key, nl + 1);
+            }
             p = nl + 1;
         }
         let rc = Rc::new((bytes, map));
         c.borrow_mut().insert(path, rc.clone());
         Some(rc)
     })
+}
+
+/// Install GNU's variable documentation offsets after the startup libraries
+/// have supplied their definitions, like `Snarf-documentation' in doc.c.
+/// Do not intern absent platform-specific variables or document void ones.
+pub(crate) fn install_variable_docs(i: &mut Interp) {
+    let Some(index) = doc_index(i) else {
+        return;
+    };
+    let prop = i.intern("variable-documentation");
+    for (key, &offset) in &index.1 {
+        let Some(name) = key.strip_prefix('V') else {
+            continue;
+        };
+        let Some(id) = i.obarray.intern_soft(name) else {
+            continue;
+        };
+        if i.bound_p(id) {
+            i.put_prop(id, prop, Value::Int(offset as i128));
+        }
+    }
 }
 
 /// DOC-entry text for KEY ("Fcar"): bytes from the recorded offset to

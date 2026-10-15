@@ -131,9 +131,9 @@ fn compile_lambda_object() {
     assert_eq!(
         ev(
             "(let ((f (native-compile (lambda (x y) (list x y (+ x y)))))) \
-             (list (funcall f 2 5) (native-comp-function-p f) (subrp f)))"
+             (list (funcall f 2 5) (native-comp-function-p f) (subrp f) (cl-type-of f)))"
         ),
-        "((2 5 7) t t)"
+        "((2 5 7) t t native-comp-function)"
     );
     // By symbol: replaces the function cell with the native subr.
     assert_eq!(

@@ -4738,6 +4738,7 @@ command-line arguments.\" \
             });
             let _ = interp.set_symbol(lh, Value::list(items));
         }
+        crate::lisp::builtins::misc::install_variable_docs(&mut interp);
         if std::env::var_os("REMACS_BOOT_PROF").is_some() {
             eprintln!(
                 "[init] total Interp::new: {}ms",
