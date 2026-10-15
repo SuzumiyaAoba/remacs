@@ -92,6 +92,7 @@ qa!(qa_clseq2, "qa_clseq2.el");
 qa!(qa_cmds, "qa_cmds.el");
 qa!(qa_coding, "qa_coding.el");
 qa!(qa_coding2, "qa_coding2.el");
+qa!(qa_coding_detection, "qa_coding_detection.el");
 qa!(qa_completion, "qa_completion.el");
 qa!(qa_ctl, "qa_ctl.el");
 qa!(qa_custom, "qa_custom.el");

@@ -7,6 +7,8 @@ pub(crate) mod arith;
 pub(crate) mod backquote;
 pub(crate) mod bidi_table;
 pub(crate) mod charset;
+pub(crate) mod coding_detect;
+pub(crate) mod coding_detection;
 pub(crate) mod comp;
 pub(crate) mod csl_table;
 pub(crate) mod data;

@@ -428,6 +428,9 @@ pub struct Interp {
     /// at runtime: (ALIAS, CANONICAL-NAME) pairs; `coding-system-base'
     /// resolves ALIAS to CANONICAL's group head.
     pub extra_coding_aliases: Vec<(String, String)>,
+    /// Exact selected category members for detection; the public priority
+    /// list exposes base names instead (aliases retain distinct IDs in GNU).
+    pub coding_detection_members: HashMap<String, String>,
     /// Current `terminal-coding-system' value (nil after set-nil).
     pub terminal_coding: Value,
     /// Current `keyboard-coding-system' value (no-conversion after
@@ -1010,6 +1013,7 @@ impl Interp {
             charset_maps: std::cell::RefCell::new(HashMap::default()),
             extra_coding_systems: Vec::new(),
             extra_coding_aliases: Vec::new(),
+            coding_detection_members: HashMap::default(),
             terminal_coding: Value::Nil,
             keyboard_coding: Value::Nil,
             macro_replay: std::collections::VecDeque::new(),

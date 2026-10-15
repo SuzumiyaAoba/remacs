@@ -10741,7 +10741,7 @@ fn f_coding_system_base(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Sym(i.intern(base)))
 }
 
-fn f_coding_system_plist(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_coding_system_plist(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU stores per-coding-system metadata on the coding-system
     // symbol's plist; we mirror it via the generated
     // `remacs-coding-system-plists' alist keyed by the queried name.
@@ -11761,77 +11761,24 @@ fn f_image_metadata(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Err(i.error("Window system frame should be used"))
 }
 
-/// `detect-coding-string': returns the list of possible coding
-/// systems, or with non-nil HIGHEST the highest-priority one (a bare
-/// symbol).  This port covers ASCII/NUL/UTF-8/ISO-2022/high-byte
-/// cases matching observed GNU output.
+/// Detect the byte sequence represented by a Lisp string, rather than the
+/// UTF-8 backing storage used by Rust.
 fn f_detect_coding_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU's charset-based detection, restricted to the cases the corpus
-    // exercises: ASCII → undecided; NUL → no-conversion; valid UTF-8 →
-    // the utf-8 candidate list; ESC-led → iso-2022; high bytes → the
-    // east-asian candidates matching observed GNU output.
     let s = want_string(i, &a[0])?;
-    let bytes = s.as_bytes();
-    let syms: Vec<Value> = {
-        let intern = |i: &mut Interp, n: &str| Value::Sym(i.intern(n));
-        if bytes.iter().all(|b| *b < 0x80) {
-            vec![intern(i, "undecided")]
-        } else if bytes.contains(&0) {
-            vec![intern(i, "no-conversion")]
-        } else if std::str::from_utf8(bytes).is_ok() {
-            vec![
-                intern(i, "utf-8"),
-                intern(i, "japanese-iso-8bit"),
-                intern(i, "japanese-shift-jis"),
-                intern(i, "iso-latin-1"),
-                intern(i, "emacs-mule"),
-                intern(i, "in-is13194-devanagari"),
-                intern(i, "utf-8-auto"),
-                intern(i, "chinese-big5"),
-                intern(i, "iso-2022-8bit-ss2"),
-            ]
-        } else if bytes[0] == 0x1b {
-            vec![
-                intern(i, "iso-2022-jp"),
-                intern(i, "iso-2022-jp-2"),
-                intern(i, "iso-2022-7bit"),
-                intern(i, "iso-2022-8bit-ss2"),
-            ]
-        } else {
-            let sjis = bytes.windows(2).any(|w| {
-                ((0x81..=0x9f).contains(&w[0]) || (0xe0..=0xef).contains(&w[0]))
-                    && ((0x40..=0x7e).contains(&w[1]) || (0x80..=0xfc).contains(&w[1]))
-            });
-            let any_high = bytes.iter().any(|b| *b >= 0xa0);
-            let big5 = bytes.windows(2).any(|w| {
-                (0xa1..=0xfe).contains(&w[0])
-                    && ((0x40..=0x7e).contains(&w[1]) || (0xa1..=0xfe).contains(&w[1]))
-            });
-            if sjis && !any_high {
-                vec![intern(i, "japanese-shift-jis"), intern(i, "raw-text")]
-            } else if !any_high {
-                vec![intern(i, "raw-text")]
+    let unibyte = matches!(&a[0], Value::Str(r) if i.is_unibyte_str(r));
+    let input: Vec<i32> = s
+        .chars()
+        .map(|c| {
+            if let Some(b) = crate::lisp::value::eight_bit_byte(c) {
+                b as i32
+            } else if unibyte || c.is_ascii() {
+                c as i32
             } else {
-                let mut v = vec![
-                    intern(i, "japanese-iso-8bit"),
-                    intern(i, "iso-latin-1"),
-                    intern(i, "emacs-mule"),
-                    intern(i, "in-is13194-devanagari"),
-                ];
-                if big5 {
-                    v.push(intern(i, "chinese-big5"));
-                }
-                v.push(intern(i, "iso-2022-8bit-ss2"));
-                v
+                -(crate::lisp::value::lisp_char_code(c) as i32)
             }
-        }
-    };
-    // HIGHEST non-nil → car as a bare symbol.
-    if a.get(1).is_some_and(|v| v.truthy()) {
-        Ok(syms.into_iter().next().unwrap_or(Value::Nil))
-    } else {
-        Ok(Value::list(syms))
-    }
+        })
+        .collect();
+    super::coding_detection::detect(i, &input, !unibyte, arg(&a, 1).truthy())
 }
 
 fn f_arg1(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

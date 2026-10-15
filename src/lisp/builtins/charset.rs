@@ -71,7 +71,7 @@ pub(crate) fn want_charset(i: &mut Interp, v: &Value) -> Result<String, Flow> {
     }
 }
 
-fn canonical_charset(i: &Interp, name: &str) -> String {
+pub(crate) fn canonical_charset(i: &Interp, name: &str) -> String {
     if let Some(target) = i.charset_aliases.iter().find(|(a, _)| a == name) {
         return target.1.clone();
     }
@@ -255,7 +255,7 @@ fn builtin_charset_plist(i: &mut Interp, name: &str) -> Option<Value> {
 /// The effective plist of CHARSET: GNU's synthesized attribute plist
 /// for the C builtins overlaid with every `put-charset-property' value
 /// stored later, in the stored list's order.
-fn effective_charset_plist(i: &mut Interp, name: &str) -> Value {
+pub(crate) fn effective_charset_plist(i: &mut Interp, name: &str) -> Value {
     let stored = charset_entry(i, name)
         .map(|e| e.1.clone())
         .unwrap_or(Value::Nil);
@@ -1580,7 +1580,7 @@ fn f_coding_system_charset_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
 /// GNU `CODING_ATTR_CATEGORY'/`CODING_ATTR_BASE_NAME' for a known
 /// coding system: (category-symbol, base-name) resolved through the
 /// alias chain and `remacs-coding-system-plists'.
-fn coding_category_member(i: &mut Interp, v: &Value) -> Option<(String, String)> {
+pub(crate) fn coding_category_member(i: &mut Interp, v: &Value) -> Option<(String, String)> {
     let table_id = i.intern("remacs-coding-system-plists");
     let table = i.symbol_value(table_id);
     let name = coding_known(i, v)?;
@@ -1638,6 +1638,10 @@ fn f_set_coding_system_priority(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
         };
         if seen.iter().any(|c| *c == cat) {
             continue;
+        }
+        if let Value::Sym(symbol) = v {
+            i.coding_detection_members
+                .insert(cat.clone(), i.symbol_name(*symbol).to_string());
         }
         seen.push(cat);
         moved.push(symv(i, &base));
@@ -2258,7 +2262,7 @@ fn iso_chars_96(i: &mut Interp, plist: &Value) -> bool {
 /// `:iso-final-char' matches FC, `:dimension' matches DIM, and whose
 /// chars flag matches — last definition wins; explicit
 /// `iso_charset_overrides' entries win over all.
-fn iso_charset_lookup(i: &mut Interp, dim: i64, chars96: bool, fc: i64) -> Option<String> {
+pub(crate) fn iso_charset_lookup(i: &mut Interp, dim: i64, chars96: bool, fc: i64) -> Option<String> {
     let mut found: Option<String> = None;
     for name in charsets_ordered(i) {
         let plist = effective_charset_plist(i, &name);
@@ -3235,7 +3239,7 @@ fn prop_int(v: &Value) -> Option<i64> {
 /// `:code-space' vector → per-dimension (lo,hi) pairs.  GNU lists the
 /// LEAST significant byte's dimension first (`code_space[0..2]' is the
 /// low byte); we return dims most-significant-first for packed codes.
-fn charset_dims(i: &Interp, plist: &Value) -> Option<Vec<(i64, i64)>> {
+pub(crate) fn charset_dims(i: &Interp, plist: &Value) -> Option<Vec<(i64, i64)>> {
     match charset_prop(i, plist, ":code-space") {
         Value::Vec(v) => {
             let v = v.borrow();
