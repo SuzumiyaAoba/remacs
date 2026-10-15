@@ -4385,11 +4385,12 @@ The line number is relative to the start of the page."
 ;Remacs: `window-normalize-buffer-to-switch-to' gives GNU's exact arg
 ;semantics — nil → other-buffer, buffer → itself, else
 ;`get-buffer-create' (stringp on non-strings).
-(defun pop-to-buffer (buffer &optional _action _norecord)
+(defun pop-to-buffer (buffer &optional _action norecord)
   "Select BUFFER in some window, preferring the current one."
   (interactive "bPop to buffer: ")
   (let ((b (window-normalize-buffer-to-switch-to buffer)))
     (set-window-buffer (selected-window) b)
+    (select-window (selected-window) norecord)
     (set-buffer b)
     b))
 
@@ -4398,6 +4399,7 @@ The line number is relative to the start of the page."
   (interactive "BSwitch to buffer: ")
   (let ((b (window-normalize-buffer-to-switch-to buffer-or-name)))
     (set-window-buffer (selected-window) b)
+    (unless norecord (select-window (selected-window)))
     (set-buffer b)
     b))
 
@@ -50412,3 +50414,124 @@ abbreviating it with ellipses to fit within a size limit."
       (fset (intern (concat "(setf " (symbol-name (car s)) ")"))
             (let ((i (cdr s)))
               (lambda (v ob) (aset ob i v)))))))
+
+
+;; Buffer history commands from GNU window.el.
+(defun last-buffer (&optional buffer visible-ok frame)
+  "Return the last buffer in FRAME's buffer list.
+If BUFFER is the last buffer, return the preceding buffer
+instead.  Buffers not visible in windows are preferred to visible
+buffers, unless optional argument VISIBLE-OK is non-nil.
+Optional third argument FRAME nil or omitted means use the
+selected frame's buffer list.  If no such buffer exists, return
+the buffer `*scratch*', creating it if necessary."
+  (setq frame (or frame (selected-frame)))
+  (or (get-next-valid-buffer (nreverse (buffer-list frame))
+                         buffer visible-ok frame)
+      (get-scratch-buffer-create)))
+
+
+(defun bury-buffer (&optional buffer-or-name)
+  "Put BUFFER-OR-NAME at the end of the list of all buffers.
+There it is the least likely candidate for `other-buffer' to
+return; thus, the least likely buffer for \\[switch-to-buffer] to
+select by default.
+
+You can specify a buffer name as BUFFER-OR-NAME, or an actual
+buffer object.  If BUFFER-OR-NAME is nil or omitted, bury the
+current buffer.  Also, if BUFFER-OR-NAME is nil or omitted,
+remove the current buffer from the selected window if it is
+displayed there."
+  (interactive)
+  (let* ((buffer (window-normalize-buffer buffer-or-name)))
+    ;; If `buffer-or-name' is not on the selected frame we unrecord it
+    ;; although it's not "here" (call it a feature).
+    (bury-buffer-internal buffer)
+    ;; Handle case where `buffer-or-name' is nil and the current buffer
+    ;; is shown in the selected window.
+    (cond
+     ((or buffer-or-name
+          (not (eq buffer (window-buffer)))
+          ;; Don't try to delete the minibuffer window, undedicate it
+          ;; or switch to a previous buffer in it.
+          (window-minibuffer-p)))
+     ((window--delete nil t))
+     (t
+      ;; Switch to another buffer in window.
+      (set-window-dedicated-p nil nil)
+      (switch-to-prev-buffer nil 'bury)))
+    ;; Always return nil.
+    nil))
+
+
+(defun unbury-buffer ()
+  "Switch to the last buffer in the buffer list."
+  (interactive)
+  (switch-to-buffer (last-buffer)))
+
+(defun replace-buffer-in-windows (&optional buffer-or-name)
+  "Replace BUFFER-OR-NAME with some other buffer in all windows showing it.
+BUFFER-OR-NAME may be a buffer or the name of an existing buffer and
+defaults to the current buffer.
+
+If the option `kill-buffer-quit-windows' is nil, behave as follows: With
+the exception of side windows, when a window showing BUFFER-OR-NAME is
+dedicated, delete that window.  If that window is the only window on its
+frame, delete its frame when there are other frames left.  In any other
+case, call `switch-to-prev-buffer' to display some other buffer in that
+window.
+
+If `kill-buffer-quit-windows' is non-nil, call `quit-restore-window' for
+any window showing BUFFER-OR-NAME with the argument BURY-OR-KILL set to
+`killing' to avoid that the latter kills the buffer prematurely.
+
+In either case, remove the buffer denoted by BUFFER-OR-NAME from the
+lists of previous and next buffers of all windows and remove any
+`quit-restore' or `quit-restore-prev' parameters mentioning it.
+
+This function does not replace the buffer specified by BUFFER-OR-NAME in
+any minibuffer window showing it, nor does it delete minibuffer windows
+or minibuffer frames.  It removes, however, that buffer from the lists
+of previous and next buffers of all minibuffer windows.
+
+If, for any window showing BUFFER-OR-NAME running the abnormal hook
+`window-deletable-functions' returns nil, do not delete that window but
+show some other buffer in that window.
+
+This function is called by `kill-buffer' which effectively kills the
+buffer specified by `buffer-or-name' afterwards.  It never kills a
+buffer by itself."
+  (interactive "bBuffer to replace: ")
+  (let ((buffer (window-normalize-buffer buffer-or-name)))
+    ;; Scan all windows including minibuffer windows.  We have to
+    ;; unrecord BUFFER-OR-NAME even in those not showing it.
+    (dolist (window (window-list-1 nil t t))
+      (when (eq (window-buffer window) buffer)
+        (cond
+         ((window-minibuffer-p window))
+         (kill-buffer-quit-windows
+          ;; Try to preserve the current buffer set up by 'kill-buffer'
+          ;; before running the hooks on 'kill-buffer-hook' (Bug#75949).
+          (let ((current-buffer (current-buffer)))
+            (quit-restore-window window 'killing)
+            (when (buffer-live-p current-buffer)
+              (set-buffer current-buffer))))
+         (t
+          (let ((dedicated-side (eq (window-dedicated-p window) 'side)))
+            (when (or dedicated-side (not (window--delete window t 'kill)))
+              ;; Switch to another buffer in that window.
+              (set-window-dedicated-p window nil)
+              (if (switch-to-prev-buffer window 'kill)
+                  (and dedicated-side (set-window-dedicated-p window 'side))
+                (window--delete window nil 'kill)))))))
+
+      (when (window-live-p window)
+        ;; If the fourth elements of the 'quit-restore' or
+        ;; 'quit-restore-prev' parameters equal BUFFER, these
+        ;; parameters become useless - in 'quit-restore-window' the
+        ;; fourth element must equal the buffer of WINDOW in order to
+        ;; use that parameter.  If BUFFER is mentioned in the second
+        ;; element of the parameter, 'quit-restore-window' cannot
+        ;; possibly show BUFFER instead; so this parameter becomes
+        ;; useless too.
+        (unrecord-window-buffer window buffer t)))))

@@ -32,6 +32,10 @@ pub struct Buffer {
     pub text: SharedText,
     /// Point (0-based char offset). Emacs `point` = `self.point + 1`.
     pub point: usize,
+    /// Start remembered when this buffer was last removed from a window.
+    pub last_window_start: usize,
+    /// Last selected window still displaying this buffer (GNU point owner).
+    pub last_selected_window: Option<Weak<RefCell<crate::editor::Window>>>,
     /// The mark marker (GNU `buffer->mark'), if the mark was ever
     /// touched.  `mark-marker' hands this object out, so `set-marker'
     /// on it moves the mark.  A Some value with `buffer = None' is a
@@ -281,6 +285,8 @@ impl Buffer {
             name: name.clone(),
             text: SharedText::new(),
             point: 0,
+            last_window_start: 0,
+            last_selected_window: None,
             mark: None,
             begv: 0,
             zv: 0,
@@ -1146,25 +1152,15 @@ impl BufferSet {
             .filter(|&id| self.get(id).is_some())
             .collect()
     }
-    /// GNU `other_buffer' (buffer.c): scan the buffer list starting
-    /// just PAST `exclude', wrapping around to the head — never from
-    /// position 0.  `exclude = usize::MAX' scans the whole list.
+    /// GNU scans the global list from its head, skipping BUFFER by identity.
     fn other_scan(&self, exclude: usize, pred: &dyn Fn(usize) -> bool) -> Option<usize> {
-        let n = self.order.len();
-        let start = match self.order.iter().position(|&id| id == exclude) {
-            Some(p) => p + 1,
-            None => 0,
-        };
-        (0..n)
-            .map(|k| self.order[(start + k) % n])
-            .find(|&id| id != exclude && pred(id))
+        self.order.iter().copied().find(|&id| id != exclude && pred(id))
     }
-    /// First live non-space-named buffer (scan from `exclude'+1).
+    /// First live non-space-named buffer in selection order.
     pub fn other(&self, exclude: usize) -> Option<usize> {
         self.other_scan(exclude, &|id| self.live_user_buffer(id))
     }
-    /// Live non-space buffer not in `shown', preferring the
-    /// after-`exclude' scan order.
+    /// Live non-space buffer not in `shown', in selection order.
     pub fn other_unshown(
         &self,
         exclude: usize,

@@ -122,6 +122,10 @@ pub struct Frame {
     /// GNU `old_selected_window': window selected before the last
     /// frame switch; nil until the first `do_switch_frame'.
     pub old_selected: Option<WindowRef>,
+    /// Buffers selected on this frame, most recently selected first.
+    pub buffer_list: Vec<usize>,
+    /// Buffers buried on this frame, most recently buried first.
+    pub buried_buffer_list: Vec<usize>,
     pub params: Value,
     pub dead: bool,
 }
@@ -291,6 +295,8 @@ impl Frame {
             width,
             height,
             old_selected: None,
+            buffer_list: vec![buffer],
+            buried_buffer_list: Vec::new(),
             params: Value::Nil,
             dead: false,
         }))
@@ -560,13 +566,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("quit-window", 0, 2, f_quit_window, "Quit WINDOW."),
     S!("quit-restore-window", 0, 2, f_quit_restore_window, ""),
     S!("kill-buffer-and-window", 0, 0, f_kill_buffer_and_window, ""),
-    S!(
-        "replace-buffer-in-windows",
-        0,
-        1,
-        f_replace_buffer_in_windows,
-        ""
-    ),
     S!("window-tree", 0, 1, f_window_tree, "Window layout tree."),
     S!(
         "window-combination-limit",
@@ -2571,6 +2570,39 @@ pub(crate) fn record_buffer_display(i: &mut Interp, bid: usize) {
     }
 }
 
+/// GNU `record_buffer': selection updates both global and frame-local MRU.
+/// Keep the selected frame/window consistent before running its Lisp hook.
+pub(crate) fn record_buffer_selection(i: &mut Interp, bid: usize) -> Result<(), Flow> {
+    i.buffers.touch(bid);
+    if let Some(f) = sel_frame(i) {
+        let mut f = f.borrow_mut();
+        f.buffer_list.retain(|id| *id != bid);
+        f.buffer_list.insert(0, bid);
+        f.buried_buffer_list.retain(|id| *id != bid);
+    }
+    crate::buffer::primitives::run_buffer_list_update_checked(i, bid)
+}
+
+/// GNU `bury-buffer-internal' changes only the selected frame's histories.
+/// Global ordering and hook execution belong to the caller.
+pub(crate) fn bury_buffer_history(i: &mut Interp, bid: usize) {
+    if let Some(f) = sel_frame(i) {
+        let mut f = f.borrow_mut();
+        f.buffer_list.retain(|id| *id != bid);
+        f.buried_buffer_list.retain(|id| *id != bid);
+        f.buried_buffer_list.insert(0, bid);
+    }
+}
+
+/// A killed buffer must disappear from every frame's local histories.
+pub(crate) fn forget_buffer_history(i: &mut Interp, bid: usize) {
+    for f in &i.frames {
+        let mut f = f.borrow_mut();
+        f.buffer_list.retain(|id| *id != bid);
+        f.buried_buffer_list.retain(|id| *id != bid);
+    }
+}
+
 pub(crate) fn f_set_window_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live(i, &arg(&a, 0))?;
     // GNU resolves BUFFER-OR-NAME with Fget_buffer, then CHECK_BUFFER.
@@ -2584,17 +2616,10 @@ pub(crate) fn f_set_window_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
         }
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
-    // GNU Fset_window_buffer on a dead buffer signals "Attempt to
-    // display deleted buffer" — without this the dead id lands in the
-    // window's buffer slot and every subsequent window-buffer read lies.
     if !i.buffer_live(bid) {
         return Err(i.error("Attempt to display deleted buffer"));
     }
-    let (old_bid, start, point) = {
-        let pt = window_point(i, &w);
-        let wb = w.borrow();
-        (wb.buffer, wb.start, pt)
-    };
+    let old_bid = w.borrow().buffer;
     if old_bid != bid {
         if matches!(w.borrow().dedicated, Value::Sym(sym::T)) {
             let name = i
@@ -2605,60 +2630,86 @@ pub(crate) fn f_set_window_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
             return Err(i.error_q("Window is dedicated to `%s'", &[&name]));
         }
         w.borrow_mut().dedicated = Value::Nil;
-        // GNU `unshow_buffer': prepend a (buffer start point) entry
-        // for the old buffer to `window-prev-buffers', deduplicated,
-        // and drop the new buffer's own entry.
-        let old_buf = i
-            .buffers
-            .get(old_bid)
-            .map(Value::Buffer)
-            .unwrap_or(Value::Nil);
-        let entry = Value::list(vec![
-            old_buf,
-            crate::buffer::primitives::new_marker_at(i, old_bid, start),
-            crate::buffer::primitives::new_marker_at(i, old_bid, point),
-        ]);
-        let mut kept: Vec<Value> = Vec::new();
-        let prev = w.borrow().prev_buffers.clone();
-        if let Ok(items) = prev.list_to_vec() {
-            for e in items {
-                if let Value::Cons(c) = &e {
-                    if let Value::Buffer(b) = &c.borrow().car {
-                        let id = b.borrow().id;
-                        if id == old_bid || id == bid {
-                            continue;
-                        }
-                    }
-                }
-                kept.push(e);
-            }
+        // Reuse GNU's Lisp history policy, including insignificant-buffer
+        // filtering, marker identity/insertion types, next-history reset,
+        // and buffer-list-update-hook (whose errors must propagate).
+        let record = Value::Sym(i.intern("record-window-buffer"));
+        i.apply(&record, vec![Value::Window(w.clone())])?;
+    }
+    // Preserve point owned by the selected window, or by another still
+    // displayed last-selected window.  Otherwise the outgoing window's
+    // point becomes the buffer's point, as in GNU `unshow_buffer'.
+    let selected = sel_window(i);
+    let selected_bid = selected.as_ref().map(|s| s.borrow().buffer);
+    if let Some(old) = i.buffers.get(old_bid) {
+        let last = old.borrow().last_selected_window.as_ref().and_then(|w| w.upgrade());
+        let another_point_owner = last.as_ref().is_some_and(|last| {
+            !Rc::ptr_eq(last, &w) && !last.borrow().dead && last.borrow().buffer == old_bid
+        });
+        let mut old = old.borrow_mut();
+        old.last_window_start = w.borrow().start;
+        if selected_bid != Some(old_bid) && !another_point_owner {
+            old.set_point(w.borrow().point);
         }
-        kept.insert(0, entry);
-        w.borrow_mut().prev_buffers = Value::list(kept);
-        // GNU `wset_buffer' moves the old buffer into `old_buffer'.
-        w.borrow_mut().old_buffer = i.buffer_value(old_bid).unwrap_or(Value::Nil);
-        w.borrow_mut().buffer = bid;
-        w.borrow_mut().point = 0;
-        w.borrow_mut().start = 0;
+        if last.as_ref().is_some_and(|last| Rc::ptr_eq(last, &w)) {
+            old.last_selected_window = None;
+        }
+    }
+    let (target_point, target_start) = i
+        .buffers
+        .get(bid)
+        .map(|b| {
+            let b = b.borrow();
+            (b.point(), b.last_window_start.clamp(b.begv, b.zv))
+        })
+        .unwrap_or((0, 0));
+    {
+        let mut wb = w.borrow_mut();
+        // The newly displayed buffer is no longer a previous/next buffer.
+        if let Ok(entries) = wb.prev_buffers.list_to_vec() {
+            wb.prev_buffers = Value::list(
+                entries
+                    .into_iter()
+                    .filter(|entry| {
+                        !matches!(entry, Value::Cons(c)
+                    if matches!(&c.borrow().car, Value::Buffer(b) if b.borrow().id == bid))
+                    })
+                    .collect(),
+            );
+        }
+        if let Ok(entries) = wb.next_buffers.list_to_vec() {
+            wb.next_buffers = Value::list(
+                entries
+                    .into_iter()
+                    .filter(|entry| !matches!(entry, Value::Buffer(b) if b.borrow().id == bid))
+                    .collect(),
+            );
+        }
+        wb.old_buffer = i.buffer_value(old_bid).unwrap_or(Value::Nil);
+        wb.buffer = bid;
+        if old_bid != bid || arg(&a, 2).is_nil() {
+            wb.point = target_point;
+            wb.old_point = target_point;
+            wb.start = target_start;
+            wb.hscroll = 0;
+            wb.min_hscroll = 0;
+            wb.suspend_hscroll = false;
+        }
+    }
+    if selected.as_ref().is_some_and(|selected| Rc::ptr_eq(selected, &w)) {
+        if let Some(buffer) = i.buffers.get(bid) {
+            buffer.borrow_mut().last_selected_window = Some(Rc::downgrade(&w));
+        }
     }
     record_buffer_display(i, bid);
-    // Displaying a buffer makes it most-recent in buffer-list order.
-    i.buffers.touch(bid);
+    // Displaying a buffer neither selects it nor promotes either MRU list.
     Ok(Value::Nil)
 }
 
-/// Sync the selected window's point with the buffer's actual point.
+/// The selected window owns its buffer's live point, even when a different
+/// buffer is current via `set-buffer'.  Other windows use their own point.
 fn window_point(i: &Interp, w: &WindowRef) -> usize {
-    // GNU Fwindow_point reads w->pointm — the window's own marker,
-    // updated from the buffer's live point only while the window is
-    // selected AND shows the current buffer (wset_buffer + redisplay).
-    let sel = sel_window(i).map(|s| s.borrow().id) == Some(w.borrow().id);
-    let shows_cur = i
-        .buffers
-        .get(w.borrow().buffer)
-        .map(|b| b.borrow().id == cur(i).borrow().id)
-        .unwrap_or(false);
-    if sel && shows_cur {
+    if sel_window(i).is_some_and(|selected| Rc::ptr_eq(&selected, w)) {
         i.buffers
             .get(w.borrow().buffer)
             .map(|b| b.borrow().point())
@@ -4068,18 +4119,7 @@ fn f_other_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     for _ in 0..n.abs() {
         cur = window_cycle(i, n.signum(), &cur).unwrap_or(cur);
     }
-    // Select it.
-    let f = sel_frame(i).unwrap();
-    f.borrow_mut().selected = cur.clone();
-    cur.borrow_mut().use_time = next_use_time();
-    // Swap buffer point bookkeeping: save old selected point? For a
-    // single-buffer-per-window model, point lives in the buffer — on
-    // select we copy window point into buffer.
-    if let Some(b) = i.buffers.get(cur.borrow().buffer) {
-        b.borrow_mut().set_point(cur.borrow().point);
-        i.set_current_buffer(cur.borrow().buffer);
-        i.buffers.touch(cur.borrow().buffer);
-    }
+    f_select_window(i, vec![Value::Window(cur.clone())].into())?;
     // GNU -Q --batch: other-window selects the window but returns nil.
     if i.noninteractive {
         Ok(Value::Nil)
@@ -4088,32 +4128,47 @@ fn f_other_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 }
 
-fn f_select_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU Fselect_window: WINDOW is required — decode_live_window on the
-    // raw arg (nil signals window-live-p, not "selected").
+pub(crate) fn f_select_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live_req(i, &a[0])?;
-    let f = sel_frame(i).unwrap();
-    // Save the previously selected window's point into `window-point'
-    // before switching — GNU's select_window records the old window's
-    // pointm; without this a temp selection (with-selected-window,
-    // scroll-other-window) loses the destination window's point and
-    // C-v-style scrolls leave a stale point for redisplay to undo.
-    let old_sel = f.borrow().selected.clone();
-    if old_sel.borrow().buffer == i.current_buffer {
-        if let Some(ob) = i.buffers.get(i.current_buffer) {
-            let p = ob.borrow().point();
-            old_sel.borrow_mut().point = p;
+    let f = frame_of_window(i, &w).ok_or_else(|| i.error("No frame"))?;
+    let old_sel = sel_window(i);
+    let same_window = old_sel.as_ref().is_some_and(|old| Rc::ptr_eq(old, &w));
+    if !same_window {
+        // GNU saves the old displayed buffer's point even when a different
+        // buffer was made current with `set-buffer'.
+        if let Some(old) = old_sel {
+            let old_bid = old.borrow().buffer;
+            if let Some(buffer) = i.buffers.get(old_bid) {
+                old.borrow_mut().point = buffer.borrow().point();
+            }
+        }
+        let changed_frame = i
+            .selected_frame
+            .as_ref()
+            .is_none_or(|old| !Rc::ptr_eq(old, &f));
+        if changed_frame {
+            let previous = f.borrow().selected.clone();
+            f.borrow_mut().old_selected = Some(previous);
+        }
+        f.borrow_mut().selected = w.clone();
+        i.selected_frame = Some(f);
+        let (bid, point) = {
+            let wb = w.borrow();
+            (wb.buffer, wb.point)
+        };
+        if let Some(buffer) = i.buffers.get(bid) {
+            let mut buffer = buffer.borrow_mut();
+            buffer.set_point(point);
+            buffer.last_selected_window = Some(Rc::downgrade(&w));
         }
     }
-    f.borrow_mut().selected = w.clone();
-    w.borrow_mut().use_time = next_use_time();
-    if let Some(b) = i.buffers.get(w.borrow().buffer) {
-        b.borrow_mut().set_point(w.borrow().point);
-        i.set_current_buffer(w.borrow().buffer);
-        // GNU select_window: record_buffer only when NORECORD is nil.
-        if arg(&a, 1).is_nil() {
-            i.buffers.touch(w.borrow().buffer);
-        }
+    let bid = w.borrow().buffer;
+    i.set_current_buffer(bid);
+    // Selecting the already-selected window records selection but must not
+    // overwrite the buffer's current point with a stale window point.
+    if arg(&a, 1).is_nil() {
+        w.borrow_mut().use_time = next_use_time();
+        record_buffer_selection(i, bid)?;
     }
     Ok(a[0].clone())
 }
@@ -4154,14 +4209,43 @@ fn f_walk_windows(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_get_buffer_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU Fget_buffer_window:
-    // nil/omitted → current buffer; string → name lookup (no match →
-    // nil); buffer object (live or killed) → match its id; anything
-    // else → `stringp' wta.  Killed buffers just find no window.
-    let bid = match a.get(0) {
-        None => i.current_buffer,
-        Some(Value::Nil) => i.current_buffer,
+/// Live windows in cyclic display order, starting at the selected window
+/// (or the specified frame's selected window).  All current tty frames are
+/// visible; their minibuffers occur after the ordinary leaf windows.
+fn buffer_window_cycle(i: &Interp, all_frames: &Value, minibuf: bool) -> Vec<WindowRef> {
+    let frames = match all_frames {
+        Value::Frame(f) => vec![f.clone()],
+        Value::Nil => i.selected_frame.iter().cloned().collect(),
+        _ => i.frames.clone(),
+    };
+    let start = match all_frames {
+        Value::Frame(f) => Some(f.borrow().selected.clone()),
+        _ => sel_window(i),
+    };
+    let mut windows = Vec::new();
+    for f in frames {
+        let f = f.borrow();
+        if f.dead {
+            continue;
+        }
+        for w in f.windows.iter().chain(f.minibuffer.iter()) {
+            let wb = w.borrow();
+            if !wb.dead && wb.horiz.is_none() && (!wb.minibuffer || minibuf) {
+                windows.push(w.clone());
+            }
+        }
+    }
+    if let Some(start) = start {
+        if let Some(pos) = windows.iter().position(|w| Rc::ptr_eq(w, &start)) {
+            windows.rotate_left(pos);
+        }
+    }
+    windows
+}
+
+pub(crate) fn f_get_buffer_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let bid = match a.first() {
+        None | Some(Value::Nil) => i.current_buffer,
         Some(Value::Buffer(b)) => b.borrow().id,
         Some(Value::Str(s)) => match i.buffers.by_name(&s.borrow()) {
             Some(b) => b,
@@ -4169,14 +4253,29 @@ fn f_get_buffer_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         },
         Some(other) => return Err(i.wrong_type_mut("stringp", other)),
     };
-    for f in &i.frames {
-        for w in &f.borrow().windows {
-            if w.borrow().buffer == bid {
-                return Ok(Value::Window(w.clone()));
-            }
+    if !i.buffer_live(bid) {
+        return Ok(Value::Nil);
+    }
+    let windows = buffer_window_cycle(i, &arg(&a, 1), i.minibuf_level > 0);
+    let selected = sel_window(i);
+    let selected_frame = sel_frame(i);
+    let mut best = None;
+    let mut best_on_selected_frame = false;
+    for w in windows {
+        if w.borrow().buffer != bid {
+            continue;
+        }
+        if selected.as_ref().is_some_and(|s| Rc::ptr_eq(s, &w)) {
+            return Ok(Value::Window(w));
+        }
+        let on_selected_frame = frame_of_window(i, &w)
+            .is_some_and(|f| selected_frame.as_ref().is_some_and(|s| Rc::ptr_eq(s, &f)));
+        if best.is_none() || (on_selected_frame && !best_on_selected_frame) {
+            best = Some(w);
+            best_on_selected_frame = on_selected_frame;
         }
     }
-    Ok(Value::Nil)
+    Ok(best.map(Value::Window).unwrap_or(Value::Nil))
 }
 
 fn f_get_buffer_window_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -4212,13 +4311,7 @@ fn f_get_buffer_window_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         Some(v) if v.truthy() => i.sym_is(v, crate::lisp::obarray::sym::T),
         _ => i.minibuf_level > 0,
     };
-    // ALL-FRAMES: a frame → that frame only; any non-nil value
-    // (t/`visible'/0) → all existing frames; nil → selected frame.
-    let frames: Vec<FrameRef> = match a.get(2) {
-        Some(Value::Frame(f)) => vec![f.clone()],
-        Some(v) if v.truthy() => i.frames.clone(),
-        _ => i.selected_frame.iter().cloned().collect(),
-    };
+    let windows = buffer_window_cycle(i, &arg(&a, 2), minibuf_ok);
     let indirect = a.get(3).map(|v| v.truthy()).unwrap_or(false);
     let base_id = |id: usize| {
         i.buffers
@@ -4227,40 +4320,18 @@ fn f_get_buffer_window_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     };
     let buf_base = base_id(bid);
     let mut out: Vec<Value> = Vec::new();
-    for f in &frames {
-        let fb = f.borrow();
-        let wins = fb.windows.iter().chain(fb.minibuffer.iter());
-        for w in wins {
-            let wb = w.borrow();
-            if wb.minibuffer && !minibuf_ok {
-                continue;
-            }
-            if wb.buffer == bid {
+    for w in windows {
+        let wb = w.borrow();
+        if wb.buffer == bid {
+            out.push(Value::Window(w.clone()));
+        } else if indirect {
+            let wbase = base_id(wb.buffer);
+            if buf_base == Some(wb.buffer)
+                || wbase == Some(bid)
+                || (buf_base.is_some() && buf_base == wbase)
+            {
                 out.push(Value::Window(w.clone()));
-            } else if indirect {
-                // `window-indirect-buffer-p': the window's buffer is
-                // B's base, is an indirect buffer of B, or shares B's
-                // base buffer.
-                let wbase = base_id(wb.buffer);
-                if buf_base == Some(wb.buffer)
-                    || wbase == Some(bid)
-                    || (buf_base.is_some() && buf_base == wbase)
-                {
-                    out.push(Value::Window(w.clone()));
-                }
             }
-        }
-    }
-    // GNU puts the selected window first when it displays the buffer
-    // (window-list-1 starts there).
-    if let Some(sf) = &i.selected_frame {
-        let sel = sf.borrow().selected.clone();
-        if let Some(pos) = out
-            .iter()
-            .position(|v| matches!(v, Value::Window(w) if Rc::ptr_eq(w, &sel)))
-        {
-            let w = out.remove(pos);
-            out.insert(0, w);
         }
     }
     Ok(Value::list(out))
@@ -4728,7 +4799,6 @@ fn other_window_for_scrolling(i: &mut Interp) -> Result<WindowRef, Flow> {
                                     i,
                                     vec![Value::Window(w.clone()), bval].into(),
                                 )?;
-                                i.buffers.touch(bid);
                                 w
                             }
                             _ => sel.clone(),
@@ -4877,7 +4947,7 @@ fn scroll_other_command(i: &mut Interp, arg: &Value, cmd_name: &str) -> EvalResu
             cmd = r;
         }
     }
-    f_select_window(i, vec![Value::Window(other.clone())].into())?;
+    f_select_window(i, vec![Value::Window(other.clone()), Value::t()].into())?;
     let cmd_id = i.intern("scroll-up-command");
     let cmd2 = i.intern("scroll-down-command");
     let run = match &cmd {
@@ -4885,7 +4955,7 @@ fn scroll_other_command(i: &mut Interp, arg: &Value, cmd_name: &str) -> EvalResu
         Value::Sym(s) if *s == cmd2 => scroll_command_cmd(i, -1, arg),
         f => i.apply(f, vec![arg.clone()]),
     };
-    let _ = f_select_window(i, vec![Value::Window(sel)].into());
+    let _ = f_select_window(i, vec![Value::Window(sel), Value::t()].into());
     i.set_current_buffer(old_buf);
     run
 }
@@ -5060,18 +5130,59 @@ fn f_frame_list(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     ))
 }
 fn f_delete_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU Fdelete_frame:
-    // decode_any_frame (framep) runs before the sole-frame check.
     let f = frame_any(i, &arg(&a, 0))?;
+    if f.borrow().dead {
+        return Ok(Value::Nil);
+    }
     if i.frames.iter().filter(|x| !x.borrow().dead).count() <= 1 {
         return Err(i.error("Attempt to delete the sole visible or iconified frame"));
     }
-    f.borrow_mut().dead = true;
+    if sel_frame(i).is_some_and(|selected| Rc::ptr_eq(&selected, &f)) {
+        let replacement = i
+            .frames
+            .iter()
+            .filter(|other| !Rc::ptr_eq(other, &f) && !other.borrow().dead)
+            .max_by_key(|other| other.borrow().selected.borrow().use_time)
+            .cloned()
+            .unwrap();
+        let window = replacement.borrow().selected.clone();
+        f_select_window(i, vec![Value::Window(window)].into())?;
+    }
+    {
+        let mut f = f.borrow_mut();
+        if let Some(root) = &f.root {
+            mark_tree_dead(root);
+        }
+        for w in f.windows.iter().chain(f.minibuffer.iter()) {
+            w.borrow_mut().dead = true;
+        }
+        f.windows.clear();
+        f.root = None;
+        f.minibuffer = None;
+        f.old_selected = None;
+        f.buffer_list.clear();
+        f.buried_buffer_list.clear();
+        f.dead = true;
+    }
+    i.frames.retain(|other| !Rc::ptr_eq(other, &f));
     Ok(Value::Nil)
 }
+
 fn f_frame_parameter(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let f = frame_of(i, &arg(&a, 0))?;
     let ps = want_sym(i, &a[1])?;
+    let name = i.symbol_name(ps);
+    if name == "buffer-list" || name == "buried-buffer-list" {
+        let f = f.borrow();
+        let ids = if name == "buffer-list" {
+            &f.buffer_list
+        } else {
+            &f.buried_buffer_list
+        };
+        return Ok(Value::list(
+            ids.iter().filter_map(|id| i.buffer_value(*id)).collect(),
+        ));
+    }
     let v = crate::lisp::eval::plist_get(&f.borrow().params, ps);
     if !v.is_nil() {
         return Ok(v);
@@ -5100,17 +5211,13 @@ fn f_frame_parameter(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         "cursor-color" => Value::string("white"),
         "background-mode" => Value::Sym(i.intern("dark")),
         "display-type" => Value::Sym(i.intern("mono")),
-        "buffer-list" => Value::list(vec![
-            i.buffer_value(ff.windows.first().map(|w| w.borrow().buffer).unwrap_or(0))
-                .unwrap_or(Value::Nil),
-        ]),
-        "unsplittable" | "no-accept-focus" | "buried-buffer-list" => Value::Nil,
+        "unsplittable" | "no-accept-focus" => Value::Nil,
         _ => Value::Nil,
     })
 }
 pub(crate) fn f_frame_parameters(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let f = frame_of(i, &arg(&a, 0))?;
-    let (stored, name, w, h, mbuf, bufv) = {
+    let (stored, name, w, h, mbuf, buffers, buried) = {
         let ff = f.borrow();
         let items = ff.params.list_to_vec().unwrap_or_default();
         let mut stored = Vec::new();
@@ -5119,16 +5226,26 @@ pub(crate) fn f_frame_parameters(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
             stored.push(Value::cons(items[k].clone(), items[k + 1].clone()));
             k += 2;
         }
-        let bufv = i
-            .buffer_value(ff.windows.first().map(|w| w.borrow().buffer).unwrap_or(0))
-            .unwrap_or(Value::Nil);
+        let buffers = Value::list(
+            ff.buffer_list
+                .iter()
+                .filter_map(|id| i.buffer_value(*id))
+                .collect(),
+        );
+        let buried = Value::list(
+            ff.buried_buffer_list
+                .iter()
+                .filter_map(|id| i.buffer_value(*id))
+                .collect(),
+        );
         (
             stored,
             ff.name.clone(),
             ff.width,
             ff.height,
             ff.minibuffer.is_some(),
-            bufv,
+            buffers,
+            buried,
         )
     };
     // GNU's tty frame parameter list, in order.
@@ -5139,8 +5256,8 @@ pub(crate) fn f_frame_parameters(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
         ("visibility", Value::t()),
         ("tab-bar-lines", Value::Int(0)),
         ("menu-bar-lines", Value::Int(1)),
-        ("buried-buffer-list", Value::Nil),
-        ("buffer-list", Value::list(vec![bufv])),
+        ("buried-buffer-list", buried),
+        ("buffer-list", buffers),
         ("unsplittable", Value::Nil),
         ("modeline", Value::t()),
         ("width", Value::Int(w as i128)),
@@ -5185,6 +5302,35 @@ pub(crate) fn f_frame_parameters(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
     }
     Ok(Value::list(out))
 }
+fn store_frame_parameter(i: &Interp, f: &FrameRef, ps: SymId, value: Value) {
+    let name = i.symbol_name(ps);
+    if name == "buffer-list" || name == "buried-buffer-list" {
+        let mut ids = Vec::new();
+        let mut tail = value;
+        while let Value::Cons(c) = tail {
+            let (head, rest) = {
+                let c = c.borrow();
+                (c.car.clone(), c.cdr.clone())
+            };
+            if let Value::Buffer(b) = head {
+                let b = b.borrow();
+                if b.live {
+                    ids.push(b.id);
+                }
+            }
+            tail = rest;
+        }
+        if name == "buffer-list" {
+            f.borrow_mut().buffer_list = ids;
+        } else {
+            f.borrow_mut().buried_buffer_list = ids;
+        }
+    } else {
+        let new = crate::lisp::eval::plist_put(&f.borrow().params, ps, value);
+        f.borrow_mut().params = new;
+    }
+}
+
 fn f_modify_frame_parameters(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let f = frame_live(i, &arg(&a, 0))?;
     let alist = a[1].list_to_vec().unwrap_or_default();
@@ -5195,8 +5341,7 @@ fn f_modify_frame_parameters(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
                 (b.car.clone(), b.cdr.clone())
             };
             if let Some(ps) = i.sym_id(&k) {
-                let new = crate::lisp::eval::plist_put(&f.borrow().params, ps, v);
-                f.borrow_mut().params = new;
+                store_frame_parameter(i, &f, ps, v);
             }
         }
     }
@@ -5205,17 +5350,23 @@ fn f_modify_frame_parameters(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
 fn f_set_frame_parameter(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let f = frame_live(i, &arg(&a, 0))?;
     let ps = want_sym(i, &a[1])?;
-    let new = crate::lisp::eval::plist_put(&f.borrow().params, ps, a[2].clone());
-    f.borrow_mut().params = new;
+    store_frame_parameter(i, &f, ps, a[2].clone());
     Ok(Value::Nil)
 }
 
 fn f_set_frame_selected_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let f = frame_live(i, &arg(&a, 0))?;
-    let w = win_of(i, &a[1])?;
+    let w = win_live_req(i, &a[1])?;
+    if !frame_of_window(i, &w).is_some_and(|wf| Rc::ptr_eq(&wf, &f)) {
+        return Err(i.error("In `set-frame-selected-window', WINDOW is not on FRAME"));
+    }
+    if sel_frame(i).is_some_and(|sf| Rc::ptr_eq(&sf, &f)) {
+        return f_select_window(i, vec![a[1].clone(), arg(&a, 2)].into());
+    }
     f.borrow_mut().selected = w;
     Ok(a[1].clone())
 }
+
 fn f_frame_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let f = frame_of(i, &arg(&a, 0))?;
     Ok(Value::Int(f.borrow().width as i128))
@@ -5273,35 +5424,21 @@ fn f_make_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_select_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU Fselect_frame checks LIVE_FRAME_P on the arg BEFORE
-    // defaulting — nil doesn't mean the selected frame here
-    // (decode_any_frame's `FRAME = Fselected_frame ()' needs a real
-    // frame object: `(select-frame nil)' → frame-live-p error).
     if matches!(arg(&a, 0), Value::Nil) {
         return Err(i.wrong_type_mut("frame-live-p", &a[0]));
     }
     let f = frame_live(i, &arg(&a, 0))?;
-    // GNU `do_switch_frame' records the frame's previous selected
-    // window into `old_selected_window' before switching.
-    {
-        let prev = f.borrow().selected.clone();
-        f.borrow_mut().old_selected = Some(prev);
+    if !sel_frame(i).is_some_and(|selected| Rc::ptr_eq(&selected, &f)) {
+        let w = f.borrow().selected.clone();
+        f_select_window(i, vec![Value::Window(w), arg(&a, 1)].into())?;
     }
-    i.selected_frame = Some(f);
     Ok(a[0].clone())
 }
 
 fn f_handle_switch_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU requires a frame argument.
     match &a[0] {
-        Value::Frame(f) => {
-            // `do_switch_frame' bookkeeping (old_selected_window).
-            if !f.borrow().dead {
-                let prev = f.borrow().selected.clone();
-                f.borrow_mut().old_selected = Some(prev);
-            }
-            Ok(Value::Nil)
-        }
+        Value::Frame(f) if f.borrow().dead => Ok(Value::Nil),
+        Value::Frame(_) => f_select_frame(i, a),
         other => Err(i.wrong_type_mut("framep", other)),
     }
 }
@@ -20536,12 +20673,13 @@ fn f_switch_to_buffer_other_window(i: &mut Interp, a: crate::lisp::Argv) -> Eval
             _ => sel.clone(),
         }
     };
-    target.borrow_mut().buffer = bid;
-    record_buffer_display(i, bid);
-    f.borrow_mut().selected = target.clone();
-    i.set_current_buffer(bid);
-    i.buffers.touch(bid);
-    Ok(i.buffer_value(bid).unwrap_or(Value::Nil))
+    let buffer = i.buffer_value(bid).unwrap_or(Value::Nil);
+    f_set_window_buffer(
+        i,
+        vec![Value::Window(target.clone()), buffer.clone()].into(),
+    )?;
+    f_select_window(i, vec![Value::Window(target), arg(&a, 1)].into())?;
+    Ok(buffer)
 }
 
 fn f_switch_to_buffer_other_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -20597,6 +20735,8 @@ fn f_quit_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
         }
     }
+    // The replacement policy may already have deleted a dedicated window.
+    if w.borrow().dead { return Ok(Value::from_bool(kill)); }
     let f = sel_frame(i).ok_or_else(|| i.error("No frame"))?;
     // GNU counts only *ordinary* windows: the minibuffer window never
     // makes this "one of many", so a lone text window quits in place.
@@ -20644,7 +20784,8 @@ fn f_quit_restore_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_err_live(i, &arg(&a, 0))?;
     let bok = arg(&a, 1);
     let bok_name = i.sym_id(&bok).map(|s| i.symbol_name(s)).unwrap_or_default();
-    let kill = bok.truthy() && bok_name != "bury" && bok_name != "append";
+    // `killing' means kill-buffer will perform teardown after this call.
+    let kill = bok.truthy() && !matches!(bok_name.as_str(), "bury" | "append" | "killing");
     f_quit_window(i, vec![Value::from_bool(kill), Value::Window(w)].into())?;
     // GNU Fquit_restore_window (window.c) returns Qnil unconditionally —
     // unlike `quit-window', the kill/bury outcome isn't the return value.
@@ -20662,35 +20803,16 @@ fn f_kill_buffer_and_window(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult
     if live <= 1 {
         return Err(i.error("Attempt to delete minibuffer or sole ordinary window"));
     }
+    let original_window = f.borrow().selected.clone();
     let bid = i.current_buffer;
     crate::buffer::primitives::kill_buffer_keep_current(i, bid)?;
-    f_delete_window(i, vec![Value::Nil].into())?;
+    if !original_window.borrow().dead {
+        f_delete_window(i, vec![Value::Window(original_window)].into())?;
+    }
     let next = crate::buffer::primitives::other_buffer_visible(i, bid)
         .or_else(|| i.buffers.list().first().copied())
         .unwrap_or_else(|| i.create_buffer("*scratch*"));
     i.set_current_buffer(next);
-    Ok(Value::Nil)
-}
-
-fn f_replace_buffer_in_windows(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let bid = match arg(&a, 0) {
-        Value::Nil => i.current_buffer,
-        v => match i.buffer_id_of(&v) {
-            Some(id) => id,
-            None => return Err(i.error("No such buffer")),
-        },
-    };
-    let other = crate::buffer::primitives::other_buffer_visible(i, bid).unwrap_or(bid);
-    let f = sel_frame(i).ok_or_else(|| i.error("No frame"))?;
-    for w in &f.borrow().windows {
-        if w.borrow().buffer == bid && !w.borrow().dead {
-            w.borrow_mut().buffer = other;
-            record_buffer_display(i, other);
-        }
-    }
-    if i.current_buffer == bid && bid != other {
-        i.set_current_buffer(other);
-    }
     Ok(Value::Nil)
 }
 

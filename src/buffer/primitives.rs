@@ -115,25 +115,11 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Rename current buffer."
     ),
     S!(
-        "bury-buffer",
-        0,
-        1,
-        f_bury_buffer,
-        "Move BUFFER to the end of the list."
-    ),
-    S!(
         "bury-buffer-internal",
         1,
         1,
         f_bury_buffer_internal,
         "Move BUFFER-OR-NAME to the end of the buffer list."
-    ),
-    S!(
-        "unbury-buffer",
-        0,
-        0,
-        f_unbury_buffer,
-        "Last buffer in the list."
     ),
     S!(
         "buffer-size",
@@ -553,7 +539,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_looking_back,
         "Match regexp before point."
     ),
-    S!("last-buffer", 0, 3, f_last_buffer, "Last buffer in order."),
     // --- insertion & deletion ---
     S!("insert", many 0, f_insert, "Insert args (strings/chars) at point."),
     S!("insert-and-inherit", many 0, f_insert_and_inherit, "Insert with inherited props."),
@@ -2644,17 +2629,22 @@ fn f_buffer_live_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// GNU `run_buffer_list_update_hook': run `buffer-list-update-hook'
 /// unless the buffer was created with INHIBIT-BUFFER-HOOKS.
 pub(crate) fn run_buffer_list_update(i: &mut Interp, id: usize) {
+    let _ = run_buffer_list_update_checked(i, id);
+}
+
+pub(crate) fn run_buffer_list_update_checked(i: &mut Interp, id: usize) -> Result<(), Flow> {
     let inhibited = i
         .buffers
         .get(id)
         .map(|b| b.borrow().inhibit_buffer_hooks)
         .unwrap_or(true);
     if inhibited {
-        return;
+        return Ok(());
     }
     let h = i.intern("buffer-list-update-hook");
     let rh = i.intern("run-hooks");
-    let _ = i.apply(&Value::Sym(rh), vec![Value::Sym(h)]);
+    i.apply(&Value::Sym(rh), vec![Value::Sym(h)])?;
+    Ok(())
 }
 
 /// Teardown shared by `kill-buffer' and child kills: unlock the file
@@ -2673,24 +2663,19 @@ fn kill_buffer_teardown(i: &mut Interp, id: usize) -> bool {
     if !killed {
         return false;
     }
-    // GNU kill_buffer calls replace_buffer_in_windows: every window
-    // still showing the dead buffer switches to its own prev-buffers
-    // history first, then `other-buffer' (per-window choice, GNU's
-    // replace_buffer_in_windows loop).
-    let fallback = other_buffer_visible(i, id)
-        .or_else(|| i.buffers.list().first().copied())
+    crate::editor::forget_buffer_history(i, id);
+    // After unlinking, the emergency fallback is predicate-free (GNU's
+    // other_buffer_safely).  No callback sees a window referring to a dead id.
+    let fallback = i
+        .buffers
+        .other(id)
         .unwrap_or_else(|| i.create_buffer("*scratch*"));
-    let mut sel_next: Option<usize> = None;
-    for f in i.frames.clone() {
-        let sel = f.borrow().selected.borrow().id;
-        for w in &f.borrow().windows {
-            if !w.borrow().dead && !w.borrow().minibuffer && w.borrow().buffer == id {
-                let pick = window_prev_live(i, w, id).unwrap_or(fallback);
-                w.borrow_mut().buffer = pick;
-                crate::editor::record_buffer_display(i, pick);
-                if w.borrow().id == sel {
-                    sel_next = Some(pick);
-                }
+    // Repair windows left behind by unusual callbacks without invoking Lisp.
+    for frame in i.frames.clone() {
+        for window in frame.borrow().windows.clone() {
+            if !window.borrow().dead && window.borrow().buffer == id {
+                window.borrow_mut().buffer = fallback;
+                crate::editor::record_buffer_display(i, fallback);
             }
         }
     }
@@ -2742,7 +2727,7 @@ fn kill_buffer_teardown(i: &mut Interp, id: usize) -> bool {
     if i.current_buffer == id {
         // GNU set_buffer_internal in quit/kill paths: the selected
         // window's replacement buffer becomes current.
-        i.set_current_buffer(sel_next.unwrap_or(fallback));
+        i.set_current_buffer(fallback);
     }
     run_buffer_list_update(i, id);
     true
@@ -2862,8 +2847,23 @@ fn kill_buffer_impl(i: &mut Interp, id: usize) -> Result<bool, Flow> {
         }
         return Ok(false);
     }
+    // GNU calls the Lisp window policy while BUFFER is still live.  During
+    // loadup that policy is not defined yet; our folded prelude defines its
+    // cell before subr-x has installed the window helpers, so defer it until
+    // boot completes.  Callback-free teardown remains available during boot.
+    let replace = i.intern("replace-buffer-in-windows");
+    if !i.boot_loading && i.fbound_p(replace) {
+        let victim = i.buffer_value(id).unwrap_or(Value::Nil);
+        i.apply(&Value::Sym(replace), vec![victim])?;
+    }
+    if !i.buffer_live(id) {
+        return Ok(true);
+    }
     if i.current_buffer == id {
-        let other = other_buffer_visible(i, id)
+        let victim = i.buffer_value(id).unwrap_or(Value::Nil);
+        let replacement = f_other_buffer(i, vec![victim, Value::Nil, Value::Nil].into())?;
+        let other = i
+            .buffer_id_of(&replacement)
             .or_else(|| i.buffers.other(id))
             .unwrap_or_else(|| i.create_buffer("*scratch*"));
         i.set_current_buffer(other);
@@ -2899,10 +2899,21 @@ fn f_kill_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(kill_buffer_impl(i, id)?))
 }
 
-fn f_buffer_list(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    let ids = i.buffers.list();
+fn f_buffer_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let mut ids = i.buffers.list();
+    // GNU accepts every non-frame argument as a request for the global list.
+    if let Value::Frame(f) = arg(&a, 0) {
+        let frame = f.borrow();
+        let visited = frame.buffer_list.clone();
+        let buried = frame.buried_buffer_list.clone();
+        ids.retain(|id| !visited.contains(id) && !buried.contains(id));
+        ids.splice(0..0, visited);
+        ids.extend(buried.into_iter().rev());
+    }
     Ok(Value::list(
-        ids.iter().filter_map(|id| i.buffer_value(*id)).collect(),
+        ids.into_iter()
+            .filter_map(|id| i.buffer_value(id))
+            .collect(),
     ))
 }
 
@@ -2944,27 +2955,66 @@ pub(crate) fn other_buffer_visible(i: &Interp, exclude: usize) -> Option<usize> 
 }
 
 fn f_other_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU Fother_buffer
-    // (BUFFER VISIBLE-OK FRAME): ignored BUFFER unless live; FRAME goes
-    // through decode_live_frame — a string/int signals frame-live-p.
-    match arg(&a, 2) {
-        Value::Nil | Value::Frame(_) => {}
-        other => return Err(i.wrong_type_mut("frame-live-p", &other)),
-    }
+    let frame = crate::editor::frame_live(i, &arg(&a, 2))?;
     let visible_ok = arg(&a, 1).truthy();
-    // GNU: BUFFER nil means NO exclusion (not the current buffer).
-    let exclude = a
-        .get(0)
-        .and_then(|v| i.buffer_id_of(v))
-        .unwrap_or(usize::MAX);
-    let pick = if visible_ok {
-        i.buffers.other(exclude)
-    } else {
-        other_buffer_visible(i, exclude)
+    // BUFFER is compared by identity: a name string is not an exclusion.
+    let exclude = match arg(&a, 0) {
+        Value::Buffer(b) if b.borrow().live => Some(b.borrow().id),
+        _ => None,
     };
-    match pick {
-        Some(id) => Ok(i.buffer_value(id).unwrap_or(Value::Nil)),
-        None => Ok(Value::Nil),
+    let predsym = i.intern("buffer-predicate");
+    let pred = crate::lisp::eval::plist_get(&frame.borrow().params, predsym);
+    let mut visible_fallback = None;
+    for frame_pass in [true, false] {
+        // A frame predicate can create buffers; obtain the global list only
+        // after the frame-local pass, as GNU does.
+        let candidates = if frame_pass {
+            frame.borrow().buffer_list.clone()
+        } else {
+            i.buffers.list()
+        };
+        for id in candidates {
+            let Some(buffer) = i.buffers.get(id) else {
+                continue;
+            };
+            if Some(id) == exclude || buffer.borrow().name.starts_with(' ') {
+                continue;
+            }
+            let value = Value::Buffer(buffer.clone());
+            if pred.truthy() && !i.apply(&pred, vec![value.clone()])?.truthy() {
+                continue;
+            }
+            // A predicate can kill the buffer while examining it.
+            if !buffer.borrow().live {
+                continue;
+            }
+            let shown = if visible_ok {
+                false
+            } else {
+                let visible = i.intern("visible");
+                crate::editor::f_get_buffer_window(
+                    i,
+                    vec![value.clone(), Value::Sym(visible)].into(),
+                )?
+                .truthy()
+            };
+            if !shown {
+                return Ok(value);
+            }
+            if visible_fallback.is_none() {
+                visible_fallback = Some(value);
+            }
+        }
+    }
+    if let Some(value) = visible_fallback {
+        return Ok(value);
+    }
+    let scratch = i.intern("get-scratch-buffer-create");
+    // GNU safe_call catches conditions, but not throws to an outer catch.
+    match i.apply(&Value::Sym(scratch), vec![]) {
+        Ok(value) => Ok(value),
+        Err(Flow::Signal(..) | Flow::Quit) => Ok(Value::Nil),
+        Err(flow) => Err(flow),
     }
 }
 
@@ -3036,59 +3086,6 @@ fn f_rename_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::string(actual))
 }
 
-fn f_bury_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU window.el `bury-buffer': bury-buffer-internal the target,
-    // then — only when called with no arg AND the buffer is shown in
-    // the selected window — (window--delete nil t), else
-    // (switch-to-prev-buffer nil 'bury).  Batch windows can't be
-    // deleted (window--delete fails on the last window), so the
-    // switch always runs: prev_buffers first, `other-buffer'
-    // fallback — GNU's replace_buffer_in_windows_safely/switch path.
-    let (id, explicit) = match a.get(0) {
-        Some(v) if v.truthy() => (
-            // GNU window-normalize-buffer: a string naming no live
-            // buffer or a dead buffer is "No such live buffer %s";
-            // other objects are "No such buffer %s".
-            match v {
-                Value::Buffer(b) => {
-                    let id = b.borrow().id;
-                    if !i.buffer_live(id) {
-                        return Err(
-                            i.error(format!("No such live buffer {}", i.princ_to_string(v)))
-                        );
-                    }
-                    id
-                }
-                Value::Str(s) => match i.buffers.by_name(&s.borrow()) {
-                    Some(id) => id,
-                    None => return Err(i.error(format!("No such live buffer {}", s.borrow()))),
-                },
-                other => {
-                    return Err(i.error(format!("No such buffer {}", i.princ_to_string(other))));
-                }
-            },
-            true,
-        ),
-        _ => (i.current_buffer, false),
-    };
-    i.buffers.bury(id);
-    // GNU bury-buffer-internal runs `buffer-list-update-hook'.
-    run_buffer_list_update(i, id);
-    if !explicit {
-        let shown = crate::editor::sel_window(i)
-            .map(|w| w.borrow().buffer == id)
-            .unwrap_or(id == i.current_buffer);
-        if shown {
-            if let Some(other) = other_buffer_visible(i, id) {
-                let target = i.buffer_value(other).unwrap_or(Value::Nil);
-                let _ = crate::editor::f_set_window_buffer(i, vec![Value::Nil, target].into());
-                i.set_current_buffer(other);
-            }
-        }
-    }
-    Ok(Value::Nil)
-}
-
 fn f_bury_buffer_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU CHECK_BUFFER: a buffer object, not a name — killed buffers
     // still qualify (bury is a no-op for them).
@@ -3098,54 +3095,10 @@ fn f_bury_buffer_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     if i.buffer_live(id) {
         i.buffers.bury(id);
-        run_buffer_list_update(i, id);
+        crate::editor::bury_buffer_history(i, id);
+        run_buffer_list_update_checked(i, id)?;
     }
     Ok(Value::Nil)
-}
-
-fn f_unbury_buffer(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    // GNU window.el: (switch-to-buffer (last-buffer)) where
-    // `last-buffer' scans the reversed buffer list through
-    // `get-next-valid-buffer': first live buffer whose name does not
-    // start with a space, that is not the current buffer, and (unless
-    // VISIBLE-OK) is not shown in any window.  The pick becomes
-    // current and is shown in the selected window (which re-touches
-    // it to the front).  With no candidate GNU falls back to
-    // `get-scratch-buffer-create'.
-    let cur = i.current_buffer;
-    let win_buf = i
-        .frames
-        .iter()
-        .flat_map(|f| f.borrow().windows.iter().cloned().collect::<Vec<_>>())
-        .map(|w| w.borrow().buffer)
-        .collect::<Vec<_>>();
-    let pick = i
-        .buffers
-        .order
-        .iter()
-        .rev()
-        .copied()
-        .find(|&id| {
-            if id == cur || win_buf.contains(&id) {
-                return false;
-            }
-            i.buffers
-                .get(id)
-                .map(|b| {
-                    let bb = b.borrow();
-                    bb.live && !bb.name.starts_with(' ')
-                })
-                .unwrap_or(false)
-        });
-    match pick {
-        Some(id) => {
-            let target = i.buffer_value(id).unwrap_or(Value::Nil);
-            let _ = crate::editor::f_set_window_buffer(i, vec![Value::Nil, target].into());
-            i.set_current_buffer(id);
-            Ok(i.buffer_value(id).unwrap_or(Value::Nil))
-        }
-        None => Ok(Value::Nil),
-    }
 }
 
 fn f_buffer_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -3477,7 +3430,6 @@ fn f_set_buffer_major_mode(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     res?;
     Ok(Value::Nil)
 }
-
 
 /// GNU buffer.h slot order, reversed by Fbuffer_local_variables.
 /// These slots are local even before Lisp creates a local binding.
@@ -6534,41 +6486,6 @@ fn f_looking_back(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
     }
     Ok(Value::Nil)
-}
-
-fn f_last_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU Fother_buffer(skip=BUFFER, visible_ok=VISIBLE-OK, last=t):
-    // last live buffer whose name does not start with a space, unless
-    // VISIBLE-OK is non-nil.  A non-nil non-deleted BUFFER is excluded.
-    let exclude = match a.first() {
-        None | Some(Value::Nil) => None,
-        Some(v) => i.buffer_id_of(v),
-    };
-    let visible_ok = a.get(1).map(|v| v.truthy()).unwrap_or(false);
-    // GNU Fother_buffer: the third arg is a FRAME — decode_valid_frame
-    // signals `(framep ARG)' on non-frames.
-    if let Some(v) = a.get(2) {
-        match v {
-            Value::Nil | Value::Frame(_) => {}
-            other => return Err(i.wrong_type_mut("framep", other)),
-        }
-    }
-    let id = i.buffers.order.iter().rev().copied().find(|&id| {
-        if Some(id) == exclude {
-            return false;
-        }
-        i.buffers
-            .get(id)
-            .map(|b| {
-                let bb = b.borrow();
-                bb.live && (visible_ok || !bb.name.starts_with(' '))
-            })
-            .unwrap_or(false)
-    });
-    match id {
-        Some(id) => Ok(i.buffer_value(id).unwrap_or(Value::Nil)),
-        None => Ok(Value::Nil),
-    }
 }
 
 // ---------- insertion & deletion ----------

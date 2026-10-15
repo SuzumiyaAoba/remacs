@@ -59,6 +59,7 @@ qa!(qa_array, "qa_array.el");
 qa!(qa_backquote, "qa_backquote.el");
 qa!(qa_backup, "qa_backup.el");
 qa!(qa_buffer, "qa_buffer.el");
+qa!(qa_buffer_history, "qa_buffer_history.el");
 qa!(qa_before_markers, "qa_before_markers.el");
 qa!(qa_float_output, "qa_float_output.el");
 qa!(qa_process_defaults, "qa_process_defaults.el");
@@ -210,7 +211,10 @@ qa!(qa_system, "qa_system.el");
 qa!(qa_tablist, "qa_tablist.el");
 qa!(qa_textprops, "qa_textprops.el");
 qa!(qa_object_intervals, "qa_object_intervals.el");
-qa!(qa_property_argument_checks, "qa_property_argument_checks.el");
+qa!(
+    qa_property_argument_checks,
+    "qa_property_argument_checks.el"
+);
 qa!(qa_thing, "qa_thing.el");
 qa!(qa_thing2, "qa_thing2.el");
 qa!(qa_diffface, "qa_diffface.el");
@@ -248,3 +252,48 @@ qa!(qa_split_window_limits, "qa_split_window_limits.el");
 qa!(qa_buffer_string_flags, "qa_buffer_string_flags.el");
 
 qa!(qa_unreadable_callable, "qa_unreadable_callable.el");
+
+// Remacs-only logical frame lifecycle; GNU batch cannot create extra frames.
+#[test]
+fn qa_buffer_history_frames() {
+    std::thread::Builder::new().stack_size(64 << 20).spawn(|| {
+        let mut i = remacs::lisp::Interp::new();
+        i.noninteractive = false;
+        let source = r#"
+(progn
+ (setq qf-one (selected-frame)
+       qf-a (get-buffer-create "qf-a")
+       qf-b (get-buffer-create "qf-b"))
+ (switch-to-buffer qf-a)
+ (setq qf-two (make-frame) qf-two-window (frame-selected-window qf-two))
+ (select-frame qf-two t)
+ (switch-to-buffer qf-b)
+ (unless (eq (car (frame-parameter qf-two 'buffer-list)) qf-b) (error "second history"))
+ (unless (eq (car (frame-parameter qf-one 'buffer-list)) qf-a) (error "first history"))
+ (select-frame qf-one t)
+ (bury-buffer qf-b)
+ (unless (eq (car (frame-parameter qf-one 'buried-buffer-list)) qf-b) (error "buried first"))
+ (unless (eq (car (frame-parameter qf-two 'buffer-list)) qf-b) (error "burial leaked"))
+ (kill-buffer qf-b)
+ (when (memq qf-b (frame-parameter qf-one 'buried-buffer-list)) (error "kill buried cleanup"))
+ (when (memq qf-b (frame-parameter qf-two 'buffer-list)) (error "kill visited cleanup"))
+ (delete-frame qf-two)
+ (when (frame-live-p qf-two) (error "dead frame live"))
+ (when (window-live-p qf-two-window) (error "dead frame window live"))
+ (when (frame-parameter qf-two 'buffer-list) (error "dead frame history"))
+ (unless (condition-case nil (progn (other-buffer nil nil qf-two) nil) (wrong-type-argument t)) (error "dead frame accepted"))
+ (setq qf-two (make-frame))
+ (select-frame qf-two)
+ (delete-frame qf-two)
+ (unless (eq (selected-frame) qf-one) (error "selected deletion replacement"))
+ (unless (eq (current-buffer) (window-buffer)) (error "selected deletion buffer"))
+ (unless (condition-case nil (progn (delete-frame qf-one) nil) (error t)) (error "last frame deleted"))
+ 'ok)
+"#;
+        let result = i.eval_str(source);
+        match result {
+            Ok(v) => assert_eq!(i.prin1_to_string(&v), "ok"),
+            Err(_) => panic!("frame lifecycle assertion failed"),
+        }
+    }).unwrap().join().unwrap();
+}
