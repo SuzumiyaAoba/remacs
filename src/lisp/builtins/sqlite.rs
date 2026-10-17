@@ -4,13 +4,13 @@
 //! we use Records so `type-of' reports `sqlite' for both:
 //!   #s(sqlite db  ID)   open or closed database handle
 //!   #s(sqlite set ID)   result set from (sqlite-select ... 'set)
-//! Ids index per-thread registries; forged #s records whose ids are not
-//! registered fail `sqlitep', so they can't reach the real tables.
+//! Ids index per-thread registries, which also retain the original record
+//! identity. Forged or copied records cannot impersonate a registered handle.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ffi::CStr;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use rusqlite::{Connection, OpenFlags, ffi};
 
@@ -20,6 +20,7 @@ use crate::lisp::value::{Subr, Value, eight_bit_byte};
 use crate::lisp::{EvalResult, Interp};
 
 struct Set {
+    object: Weak<RefCell<Vec<Value>>>,
     statement: Option<Statement>,
     /// Only stepping past the last row sets EOF; metadata access never steps.
     more: bool,
@@ -177,6 +178,7 @@ enum SVal {
 }
 
 struct DbEntry {
+    object: Weak<RefCell<Vec<Value>>>,
     conn: Option<Rc<Connection>>,
 }
 
@@ -251,29 +253,62 @@ fn sql_err(i: &mut Interp, e: SqlError, execute: bool) -> Flow {
     }
 }
 
-/// Parse #s(sqlite <kind-sym> <id>); the kind symbol id is compared by name
-/// so callers see "db" / "set".
-fn handle(v: &Value, kind: &str, i: &mut Interp) -> Option<u64> {
-    let (tag, k, id) = match v {
-        Value::Record(r) => {
-            let rr = r.borrow();
-            match rr.as_slice() {
-                [Value::Sym(t), Value::Sym(k), Value::Int(id)] => (*t, *k, *id),
-                _ => return None,
-            }
-        }
-        _ => return None,
-    };
-    if tag != i.intern("sqlite") || i.symbol_name(k) != kind {
-        return None;
-    }
-    u64::try_from(id).ok()
+/// An authenticated object and its native lifecycle, independent of other
+/// arguments. Closed objects retain their SQLite type, just as GNU does.
+enum Handle {
+    Db { id: u64, open: bool },
+    Set { id: u64, open: bool },
 }
 
-/// Registered `sqlite' object of the wanted kind → id, else wrong-type.
+/// Authenticate both the record layout and its allocation identity. The ID
+/// alone is public Lisp data, not proof that sqlite-open/select created it.
+/// A weak reference avoids keeping the Lisp object alive and prevents a later
+/// allocation at the same address from being mistaken for the original.
+fn handle(v: &Value, i: &mut Interp) -> Option<Handle> {
+    let Value::Record(object) = v else {
+        return None;
+    };
+    let (tag, kind, id) = match object.borrow().as_slice() {
+        [Value::Sym(tag), Value::Sym(kind), Value::Int(id)] => (*tag, *kind, *id),
+        _ => return None,
+    };
+    if tag != i.intern("sqlite") {
+        return None;
+    }
+    let id = u64::try_from(id).ok()?;
+    let object = Rc::downgrade(object);
+    match i.symbol_name(kind).as_str() {
+        "db" => DBS.with(|dbs| {
+            dbs.borrow().get(&id).and_then(|entry| {
+                entry.object.ptr_eq(&object).then_some(Handle::Db {
+                    id,
+                    open: entry.conn.is_some(),
+                })
+            })
+        }),
+        "set" => SETS.with(|sets| {
+            sets.borrow().get(&id).and_then(|entry| {
+                entry.object.ptr_eq(&object).then_some(Handle::Set {
+                    id,
+                    open: entry.statement.is_some(),
+                })
+            })
+        }),
+        _ => None,
+    }
+}
+
+/// GNU checks identity, kind, and liveness before SQL or other arguments.
 fn want_db_id(i: &mut Interp, v: &Value) -> Result<u64, Flow> {
-    match handle(v, "db", i) {
-        Some(id) => Ok(id),
+    match handle(v, i) {
+        Some(Handle::Db { id, open: true }) => Ok(id),
+        Some(Handle::Db { open: false, .. }) => {
+            Err(sqlite_err(i, vec![Value::string("Database closed")].into()))
+        }
+        Some(Handle::Set { .. }) => Err(sqlite_err(
+            i,
+            vec![Value::string("Invalid database object")].into(),
+        )),
         None => Err(i.wrong_type_mut("sqlitep", v)),
     }
 }
@@ -284,17 +319,9 @@ fn connection(i: &mut Interp, id: u64) -> Result<Rc<Connection>, Flow> {
         .ok_or_else(|| sqlite_err(i, vec![Value::string("Database closed")].into()))
 }
 
-/// t if OBJECT is a registered sqlite record (db or set).
+/// t for genuine SQLite objects, including closed databases and sets.
 fn is_sqlite(i: &mut Interp, v: &Value) -> bool {
-    if let Some(id) = handle(v, "db", i) {
-        if DBS.with(|d| d.borrow().contains_key(&id)) {
-            return true;
-        }
-    }
-    if let Some(id) = handle(v, "set", i) {
-        return SETS.with(|s| s.borrow().contains_key(&id));
-    }
-    false
+    handle(v, i).is_some()
 }
 
 /// Registered live set → mutable access via closure.
@@ -303,42 +330,38 @@ fn with_set<R>(
     v: &Value,
     f: impl FnOnce(&mut Set) -> Result<R, Flow>,
 ) -> Result<R, Flow> {
-    match handle(v, "set", i) {
-        Some(id) => SETS.with(|s| match s.borrow_mut().get_mut(&id) {
-            Some(set) if set.statement.is_some() => f(set),
-            _ => Err(sqlite_err(
-                i,
-                vec![Value::string("Invalid set object")].into(),
-            )),
+    match handle(v, i) {
+        Some(Handle::Set { id, open: true }) => SETS.with(|sets| {
+            // No Lisp callback can change the registry between validation and
+            // this borrow; the closure only accesses native statement state.
+            f(sets.borrow_mut().get_mut(&id).unwrap())
         }),
-        None => {
-            if is_sqlite(i, v) {
-                // A db (or dead set) is an sqlite object but not a set.
-                Err(sqlite_err(
-                    i,
-                    vec![Value::string("Invalid set object")].into(),
-                ))
-            } else {
-                Err(i.wrong_type_mut("sqlitep", v))
-            }
-        }
+        Some(Handle::Set { open: false, .. }) => Err(sqlite_err(
+            i,
+            vec![Value::string("Statement closed")].into(),
+        )),
+        Some(Handle::Db { .. }) => Err(sqlite_err(
+            i,
+            vec![Value::string("Invalid set object")].into(),
+        )),
+        None => Err(i.wrong_type_mut("sqlitep", v)),
     }
 }
 
-fn make_db_record(i: &mut Interp, id: u64) -> Value {
-    Value::Record(Rc::new(RefCell::new(vec![
+fn make_db_record(i: &mut Interp, id: u64) -> Rc<RefCell<Vec<Value>>> {
+    Rc::new(RefCell::new(vec![
         Value::Sym(i.intern("sqlite")),
         Value::Sym(i.intern("db")),
         Value::Int(id as i128),
-    ])))
+    ]))
 }
 
-fn make_set_record(i: &mut Interp, id: u64) -> Value {
-    Value::Record(Rc::new(RefCell::new(vec![
+fn make_set_record(i: &mut Interp, id: u64) -> Rc<RefCell<Vec<Value>>> {
+    Rc::new(RefCell::new(vec![
         Value::Sym(i.intern("sqlite")),
         Value::Sym(i.intern("set")),
         Value::Int(id as i128),
-    ])))
+    ]))
 }
 
 /// Lisp VALUE → sqlite bind value.
@@ -416,15 +439,17 @@ fn f_sqlite_open(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     match conn {
         Ok(c) => {
             let id = next_id();
+            let object = make_db_record(i, id);
             DBS.with(|d| {
                 d.borrow_mut().insert(
                     id,
                     DbEntry {
+                        object: Rc::downgrade(&object),
                         conn: Some(Rc::new(c)),
                     },
                 )
             });
-            Ok(make_db_record(i, id))
+            Ok(Value::Record(object))
         }
         // GNU returns nil when the database can't be opened.
         Err(_) => Ok(Value::Nil),
@@ -432,12 +457,20 @@ fn f_sqlite_open(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_sqlite_close(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let id = want_db_id(i, &a[0])?;
-    DBS.with(|d| {
-        if let Some(e) = d.borrow_mut().get_mut(&id) {
-            e.conn = None;
+    match handle(&a[0], i) {
+        // GNU's idempotent-close shortcut also accepts a finalized set.
+        Some(Handle::Db { open: false, .. } | Handle::Set { open: false, .. }) => {}
+        Some(Handle::Db { id, open: true }) => DBS.with(|dbs| {
+            dbs.borrow_mut().get_mut(&id).unwrap().conn = None;
+        }),
+        Some(Handle::Set { open: true, .. }) => {
+            return Err(sqlite_err(
+                i,
+                vec![Value::string("Invalid database object")].into(),
+            ));
         }
-    });
+        None => return Err(i.wrong_type_mut("sqlitep", &a[0])),
+    }
     Ok(Value::Sym(1))
 }
 
@@ -499,16 +532,18 @@ fn f_sqlite_select(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let mut statement = Statement::prepare(conn, &sql, &vals).map_err(|e| sql_err(i, e, false))?;
     if is_set {
         let sid = next_id();
+        let object = make_set_record(i, sid);
         SETS.with(|s| {
             s.borrow_mut().insert(
                 sid,
                 Set {
+                    object: Rc::downgrade(&object),
                     statement: Some(statement),
                     more: true,
                 },
             )
         });
-        return Ok(make_set_record(i, sid));
+        return Ok(Value::Record(object));
     }
     // GNU's eager select stops at any non-row result, including a step
     // failure, and returns the rows collected so far. Prepare/bind still fail.
