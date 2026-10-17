@@ -90,6 +90,7 @@ qa!(qa_clprint, "qa_clprint.el");
 qa!(qa_clseq, "qa_clseq.el");
 qa!(qa_clseq2, "qa_clseq2.el");
 qa!(qa_cmds, "qa_cmds.el");
+qa!(qa_whitespace_narrowing, "qa_whitespace_narrowing.el");
 qa!(qa_legacy_codecs, "qa_legacy_codecs.el");
 qa!(qa_coding, "qa_coding.el");
 qa!(qa_coding2, "qa_coding2.el");

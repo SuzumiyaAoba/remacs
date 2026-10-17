@@ -1508,27 +1508,12 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Kill N words backward."
     ),
     S!(
-        "delete-horizontal-space",
-        0,
-        1,
-        f_delete_horizontal_space,
-        "Delete surrounding whitespace."
-    ),
-    S!(
         "just-one-space",
         0,
         1,
         f_just_one_space,
         "One space around point."
     ),
-    S!(
-        "delete-indentation",
-        0,
-        3,
-        f_delete_indentation,
-        "Join this line to previous."
-    ),
-    S!("join-line", 0, 1, f_delete_indentation, ""),
     S!(
         "zap-to-char",
         2,
@@ -14554,27 +14539,6 @@ fn f_backward_kill_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_delete_horizontal_space(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let backward_only = arg(&a, 0).truthy();
-    let b = cur(i);
-    let bb = b.borrow_mut();
-    let p = bb.point();
-    let mut s = p;
-    let mut e = p;
-    while s > 0 && matches!(bb.text.char_at(s - 1), ' ' | '\t') {
-        s -= 1;
-    }
-    if !backward_only {
-        while e < bb.text.len() && matches!(bb.text.char_at(e), ' ' | '\t') {
-            e += 1;
-        }
-    }
-    drop(bb);
-    crate::buffer::primitives::chg_delete(i, s, e)?;
-    cur(i).borrow_mut().set_point(s);
-    Ok(Value::Nil)
-}
-
 fn f_just_one_space(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let n = arg(&a, 0).int().unwrap_or(1).max(0) as usize;
     let b = cur(i);
@@ -14849,70 +14813,6 @@ fn f_downcase_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 fn f_capitalize_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     word_op(i, &a, crate::lisp::builtins::strfn::CaseOp::Cap)
-}
-
-fn f_delete_indentation(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let b = cur(i);
-    let bb = b.borrow_mut();
-    let syn = syntax_table_entries(i);
-    let arg_follow = a.first().map(|v| v.truthy()).unwrap_or(false);
-    let p = bb.point();
-    let line = bb.text.line_of_pos(p);
-    // GNU: ARG non-nil joins the FOLLOWING line to this one; otherwise
-    // join current line to the previous.
-    let join_line = if arg_follow { line + 1 } else { line };
-    if join_line == 0 {
-        return Ok(Value::Nil);
-    }
-    let ls = bb.text.line_start(join_line);
-    if ls == 0 || (arg_follow && ls >= bb.text.len()) {
-        return Ok(Value::Nil);
-    }
-    // Delete the newline + leading whitespace of the joined line,
-    // plus trailing horizontal whitespace on the previous line.
-    let mut e = ls;
-    while e < bb.text.len() && matches!(bb.text.char_at(e), ' ' | '\t') {
-        e += 1;
-    }
-    let mut s = ls - 1; // the newline
-    while s > 0 && matches!(bb.text.char_at(s - 1), ' ' | '\t') && bb.text.char_at(s - 1) != '\n' {
-        s -= 1;
-    }
-    // fixup-whitespace: insert one space unless point lands at
-    // BOL/EOL/close-paren, or follows open-paren/expression-prefix.
-    let need_space = {
-        let at = if e < bb.text.len() {
-            Some(bb.text.char_at(e))
-        } else {
-            None
-        };
-        let before = if s > 0 {
-            Some(bb.text.char_at(s - 1))
-        } else {
-            None
-        };
-        let close = at
-            .map(|c| syntax_entry_code(syn.as_ref(), c) == b')')
-            .unwrap_or(false);
-        let opens = before
-            .map(|c| {
-                let k = syntax_entry_code(syn.as_ref(), c);
-                k == b'(' || k == b'\''
-            })
-            .unwrap_or(false);
-        !(close || opens || at.is_none() || before.is_none())
-    };
-    drop(bb);
-    crate::buffer::primitives::chg_delete(i, s, e)?;
-    {
-        let b = cur(i);
-        let mut bb = b.borrow_mut();
-        if need_space {
-            bb.raw_insert_at(s, " ");
-        }
-        bb.set_point(s + usize::from(need_space));
-    }
-    Ok(Value::Nil)
 }
 
 fn f_indent_line_to(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

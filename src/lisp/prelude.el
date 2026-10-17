@@ -2765,6 +2765,93 @@ HANDLE is as returned by `prepare-change-group'."
 
 ;; ---------- whitespace deletion / cycle-spacing (GNU simple.el) ----------
 
+;; Use the GNU commands so scans, point restoration, and edits all obey
+;; the accessible region and preserve surviving text properties/markers.
+(defun delete-indentation (&optional arg beg end)
+  "Join this line to previous and fix up whitespace at join.
+If there is a fill prefix, delete it from the beginning of this
+line.
+With prefix ARG, join the current line to the following line.
+When BEG and END are non-nil, join all lines in the region they
+define.  Interactively, BEG and END are, respectively, the start
+and end of the region if it is active, else nil.  (The region is
+ignored if prefix ARG is given.)"
+  (interactive
+   (progn (barf-if-buffer-read-only)
+          (cons current-prefix-arg
+                (and (use-region-p)
+                     (list (region-beginning) (region-end))))))
+  ;; Consistently deactivate mark even when no text is changed.
+  (setq deactivate-mark t)
+  (if (and beg (not arg))
+      ;; Region is active.  Go to END, but only if region spans
+      ;; multiple lines.
+      (and (goto-char beg)
+           (> end (line-end-position))
+           (goto-char end))
+    ;; Region is inactive.  Set a loop sentinel
+    ;; (subtracting 1 in order to compare less than BOB).
+    (setq beg (1- (line-beginning-position (and arg 2))))
+    (when arg (forward-line)))
+  (let ((prefix (and (> (length fill-prefix) 0)
+                     (regexp-quote fill-prefix))))
+    (while (and (> (line-beginning-position) beg)
+                (forward-line 0)
+                (= (preceding-char) ?\n))
+      (delete-char -1)
+      ;; If the appended line started with the fill prefix,
+      ;; delete the prefix.
+      (if (and prefix (looking-at prefix))
+          (replace-match "" t t))
+      (fixup-whitespace))))
+
+(defun delete-blank-lines ()
+  "On blank line, delete all surrounding blank lines, leaving just one.
+On isolated blank line, delete that one.
+On nonblank line, delete any immediately following blank lines."
+  (interactive "*")
+  (let (thisblank singleblank)
+    (save-excursion
+      (beginning-of-line)
+      (setq thisblank (looking-at "[ \t]*$"))
+      ;; Set singleblank if there is just one blank line here.
+      (setq singleblank
+	    (and thisblank
+		 (not (looking-at "[ \t]*\n[ \t]*$"))
+		 (or (bobp)
+		     (progn (forward-line -1)
+			    (not (looking-at "[ \t]*$")))))))
+    ;; Delete preceding blank lines, and this one too if it's the only one.
+    (if thisblank
+	(progn
+	  (beginning-of-line)
+	  (if singleblank (forward-line 1))
+	  (delete-region (point)
+			 (if (re-search-backward "[^ \t\n]" nil t)
+			     (progn (forward-line 1) (point))
+			   (point-min)))))
+    ;; Delete following blank lines, unless the current line is blank
+    ;; and there are no following blank lines.
+    (if (not (and thisblank singleblank))
+	(save-excursion
+	  (end-of-line)
+	  (forward-line 1)
+	  (delete-region (point)
+			 (if (re-search-forward "[^ \t\n]" nil t)
+			     (progn (beginning-of-line) (point))
+			   (point-max)))))
+    ;; Handle the special case where point is followed by newline and eob.
+    ;; Delete the line, leaving point at eob.
+    (if (looking-at "^[ \t]*\n\\'")
+	(delete-region (point) (point-max)))))
+
+(defun delete-horizontal-space (&optional backward-only)
+  "Delete all spaces and tabs around point.
+If BACKWARD-ONLY is non-nil (interactively, the prefix argument), delete
+them only before point."
+  (interactive "*P")
+  (delete-space--internal " \t" backward-only))
+
 (defun just-one-space (&optional n)
   "Delete all spaces and tabs around point, leaving one space (or N spaces).
 Interactively, N is the prefix numeric argument.

@@ -639,13 +639,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_append_next_kill,
         "Make the next kill append to the last kill-ring entry."
     ),
-    S!(
-        "delete-blank-lines",
-        0,
-        0,
-        f_delete_blank_lines,
-        "Delete blank lines around point."
-    ),
+    // GNU simple.el whitespace commands live in the prelude.
     S!("combine-after-change-calls", raw, f_progn_raw, ""),
     S!("combine-change-calls", raw, f_second_form_raw, ""),
     // --- buffer text access ---
@@ -13778,76 +13772,6 @@ fn f_primitive_undo(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
     }
     Ok(list)
-}
-
-fn f_delete_blank_lines(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    // Emacs: on a blank line, delete all contiguous blank lines
-    // (leaving just one when there are several). On a nonblank line,
-    // delete all blank lines following it.
-    let _ = i;
-    let b = cur(i);
-    let bb = b.borrow_mut();
-    let len = bb.text.len();
-    let blank_at = |bb: &crate::buffer::Buffer, start: usize, end: usize| {
-        bb.text.substring(start, end).trim().is_empty()
-    };
-    // (start, end) of the line containing char-pos p, with end
-    // including the trailing newline when present.
-    let line_span = |bb: &crate::buffer::Buffer, p: usize| {
-        let l = bb.text.line_of_pos(p);
-        let s = bb.text.line_start(l);
-        let mut e = bb.text.line_end(s);
-        if e < len {
-            e += 1;
-        }
-        (s, e)
-    };
-    let p = bb.point().min(len);
-    let (ls, le) = line_span(&bb, p);
-    let mut s = ls;
-    let mut e = le;
-    if blank_at(&bb, ls, le) {
-        // Extend over the whole contiguous blank region.
-        while s > 0 {
-            let (ps, pe) = line_span(&bb, s - 1);
-            if !blank_at(&bb, ps, pe) {
-                break;
-            }
-            s = ps;
-        }
-        while e < len {
-            let (ns, ne) = line_span(&bb, e);
-            if !blank_at(&bb, ns, ne) {
-                break;
-            }
-            e = ne;
-        }
-        // Keep one blank line if the region spans several: delete
-        // from the end of the first blank line onward.
-        let (fs, fe) = line_span(&bb, s);
-        if e - s > fe - fs {
-            s = fe;
-        }
-    } else {
-        // Delete following blank lines only (after the current
-        // line's terminating newline).
-        s = le;
-        while e < len {
-            let (ns, ne) = line_span(&bb, e);
-            if !blank_at(&bb, ns, ne) {
-                break;
-            }
-            e = ne;
-        }
-        if e == le {
-            return Ok(Value::Nil);
-        }
-    }
-    drop(bb);
-    chg_delete(i, s, e)?;
-    let np = s.min(b.borrow().text.len());
-    b.borrow_mut().set_point(np);
-    Ok(Value::Nil)
 }
 
 // ---------- misc ----------
