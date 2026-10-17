@@ -2,11 +2,14 @@
 //!
 //! Usage:
 //!   remacs [options] [FILE...]
-//!   --batch, -Q --no-init: batch mode (no TUI)
+//!   --batch: batch mode (no TUI)
+//!   -Q / --no-init: skip initialization files
 //!   --eval EXPR / --execute EXPR: evaluate Lisp
 //!   --load FILE / -l FILE: load a Lisp file
 //!   --script FILE: batch + load
 //!   --version
+
+mod cli;
 
 use remacs::lisp::{Flow, Interp, OutputSink, Value};
 
@@ -16,10 +19,7 @@ fn main() {
     // before the interpreter is initialized — so init-time code like
     // `global-font-lock-mode''s `:init-value (not noninteractive)'
     // already sees the batch state.  Carry it to `Interp::new'.
-    if args
-        .iter()
-        .any(|a| matches!(a.as_str(), "--batch" | "-batch" | "--script"))
-    {
+    if cli::options(&args).any(|a| matches!(a, "--batch" | "-batch" | "--script")) {
         // SAFETY: set before Interp::new spawns work; the value is
         // only read during startup on this same thread anyway.
         unsafe { std::env::set_var("REMACS_NONINTERACTIVE", "1") };
@@ -30,9 +30,9 @@ fn main() {
     // the interpreter on a worker with a generous stack.  The AppKit
     // GUI must stay on the main thread, so only the headless path is
     // moved; gui.rs enlarges its logic thread separately.
-    let headless = args.iter().any(|a| {
+    let headless = cli::options(&args).any(|a| {
         matches!(
-            a.as_str(),
+            a,
             "--batch"
                 | "-batch"
                 | "--eval"
@@ -41,6 +41,8 @@ fn main() {
                 | "-l"
                 | "--script"
                 | "--ieval"
+                | "-f"
+                | "--funcall"
                 | "-nw"
                 | "--no-window-system"
                 | "--version"
@@ -60,7 +62,7 @@ fn main() {
 
 fn real_main(args: Vec<String>) {
     // GNU prints the version without booting the interpreter.
-    if args.iter().any(|a| a == "--version") {
+    if cli::options(&args).any(|a| a == "--version") {
         println!("remacs 0.1 (Emacs-compatible editor in Rust)");
         return;
     }
@@ -69,9 +71,9 @@ fn real_main(args: Vec<String>) {
     // interpreter on the logic thread, so building one here would be
     // a thrown-away ~30s prelude — and any arg that forces batch or
     // the terminal front-end keeps this process headless.
-    let batch_arg = args.iter().any(|a| {
+    let batch_arg = cli::options(&args).any(|a| {
         matches!(
-            a.as_str(),
+            a,
             "--batch"
                 | "-batch"
                 | "--eval"
@@ -84,21 +86,13 @@ fn real_main(args: Vec<String>) {
                 | "--funcall"
         )
     });
-    let no_window_arg = args
-        .iter()
-        .any(|a| matches!(a.as_str(), "-nw" | "--no-window-system"));
+    let no_window_arg = cli::options(&args).any(|a| matches!(a, "-nw" | "--no-window-system"));
     if !batch_arg && !no_window_arg {
-        // Same operand rule as the arg loop below: recognized flag
-        // names are consumed, every other arg is a file to visit.
-        let files: Vec<String> = args
-            .iter()
-            .filter(|a| {
-                !matches!(
-                    a.as_str(),
-                    "-Q" | "--quick" | "-q" | "--no-init" | "-no-x-resources" | "--no-x-resources"
-                )
+        let files: Vec<String> = cli::arguments(&args)
+            .filter_map(|arg| match arg {
+                cli::Argument::File(name) => Some(name.to_string()),
+                cli::Argument::Option { .. } => None,
             })
-            .cloned()
             .collect();
         return match remacs::gui::run_gui(&files) {
             Ok(()) => {}
@@ -115,13 +109,29 @@ fn real_main(args: Vec<String>) {
     // seeded in Interp::new (GNU init_cmdargs placement).
 
     let mut batch = false;
-    let mut files: Vec<String> = Vec::new();
-    let mut idx = 0;
     let exit = 0i32;
 
-    while idx < args.len() {
-        let arg = &args[idx];
-        match arg.as_str() {
+    let mut arguments = cli::arguments(&args);
+    while let Some(argument) = arguments.next() {
+        let (mut idx, arg) = match argument {
+            cli::Argument::Option { index, name } => (index, name),
+            cli::Argument::File(name) => {
+                // Visit files in command-line order, including in batch
+                // mode, so later actions and exit hooks see them.
+                inhibit_startup(&mut i);
+                let form = format!("(find-file {:?})", name);
+                match i.eval_str(&form) {
+                    Ok(_) => {}
+                    Err(Flow::Exit(code)) => std::process::exit(code as i32),
+                    Err(flow) => {
+                        report_flow(&mut i, flow);
+                        batch_exit(&mut i, 255);
+                    }
+                }
+                continue;
+            }
+        };
+        match arg {
             "-Q" | "--quick" => {
                 // GNU: -Q inhibits site/user init, the splash screen,
                 // and X resources — it does NOT imply batch.  remacs
@@ -256,6 +266,23 @@ fn real_main(args: Vec<String>) {
                     if i.quit_editor {
                         std::process::exit(exit);
                     }
+                    // Functions such as batch-native-compile consume
+                    // filenames themselves.  Do not visit those again.
+                    if let Ok(left) = i.symbol_value(lid).list_to_vec() {
+                        let remaining: Option<Vec<String>> = left
+                            .iter()
+                            .map(|value| {
+                                if let Value::Str(text) = value {
+                                    Some(text.borrow().clone())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        if let Some(remaining) = remaining {
+                            arguments.retain_remaining(&remaining);
+                        }
+                    }
                 }
             }
             "--script" => {
@@ -271,14 +298,8 @@ fn real_main(args: Vec<String>) {
                 // Already accounted for by the pre-`Interp::new'
                 // dispatch (this process only runs headless paths).
             }
-            other => {
-                // GNU: a bare file arg with no window system inhibits
-                // the startup screen (`unless initial-window-system').
-                inhibit_startup(&mut i);
-                files.push(other.to_string());
-            }
+            _ => unreachable!("CLI parser returned an unhandled option"),
         }
-        idx += 1;
     }
 
     if batch {
@@ -294,11 +315,7 @@ fn real_main(args: Vec<String>) {
     // its operand (e.g. `remacs --eval' with no form), where GNU
     // would still open an interactive session.
 
-    // Interactive terminal: visit files, run the editor loop.
-    for f in &files {
-        let form = format!("(find-file {:?})", f);
-        let _ = i.eval_str(&form);
-    }
+    // Interactive terminal: files have been visited; run the editor loop.
     match remacs::term::run_editor(&mut i) {
         Ok(()) => {}
         Err(e) => {
