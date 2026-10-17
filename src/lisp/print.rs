@@ -1591,6 +1591,15 @@ impl Interp {
 
 /// Convert a lexical environment chain to a printable alist-of-frames.
 fn lex_frame_to_value(i: &Interp, frame: &Rc<crate::lisp::eval::LexFrame>) -> Value {
+    // Explicit environments must retain their order, duplicate entries,
+    // markers and original tail rather than sorting/rebuilding the alist.
+    let mut explicit = Some(frame.clone());
+    while let Some(f) = explicit {
+        if f.raw.is_some() {
+            return crate::lisp::eval::lexenv_as_value(&Some(frame.clone()));
+        }
+        explicit = f.parent.clone();
+    }
     // GNU prints the environment as a single alist — the visible
     // bindings innermost-first — or nil when empty.
     let mut pairs: Vec<Value> = Vec::new();

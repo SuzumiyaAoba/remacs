@@ -41,6 +41,10 @@ pub struct LexFrame {
     /// dynamically by `let'/`let*' for the rest of this scope's extent,
     /// then the declaration unwinds with the frame.
     pub declared: RefCell<Vec<SymId>>,
+    /// A caller-supplied Lisp environment, kept as the original alist.
+    /// This is a leaf frame: preserving its cells gives `eval' GNU's
+    /// first-match lookup, shared `setq' updates and lazy list validation.
+    pub raw: Option<Value>,
     pub parent: Option<Rc<LexFrame>>,
 }
 
@@ -70,6 +74,12 @@ pub fn lexenv_as_value(env: &LexEnv) -> Value {
         for (s, v) in frame.vars.borrow().iter().rev() {
             items.push(Value::cons(Value::Sym(*s), v.clone()));
         }
+        if let Some(raw) = &frame.raw {
+            return items
+                .into_iter()
+                .rev()
+                .fold(raw.clone(), |tail, item| Value::cons(item, tail));
+        }
         cur = &frame.parent;
     }
     if items.is_empty() {
@@ -81,14 +91,148 @@ pub fn lexenv_as_value(env: &LexEnv) -> Value {
 
 pub type LexEnv = Option<Rc<LexFrame>>;
 
-pub fn lexenv_lookup(mut env: &LexEnv, sym: SymId) -> Option<Value> {
+/// An invalid tail is an error only when a lexical search reaches it.
+pub(crate) struct LexEnvError {
+    env: Value,
+    circular: bool,
+}
+
+impl LexEnvError {
+    fn in_env(mut self, env: &LexEnv) -> Self {
+        self.env = lexenv_as_value(env);
+        self
+    }
+
+    pub(crate) fn into_flow(self, i: &mut Interp) -> Flow {
+        if self.circular {
+            i.signal_data(sym::CIRCULAR_LIST, vec![self.env])
+        } else {
+            i.wrong_type_mut("listp", &self.env)
+        }
+    }
+}
+
+/// GNU's assq/memq searches preserve the first match and do not examine
+/// the remaining tail after a match.  Keep the original alist in errors.
+fn lexenv_find(
+    raw: &Value,
+    matches: impl Fn(&Value) -> bool,
+) -> Result<Option<Value>, LexEnvError> {
+    let mut cur = raw.clone();
+    let mut slow = raw.clone();
+    let mut advance_slow = false;
+    loop {
+        match cur {
+            Value::Nil => return Ok(None),
+            Value::Cons(c) => {
+                let (item, next) = {
+                    let c = c.borrow();
+                    (c.car.clone(), c.cdr.clone())
+                };
+                if matches(&item) {
+                    return Ok(Some(item));
+                }
+                cur = next;
+            }
+            _ => {
+                return Err(LexEnvError {
+                    env: raw.clone(),
+                    circular: false,
+                });
+            }
+        }
+        // As in Value::list_to_vec, advance the slow cursor every
+        // other step. Explicit environment lookup needs no allocation.
+        if advance_slow {
+            if let Value::Cons(c) = slow {
+                slow = c.borrow().cdr.clone();
+            }
+            if let (Value::Cons(a), Value::Cons(b)) = (&slow, &cur) {
+                if Rc::ptr_eq(a, b) {
+                    return Err(LexEnvError {
+                        env: raw.clone(),
+                        circular: true,
+                    });
+                }
+            }
+        }
+        advance_slow = !advance_slow;
+    }
+}
+
+fn lexenv_assq(raw: &Value, sym: SymId) -> Result<Option<super::value::ConsRef>, LexEnvError> {
+    let key = if sym == sym::NIL {
+        Value::Nil
+    } else {
+        Value::Sym(sym)
+    };
+    Ok(lexenv_find(
+        raw,
+        |v| matches!(v, Value::Cons(c) if super::builtins::eq_values(&c.borrow().car, &key)),
+    )?
+    .and_then(|v| {
+        if let Value::Cons(c) = v {
+            Some(c)
+        } else {
+            None
+        }
+    }))
+}
+
+pub(crate) fn lexenv_lookup_checked(
+    mut env: &LexEnv,
+    sym: SymId,
+) -> Result<Option<Value>, LexEnvError> {
+    let original = env;
     while let Some(frame) = env {
         if let Some((_, v)) = frame.vars.borrow().iter().find(|(s, _)| *s == sym) {
-            return Some(v.clone());
+            return Ok(Some(v.clone()));
+        }
+        if let Some(raw) = &frame.raw {
+            if let Some(c) = lexenv_assq(raw, sym).map_err(|e| e.in_env(original))? {
+                return Ok(Some(c.borrow().cdr.clone()));
+            }
         }
         env = &frame.parent;
     }
-    None
+    Ok(None)
+}
+
+pub fn lexenv_lookup(env: &LexEnv, sym: SymId) -> Option<Value> {
+    lexenv_lookup_checked(env, sym).ok().flatten()
+}
+
+pub(crate) fn lexenv_set(mut env: &LexEnv, sym: SymId, value: Value) -> Result<bool, LexEnvError> {
+    let original = env;
+    while let Some(frame) = env {
+        if let Some((_, v)) = frame.vars.borrow_mut().iter_mut().find(|(s, _)| *s == sym) {
+            *v = value;
+            return Ok(true);
+        }
+        if let Some(raw) = &frame.raw {
+            if let Some(c) = lexenv_assq(raw, sym).map_err(|e| e.in_env(original))? {
+                c.borrow_mut().cdr = value;
+                return Ok(true);
+            }
+        }
+        env = &frame.parent;
+    }
+    Ok(false)
+}
+
+/// Keep explicit environments flat and shared; values may themselves be
+/// arbitrary lists, and duplicate keys are resolved by first-match lookup.
+pub(crate) fn lexenv_from_value(value: &Value) -> LexEnv {
+    if value.is_nil() {
+        None
+    } else {
+        Some(Rc::new(LexFrame {
+            vars: RefCell::new(Vec::new()),
+            declared: RefCell::new(Vec::new()),
+            raw: Some(value.clone()),
+            parent: None,
+        }))
+    }
 }
 
 /// Read a cons cell's `cdr` without borrowing the `RefCell` or cloning
@@ -114,14 +258,27 @@ pub(crate) fn cons_ptr(v: &Value) -> *const RefCell<Cons> {
 /// is declared dynamically scoped by a bare `defvar' anywhere in ENV.
 /// Scoped declarations only affect binding decisions — lookups go
 /// through `lexenv_lookup'/the dynamic cell like GNU's `assq'.
-pub fn lexenv_declared(mut env: &LexEnv, sym: SymId) -> bool {
+pub(crate) fn lexenv_declared(mut env: &LexEnv, sym: SymId) -> Result<bool, LexEnvError> {
+    let original = env;
     while let Some(frame) = env {
         if frame.declared.borrow().contains(&sym) {
-            return true;
+            return Ok(true);
+        }
+        if let Some(raw) = &frame.raw {
+            let key = if sym == sym::NIL {
+                Value::Nil
+            } else {
+                Value::Sym(sym)
+            };
+            if lexenv_find(raw, |v| super::builtins::eq_values(v, &key))
+                .map_err(|e| e.in_env(original))?
+                .is_some() {
+                return Ok(true);
+            }
         }
         env = &frame.parent;
     }
-    false
+    Ok(false)
 }
 
 /// Record a scoped `defvar' declaration in the innermost frame of ENV
@@ -140,6 +297,7 @@ pub fn lexenv_root() -> LexEnv {
     Some(Rc::new(LexFrame {
         vars: RefCell::new(Vec::new()),
         declared: RefCell::new(Vec::new()),
+        raw: None,
         parent: None,
     }))
 }
@@ -6091,7 +6249,7 @@ command-line arguments.\" \
             }
         }
         match form {
-            Value::Nil => Ok(Value::Nil),
+            Value::Nil => self.eval_symbol(sym::NIL),
             Value::Int(_)
             | Value::Float(_)
             | Value::Str(_)
@@ -6122,9 +6280,6 @@ command-line arguments.\" \
     }
 
     fn eval_symbol(&mut self, id: SymId) -> EvalResult {
-        if id == sym::NIL {
-            return Ok(Value::Nil);
-        }
         // Lexical lookup first — GNU `eval_sub' does `Fassq (form,
         // internal-interpreter-environment)' unconditionally ("we do not
         // pay attention to the declared_special flag here"): a closure
@@ -6133,7 +6288,9 @@ command-line arguments.\" \
         // `custom-initialize-after-file-load' does) still reads the
         // lexical binding, matching byte-compiled GNU code where the
         // parameter is a stack slot.
-        if let Some(v) = lexenv_lookup(&self.lexenv, id) {
+        if let Some(v) =
+            lexenv_lookup_checked(&self.lexenv, id).map_err(|e| e.into_flow(self))?
+        {
             return Ok(v);
         }
         let v = self.symbol_value(id);
@@ -7658,6 +7815,7 @@ command-line arguments.\" \
             let frame = Rc::new(LexFrame {
                 vars: RefCell::new(Vec::new()),
                 declared: RefCell::new(Vec::new()),
+                raw: None,
                 parent: l.env.clone(),
             });
             let saved = std::mem::replace(&mut self.lexenv, Some(frame.clone()));

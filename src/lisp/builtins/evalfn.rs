@@ -501,7 +501,7 @@ fn f_eval(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // lexical-binding=t).  Non-nil non-cons LEXICAL uses a fresh
     // lexical environment; a cons is an actual env.
     let lexenv = if matches!(lex, Value::Cons(_)) {
-        parse_lexenv_spec(i, &lex)
+        crate::lisp::eval::lexenv_from_value(&lex)
     } else if lex.truthy() {
         crate::lisp::eval::lexenv_root()
     } else {
@@ -4854,89 +4854,12 @@ fn f_internal_make_closure(i: &mut Interp, args: crate::lisp::Argv) -> EvalResul
         Value::Cons(_) => body_v.list_to_vec().unwrap_or_default(),
         _ => vec![body_v.clone()],
     };
-    let env = parse_lexenv_spec(i, env_v);
+    let env = crate::lisp::eval::lexenv_from_value(env_v);
     let mut lam = i.parse_lambda(params, &body, None)?;
     lam.env = env;
     Ok(Value::Lambda(std::rc::Rc::new(lam)))
 }
 
-/// Convert the alist-ish ENV argument used by `eval'/byte-compiled
-/// closures into a LexEnv. Elements that are (VAR . VAL) pairs go in
-/// the innermost frame; elements that are proper lists of such pairs
-/// become enclosing frames.
-fn parse_lexenv_spec(i: &mut Interp, env_v: &Value) -> crate::lisp::LexEnv {
-    use crate::lisp::eval::LexFrame;
-
-    let mut inner: Option<std::rc::Rc<LexFrame>> = None;
-    let mut parents: Vec<std::rc::Rc<LexFrame>> = Vec::new();
-    let is_pair = |v: &Value| -> bool {
-        matches!(v, Value::Cons(c) if matches!(c.borrow().car, Value::Sym(_))
-            && !matches!(c.borrow().cdr, Value::Cons(_)))
-    };
-    let frame_of = |vars: Vec<(Value, Value)>, markers: Vec<SymId>| -> std::rc::Rc<LexFrame> {
-        let mut m: Vec<(SymId, Value)> = Vec::new();
-        for (k, v) in vars {
-            if let Value::Sym(id) = k {
-                match m.iter_mut().find(|(s, _)| *s == id) {
-                    Some(e) => e.1 = v,
-                    None => m.push((id, v)),
-                }
-            }
-        }
-        // `vars' arrives in env order (newest first); store
-        // oldest-first so `lexenv_as_value' reproduces it.
-        m.reverse();
-        std::rc::Rc::new(LexFrame {
-            vars: std::cell::RefCell::new(m),
-            declared: std::cell::RefCell::new(markers),
-            parent: None,
-        })
-    };
-    let mut first: Vec<(Value, Value)> = Vec::new();
-    let mut first_markers: Vec<SymId> = Vec::new();
-    for elt in env_v.list_to_vec().unwrap_or_default() {
-        if is_pair(&elt) {
-            if let Value::Cons(c) = &elt {
-                let b = c.borrow();
-                first.push((b.car.clone(), b.cdr.clone()));
-            }
-        } else if let Value::Sym(id) = elt {
-            // A bare symbol is a scoped `defvar' marker (GNU's `memq'
-            // check at binding time), not a binding.
-            first_markers.push(id);
-        } else if let Value::Cons(_) = elt {
-            // A nested list of pairs = an enclosing let frame.
-            let vars: Vec<(Value, Value)> = elt
-                .list_to_vec()
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|p| {
-                    if let Value::Cons(c) = &p {
-                        let b = c.borrow();
-                        Some((b.car.clone(), b.cdr.clone()))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            parents.push(frame_of(vars, Vec::new()));
-        }
-    }
-    if !first.is_empty() || !first_markers.is_empty() || !parents.is_empty() {
-        inner = Some(frame_of(first, first_markers));
-    }
-    // Chain: innermost first, then the enclosing frames in order.
-    for p in parents.into_iter().rev() {
-        let q = std::rc::Rc::new(LexFrame {
-            vars: std::cell::RefCell::new(p.vars.borrow().clone()),
-            declared: std::cell::RefCell::new(p.declared.borrow().clone()),
-            parent: inner.take(),
-        });
-        inner = Some(q);
-    }
-    let _ = i;
-    inner
-}
 fn f_macroexp_parse_body(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let items = want_list(i, &args[0])?;
     // split leading (declare ...) forms and strings

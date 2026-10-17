@@ -142,9 +142,6 @@ impl Interp {
         sym: SymId,
         val: Value,
     ) -> Result<(), Flow> {
-        let is_special = self.obarray.symbol(sym).special
-            || crate::lisp::eval::lexenv_declared(&self.lexenv, sym)
-            || self.file_declared.borrow().contains(&sym);
         // Constants (nil/t/keywords) can never be bound: GNU's
         // let_bind reaches specbind's `trapped_write == NOWRITE'
         // check in both dynamic and lexical eval and signals
@@ -152,6 +149,9 @@ impl Interp {
         if self.obarray.symbol(sym).constant {
             return Err(self.signal_data(sym::SETTING_CONSTANT, vec![self.sym(sym)]));
         }
+        let is_special = self.obarray.symbol(sym).special
+            || crate::lisp::eval::lexenv_declared(&self.lexenv, sym).map_err(|e| e.into_flow(self))?
+            || self.file_declared.borrow().contains(&sym);
         match (lex_vars, is_special) {
             (Some(frame), false) => {
                 crate::lisp::eval::lexframe_bind(frame, sym, val);
@@ -316,8 +316,9 @@ fn sf_or(i: &mut Interp, args: Value) -> EvalResult {
 
 /// Validate a let-style VARLIST, returning (VAR . VALUEFORM) pairs.
 /// VAR is returned unchecked: GNU defers the `symbolp' test until bind
-/// time so that value-forms evaluate before it fires.
-fn parse_let_specs(i: &mut Interp, specs: &Value) -> Result<Vec<(Value, Value)>, Flow> {
+/// time so that value-forms evaluate before it fires. A bare variable has
+/// no value-form: unlike `(VAR)', its implicit nil must not be evaluated.
+fn parse_let_specs(i: &mut Interp, specs: &Value) -> Result<Vec<(Value, Option<Value>)>, Flow> {
     match specs {
         Value::Nil => return Ok(Vec::new()),
         Value::Cons(_) => {}
@@ -334,7 +335,7 @@ fn parse_let_specs(i: &mut Interp, specs: &Value) -> Result<Vec<(Value, Value)>,
                 if i.sym_id(&spec).is_some() {
                     // A bare symbol spec (possibly a positioned symbol)
                     // binds to nil.
-                    out.push((spec, Value::Nil));
+                    out.push((spec, None));
                 } else {
                     // GNU: (cdr (cdr SPEC)) must be nil; the value-form
                     // is (car (cdr SPEC)).
@@ -347,12 +348,19 @@ fn parse_let_specs(i: &mut Interp, specs: &Value) -> Result<Vec<(Value, Value)>,
                         spec.each_car(|e| data.push(e.clone()));
                         return Err(i.signal_data(sym::ERROR, data));
                     }
-                    out.push((let_car(i, &spec)?, let_car(i, &tail)?));
+                    out.push((let_car(i, &spec)?, Some(let_car(i, &tail)?)));
                 }
                 cur = unsafe { &(*cell).cdr };
             }
             _ => return Err(i.wrong_type_mut("listp", unsafe { &*cur })),
         }
+    }
+}
+
+fn eval_let_init(i: &mut Interp, init: &Option<Value>) -> EvalResult {
+    match init {
+        Some(form) => i.eval(form),
+        None => Ok(Value::Nil),
     }
 }
 
@@ -387,12 +395,13 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
     // variables (parallel binding).
     let mut evaluated = Vec::with_capacity(specs.len());
     for (var, init) in &specs {
-        evaluated.push((var.clone(), i.eval(init)?));
+        evaluated.push((var.clone(), eval_let_init(i, init)?));
     }
     if i.lexical_binding_active() {
         let frame = Rc::new(LexFrame {
             vars: RefCell::new(Vec::new()),
             declared: RefCell::new(Vec::new()),
+            raw: None,
             parent: i.lexenv.clone(),
         });
         let mark = i.specbind_depth();
@@ -454,13 +463,14 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
         let frame = Rc::new(LexFrame {
             vars: RefCell::new(Vec::new()),
             declared: RefCell::new(Vec::new()),
+            raw: None,
             parent: i.lexenv.clone(),
         });
         let mark = i.specbind_depth();
         let saved = std::mem::replace(&mut i.lexenv, Some(frame.clone()));
         let mut r = Ok(Value::Nil);
         for (var, init) in &specs {
-            r = i.eval(init).and_then(|v| {
+            r = eval_let_init(i, init).and_then(|v| {
                 let_var(i, var)
                     .and_then(|s| i.bind_var(Some(&frame), s, v))
                     .map(|_| Value::Nil)
@@ -479,8 +489,7 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
         let mark = i.specbind_depth();
         let mut r = Ok(Value::Nil);
         for (var, init) in &specs {
-            r = i
-                .eval(init)
+            r = eval_let_init(i, init)
                 .and_then(|v| let_var(i, var).and_then(|s| i.specbind(s, v)))
                 .map(|_| Value::Nil);
             if r.is_err() {
@@ -545,22 +554,8 @@ fn setq_pairs(i: &mut Interp, args: &Value, default: bool, who: SymId) -> EvalRe
                     // ALL params there).  Gating on `special' here wrote
                     // the global cell while reads resolved the param —
                     // e.g. a defun arg named `values' lost its setq.
-                    let mut done = false;
-                    if i.lexenv.is_some() {
-                        let mut env = &i.lexenv;
-                        while let Some(frame) = env {
-                            let pos = {
-                                let vars = frame.vars.borrow();
-                                vars.iter().position(|(s, _)| *s == sid)
-                            };
-                            if let Some(pos) = pos {
-                                frame.vars.borrow_mut()[pos].1 = last.clone();
-                                done = true;
-                                break;
-                            }
-                            env = &frame.parent;
-                        }
-                    }
+                    let done = crate::lisp::eval::lexenv_set(&i.lexenv, sid, last.clone())
+                        .map_err(|e| e.into_flow(i))?;
                     if !done {
                         i.set_symbol(sid, last.clone())?;
                     }
@@ -945,6 +940,22 @@ fn sf_unwind_protect(i: &mut Interp, args: Value) -> EvalResult {
     }
 }
 
+/// Unlike let, GNU binds a condition-case variable lexically whenever
+/// an interpreter environment exists, even for special/declared symbols.
+fn bind_handler_var(
+    i: &mut Interp,
+    frame: Option<&Rc<LexFrame>>,
+    var: SymId,
+    value: Value,
+) -> Result<(), Flow> {
+    if let Some(frame) = frame {
+        crate::lisp::eval::lexframe_bind(frame, var, value);
+        Ok(())
+    } else {
+        i.specbind(var, value)
+    }
+}
+
 fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
     let var_v = car(&args);
     // GNU Fcondition_case: VAR must be nil or a symbol.
@@ -1019,6 +1030,7 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                             Some(Rc::new(LexFrame {
                                 vars: RefCell::new(Vec::new()),
                                 declared: RefCell::new(Vec::new()),
+                                raw: None,
                                 parent: i.lexenv.clone(),
                             }))
                         } else {
@@ -1029,7 +1041,7 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                             None => None,
                         };
                         if let Some(vid) = i.sym_id(&var_v).filter(|_| !var_v.is_nil()) {
-                            if let Err(e) = i.bind_var(lex_frame.as_ref(), vid, v.clone()) {
+                            if let Err(e) = bind_handler_var(i, lex_frame.as_ref(), vid, v.clone()) {
                                 if lex_frame.is_some() {
                                     i.lexenv = saved_lex;
                                 }
@@ -1076,6 +1088,7 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                                 Some(Rc::new(LexFrame {
                                     vars: RefCell::new(Vec::new()),
                                     declared: RefCell::new(Vec::new()),
+                                    raw: None,
                                     parent: i.lexenv.clone(),
                                 }))
                             } else {
@@ -1087,7 +1100,7 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                             };
                             // GNU binds VAR only when it is non-nil.
                             if let Some(vid) = i.sym_id(&var_v).filter(|_| !var_v.is_nil()) {
-                                if let Err(e) = i.bind_var(lex_frame.as_ref(), vid, err_val) {
+                                if let Err(e) = bind_handler_var(i, lex_frame.as_ref(), vid, err_val) {
                                     if lex_frame.is_some() {
                                         i.lexenv = saved_lex;
                                     }

@@ -2084,72 +2084,7 @@ pub(crate) fn make_interpreted_closure(
         }
     }
     let body = body_v.list_to_vec().unwrap_or_default();
-    let env = match env_v {
-        Value::Nil => None,
-        // `(t)' — GNU's printed env for a top-level lexical
-        // environment: an empty root frame (prints back as `(t)').
-        Value::Cons(c)
-            if matches!(&c.borrow().cdr, Value::Nil)
-                && matches!(&c.borrow().car, Value::Sym(s) if *s == crate::lisp::obarray::sym::T) =>
-        {
-            Some(Rc::new(crate::lisp::LexFrame {
-                vars: RefCell::new(Vec::new()),
-                declared: RefCell::new(Vec::new()),
-                parent: None,
-            }))
-        }
-        // An env value is a list of binding alists — model as a flat
-        // alist lexical frame.
-        alist => {
-            let mut vars: Vec<(crate::lisp::value::SymId, Value)> = Vec::new();
-            let mut declared: Vec<crate::lisp::value::SymId> = Vec::new();
-            let mut cur = alist.clone();
-            // Peel off a possible outer context list.
-            loop {
-                let next = match &cur {
-                    Value::Cons(c) => {
-                        let b = c.borrow();
-                        let elem = b.car.clone();
-                        let rest = b.cdr.clone();
-                        // Elements may be (sym . val) conses or bare syms
-                        // (scoped `defvar' markers, as in GNU's env).
-                        match &elem {
-                            Value::Cons(p) => {
-                                let pb = p.borrow();
-                                if let Some(sid) = i.sym_id(&pb.car) {
-                                    match vars.iter_mut().find(|(s, _)| *s == sid) {
-                                        Some(e) => e.1 = pb.cdr.clone(),
-                                        None => vars.push((sid, pb.cdr.clone())),
-                                    }
-                                }
-                            }
-                            Value::Sym(sid) => {
-                                if !declared.contains(sid) {
-                                    declared.push(*sid);
-                                }
-                            }
-                            _ => {}
-                        }
-                        rest
-                    }
-                    _ => Value::Nil,
-                };
-                if matches!(next, Value::Nil) {
-                    break;
-                }
-                cur = next;
-            }
-            // The alist is already in GNU env order (newest binding
-            // first); reverse so `vars' order is oldest-first and
-            // `lexenv_as_value' reproduces the input verbatim.
-            vars.reverse();
-            Some(Rc::new(crate::lisp::LexFrame {
-                vars: RefCell::new(vars),
-                declared: RefCell::new(declared),
-                parent: None,
-            }))
-        }
-    };
+    let env = crate::lisp::eval::lexenv_from_value(env_v);
     // A `#[ARGDESC STR CONSTS DEPTH DOC ISPEC]' literal read while
     // evaluating a `.elc' dump blob stands in for GNU's byte-compiled
     // (or, on nativecomp builds, subr-shaped) function object: mark it
