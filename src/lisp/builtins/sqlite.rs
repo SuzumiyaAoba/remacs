@@ -9,10 +9,11 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::ffi::CStr;
 use std::rc::Rc;
 
 use rusqlite::types::{ToSql, ToSqlOutput, ValueRef};
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, ffi};
 
 use super::{S, arg, want_string};
 use crate::lisp::error::Flow;
@@ -20,15 +21,175 @@ use crate::lisp::value::{Subr, Value, eight_bit_byte};
 use crate::lisp::{EvalResult, Interp};
 
 struct Set {
-    cols: Vec<String>,
-    rows: Vec<Vec<SVal>>,
-    pos: usize,
-    /// GNU's `sqlite-more-p' is lazy: it stays t until a `sqlite-next'
-    /// call steps past the last row, so even an empty set reports t
-    /// before the first `sqlite-next'.
+    statement: Option<SetStatement>,
+    /// Only stepping past the last row sets EOF; metadata access never steps.
     more: bool,
-    /// Becomes false on `sqlite-finalize'; further set ops then fail.
-    live: bool,
+}
+
+/// An owned SQLite statement whose connection outlives it, even if Lisp closes
+/// the database handle.  This avoids a self-referential rusqlite Statement/Rows
+/// pair and lets each sqlite-next perform exactly one sqlite3_step.
+struct SetStatement {
+    conn: Rc<Connection>,
+    stmt: *mut ffi::sqlite3_stmt,
+}
+
+impl Drop for SetStatement {
+    fn drop(&mut self) {
+        // SAFETY: stmt is owned exclusively here; conn is still alive during
+        // finalization. SQLite also permits finalizing a null statement.
+        unsafe { ffi::sqlite3_finalize(self.stmt) };
+    }
+}
+
+impl SetStatement {
+    fn error(&self, code: i32) -> rusqlite::Error {
+        // SAFETY: conn owns a live database, and SQLite owns its error string.
+        let message = unsafe { CStr::from_ptr(ffi::sqlite3_errmsg(self.conn.handle())) };
+        rusqlite::Error::SqliteFailure(
+            ffi::Error::new(code),
+            Some(message.to_string_lossy().into()),
+        )
+    }
+
+    fn prepare(conn: Rc<Connection>, sql: &str, vals: &[SVal]) -> rusqlite::Result<Self> {
+        let len = i32::try_from(sql.len()).map_err(|_| {
+            rusqlite::Error::SqliteFailure(ffi::Error::new(ffi::SQLITE_TOOBIG), None)
+        })?;
+        let mut set = Self {
+            conn,
+            stmt: std::ptr::null_mut(),
+        };
+        // SAFETY: the connection and SQL bytes are live; len bounds SQLite's
+        // read and stmt is a valid out pointer. Like rusqlite and GNU, accept
+        // embedded NULs (SQLite stops there). This does not step the statement.
+        let code = unsafe {
+            ffi::sqlite3_prepare_v2(
+                set.conn.handle(),
+                sql.as_ptr().cast(),
+                len,
+                &mut set.stmt,
+                std::ptr::null_mut(),
+            )
+        };
+        if code != ffi::SQLITE_OK {
+            let failure = set.error(code);
+            // Retain rusqlite's existing prepare-error payload, including a
+            // token offset where SQLite provides one (bundled SQLite >= 3.38).
+            let offset = unsafe { ffi::sqlite3_error_offset(set.conn.handle()) };
+            if let rusqlite::Error::SqliteFailure(error, Some(msg)) = &failure
+                && error.code == rusqlite::ErrorCode::Unknown
+                && offset >= 0
+            {
+                return Err(rusqlite::Error::SqlInputError {
+                    error: *error,
+                    msg: msg.clone(),
+                    sql: sql.to_owned(),
+                    offset,
+                });
+            }
+            return Err(failure);
+        }
+        // Preserve positional binding validation; omitted slots already have
+        // SQLite's NULL default, including gaps in numbered parameters.
+        let count = unsafe { ffi::sqlite3_bind_parameter_count(set.stmt) } as usize;
+        if vals.len() > count {
+            return Err(rusqlite::Error::InvalidParameterCount(vals.len(), count));
+        }
+        for (k, value) in vals.iter().enumerate() {
+            let index = (k + 1) as i32;
+            // SAFETY: index is a valid parameter slot. SQLITE_TRANSIENT copies
+            // strings/blobs before returning, so Lisp mutations cannot alter
+            // the saved parameters and no Rust slice outlives this call.
+            let code = unsafe {
+                match value {
+                    SVal::N => ffi::sqlite3_bind_null(set.stmt, index),
+                    SVal::I(n) => ffi::sqlite3_bind_int64(set.stmt, index, *n),
+                    SVal::F(f) => ffi::sqlite3_bind_double(set.stmt, index, *f),
+                    SVal::T(bytes) => ffi::sqlite3_bind_text64(
+                        set.stmt,
+                        index,
+                        bytes.as_ptr().cast(),
+                        bytes.len() as u64,
+                        ffi::SQLITE_TRANSIENT(),
+                        ffi::SQLITE_UTF8 as u8,
+                    ),
+                    SVal::B(bytes) => ffi::sqlite3_bind_blob64(
+                        set.stmt,
+                        index,
+                        bytes.as_ptr().cast(),
+                        bytes.len() as u64,
+                        ffi::SQLITE_TRANSIENT(),
+                    ),
+                }
+            };
+            if code != ffi::SQLITE_OK {
+                return Err(set.error(code));
+            }
+        }
+        Ok(set)
+    }
+
+    fn columns(&self) -> rusqlite::Result<Vec<String>> {
+        // SAFETY: stmt remains prepared until Drop. Column names are copied
+        // before stepping/repreparing can invalidate SQLite's string pointers.
+        unsafe {
+            (0..ffi::sqlite3_column_count(self.stmt))
+                .map(|k| {
+                    let name = ffi::sqlite3_column_name(self.stmt, k);
+                    if name.is_null() {
+                        return Err(self.error(ffi::SQLITE_NOMEM));
+                    }
+                    Ok(CStr::from_ptr(name).to_string_lossy().into_owned())
+                })
+                .collect()
+        }
+    }
+
+    fn next(&mut self) -> rusqlite::Result<Option<Vec<SVal>>> {
+        // SAFETY: stmt and its connection are live and used on this thread
+        // only. Copy every column before a subsequent step can invalidate it.
+        unsafe {
+            match ffi::sqlite3_step(self.stmt) {
+                ffi::SQLITE_DONE => Ok(None),
+                ffi::SQLITE_ROW => {
+                    let mut row = Vec::new();
+                    for k in 0..ffi::sqlite3_column_count(self.stmt) {
+                        row.push(match ffi::sqlite3_column_type(self.stmt, k) {
+                            ffi::SQLITE_INTEGER => SVal::I(ffi::sqlite3_column_int64(self.stmt, k)),
+                            ffi::SQLITE_FLOAT => SVal::F(ffi::sqlite3_column_double(self.stmt, k)),
+                            kind @ (ffi::SQLITE_TEXT | ffi::SQLITE_BLOB) => {
+                                let ptr = if kind == ffi::SQLITE_TEXT {
+                                    ffi::sqlite3_column_text(self.stmt, k)
+                                } else {
+                                    ffi::sqlite3_column_blob(self.stmt, k).cast()
+                                };
+                                let len = ffi::sqlite3_column_bytes(self.stmt, k) as usize;
+                                if ptr.is_null() && (kind == ffi::SQLITE_TEXT || len != 0) {
+                                    return Err(self.error(ffi::SQLITE_NOMEM));
+                                }
+                                // Empty BLOBs can have a null pointer, which
+                                // Rust slices prohibit even for zero length.
+                                let bytes = if len == 0 {
+                                    Vec::new()
+                                } else {
+                                    std::slice::from_raw_parts(ptr, len).to_vec()
+                                };
+                                if kind == ffi::SQLITE_TEXT {
+                                    SVal::T(bytes)
+                                } else {
+                                    SVal::B(bytes)
+                                }
+                            }
+                            _ => SVal::N,
+                        });
+                    }
+                    Ok(Some(row))
+                }
+                code => Err(self.error(code)),
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -56,7 +217,7 @@ impl ToSql for SVal {
 }
 
 struct DbEntry {
-    conn: Option<Connection>,
+    conn: Option<Rc<Connection>>,
 }
 
 thread_local! {
@@ -146,7 +307,7 @@ fn want_db_id(i: &mut Interp, v: &Value) -> Result<u64, Flow> {
 fn with_conn<R>(
     i: &mut Interp,
     id: u64,
-    f: impl FnOnce(&mut Connection) -> Result<R, rusqlite::Error>,
+    f: impl FnOnce(&Connection) -> Result<R, rusqlite::Error>,
 ) -> Result<R, Flow> {
     DBS.with(|d| {
         let mut m = d.borrow_mut();
@@ -178,7 +339,7 @@ fn with_set<R>(
 ) -> Result<R, Flow> {
     match handle(v, "set", i) {
         Some(id) => SETS.with(|s| match s.borrow_mut().get_mut(&id) {
-            Some(set) if set.live => f(set),
+            Some(set) if set.statement.is_some() => f(set),
             _ => Err(sqlite_err(
                 i,
                 vec![Value::string("Invalid set object")].into(),
@@ -310,7 +471,14 @@ fn f_sqlite_open(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     match conn {
         Ok(c) => {
             let id = next_id();
-            DBS.with(|d| d.borrow_mut().insert(id, DbEntry { conn: Some(c) }));
+            DBS.with(|d| {
+                d.borrow_mut().insert(
+                    id,
+                    DbEntry {
+                        conn: Some(Rc::new(c)),
+                    },
+                )
+            });
             Ok(make_db_record(i, id))
         }
         // GNU returns nil when the database can't be opened.
@@ -384,7 +552,7 @@ fn exec_quiet(i: &mut Interp, id: u64, sql: &str) -> EvalResult {
 }
 
 fn select_rows(
-    c: &mut Connection,
+    c: &Connection,
     sql: &str,
     vals: &[SVal],
 ) -> Result<(Vec<String>, Vec<Vec<SVal>>), rusqlite::Error> {
@@ -411,23 +579,24 @@ fn f_sqlite_select(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let rtype = arg(&a, 3);
     let is_set = matches!(&rtype, Value::Sym(s) if i.symbol_name(*s) == "set");
     let is_full = matches!(&rtype, Value::Sym(s) if i.symbol_name(*s) == "full");
-    let (cols, rows) = with_conn(i, id, |c| select_rows(c, &sql, &vals))?;
     if is_set {
+        let conn = DBS
+            .with(|d| d.borrow().get(&id).and_then(|e| e.conn.clone()))
+            .ok_or_else(|| sqlite_err(i, vec![Value::string("Database closed")].into()))?;
+        let statement = SetStatement::prepare(conn, &sql, &vals).map_err(|e| sql_err(i, e))?;
         let sid = next_id();
         SETS.with(|s| {
             s.borrow_mut().insert(
                 sid,
                 Set {
-                    cols,
-                    rows,
-                    pos: 0,
+                    statement: Some(statement),
                     more: true,
-                    live: true,
                 },
             )
         });
         return Ok(make_set_record(i, sid));
     }
+    let (cols, rows) = with_conn(i, id, |c| select_rows(c, &sql, &vals))?;
     let mut out: Vec<Value> = Vec::new();
     if is_full {
         out.push(Value::list(
@@ -463,15 +632,18 @@ fn f_sqlite_rollback(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_sqlite_next(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let row = with_set(i, &a[0], |s| {
-        if s.pos < s.rows.len() {
-            let row = s.rows[s.pos].clone();
-            s.pos += 1;
-            Ok(Some(row))
-        } else {
-            s.more = false;
-            Ok(None)
+        if !s.more {
+            return Ok(Ok(None));
         }
-    })?;
+        let row = s.statement.as_mut().unwrap().next();
+        if matches!(row, Ok(None)) {
+            s.more = false;
+        }
+        Ok(row)
+    })?
+    // GNU reports step failures here, not while constructing the set. It
+    // leaves EOF false so a later sqlite-next can retry the statement.
+    .map_err(|e| sqlite_err(i, vec![Value::string(e.to_string())].into()))?;
     Ok(match row {
         Some(row) => Value::list(row.iter().map(|value| sval_to_value(i, value)).collect()),
         None => Value::Nil,
@@ -483,17 +655,16 @@ fn f_sqlite_more_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_sqlite_columns(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    with_set(i, &a[0], |s| {
-        Ok(Value::list(
-            s.cols.iter().map(|c| Value::string(c.clone())).collect(),
-        ))
-    })
+    let columns = with_set(i, &a[0], |s| Ok(s.statement.as_ref().unwrap().columns()))?
+        .map_err(|e| sql_err(i, e))?;
+    Ok(Value::list(
+        columns.into_iter().map(Value::string).collect(),
+    ))
 }
 
 fn f_sqlite_finalize(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     with_set(i, &a[0], |s| {
-        s.live = false;
-        s.rows.clear();
+        s.statement = None;
         Ok(Value::Sym(1))
     })
 }
