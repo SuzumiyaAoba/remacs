@@ -93,45 +93,42 @@ fn f_prin1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     if !ov.is_nil() && !i.sym_is(&ov, sym::T) && !matches!(ov, Value::Cons(_)) {
         return Err(i.wrong_type_mut("consp", &ov));
     }
+    let stream = i.checked_output_stream(&arg(&args, 1))?;
     let s = i.print_to_string_cb(&args[0])?;
-    i.write_output_to(&s, &arg(&args, 1))?;
+    i.write_output_to(&s, &stream)?;
     Ok(args[0].clone())
 }
 
 fn f_princ(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    let stream = i.checked_output_stream(&arg(&args, 1))?;
     let s = i.princ_to_string_cb(&args[0])?;
-    i.write_output_to(&s, &arg(&args, 1))?;
+    i.write_output_to(&s, &stream)?;
     Ok(args[0].clone())
 }
 
 fn f_print(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    let stream = i.checked_output_stream(&arg(&args, 1))?;
     let s = i.print_to_string_cb(&args[0])?;
     // GNU's print emits a newline before and after the object.
-    i.write_output_to(&format!("\n{}\n", s), &arg(&args, 1))?;
+    i.write_output_to(&format!("\n{}\n", s), &stream)?;
     Ok(args[0].clone())
 }
 
 fn f_terpri(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU: (terpri &optional PRINTCHARFUN ENSURE) — with ENSURE non-nil
-    // and output already at BOL, return nil WITHOUT ever resolving
-    // PRINTCHARFUN (print.c Fterpri: check BOL first).  Both probes
-    // use the CURRENT buffer's point for BOL-ness.
-    let stream = arg(&args, 0);
+    // GNU print_prepare validates the stream before the ENSURE/BOL
+    // shortcut, including when no newline would be emitted.
+    let stream = i.checked_output_stream(&arg(&args, 0))?;
     let ensure = arg(&args, 1).truthy();
     if ensure && i.output_at_bol(&stream) {
         return Ok(Value::Nil);
     }
-    let dest = match &stream {
-        Value::Nil => i.symbol_value(i.standard_output_sym),
-        v => v.clone(),
-    };
-    match &dest {
+    match &stream {
         Value::Nil => {}
         Value::Sym(sid) if *sid == sym::T => {}
         Value::Marker(_) | Value::Buffer(_) => {}
         _ => {
             return i
-                .apply(&dest, vec![Value::Int('\n' as i128)])
+                .apply(&stream, vec![Value::Int('\n' as i128)])
                 .map(|_| Value::Sym(sym::T));
         }
     }
@@ -148,6 +145,7 @@ fn f_write_char(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Int(n) => *n,
         other => return Err(i.wrong_type_mut("fixnump", other)),
     };
+    let stream = i.checked_output_stream(&arg(&args, 1))?;
     if n < 0 {
         // GNU prints the negative code as `f' + 6 hex digits of the
         // 22-bit masked value: -1 → "f03fffff", -5 → "f03ffffb".
@@ -168,12 +166,12 @@ fn f_write_char(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         let mut buf = [0u8; 4];
         let ch = crate::lisp::value::write_char_eight_bit(b);
         return i
-            .write_output_to(ch.encode_utf8(&mut buf), &arg(&args, 1))
+            .write_output_to(ch.encode_utf8(&mut buf), &stream)
             .map(|_| args[0].clone());
     }
     let c = crate::lisp::value::lisp_char(n as u32).unwrap_or('\u{FFFD}');
     let mut s = [0u8; 4];
-    i.write_output_to(c.encode_utf8(&mut s), &arg(&args, 1))?;
+    i.write_output_to(c.encode_utf8(&mut s), &stream)?;
     Ok(args[0].clone())
 }
 

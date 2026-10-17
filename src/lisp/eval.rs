@@ -11455,9 +11455,36 @@ command-line arguments.\" \
         }
     }
 
+    /// Resolve a print stream and reject dead buffer/marker destinations
+    /// before printing or changing any output state (GNU print_prepare).
+    pub(crate) fn checked_output_stream(&self, stream: &Value) -> Result<Value, Flow> {
+        let dest = match stream {
+            Value::Nil => self.symbol_value(self.standard_output_sym),
+            v => v.clone(),
+        };
+        match &dest {
+            Value::Buffer(b) if !b.borrow().live => {
+                return Err(self.error("Selecting deleted buffer"));
+            }
+            Value::Marker(m)
+                if m.borrow()
+                    .buffer
+                    .and_then(|id| self.buffers.get(id))
+                    .is_none() =>
+            {
+                return Err(self.error("Marker does not point anywhere"));
+            }
+            _ => {}
+        }
+        // A nil standard-output means t; retain the resolved destination
+        // even if a print-unreadable-function callback changes the variable.
+        Ok(if dest.is_nil() { Value::t() } else { dest })
+    }
+
     /// Send printed output to STREAM (nil → `standard-output', t → the
     /// real output sink, buffer/marker → insert, function → call).
     pub fn write_output_to(&mut self, s: &str, stream: &Value) -> Result<(), Flow> {
+        let dest = self.checked_output_stream(stream)?;
         if let Some(c) = s.chars().last() {
             self.out_last_char = Some(c);
         }
@@ -11465,11 +11492,6 @@ command-line arguments.\" \
             self.output_buffer.push_str(&Self::sink_text(s));
             return Ok(());
         }
-        // `standard-output` may name a buffer, a marker, a function, or t.
-        let dest = match stream {
-            Value::Nil => self.symbol_value(self.standard_output_sym),
-            v => v.clone(),
-        };
         match &dest {
             Value::Buffer(b) => {
                 let bb = b.borrow();

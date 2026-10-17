@@ -183,6 +183,7 @@ qa!(qa_plists, "qa_plists.el");
 qa!(qa_point, "qa_point.el");
 qa!(qa_pp, "qa_pp.el");
 qa!(qa_printvars, "qa_printvars.el");
+qa!(qa_output_streams, "qa_output_streams.el");
 qa!(qa_print_variables, "qa_print_variables.el");
 qa!(qa_quoting_scope, "qa_quoting_scope.el");
 qa!(qa_symbol_print_escape, "qa_symbol_print_escape.el");
@@ -315,3 +316,42 @@ qa!(qa_unibyte_bounds, "qa_unibyte_bounds.el");
 qa!(qa_sqlite_blob, "qa_sqlite_blob.el");
 
 qa!(qa_process_large_send, "qa_process_large_send.el");
+
+#[test]
+fn qa_output_stream_state() {
+    on_big_stack(|| {
+        let (mut i, output) = interp();
+        let streams = [
+            "(let ((b (generate-new-buffer \" *qa-dead-output*\"))) (kill-buffer b) b)",
+            "(make-marker)",
+            "(let* ((b (generate-new-buffer \" *qa-dead-marker*\")) (m (with-current-buffer b (point-marker)))) (kill-buffer b) m)",
+        ];
+        for source in streams {
+            let stream = i
+                .eval_str(source)
+                .unwrap_or_else(|_| panic!("stream fixture failed"));
+            for capture in [false, true] {
+                i.capture_output = capture;
+                i.output_buffer = "unchanged\n".into();
+                i.out_last_char = Some('\n');
+                let old_output = output.borrow().clone();
+                assert!(i.write_output_to("payload", &stream).is_err());
+                assert_eq!(i.output_buffer, "unchanged\n");
+                assert_eq!(i.out_last_char, Some('\n'));
+                assert_eq!(*output.borrow(), old_output);
+                let terpri = i.intern("terpri");
+                assert!(
+                    i.apply(
+                        &remacs::lisp::Value::Sym(terpri),
+                        vec![stream.clone(), remacs::lisp::Value::t()]
+                    )
+                    .is_err()
+                );
+                assert_eq!(i.output_buffer, "unchanged\n");
+                assert_eq!(i.out_last_char, Some('\n'));
+                assert_eq!(*output.borrow(), old_output);
+                i.capture_output = false;
+            }
+        }
+    });
+}
