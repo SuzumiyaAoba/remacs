@@ -3888,12 +3888,22 @@ fn f_eval_buffer(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         },
         _ => i.current_buffer,
     };
-    let text = i
-        .buffers
-        .get(buf_id)
-        .map(|b| b.borrow().text.text())
-        .unwrap_or_default();
-    let r = i.eval_str_buf(&text);
+    let Some(buffer) = i.buffers.get(buf_id) else {
+        return Err(i.error("No such buffer"));
+    };
+    let saved = i.save_excursion_state(false);
+    let begv = buffer.borrow().begv;
+    buffer.borrow_mut().set_point(begv);
+    let r = eval_buffer_source(
+        i,
+        &buffer,
+        Value::Nil,
+        Value::Nil,
+        arg(&args, 1),
+        Value::Nil,
+        arg(&args, 4).truthy(),
+    );
+    i.restore_excursion_state(saved);
     // GNU readevalloop: a non-nil FILENAME is what `load-history'
     // records — `loadhist_initialize' pushes (FILENAME) onto
     // `current-load-list' and `build_load_history' stores it
@@ -3930,42 +3940,269 @@ fn f_eval_buffer(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_eval_region(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // (eval-region START END) — eval region of current buffer.
-    // GNU Feval_region: nil START/END mean point-min/point-max
-    // (read_minibuf-or-bob-style nil-default); non-nil non-numbers signal
-    // integer-or-marker-p.
-    let (s, e) = (
-        match &args[0] {
-            Value::Nil => 1,
-            v => crate::lisp::builtins::want_int_or_mark(i, v)?,
-        },
-        match &args[1] {
-            Value::Nil => i
-                .buffers
-                .get(i.current_buffer)
-                .map(|b| b.borrow().zv.max(b.borrow().begv) as i128 + 1)
-                .unwrap_or(1),
-            v => crate::lisp::builtins::want_int_or_mark(i, v)?,
+    let buffer = i.buffers.get(i.current_buffer).unwrap();
+    eval_buffer_source(
+        i,
+        &buffer,
+        args[0].clone(),
+        args[1].clone(),
+        arg(&args, 2),
+        arg(&args, 3),
+        false,
+    )
+}
+
+/// Read the live buffer, as in GNU lread.c's readevalloop.  In particular,
+/// START is a goto-char position, not a substring bound: it is clipped to
+/// the accessible range.  A nil START reads at point and ignores END.
+fn eval_buffer_source(
+    i: &mut Interp,
+    buffer: &crate::lisp::value::BufferRef,
+    mut start: Value,
+    mut end: Value,
+    printflag: Value,
+    read_function: Value,
+    allow_print: bool,
+) -> EvalResult {
+    let depth = i.specbind_depth();
+    let lex_on = i
+        .intern_soft("lexical-binding")
+        .map(|s| i.symbol_value(s).truthy())
+        .unwrap_or(false);
+    let saved_lexenv = std::mem::replace(
+        &mut i.lexenv,
+        if lex_on {
+            crate::lisp::eval::lexenv_root()
+        } else {
+            None
         },
     );
-    let len = i
-        .buffers
-        .get(i.current_buffer)
-        .map(|b| b.borrow().text.len() as i128 + 1)
-        .unwrap_or(1);
-    if s < 1 || e < 1 || s > len || e > len {
-        let sym = i.intern("args-out-of-range");
-        return Err(i.signal_data(sym, vec![Value::Int(s), Value::Int(e)]));
-    }
-    let text = i
-        .buffers
-        .get(i.current_buffer)
-        .map(|b| {
-            let bb = b.borrow();
-            bb.text.substring((s - 1) as usize, (e - 1) as usize)
-        })
-        .unwrap_or_default();
-    i.eval_str_buf(&text)
+    let result = (|| {
+        let input = i.intern("standard-input");
+        let list = i.intern("eval-buffer-list");
+        let old_list = i.symbol_value(list);
+        i.specbind(input, Value::Buffer(buffer.clone()))?;
+        i.specbind(list, Value::cons(Value::Buffer(buffer.clone()), old_list))?;
+        let output = i.intern("standard-output");
+        let sink = if printflag.is_nil() && !allow_print {
+            Value::Sym(i.intern("symbolp"))
+        } else {
+            printflag.clone()
+        };
+        i.specbind(output, sink)?;
+        let mut source_version = None;
+        let mut source_tick = None;
+        let mut chars = Rc::new(Vec::new());
+        loop {
+            if !buffer.borrow().live {
+                return Err(i.error("Reading from killed buffer"));
+            }
+            // Excursions create short-lived markers.  Drop their expired
+            // registrations so reading many forms does not accumulate them.
+            buffer
+                .borrow_mut()
+                .markers
+                .retain(|m| m.strong_count() != 0);
+            let buffer_id = buffer.borrow().id;
+            if i.current_buffer != buffer_id {
+                if let Some(caller) = i.buffers.get(i.current_buffer) {
+                    caller
+                        .borrow_mut()
+                        .markers
+                        .retain(|m| m.strong_count() != 0);
+                }
+            }
+            // A region only temporarily changes point and narrowing while
+            // reading.  Evaluated forms see the original restriction and
+            // point, and edits move the saved stream positions via markers.
+            let saved = if !start.is_nil() {
+                let caller = i.save_excursion_state(false);
+                let buffer_id = buffer.borrow().id;
+                i.set_current_buffer(buffer_id);
+                Some((
+                    caller,
+                    i.save_excursion_state(false),
+                    i.save_restriction_state(),
+                ))
+            } else {
+                None
+            };
+            let read = (|| {
+                if !start.is_nil() {
+                    let pos = super::want_int_or_mark(i, &start)?;
+                    // Fgoto_char accepts fixnums/markers, not bignums.
+                    if !(-(1i128 << 61)..(1i128 << 61)).contains(&pos) {
+                        return Err(i.wrong_type_mut("integer-or-marker-p", &start));
+                    }
+                    let (begv, zv) = {
+                        let b = buffer.borrow();
+                        (b.begv, b.zv)
+                    };
+                    buffer
+                        .borrow_mut()
+                        .set_point(pos.clamp(begv as i128 + 1, zv as i128 + 1) as usize - 1);
+                    if !end.is_nil() {
+                        let limit = super::want_int_or_mark(i, &end)?;
+                        let len = buffer.borrow().text.len();
+                        if limit < 1 || limit > len as i128 + 1 {
+                            return Err(i.signal_data(
+                                sym::ARGS_OUT_OF_RANGE,
+                                vec![Value::Int(begv as i128 + 1), Value::Int(limit)],
+                            ));
+                        }
+                        let limit = limit as usize - 1;
+                        let mut b = buffer.borrow_mut();
+                        b.begv = begv.min(limit);
+                        b.zv = begv.max(limit);
+                        let point = b.point();
+                        b.set_point(point);
+                        if matches!(end, Value::Int(_)) {
+                            let marker = Rc::new(RefCell::new(Marker {
+                                buffer: Some(b.id),
+                                position: b.zv,
+                                insertion_type: false,
+                            }));
+                            b.register_marker(&marker);
+                            end = Value::Marker(marker);
+                        }
+                    }
+                }
+                // Read only BEGV..ZV, keeping offsets relative to BEGV for
+                // invalid-read-syntax locations.  Reuse unchanged source
+                // text; forms can edit it or change its restriction.
+                let (begv, mut pos) = {
+                    let b = buffer.borrow();
+                    let version = (b.text.chars_mod_tick.get(), b.begv, b.zv);
+                    if source_version != Some(version)
+                        || source_tick
+                            .as_ref()
+                            .is_none_or(|tick| !Rc::ptr_eq(tick, &b.text.chars_mod_tick))
+                    {
+                        source_tick = Some(b.text.chars_mod_tick.clone());
+                        chars = Rc::new(b.text.substring(b.begv, b.zv).chars().collect::<Vec<_>>());
+                        source_version = Some(version);
+                    }
+                    (b.begv, b.point().saturating_sub(b.begv))
+                };
+                // readevalloop peeks through layout before calling a custom
+                // reader, so whitespace-only input never calls READ-FUNCTION.
+                loop {
+                    while pos < chars.len()
+                        && matches!(chars[pos], ' ' | '\t' | '\n' | '\x0c' | '\r' | '\u{a0}')
+                    {
+                        pos += 1;
+                    }
+                    if pos < chars.len() && chars[pos] == ';' {
+                        while pos < chars.len() && chars[pos] != '\n' {
+                            pos += 1;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                buffer.borrow_mut().set_point(begv + pos);
+                if pos >= chars.len() {
+                    return Ok(None);
+                }
+                let lrf = i.intern("load-read-function");
+                let reader_function = if read_function.is_nil() {
+                    i.symbol_value(lrf)
+                } else {
+                    read_function.clone()
+                };
+                let builtin_read = match &reader_function {
+                    Value::Nil => true,
+                    Value::Subr(s) => s.name == "read",
+                    Value::Sym(s) => {
+                        matches!(i.symbol_function(*s), Value::Subr(f) if f.name == "read")
+                    }
+                    _ => false,
+                };
+                let form = if builtin_read {
+                    let invalid_read_syntax = i.intern("invalid-read-syntax");
+                    let mut reader = crate::lisp::reader::Reader::with_chars(i, chars.clone());
+                    reader.set_position(pos);
+                    reader.from_buffer = true;
+                    let result = reader.read();
+                    let mut position = reader.position();
+                    // Reader peeks at unexpected delimiters; GNU's buffer
+                    // stream has already consumed that character when it
+                    // signals.  This matters when nil START leaves point
+                    // at the failing read instead of restoring it.
+                    if let Err(Flow::Signal(Value::Sym(s), data, _)) = &result {
+                        if *s == invalid_read_syntax {
+                            if let Some(Value::Str(message)) =
+                                data.list_to_vec().ok().and_then(|v| v.first().cloned())
+                            {
+                                let message = message.borrow();
+                                if (message.as_str() == ")"
+                                    && matches!(chars.get(position), Some(')' | ']')))
+                                    || (message.as_str() == "."
+                                        && chars.get(position) == Some(&'.'))
+                                {
+                                    position += 1;
+                                }
+                            }
+                        }
+                    }
+                    buffer.borrow_mut().set_point(begv + position);
+                    match result {
+                        Ok(Some(form)) => form,
+                        Ok(None) => return Ok(None),
+                        Err(Flow::Signal(Value::Sym(s), _, flags)) if s == sym::END_OF_FILE => {
+                            return Err(Flow::Signal(
+                                Value::Sym(s),
+                                Value::list(vec![Value::Buffer(buffer.clone())]),
+                                flags,
+                            ));
+                        }
+                        Err(error) => return Err(error),
+                    }
+                } else {
+                    i.apply(&reader_function, vec![Value::Buffer(buffer.clone())])?
+                };
+                let stop = !read_function.is_nil() && buffer.borrow().point() == buffer.borrow().zv;
+                if !start.is_nil() && !stop {
+                    let mut b = buffer.borrow_mut();
+                    let marker = Rc::new(RefCell::new(Marker {
+                        buffer: Some(b.id),
+                        position: b.point(),
+                        insertion_type: false,
+                    }));
+                    b.register_marker(&marker);
+                    start = Value::Marker(marker);
+                }
+                Ok(Some((form, stop)))
+            })();
+            if let Some((caller, point, restriction)) = saved {
+                i.restore_restriction_state(restriction);
+                i.restore_excursion_state(point);
+                i.restore_excursion_state(caller);
+            }
+            let Some((form, stop)) = read? else {
+                return Ok(Value::Nil);
+            };
+            let value = i.eval(&form)?;
+            if printflag.truthy() {
+                let values = i.intern("values");
+                let old = i.symbol_value(values);
+                i.set_symbol(values, Value::cons(value.clone(), old))?;
+                let destination = i.symbol_value(output);
+                let printer = i.intern(if matches!(destination, Value::Sym(s) if s == sym::T) {
+                    "prin1"
+                } else {
+                    "print"
+                });
+                i.apply(&Value::Sym(printer), vec![value])?;
+            }
+            if stop {
+                return Ok(Value::Nil);
+            }
+        }
+    })();
+    i.lexenv = saved_lexenv;
+    i.unbind_to(depth)?;
+    result
 }
 fn f_command_execute(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU simple.el
