@@ -360,3 +360,5 @@ fn qa_output_stream_state() {
         }
     });
 }
+
+qa!(qa_xml_normalization, "qa_xml_normalization.el");

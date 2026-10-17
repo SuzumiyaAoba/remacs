@@ -263,9 +263,23 @@ fn parse_xml(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
             if a.key.as_ref().starts_with(b"xmlns") {
                 continue;
             }
-            let v = a
-                .decode_and_unescape_value(r.decoder())
-                .map(|v| v.into_owned())
+            // XML 1.0 sections 2.11 and 3.3.3: normalize literal
+            // CRLF/CR first, then attribute TAB/LF to spaces, BEFORE
+            // unescaping. Character references such as &#13; must keep
+            // their referenced characters, and ordinary spaces must not
+            // be trimmed or collapsed for these CDATA attributes.
+            let v = r
+                .decoder()
+                .decode(&a.value)
+                .ok()
+                .and_then(|raw| {
+                    let text = quick_xml::events::BytesText::from_escaped(raw);
+                    let normalized = text.xml10_content().ok()?;
+                    let normalized = normalized.replace(['\t', '\n'], " ");
+                    quick_xml::escape::unescape(&normalized)
+                        .ok()
+                        .map(|v| v.into_owned())
+                })
                 .unwrap_or_default();
             attrs.push(attr_cons(i, local_name(a.key.as_ref()), &v));
         }
@@ -313,19 +327,24 @@ fn parse_xml(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
                 push_node(stack.last_mut().unwrap(), Value::list(node));
             }
             Ok(Event::Text(e)) => {
-                if let Ok(t) = e.decode() {
+                // Normalize literal line endings before GeneralRef events
+                // are resolved, so numeric CR/LF references stay intact.
+                if let Ok(t) = e.xml10_content() {
                     push_text(stack.last_mut().unwrap(), &t, false);
                 }
             }
             Ok(Event::CData(e)) => {
-                if let Ok(t) = e.decode() {
+                if let Ok(t) = e.xml10_content() {
                     push_text(stack.last_mut().unwrap(), &t, true);
                 }
             }
             Ok(Event::Comment(e)) => {
                 // GNU's DISCARD-COMMENTS drops only top-level comments.
                 if !(drop_comments && stack.len() == 1) {
-                    let t = e.decode().map(|t| t.into_owned()).unwrap_or_default();
+                    let t = e
+                        .xml10_content()
+                        .map(|t| t.into_owned())
+                        .unwrap_or_default();
                     push_node(
                         stack.last_mut().unwrap(),
                         Value::list(vec![
