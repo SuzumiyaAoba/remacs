@@ -9,6 +9,7 @@
 //! sentinels on status transitions.
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::rc::Rc;
 
@@ -28,6 +29,8 @@ pub enum ProcIo {
         /// Pty master: reads child stdout, writes child stdin.
         master_fd: i32,
         stderr: Option<std::process::ChildStderr>,
+        /// Unsent input, shared with reentrant sends from filters/timers.
+        pending_input: VecDeque<u8>,
     },
     /// An Emacs-internal pipe. `read_fd` is polled for data a child
     /// writes into `child_wfd` (used as a `:stderr` destination);
@@ -395,6 +398,7 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     child,
                     master_fd,
                     stderr,
+                    pending_input,
                 } => {
                     let mut buf = [0u8; 8192];
                     loop {
@@ -424,6 +428,7 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                             // Child is reaped; release the pty master.
                             unsafe { libc::close(*master_fd) };
                             *master_fd = -1;
+                            *pending_input = VecDeque::new();
                             if let Some(sig) = std::os::unix::process::ExitStatusExt::signal(&st) {
                                 p.status = "signal";
                                 p.exit_status = sig;
@@ -1058,6 +1063,7 @@ fn f_make_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             child,
             master_fd,
             stderr,
+            pending_input: VecDeque::new(),
         },
     );
     p.tty_name = Value::string(tty_name);
@@ -1940,7 +1946,95 @@ fn f_process_send_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     proc_write(i, &p, text.as_bytes())
 }
 
+/// Try one nonblocking write, retaining exactly the unwritten suffix.
+/// Keeping this queue on the process lets a filter's nested send append behind
+/// the outer send and drain both without duplicating or reordering input.
+fn write_pending_input(
+    pending: &mut VecDeque<u8>,
+    mut write: impl FnMut(&[u8]) -> std::io::Result<usize>,
+) -> std::io::Result<bool> {
+    if pending.is_empty() {
+        return Ok(true);
+    }
+    let bytes = pending.as_slices().0;
+    match write(bytes)? {
+        0 => Err(std::io::ErrorKind::WriteZero.into()),
+        n => {
+            pending.drain(..n);
+            let complete = pending.is_empty();
+            if complete {
+                // Do not retain a large send's peak allocation for the entire
+                // lifetime of an otherwise idle child process.
+                *pending = VecDeque::new();
+            }
+            Ok(complete)
+        }
+    }
+}
+
+fn write_child_input(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
+    {
+        let mut pb = p.borrow_mut();
+        if pb.dead || pb.status != "run" {
+            return Err(i.error("Process is not running"));
+        }
+        if let ProcIo::Child { pending_input, .. } = &mut pb.io {
+            pending_input.extend(bytes);
+        }
+    }
+    loop {
+        if i.quit_flag {
+            i.quit_flag = false;
+            return Err(Flow::Quit);
+        }
+        let result = {
+            let mut pb = p.borrow_mut();
+            // A filter or timer may have deleted/reaped the process while we
+            // waited. Never retain its descriptor (or a borrow) across Lisp.
+            if pb.dead || pb.status != "run" {
+                return Err(i.error("Process is not running"));
+            }
+            let ProcIo::Child {
+                master_fd,
+                pending_input,
+                ..
+            } = &mut pb.io
+            else {
+                return Err(i.error("Writing to process: broken pipe"));
+            };
+            if *master_fd < 0 {
+                return Err(i.error("Writing to process: broken pipe"));
+            }
+            write_pending_input(pending_input, |rest| {
+                let n = unsafe { libc::write(*master_fd, rest.as_ptr().cast(), rest.len()) };
+                if n < 0 {
+                    Err(std::io::Error::last_os_error())
+                } else {
+                    Ok(n as usize)
+                }
+            })
+        };
+        match result {
+            Ok(true) => return Ok(Value::Nil),
+            Ok(false) => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // The child may be blocked writing output before it can read
+                // more input. Pump all output (including separate stderr pipe
+                // processes) and timers instead of just waiting for POLLOUT.
+                timer_check(i)?;
+                poll_all(i)?;
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(_) => return Err(i.error("Writing to process: broken pipe")),
+        }
+    }
+}
+
 fn proc_write(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
+    if matches!(p.borrow().io, ProcIo::Child { .. }) {
+        return write_child_input(i, p, bytes);
+    }
     let mut pb = p.borrow_mut();
     if !pb.alive() {
         return Err(i.error("Process is not running"));
@@ -1954,10 +2048,7 @@ fn proc_write(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
         };
     }
     let r = match &mut pb.io {
-        ProcIo::Child { master_fd, .. } => {
-            let n = unsafe { libc::write(*master_fd, bytes.as_ptr() as *const _, bytes.len()) };
-            if n < 0 { Err(()) } else { Ok(()) }
-        }
+        ProcIo::Child { .. } => unreachable!("child writes use the pending-input queue"),
         ProcIo::Pipe { sink_fd, .. } => {
             let n = unsafe { libc::write(*sink_fd, bytes.as_ptr() as *const _, bytes.len()) };
             if n < 0 { Err(()) } else { Ok(()) }
@@ -2006,13 +2097,12 @@ fn f_process_send_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_process_send_eof(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU: PROCESS nil/omitted → the process of the current buffer.
     let p = get_process(i, &arg(&a, 0))?;
-    {
+    if matches!(p.borrow().io, ProcIo::Child { .. }) {
+        // The VEOF character must follow any input queued by an outer send.
+        write_child_input(i, &p, b"\x04")?;
+    } else {
         let mut pb = p.borrow_mut();
         match &mut pb.io {
-            // On a pty GNU writes the VEOF character.
-            ProcIo::Child { master_fd, .. } => unsafe {
-                libc::write(*master_fd, b"\x04".as_ptr() as *const _, 1);
-            },
             ProcIo::Pipe { sink_fd, .. } => unsafe {
                 libc::close(*sink_fd);
                 *sink_fd = -1;
@@ -2418,8 +2508,12 @@ fn f_delete_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let final_seen = pb.reported || matches!(pb.status, "exit" | "signal" | "closed");
         ev = match &mut pb.io {
             ProcIo::Child {
-                child, master_fd, ..
+                child,
+                master_fd,
+                pending_input,
+                ..
             } => {
+                *pending_input = VecDeque::new();
                 let _ = child.kill();
                 // Reap the child and release the pty — otherwise fds and
                 // zombies accumulate until openpty starts failing.
@@ -3335,4 +3429,89 @@ pub(crate) fn install(i: &mut Interp) {
         items.push(mkpair(i, ":family", fs));
     }
     i.put_prop(mnp, subs, Value::list(items));
+}
+
+#[cfg(test)]
+mod send_tests {
+    use super::write_pending_input;
+    use std::collections::VecDeque;
+    use std::io::{Error, ErrorKind};
+
+    #[test]
+    fn partial_writes_and_retries_preserve_exact_suffix() {
+        let mut pending = VecDeque::from(b"abcdefgh".to_vec());
+        let mut received = Vec::new();
+        for result in [
+            Ok(2),
+            Err(ErrorKind::Interrupted),
+            Err(ErrorKind::WouldBlock),
+            Ok(3),
+            Ok(3),
+        ] {
+            let before = pending.clone();
+            let done = write_pending_input(&mut pending, |bytes| match result {
+                Ok(n) => {
+                    received.extend_from_slice(&bytes[..n]);
+                    Ok(n)
+                }
+                Err(kind) => Err(kind.into()),
+            });
+            if let Err(kind) = result {
+                assert_eq!(done.unwrap_err().kind(), kind);
+                assert_eq!(pending, before);
+            } else {
+                assert_eq!(done.unwrap(), pending.is_empty());
+            }
+        }
+        assert!(pending.is_empty());
+        assert_eq!(pending.capacity(), 0);
+        assert_eq!(received, b"abcdefgh");
+    }
+
+    #[test]
+    fn nested_send_appends_after_unwritten_input() {
+        let mut pending = VecDeque::with_capacity(8);
+        pending.extend(b"abcdefgh");
+        let mut received = Vec::new();
+        assert!(
+            !write_pending_input(&mut pending, |bytes| {
+                received.extend_from_slice(&bytes[..6]);
+                Ok(6)
+            })
+            .unwrap()
+        );
+        // Simulate another send during the wait; this also wraps the deque.
+        pending.extend(b"1234");
+        while !write_pending_input(&mut pending, |bytes| {
+            received.extend_from_slice(bytes);
+            Ok(bytes.len())
+        })
+        .unwrap()
+        {}
+        assert_eq!(received, b"abcdefgh1234");
+        // The outer send must observe that the nested send already drained it.
+        assert!(write_pending_input(&mut pending, |_| panic!("duplicate write")).unwrap());
+    }
+
+    #[test]
+    fn zero_and_permanent_errors_do_not_report_success() {
+        let original = VecDeque::from(b"remaining".to_vec());
+        let mut pending = original.clone();
+        assert_eq!(
+            write_pending_input(&mut pending, |_| Ok(0))
+                .unwrap_err()
+                .kind(),
+            ErrorKind::WriteZero
+        );
+        assert_eq!(pending, original);
+        for errno in [libc::EPIPE, libc::EIO, libc::EBADF] {
+            assert_eq!(
+                write_pending_input(&mut pending, |_| Err(Error::from_raw_os_error(errno)))
+                    .unwrap_err()
+                    .raw_os_error(),
+                Some(errno)
+            );
+            assert_eq!(pending, original);
+        }
+    }
 }
