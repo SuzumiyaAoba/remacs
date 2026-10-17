@@ -10403,6 +10403,11 @@ pub(crate) fn coding_known(i: &Interp, v: &Value) -> Option<String> {
         Value::Sym(s) => i.symbol_name(*s).to_string(),
         _ => return None,
     };
+    // Explicit alias names are arbitrary symbols, even when their spelling
+    // ends in an EOL suffix whose apparent base is not a coding system.
+    if i.extra_coding_aliases.iter().any(|(alias, _)| *alias == name) {
+        return Some(name);
+    }
     let base = name
         .strip_suffix("-unix")
         .or_else(|| name.strip_suffix("-dos"))
@@ -10553,6 +10558,7 @@ pub(crate) fn coding_alias_group(i: &Interp, v: &Value) -> Option<Vec<String>> {
     };
     // The canonical system NAME resolves to (base-group member or
     // custom system), plus the group that head owns.
+    let name = resolve_target(i, &name);
     let head = {
         let (nb, idx) = eol_split(&name);
         let base_res = resolve_target(i, nb);
@@ -10634,9 +10640,9 @@ pub(crate) fn coding_alias_group(i: &Interp, v: &Value) -> Option<Vec<String>> {
 fn f_coding_system_eol_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU: nil means the default (unix ⇒ 0); a non-coding-system or
     // non-symbol argument returns nil rather than signaling.
-    let name = match &a[0] {
+    match &a[0] {
         Value::Nil => return Ok(Value::Int(0)),
-        Value::Sym(s) => i.symbol_name(*s).to_string(),
+        Value::Sym(_) => {}
         _ => return Ok(Value::Nil),
     };
     if i.sym_id(&a[0]).is_none() {
@@ -10645,15 +10651,10 @@ fn f_coding_system_eol_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     if coding_known(i, &a[0]).is_none() {
         return Ok(Value::Nil);
     }
-    // GNU: `no-conversion'/`binary' have no EOL variants — their
-    // eol-type is the fixed scalar 0, not a variant vector.
-    if name == "no-conversion" {
-        return Ok(Value::Int(0));
-    }
-    let (base, idx) = eol_split(&name);
-    if let Some(idx) = idx {
+    if let Some(idx) = coding_fixed_eol(i, &a[0]) {
         return Ok(Value::Int(idx as i128));
     }
+    let base = coding_canonical(i, &a[0]);
     // Base system: vector of the three EOL variants.
     Ok(Value::Vec(Rc::new(RefCell::new(
         ["unix", "dos", "mac"]
@@ -10711,6 +10712,10 @@ fn f_coding_system_base(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Nil => "no-conversion".to_string(),
         other => return Err(i.wrong_type_mut("symbolp", other)),
     };
+    if i.extra_coding_aliases.iter().any(|(alias, _)| *alias == name) {
+        let base = coding_canonical(i, &a[0]);
+        return Ok(Value::Sym(i.intern(&base)));
+    }
     // GNU: the bare EOL names `unix'/`dos'/`mac' are subsidiaries of
     // `undecided' (its eol-type vector), not self-based.
     if matches!(name.as_str(), "unix" | "dos" | "mac") {
@@ -10765,18 +10770,8 @@ pub(crate) fn f_coding_system_plist(i: &mut Interp, a: crate::lisp::Argv) -> Eva
         // EOL variants share the base system's plist — GNU's
         // coding-system objects for utf-8-unix/-dos/-mac all carry
         // utf-8's attributes.
-        let key = match &q {
-            Value::Sym(s) => {
-                let name = i.symbol_name(*s).to_string();
-                // Runtime aliases share their target's plist like
-                // EOL variants share the base's (GNU resolves
-                // `define-coding-system-alias' to the target object).
-                let resolved = coding_base_extra(i, &name);
-                let (base, _) = eol_split(&resolved);
-                Value::Sym(i.intern(base))
-            }
-            other => other.clone(),
-        };
+        let base = coding_canonical(i, &q);
+        let key = Value::Sym(i.intern(&base));
         if let Some(entry) = assq(&i.symbol_value(table_id), &key) {
             if let Value::Cons(pair) = &entry {
                 let (_, val) = {
@@ -12790,55 +12785,329 @@ fn f_detect_coding_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 /// Canonical coding-system name for the arg (alias-group head, EOL
 /// suffix stripped).
-fn coding_canonical(i: &Interp, v: &Value) -> String {
-    let name = coding_known(i, v).unwrap_or_default();
-    let (base, _) = eol_split(&name);
-    coding_alias_group(i, v)
-        .and_then(|g| g.first().cloned())
-        .unwrap_or_else(|| base.to_string())
+pub(crate) fn coding_canonical(i: &Interp, v: &Value) -> String {
+    let mut name = match v {
+        Value::Nil => "no-conversion".to_string(),
+        Value::Sym(s) => i.symbol_name(*s).to_string(),
+        _ => return String::new(),
+    };
+    for _ in 0..32 {
+        let base = eol_split(&name).0.to_string();
+        if let Some((_, target)) = i
+            .extra_coding_aliases
+            .iter()
+            .find(|(n, _)| *n == name || *n == base)
+        {
+            name = target.clone();
+            continue;
+        }
+        return CODING_ALIASES
+            .iter()
+            .find(|&&(n, _)| n == base)
+            .or_else(|| {
+                CODING_ALIASES
+                    .iter()
+                    .find(|&&(_, group)| group.contains(&base.as_str()))
+            })
+            .map(|&(_, group)| eol_split(group[0]).0.to_string())
+            .unwrap_or(base);
+    }
+    eol_split(&name).0.to_string()
+}
+
+/// Follow aliases before selecting an EOL subsidiary; a bare base uses
+/// automatic EOL detection when decoding and LF when encoding.
+fn coding_fixed_eol(i: &Interp, v: &Value) -> Option<usize> {
+    let Value::Sym(s) = v else { return Some(0) };
+    let mut name = i.symbol_name(*s).to_string();
+    for _ in 0..32 {
+        if let Some((_, target)) = i.extra_coding_aliases.iter().find(|(n, _)| *n == name) {
+            name = target.clone();
+        } else {
+            if let Some(eol) = eol_split(&name).1 {
+                return Some(eol);
+            }
+            return match name.as_str() {
+                "unix" | "no-conversion" | "binary" => Some(0),
+                "dos" => Some(1),
+                "mac" => Some(2),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 fn f_encode_coding_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // (encode-coding-string STRING CODING-SYSTEM &optional NOCOPY BUFFER)
-    let s = want_string(i, &a[0])?;
+    let text = want_string(i, &a[0])?;
     f_check_coding_system(i, vec![a[1].clone()].into())?;
     let canonical = coding_canonical(i, &a[1]);
-    // GNU substitutes the coding system's :default-char for
-    // unencodable chars (e.g. us-ascii's `?'), else a space.
-    let default_char = {
-        let plist = f_coding_system_plist(i, vec![a[1].clone()].into())?;
-        let dc = crate::lisp::eval::plist_get(&plist, i.intern(":default-char"));
-        match dc {
-            Value::Int(n) if (0..=0x3FFFFF).contains(&n) => n as u32,
-            _ => ' ' as u32,
-        }
+    let coding = Value::Sym(i.intern(&canonical));
+    let eol = coding_fixed_eol(i, &a[1]).unwrap_or(0);
+    let unibyte = matches!(&a[0], Value::Str(r) if i.is_unibyte_str(r));
+    let intervals = match &a[0] {
+        Value::Str(r) => i.str_props(r).to_vec(),
+        _ => Vec::new(),
     };
-    let unibyte_in = matches!(&a[0], Value::Str(r) if i.is_unibyte_str(r));
-    let mut out = String::new();
-    for c in s.chars() {
-        let u = c as u32;
-        if unibyte_in && (0x80..=0xFF).contains(&u) {
-            // A unibyte string's high chars are already bytes; GNU
-            // emits them raw (eight-bit passthrough).
-            out.push(c);
-            continue;
-        }
-        if let Some(b) = crate::lisp::value::eight_bit_byte(c) {
-            // Eight-bit chars emit their raw byte in any system.
-            out.push(b as char);
-            continue;
-        }
-        match encode_one_char(&canonical, u) {
-            Some(bs) => out.extend(bs.iter().map(|&b| b as char)),
-            // GNU substitutes the coding system's default-char.
-            None => out.push(char::from_u32(default_char).unwrap_or(' ')),
+    let charset = i.intern("charset");
+    let mut preferred = Vec::new();
+    let mut input = String::new();
+    for (pos, ch) in text.chars().enumerate() {
+        let preference = intervals
+            .iter()
+            .filter(|(start, end, _)| *start <= pos && pos < *end)
+            .find_map(|(_, _, pl)| {
+                pl.chunks_exact(2).find_map(|pair| {
+                    if matches!(pair[0], Value::Sym(id) if id == charset) {
+                        i.sym_id(&pair[1]).map(|id| i.symbol_name(id).to_string())
+                    } else {
+                        None
+                    }
+                })
+            });
+        preferred.push(preference.clone());
+        if ch == '\n' && eol != 0 {
+            input.push('\r');
+            if eol == 1 {
+                input.push('\n');
+                preferred.push(preference);
+            }
+        } else if unibyte && (128..=255).contains(&(ch as u32)) {
+            input.push(crate::lisp::value::lisp_char(0x3fff00 + ch as u32).unwrap());
+        } else {
+            input.push(ch);
         }
     }
-    let sv = Value::string(out);
-    if let Value::Str(r) = &sv {
+    let bytes = if canonical == "chinese-hz" {
+        encode_hz(i, &input)
+    } else if let Some(bytes) =
+        super::coding_iso2022::encode_with_preferences(i, &coding, &input, true, &preferred)
+    {
+        bytes
+    } else if let Some(bytes) = super::coding_legacy::encode(i, &coding, &input, true) {
+        bytes
+    } else {
+        let plist = f_coding_system_plist(i, vec![coding].into())?;
+        let dc = crate::lisp::eval::plist_get(&plist, i.intern(":default-char"));
+        let default = dc.int().unwrap_or(32) as u8;
+        input
+            .chars()
+            .flat_map(|ch| {
+                if let Some(b) = crate::lisp::value::eight_bit_byte(ch) {
+                    vec![b]
+                } else {
+                    encode_one_char(&canonical, ch as u32).unwrap_or_else(|| vec![default])
+                }
+            })
+            .collect()
+    };
+    let value = Value::string(bytes.iter().map(|b| *b as char).collect::<String>());
+    if let Value::Str(r) = &value {
         i.mark_unibyte(r);
     }
-    Ok(sv)
+    Ok(value)
+}
+
+fn encode_hz(i: &Interp, text: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut shifted = false;
+    for ch in text.chars() {
+        let c = crate::lisp::value::lisp_char_code(ch);
+        let code = if c >= 128 {
+            super::charset::charset_encode(i, "chinese-gb2312", c as i64)
+        } else {
+            None
+        };
+        if let Some(code) = code {
+            if !shifted {
+                out.extend_from_slice(b"~{");
+                shifted = true;
+            }
+            out.extend_from_slice(&[(code >> 8) as u8, code as u8]);
+        } else {
+            if shifted {
+                out.extend_from_slice(b"~}");
+                shifted = false;
+            }
+            if c == 126 {
+                out.extend_from_slice(b"~~");
+            } else if c < 128 {
+                out.push(c as u8);
+            } else {
+                out.extend_from_slice(
+                    format!(
+                        "{}{:0width$X}",
+                        if c < 65536 { "\\u" } else { "\\U" },
+                        c,
+                        width = if c < 65536 { 4 } else { 8 }
+                    )
+                    .as_bytes(),
+                );
+            }
+        }
+    }
+    if shifted {
+        out.extend_from_slice(b"~}");
+    }
+    out
+}
+
+fn decode_hz(i: &mut Interp, bytes: &[u8]) -> Result<(String, Vec<(usize, usize, String)>), Flow> {
+    // HZ's Lisp post-read conversion operates after UTF-8 decoding, and
+    // only converts complete contiguous GB pairs following a ~{ marker.
+    let chars: Vec<char> = super::coding_legacy::internal_decode(bytes)
+        .chars()
+        .collect();
+    let mut out = String::new();
+    let mut spans = Vec::new();
+    let mut pos = 0;
+    let mut at = 0;
+    let continuation = i
+        .intern_soft("decode-hz-line-continuation")
+        .is_some_and(|id| i.symbol_value(id).truthy());
+    while at < chars.len() {
+        if chars[at] == '~' && at + 1 == chars.len() {
+            return Err(i.wrong_type_mut("wholenump", &Value::Nil));
+        }
+        if chars[at] == '~' && at + 1 < chars.len() {
+            match chars[at + 1] {
+                '{' => {
+                    at += 2;
+                    let start = pos;
+                    while at + 1 < chars.len()
+                        && ('!'..='}').contains(&chars[at])
+                        && ('!'..='~').contains(&chars[at + 1])
+                    {
+                        let code = ((chars[at] as i64) << 8) | chars[at + 1] as i64;
+                        if let Some(c) = super::charset::charset_decode(i, "chinese-gb2312", code) {
+                            out.push(
+                                crate::lisp::value::lisp_char(c as u32)
+                                    .unwrap_or_else(|| crate::lisp::value::mule_seq_char(c as u32)),
+                            );
+                            pos += 1;
+                            at += 2;
+                        } else {
+                            break;
+                        }
+                    }
+                    if pos > start {
+                        spans.push((start, pos, "chinese-gb2312".to_string()));
+                    }
+                    if chars.get(at) == Some(&'~') && chars.get(at + 1) == Some(&'}') {
+                        at += 2;
+                    }
+                    continue;
+                }
+                '~' => {
+                    out.push('~');
+                    pos += 1;
+                    at += 2;
+                    continue;
+                }
+                '\n' if continuation => {
+                    at += 2;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        out.push(chars[at]);
+        pos += 1;
+        at += 1;
+    }
+    Ok((out, spans))
+}
+
+/// Normalize EOLs only for consistent automatic input or an explicit
+/// subsidiary. Mixed automatic input stays byte-for-byte unchanged.
+fn coding_decode_eol(bytes: &[u8], fixed: Option<usize>) -> Vec<u8> {
+    let mut seen = [false; 3];
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'\r' if bytes.get(at + 1) == Some(&b'\n') => {
+                seen[1] = true;
+                at += 1;
+            }
+            b'\r' => seen[2] = true,
+            b'\n' => seen[0] = true,
+            _ => {}
+        }
+        at += 1;
+    }
+    let eol = fixed.unwrap_or_else(|| {
+        if seen.iter().filter(|v| **v).count() == 1 {
+            seen.iter().position(|v| *v).unwrap()
+        } else {
+            0
+        }
+    });
+    let mut out = Vec::new();
+    at = 0;
+    while at < bytes.len() {
+        if eol == 1 && bytes[at..].starts_with(b"\r\n") {
+            out.push(b'\n');
+            at += 2;
+        } else {
+            out.push(if eol == 2 && bytes[at] == b'\r' {
+                b'\n'
+            } else {
+                bytes[at]
+            });
+            at += 1;
+        }
+    }
+    out
+}
+
+fn decode_coding_bytes(
+    i: &mut Interp,
+    coding: &Value,
+    canonical: &str,
+    bytes: &[u8],
+    force_conversion: bool,
+) -> Result<Value, Flow> {
+    super::coding_legacy::validate_decode(i, coding, bytes)?;
+    let converted = if canonical == "chinese-hz" {
+        Some(decode_hz(i, bytes)?)
+    } else if let Some(decoded) = super::coding_iso2022::decode(i, coding, bytes) {
+        Some(decoded)
+    } else {
+        super::coding_legacy::decode(i, coding, bytes, force_conversion)
+    };
+    let (text, spans, metadata) = match converted {
+        Some((text, spans)) => (text, spans, true),
+        None => (
+            if matches!(canonical, "utf-8" | "utf-8-auto" | "undecided") {
+                decode_file_utf8(bytes)
+            } else {
+                decode_bytes(canonical, bytes)
+            },
+            Vec::new(),
+            false,
+        ),
+    };
+    let value = Value::string(text);
+    if let Value::Str(r) = &value {
+        i.mark_multibyte(r);
+        if metadata {
+            let charset = i.intern("charset");
+            let props = spans
+                .into_iter()
+                .map(|(start, end, name)| {
+                    (
+                        start,
+                        end,
+                        vec![Value::Sym(charset), Value::Sym(i.intern(&name))],
+                    )
+                })
+                .collect();
+            i.set_str_props(r, props);
+        } else {
+            attach_decode_charset_props(i, r, canonical);
+        }
+    }
+    Ok(value)
 }
 
 /// Decode bytes to chars for CANONICAL coding names — the inverse of
@@ -13201,6 +13470,7 @@ pub(crate) fn decode_file_bytes(
     } else {
         input.as_slice()
     };
+    let mut codec_decoded = None;
     let text = if !multibyte {
         input.iter().map(|&byte| byte as char).collect()
     } else if matches!(canonical.as_str(), "raw-text" | "no-conversion") {
@@ -13219,7 +13489,6 @@ pub(crate) fn decode_file_bytes(
         "utf-8"
             | "utf-8-auto"
             | "utf-8-with-signature"
-            | "utf-8-emacs"
             | "utf-8-hfs"
             | "utf-8-nfd"
             | "prefer-utf-8"
@@ -13227,13 +13496,24 @@ pub(crate) fn decode_file_bytes(
     ) {
         decode_file_utf8(input)
     } else {
-        decode_bytes(&canonical, input)
+        let codec = Value::Sym(i.intern(&canonical));
+        codec_decoded = Some(decode_coding_bytes(
+            i,
+            &codec,
+            &canonical,
+            input,
+            bytes.contains(&b'\r'),
+        )?);
+        String::new()
     };
-    let decoded = Value::string(text);
+    let has_codec_props = codec_decoded.is_some();
+    let decoded = codec_decoded.unwrap_or_else(|| Value::string(text));
     if let Value::Str(string) = &decoded {
         if multibyte {
             i.mark_multibyte(string);
-            attach_decode_charset_props(i, string, &canonical);
+            if !has_codec_props {
+                attach_decode_charset_props(i, string, &canonical);
+            }
         } else {
             i.mark_unibyte(string);
         }
@@ -13251,18 +13531,21 @@ pub(crate) fn decode_file_bytes(
 }
 
 fn f_decode_coding_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // (decode-coding-string STRING CODING-SYSTEM &optional NOCOPY BUFFER)
-    let s = want_string(i, &a[0])?;
+    want_string(i, &a[0])?;
     f_check_coding_system(i, vec![a[1].clone()].into())?;
     let canonical = coding_canonical(i, &a[1]);
-    let _ = s;
+    let coding = Value::Sym(i.intern(&canonical));
     let bytes = lisp_string_bytes(i, &a[0]);
-    let sv = Value::string(decode_bytes(&canonical, &bytes));
-    if let Value::Str(r) = &sv {
-        i.mark_multibyte(r);
-        attach_decode_charset_props(i, r, &canonical);
-    }
-    Ok(sv)
+    let force_conversion = bytes.contains(&b'\r');
+    // UTF-16 octets are not ASCII-compatible: a CR/LF byte can be
+    // part of an unrelated character. Keep its character decoder in
+    // charge rather than applying byte-level EOL conversion.
+    let bytes = if canonical.starts_with("utf-16") {
+        bytes
+    } else {
+        coding_decode_eol(&bytes, coding_fixed_eol(i, &a[1]))
+    };
+    decode_coding_bytes(i, &coding, &canonical, &bytes, force_conversion)
 }
 
 /// Encode one Unicode scalar to bytes for CANONICAL (alias-group
@@ -16562,8 +16845,19 @@ fn f_define_coding_system_alias(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
     // `coding-system-list' (sorted via `add-to-coding-system-list')
     // and resolves to CODING-SYSTEM's base for `coding-system-base'.
     let alias = i.symbol_name(alias_id);
-    let target = i.symbol_name(target_id);
-    if !i.extra_coding_aliases.iter().any(|(x, _)| *x == alias) {
+    // GNU aliases capture the target's coding object, not a live symbol
+    // indirection. Freeze its canonical name (including any EOL suffix)
+    // before overwriting ALIAS, so retargeting another alias cannot change
+    // existing aliases and defining an alias to itself cannot create a cycle.
+    let target = coding_alias_group(i, &a[1])
+        .and_then(|group| group.into_iter().next())
+        .unwrap_or_else(|| i.symbol_name(target_id));
+    if alias == target {
+        return add_to_coding_system_list(i, &alias);
+    }
+    if let Some((_, previous)) = i.extra_coding_aliases.iter_mut().find(|(x, _)| *x == alias) {
+        *previous = target;
+    } else {
         i.extra_coding_aliases.push((alias.clone(), target));
     }
     add_to_coding_system_list(i, &alias)

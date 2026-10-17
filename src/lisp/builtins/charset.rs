@@ -397,7 +397,7 @@ fn f_unify_charset(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     });
     match mapval {
         Some(Value::Str(s)) => {
-            if let Some(t) = charset_table(i, &s.borrow()) {
+            if let Some(t) = charset_table(i, &s.borrow(), &name) {
                 i.charset_maps.borrow_mut().insert(key, t);
             }
         }
@@ -443,7 +443,7 @@ fn charset_ordered_insert(i: &mut Interp, name: &str) {
 /// a vector is inline [CODE-1 CHAR-1 ...] pairs (cached per charset).
 fn map_value_table(i: &Interp, name: &str, v: &Value) -> Option<Rc<CharsetTable>> {
     match v {
-        Value::Str(s) => charset_table(i, &s.borrow()),
+        Value::Str(s) => charset_table(i, &s.borrow(), &name),
         Value::Vec(_) => {
             let key = format!("vecmap:{name}");
             let cached = i.charset_maps.borrow().get(&key).cloned();
@@ -1481,7 +1481,15 @@ fn coding_plist_key(i: &Interp, name: &str) -> String {
             .or_else(|| n.strip_suffix("-mac"))
             .unwrap_or(n)
     }
-    let mut cur = strip(name).to_string();
+    // Resolve explicit aliases before interpreting suffixes in their names.
+    let mut resolved = name.to_string();
+    for _ in 0..16 {
+        match i.extra_coding_aliases.iter().find(|(alias, _)| *alias == resolved) {
+            Some((_, target)) => resolved = target.clone(),
+            None => break,
+        }
+    }
+    let mut cur = strip(&resolved).to_string();
     // Alias chain (static group head or define-coding-system-alias target).
     for _ in 0..16 {
         if let Some(&(_, group)) = misc::CODING_ALIASES
@@ -1711,34 +1719,78 @@ fn f_set_keyboard_coding_system_internal(i: &mut Interp, a: crate::lisp::Argv) -
 }
 
 fn f_find_coding_systems_region_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU Ffind_coding_systems_region_internal: a STRING START returns t
-    // for ASCII/unibyte strings without looking at END; otherwise START
-    // and END go through fix_position — non-integer/marker args signal
-    // wrong-type-argument integer-or-marker-p BEFORE the bounds check.
-    if let Value::Str(s) = &a[0] {
-        let s = s.borrow();
-        // Unibyte or pure-ASCII: every coding system can encode it → t.
-        if s.is_ascii() {
+    // GNU checks all distinct non-ASCII characters against each base
+    // coding system's charset list. Returning t for arbitrary text makes
+    // mule-cmds.el's encode-coding-char mistake substitutions for success.
+    let text = if let Value::Str(s) = &a[0] {
+        if i.is_unibyte_str(s) || s.borrow().is_ascii() {
             return Ok(Value::t());
         }
-        // Multibyte non-ASCII: any-codable approximation (we don't track
-        // per-coding charset coverage here).
+        s.borrow().clone()
+    } else {
+        let start = crate::lisp::builtins::want_int_or_mark(i, &a[0])?;
+        let end = crate::lisp::builtins::want_int_or_mark(i, &a[1])?;
+        let text = i
+            .buffers
+            .get(i.current_buffer)
+            .map(|b| b.borrow().text.text())
+            .unwrap_or_default();
+        let len = text.chars().count() as i128;
+        if !(1 <= start && start <= end && end <= len + 1) {
+            let sid = i.intern("args-out-of-range");
+            return Err(i.signal(sid, Value::list(vec![a[0].clone(), a[1].clone()])));
+        }
+        let multi = i.intern("enable-multibyte-characters");
+        if !i.symbol_value(multi).truthy() {
+            return Ok(Value::t());
+        }
+        text.chars()
+            .skip((start - 1) as usize)
+            .take((end - start) as usize)
+            .collect()
+    };
+    let mut chars: Vec<i64> = text
+        .chars()
+        .filter(|c| !c.is_ascii())
+        .map(|c| lisp_char_code(c) as i64)
+        .collect();
+    chars.sort_unstable();
+    chars.dedup();
+    if chars.is_empty() {
         return Ok(Value::t());
     }
-    let s = crate::lisp::builtins::want_int_or_mark(i, &a[0])?;
-    let e = crate::lisp::builtins::want_int_or_mark(i, &a[1])?;
-    let zv = i
-        .buffers
-        .get(i.current_buffer)
-        .map(|b| b.borrow().text_len() as i128 + 1)
-        .unwrap_or(1);
-    // GNU: !(BEG <= s && s <= e && e <= Z) → args-out-of-range.
-    if !(1 <= s && s <= e && e <= zv) {
-        let sid = i.intern("args-out-of-range");
-        return Err(i.signal(sid, Value::list(vec![a[0].clone(), a[1].clone()])));
+    let exclude = a
+        .get(2)
+        .and_then(|v| v.list_to_vec().ok())
+        .unwrap_or_default();
+    let list_id = i.intern("coding-system-list");
+    let codings = i.symbol_value(list_id).list_to_vec().unwrap_or_default();
+    let mut safe = Vec::new();
+    for coding in codings {
+        let Value::Sym(id) = coding else { continue };
+        let name = i.symbol_name(id).to_string();
+        if name != misc::coding_canonical(i, &coding)
+            || exclude.iter().any(|v| eq_values(v, &coding))
+        {
+            continue;
+        }
+        let names: Vec<String> = coding_system_charset_names(i, &coding)
+            .list_to_vec()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|v| i.sym_id(v).map(|id| i.symbol_name(id).to_string()))
+            .collect();
+        if chars.iter().all(|&ch| {
+            names
+                .iter()
+                .any(|name| charset_encode(i, name, ch).is_some())
+        }) {
+            safe.push(coding);
+        }
     }
-    // GNU returns t for regions any coding system can encode.
-    Ok(Value::t())
+    safe.push(symv(i, "raw-text"));
+    safe.push(symv(i, "no-conversion"));
+    Ok(Value::list(safe))
 }
 
 // ---------- charset ids / priority / unicode property tables ----------
@@ -3143,7 +3195,7 @@ fn table_lookup(tab: &[(i64, i64, i64)], x: i64) -> Option<i64> {
     None
 }
 
-fn parse_charset_map(text: &str) -> CharsetTable {
+fn parse_charset_map(text: &str, dims: Option<&[(i64, i64)]>) -> CharsetTable {
     let hex = |s: &str| -> Option<i64> {
         let s = s
             .trim()
@@ -3169,8 +3221,31 @@ fn parse_charset_map(text: &str) -> CharsetTable {
         let (Some(lo), Some(hi), Some(base)) = (lo, hi, hex(b)) else {
             continue;
         };
-        dec.push((lo, hi, base));
-        enc.push((base, base + (hi - lo), lo));
+        if let Some(dims) = dims {
+            let (Some(first), Some(last)) = (linear_index(dims, lo), linear_index(dims, hi)) else {
+                continue;
+            };
+            let mut index = first;
+            while index <= last {
+                let Some(code) = unlinear_index(dims, index) else {
+                    break;
+                };
+                // Within the lowest byte each run is packed-contiguous.
+                // Crossing its upper bound advances to the next valid row,
+                // rather than traversing holes in the charset code space.
+                let count = (dims.last().unwrap().1 - (code & 255) + 1).min(last - index + 1);
+                if count <= 0 {
+                    break;
+                }
+                let ch = base + index - first;
+                dec.push((code, code + count - 1, ch));
+                enc.push((ch, ch + count - 1, code));
+                index += count;
+            }
+        } else {
+            dec.push((lo, hi, base));
+            enc.push((base, base + (hi - lo), lo));
+        }
     }
     dec.sort_unstable();
     enc.sort_unstable();
@@ -3197,8 +3272,13 @@ fn charset_map_dirs() -> Vec<std::path::PathBuf> {
 
 /// Load (and cache) `etc/charsets/NAME.map'.  A missing file caches an
 /// empty table so we don't rescan per character.
-fn charset_table(i: &Interp, mapname: &str) -> Option<Rc<CharsetTable>> {
-    if let Some(t) = i.charset_maps.borrow().get(mapname) {
+fn charset_table(i: &Interp, mapname: &str, name: &str) -> Option<Rc<CharsetTable>> {
+    let plist = charset_entry(i, name)
+        .map(|e| e.1.clone())
+        .unwrap_or(Value::Nil);
+    let dims = charset_dims(i, &plist);
+    let key = format!("filemap:{mapname}:{dims:?}");
+    if let Some(t) = i.charset_maps.borrow().get(&key) {
         return if t.dec.is_empty() {
             None
         } else {
@@ -3208,15 +3288,13 @@ fn charset_table(i: &Interp, mapname: &str) -> Option<Rc<CharsetTable>> {
     for d in charset_map_dirs() {
         let p = d.join(format!("{mapname}.map"));
         if let Ok(text) = std::fs::read_to_string(&p) {
-            let t = Rc::new(parse_charset_map(&text));
-            i.charset_maps
-                .borrow_mut()
-                .insert(mapname.to_string(), t.clone());
+            let t = Rc::new(parse_charset_map(&text, dims.as_deref()));
+            i.charset_maps.borrow_mut().insert(key.clone(), t.clone());
             return Some(t);
         }
     }
     i.charset_maps.borrow_mut().insert(
-        mapname.to_string(),
+        key,
         Rc::new(CharsetTable {
             dec: Vec::new(),
             enc: Vec::new(),

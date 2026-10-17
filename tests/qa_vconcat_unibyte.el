@@ -9,11 +9,9 @@
        (string (apply #'unibyte-string bytes)))
   (qa (vconcat string) (apply #'vector bytes))
   (qa (vconcat (copy-sequence string)) (apply #'vector bytes))
-  ;; Pre-existing producer bug: substring drops its source encoding flag.
-  (qa-xf (aref (substring string 126 130) 2) 128
-         "substring loses unibyte metadata before vconcat")
-  (qa-xf (vconcat (substring string 126 130)) [126 127 128 129]
-         "substring loses unibyte metadata before vconcat")
+  ;; Substrings preserve the source unibyte representation.
+  (qa (aref (substring string 126 130) 2) 128)
+  (qa (vconcat (substring string 126 130)) [126 127 128 129])
   (qa (vconcat (concat string "x")) (apply #'vector (append bytes '(120))))
   (qa (multibyte-string-p string) nil)
   (qa (length string) 256))

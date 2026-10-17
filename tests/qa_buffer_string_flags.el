@@ -51,11 +51,10 @@
     (let ((s (buffer-string)))
       (qa (multibyte-string-p s) t)
       (qa (string-to-list (encode-coding-string s 'utf-8)) (cadr case)))))
-;; Preexisting coding alias gap: utf-8-unix is not canonicalized by the
-;; encoder for Unicode, even on master before the buffer extraction fix.
+;; Explicit UTF-8 EOL aliases retain Unicode encoding behavior.
 (dolist (case '((233 (195 169)) (945 (206 177))))
   (with-temp-buffer
     (insert-char (car case))
-    (qa-xf (string-to-list (encode-coding-string (buffer-string) 'utf-8-unix))
-           (cadr case) "preexisting utf-8-unix encoder alias gap")))
+    (qa (string-to-list (encode-coding-string (buffer-string) 'utf-8-unix))
+        (cadr case))))
 (princ (qa--done)) (terpri)

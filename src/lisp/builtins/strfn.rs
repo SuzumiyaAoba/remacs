@@ -479,10 +479,12 @@ fn f_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let mut out = String::new();
     for a in args.iter() {
         match a {
-            Value::Int(n) => match lisp_char(*n as u32) {
-                Some(c) => out.push(c),
-                None => return Err(i.wrong_type_mut("characterp", a)),
-            },
+            Value::Int(n) if (0..=0x3fffff).contains(n) => {
+                out.push(
+                    lisp_char(*n as u32)
+                        .unwrap_or_else(|| crate::lisp::value::mule_seq_char(*n as u32)),
+                );
+            }
             _ => return Err(i.wrong_type_mut("characterp", a)),
         }
     }
@@ -699,11 +701,24 @@ fn substring_impl(i: &mut Interp, args: crate::lisp::Argv, copy_props: bool) -> 
             slice
                 .iter()
                 .filter_map(|v| match v {
-                    Value::Int(n) => lisp_char(*n as u32),
+                    Value::Int(n) => Some(
+                        lisp_char(*n as u32)
+                            .unwrap_or_else(|| crate::lisp::value::mule_seq_char(*n as u32)),
+                    ),
                     _ => None,
                 })
                 .collect::<String>(),
         ));
+        // Substrings preserve the source representation even when the
+        // slice contains only ASCII or raw encoded bytes. mule-cmds.el's
+        // encode-coding-char relies on this for its byte-string result.
+        if let Value::Str(src) = &args[0] {
+            if i.is_unibyte_str(src) {
+                i.mark_unibyte(&ns);
+            } else if i.is_multibyte_str(src) {
+                i.mark_multibyte(&ns);
+            }
+        }
         // GNU substring copies the source's text properties on the
         // sliced range (shifted to 0-based on the result).
         if copy_props {
