@@ -317,6 +317,7 @@ qa!(qa_unibyte_bounds, "qa_unibyte_bounds.el");
 qa!(qa_sqlite_blob, "qa_sqlite_blob.el");
 qa!(qa_sqlite_parameters, "qa_sqlite_parameters.el");
 qa!(qa_sqlite_lazy_sets, "qa_sqlite_lazy_sets.el");
+qa!(qa_sqlite_errors, "qa_sqlite_errors.el");
 
 qa!(qa_process_large_send, "qa_process_large_send.el");
 
