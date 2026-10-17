@@ -314,6 +314,7 @@ qa!(qa_elisp_mode_name, "qa_elisp_mode_name.el");
 qa!(qa_unibyte_bounds, "qa_unibyte_bounds.el");
 
 qa!(qa_sqlite_blob, "qa_sqlite_blob.el");
+qa!(qa_sqlite_parameters, "qa_sqlite_parameters.el");
 
 qa!(qa_process_large_send, "qa_process_large_send.el");
 

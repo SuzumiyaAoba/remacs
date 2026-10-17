@@ -250,6 +250,17 @@ fn bind_args(i: &mut Interp, v: &Value) -> Result<Vec<SVal>, Flow> {
     items.iter().map(|x| bind_val(i, x)).collect()
 }
 
+/// GNU leaves unbound parameter slots as NULL.  rusqlite's positional
+/// binding requires an exact count, so supply NULL for omitted slots.
+/// Use SQLite's count (the highest slot index, including numbered gaps),
+/// and retain excess values so they still produce a parameter error.
+fn complete_params(vals: &[SVal], count: usize) -> impl Iterator<Item = &SVal> {
+    vals.iter().chain(std::iter::repeat_n(
+        &SVal::N,
+        count.saturating_sub(vals.len()),
+    ))
+}
+
 fn row_val(v: rusqlite::types::ValueRef<'_>) -> SVal {
     match v {
         rusqlite::types::ValueRef::Null => SVal::N,
@@ -327,9 +338,10 @@ fn f_sqlite_execute(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // Otherwise the affected-row count is returned.
     let (cols_rows, n) = with_conn(i, id, |c| {
         let mut stmt = c.prepare(sql.as_str())?;
+        let params = rusqlite::params_from_iter(complete_params(&vals, stmt.parameter_count()));
         let width = stmt.column_count();
         if width > 0 {
-            let mut q = stmt.query(rusqlite::params_from_iter(vals.iter()))?;
+            let mut q = stmt.query(params)?;
             let mut rows = Vec::new();
             while let Some(row) = q.next()? {
                 let mut r = Vec::with_capacity(width);
@@ -340,7 +352,7 @@ fn f_sqlite_execute(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
             Ok((Some(rows), 0))
         } else {
-            Ok((None, stmt.execute(rusqlite::params_from_iter(vals.iter()))?))
+            Ok((None, stmt.execute(params)?))
         }
     })?;
     match cols_rows {
@@ -380,7 +392,8 @@ fn select_rows(
     let cols: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
     let width = cols.len();
     let mut rows = Vec::new();
-    let mut q = stmt.query(rusqlite::params_from_iter(vals.iter()))?;
+    let params = rusqlite::params_from_iter(complete_params(vals, stmt.parameter_count()));
+    let mut q = stmt.query(params)?;
     while let Some(row) = q.next()? {
         let mut r = Vec::with_capacity(width);
         for k in 0..width {
