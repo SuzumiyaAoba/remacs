@@ -11,11 +11,12 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use rusqlite::types::{ToSql, ToSqlOutput, ValueRef};
 use rusqlite::{Connection, OpenFlags};
 
 use super::{S, arg, want_string};
 use crate::lisp::error::Flow;
-use crate::lisp::value::{Subr, Value};
+use crate::lisp::value::{Subr, Value, eight_bit_byte};
 use crate::lisp::{EvalResult, Interp};
 
 struct Set {
@@ -34,9 +35,24 @@ struct Set {
 enum SVal {
     I(i64),
     F(f64),
-    T(String),
+    T(Vec<u8>),
     B(Vec<u8>),
     N,
+}
+
+// Keep TEXT as bytes as well: GNU binds unibyte strings verbatim, even
+// when their bytes are not valid UTF-8.  rusqlite's owned Text(String)
+// cannot represent those parameters without changing their contents.
+impl ToSql for SVal {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::Borrowed(match self {
+            Self::I(n) => ValueRef::Integer(*n),
+            Self::F(f) => ValueRef::Real(*f),
+            Self::T(bytes) => ValueRef::Text(bytes),
+            Self::B(bytes) => ValueRef::Blob(bytes),
+            Self::N => ValueRef::Null,
+        }))
+    }
 }
 
 struct DbEntry {
@@ -199,23 +215,30 @@ fn make_set_record(i: &mut Interp, id: u64) -> Value {
 }
 
 /// Lisp VALUE → sqlite bind value.
-fn bind_val(i: &mut Interp, v: &Value) -> Result<rusqlite::types::Value, Flow> {
-    use rusqlite::types::Value as R;
+fn bind_val(i: &mut Interp, v: &Value) -> Result<SVal, Flow> {
+    use SVal as R;
     Ok(match v {
-        Value::Nil => R::Null,
-        Value::Int(n) => R::Integer(
+        Value::Nil => R::N,
+        Value::Int(n) => R::I(
             i64::try_from(*n)
                 .map_err(|_| sqlite_err(i, vec![Value::string("integer out of range")].into()))?,
         ),
-        Value::Float(f) => R::Real(**f),
-        Value::Str(s) => R::Text(s.borrow().clone()),
+        Value::Float(f) => R::F(**f),
+        Value::Str(s) => R::T(if i.is_unibyte_str(s) {
+            s.borrow()
+                .chars()
+                .map(|c| eight_bit_byte(c).unwrap_or(c as u8))
+                .collect()
+        } else {
+            s.borrow().as_bytes().to_vec()
+        }),
         // GNU binds `t' as 1.
-        Value::Sym(s) if *s == crate::lisp::obarray::sym::T => R::Integer(1),
+        Value::Sym(s) if *s == crate::lisp::obarray::sym::T => R::I(1),
         _ => return Err(i.wrong_type_mut("stringp", v)),
     })
 }
 
-fn bind_args(i: &mut Interp, v: &Value) -> Result<Vec<rusqlite::types::Value>, Flow> {
+fn bind_args(i: &mut Interp, v: &Value) -> Result<Vec<SVal>, Flow> {
     let items = match v {
         Value::Nil => return Ok(vec![]),
         Value::Vec(vec) => vec.borrow().clone(),
@@ -232,18 +255,25 @@ fn row_val(v: rusqlite::types::ValueRef<'_>) -> SVal {
         rusqlite::types::ValueRef::Null => SVal::N,
         rusqlite::types::ValueRef::Integer(n) => SVal::I(n),
         rusqlite::types::ValueRef::Real(f) => SVal::F(f),
-        rusqlite::types::ValueRef::Text(t) => SVal::T(String::from_utf8_lossy(t).into_owned()),
+        rusqlite::types::ValueRef::Text(t) => SVal::T(t.to_vec()),
         rusqlite::types::ValueRef::Blob(b) => SVal::B(b.to_vec()),
     }
 }
 
-fn sval_to_value(s: &SVal) -> Value {
+fn sval_to_value(i: &mut Interp, s: &SVal) -> Value {
     match s {
         SVal::I(n) => Value::Int(*n as i128),
         SVal::F(f) => Value::float(*f),
-        SVal::T(t) => Value::string(t.clone()),
-        // Strings are UTF-8; blobs degrade lossily (GNU uses unibyte).
-        SVal::B(b) => Value::string(String::from_utf8_lossy(b).into_owned()),
+        SVal::T(t) => Value::string(String::from_utf8_lossy(t).into_owned()),
+        // BLOBs are byte sequences, even when they happen to be valid UTF-8.
+        // Use the interpreter's unibyte representation without decoding them.
+        SVal::B(b) => {
+            let value = Value::string(b.iter().map(|&byte| byte as char).collect::<String>());
+            if let Value::Str(s) = &value {
+                i.mark_unibyte(s);
+            }
+            value
+        }
         SVal::N => Value::Nil,
     }
 }
@@ -316,7 +346,7 @@ fn f_sqlite_execute(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     match cols_rows {
         Some(rows) => Ok(Value::list(
             rows.iter()
-                .map(|r| Value::list(r.iter().map(sval_to_value).collect()))
+                .map(|r| Value::list(r.iter().map(|value| sval_to_value(i, value)).collect()))
                 .collect(),
         )),
         None => Ok(Value::Int(n as i128)),
@@ -344,7 +374,7 @@ fn exec_quiet(i: &mut Interp, id: u64, sql: &str) -> EvalResult {
 fn select_rows(
     c: &mut Connection,
     sql: &str,
-    vals: &[rusqlite::types::Value],
+    vals: &[SVal],
 ) -> Result<(Vec<String>, Vec<Vec<SVal>>), rusqlite::Error> {
     let mut stmt = c.prepare(sql)?;
     let cols: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
@@ -392,7 +422,9 @@ fn f_sqlite_select(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         ));
     }
     for r in &rows {
-        out.push(Value::list(r.iter().map(sval_to_value).collect()));
+        out.push(Value::list(
+            r.iter().map(|value| sval_to_value(i, value)).collect(),
+        ));
     }
     Ok(Value::list(out))
 }
@@ -417,15 +449,19 @@ fn f_sqlite_rollback(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_sqlite_next(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    with_set(i, &a[0], |s| {
+    let row = with_set(i, &a[0], |s| {
         if s.pos < s.rows.len() {
             let row = s.rows[s.pos].clone();
             s.pos += 1;
-            Ok(Value::list(row.iter().map(sval_to_value).collect()))
+            Ok(Some(row))
         } else {
             s.more = false;
-            Ok(Value::Nil)
+            Ok(None)
         }
+    })?;
+    Ok(match row {
+        Some(row) => Value::list(row.iter().map(|value| sval_to_value(i, value)).collect()),
+        None => Value::Nil,
     })
 }
 
