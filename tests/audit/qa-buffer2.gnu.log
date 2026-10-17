@@ -1,0 +1,4 @@
+327 checks passedWarning (files): Missing ‘lexical-binding’ cookie in "~/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_buffer2.el".
+You can add one with ‘M-x elisp-enable-lexical-binding RET’.
+See ‘(elisp)Selecting Lisp Dialect’ and ‘(elisp)Converting to Lexical Binding’
+for more information.

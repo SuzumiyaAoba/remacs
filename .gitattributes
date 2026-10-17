@@ -1,1 +1,5 @@
 lisp-elc/*.elc binary
+tests/audit/*.out -text whitespace=-blank-at-eof
+tests/audit/*.err -text whitespace=-blank-at-eof
+tests/audit/*.log -text whitespace=-blank-at-eof
+tests/audit/pty/*.out binary

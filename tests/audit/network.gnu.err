@@ -1,0 +1,41 @@
+NETWORK|network:pair-control
+
+NETWORK server port 52418
+
+NETWORK|network:send-eof
+
+NETWORK server port 52420
+
+NETWORK|network:deleted-listener-rebind
+
+NETWORK|network:deleted-local-listener-unlink
+
+NETWORK|network:accept-log-callback
+
+NETWORK server port 52423
+
+NETWORK|network:accept-sentinel-target
+
+NETWORK server port 52426
+
+NETWORK|network:accepted-noquery-inheritance
+
+NETWORK server port 52428
+
+NETWORK|network:accepted-coding-inheritance
+
+NETWORK server port 52430
+
+NETWORK|network:accepted-plist-control
+
+NETWORK server port 52432
+
+NETWORK|network:accepted-contact
+
+NETWORK server port 52434
+
+NETWORK|network:resolved-remote-address
+
+NETWORK|network:stop-reading
+
+NETWORK server port 52438

@@ -1,0 +1,1826 @@
+{
+  "recorded_at": "2026-10-15T15:19:40.311410+00:00",
+  "head": "cd0db158c64c3941cf2a1d96fdb0cfe789c2cce6",
+  "scope": [
+    "cli",
+    "concurrency",
+    "external",
+    "files",
+    "hash",
+    "native",
+    "network",
+    "network_system",
+    "process",
+    "treesit"
+  ],
+  "exhaustive": false,
+  "runs": [
+    {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_external.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.183134,
+      "completed": true,
+      "stdout_file": "external.gnu.out",
+      "stderr_file": "external.gnu.err",
+      "group": "external",
+      "side": "gnu"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_external.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 10.140538,
+      "completed": true,
+      "stdout_file": "external.remacs.out",
+      "stderr_file": "external.remacs.err",
+      "group": "external",
+      "side": "remacs"
+    },
+    {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_hash.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.191121,
+      "completed": true,
+      "stdout_file": "hash.gnu.out",
+      "stderr_file": "hash.gnu.err",
+      "group": "hash",
+      "side": "gnu"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_hash.el"
+      ],
+      "only": null,
+      "skip": "equal:cycles",
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 7.61344,
+      "completed": true,
+      "stdout_file": "hash.remacs.out",
+      "stderr_file": "hash.remacs.err",
+      "group": "hash",
+      "side": "remacs"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_hash.el"
+      ],
+      "only": "equal:cycles",
+      "skip": null,
+      "returncode": null,
+      "timed_out": true,
+      "timeout_seconds": 20,
+      "elapsed_seconds": 20.006012,
+      "completed": false,
+      "stdout_file": "hash.remacs-cycle.out",
+      "stderr_file": "hash.remacs-cycle.err",
+      "group": "hash",
+      "side": "remacs",
+      "isolated": true
+    },
+    {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_native.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 5.703991,
+      "completed": true,
+      "stdout_file": "native.gnu.out",
+      "stderr_file": "native.gnu.err",
+      "group": "native",
+      "side": "gnu"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_native.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 12.145968,
+      "completed": true,
+      "stdout_file": "native.remacs.out",
+      "stderr_file": "native.remacs.err",
+      "group": "native",
+      "side": "remacs"
+    },
+    {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_concurrency.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.422114,
+      "completed": true,
+      "stdout_file": "concurrency.gnu.out",
+      "stderr_file": "concurrency.gnu.err",
+      "group": "concurrency",
+      "side": "gnu"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_concurrency.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 9.073481,
+      "completed": true,
+      "stdout_file": "concurrency.remacs.out",
+      "stderr_file": "concurrency.remacs.err",
+      "group": "concurrency",
+      "side": "remacs"
+    },
+    {
+      "group": "cli",
+      "side": "gnu",
+      "completed": true,
+      "returncode": 0,
+      "timed_out": false,
+      "recorded_at": "2026-10-15T15:38:56.792681+00:00",
+      "command": [
+        "python3",
+        "tools/audit_cli.py",
+        "--gnu",
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1"
+      ],
+      "stdout_file": "cli.gnu.out",
+      "stderr_file": "cli.gnu.err"
+    },
+    {
+      "group": "cli",
+      "side": "remacs",
+      "completed": true,
+      "returncode": 0,
+      "timed_out": false,
+      "recorded_at": "2026-10-15T15:38:56.792681+00:00",
+      "command": [
+        "python3",
+        "tools/audit_cli.py",
+        "--gnu",
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1"
+      ],
+      "stdout_file": "cli.remacs.out",
+      "stderr_file": "cli.remacs.err"
+    },
+    {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_treesit.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.197383,
+      "completed": true,
+      "stdout_file": "treesit.gnu.out",
+      "stderr_file": "treesit.gnu.err",
+      "group": "treesit",
+      "side": "gnu"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_treesit.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 8.086881,
+      "completed": true,
+      "stdout_file": "treesit.remacs.out",
+      "stderr_file": "treesit.remacs.err",
+      "group": "treesit",
+      "side": "remacs"
+    },
+    {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_process.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 10.45709,
+      "completed": true,
+      "stdout_file": "process.gnu.out",
+      "stderr_file": "process.gnu.err",
+      "group": "process",
+      "side": "gnu"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_process.el"
+      ],
+      "only": null,
+      "skip": "process:timeout-overflow",
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 8.324239,
+      "completed": true,
+      "stdout_file": "process.remacs.out",
+      "stderr_file": "process.remacs.err",
+      "group": "process",
+      "side": "remacs"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_process.el"
+      ],
+      "only": "process:timeout-overflow",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 20,
+      "elapsed_seconds": 7.962868,
+      "completed": false,
+      "stdout_file": "process.remacs-overflow.out",
+      "stderr_file": "process.remacs-overflow.err",
+      "group": "process",
+      "side": "remacs",
+      "isolated": true
+    },
+    {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_files.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 30,
+      "elapsed_seconds": 0.185033,
+      "completed": true,
+      "stdout_file": "files.gnu.out",
+      "stderr_file": "files.gnu.err",
+      "group": "files",
+      "side": "gnu"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_files.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 30,
+      "elapsed_seconds": 8.324008,
+      "completed": true,
+      "stdout_file": "files.remacs.out",
+      "stderr_file": "files.remacs.err",
+      "group": "files",
+      "side": "remacs"
+    },
+    {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_network.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 20,
+      "elapsed_seconds": 0.371722,
+      "completed": true,
+      "stdout_file": "network.gnu.out",
+      "stderr_file": "network.gnu.err",
+      "group": "network",
+      "side": "gnu"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_network.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 20,
+      "elapsed_seconds": 7.901658,
+      "completed": true,
+      "stdout_file": "network.remacs.out",
+      "stderr_file": "network.remacs.err",
+      "group": "network",
+      "side": "remacs"
+    },
+    {
+      "group": "network_system",
+      "side": "gnu",
+      "returncode": 0,
+      "completed": true,
+      "timed_out": false,
+      "command": [
+        "python3",
+        "tools/audit_network_binding.py",
+        "--gnu",
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1"
+      ],
+      "stdout_file": "network-binding.gnu.out",
+      "stderr_file": "network-binding.gnu.err"
+    },
+    {
+      "group": "network_system",
+      "side": "remacs",
+      "returncode": 0,
+      "completed": true,
+      "timed_out": false,
+      "command": [
+        "python3",
+        "tools/audit_network_binding.py",
+        "--gnu",
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1"
+      ],
+      "stdout_file": "network-binding.remacs.out",
+      "stderr_file": "network-binding.remacs.err"
+    }
+  ],
+  "cases": [
+    {
+      "id": "html-discard:<!--before--><p><!--inside-->text</p><!--after-->",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<!--before--><p><!--inside-->text</p><!--after-->\") (libxml-parse-html-region nil nil nil t))",
+      "gnu": "(ok (html nil (body nil (p nil (comment nil \"inside\") \"text\") (comment nil \"after\"))))",
+      "remacs": "(ok (html nil (body nil (p nil \"text\"))))",
+      "differs": true
+    },
+    {
+      "id": "html-discard:<head></head><body>x</body>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<head></head><body>x</body>\") (libxml-parse-html-region nil nil nil t))",
+      "gnu": "(ok (html nil (head nil) (body nil \"x\")))",
+      "remacs": "(ok (html nil (body nil \"x\")))",
+      "differs": true
+    },
+    {
+      "id": "html-discard:<p><div>x</div>y</p>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<p><div>x</div>y</p>\") (libxml-parse-html-region nil nil nil t))",
+      "gnu": "(ok (html nil (body nil (p nil) (div nil \"x\") \"y\")))",
+      "remacs": "(ok (html nil (body nil (p nil) (div nil \"x\") \"y\" (p nil))))",
+      "differs": true
+    },
+    {
+      "id": "html-discard:<p>ok</p>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<p>ok</p>\") (libxml-parse-html-region nil nil nil t))",
+      "gnu": "(ok (html nil (body nil (p nil \"ok\"))))",
+      "remacs": "(ok (html nil (body nil (p nil \"ok\"))))",
+      "differs": false
+    },
+    {
+      "id": "html-discard:<p>one</p><p>two</p>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<p>one</p><p>two</p>\") (libxml-parse-html-region nil nil nil t))",
+      "gnu": "(ok (html nil (body nil (p nil \"one\") (p nil \"two\"))))",
+      "remacs": "(ok (html nil (body nil (p nil \"one\") (p nil \"two\"))))",
+      "differs": false
+    },
+    {
+      "id": "html-discard:<svg viewBox=\"0 0 1 1\"><circle/></svg>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<svg viewBox=\\\"0 0 1 1\\\"><circle/></svg>\") (libxml-parse-html-region nil nil nil t))",
+      "gnu": "(ok (html nil (body nil (svg ((viewbox . \"0 0 1 1\")) (circle nil)))))",
+      "remacs": "(ok (html nil (body nil (svg ((viewBox . \"0 0 1 1\")) (circle nil)))))",
+      "differs": true
+    },
+    {
+      "id": "html-discard:<table><tr><td>a</td></tr></table><table><tbody><tr><td>b</td></tr></tbody></table>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<table><tr><td>a</td></tr></table><table><tbody><tr><td>b</td></tr></tbody></table>\") (libxml-parse-html-region nil nil nil t))",
+      "gnu": "(ok (html nil (body nil (table nil (tr nil (td nil \"a\"))) (table nil (tbody nil (tr nil (td nil \"b\")))))))",
+      "remacs": "(ok (html nil (body nil (table nil (tbody nil (tr nil (td nil \"a\")))) (table nil (tbody nil (tr nil (td nil \"b\")))))))",
+      "differs": true
+    },
+    {
+      "id": "html-discard:<table>text<tr><td>a</td></tr></table>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<table>text<tr><td>a</td></tr></table>\") (libxml-parse-html-region nil nil nil t))",
+      "gnu": "(ok (html nil (body nil (table nil \"text\" (tr nil (td nil \"a\"))))))",
+      "remacs": "(ok (html nil (body nil \"text\" (table nil (tr nil (td nil \"a\"))))))",
+      "differs": true
+    },
+    {
+      "id": "html:<!--before--><p><!--inside-->text</p><!--after-->",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<!--before--><p><!--inside-->text</p><!--after-->\") (libxml-parse-html-region))",
+      "gnu": "(ok (top nil (comment nil \"before\") (html nil (body nil (p nil (comment nil \"inside\") \"text\") (comment nil \"after\")))))",
+      "remacs": "(ok (top nil (comment nil \"before\") (html nil (body nil (p nil (comment nil \"inside\") \"text\") (comment nil \"after\")))))",
+      "differs": false
+    },
+    {
+      "id": "html:<head></head><body>x</body>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<head></head><body>x</body>\") (libxml-parse-html-region))",
+      "gnu": "(ok (html nil (head nil) (body nil \"x\")))",
+      "remacs": "(ok (html nil (body nil \"x\")))",
+      "differs": true
+    },
+    {
+      "id": "html:<p><div>x</div>y</p>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<p><div>x</div>y</p>\") (libxml-parse-html-region))",
+      "gnu": "(ok (html nil (body nil (p nil) (div nil \"x\") \"y\")))",
+      "remacs": "(ok (html nil (body nil (p nil) (div nil \"x\") \"y\" (p nil))))",
+      "differs": true
+    },
+    {
+      "id": "html:<p>ok</p>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<p>ok</p>\") (libxml-parse-html-region))",
+      "gnu": "(ok (html nil (body nil (p nil \"ok\"))))",
+      "remacs": "(ok (html nil (body nil (p nil \"ok\"))))",
+      "differs": false
+    },
+    {
+      "id": "html:<p>one</p><p>two</p>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<p>one</p><p>two</p>\") (libxml-parse-html-region))",
+      "gnu": "(ok (html nil (body nil (p nil \"one\") (p nil \"two\"))))",
+      "remacs": "(ok (html nil (body nil (p nil \"one\") (p nil \"two\"))))",
+      "differs": false
+    },
+    {
+      "id": "html:<svg viewBox=\"0 0 1 1\"><circle/></svg>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<svg viewBox=\\\"0 0 1 1\\\"><circle/></svg>\") (libxml-parse-html-region))",
+      "gnu": "(ok (html nil (body nil (svg ((viewbox . \"0 0 1 1\")) (circle nil)))))",
+      "remacs": "(ok (html nil (body nil (svg ((viewBox . \"0 0 1 1\")) (circle nil)))))",
+      "differs": true
+    },
+    {
+      "id": "html:<table><tr><td>a</td></tr></table><table><tbody><tr><td>b</td></tr></tbody></table>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<table><tr><td>a</td></tr></table><table><tbody><tr><td>b</td></tr></tbody></table>\") (libxml-parse-html-region))",
+      "gnu": "(ok (html nil (body nil (table nil (tr nil (td nil \"a\"))) (table nil (tbody nil (tr nil (td nil \"b\")))))))",
+      "remacs": "(ok (html nil (body nil (table nil (tbody nil (tr nil (td nil \"a\")))) (table nil (tbody nil (tr nil (td nil \"b\")))))))",
+      "differs": true
+    },
+    {
+      "id": "html:<table>text<tr><td>a</td></tr></table>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<table>text<tr><td>a</td></tr></table>\") (libxml-parse-html-region))",
+      "gnu": "(ok (html nil (body nil (table nil \"text\" (tr nil (td nil \"a\"))))))",
+      "remacs": "(ok (html nil (body nil \"text\" (table nil (tr nil (td nil \"a\"))))))",
+      "differs": true
+    },
+    {
+      "id": "sql:bad-return-type",
+      "group": "external",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (sqlite-select db \"select 1\" nil 'bogus) (sqlite-close db)))",
+      "gnu": "(ok ((1)))",
+      "remacs": "(ok ((1)))",
+      "differs": false
+    },
+    {
+      "id": "sql:bigint-bind",
+      "group": "external",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (sqlite-select db \"select ?\" '(9223372036854775808)) (sqlite-close db)))",
+      "gnu": "(ok ((0)))",
+      "remacs": "(error (sqlite-error \"integer out of range\"))",
+      "differs": true
+    },
+    {
+      "id": "sql:blob-bind",
+      "group": "external",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (let ((s (caar (sqlite-select db \"select ?\" (list (unibyte-string 0 128 255)))))) (list (multibyte-string-p s) (string-to-list s))) (sqlite-close db)))",
+      "gnu": "(ok (t (0 4194176 4194303)))",
+      "remacs": "(ok (nil (0 4194176 4194303)))",
+      "differs": true
+    },
+    {
+      "id": "sql:blob-read",
+      "group": "external",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (let ((s (caar (sqlite-select db \"select x'0080ff'\")))) (list (multibyte-string-p s) (string-to-list s))) (sqlite-close db)))",
+      "gnu": "(ok (nil (0 128 255)))",
+      "remacs": "(ok (t (0 65533 65533)))",
+      "differs": true
+    },
+    {
+      "id": "sql:close-active",
+      "group": "external",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (let ((s (sqlite-select db \"select 1 union all select 2\" nil 'set))) (list (sqlite-close db) (sqlite-next s) (sqlite-next s))) (sqlite-close db)))",
+      "gnu": "(ok (t (1) (2)))",
+      "remacs": "(ok (t (1) (2)))",
+      "differs": false
+    },
+    {
+      "id": "sql:constraint-error",
+      "group": "external",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (progn (sqlite-execute db \"create table t(x unique)\") (sqlite-execute db \"insert into t values(1)\") (sqlite-execute db \"insert into t values(1)\")) (sqlite-close db)))",
+      "gnu": "(error (sqlite-error \"UNIQUE constraint failed: t.x\"))",
+      "remacs": "(error (sqlite-error (\"Error code 2067: constraint failed\" \"UNIQUE constraint failed: t.x\" 16 2067)))",
+      "differs": true
+    },
+    {
+      "id": "sql:empty",
+      "group": "external",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (sqlite-execute db \"\") (sqlite-close db)))",
+      "gnu": "(error (sqlite-error \"not an error\"))",
+      "remacs": "(error (sqlite-error (\"Error code 21: bad parameter or other API misuse\" \"bad parameter or other API misuse\" 18 21)))",
+      "differs": true
+    },
+    {
+      "id": "sql:empty-select",
+      "group": "external",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (sqlite-select db \"\") (sqlite-close db)))",
+      "gnu": "(ok nil)",
+      "remacs": "(error (sqlite-error (\"Error code 21: bad parameter or other API misuse\" \"bad parameter or other API misuse\" 18 21)))",
+      "differs": true
+    },
+    {
+      "id": "sql:extra-one",
+      "group": "external",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (sqlite-select db \"select ?\" '(7 8)) (sqlite-close db)))",
+      "gnu": "(error (sqlite-error \"column index out of range\"))",
+      "remacs": "(error (sqlite-error (\"SQL logic error\" \"Wrong number of parameters passed to query. Got 2, needed 1\" 1 1)))",
+      "differs": true
+    },
+    {
+      "id": "sql:forged",
+      "group": "external",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (let ((fake (record 'sqlite 'db 999999))) (list (sqlitep fake) (sqlite-close fake))) (sqlite-close db)))",
+      "gnu": "(error (wrong-type-argument sqlitep #s(sqlite db 999999)))",
+      "remacs": "(ok (nil t))",
+      "differs": true
+    },
+    {
+      "id": "sql:lazy-insert",
+      "group": "external",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (progn (sqlite-execute db \"create table t(a)\") (sqlite-select db \"insert into t values(7) returning a\" nil 'set) (sqlite-select db \"select * from t\")) (sqlite-close db)))",
+      "gnu": "(ok nil)",
+      "remacs": "(ok ((7)))",
+      "differs": true
+    },
+    {
+      "id": "sql:missing-all",
+      "group": "external",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (sqlite-select db \"select ?, ?\") (sqlite-close db)))",
+      "gnu": "(ok ((nil nil)))",
+      "remacs": "(error (sqlite-error (\"SQL logic error\" \"Wrong number of parameters passed to query. Got 0, needed 2\" 1 1)))",
+      "differs": true
+    },
+    {
+      "id": "sql:missing-one",
+      "group": "external",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (sqlite-select db \"select ?, ?\" '(7)) (sqlite-close db)))",
+      "gnu": "(ok ((7 nil)))",
+      "remacs": "(error (sqlite-error (\"SQL logic error\" \"Wrong number of parameters passed to query. Got 1, needed 2\" 1 1)))",
+      "differs": true
+    },
+    {
+      "id": "sql:nil-bind",
+      "group": "external",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (sqlite-select db \"select ?\" '(nil)) (sqlite-close db)))",
+      "gnu": "(ok ((nil)))",
+      "remacs": "(ok ((nil)))",
+      "differs": false
+    },
+    {
+      "id": "sql:select-error",
+      "group": "external",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (sqlite-select db \"select * from nonexistent\") (sqlite-close db)))",
+      "gnu": "(error (sqlite-error (\"SQL logic error\" \"no such table: nonexistent\" 1 1)))",
+      "remacs": "(error (sqlite-error (\"Error code 1: SQL logic error\" \"no such table: nonexistent\" 23 1)))",
+      "differs": true
+    },
+    {
+      "id": "sql:true-bind",
+      "group": "external",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (sqlite-select db \"select ?\" '(t)) (sqlite-close db)))",
+      "gnu": "(ok ((1)))",
+      "remacs": "(ok ((1)))",
+      "differs": false
+    },
+    {
+      "id": "versions",
+      "group": "external",
+      "form": "(list emacs-version (sqlite-available-p) (libxml-available-p))",
+      "gnu": "(ok (\"31.1\" t t))",
+      "remacs": "(ok (\"31.1\" t t))",
+      "differs": false
+    },
+    {
+      "id": "xml:<!DOCTYPE a [<!ENTITY word 'hello'>]><a x=\"&word;\"/>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<!DOCTYPE a [<!ENTITY word 'hello'>]><a x=\\\"&word;\\\"/>\") (libxml-parse-xml-region))",
+      "gnu": "(ok (a ((x . \"hello\"))))",
+      "remacs": "(ok (a ((x . \"\"))))",
+      "differs": true
+    },
+    {
+      "id": "xml:<!DOCTYPE a [<!ENTITY word 'hello'>]><a>&word;</a>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<!DOCTYPE a [<!ENTITY word 'hello'>]><a>&word;</a>\") (libxml-parse-xml-region))",
+      "gnu": "(ok (a nil nil))",
+      "remacs": "(ok nil)",
+      "differs": true
+    },
+    {
+      "id": "xml:<1bad/>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<1bad/>\") (libxml-parse-xml-region))",
+      "gnu": "(ok nil)",
+      "remacs": "(ok (1bad nil))",
+      "differs": true
+    },
+    {
+      "id": "xml:<a x=\"&missing;\"/>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<a x=\\\"&missing;\\\"/>\") (libxml-parse-xml-region))",
+      "gnu": "(ok nil)",
+      "remacs": "(ok (a ((x . \"\"))))",
+      "differs": true
+    },
+    {
+      "id": "xml:<a x=\"1\" x=\"2\"/>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<a x=\\\"1\\\" x=\\\"2\\\"/>\") (libxml-parse-xml-region))",
+      "gnu": "(ok nil)",
+      "remacs": "(ok (a ((x . \"1\") (x . \"2\"))))",
+      "differs": true
+    },
+    {
+      "id": "xml:<a x=\"<\"/>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<a x=\\\"<\\\"/>\") (libxml-parse-xml-region))",
+      "gnu": "(ok nil)",
+      "remacs": "(ok (a ((x . \"<\"))))",
+      "differs": true
+    },
+    {
+      "id": "xml:<a x=\"one\ttwo\nthree\rfour\"/>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<a x=\\\"one\\11two\\nthree\\15four\\\"/>\") (libxml-parse-xml-region))",
+      "gnu": "(ok (a ((x . \"one two three four\"))))",
+      "remacs": "(ok (a ((x . \"one\\11two\\nthree\\15four\"))))",
+      "differs": true
+    },
+    {
+      "id": "xml:<a xmlnsfoo=\"keep\"/>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<a xmlnsfoo=\\\"keep\\\"/>\") (libxml-parse-xml-region))",
+      "gnu": "(ok (a ((xmlnsfoo . \"keep\"))))",
+      "remacs": "(ok (a nil))",
+      "differs": true
+    },
+    {
+      "id": "xml:<a/>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<a/>\") (libxml-parse-xml-region))",
+      "gnu": "(ok (a nil))",
+      "remacs": "(ok (a nil))",
+      "differs": false
+    },
+    {
+      "id": "xml:<a>\u0001</a>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<a>\\1</a>\") (libxml-parse-xml-region))",
+      "gnu": "(ok nil)",
+      "remacs": "(ok (a nil \"\\1\"))",
+      "differs": true
+    },
+    {
+      "id": "xml:<a>&#0;</a>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<a>&#0;</a>\") (libxml-parse-xml-region))",
+      "gnu": "(ok nil)",
+      "remacs": "(ok (a nil \"\\0\"))",
+      "differs": true
+    },
+    {
+      "id": "xml:<a>&#1;</a>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<a>&#1;</a>\") (libxml-parse-xml-region))",
+      "gnu": "(ok nil)",
+      "remacs": "(ok (a nil \"\\1\"))",
+      "differs": true
+    },
+    {
+      "id": "xml:<a>&missing;</a>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<a>&missing;</a>\") (libxml-parse-xml-region))",
+      "gnu": "(ok nil)",
+      "remacs": "(ok nil)",
+      "differs": false
+    },
+    {
+      "id": "xml:<a><!--bad--comment--></a>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<a><!--bad--comment--></a>\") (libxml-parse-xml-region))",
+      "gnu": "(ok nil)",
+      "remacs": "(ok (a nil (comment nil \"bad--comment\")))",
+      "differs": true
+    },
+    {
+      "id": "xml:<a><![CDATA[\u0001]]></a>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<a><![CDATA[\\1]]></a>\") (libxml-parse-xml-region))",
+      "gnu": "(ok nil)",
+      "remacs": "(ok (a nil \"\\1\"))",
+      "differs": true
+    },
+    {
+      "id": "xml:<a>]]></a>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<a>]]></a>\") (libxml-parse-xml-region))",
+      "gnu": "(ok nil)",
+      "remacs": "(ok (a nil \"]]>\"))",
+      "differs": true
+    },
+    {
+      "id": "xml:<a>one\r\ntwo\rthree</a>",
+      "group": "external",
+      "form": "(with-temp-buffer (insert \"<a>one\\15\\ntwo\\15three</a>\") (libxml-parse-xml-region))",
+      "gnu": "(ok (a nil \"one\\ntwo\\nthree\"))",
+      "remacs": "(ok (a nil \"one\\15\\ntwo\\15three\"))",
+      "differs": true
+    },
+    {
+      "id": "equal:cycles",
+      "group": "hash",
+      "form": "(let ((a (list 1)) (b (list 1))) (setcdr a a) (setcdr b b) (equal a b))",
+      "gnu": "(ok t)",
+      "remacs": "TIMEOUT after 20 seconds (process terminated)",
+      "differs": true
+    },
+    {
+      "id": "equal:deep-different-lists",
+      "group": "hash",
+      "form": "(let ((a 1) (b 2)) (dotimes (_ 205) (setq a (list a) b (list b))) (equal a b))",
+      "gnu": "(error (error \"Stack overflow in equal\"))",
+      "remacs": "(ok t)",
+      "differs": true
+    },
+    {
+      "id": "hash:custom-test",
+      "group": "hash",
+      "form": "(progn (define-hash-table-test 'audit-case-fold (lambda (a b) (string= (downcase a) (downcase b))) (lambda (a) (sxhash-equal (downcase a)))) (let ((h (make-hash-table :test 'audit-case-fold))) (puthash \"HELLO\" 42 h) (list (gethash \"hello\" h) (hash-table-test h))))",
+      "gnu": "(ok (42 audit-case-fold))",
+      "remacs": "(ok (nil audit-case-fold))",
+      "differs": true
+    },
+    {
+      "id": "hash:cycle-lookup",
+      "group": "hash",
+      "form": "(let* ((a (list 1)) (b (list 1)) (h (make-hash-table :test 'equal))) (setcdr a a) (setcdr b b) (puthash a 42 h) (gethash b h))",
+      "gnu": "(ok 42)",
+      "remacs": "(ok nil)",
+      "differs": true
+    },
+    {
+      "id": "hash:eql-zero",
+      "group": "hash",
+      "form": "(let ((h (make-hash-table :test 'eql))) (puthash 0.0 42 h) (list (eql 0.0 -0.0) (gethash -0.0 h)))",
+      "gnu": "(ok (nil nil))",
+      "remacs": "(ok (nil nil))",
+      "differs": false
+    },
+    {
+      "id": "hash:equal-bool-vector",
+      "group": "hash",
+      "form": "(let ((h (make-hash-table :test 'equal))) (puthash (make-bool-vector 3 t) 42 h) (gethash (make-bool-vector 3 t) h))",
+      "gnu": "(ok 42)",
+      "remacs": "(ok 42)",
+      "differs": false
+    },
+    {
+      "id": "hash:equal-byte-string",
+      "group": "hash",
+      "form": "(let ((h (make-hash-table :test 'equal)) (a (unibyte-string 233)) (b (string 233))) (puthash a 42 h) (list (equal a b) (gethash b h)))",
+      "gnu": "(ok (nil nil))",
+      "remacs": "(ok (nil nil))",
+      "differs": false
+    },
+    {
+      "id": "hash:equal-markers",
+      "group": "hash",
+      "form": "(with-temp-buffer (let ((h (make-hash-table :test 'equal))) (puthash (point-marker) 42 h) (gethash (point-marker) h)))",
+      "gnu": "(ok 42)",
+      "remacs": "(ok nil)",
+      "differs": true
+    },
+    {
+      "id": "hash:equal-shared-subtree",
+      "group": "hash",
+      "form": "(let* ((a (list 1)) (b (list a a)) (c (list (list 1) (list 1))) (h (make-hash-table :test 'equal))) (puthash b 42 h) (list (equal b c) (gethash c h)))",
+      "gnu": "(ok (t 42))",
+      "remacs": "(ok (t 42))",
+      "differs": false
+    },
+    {
+      "id": "hash:equal-zero",
+      "group": "hash",
+      "form": "(let ((h (make-hash-table :test 'equal))) (puthash 0.0 42 h) (list (equal 0.0 -0.0) (gethash -0.0 h)))",
+      "gnu": "(ok (nil nil))",
+      "remacs": "(ok (nil nil))",
+      "differs": false
+    },
+    {
+      "id": "hash:size-growth",
+      "group": "hash",
+      "form": "(let ((h (make-hash-table :size 1))) (dotimes (n 10) (puthash n n h)) (list (hash-table-count h) (> (hash-table-size h) 1)))",
+      "gnu": "(ok (10 t))",
+      "remacs": "(ok (10 nil))",
+      "differs": true
+    },
+    {
+      "id": "hash:weak-key-gc",
+      "group": "hash",
+      "form": "(let ((h (make-hash-table :test 'eq :weakness 'key))) (dotimes (n 1000) (puthash (vector n) 42 h)) (garbage-collect) (garbage-collect) (< (hash-table-count h) 10))",
+      "gnu": "(ok t)",
+      "remacs": "(ok nil)",
+      "differs": true
+    },
+    {
+      "id": "native:basic",
+      "group": "native",
+      "form": "(funcall (audit-native-compile (lambda (x) (+ x 1))) 7)",
+      "gnu": "(ok 8)",
+      "remacs": "(ok 8)",
+      "differs": false
+    },
+    {
+      "id": "native:captured-variable",
+      "group": "native",
+      "form": "(let ((x 7)) (funcall (audit-native-compile (lambda nil x))))",
+      "gnu": "(ok 0)",
+      "remacs": "(ok x)",
+      "differs": true
+    },
+    {
+      "id": "native:closure-result",
+      "group": "native",
+      "form": "(let ((f (funcall (audit-native-compile (lambda (x) (lambda nil x))) 7))) (funcall f))",
+      "gnu": "(ok 7)",
+      "remacs": "(error (void-variable x))",
+      "differs": true
+    },
+    {
+      "id": "native:empty-and",
+      "group": "native",
+      "form": "(funcall (audit-native-compile (lambda nil (and))))",
+      "gnu": "(ok t)",
+      "remacs": "(ok nil)",
+      "differs": true
+    },
+    {
+      "id": "native:error-aborts-sequence",
+      "group": "native",
+      "form": "(progn (setq audit-native-side-effect nil) (let ((f (audit-native-compile (lambda nil (error \"audit-stop\") (setq audit-native-side-effect t))))) (list (condition-case e (funcall f) (error (car e))) audit-native-side-effect)))",
+      "gnu": "(ok (error nil))",
+      "remacs": "(ok (t t))",
+      "differs": true
+    },
+    {
+      "id": "native:file-parse-error",
+      "group": "native",
+      "form": "(let ((source (expand-file-name \"broken.el\" audit-native-dir)) (output (expand-file-name \"broken.eln\" audit-native-dir))) (with-temp-file source (insert \";;; -*- lexical-binding: t -*-\\n\" \"(defun audit-native-valid-prefix () 7)\\n(\\n\")) (condition-case e (progn (native-compile source output) 'compiled) (error (car e))))",
+      "gnu": "(ok end-of-file)",
+      "remacs": "(ok compiled)",
+      "differs": true
+    },
+    {
+      "id": "native:file-top-level-forms",
+      "group": "native",
+      "form": "(let ((source (expand-file-name \"top-level.el\" audit-native-dir)) (output (expand-file-name \"top-level.eln\" audit-native-dir))) (with-temp-file source (insert \";;; -*- lexical-binding: t -*-\\n\" \"(setq audit-native-loaded 42)\\n\" \"(defun audit-native-file-function () 7)\\n\" \"(provide 'audit-native-file-feature)\\n\")) (native-compile source output) (setq audit-native-loaded nil) (native-elisp-load output) (list audit-native-loaded (featurep 'audit-native-file-feature) (audit-native-file-function)))",
+      "gnu": "(ok (42 t 7))",
+      "remacs": "(ok (nil nil 7))",
+      "differs": true
+    },
+    {
+      "id": "native:global-value",
+      "group": "native",
+      "form": "(funcall (audit-native-compile (lambda nil audit-native-special)))",
+      "gnu": "(ok 1)",
+      "remacs": "(ok audit-native-special)",
+      "differs": true
+    },
+    {
+      "id": "native:let-star-shadow",
+      "group": "native",
+      "form": "(funcall (audit-native-compile (lambda (x) (let* ((x (1+ x))) x))) 7)",
+      "gnu": "(ok 8)",
+      "remacs": "(error (wrong-type-argument number-or-marker-p nil))",
+      "differs": true
+    },
+    {
+      "id": "native:quoted-constant-identity",
+      "group": "native",
+      "form": "(let ((f (audit-native-compile (lambda nil '(1 2))))) (eq (funcall f) (funcall f)))",
+      "gnu": "(ok t)",
+      "remacs": "(ok nil)",
+      "differs": true
+    },
+    {
+      "id": "native:special-parameter",
+      "group": "native",
+      "form": "(funcall (audit-native-compile (lambda (audit-native-special) (symbol-value 'audit-native-special))) 7)",
+      "gnu": "(ok 1)",
+      "remacs": "(ok 1)",
+      "differs": false
+    },
+    {
+      "id": "native:string-byte-kind",
+      "group": "native",
+      "form": "(let ((f (audit-native-compile (lambda nil \"����\")))) (list (multibyte-string-p (funcall f)) (string-to-list (funcall f))))",
+      "gnu": "(ok (nil (128 255)))",
+      "remacs": "(ok (nil (4194176 4194303)))",
+      "differs": true
+    },
+    {
+      "id": "native:string-byte-kind-baseline",
+      "group": "native",
+      "form": "(list (multibyte-string-p \"����\") (string-to-list \"����\"))",
+      "gnu": "(ok (nil (128 255)))",
+      "remacs": "(ok (nil (128 255)))",
+      "differs": false
+    },
+    {
+      "id": "condition:notify-without-lock",
+      "group": "concurrency",
+      "form": "(condition-notify (make-condition-variable (make-mutex)))",
+      "gnu": "(error (error \"Condition variable's mutex is not held by current thread\"))",
+      "remacs": "(error (error \"Condition variable's mutex is not held by current thread\"))",
+      "differs": false
+    },
+    {
+      "id": "condition:wait-without-lock",
+      "group": "concurrency",
+      "form": "(condition-wait (make-condition-variable (make-mutex)))",
+      "gnu": "(error (error \"Condition variable's mutex is not held by current thread\"))",
+      "remacs": "(error (error \"Condition variable's mutex is not held by current thread\"))",
+      "differs": false
+    },
+    {
+      "id": "mutex:busy-lock",
+      "group": "concurrency",
+      "form": "(let ((m (make-mutex)) (entered nil) worker) (mutex-lock m) (unwind-protect (progn (setq worker (make-thread (lambda nil (mutex-lock m) (unwind-protect (setq entered t) (mutex-unlock m))))) (sleep-for 0.03) (let ((before-unlock entered)) (ignore-errors (mutex-unlock m)) (thread-join worker) (list before-unlock entered))) (ignore-errors (mutex-unlock m))))",
+      "gnu": "(ok (nil t))",
+      "remacs": "(ok (t t))",
+      "differs": true
+    },
+    {
+      "id": "mutex:foreign-unlock",
+      "group": "concurrency",
+      "form": "(let ((m (make-mutex))) (mutex-lock m) (unwind-protect (thread-join (make-thread (lambda nil (condition-case e (progn (mutex-unlock m) 'unlocked) (error (car e)))))) (ignore-errors (mutex-unlock m))))",
+      "gnu": "(ok error)",
+      "remacs": "(ok unlocked)",
+      "differs": true
+    },
+    {
+      "id": "mutex:recursive-depth",
+      "group": "concurrency",
+      "form": "(let ((m (make-mutex))) (mutex-lock m) (mutex-lock m) (unwind-protect (list (mutex-unlock m) (mutex-unlock m)) (ignore-errors (mutex-unlock m))))",
+      "gnu": "(ok (nil nil))",
+      "remacs": "(error (error \"Cannot unlock mutex owned by another thread\"))",
+      "differs": true
+    },
+    {
+      "id": "thread:current-buffer-isolation",
+      "group": "concurrency",
+      "form": "(let ((a (generate-new-buffer \" *audit-thread-a*\")) (b (generate-new-buffer \" *audit-thread-b*\"))) (unwind-protect (save-current-buffer (set-buffer a) (let ((worker (make-thread (lambda nil (set-buffer b))))) (thread-join worker) (eq (current-buffer) a))) (kill-buffer a) (kill-buffer b)))",
+      "gnu": "(ok t)",
+      "remacs": "(ok nil)",
+      "differs": true
+    },
+    {
+      "id": "thread:dynamic-bindings",
+      "group": "concurrency",
+      "form": "(let ((audit-thread-special 'parent)) (thread-join (make-thread (lambda nil (symbol-value 'audit-thread-special)))))",
+      "gnu": "(ok global)",
+      "remacs": "(ok parent)",
+      "differs": true
+    },
+    {
+      "id": "thread:invalid-function",
+      "group": "concurrency",
+      "form": "(unwind-protect (threadp (make-thread 42)) (thread-last-error t))",
+      "gnu": "(ok t)",
+      "remacs": "(ok t)",
+      "differs": false
+    },
+    {
+      "id": "thread:parent-worker-coordination",
+      "group": "concurrency",
+      "form": "(progn (setq audit-thread-ready nil) (let ((worker (make-thread (lambda nil (let ((n 0)) (while (and (not audit-thread-ready) (< n 200)) (setq n (1+ n)) (sleep-for 0.005)) (if audit-thread-ready 'ready 'timed-out)))))) (setq audit-thread-ready t) (thread-join worker)))",
+      "gnu": "(ok ready)",
+      "remacs": "(ok timed-out)",
+      "differs": true
+    },
+    {
+      "id": "timer:accept-process-output",
+      "group": "concurrency",
+      "form": "(let ((timer-list nil) (hits 0)) (unwind-protect (progn (run-at-time 0 nil (lambda nil (setq hits (1+ hits)))) (accept-process-output nil 0.04) hits) (mapc #'cancel-timer timer-list)))",
+      "gnu": "(ok 1)",
+      "remacs": "(ok 1)",
+      "differs": false
+    },
+    {
+      "id": "timer:accept-process-output-inhibit",
+      "group": "concurrency",
+      "form": "(let ((timer-list nil) (hits 0) (p (make-pipe-process :name \"audit-timer-inhibit\" :noquery t))) (unwind-protect (progn (run-at-time 0 nil (lambda nil (setq hits (1+ hits)))) (accept-process-output p 0.04 nil 1) hits) (mapc #'cancel-timer timer-list) (delete-process p)))",
+      "gnu": "(ok 0)",
+      "remacs": "(ok 1)",
+      "differs": true
+    },
+    {
+      "id": "timer:cancel-other-due",
+      "group": "concurrency",
+      "form": "(let ((timer-list nil) (hits nil) later) (unwind-protect (progn (setq later (run-at-time -1 nil (lambda nil (push 'later hits)))) (run-at-time -2 nil (lambda nil (push 'first hits) (cancel-timer later))) (sleep-for 0.04) hits) (mapc #'cancel-timer timer-list)))",
+      "gnu": "(ok (first))",
+      "remacs": "(ok (first))",
+      "differs": false
+    },
+    {
+      "id": "timer:normal-dispatch",
+      "group": "concurrency",
+      "form": "(let ((timer-list nil) (hits 0)) (unwind-protect (progn (run-at-time 0 nil (lambda nil (setq hits (1+ hits)))) (sleep-for 0.04) hits) (mapc #'cancel-timer timer-list)))",
+      "gnu": "(ok 1)",
+      "remacs": "(ok 1)",
+      "differs": false
+    },
+    {
+      "id": "cli:eval-control",
+      "group": "cli",
+      "form": "argv=[\"-Q\", \"--batch\", \"--eval\", \"(princ (+ 1 2))\"]",
+      "gnu": "{\"exit\": 0, \"stdout\": \"3\"}",
+      "remacs": "{\"exit\": 0, \"stdout\": \"3\"}",
+      "differs": false
+    },
+    {
+      "id": "cli:eval-multiple-forms",
+      "group": "cli",
+      "form": "argv=[\"-Q\", \"--batch\", \"--eval\", \"(princ 1) (princ 2)\"]",
+      "gnu": "{\"exit\": 0, \"stdout\": \"1\"}",
+      "remacs": "{\"exit\": 0, \"stdout\": \"12\"}",
+      "differs": true
+    },
+    {
+      "id": "cli:file-before-eval",
+      "group": "cli",
+      "form": "argv=[\"-Q\", \"--batch\", \"<audit-dir>/fixture.txt\", \"--eval\", \"(princ (buffer-string))\"]; fixture.txt=\"fixture-text\\n\"",
+      "gnu": "{\"exit\": 0, \"stdout\": \"fixture-text\\n\"}",
+      "remacs": "{\"exit\": 0, \"stdout\": \"\"}",
+      "differs": true
+    },
+    {
+      "id": "cli:file-after-eval-control",
+      "group": "cli",
+      "form": "argv=[\"-Q\", \"--batch\", \"--eval\", \"(princ (buffer-string))\", \"<audit-dir>/fixture.txt\"]; fixture.txt=\"fixture-text\\n\"",
+      "gnu": "{\"exit\": 0, \"stdout\": \"\"}",
+      "remacs": "{\"exit\": 0, \"stdout\": \"\"}",
+      "differs": false
+    },
+    {
+      "id": "cli:funcall-consumed-arguments",
+      "group": "cli",
+      "form": "argv=[\"-Q\", \"--batch\", \"--eval\", \"(defun audit-cli-consume () (setq command-line-args-left nil))\", \"-f\", \"audit-cli-consume\", \"--eval\", \"(princ 123)\"]",
+      "gnu": "{\"exit\": 0, \"stdout\": \"\"}",
+      "remacs": "{\"exit\": 0, \"stdout\": \"123\"}",
+      "differs": true
+    },
+    {
+      "id": "cli:end-of-options",
+      "group": "cli",
+      "form": "argv=[\"-Q\", \"--batch\", \"--\", \"--eval\", \"(princ 123)\"]",
+      "gnu": "{\"exit\": 0, \"stdout\": \"\"}",
+      "remacs": "{\"exit\": 0, \"stdout\": \"123\"}",
+      "differs": true
+    },
+    {
+      "id": "cli:load-path-short",
+      "group": "cli",
+      "form": "argv=[\"-Q\", \"--batch\", \"-L\", \"<audit-dir>/lib\", \"--eval\", \"(condition-case e (progn (require 'audit-cli-library) (princ audit-cli-library-value)) (error (prin1 (car e))))\"]",
+      "gnu": "{\"exit\": 0, \"stdout\": \"42\"}",
+      "remacs": "{\"exit\": 0, \"stdout\": \"file-missing\"}",
+      "differs": true
+    },
+    {
+      "id": "cli:load-path-long",
+      "group": "cli",
+      "form": "argv=[\"-Q\", \"--batch\", \"--directory\", \"<audit-dir>/lib\", \"--eval\", \"(condition-case e (progn (require 'audit-cli-library) (princ audit-cli-library-value)) (error (prin1 (car e))))\"]",
+      "gnu": "{\"exit\": 0, \"stdout\": \"42\"}",
+      "remacs": "{\"exit\": 0, \"stdout\": \"file-missing\"}",
+      "differs": true
+    },
+    {
+      "id": "cli:single-hyphen-eval",
+      "group": "cli",
+      "form": "argv=[\"-Q\", \"--batch\", \"-eval\", \"(princ 7)\"]",
+      "gnu": "{\"exit\": 0, \"stdout\": \"7\"}",
+      "remacs": "{\"exit\": 0, \"stdout\": \"\"}",
+      "differs": true
+    },
+    {
+      "id": "cli:equals-eval",
+      "group": "cli",
+      "form": "argv=[\"-Q\", \"--batch\", \"--eval=(princ 7)\"]",
+      "gnu": "{\"exit\": 0, \"stdout\": \"7\"}",
+      "remacs": "{\"exit\": 0, \"stdout\": \"\"}",
+      "differs": true
+    },
+    {
+      "id": "cli:help",
+      "group": "cli",
+      "form": "argv=[\"-Q\", \"--batch\", \"--help\"]",
+      "gnu": "{\"exit\": 0, \"has_usage\": true}",
+      "remacs": "{\"exit\": 0, \"has_usage\": false}",
+      "differs": true
+    },
+    {
+      "id": "treesit:basic-control",
+      "group": "treesit",
+      "form": "(with-temp-buffer (insert \"[1,2]\") (let ((p (treesit-parser-create 'json))) (treesit-node-string (treesit-parser-root-node p))))",
+      "gnu": "(ok \"(document (array (number) (number)))\")",
+      "remacs": "(ok \"(document (array (number) (number)))\")",
+      "differs": false
+    },
+    {
+      "id": "treesit:delete-twice",
+      "group": "treesit",
+      "form": "(with-temp-buffer (let ((p (treesit-parser-create 'json))) (treesit-parser-delete p) (treesit-parser-delete p)))",
+      "gnu": "(error (treesit-parser-deleted #<treesit-parser for json>))",
+      "remacs": "(error (treesit-parser-deleted #<deleted treesit-parser for json>))",
+      "differs": true
+    },
+    {
+      "id": "treesit:edit-longer",
+      "group": "treesit",
+      "form": "(with-temp-buffer (insert \"[1,2]\") (let ((p (treesit-parser-create 'json))) (treesit-parser-root-node p) (goto-char 2) (delete-char 1) (insert \"null\") (treesit-node-string (treesit-parser-root-node p))))",
+      "gnu": "(ok \"(document (array (null) (number)))\")",
+      "remacs": "(ok \"(document (array (number) (number)))\")",
+      "differs": true
+    },
+    {
+      "id": "treesit:edit-same-length",
+      "group": "treesit",
+      "form": "(with-temp-buffer (insert \"[1,2]\") (let ((p (treesit-parser-create 'json))) (treesit-parser-root-node p) (goto-char 2) (delete-char 1) (insert \"x\") (let ((root (treesit-parser-root-node p))) (list (treesit-node-check root 'has-error) (treesit-node-string root)))))",
+      "gnu": "(ok (t \"(document (array (ERROR (UNEXPECTED 'x')) (number)))\"))",
+      "remacs": "(ok (nil \"(document (array (number) (number)))\"))",
+      "differs": true
+    },
+    {
+      "id": "treesit:indirect-buffer",
+      "group": "treesit",
+      "form": "(with-temp-buffer (insert \"[1,2]\") (let* ((base (current-buffer)) (p (treesit-parser-create 'json)) (indirect (make-indirect-buffer base \" *audit-treesit-indirect*\"))) (unwind-protect (list (eq p (treesit-parser-create 'json indirect)) (length (treesit-parser-list indirect))) (kill-buffer indirect))))",
+      "gnu": "(ok (nil 1))",
+      "remacs": "(ok (t 1))",
+      "differs": true
+    },
+    {
+      "id": "treesit:killed-buffer-parser",
+      "group": "treesit",
+      "form": "(let* ((b (generate-new-buffer \" *audit-treesit*\")) (p (treesit-parser-create 'json b))) (kill-buffer b) (list (treesit-parser-p p) (condition-case e (treesit-parser-language p) (error (car e)))))",
+      "gnu": "(ok (t json))",
+      "remacs": "(ok (t json))",
+      "differs": false
+    },
+    {
+      "id": "treesit:notifier-dedup",
+      "group": "treesit",
+      "form": "(with-temp-buffer (let ((p (treesit-parser-create 'json))) (treesit-parser-add-notifier p 'audit-treesit-notifier) (treesit-parser-add-notifier p 'audit-treesit-notifier) (length (treesit-parser-notifiers p))))",
+      "gnu": "(ok 1)",
+      "remacs": "(ok 2)",
+      "differs": true
+    },
+    {
+      "id": "treesit:notifier-invalid",
+      "group": "treesit",
+      "form": "(with-temp-buffer (let ((p (treesit-parser-create 'json))) (treesit-parser-add-notifier p 42) 'accepted))",
+      "gnu": "(error (wrong-type-argument symbolp 42))",
+      "remacs": "(ok accepted)",
+      "differs": true
+    },
+    {
+      "id": "treesit:notifier-lambda",
+      "group": "treesit",
+      "form": "(with-temp-buffer (let ((p (treesit-parser-create 'json))) (treesit-parser-add-notifier p (lambda (_ranges _parser) nil)) 'accepted))",
+      "gnu": "(error (wrong-type-argument symbolp #[(_ranges _parser) (nil) (t)]))",
+      "remacs": "(ok accepted)",
+      "differs": true
+    },
+    {
+      "id": "treesit:old-node-after-edit",
+      "group": "treesit",
+      "form": "(with-temp-buffer (insert \"[1,2]\") (let* ((p (treesit-parser-create 'json)) (old (treesit-parser-root-node p))) (goto-char (point-max)) (insert \" \") (let ((before (treesit-node-check old 'outdated))) (treesit-parser-root-node p) (list before (treesit-node-check old 'outdated) (condition-case e (treesit-node-type old) (error (car e)))))))",
+      "gnu": "(ok (nil t treesit-node-outdated))",
+      "remacs": "(ok (nil t treesit-node-outdated))",
+      "differs": false
+    },
+    {
+      "id": "treesit:old-node-after-repeated-reparse",
+      "group": "treesit",
+      "form": "(with-temp-buffer (insert \"[1,2]\") (let* ((p (treesit-parser-create 'json)) (old (treesit-parser-root-node p)) hits) (dotimes (_ 8) (goto-char (point-max)) (insert \" \") (treesit-parser-root-node p) (push (treesit-node-check old 'outdated) hits)) (nreverse hits)))",
+      "gnu": "(ok (t t t t t t t t))",
+      "remacs": "(ok (t nil t nil t nil t nil))",
+      "differs": true
+    },
+    {
+      "id": "treesit:parser-reuse-control",
+      "group": "treesit",
+      "form": "(with-temp-buffer (let ((p (treesit-parser-create 'json))) (eq p (treesit-parser-create 'json))))",
+      "gnu": "(ok t)",
+      "remacs": "(ok t)",
+      "differs": false
+    },
+    {
+      "id": "treesit:query-control",
+      "group": "treesit",
+      "form": "(with-temp-buffer (insert \"[1,2]\") (let ((p (treesit-parser-create 'json))) (mapcar #'car (treesit-query-capture p \"(number) @n\"))))",
+      "gnu": "(ok (n n))",
+      "remacs": "(ok (n n))",
+      "differs": false
+    },
+    {
+      "id": "treesit:query-match-case",
+      "group": "treesit",
+      "form": "(with-temp-buffer (insert \"[\\\"A\\\",\\\"a\\\"]\") (let ((p (treesit-parser-create 'json)) (case-fold-search t)) (length (treesit-query-capture p \"((string) @s (#match? @s \\\"A\\\"))\"))))",
+      "gnu": "(ok 1)",
+      "remacs": "(ok 2)",
+      "differs": true
+    },
+    {
+      "id": "treesit:query-repeat-capture",
+      "group": "treesit",
+      "form": "(with-temp-buffer (insert \"[1,2]\") (let ((p (treesit-parser-create 'json))) (mapcar #'car (treesit-query-capture p \"((array (number) @n (number) @n) (#eq? @n \\\"1\\\"))\"))))",
+      "gnu": "(ok nil)",
+      "remacs": "(ok (n n))",
+      "differs": true
+    },
+    {
+      "id": "treesit:ranges-edit",
+      "group": "treesit",
+      "form": "(with-temp-buffer (insert \"xx [1] yy\") (let ((p (treesit-parser-create 'json))) (treesit-parser-set-included-ranges p '((4 . 7))) (treesit-parser-root-node p) (goto-char 1) (insert \"ZZ\") (treesit-parser-included-ranges p)))",
+      "gnu": "(ok ((4 . 7)))",
+      "remacs": "(ok ((4 . 7)))",
+      "differs": false
+    },
+    {
+      "id": "treesit:ranges-invalid",
+      "group": "treesit",
+      "form": "(with-temp-buffer (insert \"[1,2]\") (treesit-parser-set-included-ranges (treesit-parser-create 'json) '((0 . 99))))",
+      "gnu": "(error (treesit-range-invalid \"RANGE is either overlapping, out-of-order or out-of-range\" ((0 . 99))))",
+      "remacs": "(error (treesit-range-invalid (0 . 99)))",
+      "differs": true
+    },
+    {
+      "id": "process:decode-latin1",
+      "group": "process",
+      "form": "(audit-process-with '(\"/bin/sh\" \"-c\" \"printf '\\\\351'\") '(:connection-type pipe :coding iso-latin-1) (lambda (p b) (audit-process-drain p) (with-current-buffer b (string-to-list (buffer-string)))))",
+      "gnu": "(ok (233))",
+      "remacs": "(ok (65533))",
+      "differs": true
+    },
+    {
+      "id": "process:encode-latin1",
+      "group": "process",
+      "form": "(audit-process-with '(\"/usr/bin/od\" \"-An\" \"-tx1\") '(:connection-type pipe :coding iso-latin-1) (lambda (p b) (process-send-string p \"é\\n\") (process-send-eof p) (audit-process-drain p) (with-current-buffer b (string-trim (buffer-string)))))",
+      "gnu": "(ok \"e9  0a\")",
+      "remacs": "(ok \"c3  a9  0a\")",
+      "differs": true
+    },
+    {
+      "id": "process:environment",
+      "group": "process",
+      "form": "(let ((process-environment (cons \"REMACS_AUDIT_CHILD=from-lisp\" process-environment))) (audit-process-with '(\"/bin/sh\" \"-c\" \"printf '%s' \\\"$REMACS_AUDIT_CHILD\\\"\") '(:connection-type pipe) (lambda (p b) (audit-process-drain p) (with-current-buffer b (buffer-string)))))",
+      "gnu": "(ok \"from-lisp\")",
+      "remacs": "(ok \"\")",
+      "differs": true
+    },
+    {
+      "id": "process:exec-path",
+      "group": "process",
+      "form": "(let* ((dir (make-temp-file \"remacs-audit-path-\" t)) (program (expand-file-name \"audit-child-command\" dir)) (exec-path (list dir))) (unwind-protect (progn (with-temp-file program (insert \"#!/bin/sh\\nprintf found\")) (set-file-modes program 448) (audit-process-with '(\"audit-child-command\") '(:connection-type pipe) (lambda (p b) (audit-process-drain p) (with-current-buffer b (buffer-string))))) (delete-directory dir t)))",
+      "gnu": "(ok \"found\")",
+      "remacs": "(error (file-missing \"Searching for program\" \"No such file or directory\" \"audit-child-command\"))",
+      "differs": true
+    },
+    {
+      "id": "process:filter-t",
+      "group": "process",
+      "form": "(audit-process-with '(\"/bin/sh\" \"-c\" \"printf ok\") '(:connection-type pipe :filter t) (lambda (p b) (let ((first (condition-case e (progn (accept-process-output p 0.1) 'ok) (error (car e))))) (set-process-filter p nil) (audit-process-drain p) (list first (with-current-buffer b (buffer-string))))))",
+      "gnu": "(ok (ok \"\"))",
+      "remacs": "(ok (void-function \"\"))",
+      "differs": true
+    },
+    {
+      "id": "process:invalid-coding",
+      "group": "process",
+      "form": "(let ((p (make-pipe-process :name \"audit-coding\" :noquery t))) (unwind-protect (progn (set-process-coding-system p 'audit-no-such-coding 'audit-no-such-coding) 'accepted) (delete-process p)))",
+      "gnu": "(error (coding-system-error audit-no-such-coding))",
+      "remacs": "(ok accepted)",
+      "differs": true
+    },
+    {
+      "id": "process:just-this-one",
+      "group": "process",
+      "form": "(audit-process-with '(\"/bin/sh\" \"-c\" \"sleep 0.02; printf other\") '(:connection-type pipe) (lambda (_other b) (let ((p (make-pipe-process :name \"audit-quiet\" :noquery t :sentinel #'ignore))) (unwind-protect (progn (accept-process-output p 0.1 nil t) (with-current-buffer b (buffer-string))) (delete-process p)))))",
+      "gnu": "(ok \"other\")",
+      "remacs": "(ok \"other\")",
+      "differs": false
+    },
+    {
+      "id": "process:pipe-connection",
+      "group": "process",
+      "form": "(audit-process-with '(\"/bin/cat\") '(:connection-type pipe) (lambda (p _b) (null (process-tty-name p))))",
+      "gnu": "(ok t)",
+      "remacs": "(ok nil)",
+      "differs": true
+    },
+    {
+      "id": "process:send-region-low-bound",
+      "group": "process",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((p (make-pipe-process :name \"audit-region\" :noquery t))) (unwind-protect (condition-case e (progn (process-send-region p 0 2) 'sent) (error (car e))) (delete-process p))))",
+      "gnu": "(ok args-out-of-range)",
+      "remacs": "(ok sent)",
+      "differs": true
+    },
+    {
+      "id": "process:send-region-marker",
+      "group": "process",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((p (make-pipe-process :name \"audit-region\" :noquery t))) (unwind-protect (process-send-region p (copy-marker 1) (copy-marker 3)) (delete-process p))))",
+      "gnu": "(ok nil)",
+      "remacs": "(error (wrong-type-argument integer-or-marker-p #<marker in no buffer>))",
+      "differs": true
+    },
+    {
+      "id": "process:send-region-narrowed",
+      "group": "process",
+      "form": "(with-temp-buffer (insert \"abc\") (narrow-to-region 2 3) (let ((p (make-pipe-process :name \"audit-region\" :noquery t))) (unwind-protect (condition-case e (progn (process-send-region p 1 4) 'sent) (error (car e))) (delete-process p))))",
+      "gnu": "(ok args-out-of-range)",
+      "remacs": "(ok sent)",
+      "differs": true
+    },
+    {
+      "id": "process:split-utf8",
+      "group": "process",
+      "form": "(audit-process-with '(\"/bin/sh\" \"-c\" \"printf '\\\\343'; sleep 0.1; printf '\\\\201\\\\202'\") '(:connection-type pipe :coding utf-8) (lambda (p b) (audit-process-drain p) (with-current-buffer b (buffer-string))))",
+      "gnu": "(ok \"あ\")",
+      "remacs": "(ok \"���\")",
+      "differs": true
+    },
+    {
+      "id": "process:timeout-overflow",
+      "group": "process",
+      "form": "(accept-process-output nil 1e+30)",
+      "gnu": "(error (file-error \"Failed select\" \"Invalid argument\"))",
+      "remacs": "Rust panic; process exit 0; AUDIT-DONE missing",
+      "differs": true
+    },
+    {
+      "id": "process:wait-without-timeout",
+      "group": "process",
+      "form": "(audit-process-with '(\"/bin/cat\") '(:connection-type pipe) (lambda (p b) (let* ((timer-list nil) (timer (run-at-time 0.02 nil (lambda nil (process-send-string p \"ok\\n\"))))) (unwind-protect (list (accept-process-output p) (with-current-buffer b (buffer-string))) (cancel-timer timer)))))",
+      "gnu": "(ok (t \"ok\\n\"))",
+      "remacs": "(ok (nil \"\"))",
+      "differs": true
+    },
+    {
+      "id": "process:working-directory",
+      "group": "process",
+      "form": "(let* ((dir (make-temp-file \"remacs-audit-cwd-\" t)) (default-directory dir)) (unwind-protect (audit-process-with '(\"/bin/pwd\") '(:connection-type pipe) (lambda (p b) (audit-process-drain p) (equal (file-truename (with-current-buffer b (string-trim (buffer-string)))) (directory-file-name (file-truename dir))))) (delete-directory dir)))",
+      "gnu": "(ok t)",
+      "remacs": "(ok nil)",
+      "differs": true
+    },
+    {
+      "id": "files:chmod-nofollow-control",
+      "group": "files",
+      "form": "(audit-file-with-directory (lambda (dir) (let ((source (expand-file-name \"source\" dir)) (link (expand-file-name \"link\" dir))) (with-temp-file source (insert \"original\")) (set-file-modes source 416) (make-symbolic-link source link) (set-file-modes link 384 'nofollow) (file-modes source))))",
+      "gnu": "(ok 416)",
+      "remacs": "(ok 416)",
+      "differs": false
+    },
+    {
+      "id": "files:copy-new-control",
+      "group": "files",
+      "form": "(audit-file-with-directory (lambda (dir) (let ((source (expand-file-name \"source\" dir)) (dest (expand-file-name \"dest\" dir))) (with-temp-file source (insert \"original\")) (copy-file source dest) (list (audit-file-read source) (audit-file-read dest)))))",
+      "gnu": "(ok (\"original\" \"original\"))",
+      "remacs": "(ok (\"original\" \"original\"))",
+      "differs": false
+    },
+    {
+      "id": "files:copy-over-broken-destination",
+      "group": "files",
+      "form": "(audit-file-with-directory (lambda (dir) (let ((source (expand-file-name \"source\" dir)) (dest (expand-file-name \"dest\" dir)) (missing (expand-file-name \"missing-target\" dir))) (with-temp-file source (insert \"original\")) (make-symbolic-link missing dest) (list (condition-case e (copy-file source dest nil) (error (car e))) (file-exists-p missing) (stringp (file-symlink-p dest))))))",
+      "gnu": "(ok (file-already-exists nil t))",
+      "remacs": "(ok (nil t t))",
+      "differs": true
+    },
+    {
+      "id": "files:copy-self-hardlink",
+      "group": "files",
+      "form": "(audit-file-with-directory (lambda (dir) (let* ((source (expand-file-name \"source\" dir)) (dest (if (eq 'hardlink 'same-name) source (expand-file-name \"alias\" dir)))) (with-temp-file source (insert \"original\")) (unless (eq 'hardlink 'same-name) (add-name-to-file source dest)) (list (condition-case e (copy-file source dest t) (error (car e))) (audit-file-read source)))))",
+      "gnu": "(ok (file-error \"\"))",
+      "remacs": "(ok (nil \"\"))",
+      "differs": true
+    },
+    {
+      "id": "files:copy-self-same-name",
+      "group": "files",
+      "form": "(audit-file-with-directory (lambda (dir) (let* ((source (expand-file-name \"source\" dir)) (dest (if (eq 'same-name 'same-name) source (expand-file-name \"alias\" dir)))) (with-temp-file source (insert \"original\")) (unless (eq 'same-name 'same-name) (add-name-to-file source dest)) (list (condition-case e (copy-file source dest t) (error (car e))) (audit-file-read source)))))",
+      "gnu": "(ok (file-error \"\"))",
+      "remacs": "(ok (nil \"\"))",
+      "differs": true
+    },
+    {
+      "id": "files:handler-copy-file",
+      "group": "files",
+      "form": "(let ((file-name-handler-alist '((\"\\\\`/audit-magic:\" . audit-magic-file-handler))) (audit-file-handler-log nil)) (with-temp-buffer (list (condition-case e (copy-file \"/audit-magic:/source\" \"/audit-magic:/dest\") (error (car e))) (nreverse audit-file-handler-log))))",
+      "gnu": "(ok (nil (copy-file)))",
+      "remacs": "(ok (file-missing nil))",
+      "differs": true
+    },
+    {
+      "id": "files:handler-delete-file",
+      "group": "files",
+      "form": "(let ((file-name-handler-alist '((\"\\\\`/audit-magic:\" . audit-magic-file-handler))) (audit-file-handler-log nil)) (with-temp-buffer (list (condition-case e (delete-file \"/audit-magic:/entry\") (error (car e))) (nreverse audit-file-handler-log))))",
+      "gnu": "(ok (nil (delete-file)))",
+      "remacs": "(ok (nil nil))",
+      "differs": true
+    },
+    {
+      "id": "files:handler-file-exists-p",
+      "group": "files",
+      "form": "(let ((file-name-handler-alist '((\"\\\\`/audit-magic:\" . audit-magic-file-handler))) (audit-file-handler-log nil)) (with-temp-buffer (list (condition-case e (file-exists-p \"/audit-magic:/entry\") (error (car e))) (nreverse audit-file-handler-log))))",
+      "gnu": "(ok (t (file-exists-p)))",
+      "remacs": "(ok (nil nil))",
+      "differs": true
+    },
+    {
+      "id": "files:handler-file-modes",
+      "group": "files",
+      "form": "(let ((file-name-handler-alist '((\"\\\\`/audit-magic:\" . audit-magic-file-handler))) (audit-file-handler-log nil)) (with-temp-buffer (list (condition-case e (file-modes \"/audit-magic:/entry\") (error (car e))) (nreverse audit-file-handler-log))))",
+      "gnu": "(ok (416 (file-modes)))",
+      "remacs": "(ok (nil nil))",
+      "differs": true
+    },
+    {
+      "id": "files:handler-file-readable-p",
+      "group": "files",
+      "form": "(let ((file-name-handler-alist '((\"\\\\`/audit-magic:\" . audit-magic-file-handler))) (audit-file-handler-log nil)) (with-temp-buffer (list (condition-case e (file-readable-p \"/audit-magic:/entry\") (error (car e))) (nreverse audit-file-handler-log))))",
+      "gnu": "(ok (t (file-readable-p)))",
+      "remacs": "(ok (nil nil))",
+      "differs": true
+    },
+    {
+      "id": "files:handler-file-writable-p",
+      "group": "files",
+      "form": "(let ((file-name-handler-alist '((\"\\\\`/audit-magic:\" . audit-magic-file-handler))) (audit-file-handler-log nil)) (with-temp-buffer (list (condition-case e (file-writable-p \"/audit-magic:/entry\") (error (car e))) (nreverse audit-file-handler-log))))",
+      "gnu": "(ok (t (file-writable-p)))",
+      "remacs": "(ok (nil nil))",
+      "differs": true
+    },
+    {
+      "id": "files:handler-insert-file-contents",
+      "group": "files",
+      "form": "(let ((file-name-handler-alist '((\"\\\\`/audit-magic:\" . audit-magic-file-handler))) (audit-file-handler-log nil)) (with-temp-buffer (list (condition-case e (insert-file-contents \"/audit-magic:/entry\") (error (car e))) (nreverse audit-file-handler-log))))",
+      "gnu": "(ok ((\"/audit-magic:/entry\" 7) (insert-file-contents)))",
+      "remacs": "(ok (file-missing nil))",
+      "differs": true
+    },
+    {
+      "id": "files:handler-lookup-control",
+      "group": "files",
+      "form": "(let ((file-name-handler-alist '((\"\\\\`/audit-magic:\" . audit-magic-file-handler)))) (eq (find-file-name-handler \"/audit-magic:/entry\" 'file-exists-p) 'audit-magic-file-handler))",
+      "gnu": "(ok t)",
+      "remacs": "(ok t)",
+      "differs": false
+    },
+    {
+      "id": "files:handler-rename-file",
+      "group": "files",
+      "form": "(let ((file-name-handler-alist '((\"\\\\`/audit-magic:\" . audit-magic-file-handler))) (audit-file-handler-log nil)) (with-temp-buffer (list (condition-case e (rename-file \"/audit-magic:/source\" \"/audit-magic:/dest\") (error (car e))) (nreverse audit-file-handler-log))))",
+      "gnu": "(ok (nil (rename-file)))",
+      "remacs": "(ok (file-missing nil))",
+      "differs": true
+    },
+    {
+      "id": "files:handler-set-file-modes",
+      "group": "files",
+      "form": "(let ((file-name-handler-alist '((\"\\\\`/audit-magic:\" . audit-magic-file-handler))) (audit-file-handler-log nil)) (with-temp-buffer (list (condition-case e (set-file-modes \"/audit-magic:/entry\" 384) (error (car e))) (nreverse audit-file-handler-log))))",
+      "gnu": "(ok (nil (set-file-modes)))",
+      "remacs": "(ok (file-missing nil))",
+      "differs": true
+    },
+    {
+      "id": "files:handler-set-file-times",
+      "group": "files",
+      "form": "(let ((file-name-handler-alist '((\"\\\\`/audit-magic:\" . audit-magic-file-handler))) (audit-file-handler-log nil)) (with-temp-buffer (list (condition-case e (set-file-times \"/audit-magic:/entry\" 0) (error (car e))) (nreverse audit-file-handler-log))))",
+      "gnu": "(ok (t (set-file-times)))",
+      "remacs": "(ok (file-missing nil))",
+      "differs": true
+    },
+    {
+      "id": "files:handler-write-region",
+      "group": "files",
+      "form": "(let ((file-name-handler-alist '((\"\\\\`/audit-magic:\" . audit-magic-file-handler))) (audit-file-handler-log nil)) (with-temp-buffer (list (condition-case e (write-region \"virtual\" nil \"/audit-magic:/entry\" nil 'quiet) (error (car e))) (nreverse audit-file-handler-log))))",
+      "gnu": "(ok (nil (write-region)))",
+      "remacs": "(ok (file-missing nil))",
+      "differs": true
+    },
+    {
+      "id": "files:hardlink-broken-symlink",
+      "group": "files",
+      "form": "(audit-file-with-directory (lambda (dir) (let ((source (expand-file-name \"source\" dir)) (dest (expand-file-name \"dest\" dir))) (make-symbolic-link \"missing-target\" source) (list (condition-case e (add-name-to-file source dest) (error (car e))) (stringp (file-symlink-p source)) (stringp (file-symlink-p dest))))))",
+      "gnu": "(ok (file-missing t nil))",
+      "remacs": "(ok (file-missing t nil))",
+      "differs": false
+    },
+    {
+      "id": "files:rename-broken-symlink",
+      "group": "files",
+      "form": "(audit-file-with-directory (lambda (dir) (let ((source (expand-file-name \"source\" dir)) (dest (expand-file-name \"dest\" dir))) (make-symbolic-link \"missing-target\" source) (list (condition-case e (rename-file source dest) (error (car e))) (stringp (file-symlink-p source)) (stringp (file-symlink-p dest))))))",
+      "gnu": "(ok (nil nil t))",
+      "remacs": "(ok (file-missing t nil))",
+      "differs": true
+    },
+    {
+      "id": "files:rename-over-broken-destination",
+      "group": "files",
+      "form": "(audit-file-with-directory (lambda (dir) (let ((source (expand-file-name \"source\" dir)) (dest (expand-file-name \"dest\" dir))) (with-temp-file source (insert \"original\")) (make-symbolic-link \"missing-target\" dest) (list (condition-case e (rename-file source dest nil) (error (car e))) (file-exists-p source) (stringp (file-symlink-p dest))))))",
+      "gnu": "(ok (file-already-exists t t))",
+      "remacs": "(ok (nil nil nil))",
+      "differs": true
+    },
+    {
+      "id": "files:rename-to-directory",
+      "group": "files",
+      "form": "(audit-file-with-directory (lambda (dir) (let ((source (expand-file-name \"source\" dir)) (dest (expand-file-name \"sub\" dir))) (with-temp-file source (insert \"original\")) (make-directory dest) (list (condition-case e (rename-file source dest) (error (car e))) (file-exists-p source) (file-exists-p (expand-file-name \"source\" dest))))))",
+      "gnu": "(ok (file-already-exists t nil))",
+      "remacs": "(ok (file-already-exists t nil))",
+      "differs": false
+    },
+    {
+      "id": "files:symlink-flag-\"nofollow\"",
+      "group": "files",
+      "form": "(audit-file-with-directory (lambda (dir) (let ((source (expand-file-name \"source\" dir))) (with-temp-file source (insert \"original\")) (list (condition-case e (progn (file-modes source '#1=\"nofollow\") 'accepted) (error (car e))) (condition-case e (progn (set-file-modes source 384 '#1#) 'accepted) (error (car e))) (condition-case e (progn (set-file-times source 0 '#1#) 'accepted) (error (car e)))))))",
+      "gnu": "(ok (accepted accepted accepted))",
+      "remacs": "(ok (accepted accepted accepted))",
+      "differs": false
+    },
+    {
+      "id": "files:symlink-flag-1",
+      "group": "files",
+      "form": "(audit-file-with-directory (lambda (dir) (let ((source (expand-file-name \"source\" dir))) (with-temp-file source (insert \"original\")) (list (condition-case e (progn (file-modes source '1) 'accepted) (error (car e))) (condition-case e (progn (set-file-modes source 384 '1) 'accepted) (error (car e))) (condition-case e (progn (set-file-times source 0 '1) 'accepted) (error (car e)))))))",
+      "gnu": "(ok (accepted accepted accepted))",
+      "remacs": "(ok (accepted accepted accepted))",
+      "differs": false
+    },
+    {
+      "id": "files:symlink-flag-bad",
+      "group": "files",
+      "form": "(audit-file-with-directory (lambda (dir) (let ((source (expand-file-name \"source\" dir))) (with-temp-file source (insert \"original\")) (list (condition-case e (progn (file-modes source 'bad) 'accepted) (error (car e))) (condition-case e (progn (set-file-modes source 384 'bad) 'accepted) (error (car e))) (condition-case e (progn (set-file-times source 0 'bad) 'accepted) (error (car e)))))))",
+      "gnu": "(ok (accepted accepted accepted))",
+      "remacs": "(ok (accepted accepted accepted))",
+      "differs": false
+    },
+    {
+      "id": "files:symlink-flag-t",
+      "group": "files",
+      "form": "(audit-file-with-directory (lambda (dir) (let ((source (expand-file-name \"source\" dir))) (with-temp-file source (insert \"original\")) (list (condition-case e (progn (file-modes source 't) 'accepted) (error (car e))) (condition-case e (progn (set-file-modes source 384 't) 'accepted) (error (car e))) (condition-case e (progn (set-file-times source 0 't) 'accepted) (error (car e)))))))",
+      "gnu": "(ok (accepted accepted accepted))",
+      "remacs": "(ok (accepted accepted accepted))",
+      "differs": false
+    },
+    {
+      "id": "network:accept-log-callback",
+      "group": "network",
+      "form": "(let ((called nil)) (audit-net-with-pair (list :log (lambda (_server _client _message) (setq called t))) (lambda (_server _client _peer) called)))",
+      "gnu": "(ok t)",
+      "remacs": "(ok nil)",
+      "differs": true
+    },
+    {
+      "id": "network:accept-sentinel-target",
+      "group": "network",
+      "form": "(let (notified) (audit-net-with-pair (list :sentinel (lambda (p _message) (push (process-status p) notified))) (lambda (_server _client _peer) (nreverse notified))))",
+      "gnu": "(ok (open))",
+      "remacs": "(ok (listen))",
+      "differs": true
+    },
+    {
+      "id": "network:accepted-coding-inheritance",
+      "group": "network",
+      "form": "(audit-net-with-pair '(:coding binary) (lambda (server _client peer) (equal (process-coding-system server) (process-coding-system peer))))",
+      "gnu": "(ok t)",
+      "remacs": "(ok nil)",
+      "differs": true
+    },
+    {
+      "id": "network:accepted-contact",
+      "group": "network",
+      "form": "(audit-net-with-pair nil (lambda (_server _client peer) (let ((contact (process-contact peer))) (list (stringp (car contact)) (integerp (cadr contact)) (vectorp (process-contact peer :remote)) (vectorp (process-contact peer :local))))))",
+      "gnu": "(ok (t t t t))",
+      "remacs": "(ok (nil nil nil nil))",
+      "differs": true
+    },
+    {
+      "id": "network:accepted-noquery-inheritance",
+      "group": "network",
+      "form": "(audit-net-with-pair '(:noquery t) (lambda (server _client peer) (list (process-query-on-exit-flag server) (process-query-on-exit-flag peer))))",
+      "gnu": "(ok (nil t))",
+      "remacs": "(ok (nil t))",
+      "differs": false
+    },
+    {
+      "id": "network:accepted-plist-control",
+      "group": "network",
+      "form": "(audit-net-with-pair '(:plist (audit-property 42)) (lambda (server _client peer) (equal (process-plist server) (process-plist peer))))",
+      "gnu": "(ok t)",
+      "remacs": "(ok t)",
+      "differs": false
+    },
+    {
+      "id": "network:deleted-listener-rebind",
+      "group": "network",
+      "form": "(let* ((server (audit-net-server)) (port (process-contact server :service)) second) (unwind-protect (progn (delete-process server) (setq second (audit-net-server (list :service port))) 'bound) (when second (ignore-errors (delete-process second))) (ignore-errors (delete-process server))))",
+      "gnu": "(ok bound)",
+      "remacs": "(error (file-error \"Cannot bind server socket\" \"Address already in use\"))",
+      "differs": true
+    },
+    {
+      "id": "network:deleted-local-listener-unlink",
+      "group": "network",
+      "form": "(let* ((dir (make-temp-file \"remacs-audit-socket-\" t)) (path (expand-file-name \"socket\" dir)) server) (unwind-protect (progn (setq server (make-network-process :name \"audit-local\" :family 'local :server t :service path :noquery t :sentinel #'ignore)) (delete-process server) (file-exists-p path)) (when server (ignore-errors (delete-process server))) (delete-directory dir t)))",
+      "gnu": "(ok t)",
+      "remacs": "(ok t)",
+      "differs": false
+    },
+    {
+      "id": "network:pair-control",
+      "group": "network",
+      "form": "(audit-net-with-pair nil (lambda (server client peer) (list (process-status server) (process-status client) (process-status peer))))",
+      "gnu": "(ok (listen open open))",
+      "remacs": "(ok (listen open open))",
+      "differs": false
+    },
+    {
+      "id": "network:resolved-remote-address",
+      "group": "network",
+      "form": "(let ((server (audit-net-server)) client) (unwind-protect (progn (setq client (make-network-process :name \"audit-dns-client\" :host \"localhost\" :family 'ipv4 :service (process-contact server :service) :noquery t :sentinel #'ignore)) (let ((remote (process-contact client :remote))) (list (aref remote 0) (aref remote 1) (aref remote 2) (aref remote 3)))) (when client (ignore-errors (delete-process client))) (ignore-errors (delete-process server))))",
+      "gnu": "(ok (127 0 0 1))",
+      "remacs": "(ok (0 0 0 0))",
+      "differs": true
+    },
+    {
+      "id": "network:send-eof",
+      "group": "network",
+      "form": "(audit-net-with-pair nil (lambda (_server client peer) (process-send-eof client) (let ((n 0)) (while (and (process-live-p peer) (< n 30)) (setq n (1+ n)) (accept-process-output nil 0.01))) (process-status peer)))",
+      "gnu": "(ok closed)",
+      "remacs": "(ok open)",
+      "differs": true
+    },
+    {
+      "id": "network:stop-reading",
+      "group": "network",
+      "form": "(audit-net-with-pair nil (lambda (_server client peer) (let ((text \"\")) (set-process-filter peer (lambda (_p chunk) (setq text (concat text chunk)))) (stop-process peer) (process-send-string client \"payload\") (accept-process-output nil 0.05) (let ((before text)) (continue-process peer) (accept-process-output nil 0.05) (list before text)))))",
+      "gnu": "(ok (\"\" \"payload\"))",
+      "remacs": "(ok (#1=\"payload\" #1#))",
+      "differs": true
+    },
+    {
+      "id": "network:actual-loopback-binding",
+      "group": "network_system",
+      "form": "(let ((s (make-network-process :name \"audit-binding\" :host \"127.0.0.1\"\n               :family 'ipv4 :server t :service 0 :noquery t)))\n  (unwind-protect (progn (message \"AUDIT-BOUND\") (sleep-for 30))\n    (delete-process s)))\nInspect the child PID with lsof -a -p PID -iTCP -sTCP:LISTEN -nP -Fn; terminate child.",
+      "gnu": "{\"actual_listen_host\": \"127.0.0.1\"}",
+      "remacs": "{\"actual_listen_host\": \"*\"}",
+      "differs": true
+    }
+  ],
+  "probe_sha256": {
+    "tests/audit_external.el": "97a6283a76b1406e2e1b66c0ecbcc88b5dbd6f3d97e80eccf31e1031cf8d1e61",
+    "tests/audit_hash.el": "d8b274b06f0548dad0a60894d16f81d53d4ad390decdcdc42722e3fae50eb510",
+    "tests/audit_native.el": "bc929cecaa8dc0cd9c6f96b41d0520260ae096a11ff308a24d0c8c401c069bd9",
+    "tests/audit_concurrency.el": "a715ea08b31a61515e7ad2445f54098698eb6b49d687359b8f0cb93cd8c42b9d",
+    "tests/audit_helpers.el": "d19bd7f6425e7976137490b329ce291675330b9a661a008833bf2b6a30412bbb",
+    "tests/audit_process.el": "fa28cee9ecd95aef67717c6c5082e663b2f6df4020816a4c1d318de95df31e1f",
+    "tools/audit_cli.py": "e6614fd51ecfae8f2d24124c2f989e9fe79cb780d77ce3b88c9aa27b9ef1ca2a",
+    "tests/audit_treesit.el": "5ee4959c5e839bd3d3a2834a9f7f54e46dc8cba5717d5670f12efb948f4630a0",
+    "tests/audit_inventory.el": "465dc793d68a3e4a752165931e4c032ba0f12672915181cc15c6d833b7fe5fbb",
+    "tools/audit_pty.py": "f543ec08d14bcb9ce47a66c76700c004cd5c2403ea1eb80f3b40a76e0f26ac80",
+    "tests/audit_files.el": "c3f6bef92851a772c112e35f569b47214cc240138e3cd33c9e00498ffa41bdf7",
+    "tests/audit_network.el": "1d44ae4dab2cc924d28d1bff61e24b27779518a4ba5b8fe1ffdbc0ae81066ef8",
+    "tools/audit_network_binding.py": "afeaecd3f69b1f8a8ee0fec28e51927e551beec7b83df9b2bd9b9b9c57190d32"
+  },
+  "existing_issue_count": 161,
+  "issue_baseline_file": "existing-issues.json",
+  "updated_at": "2026-10-17T08:07:16.953585+00:00",
+  "external_fixtures": {
+    "json-grammar": {
+      "path": "/Users/suzumiyaaoba/.emacs.d/tree-sitter/libtree-sitter-json.dylib",
+      "sha256": "d6bd7826572fe3004362ce6667faff67eea76f38a4b1c5683889be548e7bf527",
+      "size": 34000
+    }
+  },
+  "inventory_summary_file": "inventory-summary.json",
+  "pty_followup_file": "pty/comparison.json",
+  "pty_procedure_source": "tools/audit_pty.py",
+  "issue_checked_at": "2026-10-17T08:09:59.620333+00:00"
+}

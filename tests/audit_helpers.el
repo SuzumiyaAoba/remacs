@@ -1,0 +1,12 @@
+;;; audit_helpers.el --- shared runtime audit output -*- lexical-binding: t; -*-
+(defun audit-check (id form)
+  (unless (or (and (getenv "REMACS_AUDIT_ONLY")
+                   (not (equal id (getenv "REMACS_AUDIT_ONLY"))))
+              (member id (split-string (or (getenv "REMACS_AUDIT_SKIP") "") "," t)))
+    (let ((print-circle t) (print-length 50) (print-level 20)
+          (print-escape-newlines t) (print-escape-control-characters t))
+      (when (getenv "REMACS_AUDIT_FORMS")
+        (princ "FORM|") (prin1 id) (princ "|") (prin1 form) (terpri))
+      (princ "AUDIT|") (prin1 id) (princ "|")
+      (prin1 (condition-case e (list 'ok (eval form t)) (error (list 'error e))))
+      (terpri))))

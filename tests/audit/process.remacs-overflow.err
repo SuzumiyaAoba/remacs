@@ -1,0 +1,4 @@
+
+thread 'remacs-main' (1618099) panicked at /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/core/src/time.rs:962:23:
+cannot convert float seconds to Duration: value is either too big or NaN
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

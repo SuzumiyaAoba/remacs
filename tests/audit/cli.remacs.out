@@ -1,0 +1,11 @@
+{"id": "cli:eval-control", "argv": ["-Q", "--batch", "--eval", "(princ (+ 1 2))"], "exit": 0, "stdout": "3"}
+{"id": "cli:eval-multiple-forms", "argv": ["-Q", "--batch", "--eval", "(princ 1) (princ 2)"], "exit": 0, "stdout": "12"}
+{"id": "cli:file-before-eval", "argv": ["-Q", "--batch", "<audit-dir>/fixture.txt", "--eval", "(princ (buffer-string))"], "exit": 0, "stdout": ""}
+{"id": "cli:file-after-eval-control", "argv": ["-Q", "--batch", "--eval", "(princ (buffer-string))", "<audit-dir>/fixture.txt"], "exit": 0, "stdout": ""}
+{"id": "cli:funcall-consumed-arguments", "argv": ["-Q", "--batch", "--eval", "(defun audit-cli-consume () (setq command-line-args-left nil))", "-f", "audit-cli-consume", "--eval", "(princ 123)"], "exit": 0, "stdout": "123"}
+{"id": "cli:end-of-options", "argv": ["-Q", "--batch", "--", "--eval", "(princ 123)"], "exit": 0, "stdout": "123"}
+{"id": "cli:load-path-short", "argv": ["-Q", "--batch", "-L", "<audit-dir>/lib", "--eval", "(condition-case e (progn (require 'audit-cli-library) (princ audit-cli-library-value)) (error (prin1 (car e))))"], "exit": 0, "stdout": "file-missing"}
+{"id": "cli:load-path-long", "argv": ["-Q", "--batch", "--directory", "<audit-dir>/lib", "--eval", "(condition-case e (progn (require 'audit-cli-library) (princ audit-cli-library-value)) (error (prin1 (car e))))"], "exit": 0, "stdout": "file-missing"}
+{"id": "cli:single-hyphen-eval", "argv": ["-Q", "--batch", "-eval", "(princ 7)"], "exit": 0, "stdout": ""}
+{"id": "cli:equals-eval", "argv": ["-Q", "--batch", "--eval=(princ 7)"], "exit": 0, "stdout": ""}
+{"id": "cli:help", "argv": ["-Q", "--batch", "--help"], "exit": 0, "has_usage": false}

@@ -1,0 +1,100 @@
+{
+  "initial_command": "rtk proxy cargo test --offline --test qa -- --test-threads=4",
+  "initial_result": {
+    "passed": 182,
+    "failed": 9,
+    "duration_seconds": 434.79
+  },
+  "initial_log": "qa-initial.log",
+  "notes": [
+    "初回の既存 QA 191 本は 182 成功、9 失敗（434.79 秒）。",
+    "qa_buffer2 と qa_mark は REMACS_NONINTERACTIVE=1 を初期化前に設定すると成功。CLI --batch でも成功。テストの起動条件差がある。",
+    "qa_bufferfile / qa_process_defaults / qa_process_names / qa_system は起動条件を揃えてサンドボックス外で再実行すると成功。ファイルロックの相手プロセス検査、ループバック bind、プロセス情報取得に環境制限が影響する。",
+    "qa_charset の find-charset-string の期待値は GNU 31.1 でも同じように失敗。新規 runtime バグには数えない。",
+    "qa_buffmenu は Rust の QA ハーネスでは失敗するが、CLI --batch と GNU では成功。エラー内容とハーネスとの差分の追加調査待ち。",
+    "qa_time_zero_zone は Rust の QA ハーネスで修飾子・幅の 12 チェックが失敗。GNU では 107 チェック成功。既存の #77/#160 と関連するため新規 Issue 相当には重複計上せず、再発・実行条件を調査する。",
+    "失敗件数をそのまま新規バグ数に加えていない。最初の一括結果と条件を変えた個別結果を分けて保存している。",
+    "追加の既存 CLI テストは 15 本成功。新しい引数順序・消費済み引数・--・-L・別名・ヘルプの検査は含まれていなかったため、GNU 比較を別に追加した。",
+    "既存 pty_editor_smoke は初期フレーム待ちで 120 秒後に失敗。追試では制御 PTY のサイズ 0x0 で ANSI 列が scratch の途中に入り、raw substring 判定が見落とすことを確認。80x24 では両実装とも描画・終了に成功。実装の停止とは区別し、runtime の新規件数に加えていない。"
+  ],
+  "targeted_rechecks": [
+    {
+      "tests": [
+        "qa_mark",
+        "qa_marker",
+        "qa_markers"
+      ],
+      "environment": "REMACS_NONINTERACTIVE=1; sandbox",
+      "result": "3 passed",
+      "log": "qa-batch-mark.log"
+    },
+    {
+      "tests": [
+        "qa_buffer",
+        "qa_buffer2",
+        "qa_buffer_history",
+        "qa_buffer_history_frames",
+        "qa_buffer_name_validation",
+        "qa_buffer_local_value_type",
+        "qa_buffer_string_flags",
+        "qa_bufferfile"
+      ],
+      "environment": "REMACS_NONINTERACTIVE=1; sandbox",
+      "result": "7 passed; qa_bufferfile failed",
+      "log": "qa-batch-buffer.log"
+    },
+    {
+      "tests": [
+        "qa_bufferfile"
+      ],
+      "environment": "REMACS_NONINTERACTIVE=1; escalated",
+      "result": "1 passed",
+      "log": "qa-bufferfile-escalated.log"
+    },
+    {
+      "tests": [
+        "qa_process_defaults",
+        "qa_process_names"
+      ],
+      "environment": "REMACS_NONINTERACTIVE=1; escalated",
+      "result": "2 passed",
+      "log": "qa-process-escalated.log"
+    },
+    {
+      "tests": [
+        "qa_system"
+      ],
+      "environment": "REMACS_NONINTERACTIVE=1; escalated",
+      "result": "1 passed",
+      "log": "qa-system-escalated.log"
+    },
+    {
+      "tests": [
+        "qa_buffmenu"
+      ],
+      "environment": "REMACS_NONINTERACTIVE=1; sandbox",
+      "result": "failed; unresolved harness difference",
+      "log": "qa-buffmenu-batch.log"
+    },
+    {
+      "tests": [
+        "qa_time_zero_zone"
+      ],
+      "environment": "REMACS_NONINTERACTIVE=1; sandbox",
+      "result": "failed; 12 assertions",
+      "log": "qa-time-zero-zone-batch.log"
+    }
+  ],
+  "cli_tests": {
+    "command": "rtk proxy cargo test --offline --test main_cli -- --test-threads=4 --skip pty_editor_smoke",
+    "result": "15 passed; pty_editor_smoke filtered out",
+    "log": "cli-tests.log"
+  },
+  "pty_test": {
+    "command": "cargo test --offline --test main_cli pty_editor_smoke -- --exact",
+    "result": "failed after 120s waiting for raw scratch substring",
+    "log": "pty-smoke.log",
+    "followup": "pty/comparison.json",
+    "explanation": "80x24 と 0x0 の制御端末で GNU/remacs の描画と C-x C-c 終了を比較。0x0 の remacs 出力では ANSI が *scratch* の途中に入るため raw substring 検査が失敗するが、ANSI を除くと初期フレームが存在し、終了コードは 0。"
+  }
+}

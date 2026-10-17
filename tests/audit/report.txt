@@ -1,0 +1,611 @@
+Remacs バグ調査 — 新規 68 件（調査継続中）
+対象 HEAD: cd0db158c64c3941cf2a1d96fdb0cfe789c2cce6
+最終測定日時 UTC: 2026-10-17T08:07:16.953585+00:00
+既存 Issue: open/closed 合計 161 件を二度取得して照合。
+差分検査: 169 ケース / 差分 121 行。
+差分行を原因・修正箇所でまとめ、GNU 側の挙動が曖昧なケース等を除外した件数。
+領域別: {'SQLite': 6, 'native': 9, 'equal/hash': 7, 'XML': 5, 'HTML': 4, 'thread/mutex': 3, 'process/timer': 1, 'process': 10, 'CLI': 7, 'tree-sitter': 7, 'network': 6, 'files': 3} / 暫定優先度: {'P1': 27, 'P2': 38, 'P3': 3}
+全領域の調査完了を示す結果ではない。未検査領域は末尾を参照。
+
+再実行（GNU Emacs 31.1 の生バイナリを指定）:
+  rtk proxy python3 tools/audit_runtime.py --gnu /path/to/emacs-31.1 --issues-json /path/to/issues.json
+  rtk proxy python3 -B tools/audit_cli.py --gnu /path/to/emacs-31.1
+  rtk proxy python3 -B tools/audit_network_binding.py --gnu /path/to/emacs-31.1
+  rtk proxy python3 tools/render_audit_report.py
+tree-sitter 検査には ~/.emacs.d/tree-sitter の JSON 文法ライブラリが必要。実行時のファイル情報は evidence.json に保存。
+network 検査にはローカルの bind/connect が可能な実行環境、実際の bind 先検査には /usr/sbin/lsof が必要。
+再現式で使う audit-native-compile 等の補助関数は tests/audit_native.el に定義。
+循環 equal と巨大待ち時間は個別プロセスで 20 秒上限。通常の検査は各プロセス 60 秒上限。CLI は各起動 30 秒上限。
+
+重複の確認:
+  XML/HTML と SQLite に該当する既存 Issue はタイトル・本文検索で見つからなかった。
+  ハッシュ関係の #27 は eq の float キー、#91 は sxhash の数値、#128 は overlay の equal。今回の独自比較・循環キー・marker キーとは再現条件と原因が異なる。
+  #18 は列挙されたリスト検索・削除関数の循環検出。今回の equal の cdr 走査停止条件と深さ判定は別の実装箇所。
+  #110 はメモリ統計。weak hash の到達不能キーが保持される動作自体は記載されていない。
+  ネイティブ関連の #109 は feature の登録、#153 は byte-compile の declare 処理。今回の C コード生成・ロードの不具合は含まれない。
+  追加調査でも Issue は 161 件で不変。thread の #44/#154 は一覧と signal の問題であり、同期実行・文脈分離・mutex 所有権は記載されていない。
+  process の #25 は同期 call-process の stderr、#54/#55 はデフォルト・命名、#14 はファイル I/O。今回の非同期子プロセスの文字コード・環境・cwd・待機・範囲検査とは別の実装箇所。
+  CLI および tree-sitter の該当する既存 Issue は本文検索でも見つからなかった。#108 は初期 load-path で、-L の解析不足とは別の再現条件。
+  再開後の最新 Issue は 161 件。#75/#76/#78/#79/#80 の状態等に更新があったが、今回のネットワーク・ファイル操作とは重複しない。
+  #54 は新規 process のデフォルト sentinel と marker。今回の accept 時のコールバック未実行・通知先誤りや listener の寿命とは別の再現条件。
+  #105 の同一 inode は add-name-to-file の no-op 判定。今回の copy-file の成功扱い、および壊れた symlink の rename/copy は記載されていない。
+  #21 は file-remote-p のエラー。今回の独自 handler は find-file-name-handler で検索できるため、物理ファイルプリミティブ側の dispatch 不足として区別した。
+
+起動時の関数名棚卸し: GNU 9087、remacs 9151、共通 9087。
+これは fboundp の名前一覧であり、呼び出しの動作検証・網羅率ではない。詳細は inventory.*.json を参照。
+
+AUD-001 [P1] SQLite の BLOB 読み出しが任意バイトを U+FFFD に置換する
+  x'0080ff' を読むと unibyte の (0 128 255) が multibyte の (0 65533 65533) になる。データを復元できない。
+  原因候補: src/lisp/builtins/sqlite.rs:240
+  再現式: (let ((db (sqlite-open))) (unwind-protect (let ((s (caar (sqlite-select db "select x'0080ff'")))) (list (multibyte-string-p s) (string-to-list s))) (sqlite-close db)))
+  GNU: (ok (nil (0 128 255)))
+  remacs: (ok (t (0 65533 65533)))
+  関連ケース: 'sql:blob-read'
+
+AUD-002 [P1] ネイティブ関数がエラー後も実行し、後続の正常値でエラーを失う
+  error の後の setq が実行され、呼び出しもエラーにならず t を返す。tramp は戻り値が EM_INVALID の場合だけ PENDING を確認する。
+  原因候補: src/lisp/builtins/comp.rs:347
+  再現式: (progn (setq audit-native-side-effect nil) (let ((f (audit-native-compile (lambda nil (error "audit-stop") (setq audit-native-side-effect t))))) (list (condition-case e (funcall f) (error (car e))) audit-native-side-effect)))
+  GNU: (ok (error nil))
+  remacs: (ok (t t))
+  関連ケース: 'native:error-aborts-sequence'
+
+AUD-003 [P1] equal が別々の循環リストの比較で停止しない
+  同じ内容の一要素循環リスト同士で GNU は t。remacs は比較開始を出力した後も終了せず、プロセスの 20 秒上限で強制終了。cdr 走査で depth が増えず、循環検出が有効にならない。
+  原因候補: src/lisp/builtins/mod.rs:547
+  再現式: (let ((a (list 1)) (b (list 1))) (setcdr a a) (setcdr b b) (equal a b))
+  GNU: (ok t)
+  remacs: TIMEOUT after 20 seconds (process terminated)
+  関連ケース: 'equal:cycles'
+
+AUD-004 [P1] equal が深い異なるリストを t と判定する
+  葉が 1 と 2 の 205 段のリストで、GNU は Stack overflow in equal、remacs は t。深さ制限以降に同じ比較ペアを入口と cons 分岐で二重登録する。
+  原因候補: src/lisp/builtins/mod.rs:521
+  再現式: (let ((a 1) (b 2)) (dotimes (_ 205) (setq a (list a) b (list b))) (equal a b))
+  GNU: (error (error "Stack overflow in equal"))
+  remacs: (ok t)
+  関連ケース: 'equal:deep-different-lists'
+
+AUD-005 [P1] ネイティブ関数のグローバル変数参照が値ではなくシンボルを返す
+  値が 1 の audit-native-special を返す関数の native-compile 後、戻り値が audit-native-special になる。未解決の変数参照を SDC で出力している。
+  原因候補: src/lisp/builtins/comp.rs:647
+  再現式: (funcall (audit-native-compile (lambda nil audit-native-special)))
+  GNU: (ok 1)
+  remacs: (ok audit-native-special)
+  関連ケース: 'native:global-value'
+
+AUD-006 [P1] ネイティブ関数内で作るクロージャが引数を捕捉しない
+  (lambda (x) (lambda () x)) を native-compile して 7 を渡すと、返された関数の呼び出しが void-variable x になる。GNU は 7。
+  原因候補: src/lisp/builtins/comp.rs:791
+  再現式: (let ((f (funcall (audit-native-compile (lambda (x) (lambda nil x))) 7))) (funcall f))
+  GNU: (ok 7)
+  remacs: (error (void-variable x))
+  関連ケース: 'native:closure-result'
+
+AUD-007 [P1] ネイティブ let* のシャドーイングで初期化前の変数を読む
+  (let* ((x (1+ x))) x) の初期化式が外側の引数 x を見ない。GNU は 8、remacs は number-or-marker-p nil。新変数を初期化式生成前に scope に追加している。
+  原因候補: src/lisp/builtins/comp.rs:910
+  再現式: (funcall (audit-native-compile (lambda (x) (let* ((x (1+ x))) x))) 7)
+  GNU: (ok 8)
+  remacs: (error (wrong-type-argument number-or-marker-p nil))
+  関連ケース: 'native:let-star-shadow'
+
+AUD-008 [P1] .eln に setq や provide などのトップレベルフォームが保存されない
+  ソースを native-compile して native-elisp-load すると defun だけが登録される。初期化と provide が消え、GNU の (42 t 7) が (nil nil 7) になる。
+  原因候補: src/lisp/builtins/comp.rs:1386
+  再現式: (let ((source (expand-file-name "top-level.el" audit-native-dir)) (output (expand-file-name "top-level.eln" audit-native-dir))) (with-temp-file source (insert ";;; -*- lexical-binding: t -*-\n" "(setq audit-native-loaded 42)\n" "(defun audit-native-file-function () 7)\n" "(provide 'audit-native-file-feature)\n")) (native-compile source output) (setq audit-native-loaded nil) (native-elisp-load output) (list audit-native-loaded (featurep 'audit-native-file-feature) (audit-native-file-function)))
+  GNU: (ok (42 t 7))
+  remacs: (ok (nil nil 7))
+  関連ケース: 'native:file-top-level-forms'
+
+AUD-009 [P2] ネイティブコンパイラがソース後半の構文エラーを無視して成功する
+  有効な defun の後に閉じていない括弧を置くと、GNU は end-of-file、remacs は .eln 生成に成功する。file_defuns の read エラーを break で破棄している。
+  原因候補: src/lisp/builtins/comp.rs:1410
+  再現式: (let ((source (expand-file-name "broken.el" audit-native-dir)) (output (expand-file-name "broken.eln" audit-native-dir))) (with-temp-file source (insert ";;; -*- lexical-binding: t -*-\n" "(defun audit-native-valid-prefix () 7)\n(\n")) (condition-case e (progn (native-compile source output) 'compiled) (error (car e))))
+  GNU: (ok end-of-file)
+  remacs: (ok compiled)
+  関連ケース: 'native:file-parse-error'
+
+AUD-010 [P2] ネイティブコンパイルした引数なし and が nil を返す
+  (lambda () (and)) は GNU では t、remacs の生成コードでは nil。and の累積結果を常に NIL で初期化している。
+  原因候補: src/lisp/builtins/comp.rs:727
+  再現式: (funcall (audit-native-compile (lambda nil (and))))
+  GNU: (ok t)
+  remacs: (ok nil)
+  関連ケース: 'native:empty-and'
+
+AUD-011 [P2] ネイティブ関数の quote 定数を呼び出しごとに作り直す
+  同じ関数から二度取得した '(1 2) の eq が GNU では t、remacs では nil。定数参照を毎回 RDC/read で再構築している。
+  原因候補: src/lisp/builtins/comp.rs:687
+  再現式: (let ((f (audit-native-compile (lambda nil '(1 2))))) (eq (funcall f) (funcall f)))
+  GNU: (ok t)
+  remacs: (ok nil)
+  関連ケース: 'native:quoted-constant-identity'
+
+AUD-012 [P2] ネイティブコンパイルした unibyte 文字列定数の文字コードが変わる
+  未コンパイルでは (128 255) の文字列がコンパイル後は (4194176 4194303) になる。GNU のコンパイル結果と未コンパイルの対照ケースは (128 255)。
+  原因候補: src/lisp/builtins/comp.rs:637
+  再現式: (let ((f (audit-native-compile (lambda nil "����")))) (list (multibyte-string-p (funcall f)) (string-to-list (funcall f))))
+  GNU: (ok (nil (128 255)))
+  remacs: (ok (nil (4194176 4194303)))
+  関連ケース: 'native:string-byte-kind', 'native:string-byte-kind-baseline'
+
+AUD-013 [P1] define-hash-table-test の独自比較関数・ハッシュ関数が使われない
+  大文字小文字を無視する比較を登録しても equal に置き換えられ、HELLO の登録値を hello で取得できない。hash-table-test は登録名を返すため問題が見えにくい。
+  原因候補: src/lisp/builtins/hashfn.rs:318
+  再現式: (progn (define-hash-table-test 'audit-case-fold (lambda (a b) (string= (downcase a) (downcase b))) (lambda (a) (sxhash-equal (downcase a)))) (let ((h (make-hash-table :test 'audit-case-fold))) (puthash "HELLO" 42 h) (list (gethash "hello" h) (hash-table-test h))))
+  GNU: (ok (42 audit-case-fold))
+  remacs: (ok (nil audit-case-fold))
+  関連ケース: 'hash:custom-test'
+
+AUD-014 [P2] equal ハッシュテーブルで構造が等しい循環キーを検索できない
+  一要素循環リストをキーにした登録値を、別の同内容の循環リストで取得すると nil。GNU は 42。循環の後方参照をポインタ依存のキーにしている。
+  原因候補: src/lisp/builtins/hashfn.rs:179
+  再現式: (let* ((a (list 1)) (b (list 1)) (h (make-hash-table :test 'equal))) (setcdr a a) (setcdr b b) (puthash a 42 h) (gethash b h))
+  GNU: (ok 42)
+  remacs: (ok nil)
+  関連ケース: 'hash:cycle-lookup'
+
+AUD-015 [P2] equal ハッシュテーブルで同じバッファ・位置の marker を検索できない
+  同位置の新しい point-marker で登録値を取得できない。equal は marker を位置とバッファで比較するが、ハッシュキーは marker のアドレスになる。
+  原因候補: src/lisp/builtins/hashfn.rs:248
+  再現式: (with-temp-buffer (let ((h (make-hash-table :test 'equal))) (puthash (point-marker) 42 h) (gethash (point-marker) h)))
+  GNU: (ok 42)
+  remacs: (ok nil)
+  関連ケース: 'hash:equal-markers'
+
+AUD-016 [P2] weak hash の到達不能なキーが garbage-collect 後も保持される
+  weakness=key のテーブルに一時 vector を 1000 個登録して参照を捨て、GC を二度呼ぶ。GNU では 10 個未満に減るが、remacs では 10 個未満にならず、弱参照として機能しない。
+  原因候補: src/lisp/builtins/evalfn.rs:4725
+  再現式: (let ((h (make-hash-table :test 'eq :weakness 'key))) (dotimes (n 1000) (puthash (vector n) 42 h)) (garbage-collect) (garbage-collect) (< (hash-table-count h) 10))
+  GNU: (ok t)
+  remacs: (ok nil)
+  関連ケース: 'hash:weak-key-gc'
+
+AUD-017 [P3] hash-table-size が拡張後も指定した初期値のままになる
+  :size 1 のテーブルに 10 件登録しても hash-table-size は 1。現在の容量を公開せず、保存した初期引数を返している。
+  原因候補: src/lisp/builtins/hashfn.rs:491
+  再現式: (let ((h (make-hash-table :size 1))) (dotimes (n 10) (puthash n n h)) (list (hash-table-count h) (> (hash-table-size h) 1)))
+  GNU: (ok (10 t))
+  remacs: (ok (10 nil))
+  関連ケース: 'hash:size-growth'
+
+AUD-018 [P2] SQLite で省略したパラメータが NULL にならずエラーになる
+  select ?, ? に値を渡さない場合や一つだけ渡す場合、GNU は不足分を nil として実行するが remacs はパラメータ数エラーにする。
+  原因候補: src/lisp/builtins/sqlite.rs:344
+  再現式: (let ((db (sqlite-open))) (unwind-protect (sqlite-select db "select ?, ?") (sqlite-close db)))
+  GNU: (ok ((nil nil)))
+  remacs: (error (sqlite-error ("SQL logic error" "Wrong number of parameters passed to query. Got 0, needed 2" 1 1)))
+  関連ケース: 'sql:missing-all', 'sql:missing-one'
+
+AUD-019 [P1] sqlite-select の set が sqlite-next より前に SQL を実行する
+  INSERT ... RETURNING を set として作るだけで挿入が完了する。GNU は sqlite-next まで実行しない。遅延実行 API の副作用のタイミングが変わる。
+  原因候補: src/lisp/builtins/sqlite.rs:364
+  再現式: (let ((db (sqlite-open))) (unwind-protect (progn (sqlite-execute db "create table t(a)") (sqlite-select db "insert into t values(7) returning a" nil 'set) (sqlite-select db "select * from t")) (sqlite-close db)))
+  GNU: (ok nil)
+  remacs: (ok ((7)))
+  関連ケース: 'sql:lazy-insert'
+
+AUD-020 [P2] SQLite のエラーコードとエラーデータ構造が誤っている
+  SQLITE_ERROR=1 の箇所で rusqlite の enum 判別値 23 を公開する。UNIQUE 違反などで GNU が文字列を渡すケースも常に四要素リストになり、エラー処理が一致しない。
+  原因候補: src/lisp/builtins/sqlite.rs:68
+  再現式: (let ((db (sqlite-open))) (unwind-protect (sqlite-select db "select * from nonexistent") (sqlite-close db)))
+  GNU: (error (sqlite-error ("SQL logic error" "no such table: nonexistent" 1 1)))
+  remacs: (error (sqlite-error ("Error code 1: SQL logic error" "no such table: nonexistent" 23 1)))
+  関連ケース: 'sql:select-error', 'sql:constraint-error', 'sql:extra-one', 'sql:empty'
+
+AUD-021 [P2] sqlitep が nil の偽レコードを sqlite-close が受け入れる
+  (record 'sqlite 'db 999999) は sqlitep で nil なのに sqlite-close が t を返す。GNU は wrong-type-argument sqlitep。ハンドル登録確認をしていない。
+  原因候補: src/lisp/builtins/sqlite.rs:122
+  再現式: (let ((db (sqlite-open))) (unwind-protect (let ((fake (record 'sqlite 'db 999999))) (list (sqlitep fake) (sqlite-close fake))) (sqlite-close db)))
+  GNU: (error (wrong-type-argument sqlitep #s(sqlite db 999999)))
+  remacs: (ok (nil t))
+  関連ケース: 'sql:forged'
+
+AUD-022 [P2] sqlite-select の空クエリが nil ではなくエラーになる
+  (sqlite-select db "") は GNU では nil。remacs では SQLite API misuse を送出する。
+  原因候補: src/lisp/builtins/sqlite.rs:349
+  再現式: (let ((db (sqlite-open))) (unwind-protect (sqlite-select db "") (sqlite-close db)))
+  GNU: (ok nil)
+  remacs: (error (sqlite-error ("Error code 21: bad parameter or other API misuse" "bad parameter or other API misuse" 18 21)))
+  関連ケース: 'sql:empty-select'
+
+AUD-023 [P2] XML の改行・属性内空白が正規化されない
+  テキストの CRLF/CR が LF にならず、属性内の TAB/LF/CR も空白にならない。パースした値が GNU と異なる。
+  原因候補: src/lisp/builtins/xml.rs:315
+  再現式: (with-temp-buffer (insert "<a>one\15\ntwo\15three</a>") (libxml-parse-xml-region))
+  GNU: (ok (a nil "one\ntwo\nthree"))
+  remacs: (ok (a nil "one\15\ntwo\15three"))
+  関連ケース: 'xml:<a>one\r\ntwo\rthree</a>', 'xml:<a x="one\ttwo\nthree\rfour"/>'
+
+AUD-024 [P2] xmlns で始まる通常の XML 属性まで削除される
+  xmlnsfoo="keep" が名前空間宣言として扱われ消える。xmlns と xmlns:prefix 以外の属性は保持する必要がある。
+  原因候補: src/lisp/builtins/xml.rs:263
+  再現式: (with-temp-buffer (insert "<a xmlnsfoo=\"keep\"/>") (libxml-parse-xml-region))
+  GNU: (ok (a ((xmlnsfoo . "keep"))))
+  remacs: (ok (a nil))
+  関連ケース: 'xml:<a xmlnsfoo="keep"/>'
+
+AUD-025 [P2] XML パーサが重複属性・禁止文字などの不正な文書を受け入れる
+  重複属性、数字で始まる要素名、NUL/制御文字、コメント内 --、属性中の生の <、テキスト中の ]]> が GNU では nil、remacs では DOM になる。
+  原因候補: src/lisp/builtins/xml.rs:246
+  再現式: (with-temp-buffer (insert "<a x=\"1\" x=\"2\"/>") (libxml-parse-xml-region))
+  GNU: (ok nil)
+  remacs: (ok (a ((x . "1") (x . "2"))))
+  関連ケース: 'xml:<a x="1" x="2"/>', 'xml:<1bad/>', 'xml:<a>&#0;</a>', 'xml:<a>&#1;</a>', 'xml:<a>\x01</a>', 'xml:<a><![CDATA[\x01]]></a>', 'xml:<a><!--bad--comment--></a>', 'xml:<a x="<"/>', 'xml:<a>]]></a>'
+
+AUD-026 [P2] XML 属性の未定義エンティティをエラーにせず空文字にする
+  x="&missing;" が GNU の nil ではなく x="" の DOM になる。属性デコードのエラーを unwrap_or_default で捨てている。
+  原因候補: src/lisp/builtins/xml.rs:266
+  再現式: (with-temp-buffer (insert "<a x=\"&missing;\"/>") (libxml-parse-xml-region))
+  GNU: (ok nil)
+  remacs: (ok (a ((x . ""))))
+  関連ケース: 'xml:<a x="&missing;"/>'
+
+AUD-027 [P2] XML の内部 DTD エンティティ宣言が無視される
+  内部で宣言した word='hello' を属性で参照すると空文字になり、要素内容で参照するとパース全体が nil になる。GNU は属性を hello として読み、要素内の参照も DOM に残す。
+  原因候補: src/lisp/builtins/xml.rs:341
+  再現式: (with-temp-buffer (insert "<!DOCTYPE a [<!ENTITY word 'hello'>]><a x=\"&word;\"/>") (libxml-parse-xml-region))
+  GNU: (ok (a ((x . "hello"))))
+  remacs: (ok (a ((x . ""))))
+  関連ケース: 'xml:<!DOCTYPE a [<!ENTITY word \'hello\'>]><a x="&word;"/>', "xml:<!DOCTYPE a [<!ENTITY word 'hello'>]><a>&word;</a>"
+
+AUD-028 [P2] HTML の DISCARD-COMMENTS がネストしたコメントまで削除する
+  GNU が削除するのはトップレベルのコメントのみ。remacs は要素内のコメントもすべて消す。
+  原因候補: src/lisp/builtins/xml.rs:128
+  再現式: (with-temp-buffer (insert "<!--before--><p><!--inside-->text</p><!--after-->") (libxml-parse-html-region nil nil nil t))
+  GNU: (ok (html nil (body nil (p nil (comment nil "inside") "text") (comment nil "after"))))
+  remacs: (ok (html nil (body nil (p nil "text"))))
+  関連ケース: 'html-discard:<!--before--><p><!--inside-->text</p><!--after-->'
+
+AUD-029 [P2] 明示的に記述した空の head 要素も削除される
+  <head></head><body>x</body> の DOM から head がなくなる。暗黙に補われた head と明示的な head を区別していない。
+  原因候補: src/lisp/builtins/xml.rs:103
+  再現式: (with-temp-buffer (insert "<head></head><body>x</body>") (libxml-parse-html-region))
+  GNU: (ok (html nil (head nil) (body nil "x")))
+  remacs: (ok (html nil (body nil "x")))
+  関連ケース: 'html:<head></head><body>x</body>', 'html-discard:<head></head><body>x</body>'
+
+AUD-030 [P2] 別の table にある tbody がすべての table の DOM を変える
+  一つでも明示的な tbody があれば、tbody を書いていない別の table にも暗黙の tbody が残る。文書全体の contains 判定を全ノードに使っている。
+  原因候補: src/lisp/builtins/xml.rs:146
+  再現式: (with-temp-buffer (insert "<table><tr><td>a</td></tr></table><table><tbody><tr><td>b</td></tr></tbody></table>") (libxml-parse-html-region))
+  GNU: (ok (html nil (body nil (table nil (tr nil (td nil "a"))) (table nil (tbody nil (tr nil (td nil "b")))))))
+  remacs: (ok (html nil (body nil (table nil (tbody nil (tr nil (td nil "a")))) (table nil (tbody nil (tr nil (td nil "b")))))))
+  関連ケース: 'html:<table><tr><td>a</td></tr></table><table><tbody><tr><td>b</td></tr></tbody></table>', 'html-discard:<table><tr><td>a</td></tr></table><table><tbody><tr><td>b</td></tr></tbody></table>'
+
+AUD-031 [P2] HTML5 の DOM 修復・属性名処理が GNU libxml の結果と一致しない
+  table 内のテキストが table 外へ移動し、p/div の組み合わせで空の p が追加され、SVG の viewBox の属性名も GNU の viewbox と異なる。libxml API の互換動作に差がある。
+  原因候補: src/lisp/builtins/xml.rs:142
+  再現式: (with-temp-buffer (insert "<table>text<tr><td>a</td></tr></table>") (libxml-parse-html-region))
+  GNU: (ok (html nil (body nil (table nil "text" (tr nil (td nil "a"))))))
+  remacs: (ok (html nil (body nil "text" (table nil (tr nil (td nil "a"))))))
+  関連ケース: 'html:<table>text<tr><td>a</td></tr></table>', 'html:<p><div>x</div>y</p>', 'html:<svg viewBox="0 0 1 1"><circle/></svg>', 'html-discard:<table>text<tr><td>a</td></tr></table>', 'html-discard:<p><div>x</div>y</p>', 'html-discard:<svg viewBox="0 0 1 1"><circle/></svg>'
+
+AUD-032 [P1] make-thread が同期実行され、親子間の待ち合わせが成立しない
+  親が make-thread の戻り後に設定するフラグを子が待つと、GNU は ready、remacs は子の待ち時間が尽きるまで親へ戻らず timed-out。thread-yield も実際のスケジューリングをしない。
+  原因候補: src/lisp/builtins/misc.rs:8029
+  再現式: (progn (setq audit-thread-ready nil) (let ((worker (make-thread (lambda nil (let ((n 0)) (while (and (not audit-thread-ready) (< n 200)) (setq n (1+ n)) (sleep-for 0.005)) (if audit-thread-ready 'ready 'timed-out)))))) (setq audit-thread-ready t) (thread-join worker)))
+  GNU: (ok ready)
+  remacs: (ok timed-out)
+  関連ケース: 'thread:parent-worker-coordination'
+
+AUD-033 [P1] スレッドの current-buffer と動的束縛が親から分離されない
+  子で set-buffer すると親の current-buffer も変わる。親の一時的な special 変数束縛も子に漏れ、GNU の global が parent になる。実行文脈を保存・切替せず i.apply している。
+  原因候補: src/lisp/builtins/misc.rs:8050
+  再現式: (let ((a (generate-new-buffer " *audit-thread-a*")) (b (generate-new-buffer " *audit-thread-b*"))) (unwind-protect (save-current-buffer (set-buffer a) (let ((worker (make-thread (lambda nil (set-buffer b))))) (thread-join worker) (eq (current-buffer) a))) (kill-buffer a) (kill-buffer b)))
+  GNU: (ok t)
+  remacs: (ok nil)
+  関連ケース: 'thread:current-buffer-isolation', 'thread:dynamic-bindings'
+
+AUD-034 [P1] mutex が他スレッドのロックを奪え、再帰ロックの深さも保持しない
+  ロック中に別スレッドが mutex-lock / mutex-unlock できる。二度ロックした同一スレッドが二度 unlock すると二度目はエラー。owner を無条件で上書きし、所有者比較と再帰回数がない。
+  原因候補: src/lisp/builtins/misc.rs:8138
+  再現式: (let ((m (make-mutex)) (entered nil) worker) (mutex-lock m) (unwind-protect (progn (setq worker (make-thread (lambda nil (mutex-lock m) (unwind-protect (setq entered t) (mutex-unlock m))))) (sleep-for 0.03) (let ((before-unlock entered)) (ignore-errors (mutex-unlock m)) (thread-join worker) (list before-unlock entered))) (ignore-errors (mutex-unlock m))))
+  GNU: (ok (nil t))
+  remacs: (ok (t t))
+  関連ケース: 'mutex:busy-lock', 'mutex:foreign-unlock', 'mutex:recursive-depth'
+
+AUD-035 [P2] accept-process-output の整数 JUST-THIS-ONE によるタイマー抑止が無視される
+  第4引数を 1 にしても待機中にタイマーが実行される。GNU は hits=0、remacs は hits=1。この引数を実装が参照していない。
+  原因候補: src/lisp/process.rs:1870
+  再現式: (let ((timer-list nil) (hits 0) (p (make-pipe-process :name "audit-timer-inhibit" :noquery t))) (unwind-protect (progn (run-at-time 0 nil (lambda nil (setq hits (1+ hits)))) (accept-process-output p 0.04 nil 1) hits) (mapc #'cancel-timer timer-list) (delete-process p)))
+  GNU: (ok 0)
+  remacs: (ok 1)
+  関連ケース: 'timer:accept-process-output-inhibit'
+
+AUD-036 [P2] make-process の connection-type=pipe が無視される
+  pipe を明示しても openpty で子プロセスを起動する。process-tty-name が GNU では nil、remacs では文字列。pipe と異なる端末の入力規律が適用される。
+  原因候補: src/lisp/process.rs:946
+  再現式: (audit-process-with '("/bin/cat") '(:connection-type pipe) (lambda (p _b) (null (process-tty-name p))))
+  GNU: (ok t)
+  remacs: (ok nil)
+  関連ケース: 'process:pipe-connection'
+
+AUD-037 [P1] プロセスの I/O が coding system を無視し、存在しない coding も受け入れる
+  iso-latin-1 指定でも入力バイト E9 は U+FFFD になり、送信する é は E9 ではなく UTF-8 の C3 A9 になる。set-process-coding-system は未定義名にも成功する。ファイル I/O の #14 とは別の入出力経路。 listener の coding 設定も accepted 接続へ継承されず、初期の UTF-8 設定になる。
+  原因候補: src/lisp/process.rs:228
+  再現式: (audit-process-with '("/bin/sh" "-c" "printf '\\351'") '(:connection-type pipe :coding iso-latin-1) (lambda (p b) (audit-process-drain p) (with-current-buffer b (string-to-list (buffer-string)))))
+  GNU: (ok (233))
+  remacs: (ok (65533))
+  関連ケース: 'process:decode-latin1', 'process:encode-latin1', 'process:invalid-coding', 'network:accepted-coding-inheritance'
+
+AUD-038 [P1] チャンク境界で分割された UTF-8 を復号できない
+  正しい UTF-8 の「あ」を E3 と 81 82 に分けて子から送ると、GNU は「あ」、remacs は三つの U+FFFD。read ごとに独立した from_utf8_lossy を使い、未完了の文字を保持しない。
+  原因候補: src/lisp/process.rs:228
+  再現式: (audit-process-with '("/bin/sh" "-c" "printf '\\343'; sleep 0.1; printf '\\201\\202'") '(:connection-type pipe :coding utf-8) (lambda (p b) (audit-process-drain p) (with-current-buffer b (buffer-string))))
+  GNU: (ok "あ")
+  remacs: (ok "���")
+  関連ケース: 'process:split-utf8'
+
+AUD-039 [P1] 子プロセスに Lisp の process-environment が渡されない
+  process-environment に追加した REMACS_AUDIT_CHILD=from-lisp を子の sh で読めない。GNU は from-lisp、remacs は空文字。Rust プロセスの環境をそのまま継承している。
+  原因候補: src/lisp/process.rs:1000
+  再現式: (let ((process-environment (cons "REMACS_AUDIT_CHILD=from-lisp" process-environment))) (audit-process-with '("/bin/sh" "-c" "printf '%s' \"$REMACS_AUDIT_CHILD\"") '(:connection-type pipe) (lambda (p b) (audit-process-drain p) (with-current-buffer b (buffer-string)))))
+  GNU: (ok "from-lisp")
+  remacs: (ok "")
+  関連ケース: 'process:environment'
+
+AUD-040 [P1] 子プロセスの作業ディレクトリに default-directory が使われない
+  一時ディレクトリを default-directory に束縛しても /bin/pwd はその場所を返さない。Command に current_dir を設定していない。
+  原因候補: src/lisp/process.rs:1000
+  再現式: (let* ((dir (make-temp-file "remacs-audit-cwd-" t)) (default-directory dir)) (unwind-protect (audit-process-with '("/bin/pwd") '(:connection-type pipe) (lambda (p b) (audit-process-drain p) (equal (file-truename (with-current-buffer b (string-trim (buffer-string)))) (directory-file-name (file-truename dir))))) (delete-directory dir)))
+  GNU: (ok t)
+  remacs: (ok nil)
+  関連ケース: 'process:working-directory'
+
+AUD-041 [P2] make-process が Lisp の exec-path で実行ファイルを探索しない
+  exec-path にだけ追加したディレクトリの実行ファイルを GNU は起動できるが、remacs は file-missing。Command::new に未解決のコマンド名を渡している。
+  原因候補: src/lisp/process.rs:1000
+  再現式: (let* ((dir (make-temp-file "remacs-audit-path-" t)) (program (expand-file-name "audit-child-command" dir)) (exec-path (list dir))) (unwind-protect (progn (with-temp-file program (insert "#!/bin/sh\nprintf found")) (set-file-modes program 448) (audit-process-with '("audit-child-command") '(:connection-type pipe) (lambda (p b) (audit-process-drain p) (with-current-buffer b (buffer-string))))) (delete-directory dir t)))
+  GNU: (ok "found")
+  remacs: (error (file-missing "Searching for program" "No such file or directory" "audit-child-command"))
+  関連ケース: 'process:exec-path'
+
+AUD-042 [P2] プロセスの filter=t を入力停止ではなく関数呼び出しとして扱う
+  GNU が受け入れる filter=t のプロセスを accept-process-output すると、remacs は t を呼んで void-function を送出する。
+  原因候補: src/lisp/process.rs:271
+  再現式: (audit-process-with '("/bin/sh" "-c" "printf ok") '(:connection-type pipe :filter t) (lambda (p b) (let ((first (condition-case e (progn (accept-process-output p 0.1) 'ok) (error (car e))))) (set-process-filter p nil) (audit-process-drain p) (list first (with-current-buffer b (buffer-string))))))
+  GNU: (ok (ok ""))
+  remacs: (ok (void-function ""))
+  関連ケース: 'process:filter-t'
+
+AUD-043 [P2] accept-process-output がタイムアウト省略時にも待たずに返る
+  cat にタイマーからデータを送るケースで、GNU は出力まで待って t と文字列を返すが、remacs はタイマーを実行する前に nil と空文字を返す。省略された待ち時間を 0 秒としている。
+  原因候補: src/lisp/process.rs:1878
+  再現式: (audit-process-with '("/bin/cat") '(:connection-type pipe) (lambda (p b) (let* ((timer-list nil) (timer (run-at-time 0.02 nil (lambda nil (process-send-string p "ok\n"))))) (unwind-protect (list (accept-process-output p) (with-current-buffer b (buffer-string))) (cancel-timer timer)))))
+  GNU: (ok (t "ok\n"))
+  remacs: (ok (nil ""))
+  関連ケース: 'process:wait-without-timeout'
+
+AUD-044 [P2] process-send-region が marker を拒否し、範囲外や narrowing 外を黙って送る
+  有効な marker は integer-or-marker-p エラーになり、位置 0 や狭められた領域外の整数は clamp され送信される。GNU は marker を受け入れ、範囲外は args-out-of-range。
+  原因候補: src/lisp/process.rs:1978
+  再現式: (with-temp-buffer (insert "abc") (let ((p (make-pipe-process :name "audit-region" :noquery t))) (unwind-protect (process-send-region p (copy-marker 1) (copy-marker 3)) (delete-process p))))
+  GNU: (ok nil)
+  remacs: (error (wrong-type-argument integer-or-marker-p #<marker in no buffer>))
+  関連ケース: 'process:send-region-marker', 'process:send-region-low-bound', 'process:send-region-narrowed'
+
+AUD-045 [P1] accept-process-output の巨大な有限待ち時間で Rust panic し、終了コードも 0 になる
+  1e30 秒を指定すると GNU は catch 可能な file-error。remacs は Duration::from_secs_f64 が panic して AUDIT-DONE に到達せず、main が join のエラーを無視するためプロセスは 0 で終了する。
+  原因候補: src/lisp/process.rs:1898
+  再現式: (accept-process-output nil 1e+30)
+  GNU: (error (file-error "Failed select" "Invalid argument"))
+  remacs: Rust panic; process exit 0; AUDIT-DONE missing
+  関連ケース: 'process:timeout-overflow'
+
+AUD-046 [P2] --eval が一つの式ではなく後続する全フォームを実行する
+  引数が (princ 1) (princ 2) のとき GNU の出力は 1、remacs は 12。run_batch が eval_forms で全体を評価する。
+  原因候補: src/main.rs:367
+  再現式: argv=["-Q", "--batch", "--eval", "(princ 1) (princ 2)"]
+  GNU: {"exit": 0, "stdout": "1"}
+  remacs: {"exit": 0, "stdout": "12"}
+  関連ケース: 'cli:eval-multiple-forms'
+
+AUD-047 [P1] バッチ起動時にファイル引数が開かれず、後続の eval に反映されない
+  ファイルの後に --eval で buffer-string を読むと GNU はファイルの内容、remacs は空文字。ファイル引数を files にためた後、batch_exit により訪問処理を飛ばす。
+  原因候補: src/main.rs:278
+  再現式: argv=["-Q", "--batch", "<audit-dir>/fixture.txt", "--eval", "(princ (buffer-string))"]; fixture.txt="fixture-text\n"
+  GNU: {"exit": 0, "stdout": "fixture-text\n"}
+  remacs: {"exit": 0, "stdout": ""}
+  関連ケース: 'cli:file-before-eval'
+
+AUD-048 [P2] -f の関数が消費した command-line-args-left を再処理する
+  関数が command-line-args-left を nil にしても、その後の --eval が実行される。GNU は実行しない。固定の args ベクタの idx を進めるため、Lisp 側の引数消費を反映できない。
+  原因候補: src/main.rs:243
+  再現式: argv=["-Q", "--batch", "--eval", "(defun audit-cli-consume () (setq command-line-args-left nil))", "-f", "audit-cli-consume", "--eval", "(princ 123)"]
+  GNU: {"exit": 0, "stdout": ""}
+  remacs: {"exit": 0, "stdout": "123"}
+  関連ケース: 'cli:funcall-consumed-arguments'
+
+AUD-049 [P1] -- の後の引数がファイル名にならず、--eval として実行される
+  -Q --batch -- --eval (princ 123) は GNU ではファイル名の並びとして処理される。remacs は 123 を出力する。オプション終了記号の処理がない。
+  原因候補: src/main.rs:126
+  再現式: argv=["-Q", "--batch", "--", "--eval", "(princ 123)"]
+  GNU: {"exit": 0, "stdout": ""}
+  remacs: {"exit": 0, "stdout": "123"}
+  関連ケース: 'cli:end-of-options'
+
+AUD-050 [P2] -L / --directory で load-path を追加できない
+  一時ディレクトリにだけ置いたライブラリを GNU は require できるが、remacs は file-missing。両オプションをファイル名として蓄積する。#108 の初期 load-path とは別の CLI 処理不足。
+  原因候補: src/main.rs:126
+  再現式: argv=["-Q", "--batch", "-L", "<audit-dir>/lib", "--eval", "(condition-case e (progn (require 'audit-cli-library) (princ audit-cli-library-value)) (error (prin1 (car e))))"]
+  GNU: {"exit": 0, "stdout": "42"}
+  remacs: {"exit": 0, "stdout": "file-missing"}
+  関連ケース: 'cli:load-path-short', 'cli:load-path-long'
+
+AUD-051 [P2] GNU のオプション表記 -eval と --eval=EXPR が無視される
+  いずれも GNU は 7 を出力し、remacs は何もせず成功終了する。単一ハイフンの長い別名や = による値指定を正規化せず、完全一致の文字列だけを判定する。
+  原因候補: src/main.rs:206
+  再現式: argv=["-Q", "--batch", "-eval", "(princ 7)"]
+  GNU: {"exit": 0, "stdout": "7"}
+  remacs: {"exit": 0, "stdout": ""}
+  関連ケース: 'cli:single-hyphen-eval', 'cli:equals-eval'
+
+AUD-052 [P3] --help が使い方を表示しない
+  GNU は Usage を表示するが、remacs -Q --batch --help は出力なしで成功終了する。ヘルプ用の分岐がない。
+  原因候補: src/main.rs:126
+  再現式: argv=["-Q", "--batch", "--help"]
+  GNU: {"exit": 0, "has_usage": true}
+  remacs: {"exit": 0, "has_usage": false}
+  関連ケース: 'cli:help'
+
+AUD-053 [P1] バッファ編集後も tree-sitter が編集前の構文木を返す
+  [1,2] の 1 を x や null に置き換えても number ノードが残る。x の構文エラーも検出されない。古い Tree に InputEdit を適用せず、そのまま再解析の基底として渡している。
+  原因候補: src/lisp/builtins/treesit.rs:606
+  再現式: (with-temp-buffer (insert "[1,2]") (let ((p (treesit-parser-create 'json))) (treesit-parser-root-node p) (goto-char 2) (delete-char 1) (insert "x") (let ((root (treesit-parser-root-node p))) (list (treesit-node-check root 'has-error) (treesit-node-string root)))))
+  GNU: (ok (t "(document (array (ERROR (UNEXPECTED 'x')) (number)))"))
+  remacs: (ok (nil "(document (array (number) (number)))"))
+  関連ケース: 'treesit:edit-same-length', 'treesit:edit-longer'
+
+AUD-054 [P1] 再解析を繰り返すと古い node の outdated 状態が解除される
+  最初のノードを保持したまま八回編集・再解析すると、GNU は outdated が常に t。remacs は t/nil を交互に返す。ノード ID が再利用されると、同じキャッシュ項目を新世代で上書きする。
+  原因候補: src/lisp/builtins/treesit.rs:248
+  再現式: (with-temp-buffer (insert "[1,2]") (let* ((p (treesit-parser-create 'json)) (old (treesit-parser-root-node p)) hits) (dotimes (_ 8) (goto-char (point-max)) (insert " ") (treesit-parser-root-node p) (push (treesit-node-check old 'outdated) hits)) (nreverse hits)))
+  GNU: (ok (t t t t t t t t))
+  remacs: (ok (t nil t nil t nil t nil))
+  関連ケース: 'treesit:old-node-after-repeated-reparse'
+
+AUD-055 [P2] indirect buffer の parser-create が base buffer の parser を再利用する
+  GNU は間接バッファに別の parser を作るが、remacs は base の既存 parser と eq になる。引数バッファを無条件で base に置き換えるため、解析文脈を分離できない。
+  原因候補: src/lisp/builtins/treesit.rs:813
+  再現式: (with-temp-buffer (insert "[1,2]") (let* ((base (current-buffer)) (p (treesit-parser-create 'json)) (indirect (make-indirect-buffer base " *audit-treesit-indirect*"))) (unwind-protect (list (eq p (treesit-parser-create 'json indirect)) (length (treesit-parser-list indirect))) (kill-buffer indirect))))
+  GNU: (ok (nil 1))
+  remacs: (ok (t 1))
+  関連ケース: 'treesit:indirect-buffer'
+
+AUD-056 [P2] parser の notifier 登録に重複排除と symbolp 検査がない
+  同じ通知関数を二度追加すると GNU の一件に対し remacs は二件になる。数値や lambda も受け入れるが、GNU は関数シンボル以外を symbolp エラーにする。
+  原因候補: src/lisp/builtins/treesit.rs:1112
+  再現式: (with-temp-buffer (let ((p (treesit-parser-create 'json))) (treesit-parser-add-notifier p 'audit-treesit-notifier) (treesit-parser-add-notifier p 'audit-treesit-notifier) (length (treesit-parser-notifiers p))))
+  GNU: (ok 1)
+  remacs: (ok 2)
+  関連ケース: 'treesit:notifier-dedup', 'treesit:notifier-invalid', 'treesit:notifier-lambda'
+
+AUD-057 [P2] query の #match? が case-fold-search に影響される
+  ["A","a"] に A を探す述語で GNU の capture は一件、remacs は二件。通常の buffer 検索用の case-fold-search を query の述語に適用している。
+  原因候補: src/lisp/builtins/treesit.rs:1856
+  再現式: (with-temp-buffer (insert "[\"A\",\"a\"]") (let ((p (treesit-parser-create 'json)) (case-fold-search t)) (length (treesit-query-capture p "((string) @s (#match? @s \"A\"))"))))
+  GNU: (ok 1)
+  remacs: (ok 2)
+  関連ケース: 'treesit:query-match-case'
+
+AUD-058 [P2] query の #eq? が同名の複数 capture のうち最初だけを検査する
+  [1,2] の両 number を @n に捕捉して @n = "1" を要求すると GNU はマッチなし、remacs は両方を返す。capture 名の解決が単一ノードに縮退する。
+  原因候補: src/lisp/builtins/treesit.rs:1767
+  再現式: (with-temp-buffer (insert "[1,2]") (let ((p (treesit-parser-create 'json))) (mapcar #'car (treesit-query-capture p "((array (number) @n (number) @n) (#eq? @n \"1\"))"))))
+  GNU: (ok nil)
+  remacs: (ok (n n))
+  関連ケース: 'treesit:query-repeat-capture'
+
+AUD-059 [P3] included-ranges のエラーデータから説明と範囲リストが欠落する
+  範囲 (0 . 99) の設定でエラーの種類は合うが、GNU の説明文字列と範囲リストの代わりに不正なペアだけをデータとして送出する。
+  原因候補: src/lisp/builtins/treesit.rs:1053
+  再現式: (with-temp-buffer (insert "[1,2]") (treesit-parser-set-included-ranges (treesit-parser-create 'json) '((0 . 99))))
+  GNU: (error (treesit-range-invalid "RANGE is either overlapping, out-of-order or out-of-range" ((0 . 99))))
+  remacs: (error (treesit-range-invalid (0 . 99)))
+  関連ケース: 'treesit:ranges-invalid'
+
+AUD-060 [P1] process-send-eof がネットワーク接続の送信側を閉じない
+  TCP 接続の client に EOF を送っても peer は open のまま。GNU の peer は closed になる。Net/LocalNet の分岐で shutdown(Write) を呼ばず、何もせず process オブジェクトを返している。
+  原因候補: src/lisp/process.rs:2008
+  再現式: (audit-net-with-pair nil (lambda (_server client peer) (process-send-eof client) (let ((n 0)) (while (and (process-live-p peer) (< n 30)) (setq n (1+ n)) (accept-process-output nil 0.01))) (process-status peer)))
+  GNU: (ok closed)
+  remacs: (ok open)
+  関連ケース: 'network:send-eof'
+
+AUD-061 [P1] delete-process 後も TCP リスナーが同じポートを占有する
+  削除したサーバーオブジェクトを参照したまま同じポートへ再 bind すると、GNU は成功、remacs は Address already in use。Listen のソケットを閉じず status だけ closed にしている。
+  原因候補: src/lisp/process.rs:2477
+  再現式: (let* ((server (audit-net-server)) (port (process-contact server :service)) second) (unwind-protect (progn (delete-process server) (setq second (audit-net-server (list :service port))) 'bound) (when second (ignore-errors (delete-process second))) (ignore-errors (delete-process server))))
+  GNU: (ok bound)
+  remacs: (error (file-error "Cannot bind server socket" "Address already in use"))
+  関連ケース: 'network:deleted-listener-rebind'
+
+AUD-062 [P2] 接続受理時に log が呼ばれず、sentinel はリスナー側で呼ばれる
+  server の :log コールバックは GNU では実行されるが remacs では実行されない。sentinel が受け取るプロセスの状態は GNU で open、remacs で listen。accepted 接続ではなく listener に通知している。
+  原因候補: src/lisp/process.rs:608
+  再現式: (let ((called nil)) (audit-net-with-pair (list :log (lambda (_server _client _message) (setq called t))) (lambda (_server _client _peer) called)))
+  GNU: (ok t)
+  remacs: (ok nil)
+  関連ケース: 'network:accept-log-callback', 'network:accept-sentinel-target'
+
+AUD-063 [P2] process-contact が受理した接続の情報と DNS 解決後のアドレスを返せない
+  accepted 接続の host/service と :local/:remote はすべて nil。localhost で接続した client の :remote は 127.0.0.1 ではなく 0.0.0.0。内部の contact データ形式の不一致と、元のホスト文字列からのアドレス捏造がある。
+  原因候補: src/lisp/process.rs:555
+  再現式: (audit-net-with-pair nil (lambda (_server _client peer) (let ((contact (process-contact peer))) (list (stringp (car contact)) (integerp (cadr contact)) (vectorp (process-contact peer :remote)) (vectorp (process-contact peer :local))))))
+  GNU: (ok (t t t t))
+  remacs: (ok (nil nil nil nil))
+  関連ケース: 'network:accepted-contact', 'network:resolved-remote-address'
+
+AUD-064 [P2] stop-process で停止したネットワーク接続からも入力を読む
+  peer を停止してから送信すると、GNU は continue-process まで filter を実行せず、remacs は停止中にも payload を渡す。poll_proc が stop 状態を確認せず read している。
+  原因候補: src/lisp/process.rs:358
+  再現式: (audit-net-with-pair nil (lambda (_server client peer) (let ((text "")) (set-process-filter peer (lambda (_p chunk) (setq text (concat text chunk)))) (stop-process peer) (process-send-string client "payload") (accept-process-output nil 0.05) (let ((before text)) (continue-process peer) (accept-process-output nil 0.05) (list before text)))))
+  GNU: (ok ("" "payload"))
+  remacs: (ok (#1="payload" #1#))
+  関連ケース: 'network:stop-reading'
+
+AUD-065 [P1] family=ipv4 を指定すると明示的なループバック bind がワイルドカードになる
+  :host 127.0.0.1 と :family ipv4 を指定したサーバーの実際のソケットを lsof で確認。GNU は 127.0.0.1、remacs は *。family が非 nil の場合に bind_host を無条件で 0.0.0.0 に置き換えている。
+  原因候補: src/lisp/process.rs:1264
+  再現式: (let ((s (make-network-process :name "audit-binding" :host "127.0.0.1"
+               :family 'ipv4 :server t :service 0 :noquery t)))
+  (unwind-protect (progn (message "AUDIT-BOUND") (sleep-for 30))
+    (delete-process s)))
+Inspect the child PID with lsof -a -p PID -iTCP -sTCP:LISTEN -nP -Fn; terminate child.
+  GNU: {"actual_listen_host": "127.0.0.1"}
+  remacs: {"actual_listen_host": "*"}
+  関連ケース: 'network:actual-loopback-binding'
+
+AUD-066 [P2] copy-file が同一実体へのコピーを成功扱いする
+  同じ名前と hardlink の両方で GNU は file-error、remacs は nil を返す。この検査では両実装とも元の内容が空になっており、GNU が内容を保持するという意味ではない。remacs が失敗を通知しない差分として記録する。
+  原因候補: src/editor/mod.rs:12035
+  再現式: (audit-file-with-directory (lambda (dir) (let* ((source (expand-file-name "source" dir)) (dest (if (eq 'same-name 'same-name) source (expand-file-name "alias" dir)))) (with-temp-file source (insert "original")) (unless (eq 'same-name 'same-name) (add-name-to-file source dest)) (list (condition-case e (copy-file source dest t) (error (car e))) (audit-file-read source)))))
+  GNU: (ok (file-error ""))
+  remacs: (ok (nil ""))
+  関連ケース: 'files:copy-self-same-name', 'files:copy-self-hardlink'
+
+AUD-067 [P1] 壊れた symlink を存在しないものとして扱い、rename や上書き保護を誤る
+  rename-file は有効な symlink オブジェクトを missing として拒否する。一方、壊れた symlink が宛先の場合は nil の上書き許可でも rename/copy が実行される。GNU は宛先の既存エントリーを保護する。exists() がリンク先をたどることを区別していない。
+  原因候補: src/editor/mod.rs:11863
+  再現式: (audit-file-with-directory (lambda (dir) (let ((source (expand-file-name "source" dir)) (dest (expand-file-name "dest" dir))) (make-symbolic-link "missing-target" source) (list (condition-case e (rename-file source dest) (error (car e))) (stringp (file-symlink-p source)) (stringp (file-symlink-p dest))))))
+  GNU: (ok (nil nil t))
+  remacs: (ok (file-missing t nil))
+  関連ケース: 'files:rename-broken-symlink', 'files:rename-over-broken-destination', 'files:copy-over-broken-destination'
+
+AUD-068 [P1] 複数のファイルプリミティブが file-name-handler-alist を経由しない
+  handler の検索自体は両実装で成功するが、file-exists-p/readable-p/writable-p/modes、copy、rename、delete、属性変更、insert-file-contents、write-region では remacs が handler を呼ばない。仮想ファイルを物理パスとして扱う。
+  原因候補: src/editor/mod.rs:10230
+  再現式: (let ((file-name-handler-alist '(("\\`/audit-magic:" . audit-magic-file-handler))) (audit-file-handler-log nil)) (with-temp-buffer (list (condition-case e (file-exists-p "/audit-magic:/entry") (error (car e))) (nreverse audit-file-handler-log))))
+  GNU: (ok (t (file-exists-p)))
+  remacs: (ok (nil nil))
+  関連ケース: 'files:handler-file-exists-p', 'files:handler-file-readable-p', 'files:handler-file-writable-p', 'files:handler-file-modes', 'files:handler-copy-file', 'files:handler-rename-file', 'files:handler-delete-file', 'files:handler-set-file-modes', 'files:handler-set-file-times', 'files:handler-insert-file-contents', 'files:handler-write-region'
+
+確定一覧から除外した差分:
+  sql:bigint-bind: GNU は i64 範囲外の整数を 0 にしている。remacs の範囲エラーを新規バグとは数えない。
+  sql:blob-bind: unibyte 入力を TEXT としてバインドした際のフラグ差分。BLOB 読み出しと分けた新規件数には数えず、追加の型・往復検査待ち。
+  native:captured-variable: GNU でも捕捉値 7 ではなく 0。参照側の制約・動作を追加確認するまで確定件数には数えない。
+  treesit:delete-twice: GNU と remacs はともに treesit-parser-deleted を送出する。opaque parser の表示に deleted が付く差だけのため、新規不具合には数えない。
+
+既存 QA の確認:
+  初回の既存 QA 191 本は 182 成功、9 失敗（434.79 秒）。
+  qa_buffer2 と qa_mark は REMACS_NONINTERACTIVE=1 を初期化前に設定すると成功。CLI --batch でも成功。テストの起動条件差がある。
+  qa_bufferfile / qa_process_defaults / qa_process_names / qa_system は起動条件を揃えてサンドボックス外で再実行すると成功。ファイルロックの相手プロセス検査、ループバック bind、プロセス情報取得に環境制限が影響する。
+  qa_charset の find-charset-string の期待値は GNU 31.1 でも同じように失敗。新規 runtime バグには数えない。
+  qa_buffmenu は Rust の QA ハーネスでは失敗するが、CLI --batch と GNU では成功。エラー内容とハーネスとの差分の追加調査待ち。
+  qa_time_zero_zone は Rust の QA ハーネスで修飾子・幅の 12 チェックが失敗。GNU では 107 チェック成功。既存の #77/#160 と関連するため新規 Issue 相当には重複計上せず、再発・実行条件を調査する。
+  失敗件数をそのまま新規バグ数に加えていない。最初の一括結果と条件を変えた個別結果を分けて保存している。
+  追加の既存 CLI テストは 15 本成功。新しい引数順序・消費済み引数・--・-L・別名・ヘルプの検査は含まれていなかったため、GNU 比較を別に追加した。
+  既存 pty_editor_smoke は初期フレーム待ちで 120 秒後に失敗。追試では制御 PTY のサイズ 0x0 で ANSI 列が scratch の途中に入り、raw substring 判定が見落とすことを確認。80x24 では両実装とも描画・終了に成功。実装の停止とは区別し、runtime の新規件数に加えていない。
+
+残る調査範囲:
+  既存 QA の qa_buffmenu と qa_time_zero_zone に残る実行条件差・失敗の切り分け
+  Lisp 評価器・バイトコード・reader/printer・数値・文字列・ハッシュの未検査ケース
+  バッファ、マーカー、undo、overlay、テキスト属性、検索、キーマップの追加シナリオ
+  ファイルと文字コード、ネットワークの IPv6/UDP/非同期接続・再入、プロセスの大容量 I/O・終了・再入、タイマー、スレッドの追加シナリオ
+  CLI の残るオプション・初期化と TUI/GUI の表示・入力・ウィンドウ操作
+  ネイティブコンパイラの残る制御フロー・フォールバック・再ロード・単位間参照
+  tree-sitter の JSON 以外の文法、座標追跡、複雑な query・included ranges・寿命と通知
+  TLS、D-Bus、file-notify、LCMS、NS GUI の実環境検査
+  全域の差分検査の既知マスク・自動 skip の再評価と、検査されていない関数の棚卸し

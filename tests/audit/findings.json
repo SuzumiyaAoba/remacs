@@ -1,0 +1,855 @@
+{
+  "status": "in_progress",
+  "language": "ja",
+  "baseline": "cd0db15",
+  "evidence_file": "evidence.json",
+  "existing_issues_file": "existing-issues.json",
+  "deduplication": {
+    "issue_count": 161,
+    "includes_closed": true,
+    "checked_twice": true,
+    "notes": [
+      "XML/HTML と SQLite に該当する既存 Issue はタイトル・本文検索で見つからなかった。",
+      "ハッシュ関係の #27 は eq の float キー、#91 は sxhash の数値、#128 は overlay の equal。今回の独自比較・循環キー・marker キーとは再現条件と原因が異なる。",
+      "#18 は列挙されたリスト検索・削除関数の循環検出。今回の equal の cdr 走査停止条件と深さ判定は別の実装箇所。",
+      "#110 はメモリ統計。weak hash の到達不能キーが保持される動作自体は記載されていない。",
+      "ネイティブ関連の #109 は feature の登録、#153 は byte-compile の declare 処理。今回の C コード生成・ロードの不具合は含まれない。",
+      "追加調査でも Issue は 161 件で不変。thread の #44/#154 は一覧と signal の問題であり、同期実行・文脈分離・mutex 所有権は記載されていない。",
+      "process の #25 は同期 call-process の stderr、#54/#55 はデフォルト・命名、#14 はファイル I/O。今回の非同期子プロセスの文字コード・環境・cwd・待機・範囲検査とは別の実装箇所。",
+      "CLI および tree-sitter の該当する既存 Issue は本文検索でも見つからなかった。#108 は初期 load-path で、-L の解析不足とは別の再現条件。",
+      "再開後の最新 Issue は 161 件。#75/#76/#78/#79/#80 の状態等に更新があったが、今回のネットワーク・ファイル操作とは重複しない。",
+      "#54 は新規 process のデフォルト sentinel と marker。今回の accept 時のコールバック未実行・通知先誤りや listener の寿命とは別の再現条件。",
+      "#105 の同一 inode は add-name-to-file の no-op 判定。今回の copy-file の成功扱い、および壊れた symlink の rename/copy は記載されていない。",
+      "#21 は file-remote-p のエラー。今回の独自 handler は find-file-name-handler で検索できるため、物理ファイルプリミティブ側の dispatch 不足として区別した。"
+    ]
+  },
+  "findings": [
+    {
+      "id": "AUD-001",
+      "priority": "P1",
+      "area": "SQLite",
+      "title": "SQLite の BLOB 読み出しが任意バイトを U+FFFD に置換する",
+      "description": "x'0080ff' を読むと unibyte の (0 128 255) が multibyte の (0 65533 65533) になる。データを復元できない。",
+      "cases": [
+        "sql:blob-read"
+      ],
+      "source": "src/lisp/builtins/sqlite.rs:240"
+    },
+    {
+      "id": "AUD-002",
+      "priority": "P1",
+      "area": "native",
+      "title": "ネイティブ関数がエラー後も実行し、後続の正常値でエラーを失う",
+      "description": "error の後の setq が実行され、呼び出しもエラーにならず t を返す。tramp は戻り値が EM_INVALID の場合だけ PENDING を確認する。",
+      "cases": [
+        "native:error-aborts-sequence"
+      ],
+      "source": "src/lisp/builtins/comp.rs:347"
+    },
+    {
+      "id": "AUD-003",
+      "priority": "P1",
+      "area": "equal/hash",
+      "title": "equal が別々の循環リストの比較で停止しない",
+      "description": "同じ内容の一要素循環リスト同士で GNU は t。remacs は比較開始を出力した後も終了せず、プロセスの 20 秒上限で強制終了。cdr 走査で depth が増えず、循環検出が有効にならない。",
+      "cases": [
+        "equal:cycles"
+      ],
+      "source": "src/lisp/builtins/mod.rs:547"
+    },
+    {
+      "id": "AUD-004",
+      "priority": "P1",
+      "area": "equal/hash",
+      "title": "equal が深い異なるリストを t と判定する",
+      "description": "葉が 1 と 2 の 205 段のリストで、GNU は Stack overflow in equal、remacs は t。深さ制限以降に同じ比較ペアを入口と cons 分岐で二重登録する。",
+      "cases": [
+        "equal:deep-different-lists"
+      ],
+      "source": "src/lisp/builtins/mod.rs:521"
+    },
+    {
+      "id": "AUD-005",
+      "priority": "P1",
+      "area": "native",
+      "title": "ネイティブ関数のグローバル変数参照が値ではなくシンボルを返す",
+      "description": "値が 1 の audit-native-special を返す関数の native-compile 後、戻り値が audit-native-special になる。未解決の変数参照を SDC で出力している。",
+      "cases": [
+        "native:global-value"
+      ],
+      "source": "src/lisp/builtins/comp.rs:647"
+    },
+    {
+      "id": "AUD-006",
+      "priority": "P1",
+      "area": "native",
+      "title": "ネイティブ関数内で作るクロージャが引数を捕捉しない",
+      "description": "(lambda (x) (lambda () x)) を native-compile して 7 を渡すと、返された関数の呼び出しが void-variable x になる。GNU は 7。",
+      "cases": [
+        "native:closure-result"
+      ],
+      "source": "src/lisp/builtins/comp.rs:791"
+    },
+    {
+      "id": "AUD-007",
+      "priority": "P1",
+      "area": "native",
+      "title": "ネイティブ let* のシャドーイングで初期化前の変数を読む",
+      "description": "(let* ((x (1+ x))) x) の初期化式が外側の引数 x を見ない。GNU は 8、remacs は number-or-marker-p nil。新変数を初期化式生成前に scope に追加している。",
+      "cases": [
+        "native:let-star-shadow"
+      ],
+      "source": "src/lisp/builtins/comp.rs:910"
+    },
+    {
+      "id": "AUD-008",
+      "priority": "P1",
+      "area": "native",
+      "title": ".eln に setq や provide などのトップレベルフォームが保存されない",
+      "description": "ソースを native-compile して native-elisp-load すると defun だけが登録される。初期化と provide が消え、GNU の (42 t 7) が (nil nil 7) になる。",
+      "cases": [
+        "native:file-top-level-forms"
+      ],
+      "source": "src/lisp/builtins/comp.rs:1386"
+    },
+    {
+      "id": "AUD-009",
+      "priority": "P2",
+      "area": "native",
+      "title": "ネイティブコンパイラがソース後半の構文エラーを無視して成功する",
+      "description": "有効な defun の後に閉じていない括弧を置くと、GNU は end-of-file、remacs は .eln 生成に成功する。file_defuns の read エラーを break で破棄している。",
+      "cases": [
+        "native:file-parse-error"
+      ],
+      "source": "src/lisp/builtins/comp.rs:1410"
+    },
+    {
+      "id": "AUD-010",
+      "priority": "P2",
+      "area": "native",
+      "title": "ネイティブコンパイルした引数なし and が nil を返す",
+      "description": "(lambda () (and)) は GNU では t、remacs の生成コードでは nil。and の累積結果を常に NIL で初期化している。",
+      "cases": [
+        "native:empty-and"
+      ],
+      "source": "src/lisp/builtins/comp.rs:727"
+    },
+    {
+      "id": "AUD-011",
+      "priority": "P2",
+      "area": "native",
+      "title": "ネイティブ関数の quote 定数を呼び出しごとに作り直す",
+      "description": "同じ関数から二度取得した '(1 2) の eq が GNU では t、remacs では nil。定数参照を毎回 RDC/read で再構築している。",
+      "cases": [
+        "native:quoted-constant-identity"
+      ],
+      "source": "src/lisp/builtins/comp.rs:687"
+    },
+    {
+      "id": "AUD-012",
+      "priority": "P2",
+      "area": "native",
+      "title": "ネイティブコンパイルした unibyte 文字列定数の文字コードが変わる",
+      "description": "未コンパイルでは (128 255) の文字列がコンパイル後は (4194176 4194303) になる。GNU のコンパイル結果と未コンパイルの対照ケースは (128 255)。",
+      "cases": [
+        "native:string-byte-kind",
+        "native:string-byte-kind-baseline"
+      ],
+      "source": "src/lisp/builtins/comp.rs:637"
+    },
+    {
+      "id": "AUD-013",
+      "priority": "P1",
+      "area": "equal/hash",
+      "title": "define-hash-table-test の独自比較関数・ハッシュ関数が使われない",
+      "description": "大文字小文字を無視する比較を登録しても equal に置き換えられ、HELLO の登録値を hello で取得できない。hash-table-test は登録名を返すため問題が見えにくい。",
+      "cases": [
+        "hash:custom-test"
+      ],
+      "source": "src/lisp/builtins/hashfn.rs:318"
+    },
+    {
+      "id": "AUD-014",
+      "priority": "P2",
+      "area": "equal/hash",
+      "title": "equal ハッシュテーブルで構造が等しい循環キーを検索できない",
+      "description": "一要素循環リストをキーにした登録値を、別の同内容の循環リストで取得すると nil。GNU は 42。循環の後方参照をポインタ依存のキーにしている。",
+      "cases": [
+        "hash:cycle-lookup"
+      ],
+      "source": "src/lisp/builtins/hashfn.rs:179"
+    },
+    {
+      "id": "AUD-015",
+      "priority": "P2",
+      "area": "equal/hash",
+      "title": "equal ハッシュテーブルで同じバッファ・位置の marker を検索できない",
+      "description": "同位置の新しい point-marker で登録値を取得できない。equal は marker を位置とバッファで比較するが、ハッシュキーは marker のアドレスになる。",
+      "cases": [
+        "hash:equal-markers"
+      ],
+      "source": "src/lisp/builtins/hashfn.rs:248"
+    },
+    {
+      "id": "AUD-016",
+      "priority": "P2",
+      "area": "equal/hash",
+      "title": "weak hash の到達不能なキーが garbage-collect 後も保持される",
+      "description": "weakness=key のテーブルに一時 vector を 1000 個登録して参照を捨て、GC を二度呼ぶ。GNU では 10 個未満に減るが、remacs では 10 個未満にならず、弱参照として機能しない。",
+      "cases": [
+        "hash:weak-key-gc"
+      ],
+      "source": "src/lisp/builtins/evalfn.rs:4725"
+    },
+    {
+      "id": "AUD-017",
+      "priority": "P3",
+      "area": "equal/hash",
+      "title": "hash-table-size が拡張後も指定した初期値のままになる",
+      "description": ":size 1 のテーブルに 10 件登録しても hash-table-size は 1。現在の容量を公開せず、保存した初期引数を返している。",
+      "cases": [
+        "hash:size-growth"
+      ],
+      "source": "src/lisp/builtins/hashfn.rs:491"
+    },
+    {
+      "id": "AUD-018",
+      "priority": "P2",
+      "area": "SQLite",
+      "title": "SQLite で省略したパラメータが NULL にならずエラーになる",
+      "description": "select ?, ? に値を渡さない場合や一つだけ渡す場合、GNU は不足分を nil として実行するが remacs はパラメータ数エラーにする。",
+      "cases": [
+        "sql:missing-all",
+        "sql:missing-one"
+      ],
+      "source": "src/lisp/builtins/sqlite.rs:344"
+    },
+    {
+      "id": "AUD-019",
+      "priority": "P1",
+      "area": "SQLite",
+      "title": "sqlite-select の set が sqlite-next より前に SQL を実行する",
+      "description": "INSERT ... RETURNING を set として作るだけで挿入が完了する。GNU は sqlite-next まで実行しない。遅延実行 API の副作用のタイミングが変わる。",
+      "cases": [
+        "sql:lazy-insert"
+      ],
+      "source": "src/lisp/builtins/sqlite.rs:364"
+    },
+    {
+      "id": "AUD-020",
+      "priority": "P2",
+      "area": "SQLite",
+      "title": "SQLite のエラーコードとエラーデータ構造が誤っている",
+      "description": "SQLITE_ERROR=1 の箇所で rusqlite の enum 判別値 23 を公開する。UNIQUE 違反などで GNU が文字列を渡すケースも常に四要素リストになり、エラー処理が一致しない。",
+      "cases": [
+        "sql:select-error",
+        "sql:constraint-error",
+        "sql:extra-one",
+        "sql:empty"
+      ],
+      "source": "src/lisp/builtins/sqlite.rs:68"
+    },
+    {
+      "id": "AUD-021",
+      "priority": "P2",
+      "area": "SQLite",
+      "title": "sqlitep が nil の偽レコードを sqlite-close が受け入れる",
+      "description": "(record 'sqlite 'db 999999) は sqlitep で nil なのに sqlite-close が t を返す。GNU は wrong-type-argument sqlitep。ハンドル登録確認をしていない。",
+      "cases": [
+        "sql:forged"
+      ],
+      "source": "src/lisp/builtins/sqlite.rs:122"
+    },
+    {
+      "id": "AUD-022",
+      "priority": "P2",
+      "area": "SQLite",
+      "title": "sqlite-select の空クエリが nil ではなくエラーになる",
+      "description": "(sqlite-select db \"\") は GNU では nil。remacs では SQLite API misuse を送出する。",
+      "cases": [
+        "sql:empty-select"
+      ],
+      "source": "src/lisp/builtins/sqlite.rs:349"
+    },
+    {
+      "id": "AUD-023",
+      "priority": "P2",
+      "area": "XML",
+      "title": "XML の改行・属性内空白が正規化されない",
+      "description": "テキストの CRLF/CR が LF にならず、属性内の TAB/LF/CR も空白にならない。パースした値が GNU と異なる。",
+      "cases": [
+        "xml:<a>one\r\ntwo\rthree</a>",
+        "xml:<a x=\"one\ttwo\nthree\rfour\"/>"
+      ],
+      "source": "src/lisp/builtins/xml.rs:315"
+    },
+    {
+      "id": "AUD-024",
+      "priority": "P2",
+      "area": "XML",
+      "title": "xmlns で始まる通常の XML 属性まで削除される",
+      "description": "xmlnsfoo=\"keep\" が名前空間宣言として扱われ消える。xmlns と xmlns:prefix 以外の属性は保持する必要がある。",
+      "cases": [
+        "xml:<a xmlnsfoo=\"keep\"/>"
+      ],
+      "source": "src/lisp/builtins/xml.rs:263"
+    },
+    {
+      "id": "AUD-025",
+      "priority": "P2",
+      "area": "XML",
+      "title": "XML パーサが重複属性・禁止文字などの不正な文書を受け入れる",
+      "description": "重複属性、数字で始まる要素名、NUL/制御文字、コメント内 --、属性中の生の <、テキスト中の ]]> が GNU では nil、remacs では DOM になる。",
+      "cases": [
+        "xml:<a x=\"1\" x=\"2\"/>",
+        "xml:<1bad/>",
+        "xml:<a>&#0;</a>",
+        "xml:<a>&#1;</a>",
+        "xml:<a>\u0001</a>",
+        "xml:<a><![CDATA[\u0001]]></a>",
+        "xml:<a><!--bad--comment--></a>",
+        "xml:<a x=\"<\"/>",
+        "xml:<a>]]></a>"
+      ],
+      "source": "src/lisp/builtins/xml.rs:246"
+    },
+    {
+      "id": "AUD-026",
+      "priority": "P2",
+      "area": "XML",
+      "title": "XML 属性の未定義エンティティをエラーにせず空文字にする",
+      "description": "x=\"&missing;\" が GNU の nil ではなく x=\"\" の DOM になる。属性デコードのエラーを unwrap_or_default で捨てている。",
+      "cases": [
+        "xml:<a x=\"&missing;\"/>"
+      ],
+      "source": "src/lisp/builtins/xml.rs:266"
+    },
+    {
+      "id": "AUD-027",
+      "priority": "P2",
+      "area": "XML",
+      "title": "XML の内部 DTD エンティティ宣言が無視される",
+      "description": "内部で宣言した word='hello' を属性で参照すると空文字になり、要素内容で参照するとパース全体が nil になる。GNU は属性を hello として読み、要素内の参照も DOM に残す。",
+      "cases": [
+        "xml:<!DOCTYPE a [<!ENTITY word 'hello'>]><a x=\"&word;\"/>",
+        "xml:<!DOCTYPE a [<!ENTITY word 'hello'>]><a>&word;</a>"
+      ],
+      "source": "src/lisp/builtins/xml.rs:341"
+    },
+    {
+      "id": "AUD-028",
+      "priority": "P2",
+      "area": "HTML",
+      "title": "HTML の DISCARD-COMMENTS がネストしたコメントまで削除する",
+      "description": "GNU が削除するのはトップレベルのコメントのみ。remacs は要素内のコメントもすべて消す。",
+      "cases": [
+        "html-discard:<!--before--><p><!--inside-->text</p><!--after-->"
+      ],
+      "source": "src/lisp/builtins/xml.rs:128"
+    },
+    {
+      "id": "AUD-029",
+      "priority": "P2",
+      "area": "HTML",
+      "title": "明示的に記述した空の head 要素も削除される",
+      "description": "<head></head><body>x</body> の DOM から head がなくなる。暗黙に補われた head と明示的な head を区別していない。",
+      "cases": [
+        "html:<head></head><body>x</body>",
+        "html-discard:<head></head><body>x</body>"
+      ],
+      "source": "src/lisp/builtins/xml.rs:103"
+    },
+    {
+      "id": "AUD-030",
+      "priority": "P2",
+      "area": "HTML",
+      "title": "別の table にある tbody がすべての table の DOM を変える",
+      "description": "一つでも明示的な tbody があれば、tbody を書いていない別の table にも暗黙の tbody が残る。文書全体の contains 判定を全ノードに使っている。",
+      "cases": [
+        "html:<table><tr><td>a</td></tr></table><table><tbody><tr><td>b</td></tr></tbody></table>",
+        "html-discard:<table><tr><td>a</td></tr></table><table><tbody><tr><td>b</td></tr></tbody></table>"
+      ],
+      "source": "src/lisp/builtins/xml.rs:146"
+    },
+    {
+      "id": "AUD-031",
+      "priority": "P2",
+      "area": "HTML",
+      "title": "HTML5 の DOM 修復・属性名処理が GNU libxml の結果と一致しない",
+      "description": "table 内のテキストが table 外へ移動し、p/div の組み合わせで空の p が追加され、SVG の viewBox の属性名も GNU の viewbox と異なる。libxml API の互換動作に差がある。",
+      "cases": [
+        "html:<table>text<tr><td>a</td></tr></table>",
+        "html:<p><div>x</div>y</p>",
+        "html:<svg viewBox=\"0 0 1 1\"><circle/></svg>",
+        "html-discard:<table>text<tr><td>a</td></tr></table>",
+        "html-discard:<p><div>x</div>y</p>",
+        "html-discard:<svg viewBox=\"0 0 1 1\"><circle/></svg>"
+      ],
+      "source": "src/lisp/builtins/xml.rs:142"
+    },
+    {
+      "id": "AUD-032",
+      "priority": "P1",
+      "area": "thread/mutex",
+      "title": "make-thread が同期実行され、親子間の待ち合わせが成立しない",
+      "description": "親が make-thread の戻り後に設定するフラグを子が待つと、GNU は ready、remacs は子の待ち時間が尽きるまで親へ戻らず timed-out。thread-yield も実際のスケジューリングをしない。",
+      "cases": [
+        "thread:parent-worker-coordination"
+      ],
+      "source": "src/lisp/builtins/misc.rs:8029"
+    },
+    {
+      "id": "AUD-033",
+      "priority": "P1",
+      "area": "thread/mutex",
+      "title": "スレッドの current-buffer と動的束縛が親から分離されない",
+      "description": "子で set-buffer すると親の current-buffer も変わる。親の一時的な special 変数束縛も子に漏れ、GNU の global が parent になる。実行文脈を保存・切替せず i.apply している。",
+      "cases": [
+        "thread:current-buffer-isolation",
+        "thread:dynamic-bindings"
+      ],
+      "source": "src/lisp/builtins/misc.rs:8050"
+    },
+    {
+      "id": "AUD-034",
+      "priority": "P1",
+      "area": "thread/mutex",
+      "title": "mutex が他スレッドのロックを奪え、再帰ロックの深さも保持しない",
+      "description": "ロック中に別スレッドが mutex-lock / mutex-unlock できる。二度ロックした同一スレッドが二度 unlock すると二度目はエラー。owner を無条件で上書きし、所有者比較と再帰回数がない。",
+      "cases": [
+        "mutex:busy-lock",
+        "mutex:foreign-unlock",
+        "mutex:recursive-depth"
+      ],
+      "source": "src/lisp/builtins/misc.rs:8138"
+    },
+    {
+      "id": "AUD-035",
+      "priority": "P2",
+      "area": "process/timer",
+      "title": "accept-process-output の整数 JUST-THIS-ONE によるタイマー抑止が無視される",
+      "description": "第4引数を 1 にしても待機中にタイマーが実行される。GNU は hits=0、remacs は hits=1。この引数を実装が参照していない。",
+      "cases": [
+        "timer:accept-process-output-inhibit"
+      ],
+      "source": "src/lisp/process.rs:1870"
+    },
+    {
+      "id": "AUD-036",
+      "priority": "P2",
+      "area": "process",
+      "title": "make-process の connection-type=pipe が無視される",
+      "description": "pipe を明示しても openpty で子プロセスを起動する。process-tty-name が GNU では nil、remacs では文字列。pipe と異なる端末の入力規律が適用される。",
+      "cases": [
+        "process:pipe-connection"
+      ],
+      "source": "src/lisp/process.rs:946"
+    },
+    {
+      "id": "AUD-037",
+      "priority": "P1",
+      "area": "process",
+      "title": "プロセスの I/O が coding system を無視し、存在しない coding も受け入れる",
+      "description": "iso-latin-1 指定でも入力バイト E9 は U+FFFD になり、送信する é は E9 ではなく UTF-8 の C3 A9 になる。set-process-coding-system は未定義名にも成功する。ファイル I/O の #14 とは別の入出力経路。 listener の coding 設定も accepted 接続へ継承されず、初期の UTF-8 設定になる。",
+      "cases": [
+        "process:decode-latin1",
+        "process:encode-latin1",
+        "process:invalid-coding",
+        "network:accepted-coding-inheritance"
+      ],
+      "source": "src/lisp/process.rs:228"
+    },
+    {
+      "id": "AUD-038",
+      "priority": "P1",
+      "area": "process",
+      "title": "チャンク境界で分割された UTF-8 を復号できない",
+      "description": "正しい UTF-8 の「あ」を E3 と 81 82 に分けて子から送ると、GNU は「あ」、remacs は三つの U+FFFD。read ごとに独立した from_utf8_lossy を使い、未完了の文字を保持しない。",
+      "cases": [
+        "process:split-utf8"
+      ],
+      "source": "src/lisp/process.rs:228"
+    },
+    {
+      "id": "AUD-039",
+      "priority": "P1",
+      "area": "process",
+      "title": "子プロセスに Lisp の process-environment が渡されない",
+      "description": "process-environment に追加した REMACS_AUDIT_CHILD=from-lisp を子の sh で読めない。GNU は from-lisp、remacs は空文字。Rust プロセスの環境をそのまま継承している。",
+      "cases": [
+        "process:environment"
+      ],
+      "source": "src/lisp/process.rs:1000"
+    },
+    {
+      "id": "AUD-040",
+      "priority": "P1",
+      "area": "process",
+      "title": "子プロセスの作業ディレクトリに default-directory が使われない",
+      "description": "一時ディレクトリを default-directory に束縛しても /bin/pwd はその場所を返さない。Command に current_dir を設定していない。",
+      "cases": [
+        "process:working-directory"
+      ],
+      "source": "src/lisp/process.rs:1000"
+    },
+    {
+      "id": "AUD-041",
+      "priority": "P2",
+      "area": "process",
+      "title": "make-process が Lisp の exec-path で実行ファイルを探索しない",
+      "description": "exec-path にだけ追加したディレクトリの実行ファイルを GNU は起動できるが、remacs は file-missing。Command::new に未解決のコマンド名を渡している。",
+      "cases": [
+        "process:exec-path"
+      ],
+      "source": "src/lisp/process.rs:1000"
+    },
+    {
+      "id": "AUD-042",
+      "priority": "P2",
+      "area": "process",
+      "title": "プロセスの filter=t を入力停止ではなく関数呼び出しとして扱う",
+      "description": "GNU が受け入れる filter=t のプロセスを accept-process-output すると、remacs は t を呼んで void-function を送出する。",
+      "cases": [
+        "process:filter-t"
+      ],
+      "source": "src/lisp/process.rs:271"
+    },
+    {
+      "id": "AUD-043",
+      "priority": "P2",
+      "area": "process",
+      "title": "accept-process-output がタイムアウト省略時にも待たずに返る",
+      "description": "cat にタイマーからデータを送るケースで、GNU は出力まで待って t と文字列を返すが、remacs はタイマーを実行する前に nil と空文字を返す。省略された待ち時間を 0 秒としている。",
+      "cases": [
+        "process:wait-without-timeout"
+      ],
+      "source": "src/lisp/process.rs:1878"
+    },
+    {
+      "id": "AUD-044",
+      "priority": "P2",
+      "area": "process",
+      "title": "process-send-region が marker を拒否し、範囲外や narrowing 外を黙って送る",
+      "description": "有効な marker は integer-or-marker-p エラーになり、位置 0 や狭められた領域外の整数は clamp され送信される。GNU は marker を受け入れ、範囲外は args-out-of-range。",
+      "cases": [
+        "process:send-region-marker",
+        "process:send-region-low-bound",
+        "process:send-region-narrowed"
+      ],
+      "source": "src/lisp/process.rs:1978"
+    },
+    {
+      "id": "AUD-045",
+      "priority": "P1",
+      "area": "process",
+      "title": "accept-process-output の巨大な有限待ち時間で Rust panic し、終了コードも 0 になる",
+      "description": "1e30 秒を指定すると GNU は catch 可能な file-error。remacs は Duration::from_secs_f64 が panic して AUDIT-DONE に到達せず、main が join のエラーを無視するためプロセスは 0 で終了する。",
+      "cases": [
+        "process:timeout-overflow"
+      ],
+      "source": "src/lisp/process.rs:1898"
+    },
+    {
+      "id": "AUD-046",
+      "priority": "P2",
+      "area": "CLI",
+      "title": "--eval が一つの式ではなく後続する全フォームを実行する",
+      "description": "引数が (princ 1) (princ 2) のとき GNU の出力は 1、remacs は 12。run_batch が eval_forms で全体を評価する。",
+      "cases": [
+        "cli:eval-multiple-forms"
+      ],
+      "source": "src/main.rs:367"
+    },
+    {
+      "id": "AUD-047",
+      "priority": "P1",
+      "area": "CLI",
+      "title": "バッチ起動時にファイル引数が開かれず、後続の eval に反映されない",
+      "description": "ファイルの後に --eval で buffer-string を読むと GNU はファイルの内容、remacs は空文字。ファイル引数を files にためた後、batch_exit により訪問処理を飛ばす。",
+      "cases": [
+        "cli:file-before-eval"
+      ],
+      "source": "src/main.rs:278"
+    },
+    {
+      "id": "AUD-048",
+      "priority": "P2",
+      "area": "CLI",
+      "title": "-f の関数が消費した command-line-args-left を再処理する",
+      "description": "関数が command-line-args-left を nil にしても、その後の --eval が実行される。GNU は実行しない。固定の args ベクタの idx を進めるため、Lisp 側の引数消費を反映できない。",
+      "cases": [
+        "cli:funcall-consumed-arguments"
+      ],
+      "source": "src/main.rs:243"
+    },
+    {
+      "id": "AUD-049",
+      "priority": "P1",
+      "area": "CLI",
+      "title": "-- の後の引数がファイル名にならず、--eval として実行される",
+      "description": "-Q --batch -- --eval (princ 123) は GNU ではファイル名の並びとして処理される。remacs は 123 を出力する。オプション終了記号の処理がない。",
+      "cases": [
+        "cli:end-of-options"
+      ],
+      "source": "src/main.rs:126"
+    },
+    {
+      "id": "AUD-050",
+      "priority": "P2",
+      "area": "CLI",
+      "title": "-L / --directory で load-path を追加できない",
+      "description": "一時ディレクトリにだけ置いたライブラリを GNU は require できるが、remacs は file-missing。両オプションをファイル名として蓄積する。#108 の初期 load-path とは別の CLI 処理不足。",
+      "cases": [
+        "cli:load-path-short",
+        "cli:load-path-long"
+      ],
+      "source": "src/main.rs:126"
+    },
+    {
+      "id": "AUD-051",
+      "priority": "P2",
+      "area": "CLI",
+      "title": "GNU のオプション表記 -eval と --eval=EXPR が無視される",
+      "description": "いずれも GNU は 7 を出力し、remacs は何もせず成功終了する。単一ハイフンの長い別名や = による値指定を正規化せず、完全一致の文字列だけを判定する。",
+      "cases": [
+        "cli:single-hyphen-eval",
+        "cli:equals-eval"
+      ],
+      "source": "src/main.rs:206"
+    },
+    {
+      "id": "AUD-052",
+      "priority": "P3",
+      "area": "CLI",
+      "title": "--help が使い方を表示しない",
+      "description": "GNU は Usage を表示するが、remacs -Q --batch --help は出力なしで成功終了する。ヘルプ用の分岐がない。",
+      "cases": [
+        "cli:help"
+      ],
+      "source": "src/main.rs:126"
+    },
+    {
+      "id": "AUD-053",
+      "priority": "P1",
+      "area": "tree-sitter",
+      "title": "バッファ編集後も tree-sitter が編集前の構文木を返す",
+      "description": "[1,2] の 1 を x や null に置き換えても number ノードが残る。x の構文エラーも検出されない。古い Tree に InputEdit を適用せず、そのまま再解析の基底として渡している。",
+      "cases": [
+        "treesit:edit-same-length",
+        "treesit:edit-longer"
+      ],
+      "source": "src/lisp/builtins/treesit.rs:606"
+    },
+    {
+      "id": "AUD-054",
+      "priority": "P1",
+      "area": "tree-sitter",
+      "title": "再解析を繰り返すと古い node の outdated 状態が解除される",
+      "description": "最初のノードを保持したまま八回編集・再解析すると、GNU は outdated が常に t。remacs は t/nil を交互に返す。ノード ID が再利用されると、同じキャッシュ項目を新世代で上書きする。",
+      "cases": [
+        "treesit:old-node-after-repeated-reparse"
+      ],
+      "source": "src/lisp/builtins/treesit.rs:248"
+    },
+    {
+      "id": "AUD-055",
+      "priority": "P2",
+      "area": "tree-sitter",
+      "title": "indirect buffer の parser-create が base buffer の parser を再利用する",
+      "description": "GNU は間接バッファに別の parser を作るが、remacs は base の既存 parser と eq になる。引数バッファを無条件で base に置き換えるため、解析文脈を分離できない。",
+      "cases": [
+        "treesit:indirect-buffer"
+      ],
+      "source": "src/lisp/builtins/treesit.rs:813"
+    },
+    {
+      "id": "AUD-056",
+      "priority": "P2",
+      "area": "tree-sitter",
+      "title": "parser の notifier 登録に重複排除と symbolp 検査がない",
+      "description": "同じ通知関数を二度追加すると GNU の一件に対し remacs は二件になる。数値や lambda も受け入れるが、GNU は関数シンボル以外を symbolp エラーにする。",
+      "cases": [
+        "treesit:notifier-dedup",
+        "treesit:notifier-invalid",
+        "treesit:notifier-lambda"
+      ],
+      "source": "src/lisp/builtins/treesit.rs:1112"
+    },
+    {
+      "id": "AUD-057",
+      "priority": "P2",
+      "area": "tree-sitter",
+      "title": "query の #match? が case-fold-search に影響される",
+      "description": "[\"A\",\"a\"] に A を探す述語で GNU の capture は一件、remacs は二件。通常の buffer 検索用の case-fold-search を query の述語に適用している。",
+      "cases": [
+        "treesit:query-match-case"
+      ],
+      "source": "src/lisp/builtins/treesit.rs:1856"
+    },
+    {
+      "id": "AUD-058",
+      "priority": "P2",
+      "area": "tree-sitter",
+      "title": "query の #eq? が同名の複数 capture のうち最初だけを検査する",
+      "description": "[1,2] の両 number を @n に捕捉して @n = \"1\" を要求すると GNU はマッチなし、remacs は両方を返す。capture 名の解決が単一ノードに縮退する。",
+      "cases": [
+        "treesit:query-repeat-capture"
+      ],
+      "source": "src/lisp/builtins/treesit.rs:1767"
+    },
+    {
+      "id": "AUD-059",
+      "priority": "P3",
+      "area": "tree-sitter",
+      "title": "included-ranges のエラーデータから説明と範囲リストが欠落する",
+      "description": "範囲 (0 . 99) の設定でエラーの種類は合うが、GNU の説明文字列と範囲リストの代わりに不正なペアだけをデータとして送出する。",
+      "cases": [
+        "treesit:ranges-invalid"
+      ],
+      "source": "src/lisp/builtins/treesit.rs:1053"
+    },
+    {
+      "id": "AUD-060",
+      "priority": "P1",
+      "area": "network",
+      "title": "process-send-eof がネットワーク接続の送信側を閉じない",
+      "description": "TCP 接続の client に EOF を送っても peer は open のまま。GNU の peer は closed になる。Net/LocalNet の分岐で shutdown(Write) を呼ばず、何もせず process オブジェクトを返している。",
+      "cases": [
+        "network:send-eof"
+      ],
+      "source": "src/lisp/process.rs:2008"
+    },
+    {
+      "id": "AUD-061",
+      "priority": "P1",
+      "area": "network",
+      "title": "delete-process 後も TCP リスナーが同じポートを占有する",
+      "description": "削除したサーバーオブジェクトを参照したまま同じポートへ再 bind すると、GNU は成功、remacs は Address already in use。Listen のソケットを閉じず status だけ closed にしている。",
+      "cases": [
+        "network:deleted-listener-rebind"
+      ],
+      "source": "src/lisp/process.rs:2477"
+    },
+    {
+      "id": "AUD-062",
+      "priority": "P2",
+      "area": "network",
+      "title": "接続受理時に log が呼ばれず、sentinel はリスナー側で呼ばれる",
+      "description": "server の :log コールバックは GNU では実行されるが remacs では実行されない。sentinel が受け取るプロセスの状態は GNU で open、remacs で listen。accepted 接続ではなく listener に通知している。",
+      "cases": [
+        "network:accept-log-callback",
+        "network:accept-sentinel-target"
+      ],
+      "source": "src/lisp/process.rs:608"
+    },
+    {
+      "id": "AUD-063",
+      "priority": "P2",
+      "area": "network",
+      "title": "process-contact が受理した接続の情報と DNS 解決後のアドレスを返せない",
+      "description": "accepted 接続の host/service と :local/:remote はすべて nil。localhost で接続した client の :remote は 127.0.0.1 ではなく 0.0.0.0。内部の contact データ形式の不一致と、元のホスト文字列からのアドレス捏造がある。",
+      "cases": [
+        "network:accepted-contact",
+        "network:resolved-remote-address"
+      ],
+      "source": "src/lisp/process.rs:555"
+    },
+    {
+      "id": "AUD-064",
+      "priority": "P2",
+      "area": "network",
+      "title": "stop-process で停止したネットワーク接続からも入力を読む",
+      "description": "peer を停止してから送信すると、GNU は continue-process まで filter を実行せず、remacs は停止中にも payload を渡す。poll_proc が stop 状態を確認せず read している。",
+      "cases": [
+        "network:stop-reading"
+      ],
+      "source": "src/lisp/process.rs:358"
+    },
+    {
+      "id": "AUD-065",
+      "priority": "P1",
+      "area": "network",
+      "title": "family=ipv4 を指定すると明示的なループバック bind がワイルドカードになる",
+      "description": ":host 127.0.0.1 と :family ipv4 を指定したサーバーの実際のソケットを lsof で確認。GNU は 127.0.0.1、remacs は *。family が非 nil の場合に bind_host を無条件で 0.0.0.0 に置き換えている。",
+      "cases": [
+        "network:actual-loopback-binding"
+      ],
+      "source": "src/lisp/process.rs:1264"
+    },
+    {
+      "id": "AUD-066",
+      "priority": "P2",
+      "area": "files",
+      "title": "copy-file が同一実体へのコピーを成功扱いする",
+      "description": "同じ名前と hardlink の両方で GNU は file-error、remacs は nil を返す。この検査では両実装とも元の内容が空になっており、GNU が内容を保持するという意味ではない。remacs が失敗を通知しない差分として記録する。",
+      "cases": [
+        "files:copy-self-same-name",
+        "files:copy-self-hardlink"
+      ],
+      "source": "src/editor/mod.rs:12035"
+    },
+    {
+      "id": "AUD-067",
+      "priority": "P1",
+      "area": "files",
+      "title": "壊れた symlink を存在しないものとして扱い、rename や上書き保護を誤る",
+      "description": "rename-file は有効な symlink オブジェクトを missing として拒否する。一方、壊れた symlink が宛先の場合は nil の上書き許可でも rename/copy が実行される。GNU は宛先の既存エントリーを保護する。exists() がリンク先をたどることを区別していない。",
+      "cases": [
+        "files:rename-broken-symlink",
+        "files:rename-over-broken-destination",
+        "files:copy-over-broken-destination"
+      ],
+      "source": "src/editor/mod.rs:11863"
+    },
+    {
+      "id": "AUD-068",
+      "priority": "P1",
+      "area": "files",
+      "title": "複数のファイルプリミティブが file-name-handler-alist を経由しない",
+      "description": "handler の検索自体は両実装で成功するが、file-exists-p/readable-p/writable-p/modes、copy、rename、delete、属性変更、insert-file-contents、write-region では remacs が handler を呼ばない。仮想ファイルを物理パスとして扱う。",
+      "cases": [
+        "files:handler-file-exists-p",
+        "files:handler-file-readable-p",
+        "files:handler-file-writable-p",
+        "files:handler-file-modes",
+        "files:handler-copy-file",
+        "files:handler-rename-file",
+        "files:handler-delete-file",
+        "files:handler-set-file-modes",
+        "files:handler-set-file-times",
+        "files:handler-insert-file-contents",
+        "files:handler-write-region"
+      ],
+      "source": "src/editor/mod.rs:10230"
+    }
+  ],
+  "excluded_or_unresolved": [
+    {
+      "case": "sql:bigint-bind",
+      "reason": "GNU は i64 範囲外の整数を 0 にしている。remacs の範囲エラーを新規バグとは数えない。"
+    },
+    {
+      "case": "sql:blob-bind",
+      "reason": "unibyte 入力を TEXT としてバインドした際のフラグ差分。BLOB 読み出しと分けた新規件数には数えず、追加の型・往復検査待ち。"
+    },
+    {
+      "case": "native:captured-variable",
+      "reason": "GNU でも捕捉値 7 ではなく 0。参照側の制約・動作を追加確認するまで確定件数には数えない。"
+    },
+    {
+      "case": "treesit:delete-twice",
+      "reason": "GNU と remacs はともに treesit-parser-deleted を送出する。opaque parser の表示に deleted が付く差だけのため、新規不具合には数えない。"
+    }
+  ],
+  "remaining_scope": [
+    "既存 QA の qa_buffmenu と qa_time_zero_zone に残る実行条件差・失敗の切り分け",
+    "Lisp 評価器・バイトコード・reader/printer・数値・文字列・ハッシュの未検査ケース",
+    "バッファ、マーカー、undo、overlay、テキスト属性、検索、キーマップの追加シナリオ",
+    "ファイルと文字コード、ネットワークの IPv6/UDP/非同期接続・再入、プロセスの大容量 I/O・終了・再入、タイマー、スレッドの追加シナリオ",
+    "CLI の残るオプション・初期化と TUI/GUI の表示・入力・ウィンドウ操作",
+    "ネイティブコンパイラの残る制御フロー・フォールバック・再ロード・単位間参照",
+    "tree-sitter の JSON 以外の文法、座標追跡、複雑な query・included ranges・寿命と通知",
+    "TLS、D-Bus、file-notify、LCMS、NS GUI の実環境検査",
+    "全域の差分検査の既知マスク・自動 skip の再評価と、検査されていない関数の棚卸し"
+  ]
+}
