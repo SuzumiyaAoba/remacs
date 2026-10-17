@@ -1261,12 +1261,10 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             return Err(i.error_q("`:server' is incompatible with `:nowait'", &[]));
         }
         let port = service_port(i, &service)?;
-        let bind_host = if kw(i, &args, ":family").truthy() {
-            "0.0.0.0".to_string()
-        } else {
-            host.clone()
-        };
-        let listener = std::net::TcpListener::bind((bind_host.as_str(), port)).map_err(|e| {
+        // An address family does not replace the requested host.  In
+        // particular, :family ipv4 must not broaden a loopback bind to
+        // every interface (issue #232).
+        let listener = std::net::TcpListener::bind((host.as_str(), port)).map_err(|e| {
             // GNU reports bind failures via the errno-derived condition:
             // EACCES → permission-denied, others → file-error, with data
             // ("Cannot bind server socket" <strerror>).
