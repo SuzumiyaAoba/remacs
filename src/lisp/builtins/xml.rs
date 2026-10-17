@@ -222,8 +222,39 @@ fn push_node(f: &mut XmlFrame, v: Value) {
     f.tail_cdata = false;
 }
 
+/// XML 1.0 (Fifth Edition), productions [2], [4] and [4a]. Rust chars
+/// already exclude surrogates; XML also excludes most C0 controls and
+/// U+FFFE/U+FFFF, but permits other Unicode noncharacters and C1 controls.
+fn xml_char(c: char) -> bool {
+    matches!(c, '\t' | '\n' | '\r' | '\u{20}'..='\u{d7ff}'
+        | '\u{e000}'..='\u{fffd}' | '\u{10000}'..='\u{10ffff}')
+}
+
+fn xml_name_start(c: char) -> bool {
+    matches!(c, ':' | 'A'..='Z' | '_' | 'a'..='z'
+        | '\u{c0}'..='\u{d6}' | '\u{d8}'..='\u{f6}' | '\u{f8}'..='\u{2ff}'
+        | '\u{370}'..='\u{37d}' | '\u{37f}'..='\u{1fff}'
+        | '\u{200c}'..='\u{200d}' | '\u{2070}'..='\u{218f}'
+        | '\u{2c00}'..='\u{2fef}' | '\u{3001}'..='\u{d7ff}'
+        | '\u{f900}'..='\u{fdcf}' | '\u{fdf0}'..='\u{fffd}'
+        | '\u{10000}'..='\u{effff}')
+}
+
+fn xml_name(name: &[u8]) -> bool {
+    let Ok(name) = std::str::from_utf8(name) else {
+        return false;
+    };
+    let mut chars = name.chars();
+    chars.next().is_some_and(xml_name_start)
+        && chars.all(|c| {
+            xml_name_start(c)
+                || matches!(c, '-' | '.' | '0'..='9' | '\u{b7}'
+                    | '\u{300}'..='\u{36f}' | '\u{203f}'..='\u{2040}')
+        })
+}
+
 /// Resolve `&name;' / `&#NNN;' references.  None = undeclared entity,
-/// which makes libxml2 fail the document.
+/// malformed reference, or forbidden XML character.
 fn resolve_ref(name: &str) -> Option<String> {
     match name {
         "amp" => Some("&".into()),
@@ -233,20 +264,70 @@ fn resolve_ref(name: &str) -> Option<String> {
         "apos" => Some("'".into()),
         _ => {
             let rest = name.strip_prefix('#')?;
-            let n = if let Some(h) = rest.strip_prefix(['x', 'X']) {
+            let n = if let Some(h) = rest.strip_prefix('x') {
+                if h.is_empty() || !h.bytes().all(|c| c.is_ascii_hexdigit()) {
+                    return None;
+                }
                 u32::from_str_radix(h, 16).ok()?
             } else {
+                if rest.is_empty() || !rest.bytes().all(|c| c.is_ascii_digit()) {
+                    return None;
+                }
                 rest.parse().ok()?
             };
-            Some(char::from_u32(n)?.to_string())
+            let c = char::from_u32(n)?;
+            xml_char(c).then(|| c.to_string())
         }
     }
 }
 
+/// Unescape attributes with the same strict reference rules as text.
+/// Do this only once: `&amp;#0;' is the literal string "&#0;".
+fn xml_unescape(mut text: &str) -> Option<String> {
+    let mut out = String::new();
+    while let Some(pos) = text.find('&') {
+        out.push_str(&text[..pos]);
+        text = &text[pos + 1..];
+        let end = text.find(';')?;
+        out.push_str(&resolve_ref(&text[..end])?);
+        text = &text[end + 1..];
+    }
+    out.push_str(text);
+    Some(out)
+}
+
+/// quick-xml checks attribute syntax but permits adjacent quoted values
+/// without the XML-required separating whitespace (`a='1'b='2'`).
+fn xml_attribute_spacing(raw: &[u8]) -> bool {
+    let mut quote = None;
+    for (pos, &c) in raw.iter().enumerate() {
+        if let Some(q) = quote {
+            if c == q {
+                quote = None;
+                if raw
+                    .get(pos + 1)
+                    .is_some_and(|c| !matches!(c, b' ' | b'\t' | b'\n' | b'\r'))
+                {
+                    return false;
+                }
+            }
+        } else if matches!(c, b'\'' | b'"') {
+            quote = Some(c);
+        }
+    }
+    true
+}
+
 fn parse_xml(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
     use quick_xml::events::Event;
+    // Validate the entire region, including CDATA and ignored markup.
+    // Reference characters are checked separately after decoding.
+    if !text.chars().all(xml_char) {
+        return Value::Nil;
+    }
     let mut r = quick_xml::Reader::from_str(text);
     r.config_mut().check_end_names = true;
+    r.config_mut().check_comments = true;
     // Bottom frame is a virtual root collecting top-level nodes.
     let mut stack = vec![XmlFrame {
         name: Vec::new(),
@@ -257,36 +338,39 @@ fn parse_xml(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
     let xml_attrs = |i: &mut Interp,
                      e: &quick_xml::events::BytesStart<'_>,
                      r: &quick_xml::Reader<&[u8]>|
-     -> Vec<Value> {
+     -> Option<Vec<Value>> {
+        if !xml_attribute_spacing(e.attributes_raw()) {
+            return None;
+        }
         let mut attrs = Vec::new();
-        for a in e.attributes().with_checks(false).flatten() {
-            // Only xmlns and xmlns:prefix declare namespaces. Ordinary
-            // names such as xmlnsfoo must remain in the attribute list.
+        // Keep quick-xml's duplicate-name and attribute syntax checks,
+        // and propagate errors instead of silently discarding attributes.
+        for a in e.attributes() {
+            let a = a.ok()?;
             let name = a.key.as_ref();
-            if name == b"xmlns" || name.starts_with(b"xmlns:") {
-                continue;
+            if !xml_name(name) || a.value.contains(&b'<') {
+                return None;
             }
             // XML 1.0 sections 2.11 and 3.3.3: normalize literal
             // CRLF/CR first, then attribute TAB/LF to spaces, BEFORE
             // unescaping. Character references such as &#13; must keep
             // their referenced characters, and ordinary spaces must not
             // be trimmed or collapsed for these CDATA attributes.
-            let v = r
-                .decoder()
-                .decode(&a.value)
-                .ok()
-                .and_then(|raw| {
-                    let text = quick_xml::events::BytesText::from_escaped(raw);
-                    let normalized = text.xml10_content().ok()?;
-                    let normalized = normalized.replace(['\t', '\n'], " ");
-                    quick_xml::escape::unescape(&normalized)
-                        .ok()
-                        .map(|v| v.into_owned())
-                })
-                .unwrap_or_default();
+            let raw = r.decoder().decode(&a.value).ok()?;
+            let text = quick_xml::events::BytesText::from_escaped(raw);
+            let normalized = text.xml10_content().ok()?;
+            let normalized = normalized.replace(['\t', '\n'], " ");
+            let v = xml_unescape(&normalized)?;
+            // Only xmlns and xmlns:prefix declare namespaces. Ordinary
+            // names such as xmlnsfoo must remain in the attribute list.
+            // Declarations are omitted from the DOM, but their names,
+            // values, and uniqueness still have to be well-formed.
+            if name == b"xmlns" || name.starts_with(b"xmlns:") {
+                continue;
+            }
             attrs.push(attr_cons(i, local_name(a.key.as_ref()), &v));
         }
-        attrs
+        Some(attrs)
     };
     // libxml2 requires exactly one root element; comments/PIs may
     // surround it at top level.
@@ -294,23 +378,35 @@ fn parse_xml(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
     loop {
         match r.read_event() {
             Ok(Event::Start(e)) => {
+                if !xml_name(e.name().as_ref()) {
+                    return Value::Nil;
+                }
+                let Some(attrs) = xml_attrs(i, &e, &r) else {
+                    return Value::Nil;
+                };
                 if stack.len() == 1 {
                     n_roots += 1;
                 }
                 stack.push(XmlFrame {
                     name: e.name().as_ref().to_vec(),
-                    attrs: xml_attrs(i, &e, &r),
+                    attrs,
                     kids: Vec::new(),
                     tail_cdata: false,
                 });
             }
             Ok(Event::Empty(e)) => {
+                if !xml_name(e.name().as_ref()) {
+                    return Value::Nil;
+                }
+                let Some(attrs) = xml_attrs(i, &e, &r) else {
+                    return Value::Nil;
+                };
                 if stack.len() == 1 {
                     n_roots += 1;
                 }
                 let node = Value::list(vec![
                     Value::Sym(i.intern(local_name(e.name().as_ref()))),
-                    Value::list(xml_attrs(i, &e, &r)),
+                    Value::list(attrs),
                 ]);
                 push_node(stack.last_mut().unwrap(), node);
             }
@@ -330,6 +426,9 @@ fn parse_xml(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
                 push_node(stack.last_mut().unwrap(), Value::list(node));
             }
             Ok(Event::Text(e)) => {
+                if e.as_ref().windows(3).any(|s| s == b"]]>") {
+                    return Value::Nil;
+                }
                 // Normalize literal line endings before GeneralRef events
                 // are resolved, so numeric CR/LF references stay intact.
                 if let Ok(t) = e.xml10_content() {
