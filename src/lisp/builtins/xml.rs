@@ -260,7 +260,10 @@ fn parse_xml(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
      -> Vec<Value> {
         let mut attrs = Vec::new();
         for a in e.attributes().with_checks(false).flatten() {
-            if a.key.as_ref().starts_with(b"xmlns") {
+            // Only xmlns and xmlns:prefix declare namespaces. Ordinary
+            // names such as xmlnsfoo must remain in the attribute list.
+            let name = a.key.as_ref();
+            if name == b"xmlns" || name.starts_with(b"xmlns:") {
                 continue;
             }
             // XML 1.0 sections 2.11 and 3.3.3: normalize literal

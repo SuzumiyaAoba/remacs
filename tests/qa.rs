@@ -362,3 +362,5 @@ fn qa_output_stream_state() {
 }
 
 qa!(qa_xml_normalization, "qa_xml_normalization.el");
+
+qa!(qa_xml_namespace_attrs, "qa_xml_namespace_attrs.el");
