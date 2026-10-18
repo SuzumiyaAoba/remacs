@@ -255,3 +255,49 @@ fn error_paths() {
         "boom"
     );
 }
+
+/// Remacs-specific handle callbacks also have to stop at their first error.
+/// GNU does not serialize quoted markers or rebuild fallback closures this way.
+#[test]
+fn failed_read_and_fallback_eval_abort() {
+    if !avail() {
+        return;
+    }
+    assert_eq!(
+        ev(r#"
+          (defvar nc-error-side nil)
+          (let* ((dir (make-temp-file "remacs-native-callback-errors-" t))
+                 (user-emacs-directory dir)
+                 (native-comp-eln-load-path (list dir)))
+            (unwind-protect
+                (let* ((read-fn
+                        (native-compile
+                         (eval (list 'lambda nil (list 'quote (make-marker))
+                                     '(setq nc-error-side 'after-read)) t)
+                         (expand-file-name "read.eln" dir)))
+                       (eval-fn
+                        (native-compile
+                         '(lambda () (unwind-protect
+                                         (setq nc-error-side 'fallback-body) nil))
+                         (expand-file-name "eval.eln" dir)))
+                       (old (symbol-function 'make-interpreted-closure))
+                       (read-error (condition-case err (funcall read-fn)
+                                     (error (car err))))
+                       eval-error)
+                  (unwind-protect
+                      (progn
+                        (fset 'make-interpreted-closure
+                              (lambda (&rest ignored) (error "native-closure-stop")))
+                        (setq eval-error (condition-case err (funcall eval-fn)
+                                           (error err))))
+                    (fset 'make-interpreted-closure old))
+                  (list (native-comp-function-p read-fn)
+                        (native-comp-function-p eval-fn)
+                        read-error eval-error nc-error-side
+                        (funcall (native-compile '(lambda () (identity nil))
+                                                 (expand-file-name "nil.eln" dir)))))
+              (delete-directory dir t)))
+          "#),
+        "(t t invalid-read-syntax (error \"native-closure-stop\") nil nil)"
+    );
+}

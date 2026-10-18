@@ -350,13 +350,12 @@ fn tramp<const K: usize>(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let mark = OBJTAB.with(|t| t.borrow().len());
     let args: Vec<EmObj> = a.iter().map(|v| reg(v.clone())).collect();
     let r = unsafe { entry(&API, env, args.as_ptr(), args.len() as i64) };
-    let out = if r == EM_INVALID {
-        match PENDING.with(|p| p.borrow_mut().take()) {
-            Some((s, d)) => Err(Flow::Signal(s, d, false)),
-            None => Err(i.error("native function failed")),
-        }
-    } else {
-        Ok(obj(r))
+    // A pending signal always wins, including for previously compiled units
+    // that may return a valid handle after a failed callback.
+    let out = match PENDING.with(|p| p.borrow_mut().take()) {
+        Some((s, d)) => Err(Flow::Signal(s, d, false)),
+        None if r == EM_INVALID => Err(i.error("native function failed")),
+        None => Ok(obj(r)),
     };
     // Handles registered during this call are disposable — the result
     // was cloned out and generated code never caches handles.
@@ -554,10 +553,14 @@ typedef const struct em_api *A_t;
 #define INT(n) (A->mk_int)(E,(long long)(n))
 #define FLT(x) (A->mk_float)(E,(x))
 #define TRUTH(h) (A->truthy)(E,(h))
-#define CALL(f,av,n) (A->call)(E,(f),(av),(n))
-#define SYMSET(s,v) (A->sym_set)(E,(s),(v))
+/* Exit the native entry before any later Lisp form or enclosing operation.
+   The pending signal stays in Rust; never unwind Rust frames through C. */
+#define CHECK(expr) ({em_obj checked=(expr);if(!checked)return 0;checked;})
+#define CALL(f,av,n) CHECK((A->call)(E,(f),(av),(n)))
+#define EVAL(form) CHECK((A->eval)(E,(form)))
+#define SYMSET(s,v) CHECK((A->sym_set)(E,(s),(v)))
 #define LISTN(av,n) (A->listn)(E,(av),(n))
-#define RDC(lit) (A->read)(E,(lit),sizeof(lit)-1)
+#define RDC(lit) CHECK((A->read)(E,(lit),sizeof(lit)-1))
 #define SDC(lit) (A->intern)(E,(lit),sizeof(lit)-1)
 "#;
 
@@ -786,7 +789,7 @@ impl<'a> Emitter<'a> {
                         // #'(lambda …) needs a real closure — eval it
                         // rather than guessing.
                         let s = self.i.prin1_to_string(whole);
-                        format!("(A->eval)(E,RDC({}))", c_str(&s))
+                        format!("EVAL(RDC({}))", c_str(&s))
                     }
                 }
             }
@@ -856,12 +859,14 @@ impl<'a> Emitter<'a> {
         if argv.is_empty() {
             return format!("CALL({fexpr},0,0)");
         }
-        let mut parts = String::from("({em_obj av[]={");
-        for x in &argv {
-            parts.push_str(&self.form(x));
-            parts.push(',');
+        // C initializer elements need not be evaluated left-to-right. Keep
+        // Lisp argument order explicit so a failure skips all later args.
+        let mut parts = format!("({{em_obj fn={fexpr};em_obj av[{}];", argv.len());
+        for (k, x) in argv.iter().enumerate() {
+            let v = self.form(x);
+            parts.push_str(&format!("av[{k}]={v};"));
         }
-        parts.push_str(&format!("}};CALL({fexpr},av,{});}})", argv.len()));
+        parts.push_str(&format!("CALL(fn,av,{});}})", argv.len()));
         parts
     }
 
@@ -1157,7 +1162,7 @@ fn emit_fallback(
     format!(
         "em_obj {cn}(const void *A_, em_env E, const em_obj *args, long n){{\
            A_t A=(A_t)A_;\
-           em_obj cl=(A->eval)(E,RDC({form}));\
+           em_obj cl=EVAL(RDC({form}));\
            return (A->call_lambda)(E,cl,args,n);}}",
         form = c_str(&form)
     )

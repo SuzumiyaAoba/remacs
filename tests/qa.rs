@@ -177,6 +177,14 @@ qa!(qa_misc3, "qa_misc3.el");
 qa!(qa_miscfn, "qa_miscfn.el");
 qa!(qa_modes, "qa_modes.el");
 qa!(qa_narrow, "qa_narrow.el");
+#[test]
+fn qa_native_error() {
+    if ev("(native-comp-available-p)") != "t" {
+        eprintln!("skipping native error tests: no C compiler available");
+        return;
+    }
+    run("qa_native_error.el");
+}
 qa!(qa_numbers, "qa_numbers.el");
 qa!(qa_obarray, "qa_obarray.el");
 qa!(qa_unintern_identity, "qa_unintern_identity.el");
