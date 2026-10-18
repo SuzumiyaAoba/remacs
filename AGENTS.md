@@ -316,6 +316,13 @@ Architecture:
   time (so they stay macros, `macrop` → t); unsupported bodies
   (unwind forms, closures) fall back to interpreter eval via
   `make-interpreted-closure`.
+- File units retain the macroexpanded top-level program, interleaving
+  ordinary forms with native function registration in source order.
+  Ordinary initialization runs on every load, not during compilation;
+  `eval-when-compile` and `eval-and-compile` retain their phase semantics.
+  A failed load keeps earlier definitions callable and skips later forms.
+  Existing `.eln` files must be recompiled to gain corrected generated
+  code or newly retained top-level forms; old units remain loadable.
 - `.eln` naming matches GNU: `<base>-<md5(truename)[:8]>-<md5(contents)[:8]>.eln`
   under `~/.emacs.d/eln-cache/31.1-remacs/`.
 - `native-compile` accepts files, symbols, and lambda objects;
@@ -341,7 +348,7 @@ Architecture:
   `comp--install-trampoline`), `comp.el`'s LIMPLE/optimizing passes
   are not run.
 
-Regression suite: `tests/nativecomp.rs` (8 tests).
+Regression suite: `tests/nativecomp.rs` and the `qa_native_*` fixtures.
 
 ## Minibuffer reads (`src/lisp/eval.rs` + `src/editor/mod.rs` + `src/term`)
 

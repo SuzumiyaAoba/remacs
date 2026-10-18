@@ -301,3 +301,27 @@ fn failed_read_and_fallback_eval_abort() {
         "(t t invalid-read-syntax (error \"native-closure-stop\") nil nil)"
     );
 }
+
+/// Remacs's synchronous async entry point shares the file compiler. Empty
+/// files remain skippable, but initializer-only files must no longer vanish.
+#[test]
+fn async_file_toplevel() {
+    if !avail() {
+        return;
+    }
+    let source = scratch("async-toplevel.el", "(setq nc-async-loaded 42)\n");
+    let empty = scratch("async-empty.el", ";;; Empty compilation input.\n");
+    assert_eq!(
+        ev(&format!(
+            "(progn (defvar nc-async-loaded nil) (let* ((nc-async-loaded nil) \
+                    (outputs (native-compile-async (list {source:?} {empty:?}) nil nil)) \
+                    (before nc-async-loaded)) \
+                (native-elisp-load (car outputs)) \
+                (let ((loaded nc-async-loaded)) \
+                  (setq nc-async-loaded nil) \
+                  (native-compile-async {source:?} nil t) \
+                  (list (length outputs) before loaded nc-async-loaded))))"
+        )),
+        "(1 nil 42 42)"
+    );
+}

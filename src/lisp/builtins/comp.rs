@@ -43,7 +43,7 @@ const EM_INVALID: EmObj = 0;
 
 thread_local! {
     static OBJTAB: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
-    static PENDING: RefCell<Option<(Value, Value)>> = const { RefCell::new(None) };
+    static PENDING: RefCell<Option<Flow>> = const { RefCell::new(None) };
     static NATIVES: RefCell<Vec<EmEntry>> = const { RefCell::new(Vec::new()) };
     static META: RefCell<Vec<NativeMeta>> = RefCell::new(Vec::new());
     static UNITS: RefCell<Vec<Unit>> = RefCell::new(Vec::new());
@@ -76,19 +76,12 @@ unsafe fn host(e: EmEnv) -> &'static mut Interp {
     &mut *(e as *mut Interp)
 }
 
-unsafe fn outcome(e: EmEnv, r: Result<Value, Flow>) -> EmObj {
+unsafe fn outcome(_e: EmEnv, r: Result<Value, Flow>) -> EmObj {
     match r {
         Ok(v) => reg(v),
-        Err(Flow::Signal(s, d, _)) => {
-            PENDING.with(|p| *p.borrow_mut() = Some((s, d)));
-            EM_INVALID
-        }
-        Err(other) => {
-            let i = host(e);
-            let f = i.error(format!("Abnormal exit from native code: {other:?}"));
-            if let Flow::Signal(s, d, _) = f {
-                PENDING.with(|p| *p.borrow_mut() = Some((s, d)));
-            }
+        Err(flow) => {
+            // Keep non-local exits in Rust until the C frame has returned.
+            PENDING.with(|p| *p.borrow_mut() = Some(flow));
             EM_INVALID
         }
     }
@@ -182,7 +175,7 @@ unsafe extern "C" fn api_sym_set(e: EmEnv, s: EmObj, v: EmObj) -> EmObj {
     }
 }
 unsafe extern "C" fn api_signal(_e: EmEnv, s: EmObj, d: EmObj) -> EmObj {
-    PENDING.with(|p| *p.borrow_mut() = Some((obj(s), obj(d))));
+    PENDING.with(|p| *p.borrow_mut() = Some(Flow::Signal(obj(s), obj(d), false)));
     EM_INVALID
 }
 unsafe extern "C" fn api_car(e: EmEnv, h: EmObj) -> EmObj {
@@ -255,10 +248,13 @@ unsafe extern "C" fn api_defsubr(
                             i.prin1_to_string(&dd)
                         );
                     }
-                    PENDING.with(|p| *p.borrow_mut() = Some((sg, dd)));
+                    PENDING.with(|p| *p.borrow_mut() = Some(Flow::Signal(sg, dd, false)));
                     1
                 }
-                Err(_) => 1,
+                Err(flow) => {
+                    PENDING.with(|p| *p.borrow_mut() = Some(flow));
+                    1
+                }
             },
             Err(_) => {
                 if std::env::var_os("REMACS_ELN_DBG").is_some() {
@@ -353,7 +349,7 @@ fn tramp<const K: usize>(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // A pending signal always wins, including for previously compiled units
     // that may return a valid handle after a failed callback.
     let out = match PENDING.with(|p| p.borrow_mut().take()) {
-        Some((s, d)) => Err(Flow::Signal(s, d, false)),
+        Some(flow) => Err(flow),
         None if r == EM_INVALID => Err(i.error("native function failed")),
         None => Ok(obj(r)),
     };
@@ -383,8 +379,19 @@ struct Unit {
 
 type UnitInit = unsafe extern "C" fn(*const EmApi, EmEnv, i64) -> i32;
 
-/// dlopen an .eln and run its registration.  Returns unit index.
-fn load_eln(i: &mut Interp, path: &str) -> Result<usize, String> {
+enum LoadError {
+    Open(String),
+    Lisp(Flow),
+}
+
+impl From<String> for LoadError {
+    fn from(message: String) -> Self {
+        Self::Open(message)
+    }
+}
+
+/// dlopen an .eln and run its ordered top-level initialization.
+fn load_eln(i: &mut Interp, path: &str) -> Result<usize, LoadError> {
     // libloading's error is the raw dlopen(3) message — GNU stores
     // exactly that string as the second datum of
     // `native-lisp-load-failed'.
@@ -401,22 +408,49 @@ fn load_eln(i: &mut Interp, path: &str) -> Result<usize, String> {
     .map_err(|e| e.to_string())?;
     let init: UnitInit = unsafe {
         *lib.get(b"remacs_eln_init\0")
-            .map_err(|_| "Not a remacs .eln (missing remacs_eln_init)")?
+            .map_err(|_| "Not a remacs .eln (missing remacs_eln_init)".to_string())?
     };
-    // Run init first (it calls `defsubr' with the unit index); push
-    // the unit only after a successful registration.
-    let idx = UNITS.with(|u| u.borrow().len());
-    let env = i as *mut Interp as EmEnv;
-    let rc = unsafe { init(&API, env, idx as i64) };
-    if rc != 0 {
-        return Err("remacs_eln_init failed".into());
-    }
-    UNITS.with(|u| {
-        u.borrow_mut().push(Unit {
+    // New file units carry their source's binding mode. Old units and
+    // single-function units keep their existing ABI and calling context.
+    let lexical = unsafe {
+        lib.get::<*const i32>(b"remacs_eln_lexical\0")
+            .ok()
+            .map(|flag| **flag != 0)
+    };
+    // Reserve the index before executing Lisp (which may load another unit).
+    // Keep the library even if initialization signals: definitions preceding
+    // the failing form remain callable and must not point into unloaded code.
+    let idx = UNITS.with(|u| {
+        let mut units = u.borrow_mut();
+        let idx = units.len();
+        units.push(Unit {
             path: path.to_string(),
             _lib: lib,
-        })
+        });
+        idx
     });
+    let saved_lexenv = i.lexenv.clone();
+    if let Some(lexical) = lexical {
+        // The file controls binding semantics, not the caller-visible value
+        // of lexical-binding (native-elisp-load does not bind that variable).
+        i.lexenv = if lexical {
+            crate::lisp::eval::lexenv_root()
+        } else {
+            None
+        };
+    }
+    let handles = OBJTAB.with(|t| t.borrow().len());
+    let env = i as *mut Interp as EmEnv;
+    let rc = unsafe { init(&API, env, idx as i64) };
+    let pending = PENDING.with(|p| p.borrow_mut().take());
+    OBJTAB.with(|t| t.borrow_mut().truncate(handles));
+    i.lexenv = saved_lexenv;
+    if let Some(flow) = pending {
+        return Err(LoadError::Lisp(flow));
+    }
+    if rc != 0 {
+        return Err(LoadError::Open("remacs_eln_init failed".into()));
+    }
     Ok(idx)
 }
 
@@ -980,6 +1014,7 @@ fn emit_fn(
     name: &str,
     l: &Rc<crate::lisp::value::Lambda>,
     k: usize,
+    force_fallback: bool,
 ) -> (String, String) {
     let cn = c_name(name, k);
     let min = l.required.len() as u32;
@@ -989,7 +1024,12 @@ fn emit_fn(
         (l.required.len() + l.optional.len()) as u32
     };
 
-    let entry = try_emit_body(i, l, &cn).unwrap_or_else(|| emit_fallback(i, name, l, &cn));
+    let direct = if force_fallback {
+        None
+    } else {
+        try_emit_body(i, l, &cn)
+    };
+    let entry = direct.unwrap_or_else(|| emit_fallback(i, name, l, &cn));
     let arglist = l
         .arglist
         .clone()
@@ -1191,7 +1231,7 @@ fn emit_unit(i: &mut Interp, fns: &[(String, Rc<crate::lisp::value::Lambda>)]) -
         "\nint remacs_eln_init(const void *api_, em_env E, long U){A_t A=(A_t)api_;(void)A;int rc=0;",
     );
     for (k, (name, l)) in fns.iter().enumerate() {
-        let (entry, desc) = emit_fn(i, name, l, k);
+        let (entry, desc) = emit_fn(i, name, l, k, false);
         out.push_str(&entry);
         out.push_str(&desc);
         let cn = c_name(name, k);
@@ -1384,59 +1424,167 @@ fn run_cc(c_src: &str, out_path: &str) -> Result<(), String> {
 // High-level compile entry
 // ---------------------------------------------------------------------------
 
-/// Collect `(defun …)'/`(defmacro …)' top-level forms of a file.
-fn file_defuns(
-    i: &mut Interp,
-    path: &str,
-) -> Result<Vec<(String, Rc<crate::lisp::value::Lambda>)>, String> {
-    let data = std::fs::read_to_string(path).map_err(|e| format!("Cannot read {path}: {e}"))?;
-    let lexical = crate::lisp::load::file_lexical_binding(&data);
-    let mut out = Vec::new();
-    let mut off = 0usize;
-    while off < data.len() {
-        match i.read_from_string(&data, off) {
-            Ok((v, end)) => {
-                if end <= off {
-                    break;
+/// A file is an ordered program, not just a collection of definitions.
+/// Ordinary forms are serialized into the unit, without running them during
+/// compilation. Macro expansion is the only compile-time evaluation here.
+struct FileEmitter {
+    code: String,
+    init: String,
+    serial: usize,
+    macro_env: Value,
+    saved_macros: Vec<(SymId, Value)>,
+    has_declarations: bool,
+}
+
+impl FileEmitter {
+    fn form(&mut self, i: &mut Interp, form: &Value) -> Result<(), Flow> {
+        let parts = form.list_to_vec().unwrap_or_default();
+        let head = parts.first().and_then(|v| match v {
+            Value::Sym(id) => Some(i.symbol_name(*id)),
+            _ => None,
+        });
+        match head.as_deref() {
+            Some("progn") => {
+                for form in &parts[1..] {
+                    self.form(i, form)?;
                 }
-                off = end;
-                if let Value::Cons(c) = &v {
-                    let car = c.borrow().car.clone();
-                    if let Value::Sym(id) = car {
-                        let hname = i.symbol_name(id);
-                        if hname == "defun" || hname == "defmacro" {
-                            let parts = v.list_to_vec().unwrap_or_default();
-                            if parts.len() >= 3 {
-                                if let Value::Sym(n) = parts[1] {
-                                    let mut lam = form_to_lambda(
-                                        i,
-                                        &parts[2],
-                                        &parts[3..],
-                                        hname == "defmacro",
-                                    );
-                                    // File definitions capture their file's
-                                    // binding mode, never the compiler caller's.
-                                    if lexical {
-                                        lam.env = crate::lisp::eval::lexenv_root();
-                                    }
-                                    let nm = i.symbol_name(n);
-                                    out.push((nm, Rc::new(lam)));
-                                }
-                            }
-                            // Like the byte-compiler, a `defmacro' is
-                            // live during compilation so later forms
-                            // expand through it.
-                            if hname == "defmacro" {
-                                let _ = i.eval(&v);
-                            }
-                        }
+                return Ok(());
+            }
+            Some("defun" | "defmacro") if parts.len() >= 3 => {
+                if let Value::Sym(id) = parts[1] {
+                    let is_macro = head.as_deref() == Some("defmacro");
+                    let mut body = Vec::new();
+                    for form in &parts[3..] {
+                        body.push(self.expand(i, form)?);
                     }
+                    let mut lambda = form_to_lambda(i, &parts[2], &body, is_macro);
+                    lambda.env = i.lexenv.clone();
+                    let lambda = Rc::new(lambda);
+                    let name = i.symbol_name(id);
+                    let (entry, desc) =
+                        emit_fn(i, &name, &lambda, self.serial, self.has_declarations);
+                    self.code.push_str(&entry);
+                    self.code.push_str(&desc);
+                    let cn = c_name(&name, self.serial);
+                    self.init
+                        .push_str(&format!("if(A->defsubr(A,E,U,&D{cn}))return 1;"));
+                    self.serial += 1;
+                    if is_macro {
+                        // Compilation sees local macro definitions, but must
+                        // leave the caller's function cells as it found them.
+                        self.saved_macros.push((id, i.symbol_function(id)));
+                        i.fset(id, Value::Lambda(lambda));
+                    }
+                    return Ok(());
                 }
             }
-            Err(_) => break,
+            Some("defvar" | "defconst") => {
+                // These declarations affect native binding decisions even
+                // in dynamic files, without mutating the compiler's globals.
+                self.has_declarations = true;
+                if let (Some(Value::Sym(id)), Some(env)) = (parts.get(1), &i.lexenv) {
+                    // A compile-time declaration does not initialize the
+                    // variable or mark it globally special.
+                    env.declared.borrow_mut().push(*id);
+                }
+            }
+            _ => {}
         }
+        // Expand only the head first, so a macro-generated top-level progn
+        // or defun is handled just like its literal counterpart.
+        let expand = i.intern("macroexpand");
+        let expanded = i.apply(
+            &Value::Sym(expand),
+            vec![form.clone(), self.macro_env.clone()],
+        )?;
+        if !same_form(&expanded, form) && matches!(form, Value::Cons(_)) {
+            return self.form(i, &expanded);
+        }
+        let expanded = self.expand(i, &expanded)?;
+        let literal = c_str(&i.prin1_to_string(&expanded));
+        // CHECK returns zero for native *functions*. Unit init uses zero for
+        // success, so check each callback explicitly and return one on error.
+        self.init.push_str(&format!(
+            "{{em_obj f=A->read(E,{literal},sizeof({literal})-1);if(!f)return 1;if(!A->eval(E,f))return 1;}}"
+        ));
+        Ok(())
     }
-    Ok(out)
+
+    fn expand(&self, i: &mut Interp, form: &Value) -> EvalResult {
+        let expand = i.intern("macroexpand-all");
+        i.apply(
+            &Value::Sym(expand),
+            vec![form.clone(), self.macro_env.clone()],
+        )
+    }
+}
+
+fn compile_file_to(i: &mut Interp, path: &str, out: &str) -> Result<bool, Flow> {
+    let data =
+        std::fs::read_to_string(path).map_err(|e| i.error(format!("Cannot read {path}: {e}")))?;
+    let lexical = crate::lisp::load::file_lexical_binding(&data);
+    let mark = i.specbind_depth();
+    let lb = i.intern("lexical-binding");
+    i.specbind(lb, Value::from_bool(lexical))?;
+    let saved_lexenv = std::mem::replace(
+        &mut i.lexenv,
+        if lexical {
+            crate::lisp::eval::lexenv_root()
+        } else {
+            None
+        },
+    );
+    // Unlike its interpreted expander, eval-and-compile retains the expanded
+    // body for load time after evaluating it once at compile time.
+    let result = (|| {
+        let (form, _) = i.read_from_string(
+            "(lambda (&rest body) (let ((expanded (macroexpand-all (cons 'progn body) macroexpand-all-environment))) (eval expanded lexical-binding) expanded))", 0)?;
+        let expander = i.eval(&form)?;
+        Ok(Value::list(vec![Value::cons(
+            Value::Sym(i.intern("eval-and-compile")),
+            expander,
+        )]))
+    })();
+    let mut emitter = FileEmitter {
+        code: String::from(C_PRELUDE),
+        init: format!(
+            "\nconst int remacs_eln_lexical={};\nint remacs_eln_init(const void *api_, em_env E, long U){{A_t A=(A_t)api_;",
+            lexical as u8
+        ),
+        serial: 0,
+        macro_env: Value::Nil,
+        saved_macros: Vec::new(),
+        has_declarations: false,
+    };
+    let result = result.and_then(|env| {
+        emitter.macro_env = env;
+        let mut off = 0;
+        let mut any_form = false;
+        while off < data.len() {
+            match i.read_from_string(&data, off) {
+                Ok((form, end)) if end > off => {
+                    off = end;
+                    any_form = true;
+                    emitter.form(i, &form)?;
+                }
+                // Keep the existing file reader's EOF behavior.
+                _ => break,
+            }
+        }
+        if !any_form {
+            return Ok(false);
+        }
+        emitter.init.push_str("return 0;}\n");
+        emitter.code.push_str(&emitter.init);
+        compile_source_to(&emitter.code, out).map_err(|e| i.error(e))?;
+        Ok(true)
+    });
+    for (id, definition) in emitter.saved_macros.into_iter().rev() {
+        i.fset(id, definition);
+    }
+    i.lexenv = saved_lexenv;
+    i.unbind_to(mark)?;
+    result
 }
 
 /// Build a Lambda from a `(defun name ARGLIST BODY…)' tail.
@@ -1549,6 +1697,10 @@ fn compile_fns_to(
     out: &str,
 ) -> Result<(), String> {
     let src = emit_unit(i, fns);
+    compile_source_to(&src, out)
+}
+
+fn compile_source_to(src: &str, out: &str) -> Result<(), String> {
     if let Ok(p) = std::env::var("REMACS_COMP_DUMP_C") {
         let _ = std::fs::write(format!("{p}.c"), &src);
     }
@@ -1567,7 +1719,8 @@ fn f_native_comp_available_p(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResu
 pub(crate) fn native_load_file(i: &mut Interp, path: &str) -> EvalResult {
     match load_eln(i, path) {
         Ok(idx) => Ok(unit_value(i, idx)),
-        Err(e) => Err(i.error(format!("Cannot open {path}: {e}"))),
+        Err(LoadError::Open(e)) => Err(i.error(format!("Cannot open {path}: {e}"))),
+        Err(LoadError::Lisp(flow)) => Err(flow),
     }
 }
 
@@ -1589,7 +1742,8 @@ fn f_native_elisp_load(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     match load_eln(i, &path) {
         Ok(idx) => Ok(unit_value(i, idx)),
-        Err(e) => {
+        Err(LoadError::Lisp(flow)) => Err(flow),
+        Err(LoadError::Open(e)) => {
             let s = i.intern("native-lisp-load-failed");
             Err(i.signal_data(s, vec![Value::string(path), Value::string(e)]))
         }
@@ -1678,17 +1832,10 @@ fn f_native_compile(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     format!("{}/{rel}", eln_cache_dir())
                 }
             };
-            let fns = match file_defuns(i, &path) {
-                Ok(v) if !v.is_empty() => v,
-                Ok(_) => {
-                    return Err(i.error(format!("No defuns to compile in {path}")));
-                }
-                Err(e) => return Err(i.error(e)),
-            };
-            match compile_fns_to(i, &fns, &out) {
-                Ok(()) => Ok(Value::string(out)),
-                Err(e) => Err(i.error(e)),
+            if !compile_file_to(i, &path, &out)? {
+                return Err(i.error(format!("No defuns to compile in {path}")));
             }
+            Ok(Value::string(out))
         }
         Value::Sym(id) => {
             let f = i.symbol_function(*id);
@@ -1747,7 +1894,8 @@ fn compile_one_lambda(
                     _ => Ok(Value::string(out_path)),
                 }
             }
-            Err(e) => Err(i.error(e)),
+            Err(LoadError::Open(e)) => Err(i.error(e)),
+            Err(LoadError::Lisp(flow)) => Err(flow),
         },
         Err(e) => Err(i.error(e)),
     }
@@ -1797,13 +1945,14 @@ fn f_native_compile_async(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 Err(e) => return Err(e),
             };
             let out = format!("{}/{rel}", eln_cache_dir());
-            let fns = file_defuns(i, &p).unwrap_or_default();
-            if fns.is_empty() {
+            if !compile_file_to(i, &p, &out)? {
                 continue;
             }
-            compile_fns_to(i, &fns, &out).map_err(|e| i.error(e))?;
             if load {
-                load_eln(i, &out).map_err(|e| i.error(e))?;
+                load_eln(i, &out).map_err(|e| match e {
+                    LoadError::Open(message) => i.error(message),
+                    LoadError::Lisp(flow) => flow,
+                })?;
             }
             outs.push(Value::string(out));
         }
