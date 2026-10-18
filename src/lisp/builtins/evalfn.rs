@@ -2114,6 +2114,16 @@ pub(crate) fn loadhist_attach(i: &mut Interp, entry: Value) {
     i.obarray.symbol_mut(cll).value = Value::cons(entry, cur);
 }
 
+/// Find the first `equal' match without swallowing comparison errors.
+fn equal_position(i: &Interp, items: &[Value], needle: &Value) -> Result<Option<usize>, Flow> {
+    for (pos, item) in items.iter().enumerate() {
+        if super::equal_values(i, item, needle)? {
+            return Ok(Some(pos));
+        }
+    }
+    Ok(None)
+}
+
 fn f_featurep(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     // GNU Ffeaturep: SUBFEATURE non-nil looks it up in the feature's
@@ -2122,10 +2132,8 @@ fn f_featurep(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     if !sub.is_nil() {
         let prop = i.intern("subfeatures");
         let subs = i.get_prop(id, prop);
-        let found = subs
-            .list_to_vec()
-            .map(|items| items.iter().any(|v| super::equal_values(i, v, &sub)))
-            .unwrap_or(false);
+        let items = subs.list_to_vec().unwrap_or_default();
+        let found = equal_position(i, &items, &sub)?.is_some();
         return Ok(Value::from_bool(found));
     }
     Ok(Value::from_bool(feature_present(i, id)))
@@ -2207,10 +2215,8 @@ fn f_require(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             .map(|last| matches!(last, Value::Str(_)))
             .unwrap_or(false);
     if from_file {
-        let dup = cll_val
-            .list_to_vec()
-            .map(|v| v.iter().any(|e| super::equal_values(i, e, &tem)))
-            .unwrap_or(false);
+        let items = cll_val.list_to_vec().unwrap_or_default();
+        let dup = equal_position(i, &items, &tem)?.is_some();
         if !dup {
             loadhist_attach(i, tem);
         }
@@ -2977,14 +2983,16 @@ pub(crate) fn safe_call_hook(i: &mut Interp, name: &str) -> EvalResult {
 }
 
 /// GNU `safe_run_hooks_error': drop FUN from HOOK's buffer-local list
-/// if present there, else from its global (default) value.
+/// if present there, else from its global (default) value.  GNU uses
+/// identity here, removing every occurrence of the failing function.
 fn safe_remove_hook_fn(i: &mut Interp, hook_id: SymId, f: &Value) {
     if let Some(b) = i.buffers.get(i.current_buffer) {
         let mut bb = b.borrow_mut();
         if let Some(v) = bb.locals.get(&hook_id).cloned() {
             let mut l = hook_list(&v);
-            if let Some(pos) = l.iter().position(|x| super::equal_values(i, x, f)) {
-                l.remove(pos);
+            let before = l.len();
+            l.retain(|x| !super::eq_values(x, f));
+            if l.len() != before {
                 bb.locals.insert(hook_id, Value::list(l));
                 return;
             }
@@ -2992,8 +3000,9 @@ fn safe_remove_hook_fn(i: &mut Interp, hook_id: SymId, f: &Value) {
     }
     let v = i.obarray.symbol(hook_id).value.clone();
     let mut l = hook_list(&v);
-    if let Some(pos) = l.iter().position(|x| super::equal_values(i, x, f)) {
-        l.remove(pos);
+    let before = l.len();
+    l.retain(|x| !super::eq_values(x, f));
+    if l.len() != before {
         let _ = i.set_symbol(hook_id, Value::list(l));
     }
 }
@@ -3184,7 +3193,7 @@ fn f_add_hook(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     let mut list = hook_value.list_to_vec().unwrap_or_default();
     // The membership test uses `equal' (GNU `member').
-    if !list.iter().any(|f| super::equal_values(i, f, &fun)) {
+    if equal_position(i, &list, &fun)?.is_none() {
         let mut alist = hook_depth_alist(i, hook_id, local, depth != 0).unwrap_or_default();
         if depth != 0 {
             alist.retain(|(f, _)| !crate::lisp::eq_values(f, &fun));
@@ -3260,18 +3269,22 @@ fn f_remove_hook(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     };
     let (list, removed) = match hook_value.list_to_vec() {
         // A non-list value or a bare lambda form compares with `equal'.
-        Err(_) if super::equal_values(i, &hook_value, &fun) => {
-            (Vec::new(), Some(hook_value.clone()))
+        Err(_) => {
+            let removed = if super::equal_values(i, &hook_value, &fun)? {
+                Some(hook_value.clone())
+            } else {
+                None
+            };
+            (Vec::new(), removed)
         }
-        Err(_) => (Vec::new(), None),
         Ok(items) => {
             let is_lambda = matches!(items.first(), Some(Value::Sym(s)) if *s == sym::LAMBDA);
-            if is_lambda && super::equal_values(i, &hook_value, &fun) {
+            if is_lambda && super::equal_values(i, &hook_value, &fun)? {
                 (Vec::new(), Some(hook_value.clone()))
             } else {
                 // GNU: `(car (member ...))' locates with `equal';
                 // `remq' then removes that same object.
-                match items.iter().position(|f| super::equal_values(i, f, &fun)) {
+                match equal_position(i, &items, &fun)? {
                     Some(p) => {
                         let old = items[p].clone();
                         let mut v = items;
@@ -3625,22 +3638,24 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
         _ => return Err(i.wrong_type_mut("stringp", &file)),
     };
     // Find the symbol whose function cell is this autoload object.
-    let owner = i
+    let mut owner = i
         .obarray
         .all_ids()
         .into_iter()
-        .find(|id| super::eq_values(&i.symbol_function(*id), &fundef))
-        // Interpreted code can hold a structurally identical but
-        // distinct `(autoload ...)' cons — e.g. one read afresh from a
-        // loaddefs form while a different cons sits in the function
-        // cell.  Fall back to an `equal' match so we still attribute
-        // the autoload to its symbol (and to its dumped stash).
-        .or_else(|| {
-            i.obarray
-                .all_ids()
-                .into_iter()
-                .find(|id| super::equal_values(i, &i.symbol_function(*id), &fundef))
-        });
+        .find(|id| super::eq_values(&i.symbol_function(*id), &fundef));
+    // Interpreted code can hold a structurally identical but
+    // distinct `(autoload ...)' cons — e.g. one read afresh from a
+    // loaddefs form while a different cons sits in the function
+    // cell.  Fall back to an `equal' match so we still attribute
+    // the autoload to its symbol (and to its dumped stash).
+    if owner.is_none() {
+        for id in i.obarray.all_ids() {
+            if super::equal_values(i, &i.symbol_function(id), &fundef)? {
+                owner = Some(id);
+                break;
+            }
+        }
+    }
     if i.dbg_flags & 0x800 != 0 {
         eprintln!(
             "[autoload {} -> {}]{}",
@@ -3921,7 +3936,7 @@ fn f_eval_buffer(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             for e in cur.list_to_vec().unwrap_or_default() {
                 let same = match &e {
                     Value::Cons(c) => {
-                        crate::lisp::builtins::equal_values(i, &c.borrow().car, &fval)
+                        crate::lisp::builtins::equal_values(i, &c.borrow().car, &fval)?
                     }
                     _ => false,
                 };
@@ -5385,8 +5400,8 @@ fn advice_name(i: &mut Interp, props: &Value) -> Value {
 
 /// Match an advice entry against `advice-remove'/`advice-member-p''s
 /// FUNCTION argument: the function value itself or a non-nil :name.
-fn advice_entry_matches(i: &Interp, fun: &Value, name: &Value, sel: &Value) -> bool {
-    super::equal_values(i, fun, sel) || (!name.is_nil() && super::equal_values(i, name, sel))
+fn advice_entry_matches(i: &Interp, fun: &Value, name: &Value, sel: &Value) -> Result<bool, Flow> {
+    Ok(super::equal_values(i, fun, sel)? || (!name.is_nil() && super::equal_values(i, name, sel)?))
 }
 
 fn f_advice_add(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -5411,8 +5426,14 @@ fn f_advice_add(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn advice_retain(i: &mut Interp, key: SymId, sel: &Value) -> Result<(), Flow> {
     if let Some(pos) = i.advices.iter().position(|(s, _)| *s == key) {
-        let mut list = std::mem::take(&mut i.advices[pos].1);
-        list.retain(|(_, f, n)| !advice_entry_matches(i, f, n, sel));
+        // Like GNU's advice--tweak, finish the replacement chain
+        // before publishing it: a comparison error leaves it intact.
+        let mut list = Vec::with_capacity(i.advices[pos].1.len());
+        for entry @ (_, f, n) in &i.advices[pos].1 {
+            if !advice_entry_matches(i, f, n, sel)? {
+                list.push(entry.clone());
+            }
+        }
         i.advices[pos].1 = list;
     }
     i.recompose_advice(key)
@@ -5433,14 +5454,19 @@ fn advice_push(i: &mut Interp, key: SymId, w: SymId, fun: Value, name: Value) ->
             i.advices.len() - 1
         }
     };
-    let mut list = std::mem::take(&mut i.advices[pos].1);
+    let mut list = Vec::with_capacity(i.advices[pos].1.len() + 1);
     // GNU's advice--add-function replaces an existing entry by :name
     // when PROPS supplies one; otherwise it matches on the function
     // itself.  Same-function-different-name pieces coexist.
-    if !name.is_nil() {
-        list.retain(|(_, _, n)| !super::equal_values(i, n, &name));
-    } else {
-        list.retain(|(_, f, _)| !super::equal_values(i, f, &fun));
+    for existing @ (_, f, n) in &i.advices[pos].1 {
+        let matches = if !name.is_nil() {
+            super::equal_values(i, n, &name)?
+        } else {
+            super::equal_values(i, f, &fun)?
+        };
+        if !matches {
+            list.push(existing.clone());
+        }
     }
     list.push(entry);
     i.advices[pos].1 = list;
@@ -5599,7 +5625,11 @@ fn f_advice_member_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     loop {
         match i.advice_link_entry(&cur) {
             Some((_, f, next, n)) => {
-                if advice_entry_matches(i, &f, &n, &a[0]) {
+                // GNU advice--member-p checks the name before the
+                // function; advice--remove-function uses the reverse order.
+                if (!n.is_nil() && super::equal_values(i, &n, &a[0])?)
+                    || super::equal_values(i, &f, &a[0])?
+                {
                     return Ok(cur);
                 }
                 cur = next;

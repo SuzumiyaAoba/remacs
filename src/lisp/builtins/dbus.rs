@@ -1089,12 +1089,17 @@ fn xd_retrieve_arg(i: &mut Interp, dtype: i32, iter: *mut DBusMessageIter) -> Va
 // ---------------------------------------------------------------------------
 
 /// `equal' comparison of bus keys (keyword or address string).
-fn bus_key_eq(i: &Interp, a: &Value, b: &Value) -> bool {
+fn bus_key_eq(i: &Interp, a: &Value, b: &Value) -> Result<bool, Flow> {
     super::equal_values(i, a, b)
 }
 
-fn find_bus_pos(i: &Interp, bus: &Value) -> Option<usize> {
-    i.dbus.buses.iter().position(|r| bus_key_eq(i, &r.bus, bus))
+fn find_bus_pos(i: &Interp, bus: &Value) -> Result<Option<usize>, Flow> {
+    for (pos, registration) in i.dbus.buses.iter().enumerate() {
+        if bus_key_eq(i, &registration.bus, bus)? {
+            return Ok(Some(pos));
+        }
+    }
+    Ok(None)
 }
 
 /// `xd_get_connection_references' — the refcount is the first field
@@ -1161,7 +1166,7 @@ fn validate_bus_address(i: &mut Interp, bus: &mut Value) -> Result<(), Flow> {
 
 /// `xd_get_connection_address'.
 fn get_connection(i: &mut Interp, bus: &Value) -> Result<*mut c_void, Flow> {
-    let conn = match find_bus_pos(i, bus) {
+    let conn = match find_bus_pos(i, bus)? {
         Some(p) => i.dbus.buses[p].conn,
         None => return Err(dbus_error_val(i, "No connection to bus", bus)),
     };
@@ -1175,9 +1180,9 @@ fn get_connection(i: &mut Interp, bus: &Value) -> Result<*mut c_void, Flow> {
 }
 
 /// `xd_close_bus' — close-or-unref an existing registration.
-fn close_bus(i: &mut Interp, bus: &Value) {
-    let Some(p) = find_bus_pos(i, bus) else {
-        return;
+fn close_bus(i: &mut Interp, bus: &Value) -> Result<(), Flow> {
+    let Some(p) = find_bus_pos(i, bus)? else {
+        return Ok(());
     };
     let conn = i.dbus.buses[p].conn;
     if connection_refs(conn) <= 1 {
@@ -1192,6 +1197,7 @@ fn close_bus(i: &mut Interp, bus: &Value) {
             (d.dbus_connection_unref)(conn);
         }
     }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1211,8 +1217,8 @@ fn f_init_bus(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     validate_bus_address(i, &mut bus)?;
 
     // Close existing registration, then re-check whether still connected.
-    close_bus(i, &bus);
-    if find_bus_pos(i, &bus).is_some() {
+    close_bus(i, &bus)?;
+    if find_bus_pos(i, &bus)?.is_some() {
         let conn = get_connection(i, &bus)?;
         let d = dbus().unwrap();
         unsafe {

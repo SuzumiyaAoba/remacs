@@ -8173,7 +8173,7 @@ fn f_pop_mark(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 
 // --- Registers ---------------------------------------------------------
 // `register-alist' holds (KEY . VALUE) cells; keys are compared with
-// `equal' (conventionally character codes, but any object works).
+// `eq', matching GNU's `alist-get' default test.
 
 fn reg_alist(i: &mut Interp) -> (crate::lisp::value::SymId, Value) {
     let sym = i.intern("register-alist");
@@ -8187,7 +8187,7 @@ fn reg_set(i: &mut Interp, key: Value, val: Value) -> Result<(), Flow> {
     let mut found = false;
     for it in &mut items {
         if let Value::Cons(c) = it {
-            if crate::lisp::builtins::equal_values(i, &c.borrow().car, &key) {
+            if crate::lisp::builtins::eq_values(&c.borrow().car, &key) {
                 c.borrow_mut().cdr = val.clone();
                 found = true;
                 break;
@@ -8205,7 +8205,7 @@ fn reg_get(i: &mut Interp, key: &Value) -> Value {
     let (_, alist) = reg_alist(i);
     for it in alist.list_to_vec().unwrap_or_default() {
         if let Value::Cons(c) = &it {
-            if crate::lisp::builtins::equal_values(i, &c.borrow().car, key) {
+            if crate::lisp::builtins::eq_values(&c.borrow().car, key) {
                 return c.borrow().cdr.clone();
             }
         }
@@ -9539,7 +9539,7 @@ fn f_labeled_widen(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if let Some(pos) = bb
         .narrow_labels
         .iter()
-        .rposition(|(_, _, l)| crate::lisp::builtins::equal_values(i, l, &a[0]))
+        .rposition(|(_, _, label)| crate::lisp::builtins::eq_values(label, &a[0]))
     {
         let (pb, pz, _) = bb.narrow_labels.remove(pos);
         bb.narrow_labels.truncate(pos);
@@ -13518,9 +13518,9 @@ fn undo_oob_err(i: &mut Interp) -> Flow {
 
 /// GNU `time-equal-p' restricted to the shapes we store in `(t . TIME)'
 /// undo entries (fixnum 0 for non-file buffers, or a Lisp timestamp).
-fn undo_time_equal(i: &Interp, a: &Value, b: &Value) -> bool {
+fn undo_time_equal(i: &Interp, a: &Value, b: &Value) -> Result<bool, Flow> {
     match (a, b) {
-        (Value::Int(x), Value::Int(y)) => x == y,
+        (Value::Int(x), Value::Int(y)) => Ok(x == y),
         _ => crate::lisp::builtins::equal_values(i, a, b),
     }
 }
@@ -13554,7 +13554,7 @@ fn undo_apply_one(
                         crate::lisp::builtins::misc::ns_to_lisp_time_i(i, bb.file_modtime_ns)
                     }
                 };
-                if undo_time_equal(i, &cdr, &vft) {
+                if undo_time_equal(i, &cdr, &vft)? {
                     f_unlock_buffer(i, vec![].into())?;
                     f_set_buffer_modified_p(i, vec![Value::Nil].into())?;
                 }

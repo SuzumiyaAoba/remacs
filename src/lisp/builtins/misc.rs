@@ -3096,7 +3096,7 @@ fn describe_vector(
         if !is_ct {
             while c < stop {
                 let d2 = crate::editor::keyelt_value(i, &cellval!(c));
-                if d2.is_nil() || !crate::lisp::builtins::equal_values(i, &d2, &defn) {
+                if d2.is_nil() || !crate::lisp::builtins::equal_values(i, &d2, &defn)? {
                     break;
                 }
                 c += 1;
@@ -3114,7 +3114,7 @@ fn describe_vector(
                 while j <= range_end {
                     let tem =
                         crate::editor::shadow_lookup_ad(i, &shadow_maps, &kludge(j), true, false)?;
-                    if !crate::lisp::builtins::equal_values(i, &tem, &shadowed_by) {
+                    if !crate::lisp::builtins::equal_values(i, &tem, &shadowed_by)? {
                         range_end = j - 1;
                         c = j;
                         break;
@@ -6628,7 +6628,7 @@ fn f_find_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         if matches!(v, Value::Sym(s) if s == sym::UNBOUND) {
             return Err(i.signal_data(sym::VOID_VARIABLE, vec![a[0].clone()]));
         }
-        if super::equal_values(i, &v, &a[1]) {
+        if super::equal_values(i, &v, &a[1])? {
             if let Some(b) = i.buffers.get(id) {
                 return Ok(Value::Buffer(b));
             }
@@ -15057,9 +15057,15 @@ pub(crate) fn ct_replay(i: &mut Interp, table: &Value, ops_src: &str) {
 /// `optimize_sub_char_table': collapse a sub-table whose slots all
 /// compare equal (default `equal'; `eq' optimized).  Children are
 /// optimized bottom-up first.
-fn ct_same(i: &mut Interp, a: &Value, b: &Value, test: &Value, eq_test: bool) -> bool {
+fn ct_same(
+    i: &mut Interp,
+    a: &Value,
+    b: &Value,
+    test: &Value,
+    eq_test: bool,
+) -> Result<bool, Flow> {
     if eq_test {
-        super::eq_values(a, b)
+        Ok(super::eq_values(a, b))
     } else if test.is_nil() {
         super::equal_values(i, a, b)
     } else {
@@ -15069,13 +15075,12 @@ fn ct_same(i: &mut Interp, a: &Value, b: &Value, test: &Value, eq_test: bool) ->
         let q = |v: &Value| Value::list(vec![Value::Sym(sym::QUOTE), v.clone()]);
         i.call_function(test, &Value::list(vec![q(a), q(b)]), None)
             .map(|v| !v.is_nil())
-            .unwrap_or(false)
     }
 }
 
-fn sub_ct_optimize(i: &mut Interp, sub: &Value, test: &Value) -> Value {
+fn sub_ct_optimize(i: &mut Interp, sub: &Value, test: &Value) -> EvalResult {
     let Some((depth, _, r)) = sub_ct_parts(sub) else {
-        return sub.clone();
+        return Ok(sub.clone());
     };
     let n = CHARTAB_SIZE[depth];
     let eq_test = matches!(test, Value::Sym(s) if i.symbol_name(*s) == "eq");
@@ -15085,7 +15090,7 @@ fn sub_ct_optimize(i: &mut Interp, sub: &Value, test: &Value) -> Value {
         b.get(3).cloned().unwrap_or(Value::Nil)
     };
     if is_sub_ct(i, &first) {
-        first = sub_ct_optimize(i, &first, &test_fn);
+        first = sub_ct_optimize(i, &first, &test_fn)?;
         r.borrow_mut()[3] = first.clone();
     }
     let mut optimizable = !is_sub_ct(i, &first);
@@ -15095,30 +15100,31 @@ fn sub_ct_optimize(i: &mut Interp, sub: &Value, test: &Value) -> Value {
             b.get(3 + k).cloned().unwrap_or(Value::Nil)
         };
         if is_sub_ct(i, &this) {
-            this = sub_ct_optimize(i, &this, &test_fn);
+            this = sub_ct_optimize(i, &this, &test_fn)?;
             r.borrow_mut()[3 + k] = this.clone();
         }
-        if optimizable && !ct_same(i, &this, &first, &test_fn, eq_test) {
+        if optimizable && !ct_same(i, &this, &first, &test_fn, eq_test)? {
             optimizable = false;
         }
     }
-    if optimizable { first } else { sub.clone() }
+    Ok(if optimizable { first } else { sub.clone() })
 }
 
 /// `Foptimize_char_table' inner: optimize each top-level slot and
 /// refresh the ASCII cache.
-fn ct_optimize(i: &mut Interp, table: &Value, test: &Value) {
+fn ct_optimize(i: &mut Interp, table: &Value, test: &Value) -> Result<(), Flow> {
     let Some(contents) = char_table_vec(table) else {
-        return;
+        return Ok(());
     };
     for ti in 1..=64usize {
         let sub = contents.borrow()[ti].clone();
         if is_sub_ct(i, &sub) {
-            let newv = sub_ct_optimize(i, &sub, test);
+            let newv = sub_ct_optimize(i, &sub, test)?;
             contents.borrow_mut()[ti] = newv;
         }
     }
     ct_refresh_ascii(i, &contents);
+    Ok(())
 }
 
 /// GNU `char_table_ascii' for a uniprop table: a compressed string in
@@ -15942,7 +15948,7 @@ fn value_lt_impl(i: &mut Interp, x: &Value, y: &Value, depth: u32) -> Result<boo
                         break;
                     }
                     (Some(a), Some(b)) => {
-                        if !crate::lisp::builtins::equal_values(i, a, b) {
+                        if !crate::lisp::builtins::equal_values(i, a, b)? {
                             lt = value_lt_impl(i, a, b, depth + 1)?;
                             break;
                         }
@@ -15968,7 +15974,7 @@ fn value_lt_impl(i: &mut Interp, x: &Value, y: &Value, depth: u32) -> Result<boo
                         break;
                     }
                     (Some(a), Some(b)) => {
-                        if !crate::lisp::builtins::equal_values(i, a, b) {
+                        if !crate::lisp::builtins::equal_values(i, a, b)? {
                             lt = value_lt_impl(i, a, b, depth + 1)?;
                             break;
                         }
@@ -16832,7 +16838,7 @@ fn f_optimize_char_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         return Err(i.wrong_type_mut("char-table-p", &a[0]));
     }
     let test = arg(&a, 1);
-    ct_optimize(i, &a[0].clone(), &test);
+    ct_optimize(i, &a[0].clone(), &test)?;
     Ok(Value::Nil)
 }
 
@@ -17020,16 +17026,9 @@ fn f_mapbacktrace(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             // resolved function value for direct calls but the symbol
             // for `apply'-driven ones.
             let base_fn = i.indirect_function_value(v);
-            match frames
-                .iter()
-                .position(|(fval, _)| {
-                    crate::lisp::builtins::equal_values(
-                        i,
-                        &i.indirect_function_value(fval),
-                        &base_fn,
-                    )
-                })
-            {
+            match frames.iter().position(|(fval, _)| {
+                crate::lisp::builtins::eq_values(&i.indirect_function_value(fval), &base_fn)
+            }) {
                 Some(p) => p,
                 None => return Ok(Value::Nil),
             }

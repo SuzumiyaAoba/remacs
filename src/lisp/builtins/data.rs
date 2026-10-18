@@ -387,19 +387,19 @@ fn f_null(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_equal(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::from_bool(equal_values(i, &args[0], &args[1])))
+    Ok(Value::from_bool(equal_values(i, &args[0], &args[1])?))
 }
 
 /// GNU `cl-equalp' (cl-extra.el): numbers compare via `=' (chars are
 /// numbers — no case fold), strings fold case via the buffer's case
 /// table, conses/vectors/records recurse, everything else uses `equal'.
-fn equalp_values(i: &Interp, down: &Value, a: &Value, b: &Value) -> bool {
+fn equalp_values(i: &Interp, down: &Value, a: &Value, b: &Value) -> Result<bool, Flow> {
     let down1 = |n: i128| match crate::lisp::builtins::misc::char_table_ref(i, down, n as usize) {
         Value::Int(m) => m,
         _ => n,
     };
     let numberp = |v: &Value| matches!(v, Value::Int(_) | Value::Float(_));
-    match (a, b) {
+    Ok(match (a, b) {
         _ if numberp(a) => numberp(b) && num_eq(a, b),
         (Value::Str(x), Value::Str(y)) => {
             let (xs, ys) = (x.borrow(), y.borrow());
@@ -419,7 +419,7 @@ fn equalp_values(i: &Interp, down: &Value, a: &Value, b: &Value) -> bool {
             loop {
                 guard += 1;
                 if guard > 100_000 {
-                    return false;
+                    return Ok(false);
                 }
                 match (&ax, &bx) {
                     (Value::Cons(ac), Value::Cons(bc)) => {
@@ -431,8 +431,8 @@ fn equalp_values(i: &Interp, down: &Value, a: &Value, b: &Value) -> bool {
                             let bb = bc.borrow();
                             (bb.car.clone(), bb.cdr.clone())
                         };
-                        if !equalp_values(i, down, &acar, &bcar) {
-                            return false;
+                        if !equalp_values(i, down, &acar, &bcar)? {
+                            return Ok(false);
                         }
                         ax = acdr;
                         bx = bcdr;
@@ -444,14 +444,18 @@ fn equalp_values(i: &Interp, down: &Value, a: &Value, b: &Value) -> bool {
         (Value::Vec(x), Value::Vec(y)) | (Value::Record(x), Value::Record(y)) => {
             let xv = x.borrow();
             let yv = y.borrow();
-            xv.len() == yv.len()
-                && xv
-                    .iter()
-                    .zip(yv.iter())
-                    .all(|(a, b)| equalp_values(i, down, a, b))
+            if xv.len() != yv.len() {
+                return Ok(false);
+            }
+            for (a, b) in xv.iter().zip(yv.iter()) {
+                if !equalp_values(i, down, a, b)? {
+                    return Ok(false);
+                }
+            }
+            true
         }
-        _ => equal_values(i, a, b),
-    }
+        _ => return equal_values(i, a, b),
+    })
 }
 
 fn num_eq(a: &Value, b: &Value) -> bool {
@@ -470,7 +474,7 @@ fn f_equalp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let down = i.current_case_table();
     Ok(Value::from_bool(equalp_values(
         i, &down, &args[0], &args[1],
-    )))
+    )?))
 }
 
 fn f_consp(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {

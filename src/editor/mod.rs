@@ -7179,7 +7179,7 @@ fn f_define_key(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 } else {
                     x.clone()
                 };
-                if !crate::lisp::builtins::equal_values(i, &converted, x) {
+                if !crate::lisp::builtins::equal_values(i, &converted, x)? {
                     changed = true;
                 }
                 elts.push(converted);
@@ -8027,7 +8027,7 @@ fn lookup_event(i: &mut Interp, map: &Value, ev: &Value, t_ok: bool) -> Result<V
                     return Ok(v_lo);
                 }
                 let v_hi = lookup_in_keymap(i, map, *hi, t_ok)?;
-                return Ok(if equal_values(i, &v_lo, &v_hi) {
+                return Ok(if equal_values(i, &v_lo, &v_hi)? {
                     v_lo
                 } else {
                     Value::Nil
@@ -8205,7 +8205,7 @@ fn where_is_collect(
                 };
                 let matched = eq_values(&binding, definition)
                     || (matches!(definition, Value::Cons(_))
-                        && equal_values(i, &binding, definition));
+                        && equal_values(i, &binding, definition)?);
                 if !matched {
                     continue;
                 }
@@ -8358,7 +8358,7 @@ fn f_where_is_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         // Skip sequences shadowed by another binding for the same
         // key: the effective binding must resolve to DEFINITION.
         let v = shadow_lookup(i, &keymaps, &sequence, remapped)?;
-        if !equal_values(i, &v, &definition) {
+        if !equal_values(i, &v, &definition)? {
             continue;
         }
 
@@ -8405,8 +8405,17 @@ fn f_where_is_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     i.get_prop(*s, nke_sym).truthy()
                 })
         });
-        if !non_key && !found.iter().any(|f| equal_values(i, f, &sequence)) {
-            found.push(sequence.clone());
+        if !non_key {
+            let mut duplicate = false;
+            for f in &found {
+                if equal_values(i, f, &sequence)? {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if !duplicate {
+                found.push(sequence.clone());
+            }
         }
 
         if first_non_ascii {
@@ -12743,7 +12752,7 @@ fn f_set_visited_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             Some(f) => Value::string(f.clone()),
             None => Value::Nil,
         },
-    ) {
+    )? {
         if let Some(f) = &fname {
             let lb = i.intern("lock-buffer");
             if let Err(fl) = i.apply(&Value::Sym(lb), vec![Value::string(f.clone())]) {
@@ -12904,7 +12913,7 @@ fn f_set_visited_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     let now_mode = mm_id
                         .and_then(|mm| cur(i).borrow().locals.get(&mm).cloned())
                         .unwrap_or(Value::Nil);
-                    if !crate::lisp::builtins::equal_values(i, &now_mode, &mode_val) {
+                    if !eq_values(&now_mode, &mode_val) {
                         let _ = i.apply(&Value::Sym(hlv), vec![Value::Nil]);
                     }
                 }
@@ -19944,7 +19953,7 @@ fn f_face_equal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     for at in ATTRS {
         let v1 = face_attr(i, &n1, at, spec);
         let v2 = face_attr(i, &n2, at, spec);
-        if !crate::lisp::builtins::equal_values(i, &v1, &v2) {
+        if !crate::lisp::builtins::equal_values(i, &v1, &v2)? {
             return Ok(Value::Nil);
         }
     }

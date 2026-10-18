@@ -2895,32 +2895,38 @@ fn eval_src_opts_inner(
         }
     }
     i.lexenv = saved_lexenv;
-    if r.is_ok() {
-        // GNU records the file in `load-history': (FILE . ENTRIES),
-        // newest file first, entries in evaluation order.  Reloading a
-        // file REPLACES its entry rather than adding a duplicate.
-        let mut entries = i.symbol_value(cll).list_to_vec().unwrap_or_default();
-        entries.reverse();
-        let entry = Value::cons(Value::string(file), Value::list(entries));
-        let lh = i.intern("load-history");
-        let cur = match i.symbol_value(lh) {
-            // Loads can run before the prelude `defvar' initializes it.
-            Value::Sym(s) if s == crate::lisp::sym::UNBOUND => Value::Nil,
-            v => v,
-        };
-        let fname = Value::string(file);
-        let mut kept = Vec::new();
-        for e in cur.list_to_vec().unwrap_or_default() {
-            let same = match &e {
-                Value::Cons(c) => crate::lisp::builtins::equal_values(i, &c.borrow().car, &fname),
-                _ => false,
+    // Keep dynamic load bindings balanced if history comparison signals.
+    let r = (|| {
+        if r.is_ok() {
+            // GNU records the file in `load-history': (FILE . ENTRIES),
+            // newest file first, entries in evaluation order.  Reloading a
+            // file REPLACES its entry rather than adding a duplicate.
+            let mut entries = i.symbol_value(cll).list_to_vec().unwrap_or_default();
+            entries.reverse();
+            let entry = Value::cons(Value::string(file), Value::list(entries));
+            let lh = i.intern("load-history");
+            let cur = match i.symbol_value(lh) {
+                // Loads can run before the prelude `defvar' initializes it.
+                Value::Sym(s) if s == crate::lisp::sym::UNBOUND => Value::Nil,
+                v => v,
             };
-            if !same {
-                kept.push(e);
+            let fname = Value::string(file);
+            let mut kept = Vec::new();
+            for e in cur.list_to_vec().unwrap_or_default() {
+                let same = match &e {
+                    Value::Cons(c) => {
+                        crate::lisp::builtins::equal_values(i, &c.borrow().car, &fname)?
+                    }
+                    _ => false,
+                };
+                if !same {
+                    kept.push(e);
+                }
             }
+            i.obarray.symbol_mut(lh).value = Value::cons(entry, Value::list(kept));
         }
-        i.obarray.symbol_mut(lh).value = Value::cons(entry, Value::list(kept));
-    }
+        r
+    })();
     i.unbind_to(mark)?;
     r
 }
