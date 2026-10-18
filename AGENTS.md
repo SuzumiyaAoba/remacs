@@ -328,6 +328,11 @@ Architecture:
   compiler-local macros and bindings without creating or replacing output.
 - Native `and` starts with the identity `t`, so `(and)` returns `t`;
   nonempty `and` and `or` retain left-to-right short-circuit evaluation.
+- Native literal objects (including quote and fallback body constants) are
+  read once per registered function and retained as Values, never temporary
+  object-table handles. Nested native calls restore the caller's constant
+  cache. Runtime allocation and ordinary file initialization remain fresh.
+  Existing `.eln` files remain loadable but need recompilation for this fix.
 - `.eln` naming matches GNU: `<base>-<md5(truename)[:8]>-<md5(contents)[:8]>.eln`
   under `~/.emacs.d/eln-cache/31.1-remacs/`.
 - `native-compile` accepts files, symbols, and lambda objects;

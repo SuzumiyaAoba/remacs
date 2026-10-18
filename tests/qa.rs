@@ -230,6 +230,14 @@ fn qa_native_boolean() {
     run("qa_native_boolean.el");
 }
 #[test]
+fn qa_native_constants() {
+    if ev("(native-comp-available-p)") != "t" {
+        eprintln!("skipping native constant tests: no C compiler available");
+        return;
+    }
+    run("qa_native_constants.el");
+}
+#[test]
 fn qa_native_parse_errors() {
     if ev("(native-comp-available-p)") != "t" {
         eprintln!("skipping native parse-error tests: no C compiler available");

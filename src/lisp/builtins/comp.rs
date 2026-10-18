@@ -19,7 +19,8 @@
 
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::ffi::{c_char, c_void};
 use std::io::Write;
 use std::rc::Rc;
@@ -45,6 +46,7 @@ thread_local! {
     static OBJTAB: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
     static PENDING: RefCell<Option<Flow>> = const { RefCell::new(None) };
     static NATIVES: RefCell<Vec<EmEntry>> = const { RefCell::new(Vec::new()) };
+    static ACTIVE_NATIVE: Cell<Option<usize>> = const { Cell::new(None) };
     static META: RefCell<Vec<NativeMeta>> = RefCell::new(Vec::new());
     static UNITS: RefCell<Vec<Unit>> = RefCell::new(Vec::new());
     static CTXT: RefCell<Option<String>> = RefCell::new(None);
@@ -115,6 +117,11 @@ struct EmApi {
     listn: unsafe extern "C" fn(EmEnv, *const EmObj, i64) -> EmObj,
     /// Registration entry used by generated init code.
     defsubr: unsafe extern "C" fn(*const EmApi, EmEnv, i64, *const c_void) -> i64,
+    /// Read a function constant once, retaining its Value rather than a
+    /// temporary OBJTAB handle. Appended to preserve the old unit ABI.
+    read_constant: unsafe extern "C" fn(EmEnv, *const c_char, usize) -> EmObj,
+    string_constant: unsafe extern "C" fn(EmEnv, *const c_char, usize) -> EmObj,
+    float_constant: unsafe extern "C" fn(EmEnv, f64) -> EmObj,
 }
 
 unsafe extern "C" fn api_nil(_e: EmEnv) -> EmObj {
@@ -144,6 +151,39 @@ unsafe extern "C" fn api_read(e: EmEnv, p: *const c_char, n: usize) -> EmObj {
     let i = host(e);
     let s = String::from_utf8_lossy(b).into_owned();
     outcome(e, i.read_from_string(&s, 0).map(|(v, _)| v))
+}
+#[derive(Hash, PartialEq, Eq)]
+enum ConstantKey {
+    Read(usize, usize),
+    String(usize, usize),
+    Float(u64),
+}
+
+fn native_constant(key: ConstantKey, create: impl FnOnce() -> EmObj) -> EmObj {
+    let Some(native) = ACTIVE_NATIVE.get() else {
+        return create();
+    };
+    // Static literals can share addresses, so distinguish read syntax from
+    // raw string bytes. Retain Values, never call-local OBJTAB handles.
+    if let Some(value) = META.with(|m| m.borrow()[native].constants.get(&key).cloned()) {
+        return reg(value);
+    }
+    let handle = create();
+    if handle != EM_INVALID {
+        let value = obj(handle);
+        META.with(|m| m.borrow_mut()[native].constants.insert(key, value));
+    }
+    handle
+}
+
+unsafe extern "C" fn api_read_constant(e: EmEnv, p: *const c_char, n: usize) -> EmObj {
+    native_constant(ConstantKey::Read(p as usize, n), || api_read(e, p, n))
+}
+unsafe extern "C" fn api_string_constant(e: EmEnv, p: *const c_char, n: usize) -> EmObj {
+    native_constant(ConstantKey::String(p as usize, n), || api_str(e, p, n))
+}
+unsafe extern "C" fn api_float_constant(e: EmEnv, f: f64) -> EmObj {
+    native_constant(ConstantKey::Float(f.to_bits()), || api_float(e, f))
 }
 unsafe extern "C" fn api_truthy(_e: EmEnv, h: EmObj) -> i64 {
     (!obj(h).is_nil()) as i64
@@ -305,6 +345,9 @@ static API: EmApi = EmApi {
     cons: api_cons,
     listn: api_listn,
     defsubr: api_defsubr,
+    read_constant: api_read_constant,
+    string_constant: api_string_constant,
+    float_constant: api_float_constant,
 };
 
 /// Mirrors the generated descriptor (repr(C), must match codegen).
@@ -338,6 +381,7 @@ struct NativeMeta {
     unit: i64,
     arglist: Value,
     iform: Value,
+    constants: HashMap<ConstantKey, Value>,
 }
 
 fn tramp<const K: usize>(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -345,7 +389,9 @@ fn tramp<const K: usize>(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let env = i as *mut Interp as EmEnv;
     let mark = OBJTAB.with(|t| t.borrow().len());
     let args: Vec<EmObj> = a.iter().map(|v| reg(v.clone())).collect();
+    let previous_native = ACTIVE_NATIVE.replace(Some(K));
     let r = unsafe { entry(&API, env, args.as_ptr(), args.len() as i64) };
+    ACTIVE_NATIVE.set(previous_native);
     // A pending signal always wins, including for previously compiled units
     // that may return a valid handle after a failed callback.
     let out = match PENDING.with(|p| p.borrow_mut().take()) {
@@ -354,7 +400,7 @@ fn tramp<const K: usize>(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         None => Ok(obj(r)),
     };
     // Handles registered during this call are disposable — the result
-    // was cloned out and generated code never caches handles.
+    // was cloned out; constant caches retain Values, never these handles.
     OBJTAB.with(|t| t.borrow_mut().truncate(mark));
     out
 }
@@ -521,6 +567,7 @@ fn install_native_subr(
         m.borrow_mut().push(NativeMeta {
             name: name.to_string(),
             unit,
+            constants: HashMap::new(),
             arglist: Value::Nil,
             iform: Value::Nil,
         })
@@ -580,12 +627,15 @@ struct em_api {
     em_obj (*cons)(em_env, em_obj, em_obj);
     em_obj (*listn)(em_env, const em_obj *, long);
     long (*defsubr)(const void *, em_env, long, const void *);
+    em_obj (*read_constant)(em_env, const char *, unsigned long);
+    em_obj (*string_constant)(em_env, const char *, unsigned long);
+    em_obj (*float_constant)(em_env, double);
 };
 typedef const struct em_api *A_t;
 #define NIL (A->nil)(E)
 #define TT (A->t)(E)
 #define INT(n) (A->mk_int)(E,(long long)(n))
-#define FLT(x) (A->mk_float)(E,(x))
+#define FLT(x) (A->float_constant)(E,(x))
 #define TRUTH(h) (A->truthy)(E,(h))
 /* Exit the native entry before any later Lisp form or enclosing operation.
    The pending signal stays in Rust; never unwind Rust frames through C. */
@@ -595,6 +645,7 @@ typedef const struct em_api *A_t;
 #define SYMSET(s,v) CHECK((A->sym_set)(E,(s),(v)))
 #define LISTN(av,n) (A->listn)(E,(av),(n))
 #define RDC(lit) CHECK((A->read)(E,(lit),sizeof(lit)-1))
+#define KDC(lit) CHECK((A->read_constant)(E,(lit),sizeof(lit)-1))
 #define SDC(lit) (A->intern)(E,(lit),sizeof(lit)-1)
 #define SYMVAL(s) ({em_obj symbol=(s);CALL(SDC("symbol-value"),&symbol,1);})
 "#;
@@ -650,6 +701,10 @@ struct Emitter<'a> {
 }
 
 impl<'a> Emitter<'a> {
+    fn constant(&self, value: &Value) -> String {
+        format!("KDC({})", c_str(&self.i.prin1_to_string(value)))
+    }
+
     fn lookup(&self, id: SymId) -> Option<String> {
         self.scopes
             .iter()
@@ -667,14 +722,13 @@ impl<'a> Emitter<'a> {
                 if let Ok(x) = i64::try_from(*n) {
                     format!("INT({x})")
                 } else {
-                    let s = n.to_string();
-                    format!("RDC({})", c_str(&s))
+                    self.constant(f)
                 }
             }
             Value::Float(x) => format!("FLT({:?})", **x),
             Value::Str(s) => {
                 let s = s.borrow();
-                format!("(A->mk_str)(E,{},{})", c_str(&s), s.len())
+                format!("(A->string_constant)(E,{},{})", c_str(&s), s.len())
             }
             Value::Sym(id) => {
                 if *id == sym::T {
@@ -697,11 +751,8 @@ impl<'a> Emitter<'a> {
                 self.cons_form(f, &car)
             }
             // Self-evaluating literals (vectors, records, …):
-            // reconstruct from the printed form.
-            other => {
-                let s = self.i.prin1_to_string(other);
-                format!("RDC({})", c_str(&s))
-            }
+            // retain one read object across calls, just like quote constants.
+            other => self.constant(other),
         }
     }
 
@@ -726,8 +777,7 @@ impl<'a> Emitter<'a> {
         match name.as_str() {
             "quote" => {
                 let a = self.args_of(whole);
-                let s = self.i.prin1_to_string(&a[0]);
-                format!("RDC({})", c_str(&s))
+                self.constant(&a[0])
             }
             "if" => {
                 let a = self.args_of(whole);
@@ -1219,7 +1269,7 @@ fn emit_fallback(
     format!(
         "em_obj {cn}(const void *A_, em_env E, const em_obj *args, long n){{\
            A_t A=(A_t)A_;\
-           em_obj cl=EVAL(RDC({form}));\
+           em_obj cl=EVAL(KDC({form}));\
            return (A->call_lambda)(E,cl,args,n);}}",
         form = c_str(&form)
     )
@@ -2287,6 +2337,7 @@ fn f_comp_register_lambda(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     })?;
     META.with(|m| {
         m.borrow_mut().push(NativeMeta {
+            constants: HashMap::new(),
             name: cname.clone(),
             unit: unit_idx as i64,
             arglist: Value::Nil,
