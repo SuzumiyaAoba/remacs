@@ -793,10 +793,11 @@ impl<'a> Emitter<'a> {
                         format!("SDC({})", c_str(&n))
                     }
                     _ => {
-                        // #'(lambda …) needs a real closure — eval it
-                        // rather than guessing.
-                        let s = self.i.prin1_to_string(whole);
-                        format!("EVAL(RDC({}))", c_str(&s))
+                        // C locals are not visible to interpreter eval.  Run
+                        // the whole function through the closure fallback so
+                        // nested lambdas capture its actual argument/local cells.
+                        self.unsupported = true;
+                        "NIL".into()
                     }
                 }
             }
@@ -1154,7 +1155,13 @@ fn emit_fallback(
     l: &Rc<crate::lisp::value::Lambda>,
     cn: &str,
 ) -> String {
-    let env_v = crate::lisp::eval::lexenv_as_value(&l.env);
+    // A nil environment means dynamic scope; lexenv_as_value's empty
+    // display convention is (t), which would turn it into lexical scope.
+    let env_v = if l.env.is_some() {
+        crate::lisp::eval::lexenv_as_value(&l.env)
+    } else {
+        Value::Nil
+    };
     let env_s = i.prin1_to_string(&env_v);
     let arglist = l
         .arglist
@@ -1381,6 +1388,7 @@ fn file_defuns(
     path: &str,
 ) -> Result<Vec<(String, Rc<crate::lisp::value::Lambda>)>, String> {
     let data = std::fs::read_to_string(path).map_err(|e| format!("Cannot read {path}: {e}"))?;
+    let lexical = crate::lisp::load::file_lexical_binding(&data);
     let mut out = Vec::new();
     let mut off = 0usize;
     while off < data.len() {
@@ -1398,12 +1406,17 @@ fn file_defuns(
                             let parts = v.list_to_vec().unwrap_or_default();
                             if parts.len() >= 3 {
                                 if let Value::Sym(n) = parts[1] {
-                                    let lam = form_to_lambda(
+                                    let mut lam = form_to_lambda(
                                         i,
                                         &parts[2],
                                         &parts[3..],
                                         hname == "defmacro",
                                     );
+                                    // File definitions capture their file's
+                                    // binding mode, never the compiler caller's.
+                                    if lexical {
+                                        lam.env = crate::lisp::eval::lexenv_root();
+                                    }
                                     let nm = i.symbol_name(n);
                                     out.push((nm, Rc::new(lam)));
                                 }

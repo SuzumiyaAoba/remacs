@@ -3391,7 +3391,7 @@ fn progn_children(i: &mut Interp, form: &Value) -> Option<Vec<Value>> {
 /// True when the file declares `-*- lexical-binding: t -*-' (or the
 /// `lexical-binding: t' local-variable form) on its first line — or on
 /// the second line when the first is a `#!' line, like Emacs.
-fn file_lexical_binding(src: &str) -> bool {
+pub(crate) fn file_lexical_binding(src: &str) -> bool {
     let mut lines = src.lines();
     let first = lines.next().unwrap_or("");
     let probe = if first.starts_with("#!") {
