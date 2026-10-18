@@ -487,3 +487,16 @@ fn buffer_local() {
         "42"
     );
 }
+
+/// Remacs supports recursive equality beyond GNU's 200-level error limit.
+/// A new memo entry must not cause the same cons to be skipped immediately.
+#[test]
+fn equality_deep_cons_contents() {
+    assert_eq!(
+        ev("(let ((a '(1)) (b '(2)) (c '(1)))
+              (dotimes (_ 220)
+                (setq a (list a) b (list b) c (list c)))
+              (list (equal a b) (equal b a) (equal a c)))"),
+        "(nil nil t)"
+    );
+}

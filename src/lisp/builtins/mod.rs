@@ -477,12 +477,10 @@ pub fn eql_values(a: &Value, b: &Value) -> bool {
     }
 }
 
-/// `equal` — structural equality.  Mirrors GNU `internal_equal':
-/// below `EQUAL_NO_RECURSION_DEPTH` (=200) it recurses plainly; past
-/// that depth each in-progress object pair is memoized and a revisit
-/// coinductively reports true, so isomorphic cyclic structures
-/// (self-cdrs, vectors holding themselves) compare equal and
-/// mismatched cycles report nil — no recursion overflow, no guard cap.
+/// `equal` — structural equality. List tails use constant-space cycle
+/// detection, like GNU `internal_equal'. Recursive object pairs are
+/// memoized past `EQUAL_NO_RECURSION_DEPTH`, so revisiting a pair
+/// coinductively reports true without skipping its remaining fields.
 pub fn equal_values(interp: &Interp, a: &Value, b: &Value) -> bool {
     let mut seen = None;
     equal_values_1(interp, a, b, 0, &mut seen)
@@ -522,7 +520,10 @@ fn equal_values_1(
     if eq_values(a, b) {
         return true;
     }
-    if depth > EQUAL_NO_RECURSION_DEPTH {
+    // Once needed, keep memoization active for sibling recursive paths too.
+    // Otherwise a graph branching through both car and cdr repeats the
+    // shallow recursion tree exponentially before reaching the depth guard.
+    if depth > EQUAL_NO_RECURSION_DEPTH || seen.is_some() {
         if let (Some(pa), Some(pb)) = (equal_obj_ptr(a), equal_obj_ptr(b)) {
             let set = seen.get_or_insert_with(EqualSeen::new);
             if !set.insert((pa, pb)) {
@@ -540,22 +541,19 @@ fn equal_values_1(
             xb.buffer == yb.buffer && xb.position == yb.position
         }
         (Value::Cons(_x), Value::Cons(_y)) => {
-            // Structural walk: like GNU's `while (CONSP(o1))' loop the
-            // tail does not consume stack; the depth check for cycle
-            // detection lives at the top of the next iteration.
+            // Cdrs do not increase recursion depth. Detect their cycles
+            // separately with Brent's walk, without a per-cons allocation.
+            // After finding one cycle, swap tails and detect the other,
+            // comparing cars throughout (GNU `internal_equal_cycle').
             let mut ax = a.clone();
             let mut bx = b.clone();
+            let mut tortoise = ax.clone();
+            let mut power = 2usize;
+            let mut steps = 0usize;
+            let mut one_cycle = false;
             loop {
                 match (&ax, &bx) {
                     (Value::Cons(ac), Value::Cons(bc)) => {
-                        if depth > EQUAL_NO_RECURSION_DEPTH {
-                            let pa = std::rc::Rc::as_ptr(ac) as usize;
-                            let pb = std::rc::Rc::as_ptr(bc) as usize;
-                            let set = seen.get_or_insert_with(EqualSeen::new);
-                            if !set.insert((pa, pb)) {
-                                return true;
-                            }
-                        }
                         let (acar, acdr) = {
                             let ab = ac.borrow();
                             (ab.car.clone(), ab.cdr.clone())
@@ -569,6 +567,29 @@ fn equal_values_1(
                         }
                         ax = acdr;
                         bx = bcdr;
+                        if eq_values(&ax, &bx) {
+                            return true;
+                        }
+                        steps += 1;
+                        // Match GNU's checkpoint cadence: the checkpoint
+                        // step resets the tortoise without testing equality.
+                        if steps == power {
+                            tortoise = ax.clone();
+                            power = power.saturating_mul(2);
+                            steps = 0;
+                        } else if eq_values(&ax, &tortoise) {
+                            if one_cycle {
+                                return true;
+                            }
+                            if !matches!(bx, Value::Cons(_)) {
+                                return false;
+                            }
+                            std::mem::swap(&mut ax, &mut bx);
+                            tortoise = ax.clone();
+                            power = 2;
+                            steps = 0;
+                            one_cycle = true;
+                        }
                     }
                     _ => {
                         return equal_values_1(interp, &ax, &bx, depth + 1, seen);

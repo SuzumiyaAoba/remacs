@@ -108,6 +108,7 @@ qa!(qa_doc, "qa_doc.el");
 qa!(qa_variable_documentation, "qa_variable_documentation.el");
 qa!(qa_vconcat_unibyte, "qa_vconcat_unibyte.el");
 qa!(qa_eieio, "qa_eieio.el");
+qa!(qa_equal_cycles, "qa_equal_cycles.el");
 qa!(qa_eieio2, "qa_eieio2.el");
 qa!(qa_edge_semantics, "qa_edge_semantics.el");
 qa!(qa_err2, "qa_err2.el");
