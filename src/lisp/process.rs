@@ -1797,7 +1797,14 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         if kw(i, &args, ":nowait").truthy() {
             return Err(i.error_q("`:server' is incompatible with `:nowait'", &[]));
         }
-        let port = service_port(i, &service)?;
+        // GNU's :service t asks the kernel to choose an ephemeral port for
+        // an Internet server, just like port zero. This server-only case
+        // does not change client parsing or local-domain socket paths.
+        let port = if matches!(service, Value::Sym(s) if s == sym::T) {
+            0
+        } else {
+            service_port(i, &service)?
+        };
         // An address family does not replace the requested host.  In
         // particular, :family ipv4 must not broaden a loopback bind to
         // every interface (issue #232).
