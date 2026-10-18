@@ -13,7 +13,7 @@
 mod dtd;
 
 use html5ever::tokenizer::{Token, TokenSink, TokenSinkResult};
-use html5ever::tree_builder::{ElementFlags, NodeOrText, QuirksMode, TreeSink};
+use html5ever::tree_builder::{ElementFlags, NodeOrText, QuirksMode, Tracer, TreeSink};
 use html5ever::{Attribute, ExpandedName, QualName, tendril::StrTendril};
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 use std::cell::{Cell, RefCell};
@@ -103,6 +103,50 @@ struct HtmlDom {
     dom: RcDom,
     tbody_start: Cell<bool>,
     explicit_tbodies: RefCell<HashMap<*const markup5ever_rcdom::Node, Handle>>,
+    p_end: Cell<bool>,
+    implied_p_end: RefCell<Option<Handle>>,
+    table_context: RefCell<HtmlTableContext>,
+    saw_html_table: Cell<bool>,
+}
+
+/// These HTML elements can only occur in the open-elements portion of
+/// TreeBuilder's traced handles, never in its active formatting/head/form
+/// handles. Their stack order identifies the current table and row/group.
+/// Snapshot before processing a token: pending table text is flushed before
+/// that token changes the stack. An implied tbody is unwrapped later as usual.
+#[derive(Default)]
+struct HtmlTableContext {
+    table: RefCell<Option<Handle>>,
+    parent: RefCell<Option<Handle>>,
+}
+
+impl Tracer for HtmlTableContext {
+    type Handle = Handle;
+
+    fn trace_handle(&self, node: &Handle) {
+        if let NodeData::Element { name, .. } = &node.data {
+            if name.ns.as_ref() == "http://www.w3.org/1999/xhtml" {
+                match name.local.as_ref() {
+                    "table" => {
+                        *self.table.borrow_mut() = Some(node.clone());
+                        *self.parent.borrow_mut() = Some(node.clone());
+                    }
+                    "tbody" | "thead" | "tfoot" | "tr" => {
+                        *self.parent.borrow_mut() = Some(node.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+impl HtmlDom {
+    fn suppress_implied_p(&self, child: &NodeOrText<Handle>) -> bool {
+        matches!(child, NodeOrText::AppendNode(node)
+            if self.implied_p_end.borrow().as_ref()
+                .is_some_and(|implied| Rc::ptr_eq(implied, node)))
+    }
 }
 
 impl TreeSink for HtmlDom {
@@ -115,8 +159,14 @@ impl TreeSink for HtmlDom {
     }
 
     fn create_element(&self, name: QualName, attrs: Vec<Attribute>, flags: ElementFlags) -> Handle {
+        if name.local.as_ref() == "table" && name.ns.as_ref() == "http://www.w3.org/1999/xhtml" {
+            self.saw_html_table.set(true);
+        }
         let explicit_tbody = self.tbody_start.get()
             && name.local.as_ref() == "tbody"
+            && name.ns.as_ref() == "http://www.w3.org/1999/xhtml";
+        let implied_p_end = self.p_end.get()
+            && name.local.as_ref() == "p"
             && name.ns.as_ref() == "http://www.w3.org/1999/xhtml";
         let node = self.dom.create_element(name, attrs, flags);
         if explicit_tbody {
@@ -124,11 +174,16 @@ impl TreeSink for HtmlDom {
                 .borrow_mut()
                 .insert(Rc::as_ptr(&node), node.clone());
         }
+        if implied_p_end {
+            *self.implied_p_end.borrow_mut() = Some(node.clone());
+        }
         node
     }
 
-    // Delegate tree construction unchanged, including foster parenting,
-    // template contents, namespace integration, and selectedcontent cloning.
+    // Delegate tree construction, apart from libxml-compatible table content
+    // and ignored paragraph end tags.
+    // Template contents, namespace integration and selectedcontent cloning
+    // retain their normal html5ever behavior.
     fn parse_error(&self, msg: std::borrow::Cow<'static, str>) {
         self.dom.parse_error(msg);
     }
@@ -145,7 +200,11 @@ impl TreeSink for HtmlDom {
         self.dom.create_pi(target, data)
     }
     fn append(&self, parent: &Handle, child: NodeOrText<Handle>) {
-        self.dom.append(parent, child);
+        // The temporary p is immediately closed by TreeBuilder. Do not attach
+        // it: an ignored </p> must not split the surrounding character data.
+        if !self.suppress_implied_p(&child) {
+            self.dom.append(parent, child);
+        }
     }
     fn append_based_on_parent_node(
         &self,
@@ -153,6 +212,24 @@ impl TreeSink for HtmlDom {
         prev: &Handle,
         child: NodeOrText<Handle>,
     ) {
+        if self.suppress_implied_p(&child) {
+            return;
+        }
+        let context = self.table_context.borrow();
+        if context
+            .table
+            .borrow()
+            .as_ref()
+            .is_some_and(|table| Rc::ptr_eq(table, element))
+        {
+            if let Some(parent) = context.parent.borrow().as_ref() {
+                // libxml2 retains content in its table/row/group. Keep both
+                // text and elements here: moving only text would reorder it
+                // relative to a foster-parented element such as <b> or <div>.
+                self.dom.append(parent, child);
+                return;
+            }
+        }
         self.dom.append_based_on_parent_node(element, prev, child);
     }
     fn append_doctype_to_document(&self, name: StrTendril, public: StrTendril, system: StrTendril) {
@@ -174,7 +251,9 @@ impl TreeSink for HtmlDom {
         self.dom.set_quirks_mode(mode);
     }
     fn append_before_sibling(&self, sibling: &Handle, node: NodeOrText<Handle>) {
-        self.dom.append_before_sibling(sibling, node);
+        if !self.suppress_implied_p(&node) {
+            self.dom.append_before_sibling(sibling, node);
+        }
     }
     fn add_attrs_if_missing(&self, target: &Handle, attrs: Vec<Attribute>) {
         self.dom.add_attrs_if_missing(target, attrs);
@@ -251,6 +330,14 @@ impl TokenSink for HtmlTokenTracker {
     type Handle = Handle;
 
     fn process_token(&self, token: Token, line: u64) -> TokenSinkResult<Handle> {
+        // Avoid scanning the open-element stack in documents without tables.
+        // Only actual HTML table creation enables tracking, starting with the
+        // following token; comments, attributes and foreign names cannot do so.
+        if self.tree.sink.saw_html_table.get() {
+            let table_context = HtmlTableContext::default();
+            self.tree.trace_handles(&table_context);
+            *self.tree.sink.table_context.borrow_mut() = table_context;
+        }
         let may_create_head = matches!(&token, Token::TagToken(tag)
             if tag.kind == html5ever::tokenizer::StartTag && tag.name.as_ref() == "head")
             // The first head start either creates the head or finds an
@@ -262,8 +349,15 @@ impl TokenSink for HtmlTokenTracker {
             .tbody_start
             .set(matches!(&token, Token::TagToken(tag)
             if tag.kind == html5ever::tokenizer::StartTag && tag.name.as_ref() == "tbody"));
+        self.tree
+            .sink
+            .p_end
+            .set(matches!(&token, Token::TagToken(tag)
+            if tag.kind == html5ever::tokenizer::EndTag && tag.name.as_ref() == "p"));
         let result = self.tree.process_token(token, line);
         self.tree.sink.tbody_start.set(false);
+        self.tree.sink.p_end.set(false);
+        self.tree.sink.implied_p_end.borrow_mut().take();
         if may_create_head {
             *self.explicit_head.borrow_mut() = self.head();
         }
@@ -314,7 +408,9 @@ fn html_node(
             let attr_list: Vec<Value> = attrs
                 .borrow()
                 .iter()
-                .map(|a| attr_cons(i, a.name.local.as_ref(), &a.value))
+                // HTML names are ASCII-case-insensitive, including foreign
+                // attributes that HTML5 adjusts back to e.g. SVG viewBox.
+                .map(|a| attr_cons(i, &a.name.local.as_ref().to_ascii_lowercase(), &a.value))
                 .collect();
             let mut node = vec![
                 Value::Sym(i.intern(name.local.as_ref())),

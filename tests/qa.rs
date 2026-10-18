@@ -374,3 +374,5 @@ qa!(qa_html_comments, "qa_html_comments.el");
 qa!(qa_html_head, "qa_html_head.el");
 
 qa!(qa_html_tbody, "qa_html_tbody.el");
+
+qa!(qa_html_repair, "qa_html_repair.el");
