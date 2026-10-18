@@ -146,9 +146,9 @@ pub struct LispHash {
     /// User callbacks may read this table, but must not mutate it.
     pub mutable: bool,
     /// Collision-chain insertion order, rebuilt from slots when resized.
-    pub custom_order: Vec<usize>,
-    /// GNU reuses removed custom-table slots in last-removed-first order.
-    pub custom_free_slots: Vec<usize>,
+    pub collision_order: Vec<usize>,
+    /// GNU reuses removed collision-checked table slots in last-removed-first order.
+    pub free_slots: Vec<usize>,
 }
 
 impl LispHash {
@@ -164,8 +164,8 @@ impl LispHash {
             test_name: Value::Nil,
             user_test: None,
             mutable: true,
-            custom_order: Vec::new(),
-            custom_free_slots: Vec::new(),
+            collision_order: Vec::new(),
+            free_slots: Vec::new(),
         }
     }
 
@@ -176,8 +176,8 @@ impl LispHash {
         if self.keys.0.iter().flatten().any(|(e, _)| *e == hk) {
             return;
         }
-        if self.user_test.is_some() {
-            if self.custom_order.len() as i128 == self.size {
+        if self.user_test.is_some() || self.test == HashTest::Equal {
+            if self.collision_order.len() as i128 == self.size {
                 // GNU maybe_resize_hash_table re-links old entries by slot
                 // order, without calling either Lisp function again.
                 self.size = if self.size == 0 {
@@ -185,10 +185,10 @@ impl LispHash {
                 } else {
                     self.size.max(6) * if self.size <= 64 { 4 } else { 2 }
                 };
-                self.custom_order = (0..self.keys.0.len()).collect();
+                self.collision_order = (0..self.keys.0.len()).collect();
             }
-            let slot = self.custom_free_slots.pop().unwrap_or(self.keys.0.len());
-            self.custom_order.push(slot);
+            let slot = self.free_slots.pop().unwrap_or(self.keys.0.len());
+            self.collision_order.push(slot);
             if slot == self.keys.0.len() {
                 self.keys.0.push(Some((hk, k)));
             } else {
@@ -210,9 +210,9 @@ impl LispHash {
             .position(|e| matches!(e, Some((h, _)) if h == hk))
         {
             self.keys.0[slot] = None;
-            if self.user_test.is_some() {
-                self.custom_order.retain(|index| *index != slot);
-                self.custom_free_slots.push(slot);
+            if self.user_test.is_some() || self.test == HashTest::Equal {
+                self.collision_order.retain(|index| *index != slot);
+                self.free_slots.push(slot);
             }
         }
     }
@@ -258,6 +258,9 @@ pub enum HashKey {
     /// the tag keeps the namespaces apart).  Tag: 1 = record,
     /// 2 = `#[...]' byte-code object, 3 = interpreted lambda.
     Tagged(u64, Vec<HashKey>),
+    /// Bounded structural hash and root identity for cyclic/large equal
+    /// keys. The hash only selects candidates; compare original keys.
+    EqualFallback(u32, usize),
     /// User-provided hash code and an entry slot. Equal hash
     /// codes select candidates; only the user's comparator merges keys.
     Custom(u32, usize),

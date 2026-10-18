@@ -108,7 +108,14 @@ pub(crate) fn hash_key_for(interp: &Interp, v: &Value, test: HashTest) -> HashKe
         HashTest::Eql => eql_key(v),
         HashTest::Equal => {
             let mut ancestors = std::collections::HashSet::new();
-            equal_key(interp, v, &mut ancestors)
+            // Keep compact acyclic keys, but a cycle or a large unfolding
+            // needs a hash bucket whose original objects are compared.
+            equal_key(interp, v, &mut ancestors, &mut 4096, 0).unwrap_or_else(|| {
+                let HashKey::Ptr(identity) = eq_key(v) else {
+                    unreachable!("only compound equal keys can need a fallback")
+                };
+                HashKey::EqualFallback(super::strfn::equal_hash_code(interp, v), identity)
+            })
         }
     }
 }
@@ -158,25 +165,26 @@ fn equal_key(
     interp: &Interp,
     v: &Value,
     ancestors: &mut std::collections::HashSet<usize>,
-) -> HashKey {
-    // Cyclic structures must not recurse forever (cl--generic method
-    // tables embed self-referencing records — GNU accepts them in
-    // `equal' tables).  Rather than GNU sxhash's depth cap — which is
-    // unsound here because our HashKey IS the bucket entry, not a
-    // collision-checked digest — track the containers on the current
-    // descent path and emit a back-edge marker keyed by pointer.
+    budget: &mut usize,
+    depth: usize,
+) -> Option<HashKey> {
+    // Normalization is only a fast path, never proof that cyclic keys
+    // differ. Bound both recursion and repeated expansion of shared DAGs.
+    // A fallback hashes a bounded unfolding and collision-checks `equal'.
+    if *budget == 0 || depth > 128 {
+        return None;
+    }
+    *budget -= 1;
     let ptr = match v {
         Value::Cons(c) => Some(Rc::as_ptr(c) as usize),
         Value::Vec(c) => Some(Rc::as_ptr(c) as usize),
         Value::Record(c) => Some(Rc::as_ptr(c) as usize),
+        Value::Lambda(c) => Some(Rc::as_ptr(c) as usize),
         _ => None,
     };
     if let Some(p) = ptr {
         if !ancestors.insert(p) {
-            // Already on the path: a cycle.  The pointer value keeps
-            // equal keys equal and makes unrelated structures' back-
-            // edges distinguishable (unlike a flat constant).
-            return HashKey::Ptr(p | (1usize << 63));
+            return None;
         }
     }
     let out = match v {
@@ -190,15 +198,15 @@ fn equal_key(
         Value::Cons(c) => {
             let b = c.borrow();
             HashKey::Cons(
-                Box::new(equal_key(interp, &b.car, ancestors)),
-                Box::new(equal_key(interp, &b.cdr, ancestors)),
+                Box::new(equal_key(interp, &b.car, ancestors, budget, depth + 1)?),
+                Box::new(equal_key(interp, &b.cdr, ancestors, budget, depth + 1)?),
             )
         }
         Value::Vec(vec) => HashKey::Vec(
             vec.borrow()
                 .iter()
-                .map(|x| equal_key(interp, x, ancestors))
-                .collect(),
+                .map(|x| equal_key(interp, x, ancestors, budget, depth + 1))
+                .collect::<Option<Vec<_>>>()?,
         ),
         // `equal' compares records elementwise — hash contents too,
         // tagged so records never collide with plain vectors.
@@ -206,8 +214,8 @@ fn equal_key(
             1,
             r.borrow()
                 .iter()
-                .map(|x| equal_key(interp, x, ancestors))
-                .collect(),
+                .map(|x| equal_key(interp, x, ancestors, budget, depth + 1))
+                .collect::<Option<Vec<_>>>()?,
         ),
         Value::Lambda(l) => {
             if let Some(items) = &l.bc_items {
@@ -216,7 +224,8 @@ fn equal_key(
                     items
                         .borrow()
                         .iter()
-                        .map(|x| equal_key(interp, x, ancestors)),
+                        .map(|x| equal_key(interp, x, ancestors, budget, depth + 1))
+                        .collect::<Option<Vec<_>>>()?,
                 );
                 HashKey::Tagged(2, keys)
             } else {
@@ -228,20 +237,30 @@ fn equal_key(
                 ];
                 keys.extend(l.required.iter().map(|s| HashKey::Sym(*s)));
                 keys.extend(l.rest.iter().map(|s| HashKey::Sym(*s)));
-                keys.extend(l.optional.iter().map(|p| {
-                    HashKey::Vec(vec![
-                        HashKey::Sym(p.sym),
-                        match &p.supplied {
-                            Some(s) => HashKey::Sym(*s),
-                            None => HashKey::Nil,
-                        },
-                        match &p.default {
-                            Some(d) => equal_key(interp, d, ancestors),
-                            None => HashKey::Nil,
-                        },
-                    ])
-                }));
-                keys.extend(l.body.iter().map(|x| equal_key(interp, x, ancestors)));
+                keys.extend(
+                    l.optional
+                        .iter()
+                        .map(|p| {
+                            Some(HashKey::Vec(vec![
+                                HashKey::Sym(p.sym),
+                                match &p.supplied {
+                                    Some(s) => HashKey::Sym(*s),
+                                    None => HashKey::Nil,
+                                },
+                                match &p.default {
+                                    Some(d) => equal_key(interp, d, ancestors, budget, depth + 1)?,
+                                    None => HashKey::Nil,
+                                },
+                            ]))
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                );
+                keys.extend(
+                    l.body
+                        .iter()
+                        .map(|x| equal_key(interp, x, ancestors, budget, depth + 1))
+                        .collect::<Option<Vec<_>>>()?,
+                );
                 HashKey::Tagged(3, keys)
             }
         }
@@ -250,7 +269,7 @@ fn equal_key(
     if let Some(p) = ptr {
         ancestors.remove(&p);
     }
-    out
+    Some(out)
 }
 
 pub(crate) fn f_make_hash_table(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -401,22 +420,41 @@ fn check_mutable(i: &mut Interp, h: &HashRef) -> Result<(), Flow> {
 }
 
 /// Return the matching entry's key, or a fresh key suitable for insertion.
-/// Built-in tables keep their fast normalized-key path. Custom tables keep
-/// distinct entries for hash collisions and invoke the Lisp comparator.
+/// A normalized key is sufficient for small acyclic built-in keys.
+/// Larger/cyclic equal keys and custom tests need collision checking.
 pub(crate) fn table_key(i: &mut Interp, h: &HashRef, key: &Value) -> Result<HashKey, Flow> {
     let (test, user_test) = {
         let table = h.borrow();
         (table.test, table.user_test.clone())
     };
     let Some((compare, hash_function)) = user_test else {
-        return Ok(hash_key_for(i, key, test));
+        let normalized = hash_key_for(i, key, test);
+        if let HashKey::EqualFallback(hash, _) = &normalized {
+            let candidates: Vec<(HashKey, Value)> = {
+                let table = h.borrow();
+                table
+                    .collision_order
+                    .iter()
+                    .rev()
+                    .filter_map(|slot| table.keys.0[*slot].as_ref())
+                    .filter(|(k, _)| matches!(k, HashKey::EqualFallback(code, _) if code == hash))
+                    .cloned()
+                    .collect()
+            };
+            for (stored_key, original) in candidates {
+                if super::equal_values(i, key, &original)? {
+                    return Ok(stored_key);
+                }
+            }
+        }
+        return Ok(normalized);
     };
     let hash_result = user_call(i, h, &hash_function, vec![key.clone()])?;
     let hash = super::strfn::user_hash_code(i, &hash_result);
     let candidates: Vec<(HashKey, Value)> = {
         let table = h.borrow();
         table
-            .custom_order
+            .collision_order
             .iter()
             .rev()
             .filter_map(|slot| table.keys.0[*slot].as_ref())
@@ -433,7 +471,7 @@ pub(crate) fn table_key(i: &mut Interp, h: &HashRef, key: &Value) -> Result<Hash
     }
     let table = h.borrow();
     let slot = table
-        .custom_free_slots
+        .free_slots
         .last()
         .copied()
         .unwrap_or(table.keys.0.len());
@@ -490,8 +528,8 @@ fn f_clrhash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             let mut hh = h.borrow_mut();
             hh.map.clear();
             hh.keys.clear();
-            hh.custom_order.clear();
-            hh.custom_free_slots.clear();
+            hh.collision_order.clear();
+            hh.free_slots.clear();
             Ok(args[0].clone())
         }
         other => Err(i.wrong_type_mut("hash-table-p", other)),

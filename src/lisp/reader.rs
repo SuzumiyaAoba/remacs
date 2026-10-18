@@ -1365,11 +1365,11 @@ pub fn parse_number(tok: &str) -> Option<Value> {
 /// Returns None when the shape doesn't match (caller falls back to a
 /// plain record).
 fn read_hash_literal(i: &mut Interp, fields: &[Value]) -> Result<Option<Value>, Flow> {
-    use crate::lisp::builtins::hashfn::hash_key_for;
+    use crate::lisp::builtins::hashfn::table_key;
     use crate::lisp::value::{HashTest, LispHash};
     // GNU's printed custom tables use the first occurrence of each plist
     // field, ignore size/unknown fields, and size storage from the data.
-    // Leave the existing built-in literal path below unchanged.
+    // Built-in literal metadata uses the existing path below.
     let property = |name: &str| {
         fields
             .chunks(2)
@@ -1470,17 +1470,17 @@ fn read_hash_literal(i: &mut Interp, fields: &[Value]) -> Result<Option<Value>, 
     let mut h = LispHash::new(test);
     h.size = size;
     h.weakness = weakness;
+    let h = std::rc::Rc::new(std::cell::RefCell::new(h));
     if let Some(pairs) = data {
         let mut it = pairs.into_iter();
         while let (Some(ky), Some(vl)) = (it.next(), it.next()) {
-            let key = hash_key_for(i, &ky, test);
-            h.map.insert(key.clone(), vl);
-            h.put_key(key, ky);
+            let key = table_key(i, &h, &ky)?;
+            let mut table = h.borrow_mut();
+            table.map.insert(key.clone(), vl);
+            table.put_key(key, ky);
         }
     }
-    Ok(Some(Value::Hash(std::rc::Rc::new(
-        std::cell::RefCell::new(h),
-    ))))
+    Ok(Some(Value::Hash(h)))
 }
 
 fn parse_float(tok: &str) -> Option<f64> {

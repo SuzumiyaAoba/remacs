@@ -190,8 +190,15 @@ colliding entries with the supplied predicate, preserving the original key
 on replacement. Copies retain the captured functions and test name; printed
 custom tables read through the same constructor/insertion path. Lisp
 callbacks may read the table but cannot mutate it, and errors/throws restore
-mutability. Built-in eq/eql/equal tables keep their normalized-key path.
-Regression: `tests/qa_hash_custom.el` (GNU Emacs 31.1).
+mutability. Built-in eq/eql and compact acyclic equal keys keep their
+normalized-key path. Cyclic or large equal keys use a bounded `sxhash`
+bucket plus `equal` on the original keys: different cycle periods can
+compare equal, while truncated-hash collisions must remain distinct.
+Equal/custom tables retain collision-chain order through slot reuse and
+resize; the reader uses the same lookup path. Normalization is bounded
+so long tails/shared DAGs cannot overflow before collision checking.
+Regressions: `tests/qa_hash_custom.el`, `tests/qa_hash_cycles.el`
+(GNU Emacs 31.1).
 
 ## Tree-sitter support (`src/lisp/builtins/treesit.rs`)
 
