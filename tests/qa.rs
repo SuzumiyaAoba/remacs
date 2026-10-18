@@ -189,6 +189,14 @@ fn qa_native_error() {
     }
     run("qa_native_error.el");
 }
+#[test]
+fn qa_native_variables() {
+    if ev("(native-comp-available-p)") != "t" {
+        eprintln!("skipping native variable tests: no C compiler available");
+        return;
+    }
+    run("qa_native_variables.el");
+}
 qa!(qa_numbers, "qa_numbers.el");
 qa!(qa_obarray, "qa_obarray.el");
 qa!(qa_unintern_identity, "qa_unintern_identity.el");

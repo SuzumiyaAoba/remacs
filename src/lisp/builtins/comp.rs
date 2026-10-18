@@ -562,6 +562,7 @@ typedef const struct em_api *A_t;
 #define LISTN(av,n) (A->listn)(E,(av),(n))
 #define RDC(lit) CHECK((A->read)(E,(lit),sizeof(lit)-1))
 #define SDC(lit) (A->intern)(E,(lit),sizeof(lit)-1)
+#define SYMVAL(s) ({em_obj symbol=(s);CALL(SDC("symbol-value"),&symbol,1);})
 "#;
 
 /// Sanitize a Lisp symbol name to a C identifier.
@@ -649,7 +650,13 @@ impl<'a> Emitter<'a> {
                     return n;
                 }
                 let name = self.i.symbol_name(*id);
-                format!("SDC({})", c_str(&name))
+                if name.starts_with(':') {
+                    return format!("SDC({})", c_str(&name));
+                }
+                // A free variable reads its current dynamic/buffer-local value,
+                // not the symbol itself or the caller's lexical environment.
+                // Like GNU native code, honor symbol-value's function cell.
+                format!("SYMVAL(SDC({}))", c_str(&name))
             }
             Value::Cons(c) => {
                 let car = c.borrow().car.clone();
