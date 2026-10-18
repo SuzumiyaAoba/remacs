@@ -333,6 +333,11 @@ Architecture:
   object-table handles. Nested native calls restore the caller's constant
   cache. Runtime allocation and ordinary file initialization remain fresh.
   Existing `.eln` files remain loadable but need recompilation for this fix.
+- Direct native string constants retain their source byte-kind flags as well
+  as their raw characters, including unibyte bytes and explicitly multibyte
+  ASCII. The constant cache distinguishes identical bytes of different kinds.
+  The kind-aware callback is appended to preserve existing unit ABI; old
+  `.eln` files remain loadable and need recompilation for this correction.
 - `.eln` naming matches GNU: `<base>-<md5(truename)[:8]>-<md5(contents)[:8]>.eln`
   under `~/.emacs.d/eln-cache/31.1-remacs/`.
 - `native-compile` accepts files, symbols, and lambda objects;

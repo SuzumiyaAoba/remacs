@@ -373,3 +373,48 @@ fn async_file_parse_errors() {
         "(end-of-file end-of-file end-of-file end-of-file nil nil 23)"
     );
 }
+
+// This pins Remacs source-value preservation, not GNU native output parity:
+// GNU 31.1's native serializer itself normalizes explicitly multibyte ASCII
+// and raw-eight-bit constants to unibyte. Identical raw C bytes must still
+// retain each source object's kind in Remacs's direct constant cache.
+#[test]
+fn direct_string_constants_preserve_source_kinds() {
+    if !avail() {
+        return;
+    }
+    assert_eq!(
+        ev(
+            r#"(let ((directory (make-temp-file "remacs-native-kinds-" t))
+                    (results nil))
+                (unwind-protect
+                    (dolist (reverse-order '(nil t))
+                      (let* ((values (list "" (string-to-multibyte "")
+                                           "ascii" (string-to-multibyte "ascii")
+                                           "\200\377" (string-to-multibyte "\200\377")))
+                             (values (if reverse-order (reverse values) values))
+                             (shape (lambda (s) (list (multibyte-string-p s)
+                                                       (string-to-list s)
+                                                       (string-bytes s))))
+                             (wanted (mapcar shape values))
+                             (fn (native-compile
+                                  (eval (list 'lambda nil (cons 'list values)) t)
+                                  (expand-file-name (if reverse-order "reverse.eln" "forward.eln")
+                                                    directory)))
+                             (first (funcall fn))
+                             (second (funcall fn))
+                             (stable t))
+                        (dotimes (index 6)
+                          (unless (eq (nth index first) (nth index second))
+                            (setq stable nil)))
+                        (push (list (native-comp-function-p fn)
+                                    (equal (mapcar shape first) wanted)
+                                    (equal (mapcar shape second) wanted)
+                                    (not (eq first second)) stable)
+                              results)))
+                  (delete-directory directory t))
+                results)"#
+        ),
+        "((t t t t t) (t t t t t))"
+    );
+}

@@ -122,6 +122,8 @@ struct EmApi {
     read_constant: unsafe extern "C" fn(EmEnv, *const c_char, usize) -> EmObj,
     string_constant: unsafe extern "C" fn(EmEnv, *const c_char, usize) -> EmObj,
     float_constant: unsafe extern "C" fn(EmEnv, f64) -> EmObj,
+    /// Preserve the source string's byte-kind flags; appended for old units.
+    string_constant_kind: unsafe extern "C" fn(EmEnv, *const c_char, usize, i64) -> EmObj,
 }
 
 unsafe extern "C" fn api_nil(_e: EmEnv) -> EmObj {
@@ -156,6 +158,7 @@ unsafe extern "C" fn api_read(e: EmEnv, p: *const c_char, n: usize) -> EmObj {
 enum ConstantKey {
     Read(usize, usize),
     String(usize, usize),
+    StringKind(usize, usize, i64),
     Float(u64),
 }
 
@@ -181,6 +184,26 @@ unsafe extern "C" fn api_read_constant(e: EmEnv, p: *const c_char, n: usize) -> 
 }
 unsafe extern "C" fn api_string_constant(e: EmEnv, p: *const c_char, n: usize) -> EmObj {
     native_constant(ConstantKey::String(p as usize, n), || api_str(e, p, n))
+}
+unsafe extern "C" fn api_string_constant_kind(
+    e: EmEnv,
+    p: *const c_char,
+    n: usize,
+    kind: i64,
+) -> EmObj {
+    native_constant(ConstantKey::StringKind(p as usize, n, kind), || {
+        let handle = api_str(e, p, n);
+        if let Value::Str(string) = obj(handle) {
+            let i = host(e);
+            if kind & 1 != 0 {
+                i.mark_unibyte(&string);
+            }
+            if kind & 2 != 0 {
+                i.mark_multibyte(&string);
+            }
+        }
+        handle
+    })
 }
 unsafe extern "C" fn api_float_constant(e: EmEnv, f: f64) -> EmObj {
     native_constant(ConstantKey::Float(f.to_bits()), || api_float(e, f))
@@ -348,6 +371,7 @@ static API: EmApi = EmApi {
     read_constant: api_read_constant,
     string_constant: api_string_constant,
     float_constant: api_float_constant,
+    string_constant_kind: api_string_constant_kind,
 };
 
 /// Mirrors the generated descriptor (repr(C), must match codegen).
@@ -630,6 +654,7 @@ struct em_api {
     em_obj (*read_constant)(em_env, const char *, unsigned long);
     em_obj (*string_constant)(em_env, const char *, unsigned long);
     em_obj (*float_constant)(em_env, double);
+    em_obj (*string_constant_kind)(em_env, const char *, unsigned long, long);
 };
 typedef const struct em_api *A_t;
 #define NIL (A->nil)(E)
@@ -727,8 +752,17 @@ impl<'a> Emitter<'a> {
             }
             Value::Float(x) => format!("FLT({:?})", **x),
             Value::Str(s) => {
+                // The same raw characters can denote unibyte bytes or
+                // multibyte eight-bit characters. Carry the metadata too;
+                // printing/reading instead would lose surrogate characters.
+                let kind = i64::from(self.i.is_unibyte_str(s))
+                    | (i64::from(self.i.is_multibyte_str(s)) << 1);
                 let s = s.borrow();
-                format!("(A->string_constant)(E,{},{})", c_str(&s), s.len())
+                format!(
+                    "(A->string_constant_kind)(E,{},{},{kind})",
+                    c_str(&s),
+                    s.len()
+                )
             }
             Value::Sym(id) => {
                 if *id == sym::T {
