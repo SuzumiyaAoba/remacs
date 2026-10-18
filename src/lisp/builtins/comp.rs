@@ -771,7 +771,8 @@ impl<'a> Emitter<'a> {
                 // names collide when `and's nest.
                 self.serial += 1;
                 let lbl = format!("ae{}", self.serial);
-                let mut out = String::from("({em_obj r=NIL;");
+                // The identity of conjunction is t, including zero operands.
+                let mut out = String::from("({em_obj r=TT;");
                 for x in &a {
                     let v = self.form(x);
                     out.push_str(&format!("r={v};if(!TRUTH(r))goto {lbl};"));

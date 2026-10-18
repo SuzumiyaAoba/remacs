@@ -222,6 +222,14 @@ fn qa_native_toplevel() {
     run("qa_native_toplevel.el");
 }
 #[test]
+fn qa_native_boolean() {
+    if ev("(native-comp-available-p)") != "t" {
+        eprintln!("skipping native boolean tests: no C compiler available");
+        return;
+    }
+    run("qa_native_boolean.el");
+}
+#[test]
 fn qa_native_parse_errors() {
     if ev("(native-comp-available-p)") != "t" {
         eprintln!("skipping native parse-error tests: no C compiler available");
