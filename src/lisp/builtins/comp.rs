@@ -933,8 +933,10 @@ impl<'a> Emitter<'a> {
             let cn = format!("v{}", self.serial);
             self.serial += 1;
             if star {
-                self.scopes.last_mut().unwrap().push((id, cn.clone()));
+                // The new binding is visible to later initializers and the
+                // body, but its own initializer still sees the outer binding.
                 let iv = self.form(&init);
+                self.scopes.last_mut().unwrap().push((id, cn.clone()));
                 decls.push_str(&format!("em_obj {cn}={iv};"));
             } else {
                 // `let': every init form sees the outer scope.
