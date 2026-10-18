@@ -12,7 +12,9 @@
 #[path = "xml_dtd.rs"]
 mod dtd;
 
-use html5ever::tendril::TendrilSink;
+use html5ever::tokenizer::{Token, TokenSink, TokenSinkResult};
+use markup5ever_rcdom::{Handle, NodeData, RcDom};
+use std::cell::{Cell, RefCell};
 
 use super::{S, arg};
 
@@ -88,10 +90,68 @@ fn check_base_url(i: &mut Interp, a: &[Value]) -> Result<(), Flow> {
 
 // ---------- HTML via html5ever + rcdom ----------
 
+/// Record the head created by an actual start tag. html5ever also inserts
+/// an empty head for body-only input, which libxml2 does not expose.
+/// Observing tokens *and* tree creation avoids mistaking comments, quoted
+/// attributes, raw text, or a late/ignored <head> for an explicit head.
+struct HtmlHeadTracker {
+    tree: html5ever::tree_builder::TreeBuilder<Handle, RcDom>,
+    explicit_head: RefCell<Option<Handle>>,
+    saw_head_start: Cell<bool>,
+}
+
+impl HtmlHeadTracker {
+    fn head(&self) -> Option<Handle> {
+        let document = self.tree.sink.document.children.borrow();
+        let html = document.iter().find(|node| {
+            matches!(&node.data, NodeData::Element { name, .. }
+                if name.local.as_ref() == "html"
+                    && name.ns.as_ref() == "http://www.w3.org/1999/xhtml")
+        })?;
+        html.children
+            .borrow()
+            .iter()
+            .find(|node| {
+                matches!(&node.data, NodeData::Element { name, .. }
+                if name.local.as_ref() == "head"
+                    && name.ns.as_ref() == "http://www.w3.org/1999/xhtml")
+            })
+            .cloned()
+    }
+}
+
+impl TokenSink for HtmlHeadTracker {
+    type Handle = Handle;
+
+    fn process_token(&self, token: Token, line: u64) -> TokenSinkResult<Handle> {
+        let may_create_head = matches!(&token, Token::TagToken(tag)
+            if tag.kind == html5ever::tokenizer::StartTag && tag.name.as_ref() == "head")
+            // The first head start either creates the head or finds an
+            // implied one. Later head tags cannot change its provenance.
+            && !self.saw_head_start.replace(true)
+            && self.head().is_none();
+        let result = self.tree.process_token(token, line);
+        if may_create_head {
+            *self.explicit_head.borrow_mut() = self.head();
+        }
+        result
+    }
+
+    fn end(&self) {
+        self.tree.end();
+    }
+
+    fn adjusted_current_node_present_but_not_in_html_namespace(&self) -> bool {
+        self.tree
+            .adjusted_current_node_present_but_not_in_html_namespace()
+    }
+}
+
 fn html_node(
     i: &mut Interp,
     h: &markup5ever_rcdom::Handle,
     src_has_tbody: bool,
+    explicit_head: Option<&Handle>,
     out: &mut Vec<Value>,
 ) {
     use markup5ever_rcdom::NodeData;
@@ -99,10 +159,13 @@ fn html_node(
         NodeData::Element { name, attrs, .. } => {
             let mut kids = Vec::new();
             for c in h.children.borrow().iter() {
-                html_node(i, c, src_has_tbody, &mut kids);
+                html_node(i, c, src_has_tbody, explicit_head, &mut kids);
             }
-            // libxml2 doesn't materialize an empty <head>; drop it.
-            if &*name.local == "head" && kids.is_empty() {
+            // Only the implicit empty head is absent from libxml2's DOM.
+            if &*name.local == "head"
+                && kids.is_empty()
+                && !explicit_head.is_some_and(|head| std::rc::Rc::ptr_eq(head, h))
+            {
                 return;
             }
             // html5ever implies <tbody> like HTML5; libxml2 doesn't.
@@ -139,8 +202,19 @@ fn html_node(
 }
 
 fn parse_html(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
-    let dom = html5ever::parse_document(markup5ever_rcdom::RcDom::default(), Default::default())
-        .one(text.to_string());
+    let tracker = HtmlHeadTracker {
+        tree: html5ever::tree_builder::TreeBuilder::new(RcDom::default(), Default::default()),
+        explicit_head: RefCell::new(None),
+        saw_head_start: Cell::new(false),
+    };
+    let tokenizer = html5ever::tokenizer::Tokenizer::new(tracker, Default::default());
+    let input = html5ever::buffer_queue::BufferQueue::default();
+    input.push_back(text.into());
+    // As in html5ever's Parser, resume after script/encoding indicators.
+    while !matches!(tokenizer.feed(&input), html5ever::TokenizerResult::Done) {}
+    tokenizer.end();
+    let explicit_head = tokenizer.sink.explicit_head.into_inner();
+    let dom = tokenizer.sink.tree.sink;
     let lower = text.to_lowercase();
     let src_has_tbody = lower.contains("<tbody");
     let mut out = Vec::new();
@@ -150,7 +224,7 @@ fn parse_html(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
         if drop_comments && matches!(&c.data, markup5ever_rcdom::NodeData::Comment { .. }) {
             continue;
         }
-        html_node(i, c, src_has_tbody, &mut out);
+        html_node(i, c, src_has_tbody, explicit_head.as_ref(), &mut out);
     }
     match out.as_slice() {
         [single] => single.clone(),

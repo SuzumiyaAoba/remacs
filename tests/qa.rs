@@ -370,3 +370,5 @@ qa!(qa_xml_well_formed, "qa_xml_well_formed.el");
 qa!(qa_xml_dtd_entities, "qa_xml_dtd_entities.el");
 
 qa!(qa_html_comments, "qa_html_comments.el");
+
+qa!(qa_html_head, "qa_html_head.el");
