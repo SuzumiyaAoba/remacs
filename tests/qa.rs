@@ -335,6 +335,7 @@ qa!(qa_delete_char_bounds, "qa_delete_char_bounds.el");
 qa!(qa_time_spec_validation, "qa_time_spec_validation.el");
 
 qa!(qa_time_zero_zone, "qa_time_zero_zone.el");
+qa!(qa_time_modifiers, "qa_time_modifiers.el");
 
 qa!(qa_thread_bookkeeping, "qa_thread_bookkeeping.el");
 

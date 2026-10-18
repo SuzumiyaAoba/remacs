@@ -4601,7 +4601,7 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU decodes TIME first (lisp_time_argument before
     // CHECK_STRING): (format-time-string 42 'bad) reports "Invalid
     // time specification", not (stringp 42).  Work in picoseconds so
-    // %N can see the PICO slot.
+    // normalization retains subsecond values before %N takes nanoseconds.
     let t = match args.get(1) {
         Some(v) => super::misc::lisp_time_to_ps(i, v)?,
         None => super::misc::lisp_time_to_ps(i, &Value::Nil)?,
@@ -4710,267 +4710,46 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             Value::Str(s) => Some(s.borrow().clone()),
             _ => None,
         });
-    let mut out = String::new();
-    let chars: Vec<char> = fmt.chars().collect();
-    let mut k = 0;
-    while k < chars.len() {
-        let c = chars[k];
-        if c != '%' {
-            out.push(c);
-            k += 1;
-            continue;
-        }
-        // %- flags, _ space-pad, 0 zero-pad, ^ uppercase, # case-swap,
-        // then an optional width, then (for %z) colons before the spec.
-        let mut j = k + 1;
-        let flag_start = j;
-        while j < chars.len() && matches!(chars[j], '-' | '_' | '0' | '^' | '#') {
-            j += 1;
-        }
-        let flags: Vec<char> = chars[flag_start..j].to_vec();
-        let uppercase = flags.contains(&'^');
-        let output_start = out.len();
-        let pad = if flags.contains(&'-') {
-            '-'
-        } else if flags.contains(&'_') {
-            '_'
-        } else {
-            '0'
-        };
-        let mut width = 0usize;
-        while j < chars.len() && chars[j].is_ascii_digit() {
-            width = width * 10 + (chars[j] as usize - '0' as usize);
-            j += 1;
-        }
-        let mut colons = 0usize;
-        while j < chars.len() && chars[j] == ':' {
-            colons += 1;
-            j += 1;
-        }
-        let spec = chars.get(j).copied();
-        let spec_text: String = chars[k..=j.min(chars.len() - 1)].iter().collect();
-        k = j + 1;
-        // %E and %O are POSIX alternative-representation modifiers:
-        // when a conversion letter follows, they're part of the spec
-        // (%Ec); a bare %E/%O is a literal per GNU.
-        if matches!(spec, Some('E') | Some('O')) {
-            if let Some(&nxt) = chars.get(k) {
-                if nxt.is_ascii_alphabetic() {
-                    let ext: String = chars[k..=k].iter().collect();
-                    let spec2 = format!("{}{}", spec_text, ext);
-                    // Preserve invalid GNU modifier combinations without
-                    // relying on libc's platform-specific literal fallback.
-                    let valid = if spec == Some('E') {
-                        "cnpqrstuxyzCPRTXYZ".contains(nxt)
-                    } else {
-                        "bdeghjklmnpqrstuwyzBCGHIMNPRSTUVWYZ".contains(nxt)
-                    };
-                    if uppercase && !valid {
-                        out.push_str(&spec2.to_ascii_uppercase());
-                    } else {
-                        out.push_str(&super::misc::strftime_spec(&spec2, &tm, locale.as_deref()));
-                    }
-                    k += 1;
-                    continue;
-                }
-            }
-            out.push_str(&spec_text);
-            continue;
-        }
-        let off = tm.tm_gmtoff;
-        // gnulib nstrftime %z rules (verified against GNU 31.1):
-        //  colons 0 → sign+hhmm; 1 → hh:mm; 2 → hh:mm:ss; 3 →
-        //  minimal (drop zero seconds, then zero minutes).  `-'/`_'
-        //  unpad just the hour field (colons=0 collapses to the
-        //  numeric hhmm); an explicit WIDTH zero-pads the hour so the
-        //  whole output reaches WIDTH chars; `_' = " " + `-'.
-        //  `compact' drops the colons — GNU's integer-zone %Z.
-        let signed_zone =
-            |off: i64, colons: usize, pad: char, width: usize, compact: bool| -> String {
-                let sign = if off < 0 { '-' } else { '+' };
-                let a = off.abs();
-                let (h, m, s) = (a / 3600, (a % 3600) / 60, a % 60);
-                let minimal = pad != '0';
-                let hh = |w: usize| -> String {
-                    if minimal {
-                        format!("{}", h)
-                    } else {
-                        format!("{:0w$}", h, w = w.max(2))
-                    }
-                };
-                let body = if compact {
-                    if s != 0 {
-                        format!("{:02}{:02}{:02}", h, m, s)
-                    } else if m != 0 {
-                        format!("{:02}{:02}", h, m)
-                    } else {
-                        format!("{:02}", h)
-                    }
-                } else {
-                    match colons {
-                        0 => {
-                            if minimal {
-                                format!("{}", h * 100 + m)
-                            } else {
-                                format!("{}{:02}", hh(width.saturating_sub(3)), m)
-                            }
-                        }
-                        1 => format!("{}:{:02}", hh(width.saturating_sub(4)), m),
-                        2 => format!("{}:{:02}:{:02}", hh(width.saturating_sub(7)), m, s),
-                        _ => {
-                            if s != 0 {
-                                format!("{}:{:02}:{:02}", hh(0), m, s)
-                            } else if m != 0 {
-                                format!("{}:{:02}", hh(0), m)
-                            } else {
-                                hh(0)
-                            }
-                        }
-                    }
-                };
-                if pad == '_' {
-                    format!(" {}{}", sign, body)
-                } else {
-                    format!("{}{}", sign, body)
-                }
-            };
-        match spec {
-            // GNU treats a flagged percent as an invalid conversion.
-            Some('%') if !flags.is_empty() || width > 0 || colons > 0 => {
-                let prefix = &spec_text[..spec_text.len() - 1];
-                let padding = flags.iter().rev().find(|c| matches!(c, '-' | '_' | '0'));
-                if padding != Some(&'-') && width > prefix.len() {
-                    let ch = if padding == Some(&'0') { '0' } else { ' ' };
-                    out.push_str(&ch.to_string().repeat(width - prefix.len()));
-                }
-                out.push_str(prefix);
-                k = j; // GNU reprocesses the second percent as a new format.
-            }
-            Some('P') => {
-                // glibc %P = lowercase %p; macOS strftime lacks it.
-                let p = super::misc::strftime_spec("%p", &tm, locale.as_deref());
-                out.push_str(&p.to_lowercase());
-            }
-            Some('N') => {
-                // Width selects the number of fraction digits
-                // (default 9 = nanoseconds; up to 12 = picoseconds).
-                let w = if width == 0 { 9 } else { width.min(12) };
-                let s = format!("{:012}", frac12);
-                out.push_str(&s[..w]);
-            }
-            Some('s') => out.push_str(&format!("{}", secs)),
-            Some('q') => {
-                // GNU extension: quarter of year (not in strftime).
-                out.push_str(&format!("{}", tm.tm_mon / 3 + 1));
-            }
-            Some('l') => {
-                // macOS strftime lacks %l (space-padded 12-hour).
-                let h12 = if tm.tm_hour % 12 == 0 {
-                    12
-                } else {
-                    tm.tm_hour % 12
-                };
-                out.push_str(&format!("{:2}", h12));
-            }
-            Some('k') => {
-                out.push_str(&format!("{:2}", tm.tm_hour));
-            }
-            // macOS strftime derives %z from the process TZ and lacks
-            // the colon variants — compute it from tm_gmtoff instead.
-            Some('z') => out.push_str(&signed_zone(off, colons, pad, width, false)),
-            Some('Z') => match &zlabel {
-                // GNU: an integer-zone %Z renders compactly — sign plus
-                // hh[mm[ss]] with trailing zero fields dropped.
-                ZoneLabel::Offset(off) => {
-                    out.push_str(&signed_zone(*off, 3, '0', 0, true));
-                }
-                ZoneLabel::Named(n) => out.push_str(n),
-                ZoneLabel::Libc => {
-                    let name = if tm.tm_zone.is_null() {
-                        String::new()
-                    } else {
-                        unsafe { std::ffi::CStr::from_ptr(tm.tm_zone as *const i8) }
-                            .to_string_lossy()
-                            .into_owned()
-                    };
-                    out.push_str(&name);
-                }
-            },
-            // Unsupported spec letters pass through literally (GNU's
-            // Emacs-only specs like %q are handled above; unknown
-            // strftime letters echo the whole "%<flags>X" text).
-            Some(s) if !matches!(s, 'a'..='z' | 'A'..='Z' | '%') => {
-                out.push_str(&spec_text);
-            }
-            Some(s) => {
-                let known = matches!(
-                    s,
-                    'a' | 'A'
-                        | 'b'
-                        | 'B'
-                        | 'c'
-                        | 'C'
-                        | 'd'
-                        | 'D'
-                        | 'e'
-                        | 'F'
-                        | 'g'
-                        | 'G'
-                        | 'h'
-                        | 'H'
-                        | 'I'
-                        | 'j'
-                        | 'm'
-                        | 'M'
-                        | 'n'
-                        | 'p'
-                        | 'P'
-                        | 'r'
-                        | 'R'
-                        | 'S'
-                        | 't'
-                        | 'T'
-                        | 'u'
-                        | 'U'
-                        | 'V'
-                        | 'w'
-                        | 'W'
-                        | 'x'
-                        | 'X'
-                        | 'y'
-                        | 'Y'
-                        | '%'
-                );
-                if known {
-                    out.push_str(&super::misc::strftime_spec(
-                        &spec_text,
-                        &tm,
-                        locale.as_deref(),
-                    ));
-                } else {
-                    out.push_str(&spec_text);
-                }
-            }
-            None => out.push_str(&spec_text),
-        }
-        // Extensions such as named %Z bypass strftime.  Lowercase %P
-        // and %#p/%#Z take precedence over the uppercase flag.
-        if spec == Some('Z') && flags.contains(&'#') {
-            out[output_start..].make_ascii_lowercase();
-        } else if uppercase && spec != Some('P')
-            && !(spec == Some('p') && flags.contains(&'#'))
-        {
-            out[output_start..].make_ascii_uppercase();
-        }
-        if uppercase && matches!(spec, Some('P') | Some('Z')) {
-            let pad = flags.iter().rev().find(|c| matches!(c, '-' | '_' | '0'));
-            let len = out.len() - output_start;
-            if pad != Some(&'-') && width > len {
-                let ch = if pad == Some(&'0') { '0' } else { ' ' };
-                out.insert_str(output_start, &ch.to_string().repeat(width - len));
+    // Own the zone name before any locale/TZ operation can invalidate libc's
+    // tm_zone. All GNU modifiers are rendered in Rust, independently of libc.
+    let zone = match zlabel {
+        ZoneLabel::Named(name) => name,
+        ZoneLabel::Offset(off) => {
+            let sign = if off < 0 { '-' } else { '+' };
+            let a = off.unsigned_abs();
+            let (h, m, s) = (a / 3600, a / 60 % 60, a % 60);
+            if s != 0 {
+                format!("{sign}{h:02}{m:02}{s:02}")
+            } else if m != 0 {
+                format!("{sign}{h:02}{m:02}")
+            } else {
+                format!("{sign}{h:02}")
             }
         }
-    }
+        ZoneLabel::Libc => {
+            if tm.tm_zone.is_null() {
+                String::new()
+            } else {
+                unsafe { std::ffi::CStr::from_ptr(tm.tm_zone as *const i8) }
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        }
+    };
+    // tz_local_tm restores TZ before returning; its tm_zone can therefore
+    // dangle. Native locale composites must see the same owned name as %Z.
+    let czone = std::ffi::CString::new(zone.split('\0').next().unwrap_or("")).unwrap();
+    let mut tm = tm;
+    tm.tm_zone = czone.as_ptr().cast();
+    let out = super::timefmt::format_time(
+        &fmt,
+        &tm,
+        secs,
+        (frac12 / 1000) as u32,
+        &zone,
+        &mut |spec| super::misc::strftime_spec(spec, &tm, locale.as_deref()),
+    )
+    .map_err(|()| i.error("Invalid time specification"))?;
     Ok(Value::string(out))
 }
 

@@ -31,6 +31,7 @@ pub(crate) mod seq;
 pub(crate) mod sqlite;
 pub(crate) mod strfn;
 pub(crate) mod treesit;
+pub(crate) mod timefmt;
 pub(crate) mod xml;
 
 use super::Interp;

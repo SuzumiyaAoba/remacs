@@ -478,6 +478,20 @@ Regression: `isearch_extends_match_in_place_and_overlays_paint',
 `tui_isearch_highlights_matches', `tui_face_text_props_and_region_paint'.
 
 
+## Portable time formatting
+
+`src/lisp/builtins/timefmt.rs` implements GNU flag ordering, field widths,
+numeric fields, composite dates, fractional precision, and zone formatting.
+Never forward GNU flags or widths to libc: macOS strftime does not support
+those extensions. `misc::strftime_spec` supplies only unadorned locale text
+(names, locale composites, and eras). Keep the resolved zone name owned while
+native locale conversion runs, since restoring TZ can invalidate `tm_zone`.
+Width is measured in bytes, numeric zero-padding follows the sign, text
+normally space-pads, and the last padding flag wins. `%N` uses nanoseconds
+and right-padding; `%F` applies its width to the year field. Regressions:
+`qa_time_modifiers`, `qa_time_zero_zone`, `qa_timefmt`, and the portable
+formatter unit test that rejects nonportable calls to its native callback.
+
 ## GNU-compat QA suite (`tests/qa.rs` + `tests/qa_*.el`)
 
 Each `qa_*.el` file is a flat list of `(qa FORM EXPECTED)` checks driven
