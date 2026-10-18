@@ -4142,6 +4142,18 @@ fn sxhash_obj_ptr5(v: &Value) -> u64 {
     (p as u64 >> 2) ^ 5
 }
 
+/// GNU hashfn_user_defined: fixnums are already hash codes; all other
+/// Lisp results are hashed with sxhash, then reduced to hash_hash_t.
+pub(crate) fn user_hash_code(i: &Interp, value: &Value) -> u32 {
+    let hash = match value {
+        Value::Int(n) if (-(1i128 << 61)..(1i128 << 61)).contains(n) => {
+            (*n as u64) & 0x3fff_ffff_ffff_ffff
+        }
+        _ => sxhash_obj(i, value, 0),
+    };
+    (hash ^ (hash >> 32)) as u32
+}
+
 fn f_sxhash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Int(sxhash_reduce(sxhash_obj(i, &args[0], 0))))
 }

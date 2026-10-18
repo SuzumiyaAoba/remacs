@@ -182,6 +182,17 @@ pins the post-boot behavior.
 - `PRELUDE_MAX` env var truncates prelude evaluation for bisection;
   `--ieval` bisects a form interactively; `WHILE_WATCH` traces eval loops.
 
+## Custom hash-table tests
+
+`define-hash-table-test` tables capture their comparison/hash functions at
+creation. `gethash`/`puthash`/`remhash` call the hash function and compare
+colliding entries with the supplied predicate, preserving the original key
+on replacement. Copies retain the captured functions and test name; printed
+custom tables read through the same constructor/insertion path. Lisp
+callbacks may read the table but cannot mutate it, and errors/throws restore
+mutability. Built-in eq/eql/equal tables keep their normalized-key path.
+Regression: `tests/qa_hash_custom.el` (GNU Emacs 31.1).
+
 ## Tree-sitter support (`src/lisp/builtins/treesit.rs`)
 
 Implemented: grammar loading via `libloading` (lookup order:

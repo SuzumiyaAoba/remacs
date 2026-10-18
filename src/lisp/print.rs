@@ -1769,6 +1769,26 @@ pub fn format_float(f: f64) -> String {
     s
 }
 
+/// A user-supplied print-number-table can use a custom test. Route its
+/// writes through puthash so callbacks and their mutation guard apply.
+fn preprocess_put(
+    i: &mut Interp,
+    h: &crate::lisp::value::HashRef,
+    key: crate::lisp::value::HashKey,
+    original: &Value,
+    value: Value,
+) -> Result<(), crate::lisp::error::Flow> {
+    if h.borrow().user_test.is_some() {
+        crate::lisp::builtins::hashfn::f_puthash(
+            i,
+            vec![original.clone(), value, Value::Hash(h.clone())].into(),
+        )?;
+    } else {
+        h.borrow_mut().map.insert(key, value);
+    }
+    Ok(())
+}
+
 /// GNU print.c `Fprint_preprocess': when `print-circle' is non-nil,
 /// fill `print-number-table' — each `print-circle-candidate' gets t
 /// at its first encounter and `-N' (bumping `print_number_index') at
@@ -1795,8 +1815,12 @@ pub fn f_print_preprocess(i: &mut Interp, a: crate::lisp::Argv) -> crate::lisp::
         if !print_circle_candidate(i, &x) {
             continue;
         }
-        let key =
-            crate::lisp::builtins::hashfn::hash_key_for(i, &x, crate::lisp::value::HashTest::Eq);
+        let custom = h.borrow().user_test.is_some();
+        let key = if custom {
+            crate::lisp::builtins::hashfn::table_key(i, &h, &x)?
+        } else {
+            crate::lisp::builtins::hashfn::hash_key_for(i, &x, crate::lisp::value::HashTest::Eq)
+        };
         let cur = h.borrow().map.get(&key).cloned();
         match cur {
             Some(Value::Sym(s)) if s == crate::lisp::sym::T => {
@@ -1804,7 +1828,7 @@ pub fn f_print_preprocess(i: &mut Interp, a: crate::lisp::Argv) -> crate::lisp::
                     c.set(c.get() + 1);
                     c.get()
                 });
-                h.borrow_mut().map.insert(key, Value::Int(-(n as i128)));
+                preprocess_put(i, &h, key, &x, Value::Int(-(n as i128)))?;
             }
             // Under `print-continuous-numbering' an uninterned symbol
             // always gets a number (GNU's byte-compile-output-docform
@@ -1816,11 +1840,9 @@ pub fn f_print_preprocess(i: &mut Interp, a: crate::lisp::Argv) -> crate::lisp::
                         c.set(c.get() + 1);
                         c.get()
                     });
-                    h.borrow_mut().map.insert(key, Value::Int(-(n as i128)));
+                    preprocess_put(i, &h, key, &x, Value::Int(-(n as i128)))?;
                 } else {
-                    h.borrow_mut()
-                        .map
-                        .insert(key, Value::Sym(crate::lisp::sym::T));
+                    preprocess_put(i, &h, key, &x, Value::Sym(crate::lisp::sym::T))?;
                 }
                 match &x {
                     Value::Cons(c) => {

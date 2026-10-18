@@ -119,6 +119,7 @@ pub enum HashTest {
     Equal,
 }
 
+#[derive(Clone)]
 pub struct LispHash {
     pub test: HashTest,
     /// We key on a normalized form so `equal` keys hash correctly.
@@ -138,10 +139,16 @@ pub struct LispHash {
     pub rehash_size: Value,
     pub rehash_threshold: Value,
     /// Name given to :test when it was a `define-hash-table-test'
-    /// symbol — `hash-table-test' reports it verbatim (GNU uses the
-    /// registered test/hash functions; we approximate with `equal'
-    /// semantics but keep the name).
+    /// symbol — `hash-table-test' reports it verbatim.
     pub test_name: Value,
+    /// Comparison and hash functions captured when a custom table is made.
+    pub user_test: Option<(Value, Value)>,
+    /// User callbacks may read this table, but must not mutate it.
+    pub mutable: bool,
+    /// Collision-chain insertion order, rebuilt from slots when resized.
+    pub custom_order: Vec<usize>,
+    /// GNU reuses removed custom-table slots in last-removed-first order.
+    pub custom_free_slots: Vec<usize>,
 }
 
 impl LispHash {
@@ -155,6 +162,10 @@ impl LispHash {
             rehash_size: Value::float(1.5),
             rehash_threshold: Value::float(0.8125),
             test_name: Value::Nil,
+            user_test: None,
+            mutable: true,
+            custom_order: Vec::new(),
+            custom_free_slots: Vec::new(),
         }
     }
 
@@ -165,6 +176,26 @@ impl LispHash {
         if self.keys.0.iter().flatten().any(|(e, _)| *e == hk) {
             return;
         }
+        if self.user_test.is_some() {
+            if self.custom_order.len() as i128 == self.size {
+                // GNU maybe_resize_hash_table re-links old entries by slot
+                // order, without calling either Lisp function again.
+                self.size = if self.size == 0 {
+                    6
+                } else {
+                    self.size.max(6) * if self.size <= 64 { 4 } else { 2 }
+                };
+                self.custom_order = (0..self.keys.0.len()).collect();
+            }
+            let slot = self.custom_free_slots.pop().unwrap_or(self.keys.0.len());
+            self.custom_order.push(slot);
+            if slot == self.keys.0.len() {
+                self.keys.0.push(Some((hk, k)));
+            } else {
+                self.keys.0[slot] = Some((hk, k));
+            }
+            return;
+        }
         match self.keys.0.iter_mut().find(|e| e.is_none()) {
             Some(slot) => *slot = Some((hk, k)),
             None => self.keys.0.push(Some((hk, k))),
@@ -172,13 +203,17 @@ impl LispHash {
     }
 
     pub fn remove_key(&mut self, hk: &HashKey) {
-        if let Some(e) = self
+        if let Some(slot) = self
             .keys
             .0
-            .iter_mut()
-            .find(|e| matches!(e, Some((h, _)) if h == hk))
+            .iter()
+            .position(|e| matches!(e, Some((h, _)) if h == hk))
         {
-            *e = None;
+            self.keys.0[slot] = None;
+            if self.user_test.is_some() {
+                self.custom_order.retain(|index| *index != slot);
+                self.custom_free_slots.push(slot);
+            }
         }
     }
 }
@@ -223,6 +258,9 @@ pub enum HashKey {
     /// the tag keeps the namespaces apart).  Tag: 1 = record,
     /// 2 = `#[...]' byte-code object, 3 = interpreted lambda.
     Tagged(u64, Vec<HashKey>),
+    /// User-provided hash code and an entry slot. Equal hash
+    /// codes select candidates; only the user's comparator merges keys.
+    Custom(u32, usize),
 }
 
 /// Max argument count for a subr: fixed or unlimited.

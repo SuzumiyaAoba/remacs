@@ -1051,7 +1051,7 @@ impl<'a> Reader<'a> {
                 }
                 if let Value::Sym(t) = &items[0] {
                     if self.interp.symbol_name(*t) == "hash-table" {
-                        if let Some(h) = read_hash_literal(self.interp, &items[1..]) {
+                        if let Some(h) = read_hash_literal(self.interp, &items[1..])? {
                             return Ok(h);
                         }
                     }
@@ -1364,9 +1364,56 @@ pub fn parse_number(tok: &str) -> Option<Value> {
 /// weakness SYM rehash-size F rehash-threshold F purecopy B').
 /// Returns None when the shape doesn't match (caller falls back to a
 /// plain record).
-fn read_hash_literal(i: &mut Interp, fields: &[Value]) -> Option<Value> {
+fn read_hash_literal(i: &mut Interp, fields: &[Value]) -> Result<Option<Value>, Flow> {
     use crate::lisp::builtins::hashfn::hash_key_for;
     use crate::lisp::value::{HashTest, LispHash};
+    // GNU's printed custom tables use the first occurrence of each plist
+    // field, ignore size/unknown fields, and size storage from the data.
+    // Leave the existing built-in literal path below unchanged.
+    let property = |name: &str| {
+        fields
+            .chunks(2)
+            .find(|pair| matches!(&pair[0], Value::Sym(id) if i.symbol_name(*id) == name))
+            .and_then(|pair| pair.get(1))
+            .cloned()
+            .unwrap_or(Value::Nil)
+    };
+    let test_arg = property("test");
+    if let Value::Sym(id) = &test_arg
+        && !matches!(i.symbol_name(*id).as_str(), "eq" | "eql" | "equal" | "nil")
+    {
+        let data = property("data");
+        let weakness = property("weakness");
+        if !matches!(data, Value::Nil | Value::Cons(_)) {
+            return Err(i.error("Hash table data is not a list"));
+        }
+        let pairs = crate::lisp::builtins::want_list(i, &data)?;
+        if pairs.len() % 2 != 0 {
+            return Err(i.error("Hash table data length is odd"));
+        }
+        let test_kw = Value::Sym(i.intern(":test"));
+        let size_kw = Value::Sym(i.intern(":size"));
+        let weakness_kw = Value::Sym(i.intern(":weakness"));
+        let table = crate::lisp::builtins::hashfn::f_make_hash_table(
+            i,
+            vec![
+                test_kw,
+                test_arg,
+                size_kw,
+                Value::Int((pairs.len() / 2) as i128),
+                weakness_kw,
+                weakness,
+            ]
+            .into(),
+        )?;
+        for pair in pairs.chunks_exact(2) {
+            crate::lisp::builtins::hashfn::f_puthash(
+                i,
+                vec![pair[0].clone(), pair[1].clone(), table.clone()].into(),
+            )?;
+        }
+        return Ok(Some(table));
+    }
     let mut test = HashTest::Eql;
     let mut data: Option<Vec<Value>> = None;
     let mut size: i128 = 0;
@@ -1374,24 +1421,26 @@ fn read_hash_literal(i: &mut Interp, fields: &[Value]) -> Option<Value> {
     let mut k = 0;
     while k + 1 < fields.len() {
         let Value::Sym(name_id) = &fields[k] else {
-            return None;
+            return Ok(None);
         };
         let name = i.symbol_name(*name_id).to_string();
         let val = &fields[k + 1];
         match name.as_str() {
             "test" => {
-                let Value::Sym(tid) = val else { return None };
+                let Value::Sym(tid) = val else {
+                    return Ok(None);
+                };
                 test = match i.symbol_name(*tid).as_str() {
                     "eq" => HashTest::Eq,
                     "eql" => HashTest::Eql,
                     "equal" => HashTest::Equal,
-                    _ => return None,
+                    _ => return Ok(None),
                 };
             }
             "data" => {
                 data = val.list_to_vec().ok();
                 if data.is_none() && !val.is_nil() {
-                    return None;
+                    return Ok(None);
                 }
             }
             "size" => {
@@ -1411,12 +1460,12 @@ fn read_hash_literal(i: &mut Interp, fields: &[Value]) -> Option<Value> {
             // rehash-size/rehash-threshold/purecopy are accepted and
             // ignored like `make-hash-table'.
             "rehash-size" | "rehash-threshold" | "purecopy" => {}
-            _ => return None,
+            _ => return Ok(None),
         }
         k += 2;
     }
     if k != fields.len() {
-        return None;
+        return Ok(None);
     }
     let mut h = LispHash::new(test);
     h.size = size;
@@ -1429,7 +1478,9 @@ fn read_hash_literal(i: &mut Interp, fields: &[Value]) -> Option<Value> {
             h.put_key(key, ky);
         }
     }
-    Some(Value::Hash(std::rc::Rc::new(std::cell::RefCell::new(h))))
+    Ok(Some(Value::Hash(std::rc::Rc::new(
+        std::cell::RefCell::new(h),
+    ))))
 }
 
 fn parse_float(tok: &str) -> Option<f64> {
