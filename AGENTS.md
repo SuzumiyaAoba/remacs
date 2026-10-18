@@ -323,6 +323,9 @@ Architecture:
   A failed load keeps earlier definitions callable and skips later forms.
   Existing `.eln` files must be recompiled to gain corrected generated
   code or newly retained top-level forms; old units remain loadable.
+- File compilation propagates reader errors, including malformed tails after
+  valid definitions. Only clean EOF ends the source scan; failure restores
+  compiler-local macros and bindings without creating or replacing output.
 - `.eln` naming matches GNU: `<base>-<md5(truename)[:8]>-<md5(contents)[:8]>.eln`
   under `~/.emacs.d/eln-cache/31.1-remacs/`.
 - `native-compile` accepts files, symbols, and lambda objects;

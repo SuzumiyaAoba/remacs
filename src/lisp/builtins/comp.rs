@@ -1558,18 +1558,20 @@ fn compile_file_to(i: &mut Interp, path: &str, out: &str) -> Result<bool, Flow> 
     };
     let result = result.and_then(|env| {
         emitter.macro_env = env;
+        // Reader::read distinguishes clean EOF (including trailing comments)
+        // from an incomplete form. read_from_string turns both into an
+        // end-of-file signal, so swallowing its errors loses malformed tails.
+        // Share the characters and keep offsets in characters, not UTF-8 bytes.
+        let chars: Rc<Vec<char>> = Rc::new(data.chars().collect());
         let mut off = 0;
         let mut any_form = false;
-        while off < data.len() {
-            match i.read_from_string(&data, off) {
-                Ok((form, end)) if end > off => {
-                    off = end;
-                    any_form = true;
-                    emitter.form(i, &form)?;
-                }
-                // Keep the existing file reader's EOF behavior.
-                _ => break,
-            }
+        loop {
+            let mut reader = crate::lisp::reader::Reader::with_chars(i, chars.clone());
+            reader.set_position(off);
+            let Some(form) = reader.read()? else { break };
+            off = reader.position();
+            any_form = true;
+            emitter.form(i, &form)?;
         }
         if !any_form {
             return Ok(false);

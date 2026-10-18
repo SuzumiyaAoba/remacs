@@ -325,3 +325,51 @@ fn async_file_toplevel() {
         "(1 nil 42 42)"
     );
 }
+
+/// The synchronous async/directory wrappers must not accept or load a valid
+/// prefix of malformed source. Their return/error contract is remacs-specific.
+#[test]
+fn async_file_parse_errors() {
+    if !avail() {
+        return;
+    }
+    assert_eq!(
+        ev(r#"
+          (let* ((dir (make-temp-file "remacs-native-parse-errors-" t))
+                 (source (expand-file-name "broken.el" dir))
+                 output)
+            (unwind-protect
+                (progn
+                  (with-temp-file source
+                    (insert ";;; -*- lexical-binding: t; -*-\n"
+                            "(defun nc-parse-prefix () 7)\n(\n"))
+                  (setq output (comp-el-to-eln-filename source))
+                  (let ((async-error
+                         (condition-case err (native-compile-async source)
+                           (error (car err))))
+                        (load-error
+                         (condition-case err (native-compile-async source nil t)
+                           (error (car err))))
+                        (directory-error
+                         (condition-case err (native-compile-directory dir)
+                           (error (car err))))
+                        (batch-error
+                         (let ((command-line-args-left (list source)))
+                           (condition-case err (batch-native-compile)
+                             (error (car err))))))
+                    (list async-error load-error directory-error batch-error
+                          (file-exists-p output) (fboundp 'nc-parse-prefix)
+                          (progn
+                            (with-temp-file source
+                              (insert "(defun nc-parse-prefix () 23)\n; clean EOF"))
+                            (native-compile-async source nil t)
+                            (nc-parse-prefix)))))
+              (when (and output (file-exists-p output)) (delete-file output))
+              (when (file-exists-p source)
+                (let ((recovered (comp-el-to-eln-filename source)))
+                  (when (file-exists-p recovered) (delete-file recovered))))
+              (delete-directory dir t)))
+          "#),
+        "(end-of-file end-of-file end-of-file end-of-file nil nil 23)"
+    );
+}
