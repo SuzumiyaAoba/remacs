@@ -13,8 +13,12 @@
 mod dtd;
 
 use html5ever::tokenizer::{Token, TokenSink, TokenSinkResult};
+use html5ever::tree_builder::{ElementFlags, NodeOrText, QuirksMode, TreeSink};
+use html5ever::{Attribute, ExpandedName, QualName, tendril::StrTendril};
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::rc::Rc;
 
 use super::{S, arg};
 
@@ -90,19 +94,142 @@ fn check_base_url(i: &mut Interp, a: &[Value]) -> Result<(), Flow> {
 
 // ---------- HTML via html5ever + rcdom ----------
 
-/// Record the head created by an actual start tag. html5ever also inserts
+/// Track each tbody's own provenance, rather than the presence of a tag
+/// anywhere in the source. TreeBuilder creates implicit tbody elements while
+/// processing tr/td/th, but explicit ones while processing a tbody start tag.
+/// Keep the handles alive so their addresses cannot be reused during recovery.
+#[derive(Default)]
+struct HtmlDom {
+    dom: RcDom,
+    tbody_start: Cell<bool>,
+    explicit_tbodies: RefCell<HashMap<*const markup5ever_rcdom::Node, Handle>>,
+}
+
+impl TreeSink for HtmlDom {
+    type Handle = Handle;
+    type Output = Self;
+    type ElemName<'a> = ExpandedName<'a>;
+
+    fn finish(self) -> Self {
+        self
+    }
+
+    fn create_element(&self, name: QualName, attrs: Vec<Attribute>, flags: ElementFlags) -> Handle {
+        let explicit_tbody = self.tbody_start.get()
+            && name.local.as_ref() == "tbody"
+            && name.ns.as_ref() == "http://www.w3.org/1999/xhtml";
+        let node = self.dom.create_element(name, attrs, flags);
+        if explicit_tbody {
+            self.explicit_tbodies
+                .borrow_mut()
+                .insert(Rc::as_ptr(&node), node.clone());
+        }
+        node
+    }
+
+    // Delegate tree construction unchanged, including foster parenting,
+    // template contents, namespace integration, and selectedcontent cloning.
+    fn parse_error(&self, msg: std::borrow::Cow<'static, str>) {
+        self.dom.parse_error(msg);
+    }
+    fn get_document(&self) -> Handle {
+        self.dom.get_document()
+    }
+    fn elem_name<'a>(&'a self, target: &'a Handle) -> ExpandedName<'a> {
+        self.dom.elem_name(target)
+    }
+    fn create_comment(&self, text: StrTendril) -> Handle {
+        self.dom.create_comment(text)
+    }
+    fn create_pi(&self, target: StrTendril, data: StrTendril) -> Handle {
+        self.dom.create_pi(target, data)
+    }
+    fn append(&self, parent: &Handle, child: NodeOrText<Handle>) {
+        self.dom.append(parent, child);
+    }
+    fn append_based_on_parent_node(
+        &self,
+        element: &Handle,
+        prev: &Handle,
+        child: NodeOrText<Handle>,
+    ) {
+        self.dom.append_based_on_parent_node(element, prev, child);
+    }
+    fn append_doctype_to_document(&self, name: StrTendril, public: StrTendril, system: StrTendril) {
+        self.dom.append_doctype_to_document(name, public, system);
+    }
+    fn mark_script_already_started(&self, node: &Handle) {
+        self.dom.mark_script_already_started(node);
+    }
+    fn pop(&self, node: &Handle) {
+        self.dom.pop(node);
+    }
+    fn get_template_contents(&self, target: &Handle) -> Handle {
+        self.dom.get_template_contents(target)
+    }
+    fn same_node(&self, x: &Handle, y: &Handle) -> bool {
+        self.dom.same_node(x, y)
+    }
+    fn set_quirks_mode(&self, mode: QuirksMode) {
+        self.dom.set_quirks_mode(mode);
+    }
+    fn append_before_sibling(&self, sibling: &Handle, node: NodeOrText<Handle>) {
+        self.dom.append_before_sibling(sibling, node);
+    }
+    fn add_attrs_if_missing(&self, target: &Handle, attrs: Vec<Attribute>) {
+        self.dom.add_attrs_if_missing(target, attrs);
+    }
+    fn associate_with_form(
+        &self,
+        target: &Handle,
+        form: &Handle,
+        nodes: (&Handle, Option<&Handle>),
+    ) {
+        self.dom.associate_with_form(target, form, nodes);
+    }
+    fn remove_from_parent(&self, target: &Handle) {
+        self.dom.remove_from_parent(target);
+    }
+    fn reparent_children(&self, node: &Handle, new_parent: &Handle) {
+        self.dom.reparent_children(node, new_parent);
+    }
+    fn is_mathml_annotation_xml_integration_point(&self, node: &Handle) -> bool {
+        self.dom.is_mathml_annotation_xml_integration_point(node)
+    }
+    fn set_current_line(&self, line: u64) {
+        self.dom.set_current_line(line);
+    }
+    fn allow_declarative_shadow_roots(&self, parent: &Handle) -> bool {
+        self.dom.allow_declarative_shadow_roots(parent)
+    }
+    fn attach_declarative_shadow(
+        &self,
+        location: &Handle,
+        template: &Handle,
+        attrs: &[Attribute],
+    ) -> bool {
+        self.dom
+            .attach_declarative_shadow(location, template, attrs)
+    }
+    fn maybe_clone_an_option_into_selectedcontent(&self, option: &Handle) {
+        self.dom.maybe_clone_an_option_into_selectedcontent(option);
+    }
+}
+
+/// Supply token provenance to the DOM sink and record an explicit head.
+/// html5ever also inserts
 /// an empty head for body-only input, which libxml2 does not expose.
 /// Observing tokens *and* tree creation avoids mistaking comments, quoted
 /// attributes, raw text, or a late/ignored <head> for an explicit head.
-struct HtmlHeadTracker {
-    tree: html5ever::tree_builder::TreeBuilder<Handle, RcDom>,
+struct HtmlTokenTracker {
+    tree: html5ever::tree_builder::TreeBuilder<Handle, HtmlDom>,
     explicit_head: RefCell<Option<Handle>>,
     saw_head_start: Cell<bool>,
 }
 
-impl HtmlHeadTracker {
+impl HtmlTokenTracker {
     fn head(&self) -> Option<Handle> {
-        let document = self.tree.sink.document.children.borrow();
+        let document = self.tree.sink.dom.document.children.borrow();
         let html = document.iter().find(|node| {
             matches!(&node.data, NodeData::Element { name, .. }
                 if name.local.as_ref() == "html"
@@ -120,7 +247,7 @@ impl HtmlHeadTracker {
     }
 }
 
-impl TokenSink for HtmlHeadTracker {
+impl TokenSink for HtmlTokenTracker {
     type Handle = Handle;
 
     fn process_token(&self, token: Token, line: u64) -> TokenSinkResult<Handle> {
@@ -130,7 +257,13 @@ impl TokenSink for HtmlHeadTracker {
             // implied one. Later head tags cannot change its provenance.
             && !self.saw_head_start.replace(true)
             && self.head().is_none();
+        self.tree
+            .sink
+            .tbody_start
+            .set(matches!(&token, Token::TagToken(tag)
+            if tag.kind == html5ever::tokenizer::StartTag && tag.name.as_ref() == "tbody"));
         let result = self.tree.process_token(token, line);
+        self.tree.sink.tbody_start.set(false);
         if may_create_head {
             *self.explicit_head.borrow_mut() = self.head();
         }
@@ -150,7 +283,7 @@ impl TokenSink for HtmlHeadTracker {
 fn html_node(
     i: &mut Interp,
     h: &markup5ever_rcdom::Handle,
-    src_has_tbody: bool,
+    explicit_tbodies: &HashMap<*const markup5ever_rcdom::Node, Handle>,
     explicit_head: Option<&Handle>,
     out: &mut Vec<Value>,
 ) {
@@ -159,7 +292,7 @@ fn html_node(
         NodeData::Element { name, attrs, .. } => {
             let mut kids = Vec::new();
             for c in h.children.borrow().iter() {
-                html_node(i, c, src_has_tbody, explicit_head, &mut kids);
+                html_node(i, c, explicit_tbodies, explicit_head, &mut kids);
             }
             // Only the implicit empty head is absent from libxml2's DOM.
             if &*name.local == "head"
@@ -169,8 +302,12 @@ fn html_node(
                 return;
             }
             // html5ever implies <tbody> like HTML5; libxml2 doesn't.
-            // When the source has no tbody tag, unwrap it into the parent.
-            if &*name.local == "tbody" && !src_has_tbody {
+            // Unwrap only this node's synthesized group. Another explicit
+            // tbody, even in this same table, must not affect its provenance.
+            if &*name.local == "tbody"
+                && name.ns.as_ref() == "http://www.w3.org/1999/xhtml"
+                && !explicit_tbodies.contains_key(&Rc::as_ptr(h))
+            {
                 out.extend(kids);
                 return;
             }
@@ -202,8 +339,8 @@ fn html_node(
 }
 
 fn parse_html(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
-    let tracker = HtmlHeadTracker {
-        tree: html5ever::tree_builder::TreeBuilder::new(RcDom::default(), Default::default()),
+    let tracker = HtmlTokenTracker {
+        tree: html5ever::tree_builder::TreeBuilder::new(HtmlDom::default(), Default::default()),
         explicit_head: RefCell::new(None),
         saw_head_start: Cell::new(false),
     };
@@ -214,9 +351,9 @@ fn parse_html(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
     while !matches!(tokenizer.feed(&input), html5ever::TokenizerResult::Done) {}
     tokenizer.end();
     let explicit_head = tokenizer.sink.explicit_head.into_inner();
-    let dom = tokenizer.sink.tree.sink;
-    let lower = text.to_lowercase();
-    let src_has_tbody = lower.contains("<tbody");
+    let tracked_dom = tokenizer.sink.tree.sink;
+    let explicit_tbodies = tracked_dom.explicit_tbodies.into_inner();
+    let dom = tracked_dom.dom;
     let mut out = Vec::new();
     for c in dom.document.children.borrow().iter() {
         // GNU's DISCARD-COMMENTS selects the document's root element;
@@ -224,7 +361,7 @@ fn parse_html(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
         if drop_comments && matches!(&c.data, markup5ever_rcdom::NodeData::Comment { .. }) {
             continue;
         }
-        html_node(i, c, src_has_tbody, explicit_head.as_ref(), &mut out);
+        html_node(i, c, &explicit_tbodies, explicit_head.as_ref(), &mut out);
     }
     match out.as_slice() {
         [single] => single.clone(),
