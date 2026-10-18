@@ -43,6 +43,8 @@ pub enum ProcIo {
     },
     /// A connected TCP stream.
     Net(std::net::TcpStream),
+    /// A nonblocking TCP connect, completed only by the process event loop.
+    Connecting(TcpConnect),
     /// A message-oriented socket. Never use stream read/write semantics here.
     Datagram(DatagramIo),
     /// A listening server socket.
@@ -56,6 +58,165 @@ pub enum ProcIo {
     Serial(std::fs::File),
     /// No backend — GNU allows `make-process` without :command.
     None,
+}
+
+/// Keep ownership of an in-flight socket, including the untried addresses.
+/// Dropping this state cancels the attempt without waiting for the network.
+pub struct TcpConnect {
+    socket: Option<std::net::TcpStream>,
+    remote: std::net::SocketAddr,
+    remaining: VecDeque<std::net::SocketAddr>,
+}
+
+impl std::os::fd::AsRawFd for TcpConnect {
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        self.socket.as_ref().expect("connecting socket").as_raw_fd()
+    }
+}
+
+/// Set O_NONBLOCK before connect(2), not after TcpStream::connect has waited.
+/// The TcpStream owns the descriptor immediately, including all error paths.
+fn nonblocking_tcp_connect(addr: std::net::SocketAddr) -> std::io::Result<std::net::TcpStream> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    let fd = unsafe {
+        libc::socket(
+            if addr.is_ipv6() {
+                libc::AF_INET6
+            } else {
+                libc::AF_INET
+            },
+            libc::SOCK_STREAM,
+            0,
+        )
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let socket = unsafe { std::net::TcpStream::from_raw_fd(fd) };
+    if unsafe { libc::fcntl(socket.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    socket.set_nonblocking(true)?;
+    let result = match addr {
+        std::net::SocketAddr::V4(addr) => {
+            let mut raw: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+            raw.sin_family = libc::AF_INET as libc::sa_family_t;
+            raw.sin_port = addr.port().to_be();
+            raw.sin_addr.s_addr = u32::from_ne_bytes(addr.ip().octets());
+            #[cfg(any(
+                target_os = "macos",
+                target_os = "freebsd",
+                target_os = "openbsd",
+                target_os = "netbsd",
+                target_os = "dragonfly"
+            ))]
+            {
+                raw.sin_len = std::mem::size_of_val(&raw) as u8;
+            }
+            unsafe {
+                libc::connect(
+                    fd,
+                    (&raw as *const libc::sockaddr_in).cast(),
+                    std::mem::size_of_val(&raw) as libc::socklen_t,
+                )
+            }
+        }
+        std::net::SocketAddr::V6(addr) => {
+            let mut raw: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
+            raw.sin6_family = libc::AF_INET6 as libc::sa_family_t;
+            raw.sin6_port = addr.port().to_be();
+            raw.sin6_addr.s6_addr = addr.ip().octets();
+            raw.sin6_flowinfo = addr.flowinfo();
+            raw.sin6_scope_id = addr.scope_id();
+            #[cfg(any(
+                target_os = "macos",
+                target_os = "freebsd",
+                target_os = "openbsd",
+                target_os = "netbsd",
+                target_os = "dragonfly"
+            ))]
+            {
+                raw.sin6_len = std::mem::size_of_val(&raw) as u8;
+            }
+            unsafe {
+                libc::connect(
+                    fd,
+                    (&raw as *const libc::sockaddr_in6).cast(),
+                    std::mem::size_of_val(&raw) as libc::socklen_t,
+                )
+            }
+        }
+    };
+    if result < 0 {
+        let error = std::io::Error::last_os_error();
+        if !matches!(
+            error.raw_os_error(),
+            Some(libc::EINPROGRESS | libc::EINTR | libc::EALREADY)
+        ) {
+            return Err(error);
+        }
+    }
+    Ok(socket)
+}
+
+impl TcpConnect {
+    fn start(mut remaining: VecDeque<std::net::SocketAddr>) -> std::io::Result<Self> {
+        let mut error = std::io::Error::from_raw_os_error(libc::EADDRNOTAVAIL);
+        while let Some(addr) = remaining.pop_front() {
+            match nonblocking_tcp_connect(addr) {
+                Ok(socket) => {
+                    return Ok(Self {
+                        socket: Some(socket),
+                        remote: addr,
+                        remaining,
+                    });
+                }
+                Err(e) => error = e,
+            }
+        }
+        Err(error)
+    }
+
+    /// SO_ERROR is meaningful only after readiness. Reading it too early can
+    /// report zero while the handshake is still in progress.
+    fn poll(&mut self) -> std::io::Result<Option<std::net::TcpStream>> {
+        use std::os::fd::AsRawFd;
+        let socket = self.socket.as_ref().expect("connecting socket");
+        let mut fd = libc::pollfd {
+            fd: socket.as_raw_fd(),
+            events: libc::POLLOUT,
+            revents: 0,
+        };
+        let ready = unsafe { libc::poll(&mut fd, 1, 0) };
+        if ready == 0 {
+            return Ok(None);
+        }
+        if ready < 0 {
+            let error = std::io::Error::last_os_error();
+            return if error.kind() == std::io::ErrorKind::Interrupted {
+                Ok(None)
+            } else {
+                Err(error)
+            };
+        }
+        let result = socket.take_error().and_then(|error| match error {
+            Some(error) => Err(error),
+            None => socket.peer_addr().map(|_| ()),
+        });
+        match result {
+            Ok(()) => Ok(self.socket.take()),
+            Err(error) => {
+                self.socket.take();
+                if self.remaining.is_empty() {
+                    return Err(error);
+                }
+                // Each replacement is also nonblocking. Defer completion to
+                // the next event-loop turn instead of spinning on readiness.
+                *self = Self::start(std::mem::take(&mut self.remaining))?;
+                Ok(None)
+            }
+        }
+    }
 }
 
 /// The current UDP/local-datagram destination is updated by each received packet.
@@ -259,6 +420,9 @@ pub struct Proc {
     /// run / stop / exit / signal / open / listen / connect / failed.
     pub status: &'static str,
     pub exit_status: i32,
+    /// GNU stores the file-error data when connect fails before it can be
+    /// polled (as opposed to an asynchronous SO_ERROR errno).
+    connect_error: Value,
     /// Buffer receiving default-filter output.
     pub buffer: Option<usize>,
     /// Insertion marker into `buffer`.
@@ -282,6 +446,9 @@ pub struct Proc {
     pub dead: bool,
     /// Final-state sentinel already delivered.
     pub reported: bool,
+    /// The open sentinel is running; nested waits must not read this socket
+    /// until it returns, though sending from that sentinel is permitted.
+    opening: bool,
     /// :stop given at creation — start stopped.
     pub start_stopped: bool,
     /// Signal sent but not yet reflected in `status` (GNU applies
@@ -498,6 +665,7 @@ fn event_string(status: &str, code: i32) -> String {
             format!("{name}: {code}\n")
         }
         "open" => "open\n".to_string(),
+        "failed" => format!("failed with code {code}\n"),
         "closed" if code == 256 => "connection broken by remote peer\n".to_string(),
         _ => format!("{status}\n"),
     }
@@ -522,6 +690,20 @@ fn run_sentinel(i: &mut Interp, pref: &ProcessRef, status: &str, code: i32) -> R
 /// Poll one process: drain output, observe exit. Returns true if anything
 /// was consumed/changed.
 fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
+    if pref.borrow().dead || pref.borrow().opening {
+        return Ok(false);
+    }
+    if matches!(pref.borrow().io, ProcIo::Connecting(_)) {
+        return poll_connect(i, pref);
+    }
+    {
+        let p = pref.borrow();
+        if matches!(p.io, ProcIo::Net(_))
+            && (p.status == "stop" || matches!(p.filter, Value::Sym(s) if s == sym::T))
+        {
+            return Ok(false);
+        }
+    }
     if matches!(pref.borrow().io, ProcIo::Datagram(_)) {
         return poll_datagram(i, pref);
     }
@@ -697,6 +879,7 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     }
                 }
                 ProcIo::Datagram(_) => unreachable!("datagrams have a message-oriented poll path"),
+                ProcIo::Connecting(_) => unreachable!("connects have a readiness poll path"),
                 ProcIo::None => {}
             }
         }
@@ -753,6 +936,7 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     pid: 0,
                     status: "open",
                     exit_status: 0,
+                    connect_error: Value::Nil,
                     buffer,
                     mark: Some(free_process_marker()),
                     filter,
@@ -768,6 +952,7 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     contact,
                     dead: false,
                     reported: false,
+                    opening: false,
                     start_stopped: false,
                     pending_status: None,
                     gnutls: None,
@@ -804,6 +989,7 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     pid: 0,
                     status: "open",
                     exit_status: 0,
+                    connect_error: Value::Nil,
                     buffer,
                     mark: Some(free_process_marker()),
                     filter,
@@ -819,6 +1005,7 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     contact,
                     dead: false,
                     reported: false,
+                    opening: false,
                     start_stopped: false,
                     pending_status: None,
                     gnutls: None,
@@ -833,6 +1020,75 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
         }
     }
     Ok(did)
+}
+
+/// Complete a nonblocking handshake before any filter can read from it.
+/// Publish the new state and release the borrow before invoking Lisp: an open
+/// sentinel can send, wait recursively, replace the filter, or delete p.
+fn poll_connect(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
+    let result = {
+        let mut p = pref.borrow_mut();
+        let ProcIo::Connecting(connect) = &mut p.io else {
+            return Ok(false);
+        };
+        connect.poll()
+    };
+    match result {
+        Ok(None) => {}
+        Ok(Some(socket)) => {
+            let local = socket.local_addr().ok().map(socket_addr_value);
+            let remote = socket.peer_addr().ok().map(socket_addr_value);
+            let local_kw = i.intern(":local");
+            let remote_kw = i.intern(":remote");
+            {
+                let mut p = pref.borrow_mut();
+                p.io = ProcIo::Net(socket);
+                if p.status == "stop" {
+                    p.pending_status = Some("open");
+                } else {
+                    p.status = "open";
+                }
+                p.opening = true;
+                // Replace existing address keys, preserving the creation args.
+                let mut items = p.contact.list_to_vec().unwrap_or_default();
+                for (key, value) in [(local_kw, local), (remote_kw, remote)] {
+                    if let Some(value) = value {
+                        if let Some(at) = items
+                            .chunks_exact(2)
+                            .position(|pair| matches!(pair[0], Value::Sym(s) if s == key))
+                        {
+                            items[at * 2 + 1] = value;
+                        } else {
+                            items.extend([Value::Sym(key), value]);
+                        }
+                    }
+                }
+                p.contact = Value::list(items);
+            }
+            let result = run_sentinel(i, pref, "open", 0);
+            pref.borrow_mut().opening = false;
+            result?;
+        }
+        Err(error) => {
+            let code = error.raw_os_error().unwrap_or(libc::EIO);
+            {
+                let mut p = pref.borrow_mut();
+                p.io = ProcIo::None;
+                if p.status == "stop" {
+                    p.pending_status = Some("failed");
+                } else {
+                    p.status = "failed";
+                }
+                p.exit_status = code;
+                p.reported = true;
+            }
+            // Unlike exit/closed, GNU keeps a failed connection registered
+            // until explicitly deleted, including while its sentinel runs.
+            run_sentinel(i, pref, "failed", code)?;
+        }
+    }
+    // A status transition is not output for accept-process-output.
+    Ok(false)
 }
 
 /// Deliver one packet before reading the next: filters must observe its sender,
@@ -964,6 +1220,7 @@ fn base_proc(name: String, kind: &'static str, io: ProcIo) -> Proc {
         pid: 0,
         status: "run",
         exit_status: 0,
+        connect_error: Value::Nil,
         buffer: None,
         mark: Some(free_process_marker()),
         filter: Value::Nil,
@@ -979,6 +1236,7 @@ fn base_proc(name: String, kind: &'static str, io: ProcIo) -> Proc {
         contact: Value::Nil,
         dead: false,
         reported: false,
+        opening: false,
         start_stopped: false,
         pending_status: None,
         gnutls: None,
@@ -1026,6 +1284,9 @@ fn finish_setup(
         p.start_stopped = true;
         p.pending_status = Some(p.status);
         p.status = "stop";
+        if p.kind == "network" {
+            p.command = Value::t();
+        }
     }
     let ct = kw(i, args, ":connection-type");
     if ct.truthy() {
@@ -1839,11 +2100,60 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         return Ok(Value::Process(pref));
     }
     let port = service_port(i, &service)?;
-    let stream = match std::net::TcpStream::connect((host.as_str(), port)) {
-        Ok(s) => s,
+    let nowait = kw(i, &args, ":nowait").truthy();
+    let connection = if nowait {
+        use std::net::ToSocketAddrs;
+        // Name resolution follows the platform's resolver; no TCP handshake
+        // is allowed to block, including fallback to another resolved address.
+        (host.as_str(), port)
+            .to_socket_addrs()
+            .and_then(|addresses| {
+                let family = match family_v {
+                    Value::Sym(s) => i.symbol_name(s),
+                    _ => String::new(),
+                };
+                TcpConnect::start(
+                    addresses
+                        .filter(|addr| match family.as_str() {
+                            "ipv4" => addr.is_ipv4(),
+                            "ipv6" => addr.is_ipv6(),
+                            _ => true,
+                        })
+                        .collect(),
+                )
+                .map(ProcIo::Connecting)
+            })
+    } else {
+        std::net::TcpStream::connect((host.as_str(), port)).and_then(|stream| {
+            stream.set_nonblocking(true)?;
+            Ok(ProcIo::Net(stream))
+        })
+    };
+    let io = match connection {
+        Ok(io) => io,
         Err(e) => {
             // GNU: (file-error "make client process failed" <errno> <plist>)
             let fe = i.intern("file-error");
+            if nowait {
+                let message = e.to_string();
+                let mut data = vec![
+                    Value::Sym(fe),
+                    Value::string("make client process failed"),
+                    Value::string(message.split(" (os error").next().unwrap_or(&message)),
+                ];
+                data.extend(args.list_to_vec().unwrap_or_default());
+                let mut p = base_proc(name, "network", ProcIo::None);
+                p.status = "failed";
+                p.exit_status = e.raw_os_error().unwrap_or(libc::EIO);
+                p.connect_error = Value::list(data);
+                p.contact = args.clone();
+                // No readiness notification exists in this immediate-error
+                // case. Explicit deletion still delivers a deleted event.
+                p.reported = true;
+                let pref = finish_setup(i, p, &args, false)?;
+                i.processes.push(pref.clone());
+                return Ok(Value::Process(pref));
+            }
             let mut data = vec![
                 Value::string("make client process failed"),
                 Value::string(e.to_string()),
@@ -1852,22 +2162,32 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             return Err(i.signal_data(fe, data));
         }
     };
-    let _ = stream.set_nonblocking(true);
-    let local_port = stream.local_addr().map(|a| a.port()).unwrap_or(0);
-    let mut p = base_proc(name, "network", ProcIo::Net(stream));
-    p.status = "open";
+    let (remote, local) = match &io {
+        ProcIo::Connecting(connect) => (
+            socket_addr_value(connect.remote),
+            connect
+                .socket
+                .as_ref()
+                .and_then(|s| s.local_addr().ok())
+                .map(socket_addr_value)
+                .unwrap_or(Value::Nil),
+        ),
+        ProcIo::Net(stream) => (
+            addr_vec(&host, port),
+            addr_vec(
+                "127.0.0.1",
+                stream.local_addr().map(|a| a.port()).unwrap_or(0),
+            ),
+        ),
+        _ => unreachable!("TCP client backend"),
+    };
+    let mut p = base_proc(name, "network", io);
+    // Even an immediately successful nonblocking connect is observable as
+    // `connect' until an event-loop turn delivers its open sentinel.
+    p.status = if nowait { "connect" } else { "open" };
     let remote_kw = symv(i, ":remote");
     let local_kw = symv(i, ":local");
-    p.contact = contact_plist(
-        i,
-        port,
-        vec![
-            remote_kw,
-            addr_vec(&host, port),
-            local_kw,
-            addr_vec("127.0.0.1", local_port),
-        ],
-    );
+    p.contact = contact_plist(i, port, vec![remote_kw, remote, local_kw, local]);
     let pref = finish_setup(i, p, &args, false)?;
     i.processes.push(pref.clone());
     Ok(Value::Process(pref))
@@ -2164,6 +2484,9 @@ fn f_process_status(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_process_exit_status(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let p = want_proc(i, &a[0])?;
+    if p.borrow().connect_error.truthy() {
+        return Ok(p.borrow().connect_error.clone());
+    }
     Ok(Value::Int(p.borrow().exit_status as i128))
 }
 
@@ -2648,6 +2971,20 @@ fn write_child_input(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult
 }
 
 fn proc_write(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
+    // GNU waits for connection completion while servicing the event loop.
+    // Never hold a RefCell borrow across callbacks or fall back to a blocking
+    // socket; a timer/sentinel can cancel this wait by deleting the process.
+    while matches!(p.borrow().io, ProcIo::Connecting(_)) && !p.borrow().dead {
+        if i.quit_flag {
+            i.quit_flag = false;
+            return Err(Flow::Quit);
+        }
+        timer_check(i)?;
+        poll_all(i)?;
+        if matches!(p.borrow().io, ProcIo::Connecting(_)) && !p.borrow().dead {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
     if matches!(p.borrow().io, ProcIo::Datagram(_)) {
         return write_datagram(i, p, bytes);
     }
@@ -2655,7 +2992,21 @@ fn proc_write(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
         return write_child_input(i, p, bytes);
     }
     let mut pb = p.borrow_mut();
+    if !pb.dead && (pb.status == "failed" || pb.pending_status == Some("failed")) {
+        let code = if pb.connect_error.truthy() {
+            i.princ_to_string(&pb.connect_error)
+        } else {
+            pb.exit_status.to_string()
+        };
+        return Err(i.error(format!(
+            "Process {} not running: failed with code {code}\n",
+            pb.name
+        )));
+    }
     if !pb.alive() {
+        if pb.kind == "network" && pb.dead {
+            return Err(i.error(format!("Process {} not running: deleted\n", pb.name)));
+        }
         return Err(i.error("Process is not running"));
     }
     // Route through the TLS record layer once gnutls-boot completed
@@ -2673,6 +3024,7 @@ fn proc_write(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
             if n < 0 { Err(()) } else { Ok(()) }
         }
         ProcIo::Datagram(_) => unreachable!("datagrams have a message-oriented write path"),
+        ProcIo::Connecting(_) => unreachable!("connecting writes wait for completion"),
         ProcIo::Net(s) => s.write_all(bytes).map_err(|_| ()),
         ProcIo::LocalNet(s) => s.write_all(bytes).map_err(|_| ()),
         ProcIo::Serial(f) => f.write_all(bytes).map_err(|_| ()),
@@ -3097,6 +3449,9 @@ fn f_stop_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             let mut pb = p.borrow_mut();
             pb.pending_status = Some(pb.status);
             pb.status = "stop";
+            if pb.kind == "network" {
+                pb.command = Value::t();
+            }
             return Ok(Value::Process(p.clone()));
         }
     }
@@ -3116,6 +3471,9 @@ fn f_continue_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             if let Some(prev) = pb.pending_status.take() {
                 pb.status = prev;
             }
+            if pb.kind == "network" {
+                pb.command = Value::Nil;
+            }
             return Ok(Value::Process(p.clone()));
         }
     }
@@ -3129,10 +3487,20 @@ fn f_delete_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let ev;
     {
         let mut pb = p.borrow_mut();
+        // A failed connect has its own notification, followed by a distinct
+        // deleted notification when explicitly removed from the process list.
+        if (pb.status == "failed" || pb.pending_status == Some("failed")) && !pb.dead {
+            pb.reported = false;
+            pb.status = "closed";
+            pb.exit_status = 0;
+            pb.connect_error = Value::Nil;
+            pb.pending_status = None;
+        }
         pb.dead = true;
         // GNU preserves an already-reported final status: deleting an
         // exited process leaves `process-status' showing `exit'.
-        let final_seen = pb.reported || matches!(pb.status, "exit" | "signal" | "closed");
+        let final_seen =
+            pb.reported || matches!(pb.status, "exit" | "signal" | "closed" | "failed");
         ev = match &mut pb.io {
             ProcIo::Child {
                 child,
@@ -3185,6 +3553,12 @@ fn f_delete_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             // Lisp references keep the process object alive.
             ProcIo::Net(s) => {
                 let _ = s.shutdown(std::net::Shutdown::Both);
+                pb.io = ProcIo::None;
+                pb.status = "closed";
+                ("deleted", 0)
+            }
+            ProcIo::Connecting(_) => {
+                pb.io = ProcIo::None;
                 pb.status = "closed";
                 ("deleted", 0)
             }
@@ -3200,7 +3574,9 @@ fn f_delete_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 ("deleted", 0)
             }
             ProcIo::Serial(_) | ProcIo::Listen(_) | ProcIo::LocalListen(..) | ProcIo::None => {
-                pb.status = "closed";
+                if !final_seen {
+                    pb.status = "closed";
+                }
                 ("deleted", 0)
             }
         };
