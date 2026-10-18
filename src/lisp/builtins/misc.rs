@@ -12773,7 +12773,7 @@ fn coding_fixed_eol(i: &Interp, v: &Value) -> Option<usize> {
     None
 }
 
-fn f_encode_coding_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_encode_coding_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let text = want_string(i, &a[0])?;
     f_check_coding_system(i, vec![a[1].clone()].into())?;
     let canonical = coding_canonical(i, &a[1]);
@@ -13465,7 +13465,7 @@ pub(crate) fn decode_file_bytes(
     Ok((decoded, used))
 }
 
-fn f_decode_coding_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_decode_coding_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     want_string(i, &a[0])?;
     f_check_coding_system(i, vec![a[1].clone()].into())?;
     let canonical = coding_canonical(i, &a[1]);

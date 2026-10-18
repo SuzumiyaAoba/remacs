@@ -43,6 +43,8 @@ pub enum ProcIo {
     },
     /// A connected TCP stream.
     Net(std::net::TcpStream),
+    /// A message-oriented socket. Never use stream read/write semantics here.
+    Datagram(DatagramIo),
     /// A listening server socket.
     Listen(std::net::TcpListener),
     /// A connected local (Unix-domain) stream — `:family local'.
@@ -54,6 +56,160 @@ pub enum ProcIo {
     Serial(std::fs::File),
     /// No backend — GNU allows `make-process` without :command.
     None,
+}
+
+/// The current UDP/local-datagram destination is updated by each received packet.
+/// Keep it separate from the socket: GNU uses sendto/recvfrom, not connect.
+#[derive(Clone)]
+enum DatagramAddress {
+    Inet(std::net::SocketAddr),
+    Local(String),
+}
+
+pub enum DatagramSocket {
+    Inet(std::net::UdpSocket),
+    Local(std::os::unix::net::UnixDatagram),
+}
+
+pub struct DatagramIo {
+    pub socket: DatagramSocket,
+    remote: Option<DatagramAddress>,
+    /// sockaddr size, also used for GNU's initial unspecified remote address.
+    address_size: usize,
+    /// GNU snapshots read-process-output-max when the socket is created.
+    read_max: usize,
+    /// UTF-8 decoders retain incomplete characters across receive calls.
+    decode_pending: Vec<u8>,
+    decode_coding: String,
+    /// Only unlink a pathname this process successfully bound itself.
+    bound_path: Option<String>,
+    /// Whole messages survive nonblocking retries; GNU uses the current peer.
+    pending: VecDeque<Vec<u8>>,
+}
+
+impl Drop for DatagramIo {
+    fn drop(&mut self) {
+        if let Some(path) = &self.bound_path {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+impl DatagramAddress {
+    fn value(&self) -> Value {
+        match self {
+            Self::Inet(addr) => socket_addr_value(*addr),
+            Self::Local(path) => Value::string(path.clone()),
+        }
+    }
+
+    fn from_value(value: &Value) -> Option<Self> {
+        match value {
+            Value::Str(s) => Some(Self::Local(s.borrow().clone())),
+            Value::Vec(v) => {
+                let v = v.borrow();
+                // GNU masks address components to their network field width.
+                let part = |n: usize| v[n].int().unwrap_or(0);
+                let addr = match v.len() {
+                    5 => {
+                        let mut octets = [0u8; 4];
+                        for (slot, value) in
+                            octets.iter_mut().zip(v[..4].iter().filter_map(Value::int))
+                        {
+                            *slot = value as u8;
+                        }
+                        std::net::SocketAddr::from((octets, part(4) as u16))
+                    }
+                    9 => std::net::SocketAddr::from((
+                        [
+                            part(0) as u16,
+                            part(1) as u16,
+                            part(2) as u16,
+                            part(3) as u16,
+                            part(4) as u16,
+                            part(5) as u16,
+                            part(6) as u16,
+                            part(7) as u16,
+                        ],
+                        part(8) as u16,
+                    )),
+                    _ => return None,
+                };
+                Some(Self::Inet(addr))
+            }
+            _ => None,
+        }
+    }
+
+    fn size(&self) -> usize {
+        match self {
+            Self::Inet(std::net::SocketAddr::V4(_)) => std::mem::size_of::<libc::sockaddr_in>(),
+            Self::Inet(std::net::SocketAddr::V6(_)) => std::mem::size_of::<libc::sockaddr_in6>(),
+            Self::Local(_) => std::mem::size_of::<libc::sockaddr_un>(),
+        }
+    }
+}
+
+impl DatagramIo {
+    fn remote_value(&self) -> Value {
+        self.remote
+            .as_ref()
+            .map(DatagramAddress::value)
+            .unwrap_or_else(|| {
+                // GNU's server starts with an all-zero sockaddr (AF_UNSPEC), not
+                // its own listening address. Account for BSD's leading sa_len.
+                let header = std::mem::offset_of!(libc::sockaddr, sa_family)
+                    + std::mem::size_of::<libc::sa_family_t>();
+                Value::cons(
+                    Value::Int(0),
+                    Value::Vec(Rc::new(RefCell::new(vec![
+                        Value::Int(0);
+                        self.address_size - header
+                    ]))),
+                )
+            })
+    }
+
+    fn recv(&self, bytes: &mut [u8]) -> std::io::Result<(usize, DatagramAddress)> {
+        match &self.socket {
+            DatagramSocket::Inet(s) => s
+                .recv_from(bytes)
+                .map(|(n, addr)| (n, DatagramAddress::Inet(addr))),
+            DatagramSocket::Local(s) => s.recv_from(bytes).map(|(n, addr)| {
+                (
+                    n,
+                    DatagramAddress::Local(
+                        addr.as_pathname()
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                    ),
+                )
+            }),
+        }
+    }
+
+    fn send(&self, bytes: &[u8], remote: &Option<DatagramAddress>) -> std::io::Result<usize> {
+        match (&self.socket, remote) {
+            (DatagramSocket::Inet(s), Some(DatagramAddress::Inet(addr))) => s.send_to(bytes, addr),
+            (DatagramSocket::Local(s), Some(DatagramAddress::Local(path))) => {
+                s.send_to(bytes, path)
+            }
+            _ => Err(std::io::Error::from_raw_os_error(libc::EINVAL)),
+        }
+    }
+}
+
+fn socket_addr_value(addr: std::net::SocketAddr) -> Value {
+    let mut parts: Vec<Value> = match addr.ip() {
+        std::net::IpAddr::V4(ip) => ip.octets().iter().map(|n| Value::Int(*n as i128)).collect(),
+        std::net::IpAddr::V6(ip) => ip
+            .segments()
+            .iter()
+            .map(|n| Value::Int(*n as i128))
+            .collect(),
+    };
+    parts.push(Value::Int(addr.port() as i128));
+    Value::Vec(Rc::new(RefCell::new(parts)))
 }
 
 impl Drop for ProcIo {
@@ -244,15 +400,7 @@ fn deliver_output(
     if out.is_empty() {
         return Ok(());
     }
-    let (filter, buffer, mark, sdest) = {
-        let p = pref.borrow();
-        (
-            p.filter.clone(),
-            p.buffer,
-            p.mark.clone(),
-            p.stderr_dest.clone(),
-        )
-    };
+    let sdest = pref.borrow().stderr_dest.clone();
     if to_stderr_dest {
         // Route to the configured stderr destination.
         match &sdest {
@@ -271,12 +419,26 @@ fn deliver_output(
         }
         return Ok(());
     }
-    let text = decode(&out);
+    let value = if matches!(pref.borrow().io, ProcIo::Datagram(_)) {
+        decode_datagram(i, pref, &out, false)?
+    } else {
+        Value::string(decode(&out))
+    };
+    deliver_decoded(i, pref, value)
+}
+
+fn deliver_decoded(i: &mut Interp, pref: &ProcessRef, value: Value) -> Result<(), Flow> {
+    let (filter, buffer, mark) = {
+        let p = pref.borrow();
+        (p.filter.clone(), p.buffer, p.mark.clone())
+    };
+    // An incomplete multibyte character does not invoke a filter yet.
+    if value.is_nil() {
+        return Ok(());
+    }
+    let text = str_value(&value).unwrap_or_default();
     if filter.truthy() {
-        i.apply(
-            &filter,
-            vec![Value::Process(pref.clone()), Value::string(text)],
-        )?;
+        i.apply(&filter, vec![Value::Process(pref.clone()), value])?;
         return Ok(());
     }
     if let Some(bid) = buffer {
@@ -336,6 +498,7 @@ fn event_string(status: &str, code: i32) -> String {
             format!("{name}: {code}\n")
         }
         "open" => "open\n".to_string(),
+        "closed" if code == 256 => "connection broken by remote peer\n".to_string(),
         _ => format!("{status}\n"),
     }
 }
@@ -359,6 +522,9 @@ fn run_sentinel(i: &mut Interp, pref: &ProcessRef, status: &str, code: i32) -> R
 /// Poll one process: drain output, observe exit. Returns true if anything
 /// was consumed/changed.
 fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
+    if matches!(pref.borrow().io, ProcIo::Datagram(_)) {
+        return poll_datagram(i, pref);
+    }
     enum Ev {
         Out(Vec<u8>, bool),
         Exit(&'static str, i32),
@@ -530,6 +696,7 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                         }
                     }
                 }
+                ProcIo::Datagram(_) => unreachable!("datagrams have a message-oriented poll path"),
                 ProcIo::None => {}
             }
         }
@@ -662,6 +829,69 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                 }));
                 i.processes.push(child_proc);
                 run_sentinel(i, pref, "open", 0)?;
+            }
+        }
+    }
+    Ok(did)
+}
+
+/// Deliver one packet before reading the next: filters must observe its sender,
+/// and a reentrant wait must not dispatch newer packets ahead of buffered ones.
+fn poll_datagram(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
+    let mut did = false;
+    let read_max = match &pref.borrow().io {
+        ProcIo::Datagram(io) => io.read_max,
+        _ => return Ok(false),
+    };
+    let mut bytes = vec![0u8; read_max];
+    // Bound each turn so a busy peer cannot starve timers/other processes.
+    for _ in 0..64 {
+        let received = {
+            let mut p = pref.borrow_mut();
+            if p.dead || p.status != "open" || matches!(p.filter, Value::Sym(s) if s == sym::T) {
+                break;
+            }
+            let ProcIo::Datagram(io) = &mut p.io else {
+                break;
+            };
+            match io.recv(&mut bytes) {
+                Ok((n, remote)) => {
+                    io.remote = Some(remote);
+                    Ok(n)
+                }
+                Err(e) => Err(e),
+            }
+        };
+        match received {
+            Ok(n) if n > 0 => {
+                did = true;
+                deliver_output(i, pref, bytes[..n].to_vec(), false)?;
+            }
+            Ok(0) if matches!(&pref.borrow().io, ProcIo::Datagram(io) if !io.decode_pending.is_empty()) =>
+            {
+                // GNU first flushes an incomplete character as raw bytes. That
+                // read produced output; a later empty datagram closes it.
+                let value = decode_datagram(i, pref, &[], true)?;
+                did = true;
+                deliver_decoded(i, pref, value)?;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+            // GNU 31.1 treats a zero-length received datagram like a closed
+            // network process, and deactivates it on permanent read errors.
+            _ => {
+                {
+                    let mut p = pref.borrow_mut();
+                    p.io = ProcIo::None;
+                    p.status = "closed";
+                    p.exit_status = 256;
+                    p.reported = true;
+                }
+                if let Some(pos) = i.processes.iter().position(|p| Rc::ptr_eq(p, pref)) {
+                    i.processes.remove(pos);
+                }
+                run_sentinel(i, pref, "closed", 256)?;
+                break;
             }
         }
     }
@@ -1157,6 +1387,300 @@ fn service_port(i: &mut Interp, v: &Value) -> Result<u16, Flow> {
     }
 }
 
+/// GNU leaves UDP clients unbound/unconnected until the first sendto. Using
+/// UdpSocket::bind here would allocate a port early and misreport :local.
+fn unbound_udp(ipv6: bool) -> std::io::Result<std::net::UdpSocket> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    let fd = unsafe {
+        libc::socket(
+            if ipv6 { libc::AF_INET6 } else { libc::AF_INET },
+            libc::SOCK_DGRAM,
+            0,
+        )
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: socket returned a new owned UDP descriptor. From this point the
+    // standard-library socket closes it on every failure path.
+    let socket = unsafe { std::net::UdpSocket::from_raw_fd(fd) };
+    if unsafe { libc::fcntl(socket.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(socket)
+}
+
+fn datagram_error(i: &mut Interp, operation: &str, error: std::io::Error) -> Flow {
+    let symbol = i.intern(if error.kind() == std::io::ErrorKind::PermissionDenied {
+        "permission-denied"
+    } else {
+        "file-error"
+    });
+    let message = error.to_string();
+    i.signal_data(
+        symbol,
+        vec![
+            Value::string(operation),
+            Value::string(message.split(" (os error").next().unwrap_or(&message)),
+        ],
+    )
+}
+
+fn make_datagram_process(i: &mut Interp, name: String, args: &Value) -> EvalResult {
+    use std::net::ToSocketAddrs;
+    let server = kw(i, args, ":server").truthy();
+    if server && kw(i, args, ":nowait").truthy() {
+        return Err(i.error_q("`:server' is incompatible with `:nowait'", &[]));
+    }
+    let explicit = kw(i, args, if server { ":local" } else { ":remote" });
+    let address = if explicit.truthy() {
+        DatagramAddress::from_value(&explicit).ok_or_else(|| i.error("Malformed address"))?
+    } else {
+        let family = kw(i, args, ":family");
+        let family = match &family {
+            Value::Nil => None,
+            Value::Sym(s) => Some(i.symbol_name(*s)),
+            _ => return Err(i.error("Unsupported address family")),
+        };
+        let service = kw(i, args, ":service");
+        if matches!(family.as_deref(), Some("local" | "unix")) {
+            DatagramAddress::Local(
+                str_value(&service).ok_or_else(|| i.wrong_type_mut("stringp", &service))?,
+            )
+        } else {
+            if !matches!(family.as_deref(), None | Some("ipv4" | "ipv6")) {
+                return Err(i.error("Unsupported address family"));
+            }
+            let port = if server && matches!(service, Value::Sym(s) if s == sym::T) {
+                0
+            } else {
+                service_port(i, &service)?
+            };
+            let host = kw(i, args, ":host");
+            let host = match host {
+                Value::Nil => {
+                    if family.as_deref() == Some("ipv6") {
+                        "::1".into()
+                    } else {
+                        "127.0.0.1".into()
+                    }
+                }
+                Value::Str(s) => s.borrow().clone(),
+                other => return Err(i.wrong_type_mut("stringp", &other)),
+            };
+            let address = (host.as_str(), port)
+                .to_socket_addrs()
+                .map_err(|e| datagram_error(i, "make network process failed", e))?
+                .find(|addr| match family.as_deref() {
+                    Some("ipv4") => addr.is_ipv4(),
+                    Some("ipv6") => addr.is_ipv6(),
+                    _ => true,
+                })
+                .ok_or_else(|| i.error("No address in requested family"))?;
+            DatagramAddress::Inet(address)
+        }
+    };
+    let operation = if server {
+        "Cannot bind server socket"
+    } else {
+        "make client process failed"
+    };
+    let socket = match &address {
+        DatagramAddress::Inet(addr) => DatagramSocket::Inet(
+            if server {
+                std::net::UdpSocket::bind(addr)
+            } else {
+                unbound_udp(addr.is_ipv6())
+            }
+            .map_err(|e| datagram_error(i, operation, e))?,
+        ),
+        DatagramAddress::Local(path) => DatagramSocket::Local(
+            if server {
+                std::os::unix::net::UnixDatagram::bind(path)
+            } else {
+                std::os::unix::net::UnixDatagram::unbound()
+            }
+            .map_err(|e| datagram_error(i, operation, e))?,
+        ),
+    };
+    let remote = if server {
+        DatagramAddress::from_value(&kw(i, args, ":remote")).filter(|a| a.size() == address.size())
+    } else {
+        Some(address.clone())
+    };
+    let io = DatagramIo {
+        socket,
+        remote,
+        address_size: address.size(),
+        read_max: {
+            let id = i.intern("read-process-output-max");
+            // IP datagrams cannot exceed 65535 bytes. Larger configured
+            // buffers do not needlessly allocate unbounded memory per poll.
+            let requested = i
+                .symbol_value(id)
+                .int()
+                .unwrap_or(65536)
+                .clamp(1, i32::MAX as i128) as usize;
+            if matches!(address, DatagramAddress::Inet(_)) {
+                requested.min(65536)
+            } else {
+                requested
+            }
+        },
+        bound_path: if server {
+            match &address {
+                DatagramAddress::Local(p) => Some(p.clone()),
+                _ => None,
+            }
+        } else {
+            None
+        },
+        decode_pending: Vec::new(),
+        decode_coding: String::new(),
+        pending: VecDeque::new(),
+    };
+    let local = match &io.socket {
+        DatagramSocket::Inet(s) => {
+            s.set_nonblocking(true)
+                .map_err(|e| datagram_error(i, operation, e))?;
+            socket_addr_value(
+                s.local_addr()
+                    .map_err(|e| datagram_error(i, operation, e))?,
+            )
+        }
+        DatagramSocket::Local(s) => {
+            s.set_nonblocking(true)
+                .map_err(|e| datagram_error(i, operation, e))?;
+            s.local_addr()
+                .map(|a| {
+                    Value::string(
+                        a.as_pathname()
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                    )
+                })
+                .map_err(|e| datagram_error(i, operation, e))?
+        }
+    };
+    let mut contact = args.clone();
+    // Only numeric IP services are resolved; Unix services remain pathnames.
+    if server && let Value::Vec(parts) = &local {
+        contact = super::eval::plist_put(
+            &contact,
+            i.intern(":service"),
+            parts.borrow().last().unwrap().clone(),
+        );
+    }
+    contact = super::eval::plist_put(&contact, i.intern(":local"), local);
+    if !server {
+        contact = super::eval::plist_put(&contact, i.intern(":remote"), address.value());
+    }
+    let mut p = base_proc(name, "network", ProcIo::Datagram(io));
+    p.status = "open";
+    p.contact = contact;
+    let pref = finish_setup(i, p, args, false)?;
+    let coding = kw(i, args, ":coding");
+    let (decode, encode) = match &coding {
+        Value::Cons(pair) => (pair.borrow().car.clone(), pair.borrow().cdr.clone()),
+        _ => (coding.clone(), coding),
+    };
+    if let Value::Sym(s) = decode {
+        pref.borrow_mut().coding.0 = i.symbol_name(s);
+    }
+    if let Value::Sym(s) = encode {
+        pref.borrow_mut().coding.1 = i.symbol_name(s);
+    }
+    i.processes.push(pref.clone());
+    Ok(Value::Process(pref))
+}
+
+/// One sendto is one message. A hypothetical short datagram write must never
+/// be retried as a second packet containing the suffix.
+fn send_whole_datagram(
+    bytes: &[u8],
+    send: impl FnOnce(&[u8]) -> std::io::Result<usize>,
+) -> std::io::Result<()> {
+    match send(bytes)? {
+        n if n == bytes.len() => Ok(()),
+        _ => Err(std::io::ErrorKind::WriteZero.into()),
+    }
+}
+
+fn write_datagram(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
+    {
+        let mut pb = p.borrow_mut();
+        if pb.dead || !pb.alive() {
+            return Err(i.error("Process is not running"));
+        }
+        // GNU process-send-string/process-send-region with zero bytes is a
+        // no-op. An actual received empty packet has different semantics.
+        if bytes.is_empty() {
+            return Ok(Value::Nil);
+        }
+        let ProcIo::Datagram(io) = &mut pb.io else {
+            unreachable!()
+        };
+        io.pending.push_back(bytes.to_vec());
+    }
+    loop {
+        if i.quit_flag {
+            i.quit_flag = false;
+            return Err(Flow::Quit);
+        }
+        let result = {
+            let mut pb = p.borrow_mut();
+            if pb.dead || !pb.alive() {
+                return Err(i.error("Process is not running"));
+            }
+            let ProcIo::Datagram(io) = &mut pb.io else {
+                return Err(i.error("Process is not running"));
+            };
+            let Some(bytes) = io.pending.front() else {
+                return Ok(Value::Nil);
+            };
+            let result = send_whole_datagram(bytes, |bytes| io.send(bytes, &io.remote));
+            if result.is_ok()
+                || result.as_ref().is_err_and(|e| {
+                    !matches!(
+                        e.kind(),
+                        std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+                    )
+                })
+            {
+                io.pending.pop_front();
+            }
+            result
+        };
+        match result {
+            Ok(()) => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // Release the process borrow before Lisp, as with child input.
+                // Nested sends append whole messages behind the pending one.
+                timer_check(i)?;
+                poll_all(i)?;
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(e) => {
+                let symbol = i.intern("file-error");
+                let message = e.to_string();
+                return Err(i.signal_data(
+                    symbol,
+                    vec![
+                        Value::string(if e.raw_os_error() == Some(libc::EMSGSIZE) {
+                            "Sending datagram"
+                        } else {
+                            "Writing to process"
+                        }),
+                        Value::string(message.split(" (os error").next().unwrap_or(&message)),
+                        Value::Process(p.clone()),
+                    ],
+                ));
+            }
+        }
+    }
+}
+
 fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let args = Value::list(a.as_slice().to_vec());
     let name_v = kw(i, &args, ":name");
@@ -1165,6 +1689,13 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Sym(id) if name_v.truthy() => i.symbol_name(*id),
         _ => return Err(i.error("Network process name not given")),
     };
+    let type_v = kw(i, &args, ":type");
+    if matches!(&type_v, Value::Sym(id) if i.symbol_name(*id) == "datagram") {
+        return make_datagram_process(i, name, &args);
+    }
+    if type_v.truthy() {
+        return Err(i.error("Unsupported connection type"));
+    }
     let service = kw(i, &args, ":service");
     let server = kw(i, &args, ":server").truthy();
     let host_v = kw(i, &args, ":host");
@@ -1641,10 +2172,16 @@ fn f_process_mark(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_process_contact(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let p = want_proc(i, &a[0])?;
-    let (c, kind) = {
+    let (mut c, kind) = {
         let pb = p.borrow();
         (pb.contact.clone(), pb.kind)
     };
+    let key = arg(&a, 1);
+    if matches!(&key, Value::Sym(id) if *id == sym::T || i.symbol_name(*id) == ":remote") {
+        if let ProcIo::Datagram(io) = &p.borrow().io {
+            c = super::eval::plist_put(&c, i.intern(":remote"), io.remote_value());
+        }
+    }
     if kind == "real" {
         // GNU returns t for ordinary child processes.
         return Ok(Value::t());
@@ -1840,12 +2377,23 @@ fn f_set_process_window_size(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResu
 }
 
 fn f_process_datagram_address(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = want_proc(i, &a[0])?;
-    Ok(Value::Nil)
+    let p = want_proc(i, &a[0])?;
+    Ok(match &p.borrow().io {
+        ProcIo::Datagram(io) => io.remote_value(),
+        _ => Value::Nil,
+    })
 }
 
 fn f_set_process_datagram_address(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = want_proc(i, &a[0])?;
+    let p = want_proc(i, &a[0])?;
+    if let ProcIo::Datagram(io) = &mut p.borrow_mut().io {
+        if let Some(remote) = DatagramAddress::from_value(&a[1]) {
+            if remote.size() == io.address_size {
+                io.remote = Some(remote);
+                return Ok(a[1].clone());
+            }
+        }
+    }
     Ok(Value::Nil)
 }
 
@@ -1934,6 +2482,63 @@ fn f_accept_process_output(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(got))
 }
 
+fn decode_datagram(i: &mut Interp, p: &ProcessRef, bytes: &[u8], finish: bool) -> EvalResult {
+    let coding = p.borrow().coding.0.clone();
+    let mut input = bytes.to_vec();
+    {
+        let mut pb = p.borrow_mut();
+        if let ProcIo::Datagram(io) = &mut pb.io {
+            if io.decode_coding != coding {
+                io.decode_pending.clear();
+                io.decode_coding = coding.clone();
+            }
+            if coding.starts_with("utf-8") || coding.starts_with("undecided") {
+                let mut pending = std::mem::take(&mut io.decode_pending);
+                pending.extend(input);
+                input = pending;
+                let mut at = 0;
+                while !finish && at < input.len() {
+                    match std::str::from_utf8(&input[at..]) {
+                        Ok(_) => break,
+                        Err(error) => {
+                            at += error.valid_up_to();
+                            if let Some(len) = error.error_len() {
+                                at += len;
+                            } else {
+                                io.decode_pending = input.split_off(at);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if input.is_empty() {
+                    return Ok(Value::Nil);
+                }
+            }
+        }
+    }
+    let value = Value::string(input.iter().map(|b| *b as char).collect::<String>());
+    if let Value::Str(s) = &value {
+        i.mark_unibyte(s);
+    }
+    if matches!(coding.as_str(), "binary" | "no-conversion") {
+        return Ok(value);
+    }
+    let coding = symv(i, &coding);
+    super::builtins::misc::f_decode_coding_string(i, vec![value, coding].into())
+}
+
+fn encode_datagram(i: &mut Interp, p: &ProcessRef, text: Value) -> Result<Vec<u8>, Flow> {
+    let name = p.borrow().coding.1.clone();
+    let coding = symv(i, &name);
+    let encoded = super::builtins::misc::f_encode_coding_string(i, vec![text, coding].into())?;
+    // GNU resolves an automatic encoder EOL on its first actual send.
+    if !matches!(name.as_str(), "binary" | "no-conversion") {
+        p.borrow_mut().coding.1 = coding_canonical_unix(&name);
+    }
+    Ok(super::builtins::misc::lisp_string_bytes(i, &encoded))
+}
+
 fn f_process_send_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU checks STRING before decoding PROCESS (CHECK_STRING is
     // arg 1's contract in process.c), then decodes PROCESS through
@@ -1943,6 +2548,10 @@ fn f_process_send_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         _ => return Err(i.wrong_type_mut("stringp", &a[1])),
     };
     let p = get_process(i, &a[0])?;
+    if matches!(p.borrow().io, ProcIo::Datagram(_)) {
+        let bytes = encode_datagram(i, &p, a[1].clone())?;
+        return proc_write(i, &p, &bytes);
+    }
     proc_write(i, &p, text.as_bytes())
 }
 
@@ -2032,6 +2641,9 @@ fn write_child_input(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult
 }
 
 fn proc_write(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
+    if matches!(p.borrow().io, ProcIo::Datagram(_)) {
+        return write_datagram(i, p, bytes);
+    }
     if matches!(p.borrow().io, ProcIo::Child { .. }) {
         return write_child_input(i, p, bytes);
     }
@@ -2053,6 +2665,7 @@ fn proc_write(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
             let n = unsafe { libc::write(*sink_fd, bytes.as_ptr() as *const _, bytes.len()) };
             if n < 0 { Err(()) } else { Ok(()) }
         }
+        ProcIo::Datagram(_) => unreachable!("datagrams have a message-oriented write path"),
         ProcIo::Net(s) => s.write_all(bytes).map_err(|_| ()),
         ProcIo::LocalNet(s) => s.write_all(bytes).map_err(|_| ()),
         ProcIo::Serial(f) => f.write_all(bytes).map_err(|_| ()),
@@ -2091,12 +2704,19 @@ fn f_process_send_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 .collect::<String>()
         })
         .unwrap_or_default();
+    if matches!(p.borrow().io, ProcIo::Datagram(_)) {
+        let bytes = encode_datagram(i, &p, Value::string(text))?;
+        return proc_write(i, &p, &bytes);
+    }
     proc_write(i, &p, text.as_bytes())
 }
 
 fn f_process_send_eof(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU: PROCESS nil/omitted → the process of the current buffer.
     let p = get_process(i, &arg(&a, 0))?;
+    if matches!(p.borrow().io, ProcIo::Datagram(_)) {
+        return Ok(arg(&a, 0));
+    }
     if matches!(p.borrow().io, ProcIo::Child { .. }) {
         // The VEOF character must follow any input queued by an outer send.
         write_child_input(i, &p, b"\x04")?;
@@ -2563,6 +3183,12 @@ fn f_delete_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
             ProcIo::LocalNet(s) => {
                 let _ = s.shutdown(std::net::Shutdown::Both);
+                pb.status = "closed";
+                ("deleted", 0)
+            }
+            ProcIo::Datagram(_) => {
+                // Release the descriptor/path now, even if Lisp retains p.
+                pb.io = ProcIo::None;
                 pb.status = "closed";
                 ("deleted", 0)
             }
@@ -3412,11 +4038,15 @@ fn f_internal_default_process_sentinel(i: &mut Interp, a: crate::lisp::Argv) -> 
 /// GNU `make-network-process' advertises its capabilities through the
 /// feature's `subfeatures' plist (process.c's `syms_of_process' calls
 /// `provide' with the supported keyword matrix).  remacs implements
-/// local (Unix-domain) and IPv4 stream sockets with :server/:service;
+/// local (Unix-domain) and IP stream/datagram sockets with :server/:service;
 /// register only those entries so `(featurep 'make-network-process
 /// '(:family local))' reports t — `server.el' consults it to pick a
 /// Unix socket over TCP.
 pub(crate) fn install(i: &mut Interp) {
+    // This is a GNU DEFVAR_INT: lexical let bindings must reach the native
+    // constructor just like dynamic bindings do.
+    let read_max = i.intern("read-process-output-max");
+    i.obarray.symbol_mut(read_max).special = true;
     let mnp = i.intern("make-network-process");
     let subs = i.intern("subfeatures");
     let mkpair = |i: &mut Interp, a: &str, b: Value| Value::list(vec![Value::Sym(i.intern(a)), b]);
@@ -3428,14 +4058,61 @@ pub(crate) fn install(i: &mut Interp) {
         let fs = Value::Sym(i.intern(fam));
         items.push(mkpair(i, ":family", fs));
     }
+    let datagram = Value::Sym(i.intern("datagram"));
+    items.push(mkpair(i, ":type", datagram));
     i.put_prop(mnp, subs, Value::list(items));
 }
 
 #[cfg(test)]
 mod send_tests {
-    use super::write_pending_input;
+    use super::{send_whole_datagram, write_pending_input};
     use std::collections::VecDeque;
     use std::io::{Error, ErrorKind};
+
+    #[test]
+    fn datagram_sends_are_atomic_and_transient_errors_do_not_consume_bytes() {
+        let packet = b"one-complete-packet";
+        for kind in [ErrorKind::Interrupted, ErrorKind::WouldBlock] {
+            assert_eq!(
+                send_whole_datagram(packet, |bytes| {
+                    assert_eq!(bytes, packet);
+                    Err(kind.into())
+                })
+                .unwrap_err()
+                .kind(),
+                kind
+            );
+        }
+        let mut sent = Vec::new();
+        send_whole_datagram(packet, |bytes| {
+            sent.push(bytes.to_vec());
+            Ok(bytes.len())
+        })
+        .unwrap();
+        assert_eq!(sent, vec![packet.to_vec()]);
+        for n in [0, 1, packet.len() - 1] {
+            let mut calls = 0;
+            assert_eq!(
+                send_whole_datagram(packet, |_| {
+                    calls += 1;
+                    Ok(n)
+                })
+                .unwrap_err()
+                .kind(),
+                ErrorKind::WriteZero
+            );
+            assert_eq!(
+                calls, 1,
+                "never send a short write's suffix as another packet"
+            );
+        }
+        assert_eq!(
+            send_whole_datagram(packet, |_| Err(Error::from_raw_os_error(libc::EMSGSIZE)))
+                .unwrap_err()
+                .raw_os_error(),
+            Some(libc::EMSGSIZE)
+        );
+    }
 
     #[test]
     fn partial_writes_and_retries_preserve_exact_suffix() {
