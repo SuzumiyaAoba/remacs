@@ -92,7 +92,6 @@ fn html_node(
     i: &mut Interp,
     h: &markup5ever_rcdom::Handle,
     src_has_tbody: bool,
-    drop_comments: bool,
     out: &mut Vec<Value>,
 ) {
     use markup5ever_rcdom::NodeData;
@@ -100,7 +99,7 @@ fn html_node(
         NodeData::Element { name, attrs, .. } => {
             let mut kids = Vec::new();
             for c in h.children.borrow().iter() {
-                html_node(i, c, src_has_tbody, drop_comments, &mut kids);
+                html_node(i, c, src_has_tbody, &mut kids);
             }
             // libxml2 doesn't materialize an empty <head>; drop it.
             if &*name.local == "head" && kids.is_empty() {
@@ -128,9 +127,6 @@ fn html_node(
             out.push(Value::string(contents.borrow().to_string()));
         }
         NodeData::Comment { contents } => {
-            if drop_comments {
-                return;
-            }
             out.push(Value::list(vec![
                 Value::Sym(i.intern("comment")),
                 Value::Nil,
@@ -149,7 +145,12 @@ fn parse_html(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
     let src_has_tbody = lower.contains("<tbody");
     let mut out = Vec::new();
     for c in dom.document.children.borrow().iter() {
-        html_node(i, c, src_has_tbody, drop_comments, &mut out);
+        // GNU's DISCARD-COMMENTS selects the document's root element;
+        // make_dom still preserves comments anywhere inside that element.
+        if drop_comments && matches!(&c.data, markup5ever_rcdom::NodeData::Comment { .. }) {
+            continue;
+        }
+        html_node(i, c, src_has_tbody, &mut out);
     }
     match out.as_slice() {
         [single] => single.clone(),
