@@ -189,6 +189,12 @@ fn equal_key(
     }
     let out = match v {
         Value::Str(s) => HashKey::Str(s.borrow().clone()),
+        Value::Marker(m) => {
+            let m = m.borrow();
+            // Match equal_values, including detached markers. Insertion
+            // type is deliberately ignored; eq/eql retain pointer identity.
+            HashKey::Marker(m.buffer, if m.buffer.is_some() { m.position } else { 0 })
+        }
         // Enabled sympos are `equal' to their bare symbol — same key
         // as the plain symbol arm below.
         _ if super::misc::as_sympos(v).is_some() => {

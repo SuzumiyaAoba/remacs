@@ -251,6 +251,9 @@ pub enum HashKey {
     Str(String),
     /// Identity key for objects where `eq` compares by pointer.
     Ptr(usize),
+    /// `equal' markers compare buffer and position, not object identity.
+    /// Detached markers use position zero, regardless of their stale offset.
+    Marker(Option<usize>, usize),
     Cons(Box<HashKey>, Box<HashKey>),
     Vec(Vec<HashKey>),
     /// Content key for records / lambdas (`equal' compares them

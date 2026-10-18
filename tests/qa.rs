@@ -138,6 +138,7 @@ qa!(qa_format, "qa_format.el");
 qa!(qa_globdir, "qa_globdir.el");
 qa!(qa_gv, "qa_gv.el");
 qa!(qa_hash, "qa_hash.el");
+qa!(qa_hash_markers, "qa_hash_markers.el");
 qa!(qa_hash_custom, "qa_hash_custom.el");
 qa!(qa_hash_cycles, "qa_hash_cycles.el");
 qa!(qa_hash2, "qa_hash2.el");

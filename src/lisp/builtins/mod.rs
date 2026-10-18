@@ -540,7 +540,7 @@ fn equal_values_1(
             // GNU `equal' on markers compares buffer + position (they're
             // `misc' objects with value semantics), not identity.
             let (xb, yb) = (x.borrow(), y.borrow());
-            xb.buffer == yb.buffer && xb.position == yb.position
+            xb.buffer == yb.buffer && (xb.buffer.is_none() || xb.position == yb.position)
         }
         (Value::Cons(_x), Value::Cons(_y)) => {
             // Cdrs do not increase recursion depth. Detect their cycles
