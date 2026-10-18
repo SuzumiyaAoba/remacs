@@ -60,7 +60,11 @@ cargo build --release  # optimized
 Rust 2024 edition. No external build-time dependencies beyond crates;
 optional libraries (`libgnutls`, `liblcms2`, `libdbus-1`) are dlopen'd
 at runtime — remacs works without them and just doesn't provide the
-corresponding features. Native compilation needs a working `cc`.
+corresponding features. DTD-bearing XML additionally uses the system
+`libxml2` runtime (or `REMACS_LIBXML2_LIBRARY`). Without it, ordinary
+XML still uses quick-xml, while a document with a DOCTYPE returns nil
+rather than ignoring its declarations. External DTDs and entities are
+not loaded. Native compilation needs a working `cc`.
 
 ## Running
 

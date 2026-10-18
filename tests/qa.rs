@@ -366,3 +366,5 @@ qa!(qa_xml_normalization, "qa_xml_normalization.el");
 qa!(qa_xml_namespace_attrs, "qa_xml_namespace_attrs.el");
 
 qa!(qa_xml_well_formed, "qa_xml_well_formed.el");
+
+qa!(qa_xml_dtd_entities, "qa_xml_dtd_entities.el");

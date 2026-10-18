@@ -9,6 +9,9 @@
 //! XML parse errors yield nil; the HTML parser (html5ever) is lenient
 //! like libxml2's HTML mode and implies html/body structure.
 
+#[path = "xml_dtd.rs"]
+mod dtd;
+
 use html5ever::tendril::TendrilSink;
 
 use super::{S, arg};
@@ -376,6 +379,22 @@ fn parse_xml(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
     // surround it at top level.
     let mut n_roots = 0u32;
     loop {
+        // quick-xml's DOCTYPE scanner counts '<' and '>' even inside
+        // quoted entity values. Dispatch at an event boundary, before that
+        // scanner can reject a legal declaration such as <!ENTITY x '<'>.
+        // Comments, CDATA and PIs have already been consumed as whole events,
+        // so lookalike strings inside them never trigger the native backend.
+        let next = &text[r.buffer_position() as usize..];
+        let next = if r.buffer_position() == 0 {
+            next.strip_prefix('\u{feff}').unwrap_or(next)
+        } else {
+            next
+        };
+        if next.starts_with("<!DOCTYPE") {
+            // Without libxml2, fail closed rather than silently ignore the
+            // declarations. Ordinary XML still uses the parser below.
+            return dtd::parse(i, text, drop_comments).unwrap_or(Value::Nil);
+        }
         match r.read_event() {
             Ok(Event::Start(e)) => {
                 if !xml_name(e.name().as_ref()) {
@@ -459,7 +478,14 @@ fn parse_xml(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
             }
             // GNU emits a bare nil for processing instructions.
             Ok(Event::PI(_)) => push_node(stack.last_mut().unwrap(), Value::Nil),
-            Ok(Event::Decl(_)) | Ok(Event::DocType(_)) => {}
+            Ok(Event::Decl(_)) => {}
+            Ok(Event::DocType(_)) => {
+                // Preserve declared entity nodes and GNU's attribute value
+                // boundaries. A DOCTYPE-like string in a comment or CDATA
+                // does not reach this branch. A missing runtime library is
+                // an unsupported DTD parse, never an ignored declaration.
+                return dtd::parse(i, text, drop_comments).unwrap_or(Value::Nil);
+            }
             Ok(Event::GeneralRef(e)) => {
                 let name = e.decode().map(|n| n.into_owned()).unwrap_or_default();
                 match resolve_ref(&name) {
