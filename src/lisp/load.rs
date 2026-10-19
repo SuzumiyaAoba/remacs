@@ -3138,23 +3138,36 @@ fn eval_str_for_load(
                     break 'load Ok(last);
                 }
                 let _rt = std::time::Instant::now();
-                let mut reader = crate::lisp::reader::Reader::with_chars(i, chars.clone());
-                reader.set_position(pos);
-                // GNU's `readevalloop' source is the load buffer —
-                // `invalid-read-syntax' carries (LINE COLUMN).
-                reader.from_buffer = true;
-                // GNU `readevalloop' reads loaded code with
-                // `locate_syms = false': `load' never produces positioned
-                // symbols even when `symbols-with-pos-enabled' is
-                // dynamically bound (e.g. by `byte-compile-from-buffer').
-                match reader.read() {
-                    Err(f) => break 'load Err(f),
+                // Loaded forms never position symbols. Only buffer
+                // sources add line/column data to syntax errors.
+                let (read, end) = crate::lisp::builtins::readfn::read_parser_at(
+                    i, chars.clone(), pos, None, load_buffer.is_some(),
+                );
+                if let Some(buffer) = load_buffer {
+                    buffer.borrow_mut().set_point(end);
+                }
+                if let Some(stream) = &stream {
+                    stream.borrow_mut().position = end;
+                }
+                match read {
+                    Err(error) => {
+                        let context = match load_buffer {
+                            Some(buffer) => Value::Buffer(buffer.clone()),
+                            None => {
+                                let filename = i.intern("load-true-file-name");
+                                i.symbol_value(filename)
+                            }
+                        };
+                        break 'load crate::lisp::builtins::readfn::finish_stream_read(
+                            i, Err(error), Some(context),
+                        );
+                    }
                     Ok(Some(f)) => {
                         let e = _rt.elapsed().as_micros();
                         if std::env::var_os("LOAD_TIME_SPLIT").is_some() && e > 3000 {
                             eprintln!("[read {}@{}] {}us", file, pos, e);
                         }
-                        Some((f, reader.position()))
+                        Some((f, end))
                     }
                     Ok(None) => None,
                 }

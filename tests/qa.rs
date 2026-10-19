@@ -297,6 +297,7 @@ qa!(qa_process_stderr, "qa_process_stderr.el");
 qa!(qa_radix, "qa_radix.el");
 qa!(qa_read, "qa_read.el");
 qa!(qa_readprint, "qa_readprint.el");
+qa!(qa_reader_error_context, "qa_reader_error_context.el");
 qa!(qa_rect, "qa_rect.el");
 qa!(qa_regex, "qa_regex.el");
 qa!(qa_regexp_classes, "qa_regexp_classes.el");

@@ -4199,32 +4199,9 @@ fn eval_buffer_source(
                     _ => false,
                 };
                 let form = if builtin_read {
-                    let invalid_read_syntax = i.intern("invalid-read-syntax");
-                    let mut reader = crate::lisp::reader::Reader::with_chars(i, chars.clone());
-                    reader.set_position(pos);
-                    reader.from_buffer = true;
-                    let result = reader.read();
-                    let mut position = reader.position();
-                    // Reader peeks at unexpected delimiters; GNU's buffer
-                    // stream has already consumed that character when it
-                    // signals.  This matters when nil START leaves point
-                    // at the failing read instead of restoring it.
-                    if let Err(Flow::Signal(Value::Sym(s), data, _)) = &result {
-                        if *s == invalid_read_syntax {
-                            if let Some(Value::Str(message)) =
-                                data.list_to_vec().ok().and_then(|v| v.first().cloned())
-                            {
-                                let message = message.borrow();
-                                if (message.as_str() == ")"
-                                    && matches!(chars.get(position), Some(')' | ']')))
-                                    || (message.as_str() == "."
-                                        && chars.get(position) == Some(&'.'))
-                                {
-                                    position += 1;
-                                }
-                            }
-                        }
-                    }
+                    let (result, position) = super::readfn::read_parser_at(
+                        i, chars.clone(), pos, None, true,
+                    );
                     buffer.borrow_mut().set_point(begv + position);
                     match result {
                         Ok(Some(form)) => form,

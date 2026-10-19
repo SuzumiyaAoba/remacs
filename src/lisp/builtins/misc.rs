@@ -12481,61 +12481,12 @@ fn f_read_positioning_symbols(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
         return super::readfn::read_load_stream(i, true);
     }
     match source {
-        Value::Buffer(b) => {
-            let (src, pos) = {
-                let bb = b.borrow();
-                (bb.text.text(), bb.point)
-            };
-            let r = i.read_from_string_pos(&src, pos, Some(1));
-            match r {
-                Ok((v, end)) => {
-                    b.borrow_mut().set_point(end);
-                    Ok(v)
-                }
-                Err(e) => Err(eof_with_stream(e, &Value::Buffer(b))),
-            }
-        }
+        Value::Buffer(_) | Value::Marker(_) => super::readfn::read_buffer_stream(i, &source, true),
         Value::Str(s) => {
             let src = s.borrow().clone();
-            let r = i.read_from_string_pos(&src, 0, Some(0));
-            match r {
-                Ok((v, _)) => Ok(v),
-                Err(e) => Err(eof_with_stream(e, &Value::Str(s))),
-            }
-        }
-        Value::Marker(m) => {
-            let (buf, pos) = {
-                let mm = m.borrow();
-                (mm.buffer, mm.position)
-            };
-            match buf.and_then(|id| i.buffers.get(id)) {
-                Some(b) => {
-                    let src = b.borrow().text.text();
-                    // GNU reports marker-read positions relative to the
-                    // marker, zero-based.
-                    let r = i.read_from_string_pos(&src, pos, Some(-(pos as i128)));
-                    match r {
-                        Ok((v, end)) => {
-                            m.borrow_mut().position = end;
-                            Ok(v)
-                        }
-                        Err(e) => Err(eof_with_stream(e, &Value::Marker(m))),
-                    }
-                }
-                None => Err(i.signal_data(crate::lisp::sym::END_OF_FILE, vec![])),
-            }
+            i.read_from_string_pos(&src, 0, Some(0)).map(|(value, _)| value)
         }
         other => Err(i.signal_data(crate::lisp::sym::INVALID_FUNCTION, vec![other])),
-    }
-}
-
-/// GNU's `end-of-file' signal carries the input stream as its datum.
-fn eof_with_stream(e: Flow, stream: &Value) -> Flow {
-    match e {
-        Flow::Signal(Value::Sym(s), _, seen) if s == crate::lisp::sym::END_OF_FILE => {
-            Flow::Signal(Value::Sym(s), Value::list(vec![stream.clone()]), seen)
-        }
-        other => other,
     }
 }
 

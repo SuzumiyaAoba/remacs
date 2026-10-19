@@ -5,6 +5,7 @@ use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, Value};
+use std::rc::Rc;
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!("read", 0, 1, f_read, "Read one Lisp object."),
@@ -31,27 +32,26 @@ pub(crate) fn is_load_stream(i: &Interp, source: &Value) -> bool {
         .is_some_and(|symbol| i.sym_id(source) == Some(symbol))
 }
 
-pub(crate) fn read_load_stream(i: &mut Interp, positioning: bool) -> EvalResult {
-    let Some(stream) = i.load_stream.clone() else {
-        return Err(i.signal_data(sym::END_OF_FILE, vec![]));
-    };
-    let (chars, position) = {
-        let stream = stream.borrow();
-        (stream.chars.clone(), stream.position)
-    };
+pub(crate) fn read_parser_at(
+    i: &mut Interp,
+    chars: Rc<Vec<char>>,
+    position: usize,
+    annotate_pos: Option<i128>,
+    from_buffer: bool,
+) -> (Result<Option<Value>, Flow>, usize) {
     let enabled = super::misc::sympos_enabled_p(i);
     let invalid_syntax = i.intern("invalid-read-syntax");
     let (result, mut end) = {
         let mut reader = crate::lisp::reader::Reader::with_chars(i, chars.clone());
         reader.set_position(position);
-        reader.from_buffer = true;
+        reader.from_buffer = from_buffer;
         reader.sympos_enabled = enabled;
-        reader.annotate_pos = positioning.then_some(-(position as i128));
+        reader.annotate_pos = annotate_pos;
         let result = reader.read();
-        (result, reader.position())
+        (result, reader.position().max(position))
     };
-    // The parser peeks at unexpected delimiters; a consuming file
-    // stream has already read that character when it signals.
+    // Diagnostic positions identify a consumed delimiter/hash token.
+    // A consuming stream advances past it even when parsing signals.
     if let Err(Flow::Signal(Value::Sym(symbol), data, _)) = &result {
         if *symbol == invalid_syntax {
             if let Some(Value::Str(message)) =
@@ -60,29 +60,104 @@ pub(crate) fn read_load_stream(i: &mut Interp, positioning: bool) -> EvalResult 
                 let message = message.borrow();
                 if (message.as_str() == ")" && matches!(chars.get(end), Some(')' | ']')))
                     || (message.as_str() == "." && chars.get(end) == Some(&'.'))
+                    || (message.starts_with('#')
+                        && message.chars().last() == chars.get(end).copied())
+                    || (message.as_str() == "nonsensical self-reference"
+                        && chars.get(end) == Some(&'#'))
                 {
                     end += 1;
                 }
             }
         }
     }
-    stream.borrow_mut().position = end;
+    (result, end)
+}
+
+pub(crate) fn finish_stream_read(
+    i: &mut Interp,
+    result: Result<Option<Value>, Flow>,
+    eof_context: Option<Value>,
+) -> EvalResult {
     match result {
         Ok(Some(value)) => Ok(value),
-        Ok(None) => {
-            let filename = i.intern("load-true-file-name");
-            Err(i.signal_data(sym::END_OF_FILE, vec![i.symbol_value(filename)]))
-        }
-        Err(Flow::Signal(Value::Sym(sym::END_OF_FILE), _, flags)) => {
-            let filename = i.intern("load-true-file-name");
-            Err(Flow::Signal(
-                Value::Sym(sym::END_OF_FILE),
-                Value::list(vec![i.symbol_value(filename)]),
-                flags,
-            ))
-        }
+        Ok(None) => Err(i.signal_data(sym::END_OF_FILE, eof_context.into_iter().collect())),
+        Err(Flow::Signal(Value::Sym(sym::END_OF_FILE), _, flags)) => Err(Flow::Signal(
+            Value::Sym(sym::END_OF_FILE),
+            Value::list(eof_context.into_iter().collect()),
+            flags,
+        )),
         Err(error) => Err(error),
     }
+}
+
+pub(crate) fn read_buffer_stream(i: &mut Interp, source: &Value, positioning: bool) -> EvalResult {
+    let (buffer, marker) = match source {
+        Value::Buffer(buffer) => (buffer.clone(), None),
+        Value::Marker(marker) => {
+            let buffer = marker.borrow().buffer.and_then(|id| i.buffers.get(id));
+            let Some(buffer) = buffer else {
+                return Err(i.signal_data(sym::END_OF_FILE, vec![]));
+            };
+            (buffer, Some(marker.clone()))
+        }
+        _ => unreachable!("buffer or marker stream"),
+    };
+    let (chars, position) = {
+        let buffer = buffer.borrow();
+        (
+            Rc::new(
+                buffer
+                    .text
+                    .substring(0, buffer.text_len())
+                    .chars()
+                    .collect(),
+            ),
+            marker
+                .as_ref()
+                .map(|m| m.borrow().position)
+                .unwrap_or_else(|| buffer.point()),
+        )
+    };
+    let base = if marker.is_some() {
+        -(position as i128)
+    } else {
+        1
+    };
+    let (result, end) = read_parser_at(
+        i,
+        chars,
+        position,
+        positioning.then_some(base),
+        marker.is_none(),
+    );
+    if let Some(marker) = marker {
+        marker.borrow_mut().position = end;
+        finish_stream_read(i, result, None)
+    } else {
+        buffer.borrow_mut().set_point(end);
+        finish_stream_read(i, result, Some(Value::Buffer(buffer)))
+    }
+}
+
+pub(crate) fn read_load_stream(i: &mut Interp, positioning: bool) -> EvalResult {
+    let Some(stream) = i.load_stream.clone() else {
+        return Err(i.signal_data(sym::END_OF_FILE, vec![]));
+    };
+    let (chars, position) = {
+        let stream = stream.borrow();
+        (stream.chars.clone(), stream.position)
+    };
+    let (result, end) = read_parser_at(
+        i,
+        chars,
+        position,
+        positioning.then_some(-(position as i128)),
+        false,
+    );
+    stream.borrow_mut().position = end;
+    let filename = i.intern("load-true-file-name");
+    let context = i.symbol_value(filename);
+    finish_stream_read(i, result, Some(context))
 }
 
 fn f_read(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -97,51 +172,7 @@ fn f_read(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             let (v, _) = i.read_from_string(&src, 0)?;
             Ok(v)
         }
-        Value::Buffer(b) => {
-            // Read one form starting at point, advance point past it.
-            // GNU `Fread' uses `locate_syms = false' — plain `read'
-            // never produces positioned symbols.
-            let (src, pos) = {
-                let bb = b.borrow();
-                // `read' stops at point-max (respects narrowing).
-                (bb.text.substring(0, bb.text_len()), bb.point)
-            };
-            // GNU read-from-minibuffer/read buffers carry the buffer
-            // object in end-of-file's data.
-            let (v, end) = match i.read_from_string_buf(&src, pos) {
-                Ok(x) => x,
-                // GNU's read-from-buffer signals (end-of-file BUFFER):
-                // the data is a one-element list holding the buffer.
-                Err(Flow::Signal(Value::Sym(s), _, flags)) if s == sym::END_OF_FILE => {
-                    return Err(Flow::Signal(
-                        Value::Sym(s),
-                        Value::cons(Value::Buffer(b.clone()), Value::Nil),
-                        flags,
-                    ));
-                }
-                Err(e) => return Err(e),
-            };
-            b.borrow_mut().set_point(end);
-            Ok(v)
-        }
-        Value::Marker(m) => {
-            let (buf, pos) = {
-                let mm = m.borrow();
-                (mm.buffer, mm.position)
-            };
-            match buf.and_then(|id| i.buffers.get(id)) {
-                Some(b) => {
-                    let src = {
-                        let bb = b.borrow();
-                        bb.text.substring(0, bb.text_len())
-                    };
-                    let (v, end) = i.read_from_string_buf(&src, pos)?;
-                    m.borrow_mut().position = end;
-                    Ok(v)
-                }
-                None => Err(i.signal_data(sym::END_OF_FILE, vec![])),
-            }
-        }
+        Value::Buffer(_) | Value::Marker(_) => read_buffer_stream(i, &source, false),
         other => {
             // GNU Fread: any other STREAM is FUNCALLed to produce
             // chars — non-functions surface `invalid-function'.

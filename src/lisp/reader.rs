@@ -27,13 +27,13 @@ pub struct Reader<'a> {
     pos: usize,
     interp: &'a mut Interp,
     /// `#N=` labels seen so far (shared structure refs via `#N#`).
-    labels: HashMap<u32, Value>,
+    labels: HashMap<u64, Value>,
     /// Labels currently being defined — `#N#` inside a `#N=` object
     /// is a forward (possibly circular) reference.
-    pending_labels: Vec<u32>,
+    pending_labels: Vec<u64>,
     /// Placeholder symbols for pending forward references; replaced
     /// by the real object once its `#N=` finishes reading.
-    label_markers: HashMap<u32, SymId>,
+    label_markers: HashMap<u64, SymId>,
     /// `read-positioning-symbols' mode: when `Some(base)', every symbol
     /// token reads as a `symbol-with-pos' record carrying position
     /// `base + token_start' (`read' keeps it off).
@@ -327,8 +327,7 @@ impl<'a> Reader<'a> {
             // A `.' directly before the close paren is the symbol `\.'
             // (Emacs reads `(a .)' as (a \.), `[a .]' as [a \.]).
             if c == '.' && self.peek_at(1) == Some(close) {
-                self.pos += 1;
-                items.push(Value::Sym(self.interp.intern(".")));
+                items.push(self.read_atom()?);
                 continue;
             }
             if c == '.' && self.at_dot_token() {
@@ -394,8 +393,7 @@ impl<'a> Reader<'a> {
             // `.' directly before `]' reads as the symbol `\.'
             // (Emacs: `[a .]' → [a \.]).
             if self.peek() == Some('.') && self.peek_at(1) == Some(close) {
-                self.pos += 1;
-                items.push(Value::Sym(self.interp.intern(".")));
+                items.push(self.read_atom()?);
                 continue;
             }
             items.push(self.read_object()?);
@@ -1130,20 +1128,37 @@ impl<'a> Reader<'a> {
             }
             Some(c) if c.is_ascii_digit() => {
                 // #Nr radix, #N= label, #N# label reference.
+                let start = self.pos;
                 self.pos += 1;
-                let mut n: u32 = 0;
+                let mut n: u64 = 0;
                 while let Some(d) = self.peek() {
                     if d.is_ascii_digit() {
-                        n = n * 10 + d.to_digit(10).unwrap();
                         self.pos += 1;
+                        n = match n
+                            .checked_mul(10)
+                            .and_then(|n| n.checked_add(d.to_digit(10).unwrap() as u64))
+                        {
+                            Some(n) if n <= i64::MAX as u64 => n,
+                            _ => return Err(self.hash_number_error(start)),
+                        };
                     } else {
                         break;
                     }
                 }
                 match self.next() {
                     Some('r') | Some('R') => {
-                        let v = self.read_radix_int(n)?;
+                        if n > u32::MAX as u64 {
+                            return Err(read_err(self.interp, &format!("integer, radix {n}")));
+                        }
+                        let v = self.read_radix_int(n as u32)?;
                         Ok(Value::Int(v))
+                    }
+                    Some('=') | Some('#')
+                        if n > ((1u64 << 61) - 1)
+                            || self.interp.intern_soft("read-circle")
+                                .is_some_and(|id| self.interp.symbol_value(id).is_nil()) =>
+                    {
+                        Err(self.hash_number_error(start))
                     }
                     Some('=') => {
                         // #N= — label the next object; #N# inside it
@@ -1183,22 +1198,17 @@ impl<'a> Reader<'a> {
                                 } else {
                                     // GNU signals with point on the
                                     // trailing `#'.
-                                    self.pos = self.pos.saturating_sub(1);
-                                    Err(read_err(self.interp, &format!("#{n}#")))
+                                    Err(self.hash_number_error(start))
                                 }
                             }
                         }
                     }
-                    other => {
+                    _ => {
                         // GNU signals with point on the consumed char
                         // (or the stream tail at EOF) — error_pos
                         // counts through pos.  At EOF the datum is
                         // just "#N" — no phantom char.
-                        self.pos = self.pos.saturating_sub(1);
-                        match other {
-                            Some(c) => Err(read_err_sym(self.interp, &format!("#{n}{c}"))),
-                            None => Err(read_err_sym(self.interp, &format!("#{n}"))),
-                        }
+                        Err(self.hash_number_error(start))
                     }
                 }
             }
@@ -1218,12 +1228,18 @@ impl<'a> Reader<'a> {
 
     /// Replace the placeholder symbol for label `n` inside `obj`
     /// with `obj` itself, producing shared/circular structure.
-    fn patch_label(&mut self, n: u32, obj: &Value) {
+    fn patch_label(&mut self, n: u64, obj: &Value) {
         let Some(marker) = self.label_markers.get(&n).copied() else {
             return;
         };
         let mut seen: HashSet<usize> = HashSet::default();
         patch_in(obj, marker, obj, &mut seen);
+    }
+
+    fn hash_number_error(&mut self, start: usize) -> Flow {
+        let token: String = self.chars[start..self.pos].iter().collect();
+        self.pos = self.pos.saturating_sub(1);
+        read_err_sym(self.interp, &token)
     }
 
     fn read_radix_int(&mut self, radix: u32) -> Result<i128, Flow> {

@@ -85,6 +85,13 @@ Nested loads restore both the cursor and input binding. Positioned file
 reads are relative to each read; buffer positions are absolute. File EOF
 data uses `load-true-file-name`. `qa_load_read_stream` covers consumption,
 reader switching, Unicode positions, nesting, and restoration on errors.
+EOF data identifies buffer/file inputs; string and marker reads carry no
+stream datum. Consuming reads advance buffer/marker/file cursors even
+when parsing signals, while markers past a narrowed end are not rewound.
+Numbered-object syntax honors `read-circle`, accepts fixnum-sized label
+IDs with checked digit accumulation, and preserves original spellings in
+errors. Positioned reads annotate literal dots before a closing delimiter.
+Regressions: `qa_reader_error_context`.
 
 ## Startup profiling (`REMACS_BOOT_PROF=1`)
 

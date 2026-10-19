@@ -1,0 +1,102 @@
+;;; -*- lexical-binding: t; -*-
+;; Issue #93: positioned reads signal parse failures; EOF data follows
+;; the input kind, and read-circle controls numbered object syntax.
+(defvar qa93-reader)
+(defvar qa93-source)
+(defvar qa93-case)
+(defvar qa93-enabled)
+(defvar qa93-suffix)
+(dolist (qa93-reader '(read read-from-string read-positioning-symbols))
+  (dolist (qa93-source '("" "(" "[" "'" "\"" "(a"))
+    (qa-err-data (funcall qa93-reader qa93-source) 'end-of-file nil))
+  (qa-err-data (funcall qa93-reader ")") 'invalid-read-syntax '(")"))
+  (qa-err-data (funcall qa93-reader ".") 'invalid-read-syntax '("."))
+  (dolist (qa93-case '(("#1=(a)" "#1=") ("#01=(a)" "#01=")
+                      ("#1#" "#1#") ("#1=[a b #1#]" "#1=")
+                      ("(#1=(a) #1#)" "#1=")
+                      ("#4294967296=(a)" "#4294967296=")))
+    (qa-err-data (let ((read-circle nil)) (funcall qa93-reader (car qa93-case)))
+                 'invalid-read-syntax (list (cadr qa93-case)))))
+
+(dolist (qa93-reader '(read read-positioning-symbols))
+  (qa (with-temp-buffer
+        (condition-case error (funcall qa93-reader (current-buffer))
+          (end-of-file (list (bufferp (cadr error)) (length error))))) '(t 2))
+  (qa-err-data (with-temp-buffer (funcall qa93-reader (point-marker))) 'end-of-file nil)
+  (qa (with-temp-buffer
+        (insert "#1=(a)") (goto-char 1)
+        (let* ((read-circle nil)
+               (error (condition-case error (funcall qa93-reader (current-buffer))
+                        (invalid-read-syntax error))))
+          (list error (point)))) '((invalid-read-syntax "#1=" 1 3) 4))
+  (qa (with-temp-buffer
+        (insert "#1=(a)") (goto-char 1)
+        (let* ((read-circle nil) (marker (point-marker))
+               (error (condition-case error (funcall qa93-reader marker)
+                        (invalid-read-syntax error))))
+          (list error (marker-position marker) (point)))) '((invalid-read-syntax "#1=") 4 1))
+  (qa (with-temp-buffer
+        (insert "(a b)") (narrow-to-region 1 4) (goto-char 1)
+        (condition-case error (funcall qa93-reader (current-buffer))
+          (end-of-file (list (bufferp (cadr error)) (= (point) (point-max)))))) '(t t))
+  (qa (with-temp-buffer
+        (insert "(a b)") (let ((marker (copy-marker 1)))
+          (narrow-to-region 1 4)
+          (condition-case error (funcall qa93-reader marker)
+            (end-of-file (list (cdr error) (marker-position marker)))))) '(nil 4))
+  (qa (with-temp-buffer
+        (insert "a b c") (let ((marker (copy-marker 5)))
+          (narrow-to-region 1 3)
+          (condition-case error (funcall qa93-reader marker)
+            (end-of-file (list (cdr error) (marker-position marker)))))) '(nil 5)))
+
+;; A dot immediately followed by the closing delimiter is a symbol,
+;; including its position; ordinary dotted-tail syntax remains intact.
+(dolist (qa93-enabled '(nil t))
+  (qa (let* ((symbols-with-pos-enabled qa93-enabled)
+             (value (read-positioning-symbols "(a .)")))
+        (list (mapcar #'bare-symbol value) (mapcar #'symbol-with-pos-pos value)))
+      '((a \.) (1 3)))
+  (qa (let* ((symbols-with-pos-enabled qa93-enabled)
+             (value (append (read-positioning-symbols "[a .]") nil)))
+        (list (mapcar #'bare-symbol value) (mapcar #'symbol-with-pos-pos value)))
+      '((a \.) (1 3)))
+  (qa (let* ((symbols-with-pos-enabled qa93-enabled)
+             (value (read-positioning-symbols "\\.")))
+        (list (bare-symbol value) (symbol-with-pos-pos value))) '(\. 0))
+  (qa (let* ((symbols-with-pos-enabled qa93-enabled)
+             (value (read-positioning-symbols "(a . b)")))
+        (list (bare-symbol (car value)) (bare-symbol (cdr value))
+              (symbol-with-pos-pos (car value)) (symbol-with-pos-pos (cdr value)))) '(a b 1 5)))
+
+(qa (read-from-string "#1=(a b)") '((a b) . 8))
+(qa (read-from-string "#4294967296=(a)") '((a) . 15))
+(qa (read-from-string "#2305843009213693951=(a)") '((a) . 24))
+(qa (let ((value (car (read-from-string "(#1=(a) #4294967297=(b) #1# #4294967297#)"))))
+      (list (eq (nth 0 value) (nth 2 value)) (eq (nth 1 value) (nth 3 value))
+            (eq (nth 0 value) (nth 1 value)))) '(t t nil))
+(qa-err-data (read "#01#") 'invalid-read-syntax '("#01#"))
+(qa-err-data (read "#2305843009213693952=(a)") 'invalid-read-syntax '("#2305843009213693952="))
+(qa-err-data (read "#9223372036854775808=(a)") 'invalid-read-syntax '("#9223372036854775808"))
+(qa-err-data (read "#4294967296r1") 'invalid-read-syntax '("integer, radix 4294967296"))
+(qa (let ((read-circle nil)) (read-from-string "#16rFF")) '(255 . 6))
+
+(defun qa93-load-error (body suffix)
+  (let ((file (make-temp-file "qa93-" nil suffix)))
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert (if (equal suffix ".elc")
+                        (concat ";ELC" (string 31 0 0 0) "\n;;; Compiled\n;;; in Emacs version 31.1\n")
+                      ";;; -*- lexical-binding: t; -*-\n") body))
+          (condition-case error (load file nil t) (error error)))
+      (delete-file file))))
+(dolist (qa93-suffix '(".el" ".elc"))
+  (qa (let ((error (qa93-load-error "(\n" qa93-suffix)))
+        (list (car error) (bufferp (cadr error)) (stringp (cadr error))))
+      (if (equal qa93-suffix ".el") '(end-of-file t nil) '(end-of-file nil t)))
+  (qa (let ((read-circle nil)) (qa93-load-error "#01=(a)\n" qa93-suffix))
+      (if (equal qa93-suffix ".el") '(invalid-read-syntax "#01=" 2 4)
+        '(invalid-read-syntax "#01="))))
+
+(princ (qa--done)) (terpri)
