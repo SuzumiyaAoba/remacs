@@ -1,0 +1,75 @@
+;;; -*- lexical-binding: t; -*-
+;; Issue #101: file-name-directory delegates remote parsing to the file
+;; name handler, respecting the shared dispatch and inhibition protocol.
+(defvar qa101-case)
+(dolist (qa101-case '(("" nil) ("file" nil) ("a:b" nil) ("/" "/")
+                      ("/tmp/file" "/tmp/") ("relative/file" "relative/")
+                      ("/tmp/a:b" "/tmp/") ("/tmp/あ" "/tmp/")))
+  (qa (file-name-directory (car qa101-case)) (cadr qa101-case)))
+;; These only parse names; no remote connection is opened.
+(dolist (qa101-case '(("/ssh:host:file" "/ssh:host:")
+                      ("/ssh:host:" "/ssh:host:")
+                      ("/ssh:user@host:/tmp/file" "/ssh:user@host:/tmp/")
+                      ("/ssh:host:relative/name" "/ssh:host:relative/")
+                      ("/ssh:host:relative/" "/ssh:host:relative/")
+                      ("/ssh:host:leaf with spaces" "/ssh:host:")
+                      ("/ssh:host:あ" "/ssh:host:")
+                      ("/ssh:proxy|ssh:host:leaf" "/ssh:host:")
+                      ("/ssh:host#2222:file" "/ssh:host#2222:")))
+  (qa (file-name-directory (car qa101-case)) (cadr qa101-case)))
+(qa (let ((file-name-handler-alist nil)) (file-name-directory "/ssh:host:file")) "/")
+
+(defvar qa101-calls)
+(defun qa101-handler (operation filename)
+  (push (list operation filename) qa101-calls)
+  "handled")
+(let ((file-name-handler-alist '(("\\`magic:" . qa101-handler))) (qa101-calls nil))
+  (qa (file-name-directory "magic:file") "handled")
+  (qa qa101-calls '((file-name-directory "magic:file")))
+  (qa (let ((inhibit-file-name-operation 'file-name-directory)
+            (inhibit-file-name-handlers '(qa101-handler)))
+        (file-name-directory "magic:file")) nil)
+  (qa (let ((inhibit-file-name-operation 'file-name-nondirectory)
+            (inhibit-file-name-handlers '(qa101-handler)))
+        (file-name-directory "magic:file")) "handled")
+  (unwind-protect
+      (progn
+        (put 'qa101-handler 'operations '(file-name-nondirectory))
+        (qa (file-name-directory "magic:file") nil)
+        (put 'qa101-handler 'operations '(file-name-directory))
+        (qa (file-name-directory "magic:file") "handled"))
+    (put 'qa101-handler 'operations nil))
+  (setq qa101-calls nil)
+  (qa-err-data (file-name-directory 1) 'wrong-type-argument '(stringp 1))
+  (qa qa101-calls nil))
+(qa (let* ((filename (propertize "magic:file" 'qa101 7)) seen
+           (file-name-handler-alist
+            (list (cons "\\`magic:"
+                        (lambda (operation argument)
+                          (setq seen (list operation (eq argument filename)
+                                           (get-text-property 0 'qa101 argument)))
+                          "properties")))))
+      (list (file-name-directory filename) seen)) '("properties" (file-name-directory t 7)))
+(defun qa101-delegate (operation filename)
+  (let ((inhibit-file-name-operation operation)
+        (inhibit-file-name-handlers '(qa101-delegate)))
+    (concat "delegated:" (file-name-directory filename))))
+(qa (let ((file-name-handler-alist '(("\\`magic:" . qa101-delegate))))
+      (file-name-directory "magic:/one/file")) "delegated:magic:/one/")
+(qa-err-data (let ((file-name-handler-alist
+                    (list (cons "\\`magic:" (lambda (_operation filename)
+                                               (signal 'file-error (list "qa101 failure" filename)))))))
+               (file-name-directory "magic:file"))
+             'file-error '("qa101 failure" "magic:file"))
+(qa (let ((file-name-handler-alist
+           (list (cons "magic:" (lambda (&rest _) "first"))
+                 (cons "file" (lambda (&rest _) "last")))))
+      (file-name-directory "magic:file")) "last")
+(qa (let ((file-name-handler-alist
+           (list (cons "magic:" (lambda (&rest _) "first"))
+                 (cons "magic:" (lambda (&rest _) "last")))))
+      (file-name-directory "magic:file")) "first")
+(qa (let ((file-name-handler-alist (list (cons "magic:" (lambda (&rest _) 'invalid)))))
+      (file-name-directory "magic:/file")) nil)
+
+(princ (qa--done)) (terpri)

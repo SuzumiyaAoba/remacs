@@ -10805,6 +10805,15 @@ fn f_locate_file_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_file_name_directory(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let s = want_str(i, &a[0])?;
+    let operation = Value::Sym(i.intern("file-name-directory"));
+    if let Some(handler) = crate::buffer::extra::find_file_name_handler(i, &s, operation.clone()) {
+        let result = i.apply(&handler, vec![operation, a[0].clone()])?;
+        return Ok(if matches!(result, Value::Str(_)) {
+            result
+        } else {
+            Value::Nil
+        });
+    }
     match s.rfind('/') {
         Some(idx) => Ok(Value::string(&s[..=idx])),
         None => Ok(Value::Nil),

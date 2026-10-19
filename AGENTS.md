@@ -118,6 +118,13 @@ Constants and aliases to constants reject buffer-local creation before
 changing state. `qa_variable_protection` covers protection, alias-local
 access, validation order, and failure atomicity.
 
+`file-name-directory` dispatches through `file-name-handler-alist` before
+the local slash split. Tramp supplies remote prefix and multihop behavior;
+do not approximate that parsing with colon heuristics. Pass the original
+filename object to the handler and honor operation/inhibition properties.
+Non-string handler results become nil, as in GNU's fileio.c.
+Regressions: `qa_file_directory_handlers` (name parsing only, no connection).
+
 ## Startup profiling (`REMACS_BOOT_PROF=1`)
 
 Before full eager source expansion, warm release `--batch` startup
