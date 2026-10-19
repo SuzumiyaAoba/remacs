@@ -767,6 +767,79 @@ fn f_setcdr(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(args[1].clone())
 }
 
+/// GNU FOR_EACH_TAIL's Brent detector. Call after advancing the tail,
+/// so successful searches can return before inspecting a circular suffix.
+/// Keeping the tortoise as a Value also roots it while an assoc callback
+/// mutates the spine. There is no arbitrary maximum proper-list length.
+struct ListCycle {
+    tortoise: Value,
+    max: usize,
+    n: isize,
+    q: u16,
+}
+impl ListCycle {
+    fn new(list: &Value) -> Self {
+        Self {
+            tortoise: list.clone(),
+            max: 2,
+            n: 0,
+            q: 2,
+        }
+    }
+    fn step(&mut self, i: &mut Interp, tail: &Value) -> Result<(), Flow> {
+        self.q = self.q.wrapping_sub(1);
+        if self.q == 0 {
+            // GNU checks for quit whenever the low counter expires.
+            if i.quit_flag {
+                i.quit_flag = false;
+                return Err(Flow::Quit);
+            }
+            self.n -= 1;
+            if self.n <= 0 {
+                self.max = self.max.saturating_mul(2);
+                self.q = self.max as u16;
+                self.n = (self.max >> 16) as isize;
+                self.tortoise = tail.clone();
+                return Ok(());
+            }
+        }
+        if eq_values(tail, &self.tortoise) {
+            return Err(i.signal_data(sym::CIRCULAR_LIST, vec![tail.clone()]));
+        }
+        Ok(())
+    }
+}
+
+/// copy-sequence copies the first cons before initializing FOR_EACH_TAIL
+/// at its cdr. Match that phase when remove/remq copy a list, including
+/// the exact source tail reported for a cycle or dotted-list error.
+fn copy_list_items(i: &mut Interp, list: &Value) -> Result<Vec<Value>, Flow> {
+    let (mut items, mut tail) = match list {
+        Value::Nil => return Ok(Vec::new()),
+        Value::Cons(c) => {
+            let c = c.borrow();
+            (vec![c.car.clone()], c.cdr.clone())
+        }
+        value => return Err(i.wrong_type_mut("listp", value)),
+    };
+    let mut cycle = ListCycle::new(&tail);
+    loop {
+        match &tail {
+            Value::Cons(c) => {
+                let next = {
+                    let c = c.borrow();
+                    items.push(c.car.clone());
+                    c.cdr.clone()
+                };
+                tail = next;
+                cycle.step(i, &tail)?;
+            }
+            Value::Nil => return Ok(items),
+            value => return Err(i.wrong_type_mut("listp", value)),
+        }
+    }
+}
+
 fn member_impl(
     i: &mut Interp,
     elt: &Value,
@@ -778,28 +851,16 @@ fn member_impl(
     // read cdrs without a borrow/clone per cell.  `cur' still yields
     // the tail `Value' to return by cloning only on a hit.
     let mut cur = list as *const Value;
-    let mut tortoise = list as *const Value;
-    let mut guard = 0usize;
+    let mut cycle = ListCycle::new(list);
     loop {
         match unsafe { &*cur } {
             Value::Cons(c) => {
-                guard += 1;
-                if guard > 500_000 {
-                    return Err(err_circular(i));
-                }
                 let cell = RefCell::as_ptr(c);
                 if cmp(i, elt, unsafe { &(*cell).car })? {
                     return Ok(unsafe { &*cur }.clone());
                 }
                 cur = unsafe { &(*cell).cdr };
-                if guard % 2 == 0 {
-                    if let Value::Cons(tc) = unsafe { &*tortoise } {
-                        tortoise = unsafe { crate::lisp::eval::cdr_ptr(tc) };
-                    }
-                }
-                if guard > 1 && eq_values(unsafe { &*cur }, unsafe { &*tortoise }) {
-                    return Err(err_circular(i));
-                }
+                cycle.step(i, unsafe { &*cur })?;
             }
             Value::Nil => return Ok(Value::Nil),
             // GNU reports the whole list argument, not the atom tail.
@@ -858,15 +919,10 @@ fn assoc_impl(
 ) -> EvalResult {
     // Raw-pointer spine walk like `member_impl'.
     let mut cur = list as *const Value;
-    let mut tortoise = list as *const Value;
-    let mut guard = 0usize;
+    let mut cycle = ListCycle::new(list);
     loop {
         match unsafe { &*cur } {
             Value::Cons(c) => {
-                guard += 1;
-                if guard > 500_000 {
-                    return Err(err_circular(i));
-                }
                 let cell = RefCell::as_ptr(c);
                 if let Value::Cons(ec) = unsafe { &(*cell).car } {
                     let eb = ec.borrow();
@@ -877,14 +933,7 @@ fn assoc_impl(
                     }
                 }
                 cur = unsafe { &(*cell).cdr };
-                if guard % 2 == 0 {
-                    if let Value::Cons(tc) = unsafe { &*tortoise } {
-                        tortoise = unsafe { crate::lisp::eval::cdr_ptr(tc) };
-                    }
-                }
-                if guard > 1 && eq_values(unsafe { &*cur }, unsafe { &*tortoise }) {
-                    return Err(err_circular(i));
-                }
+                cycle.step(i, unsafe { &*cur })?;
             }
             Value::Nil => return Ok(Value::Nil),
             // GNU assoc/assq report the whole LIST argument, not the
@@ -988,47 +1037,27 @@ fn f_rassq_delete_all(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     delete_all_by(i, args, true)
 }
 fn f_assoc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // (assoc KEY ALIST &optional TESTFN)
-    if let Some(testfn) = args.get(2) {
-        if testfn.truthy() {
-            let mut cur = args[1].clone();
-            let mut tortoise = args[1].clone();
-            let mut guard = 0usize;
-            loop {
-                match &cur {
-                    Value::Cons(c) => {
-                        guard += 1;
-                        if guard > 500_000 {
-                            return Err(err_circular(i));
-                        }
-                        let (elem, next) = {
-                            let b = c.borrow();
-                            (b.car.clone(), b.cdr.clone())
-                        };
-                        if let Value::Cons(ec) = &elem {
-                            let k = {
-                                let eb = ec.borrow();
-                                eb.car.clone()
-                            };
-                            let r = i.apply(testfn, vec![k, args[0].clone()])?;
-                            if r.truthy() {
-                                return Ok(elem.clone());
-                            }
-                        }
-                        cur = next;
-                        if guard % 2 == 0 {
-                            if let Value::Cons(tc) = &tortoise {
-                                let tnext = tc.borrow().cdr.clone();
-                                tortoise = tnext;
-                            }
-                        }
-                        if guard > 1 && eq_values(&cur, &tortoise) {
-                            return Err(err_circular(i));
+    // A TESTFN can change the current cell's cdr. Read it after the
+    // callback, like FOR_EACH_TAIL, with all RefCell borrows released.
+    if let Some(testfn) = args.get(2).filter(|v| v.truthy()) {
+        let mut tail = args[1].clone();
+        let mut cycle = ListCycle::new(&tail);
+        loop {
+            match &tail {
+                Value::Cons(c) => {
+                    let current = c.clone();
+                    let element = current.borrow().car.clone();
+                    if let Value::Cons(pair) = &element {
+                        let key = pair.borrow().car.clone();
+                        if i.apply(testfn, vec![key, args[0].clone()])?.truthy() {
+                            return Ok(element);
                         }
                     }
-                    Value::Nil => return Ok(Value::Nil),
-                    other => return Err(i.wrong_type_mut("listp", other)),
+                    tail = current.borrow().cdr.clone();
+                    cycle.step(i, &tail)?;
                 }
+                Value::Nil => return Ok(Value::Nil),
+                _ => return Err(i.wrong_type_mut("listp", &args[1])),
             }
         }
     }
@@ -1036,10 +1065,11 @@ fn f_assoc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         i,
         &args[0],
         &args[1],
-        |ii, a, b| equal_values(ii, a, b),
+        |i, a, b| equal_values(i, a, b),
         false,
     )
 }
+
 fn f_rassq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     assoc_impl(i, &args[0], &args[1], |_ii, a, b| Ok(eq_values(a, b)), true)
 }
@@ -1116,6 +1146,7 @@ fn del_impl(i: &mut Interp, elt: &Value, list: &Value, use_eq: bool) -> EvalResu
     let mut result = list.clone();
     let mut cur = list.clone();
     let mut prev: Option<crate::lisp::value::ConsRef> = None;
+    let mut cycle = ListCycle::new(list);
     loop {
         match cur {
             Value::Cons(c) => {
@@ -1133,14 +1164,14 @@ fn del_impl(i: &mut Interp, elt: &Value, list: &Value, use_eq: bool) -> EvalResu
                         Some(p) => p.borrow_mut().cdr = next.clone(),
                         None => result = next.clone(),
                     }
-                    cur = next;
                 } else {
                     prev = Some(c.clone());
-                    cur = next;
                 }
+                cur = c.borrow().cdr.clone();
+                cycle.step(i, &cur)?;
             }
             Value::Nil => break,
-            _ => return Err(i.wrong_type_mut("listp", list)),
+            _ => return Err(i.wrong_type_mut("listp", &result)),
         }
     }
     Ok(result)
@@ -1806,24 +1837,11 @@ fn remove_impl(
             Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(kept))))
         }
         Value::Cons(_) | Value::Nil => {
-            // List (or nil): GNU `remove`/`remq` copy the spine — the
-            // original list is left untouched.
-            let mut kept: Vec<Value> = Vec::new();
-            let mut cur = seq.clone();
-            loop {
-                match cur {
-                    Value::Cons(c) => {
-                        let (car, next) = {
-                            let b = c.borrow();
-                            (b.car.clone(), b.cdr.clone())
-                        };
-                        if !cmp(i, elt, &car)? {
-                            kept.push(car);
-                        }
-                        cur = next;
-                    }
-                    Value::Nil => break,
-                    other => return Err(i.wrong_type_mut("listp", &other)),
+            let items = copy_list_items(i, seq)?;
+            let mut kept = Vec::with_capacity(items.len());
+            for value in items {
+                if !cmp(i, elt, &value)? {
+                    kept.push(value);
                 }
             }
             Ok(Value::list(kept))
@@ -1860,37 +1878,10 @@ fn f_remq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             other => return Err(i.wrong_type_mut("listp", other)),
         }
     }
-    // memq the remainder: if ELT still occurs, delq a copy.
-    let mut found = false;
-    let mut cur = list.clone();
-    let mut guard = 0usize;
-    loop {
-        guard += 1;
-        if guard > 500_000 {
-            return Err(err_circular(i));
-        }
-        match &cur {
-            Value::Cons(c) => {
-                let (car, next) = {
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
-                };
-                if eq_values(elt, &car) {
-                    found = true;
-                    break;
-                }
-                cur = next;
-            }
-            // GNU `memq' signals wrong-type-argument on a non-nil
-            // atom tail (dotted lists); mirror that instead of
-            // silently returning the input.
-            Value::Nil => break,
-            other => return Err(i.wrong_type_mut("listp", other)),
-        }
-    }
+    let found = member_impl(i, elt, &list, |_, a, b| Ok(eq_values(a, b)))?.truthy();
     if found {
         // copy-sequence + delq (delq splices the copy in place).
-        let items = want_list(i, &list)?;
+        let items = copy_list_items(i, &list)?;
         let copied = Value::list(items);
         del_impl(i, elt, &copied, true)
     } else {
