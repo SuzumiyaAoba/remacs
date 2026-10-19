@@ -134,6 +134,7 @@ qa!(qa_extension_period, "qa_extension_period.el");
 qa!(qa_file_completion_prefix, "qa_file_completion_prefix.el");
 qa!(qa_filelocal, "qa_filelocal.el");
 qa!(qa_filesys, "qa_filesys.el");
+qa!(qa_file_remote, "qa_file_remote.el");
 qa!(qa_fill, "qa_fill.el");
 qa!(qa_fontlock, "qa_fontlock.el");
 qa!(qa_docstring_escape, "qa_docstring_escape.el");

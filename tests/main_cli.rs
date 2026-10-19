@@ -62,6 +62,27 @@ fn quick_start_symbol_metadata_matches_gnu() {
 }
 
 #[test]
+fn remote_identification_autoloads_tramp_on_first_call() {
+    // No source/framework is loaded before the first file-remote-p call.
+    let expression = "(prin1 (list (featurep 'tramp) \
+        (file-remote-p \"/ssh:qa21.invalid:/file\") \
+        (file-remote-p \"/ssh:u@qa21.invalid#2222:/file\" 'host) \
+        (file-remote-p \"/ssh:qa21.invalid:/file\" nil t) (featurep 'tramp)))";
+    let expected = "(nil \"/ssh:qa21.invalid:\" \"qa21.invalid#2222\" nil t)";
+    if let Some(gnu) = std::env::var_os("GNU_EMACS") {
+        let output = Command::new(gnu)
+            .args(["-Q", "--batch", "--eval", expression])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+    }
+    let (output, errors, status) = remacs(&["-Q", "--batch", "--eval", expression], "");
+    assert_eq!(status, 0, "{errors}");
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn eval_error_exits_nonzero() {
     let (_o, e, code) = remacs(&["--eval", "(car 1)"], "");
     assert_ne!(code, 0);
