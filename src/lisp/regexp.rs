@@ -73,10 +73,6 @@ impl CharSet {
         self.singles.contains(&c)
             || self.ranges.iter().any(|(lo, hi)| c >= *lo && c <= *hi)
             || self
-                .posix
-                .iter()
-                .any(|(name, neg)| posix_match(name.as_str(), c, syn) != *neg)
-            || self
                 .syntax
                 .iter()
                 .any(|(code, neg)| syntax_match(*code, c, syn) != *neg)
@@ -84,7 +80,11 @@ impl CharSet {
     }
 
     fn contains(&self, c: char, case_fold: bool, syn: SynFn, cat: CatFn) -> bool {
-        let mut found = self.base_match(c, syn, cat);
+        let mut found = self.base_match(c, syn, cat)
+            || self
+                .posix
+                .iter()
+                .any(|(name, neg)| syn.posix(name, c, case_fold) != *neg);
         if !found && case_fold {
             for lc in c.to_lowercase() {
                 if lc != c && self.base_match(lc, syn, cat) {
@@ -125,23 +125,29 @@ pub fn syntax_code(c: char) -> u8 {
 }
 
 fn syntax_match(code: u8, c: char, syn: SynFn) -> bool {
-    let sc = syn(c);
+    let sc = syn.code(c);
     // GNU accepts `-` as an alias for the whitespace class.
     sc == code || (code == b'-' && sc == b' ')
 }
 
-/// GNU `[:name:]' classes.  Unknown names are rejected at parse time;
-/// this is only reached for names in `KNOWN_POSIX'.
-fn posix_match(name: &str, c: char, syn: SynFn) -> bool {
+/// Table-free fallback for standalone syntax callbacks and early loadup.
+/// The interpreter overrides this with its GNU character tables.
+fn posix_match(name: &str, c: char, syn: &dyn Fn(char) -> u8, fold: bool) -> bool {
     match name {
         "alnum" => c.is_alphanumeric(),
         "alpha" => c.is_alphabetic(),
         "digit" => c.is_ascii_digit(),
         "xdigit" => c.is_ascii_hexdigit(),
-        "upper" => c.is_uppercase(),
-        "lower" => c.is_lowercase(),
-        "space" => c.is_whitespace(),
-        "punct" => c.is_ascii_punctuation(),
+        "upper" => c.is_uppercase() || (fold && c.is_lowercase()),
+        "lower" => c.is_lowercase() || (fold && c.is_uppercase()),
+        "space" => syn(c) == b' ',
+        "punct" => {
+            if c.is_ascii() {
+                c.is_ascii_punctuation()
+            } else {
+                syn(c) != b'w'
+            }
+        }
         "graph" => !c.is_whitespace() && !c.is_control(),
         "print" => !c.is_control(),
         // GNU regex.c ISCNTRL: `(c) < \' \'` — ASCII controls only;
@@ -179,7 +185,86 @@ const KNOWN_POSIX: &[&str] = &[
     "multibyte",
 ];
 
-pub type SynFn<'a> = &'a dyn Fn(char) -> u8;
+/// Syntax plus character classification supplied by the caller.  Plain
+/// syntax callbacks remain usable by standalone engine clients; the editor
+/// supplies its live GNU syntax, case and Unicode category tables.
+pub trait Syntax {
+    fn code(&self, c: char) -> u8;
+
+    fn posix(&self, name: &str, c: char, fold: bool) -> bool {
+        posix_match(name, c, &|ch| self.code(ch), fold)
+    }
+}
+
+impl<F: Fn(char) -> u8 + ?Sized> Syntax for F {
+    fn code(&self, c: char) -> u8 {
+        self(c)
+    }
+}
+
+pub type SynFn<'a> = &'a dyn Syntax;
+
+/// GNU character.c and regex-emacs.c predicates.  CATEGORY is the raw
+/// general-category enum; UPPER/LOWER come from the current case table.
+pub(crate) fn class_matches(
+    name: &str,
+    c: char,
+    syntax: u8,
+    category: Option<i128>,
+    upper: bool,
+    lower: bool,
+) -> bool {
+    let cp = crate::lisp::value::lisp_char_code(c);
+    match name {
+        "ascii" => cp < 128,
+        "nonascii" => cp >= 128,
+        "unibyte" => cp <= 255,
+        "multibyte" => cp > 255,
+        "digit" => c.is_ascii_digit(),
+        "xdigit" => c.is_ascii_hexdigit(),
+        "cntrl" => cp < 32,
+        "space" => syntax == b' ',
+        "word" => syntax == b'w',
+        "punct" => {
+            if c.is_ascii() {
+                c.is_ascii_punctuation()
+            } else {
+                syntax != b'w'
+            }
+        }
+        "upper" => upper,
+        "lower" => lower,
+        "blank" => {
+            if c.is_ascii() {
+                matches!(c, ' ' | '\t')
+            } else {
+                category == Some(23)
+            }
+        }
+        "alpha" | "alnum" => {
+            if c.is_ascii() {
+                c.is_ascii_alphabetic() || (name == "alnum" && c.is_ascii_digit())
+            } else {
+                matches!(category, Some(1..=8 | 10)) || (name == "alnum" && category == Some(9))
+            }
+        }
+        "graph" => {
+            if cp <= 255 {
+                cp > 32 && !(127..=160).contains(&cp)
+            } else {
+                category.is_some() && !matches!(category, Some(23..=26 | 28 | 30))
+            }
+        }
+        "print" => {
+            if cp <= 255 {
+                cp >= 32 && !(127..=159).contains(&cp)
+            } else {
+                category.is_some() && !matches!(category, Some(26 | 28 | 30))
+            }
+        }
+        _ => false,
+    }
+}
 
 /// Category-table lookup for `\cX'/`\CX': `(c, BIT)' where BIT is the
 /// category character's code (e.g. `j' = 106 for Japanese).
@@ -197,11 +282,11 @@ pub fn std_syntax(c: char) -> u8 {
 }
 
 fn is_word_char(c: char, syn: SynFn) -> bool {
-    syn(c) == b'w'
+    syn.code(c) == b'w'
 }
 
 fn is_sym_char(c: char, syn: SynFn) -> bool {
-    matches!(syn(c), b'w' | b'_')
+    matches!(syn.code(c), b'w' | b'_')
 }
 
 // ---------- parsing ----------

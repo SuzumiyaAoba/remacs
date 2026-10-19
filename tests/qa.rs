@@ -278,6 +278,7 @@ qa!(qa_read, "qa_read.el");
 qa!(qa_readprint, "qa_readprint.el");
 qa!(qa_rect, "qa_rect.el");
 qa!(qa_regex, "qa_regex.el");
+qa!(qa_regexp_classes, "qa_regexp_classes.el");
 qa!(qa_regexpopt, "qa_regexpopt.el");
 qa!(qa_replace, "qa_replace.el");
 qa!(qa_replace_case, "qa_replace_case.el");

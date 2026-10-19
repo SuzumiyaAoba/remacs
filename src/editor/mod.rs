@@ -17871,7 +17871,7 @@ pub(crate) fn syntax_table_entries(i: &Interp) -> Option<SynTable> {
 /// back to the hardcoded standard table.
 pub(crate) fn syntax_entry_code(t: Option<&SynTable>, c: char) -> u8 {
     if let Some(t) = t {
-        if let Value::Cons(cn) = t.get(c as u32) {
+        if let Value::Cons(cn) = t.get(crate::lisp::value::lisp_char_code(c) as u32) {
             if let Value::Int(n) = &cn.borrow().car {
                 if let Some(letter) = SYNTAX_CLASS_CHARS.get(*n as usize & 0xf) {
                     return *letter as u8;
@@ -17896,9 +17896,129 @@ pub(crate) fn syntax_code_buf(i: &Interp, c: char) -> u8 {
 /// Regex-ready syntax lookup for the current buffer's `syntax-table'
 /// (falls back to the standard table).  Construct BEFORE borrowing a
 /// buffer — the lookup itself touches the buffer.
-pub(crate) fn re_syntax(i: &Interp) -> impl Fn(char) -> u8 + 'static {
-    let syn = syntax_table_entries(i);
-    move |c| syntax_entry_code(syn.as_ref(), c)
+pub(crate) fn re_syntax(i: &Interp) -> RegexSyntax {
+    use crate::lisp::builtins::{misc::CharTableSnapshot, strfn::case_extra};
+    let down = i
+        .current_buffer_ref()
+        .and_then(|buffer| buffer.try_borrow().ok().and_then(|b| b.case_table.clone()))
+        .or_else(|| i.standard_case_table.clone())
+        .unwrap_or(Value::Nil);
+    let snapshot_extra =
+        |slot| case_extra(&down, slot).and_then(|table| CharTableSnapshot::new(i, &table));
+    RegexSyntax {
+        syntax: syntax_table_entries(i),
+        down: CharTableSnapshot::new(i, &down),
+        up: snapshot_extra(0),
+        canon: snapshot_extra(1),
+        equiv: snapshot_extra(2),
+        category: i
+            .intern_soft("unicode-category-table")
+            .and_then(|id| CharTableSnapshot::new(i, &i.symbol_value(id))),
+    }
+}
+
+pub(crate) struct RegexSyntax {
+    syntax: Option<SynTable>,
+    down: Option<crate::lisp::builtins::misc::CharTableSnapshot>,
+    up: Option<crate::lisp::builtins::misc::CharTableSnapshot>,
+    canon: Option<crate::lisp::builtins::misc::CharTableSnapshot>,
+    equiv: Option<crate::lisp::builtins::misc::CharTableSnapshot>,
+    category: Option<crate::lisp::builtins::misc::CharTableSnapshot>,
+}
+
+impl RegexSyntax {
+    fn mapped(table: &Option<crate::lisp::builtins::misc::CharTableSnapshot>, c: char) -> char {
+        let code = crate::lisp::value::lisp_char_code(c) as u32;
+        table
+            .as_ref()
+            .and_then(|t| match t.get(code) {
+                Value::Int(n) if (0..=0x3f_ffff).contains(&n) => {
+                    crate::lisp::value::lisp_char(n as u32)
+                }
+                _ => None,
+            })
+            .unwrap_or(c)
+    }
+
+    fn raw_class(&self, name: &str, c: char) -> bool {
+        use crate::lisp::regexp::Syntax;
+        // GNU's regexp bitmap contains only ASCII members for these
+        // extras.  Unicode Latin-1 characters take the multibyte path.
+        if name == "unibyte" {
+            return c.is_ascii();
+        }
+        if name == "multibyte" {
+            return !c.is_ascii();
+        }
+        // Before Unicode loadup there is no category table yet.  Keep
+        // standalone engine behavior until the GNU table is installed.
+        if (self.category.is_none()
+            && !c.is_ascii()
+            && matches!(name, "alpha" | "alnum" | "blank" | "graph" | "print"))
+            || (self.down.is_none() && matches!(name, "upper" | "lower"))
+        {
+            return Syntax::posix(&|ch| self.code(ch), name, c, false);
+        }
+        let cp = crate::lisp::value::lisp_char_code(c) as u32;
+        let upper = Self::mapped(&self.down, c) != c;
+        let lower = !upper && Self::mapped(&self.up, c) != c;
+        let category = self
+            .category
+            .as_ref()
+            .and_then(|table| match table.get(cp) {
+                Value::Int(n)
+                    if (crate::lisp::value::FIXNUM_MIN..=crate::lisp::value::FIXNUM_MAX)
+                        .contains(&n) =>
+                {
+                    Some(n)
+                }
+                _ => None,
+            });
+        crate::lisp::regexp::class_matches(name, c, self.code(c), category, upper, lower)
+    }
+}
+
+impl crate::lisp::regexp::Syntax for RegexSyntax {
+    fn code(&self, c: char) -> u8 {
+        syntax_entry_code(self.syntax.as_ref(), c)
+    }
+
+    fn posix(&self, name: &str, c: char, fold: bool) -> bool {
+        // Eight-bit characters use the byte bitmap even in multibyte
+        // text.  GNU's POSIX-class bitmap is populated only for ASCII.
+        if crate::lisp::value::eight_bit_byte(c).is_some() {
+            return false;
+        }
+        // GNU tests upper/lower against the original character, merging
+        // those two classes when case folding is enabled.  Full Unicode
+        // string expansions (e.g. sharp-s -> SS) are not character cases.
+        if matches!(name, "upper" | "lower") {
+            return self.raw_class(name, c)
+                || (fold && self.raw_class(if name == "upper" { "lower" } else { "upper" }, c));
+        }
+        if !fold {
+            return self.raw_class(name, c);
+        }
+        let canonical = Self::mapped(&self.canon, c);
+        if !c.is_ascii() {
+            return self.raw_class(name, canonical);
+        }
+        // GNU compiles ASCII class members into a bitmap after applying
+        // translation.  Include equivalent ASCII members even when their
+        // syntax differs, rather than folding their syntax after matching.
+        if self.raw_class(name, canonical) || self.raw_class(name, c) {
+            return true;
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut next = canonical;
+        while seen.insert(next) {
+            if next.is_ascii() && self.raw_class(name, next) {
+                return true;
+            }
+            next = Self::mapped(&self.equiv, next);
+        }
+        false
+    }
 }
 
 /// Regex-ready category lookup for `\cX'/`\CX' classes: `(c, BIT)'

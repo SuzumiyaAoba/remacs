@@ -5718,58 +5718,10 @@ impl SkipClassContext {
             }
             _ => None,
         };
-        match name {
-            "ascii" => c.is_ascii(),
-            "nonascii" => !c.is_ascii(),
-            "unibyte" => cp <= 255,
-            "multibyte" => cp > 255,
-            "digit" => c.is_ascii_digit(),
-            "xdigit" => c.is_ascii_hexdigit(),
-            "cntrl" => cp < 32,
-            "space" => syntax() == b' ',
-            "word" => syntax() == b'w',
-            "punct" => {
-                if c.is_ascii() {
-                    c.is_ascii_punctuation()
-                } else {
-                    syntax() != b'w'
-                }
-            }
-            "upper" => changed(&self.downcase),
-            "lower" => !changed(&self.downcase) && changed(&self.upcase),
-            "blank" => {
-                if c.is_ascii() {
-                    c == ' ' || c == '\t'
-                } else {
-                    category() == Some(23)
-                }
-            }
-            "alpha" | "alnum" => {
-                if c.is_ascii() {
-                    c.is_ascii_alphabetic() || (name == "alnum" && c.is_ascii_digit())
-                } else {
-                    let cat = category();
-                    matches!(cat, Some(1..=8 | 10)) || (name == "alnum" && cat == Some(9))
-                }
-            }
-            "graph" => {
-                if cp <= 255 {
-                    cp > 32 && !(127..=160).contains(&cp)
-                } else {
-                    let cat = category();
-                    cat.is_some() && !matches!(cat, Some(23..=26 | 28 | 30))
-                }
-            }
-            "print" => {
-                if cp <= 255 {
-                    cp >= 32 && !(127..=159).contains(&cp)
-                } else {
-                    let cat = category();
-                    cat.is_some() && !matches!(cat, Some(26 | 28 | 30))
-                }
-            }
-            _ => false,
-        }
+        let upper = changed(&self.downcase);
+        crate::lisp::regexp::class_matches(
+            name, c, syntax(), category(), upper, !upper && changed(&self.upcase),
+        )
     }
 }
 

@@ -15125,6 +15125,58 @@ fn ct_ref_defalt(i: &Interp, table: &Value, idx: usize) -> Value {
 /// parent chain (defalt checked at each level before following the
 /// parent link).  Used by `aref'/`elt' and syntax lookups; NOT by
 /// `char-table-range' with a cons range (which skips the parent).
+/// Read-only access to a char-table chain without retaining an Interp
+/// borrow.  Regexp matching uses this while its buffer is borrowed.
+pub(crate) struct CharTableSnapshot {
+    tag: Option<SymId>,
+    levels: Vec<(Rc<RefCell<Vec<Value>>>, Value, bool)>,
+}
+
+impl CharTableSnapshot {
+    pub(crate) fn new(i: &Interp, table: &Value) -> Option<Self> {
+        if !is_char_table(i, table) {
+            return None;
+        }
+        let mut levels = Vec::new();
+        let mut current = table.clone();
+        for _ in 0..64 {
+            let contents = char_table_vec(&current)?;
+            ct_uncompress_ascii(i, &current, &contents);
+            levels.push((
+                contents,
+                i.char_table_defalt(&current),
+                is_uniprop_table(i, &current),
+            ));
+            current = i.char_table_parent(&current);
+            if current.is_nil() {
+                break;
+            }
+        }
+        Some(Self {
+            tag: i.intern_soft("sub-char-table"),
+            levels,
+        })
+    }
+
+    pub(crate) fn get(&self, code: u32) -> Value {
+        for (contents, default, uniprop) in &self.levels {
+            let contents = contents.borrow();
+            let value = if contents.len() == 256 {
+                contents.get(code as usize).cloned().unwrap_or(Value::Nil)
+            } else {
+                ct_raw_tag(self.tag, &contents, code, *uniprop)
+            };
+            if !value.is_nil() {
+                return value;
+            }
+            if !default.is_nil() {
+                return default.clone();
+            }
+        }
+        Value::Nil
+    }
+}
+
 pub(crate) fn char_table_ref(i: &Interp, table: &Value, idx: usize) -> Value {
     let mut cur = table.clone();
     for _ in 0..64 {
