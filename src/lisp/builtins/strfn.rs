@@ -1574,13 +1574,41 @@ fn f_string_chop_newline(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
 /// Display column width of one character under GNU's `strwidth'
 /// rules: each character contributes its `char-width-table' width —
 /// tab is 8 flat (no tab-stop tracking) and newline counts 0.
-fn gnu_char_width(c: char) -> usize {
+fn gnu_char_width(i: &Interp, c: char) -> usize {
     if c == '\t' {
         8
-    } else if c == '\n' {
-        0
     } else {
-        crate::buffer::primitives::char_width(c) as usize
+        gnu_char_code_width(i, lisp_char_code(c) as u32)
+    }
+}
+
+fn gnu_char_code_width(i: &Interp, code: u32) -> usize {
+    // CHARACTER_WIDTH handles ASCII directly. For other characters,
+    // consult the live table using the Lisp code rather than a Rust
+    // proxy scalar (surrogates, high Mule codes, and eight-bit chars).
+    if code < 0x80 {
+        return match code {
+            10 => 0,
+            0x20..=0x7E => 1,
+            _ => 2,
+        };
+    }
+    if let Some(id) = i.intern_soft("char-width-table") {
+        if let Value::Int(width) = misc::char_table_ref(i, &i.symbol_value(id), code as usize) {
+            if width >= 0 {
+                return width as usize;
+            }
+        }
+    }
+    // Sparse bootstrap tables may not yet have a default or all ranges.
+    if (0x80..=0x9F).contains(&code) || (0x3FFF80..=0x3FFFFF).contains(&code) {
+        4
+    } else if code > 0x10FFFF {
+        1
+    } else {
+        char::from_u32(code)
+            .map(|c| crate::buffer::primitives::char_width(c) as usize)
+            .unwrap_or(1)
     }
 }
 
@@ -1598,7 +1626,7 @@ fn f_string_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let (f, t) = validate_subarray(i, &args[0], &from, &to, chars.len())?;
     let mut w = 0usize;
     for c in &chars[f..t] {
-        w += gnu_char_width(*c);
+        w += gnu_char_width(i, *c);
     }
     Ok(Value::Int(w as i128))
 }
@@ -1608,7 +1636,7 @@ fn f_string_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 /// WIDTH; when the string is actually truncated and ELLIPSIS is
 /// non-nil, an ellipsis is appended, reserving its own width first
 /// (ELLIPSIS of t means `truncate-string-ellipsis', defaulting to "…"
-/// which GNU's char-width table counts as 2 columns).  PADDING non-nil
+/// measured using the current char-width table).  PADDING non-nil
 /// pads the result out to WIDTH — PADDING of a character pads with
 /// that character, otherwise with spaces.  START-COLUMN is the
 /// starting display column (affects tab expansion and leaves room).
@@ -1642,7 +1670,7 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
         .map(|e| {
             let mut w = 0;
             for c in e.chars() {
-                w += gnu_char_width(c);
+                w += gnu_char_width(i, c);
             }
             w
         })
@@ -1654,16 +1682,15 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
     let mut col = 0usize;
     let mut idx = 0usize;
     while idx < chars.len() && col < start_col {
-        col += gnu_char_width(chars[idx]);
+        col += gnu_char_width(i, chars[idx]);
         idx += 1;
     }
-    // Scan the tail: if it fits within WIDTH, return it whole (an
-    // ellipsis is only used when the string is actually truncated).
+    // Scan the tail to decide whether to reserve ellipsis width.
     let mut fits = true;
     {
         let mut c = col;
         for &ch in &chars[idx..] {
-            let cw = gnu_char_width(ch);
+            let cw = gnu_char_width(i, ch);
             if c + cw > width {
                 fits = false;
                 break;
@@ -1680,15 +1707,15 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
     let mut out = String::new();
     let mut truncated = false;
     for &c in &chars[idx..] {
-        let cw = gnu_char_width(c);
-        if col + cw > budget {
+        let cw = gnu_char_width(i, c);
+        if col >= budget || col + cw > budget {
             truncated = true;
             break;
         }
         out.push(c);
         col += cw;
     }
-    if truncated {
+    if truncated && !fits {
         if let Some(e) = &ellipsis {
             out.push_str(e);
             col += ell_w;
@@ -1728,7 +1755,7 @@ fn f_string_fill(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         } else if c == '\t' {
             col + (8 - col % 8)
         } else {
-            col + gnu_char_width(c)
+            col + gnu_char_width(i, c)
         }
     };
     let word_width = |mut pos: usize| -> usize {
@@ -4807,7 +4834,7 @@ fn format_char_width(i: &Interp, ch: char) -> usize {
             }
         }
     }
-    gnu_char_width(ch)
+    gnu_char_width(i, ch)
 }
 
 /// C printf precision on a pre-formatted integer string: pad with
@@ -5190,19 +5217,7 @@ fn f_char_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         let tw = i.symbol_value(tid).int().unwrap_or(8);
         return Ok(Value::Int(tw));
     }
-    // GNU's default char-width-table: 4 for ISO control chars
-    // (0x80..=0x9F) and eight-bit chars (0x3FFF80..=0x3FFFFF),
-    // 1 for the other non-Unicode internals; the rest per the
-    // display width table.
-    let u = c as u32;
-    let w = if (0x80..=0x9F).contains(&u) || (0x3FFF80..=0x3FFFFF).contains(&u) {
-        4
-    } else if u > 0x10FFFF {
-        1
-    } else {
-        let ch = char::from_u32(u).unwrap_or('\u{FFFD}');
-        gnu_char_width(ch)
-    };
+    let w = gnu_char_code_width(i, c as u32);
     Ok(Value::Int(w as i128))
 }
 fn f_format_spec(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {

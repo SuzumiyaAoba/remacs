@@ -9,7 +9,7 @@
 ;;     live in ucs-normalize.el which is not preloaded.
 ;;   - ucs-normalize-string is bound (it's in the dump).
 ;;   - encode-char/decode-char roundtrip between charsets.
-;;   - char-width/string-width/truncate-string-to-width are libc-width.
+;;   - char-width/string-width/truncate-string-to-width use char-width-table.
 ;;   - charset-id-internal / charset-ordinal-pos are NOT fns.
 ;;   - charset-map / clear-charset-maps are NOT fns.
 

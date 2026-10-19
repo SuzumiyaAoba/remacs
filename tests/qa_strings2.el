@@ -106,13 +106,17 @@
 ;; (STR END-COLUMN &optional START-COLUMN PADDING ELLIPSIS …)
 (qa (truncate-string-to-width "abcdef" 3) "abc")
 (qa (truncate-string-to-width "abc" 10) "abc")
-;; ELLIPSIS: a string replaces the tail — it consumes END-COLUMN width,
-;; so "abcdef" at width 4 with "…" keeps 3 chars + the ellipsis
+;; ELLIPSIS replaces the tail and consumes part of END-COLUMN's budget.
 (qa (truncate-string-to-width "abcdef" 4 0 nil "...") "a...")
-(qa (truncate-string-to-width "abcdef" 4 0 nil "…") "ab…")
+(let ((char-width-table (copy-sequence char-width-table)))
+  ;; Pin ambiguous-width ellipsis explicitly for every environment.
+  (set-char-table-range char-width-table ?… 2)
+  (qa (truncate-string-to-width "abcdef" 4 0 nil "…") "ab…"))
 ;; ELLIPSIS non-nil non-string → "…" (truncate-string-ellipsis is nil -Q)
-(qa (truncate-string-to-width "abcdef" 5 0 nil t) "abc…")
-(qa (truncate-string-to-width "abcdef" 4 0 nil t) "ab…")
+(let ((char-width-table (copy-sequence char-width-table)))
+  (set-char-table-range char-width-table ?… 2)
+  (qa (truncate-string-to-width "abcdef" 5 0 nil t) "abc…")
+  (qa (truncate-string-to-width "abcdef" 4 0 nil t) "ab…"))
 ;; ELLIPSIS ignored when nothing is truncated
 (qa (truncate-string-to-width "abc" 5 0 nil "...") "abc")
 

@@ -76,6 +76,7 @@ qa!(qa_buffmenu, "qa_buffmenu.el");
 qa!(qa_case, "qa_case.el");
 qa!(qa_char, "qa_char.el");
 qa!(qa_charset, "qa_charset.el");
+qa!(qa_character_width_table, "qa_character_width_table.el");
 qa!(
     qa_decomposition_description,
     "qa_decomposition_description.el"

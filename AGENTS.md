@@ -628,6 +628,13 @@ qa-xf back to qa and watch it go XPASS→pass):
   cons args), `char-width`, `charset-priority-list`,
   `set-charset-priority`, `sort-charsets`, `find-charset-*`,
   `coding-system-charset-list`, synthesized builtin attribute plists.
+  `char-width` and the string width/truncation helpers consult the
+  live `char-width-table` using original Lisp character codes, including
+  surrogate/high-Mule/eight-bit proxies. ASCII uses GNU's direct width
+  rules; sparse bootstrap tables fall back to the static width ranges.
+  Zero-width overrides, parent inheritance, mutation, buffer-local
+  tables, and truncation at an exact width are covered by
+  `qa_character_width_table`.
 - Indirect buffers: fixed — text/ticks/text-props/undo-list are
   shared via SharedText (per GNU's buffer_text), BEGV/ZV/point/markers
   stay per-buffer, `buffer-base-buffer` returns a live object (killed

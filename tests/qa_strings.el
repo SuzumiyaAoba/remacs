@@ -144,12 +144,16 @@
 (qa (string-width "\t") 8)
 (qa (string-width "a\tb") 10)
 (qa (string-width "a\nb") 2)
-(qa (string-width "é") 3)
+;; The live GNU table gives the combining accent zero columns.
+(qa (string-width "é") 1)
 (qa (string-pixel-width "abc") 3)
 (qa (string-pixel-width "日") 2)
 
 (qa (truncate-string-to-width "日本語" 4) "日本")
-(qa (truncate-string-to-width "abcdef" 4 nil nil ?.) "ab…")
+(let ((char-width-table (copy-sequence char-width-table)))
+  ;; Ambiguous-width ellipsis depends on the language environment.
+  (set-char-table-range char-width-table ?… 2)
+  (qa (truncate-string-to-width "abcdef" 4 nil nil ?.) "ab…"))
 
 (qa (string-fill "aaa bbb ccc" 7) "aaa bbb\nccc")
 (qa (string-fill "aaaaaaaaa bbb" 5) "aaaaaaaaa\nbbb")
