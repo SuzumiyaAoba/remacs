@@ -602,10 +602,9 @@ fn f_subr_type(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
 }
 fn f_macrop(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let fun = match &args[0] {
-        Value::Sym(id) => i.symbol_function(*id),
-        other => other.clone(),
-    };
+    // GNU subr.el consults indirect-function: aliases (including
+    // obsolete pushnew) keep the target macro/autoload type.
+    let fun = f_indirect_function(i, vec![args[0].clone()].into())?;
     match &fun {
         Value::Lambda(l) => return Ok(Value::from_bool(l.is_macro)),
         Value::Cons(c) => {

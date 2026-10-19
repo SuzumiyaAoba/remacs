@@ -8221,6 +8221,15 @@ command-line arguments.\" \
                             } else {
                                 self.symbol_function(id)
                             };
+                            // Inspect the same public alias chain GNU's
+                            // macroexpand follows, without autoloading
+                            // until the target's macro type is known.
+                            if matches!(&f, Value::Sym(alias) if *alias != sym::UNBOUND) {
+                                f = crate::lisp::builtins::data::f_indirect_function(
+                                    self,
+                                    vec![Value::Sym(id)].into(),
+                                )?;
+                            }
                             // Autoload cell: resolve macro autoloads
                             // (TYPE non-nil); others stop expansion.
                             let auto_id = self.intern("autoload");

@@ -666,6 +666,12 @@ qa-xf back to qa and watch it go XPASS→pass):
   the prelude's GNU subr.el defmacro (dropped); empty BODY now returns
   the last binding value (qa_subrx).  `progv' is gone from 31.1 core —
   it lives in obsolete cl.el (`(require 'cl)' first; tests updated).
+  `pushnew` follows the same obsolete-package boundary: `cl-lib` alone
+  leaves it void. `qa_obsolete_pushnew` pins `cl`'s keyword comparisons,
+  key functions, generalized places, and single evaluation of subforms.
+  `macrop`/`macroexpand` follow public function aliases, including the
+  obsolete name's alias to `cl-pushnew`; predicate inspection preserves
+  macro autoloads without loading them.
 - Batch frame model differs from GNU -Q tty: `frame-parameter` values,
   window edges, `tty-*`/`pos-visible-in-window-p`, etc. (qa_window).
 - `define-key` on prefix key, `keymap-set` return value, `help-function`

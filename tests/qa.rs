@@ -129,6 +129,7 @@ qa!(qa_eval_narrowing, "qa_eval_narrowing.el");
 qa!(qa_eval_lexenv, "qa_eval_lexenv.el");
 qa!(qa_closure_constructor, "qa_closure_constructor.el");
 qa!(qa_cl_boot_surface, "qa_cl_boot_surface.el");
+qa!(qa_obsolete_pushnew, "qa_obsolete_pushnew.el");
 qa!(qa_menu_keys, "qa_menu_keys.el");
 qa!(qa_basic_faces, "qa_basic_faces.el");
 qa!(qa_face, "qa_face.el");

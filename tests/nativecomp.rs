@@ -105,6 +105,30 @@ fn compile_load_run_file() {
 }
 
 #[test]
+fn obsolete_macro_aliases_compile_with_keywords() {
+    if !avail() {
+        return;
+    }
+    let source = r#";;; -*- lexical-binding: t; -*-
+(defun nc-pushnew-alias ()
+  (let ((xs '("a" "b")) (ys '((1 . a) (2 . b))))
+    (pushnew (copy-sequence "a") xs :test 'equal)
+    (pushnew '(1 . c) ys :key 'car)
+    (list xs ys)))
+"#;
+    let path = scratch("legacy-macro-alias.el", source);
+    assert_eq!(
+        ev(&format!(
+            "(progn (require 'cl) \
+               (native-elisp-load (native-compile {path:?})) \
+               (list (nc-pushnew-alias) \
+                     (native-comp-function-p (symbol-function 'nc-pushnew-alias))))"
+        )),
+        "(((\"a\" \"b\") ((1 . a) (2 . b))) t)"
+    );
+}
+
+#[test]
 fn optional_rest_letstar() {
     if !avail() {
         return;
