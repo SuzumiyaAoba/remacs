@@ -92,6 +92,12 @@ Numbered-object syntax honors `read-circle`, accepts fixnum-sized label
 IDs with checked digit accumulation, and preserves original spellings in
 errors. Positioned reads annotate literal dots before a closing delimiter.
 Regressions: `qa_reader_error_context`.
+Numbered objects register a fresh cons placeholder before reading their
+body, including when redefining a label. Cons results copy their car/cdr
+into that placeholder without overwriting a nested definition's mapping;
+other results substitute placeholder references and update the mapping.
+Nested cons labels therefore need not alias, while vector labels can.
+Regressions: `qa_reader_circles`.
 
 ## Startup profiling (`REMACS_BOOT_PROF=1`)
 

@@ -12,7 +12,7 @@ use std::rc::Rc;
 use super::Interp;
 use super::error::Flow;
 use super::obarray::sym;
-use super::value::{SymId, Value};
+use super::value::Value;
 
 // Emacs modifier bits for char literals (from src/character.h).
 pub const CHAR_ALT: i128 = 0x0040_0000;
@@ -28,12 +28,6 @@ pub struct Reader<'a> {
     interp: &'a mut Interp,
     /// `#N=` labels seen so far (shared structure refs via `#N#`).
     labels: HashMap<u64, Value>,
-    /// Labels currently being defined — `#N#` inside a `#N=` object
-    /// is a forward (possibly circular) reference.
-    pending_labels: Vec<u64>,
-    /// Placeholder symbols for pending forward references; replaced
-    /// by the real object once its `#N=` finishes reading.
-    label_markers: HashMap<u64, SymId>,
     /// `read-positioning-symbols' mode: when `Some(base)', every symbol
     /// token reads as a `symbol-with-pos' record carrying position
     /// `base + token_start' (`read' keeps it off).
@@ -115,8 +109,6 @@ impl<'a> Reader<'a> {
             pos: 0,
             interp,
             labels: HashMap::default(),
-            pending_labels: Vec::new(),
-            label_markers: HashMap::default(),
             annotate_pos: None,
             sympos_enabled: false,
             from_buffer: false,
@@ -1161,47 +1153,44 @@ impl<'a> Reader<'a> {
                         Err(self.hash_number_error(start))
                     }
                     Some('=') => {
-                        // #N= — label the next object; #N# inside it
-                        // resolves to a placeholder patched afterwards.
+                        // GNU registers a cons placeholder before reading
+                        // the object, replacing any previous definition.
+                        let placeholder = Value::cons(Value::Nil, Value::Nil);
+                        self.labels.insert(n, placeholder.clone());
                         if self.skip_layout()? {
                             return Err(eof_err(self.interp));
                         }
-                        self.pending_labels.push(n);
-                        let obj = self.read_object();
-                        self.pending_labels.pop();
-                        let obj = obj?;
-                        // `#N=#N#' — the labelled object is nothing but
-                        // the placeholder itself; GNU rejects it.
-                        if let Value::Sym(s) = &obj {
-                            if self.label_markers.get(&n) == Some(s) {
-                                // GNU signals with point on the
-                                // object's last char.
+                        let obj = self.read_object()?;
+                        if let Value::Cons(pair) = &obj {
+                            let Value::Cons(stub) = &placeholder else {
+                                unreachable!()
+                            };
+                            if Rc::ptr_eq(pair, stub) {
                                 self.pos = self.pos.saturating_sub(1);
                                 return Err(read_err(self.interp, "nonsensical self-reference"));
                             }
+                            // Reuse the placeholder as the actual cons.
+                            // Nested/redefined labels keep GNU's identity
+                            // behavior, rather than aliasing the read pair.
+                            let (car, cdr) = {
+                                let pair = pair.borrow();
+                                (pair.car.clone(), pair.cdr.clone())
+                            };
+                            let mut stub = stub.borrow_mut();
+                            stub.car = car;
+                            stub.cdr = cdr;
+                            drop(stub);
+                            Ok(placeholder)
+                        } else {
+                            let mut seen = HashSet::default();
+                            patch_in(&obj, &placeholder, &obj, &mut seen);
+                            self.labels.insert(n, obj.clone());
+                            Ok(obj)
                         }
-                        self.patch_label(n, &obj);
-                        self.labels.insert(n, obj.clone());
-                        Ok(obj)
                     }
                     Some('#') => {
-                        // #N# — reference a labeled object.
-                        match self.labels.get(&n) {
-                            Some(v) => Ok(v.clone()),
-                            None => {
-                                if self.pending_labels.contains(&n) {
-                                    if !self.label_markers.contains_key(&n) {
-                                        let m = self.interp.make_symbol(&format!("#label{}#", n));
-                                        self.label_markers.insert(n, m);
-                                    }
-                                    Ok(Value::Sym(self.label_markers[&n]))
-                                } else {
-                                    // GNU signals with point on the
-                                    // trailing `#'.
-                                    Err(self.hash_number_error(start))
-                                }
-                            }
-                        }
+                        let object = self.labels.get(&n).cloned();
+                        object.ok_or_else(|| self.hash_number_error(start))
                     }
                     _ => {
                         // GNU signals with point on the consumed char
@@ -1224,16 +1213,6 @@ impl<'a> Reader<'a> {
                 }
             }
         }
-    }
-
-    /// Replace the placeholder symbol for label `n` inside `obj`
-    /// with `obj` itself, producing shared/circular structure.
-    fn patch_label(&mut self, n: u64, obj: &Value) {
-        let Some(marker) = self.label_markers.get(&n).copied() else {
-            return;
-        };
-        let mut seen: HashSet<usize> = HashSet::default();
-        patch_in(obj, marker, obj, &mut seen);
     }
 
     fn hash_number_error(&mut self, start: usize) -> Flow {
@@ -1603,11 +1582,14 @@ fn parse_float(tok: &str) -> Option<f64> {
     tok.parse::<f64>().ok()
 }
 
-/// Replace occurrences of `marker` (a placeholder SymId) inside `v`
-/// with `target`, descending into conses/vectors/records. `seen`
-/// guards against revisiting cells (matters once the structure is
-/// already circular).
-fn patch_in(v: &Value, marker: SymId, target: &Value, seen: &mut HashSet<usize>) {
+fn placeholder_eq(value: &Value, placeholder: &Value) -> bool {
+    matches!((value, placeholder), (Value::Cons(value), Value::Cons(placeholder))
+        if Rc::ptr_eq(value, placeholder))
+}
+
+/// Replace placeholder cons references inside `v` with `target`.
+/// Track visited conses/vectors/records since they may already be cyclic.
+fn patch_in(v: &Value, placeholder: &Value, target: &Value, seen: &mut HashSet<usize>) {
     match v {
         Value::Cons(c) => {
             let ptr = Rc::as_ptr(c) as usize;
@@ -1618,15 +1600,15 @@ fn patch_in(v: &Value, marker: SymId, target: &Value, seen: &mut HashSet<usize>)
                 let b = c.borrow();
                 (b.car.clone(), b.cdr.clone())
             };
-            if matches!(&car, Value::Sym(s) if *s == marker) {
+            if placeholder_eq(&car, placeholder) {
                 c.borrow_mut().car = target.clone();
             } else {
-                patch_in(&car, marker, target, seen);
+                patch_in(&car, placeholder, target, seen);
             }
-            if matches!(&cdr, Value::Sym(s) if *s == marker) {
+            if placeholder_eq(&cdr, placeholder) {
                 c.borrow_mut().cdr = target.clone();
             } else {
-                patch_in(&cdr, marker, target, seen);
+                patch_in(&cdr, placeholder, target, seen);
             }
         }
         Value::Vec(vec) => {
@@ -1639,11 +1621,11 @@ fn patch_in(v: &Value, marker: SymId, target: &Value, seen: &mut HashSet<usize>)
             let items: Vec<Value> = items
                 .into_iter()
                 .map(|it| {
-                    if matches!(&it, Value::Sym(s) if *s == marker) {
+                    if placeholder_eq(&it, placeholder) {
                         touched = true;
                         target.clone()
                     } else {
-                        patch_in(&it, marker, target, seen);
+                        patch_in(&it, placeholder, target, seen);
                         it
                     }
                 })
@@ -1662,11 +1644,11 @@ fn patch_in(v: &Value, marker: SymId, target: &Value, seen: &mut HashSet<usize>)
             let items: Vec<Value> = items
                 .into_iter()
                 .map(|it| {
-                    if matches!(&it, Value::Sym(s) if *s == marker) {
+                    if placeholder_eq(&it, placeholder) {
                         touched = true;
                         target.clone()
                     } else {
-                        patch_in(&it, marker, target, seen);
+                        patch_in(&it, placeholder, target, seen);
                         it
                     }
                 })
