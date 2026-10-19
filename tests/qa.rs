@@ -81,6 +81,7 @@ qa!(
     "qa_decomposition_description.el"
 );
 qa!(qa_chartables, "qa_chartables.el");
+qa!(qa_char_table_range_alias, "qa_char_table_range_alias.el");
 qa!(qa_char_table_reader, "qa_char_table_reader.el");
 qa!(qa_category_defaults, "qa_category_defaults.el");
 qa!(qa_clloop, "qa_clloop.el");

@@ -16062,14 +16062,17 @@ fn f_map_char_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let mut last: Option<(u32, u32)> = None;
     for (from, to, val) in runs.into_iter().filter(|(_, _, v)| !v.is_nil()) {
         last = Some((from, to));
+        // GNU updates the shared range even when this callback receives
+        // a fixnum. A previously retained cons must already show the
+        // singleton bounds while that callback is running (or exits).
+        if let Value::Cons(c) = &range {
+            let mut cc = c.borrow_mut();
+            cc.car = Value::Int(from as i128);
+            cc.cdr = Value::Int(to as i128);
+        }
         let key = if from == to {
             Value::Int(from as i128)
         } else {
-            if let Value::Cons(c) = &range {
-                let mut cc = c.borrow_mut();
-                cc.car = Value::Int(from as i128);
-                cc.cdr = Value::Int(to as i128);
-            }
             range.clone()
         };
         let val = if decode {
