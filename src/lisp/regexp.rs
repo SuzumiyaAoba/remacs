@@ -3,7 +3,7 @@
 //!
 //! Supported syntax (per Emacs):
 //!   `.` `*` `+` `?` `*?` `+?` `??` `\{m\}` `\{m,n\}`
-//!   `[...]` `[^...]` ranges, `[:class:]` POSIX classes, `\sX` in classes
+//!   `[...]` `[^...]` ranges, `[:class:]` POSIX classes
 //!   `^` `$` `` \` `` `\'` `\b` `\B` `\<` `\>` `\_<` `\_>` `\w` `\W` `\sX` `\SX`
 //!   `\(...\)` `\(?:...\)` `\|` `\1`–`\9` backrefs
 
@@ -298,6 +298,7 @@ struct Parser {
     chars: Vec<char>,
     pos: usize,
     n_groups: usize,
+    open_groups: Vec<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -401,67 +402,8 @@ impl Parser {
                     };
                 }
                 Some('\\') if self.chars.get(self.pos + 1) == Some(&'{') => {
-                    // interval \{m,n\}
-                    // GNU re_compile_pattern for `\{': reads digits,
-                    // optional `,' + digits, then `\}'.  EOF before
-                    // the contents → "Unmatched \{"; non-digit junk
-                    // or n<m/>RE_DUP_MAX → "Invalid content of \{\}".
-                    // `\{,5\}' is `{0,5}'.
                     self.pos += 2;
-                    let take_digits = |p: &mut Self| -> String {
-                        let mut s = String::new();
-                        while let Some(c) = p.peek() {
-                            if c.is_ascii_digit() {
-                                s.push(c);
-                                p.pos += 1;
-                            } else {
-                                break;
-                            }
-                        }
-                        s
-                    };
-                    let min_s = take_digits(self);
-                    let max_s = if self.peek() == Some(',') {
-                        self.pos += 1;
-                        Some(take_digits(self))
-                    } else {
-                        None
-                    };
-                    let closed = self.peek() == Some('\\')
-                        && self.chars.get(self.pos + 1) == Some(&'}');
-                    if closed {
-                        self.pos += 2;
-                    }
-                    // At this point: `\{' then [digits] [, [digits]]
-                    // then optional `\}'.  GNU's grammar requires the
-                    // closer; without it, if the contents are still
-                    // junk it's "Invalid content", at bare EOF of a
-                    // clean prefix it's "Unmatched \{".
-                    let junk = !closed && self.peek().is_some();
-                    if junk {
-                        return Err(RegexError("Invalid content of \\{\\}".into()));
-                    }
-                    let min_empty = min_s.is_empty();
-                    let minv: usize = if min_empty {
-                        0
-                    } else {
-                        min_s.parse().unwrap_or(usize::MAX)
-                    };
-                    let maxv: Option<usize> = match &max_s {
-                        Some(s) if s.is_empty() => None, // \{N,\} = N..
-                        Some(s) => Some(s.parse().unwrap_or(usize::MAX)),
-                        None => Some(minv), // \{N\}, including \{\} = {0}
-                    };
-                    if !closed {
-                        // `\{' then clean digits then EOF: "Unmatched \{".
-                        return Err(RegexError("Unmatched \\{".into()));
-                    }
-                    const RE_DUP_MAX: usize = 65535;
-                    if minv > RE_DUP_MAX
-                        || matches!(maxv, Some(mv) if mv > RE_DUP_MAX || mv < minv)
-                    {
-                        return Err(RegexError("Invalid content of \\{\\}".into()));
-                    }
+                    let (minv, maxv) = self.parse_interval()?;
                     node = Ast::Repeat {
                         node: Box::new(node),
                         min: minv,
@@ -473,6 +415,48 @@ impl Parser {
             }
         }
         Ok(node)
+    }
+
+    /// GNU GET_INTERVAL_COUNT validates overflow while reading digits,
+    /// before checking EOF or the closer.  A final backslash is a
+    /// separate trailing-escape error, not an invalid interval bound.
+    fn interval_count(&mut self) -> Result<(usize, bool), RegexError> {
+        let mut value = 0usize;
+        let mut digits = false;
+        loop {
+            let c = self
+                .peek()
+                .ok_or_else(|| RegexError("Unmatched \\{".into()))?;
+            if !c.is_ascii_digit() {
+                return Ok((value, digits));
+            }
+            value = value * 10 + (c as usize - '0' as usize);
+            if value > 65535 {
+                return Err(RegexError("Invalid content of \\{\\}".into()));
+            }
+            digits = true;
+            self.pos += 1;
+        }
+    }
+
+    fn parse_interval(&mut self) -> Result<(usize, Option<usize>), RegexError> {
+        let (min, _) = self.interval_count()?;
+        let max = if self.peek() == Some(',') {
+            self.pos += 1;
+            let (count, digits) = self.interval_count()?;
+            digits.then_some(count)
+        } else {
+            Some(min)
+        };
+        if max.is_some_and(|max| max < min) || self.next() != Some('\\') {
+            return Err(RegexError("Invalid content of \\{\\}".into()));
+        }
+        match self.next() {
+            None => return Err(RegexError("Trailing backslash".into())),
+            Some('}') => {}
+            _ => return Err(RegexError("Invalid content of \\{\\}".into())),
+        }
+        Ok((min, max))
     }
 
     /// atom := char | '.' | '^' | '$' | '[' class ']' | '\' escaped | '(' group ')'
@@ -496,8 +480,7 @@ impl Parser {
             Some('(') => {
                 // \( ... \) group; \(?: ... \) shy group; \(?N: ... \)
                 // numbered group (GNU Emacs 29+).
-                if self.peek() == Some('?') {
-                    let save = self.pos;
+                if self.peek() == Some('?') && self.chars.get(self.pos + 1).is_some() {
                     self.pos += 1;
                     if self.peek() == Some(':') {
                         self.pos += 1;
@@ -505,32 +488,42 @@ impl Parser {
                         self.expect_close()?;
                         return Ok(Ast::ShyGroup(Box::new(inner)));
                     }
-                    let mut digits = String::new();
+                    if !matches!(self.peek(), Some('1'..='9')) {
+                        return Err(RegexError("Invalid regular expression".into()));
+                    }
+                    let mut g = 0i32;
                     while let Some(c) = self.peek() {
                         if c.is_ascii_digit() {
-                            digits.push(c);
+                            g = g
+                                .checked_mul(10)
+                                .and_then(|g| g.checked_add(c as i32 - '0' as i32))
+                                .ok_or_else(|| RegexError("Regular expression too big".into()))?;
                             self.pos += 1;
                         } else {
                             break;
                         }
                     }
-                    if !digits.is_empty() && self.peek() == Some(':') {
-                        self.pos += 1;
-                        let g = digits.parse::<usize>().unwrap_or(0).min(63);
-                        if g > self.n_groups {
-                            self.n_groups = g;
+                    match self.next() {
+                        None => {
+                            return Err(RegexError("Premature end of regular expression".into()));
                         }
-                        let inner = self.parse_alt()?;
-                        self.expect_close()?;
-                        return Ok(Ast::Group(g, Box::new(inner)));
+                        Some(':') => {}
+                        _ => return Err(RegexError("Invalid regular expression".into())),
                     }
-                    self.pos = save;
+                    let g = g as usize;
+                    if self.open_groups.contains(&g) {
+                        return Err(RegexError("Invalid regular expression".into()));
+                    }
+                    self.n_groups = self.n_groups.max(g);
+                    return self.parse_group(g);
                 }
-                self.n_groups += 1;
+                self.n_groups = self
+                    .n_groups
+                    .checked_add(1)
+                    .filter(|n| *n <= i32::MAX as usize)
+                    .ok_or_else(|| RegexError("Regular expression too big".into()))?;
                 let g = self.n_groups;
-                let inner = self.parse_alt()?;
-                self.expect_close()?;
-                Ok(Ast::Group(g, Box::new(inner)))
+                self.parse_group(g)
             }
             Some(')') => {
                 // stray \) — the caller (parse_alt) should have stopped;
@@ -551,8 +544,7 @@ impl Parser {
             Some('<') => Ok(Ast::Anchor('<')),
             Some('>') => Ok(Ast::Anchor('>')),
             Some('_') => match self.peek() {
-                // GNU: `\_<' and `\_>' are symbol boundaries; a bare
-                // `\_' is a literal underscore.
+                // GNU requires a symbol-boundary selector after \_.
                 Some('<') => {
                     self.pos += 1;
                     Ok(Ast::Anchor('l'))
@@ -561,27 +553,54 @@ impl Parser {
                     self.pos += 1;
                     Ok(Ast::Anchor('g'))
                 }
-                _ => Ok(Ast::Char('_')),
+                None => Err(RegexError("Premature end of regular expression".into())),
+                _ => Err(RegexError("Invalid regular expression".into())),
             },
+            Some('{') => {
+                // Even without a preceding atom GNU validates the whole
+                // interval, then re-reads a valid interval as literal text.
+                let start = self.pos;
+                self.parse_interval()?;
+                self.pos = start;
+                Ok(Ast::Char('{'))
+            }
             Some('w') => Ok(Ast::SyntaxClass(b'w', false)),
             Some('W') => Ok(Ast::SyntaxClass(b'w', true)),
             Some('s') => {
-                let code = self.next().ok_or(RegexError("Premature end of regular expression".into()))?;
+                let code = self
+                    .next()
+                    .ok_or(RegexError("Premature end of regular expression".into()))?;
                 Ok(Ast::SyntaxClass(code as u8, false))
             }
             Some('S') => {
-                let code = self.next().ok_or(RegexError("Premature end of regular expression".into()))?;
+                let code = self
+                    .next()
+                    .ok_or(RegexError("Premature end of regular expression".into()))?;
                 Ok(Ast::SyntaxClass(code as u8, true))
             }
             Some('c') => {
-                let code = self.next().ok_or(RegexError("Premature end of regular expression".into()))?;
+                let code = self
+                    .next()
+                    .ok_or(RegexError("Premature end of regular expression".into()))?;
                 Ok(Ast::CategoryClass(code as u8, false))
             }
             Some('C') => {
-                let code = self.next().ok_or(RegexError("Premature end of regular expression".into()))?;
+                let code = self
+                    .next()
+                    .ok_or(RegexError("Premature end of regular expression".into()))?;
                 Ok(Ast::CategoryClass(code as u8, true))
             }
-            Some(d @ '1'..='9') => Ok(Ast::Backref(d as usize - '0' as usize)),
+            Some(d @ '1'..='9') => {
+                let group = d as usize - '0' as usize;
+                // GNU checks the logical highest number, including holes
+                // introduced by explicit numbering, plus currently open
+                // groups.  A missing capture below that number is valid
+                // syntax but cannot match at runtime.
+                if group > self.n_groups || self.open_groups.contains(&group) {
+                    return Err(RegexError("Invalid back reference".into()));
+                }
+                Ok(Ast::Backref(group))
+            }
             Some('n') => Ok(Ast::Char('\n')),
             Some('t') => Ok(Ast::Char('\t')),
             Some('r') => Ok(Ast::Char('\r')),
@@ -603,6 +622,20 @@ impl Parser {
             // GNU re_compile_pattern: "Unmatched ( or \\(".
             Err(RegexError("Unmatched ( or \\(".into()))
         }
+    }
+
+    fn parse_group(&mut self, group: usize) -> Result<Ast, RegexError> {
+        self.open_groups.push(group);
+        let inner = self.parse_alt()?;
+        self.expect_close()?;
+        self.open_groups.pop();
+        // GNU tracks the logical numbering but emits capture instructions
+        // only through MAX_REGNUM, rather than allocating huge registers.
+        Ok(if group <= 255 {
+            Ast::Group(group, Box::new(inner))
+        } else {
+            Ast::ShyGroup(Box::new(inner))
+        })
     }
 
     /// [...] char class.
@@ -676,7 +709,7 @@ impl Parser {
                     }
                 }
                 if ok {
-                    if !KNOWN_POSIX.contains(&name.as_str()) {
+                    if neg || !KNOWN_POSIX.contains(&name.as_str()) {
                         return Err(RegexError("Invalid character class name".into()));
                     }
                     set.posix.push((name, neg));
@@ -692,26 +725,8 @@ impl Parser {
                 }
                 continue;
             }
-            // \sX syntax class inside [].
-            if self.peek() == Some('\\')
-                && matches!(self.chars.get(self.pos + 1), Some('s') | Some('S'))
-            {
-                self.pos += 1;
-                let neg = self.next() == Some('S');
-                let code = self.next().ok_or(RegexError("Premature end of regular expression".into()))?;
-                set.syntax.push((code as u8, neg));
-                continue;
-            }
-            // \cX category class inside [].
-            if self.peek() == Some('\\')
-                && matches!(self.chars.get(self.pos + 1), Some('c') | Some('C'))
-            {
-                self.pos += 1;
-                let neg = self.next() == Some('C');
-                let code = self.next().ok_or(RegexError("Premature end of regular expression".into()))?;
-                set.cats.push((code as u8, neg));
-                continue;
-            }
+            // Backslashes are ordinary characters inside a GNU bracket
+            // expression, including before s/S/c/C.
             prev_char = Some(self.class_char()?);
         }
         if let Some(c) = prev_char {
@@ -721,8 +736,7 @@ impl Parser {
     }
 
     /// One char inside a class.  GNU: `\' is an ordinary character
-    /// inside [...] (only `[:posix:]' and `\s'/`\S' are special, and
-    /// those are handled by the caller before this).
+    /// inside [...] (POSIX class names are handled by the caller).
     fn class_char(&mut self) -> Result<char, RegexError> {
         self.next().ok_or(RegexError("Unmatched [ or [^".into()))
     }
@@ -904,35 +918,12 @@ pub fn compile(pattern: &str) -> Result<Regex, RegexError> {
     compile_case(pattern, true)
 }
 
-/// GNU rejects `\N' when group N has not yet been CLOSED in the
-/// pattern (forward refs and refs to enclosing groups are errors).
-fn check_backrefs(node: &Ast, closed: &mut [bool]) -> Result<(), RegexError> {
-    match node {
-        Ast::Backref(g) => {
-            if !closed.get(*g).copied().unwrap_or(false) {
-                return Err(RegexError("Invalid back reference".into()));
-            }
-        }
-        Ast::Group(g, inner) => {
-            check_backrefs(inner, closed)?;
-            closed[*g] = true;
-        }
-        Ast::ShyGroup(inner) | Ast::Repeat { node: inner, .. } => check_backrefs(inner, closed)?,
-        Ast::Alt(bs) | Ast::Concat(bs) => {
-            for b in bs {
-                check_backrefs(b, closed)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
 pub fn compile_case(pattern: &str, case_fold: bool) -> Result<Regex, RegexError> {
     let mut p = Parser {
         chars: pattern.chars().collect(),
         pos: 0,
         n_groups: 0,
+        open_groups: Vec::new(),
     };
     let ast = p.parse_alt()?;
     if p.pos != p.chars.len() {
@@ -950,10 +941,10 @@ pub fn compile_case(pattern: &str, case_fold: bool) -> Result<Regex, RegexError>
             p.pos
         )));
     }
-    check_backrefs(&ast, &mut vec![false; p.n_groups + 1])?;
+    let n_groups = p.n_groups.min(255);
     let mut cg = Codegen {
         prog: Vec::with_capacity(64),
-        next_reg: 2 * (p.n_groups + 1),
+        next_reg: 2 * (n_groups + 1),
     };
     cg.push(Inst::Save(0));
     cg.emit(&ast);
@@ -961,8 +952,8 @@ pub fn compile_case(pattern: &str, case_fold: bool) -> Result<Regex, RegexError>
     cg.push(Inst::Match);
     Ok(Regex {
         prog: cg.prog,
-        n_groups: p.n_groups,
-        extra_regs: cg.next_reg - 2 * (p.n_groups + 1),
+        n_groups,
+        extra_regs: cg.next_reg - 2 * (n_groups + 1),
         case_fold,
         source: pattern.to_string(),
     })
