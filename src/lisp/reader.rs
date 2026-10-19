@@ -964,13 +964,36 @@ impl<'a> Reader<'a> {
                 }
                 let items = self.read_seq_unannotated(']')?;
                 if sub {
+                    // GNU validates the complete sub-table header and
+                    // depth-specific slot count before constructing a trie
+                    // node.  Short records cannot safely reach its printer.
+                    if items.len() < 2 {
+                        return Err(plain_err(self.interp, "Invalid size of sub-char-table"));
+                    }
+                    let slots = match items[0] {
+                        Value::Int(1) => 16,
+                        Value::Int(2) => 32,
+                        Value::Int(3) => 128,
+                        _ => return Err(plain_err(self.interp, "Invalid depth in sub-char-table")),
+                    };
+                    if items.len() != slots + 2 {
+                        return Err(plain_err(self.interp, "Invalid size in sub-char-table"));
+                    }
+                    if !matches!(items[1], Value::Int(n)
+                        if (0..=super::builtins::misc::CT_MAX_CHAR as i128).contains(&n))
+                    {
+                        return Err(plain_err(
+                            self.interp,
+                            "Invalid minimum character in sub-char-table",
+                        ));
+                    }
                     let mut rec = Vec::with_capacity(items.len() + 1);
                     rec.push(Value::Sym(self.interp.intern("sub-char-table")));
                     rec.extend(items);
                     return Ok(Value::Record(Rc::new(std::cell::RefCell::new(rec))));
                 }
-                if items.len() < 3 {
-                    return Err(read_err_sym(self.interp, "#^"));
+                if items.len() < 68 {
+                    return Err(read_err(self.interp, "Invalid size char-table"));
                 }
                 let defalt = items[0].clone();
                 let parent = items[1].clone();

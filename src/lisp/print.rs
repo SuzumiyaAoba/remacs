@@ -1038,7 +1038,7 @@ impl Interp {
                 }
                 // Sub char tables print `#^^[DEPTH MIN-CHAR
                 // SLOTS...]' — GNU's trie nodes.
-                if self.symbol_name(*t) == "sub-char-table" {
+                if self.symbol_name(*t) == "sub-char-table" && rr.len() >= 3 {
                     out.push_str("#^^[");
                     if let Some(d) = rr.get(1) {
                         inner!(d);
