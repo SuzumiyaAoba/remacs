@@ -123,45 +123,71 @@ pub struct Buffer {
     pub inhibit_buffer_hooks: bool,
 }
 
-/// Resolve symlinks like GNU's `file-truename'.  When FILE doesn't
-/// exist, canonicalize resolves nothing — resolve the longest
-/// existing ancestor and reattach the missing tail instead.
+/// Resolve path components in GNU file-truename order. Missing components
+/// remain usable names; a later `..' can cancel one and expose a real link.
+/// Relative links preserve the root, while absolute links replace it.
 pub fn file_truename(path: &str) -> String {
-    // GNU keeps a trailing slash on the resolved name iff the input
-    // had one — `file-truename "/tmp/"' → "/private/tmp/".
-    let dirlike = path.ends_with('/');
-    let mut missing: Vec<&str> = Vec::new();
-    let mut rest = path;
-    loop {
-        if let Ok(real) = std::fs::canonicalize(rest) {
-            let mut out = real.to_string_lossy().into_owned();
-            while out.ends_with('/') && out.len() > 1 {
-                out.pop();
-            }
-            for c in missing.iter().rev() {
-                if !out.ends_with('/') {
-                    out.push('/');
+    use std::collections::VecDeque;
+
+    let absolute = if path.starts_with('/') {
+        path.to_owned()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("/"))
+            .join(path)
+            .to_string_lossy()
+            .into_owned()
+    };
+    let root = |name: &str| {
+        if name.starts_with("//") && !name.starts_with("///") {
+            "//"
+        } else {
+            "/"
+        }
+    };
+    let mut out = root(&absolute).to_owned();
+    let mut root_len = out.len();
+    let mut pending: VecDeque<String> = absolute.split('/').map(str::to_owned).collect();
+    let mut dirlike = path.ends_with('/');
+    let mut links = 0;
+    while let Some(component) = pending.pop_front() {
+        match component.as_str() {
+            "" | "." => continue,
+            ".." => {
+                if out.len() > root_len {
+                    out.truncate(out.rfind('/').unwrap().max(root_len));
                 }
-                out.push_str(c);
+                continue;
             }
-            if dirlike && !out.ends_with('/') {
-                out.push('/');
-            }
-            return out;
+            _ => {}
         }
-        match rest.rfind('/') {
-            Some(0) => {
-                // Only "/" remains; it always canonicalizes, so the
-                // loop above must have returned — unreachable.
-                return path.to_string();
+        let candidate = format!(
+            "{}{}{}",
+            out,
+            if out.ends_with('/') { "" } else { "/" },
+            component
+        );
+        if links < 100 {
+            if let Ok(target) = std::fs::read_link(&candidate) {
+                links += 1;
+                let target = target.to_string_lossy();
+                dirlike |= pending.iter().all(String::is_empty) && target.ends_with('/');
+                if target.starts_with('/') {
+                    out = root(&target).to_owned();
+                    root_len = out.len();
+                }
+                for part in target.split('/').rev() {
+                    pending.push_front(part.to_owned());
+                }
+                continue;
             }
-            Some(pos) => {
-                missing.push(&rest[pos + 1..]);
-                rest = &rest[..pos];
-            }
-            None => return path.to_string(),
         }
+        out = candidate;
     }
+    if dirlike && !out.ends_with('/') {
+        out.push('/');
+    }
+    out
 }
 
 /// GNU file-lock path: `.#NAME' in FILE's directory.

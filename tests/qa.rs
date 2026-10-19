@@ -143,6 +143,7 @@ qa!(qa_directory_order, "qa_directory_order.el");
 qa!(qa_filelocal, "qa_filelocal.el");
 qa!(qa_filesys, "qa_filesys.el");
 qa!(qa_file_directory_handlers, "qa_file_directory_handlers.el");
+qa!(qa_file_truename_roots, "qa_file_truename_roots.el");
 qa!(qa_file_remote, "qa_file_remote.el");
 qa!(qa_fill, "qa_fill.el");
 qa!(qa_fontlock, "qa_fontlock.el");

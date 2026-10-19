@@ -125,6 +125,13 @@ filename object to the handler and honor operation/inhibition properties.
 Non-string handler results become nil, as in GNU's fileio.c.
 Regressions: `qa_file_directory_handlers` (name parsing only, no connection).
 
+`file-truename` expands home/default directory without collapsing path
+components before resolving links. The shared buffer truename helper
+preserves exactly two leading slashes and walks components in physical
+order, including canceled missing directories. Relative links retain the
+root; absolute targets replace it. Nil/symbol arguments report
+`arrayp` like GNU files.el. Regressions: `qa_file_truename_roots`.
+
 ## Startup profiling (`REMACS_BOOT_PROF=1`)
 
 Before full eager source expansion, warm release `--batch` startup

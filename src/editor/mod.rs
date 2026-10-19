@@ -10109,7 +10109,7 @@ fn tilde_user_home(user: &str) -> Option<String> {
 /// Returns None when NAME starts with `~' but is not expandable
 /// (`~user' for an unknown user): GNU `expand-file-name' then
 /// falls back to joining the name onto the DIRECTORY argument.
-fn expand_file_name_opt(i: &mut Interp, name: &str) -> Option<String> {
+fn expand_file_name_raw_opt(i: &mut Interp, name: &str) -> Option<String> {
     let mut s = name.to_string();
     if let Some(rest) = s.strip_prefix('~') {
         // `~/x' expands against $HOME (which GNU reads through
@@ -10143,22 +10143,31 @@ fn expand_file_name_opt(i: &mut Interp, name: &str) -> Option<String> {
         };
         s = format!("{}{}{}", dir, sep, s);
     }
-    // Collapse /./ and /../
-    Some(normalize_path(&s))
+    Some(s)
+}
+
+fn expand_file_name_opt(i: &mut Interp, name: &str) -> Option<String> {
+    expand_file_name_raw_opt(i, name).map(|s| normalize_path(&s))
 }
 
 /// Expand ~, env vars, and make absolute via `default-directory';
 /// an unexpandable `~user' counts as a relative name, like GNU's
 /// inner expansion used by pathname-taking subrs.
 pub fn expand_file_name_str(i: &mut Interp, name: &str) -> String {
-    expand_file_name_opt(i, name).unwrap_or_else(|| {
+    normalize_path(&expand_file_name_raw_str(i, name))
+}
+
+/// Expand home/default directory without removing components before
+/// file-truename has followed the symlinks that give `..' its meaning.
+fn expand_file_name_raw_str(i: &mut Interp, name: &str) -> String {
+    expand_file_name_raw_opt(i, name).unwrap_or_else(|| {
         let dir = default_directory(i);
         let sep = if dir.ends_with('/') || dir.is_empty() {
             ""
         } else {
             "/"
         };
-        normalize_path(&format!("{}{}{}", dir, sep, name))
+        format!("{}{}{}", dir, sep, name)
     })
 }
 
@@ -13543,17 +13552,13 @@ fn f_file_truename(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // string='s `stringp' check first.
     let p = match &a[0] {
         Value::Str(s) => s.borrow().clone(),
-        Value::Sym(_) => return Err(i.wrong_type_mut("arrayp", &a[0])),
+        Value::Nil | Value::Sym(_) => return Err(i.wrong_type_mut("arrayp", &a[0])),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
-    // GNU Ffile_truename runs Fexpand_file_name on the name first —
-    // relative names resolve against `default-directory' — then its Lisp
-    // `cond': "" / "~" → expand-file-name (then "" → "/"); "~user[/…]" →
-    // concat(expand-file-name "~user", rest).  We keep the plain `~'
-    // expansion only; `~user' still resolves to $HOME when the user name
-    // is absent.
+    // Resolve home/default directory while retaining components: GNU
+    // follows a symlink before interpreting a following `..'.
     let p = {
-        let ex = expand_file_name_str(i, &p);
+        let ex = expand_file_name_raw_str(i, &p);
         if ex.is_empty() { "/".to_string() } else { ex }
     };
     // GNU Ffile_truename: COUNTER (arg2) is a cons whose car must be a
