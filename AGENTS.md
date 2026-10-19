@@ -56,6 +56,26 @@ Registration rules:
 - Generated loaddefs with qualified provide (e.g. `semantic/loaddefs`)
   need the qualified key too.
 
+`locate-library` searches the caller's load-path before the embedded
+table. An explicit PATH is authoritative. Default embedded hits return
+absolute, readable `.el` paths: use an existing flat bundled file, or
+publish its source into a private process-local temporary directory
+(`src/lisp/embedded_cache.rs`). Publication is atomic; repeated lookups
+preserve edits to the materialized file. Never return `builtin:` load
+identities as filenames. Respect NOSUFFIX and configured suffixes rather
+than inventing `.elc` files for embedded bytecode twins.
+
+Flat returned filenames resolve back to their canonical registry keys
+(`semantic-ctxt.el` → `semantic/ctxt`) for recursive-load detection.
+Post-boot `subr-x` returns GNU's `emacs-lisp-subr-x.el`; loading that
+absolute path retains the same live-definition protection as a normal
+`load "subr-x"`. A user's cwd `lisp/` directory is searchable but is
+not classified as shipped source. The checkout, installed Lisp tree,
+and private materialized source directory are shipped-source roots.
+Regressions: `qa_locate_embedded`, `tests/embedded_cache.rs`, and the
+standalone copied-binary tests in `tests/embedded_libraries.rs` (also
+run with `REMACS_NO_ELC`).
+
 ## Startup profiling (`REMACS_BOOT_PROF=1`)
 
 Before full eager source expansion, warm release `--batch` startup

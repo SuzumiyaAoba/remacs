@@ -78,20 +78,7 @@ fn pick_existing(paths: Vec<PathBuf>, prefer_newer: bool) -> Option<Found> {
     best.map(|(p, _)| Found::File(p.to_string_lossy().into_owned()))
 }
 
-/// `locate' honoring `load''s NOSUFFIX/MUST-SUFFIX arguments.
-pub(crate) fn locate_opts(
-    i: &mut Interp,
-    name: &str,
-    nosuffix: bool,
-    mustsuffix: bool,
-) -> Option<String> {
-    match locate_full(i, name, nosuffix, mustsuffix) {
-        Some(Found::File(p)) => Some(p),
-        _ => None,
-    }
-}
-
-/// `locate_opts' that also reports a directory hit: GNU's `openp'
+/// Locate a load candidate, also reporting directory hits: GNU's `openp'
 /// opens directories happily and `Fload' signals "Is a directory"
 /// afterwards, so the distinction must survive the search.
 pub(crate) fn locate_full(
@@ -188,9 +175,20 @@ fn search_dirs(i: &mut Interp) -> Vec<PathBuf> {
 
 /// Directories searched for bundled libraries after `load-path'
 /// (mirrors `locate''s built-in fallback): the exe-relative lisp/
-/// dirs plus a cwd-relative "lisp" for development builds.
+/// dirs, the development cwd's lisp/, and an already-created source cache.
+/// Return absolute paths so Lisp default-directory cannot reinterpret hits.
 pub(crate) fn builtin_dirs() -> Vec<String> {
-    let mut v = vec!["lisp".to_string()];
+    let mut v = std::env::current_dir()
+        .ok()
+        .map(|cwd| vec![cwd.join("lisp").to_string_lossy().into_owned()])
+        .unwrap_or_default();
+    v.extend(installed_library_dirs());
+    v
+}
+
+/// Runtime source locations whose contents belong to the executable.
+fn installed_library_dirs() -> Vec<String> {
+    let mut v = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
         if let Some(exedir) = exe.parent() {
             v.push(exedir.join("../lisp").to_string_lossy().into_owned());
@@ -202,18 +200,28 @@ pub(crate) fn builtin_dirs() -> Vec<String> {
             );
         }
     }
+    if let Some(directory) = super::embedded_cache::directory() {
+        v.push(directory.to_string_lossy().into_owned());
+    }
     v
 }
 
-/// True when PATH resolves inside one of `builtin_dirs()' — i.e. it is
-/// our bundled copy of a library, not a user's load-path override.
-/// Comparison is canonicalized: `builtin_dirs' entries may be relative
-/// ("lisp/...") or `..'-joined while hits come in absolute.
-fn path_in_builtin_dirs(path: &str) -> bool {
+/// Distinguish shipped sources from user overrides, including a user's
+/// cwd/lisp directory. All roots are compared after canonicalization.
+fn path_is_bundled_source(path: &str) -> bool {
     let Ok(p) = std::fs::canonicalize(path) else {
         return false;
     };
-    builtin_dirs().iter().any(|d| {
+    let mut roots = installed_library_dirs();
+    // Classify an explicitly referenced development source tree without
+    // making installed executables depend on that tree for searching.
+    roots.push(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("lisp")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    roots.iter().any(|d| {
         std::fs::canonicalize(d)
             .map(|cd| p.starts_with(&cd))
             .unwrap_or(false)
@@ -221,26 +229,22 @@ fn path_in_builtin_dirs(path: &str) -> bool {
 }
 
 /// Resolved-load identity for comparing against `loads_in_progress':
-/// `builtin:' names and on-disk hits under `builtin_dirs' whose stem
-/// is an embedded library all normalize to `builtin:<stem>' — the
+/// `builtin:' names and on-disk bundled sources with an embedded key
+/// all normalize to `builtin:<key>' — the
 /// three spellings (virtual path, disk `.el', disk `.elc' twin
 /// fallback) one file can appear under while loading.  Everything
 /// else is the literal resolved path GNU's `Fequal' would compare.
 pub(crate) fn load_key(path: &str) -> String {
-    let stem_of = |s: &str| -> String {
-        let s = s.strip_prefix("builtin:").unwrap_or(s);
-        let base = s.rsplit('/').next().unwrap_or(s);
-        base.strip_suffix(".elc")
-            .or_else(|| base.strip_suffix(".el"))
-            .unwrap_or(base)
-            .to_string()
-    };
-    let stem = stem_of(path);
-    if path.starts_with("builtin:") {
-        return format!("builtin:{stem}");
-    }
-    if path_in_builtin_dirs(path) && embedded(&stem).is_some() {
-        return format!("builtin:{stem}");
+    let name = path.strip_prefix("builtin:").unwrap_or(path);
+    if path.starts_with("builtin:") || path_is_bundled_source(path) {
+        if let Some((key, _)) = embedded_entry(name) {
+            let key = if key == "emacs-lisp-subr-x" {
+                "subr-x"
+            } else {
+                key
+            };
+            return format!("builtin:{key}");
+        }
     }
     path.to_string()
 }
@@ -2500,32 +2504,122 @@ pub(crate) fn embedded_elc(name: &str) -> Option<&'static str> {
         .map(|(_, src)| *src)
 }
 
-/// Embedded source for library NAME (with or without .el/.elc suffix).
-pub(crate) fn embedded(name: &str) -> Option<&'static str> {
+/// Resolve a source key without consuming another filename suffix.
+fn embedded_key(stem: &str) -> Option<(&'static str, &'static str)> {
+    EMBEDDED_LISP
+        .iter()
+        .find(|(key, _)| *key == stem)
+        .or_else(|| {
+            stem.rsplit_once('/').and_then(|(dir, base)| {
+                let flat = format!("{dir}-{base}");
+                EMBEDDED_LISP.iter().find(|(key, _)| *key == flat)
+            })
+        })
+        .or_else(|| {
+            let base = stem.rsplit('/').next().unwrap_or(stem);
+            EMBEDDED_LISP.iter().find(|(key, _)| {
+                *key == base
+                    || (key.len() == base.len()
+                        && key
+                            .bytes()
+                            .map(|byte| if byte == b'/' { b'-' } else { byte })
+                            .eq(base.bytes()))
+            })
+        })
+        .copied()
+}
+
+fn embedded_entry(name: &str) -> Option<(&'static str, &'static str)> {
     let stem = name
         .strip_suffix(".el")
         .or_else(|| name.strip_suffix(".elc"))
         .unwrap_or(name);
-    EMBEDDED_LISP
-        .iter()
-        .find(|(n, _)| *n == stem)
-        .or_else(|| {
-            // Colliding basenames are bundled as SUBDIR-BASE.el, so
-            // "quail/burmese" resolves to the quail input method,
-            // not language/burmese.
-            stem.rsplit_once('/').and_then(|(dir, base)| {
-                let flat = format!("{dir}-{base}");
-                EMBEDDED_LISP.iter().find(|(n, _)| *n == flat)
-            })
+    embedded_key(stem)
+}
+
+/// Embedded source for library NAME (including a returned flat filename).
+pub(crate) fn embedded(name: &str) -> Option<&'static str> {
+    embedded_entry(name).map(|(_, source)| source)
+}
+
+/// Locate the default bundled source after the caller's search path.
+/// Explicit PATH searches never enter here. Only real .el candidates
+/// participate, so NOSUFFIX and representation suffixes remain meaningful.
+pub(crate) fn locate_bundled_source(
+    i: &mut Interp,
+    name: &str,
+    suffixes: &[String],
+) -> Result<Option<String>, crate::lisp::Flow> {
+    if Path::new(name).is_absolute()
+        || name.starts_with('~')
+        || Path::new(name).components().any(|part| {
+            matches!(
+                part,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
         })
-        .or_else(|| {
-            // Autoload cells carry GNU's subdirectory paths
-            // ("progmodes/f90"); our lisp/ tree is flat, so fall
-            // back to the basename.
-            stem.rsplit_once('/')
-                .and_then(|(_, base)| EMBEDDED_LISP.iter().find(|(n, _)| *n == base))
-        })
-        .map(|(_, src)| *src)
+    {
+        return Ok(None);
+    }
+    for suffix in suffixes {
+        let candidate = format!("{name}{suffix}");
+        let Some(stem) = candidate.strip_suffix(".el") else {
+            continue;
+        };
+        let Some((mut key, mut source)) = embedded_key(stem) else {
+            continue;
+        };
+        // The compatibility amalgam is only a bootstrap artifact.
+        if !i.boot_loading && key == "subr-x" {
+            (key, source) = embedded_key("emacs-lisp-subr-x").unwrap();
+        }
+        return bundled_source_file(i, name, key, source).map(Some);
+    }
+    Ok(None)
+}
+
+fn bundled_source_file(
+    i: &mut Interp,
+    name: &str,
+    key: &str,
+    source: &str,
+) -> Result<String, crate::lisp::Flow> {
+    let filename = format!("{}.el", key.replace('/', "-"));
+    for directory in builtin_dirs() {
+        let path = Path::new(&directory).join(&filename);
+        if path.is_file() {
+            return Ok(path.to_string_lossy().into_owned());
+        }
+    }
+    let path = super::embedded_cache::materialize(key, source).map_err(|error| {
+        i.signal_data(
+            crate::lisp::sym::FILE_ERROR,
+            vec![
+                Value::string("Writing embedded library source"),
+                Value::string(error.to_string()),
+                Value::string(name),
+            ],
+        )
+    })?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Normalize bundled source hits to the source that normal load uses.
+pub(crate) fn located_source(
+    i: &mut Interp,
+    name: &str,
+    path: String,
+) -> Result<String, crate::lisp::Flow> {
+    let stem = name.strip_suffix(".el").unwrap_or(name);
+    if !i.boot_loading && stem == "subr-x" && path_is_bundled_source(&path) {
+        let source = Path::new(&path).with_file_name("emacs-lisp-subr-x.el");
+        if source.is_file() {
+            return Ok(source.to_string_lossy().into_owned());
+        }
+        let (key, source) = embedded_key("emacs-lisp-subr-x").unwrap();
+        return bundled_source_file(i, name, key, source);
+    }
+    Ok(path)
 }
 
 /// Decode file bytes for `load' like GNU's `utf-8-emacs' decode:
@@ -3554,11 +3648,15 @@ pub(crate) fn load_library_opts_msg(
     // and later libraries' definitions (replace.el's
     // `replace-highlight') and resetting live state
     // (`file-name-handler-alist', `electric-quote-string').
-    let gnu_subr_x = !i.boot_loading && stem == "subr-x" && !name.contains('/');
+    let found = locate_full(i, name, nosuffix, mustsuffix);
+    let gnu_subr_x = !i.boot_loading
+        && ((stem == "subr-x" && !name.contains('/'))
+            || matches!(&found, Some(Found::File(path)) if path_is_bundled_source(path)
+                && matches!(embedded_entry(path), Some(("subr-x" | "emacs-lisp-subr-x", _)))));
     let live_defs = gnu_subr_x.then(|| live_definitions(i));
-    let result = match locate_full(i, name, nosuffix, mustsuffix) {
+    let result = match found {
         Some(Found::Dir(d)) => Ok(LoadOutcome::Dir(d)),
-        Some(Found::File(path)) if gnu_subr_x && path_in_builtin_dirs(&path) => {
+        Some(Found::File(path)) if gnu_subr_x && path_is_bundled_source(&path) => {
             let real = Path::new(&path).with_file_name("emacs-lisp-subr-x.el");
             let file = if real.is_file() {
                 real.to_string_lossy().into_owned()
@@ -3590,7 +3688,7 @@ pub(crate) fn load_library_opts_msg(
                 && path.ends_with(".el")
                 && !name.contains('/')
                 && !name.ends_with(".el")
-                && path_in_builtin_dirs(&path)
+                && path_is_bundled_source(&path)
                 && embedded_elc(stem).is_some()
                 && !i
                     .symbol_value(i.intern_soft("load-prefer-newer").unwrap_or(0))

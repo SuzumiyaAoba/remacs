@@ -1,0 +1,52 @@
+;;; -*- lexical-binding: nil; -*-
+;; Issue #53: search results are usable source paths, including flat ports.
+(dolist (qa53-library '("simple" "subr-x" "cl-lib" "semantic/ctxt" "quail/emoji"))
+  (qa (let ((path (locate-library qa53-library)))
+        (list (stringp path) (file-name-absolute-p path)
+              (file-exists-p path) (file-readable-p path))) '(t t t t)))
+(qa (locate-library "qa53-nonexistent-library-xyz") nil)
+(qa (locate-library "simple" t) nil)
+(qa (let ((path (locate-library "simple.el" t)))
+      (and (stringp path) (file-readable-p path))) t)
+(qa (locate-library "simple" nil '("/qa53-nonexistent-path")) nil)
+(qa (locate-library "semantic/ctxt" nil '("/qa53-nonexistent-path")) nil)
+
+;; The returned path loads the GNU subr-x source rather than replaying
+;; the compatibility amalgam and its unrelated definitions/settings.
+(qa (let ((before (symbol-function 'replace-highlight))
+          (handlers file-name-handler-alist) (electric-quote-string 'qa53))
+      (load (locate-library "subr-x") nil t)
+      (list (eq before (symbol-function 'replace-highlight))
+            (equal handlers file-name-handler-alist) electric-quote-string)) '(t t qa53))
+(qa (load (locate-library "avl-tree") nil t) t)
+(qa (featurep 'avl-tree) t)
+(qa (avl-tree-p (avl-tree-create #'<)) t)
+
+(let ((qa53-directory (make-temp-file "qa53-path-" t)))
+  (unwind-protect
+      (progn
+        (with-temp-file (expand-file-name "simple.el" qa53-directory)
+          (insert "(setq qa53-override 'source)\n"))
+        (with-temp-file (expand-file-name "simple" qa53-directory)
+          (insert "(setq qa53-override 'bare)\n"))
+        (let ((load-path (list qa53-directory)))
+          (qa (locate-library "simple") (expand-file-name "simple.el" qa53-directory))
+          (qa (locate-library "simple" t) (expand-file-name "simple" qa53-directory))
+          (qa (progn (load (locate-library "simple") nil t) qa53-override) 'source)
+          (qa (progn (load (locate-library "simple" t) nil t t) qa53-override) 'bare))
+        (qa (locate-library "simple" nil (list qa53-directory))
+            (expand-file-name "simple.el" qa53-directory))
+        (let ((default-directory (file-name-as-directory qa53-directory)))
+          (qa (locate-library "simple" nil '(nil)) (expand-file-name "simple.el" qa53-directory))
+          (qa (locate-library "simple" nil '(".")) (expand-file-name "simple.el" qa53-directory)))
+        (make-directory (expand-file-name "semantic" qa53-directory))
+        (with-temp-file (expand-file-name "semantic/ctxt.el" qa53-directory)
+          (insert "(setq qa53-qualified 'override)\n"))
+        (let ((load-path (list qa53-directory)))
+          (qa (locate-library "semantic/ctxt") (expand-file-name "semantic/ctxt.el" qa53-directory)))
+        (with-temp-file (expand-file-name "qa53-dot.name.el" qa53-directory) (insert "nil\n"))
+        (qa (locate-library "qa53-dot.name" nil (list qa53-directory))
+            (expand-file-name "qa53-dot.name.el" qa53-directory)))
+    (delete-directory qa53-directory t)))
+
+(princ (qa--done)) (terpri)

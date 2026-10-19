@@ -3499,11 +3499,23 @@ fn f_locate_library(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let nosuffix = arg(&args, 1).truthy();
     let path = arg(&args, 2);
     let interactive = arg(&args, 3).truthy();
-    let file = if !path.truthy() {
-        crate::lisp::load::locate_opts(i, &name, nosuffix, false)
+    let default_path = path.is_nil();
+    let search_path = if default_path {
+        let id = i.intern("load-path");
+        i.symbol_value(id)
     } else {
-        locate_library_in(i, &name, nosuffix, &path)?
+        path
     };
+    let mut file = locate_library_in(i, &name, nosuffix, &search_path)?;
+    if default_path {
+        file = match file {
+            Some(path) => Some(crate::lisp::load::located_source(i, &name, path)?),
+            None => {
+                let suffixes = locate_library_suffixes(i, nosuffix);
+                crate::lisp::load::locate_bundled_source(i, &name, &suffixes)?
+            }
+        };
+    }
     if interactive {
         // GNU reports through `message' for M-x calls.
         let msg = match &file {
@@ -3535,8 +3547,9 @@ fn locate_library_in(
     // contributes no directories (returns nil, no error).
     let dirs = path.list_to_vec().unwrap_or_default();
     let suffixes = locate_library_suffixes(i, nosuffix);
-    if std::path::Path::new(name).is_absolute() {
+    if std::path::Path::new(name).is_absolute() || name.starts_with('~') {
         // GNU `locate-file': absolute names only get suffix variants.
+        let name = crate::editor::expand_file_name_str(i, name);
         for suf in &suffixes {
             let cand = format!("{name}{suf}");
             if std::path::Path::new(&cand).is_file() {
@@ -3546,14 +3559,20 @@ fn locate_library_in(
         return Ok(None);
     }
     for dir_v in &dirs {
-        let dir = match dir_v {
-            Value::Str(s) => s.borrow().clone(),
-            _ => return Err(i.wrong_type_mut("stringp", dir_v)),
+        let directory = match dir_v {
+            Value::Str(value) => crate::editor::expand_file_name_str(i, &value.borrow()),
+            Value::Nil => crate::editor::expand_file_name_str(i, ""),
+            _ => continue,
         };
-        for suf in &suffixes {
-            let cand = format!("{}/{}{}", dir.trim_end_matches('/'), name, suf);
-            if std::path::Path::new(&cand).is_file() {
-                return Ok(Some(cand));
+        let base = std::path::Path::new(&directory)
+            .join(name)
+            .to_string_lossy()
+            .into_owned();
+        let base = crate::editor::expand_file_name_str(i, &base);
+        for suffix in &suffixes {
+            let candidate = format!("{base}{suffix}");
+            if std::path::Path::new(&candidate).is_file() {
+                return Ok(Some(candidate));
             }
         }
     }
@@ -3596,6 +3615,7 @@ fn locate_library_suffixes(i: &mut Interp, nosuffix: bool) -> Vec<String> {
     }
     sufs
 }
+
 fn f_autoload(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // (autoload FUNCTION FILE &optional DOCSTRING INTERACTIVE TYPE)
     // Register an autoload stub: on first call, load FILE then call.

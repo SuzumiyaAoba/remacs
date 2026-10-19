@@ -9,6 +9,7 @@ pub(crate) mod bytecode;
 pub(crate) mod cjk_tables;
 pub(crate) mod ctdata;
 pub mod dynlib;
+mod embedded_cache;
 pub mod error;
 pub mod eval;
 pub mod load;
