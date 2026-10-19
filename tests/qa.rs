@@ -299,6 +299,7 @@ qa!(qa_regexp_classes, "qa_regexp_classes.el");
 qa!(qa_regexp_errors, "qa_regexp_errors.el");
 qa!(qa_regexpopt, "qa_regexpopt.el");
 qa!(qa_replace, "qa_replace.el");
+qa!(qa_replace_bounds, "qa_replace_bounds.el");
 qa!(qa_replace_case, "qa_replace_case.el");
 qa!(qa_ring, "qa_ring.el");
 qa!(qa_rx, "qa_rx.el");

@@ -700,6 +700,11 @@ qa-xf back to qa and watch it go XPASS→pass):
   `re-search-backward' honors the GNU re_match STOP limit (matches
   can't run past pos), fixing `forward-symbol'/`beginning-of-defun'
   boundary behavior; case-fold items pass (qa_case clean).
+  `replace-match` range-error data reports the selected match registers,
+  independently of replacement length or escape parsing. Tests must set
+  match data explicitly rather than depend on the last startup regexp;
+  `qa_replace_bounds` covers this error precedence and preservation of
+  buffer contents/match data after a range error.
 - `seq`/`map`/`ring`: `seq-let' vectors, `make-ring' arity errors, and
   bool-vector `map-pairs'/`seq-do-indexed' all fixed (qa_seq/qa_mapring
   clean; map_seq gained a bool-vector arm).
