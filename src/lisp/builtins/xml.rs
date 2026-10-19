@@ -753,7 +753,7 @@ fn parse_xml(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
                 push_node(stack.last_mut().unwrap(), Value::list(node));
             }
             Ok(Event::Text(e)) => {
-                if e.as_ref().windows(3).any(|s| s == b"]]>") {
+                if e.windows(3).any(|s| s == b"]]>") {
                     return Value::Nil;
                 }
                 // Normalize literal line endings before GeneralRef events
