@@ -300,6 +300,7 @@ qa!(qa_search, "qa_search.el");
 qa!(qa_secure_hash_binary, "qa_secure_hash_binary.el");
 qa!(qa_seq, "qa_seq.el");
 qa!(qa_seq2, "qa_seq2.el");
+qa!(qa_sort_callbacks, "qa_sort_callbacks.el");
 qa!(qa_sort, "qa_sort.el");
 qa!(qa_special, "qa_special.el");
 qa!(qa_special_variables, "qa_special_variables.el");

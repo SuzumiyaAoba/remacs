@@ -16523,7 +16523,7 @@ fn value_lt_impl(i: &mut Interp, x: &Value, y: &Value, depth: u32) -> Result<boo
     })
 }
 
-fn f_value_lt(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+pub(super) fn f_value_lt(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let (x, y) = (&a[0], &a[1]);
     Ok(Value::from_bool(value_lt_impl(i, x, y, 0)?))
 }

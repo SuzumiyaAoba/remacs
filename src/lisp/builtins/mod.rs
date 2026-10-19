@@ -29,6 +29,7 @@ pub(crate) mod nsgui;
 pub(crate) mod printfn;
 pub(crate) mod readfn;
 pub(crate) mod seq;
+pub(crate) mod sort;
 pub(crate) mod sqlite;
 pub(crate) mod strfn;
 pub(crate) mod treesit;
