@@ -5329,6 +5329,10 @@ command-line arguments.\" \
     /// Push a dynamic binding for `sym` to `val`.
     #[track_caller]
     pub fn specbind(&mut self, id: SymId, val: Value) -> Result<(), Flow> {
+        // GNU specbind follows variable indirection before saving or
+        // replacing the value cell, including a base's buffer-local slot.
+        // Binding the alias's unused cell is invisible to symbol_value.
+        let id = self.var_alias_target(id);
         if self.obarray.symbol(id).constant {
             if self.dbg_flags & 0x100 != 0 {
                 eprintln!(
@@ -8972,6 +8976,33 @@ command-line arguments.\" \
         // Variables that are always dynamically bound even under
         // lexical-binding. Real Emacs has hundreds; these cover startup.
         let specials = [
+            // GNU C/dump variables whose defaults are installed without
+            // evaluating a Lisp defvar.  They still need dynamic let
+            // bindings in lexically scoped callers.
+            "after-focus-change-function",
+            "clear-message-function",
+            "clone-indirect-buffer-hook",
+            "display-mm-dimensions-alist",
+            "focus-in-hook",
+            "focus-out-hook",
+            "fringe-cursor-alist",
+            "fringe-indicator-alist",
+            "internal--get-default-lexical-binding-function",
+            "last-input-event",
+            "latin-extra-code-table",
+            "ns-version-string",
+            "overriding-terminal-local-map",
+            "quit-flag",
+            "read-process-output-max",
+            "real-last-command",
+            "region-extract-function",
+            "scroll-step",
+            "set-message-function",
+            "standard-display-table",
+            "throw-on-input",
+            "truncate-partial-width-windows",
+            "window-safe-min-height",
+            "window-safe-min-width",
             "standard-output",
             "standard-input",
             "lexical-binding",
