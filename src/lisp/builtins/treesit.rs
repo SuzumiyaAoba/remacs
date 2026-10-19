@@ -1026,8 +1026,8 @@ fn f_buffer_root_node(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// byte offsets, like `treesit_make_ts_ranges'.
 fn make_ts_ranges(i: &mut Interp, ranges: &Value, buf: &BufferRef) -> Result<Vec<Range>, Flow> {
     let items = ranges.list_to_vec().map_err(|e| match e {
-        crate::lisp::value::ListError::Circular => {
-            i.signal_data(sym::CIRCULAR_LIST, vec![ranges.clone()])
+        crate::lisp::value::ListError::Circular(tail) => {
+            i.signal_data(sym::CIRCULAR_LIST, vec![tail])
         }
         crate::lisp::value::ListError::Dotted(t) => i.wrong_type_mut("listp", &t),
     })?;

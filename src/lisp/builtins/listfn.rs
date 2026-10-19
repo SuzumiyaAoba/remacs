@@ -813,7 +813,7 @@ impl ListCycle {
 /// copy-sequence copies the first cons before initializing FOR_EACH_TAIL
 /// at its cdr. Match that phase when remove/remq copy a list, including
 /// the exact source tail reported for a cycle or dotted-list error.
-fn copy_list_items(i: &mut Interp, list: &Value) -> Result<Vec<Value>, Flow> {
+pub(super) fn copy_list_items(i: &mut Interp, list: &Value) -> Result<Vec<Value>, Flow> {
     let (mut items, mut tail) = match list {
         Value::Nil => return Ok(Vec::new()),
         Value::Cons(c) => {
@@ -1208,7 +1208,7 @@ fn f_delete(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
 }
 fn f_copy_alist(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let items = want_list(i, &args[0])?;
+    let items = copy_list_items(i, &args[0])?;
     let copied: Vec<Value> = items
         .into_iter()
         .map(|v| match v {

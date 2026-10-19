@@ -4951,7 +4951,7 @@ fn f_build_binding(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             if let Err(e) = a[0].list_to_vec() {
                 let tail = match e {
                     crate::lisp::value::ListError::Dotted(t) => t,
-                    crate::lisp::value::ListError::Circular => Value::Nil,
+                    crate::lisp::value::ListError::Circular(_) => Value::Nil,
                 };
                 return Err(i.wrong_type_mut("listp", if tail.is_nil() { &a[0] } else { &tail }));
             }
@@ -6238,12 +6238,23 @@ fn f_unencodable_char_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     // GNU Funencodable_char_position (coding.c):
     // check_coding_system runs FIRST (non-symbol → `symbolp', unknown →
     // `coding-system-error'); then STRING non-nil switches to string
-    // mode (`stringp' check, `integerp' on START/END — markers and
-    // floats rejected), else buffer mode (`integer-or-marker-p').
-    check_coding(i, &a[2])?;
+    // mode (substring-style bounds), else buffer mode
+    // (`integer-or-marker-p'). Nil coding selects undecided.
+    if !a[2].is_nil() {
+        check_coding(i, &a[2])?;
+    }
+    let coding = if a[2].is_nil() {
+        Value::Sym(i.intern("undecided"))
+    } else {
+        a[2].clone()
+    };
+    // Raw-text coding accepts every character, before validating bounds.
+    if eol_split(&coding_canonical(i, &coding)).0 == "raw-text" {
+        return Ok(Value::Nil);
+    }
     // A char encodes iff some charset of the coding system encodes it;
     // an empty charset list (no-conversion) accepts everything.
-    let cslist = super::charset::coding_system_charset_names(i, &a[2]);
+    let cslist = super::charset::coding_system_charset_names(i, &coding);
     let csnames: Vec<String> = cslist
         .list_to_vec()
         .unwrap_or_default()
@@ -6263,22 +6274,13 @@ fn f_unencodable_char_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     match a.get(4) {
         Some(Value::Str(s)) => {
             let sv: Vec<char> = s.borrow().chars().collect();
-            let len = sv.len() as i128;
-            let start = want_int(i, &a[0])?;
-            let end = want_int(i, &a[1])?;
-            // A negative START counts from the string's end (GNU's
-            // `pos = SCHARS (string) + XFIXNUM (start)'); the range
-            // error still reports the ORIGINAL values.
-            let pos = if start < 0 { len + start } else { start };
-            if pos < 0 || pos > end || end > len {
-                return Err(i.signal_data(
-                    sym::ARGS_OUT_OF_RANGE,
-                    vec![a[4].clone(), a[0].clone(), a[1].clone()],
-                ));
+            let (pos, end) = super::strfn::validate_subarray(i, &a[4], &a[0], &a[1], sv.len())?;
+            if i.is_unibyte_str(s) {
+                return Ok(Value::Nil);
             }
             for p in pos..end {
                 if unencodable(i, sv[p as usize]) {
-                    hits.push(p);
+                    hits.push(p as i128);
                 }
             }
         }
@@ -10299,6 +10301,11 @@ pub(crate) fn coding_known(i: &Interp, v: &Value) -> Option<String> {
         Value::Sym(s) => i.symbol_name(*s).to_string(),
         _ => return None,
     };
+    // Registered subsidiaries remain valid even if a parent alias is
+    // later redirected to a coding system with a fixed EOL type.
+    if crate::lisp::builtins::csl_table::CODING_SYSTEM_LIST_SEED.contains(&name.as_str()) {
+        return Some(name);
+    }
     // Explicit alias names are arbitrary symbols, even when their spelling
     // ends in an EOL suffix whose apparent base is not a coding system.
     if i.extra_coding_aliases.iter().any(|(alias, _)| *alias == name) {
@@ -10309,11 +10316,22 @@ pub(crate) fn coding_known(i: &Interp, v: &Value) -> Option<String> {
         .or_else(|| name.strip_suffix("-dos"))
         .or_else(|| name.strip_suffix("-mac"))
         .unwrap_or(&name);
-    // Bases without an eol-type (no-conversion/binary and alias-only
-    // names like `unix') own no `-eol' subsidiaries at all.
+    // Only automatic-EOL parents own subsidiaries. Aliases of a fixed
+    // subsidiary (emacs-internal -> utf-8-emacs-unix) do not gain them.
+    let mut parent = base.to_string();
+    for _ in 0..32 {
+        if let Some((_, target)) = i.extra_coding_aliases.iter().find(|(n, _)| *n == parent) {
+            parent = target.clone();
+        } else {
+            break;
+        }
+    }
+    if let Some((_, group)) = CODING_ALIASES.iter().find(|(n, _)| *n == parent) {
+        parent = group[0].to_string();
+    }
     let eol_ok = base == name.as_str()
-        || (base != "no-conversion"
-            && !matches!(base, "unix" | "dos" | "mac")
+        || (eol_split(&parent).1.is_none()
+            && !matches!(parent.as_str(), "no-conversion" | "unix" | "dos" | "mac")
             && (CODING_SYSTEMS.contains(&base)
                 || crate::lisp::builtins::csl_table::CODING_SYSTEM_LIST_SEED.contains(&base)
                 || i.extra_coding_systems.iter().any(|n| *n == base)));
@@ -10382,7 +10400,9 @@ fn f_coding_system_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::list(codings))
 }
 fn f_coding_system_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::from_bool(coding_known(i, &a[0]).is_some()))
+    Ok(Value::from_bool(
+        a[0].is_nil() || coding_known(i, &a[0]).is_some(),
+    ))
 }
 
 fn f_coding_system_priority_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -10608,6 +10628,12 @@ fn f_coding_system_base(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Nil => "no-conversion".to_string(),
         other => return Err(i.wrong_type_mut("symbolp", other)),
     };
+    // Validate the original name before stripping a suffix or resolving
+    // an alias group, which could otherwise make an unknown name valid.
+    if !a[0].is_nil() && coding_known(i, &a[0]).is_none() {
+        let s = i.intern("coding-system-error");
+        return Err(i.signal_data(s, vec![a[0].clone()]));
+    }
     if i.extra_coding_aliases.iter().any(|(alias, _)| *alias == name) {
         let base = coding_canonical(i, &a[0]);
         return Ok(Value::Sym(i.intern(&base)));
@@ -10632,12 +10658,6 @@ fn f_coding_system_base(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         .find(|&&(n, grp)| n == base || grp.iter().any(|m| *m == base))
     {
         return Ok(Value::Sym(i.intern(group[0])));
-    }
-    // GNU: an unknown symbol signals `coding-system-error' with the
-    // symbol as data rather than echoing it back.
-    if coding_known(i, &a[0]).is_none() {
-        let s = i.intern("coding-system-error");
-        return Err(i.signal_data(s, vec![a[0].clone()]));
     }
     Ok(Value::Sym(i.intern(base)))
 }
@@ -10784,7 +10804,7 @@ pub(crate) fn add_to_coding_system_list(i: &mut Interp, name: &str) -> EvalResul
 
 fn f_coding_system_put(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU: SYMBOLP checks CS then PROP; unknown CS → coding-system-error;
-    // the value lands on the coding system's plist (prepend like Fput).
+    // Existing properties update in place; new properties append.
     let cs = match &a[0] {
         Value::Sym(_) => a[0].clone(),
         other => return Err(i.wrong_type_mut("symbolp", other)),
@@ -10818,7 +10838,7 @@ fn f_coding_system_put(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 (pb.car.clone(), pb.cdr.clone())
             };
             if eq_values(&pk, &key) {
-                pair.borrow_mut().cdr = Value::cons(a[1].clone(), Value::cons(a[2].clone(), pl));
+                pair.borrow_mut().cdr = crate::lisp::eval::plist_put_v(&pl, &a[1], a[2].clone());
                 return Ok(a[2].clone());
             }
         }
@@ -14854,7 +14874,7 @@ fn f_make_composed_keymap(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
             other => match other.list_to_vec() {
                 Ok(items) => into.extend(items),
-                Err(crate::lisp::value::ListError::Circular) => {
+                Err(crate::lisp::value::ListError::Circular(_)) => {
                     return Err(i.error("List contains a loop"));
                 }
                 Err(crate::lisp::value::ListError::Dotted(tail)) => {

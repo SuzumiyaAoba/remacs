@@ -5,7 +5,7 @@ use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{
-    StrRef, Subr, SymId, Value, eight_bit_byte, lisp_char, lisp_char_code, surrogate_code,
+    StrRef, Subr, SymId, Value, eight_bit_byte, lisp_char, lisp_char_code,
 };
 use std::cell::Ref;
 use std::rc::Rc;
@@ -1985,8 +1985,27 @@ fn filevercmp(s1: &[char], s2: &[char]) -> std::cmp::Ordering {
     verrevcmp(s1, s2)
 }
 fn f_string_distance(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let a: Vec<char> = want_string(i, &args[0])?.chars().collect();
-    let b: Vec<char> = want_string(i, &args[1])?.chars().collect();
+    want_string(i, &args[0])?;
+    want_string(i, &args[1])?;
+    let units = |v: &Value| -> Vec<i128> {
+        let Value::Str(s) = v else { unreachable!() };
+        if arg(&args, 2).truthy() {
+            gnu_sbytes(i, s).into_iter().map(i128::from).collect()
+        } else {
+            s.borrow()
+                .chars()
+                .map(|c| {
+                    if i.is_unibyte_str(s) {
+                        eight_bit_byte(c).map(i128::from).unwrap_or(c as i128)
+                    } else {
+                        lisp_char_code(c)
+                    }
+                })
+                .collect()
+        }
+    };
+    let a = units(&args[0]);
+    let b = units(&args[1]);
     let (n, m) = (a.len(), b.len());
     if n == 0 {
         return Ok(Value::Int(m as i128));
@@ -2111,12 +2130,10 @@ fn gnu_sbytes(i: &Interp, s: &StrRef) -> Vec<u8> {
         if let Some(b) = eight_bit_byte(c) {
             out.push(0xC0 | ((b >> 6) & 0x01));
             out.push(0x80 | (b & 0x3F));
-        } else if let Some(code) = surrogate_code(c) {
-            // GNU surrogates are ordinary char codes; closest stable
-            // encoding is the codepoint's UTF-8.
-            out.extend_from_slice(char::from_u32(code).unwrap_or(c).to_string().as_bytes());
         } else {
-            out.extend_from_slice(c.to_string().as_bytes());
+            out.extend(super::coding_legacy::internal_encode(
+                lisp_char_code(c) as u32
+            ));
         }
     }
     out
@@ -5124,7 +5141,7 @@ fn clamp_end(v: &Value, len: usize) -> Value {
 /// count from the end), anything else `wrong-type-argument integerp';
 /// then 0 <= from <= to <= SIZE or `args-out-of-range' with the array
 /// and the ORIGINAL bounds (after the compare-strings END clamp).
-fn validate_subarray(
+pub(super) fn validate_subarray(
     i: &mut Interp,
     arr: &Value,
     from: &Value,

@@ -39,6 +39,29 @@ fn eval_runs_lisp() {
 }
 
 #[test]
+fn quick_start_symbol_metadata_matches_gnu() {
+    // Probe before loading Lisp source: those loads may legitimately
+    // require cl-macs, pcase, gv and icons and change their metadata.
+    let expression = "(prin1 (list (length (face-list)) \
+        (mapcar #'fboundp '(cl-declaim cl-proclaim cl-loop cl-case)) \
+        (get 'pcase 'lisp-indent-function) (get 'pcase 'edebug-form-spec) \
+        (symbol-plist 'car) (featurep 'cl-macs) (featurep 'gv) \
+        (featurep 'icons) (featurep 'cl-lib)))";
+    let expected = "(187 (nil nil nil nil) nil nil (slot-name t) nil nil nil nil)";
+    if let Some(gnu) = std::env::var_os("GNU_EMACS") {
+        let output = Command::new(gnu)
+            .args(["-Q", "--batch", "--eval", expression])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+    }
+    let (output, errors, status) = remacs(&["-Q", "--batch", "--eval", expression], "");
+    assert_eq!(status, 0, "{errors}");
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn eval_error_exits_nonzero() {
     let (_o, e, code) = remacs(&["--eval", "(car 1)"], "");
     assert_ne!(code, 0);

@@ -653,7 +653,10 @@ impl<'a> Reader<'a> {
                     None => {
                         return Err(plain_err(
                             self.interp,
-                            &format!("Non-hex character used for Unicode escape: {c}"),
+                            &format!(
+                                "Non-hex character used for Unicode escape: {c} ({})",
+                                c as u32
+                            ),
                         ));
                     }
                 },

@@ -699,8 +699,12 @@ impl Value {
     pub fn list_to_vec(&self) -> Result<Vec<Value>, ListError> {
         let mut out = Vec::new();
         let mut cur = self.clone();
-        let mut slow = self.clone();
-        let mut steps = 0usize;
+        // Match GNU FOR_EACH_TAIL's Brent detector, including the tail
+        // carried in a circular-list condition (not necessarily SELF).
+        let mut tortoise = self.clone();
+        let mut max = 2usize;
+        let mut n = 0isize;
+        let mut q = 2u16;
         loop {
             match cur {
                 Value::Nil => return Ok(out),
@@ -713,16 +717,20 @@ impl Value {
                 }
                 other => return Err(ListError::Dotted(other)),
             }
-            steps += 1;
-            if steps % 2 == 0 {
-                if let Value::Cons(c) = slow {
-                    let next = c.borrow().cdr.clone();
-                    slow = next;
+            q = q.wrapping_sub(1);
+            if q == 0 {
+                n -= 1;
+                if n <= 0 {
+                    max = max.saturating_mul(2);
+                    q = max as u16;
+                    n = (max >> 16) as isize;
+                    tortoise = cur.clone();
+                    continue;
                 }
-                if let (Value::Cons(a), Value::Cons(b)) = (&slow, &cur) {
-                    if Rc::ptr_eq(a, b) {
-                        return Err(ListError::Circular);
-                    }
+            }
+            if let (Value::Cons(a), Value::Cons(b)) = (&tortoise, &cur) {
+                if Rc::ptr_eq(a, b) {
+                    return Err(ListError::Circular(cur));
                 }
             }
         }
@@ -734,8 +742,8 @@ impl Value {
 pub enum ListError {
     /// List ended in a non-nil non-cons (dotted pair); carries the tail.
     Dotted(Value),
-    /// Circular list detected.
-    Circular,
+    /// Circular list detected; carries GNU's meeting tail.
+    Circular(Value),
 }
 
 impl fmt::Debug for Value {

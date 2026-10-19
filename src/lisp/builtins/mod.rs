@@ -414,8 +414,8 @@ pub(crate) fn want_cons(i: &mut Interp, v: &Value) -> Result<super::value::ConsR
 pub(crate) fn want_list(i: &mut Interp, v: &Value) -> Result<Vec<Value>, Flow> {
     match v.list_to_vec() {
         Ok(items) => Ok(items),
-        Err(super::value::ListError::Circular) => {
-            Err(i.signal_data(sym::CIRCULAR_LIST, vec![v.clone()]))
+        Err(super::value::ListError::Circular(tail)) => {
+            Err(i.signal_data(sym::CIRCULAR_LIST, vec![tail]))
         }
         Err(super::value::ListError::Dotted(tail)) => Err(i.wrong_type_mut("listp", &tail)),
     }

@@ -701,10 +701,6 @@ fn round_with(i: &mut Interp, args: &[Value], mode: u8) -> EvalResult {
         return Err(arith_err(i, "Division by zero"));
     }
     let q = xf / yf;
-    if q.is_nan() {
-        let s = i.intern("domain-error");
-        return Err(i.signal_data(s, vec![Value::string("NaN"), Value::float(q)]));
-    }
     let r = match mode {
         0 => q.trunc(),
         1 => q.floor(),
@@ -717,7 +713,7 @@ fn round_with(i: &mut Interp, args: &[Value], mode: u8) -> EvalResult {
     let hi = crate::lisp::value::FIXNUM_MAX as f64;
     if !r.is_finite() || r < lo || r > hi {
         let osym = i.intern("overflow-error");
-        return Err(i.signal_data(osym, vec![args[0].clone()]));
+        return Err(i.signal_data(osym, vec![]));
     }
     Ok(Value::Int(r as i128))
 }

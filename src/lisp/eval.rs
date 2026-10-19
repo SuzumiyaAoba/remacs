@@ -13945,7 +13945,7 @@ pub(crate) fn subr_interactive(name: &str) -> Option<&'static str> {
         ("exit-minibuffer", "\u{1}nil"),
         (
             "find-file",
-            "(find-file-read-args \"Find file: \" (confirm-nonexistent-file-or-buffer))",
+            "(byte-code \"\\300\\301\\302 \\\"\\207\" [find-file-read-args \"Find file: \" confirm-nonexistent-file-or-buffer] 3)",
         ),
         ("fit-window-to-buffer", "\u{1}nil"),
         ("fundamental-mode", "\u{1}nil"),

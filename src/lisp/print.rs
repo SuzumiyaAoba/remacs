@@ -1603,8 +1603,10 @@ fn lex_frame_to_value(i: &Interp, frame: &Rc<crate::lisp::eval::LexFrame>) -> Va
     // GNU prints the environment as a single alist — the visible
     // bindings innermost-first — or nil when empty.
     let mut pairs: Vec<Value> = Vec::new();
+    let mut declarations = Vec::new();
     let mut cur = Some(frame.clone());
     while let Some(f) = cur {
+        declarations.extend(f.declared.borrow().iter().rev().copied().map(Value::Sym));
         for (sym_id, val) in f.vars.borrow().iter() {
             pairs.push(Value::cons(Value::Sym(*sym_id), val.clone()));
         }
@@ -1613,7 +1615,10 @@ fn lex_frame_to_value(i: &Interp, frame: &Rc<crate::lisp::eval::LexFrame>) -> Va
     // GNU's environment list is a flat alist innermost-first; the
     // toplevel (empty) environment prints as `(t)'.
     if pairs.is_empty() {
-        return Value::list(vec![Value::Sym(crate::lisp::obarray::sym::T)]);
+        // A scoped bare defvar remains visible in a trivial captured
+        // environment, including in wrong-number-of-arguments data.
+        declarations.push(Value::Sym(crate::lisp::obarray::sym::T));
+        return Value::list(declarations);
     }
     pairs.sort_by_key(|v| {
         if let Value::Cons(c) = v {
