@@ -36,6 +36,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Recursively expand all macros in FORM."
     ),
     S!(
+        "macroexpand--all-toplevel",
+        1,
+        2,
+        f_macroexpand_all_toplevel,
+        ""
+    ),
+    S!(
         "macroexpand-1",
         1,
         2,
@@ -692,6 +699,18 @@ fn f_macroexpand_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_macroexpand_all(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    macroexpand_all_entry(i, args, true)
+}
+
+fn f_macroexpand_all_toplevel(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    macroexpand_all_entry(i, args, false)
+}
+
+fn macroexpand_all_entry(
+    i: &mut Interp,
+    args: crate::lisp::Argv,
+    scope_dynvars: bool,
+) -> EvalResult {
     // GNU: ENVIRONMENT is passed through the dynamic variable
     // `macroexpand-all-environment'; macros such as `rx'/`rx-let'
     // consult it for local definitions.  CHECK_LIST like the others.
@@ -701,10 +720,22 @@ fn f_macroexpand_all(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         other => return Err(i.wrong_type_mut("listp", other)),
     }
     let id = i.intern("macroexpand-all-environment");
-    i.specbind(id, env)?;
-    let r = macroexpand_all(i, &args[0]);
-    i.unbind(1)?;
-    r
+    let mark = i.specbind_depth();
+    let result = (|| {
+        i.specbind(id, env)?;
+        if scope_dynvars {
+            let dynvars = i.intern("macroexp--dynvars");
+            let old = if i.bound_p(dynvars) {
+                i.symbol_value(dynvars)
+            } else {
+                Value::Nil
+            };
+            i.specbind(dynvars, old)?;
+        }
+        macroexpand_all(i, &args[0])
+    })();
+    i.unbind_to(mark)?;
+    result
 }
 
 /// Whether FORM is a `(declare ...)' spec — a data position consumed
@@ -722,25 +753,41 @@ fn is_declare_form(i: &Interp, form: &Value) -> bool {
 /// GNU `macroexp--expand-all' applies the head symbol's
 /// `compiler-macro' property as (apply HANDLER FORM (cdr FORM)),
 /// following `symbol-function' aliases like `cl-compiler-macroexpand'.
-/// A result `eq' to FORM punts; a handler error warns and punts.
-/// Returns the replacement form to re-expand, or None.
-fn try_compiler_macro(i: &mut Interp, form: &Value) -> EvalResult {
-    let (car, cdr) = match form {
+fn compiler_macro_handler(i: &mut Interp, form: &Value) -> Option<Value> {
+    let car = match form {
         Value::Cons(c) => {
             let b = c.borrow();
-            (b.car.clone(), b.cdr.clone())
+            b.car.clone()
         }
-        _ => return Ok(Value::Nil),
+        _ => return None,
     };
+    // GNU handles these data/special-form positions before considering
+    // a compiler-macro property on an ordinary call.
+    if i.sym_id(&car).is_some_and(|id| {
+        matches!(
+            id,
+            sym::QUOTE
+                | sym::FUNCTION
+                | sym::DEFVAR
+                | sym::DEFCONST
+                | sym::LET
+                | sym::LET_STAR
+                | sym::WHILE
+                | sym::UNWIND_PROTECT
+                | sym::SETQ
+                | sym::COND
+                | sym::CONDITION_CASE
+        )
+    }) {
+        return None;
+    }
     let mut func = crate::lisp::builtins::misc::unpos(&car);
     let cmacro = i.intern("compiler-macro");
-    let mut handler = Value::Nil;
     let mut guard = 0;
     while let Value::Sym(id) = func {
         let h = i.get_prop(id, cmacro);
         if !h.is_nil() {
-            handler = h;
-            break;
+            return Some(h);
         }
         let sf = i.symbol_function(id);
         match sf {
@@ -754,24 +801,41 @@ fn try_compiler_macro(i: &mut Interp, form: &Value) -> EvalResult {
             _ => break,
         }
     }
-    if handler.is_nil() {
-        return Ok(Value::Nil);
-    }
-    let mut argv = vec![form.clone()];
-    match want_list(i, &cdr) {
-        Ok(v) => argv.extend(v),
-        Err(_) => return Ok(Value::Nil),
-    }
-    match i.apply(&handler, argv) {
-        Ok(newf) => {
-            if super::eq_values(&newf, form) {
-                Ok(Value::Nil)
-            } else {
-                Ok(newf)
-            }
+    None
+}
+
+/// None means the handler returned FORM unchanged; Some(nil) is a valid
+/// expansion.  Retain HANDLER for the retry after expanding arguments.
+fn expand_compiler_macro(
+    i: &mut Interp,
+    handler: &Value,
+    form: &Value,
+) -> Result<Option<Value>, Flow> {
+    let helper = i.intern("macroexp--compiler-macro");
+    let expanded = if i.fbound_p(helper) {
+        // The GNU helper honors inhibition/debug settings, warns on
+        // optimization failures and preserves nonlocal exits.
+        i.apply(&Value::Sym(helper), vec![handler.clone(), form.clone()])?
+    } else {
+        // Early loadup, before macroexp.el's wrapper is defined.
+        if i.intern_soft("macroexp-inhibit-compiler-macros")
+            .is_some_and(|id| i.bound_p(id) && i.symbol_value(id).truthy())
+        {
+            return Ok(None);
         }
-        Err(_) => Ok(Value::Nil),
-    }
+        let rest = match form {
+            Value::Cons(c) => c.borrow().cdr.clone(),
+            _ => return Ok(None),
+        };
+        let mut argv = vec![form.clone()];
+        argv.extend(want_list(i, &rest)?);
+        match i.apply(handler, argv) {
+            Ok(value) => value,
+            Err(Flow::Signal(..)) => return Ok(None),
+            Err(flow) => return Err(flow),
+        }
+    };
+    Ok((!super::eq_values(&expanded, form)).then_some(expanded))
 }
 
 /// Whether V can be a `setq' target symbol — a symbol other than
@@ -954,9 +1018,10 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
     // recursing on each copy re-expands the same cons exponentially.
     // Entries validate against `macro_gen' so definition/property
     // changes re-expand once.  Expansion depends on
-    // `macroexpand-all-environment', so only the nil-environment case
-    // (the `load'/`require' path, where env is invariant) is memoized.
-    let env_nil = {
+    // `macroexpand-all-environment'.  Eager load expansion must visit
+    // each occurrence even when source forms share conses: user macros
+    // and compiler macros may have observable expansion-time effects.
+    let env_nil = i.macroexp_call_depth == 0 && {
         let env_id = i.intern("macroexpand-all-environment");
         i.symbol_value(env_id).is_nil()
     };
@@ -1223,12 +1288,44 @@ fn macroexpand_all_inner(i: &mut Interp, form: &Value) -> EvalResult {
         }
     }
     // `macroexpand'/`macroexpand-1'.
-    if let Value::Cons(_) = expanded {
-        let newf = try_compiler_macro(i, &expanded)?;
-        if !newf.is_nil() {
+    let compiler_macro = compiler_macro_handler(i, &expanded);
+    if let Some(handler) = &compiler_macro {
+        if let Some(newf) = expand_compiler_macro(i, handler, &expanded)? {
             return macroexpand_all(i, &newf);
         }
     }
+    let mark = i.specbind_depth();
+    let scoped = match &expanded {
+        Value::Cons(c) => i.sym_id(&c.borrow().car).is_some_and(|id| {
+            matches!(
+                id,
+                sym::LET | sym::LET_STAR | sym::LAMBDA | sym::FUNCTION | sym::DEFUN | sym::DEFMACRO
+            ) || i.symbol_name(id) == "closure"
+        }),
+        _ => false,
+    };
+    if scoped {
+        let id = i.intern("macroexp--dynvars");
+        let old = if i.bound_p(id) {
+            i.symbol_value(id)
+        } else {
+            Value::Nil
+        };
+        i.specbind(id, old)?;
+    }
+    let result = macroexpand_all_expanded(i, expanded, env_id, env, sm, compiler_macro);
+    i.unbind_to(mark)?;
+    result
+}
+
+fn macroexpand_all_expanded(
+    i: &mut Interp,
+    expanded: Value,
+    env_id: SymId,
+    env: Value,
+    sm: bool,
+    compiler_macro: Option<Value>,
+) -> EvalResult {
     match &expanded {
         Value::Cons(c) => {
             let (car, cdr) = {
@@ -1275,6 +1372,24 @@ fn macroexpand_all_inner(i: &mut Interp, form: &Value) -> EvalResult {
                         }
                         for it in body {
                             out.push(expand_body_filtered(i, env_id, &env, sm, &bound, it)?);
+                        }
+                        return Ok(Value::list(out));
+                    }
+                    sym::DEFVAR | sym::DEFCONST
+                        if items.len() >= 2
+                            && items[1].truthy()
+                            && i.sym_id(&items[1]).is_some() =>
+                    {
+                        let dynvars = i.intern("macroexp--dynvars");
+                        let old = if i.bound_p(dynvars) {
+                            i.symbol_value(dynvars)
+                        } else {
+                            Value::Nil
+                        };
+                        i.set_symbol(dynvars, Value::cons(items[1].clone(), old))?;
+                        let mut out = items[..2].to_vec();
+                        for item in &items[2..] {
+                            out.push(macroexpand_all(i, item)?);
                         }
                         return Ok(Value::list(out));
                     }
@@ -1804,7 +1919,16 @@ fn macroexpand_all_inner(i: &mut Interp, form: &Value) -> EvalResult {
             for it in &items[1..] {
                 out.push(macroexpand_all(i, it)?);
             }
-            Ok(Value::list(out))
+            let result = Value::list(out);
+            if let Some(handler) = &compiler_macro {
+                if super::equal_values(i, &expanded, &result)? {
+                    return Ok(expanded);
+                }
+                if let Some(newf) = expand_compiler_macro(i, handler, &result)? {
+                    return macroexpand_all(i, &newf);
+                }
+            }
+            Ok(result)
         }
         _ => Ok(expanded),
     }
@@ -1930,87 +2054,6 @@ pub(crate) fn translate_message_quotes(i: &Interp, fmt: &str) -> String {
                     _ => out.push(c),
                 }
             }
-        }
-    }
-    out
-}
-
-/// Simple format for error strings: %s → princ, %S → prin1, %% → %.
-pub(crate) fn apply_format_simple(i: &Interp, fmt: &str, args: &[Value]) -> String {
-    let fmt = translate_message_quotes(i, fmt);
-    let mut out = String::new();
-    let mut ai = 0;
-    let mut chars = fmt.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '%' {
-            match chars.next() {
-                Some('s') => {
-                    if let Some(a) = args.get(ai) {
-                        ai += 1;
-                        // `%s' on a string copies it verbatim — the
-                        // escaped princ rendering is for non-strings.
-                        match a {
-                            Value::Str(raw) => out.push_str(&raw.borrow()),
-                            _ => out.push_str(&i.princ_to_string(a)),
-                        }
-                    }
-                }
-                Some('S') => {
-                    if let Some(a) = args.get(ai) {
-                        ai += 1;
-                        out.push_str(&i.print_to_string(a));
-                    }
-                }
-                Some('%') => out.push('%'),
-                Some(d) if d.is_ascii_digit() => {
-                    // skip field-width specs like %5s — read digits then letter
-                    let mut n = String::from(d);
-                    while let Some(&c2) = chars.peek() {
-                        if c2.is_ascii_digit() {
-                            n.push(c2);
-                            chars.next();
-                        } else {
-                            break;
-                        }
-                    }
-                    match chars.next() {
-                        Some('s') => {
-                            if let Some(a) = args.get(ai) {
-                                ai += 1;
-                                out.push_str(&i.princ_to_string(a));
-                            }
-                        }
-                        Some('d') => {
-                            if let Some(a) = args.get(ai) {
-                                ai += 1;
-                                out.push_str(&i.princ_to_string(a));
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                Some(l @ ('d' | 'x' | 'o' | 'c' | 'e' | 'f' | 'g')) => {
-                    if let Some(a) = args.get(ai) {
-                        ai += 1;
-                        // GNU's error/message path uses the full format
-                        // semantics for numeric specs (e.g. %c renders a
-                        // character); delegate to `format'.
-                        let spec = format!("%{}", l);
-                        let spec_args = [Value::Nil, a.clone()];
-                        match super::strfn::format_impl(i, &spec, &spec_args) {
-                            Ok(Value::Str(s)) => out.push_str(&s.borrow()),
-                            _ => out.push_str(&i.princ_to_string(a)),
-                        }
-                    }
-                }
-                Some(other) => {
-                    out.push('%');
-                    out.push(other);
-                }
-                None => out.push('%'),
-            }
-        } else {
-            out.push(c);
         }
     }
     out

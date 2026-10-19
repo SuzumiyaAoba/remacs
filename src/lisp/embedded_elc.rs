@@ -82,6 +82,7 @@ pub(crate) static EMBEDDED_ELC: &[(&str, &str)] = &[
     ("text-mode", include_str!("../../lisp-elc/text-mode.elc")),
     ("timer", include_str!("../../lisp-elc/timer.elc")),
     ("newcomment", include_str!("../../lisp-elc/newcomment.elc")),
+    ("ucs-normalize", include_str!("../../lisp-elc/ucs-normalize.elc")),
     ("ns-win", include_str!("../../lisp-elc/ns-win.elc")),
     ("common-win", include_str!("../../lisp-elc/common-win.elc")),
     ("fontset", include_str!("../../lisp-elc/fontset.elc")),

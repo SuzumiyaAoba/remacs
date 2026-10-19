@@ -19252,8 +19252,10 @@ NAME and the slots, as in GNU's `cl-defstruct'."
       (push `(defvar ,tagsym nil) defs)
       (push `(put ',n 'cl-struct-type '(,type ,named)) defs)
       (push `(cl--struct-register-tag ',n ',ptags) defs)
+      ;; The registration protocol uses record/:named=nil; the local
+      ;; `named' sentinel above only controls tag-aware code generation.
       (push `(cl--struct-register-class ',n nil ',(cadr include)
-                                        ',type ',named ',slots
+                                        ',(or type 'record) ,(and type (eq named t)) ',slots
                                         ',tagsym ',tagsymname nil)
             defs)
       (push `(defconst ,tagsymname (cl--find-class ',n)) defs)
@@ -19416,7 +19418,7 @@ NAME may also already be a class object."
 Simplified `cl-struct-define': builds the class record, populates the
 slot-descriptor vector and index table, links into the parent chain,
 and stores it under `cl--class'."
-  (when (eq type 'record) (setq type nil))
+  (when (or (null type) (eq type 'record)) (setq type nil named nil))
   ;; GNU `cl-struct-define' drops the leading `cl-tag-slot' descriptor
   ;; from SLOTS for records (the tag lives at index 0 but is not a
   ;; user slot): keeping it shifts every slot's index-table entry and
@@ -50482,36 +50484,33 @@ abbreviating it with ellipses to fit within a size limit."
 (put 'warning-levels 'risky-local-variable t)
 (put 'warning-series 'risky-local-variable t)
 
-;; eieio-core.el wraps its `cl-defstruct (eieio--class ...)' in
-;; `(eval-when-compile (cl-declaim (optimize (safety 0))))' — GNU
-;; byte-compiles the file so the generated accessors lose their
-;; `eieio--class-p' tag check (byte-compile-delete-errors) and behave
-;; as bare `aref's: foreign records return slot junk, short objects
-;; signal args-out-of-range (never wrong-type-argument).  Remacs
-;; interprets eieio-core so the check survives; rebind the accessors
-;; to the GNU-compiled shape after eieio-core loads.
-(with-eval-after-load 'eieio-core
-  (let ((slots '((eieio--class-name . 1)
-                 (eieio--class-docstring . 2)
-                 (eieio--class-parents . 3)
-                 (eieio--class-slots . 4)
-                 (eieio--class-index-table . 5)
-                 (eieio--class-children . 6)
-                 (eieio--class-initarg-tuples . 7)
-                 (eieio--class-class-slots . 8)
-                 (eieio--class-class-allocation-values . 9)
-                 (eieio--class-default-object-cache . 10)
-                 (eieio--class-options . 11))))
-    (dolist (s slots)
-      (fset (car s)
-            (let ((i (cdr s)))
-              (lambda (ob) (aref ob i))))
-      ;; `setf' on the accessor was already a plain aset in GNU's
-      ;; compiled twin too — keep ours in sync.
-      (fset (intern (concat "(setf " (symbol-name (car s)) ")"))
-            (let ((i (cdr s)))
-              (lambda (v ob) (aset ob i v)))))))
-
+;; GNU's eieio--class comes from a safety-0 compilation.  Normalize its
+;; accessors and compiler macros as soon as cl-struct-define registers
+;; the class, before later eager-expanded functions consume them.  The
+;; old after-load hook ran too late for those frozen inliner calls.
+(defun remacs--eieio-compiled-accessors (name &rest _args)
+  (when (eq name 'eieio--class)
+    (dolist (slot '((eieio--class-name . 1)
+                   (eieio--class-docstring . 2)
+                   (eieio--class-parents . 3)
+                   (eieio--class-slots . 4)
+                   (eieio--class-index-table . 5)
+                   (eieio--class-children . 6)
+                   (eieio--class-initarg-tuples . 7)
+                   (eieio--class-class-slots . 8)
+                   (eieio--class-class-allocation-values . 9)
+                   (eieio--class-default-object-cache . 10)
+                   (eieio--class-options . 11)))
+      (let ((index (cdr slot)) (accessor (car slot)))
+        (fset accessor (lambda (object) (aref object index)))
+        (fset (intern (concat "(setf " (symbol-name accessor) ")"))
+              (lambda (value object) (aset object index value)))
+        (let ((inliner (intern (concat (symbol-name accessor) "--inliner"))))
+          (fset inliner
+                (lambda (_form object) (list 'progn (list 'aref object index))))
+          (put accessor 'compiler-macro inliner))
+        (eval `(gv-define-setter ,accessor (value object)
+                 (list 'aset object ,index value)) t)))))
 
 ;; Buffer history commands from GNU window.el.
 (defun last-buffer (&optional buffer visible-ok frame)

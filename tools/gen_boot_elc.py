@@ -17,11 +17,14 @@ Compilation runs inside one Emacs process.  `remacs-compat' (a
 remacs-only shim file) is pre-provided so our cl-lib's `(require
 'remacs-compat)' resolves without loading the shim itself.  Files GNU
 marks `no-byte-compile' (charprop.el) are skipped automatically.
+Use --only NAME [NAME ...] to update selected twins while retaining
+the other existing entries in the generated Rust table.
 
 Regenerate whenever a booted lisp/*.el file changes — like
 tools/gen_embedded.py for the EMBEDDED_LISP table.
 """
 
+import argparse
 import os
 import subprocess
 import sys
@@ -68,7 +71,7 @@ BOOT_LIBS = [
     "abbrev", "cconv", "cus-face", "ediff-hook", "eldoc", "mouse",
     "rect", "send-to", "map", "prog-mode", "regexp-opt", "register",
     "replace", "scroll-bar", "text-mode", "timer", "newcomment",
-    "ns-win", "common-win", "fontset", "mwheel", "pcase", "help-macro",
+    "ucs-normalize", "ns-win", "common-win", "fontset", "mwheel", "pcase", "help-macro",
     "inline",
 ]
 
@@ -94,6 +97,9 @@ ELISP = r"""
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--only", nargs="+", metavar="NAME", choices=sorted(set(BOOT_LIBS) - SKIP))
+    selected = set(parser.parse_args().only or BOOT_LIBS)
     emacs = os.environ.get("EMACS")
     if not emacs:
         for cand in [
@@ -108,11 +114,11 @@ def main() -> int:
     os.makedirs(OUT, exist_ok=True)
     script = os.path.join(OUT, ".gen.el")
     with open(script, "w") as f:
-        f.write(ELISP)
+        f.write(ELISP.lstrip("\n"))
 
     sources = []
     for lib in BOOT_LIBS:
-        if lib in SKIP:
+        if lib in SKIP or lib not in selected:
             continue
         src = os.path.join(LISP, f"{lib}.el")
         if not os.path.exists(src):
@@ -139,13 +145,15 @@ def main() -> int:
         print(f"emacs exited {r.returncode}", file=sys.stderr)
         return 1
 
+    # Selective regeneration keeps all previously compiled boot twins.
     emitted = {}
-    for src in staged:
-        stem = os.path.splitext(os.path.basename(src))[0]
+    for stem in BOOT_LIBS:
+        if stem in SKIP:
+            continue
         elc = os.path.join(OUT, f"{stem}.elc")
         if os.path.exists(elc):
             emitted[stem] = elc
-        else:
+        elif stem in selected:
             print(f"no .elc: {stem}", file=sys.stderr)
 
     lines = [

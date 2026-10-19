@@ -13,6 +13,20 @@
 (require 'eieio-base)
 (require 'eieio-compat) ;; for defmethod/call-next-method/next-method-p
 (require 'cl-lib)
+(dolist (slot '((eieio--class-name . 1)
+                (eieio--class-docstring . 2)
+                (eieio--class-parents . 3)
+                (eieio--class-slots . 4)
+                (eieio--class-index-table . 5)
+                (eieio--class-children . 6)
+                (eieio--class-initarg-tuples . 7)
+                (eieio--class-class-slots . 8)
+                (eieio--class-class-allocation-values . 9)
+                (eieio--class-default-object-cache . 10)
+                (eieio--class-options . 11)))
+  (qa (macroexpand-all (list (car slot) 'qaee-object))
+      (list 'progn (list 'aref 'qaee-object (cdr slot)))))
+(qa-err (cl--class-parents [t]) 'wrong-type-argument)
 (progn
 
 ;; == defclass / make-instance ==
@@ -140,7 +154,8 @@
   ;; GNU's dumped eieio accessors run at (safety 0) — the
   ;; `eieio--class-p' typecheck is compiled out, so `eieio--class-object'
   ;; returns the instance and `cl-check-type' reaches `args-out-of-range'.
-  ;; remacs reproduces this via the safety-0 accessor shim in prelude.el.
+  ;; Remacs preserves that shape for both accessors and compiler macros
+  ;; when defining the built-in eieio--class structure.
   (qa-err (child-of-class-p c 'qaee-shape) 'args-out-of-range)
   (qa (object-of-class-p c 'qaee-shape) t)   ;; transitive
   (qa (object-of-class-p c 'qaee-circle) t)

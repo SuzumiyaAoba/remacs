@@ -4314,11 +4314,6 @@ pub(crate) fn f_format_message(i: &mut Interp, args: crate::lisp::Argv) -> EvalR
     Ok(v)
 }
 
-pub(crate) fn format_impl(i: &Interp, fmt: &str, args: &[Value]) -> EvalResult {
-    let mut spans = Vec::new();
-    format_impl_spans(i, fmt, args, &[], &mut spans)
-}
-
 fn format_impl_spans(
     i: &Interp,
     fmt: &str,

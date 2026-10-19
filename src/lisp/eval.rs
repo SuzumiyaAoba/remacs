@@ -2930,6 +2930,16 @@ impl Interp {
             // GNU-verbatim compatibility definitions (string trim/pad,
             // fringe helpers, paren/select/vc/dnd support, …).
             let _ = boot_lib(&mut interp, "subr-x");
+            // Keep GNU's load-expansion hook, but use the Rust deep
+            // walker behind its full-pass helper.  Interpreting the
+            // amalgam's pcase-heavy walker exceeds Lisp depth at loadup.
+            if let Some(subr) = crate::lisp::builtins::evalfn::SUBRS
+                .iter()
+                .find(|s| s.name == "macroexpand--all-toplevel")
+            {
+                let id = interp.intern(subr.name);
+                interp.fset(id, Value::Subr(subr));
+            }
             // GNU's subr.el defvar (mostly populated by loaddefs.el
             // autoload cookies); compat.el's cookie pushes
             // `(compat MAJOR MINOR 9999)'.
@@ -4811,6 +4821,23 @@ command-line arguments.\" \
         // and the helper defuns to Rust subrs after every library load,
         // so prelude/Lisp redefinitions can't re-expose the cells.
         crate::lisp::builtins::backquote::install_macros(&mut interp);
+        if std::env::var("REMACS_NO_PRELUDE").is_err() {
+            // A compatibility wrapper, not user advice: dumped macro
+            // expansion intentionally strips advice from called helpers.
+            let dumped = interp.loading_dumped;
+            interp.loading_dumped = true;
+            let _ = interp.eval_str(
+                "(eval \
+                   '(let ((original (symbol-function 'cl-struct-define))) \
+                      (fset 'cl-struct-define \
+                        (lambda (name docstring parent type named slots children-sym tag print) \
+                          (prog1 \
+                            (funcall original name docstring parent type named slots children-sym tag print) \
+                            (remacs--eieio-compiled-accessors name))))) \
+                   t)",
+            );
+            interp.loading_dumped = dumped;
+        }
         // GNU -Q starts a session with `gensym-counter' at 0 and no
         // interned `g<N>' symbols (its .elc boot never reads the let
         // bindings named g0.. that remacs's source boot interns).
@@ -11688,6 +11715,13 @@ command-line arguments.\" \
     /// Insertions bypass read-only/change-hook machinery (GNU's
     /// `insert_1_both' with PREPARE=false).
     pub fn message(&mut self, s: &str) {
+        // Boot loads construct the dumped image.  Their normal messages
+        // are logged and discarded at the end of startup, like GNU's
+        // dump-time output, instead of entering the user's echo session.
+        if self.boot_loading {
+            self.message_log(s);
+            return;
+        }
         if self.noninteractive {
             if self.stderr_need_newline {
                 eprintln!();

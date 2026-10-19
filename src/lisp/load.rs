@@ -2847,6 +2847,12 @@ fn eval_src_opts_inner(
     // The interpreter's `features' vec is only a boot-time ledger for
     // the dump/prelude bookkeeping.
     i.specbind(cll, Value::Nil)?;
+    // GNU readevalloop keeps top-level dynamic declarations local to
+    // this load, while allowing successive forms to share them.
+    let dynvars = i.intern("macroexp--dynvars");
+    if i.bound_p(dynvars) {
+        i.specbind(dynvars, i.symbol_value(dynvars))?;
+    }
     // Embedded (`builtin:') libraries play the role of GNU's dumped
     // .elc files: functions defined while they load keep
     // `dumped_doc' docstring semantics.
@@ -2959,6 +2965,19 @@ fn eval_str_for_load(
     let mut source_version = None;
     let mut pos = 0usize;
     let mut last = Value::Nil;
+    // Capture availability once per stream, as GNU readevalloop does.
+    // The symbol itself remains live so redefinitions during the load
+    // affect later calls.  Compiled streams have already been expanded.
+    let expander = i.intern("internal-macroexpand-for-load");
+    let expander = if i.fbound_p(expander)
+        && !file.ends_with(".elc")
+        && !file.ends_with(".elc.gz")
+        && !src.starts_with(";ELC\u{1f}")
+    {
+        Value::Sym(expander)
+    } else {
+        Value::Nil
+    };
     let lrf_sym = i.intern("load-read-function");
     // GNU passes the file stream (`Qget_file_char') to a custom
     // `load-read-function' — a *consuming* input.  Our equivalent is a
@@ -3113,7 +3132,7 @@ fn eval_str_for_load(
                     buffer.borrow_mut().set_point(end);
                 }
                 let t0 = (i.dbg_flags & 0x200 != 0).then(std::time::Instant::now);
-                match eval_for_load(i, form.clone()) {
+                match eval_for_load(i, form.clone(), &expander) {
                     Ok(v) => {
                         last = v;
                         if let Some(t0) = t0 {
@@ -3177,55 +3196,26 @@ fn eval_str_for_load(
 /// and evaluated in turn (an autoloaded macro in a later child is not
 /// resolved until that child's expansion runs, matching GNU's
 /// observable autoload timing).
-fn eval_for_load(i: &mut Interp, form: Value) -> EvalResult {
-    // Splice a `progn' BEFORE expanding: GNU expands each spliced child
-    // at its own turn, so later autoloaded macros stay unresolved while
-    // earlier children evaluate.
-    if let Some(children) = progn_children(i, &form) {
-        let mut last = Value::Nil;
-        for child in children {
-            last = eval_for_load(i, child)?;
+fn eval_for_load(i: &mut Interp, form: Value, expander: &Value) -> EvalResult {
+    let expanded = if expander.is_nil() {
+        form
+    } else {
+        // GNU first expands the head, then splices a resulting progn.
+        // Each child is expanded only after earlier children evaluate,
+        // so macro definitions and autoloads retain their load order.
+        let head = expand_for_load(i, expander, form, false)?;
+        if let Some(children) = progn_children(i, &head) {
+            let mut last = Value::Nil;
+            for child in children {
+                last = eval_for_load(i, child, expander)?;
+            }
+            return Ok(last);
         }
-        return Ok(last);
-    }
-    i.macroexp_call_depth += 1;
-    // GNU's `internal-macroexpand-for-load' repeatedly expands the
-    // form's head (the `macroexpand' fixpoint), NOT a deep
-    // `macroexpand-all': subform macros expand lazily when the body
-    // later evals.  Deep expansion runs interpreted `pcase--expand'
-    // across every nested form, which blows up exponentially on files
-    // like mail-extr.el.  The nil ENVIRONMENT matches GNU's binding.
-    let env_id = i.intern("macroexpand-all-environment");
-    i.specbind(env_id, Value::Nil)?;
-    let expanded_result = i.macroexpand(&form);
-    let _ = i.unbind(1);
-    i.macroexp_call_depth -= 1;
-    let expanded = match expanded_result {
-        Ok(f) => f,
-        // GNU's `internal-macroexpand-for-load' wraps expansion
-        // failures: it re-signals (error "Eager macro-expansion
-        // failure: %S" err) where err is the original condition as
-        // (sym . data); `error' formats eagerly, so the data is a
-        // single formatted string.  Non-signal exits propagate.
-        Err(crate::lisp::Flow::Signal(sym, data, _)) => {
-            let err = Value::cons(sym, data);
-            let msg = crate::lisp::builtins::evalfn::apply_format_simple(
-                i,
-                "Eager macro-expansion failure: %S",
-                &[err],
-            );
-            return Err(i.error(msg));
-        }
-        Err(f) => return Err(f),
+        // Non-progn forms, including function bodies, receive the full
+        // expansion pass.  The GNU hook also handles expansion failures
+        // and cycles, and remains observable to advice and redefinition.
+        expand_for_load(i, expander, head, true)?
     };
-    // A macro may have expanded into a top-level `progn' — splice it too.
-    if let Some(children) = progn_children(i, &expanded) {
-        let mut last = Value::Nil;
-        for child in children {
-            last = eval_for_load(i, child)?;
-        }
-        return Ok(last);
-    }
     match i.eval(&expanded) {
         // GNU records definitions via LOADHIST_ATTACH inside the
         // defining subrs (defalias/defvar/defvaralias/provide/require/
@@ -3238,6 +3228,13 @@ fn eval_for_load(i: &mut Interp, form: Value) -> EvalResult {
         }
         Err(f) => Err(f),
     }
+}
+
+fn expand_for_load(i: &mut Interp, expander: &Value, form: Value, full: bool) -> EvalResult {
+    i.macroexp_call_depth += 1;
+    let result = i.apply(expander, vec![form, Value::from_bool(full)]);
+    i.macroexp_call_depth -= 1;
+    result
 }
 
 /// Record a `load-history' entry for the embedded startup prelude so

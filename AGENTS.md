@@ -56,9 +56,10 @@ Registration rules:
 - Generated loaddefs with qualified provide (e.g. `semantic/loaddefs`)
   need the qualified key too.
 
-## Startup profile (release build, `REMACS_BOOT_PROF=1`)
+## Startup profiling (`REMACS_BOOT_PROF=1`)
 
-Warm `--batch` startup is ~0.85 s: prelude eval ~250 ms + ~350 ms of
+Before full eager source expansion, warm release `--batch` startup
+measured ~0.85 s: prelude eval ~250 ms + ~350 ms of
 `boot_lib` loads.  Boot libraries are AOT byte-compiled by GNU Emacs
 into `lisp-elc/*.elc` (see below); `load_library` prefers an embedded
 `.elc' twin over the `.el' source while `boot_loading', and the
@@ -128,6 +129,27 @@ top-level `setq'/`defconst'/`add-hook' forms (reset
 `file-name-handler-alist', `electric-quote-string').  So edits to the
 amalgam only take effect through the boot load; `tests/qa_subrx3.el'
 pins the post-boot behavior.
+
+## Source loading and eager macro expansion
+
+`load.rs` follows GNU `readevalloop`: call
+`internal-macroexpand-for-load` with nil, splice a resulting top-level
+`progn` in evaluation order, then call the hook with t for other forms.
+The hook remains observable to advice and redefinition.  Compiled streams
+skip both passes.  `macroexpand--all-toplevel` uses the Rust deep walker
+after the boot amalgam is loaded, avoiding the interpreted GNU walker's
+extra Lisp depth during initialization.
+
+Eager expansion does not memoize cons identities: separate occurrences
+can share reader objects while macro/compiler-macro calls still have
+observable effects.  Compiler macros can expand to nil and are retried
+after their arguments change; the GNU wrapper handles inhibition and
+optimization warnings.  `macroexp--dynvars` is scoped per load and per
+lexical binding/function body.  The internal `eieio--class` structure
+gets its GNU safety-0 accessor and inliner definitions when registration
+completes; a feature's after-load hook is too late for expanded consumers.
+Regressions: `qa_load_macroexpand`, `qa_eieio`, and the existing macro,
+pcase, cl-loop, load and CLI suites.
 
 
 
