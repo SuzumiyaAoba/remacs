@@ -99,6 +99,14 @@ other results substitute placeholder references and update the mapping.
 Nested cons labels therefore need not alias, while vector labels can.
 Regressions: `qa_reader_circles`.
 
+`write-char` follows GNU's CHECK_FIXNUM and unsigned 32-bit printchar
+conversion, not CHECK_CHARACTER. Function streams receive the unencoded
+32-bit value; text streams resolve ASCII Shift/Control, discard the six
+event modifier bits, and reject remaining invalid bits. High Mule codes
+use the existing character proxies rather than U+FFFD. Return the original
+fixnum, including when its encoded character differs. `qa_write_char`
+checks string/buffer/marker/function destinations and validation ordering.
+
 ## Startup profiling (`REMACS_BOOT_PROF=1`)
 
 Before full eager source expansion, warm release `--batch` startup

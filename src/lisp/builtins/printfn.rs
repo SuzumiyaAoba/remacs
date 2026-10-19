@@ -137,42 +137,62 @@ fn f_terpri(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_write_char(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU Fwrite_char: CHECK_FIXNUM only — the range check lives in
-    // printchar: negatives (and out-of-charset codes) signal
-    // (error "Invalid character: %o") with the *unsigned* octal;
-    // eight-bit codes write as the byte, big codes as U+FFFD.
+    // GNU Fwrite_char checks fixnump, then printchar narrows to unsigned
+    // int. Function streams receive that value before CHAR_STRING folds
+    // modifiers or rejects invalid codes for text destinations.
     let n = match &args[0] {
-        Value::Int(n) => *n,
+        Value::Int(n) if args[0].fixnump() => *n,
         other => return Err(i.wrong_type_mut("fixnump", other)),
     };
     let stream = i.checked_output_stream(&arg(&args, 1))?;
-    if n < 0 {
-        // GNU prints the negative code as `f' + 6 hex digits of the
-        // 22-bit masked value: -1 → "f03fffff", -5 → "f03ffffb".
+    let code = n as u32;
+    if !matches!(&stream, Value::Nil | Value::Buffer(_) | Value::Marker(_))
+        && !i.sym_is(&stream, sym::T)
+    {
+        i.apply(&stream, vec![Value::Int(code as i128)])?;
+        return Ok(args[0].clone());
+    }
+    let code = write_char_text_code(code);
+    if code > 0x3FFFFF {
         return Err(i.signal_data(
             sym::ERROR,
-            vec![Value::string(format!(
-                "Invalid character: f{:06x}",
-                n & 0x3FFFFF
-            ))],
+            vec![Value::string(format!("Invalid character: {code:x}"))],
         ));
     }
     // Eight-bit codes emit a sentinel so sinks get GNU's semantics:
     // function → code, text → the eight-bit char, stdout → overlong.
-    if let Some(b) = (0x3FFF80..=0x3FFFFF)
-        .contains(&n)
-        .then(|| (n - 0x3FFF00) as u8)
-    {
-        let mut buf = [0u8; 4];
-        let ch = crate::lisp::value::write_char_eight_bit(b);
-        return i
-            .write_output_to(ch.encode_utf8(&mut buf), &stream)
-            .map(|_| args[0].clone());
-    }
-    let c = crate::lisp::value::lisp_char(n as u32).unwrap_or('\u{FFFD}');
+    let c = match code {
+        0x3FFF80..=0x3FFFFF => crate::lisp::value::write_char_eight_bit((code - 0x3FFF00) as u8),
+        0x110000..=0x3FFF7F => crate::lisp::value::mule_seq_char(code),
+        _ => crate::lisp::value::lisp_char(code).unwrap(),
+    };
     let mut s = [0u8; 4];
     i.write_output_to(c.encode_utf8(&mut s), &stream)?;
     Ok(args[0].clone())
+}
+
+/// GNU char_string resolves ASCII Shift/Control and discards the six
+/// event modifier bits. Other high bits remain invalid character bits.
+fn write_char_text_code(mut code: u32) -> u32 {
+    const MODIFIERS: u32 = 0x0FC0_0000;
+    const SHIFT: u32 = 0x0200_0000;
+    const CONTROL: u32 = 0x0400_0000;
+    if code & !MODIFIERS <= 0x7F {
+        if code & SHIFT != 0 && (b'a' as u32..=b'z' as u32).contains(&(code & 0x7F)) {
+            code -= (b'a' - b'A') as u32;
+        }
+        if code & CONTROL != 0 {
+            let base = code & 0x7F;
+            let resolved = match base {
+                0x20 => 0,
+                0x3F => 0x7F,
+                0x40..=0x5F | 0x61..=0x7A => base & 0x1F,
+                _ => base,
+            };
+            code = (code & !0x7F) | resolved;
+        }
+    }
+    code & !MODIFIERS
 }
 
 fn f_prin1_to_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
