@@ -993,22 +993,25 @@
   ("%.2é" 0.0e+NaN "0.0e+NaN")
 ))
  (let ((float-output-format (car case)) (value (cadr case)) (expected (cadr (cdr case))))
-  ;; Default shortest subnormal rendering already diverges on master.
-  ;; Custom descriptor rows remain strict; only default-fallback output is exempt.
-  (if (and (equal expected "5e-324")
-           (not (member float-output-format '("%.e" "%.g"))))
-      (progn
-        (qa-xf (prin1-to-string value) expected "preexisting shortest subnormal printer" )
-        (qa-xf (number-to-string value) expected "preexisting shortest subnormal printer" )
-        (qa-xf (format "%s" value) expected "preexisting shortest subnormal printer" )
-        (qa-xf (format "%S" value) expected "preexisting shortest subnormal printer" )
-      )
-    (progn
-      (qa (prin1-to-string value) expected)
-      (qa (number-to-string value) expected)
-      (qa (format "%s" value) expected)
-      (qa (format "%S" value) expected)
-    ))))
+  (qa (prin1-to-string value) expected)
+  (qa (number-to-string value) expected)
+  (qa (format "%s" value) expected)
+  (qa (format "%S" value) expected)))
+;; Issue #3: shortest round-tripping output throughout the subnormal range,
+;; including both signs and the boundary with normal doubles.
+(dolist (case '((5e-324 "5e-324") (-5e-324 "-5e-324")
+                (1e-323 "1e-323") (-1e-323 "-1e-323")
+                (1e-310 "1e-310") (-1e-310 "-1e-310")
+                (2.5e-320 "2.5e-320") (-2.5e-320 "-2.5e-320")
+                (1.5e-315 "1.5e-315") (-1.5e-315 "-1.5e-315")
+                (2.225073858507201e-308 "2.225073858507201e-308")
+                (2.2250738585072014e-308 "2.2250738585072014e-308")))
+  (let ((float-output-format nil) (value (car case)) (expected (cadr case)))
+    (qa (prin1-to-string value) expected)
+    (qa (number-to-string value) expected)
+    (qa (format "%s" value) expected)
+    (qa (format "%S" value) expected)
+    (qa (= (read expected) value) t)))
 ;; Dynamic binding, collection recursion, streams and unaffected numeric formats.
 (qa (boundp 'float-output-format) t)
 (qa float-output-format nil)

@@ -1735,7 +1735,8 @@ fn format_float_descriptor(value: f64, descriptor: &str) -> Option<String> {
 }
 
 /// Emacs-style float printing (`float_to_string`): shortest of
-/// `%.15g`–`%.17g` that reads back to the same double.
+/// `%.15g`–`%.17g` that reads back to the same double.  Subnormals
+/// start at one significant digit, as in gnulib's dtoastr.
 /// `1.5`, `1.0`, `1e+20`, `1.0e+INF`, `-1.0e+INF`, `0.0e+NaN`.
 /// NaNs print the numeric mantissa GNU derives from the NaN payload
 /// (`float_error' notation): `get_nan_payload' strips the quiet bit,
@@ -1756,7 +1757,8 @@ pub fn format_float(f: f64) -> String {
         return if f.is_sign_negative() { "-0.0" } else { "0.0" }.into();
     }
     let mut s = String::new();
-    for prec in [15usize, 16, 17] {
+    let first_precision = if f.is_subnormal() { 1 } else { 15 };
+    for prec in first_precision..=17 {
         s = format_g(f, prec);
         if s.parse::<f64>().ok() == Some(f) {
             break;
