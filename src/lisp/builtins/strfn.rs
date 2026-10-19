@@ -1329,102 +1329,122 @@ fn f_string_join(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::string(out))
 }
 fn f_split_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU (defun): `(length STRING)' evals first — atoms signal
-    // `sequencep'; conses/vectors/bool-vectors pass length then fail
-    // `stringp' inside the first `string-match'.  TRIM is concatenated
-    // into a regexp next (`concat' → `sequencep' on non-sequences), then
-    // SEPARATORS fails `stringp' in `string-match' before STRING does.
-    match &args[0] {
-        Value::Str(_) | Value::Nil | Value::Cons(_) | Value::Vec(_) => {}
-        v if super::misc::is_bool_vector(i, v) => {}
-        other => return Err(i.wrong_type_mut("sequencep", other)),
-    }
-    // GNU: when SEPARATORS is nil, OMIT-NULLS defaults to t.
-    let omit_nulls = match args.get(2) {
-        Some(v) if !v.is_nil() => true,
-        _ => matches!(args.get(1), None | Some(Value::Nil)),
-    };
-    // GNU's optional TRIM is a regexp stripped (one match per edge)
-    // from each substring before the OMIT-NULLS test; it goes through
-    // `concat', so any sequence of characters is accepted and atoms
-    // signal `sequencep'.
-    let trim: Option<String> = match args.get(3) {
+    // GNU subr.el keeps the next search position separate from the
+    // current field's start.  Advancing only the former after empty
+    // matches guarantees progress without dropping field characters.
+    let source = args[0].clone();
+    let keep_empty = args.get(1).is_some_and(Value::truthy)
+        && !args.get(2).is_some_and(Value::truthy);
+    let length_fn = i.intern("length");
+    let length = i.apply(&Value::Sym(length_fn), vec![source.clone()])?;
+    let len = want_int(i, &length)? as usize;
+    let trim = match args.get(3) {
         None | Some(Value::Nil) => None,
         Some(v) => {
             let mut s = String::new();
             concat_seq(i, v, &mut s)?;
-            Some(s)
+            Some((
+                Value::string(format!("\\`\\(?:{}\\)", s)),
+                Value::string(format!("\\(?:{}\\)\\'", s)),
+            ))
         }
     };
-    let sep_is_default = matches!(args.get(1), None | Some(Value::Nil));
     let sep = match args.get(1) {
-        None | Some(Value::Nil) => "[ \u{0C}\t\n\r\u{0B}]+".into(),
-        Some(v) => want_string(i, v)?,
+        Some(v) if v.truthy() => v.clone(),
+        _ => {
+            let id = i.intern("split-string-default-separators");
+            i.eval(&Value::Sym(id))?
+        }
     };
-    let s = match &args[0] {
-        Value::Str(s) => s.borrow().clone(),
-        other => return Err(i.wrong_type_mut("stringp", other)),
-    };
-    let _ = sep_is_default;
-    // If sep is a regex-ish, use our regexp engine; else literal split.
-    let is_regex = sep.contains('\\')
-        || sep.contains('[')
-        || sep.contains('^')
-        || sep.contains('$')
-        || sep.contains('.')
-        || sep.contains('*')
-        || sep.contains('+')
-        || sep.contains('?');
-    let mut parts: Vec<String> = if is_regex {
-        match crate::lisp::regexp::compile(&sep) {
-            Ok(re) => {
-                let mut out = Vec::new();
-                let mut pos = 0usize;
-                let syn = crate::editor::re_syntax(i);
-                let chars: Vec<char> = s.chars().collect();
-                while pos <= chars.len() {
-                    match crate::lisp::regexp::search(
-                        &re,
-                        &chars,
-                        pos,
-                        &syn,
-                        &crate::editor::re_category(i),
-                        crate::lisp::regexp::NO_POINT,
-                    ) {
-                        Some((ms, me)) => {
-                            out.push(chars[pos..ms].iter().collect());
-                            pos = me.max(ms + 1);
-                            if ms == me && pos > chars.len() {
-                                break;
-                            }
-                        }
-                        None => {
-                            out.push(chars[pos..].iter().collect());
-                            break;
-                        }
-                    }
-                }
-                out
+    let mut parts = Vec::new();
+    let (mut next, mut start) = (0usize, 0usize);
+    loop {
+        let found = split_string_match(i, &sep, &source, next, false)?;
+        let Some(sep_start) = found.int() else {
+            break;
+        };
+        let sep_start = sep_start as usize;
+        let sep_end = split_match_end(i)?;
+        if keep_empty || start < sep_start {
+            let item = f_substring(
+                i,
+                vec![
+                    source.clone(),
+                    Value::Int(start as i128),
+                    Value::Int(sep_start as i128),
+                ].into(),
+            )?;
+            let item = split_trim_item(i, item, &trim)?;
+            if keep_empty || matches!(&item, Value::Str(s) if !s.borrow().is_empty()) {
+                parts.push(item);
             }
-            Err(_) => s.split(&sep as &str).map(|x| x.to_string()).collect(),
         }
-    } else {
-        s.split(&sep as &str).map(|x| x.to_string()).collect()
-    };
-    if let Some(t) = &trim {
-        let mut tp = Vec::with_capacity(parts.len());
-        for p in parts {
-            let a = trim_left_re(i, &p, t)?;
-            tp.push(trim_right_re(i, &a, t)?);
+        next = (next + 1).max(sep_end);
+        start = sep_end;
+        if start >= len {
+            break;
         }
-        parts = tp;
     }
-    let filtered: Vec<Value> = parts
-        .into_iter()
-        .filter(|p| !omit_nulls || !p.is_empty())
-        .map(Value::string)
-        .collect();
-    Ok(Value::list(filtered))
+    // GNU returns the original object when no separator was found.
+    let item = if start == 0 {
+        source
+    } else {
+        f_substring(i, vec![source, Value::Int(start as i128)].into())?
+    };
+    let item = split_trim_item(i, item, &trim)?;
+    if keep_empty || matches!(&item, Value::Str(s) if !s.borrow().is_empty()) {
+        parts.push(item);
+    }
+    Ok(Value::list(parts))
+}
+
+fn split_string_match(
+    i: &mut Interp,
+    regexp: &Value,
+    string: &Value,
+    start: usize,
+    preserve_data: bool,
+) -> EvalResult {
+    let id = i.intern(if preserve_data {
+        "string-match-p"
+    } else {
+        "string-match"
+    });
+    i.apply(
+        &Value::Sym(id),
+        vec![regexp.clone(), string.clone(), Value::Int(start as i128)],
+    )
+}
+
+fn split_match_end(i: &mut Interp) -> Result<usize, Flow> {
+    let id = i.intern("match-end");
+    let end = i.apply(&Value::Sym(id), vec![Value::Int(0)])?;
+    Ok(want_int(i, &end)? as usize)
+}
+
+fn split_trim_item(i: &mut Interp, item: Value, trim: &Option<(Value, Value)>) -> EvalResult {
+    let Some((left, right)) = trim else {
+        return Ok(item);
+    };
+    let beg = if split_string_match(i, left, &item, 0, false)?.truthy() {
+        split_match_end(i)?
+    } else {
+        0
+    };
+    let end = split_string_match(i, right, &item, beg, true)?;
+    let len = match &item {
+        Value::Str(s) => s.borrow().chars().count(),
+        _ => 0,
+    };
+    let end = end.int().map(|n| n as usize).unwrap_or(len);
+    if beg > 0 || end < len {
+        f_substring(
+            i,
+            vec![item, Value::Int(beg as i128), Value::Int(end as i128)].into(),
+        )
+    } else {
+        Ok(item)
+    }
 }
 fn f_string_replace(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU subr.el: `from' is checked via `equal', `in' by the

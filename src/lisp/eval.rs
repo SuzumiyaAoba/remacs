@@ -9162,6 +9162,7 @@ command-line arguments.\" \
             "window-safe-min-height",
             "window-safe-min-width",
             "standard-output",
+            "split-string-default-separators",
             "standard-input",
             "lexical-binding",
             "inhibit-read-only",
@@ -9992,6 +9993,12 @@ command-line arguments.\" \
             ("double-click-fuzz", Value::Int(3)),
             ("minibuffer-message-timeout", Value::Int(2)),
             ("read-process-output-max", Value::Int(65536)),
+            // split-string can run during prelude evaluation, before
+            // GNU subr.el's defconst has been loaded.
+            (
+                "split-string-default-separators",
+                Value::string("[ \u{0c}\t\n\r\u{0b}]+"),
+            ),
             ("max-mini-window-height", Value::float(0.25)),
             ("window-min-height", Value::Int(4)),
             ("window-min-width", Value::Int(10)),
