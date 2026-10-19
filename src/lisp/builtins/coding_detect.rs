@@ -68,15 +68,33 @@ pub(crate) fn detect_non_iso_with_tables(
     multibyte: bool,
     head_ascii: usize,
 ) -> (u32, u32) {
+    detect_non_iso_mode(
+        input,
+        mule_lengths,
+        sjis_max_lead,
+        multibyte,
+        head_ascii,
+        true,
+    )
+}
+
+pub(super) fn detect_non_iso_mode(
+    input: &[i32],
+    mule_lengths: &[u8; 256],
+    sjis_max_lead: u8,
+    multibyte: bool,
+    head_ascii: usize,
+    last_block: bool,
+) -> (u32, u32) {
     debug_assert!(input.iter().all(|&c| c <= 255));
     let mut found = 0;
     let mut rejected = 0;
     for (f, r) in [
-        detect_utf8(input, multibyte),
-        detect_utf16(input),
-        detect_sjis(input, sjis_max_lead),
-        detect_big5(input),
-        detect_mule(input, mule_lengths, multibyte, head_ascii),
+        detect_utf8_mode(input, multibyte, last_block),
+        detect_utf16_mode(input, last_block),
+        detect_sjis_mode(input, sjis_max_lead, last_block),
+        detect_big5_mode(input, last_block),
+        detect_mule_mode(input, mule_lengths, multibyte, head_ascii, last_block),
     ] {
         found |= f;
         rejected |= r;
@@ -85,6 +103,9 @@ pub(crate) fn detect_non_iso_with_tables(
 }
 
 pub(super) fn detect_utf8(input: &[i32], multibyte: bool) -> (u32, u32) {
+    detect_utf8_mode(input, multibyte, true)
+}
+fn detect_utf8_mode(input: &[i32], multibyte: bool, last_block: bool) -> (u32, u32) {
     // GNU deliberately requires another byte after the three-byte BOM.
     let bom_len = if multibyte && input.len() > 1 && input[0] == -0xfeff {
         // A genuine U+FEFF has literal EF BB BF internal bytes, unlike
@@ -104,19 +125,35 @@ pub(super) fn detect_utf8(input: &[i32], multibyte: bool) -> (u32, u32) {
             non_ascii |= c < 0;
             continue;
         }
-        // Emacs detection checks structure, not Unicode scalar validity.
-        // This accepts overlong C0/C1 and F5..F7 sequences, as coding.c does.
-        let continuation_count = match c {
-            0xc0..=0xdf => 1,
-            0xe0..=0xef => 2,
-            0xf0..=0xf7 => 3,
-            _ => return (0, UTF8_MASK),
-        };
-        for _ in 0..continuation_count {
-            match input.get(pos) {
-                Some(0x80..=0xbf) => pos += 1,
-                _ => return (0, UTF8_MASK),
+        // File detection runs before LAST_BLOCK is set: an unfinished
+        // sequence remains a candidate, even when its lead is invalid.
+        let mut complete = false;
+        for width in 2..=5 {
+            let Some(&trail) = input.get(pos) else {
+                if last_block {
+                    return (0, UTF8_MASK);
+                }
+                return (
+                    if bom { UTF8_MASK } else { UTF8 | UTF8_AUTO },
+                    if bom { 0 } else { UTF8_SIG },
+                );
+            };
+            pos += 1;
+            if !(0x80..=0xbf).contains(&trail) {
+                return (0, UTF8_MASK);
             }
+            if match width {
+                2 => c & 0xe0 == 0xc0,
+                3 => c & 0xf0 == 0xe0,
+                4 => c & 0xf8 == 0xf0,
+                _ => c & 0xfc == 0xf8 && c < 0xf8,
+            } {
+                complete = true;
+                break;
+            }
+        }
+        if !complete {
+            return (0, UTF8_MASK);
         }
         non_ascii = true;
     }
@@ -141,7 +178,10 @@ fn next_utf16_pair(input: &[i32], pos: &mut usize) -> Option<(i32, i32)> {
 }
 
 pub(super) fn detect_utf16(input: &[i32]) -> (u32, u32) {
-    if input.len() & 1 != 0 {
+    detect_utf16_mode(input, true)
+}
+fn detect_utf16_mode(input: &[i32], last_block: bool) -> (u32, u32) {
+    if last_block && input.len() & 1 != 0 {
         return (0, UTF16_MASK);
     }
     let mut pos = 0;
@@ -195,7 +235,11 @@ pub(super) fn detect_utf16(input: &[i32]) -> (u32, u32) {
     (0, rejected)
 }
 
+#[cfg(test)]
 fn detect_sjis(input: &[i32], max_lead: u8) -> (u32, u32) {
+    detect_sjis_mode(input, max_lead, true)
+}
+fn detect_sjis_mode(input: &[i32], max_lead: u8, last_block: bool) -> (u32, u32) {
     let mut pos = 0;
     let mut found = 0;
     while let Some(&c) = input.get(pos) {
@@ -205,7 +249,7 @@ fn detect_sjis(input: &[i32], max_lead: u8) -> (u32, u32) {
         }
         if (0x81..=0x9f).contains(&c) || (0xe0..=i32::from(max_lead)).contains(&c) {
             let Some(&trail) = input.get(pos) else {
-                return (0, SJIS);
+                return if last_block { (0, SJIS) } else { (found, 0) };
             };
             pos += 1;
             if !(0x40..=0xfc).contains(&trail) || trail == 0x7f {
@@ -221,7 +265,11 @@ fn detect_sjis(input: &[i32], max_lead: u8) -> (u32, u32) {
     (found, 0)
 }
 
+#[cfg(test)]
 fn detect_big5(input: &[i32]) -> (u32, u32) {
+    detect_big5_mode(input, true)
+}
+fn detect_big5_mode(input: &[i32], last_block: bool) -> (u32, u32) {
     let mut pos = 0;
     let mut found = 0;
     while let Some(&c) = input.get(pos) {
@@ -233,7 +281,7 @@ fn detect_big5(input: &[i32]) -> (u32, u32) {
             return (0, BIG5);
         }
         let Some(&trail) = input.get(pos) else {
-            return (0, BIG5);
+            return if last_block { (0, BIG5) } else { (found, 0) };
         };
         pos += 1;
         if trail < 0x40 || (0x7f..=0xa0).contains(&trail) {
@@ -260,11 +308,21 @@ fn source_item_bytes(c: i32, multibyte: bool) -> usize {
     }
 }
 
+#[cfg(test)]
 fn detect_mule(
     input: &[i32],
     lengths: &[u8; 256],
     multibyte: bool,
     head_ascii: usize,
+) -> (u32, u32) {
+    detect_mule_mode(input, lengths, multibyte, head_ascii, true)
+}
+fn detect_mule_mode(
+    input: &[i32],
+    lengths: &[u8; 256],
+    multibyte: bool,
+    head_ascii: usize,
+    last_block: bool,
 ) -> (u32, u32) {
     // A successful early ISO scan can stop the ASCII prefix at ESC/SI/SO.
     // Those controls must then be seen (and rejected) by the Mule detector.
@@ -283,7 +341,11 @@ fn detect_mule(
             let mut bytes = 0;
             loop {
                 let Some(&next) = input.get(pos) else {
-                    return (0, EMACS_MULE);
+                    return if last_block {
+                        (0, EMACS_MULE)
+                    } else {
+                        (found, 0)
+                    };
                 };
                 pos += 1;
                 c = next;
@@ -306,6 +368,7 @@ fn detect_mule(
         for _ in 1..lengths[c as usize] {
             match input.get(pos) {
                 Some(0xa0..=0xff) => pos += 1,
+                None if !last_block => return (found, 0),
                 _ => return (0, EMACS_MULE),
             }
         }

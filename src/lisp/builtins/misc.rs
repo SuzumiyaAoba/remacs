@@ -12658,16 +12658,39 @@ pub(crate) fn check_region_positions(i: &mut Interp, a: &[Value]) -> Result<(), 
     Ok(())
 }
 
-fn f_detect_coding_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    check_region_positions(i, &a)?;
-    // Args are START END HIGHEST — forward only HIGHEST to the string
-    // form's signature (STRING HIGHEST).
-    let undecided = Value::Sym(i.intern("undecided"));
-    if a.get(2).is_some_and(|v| v.truthy()) {
-        Ok(undecided)
-    } else {
-        Ok(Value::list(vec![undecided]))
+fn coding_region_source(i: &mut Interp, a: &[Value]) -> Result<(Vec<i128>, Value), Flow> {
+    let mut positions = Vec::new();
+    for v in &a[..2] {
+        let position = match v {
+            Value::Int(n) if v.fixnump() => *n,
+            Value::Int(_) => {
+                let buffer = i.buffer_value(i.current_buffer).unwrap_or(Value::Nil);
+                return Err(i.signal_data(
+                    sym::ARGS_OUT_OF_RANGE,
+                    vec![buffer, a[0].clone(), a[1].clone()],
+                ));
+            }
+            Value::Marker(m) if m.borrow().buffer.is_some() => m.borrow().position as i128 + 1,
+            Value::Marker(_) => return Err(i.error("Marker does not point anywhere")),
+            v => return Err(i.wrong_type_mut("integer-or-marker-p", v)),
+        };
+        positions.push(position);
     }
+    positions.sort();
+    let source = crate::buffer::primitives::f_buffer_substring(
+        i,
+        positions
+            .iter()
+            .map(|p| Value::Int(*p))
+            .collect::<Vec<_>>()
+            .into(),
+    )?;
+    Ok((positions, source))
+}
+
+fn f_detect_coding_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let (_, source) = coding_region_source(i, &a)?;
+    f_detect_coding_string(i, vec![source, arg(&a, 2)].into())
 }
 
 /// Canonical coding-system name for the arg (alias-group head, EOL
@@ -13188,213 +13211,135 @@ fn decode_file_utf8(mut bytes: &[u8]) -> String {
     out
 }
 
-/// GNU's initial file detector can leave a terminal sequence incomplete;
-/// the decoder subsequently preserves any invalid bytes in that sequence.
-fn file_utf8_candidate(bytes: &[u8]) -> bool {
-    let mut pos = 0;
-    while pos < bytes.len() {
-        let lead = bytes[pos];
-        pos += 1;
-        if lead < 0x80 {
-            continue;
-        }
-        let mut complete = false;
-        for width in 2..=5 {
-            if pos == bytes.len() {
-                return true;
-            }
-            let next = bytes[pos];
-            pos += 1;
-            if next & 0xC0 != 0x80 {
-                return false;
-            }
-            let leading = match width {
-                2 => lead & 0xE0 == 0xC0,
-                3 => lead & 0xF0 == 0xE0,
-                4 => lead & 0xF8 == 0xF0,
-                _ => lead & 0xFC == 0xF8 && lead < 0xF8,
-            };
-            if leading {
-                complete = true;
-                break;
-            }
-        }
-        if !complete {
-            return false;
-        }
+/// Apply the user's file coding detector to a raw, unibyte sample. GNU
+/// samples the first KiB and last three KiB without modifying the target.
+pub(crate) fn auto_file_coding(i: &mut Interp, path: &str, bytes: &[u8]) -> EvalResult {
+    let function = i.intern("set-auto-coding-function");
+    let function = i.symbol_value(function);
+    if function.is_nil() {
+        return Ok(Value::Nil);
     }
-    true
+    let directory = i.intern("default-directory");
+    let directory_value = i.symbol_value(directory);
+    let sample = if bytes.len() > 4096 {
+        [&bytes[..1024], &bytes[bytes.len() - 3072..]].concat()
+    } else {
+        bytes.to_vec()
+    };
+    let source = Value::string(sample.iter().map(|b| *b as char).collect::<String>());
+    if let Value::Str(r) = &source {
+        i.mark_unibyte(r);
+    }
+    let saved_match = i.match_data.clone();
+    let result = with_coding_buffer(i, &source, false, |i| {
+        i.set_symbol(directory, directory_value)?;
+        crate::buffer::primitives::cur(i).borrow_mut().set_point(0);
+        i.apply(
+            &function,
+            vec![Value::string(path), Value::Int(sample.len() as i128)],
+        )
+    });
+    i.match_data = saved_match;
+    result
 }
 
-/// Decode file bytes and return both the property-bearing text and the
-/// actual coding system. Character counts are computed after decoding by
-/// insert-file-contents; file offsets remain byte offsets.
+pub(crate) fn coding_inherit_file_eol(
+    i: &mut Interp,
+    coding: &Value,
+    parent: &Value,
+) -> EvalResult {
+    let coding = if coding.is_nil() {
+        Value::Sym(i.intern("raw-text"))
+    } else {
+        coding.clone()
+    };
+    f_check_coding_system(i, vec![coding.clone()].into())?;
+    if coding_fixed_eol(i, &coding).is_some() {
+        return Ok(coding);
+    }
+    if !parent.is_nil() {
+        f_check_coding_system(i, vec![parent.clone()].into())?;
+    }
+    let eol = if parent.is_nil() {
+        0
+    } else {
+        coding_fixed_eol(i, parent).unwrap_or(0)
+    };
+    let base = coding_canonical(i, &coding);
+    Ok(Value::Sym(i.intern(&format!(
+        "{}-{}",
+        base,
+        ["unix", "dos", "mac"][eol]
+    ))))
+}
+
+pub(crate) fn raw_file_coding(i: &mut Interp, coding: &Value) -> EvalResult {
+    let base = coding_canonical(i, coding);
+    if matches!(base.as_str(), "no-conversion" | "raw-text") {
+        return Ok(coding.clone());
+    }
+    let name = match coding_fixed_eol(i, coding) {
+        Some(n) => format!("raw-text-{}", ["unix", "dos", "mac"][n]),
+        None => "raw-text".into(),
+    };
+    Ok(Value::Sym(i.intern(&name)))
+}
+
+/// Decode external file bytes with the common codecs. File detection
+/// keeps incomplete terminal sequences as candidates until EOF is known.
 pub(crate) fn decode_file_bytes(
     i: &mut Interp,
     bytes: &[u8],
     requested: &Value,
     literal: bool,
-    at_file_start: bool,
 ) -> Result<(Value, Value), Flow> {
-    let multibyte_id = i.intern("enable-multibyte-characters");
-    let multibyte = i.symbol_value(multibyte_id).truthy();
-    let coding = if literal {
+    let multibyte = i.intern("enable-multibyte-characters");
+    let multibyte = i.symbol_value(multibyte).truthy();
+    let mut coding = if literal {
         Value::Sym(i.intern("no-conversion"))
     } else if requested.is_nil() {
         Value::Sym(i.intern("undecided"))
+    } else if i
+        .sym_id(requested)
+        .is_some_and(|s| i.symbol_name(s) == "auto-save-coding")
+    {
+        Value::Sym(i.intern("utf-8-emacs-unix"))
     } else {
         requested.clone()
     };
     f_check_coding_system(i, vec![coding.clone()].into())?;
-    let base = f_coding_system_base(i, vec![coding.clone()].into())?;
-    let mut canonical = i.symbol_name(i.sym_id(&base).unwrap()).to_string();
-    let original_base = canonical.clone();
-    let name = i.symbol_name(i.sym_id(&coding).unwrap()).to_string();
-    let alias = coding_alias_group(i, &coding)
-        .and_then(|group| group.into_iter().next())
-        .unwrap_or_else(|| name.clone());
-    let fixed_eol = eol_split(&alias).1.or(match name.as_str() {
-        "unix" => Some(0),
-        "dos" => Some(1),
-        "mac" => Some(2),
-        _ => None,
-    });
-    let binary = canonical == "no-conversion";
-    let bom = at_file_start && bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
-    if !multibyte && !binary {
-        // GNU suppresses character conversion in unibyte buffers, but
-        // still performs the requested EOL conversion.
-        canonical = "raw-text".to_string();
-    } else if canonical == "undecided" {
-        canonical = if bom {
-            "utf-8-with-signature".to_string()
-        } else if bytes.iter().all(|b| *b < 0x80) {
-            "undecided".to_string()
+    if !multibyte {
+        coding = raw_file_coding(i, &coding)?;
+    }
+    if coding_canonical(i, &coding) == "undecided" {
+        let fixed = coding_fixed_eol(i, &coding);
+        coding = if bytes.starts_with(&[255, 254]) {
+            Value::Sym(i.intern("utf-16le-with-signature"))
+        } else if bytes.starts_with(&[254, 255]) {
+            Value::Sym(i.intern("utf-16be-with-signature"))
         } else {
-            let priority_id = i.intern("remacs-coding-system-priorities");
-            let priorities = i
-                .symbol_value(priority_id)
-                .list_to_vec()
-                .unwrap_or_default();
-            let utf8 = file_utf8_candidate(bytes);
-            let latin1 = bytes.iter().all(|b| !(0x80..0xA0).contains(b));
-            priorities
-                .iter()
-                .find_map(|coding| {
-                    let base = coding_canonical(i, coding);
-                    match base.as_str() {
-                        "utf-8" | "utf-8-auto" if utf8 => Some("utf-8".to_string()),
-                        "iso-latin-1" if latin1 => Some(base),
-                        "raw-text" | "no-conversion" => Some(base),
-                        _ => None,
-                    }
-                })
-                .unwrap_or_else(|| if utf8 { "utf-8" } else { "raw-text" }.to_string())
+            super::coding_detection::detect_file(
+                i,
+                &bytes.iter().map(|b| *b as i32).collect::<Vec<_>>(),
+            )?
         };
-    }
-
-    let mut eols = [false; 3];
-    let mut pos = 0;
-    while pos < bytes.len() {
-        match bytes[pos] {
-            b'\r' if bytes.get(pos + 1) == Some(&b'\n') => {
-                eols[1] = true;
-                pos += 1;
+        if let Some(eol) = fixed {
+            if coding_canonical(i, &coding) != "no-conversion" {
+                let base = coding_canonical(i, &coding);
+                coding = Value::Sym(i.intern(&format!("{}-{}", base, ["unix", "dos", "mac"][eol])));
             }
-            b'\r' => eols[2] = true,
-            b'\n' => eols[0] = true,
-            _ => {}
-        }
-        pos += 1;
-    }
-    let detected_eol = match eols.iter().filter(|seen| **seen).count() {
-        0 => None,
-        1 => eols.iter().position(|seen| *seen),
-        _ => Some(0),
-    };
-    let eol = if binary {
-        Some(0)
-    } else {
-        fixed_eol.or(detected_eol)
-    };
-    let mut input = Vec::with_capacity(bytes.len());
-    let mut pos = 0;
-    while pos < bytes.len() {
-        if eol == Some(1) && bytes[pos..].starts_with(b"\r\n") {
-            input.push(b'\n');
-            pos += 2;
-        } else {
-            input.push(if eol == Some(2) && bytes[pos] == b'\r' {
-                b'\n'
-            } else {
-                bytes[pos]
-            });
-            pos += 1;
         }
     }
-    let strip_bom = bom && matches!(canonical.as_str(), "utf-8-with-signature" | "utf-8-auto");
-    let input = if strip_bom {
-        &input[3..]
-    } else {
-        input.as_slice()
-    };
-    let mut codec_decoded = None;
-    let text = if !multibyte {
-        input.iter().map(|&byte| byte as char).collect()
-    } else if matches!(canonical.as_str(), "raw-text" | "no-conversion") {
-        input
-            .iter()
-            .map(|&byte| {
-                if byte < 0x80 {
-                    byte as char
-                } else {
-                    crate::lisp::value::lisp_char(0x3FFF00 + byte as u32).unwrap()
-                }
-            })
-            .collect()
-    } else if matches!(
-        canonical.as_str(),
-        "utf-8"
-            | "utf-8-auto"
-            | "utf-8-with-signature"
-            | "utf-8-hfs"
-            | "utf-8-nfd"
-            | "prefer-utf-8"
-            | "undecided"
-    ) {
-        decode_file_utf8(input)
-    } else {
-        let codec = Value::Sym(i.intern(&canonical));
-        codec_decoded = Some(decode_coding_bytes(
-            i,
-            &codec,
-            &canonical,
-            input,
-            bytes.contains(&b'\r'),
-        )?);
-        String::new()
-    };
-    let has_codec_props = codec_decoded.is_some();
-    let decoded = codec_decoded.unwrap_or_else(|| Value::string(text));
-    if let Value::Str(string) = &decoded {
-        if multibyte {
-            i.mark_multibyte(string);
-            if !has_codec_props {
-                attach_decode_charset_props(i, string, &canonical);
-            }
-        } else {
-            i.mark_unibyte(string);
+    let source = Value::string(bytes.iter().map(|b| *b as char).collect::<String>());
+    if let Value::Str(r) = &source {
+        i.mark_unibyte(r);
+    }
+    let (decoded, used, _) = decode_region_text(i, &source, &coding)?;
+    if !multibyte {
+        if let Value::Str(r) = &decoded {
+            i.mark_unibyte(r);
         }
     }
-    let used = if binary || (canonical == original_base && (fixed_eol.is_some() || eol.is_none())) {
-        coding
-    } else {
-        let name = match eol {
-            Some(index) => format!("{}-{}", canonical, ["unix", "dos", "mac"][index]),
-            None => canonical,
-        };
-        Value::Sym(i.intern(&name))
-    };
     Ok((decoded, used))
 }
 
@@ -13699,6 +13644,7 @@ fn with_coding_buffer(
     let multibyte = i.intern("enable-multibyte-characters");
     i.set_buffer_local_toplevel_value(multibyte, id, if mb { Value::t() } else { Value::Nil });
     let buffer = crate::buffer::primitives::cur(i);
+    buffer.borrow_mut().inhibit_buffer_hooks = true;
     if let Value::Str(r) = source {
         let storage = if mb {
             r.borrow().clone()
@@ -13767,6 +13713,26 @@ fn coding_safe_call(i: &mut Interp, hook: &Value, args: Vec<Value>) -> EvalResul
 }
 
 fn region_post_read(i: &mut Interp, hook: &Value, start: usize, count: usize) -> EvalResult {
+    post_read_conversion(i, hook, start, count, true)
+}
+
+pub(crate) fn post_file_conversion(
+    i: &mut Interp,
+    coding: &Value,
+    start: usize,
+    count: usize,
+) -> EvalResult {
+    let hook = region_conversion_hook(i, coding, false)?;
+    post_read_conversion(i, &hook, start, count, false)
+}
+
+fn post_read_conversion(
+    i: &mut Interp,
+    hook: &Value,
+    start: usize,
+    count: usize,
+    safe: bool,
+) -> EvalResult {
     if hook.is_nil() {
         return Ok(Value::Int(count as i128));
     }
@@ -13775,7 +13741,11 @@ fn region_post_read(i: &mut Interp, hook: &Value, start: usize, count: usize) ->
     let undo = buffer.borrow().undo_sym;
     let saved_undo = buffer.borrow_mut().locals.insert(undo, Value::t());
     buffer.borrow_mut().set_point(start);
-    let result = coding_safe_call(i, hook, vec![Value::Int(count as i128)]);
+    let result = if safe {
+        coding_safe_call(i, hook, vec![Value::Int(count as i128)])
+    } else {
+        i.apply(hook, vec![Value::Int(count as i128)])
+    };
     if let Some(saved) = saved_undo {
         buffer.borrow_mut().locals.insert(undo, saved);
     } else {
@@ -13982,7 +13952,7 @@ fn code_convert_region(i: &mut Interp, a: crate::lisp::Argv, encode: bool) -> Ev
 }
 
 fn code_convert_region_inner(i: &mut Interp, a: crate::lisp::Argv, encode: bool) -> EvalResult {
-    use crate::buffer::primitives::{chg_coding_region, chg_with_buffer, f_buffer_substring};
+    use crate::buffer::primitives::{chg_coding_region, chg_with_buffer};
     let coding = if a[2].is_nil() {
         Value::Sym(i.intern("no-conversion"))
     } else {
@@ -13998,32 +13968,7 @@ fn code_convert_region_inner(i: &mut Interp, a: crate::lisp::Argv, encode: bool)
         Value::Buffer(b) => b.borrow().id,
         v => return Err(i.wrong_type_mut("bufferp", v)),
     };
-    let mut positions = Vec::new();
-    for v in &a[..2] {
-        let position = match v {
-            Value::Int(n) if v.fixnump() => *n,
-            Value::Int(_) => {
-                let buffer = i.buffer_value(source_buffer).unwrap_or(Value::Nil);
-                return Err(i.signal_data(
-                    sym::ARGS_OUT_OF_RANGE,
-                    vec![buffer, a[0].clone(), a[1].clone()],
-                ));
-            }
-            Value::Marker(m) if m.borrow().buffer.is_some() => m.borrow().position as i128 + 1,
-            Value::Marker(_) => return Err(i.error("Marker does not point anywhere")),
-            v => return Err(i.wrong_type_mut("integer-or-marker-p", v)),
-        };
-        positions.push(position);
-    }
-    positions.sort();
-    let mut source = f_buffer_substring(
-        i,
-        positions
-            .iter()
-            .map(|p| Value::Int(*p))
-            .collect::<Vec<_>>()
-            .into(),
-    )?;
+    let (positions, mut source) = coding_region_source(i, &a)?;
     let hook = region_conversion_hook(i, &coding, encode)?;
     if encode && !hook.is_nil() {
         source = with_coding_buffer(i, &source, true, |i| {

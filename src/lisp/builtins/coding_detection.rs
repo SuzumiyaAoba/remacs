@@ -417,6 +417,20 @@ fn eol(input: &[i32], bit: u32, multibyte: bool) -> Option<&'static str> {
 }
 
 pub(crate) fn detect(i: &mut Interp, input: &[i32], multibyte: bool, highest: bool) -> EvalResult {
+    detect_internal(i, input, multibyte, highest, true)
+}
+
+/// Initial file detection precedes the final-block decoder pass.
+pub(super) fn detect_file(i: &mut Interp, input: &[i32]) -> EvalResult {
+    detect_internal(i, input, false, true, false)
+}
+fn detect_internal(
+    i: &mut Interp,
+    input: &[i32],
+    multibyte: bool,
+    highest: bool,
+    last_block: bool,
+) -> EvalResult {
     let priorities = variable(i, "remacs-coding-system-priorities")
         .list_to_vec()
         .unwrap_or_default();
@@ -523,13 +537,24 @@ pub(crate) fn detect(i: &mut Interp, input: &[i32], multibyte: bool, highest: bo
                     !(0..128).contains(c) || (early_iso_success && matches!(c, 14 | 15 | 27))
                 })
                 .unwrap_or(input.len());
-            let (f, r) = coding_detect::detect_non_iso_with_tables(
-                input,
-                &mule_lengths,
-                0xef,
-                multibyte,
-                head_ascii,
-            );
+            let (f, r) = if last_block {
+                coding_detect::detect_non_iso_with_tables(
+                    input,
+                    &mule_lengths,
+                    0xef,
+                    multibyte,
+                    head_ascii,
+                )
+            } else {
+                coding_detect::detect_non_iso_mode(
+                    input,
+                    &mule_lengths,
+                    0xef,
+                    multibyte,
+                    head_ascii,
+                    false,
+                )
+            };
             let groups = [
                 coding_detect::UTF8_MASK,
                 coding_detect::UTF16_MASK,

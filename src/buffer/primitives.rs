@@ -9795,8 +9795,30 @@ pub(crate) fn regexp_compile(
     crate::lisp::regexp::compile_case(&pat, case_fold)
         .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))
 }
+/// GNU regexp/search compares raw bytes through BYTE8_TO_CHAR, even
+/// when the underlying buffer stores single-byte character positions.
+fn buffer_search_chars(chars: &[char], unibyte: bool) -> std::borrow::Cow<'_, [char]> {
+    if unibyte {
+        std::borrow::Cow::Owned(
+            chars
+                .iter()
+                .map(|c| {
+                    if (128..=255).contains(&(*c as u32)) {
+                        crate::lisp::value::lisp_char(0x3fff00 + *c as u32).unwrap()
+                    } else {
+                        *c
+                    }
+                })
+                .collect(),
+        )
+    } else {
+        std::borrow::Cow::Borrowed(chars)
+    }
+}
+
 fn f_looking_at_impl(i: &mut Interp, a: crate::lisp::Argv, posix: bool) -> EvalResult {
     let re = regexp_compile(i, &a[0])?;
+    let unibyte = buffer_is_unibyte(i);
     let syn = crate::editor::re_syntax(i);
     let regs = {
         let b = cur(i);
@@ -9805,6 +9827,8 @@ fn f_looking_at_impl(i: &mut Interp, a: crate::lisp::Argv, posix: bool) -> EvalR
         let stop = bb.text_len();
         let pos = bb.point() - begv;
         let text = bb.text.as_slice();
+        let converted = buffer_search_chars(&text, unibyte);
+        let text = converted.as_ref();
         crate::lisp::regexp::looking_at(
             &re,
             &text[begv..stop],
@@ -9990,11 +10014,14 @@ pub(crate) fn search_common(
     let literal_fold = i
         .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
         .truthy();
+    let unibyte = buffer_is_unibyte(i);
     let found = {
         let b = cur(i);
         let bb = b.borrow_mut();
         let stop = bb.text_len();
-        let text = &bb.text.as_slice()[begv..stop];
+        let slice = bb.text.as_slice();
+        let converted = buffer_search_chars(&slice[begv..stop], unibyte);
+        let text = converted.as_ref();
         let bound_idx = bound
             .map(|p| (p.max(1) as usize - 1).saturating_sub(begv))
             .unwrap_or(if backward { 0 } else { text.len() });

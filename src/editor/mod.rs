@@ -12272,12 +12272,27 @@ fn insert_file_contents_inner(
         let lo = (beg_offset as usize).min(raw.len());
         let hi = (end_offset as usize).min(raw.len());
         let slice = &raw[lo..hi.max(lo)];
-        let requested = i
+        let mut requested = i
             .intern_soft("coding-system-for-read")
             .map(|symbol| i.symbol_value(symbol))
             .unwrap_or(Value::Nil);
+        if requested.is_nil() && !literal {
+            if is_regular {
+                requested = crate::lisp::builtins::misc::auto_file_coding(i, &path, slice)?;
+            }
+            if requested.is_nil() {
+                let operation = Value::Sym(i.intern("insert-file-contents"));
+                let finder = i.intern("find-operation-coding-system");
+                let mut arguments = vec![operation];
+                arguments.extend(a.iter().cloned());
+                arguments.resize(6, Value::Nil);
+                if let Value::Cons(pair) = i.apply(&Value::Sym(finder), arguments)? {
+                    requested = pair.borrow().car.clone();
+                }
+            }
+        }
         let (decoded, coding) =
-            crate::lisp::builtins::misc::decode_file_bytes(i, slice, &requested, literal, lo == 0)?;
+            crate::lisp::builtins::misc::decode_file_bytes(i, slice, &requested, literal)?;
         let contents = want_str(i, &decoded)?;
         let mut n = contents.chars().count();
         let b = cur(i);
@@ -12367,6 +12382,11 @@ fn insert_file_contents_inner(
         }
         if let Value::Str(string) = &inserted_string {
             crate::buffer::primitives::copy_str_props(i, string, inserted_at);
+        }
+        if let Value::Int(converted_count) =
+            crate::lisp::builtins::misc::post_file_conversion(i, &coding, inserted_at, n)?
+        {
+            n = converted_count.max(0) as usize;
         }
         if visit {
             // GNU Finsert_file_contents records the visited name,
@@ -12471,7 +12491,7 @@ fn f_write_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU runs validate_region on non-string START before CHECK_STRING
     // on FILENAME, so a bogus START reports integer-or-marker-p first.
     let text = if let Value::Str(sv) = &a[0] {
-        sv.borrow().clone()
+        Value::Str(sv.clone())
     } else {
         let b = cur(i);
         let bb = b.borrow();
@@ -12485,12 +12505,15 @@ fn f_write_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             let end = want_int(i, &a[1])?;
             let (start, end) = (start.min(end), start.max(end));
             if start < bb.begv as i128 + 1 || end > bb.zv as i128 + 1 {
-                return Err(i.signal_data(sym::ARGS_OUT_OF_RANGE,
-                    vec![Value::Buffer(b.clone()), a[0].clone(), a[1].clone()]));
+                return Err(i.signal_data(
+                    sym::ARGS_OUT_OF_RANGE,
+                    vec![Value::Buffer(b.clone()), a[0].clone(), a[1].clone()],
+                ));
             }
             (start as usize - 1, end as usize - 1)
         };
-        bb.text.substring(start, end)
+        drop(bb);
+        buffer_file_text(i, start, end)
     };
     let path = want_filename(i, &a[2])?;
     // Reject an invalid lock name before opening or truncating the file.
@@ -12500,6 +12523,119 @@ fn f_write_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
     }
     write_file_string(i, &path, &text, &a)
+}
+
+fn buffer_file_text(i: &mut Interp, start: usize, end: usize) -> Value {
+    let b = cur(i);
+    let bb = b.borrow();
+    let value = Value::string(bb.text.substring(start, end));
+    if let Value::Str(r) = &value {
+        i.set_str_props(r, bb.text.props.borrow().slice(start, end));
+        let multibyte = i.intern("enable-multibyte-characters");
+        if i.symbol_value(multibyte).truthy() {
+            i.mark_multibyte(r);
+        } else {
+            i.mark_unibyte(r);
+        }
+    }
+    value
+}
+
+/// GNU fileio.c choose_write_coding_system: explicit coding, local
+/// buffer coding, file-name policy, then defaults and safe encoding.
+fn choose_write_coding(i: &mut Interp, path: &str, a: &[Value]) -> EvalResult {
+    use crate::lisp::builtins::misc::{coding_inherit_file_eol, raw_file_coding};
+    let write = i.intern("coding-system-for-write");
+    let explicit = i.symbol_value(write);
+    if !explicit.is_nil() {
+        return coding_inherit_file_eol(i, &explicit, &Value::Nil);
+    }
+    let (start, end) = if matches!(a[0], Value::Str(_)) {
+        (a[0].clone(), arg(a, 1))
+    } else if a[0].is_nil() {
+        (
+            Value::Int(1),
+            Value::Int(cur(i).borrow().text_len() as i128 + 1),
+        )
+    } else {
+        let x = want_int(i, &a[0])?;
+        let y = want_int(i, &a[1])?;
+        (Value::Int(x.min(y)), Value::Int(x.max(y)))
+    };
+    let buffer_coding = i.intern("buffer-file-coding-system");
+    let original = i.symbol_value(buffer_coding);
+    let local = cur(i).borrow().locals.contains_key(&buffer_coding);
+    let multibyte = i.intern("enable-multibyte-characters");
+    let mut raw = !local && !i.symbol_value(multibyte).truthy();
+    let mut coding = if local { original.clone() } else { Value::Nil };
+    if coding.is_nil() {
+        let finder = i.intern("find-operation-coding-system");
+        let lockname = if arg(a, 5).is_nil() {
+            match arg(a, 4) {
+                Value::Str(name) => Value::string(expand_file_name_str(i, &name.borrow())),
+                _ => Value::string(path),
+            }
+        } else {
+            arg(a, 5)
+        };
+        let arguments = vec![
+            Value::Sym(i.intern("write-region")),
+            start.clone(),
+            end.clone(),
+            Value::string(path),
+            arg(a, 3),
+            arg(a, 4),
+            lockname,
+        ];
+        if let Value::Cons(pair) = i.apply(&Value::Sym(finder), arguments)? {
+            coding = pair.borrow().cdr.clone();
+        }
+    }
+    let using_default = coding.is_nil();
+    if using_default {
+        coding = original;
+    }
+    if !coding.is_nil() {
+        let plist =
+            crate::lisp::builtins::misc::f_coding_system_plist(i, vec![coding.clone()].into())?;
+        let kind = i.intern(":coding-type");
+        raw |= i
+            .sym_id(&crate::lisp::eval::plist_get(&plist, kind))
+            .is_some_and(|s| i.symbol_name(s) == "raw-text");
+    }
+    let selector = i.intern("select-safe-coding-system-function");
+    let selector = i.symbol_value(selector);
+    if !raw && i.sym_id(&selector).is_some_and(|s| i.fbound_p(s)) {
+        let buffer = cur(i);
+        let restriction = {
+            let b = buffer.borrow();
+            (b.begv, b.zv)
+        };
+        if a[0].is_nil() {
+            let mut b = buffer.borrow_mut();
+            b.begv = 0;
+            b.zv = b.text_len();
+        }
+        let selected = i.apply(
+            &selector,
+            vec![start, end, coding, Value::Nil, Value::string(path)],
+        );
+        {
+            let mut b = buffer.borrow_mut();
+            b.begv = restriction.0;
+            b.zv = restriction.1.min(b.text_len());
+        }
+        coding = selected?;
+    }
+    if !using_default {
+        let default = i.obarray.symbol(buffer_coding).value.clone();
+        coding = coding_inherit_file_eol(i, &coding, &default)?;
+    }
+    if raw {
+        coding = raw_file_coding(i, &coding)?;
+    }
+    // An unspecified external EOL format inherits the host's Unix EOL.
+    coding_inherit_file_eol(i, &coding, &Value::Nil)
 }
 
 fn region_bounds(i: &mut Interp, s: &Value, e: &Value, len: usize) -> Result<(usize, usize), Flow> {
@@ -12589,7 +12725,7 @@ fn set_visit_state(i: &mut Interp, path: &str) {
     bb.note_modified(false);
 }
 
-fn write_file_string(i: &mut Interp, path: &str, text: &str, a: &[Value]) -> EvalResult {
+fn write_file_string(i: &mut Interp, path: &str, text: &Value, a: &[Value]) -> EvalResult {
     let append = a.get(3).cloned().unwrap_or(Value::Nil);
     let excl = matches!(a.get(6), Some(Value::Sym(s)) if *s == i.intern("excl"));
     if excl && std::path::Path::new(path).exists() {
@@ -12599,7 +12735,10 @@ fn write_file_string(i: &mut Interp, path: &str, text: &str, a: &[Value]) -> Eva
             vec![Value::string("File already exists"), Value::string(path)],
         ));
     }
-    let bytes = file_bytes_of_str(text);
+    let coding = choose_write_coding(i, path, a)?;
+    let encoded =
+        crate::lisp::builtins::misc::f_encode_coding_string(i, vec![text.clone(), coding].into())?;
+    let bytes = file_bytes_of_str(&want_str(i, &encoded)?);
     let r = match &append {
         // GNU: an integer APPEND overwrites at that byte offset
         // (the file keeps its trailing bytes; no truncation).
@@ -13054,7 +13193,9 @@ fn f_find_file_noselect(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if let Some(b) = existing {
         if !arg(&a, 1).truthy() {
             let bv = Value::Buffer(b.clone());
-            let fresh = crate::buffer::primitives::f_verify_visited_file_modtime(i, vec![bv].into())?.truthy();
+            let fresh =
+                crate::buffer::primitives::f_verify_visited_file_modtime(i, vec![bv].into())?
+                    .truthy();
             if !fresh {
                 let bid = b.borrow().id;
                 let modified = i
@@ -13078,10 +13219,7 @@ fn f_find_file_noselect(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                         let hit = i
                             .apply(
                                 &Value::Sym(sm),
-                                vec![
-                                    Value::Str(re.clone()),
-                                    Value::string(path.clone()),
-                                ],
+                                vec![Value::Str(re.clone()), Value::string(path.clone())],
                             )
                             .map(|v| v.truthy())
                             .unwrap_or(false);
@@ -13161,41 +13299,23 @@ fn f_find_file_noselect(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             bb.locals
                 .insert(dd, Value::string(path[..=dir_end].to_string()));
         }
-        match std::fs::read_to_string(&path) {
-            Ok(contents) => {
-                let old_len = bb.text.len();
-                drop(bb);
-                // GNU's insert-file-contents runs the change hooks in
-                // the file's buffer.
-                crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
-                    crate::lisp::builtins::evalfn::signal_before_change(i, 1, old_len + 1)?;
-                    {
-                        let b = i.buffers.get(bid).unwrap();
-                        let mut bb = b.borrow_mut();
-                        bb.text.set_text(&contents);
-                        bb.zv = bb.text.len();
-                        bb.note_modified(false);
-                    }
-                    let new_len = contents.chars().count();
-                    crate::lisp::builtins::evalfn::signal_after_change(i, 1, new_len + 1, old_len as i128)
-                })?;
-                let mut bb = b.borrow_mut();
-                // GNU records the visited file's modtime+size so
-                // `verify-visited-file-modtime' can detect changes.
-                if let Ok(m) = std::fs::metadata(&path) {
-                    bb.file_modtime_ns = m
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|d| d.as_secs() as i128 * 1_000_000_000 + d.subsec_nanos() as i128)
-                        .unwrap_or(-2);
-                    bb.file_modtime_size = m.len() as i128;
-                }
-            }
-            Err(_) => {
-                // Visited file does not exist (GNU: modtime flag -1).
-                bb.file_modtime_ns = -1;
-            }
+        bb.file_modtime_ns = -1;
+    }
+    let raw = arg(&a, 2).truthy();
+    let read = crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
+        if raw {
+            let multibyte = i.intern("enable-multibyte-characters");
+            i.set_buffer_local_toplevel_value(multibyte, bid, Value::Nil);
+            let literal = i.intern("find-file-literally");
+            i.set_buffer_local_toplevel_value(literal, bid, Value::t());
+        }
+        insert_file_contents_impl(i, vec![Value::string(path.clone()), Value::t()].into(), raw)
+    });
+    match read {
+        Err(Flow::Signal(Value::Sym(code), ..))
+            if code == sym::FILE_MISSING && !std::path::Path::new(&path).exists() => {}
+        result => {
+            result?;
         }
     }
     // GNU find-file-noselect -> after-find-file: pick the major mode and
@@ -13205,7 +13325,11 @@ fn f_find_file_noselect(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let nm = i.intern("normal-mode");
     let rh = i.intern("run-hooks");
     let ffh = i.intern("find-file-hook");
-    let r1 = i.apply(&Value::Sym(nm), vec![Value::t()]);
+    let r1 = if raw {
+        Ok(Value::Nil)
+    } else {
+        i.apply(&Value::Sym(nm), vec![Value::t()])
+    };
     let r2 = r1.and_then(|_| i.apply(&Value::Sym(rh), vec![Value::Sym(ffh)]));
     i.set_current_buffer(prev_buf);
     r2?;
@@ -13275,7 +13399,6 @@ fn f_save_buffer(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
             crate::buffer::primitives::chg_insert(i, len2, "\n")?;
         }
     }
-    let text = b.borrow().text.text();
     // GNU basic-save-buffer's dir-existence prompt runs before
     // basic-save-buffer-2's writable checks: when neither FILE nor DIR
     // exists, GNU asks "create?" — in batch the read hits EOF.
@@ -13328,27 +13451,25 @@ fn f_save_buffer(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
             return Err(i.error("Attempt to save to a file that you aren't allowed to write"));
         }
     }
-    match std::fs::write(&path, file_bytes_of_str(&text)) {
-        Ok(()) => {
-            {
-                let mut bb = b.borrow_mut();
-                bb.note_modified(false);
-                update_visited_file_modtime(&mut bb, &path);
-            }
-            if !i.noninteractive {
-                i.message(&format!("Wrote {}", path));
-            }
-            // GNU basic-save-buffer-1 returns nil.
-            Ok(Value::Nil)
-        }
-        Err(e) => Err(i.signal_data(
-            sym::FILE_ERROR,
-            vec![
-                Value::string(format!("Saving file: {}", e)),
-                Value::string(path),
-            ],
-        )),
-    }
+    let len = b.borrow().text_len();
+    let text = buffer_file_text(i, 0, len);
+    write_file_string(
+        i,
+        &path,
+        &text,
+        &[
+            Value::Nil,
+            Value::Nil,
+            Value::string(path.clone()),
+            Value::Nil,
+            Value::t(),
+        ],
+    )?;
+    let last = i.intern("last-coding-system-used");
+    let used = i.symbol_value(last);
+    let buffer_coding = i.intern("buffer-file-coding-system");
+    i.set_symbol(buffer_coding, used)?;
+    Ok(Value::Nil)
 }
 
 fn f_write_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -13398,59 +13519,10 @@ fn f_write_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_append_to_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU
-    // write-region(START, END, FILENAME, 'append): a string START is
-    // written literally (END ignored); otherwise validate_region —
-    // both before FILENAME's CHECK_STRING.
-    let text = if let Value::Str(sv) = &a[0] {
-        sv.borrow().clone()
-    } else {
-        let b = cur(i);
-        let bb = b.borrow();
-        let len = bb.text.len();
-        let (s, e) = region_bounds(i, &a[0], &a[1], len)?;
-        bb.text.substring(s.min(e), s.max(e))
-    };
-    let path = want_filename(i, &a[2])?;
-    use std::io::Write;
-    match std::fs::OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(&path)
-    {
-        Ok(mut f) => match f.write_all(text.as_bytes()) {
-            Ok(()) => Ok(Value::Nil),
-            Err(e) => {
-                let s = match e.kind() {
-                    std::io::ErrorKind::PermissionDenied => i.intern("permission-denied"),
-                    _ => sym::FILE_ERROR,
-                };
-                Err(i.signal_data(
-                    s,
-                    vec![
-                        Value::string("Opening output file"),
-                        Value::string(file_error_string(&e)),
-                        Value::string(path.clone()),
-                    ],
-                ))
-            }
-        },
-        Err(e) => {
-            let s = match e.kind() {
-                std::io::ErrorKind::PermissionDenied => i.intern("permission-denied"),
-                std::io::ErrorKind::NotFound => sym::FILE_MISSING,
-                _ => sym::FILE_ERROR,
-            };
-            Err(i.signal_data(
-                s,
-                vec![
-                    Value::string("Opening output file"),
-                    Value::string(file_error_string(&e)),
-                    Value::string(path),
-                ],
-            ))
-        }
-    }
+    f_write_region(
+        i,
+        vec![a[0].clone(), a[1].clone(), a[2].clone(), Value::t()].into(),
+    )
 }
 
 fn f_file_truename(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
