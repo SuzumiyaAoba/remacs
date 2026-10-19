@@ -76,6 +76,16 @@ Regressions: `qa_locate_embedded`, `tests/embedded_cache.rs`, and the
 standalone copied-binary tests in `tests/embedded_libraries.rs` (also
 run with `REMACS_NO_ELC`).
 
+Both `read` and `read-positioning-symbols` resolve nil/omitted streams
+through `standard-input`. Source loads expose the existing input buffer;
+direct/compiled loads expose the private uninterned `get-file-char`
+symbol and share a `LoadStream` character cursor with the loader and
+custom `load-read-function`. Direct streams create no scratch buffer.
+Nested loads restore both the cursor and input binding. Positioned file
+reads are relative to each read; buffer positions are absolute. File EOF
+data uses `load-true-file-name`. `qa_load_read_stream` covers consumption,
+reader switching, Unicode positions, nesting, and restoration on errors.
+
 ## Startup profiling (`REMACS_BOOT_PROF=1`)
 
 Before full eager source expansion, warm release `--batch` startup

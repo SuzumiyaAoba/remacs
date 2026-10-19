@@ -12476,28 +12476,11 @@ fn f_set_lisp_face_attr_resource(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
 /// positions for buffers and 0-based read-relative ones for strings
 /// and markers; non-stream args signal `invalid-function'.
 fn f_read_positioning_symbols(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil => {
-            let Some(b) = i.current_buffer_ref() else {
-                return Err(i.signal(crate::lisp::sym::END_OF_FILE, Value::Nil));
-            };
-            let (src, pos) = {
-                let bb = b.borrow();
-                (bb.text.text(), bb.point)
-            };
-            // GNU positions are absolute 1-based buffer positions;
-            // reader token starts are absolute 0-based indices into
-            // SRC, so the base is 1 regardless of where reading begins.
-            let r = i.read_from_string_pos(&src, pos, Some(1));
-            match r {
-                Ok((v, end)) => {
-                    b.borrow_mut().set_point(end);
-                    Ok(v)
-                }
-                // GNU's end-of-file signal data is the input stream.
-                Err(e) => Err(eof_with_stream(e, &Value::Buffer(b))),
-            }
-        }
+    let source = super::readfn::default_read_source(i, arg(&a, 0));
+    if super::readfn::is_load_stream(i, &source) {
+        return super::readfn::read_load_stream(i, true);
+    }
+    match source {
         Value::Buffer(b) => {
             let (src, pos) = {
                 let bb = b.borrow();

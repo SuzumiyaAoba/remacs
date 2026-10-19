@@ -358,6 +358,8 @@ pub struct Interp {
     /// this — GNU's "Recursive load" check and the recursion that
     /// would spin forever on self-autoloads.
     pub loads_in_progress: Vec<String>,
+    pub(crate) load_stream: Option<Rc<RefCell<crate::lisp::load::LoadStream>>>,
+    pub(crate) load_stream_symbol: Option<SymId>,
     /// Number of currently-active dumped definitions.  GNU byte-compiles
     /// its dump, so macros called there need not remain visible at -Q;
     /// remacs stashes those cells and resolves hidden macros only while
@@ -1077,6 +1079,8 @@ impl Interp {
             noninteractive: std::env::var_os("REMACS_NONINTERACTIVE").is_some(),
             default_obarray: None,
             loads_in_progress: Vec::new(),
+            load_stream: None,
+            load_stream_symbol: None,
             loading_dumped: false,
             dumped_call_depth: 0,
             reading_elc: false,

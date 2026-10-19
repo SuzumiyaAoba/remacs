@@ -7,6 +7,13 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+/// Consuming input for direct/compiled loads, exposed as GNU's private
+/// `get-file-char' stream symbol. Source loads use their real buffer.
+pub(crate) struct LoadStream {
+    pub chars: Rc<Vec<char>>,
+    pub position: usize,
+}
+
 /// Candidate paths GNU's `openp' would try for NAME in DIR.
 /// NOSUFFIX opens NAME literally; MUST-SUFFIX requires NAME to carry
 /// a recognized `.el'/`.elc' suffix already.
@@ -2812,6 +2819,7 @@ fn eval_src_opts(
         None
     };
     let saved_excursion = load_buffer.as_ref().map(|_| i.save_excursion_state(false));
+    let saved_stream = i.load_stream.clone();
     let mark = i.specbind_depth();
     let result = (|| {
         if let Some(buffer) = &load_buffer {
@@ -2820,6 +2828,21 @@ fn eval_src_opts(
             let old = i.symbol_value(list);
             i.specbind(input, Value::Buffer(buffer.clone()))?;
             i.specbind(list, Value::cons(Value::Buffer(buffer.clone()), old))?;
+        } else {
+            let stream_symbol = match i.load_stream_symbol {
+                Some(symbol) => symbol,
+                None => {
+                    let symbol = i.make_symbol("get-file-char");
+                    i.load_stream_symbol = Some(symbol);
+                    symbol
+                }
+            };
+            i.load_stream = Some(Rc::new(RefCell::new(LoadStream {
+                chars: Rc::new(src.chars().collect()),
+                position: 0,
+            })));
+            let input = i.intern("standard-input");
+            i.specbind(input, Value::Sym(stream_symbol))?;
         }
         eval_src_opts_inner(i, file, src, force_lex, dumped_like, load_buffer.as_ref())
     })();
@@ -2827,6 +2850,7 @@ fn eval_src_opts(
         i.restore_excursion_state(saved);
     }
     let unwind = i.unbind_to(mark);
+    i.load_stream = saved_stream;
     if let Some(buffer) = load_buffer {
         // As in mule.el's unwind-protect, suppress kill queries/hooks but
         // retain ordinary buffer-list update notifications.
@@ -3056,7 +3080,15 @@ fn eval_str_for_load(
     src: &str,
     load_buffer: Option<&crate::lisp::value::BufferRef>,
 ) -> EvalResult {
-    let mut chars: Rc<Vec<char>> = Rc::new(src.chars().collect());
+    let stream = if load_buffer.is_none() {
+        i.load_stream.clone()
+    } else {
+        None
+    };
+    let mut chars: Rc<Vec<char>> = stream
+        .as_ref()
+        .map(|stream| stream.borrow().chars.clone())
+        .unwrap_or_else(|| Rc::new(src.chars().collect()));
     // Refresh from the live buffer even before the first form: binding
     // watchers may already have changed or narrowed the source.
     let mut source_version = None;
@@ -3076,13 +3108,7 @@ fn eval_str_for_load(
         Value::Nil
     };
     let lrf_sym = i.intern("load-read-function");
-    // GNU passes the file stream (`Qget_file_char') to a custom
-    // `load-read-function' — a *consuming* input.  Our equivalent is a
-    // marker into a scratch buffer holding the file text: `read' on a
-    // marker advances it and signals `end-of-file' at the end, so
-    // readers like edebug's `edebug--read' (`(funcall #'read stream)')
-    // terminate.  Created lazily; killed when the load exits.
-    let mut stream: Option<(usize, Rc<RefCell<crate::lisp::value::Marker>>)> = None;
+    let stream_source = i.load_stream_symbol.map(Value::Sym).unwrap_or(Value::Nil);
     let result = 'load: loop {
         if let Some(buffer) = load_buffer {
             let b = buffer.borrow();
@@ -3095,6 +3121,8 @@ fn eval_str_for_load(
                 chars = Rc::new(b.text.text().chars().take(b.zv).collect());
                 source_version = Some(version);
             }
+        } else if let Some(stream) = &stream {
+            pos = stream.borrow().position;
         }
         // GNU's `readevalloop' peeks at the stream itself; the
         // `load-read-function' is consulted only while content remains,
@@ -3155,34 +3183,11 @@ fn eval_str_for_load(
                     Ok(form) => Some((form, buffer.borrow().point())),
                 }
             } else {
-                let (_, mark) = match &stream {
-                    Some(pair) => pair.clone(),
-                    None => {
-                        let bid = i.create_buffer(" *load-read*");
-                        let mk = Rc::new(RefCell::new(crate::lisp::value::Marker {
-                            buffer: Some(bid),
-                            // GNU `readevalloop' shares one read
-                            // position between the default reader and
-                            // a `load-read-function' installed
-                            // mid-file (edebug installs `edebug--read'
-                            // at top level): start the marker at the
-                            // byte the plain reader already reached,
-                            // not 0 — else earlier forms re-evaluate.
-                            position: pos,
-                            insertion_type: false,
-                        }));
-                        if let Some(b) = i.buffers.get(bid) {
-                            b.borrow_mut().insert_at(0, src);
-                        }
-                        let pair = (bid, mk);
-                        stream = Some(pair.clone());
-                        pair
-                    }
-                };
+                let stream = stream.as_ref().expect("direct load stream");
                 // GNU `readevalloop::read_next' consumes whitespace and
                 // `;'-comments on the stream itself before checking EOF,
                 // so the read function only ever sees real input.
-                let mut p = mark.borrow().position;
+                let mut p = stream.borrow().position;
                 loop {
                     while p < chars.len()
                         && matches!(chars[p], ' ' | '\t' | '\n' | '\x0C' | '\r' | '\u{A0}')
@@ -3197,14 +3202,14 @@ fn eval_str_for_load(
                     }
                     break;
                 }
-                mark.borrow_mut().position = p;
+                stream.borrow_mut().position = p;
                 if p >= chars.len() {
                     break 'load Ok(last);
                 }
-                match i.apply(&lrf, vec![Value::Marker(mark.clone())]) {
+                match i.apply(&lrf, vec![stream_source.clone()]) {
                     Err(f) => break 'load Err(f),
                     Ok(form) => {
-                        pos = mark.borrow().position;
+                        pos = stream.borrow().position;
                         Some((form, pos))
                     }
                 }
@@ -3227,6 +3232,9 @@ fn eval_str_for_load(
                 pos = end;
                 if let Some(buffer) = load_buffer {
                     buffer.borrow_mut().set_point(end);
+                }
+                if let Some(stream) = &stream {
+                    stream.borrow_mut().position = end;
                 }
                 let t0 = (i.dbg_flags & 0x200 != 0).then(std::time::Instant::now);
                 match eval_for_load(i, form.clone(), &expander) {
@@ -3279,11 +3287,6 @@ fn eval_str_for_load(
             None => break 'load Ok(last),
         }
     };
-    if let Some((bid, mark)) = stream {
-        mark.borrow_mut().buffer = None;
-        let obarray = &i.obarray;
-        i.buffers.kill(bid, |s| obarray.symbol(s).always_local);
-    }
     result
 }
 

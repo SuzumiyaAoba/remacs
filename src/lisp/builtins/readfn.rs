@@ -17,17 +17,87 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
 ];
 
+pub(crate) fn default_read_source(i: &mut Interp, source: Value) -> Value {
+    if source.is_nil() {
+        let input = i.intern("standard-input");
+        i.symbol_value(input)
+    } else {
+        source
+    }
+}
+
+pub(crate) fn is_load_stream(i: &Interp, source: &Value) -> bool {
+    i.load_stream_symbol
+        .is_some_and(|symbol| i.sym_id(source) == Some(symbol))
+}
+
+pub(crate) fn read_load_stream(i: &mut Interp, positioning: bool) -> EvalResult {
+    let Some(stream) = i.load_stream.clone() else {
+        return Err(i.signal_data(sym::END_OF_FILE, vec![]));
+    };
+    let (chars, position) = {
+        let stream = stream.borrow();
+        (stream.chars.clone(), stream.position)
+    };
+    let enabled = super::misc::sympos_enabled_p(i);
+    let invalid_syntax = i.intern("invalid-read-syntax");
+    let (result, mut end) = {
+        let mut reader = crate::lisp::reader::Reader::with_chars(i, chars.clone());
+        reader.set_position(position);
+        reader.from_buffer = true;
+        reader.sympos_enabled = enabled;
+        reader.annotate_pos = positioning.then_some(-(position as i128));
+        let result = reader.read();
+        (result, reader.position())
+    };
+    // The parser peeks at unexpected delimiters; a consuming file
+    // stream has already read that character when it signals.
+    if let Err(Flow::Signal(Value::Sym(symbol), data, _)) = &result {
+        if *symbol == invalid_syntax {
+            if let Some(Value::Str(message)) =
+                data.list_to_vec().ok().and_then(|v| v.first().cloned())
+            {
+                let message = message.borrow();
+                if (message.as_str() == ")" && matches!(chars.get(end), Some(')' | ']')))
+                    || (message.as_str() == "." && chars.get(end) == Some(&'.'))
+                {
+                    end += 1;
+                }
+            }
+        }
+    }
+    stream.borrow_mut().position = end;
+    match result {
+        Ok(Some(value)) => Ok(value),
+        Ok(None) => {
+            let filename = i.intern("load-true-file-name");
+            Err(i.signal_data(sym::END_OF_FILE, vec![i.symbol_value(filename)]))
+        }
+        Err(Flow::Signal(Value::Sym(sym::END_OF_FILE), _, flags)) => {
+            let filename = i.intern("load-true-file-name");
+            Err(Flow::Signal(
+                Value::Sym(sym::END_OF_FILE),
+                Value::list(vec![i.symbol_value(filename)]),
+                flags,
+            ))
+        }
+        Err(error) => Err(error),
+    }
+}
+
 fn f_read(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // (read &optional STREAM) — stream may be a string, buffer, marker,
-    // function, or nil (stdin/minibuffer — unsupported → error).
-    match args.get(0) {
-        None | Some(Value::Nil) => Err(i.error("read: stdin not supported")),
-        Some(Value::Str(s)) => {
+    let source = default_read_source(i, super::arg(&args, 0));
+    if is_load_stream(i, &source) {
+        return read_load_stream(i, false);
+    }
+    match &source {
+        Value::Nil | Value::Sym(sym::T) => Err(i.error("read: stdin not supported")),
+        Value::Str(s) => {
             let src = s.borrow().clone();
             let (v, _) = i.read_from_string(&src, 0)?;
             Ok(v)
         }
-        Some(Value::Buffer(b)) => {
+        Value::Buffer(b) => {
             // Read one form starting at point, advance point past it.
             // GNU `Fread' uses `locate_syms = false' — plain `read'
             // never produces positioned symbols.
@@ -54,7 +124,7 @@ fn f_read(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             b.borrow_mut().set_point(end);
             Ok(v)
         }
-        Some(Value::Marker(m)) => {
+        Value::Marker(m) => {
             let (buf, pos) = {
                 let mm = m.borrow();
                 (mm.buffer, mm.position)
@@ -72,7 +142,7 @@ fn f_read(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                 None => Err(i.signal_data(sym::END_OF_FILE, vec![])),
             }
         }
-        Some(other) => {
+        other => {
             // GNU Fread: any other STREAM is FUNCALLed to produce
             // chars — non-functions surface `invalid-function'.
             let mut src = String::new();

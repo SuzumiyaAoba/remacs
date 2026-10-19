@@ -180,6 +180,7 @@ qa!(qa_list, "qa_list.el");
 qa!(qa_lists, "qa_lists.el");
 qa!(qa_lists2, "qa_lists2.el");
 qa!(qa_load, "qa_load.el");
+qa!(qa_load_read_stream, "qa_load_read_stream.el");
 qa!(qa_unload_dependencies, "qa_unload_dependencies.el");
 qa!(qa_locate_embedded, "qa_locate_embedded.el");
 qa!(qa_load_macroexpand, "qa_load_macroexpand.el");
