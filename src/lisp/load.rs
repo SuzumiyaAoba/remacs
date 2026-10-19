@@ -2979,7 +2979,10 @@ fn eval_src_opts_inner(
         }
         return Err(i.signal_data(crate::lisp::sym::ERROR, data));
     }
-    let r = eval_str_for_load(i, file, &src, load_buffer);
+    let compiled_library = i.loading_compiled_library;
+    let r = i.with_eval_context(compiled_library, |i| {
+        eval_str_for_load(i, file, &src, load_buffer)
+    });
     let popped = i.loads_in_progress.pop();
     debug_assert!(popped.as_deref() == Some(file));
     i.reading_elc = was_elc;
@@ -3326,7 +3329,10 @@ fn eval_for_load(i: &mut Interp, form: Value, expander: &Value) -> EvalResult {
 
 fn expand_for_load(i: &mut Interp, expander: &Value, form: Value, full: bool) -> EvalResult {
     i.macroexp_call_depth += 1;
+    let compiled = i.loading_compiled_library || i.boot_loading;
+    let saved_expansion = std::mem::replace(&mut i.compiled_macro_expansion, compiled);
     let result = i.apply(expander, vec![form, Value::from_bool(full)]);
+    i.compiled_macro_expansion = saved_expansion;
     i.macroexp_call_depth -= 1;
     result
 }
@@ -3637,7 +3643,12 @@ pub(crate) fn load_library_opts_msg(
         .strip_suffix(".el")
         .or_else(|| name.strip_suffix(".elc"))
         .unwrap_or(name);
-    let bundled = embedded(stem).is_some();
+    let found = locate_full(i, name, nosuffix, mustsuffix);
+    let bundled = match &found {
+        Some(Found::File(path)) => path_is_bundled_source(path) && embedded(path).is_some(),
+        Some(Found::Dir(_)) => false,
+        None => embedded(stem).is_some(),
+    };
     let gc = i.intern("gensym-counter");
     let saved_gc = bundled.then(|| i.symbol_value(gc));
     // Post-boot `subr-x' reads GNU's verbatim subr-x.el, not the
@@ -3648,7 +3659,6 @@ pub(crate) fn load_library_opts_msg(
     // and later libraries' definitions (replace.el's
     // `replace-highlight') and resetting live state
     // (`file-name-handler-alist', `electric-quote-string').
-    let found = locate_full(i, name, nosuffix, mustsuffix);
     let saved_compiled_library = i.loading_compiled_library;
     i.loading_compiled_library = can_elc
         && bundled

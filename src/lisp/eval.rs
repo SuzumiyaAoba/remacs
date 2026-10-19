@@ -363,11 +363,15 @@ pub struct Interp {
     /// remacs stashes those cells and resolves hidden macros only while
     /// a dumped lambda is running.
     pub dumped_call_depth: usize,
-    /// Number of currently-active macro expanders.  Hidden dump-time
-    /// helpers remain callable only in this expansion-time context; a
-    /// dumped function's ordinary runtime calls still see GNU's void
-    /// function cells.
+    /// Number of active macro expanders, used to distinguish compiler
+    /// requirements from runtime library dependencies.
     pub macroexp_call_depth: usize,
+    /// The currently executing Lisp function belongs to dumped code.
+    /// Unlike dumped_call_depth, this does not include ancestor frames.
+    pub current_lambda_dumped: bool,
+    /// Provenance of forms being inspected by macroexpand, independent
+    /// of the dumped implementation of the macroexpansion machinery.
+    pub compiled_macro_expansion: bool,
     /// True while the reader is consuming an embedded/on-disk `.elc'
     /// stream (`;ELC' magic).  `#[...]' byte-code objects read in this
     /// window are dumped compiled functions: they get `compiled' set so
@@ -1079,6 +1083,8 @@ impl Interp {
             boot_loading: true,
             bc_depth: 0,
             macroexp_call_depth: 0,
+            current_lambda_dumped: false,
+            compiled_macro_expansion: false,
             expand_unadvised_depth: 0,
             loading_compiled_library: false,
             macro_cache: HashMap::default(),
@@ -5363,10 +5369,13 @@ command-line arguments.\" \
         self.obarray.symbol(id).function.clone()
     }
 
-    /// Function cell used by ordinary calls.  Hidden dump-time
-    /// definitions stay reachable via the `remacs--dump-fn' stash —
-    /// GNU voids these cells at -Q, but keeping calls working is a
-    /// deliberate superset (see `form_function').
+    /// Hidden macros remain available to the interpreted implementation
+    /// of dumped code, without exposing them to users.
+    fn dumped_macros_allowed(&self) -> bool {
+        self.current_lambda_dumped || self.loading_compiled_library || self.boot_loading
+    }
+
+    /// Function cell used by ordinary calls.
     fn callable_function(&mut self, id: SymId) -> Value {
         let f = self.symbol_function(id);
         // A `nil' cell (fset to nil, or a cell that holds nil rather
@@ -5377,7 +5386,7 @@ command-line arguments.\" \
         } else if !matches!(f, Value::Sym(s) if s == sym::UNBOUND) {
             f
         } else {
-            self.dumped_function(id).unwrap_or(f)
+            self.dumped_function_for_call(id).unwrap_or(f)
         };
         // Inside a macro expander running for compiled-equivalent
         // (dumped/bundled) code, resolve to the unadvised base: GNU
@@ -5402,18 +5411,26 @@ command-line arguments.\" \
         }
     }
 
-    /// Function cell for the head of a form.  In addition to normal
-    /// expansion-time access, a dumped definition stays callable: GNU
-    /// voids these cells at -Q, but every name we void has its real
-    /// dumped definition stashed on `remacs--dump-fn', so direct calls
-    /// still run the dump-time semantics (strictly more capable than
-    /// GNU's void-function, while `symbol-function' stays nil).
+    /// Folded runtime functions remain compatibility fallbacks until
+    /// their source/autoload paths fully provide them (face-remap, rx,
+    /// etc.). Voided macros are only compiler implementation details.
+    fn dumped_function_for_call(&mut self, id: SymId) -> Option<Value> {
+        let function = self.dumped_function(id)?;
+        if self.is_macro_function(&function) && !self.dumped_macros_allowed() {
+            None
+        } else {
+            Some(function)
+        }
+    }
+
+    /// Function cell for a form head. Voided macro cells stay void in
+    /// user code; dumped bodies may use their hidden compiler macros.
     fn form_function(&mut self, id: SymId) -> Value {
         let f = self.symbol_function(id);
         let f = if !matches!(f, Value::Sym(s) if s == sym::UNBOUND) {
             f
         } else {
-            self.dumped_function(id).unwrap_or(f)
+            self.dumped_function_for_call(id).unwrap_or(f)
         };
         // Same unadvised-base resolution as `callable_function': code
         // evaluated inside a dumped-code macro expander sees the
@@ -5907,6 +5924,24 @@ command-line arguments.\" \
 
     // ---------- entry points ----------
 
+    /// Enter source evaluation without inheriting a compiled caller's
+    /// access to hidden helpers. LOAD preserves its own file provenance;
+    /// eval, eval-buffer, and string evaluation start a user context.
+    pub(crate) fn with_eval_context<T>(
+        &mut self,
+        compiled_library: bool,
+        evaluate: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let saved_lambda = std::mem::replace(&mut self.current_lambda_dumped, false);
+        let saved_expansion = std::mem::replace(&mut self.compiled_macro_expansion, false);
+        let saved_library = std::mem::replace(&mut self.loading_compiled_library, compiled_library);
+        let result = evaluate(self);
+        self.current_lambda_dumped = saved_lambda;
+        self.compiled_macro_expansion = saved_expansion;
+        self.loading_compiled_library = saved_library;
+        result
+    }
+
     /// Read and evaluate all top-level forms in `src`.
     /// Returns the last value.
     pub fn eval_str(&mut self, src: &str) -> EvalResult {
@@ -5920,7 +5955,7 @@ command-line arguments.\" \
             .unwrap_or(false);
         let saved_lexenv =
             std::mem::replace(&mut self.lexenv, if lex_on { lexenv_root() } else { None });
-        let r = self.eval_str_inner(src, false);
+        let r = self.with_eval_context(false, |i| i.eval_str_inner(src, false));
         self.lexenv = saved_lexenv;
         r
     }
@@ -5935,7 +5970,7 @@ command-line arguments.\" \
             .unwrap_or(false);
         let saved_lexenv =
             std::mem::replace(&mut self.lexenv, if lex_on { lexenv_root() } else { None });
-        let r = self.eval_str_inner(src, true);
+        let r = self.with_eval_context(false, |i| i.eval_str_inner(src, true));
         self.lexenv = saved_lexenv;
         r
     }
@@ -7465,7 +7500,13 @@ command-line arguments.\" \
         if bump {
             self.dumped_call_depth += 1;
         }
-        let r = self.call_lambda_inner(l, argv, shown);
+        let saved_lambda = std::mem::replace(&mut self.current_lambda_dumped, l.dumped_doc);
+        let r = if l.dumped_doc {
+            self.call_lambda_inner(l, argv, shown)
+        } else {
+            self.with_eval_context(false, |i| i.call_lambda_inner(l, argv, shown))
+        };
+        self.current_lambda_dumped = saved_lambda;
         if bump {
             self.dumped_call_depth -= 1;
         }
@@ -7936,7 +7977,11 @@ command-line arguments.\" \
         if let Err(e) = self.specbind(lb, lex_val) {
             return Err(e);
         }
+        let compiled =
+            self.current_lambda_dumped || self.loading_compiled_library || self.boot_loading;
+        let saved_expansion = std::mem::replace(&mut self.compiled_macro_expansion, compiled);
         let r = self.macro_expand_call(mac, args);
+        self.compiled_macro_expansion = saved_expansion;
         self.unbind_to(mark)?;
         r
     }
@@ -8171,7 +8216,11 @@ command-line arguments.\" \
                                 cur = new;
                                 continue;
                             }
-                            let mut f = self.form_function(id);
+                            let mut f = if self.compiled_macro_expansion || self.boot_loading {
+                                self.form_function(id)
+                            } else {
+                                self.symbol_function(id)
+                            };
                             // Autoload cell: resolve macro autoloads
                             // (TYPE non-nil); others stop expansion.
                             let auto_id = self.intern("autoload");

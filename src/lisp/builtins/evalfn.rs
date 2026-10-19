@@ -535,7 +535,7 @@ fn f_eval(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         }
     }
     let saved = std::mem::replace(&mut i.lexenv, lexenv);
-    let r = i.eval(&args[0]);
+    let r = i.with_eval_context(false, |i| i.eval(&args[0]));
     i.lexenv = saved;
     i.explicit_eval_depth -= 1;
     r
@@ -4057,7 +4057,7 @@ fn eval_buffer_source(
             None
         },
     );
-    let result = (|| {
+    let result = i.with_eval_context(false, |i| {
         let input = i.intern("standard-input");
         let list = i.intern("eval-buffer-list");
         let old_list = i.symbol_value(list);
@@ -4279,7 +4279,7 @@ fn eval_buffer_source(
                 return Ok(Value::Nil);
             }
         }
-    })();
+    });
     i.lexenv = saved_lexenv;
     i.unbind_to(depth)?;
     result

@@ -144,6 +144,16 @@ CLI menu/closure test in `tests/main_cli.rs`.
 The constructor suite also pins argument-bearing closures' empty `(t)`
 environment, argument/inner-let shadowing, and quoted names (#70).
 
+Voided macro cells do not expose `remacs--dump-fn` definitions to user
+code. `current_lambda_dumped` tracks the immediate function rather than
+compiled ancestors; `compiled_macro_expansion` tracks the input forms
+separately from the dumped macroexpander implementation. `with_eval_context`
+scopes eval, buffer/string evaluation, loads, and user callbacks so
+unloaded CL macros signal `void-function` until `cl-lib` is required.
+Regular folded-function fallbacks remain for incomplete source/autoload
+paths (face-remap, rx, etc.). Regressions: `qa_cl_boot_surface` and the
+copied-binary library tests, whose watchdog also guards against loop hangs.
+
 ## AOT .elc twins (`src/lisp/embedded_elc.rs` + `lisp-elc/`)
 
 `tools/gen_boot_elc.py` runs GNU Emacs's `byte-compile-file' over the

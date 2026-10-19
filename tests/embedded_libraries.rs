@@ -18,7 +18,11 @@ fn standalone_expression() -> String {
         .replace('"', "\\\"");
     format!(
         r#"(let ((load-path nil) (electric-quote-string 'standalone))
-      (let* ((names '("simple" "subr-x" "cl-lib" "semantic/ctxt" "quail/emoji"))
+      (let* ((boot-surface
+                (list (fboundp 'cl-loop)
+                      (condition-case error (cl-loop return 1) (error (car error)))
+                      (macroexpand '(cl-loop return 1))))
+             (names '("simple" "subr-x" "cl-lib" "semantic/ctxt" "quail/emoji"))
              (paths (mapcar #'locate-library names))
              (descriptions (mapcar
                 (lambda (path)
@@ -32,8 +36,10 @@ fn standalone_expression() -> String {
           (load (nth 3 paths) nil t)
           (load (nth 4 paths) nil t)
           (load (car paths) nil t)
-          (prin1 (list descriptions subrx-state
+          (require 'cl-lib)
+          (prin1 (list boot-surface descriptions subrx-state
                        (featurep 'avl-tree) (featurep 'semantic/ctxt) (featurep 'emoji)
+                       (cl-loop for x from 1 to 3 collect x)
                        (locate-library "qa53-no-such-library")
                        (locate-library "simple" t)
                        (locate-library "simple" nil '("/qa53-no-path"))
@@ -119,7 +125,7 @@ fn run_standalone(no_elc: bool) {
     );
     assert_eq!(
         stdout,
-        "(((t t t) (t t t) (t t t) (t t t) (t t t)) (t standalone) t t t nil nil nil (t user))",
+        "((nil void-function (cl-loop return 1)) ((t t t) (t t t) (t t t) (t t t) (t t t)) (t standalone) t t t (1 2 3) nil nil nil (t user))",
         "{stderr}"
     );
 }
