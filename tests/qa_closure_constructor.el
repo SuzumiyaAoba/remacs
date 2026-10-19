@@ -24,6 +24,23 @@
              (let ((first (lambda () x)) (second (lambda () x)))
                (eq (assq 'x (aref first 2)) (assq 'x (aref second 2))))) t) t)
 
+;; Issue #70: argument-bearing closures with no free variables keep
+;; the (t) lexical marker. Quoted names do not capture. GNU retains
+;; body references conservatively even when an inner binding shadows.
+(qa-prin1 (eval '(let ((x 5)) (lambda (y) y)) t) "#[(y) (y) (t)]")
+(qa (eval '(let ((x 5))
+             (let ((f (lambda (y) y))) (aref f 2))) t) '(t))
+(qa (eval '(let ((x 5)) (aref (lambda (x) x) 2)) t) '((x . 5)))
+(qa (eval '(let ((x 5))
+             (aref (lambda (y) (let ((x y)) x)) 2)) t) '((x . 5)))
+(qa (eval '(let ((x 5)) (aref (lambda (y) 'x) 2)) t) '(t))
+(qa (eval '(let ((x 5) (unused 7))
+             (aref (lambda (y) (+ x y)) 2)) t) '((x . 5)))
+(qa-prin1 (eval '(let ((x 5)) (lambda (y) (+ x y))) t)
+          "#[(y) ((+ x y)) ((x . 5))]")
+(qa (funcall (eval '(let ((x 5)) (lambda (x) x)) t) 3) 3)
+(qa (funcall (eval '(let ((x 5) (unused 7)) (lambda (y) (+ x y))) t) 3) 8)
+
 ;; Raw construction keeps the original environment and its persistent
 ;; spine. Later let* bindings cannot appear in an earlier capture.
 (dolist (qa31-constructor '(nil make-interpreted-closure cconv-make-interpreted-closure))

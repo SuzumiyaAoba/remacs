@@ -141,6 +141,8 @@ constructor can return a shared object or even a non-function value.
 
 Regressions: `qa_menu_keys.el`, `qa_closure_constructor.el`, and the fresh
 CLI menu/closure test in `tests/main_cli.rs`.
+The constructor suite also pins argument-bearing closures' empty `(t)`
+environment, argument/inner-let shadowing, and quoted names (#70).
 
 ## AOT .elc twins (`src/lisp/embedded_elc.rs` + `lisp-elc/`)
 
