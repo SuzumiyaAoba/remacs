@@ -332,7 +332,7 @@ pub(super) fn internal_encode(c: u32) -> Vec<u8> {
     bs[0] = ([0, 0, 0xc0, 0xe0, 0xf0, 0xf8][n]) | x as u8;
     bs
 }
-pub(super) fn internal_decode(bs: &[u8]) -> String {
+pub(crate) fn internal_decode(bs: &[u8]) -> String {
     let mut out = String::new();
     let mut at = 0;
     while at < bs.len() {

@@ -3605,25 +3605,23 @@ fn f_autoload(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     if !matches!(file, Value::Str(_)) {
         return Err(i.wrong_type_mut("stringp", &file));
     }
-    if i.fbound_p(fid) {
-        // Already defined: GNU's `autoload' is a no-op returning nil.
+    let existing = i.symbol_function(fid);
+    let auto_id = i.intern("autoload");
+    let replaceable = matches!(&existing, Value::Cons(c) if i.sym_is(&c.borrow().car,auto_id));
+    if i.fbound_p(fid) && !replaceable {
+        // GNU replaces existing autoload cells, while a real definition
+        // (including an alias) is a no-op returning nil.
         return Ok(Value::Nil);
     }
     // GNU's autoload cell is always (autoload FILE DOC INTERACTIVE TYPE)
     // — absent optional fields are stored as nil.
-    let auto_id = i.intern("autoload");
     let mut cell = vec![Value::Sym(auto_id), file];
     for k in 2..5 {
         cell.push(args.get(k).cloned().unwrap_or(Value::Nil));
     }
     let definition = Value::list(cell);
-    // GNU `Fautoload' goes through defalias, recording load history even
-    // if fset then rejects a non-nil definition of nil.
-    let defun_id = i.intern("defun");
-    loadhist_attach(i, Value::cons(i.sym(defun_id), args[0].clone()));
-    i.check_function_assignment(fid, &definition)?;
-    i.fset(fid, definition);
-    Ok(args[0].clone())
+    // Fautoload delegates to Fdefalias for history and advice handling.
+    crate::lisp::builtins::data::f_defalias(i, vec![args[0].clone(), definition].into())
 }
 fn f_autoloadp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let auto_id = i.intern("autoload");

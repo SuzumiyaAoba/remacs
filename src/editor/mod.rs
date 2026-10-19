@@ -9137,6 +9137,9 @@ fn keymap_sort_key(i: &Interp, keys: &[Value]) -> Vec<(u8, i128, String)> {
 /// `substitute-command-keys` — expand `\[cmd]`, `\{map}`, `\<map>`,
 /// `\=` escapes, and `'` → `’' quoting (Emacs curve style).
 fn f_substitute_command_keys(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    if a[0].is_nil() {
+        return Ok(Value::Nil);
+    }
     let s = want_str(i, &a[0])?;
     let chars: Vec<char> = s.chars().collect();
     let mut out = String::new();
@@ -19223,6 +19226,144 @@ fn f_remove_overlays(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 // ---------- help/docs ----------
 
+/// Resolve a DOC offset or an external .elc docstring reference. File
+/// offsets are byte offsets, with the #@/unit-separator validation and
+/// control-character escaping used by GNU get_doc_string.
+fn documentation_reference(i: &mut Interp, reference: &Value) -> EvalResult {
+    if let Value::Int(offset) = reference {
+        if *offset == 0 {
+            return Ok(Value::Nil);
+        }
+        return Ok(offset
+            .checked_abs()
+            .and_then(|n| usize::try_from(n).ok())
+            .and_then(|n| crate::lisp::builtins::misc::doc_text_at(i, n))
+            .map(Value::string)
+            .unwrap_or(Value::Nil));
+    }
+    let Value::Cons(pair) = reference else {
+        return Ok(Value::Nil);
+    };
+    let (file, offset) = {
+        let p = pair.borrow();
+        (p.car.clone(), p.cdr.int().unwrap_or(0))
+    };
+    let Value::Str(file) = file else {
+        return Ok(Value::Nil);
+    };
+    let directory = i.intern("lisp-directory");
+    let Value::Str(directory) = i.symbol_value(directory) else {
+        return Ok(Value::Nil);
+    };
+    let file = file.borrow().clone();
+    let path = if std::path::Path::new(&file).is_absolute() {
+        file.clone()
+    } else {
+        format!("{}{}", directory.borrow(), file)
+    };
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                || error.raw_os_error() == Some(libc::ENOTDIR) =>
+        {
+            return Ok(Value::string(format!(
+                "Cannot open doc string file \"{}\"\n",
+                file
+            )));
+        }
+        Err(error) => {
+            return Err(report_file_errno(
+                i,
+                "Read error on documentation file",
+                vec![Value::string(file)],
+                &error,
+            ));
+        }
+    };
+    let Some(offset) = offset.checked_abs().and_then(|n| usize::try_from(n).ok()) else {
+        return Ok(Value::Nil);
+    };
+    if offset == 0 || offset > bytes.len() {
+        return Ok(Value::Nil);
+    }
+    if bytes[offset - 1] != 31 {
+        if bytes[offset - 1] != b' ' {
+            return Ok(Value::Nil);
+        }
+        let mut at = offset - 1;
+        while at > 0 && bytes[at - 1].is_ascii_digit() {
+            at -= 1;
+        }
+        if at < 2 || &bytes[at - 2..at] != b"#@" {
+            return Ok(Value::Nil);
+        }
+    }
+    let end = bytes[offset..]
+        .iter()
+        .position(|b| *b == 31)
+        .map(|n| offset + n)
+        .unwrap_or(bytes.len());
+    let mut decoded = Vec::new();
+    let mut at = offset;
+    while at < end {
+        let byte = bytes[at];
+        at += 1;
+        if byte != 1 {
+            decoded.push(byte);
+            continue;
+        }
+        let escape = if at < end { bytes[at] } else { 0 };
+        at += 1;
+        decoded.push(match escape {
+            1 => 1,
+            b'0' => 0,
+            b'_' => 31,
+            value => {
+                return Err(i.error(format!(
+                    "Invalid data in documentation file -- \u{1} followed by code {:03o}",
+                    value
+                )));
+            }
+        });
+    }
+    // Docstrings use Emacs's internal string bytes: C0/C1 escape raw
+    // eight-bit characters and surrogate codes are valid storage chars.
+    let mut text = String::new();
+    let mut at = 0;
+    let mut start = 0;
+    while at < decoded.len() {
+        let raw = matches!(decoded[at], 0xc0 | 0xc1)
+            && decoded.get(at + 1).is_some_and(|b| b & 0xc0 == 0x80);
+        let surrogate = decoded[at] == 0xed
+            && decoded
+                .get(at + 1)
+                .is_some_and(|b| (0xa0..=0xbf).contains(b))
+            && decoded.get(at + 2).is_some_and(|b| b & 0xc0 == 0x80);
+        if raw || surrogate {
+            text.push_str(&crate::lisp::builtins::coding_legacy::internal_decode(
+                &decoded[start..at],
+            ));
+            let code = if raw {
+                0x3fff00 + (((decoded[at] & 1) as u32) << 6 | decoded[at + 1] as u32)
+            } else {
+                (((decoded[at] & 15) as u32) << 12)
+                    | (((decoded[at + 1] & 63) as u32) << 6)
+                    | (decoded[at + 2] & 63) as u32
+            };
+            text.push(crate::lisp::value::lisp_char(code).unwrap());
+            at += if raw { 2 } else { 3 };
+            start = at;
+        } else {
+            at += 1;
+        }
+    }
+    text.push_str(&crate::lisp::builtins::coding_legacy::internal_decode(
+        &decoded[start..],
+    ));
+    Ok(Value::string(text))
+}
+
 fn f_documentation_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
     let prop = want_sym(i, &a[1])?;
@@ -19240,23 +19381,14 @@ fn f_documentation_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     if matches!(&tem, Value::Int(n) if *n == 0) {
         tem = Value::Nil;
     }
-    // Fixnum (or `(FILE . POS)' cons) props index the DOC file.
+    // References share the same lookup as function values; other
+    // property objects are evaluated as documentation forms.
     match &tem {
-        Value::Int(off) => {
-            tem = match crate::lisp::builtins::misc::doc_text_at(i, *off as usize) {
-                Some(s) => Value::string(s),
-                None => Value::Nil,
-            };
+        Value::Int(_) if tem.fixnump() => {
+            tem = documentation_reference(i, &tem)?;
         }
-        Value::Cons(c) if matches!(c.borrow().cdr, Value::Int(_)) => {
-            let off = match &c.borrow().cdr {
-                Value::Int(n) => *n as usize,
-                _ => 0,
-            };
-            tem = match crate::lisp::builtins::misc::doc_text_at(i, off) {
-                Some(s) => Value::string(s),
-                None => Value::Nil,
-            };
+        Value::Cons(pair) if pair.borrow().cdr.fixnump() => {
+            tem = documentation_reference(i, &tem)?;
         }
         // A non-string non-offset doc property is an eval form in GNU.
         Value::Nil | Value::Str(_) => {}
@@ -19278,14 +19410,28 @@ fn f_documentation_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     Ok(tem)
 }
 
+/// Raw lambda/autoload/keymap values and specialized function objects
+/// use the same function-documentation protocol as GNU doc.c.
+fn documentation_function_value(i: &mut Interp, function: &Value, raw: &Value) -> EvalResult {
+    let getter = Value::Sym(i.intern("function-documentation"));
+    let doc = i.apply(&getter, vec![function.clone()])?;
+    let doc = match &doc {
+        Value::Int(_) if doc.fixnump() => documentation_reference(i, &doc)?,
+        Value::Cons(pair) if pair.borrow().cdr.fixnump() => documentation_reference(i, &doc)?,
+        _ => doc,
+    };
+    if raw.truthy() {
+        Ok(doc)
+    } else {
+        let substitute = Value::Sym(i.intern("substitute-command-keys"));
+        i.apply(&substitute, vec![doc])
+    }
+}
+
 fn f_documentation(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let f = match &a[0] {
-        // GNU signals `void-function' for a symbol with no fdefinition
-        // — 'nil (no function cell) included.
-        Value::Nil => {
-            return Err(i.signal_data(crate::lisp::sym::VOID_FUNCTION, vec![a[0].clone()]));
-        }
-        Value::Sym(id) => {
+        Value::Nil | Value::Sym(_) => {
+            let id = want_sym(i, &a[0])?;
             // GNU Fdocumentation: a symbol's `function-documentation'
             // property is consulted even when the function cell is
             // void (void-function only fires when there is no prop).
@@ -19293,36 +19439,27 @@ fn f_documentation(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             // this is how `defalias' with a DOC arg overrides the
             // aliased function's text.
             let fd = i.intern("function-documentation");
-            if !i.get_prop(*id, fd).is_nil() {
+            if !i.get_prop(id, fd).is_nil() {
                 let mut dargs = vec![a[0].clone(), Value::Sym(fd)];
                 if let Some(raw) = a.get(1) {
                     dargs.push(raw.clone());
                 }
                 return f_documentation_property(i, dargs.into());
             }
-            let v = i.symbol_function(*id);
+            // Resolve the complete alias chain using the native
+            // indirect-function implementation. Only the original
+            // symbol's DOC property overrides the resolved definition.
+            let v = crate::lisp::builtins::data::f_indirect_function(i, vec![a[0].clone()].into())?;
             if v.is_nil() || matches!(v, Value::Sym(s) if s == crate::lisp::sym::UNBOUND) {
                 return Err(i.signal_data(crate::lisp::sym::VOID_FUNCTION, vec![a[0].clone()]));
             }
             v
         }
-        // GNU `documentation-function': a string/vector IS a keyboard
-        // macro → "Keyboard macro."; other non-functions signal
-        // (invalid-function VALUE).
-        // GNU `documentation-function': a keymap (cons headed by the
-        // `keymap' tag) gets the prefix-command docstring; a string or
-        // vector IS a keyboard macro → "Keyboard macro."; other
-        // non-functions signal (invalid-function VALUE).
-        Value::Cons(_) if is_keymap(i, &a[0]) => {
-            return Ok(Value::string(
-                "Prefix command (definition is a keymap associating keystrokes with commands).",
-            ));
-        }
-        Value::Str(_) | Value::Vec(_) => {
-            return Ok(Value::string("Keyboard macro."));
-        }
         other => {
-            if !matches!(other, Value::Lambda(_) | Value::Subr(_) | Value::Cons(_)) {
+            if !matches!(
+                other,
+                Value::Lambda(_) | Value::Subr(_) | Value::Cons(_) | Value::Str(_) | Value::Vec(_)
+            ) {
                 return Err(i.signal_data(crate::lisp::sym::INVALID_FUNCTION, vec![other.clone()]));
             }
             other.clone()
@@ -19399,7 +19536,7 @@ fn f_documentation(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 }
                 Ok(Value::string(t))
             }
-            None => Ok(Value::Nil),
+            None => documentation_function_value(i, &f, &arg(&a, 1)),
         },
         None => match &f {
             Value::Subr(s) => {
@@ -19421,34 +19558,7 @@ fn f_documentation(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     Ok(Value::string(s.doc))
                 }
             }
-            Value::Cons(c) => {
-                // GNU `documentation-function-or-1': an autoload cell's
-                // docstring is its third element.
-                let doc = {
-                    let b = c.borrow();
-                    let auto_id = i.intern("autoload");
-                    if i.sym_is(&b.car, auto_id) {
-                        f.list_to_vec()
-                            .ok()
-                            .and_then(|v| v.get(2).cloned())
-                            .unwrap_or(Value::Nil)
-                    } else {
-                        Value::Nil
-                    }
-                };
-                match doc {
-                    Value::Str(d) => {
-                        let d = d.borrow().clone();
-                        if !matches!(arg(&a, 1), Value::Nil) {
-                            return Ok(Value::string(d));
-                        }
-                        let sck = Value::Sym(i.intern("substitute-command-keys"));
-                        i.apply(&sck, vec![Value::string(d)])
-                    }
-                    _ => Ok(Value::Nil),
-                }
-            }
-            _ => Ok(Value::Nil),
+            _ => documentation_function_value(i, &f, &arg(&a, 1)),
         },
     }
 }

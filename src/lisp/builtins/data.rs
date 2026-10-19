@@ -860,7 +860,7 @@ fn f_fset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     i.fset(id, def.clone());
     Ok(def)
 }
-fn f_defalias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_defalias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     let def = normalize_fn_def(i, args[1].clone());
     // GNU's `Fdefalias' chases the alias chain before installing: a
@@ -1640,7 +1640,7 @@ fn f_mapatoms(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     Ok(Value::Nil)
 }
-fn f_indirect_function(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_indirect_function(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let mut cur = crate::lisp::builtins::misc::unpos(&args[0]);
     let mut seen: std::collections::HashSet<crate::lisp::value::SymId> =
         std::collections::HashSet::new();

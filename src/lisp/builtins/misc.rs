@@ -9401,7 +9401,16 @@ pub(crate) fn doc_offset(i: &mut Interp, key: &str) -> Option<usize> {
 pub(crate) fn doc_text_at(i: &mut Interp, off: usize) -> Option<String> {
     let rc = doc_index(i)?;
     let (bytes, _map) = &*rc;
-    if off >= bytes.len() {
+    if off < 2 || off >= bytes.len() || bytes[off - 1] != b'\n' {
+        return None;
+    }
+    // GNU rejects stale DOC references rather than returning a suffix
+    // from arbitrary file contents: a header is US + NAME + newline.
+    let mut header = off - 2;
+    while header > 0 && bytes[header] > b' ' {
+        header -= 1;
+    }
+    if bytes[header] != 31 {
         return None;
     }
     let end = bytes[off..]
