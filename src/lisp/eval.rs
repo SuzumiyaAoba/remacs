@@ -4923,6 +4923,19 @@ command-line arguments.\" \
             }
             let _ = interp.set_symbol(lh, Value::list(items));
         }
+        // Snapshot GNU's post-loadup forwarding state, independently of
+        // optional DOC data. Do not intern absent platform variables.
+        for entry in include_str!("forwarded_variables.txt").lines() {
+            let (kind, name) = entry.split_once(' ').unwrap();
+            if let Some(id) = interp.obarray.intern_soft(name) {
+                if interp.bound_p(id) {
+                    let symbol = interp.obarray.symbol_mut(id);
+                    symbol.builtin_variable = true;
+                    symbol.forwarded_variable = true;
+                    symbol.make_local_if_set |= kind == "B";
+                }
+            }
+        }
         crate::lisp::builtins::misc::install_variable_docs(&mut interp);
         if std::env::var_os("REMACS_BOOT_PROF").is_some() {
             eprintln!(

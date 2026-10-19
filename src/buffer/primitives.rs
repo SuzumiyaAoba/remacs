@@ -3914,6 +3914,7 @@ fn f_buffer_local_variables(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
 
 fn f_buffer_local_value(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
+    let sid = i.var_alias_target(sid);
     // Unlike optional buffer arguments, nil is not the current buffer.
     if !matches!(a[1], Value::Buffer(_)) {
         return Err(i.wrong_type_mut("bufferp", &a[1]));
@@ -3933,6 +3934,7 @@ fn f_buffer_local_value(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_buffer_local_boundp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
+    let sid = i.var_alias_target(sid);
     if !matches!(a[1], Value::Buffer(_)) {
         return Err(i.wrong_type_mut("bufferp", &a[1]));
     }
@@ -3954,6 +3956,15 @@ fn f_buffer_local_boundp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_make_local_variable(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
+    let sid = i.var_alias_target(sid);
+    if i.obarray.symbol(sid).constant {
+        return Err(i.signal_data(sym::SETTING_CONSTANT, vec![a[0].clone()]));
+    }
+    let per_buffer = i.obarray.symbol(sid).always_local
+        || (i.obarray.symbol(sid).forwarded_variable && i.obarray.symbol(sid).make_local_if_set);
+    if !per_buffer {
+        i.obarray.symbol_mut(sid).forwarded_variable = false;
+    }
     // Seed with the CURRENT effective value: for BVAR-style variables
     // (`buffer-file-name') the buffer slot is the binding even before
     // `locals' has an entry, so the default cell would seed wrongly.
@@ -3974,11 +3985,22 @@ fn f_make_local_variable(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         // (the unbound sentinel) when the variable is unbound.
         bb.locals.insert(sid, seed);
     }
-    Ok(a[0].clone())
+    Ok(if per_buffer {
+        a[0].clone()
+    } else {
+        i.sym(sid)
+    })
 }
 
 fn f_make_variable_buffer_local(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
+    let sid = i.var_alias_target(sid);
+    if i.obarray.symbol(sid).constant {
+        return Err(i.signal_data(sym::SETTING_CONSTANT, vec![a[0].clone()]));
+    }
+    if !i.obarray.symbol(sid).always_local && !i.obarray.symbol(sid).make_local_if_set {
+        i.obarray.symbol_mut(sid).forwarded_variable = false;
+    }
     // GNU: the variable gains a buffer-local cell in every buffer
     // initialized to the default; an unbound default becomes nil, so
     // `boundp' is t right away (verified on 31.1).
@@ -3994,6 +4016,7 @@ fn f_make_variable_buffer_local(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
 
 fn f_kill_local_variable(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
+    let sid = i.var_alias_target(sid);
     // `buffer-file-name' is a BVAR: GNU's kill edits the buffer's
     // local-vars alist where the slot variable never appears — a
     // no-op (value AND `local-variable-p' survive; verified on 31.1).
@@ -4076,6 +4099,7 @@ fn f_local_variable_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // signals `bufferp', not `symbolp'.
     let b = buf_of(i, &arg(&a, 1))?;
     let sid = want_sym(i, &a[0])?;
+    let sid = i.var_alias_target(sid);
     // GNU `DEFVAR_PER_BUFFER' variables are local in every buffer.
     // `make-variable-buffer-local' (blv `local_if_set') is NOT consulted:
     // only a concrete buffer-local binding (or per-buffer C var) counts.

@@ -21,7 +21,7 @@ pub struct Symbol {
     /// `defvar`/`defconst` marks the symbol special (dynamically bound
     /// even under `lexical-binding`).
     pub special: bool,
-    /// Constants (nil, t, keywords, defconst) can't be rebound or set.
+    /// Read-only symbols (nil, t, keywords and their aliases).
     pub constant: bool,
     /// `make-variable-buffer-local`: setting this var auto-creates a
     /// buffer-local binding in the current buffer.
@@ -33,6 +33,9 @@ pub struct Symbol {
     /// A C-backed variable (GNU `DEFVAR_LISP'/`DEFVAR_PER_BUFFER'):
     /// `makunbound' refuses with "Built-in variable may not be unbound".
     pub builtin_variable: bool,
+    /// GNU SYMBOL_FORWARDED, as distinct from a C-backed variable that
+    /// has become SYMBOL_LOCALIZED. `defvaralias' rejects each differently.
+    pub forwarded_variable: bool,
     /// Whether this symbol names a defined variable (boundp / defvar'd).
     pub variable_documentation: Option<String>,
     /// Uninterned symbols (make-symbol/gensym) print with a `#:' prefix.
@@ -252,6 +255,7 @@ impl Obarray {
             make_local_if_set: false,
             always_local: false,
             builtin_variable: false,
+            forwarded_variable: false,
             variable_documentation: None,
             uninterned: false,
             var_alias: None,
@@ -285,6 +289,7 @@ impl Obarray {
             make_local_if_set: false,
             always_local: false,
             builtin_variable: false,
+            forwarded_variable: false,
             variable_documentation: None,
             uninterned: true,
             var_alias: None,

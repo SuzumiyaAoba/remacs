@@ -933,7 +933,12 @@ fn f_defvaralias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             }
         }
     }
-    if i.obarray.symbol(newv).always_local
+    if i.obarray.symbol(newv).forwarded_variable {
+        let name = i.symbol_name(newv);
+        return Err(i.error(format!("Cannot make a built-in variable an alias: {name}")));
+    }
+    if i.obarray.symbol(newv).builtin_variable
+        || i.obarray.symbol(newv).always_local
         || i.obarray.symbol(newv).make_local_if_set
         || i.buffers.list().iter().any(|bid| {
             i.buffers.get(*bid).is_some_and(|b| b.borrow().locals.contains_key(&newv))
@@ -963,6 +968,7 @@ fn f_defvaralias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     i.put_prop(newv, prop, args[1].clone());
     i.obarray.symbol_mut(newv).special = true;
     i.obarray.symbol_mut(base).special = true;
+    i.obarray.symbol_mut(newv).constant = i.obarray.symbol(base).constant;
     // GNU stores docstring unconditionally — nil ERASES an old one.
     let vd = i.intern("variable-documentation");
     let doc = args.get(2).cloned().unwrap_or(Value::Nil);

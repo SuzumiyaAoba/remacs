@@ -107,6 +107,17 @@ use the existing character proxies rather than U+FFFD. Return the original
 fixnum, including when its encoded character differs. `qa_write_char`
 checks string/buffer/marker/function destinations and validation ordering.
 
+Variable protection uses a committed GNU forwarding snapshot
+(`src/lisp/forwarded_variables.txt`, regenerate with
+`tools/gen_forwarded_variables.py --emacs GNU31_BINARY`). `G` entries
+use non-buffer forwarding; `B` entries are C buffer slots. Apply flags only
+to existing bound symbols after boot, without relying on DOC availability.
+C globals become localized when made buffer-local; C buffer slots stay
+forwarded. Both remain C-backed and cannot be unbound or made aliases.
+Constants and aliases to constants reject buffer-local creation before
+changing state. `qa_variable_protection` covers protection, alias-local
+access, validation order, and failure atomicity.
+
 ## Startup profiling (`REMACS_BOOT_PROF=1`)
 
 Before full eager source expansion, warm release `--batch` startup
