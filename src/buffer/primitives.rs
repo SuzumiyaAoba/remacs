@@ -10611,7 +10611,7 @@ fn f_replace_match(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let mut rep = expand_replacement(i, &newtext, literal, &md, &src)?;
         if !fixedcase {
             let old: String = src[s.min(src.len())..e.min(src.len())].iter().collect();
-            rep = match_case(&old, &rep);
+            rep = match_case(i, &old, &rep);
         }
         let mut out: String = src[..s.min(src.len())].iter().collect();
         out.push_str(&rep);
@@ -10665,13 +10665,13 @@ fn f_replace_match(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let bb = b.borrow_mut();
     let old = bb.text.substring(start, end.min(bb.text.len()));
     let src: Vec<char> = bb.text.substring(bb.begv, bb.text.len()).chars().collect();
+    let tlen = bb.text.len();
+    drop(bb);
     let mut rep = expand_replacement(i, &newtext, literal, &md, &src)?;
     if !fixedcase {
-        rep = match_case(&old, &rep);
+        rep = match_case(i, &old, &rep);
     }
-    let tlen = bb.text.len();
     let rep_len = rep.chars().count();
-    drop(bb);
     // GNU `replace_range': a single change pair, not delete+insert.
     chg_replace(i, start, end.min(tlen), &rep)?;
     cur(i).borrow_mut().set_point(start + rep_len);
@@ -10730,32 +10730,62 @@ fn f_match_substitute_replacement(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
             md.regs.get(1).copied().flatten(),
         ) {
             let old: String = src[s.min(src.len())..e.min(src.len())].iter().collect();
-            rep = match_case(&old, &rep);
+            rep = match_case(i, &old, &rep);
         }
     }
     Ok(Value::string(rep))
 }
 
-/// Case-matching for `replace-match`: if OLD is all-caps/capitalized,
-/// apply the same to NEW.
-pub(crate) fn match_case(old: &str, new: &str) -> String {
-    let letters: Vec<char> = old.chars().filter(|c| c.is_alphabetic()).collect();
-    if letters.is_empty() {
-        return new.to_string();
-    }
-    let all_upper = letters.iter().all(|c| c.is_uppercase());
-    let first_upper = letters[0].is_uppercase() && letters[1..].iter().all(|c| c.is_lowercase());
-    if all_upper && letters.len() > 1 {
-        return new.to_uppercase();
-    }
-    if first_upper {
-        let mut cs = new.chars();
-        match cs.next() {
-            Some(c) => return c.to_uppercase().collect::<String>() + cs.as_str(),
-            None => return new.to_string(),
+/// GNU Freplace_match case_action: inspect word initials using the current
+/// syntax and case tables, then apply upcase or upcase-initials to NEW.
+pub(crate) fn match_case(i: &mut Interp, old: &str, new: &str) -> String {
+    use crate::lisp::builtins::strfn::{CaseOp, case_extra, case_str, ct_case};
+
+    let syntax = crate::editor::syntax_table_entries(i);
+    let down = i.current_case_table();
+    let up = case_extra(&down, 0).unwrap_or_else(|| down.clone());
+    let symbols_as_words = i
+        .intern_soft("case-symbols-as-words")
+        .is_some_and(|id| i.symbol_value(id).truthy());
+    let mut previous = '\n';
+    let (mut multi, mut lower, mut nonuppercase_initial, mut upper) =
+        (false, false, false, false);
+    for ch in old.chars() {
+        let code = crate::lisp::value::lisp_char_code(ch) as u32;
+        let uppercase = ct_case(i, &down, code) != code;
+        let lowercase = !uppercase && ct_case(i, &up, code) != code;
+        let prev_syntax = crate::editor::syntax_entry_code(syntax.as_ref(), previous);
+        let inside_word = prev_syntax == b'w' || (symbols_as_words && prev_syntax == b'_');
+        if lowercase {
+            lower = true;
+            if inside_word {
+                multi = true;
+            } else {
+                nonuppercase_initial = true;
+            }
+        } else if uppercase {
+            upper = true;
+            multi |= inside_word;
+        } else if !inside_word {
+            nonuppercase_initial = true;
         }
+        previous = ch;
     }
-    new.to_string()
+    let op = if !lower && multi {
+        CaseOp::Up
+    } else if !nonuppercase_initial && multi {
+        CaseOp::CapUp
+    } else if !nonuppercase_initial && upper {
+        CaseOp::Up
+    } else {
+        return new.to_string();
+    };
+    let title = if op == CaseOp::CapUp {
+        crate::lisp::builtins::charset::unicode_prop_table(i, "titlecase")
+    } else {
+        Value::Nil
+    };
+    case_str(i, new, op, &down, &up, &title)
 }
 
 fn f_regexp_quote(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

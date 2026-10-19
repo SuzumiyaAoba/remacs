@@ -2321,7 +2321,7 @@ fn f_replace_regexp_in_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
             let old: String = str_chars[gs.min(str_chars.len())..ge.min(str_chars.len())]
                 .iter()
                 .collect();
-            rep_piece = crate::buffer::primitives::match_case(&old, &rep_piece);
+            rep_piece = crate::buffer::primitives::match_case(i, &old, &rep_piece);
         }
         let mut piece: String = str_chars[..gs.min(str_chars.len())].iter().collect();
         piece.push_str(&rep_piece);

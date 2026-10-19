@@ -820,7 +820,7 @@ pub(crate) fn case_extra(ct: &Value, slot: usize) -> Option<Value> {
 }
 
 /// `CHAR_TABLE_REF' casing map: Int result -> that char, else unchanged.
-fn ct_case(i: &Interp, table: &Value, c: u32) -> u32 {
+pub(crate) fn ct_case(i: &Interp, table: &Value, c: u32) -> u32 {
     match crate::lisp::builtins::misc::char_table_ref(i, table, c as usize) {
         Value::Int(n) if (0..=0x3f_ffff).contains(&n) => n as u32,
         _ => c,
@@ -920,7 +920,13 @@ pub(crate) fn case_str(
 ) -> String {
     let chars: Vec<char> = src.chars().collect();
     let syn = crate::editor::syntax_table_entries(i);
-    let wordp = |c: char| crate::editor::syntax_entry_code(syn.as_ref(), c) == b'w';
+    let symbols_as_words = i
+        .intern_soft("case-symbols-as-words")
+        .is_some_and(|id| i.symbol_value(id).truthy());
+    let wordp = |c: char| {
+        let syntax = crate::editor::syntax_entry_code(syn.as_ref(), c);
+        syntax == b'w' || (symbols_as_words && syntax == b'_')
+    };
     let mut out = String::new();
     let mut in_word = false;
     for (idx, &c) in chars.iter().enumerate() {

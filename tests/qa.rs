@@ -280,6 +280,7 @@ qa!(qa_rect, "qa_rect.el");
 qa!(qa_regex, "qa_regex.el");
 qa!(qa_regexpopt, "qa_regexpopt.el");
 qa!(qa_replace, "qa_replace.el");
+qa!(qa_replace_case, "qa_replace_case.el");
 qa!(qa_ring, "qa_ring.el");
 qa!(qa_rx, "qa_rx.el");
 qa!(qa_search, "qa_search.el");
