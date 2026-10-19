@@ -706,6 +706,11 @@ qa-xf back to qa and watch it go XPASS→pass):
   Comparisons are exact (no f64 coercion): `<`/`=`/`/=`/`min`/`max`
   over ≥2^61 values and `random' (BSD TYPE_3 + GNU string seeding)
   all match GNU bit-for-bit; qa_numbers/qa_miscfn clean.
+  Hash dispatch uses the inclusive signed fixnum range: the minimum
+  fixnum must not enter the bignum hash path via an absolute-value
+  comparison. `qa_sxhash_boundaries` pins numeric/content hashes and
+  identity-hash invariants; address-derived hashes can vary across GNU
+  sessions and backends and must not be pinned to one process's values.
 - `json`: `json-serialize' returns unibyte UTF-8, plist input forms
   objects, lone-surrogate `concat` crash skipped.  `json-value-p'
   does not exist in GNU 31.1 either (stale ledger note).  Remaining:

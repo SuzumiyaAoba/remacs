@@ -153,6 +153,7 @@ qa!(qa_format_conversions, "qa_format_conversions.el");
 qa!(qa_globdir, "qa_globdir.el");
 qa!(qa_gv, "qa_gv.el");
 qa!(qa_hash, "qa_hash.el");
+qa!(qa_sxhash_boundaries, "qa_sxhash_boundaries.el");
 qa!(qa_hash_float_identity, "qa_hash_float_identity.el");
 qa!(qa_hash_markers, "qa_hash_markers.el");
 qa!(qa_hash_custom, "qa_hash_custom.el");

@@ -2066,8 +2066,8 @@ fn f_string_glyph_split(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 const SXHASH_MAX_DEPTH: usize = 3;
 const SXHASH_MAX_LEN: usize = 7;
 
-// GNU fixnum range: EMACS_INT_MAX >> INTTYPEBITS (2^61 - 1). Wider
-// ints are GNU bignums and hash via sxhash_bignum, not XUFIXNUM.
+// GNU fixnums span -2^61 .. 2^61-1. Wider integers hash as bignums.
+const SXHASH_FIXNUM_MIN: i128 = -(1i128 << 61);
 const SXHASH_FIXNUM_MAX: i128 = (1i128 << 61) - 1;
 
 // Pseudovector header bits from GNU lisp.h, folded into ASIZE when
@@ -4078,7 +4078,7 @@ fn sxhash_obj(i: &Interp, v: &Value, depth: usize) -> u64 {
         // two's-complement representation.  Beyond the fixnum range
         // these are GNU bignums, hashed per sxhash_bignum.
         Value::Int(n) => {
-            if n.unsigned_abs() <= SXHASH_FIXNUM_MAX as u128 {
+            if (SXHASH_FIXNUM_MIN..=SXHASH_FIXNUM_MAX).contains(n) {
                 (*n as u64) & 0x3fff_ffff_ffff_ffff
             } else {
                 sxhash_bignum(*n)
@@ -4246,7 +4246,9 @@ fn f_sxhash_eql(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let h = match &args[0] {
         // FLOATP or BIGNUMP → sxhash, else sxhash_eq.
         Value::Float(_) => sxhash_obj(i, &args[0], 0),
-        Value::Int(n) if n.unsigned_abs() > SXHASH_FIXNUM_MAX as u128 => sxhash_obj(i, &args[0], 0),
+        Value::Int(n) if !(SXHASH_FIXNUM_MIN..=SXHASH_FIXNUM_MAX).contains(n) => {
+            sxhash_obj(i, &args[0], 0)
+        }
         _ => sxhash_eq(i, &args[0]),
     };
     Ok(Value::Int(sxhash_reduce(h)))
