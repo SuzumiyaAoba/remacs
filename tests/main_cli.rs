@@ -62,6 +62,38 @@ fn quick_start_symbol_metadata_matches_gnu() {
 }
 
 #[test]
+fn boot_menu_properties_keep_functions_and_runtime_closures_trim_context() {
+    let expression = r#"(let ((cua-mode nil) (mark-active nil))
+      (prin1 (list
+        (mapcar (lambda (name)
+          (let* ((item (cdr (assq name (cdr menu-bar-edit-menu))))
+                 (keys (plist-get (nthcdr 3 item) :keys))
+                 (wanted (cond ((eq name 'cut) "\\[kill-region]")
+                               ((eq name 'paste) "\\[yank]")
+                               ((featurep 'ns) "\\[ns-copy-including-secondary]")
+                               (t "\\[kill-ring-save]"))))
+            (list (functionp keys) (and keys (equal (funcall keys) wanted)))))
+          '(cut copy paste))
+        (let* ((item (cdr (assq 'paste (cdr menu-bar-edit-menu))))
+               (enable (plist-get (nthcdr 3 item) :enable)))
+          (functionp (cadr (cadr enable))))
+        (eval '(let ((unused-menu (make-sparse-keymap "E")))
+                 (aref (lambda () "k") 2)) t))))"#;
+    let expected = "(((t t) (t t) (t t)) t (t))";
+    if let Some(gnu) = std::env::var_os("GNU_EMACS") {
+        let output = Command::new(gnu)
+            .args(["-Q", "--batch", "--eval", expression])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+    }
+    let (output, errors, status) = remacs(&["-Q", "--batch", "--eval", expression], "");
+    assert_eq!(status, 0, "{errors}");
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn remote_identification_autoloads_tramp_on_first_call() {
     // No source/framework is loaded before the first file-remote-p call.
     let expression = "(prin1 (list (featurep 'tramp) \

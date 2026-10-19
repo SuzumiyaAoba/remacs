@@ -8,6 +8,7 @@ pub(crate) static EMBEDDED_ELC: &[(&str, &str)] = &[
     ("env", include_str!("../../lisp-elc/env.elc")),
     ("jka-cmpr-hook", include_str!("../../lisp-elc/jka-cmpr-hook.elc")),
     ("tabulated-list", include_str!("../../lisp-elc/tabulated-list.elc")),
+    ("menu-bar", include_str!("../../lisp-elc/menu-bar.elc")),
     ("tool-bar", include_str!("../../lisp-elc/tool-bar.elc")),
     ("widget", include_str!("../../lisp-elc/widget.elc")),
     ("version", include_str!("../../lisp-elc/version.elc")),

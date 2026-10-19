@@ -1570,7 +1570,7 @@ impl FileEmitter {
                 if let (Some(Value::Sym(id)), Some(env)) = (parts.get(1), &i.lexenv) {
                     // A compile-time declaration does not initialize the
                     // variable or mark it globally special.
-                    env.declared.borrow_mut().push(*id);
+                    crate::lisp::eval::lexenv_declare(&Some(env.clone()), *id);
                 }
             }
             _ => {}

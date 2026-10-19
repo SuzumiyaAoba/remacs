@@ -128,7 +128,7 @@ impl Interp {
     /// Eval entry points install a `(t)' root env so file-toplevel
     /// definitions capture a real (empty) lexical scope.
     pub fn lambda_env(&self) -> crate::lisp::eval::LexEnv {
-        self.lexenv.clone()
+        crate::lisp::eval::lexenv_from_value(&crate::lisp::eval::lexenv_as_value(&self.lexenv))
     }
 
     /// `let`/`let*`/`condition-case` variable binding honoring scoping:
@@ -175,25 +175,6 @@ fn sf_quote(i: &mut Interp, args: Value) -> EvalResult {
     Ok(car(&args))
 }
 
-/// GNU Ffunction hands a `(lambda ARGLIST ...)' ARGLIST to
-/// `internal-make-interpreted-closure-function' (cconv's
-/// `(cl-assert (listp args))') in a lexical env, else to
-/// Fmake_interpreted_closure's CHECK_LIST.
-fn check_closure_arglist(i: &mut Interp, arglist: &Value) -> Result<(), Flow> {
-    if matches!(arglist, Value::Cons(_) | Value::Nil) {
-        return Ok(());
-    }
-    let mkc = i.intern("internal-make-interpreted-closure-function");
-    if i.lexenv.is_some() && i.symbol_value(mkc).truthy() {
-        let assert_id = i.intern("cl-assertion-failed");
-        let listp_id = i.intern("listp");
-        let args_id = i.intern("args");
-        let form = Value::list(vec![Value::Sym(listp_id), Value::Sym(args_id)]);
-        return Err(i.signal_data(assert_id, vec![form]));
-    }
-    Err(i.wrong_type_mut("listp", arglist))
-}
-
 fn sf_function(i: &mut Interp, args: Value) -> EvalResult {
     // GNU Ffunction: `wrong-number-of-arguments' on >1 operand —
     // reported count is Flength of the UNEVALLED arg list.
@@ -206,9 +187,7 @@ fn sf_function(i: &mut Interp, args: Value) -> EvalResult {
         Value::Cons(_) => {
             let head = car(&arg);
             if i.sym_is(&head, sym::LAMBDA) {
-                check_closure_arglist(i, &car(&cdr(&arg)))?;
-                let lambda = i.lambda_from_form(&arg, None)?;
-                return Ok(Value::Lambda(Rc::new(lambda)));
+                return i.function_from_lambda(&cdr(&arg));
             }
             Ok(arg)
         }
@@ -398,12 +377,7 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
         evaluated.push((var.clone(), eval_let_init(i, init)?));
     }
     if i.lexical_binding_active() {
-        let frame = Rc::new(LexFrame {
-            vars: RefCell::new(Vec::new()),
-            declared: RefCell::new(Vec::new()),
-            raw: None,
-            parent: i.lexenv.clone(),
-        });
+        let frame = crate::lisp::eval::lexenv_extend(&i.lexenv);
         let mark = i.specbind_depth();
         let mut r = Ok(Value::Nil);
         for (v, val) in evaluated {
@@ -460,12 +434,7 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
     let specs = parse_let_specs(i, &car(&args))?;
     let body = cdr(&args);
     if i.lexical_binding_active() {
-        let frame = Rc::new(LexFrame {
-            vars: RefCell::new(Vec::new()),
-            declared: RefCell::new(Vec::new()),
-            raw: None,
-            parent: i.lexenv.clone(),
-        });
+        let frame = crate::lisp::eval::lexenv_extend(&i.lexenv);
         let mark = i.specbind_depth();
         let saved = std::mem::replace(&mut i.lexenv, Some(frame.clone()));
         let mut r = Ok(Value::Nil);
@@ -716,7 +685,17 @@ fn sf_defun(i: &mut Interp, args: Value) -> EvalResult {
     // defun never captures a lexical env from the definition site in the
     // dynamic model; under lexical-binding it captures the file env.
     lambda.env = i.lambda_env();
-    i.fset_defalias(sid, Value::Lambda(Rc::new(lambda)))?;
+    let function = if i.boot_loading {
+        Value::Lambda(Rc::new(lambda))
+    } else {
+        i.function_from_parts(
+            params.clone(),
+            Value::list(lambda.body),
+            lambda.doc_value.unwrap_or(Value::Nil),
+            lambda.interactive.unwrap_or(Value::Nil),
+        )?
+    };
+    i.fset_defalias(sid, function)?;
     eval_defun_declarations(i, &name_v, &params, &body, false)?;
     // GNU `defun' reaches `defalias' (eval.c), which
     // LOADHIST_ATTACHes `(defun . SYM)'.
@@ -743,7 +722,18 @@ fn sf_defmacro(i: &mut Interp, args: Value) -> EvalResult {
     let mut lambda = i.parse_lambda(&params, &body, Some(sid))?;
     lambda.is_macro = true;
     lambda.env = i.lambda_env();
-    i.fset_defalias(sid, Value::Lambda(Rc::new(lambda)))?;
+    let function = if i.boot_loading {
+        Value::Lambda(Rc::new(lambda))
+    } else {
+        let function = i.function_from_parts(
+            params.clone(),
+            Value::list(lambda.body),
+            lambda.doc_value.unwrap_or(Value::Nil),
+            lambda.interactive.unwrap_or(Value::Nil),
+        )?;
+        Value::cons(Value::Sym(sym::MACRO), function)
+    };
+    i.fset_defalias(sid, function)?;
     eval_defun_declarations(i, &name_v, &params, &body, true)?;
     // GNU `defmacro' reaches `defalias' the same way.
     let defun_id = i.intern("defun");
@@ -752,15 +742,7 @@ fn sf_defmacro(i: &mut Interp, args: Value) -> EvalResult {
 }
 
 fn sf_lambda(i: &mut Interp, args: Value) -> EvalResult {
-    // `(lambda ...)' self-evaluates to a function object; under
-    // lexical-binding it closes over the current lexical env.
-    let params = car(&args);
-    check_closure_arglist(i, &params)?;
-    let body_v = cdr(&args);
-    let body = body_v.list_to_vec().unwrap_or_default();
-    let mut lambda = i.parse_lambda(&params, &body, None)?;
-    lambda.env = i.lambda_env();
-    Ok(Value::Lambda(Rc::new(lambda)))
+    i.function_from_lambda(&args)
 }
 
 /// GNU `macroexp--defun-declarations': each `(declare (PROP . ARGS))'
@@ -1027,12 +1009,7 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                         let hbody = cdr(&handler);
                         let mark = i.specbind_depth();
                         let lex_frame = if i.lexical_binding_active() {
-                            Some(Rc::new(LexFrame {
-                                vars: RefCell::new(Vec::new()),
-                                declared: RefCell::new(Vec::new()),
-                                raw: None,
-                                parent: i.lexenv.clone(),
-                            }))
+                            Some(crate::lisp::eval::lexenv_extend(&i.lexenv))
                         } else {
                             None
                         };
@@ -1085,12 +1062,7 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                             let hbody = cdr(&handler);
                             let mark = i.specbind_depth();
                             let lex_frame = if i.lexical_binding_active() {
-                                Some(Rc::new(LexFrame {
-                                    vars: RefCell::new(Vec::new()),
-                                    declared: RefCell::new(Vec::new()),
-                                    raw: None,
-                                    parent: i.lexenv.clone(),
-                                }))
+                                Some(crate::lisp::eval::lexenv_extend(&i.lexenv))
                             } else {
                                 None
                             };

@@ -26,67 +26,38 @@ struct SpecBind {
     old: Option<Value>,
 }
 
-/// A lexical environment frame (chained).
-///
-/// Bindings are stored in a `Vec`, not a `HashMap`: `let' frames and
-/// lambda calls typically bind a handful of variables, so a linear
-/// scan beats hashing and we skip two allocations per frame.  The
-/// vector's order doubles as GNU's `internal-interpreter-environment'
-/// order — `lexenv_as_value' walks it in reverse (newest first).
+/// A lexical environment head. Its alist spine is persistent while each
+/// `(symbol . value)' cell is shared. Capturing the head preserves lexical
+/// scope and lets closure optimization retain the original mutable cells.
 pub struct LexFrame {
-    /// `(sym . value)' pairs in binding order (oldest first).
-    pub vars: RefCell<Vec<(SymId, Value)>>,
-    /// Scoped `defvar' declarations — GNU's bare-symbol elements of
-    /// `internal-interpreter-environment': a name listed here is bound
-    /// dynamically by `let'/`let*' for the rest of this scope's extent,
-    /// then the declaration unwinds with the frame.
+    pub raw: RefCell<Value>,
+    /// File-load bookkeeping for scoped bare defvar declarations.
     pub declared: RefCell<Vec<SymId>>,
-    /// A caller-supplied Lisp environment, kept as the original alist.
-    /// This is a leaf frame: preserving its cells gives `eval' GNU's
-    /// first-match lookup, shared `setq' updates and lazy list validation.
-    pub raw: Option<Value>,
-    pub parent: Option<Rc<LexFrame>>,
 }
 
-/// Record a binding in a lexical frame, tracking GNU's env order.
-/// A re-bind keeps the name's original position (GNU's `assq' hits the
-/// first env entry, same observable order).
-pub fn lexframe_bind(frame: &LexFrame, sym: SymId, val: Value) {
-    let mut vars = frame.vars.borrow_mut();
-    if let Some(e) = vars.iter_mut().find(|(s, _)| *s == sym) {
-        e.1 = val;
+pub fn lexframe_bind(frame: &LexFrame, sym: SymId, value: Value) {
+    let symbol = if sym == sym::NIL {
+        Value::Nil
     } else {
-        vars.push((sym, val));
-    }
+        Value::Sym(sym)
+    };
+    let binding = Value::cons(symbol, value);
+    let tail = frame.raw.borrow().clone();
+    *frame.raw.borrow_mut() = Value::cons(binding, tail);
 }
 
-/// GNU's `internal-interpreter-environment' as a Lisp value: a flat
-/// alist of `(sym . val)' conses, innermost bindings first (specbind
-/// prepends).  Bare `defvar' markers appear as bare symbols.  An
-/// entirely empty chain prints as `(t)' — our root-env convention.
+/// The actual GNU interpreter environment, including shared binding cells.
 pub fn lexenv_as_value(env: &LexEnv) -> Value {
-    let mut items: Vec<Value> = Vec::new();
-    let mut cur = env;
-    while let Some(frame) = cur {
-        for s in frame.declared.borrow().iter() {
-            items.push(Value::Sym(*s));
-        }
-        for (s, v) in frame.vars.borrow().iter().rev() {
-            items.push(Value::cons(Value::Sym(*s), v.clone()));
-        }
-        if let Some(raw) = &frame.raw {
-            return items
-                .into_iter()
-                .rev()
-                .fold(raw.clone(), |tail, item| Value::cons(item, tail));
-        }
-        cur = &frame.parent;
-    }
-    if items.is_empty() {
-        Value::list(vec![Value::Sym(crate::lisp::obarray::sym::T)])
-    } else {
-        Value::list(items)
-    }
+    env.as_ref()
+        .map(|frame| frame.raw.borrow().clone())
+        .unwrap_or(Value::Nil)
+}
+
+pub fn lexenv_extend(parent: &LexEnv) -> Rc<LexFrame> {
+    Rc::new(LexFrame {
+        raw: RefCell::new(lexenv_as_value(parent)),
+        declared: RefCell::new(Vec::new()),
+    })
 }
 
 pub type LexEnv = Option<Rc<LexFrame>>;
@@ -180,57 +151,38 @@ fn lexenv_assq(raw: &Value, sym: SymId) -> Result<Option<super::value::ConsRef>,
 }
 
 pub(crate) fn lexenv_lookup_checked(
-    mut env: &LexEnv,
+    env: &LexEnv,
     sym: SymId,
 ) -> Result<Option<Value>, LexEnvError> {
-    let original = env;
-    while let Some(frame) = env {
-        if let Some((_, v)) = frame.vars.borrow().iter().find(|(s, _)| *s == sym) {
-            return Ok(Some(v.clone()));
-        }
-        if let Some(raw) = &frame.raw {
-            if let Some(c) = lexenv_assq(raw, sym).map_err(|e| e.in_env(original))? {
-                return Ok(Some(c.borrow().cdr.clone()));
-            }
-        }
-        env = &frame.parent;
-    }
-    Ok(None)
+    let Some(frame) = env else { return Ok(None) };
+    let raw = frame.raw.borrow().clone();
+    Ok(lexenv_assq(&raw, sym)
+        .map_err(|e| e.in_env(env))?
+        .map(|cell| cell.borrow().cdr.clone()))
 }
 
 pub fn lexenv_lookup(env: &LexEnv, sym: SymId) -> Option<Value> {
     lexenv_lookup_checked(env, sym).ok().flatten()
 }
 
-pub(crate) fn lexenv_set(mut env: &LexEnv, sym: SymId, value: Value) -> Result<bool, LexEnvError> {
-    let original = env;
-    while let Some(frame) = env {
-        if let Some((_, v)) = frame.vars.borrow_mut().iter_mut().find(|(s, _)| *s == sym) {
-            *v = value;
-            return Ok(true);
-        }
-        if let Some(raw) = &frame.raw {
-            if let Some(c) = lexenv_assq(raw, sym).map_err(|e| e.in_env(original))? {
-                c.borrow_mut().cdr = value;
-                return Ok(true);
-            }
-        }
-        env = &frame.parent;
+pub(crate) fn lexenv_set(env: &LexEnv, sym: SymId, value: Value) -> Result<bool, LexEnvError> {
+    let Some(frame) = env else { return Ok(false) };
+    let raw = frame.raw.borrow().clone();
+    if let Some(cell) = lexenv_assq(&raw, sym).map_err(|e| e.in_env(env))? {
+        cell.borrow_mut().cdr = value;
+        return Ok(true);
     }
     Ok(false)
 }
 
-/// Keep explicit environments flat and shared; values may themselves be
-/// arbitrary lists, and duplicate keys are resolved by first-match lookup.
+/// Keep explicit environments flat and shared, with first-match lookup.
 pub(crate) fn lexenv_from_value(value: &Value) -> LexEnv {
     if value.is_nil() {
         None
     } else {
         Some(Rc::new(LexFrame {
-            vars: RefCell::new(Vec::new()),
+            raw: RefCell::new(value.clone()),
             declared: RefCell::new(Vec::new()),
-            raw: Some(value.clone()),
-            parent: None,
         }))
     }
 }
@@ -258,48 +210,36 @@ pub(crate) fn cons_ptr(v: &Value) -> *const RefCell<Cons> {
 /// is declared dynamically scoped by a bare `defvar' anywhere in ENV.
 /// Scoped declarations only affect binding decisions — lookups go
 /// through `lexenv_lookup'/the dynamic cell like GNU's `assq'.
-pub(crate) fn lexenv_declared(mut env: &LexEnv, sym: SymId) -> Result<bool, LexEnvError> {
-    let original = env;
-    while let Some(frame) = env {
-        if frame.declared.borrow().contains(&sym) {
-            return Ok(true);
-        }
-        if let Some(raw) = &frame.raw {
-            let key = if sym == sym::NIL {
-                Value::Nil
-            } else {
-                Value::Sym(sym)
-            };
-            if lexenv_find(raw, |v| super::builtins::eq_values(v, &key))
-                .map_err(|e| e.in_env(original))?
-                .is_some() {
-                return Ok(true);
-            }
-        }
-        env = &frame.parent;
-    }
-    Ok(false)
+pub(crate) fn lexenv_declared(env: &LexEnv, sym: SymId) -> Result<bool, LexEnvError> {
+    let Some(frame) = env else { return Ok(false) };
+    let key = if sym == sym::NIL {
+        Value::Nil
+    } else {
+        Value::Sym(sym)
+    };
+    let raw = frame.raw.borrow().clone();
+    Ok(
+        lexenv_find(&raw, |value| super::builtins::eq_values(value, &key))
+            .map_err(|e| e.in_env(env))?
+            .is_some(),
+    )
 }
 
-/// Record a scoped `defvar' declaration in the innermost frame of ENV
-/// (GNU pushes the bare symbol onto `internal-interpreter-environment').
 pub fn lexenv_declare(env: &LexEnv, sym: SymId) {
     if let Some(frame) = env {
-        let mut d = frame.declared.borrow_mut();
-        if !d.contains(&sym) {
-            d.push(sym);
-        }
+        frame.declared.borrow_mut().push(sym);
+        let symbol = if sym == sym::NIL {
+            Value::Nil
+        } else {
+            Value::Sym(sym)
+        };
+        let tail = frame.raw.borrow().clone();
+        *frame.raw.borrow_mut() = Value::cons(symbol, tail);
     }
 }
 
-/// A fresh empty lexical root — GNU's `(t)' sentinel environment.
 pub fn lexenv_root() -> LexEnv {
-    Some(Rc::new(LexFrame {
-        vars: RefCell::new(Vec::new()),
-        declared: RefCell::new(Vec::new()),
-        raw: None,
-        parent: None,
-    }))
+    lexenv_from_value(&Value::list(vec![Value::Sym(sym::T)]))
 }
 
 /// Where output from `princ`/`print`/`message` goes. The editor installs a
@@ -2954,6 +2894,9 @@ impl Interp {
             // tool-bar.el is in GNU's dump on window-system builds
             // (loadup.el): same reasoning — the feature mark alone
             // would make `require' skip the definitions.
+            // GNU menu-bar.el owns its constructors. The serialized prelude
+            // Edit snapshot dropped function-valued properties to nil.
+            let _ = boot_lib(&mut interp, "menu-bar");
             let _ = boot_lib(&mut interp, "tool-bar");
             // widget.el is dumped too (loadup.el loads "widget" for
             // `define-widget' & co. used by cus-edit and friends).
@@ -4821,6 +4764,11 @@ command-line arguments.\" \
         // and the helper defuns to Rust subrs after every library load,
         // so prelude/Lisp redefinitions can't re-expose the cells.
         crate::lisp::builtins::backquote::install_macros(&mut interp);
+        // GNU loadup installs the optimizer only after cconv and the other
+        // dumped libraries are ready. Earlier bootstrap closures stay raw.
+        let constructor = interp.intern("internal-make-interpreted-closure-function");
+        let optimizer = interp.intern("cconv-make-interpreted-closure");
+        let _ = interp.set_symbol(constructor, Value::Sym(optimizer));
         if std::env::var("REMACS_NO_PRELUDE").is_err() {
             // A compatibility wrapper, not user advice: dumped macro
             // expansion intentionally strips advice from called helpers.
@@ -6329,16 +6277,8 @@ command-line arguments.\" \
             if *s == sym::UNBOUND {
                 if self.dbg_flags & 0x10 != 0 {
                     let name = self.obarray.symbol(id).name.clone();
-                    let mut depth = 0;
-                    let mut env = &self.lexenv;
-                    let mut found = false;
-                    while let Some(f) = env {
-                        depth += 1;
-                        if f.vars.borrow().iter().any(|(s, _)| *s == id) {
-                            found = true;
-                        }
-                        env = &f.parent;
-                    }
+                    let depth = usize::from(self.lexenv.is_some());
+                    let found = lexenv_lookup(&self.lexenv, id).is_some();
                     eprintln!(
                         "DBG void-var {} special={} lexdepth={} lexhas={} specbinds={} case_handlers={}",
                         name,
@@ -7843,12 +7783,7 @@ command-line arguments.\" \
             // `(param . arg)' pair onto the closure env — `defvar'd
             // specials, scoped-declared names, even nil/t — since
             // `internal-interpreter-environment' is not consulted here.
-            let frame = Rc::new(LexFrame {
-                vars: RefCell::new(Vec::new()),
-                declared: RefCell::new(Vec::new()),
-                raw: None,
-                parent: l.env.clone(),
-            });
+            let frame = lexenv_extend(&l.env);
             let saved = std::mem::replace(&mut self.lexenv, Some(frame.clone()));
             let bind_result = self.bind_lambda_walk(&arglist, &argv, &fun, |_i, s, v| {
                 lexframe_bind(&frame, s, v);
@@ -8252,170 +8187,88 @@ command-line arguments.\" \
         self.parse_lambda(&items[1], &items[2..], name)
     }
 
-    /// Convert the cdr of a `(lambda CDR...)' form into a `Lambda`,
-    /// mirroring GNU's `Ffunction'/`Fmake_interpreted_closure':
-    ///
-    /// - ARGLIST is `Fcar (cdr)' — a non-cons non-nil atom signals
-    ///   `wrong-type-argument (listp ATOM)' (`(lambda a)' under
-    ///   dynamic eval, `(function (lambda . 5))' alike).
-    /// - A leading string is a docstring only when more forms follow
-    ///   (else it's the sole body form); `(:documentation FORM)' is
-    ///   evaluated at closure-construction time like GNU.
-    /// - `(interactive ...)' — any cons starting `interactive' — is the
-    ///   interactive spec; `(interactive . X)' signals listp X via
-    ///   GNU's `CHECK_LIST (iform)'.
-    /// - An empty body normalizes to `(nil)' ("make sure the body is
-    ///   never empty").
-    /// - With a lexical env GNU routes through `internal-make-closure'
-    ///   (cconv.el): `cl-assert (consp body)' then `(listp args)',
-    ///   yielding `cl-assertion-failed' errors; the dynamic
-    ///   `Fmake_interpreted_closure' signals `wta consp'/`listp' on the
-    ///   same operands.
-    pub fn lambda_from_function_form(&mut self, cdr: &Value) -> Result<Lambda, Flow> {
-        // `cdr' is FCDR of the `(lambda ...)' form — the spine check in
-        // eval_form already ensured it's a proper list or atom.
-        let arglist = match cdr {
-            Value::Nil => Value::Nil,
-            Value::Cons(c) => c.borrow().car.clone(),
-            // GNU `Fcar' on an atom signals listp ATOM (the `5' of
-            // `(lambda . 5)').
+    /// GNU Ffunction's lambda constructor protocol. Keep the raw parts
+    /// intact for a user-supplied constructor; its result need not itself
+    /// be a function. Native validation belongs to the fallback constructor.
+    pub fn function_from_lambda(&mut self, cdr: &Value) -> EvalResult {
+        let (args, mut body) = match cdr {
+            Value::Nil => (Value::Nil, Value::Nil),
+            Value::Cons(cell) => {
+                let cell = cell.borrow();
+                (cell.car.clone(), cell.cdr.clone())
+            }
             other => return Err(self.wrong_type_mut("listp", other)),
-        };
-        let mut body = match cdr {
-            Value::Nil | Value::Cons(_) => match cdr {
-                Value::Nil => Value::Nil,
-                Value::Cons(c) => c.borrow().cdr.clone(),
-                _ => unreachable!(),
-            },
-            _ => Value::Nil,
         };
         let mut docstring = Value::Nil;
         let mut iform = Value::Nil;
-        // GNU: a leading string is the docstring iff a body follows.
-        if let Value::Cons(c) = &body {
+        if let Value::Cons(cell) = &body {
             let (first, rest) = {
-                let b = c.borrow();
-                (b.car.clone(), b.cdr.clone())
+                let cell = cell.borrow();
+                (cell.car.clone(), cell.cdr.clone())
             };
-            match &first {
-                Value::Str(s) => {
-                    if !rest.is_nil() {
-                        docstring = first.clone();
-                        body = rest;
-                    } else {
-                        let _ = s;
-                    }
-                }
-                Value::Cons(cc) => {
-                    // `(:documentation FORM)': evaluate FORM now; nil or
-                    // a non-consp cdr means it isn't a docstring at all.
-                    let is_doc = {
-                        let b = cc.borrow();
-                        matches!(&b.car, Value::Sym(s)
-                            if self.symbol_name(*s) == ":documentation")
+            if matches!(first, Value::Str(_)) && !rest.is_nil() {
+                docstring = first;
+                body = rest;
+            } else if let Value::Cons(form) = first {
+                let (head, tail) = {
+                    let form = form.borrow();
+                    (form.car.clone(), form.cdr.clone())
+                };
+                if matches!(head, Value::Sym(sym) if self.symbol_name(sym) == ":documentation") {
+                    let expression = match tail {
+                        Value::Cons(cell) => cell.borrow().car.clone(),
+                        Value::Nil => Value::Nil,
+                        other => return Err(self.wrong_type_mut("listp", &other)),
                     };
-                    if is_doc {
-                        let form = {
-                            let b = cc.borrow();
-                            match &b.cdr {
-                                Value::Cons(a) => a.borrow().car.clone(),
-                                _ => Value::Nil,
-                            }
-                        };
-                        let v = self.eval(&form)?;
-                        if !v.is_nil() {
-                            docstring = v;
-                            body = rest;
-                        }
-                    }
+                    docstring = self.eval(&expression)?;
+                    body = rest;
                 }
-                _ => {}
             }
         }
-        // `(interactive ...)' in the (post-docstring) front slot.
-        if let Value::Cons(c) = &body {
+        if let Value::Cons(cell) = &body {
             let (first, rest) = {
-                let b = c.borrow();
-                (b.car.clone(), b.cdr.clone())
+                let cell = cell.borrow();
+                (cell.car.clone(), cell.cdr.clone())
             };
-            let is_interactive = match &first {
-                Value::Cons(cc) => {
-                    let b = cc.borrow();
-                    self.sym_is(&b.car, sym::INTERACTIVE)
-                }
-                _ => false,
-            };
-            if is_interactive {
-                iform = first.clone();
+            if matches!(&first, Value::Cons(form) if self.sym_is(&form.borrow().car, sym::INTERACTIVE))
+            {
+                iform = first;
                 body = rest;
             }
         }
+        self.function_from_parts(args, body, docstring, iform)
+    }
+
+    pub fn function_from_parts(
+        &mut self,
+        args: Value,
+        mut body: Value,
+        docstring: Value,
+        iform: Value,
+    ) -> EvalResult {
         if body.is_nil() {
             body = Value::list(vec![Value::Nil]);
         }
-        // The make-interpreted-closure checks.  GNU's dynamic path
-        // (Fmake_interpreted_closure) uses CHECK_CONS/CHECK_LIST; the
-        // lexical path goes through `internal-make-closure' whose
-        // `cl-assert's produce `cl-assertion-failed' instead.
-        if self.lexenv.is_some() {
-            if !matches!(body, Value::Cons(_)) {
-                let assert_id = self.intern("cl-assertion-failed");
-                let consp_id = self.intern("consp");
-                let body_id = self.intern("body");
-                return Err(self.signal_data(
-                    assert_id,
-                    vec![Value::list(vec![Value::Sym(consp_id), Value::Sym(body_id)])],
-                ));
-            }
-            let arglist_ok = matches!(arglist, Value::Cons(_) | Value::Nil);
-            if !arglist_ok {
-                let assert_id = self.intern("cl-assertion-failed");
-                let listp_id = self.intern("listp");
-                let args_id = self.intern("args");
-                return Err(self.signal_data(
-                    assert_id,
-                    vec![Value::list(vec![Value::Sym(listp_id), Value::Sym(args_id)])],
-                ));
-            }
+        let constructor_id = self.intern("internal-make-interpreted-closure-function");
+        let constructor = self.symbol_value(constructor_id);
+        let env = lexenv_as_value(&self.lexenv);
+        let arguments = vec![args, body, env.clone(), docstring, iform];
+        let mut value = if !env.is_nil() && constructor.truthy() {
+            self.apply(&constructor, arguments)?
         } else {
-            if !matches!(body, Value::Cons(_)) {
-                return Err(self.wrong_type_mut("consp", &body));
-            }
-            if !matches!(arglist, Value::Cons(_) | Value::Nil) {
-                return Err(self.wrong_type_mut("listp", &arglist));
-            }
-        }
-        // CHECK_LIST (iform): a dotted `(interactive . X)' tails out.
-        let mut tail = iform.clone();
-        while let Value::Cons(c) = &tail {
-            let next = c.borrow().cdr.clone();
-            tail = next;
-        }
-        if !tail.is_nil() {
-            return Err(self.wrong_type_mut("listp", &tail));
-        }
-        let body_vec = match body.list_to_vec() {
-            Ok(v) => v,
-            Err(crate::lisp::value::ListError::Dotted(t)) => {
-                return Err(self.wrong_type_mut("listp", &t));
-            }
-            Err(_) => return Err(self.wrong_type_mut("listp", &body)),
+            crate::lisp::builtins::misc::f_make_interpreted_closure(self, arguments.into())?
         };
-        let mut lambda = self.parse_lambda(&arglist, &body_vec, None)?;
-        lambda.env = self.lambda_env();
-        lambda.doc_value = if docstring.is_nil() {
-            None
-        } else {
-            Some(docstring.clone())
-        };
-        lambda.doc = match &docstring {
-            Value::Str(s) => Some(s.borrow().clone()),
-            _ => lambda.doc.clone(),
-        };
-        if !iform.is_nil() {
-            lambda.interactive = Some(iform);
+        // Keep the port's nativecomp metadata on new closures made by
+        // dumped library code, including constructors reached via cconv.
+        // Never rewrite a shared object returned by a custom constructor.
+        if let Value::Lambda(lambda) = &mut value {
+            if let Some(lambda) = Rc::get_mut(lambda) {
+                lambda.compiled |= self.loading_dumped || self.dumped_call_depth > 0;
+                lambda.dumped_doc |= self.loading_dumped;
+                lambda.plain = self.explicit_eval_depth > 0;
+            }
         }
-        Ok(lambda)
+        Ok(value)
     }
 
     /// Build a `Lambda` from a param list and body forms.
@@ -10766,11 +10619,10 @@ command-line arguments.\" \
             ("print-unreadable-function", Value::Nil),
             ("eval-depth", Value::Int(0)),
             (
-                // GNU's loadup sets this to
-                // `#'cconv-make-interpreted-closure' once cconv is
-                // dumped (lisp/loadup.el:387); mirror that state.
+                // Bootstrap without closure optimization; loadup installs
+                // cconv's constructor after the dumped libraries are ready.
                 "internal-make-interpreted-closure-function",
-                Value::Sym(self.intern("cconv-make-interpreted-closure")),
+                Value::Nil,
             ),
             ("macroexp--debug-eager", Value::Nil),
             ("macroexpand-all-environment", Value::Nil),

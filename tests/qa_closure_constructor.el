@@ -1,0 +1,83 @@
+;;; -*- lexical-binding: nil; -*-
+;; Issue #31: GNU's interpreted-closure constructor and shared environments.
+
+(qa-prin1 (eval '(let ((unused 9)) (lambda () "k")) t) "#[nil (\"k\") (t)]")
+(qa (eval '(let ((needed 7) (unused 9))
+             (aref (lambda () needed) 2)) t) '((needed . 7)))
+(qa (eval '(let ((unused 9)) (aref (lambda () 'unused) 2)) t) '(t))
+(qa (eval '(let ((needed 7) (unused 9))
+             (funcall (lambda () needed))) t) 7)
+(qa (eval '(let ((x 1))
+             (let ((setter (lambda (value) (setq x value)))
+                   (getter (lambda () x)))
+               (list (funcall setter 4) (funcall getter) x))) t) '(4 4 4))
+(qa (eval '(let ((x 1))
+             (let ((first (lambda () (setq x (1+ x))))
+                   (second (lambda () (setq x (1+ x)))))
+               (list (funcall first) (funcall second) x))) t) '(2 3 3))
+(qa (eval '(let ((x 1))
+             (let ((function (lambda () x))) (setq x 7) (funcall function))) t) 7)
+(qa (eval '(let ((x 1))
+             (let ((function (lambda () x)))
+               (setcdr (assq 'x (aref function 2)) 12) x)) t) 12)
+(qa (eval '(let ((x 1))
+             (let ((first (lambda () x)) (second (lambda () x)))
+               (eq (assq 'x (aref first 2)) (assq 'x (aref second 2))))) t) t)
+
+;; Raw construction keeps the original environment and its persistent
+;; spine. Later let* bindings cannot appear in an earlier capture.
+(dolist (qa31-constructor '(nil make-interpreted-closure cconv-make-interpreted-closure))
+  (qa (let ((internal-make-interpreted-closure-function qa31-constructor))
+        (eval '(let* ((qa31-early (lambda () qa31-later)) (qa31-later 5))
+                 (condition-case nil (funcall qa31-early) (void-variable 'absent))) t)) 'absent)
+  (qa (let ((internal-make-interpreted-closure-function qa31-constructor))
+        (eval '(let ((x 1))
+                 (let ((function (lambda () (setq x 8))))
+                   (funcall function) x)) t)) 8))
+(qa (let ((internal-make-interpreted-closure-function nil))
+      (eval '(let ((x 1) (y 2)) (aref (lambda () x) 2)) t)) '((y . 2) (x . 1) t))
+(qa (eval '(let ((x 1) (y 2))
+             (aref (lambda () :closure-dont-trim-context x) 2)) t)
+    '((y . 2) (x . 1) t))
+(qa (eval '(let ((x 1) (y 2))
+             (aref (lambda () :closure-dont-trim-context) 2)) t) '(t))
+
+;; Constructors receive five raw parts and can return arbitrary values.
+(qa (let ((internal-make-interpreted-closure-function
+           (lambda (args body env doc iform) (list args body env doc iform))))
+      (eval '(let ((unused 9))
+               #'(lambda (arg) "doc" (interactive "p") (+ arg 1))) t))
+    '((arg) ((+ arg 1)) ((unused . 9) t) "doc" (interactive "p")))
+(qa (let ((internal-make-interpreted-closure-function (lambda (&rest _) 'custom)))
+      (eval '(function (lambda () 1)) t)) 'custom)
+(qa (let ((internal-make-interpreted-closure-function
+           (lambda (args body env doc iform) (list args body env doc iform))))
+      (eval '(function (lambda 5 . 9)) t)) '(5 9 (t) nil nil))
+(qa (let ((internal-make-interpreted-closure-function
+           (lambda (args body env doc iform) (list args body env doc iform))))
+      (eval '(function (lambda ())) t)) '(nil (nil) (t) nil nil))
+(qa (let ((internal-make-interpreted-closure-function
+           (lambda (args body env doc iform) (list args body env doc iform))))
+      (eval '(function (lambda () (:documentation nil) 7)) t)) '(nil (7) (t) nil nil))
+(qa (let ((internal-make-interpreted-closure-function (lambda (&rest _) (error "Must not run"))))
+      (funcall (eval '(function (lambda () 7)) nil))) 7)
+(qa (let ((internal-make-interpreted-closure-function (lambda (&rest _) 'custom)))
+      (eval '(defun qa31-custom-defun () 7) t)
+      (symbol-function 'qa31-custom-defun)) 'custom)
+(qa (let ((internal-make-interpreted-closure-function (lambda (&rest _) 'custom)))
+      (eval '(defmacro qa31-custom-macro () 7) t)
+      (symbol-function 'qa31-custom-macro)) '(macro . custom))
+
+;; The real optimizer handles expansion/free variables and explicit envs.
+(qa (eval '(let ((value 7) (unused 9))
+             (funcall (lambda () (when t value)))) t) 7)
+(qa (let* ((binding (cons 'x 1)) (env (list binding))
+           (function (eval '(lambda () x) env)))
+      (setcdr binding 8) (funcall function)) 8)
+(qa (let* ((binding (cons 'x 1)) (env (list binding))
+           (function (eval '(lambda () (setq x 8)) env)))
+      (funcall function) (cdr binding)) 8)
+(qa-err (let ((internal-make-interpreted-closure-function 'qa31-absent-constructor))
+          (eval '(lambda () 1) t)) 'void-function)
+
+(princ (qa--done)) (terpri)

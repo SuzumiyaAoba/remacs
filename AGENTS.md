@@ -88,6 +88,29 @@ with `wrong-type-argument stringp t'.
 `autoload_do_load' before interactive-spec lookup — GNU's
 call-interactively does the same via `indirect_function'; without it,
 
+## Menu constructors and interpreted closures
+
+`menu-bar.el` is loaded explicitly after `subr-x` and before `tool-bar`.
+The prelude no longer seeds its Edit menu from a serialized keymap: that
+snapshot replaced the function-valued `:keys` and paste `:enable` fields
+with nil.  The GNU constructor now creates the actual functions in both
+AOT and source boot modes.  Regenerate its twin with
+`python3 tools/gen_boot_elc.py --only menu-bar`.
+
+`Ffunction` and runtime `lambda`/`defun`/`defmacro` construction honor
+`internal-make-interpreted-closure-function`'s five-argument protocol.
+The variable is nil during bootstrap and becomes
+`cconv-make-interpreted-closure` after the dumped libraries are ready.
+Lexical environments have persistent alist heads and shared mutable
+binding conses: optimizer trimming must retain those cells, and captures
+must not acquire later `let*` bindings.  The printer exposes the actual
+environment instead of sorting or reconstructing its contents.  Keep
+nativecomp metadata on new closures built by dumped code; a custom
+constructor can return a shared object or even a non-function value.
+
+Regressions: `qa_menu_keys.el`, `qa_closure_constructor.el`, and the fresh
+CLI menu/closure test in `tests/main_cli.rs`.
+
 ## AOT .elc twins (`src/lisp/embedded_elc.rs` + `lisp-elc/`)
 
 `tools/gen_boot_elc.py` runs GNU Emacs's `byte-compile-file' over the

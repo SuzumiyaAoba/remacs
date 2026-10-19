@@ -1589,46 +1589,9 @@ impl Interp {
     }
 }
 
-/// Convert a lexical environment chain to a printable alist-of-frames.
-fn lex_frame_to_value(i: &Interp, frame: &Rc<crate::lisp::eval::LexFrame>) -> Value {
-    // Explicit environments must retain their order, duplicate entries,
-    // markers and original tail rather than sorting/rebuilding the alist.
-    let mut explicit = Some(frame.clone());
-    while let Some(f) = explicit {
-        if f.raw.is_some() {
-            return crate::lisp::eval::lexenv_as_value(&Some(frame.clone()));
-        }
-        explicit = f.parent.clone();
-    }
-    // GNU prints the environment as a single alist — the visible
-    // bindings innermost-first — or nil when empty.
-    let mut pairs: Vec<Value> = Vec::new();
-    let mut declarations = Vec::new();
-    let mut cur = Some(frame.clone());
-    while let Some(f) = cur {
-        declarations.extend(f.declared.borrow().iter().rev().copied().map(Value::Sym));
-        for (sym_id, val) in f.vars.borrow().iter() {
-            pairs.push(Value::cons(Value::Sym(*sym_id), val.clone()));
-        }
-        cur = f.parent.clone();
-    }
-    // GNU's environment list is a flat alist innermost-first; the
-    // toplevel (empty) environment prints as `(t)'.
-    if pairs.is_empty() {
-        // A scoped bare defvar remains visible in a trivial captured
-        // environment, including in wrong-number-of-arguments data.
-        declarations.push(Value::Sym(crate::lisp::obarray::sym::T));
-        return Value::list(declarations);
-    }
-    pairs.sort_by_key(|v| {
-        if let Value::Cons(c) = v {
-            if let Value::Sym(s) = &c.borrow().car {
-                return i.symbol_name(*s).to_string();
-            }
-        }
-        String::new()
-    });
-    Value::list(pairs)
+/// Return the canonical, shared interpreter-environment alist.
+fn lex_frame_to_value(_i: &Interp, frame: &Rc<crate::lisp::eval::LexFrame>) -> Value {
+    crate::lisp::eval::lexenv_as_value(&Some(frame.clone()))
 }
 
 /// C `%.{prec}g` formatting: `prec` significant digits, scientific

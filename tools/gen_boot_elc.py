@@ -55,7 +55,7 @@ SKIP = {
 # (nothing at the moment — kept for future exceptions).
 BOOT_LIBS = [
     "byte-run", "subr", "seq", "env", "jka-cmpr-hook", "tabulated-list",
-    "subr-x", "tool-bar", "widget", "version", "vc-hooks", "uniquify",
+    "subr-x", "menu-bar", "tool-bar", "widget", "version", "vc-hooks", "uniquify",
     "tooltip", "float-sup", "map-ynp", "debug-early", "oclosure",
     "cl-macs", "cl-lib", "cl-generic", "nadvice", "loaddefs", "tab-bar",
     "icons", "image", "buff-menu", "electric", "format", "composite",

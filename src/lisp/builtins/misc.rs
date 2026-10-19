@@ -1985,7 +1985,7 @@ fn f_interpreted_function_p(_i: &mut Interp, args: crate::lisp::Argv) -> EvalRes
     ))
 }
 
-fn f_make_interpreted_closure(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_make_interpreted_closure(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // (make-interpreted-closure ARGS BODY ENV &optional DOCSTRING IFORM)
     // — GNU eval.c: slots [args body env nil docstring iform], length
     // 3/5/6 by trailing non-nil slots.  IFORM is `(interactive X)'.
