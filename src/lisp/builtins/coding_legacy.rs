@@ -170,6 +170,18 @@ pub(crate) fn decode(
     bytes: &[u8],
     force_conversion: bool,
 ) -> Option<(String, Spans)> {
+    decode_with_native(i, coding, bytes, &[], force_conversion)
+}
+
+/// Region decoding passes native multibyte characters through without
+/// mistaking them for external octets or ending a charset annotation.
+pub(super) fn decode_with_native(
+    i: &mut Interp,
+    coding: &Value,
+    bytes: &[u8],
+    native: &[Option<char>],
+    force_conversion: bool,
+) -> Option<(String, Spans)> {
     let (n, k, p) = attrs(i, coding)?;
     if n == "utf-8-emacs" {
         return Some((internal_decode(bytes), vec![]));
@@ -184,7 +196,14 @@ pub(crate) fn decode(
         && bytes.iter().all(|b| *b < 128 && *b != 13)
         && prop(i, &p, ":ascii-compatible-p").truthy()
     {
-        return Some((bytes.iter().map(|b| *b as char).collect(), vec![]));
+        return Some((
+            bytes
+                .iter()
+                .enumerate()
+                .map(|(at, b)| native.get(at).copied().flatten().unwrap_or(*b as char))
+                .collect(),
+            vec![],
+        ));
     }
     let sets = specs(i, &p);
     let sjis = k == "shift-jis";
@@ -194,6 +213,12 @@ pub(crate) fn decode(
     let mut pos = 0;
     let mut at = 0;
     while at < bytes.len() {
+        if let Some(c) = native.get(at).copied().flatten() {
+            out.push(c);
+            at += 1;
+            pos += 1;
+            continue;
+        }
         let b = bytes[at];
         let mut found = None;
         if sjis {
@@ -220,7 +245,9 @@ pub(crate) fn decode(
             }
         } else {
             for (name, len, ranges) in &sets {
-                if at + len > bytes.len() {
+                if at + len > bytes.len()
+                    || (at..at + len).any(|p| native.get(p).is_some_and(Option::is_some))
+                {
                     continue;
                 }
                 if ranges.len() == *len
@@ -251,7 +278,7 @@ pub(crate) fn decode(
                             .is_some_and(|(lo, hi)| (b as i64) >= *lo && (b as i64) <= *hi)
                 })
             };
-            if incomplete {
+            if incomplete && native.get(at..).unwrap_or(&[]).iter().all(Option::is_none) {
                 if let Some(last) = spans.last_mut() {
                     last.1 = pos;
                 }
@@ -280,7 +307,7 @@ pub(crate) fn decode(
     }
     Some((out, spans))
 }
-fn internal_encode(c: u32) -> Vec<u8> {
+pub(super) fn internal_encode(c: u32) -> Vec<u8> {
     if c >= 0x3fff80 {
         return vec![c as u8];
     }

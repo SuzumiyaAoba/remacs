@@ -2292,6 +2292,92 @@ pub(crate) fn chg_replace(i: &mut Interp, s0: usize, e0: usize, s: &str) -> Eval
     signal_after_change(i, s0 + 1, s0 + 1 + n_ins, n_del as i128)
 }
 
+/// `code_convert_region' signals one replacement with the GNU
+/// encode/decode point timing. Both original endpoint markers remain
+/// at the corresponding endpoints, including after post-read edits.
+pub(crate) fn chg_coding_region(
+    i: &mut Interp,
+    start: usize,
+    end: usize,
+    text: &str,
+    properties: &Value,
+    replace: bool,
+    encode: bool,
+    after: impl FnOnce(&mut Interp) -> EvalResult,
+) -> EvalResult {
+    check_writable(i)?;
+    barf_if_file_locked(i)?;
+    text_ro_range(i, start, end)?;
+    text_ro_insert(i, start)?;
+    let buffer = cur(i);
+    let point = buffer.borrow().point();
+    let old_len = buffer.borrow().text_len();
+    let deactivate = i.intern("deactivate-mark");
+    let old_deactivate = i.symbol_value(deactivate);
+    let boundaries: Vec<_> = if replace {
+        buffer
+            .borrow()
+            .markers
+            .iter()
+            .filter_map(|w| {
+                let marker = w.upgrade()?;
+                let m = marker.borrow();
+                let at_start = m.position == start && m.insertion_type;
+                let at_end = m.position == end && !m.insertion_type;
+                drop(m);
+                (at_start || at_end).then_some((marker, at_start))
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let n = text.chars().count();
+    let result = (|| {
+        if replace && !encode {
+            buffer.borrow_mut().set_point(start);
+        }
+        signal_before_change(i, start + 1, end + 1)?;
+        {
+            let mut b = buffer.borrow_mut();
+            b.raw_delete_region(start, end);
+            b.raw_insert_at(start, text);
+            let hook_point = if !replace {
+                point
+            } else if !encode || (point >= start && point <= end) {
+                start
+            } else if point > end {
+                point - (end - start) + n
+            } else {
+                point
+            };
+            b.set_point(hook_point);
+            b.note_text_change(end - start + n);
+            if let Value::Str(s) = properties {
+                b.text
+                    .props_write()
+                    .graft(start, &i.str_props(s).to_vec(), false);
+            }
+        }
+        signal_after_change(i, start + 1, start + n + 1, (end - start) as i128)?;
+        after(i)
+    })();
+    let inserted = (buffer.borrow().text_len() + end - start).saturating_sub(old_len);
+    for (marker, at_start) in &boundaries {
+        marker.borrow_mut().position = if *at_start { start } else { start + inserted };
+    }
+    // GNU restores point after signaling the completed conversion.
+    let restored = if !replace || point < start {
+        point
+    } else if point < end {
+        start
+    } else {
+        point - (end - start) + inserted
+    };
+    buffer.borrow_mut().set_point(restored);
+    let _ = i.set_symbol(deactivate, old_deactivate);
+    result
+}
+
 /// Run F with BUF_IDX temporarily current — GNU change hooks fire in
 /// the modified buffer, which is not always the selected one
 /// (`copy-to-buffer', `append-to-buffer').

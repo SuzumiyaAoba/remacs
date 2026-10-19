@@ -13511,29 +13511,449 @@ fn f_encode_coding_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     })
 }
 
-fn f_decode_coding_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // (decode-coding-region START END CODING-SYSTEM &optional BUFFER)
-    // GNU code_convert_region: CHECK_CODING_SYSTEM first, then
-    // DESTINATION, then validate_region.
-    if let Some(cs) = a.get(2) {
-        if !cs.is_nil() {
-            let _ = f_check_coding_system(i, vec![cs.clone()].into())?;
+/// Decode a region as external octets plus already decoded native
+/// characters (GNU's negative charbuf entries). Charset annotations
+/// survive native entries; ISO-2022 also resynchronizes graphic plane 0.
+fn decode_region_text(
+    i: &mut Interp,
+    source: &Value,
+    requested: &Value,
+) -> Result<(Value, Value, bool), Flow> {
+    let text = want_string(i, source)?;
+    let unibyte = matches!(source, Value::Str(r) if i.is_unibyte_str(r));
+    let mut bytes = Vec::new();
+    let mut native = Vec::new();
+    let mut storage_bytes = 0;
+    for c in text.chars() {
+        let raw = crate::lisp::value::eight_bit_byte(c);
+        let decoded = !unibyte && raw.is_none() && c as u32 >= 128;
+        bytes.push(if decoded { 0 } else { raw.unwrap_or(c as u8) });
+        native.push(decoded.then_some(c));
+        storage_bytes += if unibyte || c.is_ascii() {
+            1
+        } else if raw.is_some() {
+            2
+        } else {
+            super::coding_legacy::internal_encode(crate::lisp::value::lisp_char_code(c) as u32)
+                .len()
+        };
+    }
+    let original = coding_canonical(i, requested);
+    let fixed = coding_fixed_eol(i, requested);
+    let mut canonical = original.clone();
+    if original == "undecided" {
+        let coding = f_detect_coding_string(i, vec![source.clone(), Value::t()].into())?;
+        canonical = coding_canonical(i, &coding);
+    }
+    // GNU only probes UTF-8 signatures in an unibyte source. In a
+    // multibyte buffer the same raw octets are ordinary UTF-8 data.
+    if canonical == "utf-8-auto" {
+        canonical = if unibyte && bytes.starts_with(&[239, 187, 191]) {
+            "utf-8-with-signature"
+        } else {
+            "utf-8"
+        }
+        .into();
+    }
+    let mut seen = [false; 3];
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'\r' if bytes.get(at + 1) == Some(&b'\n') => {
+                seen[1] = true;
+                at += 1;
+            }
+            b'\r' => seen[2] = true,
+            b'\n' => seen[0] = true,
+            _ => {}
+        }
+        at += 1;
+    }
+    let detected = match seen.iter().filter(|v| **v).count() {
+        0 => None,
+        1 => seen.iter().position(|v| *v),
+        _ => Some(0),
+    };
+    let eol = fixed.or(detected);
+    let used = if canonical == original && (fixed.is_some() || eol.is_none()) {
+        requested.clone()
+    } else {
+        let name = match eol {
+            Some(n) => format!("{}-{}", canonical, ["unix", "dos", "mac"][n]),
+            None => canonical.clone(),
+        };
+        Value::Sym(i.intern(&name))
+    };
+    let force = bytes.contains(&b'\r');
+    if !canonical.starts_with("utf-16") {
+        let mut input = Vec::new();
+        let mut natives = Vec::new();
+        at = 0;
+        while at < bytes.len() {
+            let crlf = eol == Some(1) && bytes[at..].starts_with(b"\r\n");
+            input.push(if crlf || eol == Some(2) && bytes[at] == b'\r' {
+                b'\n'
+            } else {
+                bytes[at]
+            });
+            natives.push(native[at]);
+            at += if crlf { 2 } else { 1 };
+        }
+        bytes = input;
+        native = natives;
+    }
+    let raw = matches!(canonical.as_str(), "raw-text" | "no-conversion");
+    let codec = Value::Sym(i.intern(&canonical));
+    let converted = if raw {
+        Some((
+            bytes
+                .iter()
+                .enumerate()
+                .map(|(p, b)| {
+                    native[p].unwrap_or_else(|| {
+                        if *b < 128 {
+                            *b as char
+                        } else {
+                            crate::lisp::value::lisp_char(0x3fff00 + *b as u32).unwrap()
+                        }
+                    })
+                })
+                .collect(),
+            Vec::new(),
+        ))
+    } else if let Some(result) =
+        super::coding_iso2022::decode_with_native(i, &codec, &bytes, &native, storage_bytes)
+    {
+        Some(result)
+    } else if native.iter().any(Option::is_some)
+        && !matches!(canonical.as_str(), "utf-8-emacs" | "utf-7" | "utf-7-imap")
+    {
+        super::coding_legacy::decode_with_native(i, &codec, &bytes, &native, force)
+    } else {
+        None
+    };
+    let value = if let Some((text, spans)) = converted {
+        let value = Value::string(text);
+        if let Value::Str(r) = &value {
+            i.mark_multibyte(r);
+            let charset = i.intern("charset");
+            let props = spans
+                .into_iter()
+                .map(|(s, e, name)| (s, e, vec![Value::Sym(charset), Value::Sym(i.intern(&name))]))
+                .collect();
+            i.set_str_props(r, props);
+        }
+        value
+    } else {
+        // Byte decoders restart at native characters; these are never
+        // reinterpreted using the external coding system.
+        let mut out = String::new();
+        let mut props = Vec::new();
+        let mut offset = 0;
+        at = 0;
+        while at < bytes.len() {
+            if let Some(c) = native[at] {
+                out.push(c);
+                offset += 1;
+                at += 1;
+                continue;
+            }
+            let start = at;
+            while at < bytes.len() && native[at].is_none() {
+                at += 1;
+            }
+            let mut part = &bytes[start..at];
+            if start == 0
+                && canonical == "utf-8-with-signature"
+                && part.starts_with(&[239, 187, 191])
+            {
+                part = &part[3..];
+            }
+            let decoded = decode_coding_bytes(i, &codec, &canonical, part, force)?;
+            if let Value::Str(r) = decoded {
+                props.extend(
+                    i.str_props(&r)
+                        .iter()
+                        .map(|(s, e, pl)| (s + offset, e + offset, pl.clone())),
+                );
+                offset += r.borrow().chars().count();
+                out.push_str(&r.borrow());
+            }
+        }
+        let value = Value::string(out);
+        if let Value::Str(r) = &value {
+            i.mark_multibyte(r);
+            i.set_str_props(r, props);
+        }
+        value
+    };
+    Ok((value, used, raw))
+}
+
+/// Run Lisp conversion hooks in a disposable buffer, as coding.c does.
+/// Its text properties and byte mode are part of the conversion input.
+fn with_coding_buffer(
+    i: &mut Interp,
+    source: &Value,
+    encode: bool,
+    f: impl FnOnce(&mut Interp) -> EvalResult,
+) -> EvalResult {
+    let old = i.current_buffer;
+    let id = i.create_buffer(" *code-conversion-work*");
+    i.set_current_buffer(id);
+    let mb = matches!(source, Value::Str(r) if !i.is_unibyte_str(r)
+        && (!encode || r.borrow().chars().any(|c| !c.is_ascii())));
+    let multibyte = i.intern("enable-multibyte-characters");
+    i.set_buffer_local_toplevel_value(multibyte, id, if mb { Value::t() } else { Value::Nil });
+    let buffer = crate::buffer::primitives::cur(i);
+    if let Value::Str(r) = source {
+        let storage = if mb {
+            r.borrow().clone()
+        } else {
+            lisp_string_bytes(i, source)
+                .into_iter()
+                .map(|b| b as char)
+                .collect()
+        };
+        let mut b = buffer.borrow_mut();
+        let undo = b.undo_sym;
+        b.locals.insert(undo, Value::t());
+        b.raw_insert_at(0, &storage);
+        b.text.props_write().graft(0, i.str_props(r), false);
+    }
+    let result = f(i);
+    i.set_current_buffer(old);
+    let _ = crate::buffer::primitives::kill_buffer_keep_current(i, id);
+    result
+}
+
+fn coding_buffer_string(i: &mut Interp) -> EvalResult {
+    let buffer = crate::buffer::primitives::cur(i);
+    let b = buffer.borrow();
+    let value = Value::string(b.text.substring(0, b.text_len()));
+    if let Value::Str(r) = &value {
+        i.set_str_props(r, b.text.props.borrow().slice(0, b.text_len()));
+        let multibyte = i.intern("enable-multibyte-characters");
+        if i.symbol_value(multibyte).truthy() {
+            i.mark_multibyte(r);
+        } else {
+            i.mark_unibyte(r);
         }
     }
-    check_region_positions(i, &a)?;
-    Ok(Value::Nil)
+    Ok(value)
+}
+
+fn region_conversion_hook(i: &mut Interp, coding: &Value, encode: bool) -> Result<Value, Flow> {
+    let plist = f_coding_system_plist(i, vec![coding.clone()].into())?;
+    let property = i.intern(if encode {
+        ":pre-write-conversion"
+    } else {
+        ":post-read-conversion"
+    });
+    let hook = crate::lisp::eval::plist_get(&plist, property);
+    // These Lisp hooks are already implemented by the shared byte codecs.
+    let implemented = i.sym_id(&hook).is_some_and(|s| {
+        matches!(
+            i.symbol_name(s).as_str(),
+            "utf-7-pre-write-conversion"
+                | "utf-7-post-read-conversion"
+                | "utf-7-imap-pre-write-conversion"
+                | "utf-7-imap-post-read-conversion"
+                | "post-read-decode-hz"
+                | "pre-write-encode-hz"
+        )
+    });
+    Ok(if implemented { Value::Nil } else { hook })
+}
+
+fn coding_safe_call(i: &mut Interp, hook: &Value, args: Vec<Value>) -> EvalResult {
+    match i.apply(hook, args) {
+        Err(Flow::Signal(..) | Flow::Quit) => Ok(Value::Nil),
+        result => result,
+    }
+}
+
+fn region_post_read(i: &mut Interp, hook: &Value, start: usize, count: usize) -> EvalResult {
+    if hook.is_nil() {
+        return Ok(Value::Int(count as i128));
+    }
+    let buffer = crate::buffer::primitives::cur(i);
+    let before = buffer.borrow().text_len();
+    let undo = buffer.borrow().undo_sym;
+    let saved_undo = buffer.borrow_mut().locals.insert(undo, Value::t());
+    buffer.borrow_mut().set_point(start);
+    let result = coding_safe_call(i, hook, vec![Value::Int(count as i128)]);
+    if let Some(saved) = saved_undo {
+        buffer.borrow_mut().locals.insert(undo, saved);
+    } else {
+        buffer.borrow_mut().locals.shift_remove(&undo);
+    }
+    let value = result?;
+    if !value.fixnump() || value.int().unwrap_or(-1) < 0 {
+        return Err(i.wrong_type_mut("wholenump", &value));
+    }
+    Ok(Value::Int(
+        count as i128 + buffer.borrow().text_len() as i128 - before as i128,
+    ))
+}
+
+fn code_convert_region(i: &mut Interp, a: crate::lisp::Argv, encode: bool) -> EvalResult {
+    let deactivate = i.intern("deactivate-mark");
+    let saved = i.symbol_value(deactivate);
+    let result = code_convert_region_inner(i, a, encode);
+    let _ = i.set_symbol(deactivate, saved);
+    result
+}
+
+fn code_convert_region_inner(i: &mut Interp, a: crate::lisp::Argv, encode: bool) -> EvalResult {
+    use crate::buffer::primitives::{chg_coding_region, chg_with_buffer, f_buffer_substring};
+    let coding = if a[2].is_nil() {
+        Value::Sym(i.intern("no-conversion"))
+    } else {
+        a[2].clone()
+    };
+    f_check_coding_system(i, vec![coding.clone()].into())?;
+    let destination = arg(&a, 3);
+    let string_result = matches!(destination, Value::Sym(sym::T));
+    let source_buffer = i.current_buffer;
+    let destination_buffer = match &destination {
+        Value::Nil => source_buffer,
+        Value::Sym(sym::T) => source_buffer,
+        Value::Buffer(b) => b.borrow().id,
+        v => return Err(i.wrong_type_mut("bufferp", v)),
+    };
+    let mut positions = Vec::new();
+    for v in &a[..2] {
+        let position = match v {
+            Value::Int(n) if v.fixnump() => *n,
+            Value::Int(_) => {
+                let buffer = i.buffer_value(source_buffer).unwrap_or(Value::Nil);
+                return Err(i.signal_data(
+                    sym::ARGS_OUT_OF_RANGE,
+                    vec![buffer, a[0].clone(), a[1].clone()],
+                ));
+            }
+            Value::Marker(m) if m.borrow().buffer.is_some() => m.borrow().position as i128 + 1,
+            Value::Marker(_) => return Err(i.error("Marker does not point anywhere")),
+            v => return Err(i.wrong_type_mut("integer-or-marker-p", v)),
+        };
+        positions.push(position);
+    }
+    positions.sort();
+    let mut source = f_buffer_substring(
+        i,
+        positions
+            .iter()
+            .map(|p| Value::Int(*p))
+            .collect::<Vec<_>>()
+            .into(),
+    )?;
+    let hook = region_conversion_hook(i, &coding, encode)?;
+    if encode && !hook.is_nil() {
+        source = with_coding_buffer(i, &source, true, |i| {
+            let len = crate::buffer::primitives::cur(i).borrow().text_len();
+            coding_safe_call(i, &hook, vec![Value::Int(1), Value::Int(len as i128 + 1)])?;
+            coding_buffer_string(i)
+        })?;
+    }
+    let (converted, used, raw) = if encode {
+        (
+            f_encode_coding_string(i, vec![source.clone(), coding.clone()].into())?,
+            coding,
+            false,
+        )
+    } else {
+        decode_region_text(i, &source, &coding)?
+    };
+    let text = want_string(i, &converted)?;
+    let count = text.chars().count();
+    let unibyte_id = i.intern("enable-multibyte-characters");
+    let mut result = converted.clone();
+    if string_result {
+        if raw {
+            result = Value::string(
+                text.chars()
+                    .map(|c| {
+                        crate::lisp::value::eight_bit_byte(c).unwrap_or_else(|| {
+                            if c.is_ascii() {
+                                c as u8
+                            } else {
+                                (-crate::lisp::value::lisp_char_code(c)) as u8
+                            }
+                        }) as char
+                    })
+                    .collect::<String>(),
+            );
+            if let Value::Str(r) = &result {
+                i.mark_unibyte(r);
+            }
+        }
+        if !encode && !hook.is_nil() {
+            result = with_coding_buffer(i, &result, false, |i| {
+                region_post_read(i, &hook, 0, count)?;
+                coding_buffer_string(i)
+            })?;
+        }
+    } else {
+        let same = source_buffer == destination_buffer;
+        result = chg_with_buffer(i, destination_buffer, |i| {
+            let unibyte = !i.symbol_value(unibyte_id).truthy();
+            let storage = if encode {
+                lisp_string_bytes(i, &converted)
+                    .into_iter()
+                    .map(|b| {
+                        if b < 128 || unibyte {
+                            b as char
+                        } else {
+                            crate::lisp::value::lisp_char(0x3fff00 + b as u32).unwrap()
+                        }
+                    })
+                    .collect::<String>()
+            } else if unibyte {
+                text.chars()
+                    .flat_map(|c| {
+                        if let Some(b) = crate::lisp::value::eight_bit_byte(c) {
+                            vec![b]
+                        } else if raw && !c.is_ascii() {
+                            vec![(-crate::lisp::value::lisp_char_code(c)) as u8]
+                        } else {
+                            super::coding_legacy::internal_encode(
+                                crate::lisp::value::lisp_char_code(c) as u32,
+                            )
+                        }
+                    })
+                    .map(|b| b as char)
+                    .collect()
+            } else {
+                text.clone()
+            };
+            let b = crate::buffer::primitives::cur(i);
+            let (start, end) = if same {
+                (positions[0] as usize - 1, positions[1] as usize - 1)
+            } else {
+                let point = b.borrow().point();
+                (point, point)
+            };
+            chg_coding_region(i, start, end, &storage, &converted, same, encode, |i| {
+                if encode {
+                    Ok(Value::Int(count as i128))
+                } else {
+                    region_post_read(i, &hook, start, count)
+                }
+            })
+        })?;
+    }
+    let last = i.intern("last-coding-system-used");
+    i.set_symbol(last, used)?;
+    Ok(result)
+}
+
+fn f_decode_coding_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    code_convert_region(i, a, false)
 }
 
 fn f_encode_coding_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU code_convert_region: CHECK_CODING_SYSTEM first,
-    // then DESTINATION, then validate_region.
-    if let Some(cs) = a.get(2) {
-        if !cs.is_nil() {
-            let _ = f_check_coding_system(i, vec![cs.clone()].into())?;
-        }
-    }
-    check_region_positions(i, &a)?;
-    Ok(Value::Nil)
+    code_convert_region(i, a, true)
 }
 
 // ---------- multibyte ----------

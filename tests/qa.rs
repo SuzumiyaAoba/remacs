@@ -98,6 +98,7 @@ qa!(qa_whitespace_narrowing, "qa_whitespace_narrowing.el");
 qa!(qa_blank_line_characters, "qa_blank_line_characters.el");
 qa!(qa_legacy_codecs, "qa_legacy_codecs.el");
 qa!(qa_coding, "qa_coding.el");
+qa!(qa_coding_region, "qa_coding_region.el");
 qa!(qa_coding2, "qa_coding2.el");
 qa!(qa_coding_detection, "qa_coding_detection.el");
 qa!(qa_completion, "qa_completion.el");

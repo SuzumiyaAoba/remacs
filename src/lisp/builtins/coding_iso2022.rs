@@ -252,6 +252,16 @@ pub(super) fn decode(
     coding: &Value,
     bytes: &[u8],
 ) -> Option<(String, Vec<(usize, usize, String)>)> {
+    decode_with_native(i, coding, bytes, &[], bytes.len())
+}
+
+pub(super) fn decode_with_native(
+    i: &mut Interp,
+    coding: &Value,
+    bytes: &[u8],
+    native: &[Option<char>],
+    storage_bytes: usize,
+) -> Option<(String, Vec<(usize, usize, String)>)> {
     let sp = spec(i, coding)?;
     let mut state = sp.initial.clone();
     let mut gl = 0usize;
@@ -262,13 +272,27 @@ pub(super) fn decode(
     let mut chars = 0;
     // GNU records charset runs in its bounded integer charbuf. ASCII
     // inherits the last non-ASCII run, until the buffer is flushed.
-    let limit = bytes.len().saturating_add(16).min(0x4000) - 15;
+    let limit = storage_bytes.saturating_add(16).min(0x4000) - 15;
     let mut units = 0usize;
     let mut run: Option<usize> = None;
     while p < bytes.len() {
         if units >= limit {
             units = 0;
             run = None;
+        }
+        if let Some(c) = native.get(p).copied().flatten() {
+            out.push(c);
+            // Negative charbuf input follows GNU's invalid_code arm:
+            // retain the character, but resynchronize graphic plane 0.
+            gl = 0;
+            state[0] = Some("ascii".into());
+            p += 1;
+            chars += 1;
+            units += 1;
+            if let Some(r) = run {
+                spans[r].1 = chars;
+            }
+            continue;
         }
         let b = bytes[p];
         if b == 27 && sp.flag("designation") {
