@@ -1438,7 +1438,7 @@ fn f_seq_contains_p(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         let r = match args.get(2) {
             Some(f) if f.truthy() => i.apply(f, vec![x.clone(), args[1].clone()])?,
             _ => {
-                if equal_values(i, &x, &args[1]) {
+                if equal_values(i, &x, &args[1])? {
                     Value::t()
                 } else {
                     Value::Nil
@@ -1456,7 +1456,7 @@ fn f_seq_position(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     for (k, x) in items.iter().enumerate() {
         let eq = match args.get(2) {
             Some(f) if f.truthy() => i.apply(f, vec![x.clone(), args[1].clone()])?.truthy(),
-            _ => equal_values(i, x, &args[1]),
+            _ => equal_values(i, x, &args[1])?,
         };
         if eq {
             return Ok(Value::Int(k as i128));
@@ -1637,7 +1637,7 @@ fn f_seq_uniq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             let dup = if testfn.truthy() {
                 i.apply(&testfn, vec![u.clone(), v.clone()])?.truthy()
             } else {
-                equal_values(i, u, &v)
+                equal_values(i, u, &v)?
             };
             if dup {
                 continue 'outer;

@@ -31,6 +31,7 @@ pub(crate) mod seq;
 pub(crate) mod sqlite;
 pub(crate) mod strfn;
 pub(crate) mod treesit;
+pub(crate) mod timefmt;
 pub(crate) mod xml;
 
 use super::Interp;
@@ -477,13 +478,12 @@ pub fn eql_values(a: &Value, b: &Value) -> bool {
     }
 }
 
-/// `equal` — structural equality.  Mirrors GNU `internal_equal':
-/// below `EQUAL_NO_RECURSION_DEPTH` (=200) it recurses plainly; past
-/// that depth each in-progress object pair is memoized and a revisit
-/// coinductively reports true, so isomorphic cyclic structures
-/// (self-cdrs, vectors holding themselves) compare equal and
-/// mismatched cycles report nil — no recursion overflow, no guard cap.
-pub fn equal_values(interp: &Interp, a: &Value, b: &Value) -> bool {
+/// `equal` — structural equality. List tails use constant-space cycle
+/// detection, like GNU `internal_equal'. Recursive object pairs are
+/// memoized after ten levels, and recursion past 200 levels signals an
+/// error. Callers must propagate that error rather than treating it as
+/// a failed comparison.
+pub fn equal_values(interp: &Interp, a: &Value, b: &Value) -> Result<bool, Flow> {
     let mut seen = None;
     equal_values_1(interp, a, b, 0, &mut seen)
 }
@@ -502,7 +502,8 @@ fn equal_obj_ptr(v: &Value) -> Option<usize> {
     }
 }
 
-const EQUAL_NO_RECURSION_DEPTH: u32 = 200;
+const EQUAL_MEMO_DEPTH: u32 = 10;
+const EQUAL_MAX_DEPTH: u32 = 200;
 
 fn equal_values_1(
     interp: &Interp,
@@ -510,52 +511,51 @@ fn equal_values_1(
     b: &Value,
     depth: u32,
     seen: &mut Option<EqualSeen>,
-) -> bool {
-    // Enabled sympos are atoms (symbols): compare by `eq' unwrapping,
-    // not record slot contents (positions must not matter).
-    if misc::as_sympos(a).is_some() || misc::as_sympos(b).is_some() {
-        return eql_values(a, b);
+) -> Result<bool, Flow> {
+    // GNU checks the limit before identity, type, or memo shortcuts.
+    // An identical leaf at depth 201 therefore still signals an error.
+    if depth > EQUAL_MAX_DEPTH {
+        return Err(interp.error("Stack overflow in equal"));
     }
-    // GNU `Fequal' first: EQ objects are equal (also terminates
-    // recursion on self-referential structures like eieio class
-    // records, whose slots point back at the same Rc).
-    if eq_values(a, b) {
-        return true;
-    }
-    if depth > EQUAL_NO_RECURSION_DEPTH {
+    if depth > EQUAL_MEMO_DEPTH {
         if let (Some(pa), Some(pb)) = (equal_obj_ptr(a), equal_obj_ptr(b)) {
             let set = seen.get_or_insert_with(EqualSeen::new);
             if !set.insert((pa, pb)) {
                 // This pair is already being compared — coinduction.
-                return true;
+                return Ok(true);
             }
         }
     }
-    match (a, b) {
+    // Enabled sympos are atoms (symbols): compare by `eq' unwrapping,
+    // not record slot contents (positions must not matter).
+    if misc::as_sympos(a).is_some() || misc::as_sympos(b).is_some() {
+        return Ok(eql_values(a, b));
+    }
+    if eq_values(a, b) {
+        return Ok(true);
+    }
+    Ok(match (a, b) {
         (Value::Str(x), Value::Str(y)) => *x.borrow() == *y.borrow(),
         (Value::Marker(x), Value::Marker(y)) => {
             // GNU `equal' on markers compares buffer + position (they're
             // `misc' objects with value semantics), not identity.
             let (xb, yb) = (x.borrow(), y.borrow());
-            xb.buffer == yb.buffer && xb.position == yb.position
+            xb.buffer == yb.buffer && (xb.buffer.is_none() || xb.position == yb.position)
         }
         (Value::Cons(_x), Value::Cons(_y)) => {
-            // Structural walk: like GNU's `while (CONSP(o1))' loop the
-            // tail does not consume stack; the depth check for cycle
-            // detection lives at the top of the next iteration.
+            // Cdrs do not increase recursion depth. Detect their cycles
+            // separately with Brent's walk, without a per-cons allocation.
+            // After finding one cycle, swap tails and detect the other,
+            // comparing cars throughout (GNU `internal_equal_cycle').
             let mut ax = a.clone();
             let mut bx = b.clone();
+            let mut tortoise = ax.clone();
+            let mut power = 2usize;
+            let mut steps = 0usize;
+            let mut one_cycle = false;
             loop {
                 match (&ax, &bx) {
                     (Value::Cons(ac), Value::Cons(bc)) => {
-                        if depth > EQUAL_NO_RECURSION_DEPTH {
-                            let pa = std::rc::Rc::as_ptr(ac) as usize;
-                            let pb = std::rc::Rc::as_ptr(bc) as usize;
-                            let set = seen.get_or_insert_with(EqualSeen::new);
-                            if !set.insert((pa, pb)) {
-                                return true;
-                            }
-                        }
                         let (acar, acdr) = {
                             let ab = ac.borrow();
                             (ab.car.clone(), ab.cdr.clone())
@@ -564,78 +564,106 @@ fn equal_values_1(
                             let bb = bc.borrow();
                             (bb.car.clone(), bb.cdr.clone())
                         };
-                        if !equal_values_1(interp, &acar, &bcar, depth + 1, seen) {
-                            return false;
+                        if !equal_values_1(interp, &acar, &bcar, depth + 1, seen)? {
+                            return Ok(false);
                         }
                         ax = acdr;
                         bx = bcdr;
+                        if eq_values(&ax, &bx) {
+                            return Ok(true);
+                        }
+                        steps += 1;
+                        // Match GNU's checkpoint cadence: the checkpoint
+                        // step resets the tortoise without testing equality.
+                        if steps == power {
+                            tortoise = ax.clone();
+                            power = power.saturating_mul(2);
+                            steps = 0;
+                        } else if eq_values(&ax, &tortoise) {
+                            if one_cycle {
+                                return Ok(true);
+                            }
+                            if !matches!(bx, Value::Cons(_)) {
+                                return Ok(false);
+                            }
+                            std::mem::swap(&mut ax, &mut bx);
+                            tortoise = ax.clone();
+                            power = 2;
+                            steps = 0;
+                            one_cycle = true;
+                        }
                     }
+                    // A missing right-hand cons is checked in the loop,
+                    // without another recursion level. The second cycle
+                    // pass likewise rejects a finite left-hand tail here.
+                    (Value::Cons(_), _) => return Ok(false),
+                    _ if one_cycle => return Ok(false),
                     _ => {
                         return equal_values_1(interp, &ax, &bx, depth + 1, seen);
                     }
                 }
             }
         }
-        (Value::Vec(x), Value::Vec(y)) => {
-            let xv = x.borrow();
-            let yv = y.borrow();
-            if xv.len() != yv.len() {
-                return false;
-            }
-            xv.iter()
-                .zip(yv.iter())
-                .all(|(a, b)| equal_values_1(interp, a, b, depth + 1, seen))
-        }
-        (Value::Record(x), Value::Record(y)) => {
-            let xv = x.borrow();
-            let yv = y.borrow();
-            if xv.len() != yv.len() {
-                return false;
-            }
-            xv.iter()
-                .zip(yv.iter())
-                .all(|(a, b)| equal_values_1(interp, a, b, depth + 1, seen))
+        (Value::Vec(x), Value::Vec(y)) | (Value::Record(x), Value::Record(y)) => {
+            equal_items(interp, &x.borrow(), &y.borrow(), depth, seen)?
         }
         (Value::Lambda(x), Value::Lambda(y)) => {
             // `#[...]' byte-code objects are pseudovectors in GNU:
             // `equal' compares their elements (argdesc, bytecode
-            // string, constants vector, ...) pairwise, so two distinct
-            // prototypes are never `equal'.
+            // string, constants vector, ...) pairwise.
             match (&x.bc_items, &y.bc_items) {
                 (Some(xi), Some(yi)) => {
-                    let xi = xi.borrow();
-                    let yi = yi.borrow();
-                    return xi.len() == yi.len()
-                        && xi
-                            .iter()
-                            .zip(yi.iter())
-                            .all(|(a, b)| equal_values_1(interp, a, b, depth + 1, seen))
-                        && x.env.is_none() == y.env.is_none();
+                    return Ok(
+                        equal_items(interp, &xi.borrow(), &yi.borrow(), depth, seen)?
+                            && x.env.is_none() == y.env.is_none(),
+                    );
                 }
                 (None, None) => {}
-                _ => return false,
+                _ => return Ok(false),
             }
             // GNU compares interpreted lambdas as list structure.
-            x.is_macro == y.is_macro
-                && x.required == y.required
-                && x.rest == y.rest
-                && x.optional.len() == y.optional.len()
-                && x.optional.iter().zip(y.optional.iter()).all(|(a, b)| {
-                    a.sym == b.sym
-                        && a.supplied == b.supplied
-                        && match (&a.default, &b.default) {
-                            (Some(d), Some(e)) => equal_values_1(interp, d, e, depth + 1, seen),
-                            (None, None) => true,
-                            _ => false,
+            if x.is_macro != y.is_macro
+                || x.required != y.required
+                || x.rest != y.rest
+                || x.optional.len() != y.optional.len()
+            {
+                return Ok(false);
+            }
+            for (a, b) in x.optional.iter().zip(y.optional.iter()) {
+                if a.sym != b.sym || a.supplied != b.supplied {
+                    return Ok(false);
+                }
+                match (&a.default, &b.default) {
+                    (Some(d), Some(e)) => {
+                        if !equal_values_1(interp, d, e, depth + 1, seen)? {
+                            return Ok(false);
                         }
-                })
-                && x.body.len() == y.body.len()
-                && x.body
-                    .iter()
-                    .zip(y.body.iter())
-                    .all(|(a, b)| equal_values_1(interp, a, b, depth + 1, seen))
+                    }
+                    (None, None) => {}
+                    _ => return Ok(false),
+                }
+            }
+            equal_items(interp, &x.body, &y.body, depth, seen)?
                 && x.env.is_none() == y.env.is_none()
         }
         _ => eql_values(a, b),
+    })
+}
+
+fn equal_items(
+    interp: &Interp,
+    a: &[Value],
+    b: &[Value],
+    depth: u32,
+    seen: &mut Option<EqualSeen>,
+) -> Result<bool, Flow> {
+    if a.len() != b.len() {
+        return Ok(false);
     }
+    for (a, b) in a.iter().zip(b.iter()) {
+        if !equal_values_1(interp, a, b, depth + 1, seen)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }

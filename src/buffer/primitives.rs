@@ -639,13 +639,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_append_next_kill,
         "Make the next kill append to the last kill-ring entry."
     ),
-    S!(
-        "delete-blank-lines",
-        0,
-        0,
-        f_delete_blank_lines,
-        "Delete blank lines around point."
-    ),
+    // GNU simple.el whitespace commands live in the prelude.
     S!("combine-after-change-calls", raw, f_progn_raw, ""),
     S!("combine-change-calls", raw, f_second_form_raw, ""),
     // --- buffer text access ---
@@ -8179,7 +8173,7 @@ fn f_pop_mark(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 
 // --- Registers ---------------------------------------------------------
 // `register-alist' holds (KEY . VALUE) cells; keys are compared with
-// `equal' (conventionally character codes, but any object works).
+// `eq', matching GNU's `alist-get' default test.
 
 fn reg_alist(i: &mut Interp) -> (crate::lisp::value::SymId, Value) {
     let sym = i.intern("register-alist");
@@ -8193,7 +8187,7 @@ fn reg_set(i: &mut Interp, key: Value, val: Value) -> Result<(), Flow> {
     let mut found = false;
     for it in &mut items {
         if let Value::Cons(c) = it {
-            if crate::lisp::builtins::equal_values(i, &c.borrow().car, &key) {
+            if crate::lisp::builtins::eq_values(&c.borrow().car, &key) {
                 c.borrow_mut().cdr = val.clone();
                 found = true;
                 break;
@@ -8211,7 +8205,7 @@ fn reg_get(i: &mut Interp, key: &Value) -> Value {
     let (_, alist) = reg_alist(i);
     for it in alist.list_to_vec().unwrap_or_default() {
         if let Value::Cons(c) = &it {
-            if crate::lisp::builtins::equal_values(i, &c.borrow().car, key) {
+            if crate::lisp::builtins::eq_values(&c.borrow().car, key) {
                 return c.borrow().cdr.clone();
             }
         }
@@ -9545,7 +9539,7 @@ fn f_labeled_widen(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if let Some(pos) = bb
         .narrow_labels
         .iter()
-        .rposition(|(_, _, l)| crate::lisp::builtins::equal_values(i, l, &a[0]))
+        .rposition(|(_, _, label)| crate::lisp::builtins::eq_values(label, &a[0]))
     {
         let (pb, pz, _) = bb.narrow_labels.remove(pos);
         bb.narrow_labels.truncate(pos);
@@ -13524,9 +13518,9 @@ fn undo_oob_err(i: &mut Interp) -> Flow {
 
 /// GNU `time-equal-p' restricted to the shapes we store in `(t . TIME)'
 /// undo entries (fixnum 0 for non-file buffers, or a Lisp timestamp).
-fn undo_time_equal(i: &Interp, a: &Value, b: &Value) -> bool {
+fn undo_time_equal(i: &Interp, a: &Value, b: &Value) -> Result<bool, Flow> {
     match (a, b) {
-        (Value::Int(x), Value::Int(y)) => x == y,
+        (Value::Int(x), Value::Int(y)) => Ok(x == y),
         _ => crate::lisp::builtins::equal_values(i, a, b),
     }
 }
@@ -13560,7 +13554,7 @@ fn undo_apply_one(
                         crate::lisp::builtins::misc::ns_to_lisp_time_i(i, bb.file_modtime_ns)
                     }
                 };
-                if undo_time_equal(i, &cdr, &vft) {
+                if undo_time_equal(i, &cdr, &vft)? {
                     f_unlock_buffer(i, vec![].into())?;
                     f_set_buffer_modified_p(i, vec![Value::Nil].into())?;
                 }
@@ -13778,76 +13772,6 @@ fn f_primitive_undo(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
     }
     Ok(list)
-}
-
-fn f_delete_blank_lines(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    // Emacs: on a blank line, delete all contiguous blank lines
-    // (leaving just one when there are several). On a nonblank line,
-    // delete all blank lines following it.
-    let _ = i;
-    let b = cur(i);
-    let bb = b.borrow_mut();
-    let len = bb.text.len();
-    let blank_at = |bb: &crate::buffer::Buffer, start: usize, end: usize| {
-        bb.text.substring(start, end).trim().is_empty()
-    };
-    // (start, end) of the line containing char-pos p, with end
-    // including the trailing newline when present.
-    let line_span = |bb: &crate::buffer::Buffer, p: usize| {
-        let l = bb.text.line_of_pos(p);
-        let s = bb.text.line_start(l);
-        let mut e = bb.text.line_end(s);
-        if e < len {
-            e += 1;
-        }
-        (s, e)
-    };
-    let p = bb.point().min(len);
-    let (ls, le) = line_span(&bb, p);
-    let mut s = ls;
-    let mut e = le;
-    if blank_at(&bb, ls, le) {
-        // Extend over the whole contiguous blank region.
-        while s > 0 {
-            let (ps, pe) = line_span(&bb, s - 1);
-            if !blank_at(&bb, ps, pe) {
-                break;
-            }
-            s = ps;
-        }
-        while e < len {
-            let (ns, ne) = line_span(&bb, e);
-            if !blank_at(&bb, ns, ne) {
-                break;
-            }
-            e = ne;
-        }
-        // Keep one blank line if the region spans several: delete
-        // from the end of the first blank line onward.
-        let (fs, fe) = line_span(&bb, s);
-        if e - s > fe - fs {
-            s = fe;
-        }
-    } else {
-        // Delete following blank lines only (after the current
-        // line's terminating newline).
-        s = le;
-        while e < len {
-            let (ns, ne) = line_span(&bb, e);
-            if !blank_at(&bb, ns, ne) {
-                break;
-            }
-            e = ne;
-        }
-        if e == le {
-            return Ok(Value::Nil);
-        }
-    }
-    drop(bb);
-    chg_delete(i, s, e)?;
-    let np = s.min(b.borrow().text.len());
-    b.borrow_mut().set_point(np);
-    Ok(Value::Nil)
 }
 
 // ---------- misc ----------

@@ -19,7 +19,8 @@
 
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::ffi::{c_char, c_void};
 use std::io::Write;
 use std::rc::Rc;
@@ -43,8 +44,9 @@ const EM_INVALID: EmObj = 0;
 
 thread_local! {
     static OBJTAB: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
-    static PENDING: RefCell<Option<(Value, Value)>> = const { RefCell::new(None) };
+    static PENDING: RefCell<Option<Flow>> = const { RefCell::new(None) };
     static NATIVES: RefCell<Vec<EmEntry>> = const { RefCell::new(Vec::new()) };
+    static ACTIVE_NATIVE: Cell<Option<usize>> = const { Cell::new(None) };
     static META: RefCell<Vec<NativeMeta>> = RefCell::new(Vec::new());
     static UNITS: RefCell<Vec<Unit>> = RefCell::new(Vec::new());
     static CTXT: RefCell<Option<String>> = RefCell::new(None);
@@ -76,19 +78,12 @@ unsafe fn host(e: EmEnv) -> &'static mut Interp {
     &mut *(e as *mut Interp)
 }
 
-unsafe fn outcome(e: EmEnv, r: Result<Value, Flow>) -> EmObj {
+unsafe fn outcome(_e: EmEnv, r: Result<Value, Flow>) -> EmObj {
     match r {
         Ok(v) => reg(v),
-        Err(Flow::Signal(s, d, _)) => {
-            PENDING.with(|p| *p.borrow_mut() = Some((s, d)));
-            EM_INVALID
-        }
-        Err(other) => {
-            let i = host(e);
-            let f = i.error(format!("Abnormal exit from native code: {other:?}"));
-            if let Flow::Signal(s, d, _) = f {
-                PENDING.with(|p| *p.borrow_mut() = Some((s, d)));
-            }
+        Err(flow) => {
+            // Keep non-local exits in Rust until the C frame has returned.
+            PENDING.with(|p| *p.borrow_mut() = Some(flow));
             EM_INVALID
         }
     }
@@ -122,6 +117,13 @@ struct EmApi {
     listn: unsafe extern "C" fn(EmEnv, *const EmObj, i64) -> EmObj,
     /// Registration entry used by generated init code.
     defsubr: unsafe extern "C" fn(*const EmApi, EmEnv, i64, *const c_void) -> i64,
+    /// Read a function constant once, retaining its Value rather than a
+    /// temporary OBJTAB handle. Appended to preserve the old unit ABI.
+    read_constant: unsafe extern "C" fn(EmEnv, *const c_char, usize) -> EmObj,
+    string_constant: unsafe extern "C" fn(EmEnv, *const c_char, usize) -> EmObj,
+    float_constant: unsafe extern "C" fn(EmEnv, f64) -> EmObj,
+    /// Preserve the source string's byte-kind flags; appended for old units.
+    string_constant_kind: unsafe extern "C" fn(EmEnv, *const c_char, usize, i64) -> EmObj,
 }
 
 unsafe extern "C" fn api_nil(_e: EmEnv) -> EmObj {
@@ -151,6 +153,60 @@ unsafe extern "C" fn api_read(e: EmEnv, p: *const c_char, n: usize) -> EmObj {
     let i = host(e);
     let s = String::from_utf8_lossy(b).into_owned();
     outcome(e, i.read_from_string(&s, 0).map(|(v, _)| v))
+}
+#[derive(Hash, PartialEq, Eq)]
+enum ConstantKey {
+    Read(usize, usize),
+    String(usize, usize),
+    StringKind(usize, usize, i64),
+    Float(u64),
+}
+
+fn native_constant(key: ConstantKey, create: impl FnOnce() -> EmObj) -> EmObj {
+    let Some(native) = ACTIVE_NATIVE.get() else {
+        return create();
+    };
+    // Static literals can share addresses, so distinguish read syntax from
+    // raw string bytes. Retain Values, never call-local OBJTAB handles.
+    if let Some(value) = META.with(|m| m.borrow()[native].constants.get(&key).cloned()) {
+        return reg(value);
+    }
+    let handle = create();
+    if handle != EM_INVALID {
+        let value = obj(handle);
+        META.with(|m| m.borrow_mut()[native].constants.insert(key, value));
+    }
+    handle
+}
+
+unsafe extern "C" fn api_read_constant(e: EmEnv, p: *const c_char, n: usize) -> EmObj {
+    native_constant(ConstantKey::Read(p as usize, n), || api_read(e, p, n))
+}
+unsafe extern "C" fn api_string_constant(e: EmEnv, p: *const c_char, n: usize) -> EmObj {
+    native_constant(ConstantKey::String(p as usize, n), || api_str(e, p, n))
+}
+unsafe extern "C" fn api_string_constant_kind(
+    e: EmEnv,
+    p: *const c_char,
+    n: usize,
+    kind: i64,
+) -> EmObj {
+    native_constant(ConstantKey::StringKind(p as usize, n, kind), || {
+        let handle = api_str(e, p, n);
+        if let Value::Str(string) = obj(handle) {
+            let i = host(e);
+            if kind & 1 != 0 {
+                i.mark_unibyte(&string);
+            }
+            if kind & 2 != 0 {
+                i.mark_multibyte(&string);
+            }
+        }
+        handle
+    })
+}
+unsafe extern "C" fn api_float_constant(e: EmEnv, f: f64) -> EmObj {
+    native_constant(ConstantKey::Float(f.to_bits()), || api_float(e, f))
 }
 unsafe extern "C" fn api_truthy(_e: EmEnv, h: EmObj) -> i64 {
     (!obj(h).is_nil()) as i64
@@ -182,7 +238,7 @@ unsafe extern "C" fn api_sym_set(e: EmEnv, s: EmObj, v: EmObj) -> EmObj {
     }
 }
 unsafe extern "C" fn api_signal(_e: EmEnv, s: EmObj, d: EmObj) -> EmObj {
-    PENDING.with(|p| *p.borrow_mut() = Some((obj(s), obj(d))));
+    PENDING.with(|p| *p.borrow_mut() = Some(Flow::Signal(obj(s), obj(d), false)));
     EM_INVALID
 }
 unsafe extern "C" fn api_car(e: EmEnv, h: EmObj) -> EmObj {
@@ -255,10 +311,13 @@ unsafe extern "C" fn api_defsubr(
                             i.prin1_to_string(&dd)
                         );
                     }
-                    PENDING.with(|p| *p.borrow_mut() = Some((sg, dd)));
+                    PENDING.with(|p| *p.borrow_mut() = Some(Flow::Signal(sg, dd, false)));
                     1
                 }
-                Err(_) => 1,
+                Err(flow) => {
+                    PENDING.with(|p| *p.borrow_mut() = Some(flow));
+                    1
+                }
             },
             Err(_) => {
                 if std::env::var_os("REMACS_ELN_DBG").is_some() {
@@ -309,6 +368,10 @@ static API: EmApi = EmApi {
     cons: api_cons,
     listn: api_listn,
     defsubr: api_defsubr,
+    read_constant: api_read_constant,
+    string_constant: api_string_constant,
+    float_constant: api_float_constant,
+    string_constant_kind: api_string_constant_kind,
 };
 
 /// Mirrors the generated descriptor (repr(C), must match codegen).
@@ -342,6 +405,7 @@ struct NativeMeta {
     unit: i64,
     arglist: Value,
     iform: Value,
+    constants: HashMap<ConstantKey, Value>,
 }
 
 fn tramp<const K: usize>(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -349,17 +413,18 @@ fn tramp<const K: usize>(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let env = i as *mut Interp as EmEnv;
     let mark = OBJTAB.with(|t| t.borrow().len());
     let args: Vec<EmObj> = a.iter().map(|v| reg(v.clone())).collect();
+    let previous_native = ACTIVE_NATIVE.replace(Some(K));
     let r = unsafe { entry(&API, env, args.as_ptr(), args.len() as i64) };
-    let out = if r == EM_INVALID {
-        match PENDING.with(|p| p.borrow_mut().take()) {
-            Some((s, d)) => Err(Flow::Signal(s, d, false)),
-            None => Err(i.error("native function failed")),
-        }
-    } else {
-        Ok(obj(r))
+    ACTIVE_NATIVE.set(previous_native);
+    // A pending signal always wins, including for previously compiled units
+    // that may return a valid handle after a failed callback.
+    let out = match PENDING.with(|p| p.borrow_mut().take()) {
+        Some(flow) => Err(flow),
+        None if r == EM_INVALID => Err(i.error("native function failed")),
+        None => Ok(obj(r)),
     };
     // Handles registered during this call are disposable — the result
-    // was cloned out and generated code never caches handles.
+    // was cloned out; constant caches retain Values, never these handles.
     OBJTAB.with(|t| t.borrow_mut().truncate(mark));
     out
 }
@@ -384,8 +449,19 @@ struct Unit {
 
 type UnitInit = unsafe extern "C" fn(*const EmApi, EmEnv, i64) -> i32;
 
-/// dlopen an .eln and run its registration.  Returns unit index.
-fn load_eln(i: &mut Interp, path: &str) -> Result<usize, String> {
+enum LoadError {
+    Open(String),
+    Lisp(Flow),
+}
+
+impl From<String> for LoadError {
+    fn from(message: String) -> Self {
+        Self::Open(message)
+    }
+}
+
+/// dlopen an .eln and run its ordered top-level initialization.
+fn load_eln(i: &mut Interp, path: &str) -> Result<usize, LoadError> {
     // libloading's error is the raw dlopen(3) message — GNU stores
     // exactly that string as the second datum of
     // `native-lisp-load-failed'.
@@ -402,22 +478,49 @@ fn load_eln(i: &mut Interp, path: &str) -> Result<usize, String> {
     .map_err(|e| e.to_string())?;
     let init: UnitInit = unsafe {
         *lib.get(b"remacs_eln_init\0")
-            .map_err(|_| "Not a remacs .eln (missing remacs_eln_init)")?
+            .map_err(|_| "Not a remacs .eln (missing remacs_eln_init)".to_string())?
     };
-    // Run init first (it calls `defsubr' with the unit index); push
-    // the unit only after a successful registration.
-    let idx = UNITS.with(|u| u.borrow().len());
-    let env = i as *mut Interp as EmEnv;
-    let rc = unsafe { init(&API, env, idx as i64) };
-    if rc != 0 {
-        return Err("remacs_eln_init failed".into());
-    }
-    UNITS.with(|u| {
-        u.borrow_mut().push(Unit {
+    // New file units carry their source's binding mode. Old units and
+    // single-function units keep their existing ABI and calling context.
+    let lexical = unsafe {
+        lib.get::<*const i32>(b"remacs_eln_lexical\0")
+            .ok()
+            .map(|flag| **flag != 0)
+    };
+    // Reserve the index before executing Lisp (which may load another unit).
+    // Keep the library even if initialization signals: definitions preceding
+    // the failing form remain callable and must not point into unloaded code.
+    let idx = UNITS.with(|u| {
+        let mut units = u.borrow_mut();
+        let idx = units.len();
+        units.push(Unit {
             path: path.to_string(),
             _lib: lib,
-        })
+        });
+        idx
     });
+    let saved_lexenv = i.lexenv.clone();
+    if let Some(lexical) = lexical {
+        // The file controls binding semantics, not the caller-visible value
+        // of lexical-binding (native-elisp-load does not bind that variable).
+        i.lexenv = if lexical {
+            crate::lisp::eval::lexenv_root()
+        } else {
+            None
+        };
+    }
+    let handles = OBJTAB.with(|t| t.borrow().len());
+    let env = i as *mut Interp as EmEnv;
+    let rc = unsafe { init(&API, env, idx as i64) };
+    let pending = PENDING.with(|p| p.borrow_mut().take());
+    OBJTAB.with(|t| t.borrow_mut().truncate(handles));
+    i.lexenv = saved_lexenv;
+    if let Some(flow) = pending {
+        return Err(LoadError::Lisp(flow));
+    }
+    if rc != 0 {
+        return Err(LoadError::Open("remacs_eln_init failed".into()));
+    }
     Ok(idx)
 }
 
@@ -488,6 +591,7 @@ fn install_native_subr(
         m.borrow_mut().push(NativeMeta {
             name: name.to_string(),
             unit,
+            constants: HashMap::new(),
             arglist: Value::Nil,
             iform: Value::Nil,
         })
@@ -547,18 +651,28 @@ struct em_api {
     em_obj (*cons)(em_env, em_obj, em_obj);
     em_obj (*listn)(em_env, const em_obj *, long);
     long (*defsubr)(const void *, em_env, long, const void *);
+    em_obj (*read_constant)(em_env, const char *, unsigned long);
+    em_obj (*string_constant)(em_env, const char *, unsigned long);
+    em_obj (*float_constant)(em_env, double);
+    em_obj (*string_constant_kind)(em_env, const char *, unsigned long, long);
 };
 typedef const struct em_api *A_t;
 #define NIL (A->nil)(E)
 #define TT (A->t)(E)
 #define INT(n) (A->mk_int)(E,(long long)(n))
-#define FLT(x) (A->mk_float)(E,(x))
+#define FLT(x) (A->float_constant)(E,(x))
 #define TRUTH(h) (A->truthy)(E,(h))
-#define CALL(f,av,n) (A->call)(E,(f),(av),(n))
-#define SYMSET(s,v) (A->sym_set)(E,(s),(v))
+/* Exit the native entry before any later Lisp form or enclosing operation.
+   The pending signal stays in Rust; never unwind Rust frames through C. */
+#define CHECK(expr) ({em_obj checked=(expr);if(!checked)return 0;checked;})
+#define CALL(f,av,n) CHECK((A->call)(E,(f),(av),(n)))
+#define EVAL(form) CHECK((A->eval)(E,(form)))
+#define SYMSET(s,v) CHECK((A->sym_set)(E,(s),(v)))
 #define LISTN(av,n) (A->listn)(E,(av),(n))
-#define RDC(lit) (A->read)(E,(lit),sizeof(lit)-1)
+#define RDC(lit) CHECK((A->read)(E,(lit),sizeof(lit)-1))
+#define KDC(lit) CHECK((A->read_constant)(E,(lit),sizeof(lit)-1))
 #define SDC(lit) (A->intern)(E,(lit),sizeof(lit)-1)
+#define SYMVAL(s) ({em_obj symbol=(s);CALL(SDC("symbol-value"),&symbol,1);})
 "#;
 
 /// Sanitize a Lisp symbol name to a C identifier.
@@ -612,6 +726,10 @@ struct Emitter<'a> {
 }
 
 impl<'a> Emitter<'a> {
+    fn constant(&self, value: &Value) -> String {
+        format!("KDC({})", c_str(&self.i.prin1_to_string(value)))
+    }
+
     fn lookup(&self, id: SymId) -> Option<String> {
         self.scopes
             .iter()
@@ -629,14 +747,22 @@ impl<'a> Emitter<'a> {
                 if let Ok(x) = i64::try_from(*n) {
                     format!("INT({x})")
                 } else {
-                    let s = n.to_string();
-                    format!("RDC({})", c_str(&s))
+                    self.constant(f)
                 }
             }
             Value::Float(x) => format!("FLT({:?})", **x),
             Value::Str(s) => {
+                // The same raw characters can denote unibyte bytes or
+                // multibyte eight-bit characters. Carry the metadata too;
+                // printing/reading instead would lose surrogate characters.
+                let kind = i64::from(self.i.is_unibyte_str(s))
+                    | (i64::from(self.i.is_multibyte_str(s)) << 1);
                 let s = s.borrow();
-                format!("(A->mk_str)(E,{},{})", c_str(&s), s.len())
+                format!(
+                    "(A->string_constant_kind)(E,{},{},{kind})",
+                    c_str(&s),
+                    s.len()
+                )
             }
             Value::Sym(id) => {
                 if *id == sym::T {
@@ -646,18 +772,21 @@ impl<'a> Emitter<'a> {
                     return n;
                 }
                 let name = self.i.symbol_name(*id);
-                format!("SDC({})", c_str(&name))
+                if name.starts_with(':') {
+                    return format!("SDC({})", c_str(&name));
+                }
+                // A free variable reads its current dynamic/buffer-local value,
+                // not the symbol itself or the caller's lexical environment.
+                // Like GNU native code, honor symbol-value's function cell.
+                format!("SYMVAL(SDC({}))", c_str(&name))
             }
             Value::Cons(c) => {
                 let car = c.borrow().car.clone();
                 self.cons_form(f, &car)
             }
             // Self-evaluating literals (vectors, records, …):
-            // reconstruct from the printed form.
-            other => {
-                let s = self.i.prin1_to_string(other);
-                format!("RDC({})", c_str(&s))
-            }
+            // retain one read object across calls, just like quote constants.
+            other => self.constant(other),
         }
     }
 
@@ -682,8 +811,7 @@ impl<'a> Emitter<'a> {
         match name.as_str() {
             "quote" => {
                 let a = self.args_of(whole);
-                let s = self.i.prin1_to_string(&a[0]);
-                format!("RDC({})", c_str(&s))
+                self.constant(&a[0])
             }
             "if" => {
                 let a = self.args_of(whole);
@@ -727,7 +855,8 @@ impl<'a> Emitter<'a> {
                 // names collide when `and's nest.
                 self.serial += 1;
                 let lbl = format!("ae{}", self.serial);
-                let mut out = String::from("({em_obj r=NIL;");
+                // The identity of conjunction is t, including zero operands.
+                let mut out = String::from("({em_obj r=TT;");
                 for x in &a {
                     let v = self.form(x);
                     out.push_str(&format!("r={v};if(!TRUTH(r))goto {lbl};"));
@@ -783,10 +912,11 @@ impl<'a> Emitter<'a> {
                         format!("SDC({})", c_str(&n))
                     }
                     _ => {
-                        // #'(lambda …) needs a real closure — eval it
-                        // rather than guessing.
-                        let s = self.i.prin1_to_string(whole);
-                        format!("(A->eval)(E,RDC({}))", c_str(&s))
+                        // C locals are not visible to interpreter eval.  Run
+                        // the whole function through the closure fallback so
+                        // nested lambdas capture its actual argument/local cells.
+                        self.unsupported = true;
+                        "NIL".into()
                     }
                 }
             }
@@ -856,12 +986,14 @@ impl<'a> Emitter<'a> {
         if argv.is_empty() {
             return format!("CALL({fexpr},0,0)");
         }
-        let mut parts = String::from("({em_obj av[]={");
-        for x in &argv {
-            parts.push_str(&self.form(x));
-            parts.push(',');
+        // C initializer elements need not be evaluated left-to-right. Keep
+        // Lisp argument order explicit so a failure skips all later args.
+        let mut parts = format!("({{em_obj fn={fexpr};em_obj av[{}];", argv.len());
+        for (k, x) in argv.iter().enumerate() {
+            let v = self.form(x);
+            parts.push_str(&format!("av[{k}]={v};"));
         }
-        parts.push_str(&format!("}};CALL({fexpr},av,{});}})", argv.len()));
+        parts.push_str(&format!("CALL(fn,av,{});}})", argv.len()));
         parts
     }
 
@@ -920,8 +1052,10 @@ impl<'a> Emitter<'a> {
             let cn = format!("v{}", self.serial);
             self.serial += 1;
             if star {
-                self.scopes.last_mut().unwrap().push((id, cn.clone()));
+                // The new binding is visible to later initializers and the
+                // body, but its own initializer still sees the outer binding.
                 let iv = self.form(&init);
+                self.scopes.last_mut().unwrap().push((id, cn.clone()));
                 decls.push_str(&format!("em_obj {cn}={iv};"));
             } else {
                 // `let': every init form sees the outer scope.
@@ -965,6 +1099,7 @@ fn emit_fn(
     name: &str,
     l: &Rc<crate::lisp::value::Lambda>,
     k: usize,
+    force_fallback: bool,
 ) -> (String, String) {
     let cn = c_name(name, k);
     let min = l.required.len() as u32;
@@ -974,7 +1109,12 @@ fn emit_fn(
         (l.required.len() + l.optional.len()) as u32
     };
 
-    let entry = try_emit_body(i, l, &cn).unwrap_or_else(|| emit_fallback(i, name, l, &cn));
+    let direct = if force_fallback {
+        None
+    } else {
+        try_emit_body(i, l, &cn)
+    };
+    let entry = direct.unwrap_or_else(|| emit_fallback(i, name, l, &cn));
     let arglist = l
         .arglist
         .clone()
@@ -1142,7 +1282,13 @@ fn emit_fallback(
     l: &Rc<crate::lisp::value::Lambda>,
     cn: &str,
 ) -> String {
-    let env_v = crate::lisp::eval::lexenv_as_value(&l.env);
+    // A nil environment means dynamic scope; lexenv_as_value's empty
+    // display convention is (t), which would turn it into lexical scope.
+    let env_v = if l.env.is_some() {
+        crate::lisp::eval::lexenv_as_value(&l.env)
+    } else {
+        Value::Nil
+    };
     let env_s = i.prin1_to_string(&env_v);
     let arglist = l
         .arglist
@@ -1157,7 +1303,7 @@ fn emit_fallback(
     format!(
         "em_obj {cn}(const void *A_, em_env E, const em_obj *args, long n){{\
            A_t A=(A_t)A_;\
-           em_obj cl=(A->eval)(E,RDC({form}));\
+           em_obj cl=EVAL(KDC({form}));\
            return (A->call_lambda)(E,cl,args,n);}}",
         form = c_str(&form)
     )
@@ -1170,7 +1316,7 @@ fn emit_unit(i: &mut Interp, fns: &[(String, Rc<crate::lisp::value::Lambda>)]) -
         "\nint remacs_eln_init(const void *api_, em_env E, long U){A_t A=(A_t)api_;(void)A;int rc=0;",
     );
     for (k, (name, l)) in fns.iter().enumerate() {
-        let (entry, desc) = emit_fn(i, name, l, k);
+        let (entry, desc) = emit_fn(i, name, l, k, false);
         out.push_str(&entry);
         out.push_str(&desc);
         let cn = c_name(name, k);
@@ -1363,53 +1509,169 @@ fn run_cc(c_src: &str, out_path: &str) -> Result<(), String> {
 // High-level compile entry
 // ---------------------------------------------------------------------------
 
-/// Collect `(defun …)'/`(defmacro …)' top-level forms of a file.
-fn file_defuns(
-    i: &mut Interp,
-    path: &str,
-) -> Result<Vec<(String, Rc<crate::lisp::value::Lambda>)>, String> {
-    let data = std::fs::read_to_string(path).map_err(|e| format!("Cannot read {path}: {e}"))?;
-    let mut out = Vec::new();
-    let mut off = 0usize;
-    while off < data.len() {
-        match i.read_from_string(&data, off) {
-            Ok((v, end)) => {
-                if end <= off {
-                    break;
+/// A file is an ordered program, not just a collection of definitions.
+/// Ordinary forms are serialized into the unit, without running them during
+/// compilation. Macro expansion is the only compile-time evaluation here.
+struct FileEmitter {
+    code: String,
+    init: String,
+    serial: usize,
+    macro_env: Value,
+    saved_macros: Vec<(SymId, Value)>,
+    has_declarations: bool,
+}
+
+impl FileEmitter {
+    fn form(&mut self, i: &mut Interp, form: &Value) -> Result<(), Flow> {
+        let parts = form.list_to_vec().unwrap_or_default();
+        let head = parts.first().and_then(|v| match v {
+            Value::Sym(id) => Some(i.symbol_name(*id)),
+            _ => None,
+        });
+        match head.as_deref() {
+            Some("progn") => {
+                for form in &parts[1..] {
+                    self.form(i, form)?;
                 }
-                off = end;
-                if let Value::Cons(c) = &v {
-                    let car = c.borrow().car.clone();
-                    if let Value::Sym(id) = car {
-                        let hname = i.symbol_name(id);
-                        if hname == "defun" || hname == "defmacro" {
-                            let parts = v.list_to_vec().unwrap_or_default();
-                            if parts.len() >= 3 {
-                                if let Value::Sym(n) = parts[1] {
-                                    let lam = form_to_lambda(
-                                        i,
-                                        &parts[2],
-                                        &parts[3..],
-                                        hname == "defmacro",
-                                    );
-                                    let nm = i.symbol_name(n);
-                                    out.push((nm, Rc::new(lam)));
-                                }
-                            }
-                            // Like the byte-compiler, a `defmacro' is
-                            // live during compilation so later forms
-                            // expand through it.
-                            if hname == "defmacro" {
-                                let _ = i.eval(&v);
-                            }
-                        }
+                return Ok(());
+            }
+            Some("defun" | "defmacro") if parts.len() >= 3 => {
+                if let Value::Sym(id) = parts[1] {
+                    let is_macro = head.as_deref() == Some("defmacro");
+                    let mut body = Vec::new();
+                    for form in &parts[3..] {
+                        body.push(self.expand(i, form)?);
                     }
+                    let mut lambda = form_to_lambda(i, &parts[2], &body, is_macro);
+                    lambda.env = i.lexenv.clone();
+                    let lambda = Rc::new(lambda);
+                    let name = i.symbol_name(id);
+                    let (entry, desc) =
+                        emit_fn(i, &name, &lambda, self.serial, self.has_declarations);
+                    self.code.push_str(&entry);
+                    self.code.push_str(&desc);
+                    let cn = c_name(&name, self.serial);
+                    self.init
+                        .push_str(&format!("if(A->defsubr(A,E,U,&D{cn}))return 1;"));
+                    self.serial += 1;
+                    if is_macro {
+                        // Compilation sees local macro definitions, but must
+                        // leave the caller's function cells as it found them.
+                        self.saved_macros.push((id, i.symbol_function(id)));
+                        i.fset(id, Value::Lambda(lambda));
+                    }
+                    return Ok(());
                 }
             }
-            Err(_) => break,
+            Some("defvar" | "defconst") => {
+                // These declarations affect native binding decisions even
+                // in dynamic files, without mutating the compiler's globals.
+                self.has_declarations = true;
+                if let (Some(Value::Sym(id)), Some(env)) = (parts.get(1), &i.lexenv) {
+                    // A compile-time declaration does not initialize the
+                    // variable or mark it globally special.
+                    env.declared.borrow_mut().push(*id);
+                }
+            }
+            _ => {}
         }
+        // Expand only the head first, so a macro-generated top-level progn
+        // or defun is handled just like its literal counterpart.
+        let expand = i.intern("macroexpand");
+        let expanded = i.apply(
+            &Value::Sym(expand),
+            vec![form.clone(), self.macro_env.clone()],
+        )?;
+        if !same_form(&expanded, form) && matches!(form, Value::Cons(_)) {
+            return self.form(i, &expanded);
+        }
+        let expanded = self.expand(i, &expanded)?;
+        let literal = c_str(&i.prin1_to_string(&expanded));
+        // CHECK returns zero for native *functions*. Unit init uses zero for
+        // success, so check each callback explicitly and return one on error.
+        self.init.push_str(&format!(
+            "{{em_obj f=A->read(E,{literal},sizeof({literal})-1);if(!f)return 1;if(!A->eval(E,f))return 1;}}"
+        ));
+        Ok(())
     }
-    Ok(out)
+
+    fn expand(&self, i: &mut Interp, form: &Value) -> EvalResult {
+        let expand = i.intern("macroexpand-all");
+        i.apply(
+            &Value::Sym(expand),
+            vec![form.clone(), self.macro_env.clone()],
+        )
+    }
+}
+
+fn compile_file_to(i: &mut Interp, path: &str, out: &str) -> Result<bool, Flow> {
+    let data =
+        std::fs::read_to_string(path).map_err(|e| i.error(format!("Cannot read {path}: {e}")))?;
+    let lexical = crate::lisp::load::file_lexical_binding(&data);
+    let mark = i.specbind_depth();
+    let lb = i.intern("lexical-binding");
+    i.specbind(lb, Value::from_bool(lexical))?;
+    let saved_lexenv = std::mem::replace(
+        &mut i.lexenv,
+        if lexical {
+            crate::lisp::eval::lexenv_root()
+        } else {
+            None
+        },
+    );
+    // Unlike its interpreted expander, eval-and-compile retains the expanded
+    // body for load time after evaluating it once at compile time.
+    let result = (|| {
+        let (form, _) = i.read_from_string(
+            "(lambda (&rest body) (let ((expanded (macroexpand-all (cons 'progn body) macroexpand-all-environment))) (eval expanded lexical-binding) expanded))", 0)?;
+        let expander = i.eval(&form)?;
+        Ok(Value::list(vec![Value::cons(
+            Value::Sym(i.intern("eval-and-compile")),
+            expander,
+        )]))
+    })();
+    let mut emitter = FileEmitter {
+        code: String::from(C_PRELUDE),
+        init: format!(
+            "\nconst int remacs_eln_lexical={};\nint remacs_eln_init(const void *api_, em_env E, long U){{A_t A=(A_t)api_;",
+            lexical as u8
+        ),
+        serial: 0,
+        macro_env: Value::Nil,
+        saved_macros: Vec::new(),
+        has_declarations: false,
+    };
+    let result = result.and_then(|env| {
+        emitter.macro_env = env;
+        // Reader::read distinguishes clean EOF (including trailing comments)
+        // from an incomplete form. read_from_string turns both into an
+        // end-of-file signal, so swallowing its errors loses malformed tails.
+        // Share the characters and keep offsets in characters, not UTF-8 bytes.
+        let chars: Rc<Vec<char>> = Rc::new(data.chars().collect());
+        let mut off = 0;
+        let mut any_form = false;
+        loop {
+            let mut reader = crate::lisp::reader::Reader::with_chars(i, chars.clone());
+            reader.set_position(off);
+            let Some(form) = reader.read()? else { break };
+            off = reader.position();
+            any_form = true;
+            emitter.form(i, &form)?;
+        }
+        if !any_form {
+            return Ok(false);
+        }
+        emitter.init.push_str("return 0;}\n");
+        emitter.code.push_str(&emitter.init);
+        compile_source_to(&emitter.code, out).map_err(|e| i.error(e))?;
+        Ok(true)
+    });
+    for (id, definition) in emitter.saved_macros.into_iter().rev() {
+        i.fset(id, definition);
+    }
+    i.lexenv = saved_lexenv;
+    i.unbind_to(mark)?;
+    result
 }
 
 /// Build a Lambda from a `(defun name ARGLIST BODY…)' tail.
@@ -1522,6 +1784,10 @@ fn compile_fns_to(
     out: &str,
 ) -> Result<(), String> {
     let src = emit_unit(i, fns);
+    compile_source_to(&src, out)
+}
+
+fn compile_source_to(src: &str, out: &str) -> Result<(), String> {
     if let Ok(p) = std::env::var("REMACS_COMP_DUMP_C") {
         let _ = std::fs::write(format!("{p}.c"), &src);
     }
@@ -1540,7 +1806,8 @@ fn f_native_comp_available_p(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResu
 pub(crate) fn native_load_file(i: &mut Interp, path: &str) -> EvalResult {
     match load_eln(i, path) {
         Ok(idx) => Ok(unit_value(i, idx)),
-        Err(e) => Err(i.error(format!("Cannot open {path}: {e}"))),
+        Err(LoadError::Open(e)) => Err(i.error(format!("Cannot open {path}: {e}"))),
+        Err(LoadError::Lisp(flow)) => Err(flow),
     }
 }
 
@@ -1562,7 +1829,8 @@ fn f_native_elisp_load(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     match load_eln(i, &path) {
         Ok(idx) => Ok(unit_value(i, idx)),
-        Err(e) => {
+        Err(LoadError::Lisp(flow)) => Err(flow),
+        Err(LoadError::Open(e)) => {
             let s = i.intern("native-lisp-load-failed");
             Err(i.signal_data(s, vec![Value::string(path), Value::string(e)]))
         }
@@ -1651,17 +1919,10 @@ fn f_native_compile(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     format!("{}/{rel}", eln_cache_dir())
                 }
             };
-            let fns = match file_defuns(i, &path) {
-                Ok(v) if !v.is_empty() => v,
-                Ok(_) => {
-                    return Err(i.error(format!("No defuns to compile in {path}")));
-                }
-                Err(e) => return Err(i.error(e)),
-            };
-            match compile_fns_to(i, &fns, &out) {
-                Ok(()) => Ok(Value::string(out)),
-                Err(e) => Err(i.error(e)),
+            if !compile_file_to(i, &path, &out)? {
+                return Err(i.error(format!("No defuns to compile in {path}")));
             }
+            Ok(Value::string(out))
         }
         Value::Sym(id) => {
             let f = i.symbol_function(*id);
@@ -1720,7 +1981,8 @@ fn compile_one_lambda(
                     _ => Ok(Value::string(out_path)),
                 }
             }
-            Err(e) => Err(i.error(e)),
+            Err(LoadError::Open(e)) => Err(i.error(e)),
+            Err(LoadError::Lisp(flow)) => Err(flow),
         },
         Err(e) => Err(i.error(e)),
     }
@@ -1770,13 +2032,14 @@ fn f_native_compile_async(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 Err(e) => return Err(e),
             };
             let out = format!("{}/{rel}", eln_cache_dir());
-            let fns = file_defuns(i, &p).unwrap_or_default();
-            if fns.is_empty() {
+            if !compile_file_to(i, &p, &out)? {
                 continue;
             }
-            compile_fns_to(i, &fns, &out).map_err(|e| i.error(e))?;
             if load {
-                load_eln(i, &out).map_err(|e| i.error(e))?;
+                load_eln(i, &out).map_err(|e| match e {
+                    LoadError::Open(message) => i.error(message),
+                    LoadError::Lisp(flow) => flow,
+                })?;
             }
             outs.push(Value::string(out));
         }
@@ -2108,6 +2371,7 @@ fn f_comp_register_lambda(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     })?;
     META.with(|m| {
         m.borrow_mut().push(NativeMeta {
+            constants: HashMap::new(),
             name: cname.clone(),
             unit: unit_idx as i64,
             arglist: Value::Nil,

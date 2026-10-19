@@ -2084,72 +2084,7 @@ pub(crate) fn make_interpreted_closure(
         }
     }
     let body = body_v.list_to_vec().unwrap_or_default();
-    let env = match env_v {
-        Value::Nil => None,
-        // `(t)' — GNU's printed env for a top-level lexical
-        // environment: an empty root frame (prints back as `(t)').
-        Value::Cons(c)
-            if matches!(&c.borrow().cdr, Value::Nil)
-                && matches!(&c.borrow().car, Value::Sym(s) if *s == crate::lisp::obarray::sym::T) =>
-        {
-            Some(Rc::new(crate::lisp::LexFrame {
-                vars: RefCell::new(Vec::new()),
-                declared: RefCell::new(Vec::new()),
-                parent: None,
-            }))
-        }
-        // An env value is a list of binding alists — model as a flat
-        // alist lexical frame.
-        alist => {
-            let mut vars: Vec<(crate::lisp::value::SymId, Value)> = Vec::new();
-            let mut declared: Vec<crate::lisp::value::SymId> = Vec::new();
-            let mut cur = alist.clone();
-            // Peel off a possible outer context list.
-            loop {
-                let next = match &cur {
-                    Value::Cons(c) => {
-                        let b = c.borrow();
-                        let elem = b.car.clone();
-                        let rest = b.cdr.clone();
-                        // Elements may be (sym . val) conses or bare syms
-                        // (scoped `defvar' markers, as in GNU's env).
-                        match &elem {
-                            Value::Cons(p) => {
-                                let pb = p.borrow();
-                                if let Some(sid) = i.sym_id(&pb.car) {
-                                    match vars.iter_mut().find(|(s, _)| *s == sid) {
-                                        Some(e) => e.1 = pb.cdr.clone(),
-                                        None => vars.push((sid, pb.cdr.clone())),
-                                    }
-                                }
-                            }
-                            Value::Sym(sid) => {
-                                if !declared.contains(sid) {
-                                    declared.push(*sid);
-                                }
-                            }
-                            _ => {}
-                        }
-                        rest
-                    }
-                    _ => Value::Nil,
-                };
-                if matches!(next, Value::Nil) {
-                    break;
-                }
-                cur = next;
-            }
-            // The alist is already in GNU env order (newest binding
-            // first); reverse so `vars' order is oldest-first and
-            // `lexenv_as_value' reproduces the input verbatim.
-            vars.reverse();
-            Some(Rc::new(crate::lisp::LexFrame {
-                vars: RefCell::new(vars),
-                declared: RefCell::new(declared),
-                parent: None,
-            }))
-        }
-    };
+    let env = crate::lisp::eval::lexenv_from_value(env_v);
     // A `#[ARGDESC STR CONSTS DEPTH DOC ISPEC]' literal read while
     // evaluating a `.elc' dump blob stands in for GNU's byte-compiled
     // (or, on nativecomp builds, subr-shaped) function object: mark it
@@ -3161,7 +3096,7 @@ fn describe_vector(
         if !is_ct {
             while c < stop {
                 let d2 = crate::editor::keyelt_value(i, &cellval!(c));
-                if d2.is_nil() || !crate::lisp::builtins::equal_values(i, &d2, &defn) {
+                if d2.is_nil() || !crate::lisp::builtins::equal_values(i, &d2, &defn)? {
                     break;
                 }
                 c += 1;
@@ -3179,7 +3114,7 @@ fn describe_vector(
                 while j <= range_end {
                     let tem =
                         crate::editor::shadow_lookup_ad(i, &shadow_maps, &kludge(j), true, false)?;
-                    if !crate::lisp::builtins::equal_values(i, &tem, &shadowed_by) {
+                    if !crate::lisp::builtins::equal_values(i, &tem, &shadowed_by)? {
                         range_end = j - 1;
                         c = j;
                         break;
@@ -4177,15 +4112,11 @@ pub(crate) fn gmt_tm(secs: i64) -> Tm {
 /// Run one `strftime` conversion against a broken-down time.  Returns the
 /// locale-formatted text (e.g. `%a` -> weekday abbrev, `%p` -> AM/PM).
 /// The C library's locale is initialized once from the environment, like
-/// GNU does at startup.
-/// Run one `strftime` conversion against a broken-down time.  Returns the
-/// locale-formatted text (e.g. `%a` -> weekday abbrev, `%p` -> AM/PM).
-/// The C library's locale is initialized once from the environment, like
 /// GNU does at startup; an explicit LOCALE (`system-time-locale')
 /// temporarily overrides it — GNU's Fformat_time_string does exactly
 /// this pair of setlocale calls, falling back to "C" for unknown
 /// locale names.
-pub(crate) fn strftime_spec(fmt: &str, tm: &Tm, locale: Option<&str>) -> String {
+pub(crate) fn strftime_spec(fmt: &str, tm: &Tm, locale: Option<&str>) -> Option<String> {
     // setlocale/strftime share process-global C state — serialize with
     // the TZ lock so parallel threads can't observe a half-switched
     // locale (or vice versa).
@@ -4194,41 +4125,14 @@ pub(crate) fn strftime_spec(fmt: &str, tm: &Tm, locale: Option<&str>) -> String 
     INIT.call_once(|| unsafe {
         libc::setlocale(libc::LC_TIME, c"".as_ptr());
     });
-    // macOS strftime lacks GNU's uppercase flag.  Strip flag-position
-    // carets and apply ASCII byte casing, not Unicode case expansion.
-    let flag_end = fmt.as_bytes().iter().skip(1)
-        .take_while(|c| matches!(c, b'-' | b'_' | b'0' | b'^' | b'#'))
-        .count() + 1;
-    let flags = &fmt[..flag_end.min(fmt.len())];
-    let uppercase = flags.contains('^');
-    let lowercase = fmt.ends_with('P')
-        || (flags.contains('#') && (fmt.ends_with('p') || fmt.ends_with('Z')));
-    let width_end = flag_end + fmt.as_bytes()[flag_end.min(fmt.len())..].iter()
-        .take_while(|c| c.is_ascii_digit()).count();
-    let textual = uppercase && fmt.ends_with(|c: char| "aAbBhcpPxXrRTDZ".contains(c));
-    let no_padding = flags.chars().rev().find(|c| matches!(c, '-' | '_' | '0')) == Some('-');
-    let native_fmt = if textual {
-        // Width and # are also libc extensions: for textual conversions
-        // use the portable base directive, then case and pad its result.
-        let base = &fmt[width_end..];
-        if base.ends_with('P') {
-            format!("%{}p", &base[..base.len() - 1])
-        } else {
-            format!("%{}", base)
-        }
-    } else if uppercase {
-        let rest = if no_padding { width_end } else { flag_end };
-        format!("{}{}", flags.replace(['^', '#'], ""), &fmt[rest..])
-    } else if no_padding {
-        // GNU suppresses explicit field widths with the final '-' flag;
-        // libc strftime can still space-pad unless the width is removed.
-        format!("{}{}", flags, &fmt[width_end..])
-    } else {
-        fmt.to_owned()
-    };
-    let mut cfmt = native_fmt.as_bytes().to_vec();
+    // Only portable, unadorned locale directives reach libc. Field widths,
+    // flags, numeric conversions and GNU extensions live in timefmt.rs.
+    // Match gnulib's underlying_strftime buffer and sentinel: locale
+    // composites can include a long caller-supplied zone abbreviation, and
+    // a leading space distinguishes valid empty locale output from failure.
+    let mut cfmt = format!(" {fmt}").into_bytes();
     cfmt.push(0);
-    let mut buf = vec![0u8; 512];
+    let mut buf = vec![0u8; 1024];
     // Our `Tm' mirrors the POSIX `struct tm' layout used by strftime.
     let n = if let Some(loc) = locale {
         unsafe {
@@ -4256,28 +4160,11 @@ pub(crate) fn strftime_spec(fmt: &str, tm: &Tm, locale: Option<&str>) -> String 
             )
         }
     };
-    let mut result = String::from_utf8_lossy(&buf[..n]).into_owned();
-    // libc echoes invalid conversions; retain their original flags and
-    // widths even when normalization did not involve uppercasing.
-    if result == native_fmt {
-        result = fmt.to_owned();
+    if n == 0 {
+        None
+    } else {
+        Some(String::from_utf8_lossy(&buf[1..n]).into_owned())
     }
-    if uppercase {
-        if lowercase {
-            result.make_ascii_lowercase();
-        } else {
-            result.make_ascii_uppercase();
-        }
-        if textual {
-            let pad = flags.chars().rev().find(|c| matches!(c, '-' | '_' | '0'));
-            let width = fmt[flag_end..width_end].parse::<usize>().unwrap_or(0);
-            if pad != Some('-') && width > result.len() {
-                let ch = if pad == Some('0') { '0' } else { ' ' };
-                result.insert_str(0, &ch.to_string().repeat(width - result.len()));
-            }
-        }
-    }
-    result
 }
 
 /// Local-time breakdown under an explicit TZ spec (e.g. "Europe/Paris",
@@ -6693,7 +6580,7 @@ fn f_find_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         if matches!(v, Value::Sym(s) if s == sym::UNBOUND) {
             return Err(i.signal_data(sym::VOID_VARIABLE, vec![a[0].clone()]));
         }
-        if super::equal_values(i, &v, &a[1]) {
+        if super::equal_values(i, &v, &a[1])? {
             if let Some(b) = i.buffers.get(id) {
                 return Ok(Value::Buffer(b));
             }
@@ -12838,7 +12725,7 @@ fn coding_fixed_eol(i: &Interp, v: &Value) -> Option<usize> {
     None
 }
 
-fn f_encode_coding_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_encode_coding_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let text = want_string(i, &a[0])?;
     f_check_coding_system(i, vec![a[1].clone()].into())?;
     let canonical = coding_canonical(i, &a[1]);
@@ -13530,7 +13417,7 @@ pub(crate) fn decode_file_bytes(
     Ok((decoded, used))
 }
 
-fn f_decode_coding_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_decode_coding_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     want_string(i, &a[0])?;
     f_check_coding_system(i, vec![a[1].clone()].into())?;
     let canonical = coding_canonical(i, &a[1]);
@@ -15122,9 +15009,15 @@ pub(crate) fn ct_replay(i: &mut Interp, table: &Value, ops_src: &str) {
 /// `optimize_sub_char_table': collapse a sub-table whose slots all
 /// compare equal (default `equal'; `eq' optimized).  Children are
 /// optimized bottom-up first.
-fn ct_same(i: &mut Interp, a: &Value, b: &Value, test: &Value, eq_test: bool) -> bool {
+fn ct_same(
+    i: &mut Interp,
+    a: &Value,
+    b: &Value,
+    test: &Value,
+    eq_test: bool,
+) -> Result<bool, Flow> {
     if eq_test {
-        super::eq_values(a, b)
+        Ok(super::eq_values(a, b))
     } else if test.is_nil() {
         super::equal_values(i, a, b)
     } else {
@@ -15134,13 +15027,12 @@ fn ct_same(i: &mut Interp, a: &Value, b: &Value, test: &Value, eq_test: bool) ->
         let q = |v: &Value| Value::list(vec![Value::Sym(sym::QUOTE), v.clone()]);
         i.call_function(test, &Value::list(vec![q(a), q(b)]), None)
             .map(|v| !v.is_nil())
-            .unwrap_or(false)
     }
 }
 
-fn sub_ct_optimize(i: &mut Interp, sub: &Value, test: &Value) -> Value {
+fn sub_ct_optimize(i: &mut Interp, sub: &Value, test: &Value) -> EvalResult {
     let Some((depth, _, r)) = sub_ct_parts(sub) else {
-        return sub.clone();
+        return Ok(sub.clone());
     };
     let n = CHARTAB_SIZE[depth];
     let eq_test = matches!(test, Value::Sym(s) if i.symbol_name(*s) == "eq");
@@ -15150,7 +15042,7 @@ fn sub_ct_optimize(i: &mut Interp, sub: &Value, test: &Value) -> Value {
         b.get(3).cloned().unwrap_or(Value::Nil)
     };
     if is_sub_ct(i, &first) {
-        first = sub_ct_optimize(i, &first, &test_fn);
+        first = sub_ct_optimize(i, &first, &test_fn)?;
         r.borrow_mut()[3] = first.clone();
     }
     let mut optimizable = !is_sub_ct(i, &first);
@@ -15160,30 +15052,31 @@ fn sub_ct_optimize(i: &mut Interp, sub: &Value, test: &Value) -> Value {
             b.get(3 + k).cloned().unwrap_or(Value::Nil)
         };
         if is_sub_ct(i, &this) {
-            this = sub_ct_optimize(i, &this, &test_fn);
+            this = sub_ct_optimize(i, &this, &test_fn)?;
             r.borrow_mut()[3 + k] = this.clone();
         }
-        if optimizable && !ct_same(i, &this, &first, &test_fn, eq_test) {
+        if optimizable && !ct_same(i, &this, &first, &test_fn, eq_test)? {
             optimizable = false;
         }
     }
-    if optimizable { first } else { sub.clone() }
+    Ok(if optimizable { first } else { sub.clone() })
 }
 
 /// `Foptimize_char_table' inner: optimize each top-level slot and
 /// refresh the ASCII cache.
-fn ct_optimize(i: &mut Interp, table: &Value, test: &Value) {
+fn ct_optimize(i: &mut Interp, table: &Value, test: &Value) -> Result<(), Flow> {
     let Some(contents) = char_table_vec(table) else {
-        return;
+        return Ok(());
     };
     for ti in 1..=64usize {
         let sub = contents.borrow()[ti].clone();
         if is_sub_ct(i, &sub) {
-            let newv = sub_ct_optimize(i, &sub, test);
+            let newv = sub_ct_optimize(i, &sub, test)?;
             contents.borrow_mut()[ti] = newv;
         }
     }
     ct_refresh_ascii(i, &contents);
+    Ok(())
 }
 
 /// GNU `char_table_ascii' for a uniprop table: a compressed string in
@@ -16007,7 +15900,7 @@ fn value_lt_impl(i: &mut Interp, x: &Value, y: &Value, depth: u32) -> Result<boo
                         break;
                     }
                     (Some(a), Some(b)) => {
-                        if !crate::lisp::builtins::equal_values(i, a, b) {
+                        if !crate::lisp::builtins::equal_values(i, a, b)? {
                             lt = value_lt_impl(i, a, b, depth + 1)?;
                             break;
                         }
@@ -16033,7 +15926,7 @@ fn value_lt_impl(i: &mut Interp, x: &Value, y: &Value, depth: u32) -> Result<boo
                         break;
                     }
                     (Some(a), Some(b)) => {
-                        if !crate::lisp::builtins::equal_values(i, a, b) {
+                        if !crate::lisp::builtins::equal_values(i, a, b)? {
                             lt = value_lt_impl(i, a, b, depth + 1)?;
                             break;
                         }
@@ -16897,7 +16790,7 @@ fn f_optimize_char_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         return Err(i.wrong_type_mut("char-table-p", &a[0]));
     }
     let test = arg(&a, 1);
-    ct_optimize(i, &a[0].clone(), &test);
+    ct_optimize(i, &a[0].clone(), &test)?;
     Ok(Value::Nil)
 }
 
@@ -17085,16 +16978,9 @@ fn f_mapbacktrace(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             // resolved function value for direct calls but the symbol
             // for `apply'-driven ones.
             let base_fn = i.indirect_function_value(v);
-            match frames
-                .iter()
-                .position(|(fval, _)| {
-                    crate::lisp::builtins::equal_values(
-                        i,
-                        &i.indirect_function_value(fval),
-                        &base_fn,
-                    )
-                })
-            {
+            match frames.iter().position(|(fval, _)| {
+                crate::lisp::builtins::eq_values(&i.indirect_function_value(fval), &base_fn)
+            }) {
                 Some(p) => p,
                 None => return Ok(Value::Nil),
             }

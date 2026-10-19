@@ -1070,7 +1070,7 @@ fn f_parser_set_included_ranges(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
     if !matches!(ranges, Value::Nil) && !matches!(ranges, Value::Cons(_)) {
         return Err(i.wrong_type_mut("consp", &ranges));
     }
-    if super::equal_values(i, &i.treesit.parsers[&pid].ranges, &ranges) {
+    if super::equal_values(i, &i.treesit.parsers[&pid].ranges, &ranges)? {
         return Ok(Value::Nil);
     }
     let buf = i.treesit.parsers[&pid].buffer.clone();

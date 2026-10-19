@@ -2,9 +2,9 @@
 
 use super::{S, arg};
 use crate::lisp::Interp;
-use crate::lisp::error::EvalResult;
+use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
-use crate::lisp::value::{HashKey, HashTest, LispHash, Subr, Value};
+use crate::lisp::value::{HashKey, HashRef, HashTest, LispHash, Subr, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -76,7 +76,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         3,
         3,
         f_define_hash_table_test,
-        "Define a new test (ignored)."
+        "Define a hash table comparison and hash function."
     ),
     S!(
         "internal--hash-table-buckets",
@@ -108,7 +108,14 @@ pub(crate) fn hash_key_for(interp: &Interp, v: &Value, test: HashTest) -> HashKe
         HashTest::Eql => eql_key(v),
         HashTest::Equal => {
             let mut ancestors = std::collections::HashSet::new();
-            equal_key(interp, v, &mut ancestors)
+            // Keep compact acyclic keys, but a cycle or a large unfolding
+            // needs a hash bucket whose original objects are compared.
+            equal_key(interp, v, &mut ancestors, &mut 4096, 0).unwrap_or_else(|| {
+                let HashKey::Ptr(identity) = eq_key(v) else {
+                    unreachable!("only compound equal keys can need a fallback")
+                };
+                HashKey::EqualFallback(super::strfn::equal_hash_code(interp, v), identity)
+            })
         }
     }
 }
@@ -158,29 +165,36 @@ fn equal_key(
     interp: &Interp,
     v: &Value,
     ancestors: &mut std::collections::HashSet<usize>,
-) -> HashKey {
-    // Cyclic structures must not recurse forever (cl--generic method
-    // tables embed self-referencing records — GNU accepts them in
-    // `equal' tables).  Rather than GNU sxhash's depth cap — which is
-    // unsound here because our HashKey IS the bucket entry, not a
-    // collision-checked digest — track the containers on the current
-    // descent path and emit a back-edge marker keyed by pointer.
+    budget: &mut usize,
+    depth: usize,
+) -> Option<HashKey> {
+    // Normalization is only a fast path, never proof that cyclic keys
+    // differ. Bound both recursion and repeated expansion of shared DAGs.
+    // A fallback hashes a bounded unfolding and collision-checks `equal'.
+    if *budget == 0 || depth > 128 {
+        return None;
+    }
+    *budget -= 1;
     let ptr = match v {
         Value::Cons(c) => Some(Rc::as_ptr(c) as usize),
         Value::Vec(c) => Some(Rc::as_ptr(c) as usize),
         Value::Record(c) => Some(Rc::as_ptr(c) as usize),
+        Value::Lambda(c) => Some(Rc::as_ptr(c) as usize),
         _ => None,
     };
     if let Some(p) = ptr {
         if !ancestors.insert(p) {
-            // Already on the path: a cycle.  The pointer value keeps
-            // equal keys equal and makes unrelated structures' back-
-            // edges distinguishable (unlike a flat constant).
-            return HashKey::Ptr(p | (1usize << 63));
+            return None;
         }
     }
     let out = match v {
         Value::Str(s) => HashKey::Str(s.borrow().clone()),
+        Value::Marker(m) => {
+            let m = m.borrow();
+            // Match equal_values, including detached markers. Insertion
+            // type is deliberately ignored; eq/eql retain pointer identity.
+            HashKey::Marker(m.buffer, if m.buffer.is_some() { m.position } else { 0 })
+        }
         // Enabled sympos are `equal' to their bare symbol — same key
         // as the plain symbol arm below.
         _ if super::misc::as_sympos(v).is_some() => {
@@ -190,15 +204,15 @@ fn equal_key(
         Value::Cons(c) => {
             let b = c.borrow();
             HashKey::Cons(
-                Box::new(equal_key(interp, &b.car, ancestors)),
-                Box::new(equal_key(interp, &b.cdr, ancestors)),
+                Box::new(equal_key(interp, &b.car, ancestors, budget, depth + 1)?),
+                Box::new(equal_key(interp, &b.cdr, ancestors, budget, depth + 1)?),
             )
         }
         Value::Vec(vec) => HashKey::Vec(
             vec.borrow()
                 .iter()
-                .map(|x| equal_key(interp, x, ancestors))
-                .collect(),
+                .map(|x| equal_key(interp, x, ancestors, budget, depth + 1))
+                .collect::<Option<Vec<_>>>()?,
         ),
         // `equal' compares records elementwise — hash contents too,
         // tagged so records never collide with plain vectors.
@@ -206,8 +220,8 @@ fn equal_key(
             1,
             r.borrow()
                 .iter()
-                .map(|x| equal_key(interp, x, ancestors))
-                .collect(),
+                .map(|x| equal_key(interp, x, ancestors, budget, depth + 1))
+                .collect::<Option<Vec<_>>>()?,
         ),
         Value::Lambda(l) => {
             if let Some(items) = &l.bc_items {
@@ -216,7 +230,8 @@ fn equal_key(
                     items
                         .borrow()
                         .iter()
-                        .map(|x| equal_key(interp, x, ancestors)),
+                        .map(|x| equal_key(interp, x, ancestors, budget, depth + 1))
+                        .collect::<Option<Vec<_>>>()?,
                 );
                 HashKey::Tagged(2, keys)
             } else {
@@ -228,20 +243,30 @@ fn equal_key(
                 ];
                 keys.extend(l.required.iter().map(|s| HashKey::Sym(*s)));
                 keys.extend(l.rest.iter().map(|s| HashKey::Sym(*s)));
-                keys.extend(l.optional.iter().map(|p| {
-                    HashKey::Vec(vec![
-                        HashKey::Sym(p.sym),
-                        match &p.supplied {
-                            Some(s) => HashKey::Sym(*s),
-                            None => HashKey::Nil,
-                        },
-                        match &p.default {
-                            Some(d) => equal_key(interp, d, ancestors),
-                            None => HashKey::Nil,
-                        },
-                    ])
-                }));
-                keys.extend(l.body.iter().map(|x| equal_key(interp, x, ancestors)));
+                keys.extend(
+                    l.optional
+                        .iter()
+                        .map(|p| {
+                            Some(HashKey::Vec(vec![
+                                HashKey::Sym(p.sym),
+                                match &p.supplied {
+                                    Some(s) => HashKey::Sym(*s),
+                                    None => HashKey::Nil,
+                                },
+                                match &p.default {
+                                    Some(d) => equal_key(interp, d, ancestors, budget, depth + 1)?,
+                                    None => HashKey::Nil,
+                                },
+                            ]))
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                );
+                keys.extend(
+                    l.body
+                        .iter()
+                        .map(|x| equal_key(interp, x, ancestors, budget, depth + 1))
+                        .collect::<Option<Vec<_>>>()?,
+                );
                 HashKey::Tagged(3, keys)
             }
         }
@@ -250,10 +275,10 @@ fn equal_key(
     if let Some(p) = ptr {
         ancestors.remove(&p);
     }
-    out
+    Some(out)
 }
 
-fn f_make_hash_table(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_make_hash_table(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // (make-hash-table &rest KEYWORD-ARGS)
     // — GNU scans the pairs backwards: the *last* pair's keyword is
     // validated first, and the *first* occurrence of a keyword wins.
@@ -299,7 +324,7 @@ fn f_make_hash_table(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // `symbolp'; unknown symbol names consult `define-hash-table-test'
     // (the `hash-table-test' property) and otherwise signal
     // "Invalid hash table test".
-    let (test, test_name) = {
+    let (test, test_name, user_test) = {
         let tname = match &test_arg {
             Value::Nil => String::new(),
             v => match i.sym_id(v) {
@@ -308,17 +333,20 @@ fn f_make_hash_table(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             },
         };
         match tname.as_str() {
-            "" | "eql" => (HashTest::Eql, Value::Nil),
-            "eq" => (HashTest::Eq, Value::Nil),
-            "equal" => (HashTest::Equal, Value::Nil),
+            "" | "eql" => (HashTest::Eql, Value::Nil, None),
+            "eq" => (HashTest::Eq, Value::Nil, None),
+            "equal" => (HashTest::Equal, Value::Nil, None),
             _ => {
                 let id = i.sym_id(&test_arg).unwrap();
                 let prop = i.intern("hash-table-test");
-                if !i.get_prop(id, prop).is_nil() {
-                    // remacs can't plug arbitrary test/hash functions
-                    // into the table — accept the name and use `equal'
-                    // semantics, keeping the name for `hash-table-test'.
-                    (HashTest::Equal, test_arg.clone())
+                let definition = i.get_prop(id, prop);
+                if let Value::Cons(first) = &definition
+                    && let Value::Cons(second) = &first.borrow().cdr
+                {
+                    // Capture the two function objects, not the property's
+                    // conses: redefining the test affects only new tables.
+                    let functions = (first.borrow().car.clone(), second.borrow().car.clone());
+                    (HashTest::Eql, test_arg.clone(), Some(functions))
                 } else {
                     // GNU: (error "Invalid hash table test" VAL)
                     return Err(i.signal_data(
@@ -368,13 +396,98 @@ fn f_make_hash_table(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     h.rehash_size = rehash_size;
     h.rehash_threshold = rehash_threshold;
     h.test_name = test_name;
+    h.user_test = user_test;
     Ok(Value::Hash(Rc::new(RefCell::new(h))))
+}
+
+/// Never retain a RefCell borrow across Lisp: callbacks can inspect the
+/// table or perform recursive lookups. Restore its mutability on every
+/// Lisp exit path, including signals and throws, as GNU does.
+fn user_call(i: &mut Interp, h: &HashRef, function: &Value, args: Vec<Value>) -> EvalResult {
+    let mutable = h.borrow().mutable;
+    h.borrow_mut().mutable = false;
+    let result = i.apply(function, args);
+    h.borrow_mut().mutable = mutable;
+    result
+}
+
+fn check_mutable(i: &mut Interp, h: &HashRef) -> Result<(), Flow> {
+    if h.borrow().mutable {
+        Ok(())
+    } else {
+        Err(i.signal_data(
+            sym::ERROR,
+            vec![
+                Value::string("hash table test modifies table"),
+                Value::Hash(h.clone()),
+            ],
+        ))
+    }
+}
+
+/// Return the matching entry's key, or a fresh key suitable for insertion.
+/// A normalized key is sufficient for small acyclic built-in keys.
+/// Larger/cyclic equal keys and custom tests need collision checking.
+pub(crate) fn table_key(i: &mut Interp, h: &HashRef, key: &Value) -> Result<HashKey, Flow> {
+    let (test, user_test) = {
+        let table = h.borrow();
+        (table.test, table.user_test.clone())
+    };
+    let Some((compare, hash_function)) = user_test else {
+        let normalized = hash_key_for(i, key, test);
+        if let HashKey::EqualFallback(hash, _) = &normalized {
+            let candidates: Vec<(HashKey, Value)> = {
+                let table = h.borrow();
+                table
+                    .collision_order
+                    .iter()
+                    .rev()
+                    .filter_map(|slot| table.keys.0[*slot].as_ref())
+                    .filter(|(k, _)| matches!(k, HashKey::EqualFallback(code, _) if code == hash))
+                    .cloned()
+                    .collect()
+            };
+            for (stored_key, original) in candidates {
+                if super::equal_values(i, key, &original)? {
+                    return Ok(stored_key);
+                }
+            }
+        }
+        return Ok(normalized);
+    };
+    let hash_result = user_call(i, h, &hash_function, vec![key.clone()])?;
+    let hash = super::strfn::user_hash_code(i, &hash_result);
+    let candidates: Vec<(HashKey, Value)> = {
+        let table = h.borrow();
+        table
+            .collision_order
+            .iter()
+            .rev()
+            .filter_map(|slot| table.keys.0[*slot].as_ref())
+            .filter(|(k, _)| matches!(k, HashKey::Custom(code, _) if *code == hash))
+            .cloned()
+            .collect()
+    };
+    for (stored_key, original) in candidates {
+        if super::eq_values(key, &original)
+            || user_call(i, h, &compare, vec![key.clone(), original])?.truthy()
+        {
+            return Ok(stored_key);
+        }
+    }
+    let table = h.borrow();
+    let slot = table
+        .free_slots
+        .last()
+        .copied()
+        .unwrap_or(table.keys.0.len());
+    Ok(HashKey::Custom(hash, slot))
 }
 
 fn f_gethash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[1] {
         Value::Hash(h) => {
-            let key = hash_key_for(i, &args[0], h.borrow().test);
+            let key = table_key(i, h, &args[0])?;
             Ok(h.borrow()
                 .map
                 .get(&key)
@@ -385,11 +498,12 @@ fn f_gethash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
 }
 
-fn f_puthash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_puthash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // Emacs signature: (puthash KEY VALUE TABLE).
     match &args[2] {
         Value::Hash(h) => {
-            let key = hash_key_for(i, &args[0], h.borrow().test);
+            check_mutable(i, h)?;
+            let key = table_key(i, h, &args[0])?;
             let mut hh = h.borrow_mut();
             hh.map.insert(key.clone(), args[1].clone());
             hh.put_key(key, args[0].clone());
@@ -402,7 +516,8 @@ fn f_puthash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_remhash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[1] {
         Value::Hash(h) => {
-            let key = hash_key_for(i, &args[0], h.borrow().test);
+            check_mutable(i, h)?;
+            let key = table_key(i, h, &args[0])?;
             let mut hh = h.borrow_mut();
             hh.map.remove(&key);
             hh.remove_key(&key);
@@ -415,9 +530,12 @@ fn f_remhash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_clrhash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[0] {
         Value::Hash(h) => {
+            check_mutable(i, h)?;
             let mut hh = h.borrow_mut();
             hh.map.clear();
             hh.keys.clear();
+            hh.collision_order.clear();
+            hh.free_slots.clear();
             Ok(args[0].clone())
         }
         other => Err(i.wrong_type_mut("hash-table-p", other)),
@@ -497,14 +615,9 @@ fn f_hash_table_size(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_copy_hash_table(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[0] {
         Value::Hash(h) => {
-            let hh = h.borrow();
-            let mut nh = LispHash::new(hh.test);
-            nh.map = hh.map.clone();
-            nh.keys = hh.keys.clone();
-            nh.weakness = hh.weakness.clone();
-            nh.size = hh.size;
-            nh.rehash_size = hh.rehash_size.clone();
-            nh.rehash_threshold = hh.rehash_threshold.clone();
+            let mut nh = h.borrow().clone();
+            // A copy made inside a callback is independently mutable.
+            nh.mutable = true;
             Ok(Value::Hash(Rc::new(RefCell::new(nh))))
         }
         other => Err(i.wrong_type_mut("hash-table-p", other)),

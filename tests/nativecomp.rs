@@ -255,3 +255,166 @@ fn error_paths() {
         "boom"
     );
 }
+
+/// Remacs-specific handle callbacks also have to stop at their first error.
+/// GNU does not serialize quoted markers or rebuild fallback closures this way.
+#[test]
+fn failed_read_and_fallback_eval_abort() {
+    if !avail() {
+        return;
+    }
+    assert_eq!(
+        ev(r#"
+          (defvar nc-error-side nil)
+          (let* ((dir (make-temp-file "remacs-native-callback-errors-" t))
+                 (user-emacs-directory dir)
+                 (native-comp-eln-load-path (list dir)))
+            (unwind-protect
+                (let* ((read-fn
+                        (native-compile
+                         (eval (list 'lambda nil (list 'quote (make-marker))
+                                     '(setq nc-error-side 'after-read)) t)
+                         (expand-file-name "read.eln" dir)))
+                       (eval-fn
+                        (native-compile
+                         '(lambda () (unwind-protect
+                                         (setq nc-error-side 'fallback-body) nil))
+                         (expand-file-name "eval.eln" dir)))
+                       (old (symbol-function 'make-interpreted-closure))
+                       (read-error (condition-case err (funcall read-fn)
+                                     (error (car err))))
+                       eval-error)
+                  (unwind-protect
+                      (progn
+                        (fset 'make-interpreted-closure
+                              (lambda (&rest ignored) (error "native-closure-stop")))
+                        (setq eval-error (condition-case err (funcall eval-fn)
+                                           (error err))))
+                    (fset 'make-interpreted-closure old))
+                  (list (native-comp-function-p read-fn)
+                        (native-comp-function-p eval-fn)
+                        read-error eval-error nc-error-side
+                        (funcall (native-compile '(lambda () (identity nil))
+                                                 (expand-file-name "nil.eln" dir)))))
+              (delete-directory dir t)))
+          "#),
+        "(t t invalid-read-syntax (error \"native-closure-stop\") nil nil)"
+    );
+}
+
+/// Remacs's synchronous async entry point shares the file compiler. Empty
+/// files remain skippable, but initializer-only files must no longer vanish.
+#[test]
+fn async_file_toplevel() {
+    if !avail() {
+        return;
+    }
+    let source = scratch("async-toplevel.el", "(setq nc-async-loaded 42)\n");
+    let empty = scratch("async-empty.el", ";;; Empty compilation input.\n");
+    assert_eq!(
+        ev(&format!(
+            "(progn (defvar nc-async-loaded nil) (let* ((nc-async-loaded nil) \
+                    (outputs (native-compile-async (list {source:?} {empty:?}) nil nil)) \
+                    (before nc-async-loaded)) \
+                (native-elisp-load (car outputs)) \
+                (let ((loaded nc-async-loaded)) \
+                  (setq nc-async-loaded nil) \
+                  (native-compile-async {source:?} nil t) \
+                  (list (length outputs) before loaded nc-async-loaded))))"
+        )),
+        "(1 nil 42 42)"
+    );
+}
+
+/// The synchronous async/directory wrappers must not accept or load a valid
+/// prefix of malformed source. Their return/error contract is remacs-specific.
+#[test]
+fn async_file_parse_errors() {
+    if !avail() {
+        return;
+    }
+    assert_eq!(
+        ev(r#"
+          (let* ((dir (make-temp-file "remacs-native-parse-errors-" t))
+                 (source (expand-file-name "broken.el" dir))
+                 output)
+            (unwind-protect
+                (progn
+                  (with-temp-file source
+                    (insert ";;; -*- lexical-binding: t; -*-\n"
+                            "(defun nc-parse-prefix () 7)\n(\n"))
+                  (setq output (comp-el-to-eln-filename source))
+                  (let ((async-error
+                         (condition-case err (native-compile-async source)
+                           (error (car err))))
+                        (load-error
+                         (condition-case err (native-compile-async source nil t)
+                           (error (car err))))
+                        (directory-error
+                         (condition-case err (native-compile-directory dir)
+                           (error (car err))))
+                        (batch-error
+                         (let ((command-line-args-left (list source)))
+                           (condition-case err (batch-native-compile)
+                             (error (car err))))))
+                    (list async-error load-error directory-error batch-error
+                          (file-exists-p output) (fboundp 'nc-parse-prefix)
+                          (progn
+                            (with-temp-file source
+                              (insert "(defun nc-parse-prefix () 23)\n; clean EOF"))
+                            (native-compile-async source nil t)
+                            (nc-parse-prefix)))))
+              (when (and output (file-exists-p output)) (delete-file output))
+              (when (file-exists-p source)
+                (let ((recovered (comp-el-to-eln-filename source)))
+                  (when (file-exists-p recovered) (delete-file recovered))))
+              (delete-directory dir t)))
+          "#),
+        "(end-of-file end-of-file end-of-file end-of-file nil nil 23)"
+    );
+}
+
+// This pins Remacs source-value preservation, not GNU native output parity:
+// GNU 31.1's native serializer itself normalizes explicitly multibyte ASCII
+// and raw-eight-bit constants to unibyte. Identical raw C bytes must still
+// retain each source object's kind in Remacs's direct constant cache.
+#[test]
+fn direct_string_constants_preserve_source_kinds() {
+    if !avail() {
+        return;
+    }
+    assert_eq!(
+        ev(
+            r#"(let ((directory (make-temp-file "remacs-native-kinds-" t))
+                    (results nil))
+                (unwind-protect
+                    (dolist (reverse-order '(nil t))
+                      (let* ((values (list "" (string-to-multibyte "")
+                                           "ascii" (string-to-multibyte "ascii")
+                                           "\200\377" (string-to-multibyte "\200\377")))
+                             (values (if reverse-order (reverse values) values))
+                             (shape (lambda (s) (list (multibyte-string-p s)
+                                                       (string-to-list s)
+                                                       (string-bytes s))))
+                             (wanted (mapcar shape values))
+                             (fn (native-compile
+                                  (eval (list 'lambda nil (cons 'list values)) t)
+                                  (expand-file-name (if reverse-order "reverse.eln" "forward.eln")
+                                                    directory)))
+                             (first (funcall fn))
+                             (second (funcall fn))
+                             (stable t))
+                        (dotimes (index 6)
+                          (unless (eq (nth index first) (nth index second))
+                            (setq stable nil)))
+                        (push (list (native-comp-function-p fn)
+                                    (equal (mapcar shape first) wanted)
+                                    (equal (mapcar shape second) wanted)
+                                    (not (eq first second)) stable)
+                              results)))
+                  (delete-directory directory t))
+                results)"#
+        ),
+        "((t t t t t) (t t t t t))"
+    );
+}

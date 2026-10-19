@@ -182,6 +182,24 @@ pins the post-boot behavior.
 - `PRELUDE_MAX` env var truncates prelude evaluation for bisection;
   `--ieval` bisects a form interactively; `WHILE_WATCH` traces eval loops.
 
+## Custom hash-table tests
+
+`define-hash-table-test` tables capture their comparison/hash functions at
+creation. `gethash`/`puthash`/`remhash` call the hash function and compare
+colliding entries with the supplied predicate, preserving the original key
+on replacement. Copies retain the captured functions and test name; printed
+custom tables read through the same constructor/insertion path. Lisp
+callbacks may read the table but cannot mutate it, and errors/throws restore
+mutability. Built-in eq/eql and compact acyclic equal keys keep their
+normalized-key path. Cyclic or large equal keys use a bounded `sxhash`
+bucket plus `equal` on the original keys: different cycle periods can
+compare equal, while truncated-hash collisions must remain distinct.
+Equal/custom tables retain collision-chain order through slot reuse and
+resize; the reader uses the same lookup path. Normalization is bounded
+so long tails/shared DAGs cannot overflow before collision checking.
+Regressions: `tests/qa_hash_custom.el`, `tests/qa_hash_cycles.el`
+(GNU Emacs 31.1).
+
 ## Tree-sitter support (`src/lisp/builtins/treesit.rs`)
 
 Implemented: grammar loading via `libloading` (lookup order:
@@ -316,6 +334,28 @@ Architecture:
   time (so they stay macros, `macrop` → t); unsupported bodies
   (unwind forms, closures) fall back to interpreter eval via
   `make-interpreted-closure`.
+- File units retain the macroexpanded top-level program, interleaving
+  ordinary forms with native function registration in source order.
+  Ordinary initialization runs on every load, not during compilation;
+  `eval-when-compile` and `eval-and-compile` retain their phase semantics.
+  A failed load keeps earlier definitions callable and skips later forms.
+  Existing `.eln` files must be recompiled to gain corrected generated
+  code or newly retained top-level forms; old units remain loadable.
+- File compilation propagates reader errors, including malformed tails after
+  valid definitions. Only clean EOF ends the source scan; failure restores
+  compiler-local macros and bindings without creating or replacing output.
+- Native `and` starts with the identity `t`, so `(and)` returns `t`;
+  nonempty `and` and `or` retain left-to-right short-circuit evaluation.
+- Native literal objects (including quote and fallback body constants) are
+  read once per registered function and retained as Values, never temporary
+  object-table handles. Nested native calls restore the caller's constant
+  cache. Runtime allocation and ordinary file initialization remain fresh.
+  Existing `.eln` files remain loadable but need recompilation for this fix.
+- Direct native string constants retain their source byte-kind flags as well
+  as their raw characters, including unibyte bytes and explicitly multibyte
+  ASCII. The constant cache distinguishes identical bytes of different kinds.
+  The kind-aware callback is appended to preserve existing unit ABI; old
+  `.eln` files remain loadable and need recompilation for this correction.
 - `.eln` naming matches GNU: `<base>-<md5(truename)[:8]>-<md5(contents)[:8]>.eln`
   under `~/.emacs.d/eln-cache/31.1-remacs/`.
 - `native-compile` accepts files, symbols, and lambda objects;
@@ -341,7 +381,7 @@ Architecture:
   `comp--install-trampoline`), `comp.el`'s LIMPLE/optimizing passes
   are not run.
 
-Regression suite: `tests/nativecomp.rs` (8 tests).
+Regression suite: `tests/nativecomp.rs` and the `qa_native_*` fixtures.
 
 ## Minibuffer reads (`src/lisp/eval.rs` + `src/editor/mod.rs` + `src/term`)
 
@@ -437,6 +477,20 @@ highlights incl. a `defhighlight' cache for font-lock runs.
 Regression: `isearch_extends_match_in_place_and_overlays_paint',
 `tui_isearch_highlights_matches', `tui_face_text_props_and_region_paint'.
 
+
+## Portable time formatting
+
+`src/lisp/builtins/timefmt.rs` implements GNU flag ordering, field widths,
+numeric fields, composite dates, fractional precision, and zone formatting.
+Never forward GNU flags or widths to libc: macOS strftime does not support
+those extensions. `misc::strftime_spec` supplies only unadorned locale text
+(names, locale composites, and eras). Keep the resolved zone name owned while
+native locale conversion runs, since restoring TZ can invalidate `tm_zone`.
+Width is measured in bytes, numeric zero-padding follows the sign, text
+normally space-pads, and the last padding flag wins. `%N` uses nanoseconds
+and right-padding; `%F` applies its width to the year field. Regressions:
+`qa_time_modifiers`, `qa_time_zero_zone`, `qa_timefmt`, and the portable
+formatter unit test that rejects nonportable calls to its native callback.
 
 ## GNU-compat QA suite (`tests/qa.rs` + `tests/qa_*.el`)
 

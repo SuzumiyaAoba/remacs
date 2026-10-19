@@ -501,7 +501,7 @@ fn f_eval(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // lexical-binding=t).  Non-nil non-cons LEXICAL uses a fresh
     // lexical environment; a cons is an actual env.
     let lexenv = if matches!(lex, Value::Cons(_)) {
-        parse_lexenv_spec(i, &lex)
+        crate::lisp::eval::lexenv_from_value(&lex)
     } else if lex.truthy() {
         crate::lisp::eval::lexenv_root()
     } else {
@@ -2114,6 +2114,16 @@ pub(crate) fn loadhist_attach(i: &mut Interp, entry: Value) {
     i.obarray.symbol_mut(cll).value = Value::cons(entry, cur);
 }
 
+/// Find the first `equal' match without swallowing comparison errors.
+fn equal_position(i: &Interp, items: &[Value], needle: &Value) -> Result<Option<usize>, Flow> {
+    for (pos, item) in items.iter().enumerate() {
+        if super::equal_values(i, item, needle)? {
+            return Ok(Some(pos));
+        }
+    }
+    Ok(None)
+}
+
 fn f_featurep(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     // GNU Ffeaturep: SUBFEATURE non-nil looks it up in the feature's
@@ -2122,10 +2132,8 @@ fn f_featurep(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     if !sub.is_nil() {
         let prop = i.intern("subfeatures");
         let subs = i.get_prop(id, prop);
-        let found = subs
-            .list_to_vec()
-            .map(|items| items.iter().any(|v| super::equal_values(i, v, &sub)))
-            .unwrap_or(false);
+        let items = subs.list_to_vec().unwrap_or_default();
+        let found = equal_position(i, &items, &sub)?.is_some();
         return Ok(Value::from_bool(found));
     }
     Ok(Value::from_bool(feature_present(i, id)))
@@ -2207,10 +2215,8 @@ fn f_require(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             .map(|last| matches!(last, Value::Str(_)))
             .unwrap_or(false);
     if from_file {
-        let dup = cll_val
-            .list_to_vec()
-            .map(|v| v.iter().any(|e| super::equal_values(i, e, &tem)))
-            .unwrap_or(false);
+        let items = cll_val.list_to_vec().unwrap_or_default();
+        let dup = equal_position(i, &items, &tem)?.is_some();
         if !dup {
             loadhist_attach(i, tem);
         }
@@ -2977,14 +2983,16 @@ pub(crate) fn safe_call_hook(i: &mut Interp, name: &str) -> EvalResult {
 }
 
 /// GNU `safe_run_hooks_error': drop FUN from HOOK's buffer-local list
-/// if present there, else from its global (default) value.
+/// if present there, else from its global (default) value.  GNU uses
+/// identity here, removing every occurrence of the failing function.
 fn safe_remove_hook_fn(i: &mut Interp, hook_id: SymId, f: &Value) {
     if let Some(b) = i.buffers.get(i.current_buffer) {
         let mut bb = b.borrow_mut();
         if let Some(v) = bb.locals.get(&hook_id).cloned() {
             let mut l = hook_list(&v);
-            if let Some(pos) = l.iter().position(|x| super::equal_values(i, x, f)) {
-                l.remove(pos);
+            let before = l.len();
+            l.retain(|x| !super::eq_values(x, f));
+            if l.len() != before {
                 bb.locals.insert(hook_id, Value::list(l));
                 return;
             }
@@ -2992,8 +3000,9 @@ fn safe_remove_hook_fn(i: &mut Interp, hook_id: SymId, f: &Value) {
     }
     let v = i.obarray.symbol(hook_id).value.clone();
     let mut l = hook_list(&v);
-    if let Some(pos) = l.iter().position(|x| super::equal_values(i, x, f)) {
-        l.remove(pos);
+    let before = l.len();
+    l.retain(|x| !super::eq_values(x, f));
+    if l.len() != before {
         let _ = i.set_symbol(hook_id, Value::list(l));
     }
 }
@@ -3184,7 +3193,7 @@ fn f_add_hook(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     let mut list = hook_value.list_to_vec().unwrap_or_default();
     // The membership test uses `equal' (GNU `member').
-    if !list.iter().any(|f| super::equal_values(i, f, &fun)) {
+    if equal_position(i, &list, &fun)?.is_none() {
         let mut alist = hook_depth_alist(i, hook_id, local, depth != 0).unwrap_or_default();
         if depth != 0 {
             alist.retain(|(f, _)| !crate::lisp::eq_values(f, &fun));
@@ -3260,18 +3269,22 @@ fn f_remove_hook(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     };
     let (list, removed) = match hook_value.list_to_vec() {
         // A non-list value or a bare lambda form compares with `equal'.
-        Err(_) if super::equal_values(i, &hook_value, &fun) => {
-            (Vec::new(), Some(hook_value.clone()))
+        Err(_) => {
+            let removed = if super::equal_values(i, &hook_value, &fun)? {
+                Some(hook_value.clone())
+            } else {
+                None
+            };
+            (Vec::new(), removed)
         }
-        Err(_) => (Vec::new(), None),
         Ok(items) => {
             let is_lambda = matches!(items.first(), Some(Value::Sym(s)) if *s == sym::LAMBDA);
-            if is_lambda && super::equal_values(i, &hook_value, &fun) {
+            if is_lambda && super::equal_values(i, &hook_value, &fun)? {
                 (Vec::new(), Some(hook_value.clone()))
             } else {
                 // GNU: `(car (member ...))' locates with `equal';
                 // `remq' then removes that same object.
-                match items.iter().position(|f| super::equal_values(i, f, &fun)) {
+                match equal_position(i, &items, &fun)? {
                     Some(p) => {
                         let old = items[p].clone();
                         let mut v = items;
@@ -3625,22 +3638,24 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
         _ => return Err(i.wrong_type_mut("stringp", &file)),
     };
     // Find the symbol whose function cell is this autoload object.
-    let owner = i
+    let mut owner = i
         .obarray
         .all_ids()
         .into_iter()
-        .find(|id| super::eq_values(&i.symbol_function(*id), &fundef))
-        // Interpreted code can hold a structurally identical but
-        // distinct `(autoload ...)' cons — e.g. one read afresh from a
-        // loaddefs form while a different cons sits in the function
-        // cell.  Fall back to an `equal' match so we still attribute
-        // the autoload to its symbol (and to its dumped stash).
-        .or_else(|| {
-            i.obarray
-                .all_ids()
-                .into_iter()
-                .find(|id| super::equal_values(i, &i.symbol_function(*id), &fundef))
-        });
+        .find(|id| super::eq_values(&i.symbol_function(*id), &fundef));
+    // Interpreted code can hold a structurally identical but
+    // distinct `(autoload ...)' cons — e.g. one read afresh from a
+    // loaddefs form while a different cons sits in the function
+    // cell.  Fall back to an `equal' match so we still attribute
+    // the autoload to its symbol (and to its dumped stash).
+    if owner.is_none() {
+        for id in i.obarray.all_ids() {
+            if super::equal_values(i, &i.symbol_function(id), &fundef)? {
+                owner = Some(id);
+                break;
+            }
+        }
+    }
     if i.dbg_flags & 0x800 != 0 {
         eprintln!(
             "[autoload {} -> {}]{}",
@@ -3888,12 +3903,22 @@ fn f_eval_buffer(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         },
         _ => i.current_buffer,
     };
-    let text = i
-        .buffers
-        .get(buf_id)
-        .map(|b| b.borrow().text.text())
-        .unwrap_or_default();
-    let r = i.eval_str_buf(&text);
+    let Some(buffer) = i.buffers.get(buf_id) else {
+        return Err(i.error("No such buffer"));
+    };
+    let saved = i.save_excursion_state(false);
+    let begv = buffer.borrow().begv;
+    buffer.borrow_mut().set_point(begv);
+    let r = eval_buffer_source(
+        i,
+        &buffer,
+        Value::Nil,
+        Value::Nil,
+        arg(&args, 1),
+        Value::Nil,
+        arg(&args, 4).truthy(),
+    );
+    i.restore_excursion_state(saved);
     // GNU readevalloop: a non-nil FILENAME is what `load-history'
     // records — `loadhist_initialize' pushes (FILENAME) onto
     // `current-load-list' and `build_load_history' stores it
@@ -3911,7 +3936,7 @@ fn f_eval_buffer(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             for e in cur.list_to_vec().unwrap_or_default() {
                 let same = match &e {
                     Value::Cons(c) => {
-                        crate::lisp::builtins::equal_values(i, &c.borrow().car, &fval)
+                        crate::lisp::builtins::equal_values(i, &c.borrow().car, &fval)?
                     }
                     _ => false,
                 };
@@ -3930,42 +3955,269 @@ fn f_eval_buffer(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_eval_region(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // (eval-region START END) — eval region of current buffer.
-    // GNU Feval_region: nil START/END mean point-min/point-max
-    // (read_minibuf-or-bob-style nil-default); non-nil non-numbers signal
-    // integer-or-marker-p.
-    let (s, e) = (
-        match &args[0] {
-            Value::Nil => 1,
-            v => crate::lisp::builtins::want_int_or_mark(i, v)?,
-        },
-        match &args[1] {
-            Value::Nil => i
-                .buffers
-                .get(i.current_buffer)
-                .map(|b| b.borrow().zv.max(b.borrow().begv) as i128 + 1)
-                .unwrap_or(1),
-            v => crate::lisp::builtins::want_int_or_mark(i, v)?,
+    let buffer = i.buffers.get(i.current_buffer).unwrap();
+    eval_buffer_source(
+        i,
+        &buffer,
+        args[0].clone(),
+        args[1].clone(),
+        arg(&args, 2),
+        arg(&args, 3),
+        false,
+    )
+}
+
+/// Read the live buffer, as in GNU lread.c's readevalloop.  In particular,
+/// START is a goto-char position, not a substring bound: it is clipped to
+/// the accessible range.  A nil START reads at point and ignores END.
+fn eval_buffer_source(
+    i: &mut Interp,
+    buffer: &crate::lisp::value::BufferRef,
+    mut start: Value,
+    mut end: Value,
+    printflag: Value,
+    read_function: Value,
+    allow_print: bool,
+) -> EvalResult {
+    let depth = i.specbind_depth();
+    let lex_on = i
+        .intern_soft("lexical-binding")
+        .map(|s| i.symbol_value(s).truthy())
+        .unwrap_or(false);
+    let saved_lexenv = std::mem::replace(
+        &mut i.lexenv,
+        if lex_on {
+            crate::lisp::eval::lexenv_root()
+        } else {
+            None
         },
     );
-    let len = i
-        .buffers
-        .get(i.current_buffer)
-        .map(|b| b.borrow().text.len() as i128 + 1)
-        .unwrap_or(1);
-    if s < 1 || e < 1 || s > len || e > len {
-        let sym = i.intern("args-out-of-range");
-        return Err(i.signal_data(sym, vec![Value::Int(s), Value::Int(e)]));
-    }
-    let text = i
-        .buffers
-        .get(i.current_buffer)
-        .map(|b| {
-            let bb = b.borrow();
-            bb.text.substring((s - 1) as usize, (e - 1) as usize)
-        })
-        .unwrap_or_default();
-    i.eval_str_buf(&text)
+    let result = (|| {
+        let input = i.intern("standard-input");
+        let list = i.intern("eval-buffer-list");
+        let old_list = i.symbol_value(list);
+        i.specbind(input, Value::Buffer(buffer.clone()))?;
+        i.specbind(list, Value::cons(Value::Buffer(buffer.clone()), old_list))?;
+        let output = i.intern("standard-output");
+        let sink = if printflag.is_nil() && !allow_print {
+            Value::Sym(i.intern("symbolp"))
+        } else {
+            printflag.clone()
+        };
+        i.specbind(output, sink)?;
+        let mut source_version = None;
+        let mut source_tick = None;
+        let mut chars = Rc::new(Vec::new());
+        loop {
+            if !buffer.borrow().live {
+                return Err(i.error("Reading from killed buffer"));
+            }
+            // Excursions create short-lived markers.  Drop their expired
+            // registrations so reading many forms does not accumulate them.
+            buffer
+                .borrow_mut()
+                .markers
+                .retain(|m| m.strong_count() != 0);
+            let buffer_id = buffer.borrow().id;
+            if i.current_buffer != buffer_id {
+                if let Some(caller) = i.buffers.get(i.current_buffer) {
+                    caller
+                        .borrow_mut()
+                        .markers
+                        .retain(|m| m.strong_count() != 0);
+                }
+            }
+            // A region only temporarily changes point and narrowing while
+            // reading.  Evaluated forms see the original restriction and
+            // point, and edits move the saved stream positions via markers.
+            let saved = if !start.is_nil() {
+                let caller = i.save_excursion_state(false);
+                let buffer_id = buffer.borrow().id;
+                i.set_current_buffer(buffer_id);
+                Some((
+                    caller,
+                    i.save_excursion_state(false),
+                    i.save_restriction_state(),
+                ))
+            } else {
+                None
+            };
+            let read = (|| {
+                if !start.is_nil() {
+                    let pos = super::want_int_or_mark(i, &start)?;
+                    // Fgoto_char accepts fixnums/markers, not bignums.
+                    if !(-(1i128 << 61)..(1i128 << 61)).contains(&pos) {
+                        return Err(i.wrong_type_mut("integer-or-marker-p", &start));
+                    }
+                    let (begv, zv) = {
+                        let b = buffer.borrow();
+                        (b.begv, b.zv)
+                    };
+                    buffer
+                        .borrow_mut()
+                        .set_point(pos.clamp(begv as i128 + 1, zv as i128 + 1) as usize - 1);
+                    if !end.is_nil() {
+                        let limit = super::want_int_or_mark(i, &end)?;
+                        let len = buffer.borrow().text.len();
+                        if limit < 1 || limit > len as i128 + 1 {
+                            return Err(i.signal_data(
+                                sym::ARGS_OUT_OF_RANGE,
+                                vec![Value::Int(begv as i128 + 1), Value::Int(limit)],
+                            ));
+                        }
+                        let limit = limit as usize - 1;
+                        let mut b = buffer.borrow_mut();
+                        b.begv = begv.min(limit);
+                        b.zv = begv.max(limit);
+                        let point = b.point();
+                        b.set_point(point);
+                        if matches!(end, Value::Int(_)) {
+                            let marker = Rc::new(RefCell::new(Marker {
+                                buffer: Some(b.id),
+                                position: b.zv,
+                                insertion_type: false,
+                            }));
+                            b.register_marker(&marker);
+                            end = Value::Marker(marker);
+                        }
+                    }
+                }
+                // Read only BEGV..ZV, keeping offsets relative to BEGV for
+                // invalid-read-syntax locations.  Reuse unchanged source
+                // text; forms can edit it or change its restriction.
+                let (begv, mut pos) = {
+                    let b = buffer.borrow();
+                    let version = (b.text.chars_mod_tick.get(), b.begv, b.zv);
+                    if source_version != Some(version)
+                        || source_tick
+                            .as_ref()
+                            .is_none_or(|tick| !Rc::ptr_eq(tick, &b.text.chars_mod_tick))
+                    {
+                        source_tick = Some(b.text.chars_mod_tick.clone());
+                        chars = Rc::new(b.text.substring(b.begv, b.zv).chars().collect::<Vec<_>>());
+                        source_version = Some(version);
+                    }
+                    (b.begv, b.point().saturating_sub(b.begv))
+                };
+                // readevalloop peeks through layout before calling a custom
+                // reader, so whitespace-only input never calls READ-FUNCTION.
+                loop {
+                    while pos < chars.len()
+                        && matches!(chars[pos], ' ' | '\t' | '\n' | '\x0c' | '\r' | '\u{a0}')
+                    {
+                        pos += 1;
+                    }
+                    if pos < chars.len() && chars[pos] == ';' {
+                        while pos < chars.len() && chars[pos] != '\n' {
+                            pos += 1;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                buffer.borrow_mut().set_point(begv + pos);
+                if pos >= chars.len() {
+                    return Ok(None);
+                }
+                let lrf = i.intern("load-read-function");
+                let reader_function = if read_function.is_nil() {
+                    i.symbol_value(lrf)
+                } else {
+                    read_function.clone()
+                };
+                let builtin_read = match &reader_function {
+                    Value::Nil => true,
+                    Value::Subr(s) => s.name == "read",
+                    Value::Sym(s) => {
+                        matches!(i.symbol_function(*s), Value::Subr(f) if f.name == "read")
+                    }
+                    _ => false,
+                };
+                let form = if builtin_read {
+                    let invalid_read_syntax = i.intern("invalid-read-syntax");
+                    let mut reader = crate::lisp::reader::Reader::with_chars(i, chars.clone());
+                    reader.set_position(pos);
+                    reader.from_buffer = true;
+                    let result = reader.read();
+                    let mut position = reader.position();
+                    // Reader peeks at unexpected delimiters; GNU's buffer
+                    // stream has already consumed that character when it
+                    // signals.  This matters when nil START leaves point
+                    // at the failing read instead of restoring it.
+                    if let Err(Flow::Signal(Value::Sym(s), data, _)) = &result {
+                        if *s == invalid_read_syntax {
+                            if let Some(Value::Str(message)) =
+                                data.list_to_vec().ok().and_then(|v| v.first().cloned())
+                            {
+                                let message = message.borrow();
+                                if (message.as_str() == ")"
+                                    && matches!(chars.get(position), Some(')' | ']')))
+                                    || (message.as_str() == "."
+                                        && chars.get(position) == Some(&'.'))
+                                {
+                                    position += 1;
+                                }
+                            }
+                        }
+                    }
+                    buffer.borrow_mut().set_point(begv + position);
+                    match result {
+                        Ok(Some(form)) => form,
+                        Ok(None) => return Ok(None),
+                        Err(Flow::Signal(Value::Sym(s), _, flags)) if s == sym::END_OF_FILE => {
+                            return Err(Flow::Signal(
+                                Value::Sym(s),
+                                Value::list(vec![Value::Buffer(buffer.clone())]),
+                                flags,
+                            ));
+                        }
+                        Err(error) => return Err(error),
+                    }
+                } else {
+                    i.apply(&reader_function, vec![Value::Buffer(buffer.clone())])?
+                };
+                let stop = !read_function.is_nil() && buffer.borrow().point() == buffer.borrow().zv;
+                if !start.is_nil() && !stop {
+                    let mut b = buffer.borrow_mut();
+                    let marker = Rc::new(RefCell::new(Marker {
+                        buffer: Some(b.id),
+                        position: b.point(),
+                        insertion_type: false,
+                    }));
+                    b.register_marker(&marker);
+                    start = Value::Marker(marker);
+                }
+                Ok(Some((form, stop)))
+            })();
+            if let Some((caller, point, restriction)) = saved {
+                i.restore_restriction_state(restriction);
+                i.restore_excursion_state(point);
+                i.restore_excursion_state(caller);
+            }
+            let Some((form, stop)) = read? else {
+                return Ok(Value::Nil);
+            };
+            let value = i.eval(&form)?;
+            if printflag.truthy() {
+                let values = i.intern("values");
+                let old = i.symbol_value(values);
+                i.set_symbol(values, Value::cons(value.clone(), old))?;
+                let destination = i.symbol_value(output);
+                let printer = i.intern(if matches!(destination, Value::Sym(s) if s == sym::T) {
+                    "prin1"
+                } else {
+                    "print"
+                });
+                i.apply(&Value::Sym(printer), vec![value])?;
+            }
+            if stop {
+                return Ok(Value::Nil);
+            }
+        }
+    })();
+    i.lexenv = saved_lexenv;
+    i.unbind_to(depth)?;
+    result
 }
 fn f_command_execute(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU simple.el
@@ -4349,7 +4601,7 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU decodes TIME first (lisp_time_argument before
     // CHECK_STRING): (format-time-string 42 'bad) reports "Invalid
     // time specification", not (stringp 42).  Work in picoseconds so
-    // %N can see the PICO slot.
+    // normalization retains subsecond values before %N takes nanoseconds.
     let t = match args.get(1) {
         Some(v) => super::misc::lisp_time_to_ps(i, v)?,
         None => super::misc::lisp_time_to_ps(i, &Value::Nil)?,
@@ -4458,267 +4710,46 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             Value::Str(s) => Some(s.borrow().clone()),
             _ => None,
         });
-    let mut out = String::new();
-    let chars: Vec<char> = fmt.chars().collect();
-    let mut k = 0;
-    while k < chars.len() {
-        let c = chars[k];
-        if c != '%' {
-            out.push(c);
-            k += 1;
-            continue;
-        }
-        // %- flags, _ space-pad, 0 zero-pad, ^ uppercase, # case-swap,
-        // then an optional width, then (for %z) colons before the spec.
-        let mut j = k + 1;
-        let flag_start = j;
-        while j < chars.len() && matches!(chars[j], '-' | '_' | '0' | '^' | '#') {
-            j += 1;
-        }
-        let flags: Vec<char> = chars[flag_start..j].to_vec();
-        let uppercase = flags.contains(&'^');
-        let output_start = out.len();
-        let pad = if flags.contains(&'-') {
-            '-'
-        } else if flags.contains(&'_') {
-            '_'
-        } else {
-            '0'
-        };
-        let mut width = 0usize;
-        while j < chars.len() && chars[j].is_ascii_digit() {
-            width = width * 10 + (chars[j] as usize - '0' as usize);
-            j += 1;
-        }
-        let mut colons = 0usize;
-        while j < chars.len() && chars[j] == ':' {
-            colons += 1;
-            j += 1;
-        }
-        let spec = chars.get(j).copied();
-        let spec_text: String = chars[k..=j.min(chars.len() - 1)].iter().collect();
-        k = j + 1;
-        // %E and %O are POSIX alternative-representation modifiers:
-        // when a conversion letter follows, they're part of the spec
-        // (%Ec); a bare %E/%O is a literal per GNU.
-        if matches!(spec, Some('E') | Some('O')) {
-            if let Some(&nxt) = chars.get(k) {
-                if nxt.is_ascii_alphabetic() {
-                    let ext: String = chars[k..=k].iter().collect();
-                    let spec2 = format!("{}{}", spec_text, ext);
-                    // Preserve invalid GNU modifier combinations without
-                    // relying on libc's platform-specific literal fallback.
-                    let valid = if spec == Some('E') {
-                        "cnpqrstuxyzCPRTXYZ".contains(nxt)
-                    } else {
-                        "bdeghjklmnpqrstuwyzBCGHIMNPRSTUVWYZ".contains(nxt)
-                    };
-                    if uppercase && !valid {
-                        out.push_str(&spec2.to_ascii_uppercase());
-                    } else {
-                        out.push_str(&super::misc::strftime_spec(&spec2, &tm, locale.as_deref()));
-                    }
-                    k += 1;
-                    continue;
-                }
-            }
-            out.push_str(&spec_text);
-            continue;
-        }
-        let off = tm.tm_gmtoff;
-        // gnulib nstrftime %z rules (verified against GNU 31.1):
-        //  colons 0 → sign+hhmm; 1 → hh:mm; 2 → hh:mm:ss; 3 →
-        //  minimal (drop zero seconds, then zero minutes).  `-'/`_'
-        //  unpad just the hour field (colons=0 collapses to the
-        //  numeric hhmm); an explicit WIDTH zero-pads the hour so the
-        //  whole output reaches WIDTH chars; `_' = " " + `-'.
-        //  `compact' drops the colons — GNU's integer-zone %Z.
-        let signed_zone =
-            |off: i64, colons: usize, pad: char, width: usize, compact: bool| -> String {
-                let sign = if off < 0 { '-' } else { '+' };
-                let a = off.abs();
-                let (h, m, s) = (a / 3600, (a % 3600) / 60, a % 60);
-                let minimal = pad != '0';
-                let hh = |w: usize| -> String {
-                    if minimal {
-                        format!("{}", h)
-                    } else {
-                        format!("{:0w$}", h, w = w.max(2))
-                    }
-                };
-                let body = if compact {
-                    if s != 0 {
-                        format!("{:02}{:02}{:02}", h, m, s)
-                    } else if m != 0 {
-                        format!("{:02}{:02}", h, m)
-                    } else {
-                        format!("{:02}", h)
-                    }
-                } else {
-                    match colons {
-                        0 => {
-                            if minimal {
-                                format!("{}", h * 100 + m)
-                            } else {
-                                format!("{}{:02}", hh(width.saturating_sub(3)), m)
-                            }
-                        }
-                        1 => format!("{}:{:02}", hh(width.saturating_sub(4)), m),
-                        2 => format!("{}:{:02}:{:02}", hh(width.saturating_sub(7)), m, s),
-                        _ => {
-                            if s != 0 {
-                                format!("{}:{:02}:{:02}", hh(0), m, s)
-                            } else if m != 0 {
-                                format!("{}:{:02}", hh(0), m)
-                            } else {
-                                hh(0)
-                            }
-                        }
-                    }
-                };
-                if pad == '_' {
-                    format!(" {}{}", sign, body)
-                } else {
-                    format!("{}{}", sign, body)
-                }
-            };
-        match spec {
-            // GNU treats a flagged percent as an invalid conversion.
-            Some('%') if !flags.is_empty() || width > 0 || colons > 0 => {
-                let prefix = &spec_text[..spec_text.len() - 1];
-                let padding = flags.iter().rev().find(|c| matches!(c, '-' | '_' | '0'));
-                if padding != Some(&'-') && width > prefix.len() {
-                    let ch = if padding == Some(&'0') { '0' } else { ' ' };
-                    out.push_str(&ch.to_string().repeat(width - prefix.len()));
-                }
-                out.push_str(prefix);
-                k = j; // GNU reprocesses the second percent as a new format.
-            }
-            Some('P') => {
-                // glibc %P = lowercase %p; macOS strftime lacks it.
-                let p = super::misc::strftime_spec("%p", &tm, locale.as_deref());
-                out.push_str(&p.to_lowercase());
-            }
-            Some('N') => {
-                // Width selects the number of fraction digits
-                // (default 9 = nanoseconds; up to 12 = picoseconds).
-                let w = if width == 0 { 9 } else { width.min(12) };
-                let s = format!("{:012}", frac12);
-                out.push_str(&s[..w]);
-            }
-            Some('s') => out.push_str(&format!("{}", secs)),
-            Some('q') => {
-                // GNU extension: quarter of year (not in strftime).
-                out.push_str(&format!("{}", tm.tm_mon / 3 + 1));
-            }
-            Some('l') => {
-                // macOS strftime lacks %l (space-padded 12-hour).
-                let h12 = if tm.tm_hour % 12 == 0 {
-                    12
-                } else {
-                    tm.tm_hour % 12
-                };
-                out.push_str(&format!("{:2}", h12));
-            }
-            Some('k') => {
-                out.push_str(&format!("{:2}", tm.tm_hour));
-            }
-            // macOS strftime derives %z from the process TZ and lacks
-            // the colon variants — compute it from tm_gmtoff instead.
-            Some('z') => out.push_str(&signed_zone(off, colons, pad, width, false)),
-            Some('Z') => match &zlabel {
-                // GNU: an integer-zone %Z renders compactly — sign plus
-                // hh[mm[ss]] with trailing zero fields dropped.
-                ZoneLabel::Offset(off) => {
-                    out.push_str(&signed_zone(*off, 3, '0', 0, true));
-                }
-                ZoneLabel::Named(n) => out.push_str(n),
-                ZoneLabel::Libc => {
-                    let name = if tm.tm_zone.is_null() {
-                        String::new()
-                    } else {
-                        unsafe { std::ffi::CStr::from_ptr(tm.tm_zone as *const i8) }
-                            .to_string_lossy()
-                            .into_owned()
-                    };
-                    out.push_str(&name);
-                }
-            },
-            // Unsupported spec letters pass through literally (GNU's
-            // Emacs-only specs like %q are handled above; unknown
-            // strftime letters echo the whole "%<flags>X" text).
-            Some(s) if !matches!(s, 'a'..='z' | 'A'..='Z' | '%') => {
-                out.push_str(&spec_text);
-            }
-            Some(s) => {
-                let known = matches!(
-                    s,
-                    'a' | 'A'
-                        | 'b'
-                        | 'B'
-                        | 'c'
-                        | 'C'
-                        | 'd'
-                        | 'D'
-                        | 'e'
-                        | 'F'
-                        | 'g'
-                        | 'G'
-                        | 'h'
-                        | 'H'
-                        | 'I'
-                        | 'j'
-                        | 'm'
-                        | 'M'
-                        | 'n'
-                        | 'p'
-                        | 'P'
-                        | 'r'
-                        | 'R'
-                        | 'S'
-                        | 't'
-                        | 'T'
-                        | 'u'
-                        | 'U'
-                        | 'V'
-                        | 'w'
-                        | 'W'
-                        | 'x'
-                        | 'X'
-                        | 'y'
-                        | 'Y'
-                        | '%'
-                );
-                if known {
-                    out.push_str(&super::misc::strftime_spec(
-                        &spec_text,
-                        &tm,
-                        locale.as_deref(),
-                    ));
-                } else {
-                    out.push_str(&spec_text);
-                }
-            }
-            None => out.push_str(&spec_text),
-        }
-        // Extensions such as named %Z bypass strftime.  Lowercase %P
-        // and %#p/%#Z take precedence over the uppercase flag.
-        if spec == Some('Z') && flags.contains(&'#') {
-            out[output_start..].make_ascii_lowercase();
-        } else if uppercase && spec != Some('P')
-            && !(spec == Some('p') && flags.contains(&'#'))
-        {
-            out[output_start..].make_ascii_uppercase();
-        }
-        if uppercase && matches!(spec, Some('P') | Some('Z')) {
-            let pad = flags.iter().rev().find(|c| matches!(c, '-' | '_' | '0'));
-            let len = out.len() - output_start;
-            if pad != Some(&'-') && width > len {
-                let ch = if pad == Some(&'0') { '0' } else { ' ' };
-                out.insert_str(output_start, &ch.to_string().repeat(width - len));
+    // Own the zone name before any locale/TZ operation can invalidate libc's
+    // tm_zone. All GNU modifiers are rendered in Rust, independently of libc.
+    let zone = match zlabel {
+        ZoneLabel::Named(name) => name,
+        ZoneLabel::Offset(off) => {
+            let sign = if off < 0 { '-' } else { '+' };
+            let a = off.unsigned_abs();
+            let (h, m, s) = (a / 3600, a / 60 % 60, a % 60);
+            if s != 0 {
+                format!("{sign}{h:02}{m:02}{s:02}")
+            } else if m != 0 {
+                format!("{sign}{h:02}{m:02}")
+            } else {
+                format!("{sign}{h:02}")
             }
         }
-    }
+        ZoneLabel::Libc => {
+            if tm.tm_zone.is_null() {
+                String::new()
+            } else {
+                unsafe { std::ffi::CStr::from_ptr(tm.tm_zone as *const i8) }
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        }
+    };
+    // tz_local_tm restores TZ before returning; its tm_zone can therefore
+    // dangle. Native locale composites must see the same owned name as %Z.
+    let czone = std::ffi::CString::new(zone.split('\0').next().unwrap_or("")).unwrap();
+    let mut tm = tm;
+    tm.tm_zone = czone.as_ptr().cast();
+    let out = super::timefmt::format_time(
+        &fmt,
+        &tm,
+        secs,
+        (frac12 / 1000) as u32,
+        &zone,
+        &mut |spec| super::misc::strftime_spec(spec, &tm, locale.as_deref()),
+    )
+    .map_err(|()| i.error("Invalid time specification"))?;
     Ok(Value::string(out))
 }
 
@@ -4854,89 +4885,12 @@ fn f_internal_make_closure(i: &mut Interp, args: crate::lisp::Argv) -> EvalResul
         Value::Cons(_) => body_v.list_to_vec().unwrap_or_default(),
         _ => vec![body_v.clone()],
     };
-    let env = parse_lexenv_spec(i, env_v);
+    let env = crate::lisp::eval::lexenv_from_value(env_v);
     let mut lam = i.parse_lambda(params, &body, None)?;
     lam.env = env;
     Ok(Value::Lambda(std::rc::Rc::new(lam)))
 }
 
-/// Convert the alist-ish ENV argument used by `eval'/byte-compiled
-/// closures into a LexEnv. Elements that are (VAR . VAL) pairs go in
-/// the innermost frame; elements that are proper lists of such pairs
-/// become enclosing frames.
-fn parse_lexenv_spec(i: &mut Interp, env_v: &Value) -> crate::lisp::LexEnv {
-    use crate::lisp::eval::LexFrame;
-
-    let mut inner: Option<std::rc::Rc<LexFrame>> = None;
-    let mut parents: Vec<std::rc::Rc<LexFrame>> = Vec::new();
-    let is_pair = |v: &Value| -> bool {
-        matches!(v, Value::Cons(c) if matches!(c.borrow().car, Value::Sym(_))
-            && !matches!(c.borrow().cdr, Value::Cons(_)))
-    };
-    let frame_of = |vars: Vec<(Value, Value)>, markers: Vec<SymId>| -> std::rc::Rc<LexFrame> {
-        let mut m: Vec<(SymId, Value)> = Vec::new();
-        for (k, v) in vars {
-            if let Value::Sym(id) = k {
-                match m.iter_mut().find(|(s, _)| *s == id) {
-                    Some(e) => e.1 = v,
-                    None => m.push((id, v)),
-                }
-            }
-        }
-        // `vars' arrives in env order (newest first); store
-        // oldest-first so `lexenv_as_value' reproduces it.
-        m.reverse();
-        std::rc::Rc::new(LexFrame {
-            vars: std::cell::RefCell::new(m),
-            declared: std::cell::RefCell::new(markers),
-            parent: None,
-        })
-    };
-    let mut first: Vec<(Value, Value)> = Vec::new();
-    let mut first_markers: Vec<SymId> = Vec::new();
-    for elt in env_v.list_to_vec().unwrap_or_default() {
-        if is_pair(&elt) {
-            if let Value::Cons(c) = &elt {
-                let b = c.borrow();
-                first.push((b.car.clone(), b.cdr.clone()));
-            }
-        } else if let Value::Sym(id) = elt {
-            // A bare symbol is a scoped `defvar' marker (GNU's `memq'
-            // check at binding time), not a binding.
-            first_markers.push(id);
-        } else if let Value::Cons(_) = elt {
-            // A nested list of pairs = an enclosing let frame.
-            let vars: Vec<(Value, Value)> = elt
-                .list_to_vec()
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|p| {
-                    if let Value::Cons(c) = &p {
-                        let b = c.borrow();
-                        Some((b.car.clone(), b.cdr.clone()))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            parents.push(frame_of(vars, Vec::new()));
-        }
-    }
-    if !first.is_empty() || !first_markers.is_empty() || !parents.is_empty() {
-        inner = Some(frame_of(first, first_markers));
-    }
-    // Chain: innermost first, then the enclosing frames in order.
-    for p in parents.into_iter().rev() {
-        let q = std::rc::Rc::new(LexFrame {
-            vars: std::cell::RefCell::new(p.vars.borrow().clone()),
-            declared: std::cell::RefCell::new(p.declared.borrow().clone()),
-            parent: inner.take(),
-        });
-        inner = Some(q);
-    }
-    let _ = i;
-    inner
-}
 fn f_macroexp_parse_body(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let items = want_list(i, &args[0])?;
     // split leading (declare ...) forms and strings
@@ -5225,8 +5179,8 @@ fn advice_name(i: &mut Interp, props: &Value) -> Value {
 
 /// Match an advice entry against `advice-remove'/`advice-member-p''s
 /// FUNCTION argument: the function value itself or a non-nil :name.
-fn advice_entry_matches(i: &Interp, fun: &Value, name: &Value, sel: &Value) -> bool {
-    super::equal_values(i, fun, sel) || (!name.is_nil() && super::equal_values(i, name, sel))
+fn advice_entry_matches(i: &Interp, fun: &Value, name: &Value, sel: &Value) -> Result<bool, Flow> {
+    Ok(super::equal_values(i, fun, sel)? || (!name.is_nil() && super::equal_values(i, name, sel)?))
 }
 
 fn f_advice_add(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -5251,8 +5205,14 @@ fn f_advice_add(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn advice_retain(i: &mut Interp, key: SymId, sel: &Value) -> Result<(), Flow> {
     if let Some(pos) = i.advices.iter().position(|(s, _)| *s == key) {
-        let mut list = std::mem::take(&mut i.advices[pos].1);
-        list.retain(|(_, f, n)| !advice_entry_matches(i, f, n, sel));
+        // Like GNU's advice--tweak, finish the replacement chain
+        // before publishing it: a comparison error leaves it intact.
+        let mut list = Vec::with_capacity(i.advices[pos].1.len());
+        for entry @ (_, f, n) in &i.advices[pos].1 {
+            if !advice_entry_matches(i, f, n, sel)? {
+                list.push(entry.clone());
+            }
+        }
         i.advices[pos].1 = list;
     }
     i.recompose_advice(key)
@@ -5273,14 +5233,19 @@ fn advice_push(i: &mut Interp, key: SymId, w: SymId, fun: Value, name: Value) ->
             i.advices.len() - 1
         }
     };
-    let mut list = std::mem::take(&mut i.advices[pos].1);
+    let mut list = Vec::with_capacity(i.advices[pos].1.len() + 1);
     // GNU's advice--add-function replaces an existing entry by :name
     // when PROPS supplies one; otherwise it matches on the function
     // itself.  Same-function-different-name pieces coexist.
-    if !name.is_nil() {
-        list.retain(|(_, _, n)| !super::equal_values(i, n, &name));
-    } else {
-        list.retain(|(_, f, _)| !super::equal_values(i, f, &fun));
+    for existing @ (_, f, n) in &i.advices[pos].1 {
+        let matches = if !name.is_nil() {
+            super::equal_values(i, n, &name)?
+        } else {
+            super::equal_values(i, f, &fun)?
+        };
+        if !matches {
+            list.push(existing.clone());
+        }
     }
     list.push(entry);
     i.advices[pos].1 = list;
@@ -5439,7 +5404,11 @@ fn f_advice_member_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     loop {
         match i.advice_link_entry(&cur) {
             Some((_, f, next, n)) => {
-                if advice_entry_matches(i, &f, &n, &a[0]) {
+                // GNU advice--member-p checks the name before the
+                // function; advice--remove-function uses the reverse order.
+                if (!n.is_nil() && super::equal_values(i, &n, &a[0])?)
+                    || super::equal_values(i, &f, &a[0])?
+                {
                     return Ok(cur);
                 }
                 cur = next;

@@ -64,6 +64,9 @@ qa!(qa_before_markers, "qa_before_markers.el");
 qa!(qa_float_output, "qa_float_output.el");
 qa!(qa_process_defaults, "qa_process_defaults.el");
 qa!(qa_process_names, "qa_process_names.el");
+qa!(qa_network_datagram, "qa_network_datagram.el");
+qa!(qa_network_nowait, "qa_network_nowait.el");
+qa!(qa_network_random_service, "qa_network_random_service.el");
 qa!(qa_fresh_buffer_locals, "qa_fresh_buffer_locals.el");
 qa!(qa_buffer_local_value_type, "qa_buffer_local_value_type.el");
 qa!(qa_buffer2, "qa_buffer2.el");
@@ -90,6 +93,8 @@ qa!(qa_clprint, "qa_clprint.el");
 qa!(qa_clseq, "qa_clseq.el");
 qa!(qa_clseq2, "qa_clseq2.el");
 qa!(qa_cmds, "qa_cmds.el");
+qa!(qa_whitespace_narrowing, "qa_whitespace_narrowing.el");
+qa!(qa_blank_line_characters, "qa_blank_line_characters.el");
 qa!(qa_legacy_codecs, "qa_legacy_codecs.el");
 qa!(qa_coding, "qa_coding.el");
 qa!(qa_coding2, "qa_coding2.el");
@@ -103,11 +108,17 @@ qa!(qa_doc, "qa_doc.el");
 qa!(qa_variable_documentation, "qa_variable_documentation.el");
 qa!(qa_vconcat_unibyte, "qa_vconcat_unibyte.el");
 qa!(qa_eieio, "qa_eieio.el");
+qa!(qa_equal_cycles, "qa_equal_cycles.el");
+qa!(qa_equal_depth, "qa_equal_depth.el");
+qa!(qa_equal_callers, "qa_equal_callers.el");
+qa!(qa_equal_runtime, "qa_equal_runtime.el");
 qa!(qa_eieio2, "qa_eieio2.el");
 qa!(qa_edge_semantics, "qa_edge_semantics.el");
 qa!(qa_err2, "qa_err2.el");
 qa!(qa_errors, "qa_errors.el");
 qa!(qa_eval, "qa_eval.el");
+qa!(qa_eval_narrowing, "qa_eval_narrowing.el");
+qa!(qa_eval_lexenv, "qa_eval_lexenv.el");
 qa!(qa_basic_faces, "qa_basic_faces.el");
 qa!(qa_face, "qa_face.el");
 qa!(qa_face3, "qa_face3.el");
@@ -127,6 +138,9 @@ qa!(qa_format, "qa_format.el");
 qa!(qa_globdir, "qa_globdir.el");
 qa!(qa_gv, "qa_gv.el");
 qa!(qa_hash, "qa_hash.el");
+qa!(qa_hash_markers, "qa_hash_markers.el");
+qa!(qa_hash_custom, "qa_hash_custom.el");
+qa!(qa_hash_cycles, "qa_hash_cycles.el");
 qa!(qa_hash2, "qa_hash2.el");
 qa!(qa_help, "qa_help.el");
 qa!(qa_hook, "qa_hook.el");
@@ -170,6 +184,78 @@ qa!(qa_misc3, "qa_misc3.el");
 qa!(qa_miscfn, "qa_miscfn.el");
 qa!(qa_modes, "qa_modes.el");
 qa!(qa_narrow, "qa_narrow.el");
+#[test]
+fn qa_native_error() {
+    if ev("(native-comp-available-p)") != "t" {
+        eprintln!("skipping native error tests: no C compiler available");
+        return;
+    }
+    run("qa_native_error.el");
+}
+#[test]
+fn qa_native_variables() {
+    if ev("(native-comp-available-p)") != "t" {
+        eprintln!("skipping native variable tests: no C compiler available");
+        return;
+    }
+    run("qa_native_variables.el");
+}
+#[test]
+fn qa_native_closures() {
+    if ev("(native-comp-available-p)") != "t" {
+        eprintln!("skipping native closure tests: no C compiler available");
+        return;
+    }
+    run("qa_native_closures.el");
+}
+#[test]
+fn qa_native_letstar() {
+    if ev("(native-comp-available-p)") != "t" {
+        eprintln!("skipping native let* tests: no C compiler available");
+        return;
+    }
+    run("qa_native_letstar.el");
+}
+#[test]
+fn qa_native_toplevel() {
+    if ev("(native-comp-available-p)") != "t" {
+        eprintln!("skipping native top-level tests: no C compiler available");
+        return;
+    }
+    run("qa_native_toplevel.el");
+}
+#[test]
+fn qa_native_boolean() {
+    if ev("(native-comp-available-p)") != "t" {
+        eprintln!("skipping native boolean tests: no C compiler available");
+        return;
+    }
+    run("qa_native_boolean.el");
+}
+#[test]
+fn qa_native_constants() {
+    if ev("(native-comp-available-p)") != "t" {
+        eprintln!("skipping native constant tests: no C compiler available");
+        return;
+    }
+    run("qa_native_constants.el");
+}
+#[test]
+fn qa_native_strings() {
+    if ev("(native-comp-available-p)") != "t" {
+        eprintln!("skipping native string tests: no C compiler available");
+        return;
+    }
+    run("qa_native_strings.el");
+}
+#[test]
+fn qa_native_parse_errors() {
+    if ev("(native-comp-available-p)") != "t" {
+        eprintln!("skipping native parse-error tests: no C compiler available");
+        return;
+    }
+    run("qa_native_parse_errors.el");
+}
 qa!(qa_numbers, "qa_numbers.el");
 qa!(qa_obarray, "qa_obarray.el");
 qa!(qa_unintern_identity, "qa_unintern_identity.el");
@@ -180,6 +266,7 @@ qa!(qa_plists, "qa_plists.el");
 qa!(qa_point, "qa_point.el");
 qa!(qa_pp, "qa_pp.el");
 qa!(qa_printvars, "qa_printvars.el");
+qa!(qa_output_streams, "qa_output_streams.el");
 qa!(qa_print_variables, "qa_print_variables.el");
 qa!(qa_quoting_scope, "qa_quoting_scope.el");
 qa!(qa_symbol_print_escape, "qa_symbol_print_escape.el");
@@ -250,6 +337,7 @@ qa!(qa_delete_char_bounds, "qa_delete_char_bounds.el");
 qa!(qa_time_spec_validation, "qa_time_spec_validation.el");
 
 qa!(qa_time_zero_zone, "qa_time_zero_zone.el");
+qa!(qa_time_modifiers, "qa_time_modifiers.el");
 
 qa!(qa_thread_bookkeeping, "qa_thread_bookkeeping.el");
 
@@ -309,3 +397,66 @@ fn qa_buffer_history_frames() {
 qa!(qa_elisp_mode_name, "qa_elisp_mode_name.el");
 
 qa!(qa_unibyte_bounds, "qa_unibyte_bounds.el");
+
+qa!(qa_sqlite_blob, "qa_sqlite_blob.el");
+qa!(qa_sqlite_parameters, "qa_sqlite_parameters.el");
+qa!(qa_sqlite_lazy_sets, "qa_sqlite_lazy_sets.el");
+qa!(qa_sqlite_errors, "qa_sqlite_errors.el");
+qa!(qa_sqlite_validation, "qa_sqlite_validation.el");
+
+qa!(qa_process_large_send, "qa_process_large_send.el");
+
+#[test]
+fn qa_output_stream_state() {
+    on_big_stack(|| {
+        let (mut i, output) = interp();
+        let streams = [
+            "(let ((b (generate-new-buffer \" *qa-dead-output*\"))) (kill-buffer b) b)",
+            "(make-marker)",
+            "(let* ((b (generate-new-buffer \" *qa-dead-marker*\")) (m (with-current-buffer b (point-marker)))) (kill-buffer b) m)",
+        ];
+        for source in streams {
+            let stream = i
+                .eval_str(source)
+                .unwrap_or_else(|_| panic!("stream fixture failed"));
+            for capture in [false, true] {
+                i.capture_output = capture;
+                i.output_buffer = "unchanged\n".into();
+                i.out_last_char = Some('\n');
+                let old_output = output.borrow().clone();
+                assert!(i.write_output_to("payload", &stream).is_err());
+                assert_eq!(i.output_buffer, "unchanged\n");
+                assert_eq!(i.out_last_char, Some('\n'));
+                assert_eq!(*output.borrow(), old_output);
+                let terpri = i.intern("terpri");
+                assert!(
+                    i.apply(
+                        &remacs::lisp::Value::Sym(terpri),
+                        vec![stream.clone(), remacs::lisp::Value::t()]
+                    )
+                    .is_err()
+                );
+                assert_eq!(i.output_buffer, "unchanged\n");
+                assert_eq!(i.out_last_char, Some('\n'));
+                assert_eq!(*output.borrow(), old_output);
+                i.capture_output = false;
+            }
+        }
+    });
+}
+
+qa!(qa_xml_normalization, "qa_xml_normalization.el");
+
+qa!(qa_xml_namespace_attrs, "qa_xml_namespace_attrs.el");
+
+qa!(qa_xml_well_formed, "qa_xml_well_formed.el");
+
+qa!(qa_xml_dtd_entities, "qa_xml_dtd_entities.el");
+
+qa!(qa_html_comments, "qa_html_comments.el");
+
+qa!(qa_html_head, "qa_html_head.el");
+
+qa!(qa_html_tbody, "qa_html_tbody.el");
+
+qa!(qa_html_repair, "qa_html_repair.el");

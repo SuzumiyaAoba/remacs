@@ -903,7 +903,7 @@ fn step_op(
         154 => {
             let b = pop!();
             let a = pop!();
-            push!(Value::from_bool(equal_values(i, &a, &b)));
+            push!(Value::from_bool(r!(equal_values(i, &a, &b))));
         }
         155 => scall!("nthcdr", 2),
         156 => scall!("elt", 2),

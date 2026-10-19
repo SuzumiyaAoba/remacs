@@ -2196,7 +2196,7 @@ fn sxhash_marker(i: &Interp, m: &crate::lisp::value::Marker) -> u64 {
 /// not elementwise. Remacs overlays are `[overlay BID IDX]' handles;
 /// GNU positions are the itree bounds (0-based start, 1-based end
 /// bytepos), or -1 each once detached.
-fn sxhash_overlay(i: &Interp, vv: &[Value]) -> Option<u64> {
+fn sxhash_overlay(i: &Interp, vv: &[Value], depth: usize) -> Option<u64> {
     let (Value::Sym(tag), Value::Int(bid), Value::Int(idx)) = (vv.first()?, vv.get(1)?, vv.get(2)?)
     else {
         return None;
@@ -2219,7 +2219,7 @@ fn sxhash_overlay(i: &Interp, vv: &[Value]) -> Option<u64> {
     };
     let mut hash = start;
     hash = sxhash_combine(hash, end);
-    hash = sxhash_combine(hash, sxhash_obj(i, &plist, 0));
+    hash = sxhash_combine(hash, sxhash_obj(i, &plist, depth));
     Some(hash)
 }
 
@@ -2229,7 +2229,7 @@ fn sxhash_overlay(i: &Interp, vv: &[Value]) -> Option<u64> {
 /// purpose, ascii, then contents[].  A remacs char-table is a Record
 /// [char-table SUBTYPE CONTENTS65 EXTRAS..] whose defalt and parent
 /// live in side-tables.
-fn sxhash_char_table(i: &Interp, v: &Value, r: Ref<'_, Vec<Value>>) -> u64 {
+fn sxhash_char_table(i: &Interp, v: &Value, r: Ref<'_, Vec<Value>>, depth: usize) -> u64 {
     let extras = r.len().saturating_sub(3);
     let mut hash =
         PSEUDOVECTOR_FLAG | (PVEC_CHAR_TABLE << 24) | (CHAR_TABLE_STD_SLOTS + extras) as u64;
@@ -2244,7 +2244,7 @@ fn sxhash_char_table(i: &Interp, v: &Value, r: Ref<'_, Vec<Value>>) -> u64 {
         .into_iter()
         .chain(contents.into_iter());
     for slot in slots.take(SXHASH_MAX_LEN) {
-        hash = sxhash_combine(hash, sxhash_obj(i, &slot, 0));
+        hash = sxhash_combine(hash, sxhash_obj(i, &slot, depth + 1));
     }
     hash
 }
@@ -4005,7 +4005,7 @@ fn sxhash_obj(i: &Interp, v: &Value, depth: usize) -> u64 {
         // two's-complement representation.  Beyond the fixnum range
         // these are GNU bignums, hashed per sxhash_bignum.
         Value::Int(n) => {
-            if n.abs() <= SXHASH_FIXNUM_MAX {
+            if n.unsigned_abs() <= SXHASH_FIXNUM_MAX as u128 {
                 (*n as u64) & 0x3fff_ffff_ffff_ffff
             } else {
                 sxhash_bignum(*n)
@@ -4021,7 +4021,7 @@ fn sxhash_obj(i: &Interp, v: &Value, depth: usize) -> u64 {
         Value::Vec(vec) => {
             // Overlay handles `[overlay BID IDX]' hash like GNU's
             // PVEC_OVERLAY (start, end, plist), not elementwise.
-            if let Some(h) = sxhash_overlay(i, &vec.borrow()) {
+            if let Some(h) = sxhash_overlay(i, &vec.borrow(), depth) {
                 return h;
             }
             let vec = vec.borrow();
@@ -4045,7 +4045,7 @@ fn sxhash_obj(i: &Interp, v: &Value, depth: usize) -> u64 {
             }
             let rr = r.borrow();
             if misc::is_char_table(i, v) {
-                return sxhash_char_table(i, v, rr);
+                return sxhash_char_table(i, v, rr, depth);
             }
             let mut hash = PSEUDOVECTOR_FLAG | (PVEC_RECORD << 24) | rr.len() as u64;
             for item in rr.iter().take(SXHASH_MAX_LEN) {
@@ -4142,6 +4142,25 @@ fn sxhash_obj_ptr5(v: &Value) -> u64 {
     (p as u64 >> 2) ^ 5
 }
 
+/// Built-in equal tables use GNU's bounded sxhash as a bucket selector,
+/// not as equality: cyclic and truncated structures may collide.
+pub(crate) fn equal_hash_code(i: &Interp, value: &Value) -> u32 {
+    let hash = sxhash_obj(i, value, 0);
+    (hash ^ (hash >> 32)) as u32
+}
+
+/// GNU hashfn_user_defined: fixnums are already hash codes; all other
+/// Lisp results are hashed with sxhash, then reduced to hash_hash_t.
+pub(crate) fn user_hash_code(i: &Interp, value: &Value) -> u32 {
+    let hash = match value {
+        Value::Int(n) if (-(1i128 << 61)..(1i128 << 61)).contains(n) => {
+            (*n as u64) & 0x3fff_ffff_ffff_ffff
+        }
+        _ => sxhash_obj(i, value, 0),
+    };
+    (hash ^ (hash >> 32)) as u32
+}
+
 fn f_sxhash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Int(sxhash_reduce(sxhash_obj(i, &args[0], 0))))
 }
@@ -4154,7 +4173,7 @@ fn f_sxhash_eql(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let h = match &args[0] {
         // FLOATP or BIGNUMP → sxhash, else sxhash_eq.
         Value::Float(_) => sxhash_obj(i, &args[0], 0),
-        Value::Int(n) if n.abs() > SXHASH_FIXNUM_MAX => sxhash_obj(i, &args[0], 0),
+        Value::Int(n) if n.unsigned_abs() > SXHASH_FIXNUM_MAX as u128 => sxhash_obj(i, &args[0], 0),
         _ => sxhash_eq(i, &args[0]),
     };
     Ok(Value::Int(sxhash_reduce(h)))

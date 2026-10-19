@@ -771,7 +771,7 @@ fn member_impl(
     i: &mut Interp,
     elt: &Value,
     list: &Value,
-    cmp: fn(&Interp, &Value, &Value) -> bool,
+    cmp: fn(&Interp, &Value, &Value) -> Result<bool, Flow>,
 ) -> EvalResult {
     // Raw-pointer spine walk (see `cdr_ptr'): `cmp' is a pure
     // predicate — `eq'/`eql'/`equal' never run Lisp — so the walk can
@@ -788,7 +788,7 @@ fn member_impl(
                     return Err(err_circular(i));
                 }
                 let cell = RefCell::as_ptr(c);
-                if cmp(i, elt, unsafe { &(*cell).car }) {
+                if cmp(i, elt, unsafe { &(*cell).car })? {
                     return Ok(unsafe { &*cur }.clone());
                 }
                 cur = unsafe { &(*cell).cdr };
@@ -812,10 +812,12 @@ fn f_member(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     member_impl(i, &args[0], &args[1], |ii, a, b| equal_values(ii, a, b))
 }
 fn f_memq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    member_impl(i, &args[0], &args[1], |_ii, a, b| eq_values(a, b))
+    member_impl(i, &args[0], &args[1], |_ii, a, b| Ok(eq_values(a, b)))
 }
 fn f_memql(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    member_impl(i, &args[0], &args[1], |_ii, a, b| super::eql_values(a, b))
+    member_impl(i, &args[0], &args[1], |_ii, a, b| {
+        Ok(super::eql_values(a, b))
+    })
 }
 
 fn member_if_impl(i: &mut Interp, pred: &Value, list: &Value, want: bool) -> EvalResult {
@@ -851,7 +853,7 @@ fn assoc_impl(
     i: &mut Interp,
     key: &Value,
     list: &Value,
-    cmp: fn(&Interp, &Value, &Value) -> bool,
+    cmp: fn(&Interp, &Value, &Value) -> Result<bool, Flow>,
     cdr_cmp: bool,
 ) -> EvalResult {
     // Raw-pointer spine walk like `member_impl'.
@@ -869,7 +871,7 @@ fn assoc_impl(
                 if let Value::Cons(ec) = unsafe { &(*cell).car } {
                     let eb = ec.borrow();
                     let probe = if cdr_cmp { &eb.cdr } else { &eb.car };
-                    if cmp(i, key, probe) {
+                    if cmp(i, key, probe)? {
                         drop(eb);
                         return Ok(unsafe { &*cell }.car.clone());
                     }
@@ -893,7 +895,13 @@ fn assoc_impl(
 }
 
 fn f_assq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    assoc_impl(i, &args[0], &args[1], |_ii, a, b| eq_values(a, b), false)
+    assoc_impl(
+        i,
+        &args[0],
+        &args[1],
+        |_ii, a, b| Ok(eq_values(a, b)),
+        false,
+    )
 }
 
 fn delete_all_by(i: &mut Interp, args: crate::lisp::Argv, on_cdr: bool) -> EvalResult {
@@ -1033,7 +1041,7 @@ fn f_assoc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     )
 }
 fn f_rassq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    assoc_impl(i, &args[0], &args[1], |_ii, a, b| eq_values(a, b), true)
+    assoc_impl(i, &args[0], &args[1], |_ii, a, b| Ok(eq_values(a, b)), true)
 }
 fn f_rassoc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     assoc_impl(
@@ -1071,7 +1079,7 @@ fn f_assoc_default(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                     v => v.clone(),
                 };
                 let hit = if test.is_nil() {
-                    equal_values(i, &key, &args[0])
+                    equal_values(i, &key, &args[0])?
                 } else {
                     i.call_function(
                         &test,
@@ -1118,7 +1126,7 @@ fn del_impl(i: &mut Interp, elt: &Value, list: &Value, use_eq: bool) -> EvalResu
                 let matched = if use_eq {
                     eq_values(&car, elt)
                 } else {
-                    equal_values(i, &car, elt)
+                    equal_values(i, &car, elt)?
                 };
                 if matched {
                     match &prev {
@@ -1146,23 +1154,22 @@ fn f_delete(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Str(s) => {
             // delete chars equal to ELT from a string
             let elt = &args[0];
-            let out: String = s
-                .borrow()
-                .chars()
-                .filter(|c| {
-                    let cv = Value::Int(*c as i128);
-                    !equal_values(i, &cv, elt)
-                })
-                .collect();
+            let mut out = String::new();
+            for c in s.borrow().chars() {
+                let cv = Value::Int(c as i128);
+                if !equal_values(i, &cv, elt)? {
+                    out.push(c);
+                }
+            }
             Ok(Value::string(out))
         }
         Value::Vec(v) => {
-            let kept: Vec<Value> = v
-                .borrow()
-                .iter()
-                .filter(|x| !equal_values(i, x, &args[0]))
-                .cloned()
-                .collect();
+            let mut kept = Vec::new();
+            for x in v.borrow().iter() {
+                if !equal_values(i, x, &args[0])? {
+                    kept.push(x.clone());
+                }
+            }
             Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(kept))))
         }
         Value::Cons(_) | Value::Nil => del_impl(i, &args[0], &args[1], false),
@@ -1304,7 +1311,7 @@ fn plist_scan(
                     }
                 };
                 let matches = if lax {
-                    equal_values(i, &k, prop)
+                    equal_values(i, &k, prop)?
                 } else {
                     eq_values(&k, prop)
                 };
@@ -1731,20 +1738,39 @@ fn f_equal_incl_props(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let ok = match (&args[0], &args[1]) {
         (Value::Str(sa), Value::Str(sb)) => {
             let (ta, tb) = (sa.borrow(), sb.borrow());
-            *ta == *tb && {
-                // GNU's `internal_equal' requires every position's
-                // property list to be `equal'.
-                let (ia, ib) = (i.str_props(sa).to_vec(), i.str_props(sb).to_vec());
-                (0..ta.chars().count()).all(|p| {
-                    equal_values(
-                        i,
-                        &Value::list(crate::buffer::primitives::str_plist_at(&ia, p)),
-                        &Value::list(crate::buffer::primitives::str_plist_at(&ib, p)),
-                    )
-                })
+            if *ta != *tb {
+                return Ok(Value::Nil);
             }
+            // GNU's `intervals_equal_1' matches property names by
+            // `eq', independently of order, then calls `equal' on
+            // each value at depth zero (not on the whole plist).
+            let (ia, ib) = (i.str_props(sa).to_vec(), i.str_props(sb).to_vec());
+            for p in 0..ta.chars().count() {
+                let pa = crate::buffer::primitives::str_plist_at(&ia, p);
+                let pb = crate::buffer::primitives::str_plist_at(&ib, p);
+                for (a, b_at_pos) in pa.chunks(2).zip(pb.chunks(2)) {
+                    if a.len() != 2 {
+                        return Ok(Value::Nil);
+                    }
+                    let Some(b) = pb.chunks(2).find(|b| eq_values(&b[0], &a[0])) else {
+                        return Ok(Value::Nil);
+                    };
+                    if b.len() != 2 || !equal_values(i, &b[1], &a[1])? {
+                        return Ok(Value::Nil);
+                    }
+                    if b_at_pos.len() != 2 {
+                        return Ok(Value::Nil);
+                    }
+                }
+                // Match GNU's ordering: a visited value can signal
+                // before a later difference in plist lengths.
+                if pa.len() != pb.len() {
+                    return Ok(Value::Nil);
+                }
+            }
+            true
         }
-        _ => equal_values(i, &args[0], &args[1]),
+        _ => equal_values(i, &args[0], &args[1])?,
     };
     Ok(Value::from_bool(ok))
 }
@@ -1758,24 +1784,25 @@ fn remove_impl(
     i: &mut Interp,
     elt: &Value,
     seq: &Value,
-    cmp: fn(&Interp, &Value, &Value) -> bool,
+    cmp: fn(&Interp, &Value, &Value) -> Result<bool, Flow>,
 ) -> EvalResult {
     match seq {
         Value::Str(s) => {
-            let kept: String = s
-                .borrow()
-                .chars()
-                .filter(|c| !cmp(i, elt, &Value::Int(*c as i128)))
-                .collect();
+            let mut kept = String::new();
+            for c in s.borrow().chars() {
+                if !cmp(i, elt, &Value::Int(c as i128))? {
+                    kept.push(c);
+                }
+            }
             Ok(Value::string(kept))
         }
         Value::Vec(v) => {
-            let kept: Vec<Value> = v
-                .borrow()
-                .iter()
-                .filter(|x| !cmp(i, elt, x))
-                .cloned()
-                .collect();
+            let mut kept = Vec::new();
+            for x in v.borrow().iter() {
+                if !cmp(i, elt, x)? {
+                    kept.push(x.clone());
+                }
+            }
             Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(kept))))
         }
         Value::Cons(_) | Value::Nil => {
@@ -1790,7 +1817,7 @@ fn remove_impl(
                             let b = c.borrow();
                             (b.car.clone(), b.cdr.clone())
                         };
-                        if !cmp(i, elt, &car) {
+                        if !cmp(i, elt, &car)? {
                             kept.push(car);
                         }
                         cur = next;

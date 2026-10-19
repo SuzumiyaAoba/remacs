@@ -487,3 +487,14 @@ fn buffer_local() {
         "42"
     );
 }
+
+/// Deep comparisons signal GNU's error instead of skipping an unexamined pair.
+#[test]
+fn equality_deep_cons_contents() {
+    assert_eq!(
+        ev("(let ((a 1) (b 2))
+              (dotimes (_ 205) (setq a (list a) b (list b)))
+              (condition-case err (equal a b) (error err)))"),
+        "(error \"Stack overflow in equal\")"
+    );
+}

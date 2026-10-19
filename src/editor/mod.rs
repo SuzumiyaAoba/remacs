@@ -1508,27 +1508,12 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Kill N words backward."
     ),
     S!(
-        "delete-horizontal-space",
-        0,
-        1,
-        f_delete_horizontal_space,
-        "Delete surrounding whitespace."
-    ),
-    S!(
         "just-one-space",
         0,
         1,
         f_just_one_space,
         "One space around point."
     ),
-    S!(
-        "delete-indentation",
-        0,
-        3,
-        f_delete_indentation,
-        "Join this line to previous."
-    ),
-    S!("join-line", 0, 1, f_delete_indentation, ""),
     S!(
         "zap-to-char",
         2,
@@ -7194,7 +7179,7 @@ fn f_define_key(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 } else {
                     x.clone()
                 };
-                if !crate::lisp::builtins::equal_values(i, &converted, x) {
+                if !crate::lisp::builtins::equal_values(i, &converted, x)? {
                     changed = true;
                 }
                 elts.push(converted);
@@ -8042,7 +8027,7 @@ fn lookup_event(i: &mut Interp, map: &Value, ev: &Value, t_ok: bool) -> Result<V
                     return Ok(v_lo);
                 }
                 let v_hi = lookup_in_keymap(i, map, *hi, t_ok)?;
-                return Ok(if equal_values(i, &v_lo, &v_hi) {
+                return Ok(if equal_values(i, &v_lo, &v_hi)? {
                     v_lo
                 } else {
                     Value::Nil
@@ -8220,7 +8205,7 @@ fn where_is_collect(
                 };
                 let matched = eq_values(&binding, definition)
                     || (matches!(definition, Value::Cons(_))
-                        && equal_values(i, &binding, definition));
+                        && equal_values(i, &binding, definition)?);
                 if !matched {
                     continue;
                 }
@@ -8373,7 +8358,7 @@ fn f_where_is_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         // Skip sequences shadowed by another binding for the same
         // key: the effective binding must resolve to DEFINITION.
         let v = shadow_lookup(i, &keymaps, &sequence, remapped)?;
-        if !equal_values(i, &v, &definition) {
+        if !equal_values(i, &v, &definition)? {
             continue;
         }
 
@@ -8420,8 +8405,17 @@ fn f_where_is_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     i.get_prop(*s, nke_sym).truthy()
                 })
         });
-        if !non_key && !found.iter().any(|f| equal_values(i, f, &sequence)) {
-            found.push(sequence.clone());
+        if !non_key {
+            let mut duplicate = false;
+            for f in &found {
+                if equal_values(i, f, &sequence)? {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if !duplicate {
+                found.push(sequence.clone());
+            }
         }
 
         if first_non_ascii {
@@ -12758,7 +12752,7 @@ fn f_set_visited_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             Some(f) => Value::string(f.clone()),
             None => Value::Nil,
         },
-    ) {
+    )? {
         if let Some(f) = &fname {
             let lb = i.intern("lock-buffer");
             if let Err(fl) = i.apply(&Value::Sym(lb), vec![Value::string(f.clone())]) {
@@ -12919,7 +12913,7 @@ fn f_set_visited_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     let now_mode = mm_id
                         .and_then(|mm| cur(i).borrow().locals.get(&mm).cloned())
                         .unwrap_or(Value::Nil);
-                    if !crate::lisp::builtins::equal_values(i, &now_mode, &mode_val) {
+                    if !eq_values(&now_mode, &mode_val) {
                         let _ = i.apply(&Value::Sym(hlv), vec![Value::Nil]);
                     }
                 }
@@ -14554,27 +14548,6 @@ fn f_backward_kill_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_delete_horizontal_space(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let backward_only = arg(&a, 0).truthy();
-    let b = cur(i);
-    let bb = b.borrow_mut();
-    let p = bb.point();
-    let mut s = p;
-    let mut e = p;
-    while s > 0 && matches!(bb.text.char_at(s - 1), ' ' | '\t') {
-        s -= 1;
-    }
-    if !backward_only {
-        while e < bb.text.len() && matches!(bb.text.char_at(e), ' ' | '\t') {
-            e += 1;
-        }
-    }
-    drop(bb);
-    crate::buffer::primitives::chg_delete(i, s, e)?;
-    cur(i).borrow_mut().set_point(s);
-    Ok(Value::Nil)
-}
-
 fn f_just_one_space(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let n = arg(&a, 0).int().unwrap_or(1).max(0) as usize;
     let b = cur(i);
@@ -14849,70 +14822,6 @@ fn f_downcase_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 fn f_capitalize_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     word_op(i, &a, crate::lisp::builtins::strfn::CaseOp::Cap)
-}
-
-fn f_delete_indentation(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let b = cur(i);
-    let bb = b.borrow_mut();
-    let syn = syntax_table_entries(i);
-    let arg_follow = a.first().map(|v| v.truthy()).unwrap_or(false);
-    let p = bb.point();
-    let line = bb.text.line_of_pos(p);
-    // GNU: ARG non-nil joins the FOLLOWING line to this one; otherwise
-    // join current line to the previous.
-    let join_line = if arg_follow { line + 1 } else { line };
-    if join_line == 0 {
-        return Ok(Value::Nil);
-    }
-    let ls = bb.text.line_start(join_line);
-    if ls == 0 || (arg_follow && ls >= bb.text.len()) {
-        return Ok(Value::Nil);
-    }
-    // Delete the newline + leading whitespace of the joined line,
-    // plus trailing horizontal whitespace on the previous line.
-    let mut e = ls;
-    while e < bb.text.len() && matches!(bb.text.char_at(e), ' ' | '\t') {
-        e += 1;
-    }
-    let mut s = ls - 1; // the newline
-    while s > 0 && matches!(bb.text.char_at(s - 1), ' ' | '\t') && bb.text.char_at(s - 1) != '\n' {
-        s -= 1;
-    }
-    // fixup-whitespace: insert one space unless point lands at
-    // BOL/EOL/close-paren, or follows open-paren/expression-prefix.
-    let need_space = {
-        let at = if e < bb.text.len() {
-            Some(bb.text.char_at(e))
-        } else {
-            None
-        };
-        let before = if s > 0 {
-            Some(bb.text.char_at(s - 1))
-        } else {
-            None
-        };
-        let close = at
-            .map(|c| syntax_entry_code(syn.as_ref(), c) == b')')
-            .unwrap_or(false);
-        let opens = before
-            .map(|c| {
-                let k = syntax_entry_code(syn.as_ref(), c);
-                k == b'(' || k == b'\''
-            })
-            .unwrap_or(false);
-        !(close || opens || at.is_none() || before.is_none())
-    };
-    drop(bb);
-    crate::buffer::primitives::chg_delete(i, s, e)?;
-    {
-        let b = cur(i);
-        let mut bb = b.borrow_mut();
-        if need_space {
-            bb.raw_insert_at(s, " ");
-        }
-        bb.set_point(s + usize::from(need_space));
-    }
-    Ok(Value::Nil)
 }
 
 fn f_indent_line_to(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -20044,7 +19953,7 @@ fn f_face_equal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     for at in ATTRS {
         let v1 = face_attr(i, &n1, at, spec);
         let v2 = face_attr(i, &n2, at, spec);
-        if !crate::lisp::builtins::equal_values(i, &v1, &v2) {
+        if !crate::lisp::builtins::equal_values(i, &v1, &v2)? {
             return Ok(Value::Nil);
         }
     }
