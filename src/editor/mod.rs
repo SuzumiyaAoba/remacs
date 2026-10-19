@@ -9393,18 +9393,27 @@ fn f_substitute_command_keys(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
 }
 
 fn f_text_char_description(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // Emacs: CHARACTER must be a plain char (no modifier bits);
-    // control chars print ^X, DEL ^?, C1 octal.
+    // GNU keymap.c: ASCII controls use caret notation in a unibyte
+    // string; every non-ASCII character remains one multibyte character.
     match &a[0] {
         Value::Int(n) if *n >= 0 && *n <= 0x3f_ffff => {
             let n = *n;
             let s = match n {
                 0x7f => "^?".to_string(),
                 c if c < 0x20 => format!("^{}", char::from_u32(c as u32 + 64).unwrap()),
-                c if (0x80..0xa0).contains(&c) => format!("\\{:03o}", c),
-                c => char::from_u32(c as u32).unwrap_or('?').to_string(),
+                c => crate::lisp::value::lisp_char(c as u32)
+                    .unwrap_or_else(|| crate::lisp::value::mule_seq_char(c as u32))
+                    .to_string(),
             };
-            Ok(Value::string(s))
+            let value = Value::string(s);
+            if let Value::Str(string) = &value {
+                if n < 128 {
+                    i.mark_unibyte(string);
+                } else {
+                    i.mark_multibyte(string);
+                }
+            }
+            Ok(value)
         }
         _ => Err(i.wrong_type_mut("characterp", &a[0])),
     }

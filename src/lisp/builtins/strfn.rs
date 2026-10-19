@@ -4952,18 +4952,19 @@ fn f_string_bytes(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let s = want_string(i, &args[0])?;
     // Unibyte strings hold chars as raw bytes (eight-bit PUA proxies)
     // — GNU's byte count is the char count; multibyte strings count
-    // per-char storage: UTF-8 length, with eight-bit chars taking 2
-    // bytes (GNU's raw-byte encoding).
+    // per-char Emacs storage: UTF-8 through 0x1fffff, five bytes for
+    // extended Mule codes, and two bytes for eight-bit characters.
+    // Count original Lisp codes, not our surrogate/Mule proxy chars.
     let n = match &args[0] {
         Value::Str(r) if i.is_unibyte_str(r) => s.chars().count(),
         _ => s
             .chars()
-            .map(|c| {
-                if crate::lisp::value::eight_bit_byte(c).is_some() {
-                    2
-                } else {
-                    c.len_utf8()
-                }
+            .map(|c| match lisp_char_code(c) {
+                0..=0x7f => 1,
+                0x80..=0x7ff | 0x3fff80..=0x3fffff => 2,
+                0x800..=0xffff => 3,
+                0x10000..=0x1fffff => 4,
+                _ => 5,
             })
             .sum(),
     };
