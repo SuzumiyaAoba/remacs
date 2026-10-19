@@ -1,0 +1,40 @@
+/// Cargo omits the kernel release from its Darwin target triple. GNU's
+/// config.guess includes it. Only use a Darwin build host's release for
+/// Darwin targets; a cross build must not acquire another OS's version.
+pub(crate) fn system_configuration(target: &str, host: &str, release: Option<&str>) -> String {
+    if target.ends_with("-apple-darwin") && host.ends_with("-apple-darwin") {
+        if let Some(release) = release.map(str::trim).filter(|release| {
+            !release.is_empty()
+                && release
+                    .split('.')
+                    .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+        }) {
+            return format!("{target}{release}");
+        }
+    }
+    target.to_owned()
+}
+
+#[cfg(not(test))]
+fn main() {
+    use std::env;
+    use std::process::Command;
+
+    println!("cargo:rerun-if-changed=build.rs");
+    let target = env::var("TARGET").expect("Cargo TARGET");
+    let host = env::var("HOST").expect("Cargo HOST");
+    let release = if target.ends_with("-apple-darwin") && host.ends_with("-apple-darwin") {
+        Command::new("uname")
+            .arg("-r")
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+    } else {
+        None
+    };
+    println!(
+        "cargo:rustc-env=REMACS_SYSTEM_CONFIGURATION={}",
+        system_configuration(&target, &host, release.as_deref())
+    );
+}

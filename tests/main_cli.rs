@@ -32,6 +32,44 @@ fn version_prints_and_exits() {
 }
 
 #[test]
+fn build_identity_is_reproducible_and_records_the_configured_target() {
+    let expression = "(let ((print-escape-newlines t)) \
+        (prin1 (list system-configuration emacs-build-system emacs-build-time (emacs-version))))";
+    let run = || {
+        let output = Command::new(env!("CARGO_BIN_EXE_remacs"))
+            .args(["-Q", "--batch", "--eval", expression])
+            // The configured target belongs to the binary, not its caller.
+            .env("REMACS_SYSTEM_CONFIGURATION", "runtime-value")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let first = run();
+    assert!(
+        first.starts_with(&format!(
+            "(\"{}\" nil nil \"GNU Emacs 31.1 (build ",
+            env!("REMACS_SYSTEM_CONFIGURATION")
+        )),
+        "{first}"
+    );
+    assert!(!first.contains("\\n of "), "{first}");
+    assert_eq!(first, run(), "build identity changed between processes");
+    if let Some(gnu) = std::env::var_os("GNU_EMACS") {
+        let output = Command::new(gnu)
+            .args(["-Q", "--batch", "--eval", expression])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(first, String::from_utf8_lossy(&output.stdout));
+    }
+}
+
+#[test]
 fn eval_runs_lisp() {
     let (o, _e, code) = remacs(&["--eval", "(princ (+ 1 2))"], "");
     assert_eq!(o, "3");

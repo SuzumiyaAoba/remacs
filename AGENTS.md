@@ -88,6 +88,17 @@ with `wrong-type-argument stringp t'.
 `autoload_do_load' before interactive-spec lookup — GNU's
 call-interactively does the same via `indirect_function'; without it,
 
+## Build identity
+
+`build.rs` records Cargo's target in `REMACS_SYSTEM_CONFIGURATION`, adding
+the build host's Darwin release for Darwin targets.  Keep this a build-time
+constant; the runtime environment must not replace the configured identity.
+After booting GNU `version.el`, startup clears `emacs-build-system` and
+`emacs-build-time` to match the reproducible reference build.  The Lisp
+version formatter remains real and honors callers' explicit variable binds.
+Regressions: `qa_build_identity.el`, `tests/build_metadata.rs`, and the CLI
+build-identity test.
+
 ## Menu constructors and interpreted closures
 
 `menu-bar.el` is loaded explicitly after `subr-x` and before `tool-bar`.

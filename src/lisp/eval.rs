@@ -2905,6 +2905,13 @@ impl Interp {
             // evaluating it defines `emacs-repository-*' helpers while
             // `(require 'version)' still fails exactly like GNU.
             let _ = boot_lib(&mut interp, "version");
+            // Match GNU's reproducible (--disable-build-details) image.
+            // version.el initializes these from the running process; those
+            // are not the machine or time at which this binary was built.
+            for name in ["emacs-build-system", "emacs-build-time"] {
+                let id = interp.intern(name);
+                let _ = interp.set_symbol(id, Value::Nil);
+            }
             // rx.el is *not* loaded in GNU's dump: `rx' and friends
             // are loaddefs autoloads at -Q, so the prelude-folded
             // definitions get stashed+autoloaded below rather than the
@@ -9817,7 +9824,7 @@ command-line arguments.\" \
             ("system-type", Value::Sym(self.intern("darwin"))),
             (
                 "system-configuration",
-                Value::string("aarch64-apple-darwin"),
+                Value::string(env!("REMACS_SYSTEM_CONFIGURATION")),
             ),
             ("fill-column", Value::Int(70)),
             ("tab-width", Value::Int(8)),
@@ -10433,10 +10440,6 @@ command-line arguments.\" \
             ("process-error-pause-time", Value::Int(0)),
             ("network-security-level", Value::Sym(self.intern("medium"))),
             ("mail-host-address", Value::Nil),
-            (
-                "system-configuration",
-                Value::string("aarch64-apple-darwin"),
-            ),
             (
                 "emacs-copyright",
                 Value::string("Copyright (C) 2025 Free Software Foundation, Inc."),

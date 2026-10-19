@@ -325,6 +325,7 @@ qa!(qa_syntax_class_bounds, "qa_syntax_class_bounds.el");
 qa!(qa_syntax2, "qa_syntax2.el");
 qa!(qa_syntaxtable, "qa_syntaxtable.el");
 qa!(qa_system, "qa_system.el");
+qa!(qa_build_identity, "qa_build_identity.el");
 qa!(qa_tablist, "qa_tablist.el");
 qa!(qa_textprops, "qa_textprops.el");
 qa!(qa_object_intervals, "qa_object_intervals.el");
