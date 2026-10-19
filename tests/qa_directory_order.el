@@ -101,4 +101,36 @@
             '("../" "./" "only.txt")))
     (delete-directory qa23-dir t)))
 
+;; Issue #103 repeats the pre-#23 bug with a smaller fixture. Pin the
+;; dot-entry boundary directly, as well as completion's reverse-stream
+;; order. The remaining names' native order varies across filesystems.
+(let ((qa103-dir (make-temp-file "qa103-directory-" t))
+      (completion-ignored-extensions nil)
+      (completion-regexp-list nil))
+  (unwind-protect
+      (progn
+        (with-temp-file (expand-file-name "f2.el" qa103-dir) (insert "2"))
+        (make-directory (expand-file-name "sub" qa103-dir))
+        (with-temp-file (expand-file-name "f1.txt" qa103-dir) (insert "1"))
+        (with-temp-file (expand-file-name ".hidden" qa103-dir) (insert "h"))
+        (qa (directory-files qa103-dir nil nil nil 0) nil)
+        (qa (directory-files qa103-dir nil nil nil 1) '("."))
+        (qa (directory-files qa103-dir nil nil nil 2) '("." ".."))
+        (qa (directory-files qa103-dir nil nil t 1) '("."))
+        (qa (directory-files qa103-dir nil nil t 2) '(".." "."))
+        (qa (mapcar #'file-name-nondirectory (directory-files qa103-dir t nil nil 2))
+            '("." ".."))
+        (qa (directory-files qa103-dir nil "^f" nil) '("f1.txt" "f2.el"))
+        (qa (sort (directory-files qa103-dir nil "^f" t) #'string<) '("f1.txt" "f2.el"))
+        (qa (last (file-name-all-completions "" qa103-dir) 2) '("../" "./"))
+        (qa (sort (file-name-all-completions "" qa103-dir) #'string<)
+            '("../" "./" ".hidden" "f1.txt" "f2.el" "sub/"))
+        (qa (file-name-all-completions "" qa103-dir)
+            (mapcar (lambda (name) (if (member name '("." ".." "sub"))
+                                      (concat name "/") name))
+                    (directory-files qa103-dir nil nil t)))
+        (qa (file-name-all-completions "f" qa103-dir)
+            (directory-files qa103-dir nil "^f" t)))
+    (delete-directory qa103-dir t)))
+
 (princ (qa--done)) (terpri)
