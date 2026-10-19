@@ -132,6 +132,7 @@ qa!(qa_fileattr, "qa_fileattr.el");
 qa!(qa_file_modes, "qa_file_modes.el");
 qa!(qa_extension_period, "qa_extension_period.el");
 qa!(qa_file_completion_prefix, "qa_file_completion_prefix.el");
+qa!(qa_directory_order, "qa_directory_order.el");
 qa!(qa_filelocal, "qa_filelocal.el");
 qa!(qa_filesys, "qa_filesys.el");
 qa!(qa_file_remote, "qa_file_remote.el");

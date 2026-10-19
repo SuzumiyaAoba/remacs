@@ -11156,6 +11156,65 @@ fn f_substitute_in_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     Ok(Value::string(out))
 }
 
+/// Read the actual directory stream, including dot entries and its native
+/// order. std::fs::read_dir deliberately hides `.' and `..', so it cannot
+/// reproduce GNU's COUNT selection or reversed-readdir completion order.
+fn directory_entry_names(dir: &str) -> std::io::Result<Vec<String>> {
+    #[cfg(unix)]
+    {
+        use std::ffi::{CStr, CString};
+        struct Directory(*mut libc::DIR);
+        impl Drop for Directory {
+            fn drop(&mut self) {
+                unsafe { libc::closedir(self.0) };
+            }
+        }
+        let path = CString::new(dir)?;
+        let stream = unsafe { libc::opendir(path.as_ptr()) };
+        if stream.is_null() {
+            return Err(std::io::Error::last_os_error());
+        }
+        let stream = Directory(stream);
+        let mut names = Vec::new();
+        loop {
+            let entry = unsafe { libc::readdir(stream.0) };
+            if entry.is_null() {
+                break;
+            }
+            let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
+            names.push(name.to_string_lossy().into_owned());
+        }
+        Ok(names)
+    }
+    #[cfg(not(unix))]
+    {
+        let entries = std::fs::read_dir(dir)?;
+        let mut names = vec![".".into(), "..".into()];
+        for entry in entries {
+            names.push(entry?.file_name().to_string_lossy().into_owned());
+        }
+        Ok(names)
+    }
+}
+
+fn directory_names(i: &mut Interp, dir: &str) -> Result<Vec<String>, Flow> {
+    directory_entry_names(dir).map_err(|error| {
+        let symbol = if error.kind() == std::io::ErrorKind::NotFound {
+            sym::FILE_MISSING
+        } else {
+            sym::FILE_ERROR
+        };
+        i.signal_data(
+            symbol,
+            vec![
+                Value::string("Opening directory"),
+                Value::string(file_error_string(&error)),
+                Value::string(dir),
+            ],
+        )
+    })
+}
+
 fn f_directory_files(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let dir = want_filename(i, &a[0])?;
     // GNU Fdirectory_files validates COUNT (arg5) before MATCH:
@@ -11183,6 +11242,7 @@ fn f_directory_files(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     } else {
         format!("{}/", dir)
     };
+    let entries = directory_names(i, &dir)?;
     let syn = crate::editor::re_syntax(i);
     let matches = |name: &str| -> bool {
         match &re {
@@ -11201,69 +11261,19 @@ fn f_directory_files(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             None => true,
         }
     };
-    let mut names = Vec::new();
-    // GNU reads "." and ".." out of the directory stream; Rust's
-    // `read_dir' omits them, so they're collected here and appended at
-    // the end — the nosort path below reverses collection order, which
-    // lands them last exactly like GNU's reversed-readdir result.
-    let dots: Vec<String> = [".", ".."]
-        .iter()
-        .filter(|d| matches(d))
-        .map(|d| {
-            if full {
-                format!("{}{}", base, d)
-            } else {
-                d.to_string()
-            }
-        })
+    let mut names: Vec<String> = entries
+        .into_iter()
+        .filter(|name| matches(name))
+        .map(|name| if full { format!("{base}{name}") } else { name })
         .collect();
-    match std::fs::read_dir(&dir) {
-        Ok(rd) => {
-            for ent in rd.flatten() {
-                let name = ent.file_name().to_string_lossy().into_owned();
-                if !matches(&name) {
-                    continue;
-                }
-                names.push(if full {
-                    format!("{}{}", base, name)
-                } else {
-                    name
-                });
-            }
-        }
-        Err(e) => {
-            // GNU signals file-missing (ENOENT) or file-error otherwise,
-            // data = ("Opening directory" strerror DIR).
-            let s = if e.kind() == std::io::ErrorKind::NotFound {
-                sym::FILE_MISSING
-            } else {
-                sym::FILE_ERROR
-            };
-            return Err(i.signal_data(
-                s,
-                vec![
-                    Value::string("Opening directory"),
-                    Value::string(file_error_string(&e)),
-                    Value::string(dir.clone()),
-                ],
-            ));
-        }
-    }
-    // GNU `directory_files_internal' conses each entry (the `.'/`..'
-    // stream entries included) onto the result list; COUNT truncates
-    // that collection, then it is either sorted with `string-lessp'
-    // or — NOSORT — returned as-is, i.e. reversed readdir order.
-    // Rust's `read_dir' omits `.'/`..', which GNU finds first, so they
-    // end up last in the cons-accumulated order.
-    let mut names = names;
-    names.reverse();
-    names.extend(dots.into_iter().rev());
-    // COUNT truncates the cons-collected (reversed-readdir, dots-last)
-    // stream BEFORE the sort — GNU `directory_files_internal'.
+    // COUNT limits matching entries in stream order, before consing
+    // reverses the selection and before the optional final sort.
     if let Some(c) = count {
         names.truncate(c);
     }
-    if !nosort {
+    if nosort {
+        names.reverse();
+    } else {
         names.sort();
     }
     Ok(Value::list(names.into_iter().map(Value::string).collect()))
@@ -11307,43 +11317,18 @@ fn f_directory_files_and_attributes(i: &mut Interp, a: crate::lisp::Argv) -> Eva
 /// `file-missing' with ("Opening directory" strerror DIR) data.
 fn dir_completion_names(i: &mut Interp, file: &str, dir: &str) -> Result<Vec<String>, Flow> {
     let mut matches = Vec::new();
-    let rd = match std::fs::read_dir(dir) {
-        Ok(rd) => rd,
-        Err(e) => {
-            let s = if e.kind() == std::io::ErrorKind::NotFound {
-                sym::FILE_MISSING
-            } else {
-                sym::FILE_ERROR
-            };
-            return Err(i.signal_data(
-                s,
-                vec![
-                    Value::string("Opening directory"),
-                    Value::string(file_error_string(&e)),
-                    Value::string(dir.to_string()),
-                ],
-            ));
-        }
-    };
-    for dot in [".", ".."] {
-        if dot.starts_with(file) {
-            matches.push(format!("{}/", dot));
-        }
-    }
-    for ent in rd.flatten() {
-        let name = ent.file_name().to_string_lossy().into_owned();
+    for name in directory_names(i, dir)? {
         if !name.starts_with(file) {
             continue;
         }
         // Directories complete with a trailing separator; symlink
         // targets are followed like GNU's file_name_completion.
-        if ent.path().is_dir() {
+        if std::path::Path::new(dir).join(&name).is_dir() {
             matches.push(format!("{}/", name));
         } else {
             matches.push(name);
         }
     }
-    matches.sort();
     Ok(matches)
 }
 
@@ -11351,6 +11336,11 @@ fn f_file_name_completion(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let dir = want_filename(i, &a[1])?;
     let file = want_str(i, &a[0])?;
     let mut matches = dir_completion_names(i, &file, &dir)?;
+    // GNU excludes the trivial directory entries once a real candidate
+    // exists. all-completions, in contrast, retains them unconditionally.
+    if matches.iter().any(|name| name != "./" && name != "../") {
+        matches.retain(|name| name != "./" && name != "../");
+    }
     // GNU calls PREDICATE on each candidate with `default-directory'
     // dynamically bound to DIRECTORY, so predicates like
     // `file-directory-p' resolve names relative to it.
@@ -11411,7 +11401,7 @@ fn f_file_name_all_completions(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     let file = want_str(i, &a[0])?;
     let matches = dir_completion_names(i, &file, &dir)?;
     Ok(Value::list(
-        matches.into_iter().map(Value::string).collect(),
+        matches.into_iter().rev().map(Value::string).collect(),
     ))
 }
 
