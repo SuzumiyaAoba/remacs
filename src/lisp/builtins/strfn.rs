@@ -1099,12 +1099,15 @@ fn number_prefix(t: &str) -> String {
     p += int_digits;
     let mut end = p;
     let mut float = false;
-    // Fractional part: `.' followed by at least one digit, OR bare `.'
-    // after int digits (which just ends the int in Emacs).
+    // A decimal point may precede an exponent even without fractional
+    // digits (`1.e2', `1.e+INF').  With no exponent, bare `1.' still
+    // ends at the integer prefix, so only advance `end' for a fraction.
     if cs.get(p) == Some(&'.') {
         let frac = scan_digits(&cs, p + 1);
-        if frac > 0 {
+        if int_digits > 0 || frac > 0 {
             p += 1 + frac;
+        }
+        if frac > 0 {
             end = p;
             float = true;
         }
