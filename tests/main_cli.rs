@@ -83,6 +83,28 @@ fn remote_identification_autoloads_tramp_on_first_call() {
 }
 
 #[test]
+fn synchronous_process_stderr_stays_with_destination() {
+    let expression = r#"(let ((print-escape-newlines t))
+      (prin1 (list
+        (with-temp-buffer
+          (call-process "sh" nil t nil "-c" "echo out; echo qa25-child-stderr >&2")
+          (buffer-string))
+        (with-temp-buffer
+          (insert "input")
+          (call-process-region 1 6 "sh" t '(t nil) nil "-c"
+                               "echo out; echo qa25-child-stderr >&2")
+          (buffer-string)))))"#;
+    let expected = r#"("out\nqa25-child-stderr\n" "out\n")"#;
+    let (output, errors, status) = remacs(&["-Q", "--batch", "--eval", expression], "");
+    assert_eq!(status, 0, "{errors}");
+    assert_eq!(output, expected);
+    assert!(
+        !errors.contains("qa25-child-stderr"),
+        "child stderr leaked: {errors}"
+    );
+}
+
+#[test]
 fn eval_error_exits_nonzero() {
     let (_o, e, code) = remacs(&["--eval", "(car 1)"], "");
     assert_ne!(code, 0);

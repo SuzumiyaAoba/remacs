@@ -13980,6 +13980,169 @@ fn dif_resolve_program(i: &mut Interp, prog: &str) -> Result<String, Flow> {
     ))
 }
 
+/// A private, uniquely-created capture file. Duplicated descriptors share
+/// its offset, preserving the child's stdout/stderr write order. Keep the
+/// file open for reading and remove it on every success/error exit.
+struct SyncOutputCapture {
+    file: Option<std::fs::File>,
+    path: std::path::PathBuf,
+}
+
+impl Drop for SyncOutputCapture {
+    fn drop(&mut self) {
+        self.file.take();
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+impl SyncOutputCapture {
+    fn new() -> std::io::Result<Self> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        loop {
+            let path = std::env::temp_dir().join(format!(
+                "remacs-output-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            let mut options = std::fs::OpenOptions::new();
+            options.read(true).write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            match options.open(&path) {
+                Ok(file) => {
+                    return Ok(Self {
+                        file: Some(file),
+                        path,
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn read(&mut self) -> std::io::Result<Vec<u8>> {
+        use std::io::{Read, Seek, SeekFrom};
+        let file = self.file.as_mut().unwrap();
+        file.seek(SeekFrom::Start(0))?;
+        let mut output = Vec::new();
+        file.read_to_end(&mut output)?;
+        Ok(output)
+    }
+}
+
+fn sync_process_destination(
+    i: &mut Interp,
+    command: &mut std::process::Command,
+    destination: &Value,
+) -> Result<(Value, Option<SyncOutputCapture>), Flow> {
+    let file_keyword = i.intern(":file");
+    let (real_destination, stderr) = match destination {
+        Value::Cons(cell) if !matches!(&cell.borrow().car, Value::Sym(s) if *s == file_keyword) => {
+            let cell = cell.borrow();
+            // Only an explicit second element overrides the default.
+            // (DEST), (DEST . t), and other dotted tails still merge.
+            let stderr = match &cell.cdr {
+                Value::Cons(second) => second.borrow().car.clone(),
+                _ => Value::t(),
+            };
+            (cell.car.clone(), stderr)
+        }
+        other => (other.clone(), Value::t()),
+    };
+    command.stdout(std::process::Stdio::piped());
+    match stderr {
+        Value::Nil => {
+            command.stderr(std::process::Stdio::null());
+            Ok((real_destination, None))
+        }
+        Value::Str(path) => {
+            let path = expand_file_name_str(i, &path.borrow());
+            let file = std::fs::File::create(&path).map_err(|error| {
+                report_file_errno(
+                    i,
+                    "Opening process output file",
+                    vec![Value::string(&path)],
+                    &error,
+                )
+            })?;
+            command.stderr(std::process::Stdio::from(file));
+            Ok((real_destination, None))
+        }
+        _ => {
+            let capture = SyncOutputCapture::new().map_err(|error| {
+                i.error(format!("Cannot create process output capture: {error}"))
+            })?;
+            let file = capture.file.as_ref().unwrap();
+            let stdout = file
+                .try_clone()
+                .map_err(|error| i.error(error.to_string()))?;
+            let stderr = file
+                .try_clone()
+                .map_err(|error| i.error(error.to_string()))?;
+            command.stdout(std::process::Stdio::from(stdout));
+            command.stderr(std::process::Stdio::from(stderr));
+            Ok((real_destination, Some(capture)))
+        }
+    }
+}
+
+fn sync_process_output(
+    i: &mut Interp,
+    output: &[u8],
+    capture: &mut Option<SyncOutputCapture>,
+) -> Result<String, Flow> {
+    let bytes = match capture {
+        Some(capture) => capture.read().map_err(|error| i.error(error.to_string()))?,
+        None => output.to_vec(),
+    };
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn deliver_sync_output(i: &mut Interp, destination: &Value, output: &str) -> Result<(), Flow> {
+    if let Value::Cons(cell) = destination {
+        let cell = cell.borrow();
+        if matches!(&cell.car, Value::Sym(s) if i.symbol_name(*s) == ":file") {
+            let path = match &cell.cdr {
+                Value::Cons(file) => file.borrow().car.clone(),
+                other => other.clone(),
+            };
+            let path = want_str(i, &path)?;
+            let path = expand_file_name_str(i, &path);
+            return std::fs::write(&path, output).map_err(|error| {
+                report_file_errno(
+                    i,
+                    "Opening process output file",
+                    vec![Value::string(path)],
+                    &error,
+                )
+            });
+        }
+    }
+    if destination.is_nil() || destination.int().is_some() {
+        return Ok(());
+    }
+    let bid = if matches!(destination, Value::Sym(s) if *s == sym::T) {
+        i.current_buffer
+    } else {
+        match i.buffer_id_of(destination) {
+            Some(buffer) => buffer,
+            None => match destination {
+                Value::Str(name) => i.create_buffer(&name.borrow()),
+                _ => i.current_buffer,
+            },
+        }
+    };
+    crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
+        crate::buffer::primitives::chg_insert_pt(i, output, false)
+    })?;
+    Ok(())
+}
+
 fn f_call_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let prog = want_str(i, &a[0])?;
     // (call-process PROGRAM &optional INFILE DESTINATION DISPLAY &rest ARGS)
@@ -14038,54 +14201,14 @@ fn f_call_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     for v in a.get(4..).unwrap_or(&[]) {
         cmd.arg(want_str(i, v)?);
     }
-    let dest = arg(&a, 2);
-    // A cons dest is (REALDEST . STDERR-FILE); STDERR-FILE t means mix
-    // stderr with ordinary output, a string writes it to that file,
-    // nil discards it (GNU callproc.c).
-    let file_sym = i.intern(":file");
-    let (real_dest, stderr_to_stdout, stderr_file) = match &dest {
-        Value::Cons(c) if !matches!(&c.borrow().car, Value::Sym(s) if *s == file_sym) => {
-            let cb = c.borrow();
-            // `(BUFF . t)' has STDERR-FILE = t in the cdr directly;
-            // `(BUFF "file")'/'(BUFF nil)' carry it in cadr.
-            let err = match &cb.cdr {
-                Value::Cons(cc) => cc.borrow().car.clone(),
-                other => other.clone(),
-            };
-            match &err {
-                // Only a STRING cdr diverts stderr to a file — GNU
-                // callproc.c mixes stderr into the destination for
-                // both (DEST . t) and (DEST . nil) (pinned).
-                Value::Str(p) => (cb.car.clone(), false, Some(p.borrow().clone())),
-                _ => (cb.car.clone(), true, None),
-            }
-        }
-        other => (other.clone(), false, None),
-    };
-    // GNU callproc.c merges stderr into the destination when STDERR-FILE
-    // is t/nil: route both streams to one fd so byte order interleaves
-    // like a real pipe.  `try_clone' dups the fd, sharing the file
-    // offset — child's stdout/stderr writes land in real arrival order.
-    let mix_file = if stderr_to_stdout {
-        let tf = std::env::temp_dir().join(format!("remacs-cp-{}", std::process::id()));
-        let out_f =
-            std::fs::File::create(&tf).map_err(|_| i.error("Cannot open stderr temp file"))?;
-        let err_f = out_f
-            .try_clone()
-            .map_err(|_| i.error("Cannot open stderr temp file"))?;
-        cmd.stdout(std::process::Stdio::from(out_f));
-        cmd.stderr(std::process::Stdio::from(err_f));
-        Some(tf)
-    } else {
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-        None
-    };
+    let (real_dest, mut capture) = sync_process_destination(i, &mut cmd, &arg(&a, 2))?;
     if let Some(fh) = infile_handle {
         cmd.stdin(std::process::Stdio::from(fh));
     }
     let file_err = i.intern("file-error");
-    let output = cmd.output().map_err(|e| {
+    let output = cmd.output();
+    drop(cmd);
+    let output = output.map_err(|e| {
         i.signal_data(
             file_err,
             vec![
@@ -14094,67 +14217,11 @@ fn f_call_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             ],
         )
     })?;
-    let stdout = if let Some(tf) = &mix_file {
-        // Interleaved bytes already merged at the fd; keep order.
-        let s = std::fs::read(tf)
-            .map(|b| String::from_utf8_lossy(&b).into_owned())
-            .unwrap_or_default();
-        let _ = std::fs::remove_file(tf);
-        s
-    } else {
-        String::from_utf8_lossy(&output.stdout).into_owned()
-    };
-    if let Some(path) = stderr_file {
-        let _ = std::fs::write(&path, &output.stderr);
+    let stdout = sync_process_output(i, &output.stdout, &mut capture)?;
+    if real_dest.int().is_some() {
+        return Ok(Value::Nil);
     }
-    // (:file FILE) — write stdout to FILE.
-    let mut file_dest: Option<String> = None;
-    if let Value::Cons(c) = &real_dest {
-        let cb = c.borrow();
-        if let (Value::Sym(s), Value::Cons(inner)) = (&cb.car, &cb.cdr) {
-            if i.symbol_name(*s) == ":file" {
-                if let Value::Str(p) = &inner.borrow().car {
-                    file_dest = Some(p.borrow().clone());
-                }
-            }
-        }
-    }
-    if let Some(path) = file_dest {
-        let _ = std::fs::write(&path, &stdout);
-    } else {
-        match &real_dest {
-            // Any integer DESTINATION discards output and returns nil
-            // (GNU callproc.c: the fd sink never produces a status value).
-            Value::Int(_) => return Ok(Value::Nil),
-            Value::Nil => {}
-            _ => {
-                // t → current buffer; string/buffer → that buffer, with
-                // string names materialized via get-buffer-create like GNU.
-                let bid = if real_dest.truthy()
-                    && !i.sym_id(&real_dest).map(|s| s == sym::T).unwrap_or(false)
-                {
-                    match i.buffer_id_of(&real_dest) {
-                        Some(b) => b,
-                        None => {
-                            if let Value::Str(s) = &real_dest {
-                                i.create_buffer(&s.borrow())
-                            } else {
-                                i.current_buffer
-                            }
-                        }
-                    }
-                } else {
-                    i.current_buffer
-                };
-                if i.buffers.get(bid).is_some() {
-                    let out = stdout.clone();
-                    crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
-                        crate::buffer::primitives::chg_insert_pt(i, &out, false)
-                    })?;
-                }
-            }
-        }
-    }
+    deliver_sync_output(i, &real_dest, &stdout)?;
     Ok(Value::Int(output.status.code().unwrap_or(1) as i128))
 }
 
@@ -14198,7 +14265,8 @@ fn dest_check(i: &mut Interp, dest: &Value) -> Result<(), Flow> {
                 if !car_ok {
                     return Err(i.wrong_type_mut("stringp", &car_v));
                 }
-                if !matches!(&cadr_v, Value::Nil | Value::Str(_))
+                if matches!(&c.borrow().cdr, Value::Cons(_))
+                    && !matches!(&cadr_v, Value::Nil | Value::Str(_))
                     && !matches!(&cadr_v, Value::Sym(s) if *s == sym::T)
                 {
                     return Err(i.wrong_type_mut("stringp", &cadr_v));
@@ -14302,35 +14370,14 @@ fn f_call_process_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     let prog = dif_resolve_program(i, &prog)?;
     let mut cmd = std::process::Command::new(&prog);
-    cmd.stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped());
-    // (DEST . STDERR-FILE) cons destinations: a string cdr diverts
-    // stderr to that file; t/nil merge stderr into the destination
-    // (GNU callproc convention; we append, losing only ordering).
-    let (real_dest, merge_stderr) = match &a.get(4).cloned().unwrap_or(Value::Nil) {
-        Value::Cons(c) => {
-            let cb = c.borrow();
-            let tail = match &cb.cdr {
-                Value::Cons(cc) => cc.borrow().car.clone(),
-                other => other.clone(),
-            };
-            match tail {
-                Value::Str(p) => {
-                    let path = p.borrow().clone();
-                    if let Ok(f) = std::fs::File::create(&path) {
-                        cmd.stderr(std::process::Stdio::from(f));
-                    }
-                    (cb.car.clone(), false)
-                }
-                _ => (cb.car.clone(), true),
-            }
-        }
-        other => (other.clone(), false),
-    };
+    cmd.stdin(std::process::Stdio::piped());
+    let (real_dest, mut capture) = sync_process_destination(i, &mut cmd, &arg(&a, 4))?;
     for v in a.get(6..).unwrap_or(&[]) {
         cmd.arg(want_str(i, v)?);
     }
-    let mut child = match cmd.spawn() {
+    let spawned = cmd.spawn();
+    drop(cmd);
+    let mut child = match spawned {
         Ok(c) => c,
         Err(e) => {
             let data = if e.kind() == std::io::ErrorKind::NotFound {
@@ -14359,47 +14406,29 @@ fn f_call_process_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let output = child
         .wait_with_output()
         .map_err(|e| i.signal_data(sym::FILE_ERROR, vec![Value::string(e.to_string())]))?;
-    let mut stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    if merge_stderr {
-        stdout.push_str(&String::from_utf8_lossy(&output.stderr));
-    }
+    let stdout = sync_process_output(i, &output.stdout, &mut capture)?;
     // (The DELETE delete happened above, before spawn — GNU order.)
     if real_dest.int().is_some() {
         return Ok(Value::Nil);
     }
-    if real_dest.truthy() {
-        let bid = if i.sym_id(&real_dest).map(|s| s == sym::T).unwrap_or(false) {
-            i.current_buffer
-        } else {
-            match i.buffer_id_of(&real_dest) {
-                Some(b) => b,
-                None => {
-                    if let Value::Str(s) = &real_dest {
-                        i.create_buffer(&s.borrow())
-                    } else {
-                        i.current_buffer
-                    }
-                }
-            }
-        };
-        if i.buffers.get(bid).is_some() {
-            crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
-                crate::buffer::primitives::chg_insert_pt(i, &stdout, false)
-            })?;
-        }
-    }
+    deliver_sync_output(i, &real_dest, &stdout)?;
     Ok(Value::Int(output.status.code().unwrap_or(1) as i128))
 }
 
 fn f_shell_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let cmdline = want_str(i, &a[0])?;
-    let out = std::process::Command::new("/bin/sh")
-        .arg("-c")
-        .arg(&cmdline)
-        .output();
+    let mut command = std::process::Command::new("/bin/sh");
+    command.arg("-c").arg(&cmdline);
+    let mut capture = if arg(&a, 2).is_nil() {
+        sync_process_destination(i, &mut command, &Value::t())?.1
+    } else {
+        None
+    };
+    let out = command.output();
+    drop(command);
     match out {
         Ok(o) => {
-            let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
+            let stdout = sync_process_output(i, &o.stdout, &mut capture)?;
             let stderr = String::from_utf8_lossy(&o.stderr).into_owned();
             let dest = arg(&a, 1);
             let bid = if dest.truthy() && !i.sym_id(&dest).map(|s| s == sym::T).unwrap_or(false) {
@@ -14460,17 +14489,15 @@ fn f_shell_command_to_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     // GNU callproc.c: with no error-buffer argument the child's stderr
     // is merged into stdout ("discard" would need an explicit
     // error-file spec, which shell-command-to-string doesn't pass).
-    match std::process::Command::new("/bin/sh")
-        .arg("-c")
-        .arg(&cmdline)
-        .stderr(std::process::Stdio::piped())
-        .output()
-    {
-        Ok(o) => {
-            let mut all = o.stdout;
-            all.extend_from_slice(&o.stderr);
-            Ok(Value::string(String::from_utf8_lossy(&all).into_owned()))
-        }
+    let mut command = std::process::Command::new("/bin/sh");
+    command.arg("-c").arg(&cmdline);
+    let (_, mut capture) = sync_process_destination(i, &mut command, &Value::t())?;
+    let result = command.output();
+    drop(command);
+    match result {
+        Ok(output) => Ok(Value::string(sync_process_output(
+            i, &output.stdout, &mut capture,
+        )?)),
         Err(e) => Err(i.error(&e.to_string())),
     }
 }
