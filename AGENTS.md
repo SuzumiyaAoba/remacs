@@ -155,6 +155,17 @@ reads the real `.el' so `symbol-file'/`load-history' stay right.
 marks `#[...]' objects `compiled' so `subrp'/`type-of'/`func-arity'
 report GNU's nativecomp surface.
 
+Default shipped-library loads also scope `loading_compiled_library`:
+requires performed during eager macro expansion are compiler helpers,
+not runtime `load-history` dependencies. Explicit `.el` loads and user
+load-path overrides keep GNU source-loading dependency records,
+including `eval-when-compile`. At the end of bootstrap, discard require
+records for features rolled out of the dump while retaining definitions,
+provides, and dependencies on live dumped features. This lets `cl-lib`
+unload normally and preserves dependency errors for user libraries.
+Regressions: `qa_unload_dependencies` and the fresh-process unload test
+in `tests/main_cli.rs` (checkout/embedded paths, normal/source boot).
+
 Gotcha: `Lambda.bc_closure' distinguishes `make-closure' products
 (env spliced into the constants vector) from bare `#[...]' literals.
 `unidata_bc_dispatch' must skip `bc_closure' objects — a mutated

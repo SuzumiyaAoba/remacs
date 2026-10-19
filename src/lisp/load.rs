@@ -3649,6 +3649,17 @@ pub(crate) fn load_library_opts_msg(
     // `replace-highlight') and resetting live state
     // (`file-name-handler-alist', `electric-quote-string').
     let found = locate_full(i, name, nosuffix, mustsuffix);
+    let saved_compiled_library = i.loading_compiled_library;
+    i.loading_compiled_library = can_elc
+        && bundled
+        && !nosuffix
+        && !name.ends_with(".el")
+        && !name.ends_with(".elc")
+        && match &found {
+            Some(Found::File(path)) => path_is_bundled_source(path),
+            Some(Found::Dir(_)) => false,
+            None => true,
+        };
     let gnu_subr_x = !i.boot_loading
         && ((stem == "subr-x" && !name.contains('/'))
             || matches!(&found, Some(Found::File(path)) if path_is_bundled_source(path)
@@ -3796,6 +3807,7 @@ pub(crate) fn load_library_opts_msg(
             },
         },
     };
+    i.loading_compiled_library = saved_compiled_library;
     if let (Some(live), Ok(LoadOutcome::Loaded(file))) = (&live_defs, &result) {
         keep_live_definitions(i, file, live);
     }

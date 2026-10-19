@@ -100,6 +100,40 @@ fn quick_start_symbol_metadata_matches_gnu() {
 }
 
 #[test]
+fn boot_dependencies_allow_unloading_cl_lib() {
+    let expression = "(progn (require 'cl-lib) \
+        (prin1 (list (unload-feature 'cl-lib) (featurep 'cl-lib) (fboundp 'cl-plusp))))";
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let directory =
+        std::env::temp_dir().join(format!("remacs-unload-{}-{nonce}", std::process::id()));
+    std::fs::create_dir(&directory).unwrap();
+    for cwd in [std::path::Path::new(env!("CARGO_MANIFEST_DIR")), &directory] {
+        for source in [false, true] {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_remacs"));
+            command
+                .current_dir(cwd)
+                .args(["-Q", "--batch", "--eval", expression]);
+            if source {
+                command.env("REMACS_NO_ELC", "1");
+            } else {
+                command.env_remove("REMACS_NO_ELC");
+            }
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "cwd={cwd:?}, source={source}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(String::from_utf8_lossy(&output.stdout), "(nil nil nil)");
+        }
+    }
+    std::fs::remove_dir(directory).unwrap();
+}
+
+#[test]
 fn boot_menu_properties_keep_functions_and_runtime_closures_trim_context() {
     let expression = r#"(let ((cua-mode nil) (mark-active nil))
       (prin1 (list

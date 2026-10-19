@@ -2257,7 +2257,11 @@ fn f_require(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             .and_then(|v| v.last().cloned())
             .map(|last| matches!(last, Value::Str(_)))
             .unwrap_or(false);
-    if from_file {
+    // Bundled sources stand in for GNU's precompiled libraries. Their
+    // eager macro expansion needs compiler helpers, but those requires
+    // are not runtime dependencies of the resulting library. User
+    // source loads still record expansion-time requires like GNU.
+    if from_file && !(i.loading_compiled_library && i.macroexp_call_depth > 0) {
         let items = cll_val.list_to_vec().unwrap_or_default();
         let dup = equal_position(i, &items, &tem)?.is_some();
         if !dup {

@@ -381,6 +381,9 @@ pub struct Interp {
     /// semantics and avoiding compiled-twin staleness for files whose
     /// compiled forms assume GNU-only machinery).
     pub boot_loading: bool,
+    /// The current library load stands in for a shipped compiled file.
+    /// Explicit source loads and user overrides retain source semantics.
+    pub loading_compiled_library: bool,
     /// Nesting depth of `bytecode::exec' frames — only for the
     /// REMACS_BC_DEPTH debug escape hatch.
     pub bc_depth: usize,
@@ -1077,6 +1080,7 @@ impl Interp {
             bc_depth: 0,
             macroexp_call_depth: 0,
             expand_unadvised_depth: 0,
+            loading_compiled_library: false,
             macro_cache: HashMap::default(),
             macro_gen: 0,
             macroexpand_all_cache: std::cell::RefCell::new((0, HashMap::default())),
@@ -4880,6 +4884,33 @@ command-line arguments.\" \
                     _ => true,
                 }
             });
+            // Rolling compile-time libraries out of the dump must also
+            // remove the dependency records they left in kept files.
+            // A successful runtime require cannot depend on an absent
+            // feature. Keep definitions/provides for symbol-file and all
+            // requirements on features that really remain in the dump.
+            let boot_features: HashSet<SymId> = interp
+                .symbol_value(fid)
+                .list_to_vec()
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|feature| interp.sym_id(feature))
+                .collect();
+            let require_id = interp.intern("require");
+            for entry in &items {
+                if let Value::Cons(cell) = entry {
+                    let mut entries = cell.borrow().cdr.list_to_vec().unwrap_or_default();
+                    entries.retain(|entry| {
+                        !matches!(entry, Value::Cons(dependency) if {
+                            let dependency = dependency.borrow();
+                            interp.sym_id(&dependency.car) == Some(require_id)
+                                && interp.sym_id(&dependency.cdr)
+                                    .is_some_and(|feature| !boot_features.contains(&feature))
+                        })
+                    });
+                    cell.borrow_mut().cdr = Value::list(entries);
+                }
+            }
             let _ = interp.set_symbol(lh, Value::list(items));
         }
         crate::lisp::builtins::misc::install_variable_docs(&mut interp);
