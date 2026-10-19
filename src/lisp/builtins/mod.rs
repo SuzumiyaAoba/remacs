@@ -9,6 +9,7 @@ pub(crate) mod bidi_table;
 pub(crate) mod charset;
 pub(crate) mod coding_iso2022;
 pub(crate) mod coding_legacy;
+pub(crate) mod coding_unicode;
 pub(crate) mod coding_detect;
 pub(crate) mod coding_detection;
 pub(crate) mod comp;

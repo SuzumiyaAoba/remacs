@@ -84,7 +84,7 @@ pub(crate) fn detect_non_iso_with_tables(
     (found, rejected)
 }
 
-fn detect_utf8(input: &[i32], multibyte: bool) -> (u32, u32) {
+pub(super) fn detect_utf8(input: &[i32], multibyte: bool) -> (u32, u32) {
     // GNU deliberately requires another byte after the three-byte BOM.
     let bom_len = if multibyte && input.len() > 1 && input[0] == -0xfeff {
         // A genuine U+FEFF has literal EF BB BF internal bytes, unlike
@@ -140,7 +140,7 @@ fn next_utf16_pair(input: &[i32], pos: &mut usize) -> Option<(i32, i32)> {
     Some((c1, c2))
 }
 
-fn detect_utf16(input: &[i32]) -> (u32, u32) {
+pub(super) fn detect_utf16(input: &[i32]) -> (u32, u32) {
     if input.len() & 1 != 0 {
         return (0, UTF16_MASK);
     }
