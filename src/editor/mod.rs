@@ -18916,6 +18916,14 @@ fn f_move_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let Some(ov) = overlay_slot(i, bid, idx) else {
         return Ok(a[0].clone());
     };
+    if s == e {
+        let property = Value::Sym(i.intern("evaporate"));
+        // overlay-get includes a category's inherited evaporate value.
+        if f_overlay_get(i, vec![a[0].clone(), property].into())?.truthy() {
+            f_delete_overlay(i, vec![a[0].clone()].into())?;
+            return Ok(a[0].clone());
+        }
+    }
     if nbid != bid {
         // Cross-buffer move: leave a dead stub behind and push a new
         // entry into the target buffer, then retarget the handle.
@@ -18992,6 +19000,11 @@ fn f_overlay_put(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             if eq_values(&a[1], &Value::Sym(evap)) {
                 // Cached flag so the deletion path needs no interner.
                 ov.evaporate = a[2].truthy();
+                // Foverlay_put immediately detaches an empty overlay
+                // when its evaporate property becomes non-nil.
+                if ov.evaporate && ov.start == ov.end {
+                    ov.buffer = None;
+                }
             }
             // GNU Foverlay_put conses a NEW property onto the front of
             // the plist (existing keys update in place) — append-order

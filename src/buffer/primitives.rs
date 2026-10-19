@@ -1872,82 +1872,107 @@ fn f_ask_user_about_lock(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Err(signal_file_locked(i, file, other))
 }
 
+/// Decode GNU editfns.c transfer/comparison bounds against the source
+/// buffer's restriction. Error data retains the original argument pair.
+fn buffer_transfer_bounds(
+    i: &mut Interp,
+    source: &Rc<RefCell<crate::buffer::Buffer>>,
+    start: &Value,
+    end: &Value,
+) -> Result<(usize, usize), Flow> {
+    let (begv, zv, live) = {
+        let b = source.borrow();
+        (b.begv, b.zv, b.live)
+    };
+    if !live {
+        return Err(i.error("Selecting deleted buffer"));
+    }
+    let first = if start.is_nil() {
+        begv as i128 + 1
+    } else {
+        want_int_or_marker_pos(i, start)?
+    };
+    let last = if end.is_nil() {
+        zv as i128 + 1
+    } else {
+        want_int_or_marker_pos(i, end)?
+    };
+    let (lo, hi) = (first.min(last), first.max(last));
+    if lo < begv as i128 + 1 || hi > zv as i128 + 1 {
+        return Err(i.signal_data(sym::ARGS_OUT_OF_RANGE, vec![start.clone(), end.clone()]));
+    }
+    Ok((lo as usize - 1, hi as usize - 1))
+}
+
+fn transfer_buffer_multibyte(i: &mut Interp, buffer: &crate::buffer::Buffer) -> bool {
+    let key = i.intern("enable-multibyte-characters");
+    buffer
+        .locals
+        .get(&key)
+        .unwrap_or(&i.obarray.symbol(key).value)
+        .truthy()
+}
+
 /// GNU: 0 when equal, else +/-(1 + number of matching leading chars).
 /// Honors `case-fold-search`.
 fn f_compare_buffer_substrings(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU Fcompare_buffer_substrings resolves buffer NAMES via
-    // decode_buffer → get_buffer, in order buf1 → start1/end1 (CHECK_NUMBER_
-    // COERCE_MARKER → integer-or-marker-p) → buf2 → start2/end2.
-    let iom = |i: &mut Interp, v: &Value| -> Result<i128, Flow> {
-        match v {
-            Value::Int(n) => Ok(*n),
-            // GNU CHECK_NUMBER_COERCE_MARKER yields the marker's 1-based
-            // charpos; Marker.position is the 0-based offset.
-            Value::Marker(m) => Ok(m.borrow().position as i128 + 1),
-            other => Err(i.wrong_type_mut("integer-or-marker-p", other)),
-        }
-    };
-    let b1 = buf_or_name(i, &a[0])?;
-    let s1 = {
-        let bb1 = b1.borrow();
-        let (b, e) = (
-            pos_idx(bb1.text.len(), iom(i, &a[1])?),
-            pos_idx(bb1.text.len(), iom(i, &a[2])?),
-        );
-        bb1.text.substring(b.min(e), b.max(e))
-    };
-    let b2 = buf_or_name(i, &a[3])?;
-    let (s1, s2) = {
-        let bb2 = b2.borrow();
-        let (b2x, e2x) = (
-            pos_idx(bb2.text.len(), iom(i, &a[4])?),
-            pos_idx(bb2.text.len(), iom(i, &a[5])?),
-        );
-        (s1, bb2.text.substring(b2x.min(e2x), b2x.max(e2x)))
-    };
+    // Resolve each buffer and its bounds before examining the next one.
+    // The case canon table belongs to the calling buffer, not either
+    // source buffer; unibyte source bytes become BYTE8_TO_CHAR values.
     let fold = i
         .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
         .truthy();
-    let n = cmp_common_prefix(&s1, &s2, fold);
-    let eq = n == s1.chars().count() && s1.chars().count() == s2.chars().count();
-    if eq {
-        return Ok(Value::Int(0));
-    }
-    let less = if n == s1.chars().count() {
-        true
-    } else if n == s2.chars().count() {
-        false
+    let canon = if fold {
+        crate::lisp::builtins::strfn::case_extra(&i.current_case_table(), 1)
     } else {
-        let c1 = fold_char(s1.chars().nth(n).unwrap(), fold);
-        let c2 = fold_char(s2.chars().nth(n).unwrap(), fold);
-        c1 < c2
+        None
     };
-    Ok(Value::Int(if less {
-        -(n as i128) - 1
+    let first = buf_or_name(i, &a[0])?;
+    let (lo, hi) = buffer_transfer_bounds(i, &first, &a[1], &a[2])?;
+    let (text1, multi1) = {
+        let b = first.borrow();
+        (b.text.substring(lo, hi), transfer_buffer_multibyte(i, &b))
+    };
+    let second = buf_or_name(i, &a[3])?;
+    let (lo, hi) = buffer_transfer_bounds(i, &second, &a[4], &a[5])?;
+    let (text2, multi2) = {
+        let b = second.borrow();
+        (b.text.substring(lo, hi), transfer_buffer_multibyte(i, &b))
+    };
+    let code = |c: char, multibyte: bool| {
+        let raw = crate::lisp::value::lisp_char_code(c) as u32;
+        let raw = if !multibyte && (128..=255).contains(&raw) {
+            0x3fff00 + raw
+        } else {
+            raw
+        };
+        canon
+            .as_ref()
+            .map(|table| crate::lisp::builtins::strfn::ct_case(i, table, raw))
+            .unwrap_or(raw)
+    };
+    let mut chars = 0i128;
+    for (left, right) in text1.chars().zip(text2.chars()) {
+        let (left, right) = (code(left, multi1), code(right, multi2));
+        if left != right {
+            return Ok(Value::Int(if left < right {
+                -1 - chars
+            } else {
+                chars + 1
+            }));
+        }
+        chars += 1;
+    }
+    let (len1, len2) = (text1.chars().count(), text2.chars().count());
+    Ok(Value::Int(if len1 < len2 {
+        -chars - 1
+    } else if len1 > len2 {
+        chars + 1
     } else {
-        n as i128 + 1
+        0
     }))
 }
 
-fn fold_char(c: char, fold: bool) -> char {
-    if fold {
-        c.to_lowercase().next().unwrap_or(c)
-    } else {
-        c
-    }
-}
-
-/// Length of the common leading character prefix of `a` and `b`.
-fn cmp_common_prefix(a: &str, b: &str, fold: bool) -> usize {
-    let mut n = 0;
-    for (x, y) in a.chars().zip(b.chars()) {
-        if fold_char(x, fold) != fold_char(y, fold) {
-            break;
-        }
-        n += 1;
-    }
-    n
-}
 fn f_object_intervals(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     match &a[0] {
         Value::Str(s) => {
@@ -7075,51 +7100,32 @@ fn f_insert_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_insert_buffer_substring(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU Finsert_buffer_substring decodes BUFFER via
-    // Fget_buffer: a buffer passes through, a string is looked up,
-    // anything else (nil included) signals `stringp'.
-    let src = match &a[0] {
+    // Fget_buffer accepts objects and names, but nil is not a current-
+    // buffer shorthand for this operation. Bounds are validated before
+    // touching the destination or checking whether it is writable.
+    let source = match &a[0] {
         Value::Buffer(b) => b.clone(),
         Value::Str(_) => buf_or_name(i, &a[0])?,
-        other => return Err(i.wrong_type_mut("stringp", other)),
+        value => return Err(i.wrong_type_mut("stringp", value)),
     };
-    let (text, len) = {
-        let bb = src.borrow();
-        (bb.text.text(), bb.text.len())
-    };
-    // GNU decode_position_or_default semantics on START/END: nil/absent
-    // -> point-min/point-max of the source buffer; present non-nil
-    // non-number-or-marker signals integer-or-marker-p.
-    let mut decpos = |v: Option<&Value>| -> Result<Option<usize>, Flow> {
-        match v {
-            Some(v) if !v.is_nil() => match v {
-                Value::Int(n) => Ok(Some(pos_idx(len, *n))),
-                Value::Marker(m) if m.borrow().buffer.is_some() => {
-                    Ok(Some(pos_idx(len, m.borrow().position as i128 + 1)))
-                }
-                _ => Err(i.wrong_type_mut("integer-or-marker-p", v)),
-            },
-            _ => Ok(None),
-        }
-    };
-    let s = decpos(a.get(1))?.unwrap_or(0);
-    let e = decpos(a.get(2))?.unwrap_or(len);
-    let chars: Vec<char> = text.chars().collect();
-    let (lo, hi) = (s.min(e), e.max(s));
-    let sub: String = chars[lo..hi].iter().collect();
-    // GNU copies the source range's text properties along with the
-    // characters.
-    let props = src.borrow().text.props.borrow().slice(lo, hi);
-    check_writable(i)?;
-    let base = cur(i).borrow().point();
-    insert_str_at_point(i, &sub, false)?;
-    if !props.is_empty() {
-        let b = cur(i);
-        let mut bb = b.borrow_mut();
-        bb.text.props_write().graft(base, &props, false);
-        bb.note_prop_modified();
+    let (lo, hi) = buffer_transfer_bounds(i, &source, &arg(&a, 1), &arg(&a, 2))?;
+    if lo == hi {
+        return Ok(Value::Nil);
     }
-    Ok(Value::Nil)
+    let value = {
+        let buffer = source.borrow();
+        let value = Value::string(buffer.text.substring(lo, hi));
+        if let Value::Str(r) = &value {
+            i.set_str_props(r, buffer.text.props.borrow().slice(lo, hi));
+            if transfer_buffer_multibyte(i, &buffer) {
+                i.mark_multibyte(r);
+            } else {
+                i.mark_unibyte(r);
+            }
+        }
+        value
+    };
+    insert_impl(i, &[value], false, false)
 }
 
 fn f_self_insert_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

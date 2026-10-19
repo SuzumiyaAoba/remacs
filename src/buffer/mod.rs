@@ -576,7 +576,11 @@ impl Buffer {
             if ov.buffer != Some(self.id) {
                 continue;
             }
-            if ov.start > pos || (ov.start == pos && (before || ov.front_advance)) {
+            // GNU itree_insert_gap treats an empty front-advancing,
+            // non-rear-advancing overlay as non-front-advancing, so
+            // insertion cannot move its beginning beyond its end.
+            let front_advance = ov.front_advance && (ov.start != ov.end || ov.rear_advance);
+            if ov.start > pos || (ov.start == pos && (before || front_advance)) {
                 ov.start += n;
             }
             if ov.end > pos || (ov.end == pos && (before || ov.rear_advance)) {

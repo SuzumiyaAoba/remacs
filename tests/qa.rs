@@ -70,6 +70,7 @@ qa!(qa_network_random_service, "qa_network_random_service.el");
 qa!(qa_fresh_buffer_locals, "qa_fresh_buffer_locals.el");
 qa!(qa_buffer_local_value_type, "qa_buffer_local_value_type.el");
 qa!(qa_buffer2, "qa_buffer2.el");
+qa!(qa_buffer_transfer, "qa_buffer_transfer.el");
 qa!(qa_bufferfile, "qa_bufferfile.el");
 qa!(qa_buffmenu, "qa_buffmenu.el");
 qa!(qa_case, "qa_case.el");
