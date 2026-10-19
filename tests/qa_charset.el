@@ -41,7 +41,8 @@
 (qa (fboundp 'charset-from-name) nil)
 ;; == find-charset-string ==
 (qa (equal (find-charset-string "abc") '(ascii)) t)
-(qa (if (memq 'japanese-jisx0208 (find-charset-string "abc 日本語")) t nil) t)
+;; GNU's default charset priority selects Unicode for these characters.
+(qa (find-charset-string "abc 日本語") '(ascii unicode-bmp))
 
 ;; == char-width / string-width ==
 (qa (char-width ?a) 1)
