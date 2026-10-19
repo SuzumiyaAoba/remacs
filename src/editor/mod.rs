@@ -11984,6 +11984,7 @@ fn f_copy_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let mut to = want_filename(i, &a[1])?;
     let keep_time = a.get(3).map(|v| v.truthy()).unwrap_or(false);
     let keep_uid_gid = a.get(4).map(|v| v.truthy()).unwrap_or(false);
+    let preserve_permissions = a.get(5).map(|v| v.truthy()).unwrap_or(false);
     let meta = match std::fs::metadata(&from) {
         Ok(m) => m,
         Err(e) => {
@@ -12024,7 +12025,8 @@ fn f_copy_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             format!("/{}", base)
         });
     }
-    if std::path::Path::new(&to).exists() {
+    let already_exists = std::path::Path::new(&to).exists();
+    if already_exists {
         match a.get(2) {
             // nil → file-already-exists, no overwrite.
             None | Some(Value::Nil) => {
@@ -12034,8 +12036,8 @@ fn f_copy_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     vec![Value::string("File already exists"), Value::string(to)],
                 ));
             }
-            // An integer means "ask the user" — in batch GNU signals
-            // file-already-exists too (no interactive query).
+            // An integer requests confirmation in GNU. This headless
+            // path rejects an existing target.
             Some(Value::Int(_)) => {
                 let tag = i.intern("file-already-exists");
                 return Err(i.signal_data(
@@ -12046,17 +12048,41 @@ fn f_copy_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             _ => {}
         }
     }
-    match std::fs::copy(&from, &to) {
-        Ok(_) => {
-            // GNU always propagates the input file's modes.
-            let _ = std::fs::set_permissions(&to, meta.permissions());
+    if f_file_equal_p(i, vec![Value::string(&from), Value::string(&to)].into())?.truthy() {
+        return Err(i.signal_data(
+            sym::FILE_ERROR,
+            vec![
+                Value::string("Input and output files are the same"),
+                Value::string(file_error_string(&std::io::Error::from_raw_os_error(0))),
+                Value::string(from),
+                Value::string(to),
+            ],
+        ));
+    }
+    // fs::copy can clone file metadata on macOS, even when KEEP-TIME
+    // is nil. Copy data into an open destination, as GNU does, retaining
+    // an existing destination's atime and giving new files current times.
+    let copied = (|| -> std::io::Result<(std::fs::File, std::fs::File)> {
+        let mut input = std::fs::File::open(&from)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+            let mask = if keep_uid_gid { 0o700 } else { 0o777 };
+            options.mode(meta.mode() & mask);
+        }
+        let mut output = options.open(&to)?;
+        std::io::copy(&mut input, &mut output)?;
+        Ok((input, output))
+    })();
+    match copied {
+        Ok((_input, output)) => {
             if keep_time {
-                if let Ok(f) = std::fs::File::options().write(true).open(&to) {
-                    let times = std::fs::FileTimes::new()
-                        .set_accessed(meta.accessed().unwrap_or(std::time::SystemTime::UNIX_EPOCH))
-                        .set_modified(meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH));
-                    let _ = f.set_times(times);
-                }
+                let times = std::fs::FileTimes::new()
+                    .set_accessed(meta.accessed().unwrap_or(std::time::SystemTime::UNIX_EPOCH))
+                    .set_modified(meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH));
+                let _ = output.set_times(times);
             }
             if keep_uid_gid {
                 #[cfg(unix)]
@@ -12067,6 +12093,46 @@ fn f_copy_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                         libc::chown(cpath.as_ptr(), meta.uid(), meta.gid());
                     }
                 }
+            }
+            #[cfg(target_os = "macos")]
+            if preserve_permissions {
+                use std::os::fd::AsRawFd;
+                // Copy ACLs explicitly without cloning timestamps.
+                if unsafe {
+                    libc::fcopyfile(
+                        _input.as_raw_fd(),
+                        output.as_raw_fd(),
+                        std::ptr::null_mut(),
+                        libc::COPYFILE_ACL,
+                    )
+                } != 0
+                {
+                    let error = std::io::Error::last_os_error();
+                    return Err(report_file_errno(
+                        i,
+                        "Copying permissions to",
+                        vec![Value::string(&to)],
+                        &error,
+                    ));
+                }
+            }
+            // GNU retains an existing destination's modes unless
+            // PRESERVE-PERMISSIONS is requested. New files use source
+            // mode bits masked by the default file permissions.
+            if preserve_permissions || !already_exists {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+                    let mask = if preserve_permissions {
+                        0o7777
+                    } else {
+                        default_file_modes() as u32 & 0o777
+                    };
+                    let _ = output
+                        .set_permissions(std::fs::Permissions::from_mode(meta.mode() & mask));
+                }
+                #[cfg(not(unix))]
+                let _ = output.set_permissions(meta.permissions());
             }
             Ok(Value::Nil)
         }

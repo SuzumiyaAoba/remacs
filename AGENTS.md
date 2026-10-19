@@ -132,6 +132,15 @@ order, including canceled missing directories. Relative links retain the
 root; absolute targets replace it. Nil/symbol arguments report
 `arrayp` like GNU files.el. Regressions: `qa_file_truename_roots`.
 
+`copy-file` copies data through an open descriptor rather than macOS's
+metadata-cloning `fs::copy`. Without KEEP-TIME, new files get current
+times and existing destinations retain their atime. KEEP-TIME restores
+both source times through that descriptor, including for read-only modes.
+Reject a destination on the input inode before truncating it. Preserve
+uid/gid and permissions independently; macOS ACL copying is explicit and
+does not clone times. Existing hard-link targets still
+require overwrite permission, like GNU. Regressions: `qa_copy_file_times`.
+
 ## Startup profiling (`REMACS_BOOT_PROF=1`)
 
 Before full eager source expansion, warm release `--batch` startup
