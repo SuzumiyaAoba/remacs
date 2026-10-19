@@ -4461,49 +4461,50 @@ fn format_impl_spans(
                     Value::Str(raw) => raw.borrow().clone(),
                     _ => i.princ_to_string(&a),
                 };
-                // Precision truncates the printed argument.
-                match prec {
-                    Some(n) => s.chars().take(n).collect(),
-                    None => s,
-                }
+                truncate_format_string(i, s, prec)
             }
             'S' => {
                 let s = i.print_to_string(&a);
-                match prec {
-                    Some(n) => s.chars().take(n).collect(),
-                    None => s,
-                }
+                truncate_format_string(i, s, prec)
             }
             'd' | 'i' => {
-                let n = match &a {
-                    Value::Int(n) => *n,
-                    Value::Float(f) => **f as i128,
-                    _ => return Err(fmt_type_err(i)),
-                };
-                // C printf precision: minimum digit count, zero-padded
-                // (%.0d of 0 prints nothing); the sign precedes the pad.
-                let mut s = match prec {
-                    Some(pr) => {
-                        if pr == 0 && n == 0 {
+                let (mut s, add_sign) = match &a {
+                    Value::Float(f) => {
+                        // GNU formats truncated doubles with %.0f, avoiding
+                        // saturation at the host integer boundary.  Integer
+                        // conversions deliberately discard negative zero.
+                        let f = f.trunc();
+                        let f = if f == 0.0 { 0.0 } else { f };
+                        let s = format_c_float(i, f, 'f', Some(0), plus, space_sign, false)?;
+                        let signed = !s.as_bytes()[0].is_ascii_digit();
+                        let digits = s.len() - usize::from(signed);
+                        let zeros = prec.unwrap_or(0).saturating_sub(digits);
+                        let sign_len = usize::from(s.starts_with(['-', '+', ' ']));
+                        let mut s = s;
+                        s.insert_str(sign_len, &"0".repeat(zeros));
+                        (s, false) // sign flags already applied by snprintf
+                    }
+                    Value::Int(n) => {
+                        let n = *n;
+                        // C printf integer precision: minimum digit count,
+                        // excluding a sign; %.0d of integer zero is empty.
+                        let s = if prec == Some(0) && n == 0 {
                             String::new()
                         } else {
-                            let neg = n < 0;
                             let digits = n.unsigned_abs().to_string();
-                            if digits.len() < pr {
-                                format!(
-                                    "{}{}{}",
-                                    if neg { "-" } else { "" },
-                                    "0".repeat(pr - digits.len()),
-                                    digits
-                                )
-                            } else {
-                                format!("{}{}", if neg { "-" } else { "" }, digits)
-                            }
-                        }
+                            let zeros = prec.unwrap_or(0).saturating_sub(digits.len());
+                            format!(
+                                "{}{}{}",
+                                if n < 0 { "-" } else { "" },
+                                "0".repeat(zeros),
+                                digits
+                            )
+                        };
+                        (s, n >= 0)
                     }
-                    None => n.to_string(),
+                    _ => return Err(fmt_type_err(i)),
                 };
-                if n >= 0 {
+                if add_sign {
                     if plus {
                         s = format!("+{}", s);
                     } else if space_sign {
@@ -4571,42 +4572,8 @@ fn format_impl_spans(
                 s.push_str(&digits);
                 s
             }
-            'e' => {
-                let f = float_of(i, &a)?;
-                let mut s = format_e(f, prec.unwrap_or(6), false);
-                if f >= 0.0 && !f.is_nan() {
-                    if plus {
-                        s.insert(0, '+');
-                    } else if space_sign {
-                        s.insert(0, ' ');
-                    }
-                }
-                s
-            }
-            'f' => {
-                let f = float_of(i, &a)?;
-                let mut s = format!("{:.*}", prec.unwrap_or(6), f);
-                // printf: '+'/' ' sign flags apply to floats too.
-                if f >= 0.0 && !f.is_nan() {
-                    if plus {
-                        s.insert(0, '+');
-                    } else if space_sign {
-                        s.insert(0, ' ');
-                    }
-                }
-                s
-            }
-            'g' => {
-                let f = float_of(i, &a)?;
-                let mut s = format_g(f, prec);
-                if f >= 0.0 && !f.is_nan() {
-                    if plus {
-                        s.insert(0, '+');
-                    } else if space_sign {
-                        s.insert(0, ' ');
-                    }
-                }
-                s
+            'e' | 'f' | 'g' => {
+                format_c_float(i, float_of(i, &a)?, letter, prec, plus, space_sign, alt)?
             }
             _ => {
                 // Unsupported spec — Emacs signals "Invalid format operation".
@@ -4615,7 +4582,7 @@ fn format_impl_spans(
         };
         // apply width/alignment — GNU's doprnt pads by DISPLAY width
         // (strwidth), so CJK chars count 2 columns, not 1.
-        let plen: usize = piece.chars().map(gnu_char_width).sum();
+        let plen: usize = piece.chars().map(|ch| format_char_width(i, ch)).sum();
         let piece_chars = piece.chars().count();
         let padded = match width {
             Some(w) if plen < w => {
@@ -4624,6 +4591,8 @@ fn format_impl_spans(
                     format!("{}{}", piece, " ".repeat(pad))
                 } else if pad0
                     && matches!(letter, 'd' | 'i' | 'o' | 'x' | 'X' | 'b' | 'e' | 'f' | 'g')
+                    && !(prec.is_some() && matches!(letter, 'd' | 'i' | 'o' | 'x' | 'X' | 'b'))
+                    && !matches!(&a, Value::Float(f) if !f.is_finite())
                 {
                     // zero-pad after any sign
                     if piece.starts_with('-') || piece.starts_with('+') || piece.starts_with(' ') {
@@ -4698,22 +4667,109 @@ fn format_impl_spans(
     Ok(Value::string(out))
 }
 
-/// C-printf-style %e: signed exponent with ≥2 digits ("1.000000e+03").
-fn format_e(f: f64, prec: usize, upper: bool) -> String {
-    let s = format!("{:.*e}", prec, f);
-    if let Some(epos) = s.find('e') {
-        let (mant, exp) = s.split_at(epos);
-        let exp_num: i128 = exp[1..].parse().unwrap_or(0);
-        let out = format!(
-            "{}e{}{:02}",
-            mant,
-            if exp_num < 0 { "-" } else { "+" },
-            exp_num.abs()
-        );
-        if upper { out.to_uppercase() } else { out }
-    } else {
-        s
+/// GNU styled_format uses snprintf for floating-point conversions,
+/// preserving sign/sharp flags and C rounding even around %g boundaries.
+/// Width is applied by the caller after conversion, as in GNU.
+fn format_c_float(
+    i: &Interp,
+    value: f64,
+    letter: char,
+    precision: Option<usize>,
+    plus: bool,
+    space: bool,
+    sharp: bool,
+) -> Result<String, Flow> {
+    let precision = precision
+        .map(libc::c_int::try_from)
+        .transpose()
+        .map_err(|_| i.error("String overflow"))?
+        .unwrap_or(-1);
+    let spec = format!(
+        "%{}{}{}.*{}\0",
+        if plus { "+" } else { "" },
+        if space { " " } else { "" },
+        if sharp { "#" } else { "" },
+        letter,
+    );
+    let mut output = vec![0u8; 128];
+    loop {
+        // The format is constructed exclusively from supported conversion
+        // letters and flags; the variadic arguments are int and double.
+        let len = unsafe {
+            libc::snprintf(
+                output.as_mut_ptr().cast(),
+                output.len(),
+                spec.as_ptr().cast(),
+                precision,
+                value,
+            )
+        };
+        if len < 0 {
+            return Err(i.error("String overflow"));
+        }
+        let len = len as usize;
+        if len < output.len() {
+            return Ok(String::from_utf8_lossy(&output[..len]).into_owned());
+        }
+        output
+            .try_reserve_exact(len + 1 - output.len())
+            .map_err(|_| i.error("String overflow"))?;
+        output.resize(len + 1, 0);
     }
+}
+
+/// Precision limits %s/%S by display columns, including zero-width
+/// characters at the boundary.  GNU treats precision zero specially.
+fn truncate_format_string(i: &Interp, mut s: String, precision: Option<usize>) -> String {
+    let Some(limit) = precision else { return s };
+    if limit == 0 {
+        s.clear();
+        return s;
+    }
+    let mut width = 0usize;
+    let end = s.char_indices().find_map(|(pos, ch)| {
+        let w = format_char_width(i, ch);
+        if w > limit - width {
+            Some(pos)
+        } else {
+            width += w;
+            None
+        }
+    });
+    if let Some(end) = end {
+        s.truncate(end);
+    }
+    s
+}
+
+fn format_char_width(i: &Interp, ch: char) -> usize {
+    // GNU CHARACTER_WIDTH handles printable ASCII directly, without
+    // consulting char-width-table, even in a multibyte string.
+    if (' '..='~').contains(&ch) {
+        return 1;
+    }
+    if ch == '\n' {
+        return 0;
+    }
+    if ch == '\t' {
+        return i
+            .intern_soft("tab-width")
+            .and_then(|id| i.symbol_value(id).int())
+            .filter(|width| *width >= 0)
+            .unwrap_or(8) as usize;
+    }
+    if let Some(id) = i.intern_soft("char-width-table") {
+        if let Value::Int(width) = misc::char_table_ref(
+            i,
+            &i.symbol_value(id),
+            lisp_char_code(ch) as usize,
+        ) {
+            if width >= 0 {
+                return width as usize;
+            }
+        }
+    }
+    gnu_char_width(ch)
 }
 
 /// C printf precision on a pre-formatted integer string: pad with
@@ -4734,7 +4790,11 @@ fn fmt_type_err(i: &Interp) -> super::Flow {
 fn int_of(i: &Interp, v: &Value) -> Result<i128, super::Flow> {
     match v {
         Value::Int(n) => Ok(*n),
-        Value::Float(f) => Ok(**f as i128),
+        Value::Float(f) if f.is_finite() => Ok(**f as i128),
+        Value::Float(_) => Err(i.signal_data(
+            i.intern_soft("overflow-error").unwrap_or(sym::ERROR),
+            vec![],
+        )),
         _ => Err(fmt_type_err(i)),
     }
 }
@@ -4744,33 +4804,6 @@ fn float_of(i: &Interp, v: &Value) -> Result<f64, super::Flow> {
         Value::Int(n) => Ok(*n as f64),
         Value::Float(f) => Ok(**f),
         _ => Err(fmt_type_err(i)),
-    }
-}
-
-fn format_g(f: f64, prec: Option<usize>) -> String {
-    let p = prec.unwrap_or(6).max(1);
-    if f == 0.0 {
-        return "0".to_string();
-    }
-    let e = f.abs().log10().floor() as i32;
-    if e < -4 || e >= p as i32 {
-        let s = format!("{:.*e}", p - 1, f);
-        // trim trailing zeros in mantissa; exponent gets a sign and ≥2 digits
-        if let Some(epos) = s.find('e') {
-            let (m, ex) = s.split_at(epos);
-            let m2 = m.trim_end_matches('0').trim_end_matches('.');
-            let exp: i32 = ex[1..].parse().unwrap_or(0);
-            format!("{}e{}{:02}", m2, if exp < 0 { "-" } else { "+" }, exp.abs())
-        } else {
-            s
-        }
-    } else {
-        let decimals = (p as i32 - 1 - e).max(0) as usize;
-        let mut s = format!("{:.*}", decimals, f);
-        if s.contains('.') {
-            s = s.trim_end_matches('0').trim_end_matches('.').to_string();
-        }
-        s
     }
 }
 

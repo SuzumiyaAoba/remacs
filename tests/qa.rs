@@ -136,6 +136,7 @@ qa!(qa_docstring_escape, "qa_docstring_escape.el");
 qa!(qa_skip_classes, "qa_skip_classes.el");
 qa!(qa_tab_indent, "qa_tab_indent.el");
 qa!(qa_format, "qa_format.el");
+qa!(qa_format_conversions, "qa_format_conversions.el");
 qa!(qa_globdir, "qa_globdir.el");
 qa!(qa_gv, "qa_gv.el");
 qa!(qa_hash, "qa_hash.el");
