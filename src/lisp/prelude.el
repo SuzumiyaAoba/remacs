@@ -26783,7 +26783,6 @@ and URL `https://rhodesmill.org/brandon/2012/one-sentence-per-line/'."
                        (list 'keymap
                              (list 'emacs-lisp 'menu-item "Emacs-Lisp"
                                    (list 'keymap "Emacs-Lisp"))))
-                 (cons 10 'eval-print-last-sexp)
                  (cons 3 (list 'keymap
                                (cons 2 'elisp-byte-compile-buffer)
                                (cons 6 'elisp-byte-compile-file)

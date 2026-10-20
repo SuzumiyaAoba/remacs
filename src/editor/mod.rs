@@ -8294,12 +8294,12 @@ fn where_is_collect(
 ) -> Result<Vec<Value>, Flow> {
     let mut sequences = Vec::new();
     for km in keymaps {
-        let km = keymap_def(i, km.clone())?;
-        if !is_keymap(i, &km) {
-            continue;
+        let resolved = keymap_def(i, km.clone())?;
+        if !is_keymap(i, &resolved) {
+            return Err(i.wrong_type_mut("keymapp", km));
         }
         let acc_sym = i.intern("accessible-keymaps");
-        let acc = i.apply(&Value::Sym(acc_sym), vec![km])?;
+        let acc = i.apply(&Value::Sym(acc_sym), vec![resolved])?;
         let mut entries = Vec::new();
         acc.each_car(|e| entries.push(e.clone()));
         for entry in entries {
@@ -8397,8 +8397,16 @@ fn f_where_is_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // map; nil means the currently active maps.
     let mut keymaps: Vec<Value> = Vec::new();
     match &keymap_arg {
-        Value::Cons(c) if is_keymap(i, &c.borrow().car) => {
+        Value::Cons(c) if is_keymap(i, &keymap_def_noautoload(i, &c.borrow().car)) => {
             keymap_arg.each_car(|k| keymaps.push(k.clone()));
+            // Validate the whole list before advertised bindings can
+            // return early, even when its first map already has a match.
+            for km in &keymaps {
+                let resolved = keymap_def(i, km.clone())?;
+                if !is_keymap(i, &resolved) {
+                    return Err(i.wrong_type_mut("keymapp", km));
+                }
+            }
         }
         Value::Nil => {
             let cam = i.intern("current-active-maps");
