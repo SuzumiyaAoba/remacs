@@ -744,6 +744,15 @@ prefix of the list is consumed, and entries end at the first NUL.
 Unibyte values retain their bytes. Program lookup uses Lisp `exec-path`
 before applying the child's PATH. Regression: `qa_process_environment`.
 
+`editor::process_directory` validates the launching buffer's
+`default-directory`, using `unhandled-file-name-directory` (nil means
+HOME), and sets each child's `Command::current_dir` without changing the
+editor's OS directory. Relative program/exec-path names and synchronous
+input files resolve against this directory. Existing PWD entries are
+corrected to the logical child directory, including symlinks; an unset
+PWD stays unset. Invalid directories signal `Setting current directory`
+with the original Lisp name. Regression: `qa_process_directory`.
+
 ## Minibuffer reads (`src/lisp/eval.rs` + `src/editor/mod.rs` + `src/term`)
 
 GNU structure kept: `read-file-name`/`completing-read`/`read-buffer`

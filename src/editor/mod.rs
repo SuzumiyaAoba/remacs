@@ -14051,8 +14051,14 @@ fn f_file_local_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_unhandled_dir(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let file = want_str(i, &a[0])?;
+    let operation = Value::Sym(i.intern("unhandled-file-name-directory"));
+    if let Some(handler) = crate::buffer::extra::find_file_name_handler(i, &file, operation.clone()) {
+        return i.apply(&handler, vec![operation, a[0].clone()]);
+    }
     // GNU: file-name-as-directory on the (local) name.
-    if file.ends_with('/') {
+    if file.is_empty() {
+        Ok(Value::string("./"))
+    } else if file.ends_with('/') {
         Ok(Value::string(file))
     } else {
         Ok(Value::string(format!("{file}/")))
@@ -14242,12 +14248,55 @@ fn f_car_less_than_car(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 // ---------- processes ----------
 
+/// GNU get_current_directory: use the launching buffer's directory,
+/// with the local directory (or home) supplied by a file-name handler.
+/// Validate in the parent so failures carry the original Lisp name.
+pub(crate) fn process_directory(i: &mut Interp) -> Result<String, Flow> {
+    let symbol = i.intern("default-directory");
+    let original = i.symbol_value(symbol);
+    let raw = want_str(i, &original)?;
+    let unhandled = f_unhandled_dir(i, vec![original.clone()].into())?;
+    let name = if unhandled.is_nil() {
+        "~".to_string()
+    } else {
+        want_str(i, &unhandled)?
+    };
+    // GNU expands a relative default-directory against the directory
+    // of the executable before using it as the expansion base.
+    let invocation = i
+        .intern_soft("invocation-directory")
+        .map(|symbol| i.symbol_value(symbol));
+    let invocation = match invocation {
+        Some(Value::Str(value)) => value.borrow().clone(),
+        _ => emacs_wd(),
+    };
+    let base = expand_against_dir(i, &raw, &invocation);
+    let directory = expand_against_dir(i, &name, &base);
+    let directory = directory.strip_prefix("/:").unwrap_or(&directory);
+    let directory = directory.split('\0').next().unwrap_or_default().to_string();
+    let accessible = (|| -> std::io::Result<()> {
+        let metadata = std::fs::metadata(&directory)?;
+        if !metadata.is_dir() {
+            return Err(std::io::Error::from_raw_os_error(libc::ENOTDIR));
+        }
+        let path = std::ffi::CString::new(directory.as_bytes()).unwrap();
+        if unsafe { libc::access(path.as_ptr(), libc::X_OK) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
+    })();
+    accessible.map_err(|error| {
+        report_file_errno(i, "Setting current directory", vec![original], &error)
+    })?;
+    Ok(directory)
+}
+
 /// Resolve PROGRAM like GNU callproc.c's openp() over `exec-path':
 /// absolute/relative-with-slash names are tried as-is, others get
 /// prefixed by each `exec-path' element.  A directory hit counts as
 /// EACCES (execvp cannot exec it), which GNU reports as
 /// `permission-denied', not `file-missing'.
-pub(crate) fn dif_resolve_program(i: &mut Interp, prog: &str) -> Result<String, Flow> {
+pub(crate) fn dif_resolve_program(i: &mut Interp, prog: &str, directory: &str) -> Result<String, Flow> {
     let mut dirs: Vec<String> = if prog.contains('/') {
         vec![String::new()]
     } else {
@@ -14277,6 +14326,7 @@ pub(crate) fn dif_resolve_program(i: &mut Interp, prog: &str) -> Result<String, 
         } else {
             format!("{}/{}", d.trim_end_matches('/'), prog)
         };
+        let cand = expand_against_dir(i, &cand, directory);
         match std::fs::metadata(&cand) {
             Ok(md) => {
                 if md.is_dir() {
@@ -14285,13 +14335,7 @@ pub(crate) fn dif_resolve_program(i: &mut Interp, prog: &str) -> Result<String, 
                 }
                 use std::os::unix::fs::PermissionsExt;
                 if md.permissions().mode() & 0o111 != 0 {
-                    // A bare cwd hit must not trigger Command's second
-                    // search using the child's (possibly different) PATH.
-                    found = Some(if cand.contains('/') {
-                        cand
-                    } else {
-                        format!("./{cand}")
-                    });
+                    found = Some(cand);
                     break;
                 }
                 eacces = true;
@@ -14503,13 +14547,14 @@ fn f_call_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // DESTINATION check, GNU callproc.c order (before exec-path
     // resolution): see `dest_check' for the acceptance rules.
     dest_check(i, &arg(&a, 2))?;
+    let directory = process_directory(i)?;
     // GNU callproc.c order: INFILE is opened BEFORE the exec-path
     // search — a missing input file reports "Opening process input
     // file" even when the program itself doesn't exist.
     let infile_handle = if let Some(infile) = a.get(1) {
         match infile {
             Value::Str(f) => {
-                let f = f.borrow().clone();
+                let f = expand_against_dir(i, &f.borrow(), &directory);
                 match std::fs::File::open(&f) {
                     Ok(fh) => Some(fh),
                     Err(e) => {
@@ -14538,8 +14583,9 @@ fn f_call_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     } else {
         None
     };
-    let resolved = dif_resolve_program(i, &prog)?;
+    let resolved = dif_resolve_program(i, &prog, &directory)?;
     let mut cmd = std::process::Command::new(&resolved);
+    cmd.current_dir(&directory);
     crate::lisp::process::environment::apply(i, &mut cmd);
     for v in a.get(4..).unwrap_or(&[]) {
         cmd.arg(want_str(i, v)?);
@@ -14711,8 +14757,10 @@ fn f_call_process_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     for v in a.get(6..).unwrap_or(&[]) {
         want_str(i, v)?;
     }
-    let prog = dif_resolve_program(i, &prog)?;
+    let directory = process_directory(i)?;
+    let prog = dif_resolve_program(i, &prog, &directory)?;
     let mut cmd = std::process::Command::new(&prog);
+    cmd.current_dir(&directory);
     crate::lisp::process::environment::apply(i, &mut cmd);
     cmd.stdin(std::process::Stdio::piped());
     let (real_dest, mut capture) = sync_process_destination(i, &mut cmd, &arg(&a, 4))?;
@@ -14761,7 +14809,9 @@ fn f_call_process_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_shell_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let cmdline = want_str(i, &a[0])?;
+    let directory = process_directory(i)?;
     let mut command = std::process::Command::new("/bin/sh");
+    command.current_dir(directory);
     crate::lisp::process::environment::apply(i, &mut command);
     command.arg("-c").arg(&cmdline);
     let mut capture = if arg(&a, 2).is_nil() {
@@ -14831,10 +14881,12 @@ fn f_shell_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_shell_command_to_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let cmdline = want_str(i, &a[0])?;
+    let directory = process_directory(i)?;
     // GNU callproc.c: with no error-buffer argument the child's stderr
     // is merged into stdout ("discard" would need an explicit
     // error-file spec, which shell-command-to-string doesn't pass).
     let mut command = std::process::Command::new("/bin/sh");
+    command.current_dir(directory);
     crate::lisp::process::environment::apply(i, &mut command);
     command.arg("-c").arg(&cmdline);
     let (_, mut capture) = sync_process_destination(i, &mut command, &Value::t())?;

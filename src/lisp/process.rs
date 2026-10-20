@@ -1583,8 +1583,10 @@ fn f_make_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         coding::constructor(i, &Value::Nil, true)?.0
     } else { String::new() };
     // Resolve against Lisp exec-path before installing the child's PATH.
-    let resolved = crate::editor::dif_resolve_program(i, &cmd[0])?;
+    let directory = crate::editor::process_directory(i)?;
+    let resolved = crate::editor::dif_resolve_program(i, &cmd[0], &directory)?;
     let mut child_command = std::process::Command::new(resolved);
+    child_command.current_dir(directory);
     child_command.args(&cmd[1..]);
     environment::apply(i, &mut child_command);
     // Transfer an explicitly supplied pipe's writer to the child, as GNU
@@ -3667,8 +3669,10 @@ fn f_internal_default_process_filter(i: &mut Interp, a: crate::lisp::Argv) -> Ev
 // ---------- synchronous helpers ----------
 
 fn run_lines(i: &mut Interp, prog: &str, args: &[String], ignore_status: bool) -> EvalResult {
-    let resolved = crate::editor::dif_resolve_program(i, prog)?;
+    let directory = crate::editor::process_directory(i)?;
+    let resolved = crate::editor::dif_resolve_program(i, prog, &directory)?;
     let mut command = std::process::Command::new(resolved);
+    command.current_dir(directory);
     environment::apply(i, &mut command);
     let out = command
         .args(args)

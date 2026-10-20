@@ -42,4 +42,19 @@ pub(crate) fn apply(i: &Interp, command: &mut Command) {
         }
         environment = rest;
     }
+    // GNU corrects an existing PWD to the child's working directory,
+    // without introducing it when Lisp left it unset.
+    let has_pwd = command
+        .get_envs()
+        .any(|(name, value)| name == "PWD" && value.is_some());
+    if has_pwd {
+        if let Some(directory) = command.get_current_dir() {
+            let mut bytes = directory.as_os_str().as_bytes();
+            while bytes.len() > 2 && bytes.ends_with(b"/") {
+                bytes = &bytes[..bytes.len() - 1];
+            }
+            let pwd = OsStr::from_bytes(bytes).to_os_string();
+            command.env("PWD", pwd);
+        }
+    }
 }
