@@ -1416,12 +1416,12 @@ fn macroexpand_all_expanded(
                     }
                     sym::LAMBDA if items.len() >= 2 => {
                         let mut out = items[..2].to_vec();
-                        // Same for `macroexp--lambda': leading
-                        // `(declare ...)' forms pass through verbatim.
+                        // A bare lambda's declarations are stray macro
+                        // forms, unlike defun/defmacro metadata above.
                         let bound = binder_syms(i, &items[1]);
                         let mut body = items[2..].iter();
                         for it in &mut body {
-                            if matches!(it, Value::Str(_)) || is_declare_form(i, it) {
+                            if matches!(it, Value::Str(_)) {
                                 out.push(it.clone());
                             } else {
                                 out.push(expand_body_filtered(i, env_id, &env, sm, &bound, it)?);
@@ -1464,7 +1464,9 @@ fn macroexpand_all_expanded(
                                 let bound = binder_syms(i, &litems[head - 1]);
                                 let mut lbody = litems[head..].iter();
                                 for it in &mut lbody {
-                                    if matches!(it, Value::Str(_)) || is_declare_form(i, it) {
+                                    if matches!(it, Value::Str(_))
+                                        || (is_clo && is_declare_form(i, it))
+                                    {
                                         lout.push(it.clone());
                                     } else {
                                         lout.push(expand_body_filtered(
