@@ -15,6 +15,7 @@ use std::rc::Rc;
 
 mod child;
 mod coding;
+pub(crate) mod environment;
 
 use super::builtins::evalfn::timer_check;
 use super::builtins::{S, arg};
@@ -1581,6 +1582,11 @@ fn f_make_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let stderr_coding = if split_stderr && !matches!(stderr_dest, Value::Process(_)) {
         coding::constructor(i, &Value::Nil, true)?.0
     } else { String::new() };
+    // Resolve against Lisp exec-path before installing the child's PATH.
+    let resolved = crate::editor::dif_resolve_program(i, &cmd[0])?;
+    let mut child_command = std::process::Command::new(resolved);
+    child_command.args(&cmd[1..]);
+    environment::apply(i, &mut child_command);
     // Transfer an explicitly supplied pipe's writer to the child, as GNU
     // does. Other :stderr destinations are drained through a separate pipe.
     let stderr_pipe = if let Value::Process(sp) = &stderr_dest {
@@ -1599,8 +1605,13 @@ fn f_make_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     } else {
         None
     };
-    let (io, tty_name) = match child::spawn(&cmd, pty_input, pty_output, stderr_pipe, split_stderr)
-    {
+    let (io, tty_name) = match child::spawn(
+        child_command,
+        pty_input,
+        pty_output,
+        stderr_pipe,
+        split_stderr,
+    ) {
         Ok(transport) => transport,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Err(i.signal_data(
@@ -3656,7 +3667,10 @@ fn f_internal_default_process_filter(i: &mut Interp, a: crate::lisp::Argv) -> Ev
 // ---------- synchronous helpers ----------
 
 fn run_lines(i: &mut Interp, prog: &str, args: &[String], ignore_status: bool) -> EvalResult {
-    let out = std::process::Command::new(prog)
+    let resolved = crate::editor::dif_resolve_program(i, prog)?;
+    let mut command = std::process::Command::new(resolved);
+    environment::apply(i, &mut command);
+    let out = command
         .args(args)
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

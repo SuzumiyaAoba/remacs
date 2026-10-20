@@ -89,7 +89,7 @@ fn pty() -> io::Result<(OwnedFd, OwnedFd, String)> {
 }
 
 pub(super) fn spawn(
-    arguments: &[String],
+    mut command: Command,
     requested_input: bool,
     requested_output: bool,
     stderr_pipe: Option<OwnedFd>,
@@ -132,9 +132,7 @@ pub(super) fn spawn(
     } else {
         Stdio::piped()
     };
-    let mut command = Command::new(&arguments[0]);
     command
-        .args(&arguments[1..])
         .stdin(child_input)
         .stdout(Stdio::from(child_output))
         .stderr(child_error);

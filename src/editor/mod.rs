@@ -14247,7 +14247,7 @@ fn f_car_less_than_car(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// prefixed by each `exec-path' element.  A directory hit counts as
 /// EACCES (execvp cannot exec it), which GNU reports as
 /// `permission-denied', not `file-missing'.
-fn dif_resolve_program(i: &mut Interp, prog: &str) -> Result<String, Flow> {
+pub(crate) fn dif_resolve_program(i: &mut Interp, prog: &str) -> Result<String, Flow> {
     let mut dirs: Vec<String> = if prog.contains('/') {
         vec![String::new()]
     } else {
@@ -14285,7 +14285,13 @@ fn dif_resolve_program(i: &mut Interp, prog: &str) -> Result<String, Flow> {
                 }
                 use std::os::unix::fs::PermissionsExt;
                 if md.permissions().mode() & 0o111 != 0 {
-                    found = Some(cand);
+                    // A bare cwd hit must not trigger Command's second
+                    // search using the child's (possibly different) PATH.
+                    found = Some(if cand.contains('/') {
+                        cand
+                    } else {
+                        format!("./{cand}")
+                    });
                     break;
                 }
                 eacces = true;
@@ -14534,6 +14540,7 @@ fn f_call_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     let resolved = dif_resolve_program(i, &prog)?;
     let mut cmd = std::process::Command::new(&resolved);
+    crate::lisp::process::environment::apply(i, &mut cmd);
     for v in a.get(4..).unwrap_or(&[]) {
         cmd.arg(want_str(i, v)?);
     }
@@ -14706,6 +14713,7 @@ fn f_call_process_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     let prog = dif_resolve_program(i, &prog)?;
     let mut cmd = std::process::Command::new(&prog);
+    crate::lisp::process::environment::apply(i, &mut cmd);
     cmd.stdin(std::process::Stdio::piped());
     let (real_dest, mut capture) = sync_process_destination(i, &mut cmd, &arg(&a, 4))?;
     for v in a.get(6..).unwrap_or(&[]) {
@@ -14754,6 +14762,7 @@ fn f_call_process_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_shell_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let cmdline = want_str(i, &a[0])?;
     let mut command = std::process::Command::new("/bin/sh");
+    crate::lisp::process::environment::apply(i, &mut command);
     command.arg("-c").arg(&cmdline);
     let mut capture = if arg(&a, 2).is_nil() {
         sync_process_destination(i, &mut command, &Value::t())?.1
@@ -14826,6 +14835,7 @@ fn f_shell_command_to_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     // is merged into stdout ("discard" would need an explicit
     // error-file spec, which shell-command-to-string doesn't pass).
     let mut command = std::process::Command::new("/bin/sh");
+    crate::lisp::process::environment::apply(i, &mut command);
     command.arg("-c").arg(&cmdline);
     let (_, mut capture) = sync_process_destination(i, &mut command, &Value::t())?;
     let result = command.output();

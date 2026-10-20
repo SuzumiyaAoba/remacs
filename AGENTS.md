@@ -732,6 +732,18 @@ Architecture:
 
 Regression suite: `tests/nativecomp.rs` and the `qa_native_*` fixtures.
 
+## Subprocess environments (`src/lisp/process/environment.rs`)
+
+Subprocess environments are built by `src/lisp/process/environment.rs`
+from the current Lisp `process-environment` binding. Async children,
+`call-process`, `call-process-region`, `process-lines` and shell command
+helpers clear inherited OS variables and install this child-local copy;
+they never mutate the editor's OS environment. Like GNU, the first entry
+wins (bare names suppress later assignments), only the initial string
+prefix of the list is consumed, and entries end at the first NUL.
+Unibyte values retain their bytes. Program lookup uses Lisp `exec-path`
+before applying the child's PATH. Regression: `qa_process_environment`.
+
 ## Minibuffer reads (`src/lisp/eval.rs` + `src/editor/mod.rs` + `src/term`)
 
 GNU structure kept: `read-file-name`/`completing-read`/`read-buffer`
