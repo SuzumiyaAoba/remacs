@@ -154,6 +154,15 @@ read-only/modified flags, not modification ticks, and ignore space-prefixed
 buffers. Sole-frame deletion has distinct default/FORCE errors.
 Regressions: `qa_frame_buffer_changes`.
 
+Finalize public `load-path` after internal bootstrap. Retain real library
+directories; a source-less executable publishes a core source in the
+private process cache and exposes that directory. Other sources are
+materialized on demand at the cache entry's position in the search path.
+EMACSLOADPATH directories preserve order/duplicates and relative spelling;
+empty elements insert defaults. Environment paths take effect after boot
+so they cannot replace internal compatibility libraries mid-initialization.
+Regressions: startup checks in `embedded_libraries` and `load_path_startup`.
+
 ## Startup profiling (`REMACS_BOOT_PROF=1`)
 
 Before full eager source expansion, warm release `--batch` startup

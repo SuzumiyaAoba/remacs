@@ -3579,6 +3579,11 @@ fn locate_library_in(
                 return Ok(Some(candidate));
             }
         }
+        if let Some(path) = crate::lisp::load::locate_cache_source(
+            i, std::path::Path::new(&directory), name, &suffixes,
+        )? {
+            return Ok(Some(path));
+        }
     }
     Ok(None)
 }

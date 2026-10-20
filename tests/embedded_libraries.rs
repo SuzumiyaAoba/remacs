@@ -17,7 +17,13 @@ fn standalone_expression() -> String {
         .replace('\\', "\\\\")
         .replace('"', "\\\"");
     format!(
-        r#"(let ((load-path nil) (electric-quote-string 'standalone))
+        r#"(progn
+    (unless (consp load-path) (error "Empty standalone startup load-path"))
+    (dolist (directory load-path)
+      (unless (and (file-name-absolute-p directory) (file-directory-p directory))
+        (error "Unusable standalone load directory: %S" directory)))
+    (unless (locate-file "simple.el" load-path) (error "No core source on startup load-path"))
+    (let ((load-path nil) (electric-quote-string 'standalone))
       (let* ((boot-surface
                 (list (fboundp 'cl-loop)
                       (condition-case error (cl-loop return 1) (error (car error)))
@@ -50,7 +56,7 @@ fn standalone_expression() -> String {
                          (with-temp-file file (insert "(setq qa53-override 'user)\n"))
                          (let ((path (locate-library "subr-x")))
                            (load path nil t)
-                           (list (equal path file) (bound-and-true-p qa53-override)))))))))"#
+                           (list (equal path file) (bound-and-true-p qa53-override))))))))))"#
     )
 }
 
@@ -73,6 +79,7 @@ fn run_standalone(no_elc: bool) {
     command
         .current_dir(root.0.join("work"))
         .env("TMPDIR", root.0.join("cache"))
+        .env_remove("EMACSLOADPATH")
         .args(["-Q", "--batch", "--eval", &standalone_expression()])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

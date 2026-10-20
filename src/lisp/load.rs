@@ -115,6 +115,13 @@ pub(crate) fn locate_full(
         name
     };
     let p = Path::new(name);
+    let source_suffixes = if nosuffix
+        || name.ends_with(".el") || name.ends_with(".elc") || name.ends_with(".eln")
+    {
+        vec![String::new()]
+    } else {
+        vec![".el".to_string()]
+    };
     if p.is_absolute() || name.contains('/') || name.contains(std::path::MAIN_SEPARATOR) {
         if let Some(hit) = pick_existing(
             candidates(Path::new(""), name, nosuffix, mustsuffix),
@@ -134,6 +141,9 @@ pub(crate) fn locate_full(
                 pick_existing(candidates(&dir, name, nosuffix, mustsuffix), prefer_newer)
             {
                 return Some(hit);
+            }
+            if let Ok(Some(path)) = locate_cache_source(i, &dir, name, &source_suffixes) {
+                return Some(Found::File(path));
             }
         }
         // Our bundled tree is flat under lisp/, with colliding
@@ -158,6 +168,9 @@ pub(crate) fn locate_full(
         if let Some(hit) = pick_existing(candidates(&dir, name, nosuffix, mustsuffix), prefer_newer)
         {
             return Some(hit);
+        }
+        if let Ok(Some(path)) = locate_cache_source(i, &dir, name, &source_suffixes) {
+            return Some(Found::File(path));
         }
     }
     None
@@ -191,6 +204,68 @@ pub(crate) fn builtin_dirs() -> Vec<String> {
         .unwrap_or_default();
     v.extend(installed_library_dirs());
     v
+}
+
+/// Publish the post-bootstrap load path. Environment directories must
+/// not replace internal bootstrap libraries before the dumped surface
+/// has been reconstructed. Empty EMACSLOADPATH entries insert defaults.
+pub(crate) fn finish_load_path(i: &mut Interp) {
+    let load_path = i.intern("load-path");
+    let mut defaults = i.symbol_value(load_path).list_to_vec().unwrap_or_default();
+    let environment = std::env::var_os("EMACSLOADPATH")
+        .map(|value| std::env::split_paths(&value).collect::<Vec<_>>());
+    let needs_defaults = environment
+        .as_ref()
+        .is_none_or(|paths| paths.iter().any(|path| path.as_os_str().is_empty()));
+    if needs_defaults {
+        // A copied executable may have no installed source directory.
+        // Publish one core source as an anchor; the existing resolver
+        // materializes other embedded sources when they are requested.
+        if defaults.is_empty() {
+            if let Some(source) = embedded("simple") {
+                let _ = super::embedded_cache::materialize("simple", source);
+            }
+        }
+        if let Some(cache) = super::embedded_cache::directory() {
+            let canonical = std::fs::canonicalize(&cache).ok();
+            // Cache publication uses its logical temporary path. Keep
+            // that spelling in load-path so repeated lookups are stable.
+            for directory in &mut defaults {
+                if let Value::Str(path) = directory {
+                    if canonical.is_some()
+                        && std::fs::canonicalize(path.borrow().as_str()).ok() == canonical
+                    {
+                        *directory = Value::string(cache.to_string_lossy().into_owned());
+                    }
+                }
+            }
+            let cache = Value::string(cache.to_string_lossy().into_owned());
+            if !defaults
+                .iter()
+                .any(|path| super::builtins::equal_values(i, path, &cache).unwrap_or(false))
+            {
+                defaults.push(cache);
+            }
+        }
+    }
+    let paths = match environment {
+        None => defaults,
+        Some(paths) => {
+            let mut expanded = Vec::new();
+            for path in paths {
+                if path.as_os_str().is_empty() {
+                    expanded.extend(defaults.iter().cloned());
+                } else {
+                    expanded.push(Value::string(path.to_string_lossy().into_owned()));
+                }
+            }
+            expanded
+        }
+    };
+    let paths = Value::list(paths);
+    if !super::builtins::equal_values(i, &i.symbol_value(load_path), &paths).unwrap_or(false) {
+        let _ = i.set_symbol(load_path, paths);
+    }
 }
 
 /// Runtime source locations whose contents belong to the executable.
@@ -2585,6 +2660,57 @@ pub(crate) fn locate_bundled_source(
     Ok(None)
 }
 
+/// The published source directory represents embedded libraries at its
+/// actual load-path position, before directories that follow a default
+/// path placeholder. Other directories retain ordinary filesystem lookup.
+pub(crate) fn locate_cache_source(
+    i: &mut Interp,
+    directory: &Path,
+    name: &str,
+    suffixes: &[String],
+) -> Result<Option<String>, crate::lisp::Flow> {
+    if i.boot_loading
+        || Path::new(name).is_absolute()
+        || name.starts_with('~')
+        || Path::new(name).components().any(|part| {
+            matches!(
+                part,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+    {
+        return Ok(None);
+    }
+    let Some(cache) = super::embedded_cache::directory() else {
+        return Ok(None);
+    };
+    let Ok(cache) = std::fs::canonicalize(cache) else {
+        return Ok(None);
+    };
+    if std::fs::canonicalize(directory).ok().as_ref() != Some(&cache) {
+        return Ok(None);
+    }
+    for suffix in suffixes {
+        let candidate = format!("{name}{suffix}");
+        let Some(stem) = candidate.strip_suffix(".el") else {
+            continue;
+        };
+        let Some((mut key, mut source)) = embedded_key(stem) else {
+            continue;
+        };
+        // Basename fallback remains a final bundled lookup, rather than
+        // claiming arbitrary qualified filenames at this directory.
+        if key != stem && key.replace('/', "-") != stem {
+            continue;
+        }
+        if key == "subr-x" {
+            (key, source) = embedded_key("emacs-lisp-subr-x").unwrap();
+        }
+        return materialized_source_file(i, name, key, source).map(Some);
+    }
+    Ok(None)
+}
+
 fn bundled_source_file(
     i: &mut Interp,
     name: &str,
@@ -2598,6 +2724,15 @@ fn bundled_source_file(
             return Ok(path.to_string_lossy().into_owned());
         }
     }
+    materialized_source_file(i, name, key, source)
+}
+
+fn materialized_source_file(
+    i: &mut Interp,
+    name: &str,
+    key: &str,
+    source: &str,
+) -> Result<String, crate::lisp::Flow> {
     let path = super::embedded_cache::materialize(key, source).map_err(|error| {
         i.signal_data(
             crate::lisp::sym::FILE_ERROR,
