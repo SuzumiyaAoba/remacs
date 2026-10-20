@@ -30,6 +30,9 @@ pub struct Buffer {
     /// via `SharedText` (`Rc<RefCell<GapBuffer>>`), so edits made in
     /// any buffer of the chain are visible in all of them.
     pub text: SharedText,
+    /// GNU BUF_AUTOSAVE_MODIFF: per-buffer, unlike the shared text's
+    /// modification/save ticks. Indirect views keep their own value.
+    pub auto_save_tick: u64,
     /// Point (0-based char offset). Emacs `point` = `self.point + 1`.
     pub point: usize,
     /// Start remembered when this buffer was last removed from a window.
@@ -319,6 +322,7 @@ impl Buffer {
             id,
             name: name.clone(),
             text: SharedText::new(),
+            auto_save_tick: 0,
             point: 0,
             last_window_start: 0,
             last_selected_window: None,
@@ -360,6 +364,10 @@ impl Buffer {
         self.text.mod_tick.get() as i64 > self.text.save_tick.get() as i64
     }
 
+    pub fn is_auto_saved(&self) -> bool {
+        self.is_modified() && self.auto_save_tick == self.text.mod_tick.get()
+    }
+
     /// GNU `modiff_incr': MODIFF grows logarithmically with the number
     /// of changed characters — floor(log2(len)) + 1 for len > 0, else 1.
     fn modiff_incr(len: usize) -> u64 {
@@ -375,23 +383,36 @@ impl Buffer {
     /// (filelock.c `lock_file' via `prepare_to_modify_buffer'), and
     /// becoming unmodified releases our lock (`unlock_file').
     pub fn note_modified(&mut self, flag: bool) {
-        // GNU Frestore_buffer_modified_p: the modified flag is
-        // SAVE_MODIFF < MODIFF, and both counters live in the shared
-        // text — setting it on any indirect view affects them all.
+        // Real edits advance MODIFF themselves; mark the text dirty
+        // before that change without adding another tick here.
         let already = self.is_modified();
         let mod_tick = self.text.mod_tick.get();
         if flag {
-            // GNU Frestore_buffer_modified_p: becoming modified sets
-            // SAVE_MODIFF to MODIFF - 1 — the flag is the strict
-            // `SAVE_MODIFF < MODIFF' comparison, so parking the
-            // current tick keeps `modified-p' nil.  MODIFF itself
-            // is untouched (the bump belongs to modiff_incr).
             if !already {
                 self.text.save_tick.set(mod_tick.wrapping_sub(1));
             }
         } else {
             self.text.save_tick.set(mod_tick);
         }
+        self.sync_modified_lock(flag, already);
+    }
+
+    /// GNU Frestore_buffer_modified_p: making clean text modified
+    /// advances MODIFF and retains its old value in SAVE_MODIFF.
+    /// CHARS_MODIFF is unchanged, and an old autosave is not revived.
+    pub fn restore_modified(&mut self, flag: bool) {
+        let already = self.is_modified();
+        let tick = self.text.mod_tick.get();
+        if !flag {
+            self.text.save_tick.set(tick);
+        } else if !already {
+            self.text.save_tick.set(tick);
+            self.text.mod_tick.set(tick.wrapping_add(1));
+        }
+        self.sync_modified_lock(flag, already);
+    }
+
+    fn sync_modified_lock(&mut self, flag: bool, already: bool) {
         // GNU locks/unlocks the file of the BASE buffer (an indirect
         // buffer never visits a file itself), driven by the flag
         // transition on that base.

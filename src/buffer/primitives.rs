@@ -3520,15 +3520,14 @@ fn f_buffer_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_buffer_modified_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let b = buf_of(i, &arg(&a, 0))?;
+    if b.borrow().is_auto_saved() {
+        return Ok(Value::Sym(i.intern("autosaved")));
+    }
     Ok(Value::from_bool(b.borrow().is_modified()))
 }
 
 pub(crate) fn f_set_buffer_modified_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let flag = a[0].truthy();
-    if flag {
-        barf_if_file_locked(i)?;
-    }
-    cur(i).borrow_mut().note_modified(flag);
+    f_restore_buffer_modified_p(i, a)?;
     Ok(Value::Nil)
 }
 
@@ -3538,17 +3537,25 @@ pub(crate) fn f_restore_buffer_modified_p(i: &mut Interp, a: crate::lisp::Argv) 
     if flag {
         barf_if_file_locked(i)?;
     }
-    cur(i).borrow_mut().note_modified(flag);
+    let buffer = cur(i);
+    buffer.borrow_mut().restore_modified(flag);
+    let autosaved = i.intern("autosaved");
+    if i.sym_id(&a[0]) == Some(autosaved) {
+        // GNU writes the base buffer's auto-save counter even when
+        // FLAG was applied through an indirect view.
+        let base = buffer
+            .borrow()
+            .base_buffer
+            .clone()
+            .unwrap_or_else(|| buffer.clone());
+        let mut base = base.borrow_mut();
+        base.auto_save_tick = base.text.mod_tick.get();
+    }
     Ok(a[0].clone())
 }
 
 fn f_not_modified(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let flag = arg(&a, 0).truthy();
-    if flag {
-        barf_if_file_locked(i)?;
-    }
-    cur(i).borrow_mut().note_modified(flag);
-    Ok(Value::Nil)
+    f_set_buffer_modified_p(i, vec![arg(&a, 0)].into())
 }
 
 fn f_buffer_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

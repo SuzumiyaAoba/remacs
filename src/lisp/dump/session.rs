@@ -54,6 +54,8 @@ struct BufferData {
     id: usize,
     name: Vec<u32>,
     text: usize,
+    #[serde(default)]
+    auto_save_tick: u64,
     point: usize,
     last_window_start: usize,
     last_selected_window: Option<Ref>,
@@ -363,6 +365,7 @@ impl Image {
             {
                 let mut b = object.borrow_mut();
                 b.text = text;
+                b.auto_save_tick = data.auto_save_tick;
                 b.point = data.point;
                 b.begv = data.begv;
                 b.zv = data.zv;
@@ -763,6 +766,7 @@ impl Image {
             id: b.id,
             name: encode_text(&b.name),
             text,
+            auto_save_tick: b.auto_save_tick,
             point: b.point,
             last_window_start: b.last_window_start,
             last_selected_window: b
@@ -937,5 +941,39 @@ mod tests {
             let result=restored.eval_str("(list (with-current-buffer dump-test-buffer (buffer-size)) (marker-position dump-test-marker))").unwrap();
             assert_eq!(restored.prin1_to_string(&result),"(8 5)");
         }).unwrap().join().unwrap();
+    }
+
+    #[test]
+    fn session_images_without_autosave_ticks_remain_readable() {
+        std::thread::Builder::new()
+            .stack_size(128 << 20)
+            .spawn(|| {
+                let mut source = Interp::new();
+                source
+                    .eval_str(
+                        r#"(progn
+                  (setq dump155-old (get-buffer-create "dump155-old"))
+                  (with-current-buffer dump155-old
+                    (insert "x") (restore-buffer-modified-p 'autosaved)))"#,
+                    )
+                    .unwrap();
+                let image = Image::capture(&source).unwrap();
+                let mut json = serde_json::to_value(&image).unwrap();
+                for buffer in json["buffers"].as_array_mut().unwrap() {
+                    if let Some(fields) = buffer.as_object_mut() {
+                        fields.remove("auto_save_tick");
+                    }
+                }
+                let image: Image = serde_json::from_value(json).unwrap();
+                let mut restored = Interp::new();
+                image.restore(&mut restored).unwrap();
+                let modified = restored
+                    .eval_str("(buffer-modified-p dump155-old)")
+                    .unwrap();
+                assert_eq!(restored.prin1_to_string(&modified), "t");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

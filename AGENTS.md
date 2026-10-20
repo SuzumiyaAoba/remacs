@@ -849,13 +849,16 @@ qa-xf back to qa and watch it go XPASS→pass):
   Zero-width overrides, parent inheritance, mutation, buffer-local
   tables, and truncation at an exact width are covered by
   `qa_character_width_table`.
-- Indirect buffers: fixed — text/ticks/text-props/undo-list are
-  shared via SharedText (per GNU's buffer_text), BEGV/ZV/point/markers
+- Indirect buffers: fixed — text, modification/save ticks, text properties,
+  and the undo list are shared via SharedText (per GNU's buffer_text).
+  BEGV/ZV/point/markers
   stay per-buffer, `buffer-base-buffer` returns a live object (killed
   buffers remain in `BufferSet` with live=false), `buffer-swap-text`
   errors on indirect buffers, `set-buffer-multibyte` errors on
   indirect buffers, buffer-list-update-hook runs on create/kill/bury,
-  and `set-buffer` syncs the undo list with the base.
+  and `set-buffer` syncs the undo list with the base. Auto-save history
+  (`Buffer.auto_save_tick`) is per-buffer; setting the `autosaved` flag
+  through an indirect view updates its base buffer's history.
 - `cl-loop`: fully works now — the ledger's hang was the same
   `cl--loop-expand' misparse; qa_clloop{,2..7} all pass.
 - `cl-destructuring-bind`/`cl-struct`/`cl-typep`/`cl-the` fixed too —
@@ -1013,9 +1016,12 @@ destructive, `signal-process' included) live in driver.el's
 Fixed divergences so far (all regression-covered in qa_*.el):
 
 - `set-buffer-modified-p`/`restore-buffer-modified-p`/`not-modified`
-  never actually set the flag (`note_modified` parked save_tick at
-  mod_tick; GNU restores `SAVE_MODIFF = MODIFF - 1`).  Also broke
-  indirect-buffer modified sharing — both live in SharedText now.
+  restore GNU counter state: making clean text modified keeps the old
+  MODIFF in SAVE_MODIFF and advances MODIFF without changing CHARS_MODIFF.
+  These counters live in SharedText. The per-buffer auto-save counter
+  makes `buffer-modified-p` return `autosaved` until the next modification;
+  ordinary truthy flags retain an existing auto-save state. Portable
+  images preserve that counter and accept older images without it.
 - `kill-buffer`/bury/`replace-buffer-in-windows`/`quit-window` picked
   `*scratch*` (visible) instead of a non-displayed buffer: GNU
   `other_buffer` prefers not-shown buffers unless VISIBLE-OK — the

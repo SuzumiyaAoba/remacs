@@ -236,3 +236,39 @@ fn image_restores_arbitrary_integers_and_identity_keys() {
         r#"(t t t nil t saved nil "1361129467683753853853498429727072845825")"#
     );
 }
+
+#[test]
+fn image_restores_autosave_counters_for_base_and_indirect_buffers() {
+    let fixture = Fixture::new();
+    let producer = format!(
+        r#"(progn
+          (setq dump155-base (get-buffer-create "dump155-base"))
+          (with-current-buffer dump155-base
+            (insert "x") (restore-buffer-modified-p 'autosaved))
+          (setq dump155-indirect (make-indirect-buffer dump155-base "dump155-indirect"))
+          (dump-emacs-portable {} t)
+          (prin1 (list (buffer-modified-p dump155-base)
+                       (buffer-modified-p dump155-indirect))))"#,
+        literal(&fixture.image())
+    );
+    assert_eq!(
+        Fixture::ok(fixture.eval("producer-cache", &[], &producer)),
+        "(autosaved t)"
+    );
+    std::fs::remove_dir_all(fixture.0.join("producer-cache")).unwrap();
+    let consumer = r#"(prin1 (list
+        (buffer-modified-p dump155-base)
+        (buffer-modified-p dump155-indirect)
+        (with-current-buffer dump155-indirect
+          (insert "y")
+          (list (buffer-modified-p dump155-base)
+                (buffer-modified-p dump155-indirect)))))"#;
+    assert_eq!(
+        Fixture::ok(fixture.eval(
+            "consumer-cache",
+            &["--dump-file", fixture.image().to_str().unwrap()],
+            consumer
+        )),
+        "(autosaved t (t t))"
+    );
+}
