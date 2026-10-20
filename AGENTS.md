@@ -1342,3 +1342,12 @@ integers validate their native ranges. Time arithmetic/conversion retains
 BigInt tick/frequency pairs and GNU's resolution normalization; conversion
 to floating time uses exact rational values. Internal position helpers may
 still use i128 after the relevant API validates the requested bounds.
+
+`make-string` follows GNU alloc.c: only an ASCII INIT with nil MULTIBYTE
+produces a unibyte string; non-ASCII INIT or a non-nil MULTIBYTE argument
+produces a multibyte string, including length zero. Explicitly record the
+kind even for ASCII/empty results. INIT uses the same logical-character
+conversion as `char-to-string`, preserving surrogate, byte8, and Mule
+characters. Validate LENGTH then INIT before allocation checks. The ASCII
+zero default remains unibyte for byte-oriented code such as md4.el.
+`tests/qa_strings.el` covers these cases.

@@ -4994,48 +4994,35 @@ fn float_of(i: &Interp, v: &Value) -> Result<f64, super::Flow> {
 // ---------- added builtins ----------
 
 fn f_make_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU CHECK_NATNUM: anything but a nonnegative fixnum signals
-    // wholenump; INIT takes the full CHECK_CHARACTER range.
+    // GNU checks LENGTH and INIT before allocating the result.
     let n = match &args[0] {
-        Value::Int(n) if *n >= 0 => *n as usize,
+        Value::Int(n) if args[0].fixnump() && *n >= 0 => *n as usize,
         other => return Err(i.wrong_type_mut("wholenump", other)),
     };
-    // GNU reports "Memory exhausted" instead of aborting when the
-    // length can't be allocated.
+    let code = match &args[1] {
+        Value::Int(code) if (0..=0x3f_ffff).contains(code) => *code as u32,
+        other => return Err(i.wrong_type_mut("characterp", other)),
+    };
     if n > 0x2000_0000 {
         return Err(i.error("Memory exhausted--use C-x s then exit and restart Emacs"));
     }
-    let ch = match &args[1] {
-        Value::Int(c) if (0..=0x3f_ffff).contains(c) => lisp_char(*c as u32).unwrap_or('\u{FFFD}'),
-        other => return Err(i.wrong_type_mut("characterp", other)),
-    };
-    // GNU: nil MULTIBYTE ⇒ a unibyte string; mark it so `aset',
-    // `aref', and seq iteration use byte semantics (md4.el relies
-    // on storing 0x80-0xFF bytes into a make-string'd buffer).
-    let multibyte = args.get(2).map(|v| v.truthy()).unwrap_or(false);
-    let mut s = String::with_capacity(if multibyte { n * ch.len_utf8() } else { n });
-    if multibyte {
-        for _ in 0..n {
-            s.push(ch)
-        }
-    } else {
-        // Bytes 0x80-0xFF stored as their eight-bit PUA proxies.
-        let bch = if (0x80..=0xFF).contains(&(ch as u32)) {
-            char::from_u32(crate::lisp::value::EIGHT_BIT_BASE + ch as u32).unwrap_or(ch)
+    let ch = lisp_char(code).unwrap_or_else(|| crate::lisp::value::mule_seq_char(code));
+    // Only ASCII with a nil MULTIBYTE argument uses unibyte storage.
+    let multibyte = code >= 128 || args.get(2).is_some_and(Value::truthy);
+    let mut text = String::with_capacity(n * ch.len_utf8());
+    for _ in 0..n {
+        text.push(ch);
+    }
+    let value = Value::string(text);
+    if let Value::Str(text) = &value {
+        // Even empty and ASCII strings retain an explicit MULTIBYTE kind.
+        if multibyte {
+            i.mark_multibyte(text);
         } else {
-            ch
-        };
-        for _ in 0..n {
-            s.push(bch)
+            i.mark_unibyte(text);
         }
     }
-    let v = Value::string(s);
-    if !multibyte {
-        if let Value::Str(r) = &v {
-            i.mark_unibyte(r);
-        }
-    }
-    Ok(v)
+    Ok(value)
 }
 
 fn f_string_to_list(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
