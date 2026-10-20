@@ -4698,6 +4698,8 @@ dependencies = [
  "quick-xml 0.38.4",
  "rusqlite",
  "rustc-hash 2.1.3",
+ "serde",
+ "serde_json",
  "sha1",
  "sha2 0.10.9",
  "sha3",

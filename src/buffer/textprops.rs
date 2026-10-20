@@ -26,6 +26,27 @@ impl Deref for TextProperties {
 }
 
 impl TextProperties {
+    pub(crate) fn from_dump(
+        len: usize,
+        intervals: Vec<(usize, usize, Vec<Value>)>,
+    ) -> Result<Self, String> {
+        if (!intervals.is_empty() && (intervals[0].0 != 0 || intervals.last().unwrap().1 != len))
+            || intervals
+                .iter()
+                .any(|(a, b, plist)| a >= b || *b > len || plist.len() % 2 != 0)
+            || intervals.windows(2).any(|pair| pair[0].1 != pair[1].0)
+        {
+            return Err("Invalid dumped text-property intervals".into());
+        }
+        let mut props = Self {
+            flat: Vec::new(),
+            intervals: intervals.into(),
+            len,
+        };
+        props.rebuild_flat();
+        Ok(props)
+    }
+
     pub(crate) fn new() -> Self {
         Self {
             flat: Vec::new(),

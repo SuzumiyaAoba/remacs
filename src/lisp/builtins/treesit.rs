@@ -103,6 +103,10 @@ pub struct TsState {
 }
 
 impl TsState {
+    pub(crate) fn has_dump_resources(&self) -> bool {
+        !self.parsers.is_empty() || !self.nodes.is_empty() || !self.queries.is_empty()
+    }
+
     pub fn new() -> Self {
         TsState {
             next_id: 1,

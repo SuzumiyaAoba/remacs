@@ -360,9 +360,20 @@ fn style_colors(st: crate::term::CellStyle) -> (Hsla, Option<Hsla>) {
 /// Returns the event sender (UI → logic) and the grid receiver
 /// (logic → UI). Exposed separately from `run_gui` so tests can
 /// drive the whole loop headlessly.
+#[cfg(test)]
 fn start_logic(
     files: Vec<String>,
 ) -> io::Result<(Sender<GuiEvent>, smol::channel::Receiver<Grid>)> {
+    start_logic_with_dump(files, None, Vec::new())
+}
+
+fn start_logic_with_dump(
+    files: Vec<String>,
+    dump_file: Option<String>,
+    arguments: Vec<String>,
+) -> io::Result<(Sender<GuiEvent>, smol::channel::Receiver<Grid>)> {
+    let wait_for_dump = dump_file.is_some();
+    let (startup_tx, startup_rx) = mpsc::channel::<Result<(), String>>();
     let (event_tx, event_rx) = mpsc::channel::<GuiEvent>();
     let (grid_tx, grid_rx) = smol::channel::bounded::<Grid>(1);
     std::thread::Builder::new()
@@ -371,7 +382,23 @@ fn start_logic(
         // thread stack (see main.rs's headless worker).
         .stack_size(512 * 1024 * 1024)
         .spawn(move || {
-            let mut i = Interp::new();
+            let mut i = match dump_file {
+                None => Interp::new(),
+                Some(path) => match crate::lisp::dump::load_with_arguments(
+                    std::path::Path::new(&path),
+                    Some(&arguments),
+                ) {
+                    Ok(interpreter) => interpreter,
+                    Err(crate::lisp::dump::LoadError::Exit(code)) => {
+                        std::process::exit(code as i32)
+                    }
+                    Err(error) => {
+                        let _ = startup_tx.send(Err(error.to_string()));
+                        return;
+                    }
+                },
+            };
+            let _ = startup_tx.send(Ok(()));
             for f in &files {
                 let form = format!("(find-file {:?})", f);
                 let _ = i.eval_str(&form);
@@ -388,13 +415,31 @@ fn start_logic(
             // grid_tx drops here → the UI pump below quits the app.
         })
         .map_err(io::Error::other)?;
+    if wait_for_dump {
+        startup_rx
+            .recv()
+            .map_err(io::Error::other)?
+            .map_err(io::Error::other)?;
+    }
     Ok((event_tx, grid_rx))
 }
 
 /// Launch the gpui front-end. `files` are visited via `find-file`
 /// once the evaluator boots on the logic thread.
 pub fn run_gui(files: &[String]) -> io::Result<()> {
-    let (event_tx, grid_rx) = start_logic(files.to_vec())?;
+    run_gui_with_dump(files, None, &[])
+}
+
+pub fn run_gui_with_dump(
+    files: &[String],
+    dump_file: Option<&str>,
+    arguments: &[String],
+) -> io::Result<()> {
+    let (event_tx, grid_rx) = start_logic_with_dump(
+        files.to_vec(),
+        dump_file.map(str::to_owned),
+        arguments.to_vec(),
+    )?;
 
     Application::new().run(move |cx: &mut App| {
         cx.on_window_closed(|cx| {
@@ -719,6 +764,26 @@ mod tests {
             }
         }
         panic!("logic thread did not exit after C-x C-c");
+    }
+
+    #[test]
+    fn missing_dump_fails_before_ui_startup() {
+        let path = std::env::temp_dir().join(format!(
+            "remacs-missing-image-{}-{}.pdmp",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        assert!(
+            super::start_logic_with_dump(
+                Vec::new(),
+                Some(path.to_string_lossy().into_owned()),
+                Vec::new()
+            )
+            .is_err()
+        );
     }
 
     /// A scripted editing session over `ChanIo` — same key codes as the

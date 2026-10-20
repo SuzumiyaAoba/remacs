@@ -107,6 +107,18 @@ pub(crate) fn collect() -> Vec<&'static Subr> {
     v
 }
 
+/// Stable within one executable fingerprint, including private macro subrs.
+pub(crate) fn dump_subrs() -> Vec<&'static Subr> {
+    let mut subrs = collect();
+    subrs.extend(SPECIAL_FORM_SUBRS);
+    subrs.extend(backquote::dump_macro_subrs());
+    subrs.extend(crate::editor::SUBRS);
+    subrs.extend(crate::editor::winxtra::SUBRS);
+    subrs.extend(crate::buffer::primitives::SUBRS);
+    subrs.extend(crate::buffer::extra::SUBRS);
+    subrs
+}
+
 /// Intern every subr name and bind its function cell.
 pub fn install(interp: &mut Interp) {
     let _t = std::env::var_os("REMACS_BOOT_PROF")

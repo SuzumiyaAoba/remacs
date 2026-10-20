@@ -66,6 +66,20 @@ fn real_main(args: Vec<String>) {
         println!("remacs 0.1 (Emacs-compatible editor in Rust)");
         return;
     }
+    let (args, dump_file) = match cli::dump_file(&args) {
+        Ok(values) => values,
+        Err(error) => {
+            eprintln!("remacs: {error}");
+            std::process::exit(255);
+        }
+    };
+    let dump_file = dump_file.or_else(|| {
+        std::env::current_exe()
+            .ok()
+            .map(|p| p.with_extension("pdmp"))
+            .filter(|p| p.is_file())
+            .map(|p| p.to_string_lossy().into_owned())
+    });
 
     // GUI dispatch BEFORE `Interp::new': run_gui spawns its own
     // interpreter on the logic thread, so building one here would be
@@ -94,7 +108,7 @@ fn real_main(args: Vec<String>) {
                 cli::Argument::Option { .. } => None,
             })
             .collect();
-        return match remacs::gui::run_gui(&files) {
+        return match remacs::gui::run_gui_with_dump(&files, dump_file.as_deref(), &args) {
             Ok(()) => {}
             Err(e) => {
                 eprintln!("remacs: gui error: {}", e);
@@ -103,7 +117,20 @@ fn real_main(args: Vec<String>) {
         };
     }
 
-    let mut i = Interp::new();
+    let mut i = match dump_file {
+        None => Interp::new(),
+        Some(path) => {
+            match remacs::lisp::dump::load_with_arguments(std::path::Path::new(&path), Some(&args))
+            {
+                Ok(interpreter) => interpreter,
+                Err(remacs::lisp::dump::LoadError::Exit(code)) => std::process::exit(code as i32),
+                Err(error) => {
+                    eprintln!("remacs: {error}");
+                    std::process::exit(255);
+                }
+            }
+        }
+    };
 
     // `command-line-args'/`invocation-name'/`invocation-directory' are
     // seeded in Interp::new (GNU init_cmdargs placement).

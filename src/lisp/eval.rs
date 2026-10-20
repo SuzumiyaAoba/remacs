@@ -661,6 +661,7 @@ pub struct Interp {
     /// CPU-time profiler running state.
     pub cpu_profiler: bool,
     pub(crate) profiling: super::profiler::State,
+    pub(crate) loaded_dump: Option<super::dump::LoadedDump>,
     /// The sole terminal object (`terminal-list', `frame-terminal'):
     /// a lazily-created record `#s(terminal 0 "initial_terminal")'.
     pub terminal: Option<Value>,
@@ -1176,6 +1177,7 @@ impl Interp {
             last_error_stack: std::cell::RefCell::new(Vec::new()),
             cpu_profiler: false,
             profiling: Default::default(),
+            loaded_dump: None,
             terminal: None,
             terminal_params: Vec::new(),
             x_display_attempted: false,
@@ -4953,6 +4955,85 @@ command-line arguments.\" \
     }
 
     // ---------- symbol helpers ----------
+
+    pub(crate) fn reset_dump_execution(&mut self) {
+        self.specbind.clear();
+        self.lexenv = None;
+        self.eval_depth = 0;
+        self.explicit_eval_depth = 0;
+        self.quit_flag = false;
+        self.catch_tags.clear();
+        self.command_args.clear();
+        self.interactive_call_depth = 0;
+        self.defining_symbol = None;
+        self.recursion_depth = 0;
+        self.executing_kbd_macro = false;
+        self.last_error = None;
+        self.output_buffer.clear();
+        self.capture_output = false;
+        self.pending_insert_behind.clear();
+        self.pending_insert_front.clear();
+        self.pending_overlay_hooks.clear();
+        self.combine_after_change_list.clear();
+        self.combine_after_change_buffer = None;
+        self.loading_dumped = false;
+        self.loads_in_progress.clear();
+        self.load_stream = None;
+        self.load_stream_symbol = None;
+        self.dumped_call_depth = 0;
+        self.macroexp_call_depth = 0;
+        self.current_lambda_dumped = false;
+        self.compiled_macro_expansion = false;
+        self.reading_elc = false;
+        self.boot_loading = false;
+        self.loading_compiled_library = false;
+        self.bc_depth = 0;
+        self.expand_unadvised_depth = 0;
+        self.macro_cache.clear();
+        self.macro_gen = self.macro_gen.wrapping_add(1);
+        *self.macroexpand_all_cache.borrow_mut() = (self.macro_gen, HashMap::default());
+        self.overlay_handles.clear();
+        self.overlay_cleanup_at = 0;
+        self.frame_state_seen = None;
+        self.stderr_need_newline = false;
+        self.out_last_char = None;
+        self.quit_editor = false;
+        self.minibuf_level = 0;
+        self.minibuf_cll.clear();
+        self.minibuf_prompts.clear();
+        self.minibuf_catching_exit = false;
+        self.minibuf_exited = false;
+        self.minibuf_pending_flow = None;
+        self.minibuf_exit_fn = None;
+        self.macro_replay.clear();
+        self.macro_replaying = false;
+        self.macro_pending_flow = None;
+        self.macro_strict = false;
+        self.handler_bindings.clear();
+        self.case_handlers.clear();
+        self.current_thread = 0;
+        self.threads.truncate(1);
+        self.lisp_stack.clear();
+        self.last_error_stack.borrow_mut().clear();
+        self.cur_head_form = Value::Nil;
+        self.memory_profiler = false;
+        self.cpu_profiler = false;
+        self.profiling = Default::default();
+        self.subr_prof.clear();
+        self.x_display_attempted = false;
+    }
+
+    pub(crate) fn reset_dump_arguments(&mut self, arguments: &[String]) {
+        let executable = std::env::args().next().unwrap_or_else(|| "remacs".into());
+        let mut values = vec![Value::string(executable)];
+        values.extend(arguments.iter().cloned().map(Value::string));
+        let full = Value::list(values);
+        let left = Value::list(arguments.iter().cloned().map(Value::string).collect());
+        let id = self.intern("command-line-args");
+        self.obarray.symbol_mut(id).value = full;
+        let id = self.intern("command-line-args-left");
+        self.obarray.symbol_mut(id).value = left;
+    }
 
     pub fn intern(&mut self, name: &str) -> SymId {
         self.obarray.intern(name)

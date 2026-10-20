@@ -82,6 +82,10 @@ pub struct FnState {
 }
 
 impl FnState {
+    pub(crate) fn has_dump_resources(&self) -> bool {
+        !self.watches.is_empty()
+    }
+
     pub fn new() -> Self {
         FnState {
             watches: Vec::new(),

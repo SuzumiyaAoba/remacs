@@ -1035,6 +1035,54 @@ losing weight. The inactive path only checks the running flags.
 Regression coverage: `tests/qa_profiler.el` (lifecycle, samples, bounded
 logs, all three report modes) and the profiler log weight-conservation test.
 
+## Portable images (`src/lisp/dump/`)
+
+`dump-emacs-portable` writes a real Remacs image; `--dump-file FILE`
+or `--dump-file=FILE` restores it before command-line actions. Without an
+explicit option, the front ends load an existing executable-side `.pdmp`
+twin. The format is Remacs-specific, with a version, executable SHA-256
+fingerprint, compressed JSON object graph, payload length/checksum, and an
+incomplete-file marker committed only after writing succeeds. GNU's binary
+`.pdmp` files are not interchangeable with these images.
+
+The flat graph stores object ids rather than process pointers. It preserves
+cycles, cons/string/vector/record/float identities, shared lexical frames,
+closure/byte-code metadata, symbol cells and obarray membership, hash-table
+keys, string representations and properties. Static primitives use a
+fingerprinted ordinal/name registry, including private macro subrs. Hashes
+are rebuilt after referents and char-table side tables have been restored.
+Core symbol ids remain fixed; ordinary, uninterned, and custom-obarray
+symbols are rebased separately. String data stores Emacs characters rather
+than thread-local proxies for non-Unicode characters.
+
+Session data includes shared buffer text, gap state, ticks, narrowing,
+locals, markers, indirect buffers, detached overlays, frame/window trees,
+history, parameters, and persistent Rust-side metadata (faces, charset and
+coding definitions, advice, watchers, char-table relations, etc.). Execution
+stacks and derived caches are reset. Process-specific startup variables,
+environment, command line and standard I/O come from the new process;
+embedded source-cache paths are relocated. `after-pdump-load-hook` runs
+after restoration and can inspect the new load statistics.
+
+An undumped session's `pdumper-stats` is nil, as GNU specifies. Only a
+successful image load sets the real absolute filename and measured restore
+time; saving an image does not change this session's provenance. The initial
+loader boots a fresh interpreter before restoring the graph, so its time
+includes that reconstruction rather than claiming a memory-mapping speedup.
+Rc cycle retention follows the allocator's existing limitations.
+
+Dumping rejects attached overlays and user-defined hash tests like GNU.
+Active processes, non-main thread objects, tree-sitter/SQLite handles,
+file-notify/D-Bus resources and dynamic native compilation units cannot be
+ported across processes by this backend and are rejected. File locks and
+other OS-owned state are not transferred. Add newly introduced persistent
+fields to the runtime/session codec or explicitly reset/reject them;
+silently omitting state is not an acceptable image format change.
+
+Regression coverage: dump graph/session unit tests, `tests/portable_dump.rs`
+(fresh copied executables, separate caches, corruption and startup metadata),
+and `tests/qa_pdumper.el` (GNU-verified errors and dump output).
+
 ## Verification recipe
 
 ```sh

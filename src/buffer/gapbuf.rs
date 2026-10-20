@@ -26,6 +26,29 @@ pub struct GapBuffer {
 const GAP_INIT: usize = 20;
 
 impl GapBuffer {
+    fn from_dump(text: &str, gap: (usize, usize, u64)) -> Result<Self, String> {
+        let chars: Vec<_> = text.chars().collect();
+        if gap.0 > chars.len() {
+            return Err("Invalid dumped gap position".into());
+        }
+        let total = chars
+            .len()
+            .checked_add(gap.1)
+            .ok_or("Dumped gap size overflow")?;
+        let mut buf = Vec::new();
+        buf.try_reserve_exact(total)
+            .map_err(|_| "Cannot allocate dumped buffer gap")?;
+        buf.extend_from_slice(&chars[..gap.0]);
+        buf.resize(gap.0 + gap.1, '\0');
+        buf.extend_from_slice(&chars[gap.0..]);
+        Ok(Self {
+            buf,
+            gap_start: gap.0,
+            gap_end: gap.0 + gap.1,
+            mod_count: gap.2,
+            lines: RefCell::new(None),
+        })
+    }
     pub fn new() -> Self {
         GapBuffer {
             buf: vec![0 as char; GAP_INIT],
@@ -267,6 +290,37 @@ pub struct SharedText {
 }
 
 impl SharedText {
+    pub(crate) fn dump_identity(&self) -> usize {
+        Rc::as_ptr(&self.inner) as usize
+    }
+
+    pub(crate) fn dump_gap(&self) -> (usize, usize, u64) {
+        let inner = self.inner.borrow();
+        (
+            inner.gap_start,
+            inner.gap_end - inner.gap_start,
+            inner.mod_count,
+        )
+    }
+
+    pub(crate) fn from_dump(
+        text: &str,
+        intervals: Vec<(usize, usize, Vec<crate::lisp::Value>)>,
+        ticks: [u64; 3],
+        had_intervals: bool,
+        gap: (usize, usize, u64),
+    ) -> Result<Self, String> {
+        let shared = Self::new();
+        *shared.inner.borrow_mut() = GapBuffer::from_dump(text, gap)?;
+        *shared.props.borrow_mut() =
+            crate::buffer::textprops::TextProperties::from_dump(text.chars().count(), intervals)?;
+        shared.mod_tick.set(ticks[0]);
+        shared.chars_mod_tick.set(ticks[1]);
+        shared.save_tick.set(ticks[2]);
+        shared.had_intervals.set(had_intervals);
+        Ok(shared)
+    }
+
     pub fn new() -> Self {
         SharedText {
             inner: Rc::new(RefCell::new(GapBuffer::new())),

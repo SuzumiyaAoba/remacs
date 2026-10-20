@@ -373,6 +373,67 @@ impl Obarray {
             .collect()
     }
 
+    pub(crate) fn is_core_symbol(&self, id: SymId) -> bool {
+        (id as usize) < CORE_SYMBOLS.len()
+    }
+
+    pub(crate) fn dump_counters(&self) -> (u64, u64) {
+        (self.gensym_counter, self.gensym_n)
+    }
+
+    pub(crate) fn is_initial_symbol(&self, id: SymId) -> bool {
+        self.map.get(&self.symbols[id as usize].name) == Some(&id)
+    }
+
+    pub(crate) fn prepare_dump_core(&mut self, id: SymId, uninterned: bool) -> Result<(), String> {
+        if !self.is_core_symbol(id) {
+            return Err("Invalid core symbol id".into());
+        }
+        if uninterned {
+            let name = self.symbols[id as usize].name.clone();
+            if self.map.get(&name) == Some(&id) {
+                self.map.remove(&name);
+            }
+            self.symbols[id as usize].uninterned = true;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn restore_dump_membership(
+        &mut self,
+        interned: &[SymId],
+        retained: &[SymId],
+        counters: (u64, u64),
+    ) -> Result<(), String> {
+        let mut map = HashMap::default();
+        for id in interned {
+            let symbol = self
+                .symbols
+                .get(*id as usize)
+                .ok_or("Invalid dumped interned symbol")?;
+            if symbol.uninterned || map.insert(symbol.name.clone(), *id).is_some() {
+                return Err("Invalid dumped symbol membership".into());
+            }
+        }
+        let members: std::collections::HashSet<_> = interned.iter().copied().collect();
+        let retained: std::collections::HashSet<_> = retained.iter().copied().collect();
+        for (id, symbol) in self.symbols.iter_mut().enumerate() {
+            if !retained.contains(&(id as SymId)) {
+                symbol.uninterned = true;
+            }
+        }
+        // Uninterned lookup keys are private unique bookkeeping, not names.
+        for (name, id) in &self.map {
+            if !members.contains(id) && name.starts_with("#uninterned#") {
+                map.insert(name.clone(), *id);
+            }
+        }
+        self.map = map;
+        self.gensym_counter = self.gensym_counter.max(counters.0);
+        self.gensym_n = counters.1;
+        Ok(())
+    }
+
     pub fn len(&self) -> usize {
         self.symbols.len()
     }

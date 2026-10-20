@@ -52,11 +52,12 @@ impl<'a> Iterator for Arguments<'a> {
             }
             match name {
                 "--eval" | "--execute" | "--load" | "-l" | "--script" | "--ieval" | "-f"
-                | "--funcall" => {
+                | "--funcall" | "--dump-file" => {
                     // Keep a missing operand as an option, for the existing
                     // command handler's missing-argument behavior.
                     self.index += usize::from(self.index < self.args.len());
                 }
+                _ if name.starts_with("--dump-file=") => {}
                 "--batch" | "-batch" | "-Q" | "--quick" | "-q" | "--no-init"
                 | "-no-x-resources" | "--no-x-resources" | "-nw" | "--no-window-system"
                 | "--version" => {}
@@ -75,6 +76,36 @@ pub fn options(args: &[String]) -> impl Iterator<Item = &str> {
         Argument::Option { name, .. } => Some(name),
         Argument::File(_) => None,
     })
+}
+
+/// Initial image options are consumed before Lisp command-line actions.
+/// Operands and filenames following `--' retain their ordinary meaning.
+pub fn dump_file(args: &[String]) -> Result<(Vec<String>, Option<String>), String> {
+    let mut removed = std::collections::HashSet::new();
+    let mut image = None;
+    for argument in arguments(args) {
+        if let Argument::Option { index, name } = argument {
+            if name == "--dump-file" {
+                let value = args
+                    .get(index + 1)
+                    .ok_or("Option --dump-file requires an argument")?;
+                image = Some(value.clone());
+                removed.insert(index);
+                removed.insert(index + 1);
+            } else if let Some(value) = name.strip_prefix("--dump-file=") {
+                image = Some(value.to_owned());
+                removed.insert(index);
+            }
+        }
+    }
+    Ok((
+        args.iter()
+            .enumerate()
+            .filter(|(index, _)| !removed.contains(index))
+            .map(|(_, arg)| arg.clone())
+            .collect(),
+        image,
+    ))
 }
 
 #[cfg(test)]
@@ -116,6 +147,7 @@ mod tests {
             "--ieval",
             "-f",
             "--funcall",
+            "--dump-file",
         ] {
             for operand in ["--", "--batch", "--script", "--version", "-nw", "--eval"] {
                 let args = strings(&[option, operand, "file", "--batch", "--", "--version"]);
@@ -165,6 +197,43 @@ mod tests {
         assert_eq!(options(&args).collect::<Vec<_>>(), vec!["--batch"]);
         let args = strings(&["--eval"]);
         assert_eq!(options(&args).collect::<Vec<_>>(), vec!["--eval"]);
+    }
+
+    #[test]
+    fn dump_options_are_initial_options_with_ordinary_operand_boundaries() {
+        let args = strings(&[
+            "--dump-file",
+            "first",
+            "--eval",
+            "--dump-file=operand",
+            "--dump-file=second",
+            "--",
+            "--dump-file",
+            "literal",
+        ]);
+        assert_eq!(
+            dump_file(&args).unwrap(),
+            (
+                strings(&[
+                    "--eval",
+                    "--dump-file=operand",
+                    "--",
+                    "--dump-file",
+                    "literal"
+                ]),
+                Some("second".into())
+            )
+        );
+        let args = strings(&["--dump-file", "--batch", "--eval", "x"]);
+        assert_eq!(
+            options(&args).collect::<Vec<_>>(),
+            vec!["--dump-file", "--eval"]
+        );
+        assert_eq!(
+            dump_file(&args).unwrap(),
+            (strings(&["--eval", "x"]), Some("--batch".into()))
+        );
+        assert!(dump_file(&strings(&["--dump-file"])).is_err());
     }
     #[test]
     fn consumed_function_operands_do_not_become_files_or_separators() {

@@ -1384,7 +1384,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("internal-stack-stats", 0, 0, f_nil, ""),
-    S!("pdumper-stats", 0, 0, f_pdumper_stats, ""),
+    S!("pdumper-stats", 0, 0, crate::lisp::dump::stats, ""),
     S!("profiler-cpu-running-p", 0, 0, f_profiler_cpu_running_p, ""),
     S!(
         "move-to-window-line",
@@ -1566,7 +1566,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "dump-emacs-portable",
         1,
         2,
-        f_dump_emacs_portable,
+        crate::lisp::dump::save,
         "Dump a portable Emacs image."
     ),
     S!(
@@ -3555,52 +3555,6 @@ fn f_t(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_nil(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::Nil)
-}
-
-fn f_dump_emacs_portable(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU pdumper.c
-    // Fdump_emacs_portable: CHECK_STRING, expand-file-name, then
-    // emacs_open(O_RDWR|O_CREAT|O_TRUNC) — EACCES → permission-denied,
-    // ENOENT → file-missing — and *then* object dumping begins; any live
-    // overlay aborts with "dumping overlays is not yet implemented".
-    let name = want_string(i, &a[0])?;
-    let path = crate::editor::expand_file_name_str(i, &name);
-    use std::os::unix::fs::OpenOptionsExt;
-    let fd = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o666)
-        .open(&path);
-    let file = match fd {
-        Ok(f) => f,
-        Err(e) => {
-            let s = match e.kind() {
-                std::io::ErrorKind::NotFound => sym::FILE_MISSING,
-                std::io::ErrorKind::PermissionDenied => i.intern("permission-denied"),
-                _ => sym::FILE_ERROR,
-            };
-            return Err(i.signal_data(
-                s,
-                vec![
-                    Value::string("Opening dump output"),
-                    Value::string(crate::editor::file_error_string(&e)),
-                    Value::string(path),
-                ],
-            ));
-        }
-    };
-    drop(file);
-    for id in i.buffers.list() {
-        if let Some(b) = i.buffers.get(id) {
-            let bb = b.borrow();
-            if bb.overlays.iter().any(|o| o.buffer.is_some()) {
-                return Err(i.error("dumping overlays is not yet implemented"));
-            }
-        }
-    }
     Ok(Value::Nil)
 }
 
@@ -17455,15 +17409,6 @@ fn f_put_image(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     let pos = a[1].clone();
     crate::editor::f_make_overlay(i, vec![pos.clone(), pos, Value::Nil].into())
-}
-
-/// `pdumper-stats` — GNU returns an alist; we were never dumped.
-fn f_pdumper_stats(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::list(vec![
-        Value::cons(Value::Sym(i.intern("dumped-with-pdumper")), Value::Nil),
-        Value::cons(Value::Sym(i.intern("load-time")), Value::float(0.0)),
-        Value::cons(Value::Sym(i.intern("dump-file-name")), Value::Nil),
-    ]))
 }
 
 /// `set-file-acl` — best-effort like GNU: validate strings, no ACL

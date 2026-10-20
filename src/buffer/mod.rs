@@ -1007,6 +1007,67 @@ pub struct BufferSet {
 }
 
 impl BufferSet {
+    pub(crate) fn dump_registry(&self) -> (Vec<Option<BufferRef>>, Vec<usize>, u64, SymId, bool) {
+        (
+            self.bufs.clone(),
+            self.order.clone(),
+            self.counter,
+            self.undo_sym,
+            self.undo_inhibit.get(),
+        )
+    }
+
+    pub(crate) fn prepare_dump_slots(names: &[Option<String>]) -> Self {
+        let mut set = Self::new();
+        for (id, name) in names.iter().enumerate() {
+            let buffer = name.as_ref().map(|name| {
+                let buffer = crate::lisp::memory::allocate(
+                    Buffer::new(id, name.clone(), 0, set.undo_inhibit.clone()),
+                    Value::Buffer,
+                );
+                buffer.borrow().text.add_viewer(&buffer);
+                buffer
+            });
+            set.bufs.push(buffer);
+        }
+        set
+    }
+
+    pub(crate) fn finish_dump_registry(
+        &mut self,
+        order: Vec<usize>,
+        counter: u64,
+        undo_sym: SymId,
+        undo_inhibit: bool,
+    ) -> Result<(), String> {
+        let mut names = HashMap::default();
+        for (id, buffer) in self.bufs.iter().enumerate() {
+            if let Some(buffer) = buffer {
+                let mut buffer = buffer.borrow_mut();
+                if buffer.id != id {
+                    return Err("Invalid dumped buffer id".into());
+                }
+                buffer.undo_sym = undo_sym;
+                buffer.undo_inhibit = self.undo_inhibit.clone();
+                if buffer.live && names.insert(buffer.name.clone(), id).is_some() {
+                    return Err("Duplicate live buffer names in dump".into());
+                }
+            }
+        }
+        if order
+            .iter()
+            .any(|id| self.get(*id).is_none_or(|b| !b.borrow().live))
+        {
+            return Err("Invalid dumped buffer order".into());
+        }
+        self.name_map = names;
+        self.order = order;
+        self.counter = counter;
+        self.undo_sym = undo_sym;
+        self.undo_inhibit.set(undo_inhibit);
+        Ok(())
+    }
+
     pub fn new() -> Self {
         BufferSet {
             bufs: Vec::new(),

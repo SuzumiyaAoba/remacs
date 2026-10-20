@@ -487,6 +487,10 @@ static BQ_LISTSTAR_MACRO: Subr = S!(
     "Like `list' but the last argument is the tail of the new list.\n\nFor example (backquote-list* 'a 'b 'c) => (a b . c)"
 );
 
+pub(super) fn dump_macro_subrs() -> [&'static Subr; 2] {
+    [&BQ_MACRO, &BQ_LISTSTAR_MACRO]
+}
+
 pub(crate) static SUBRS: &[Subr] = &[
     S!(
         "backquote-process",

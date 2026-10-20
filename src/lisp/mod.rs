@@ -11,6 +11,7 @@ pub(crate) mod ctdata;
 pub mod dynlib;
 mod embedded_cache;
 pub mod error;
+pub mod dump;
 pub mod eval;
 pub mod load;
 pub(crate) mod memory;

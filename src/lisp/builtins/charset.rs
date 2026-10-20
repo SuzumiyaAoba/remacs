@@ -3163,6 +3163,7 @@ fn charset_decode_at(i: &Interp, name: &str, code: i64, depth: u8) -> Option<i64
 /// (LO,HI,BASE) maps codes LO..=HI to chars BASE..=BASE+(HI-LO).
 /// `dec' is sorted by LO for decode lookup, `enc' by char BASE for
 /// encode lookup.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct CharsetTable {
     dec: Vec<(i64, i64, i64)>,
     enc: Vec<(i64, i64, i64)>,

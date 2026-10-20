@@ -212,6 +212,7 @@ qa!(qa_misc3, "qa_misc3.el");
 qa!(qa_miscfn, "qa_miscfn.el");
 qa!(qa_memory_statistics, "qa_memory_statistics.el");
 qa!(qa_profiler, "qa_profiler.el");
+qa!(qa_pdumper, "qa_pdumper.el");
 qa!(qa_misc_differences, "qa_misc_differences.el");
 qa!(qa_modes, "qa_modes.el");
 qa!(qa_narrow, "qa_narrow.el");

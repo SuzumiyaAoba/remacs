@@ -153,6 +153,21 @@ pub(crate) fn next_use_time() -> u64 {
     USE_TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
 }
 
+pub(crate) fn reserve_dump_ids(window: usize, frame: usize, use_time: u64) {
+    NEXT_ID.fetch_max(
+        window.saturating_add(1),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    NEXT_FRAME_ID.fetch_max(
+        frame.saturating_add(1),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    USE_TICK.fetch_max(
+        use_time.saturating_add(1),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
 impl Window {
     pub fn new(buffer: usize) -> WindowRef {
         crate::lisp::memory::allocate(
