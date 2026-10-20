@@ -400,6 +400,24 @@ pcase, cl-loop, load and CLI suites.
 - `PRELUDE_MAX` env var truncates prelude evaluation for bisection;
   `--ieval` bisects a form interactively; `WHILE_WATCH` traces eval loops.
 
+## Kill-ring selection and paste
+
+`current-kill` follows GNU simple.el: compute the yank index from the
+length of `kill-ring-yank-pointer`, not by finding an identical tail.
+Use the ordinary numeric/sequence primitives so malformed pointers and
+float arguments retain GNU's validation order. Return the selected car
+itself, preserving string identity, representation, and properties.
+
+For N=0, consult `interprogram-paste-function` before checking for an
+empty ring. Import a reversed copy of list results through `kill-new`,
+with paste/cut callbacks dynamically disabled during import. Positive
+rotation notifies the cut function only when selection changes are
+enabled and DO-NOT-MOVE is nil. `push_kill_ring_value` keeps supplied
+string objects and the old ring tail. `yank` delegates selection to
+`current-kill` and insertion to `insert-for-yank`; cons prefixes swap
+point/mark without activating the region. Regressions: `qa_current_kill`
+and `tui_yank_imports_external_text_and_preserves_properties`.
+
 ## Case conversion and symbol names
 
 GNU casefiddle has distinct string paths: nonempty unibyte strings use

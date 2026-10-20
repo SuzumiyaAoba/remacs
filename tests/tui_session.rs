@@ -148,6 +148,24 @@ fn tui_session_find_file_mx_switch_save_quit() {
     })
 }
 
+#[test]
+fn tui_yank_imports_external_text_and_preserves_properties() {
+    run_on_big_stack(|| {
+        let mut i = Interp::new();
+        i.eval_str("(setq kill-ring nil kill-ring-yank-pointer nil interprogram-cut-function nil qa129-pastes 0 interprogram-paste-function (lambda () (setq qa129-pastes (1+ qa129-pastes)) (propertize \"PASTE\" 'qa129-tag 7)))").unwrap();
+        let echoes = run(vec![25, C_X, 3], &mut i); // C-y, C-x C-c
+        let result = i.eval_str("(and (equal (buffer-string) \"PASTE\") (= (get-text-property 1 'qa129-tag) 7) (= qa129-pastes 1) (eq kill-ring-yank-pointer kill-ring))").unwrap();
+        assert!(!result.is_nil(), "{}", i.prin1_to_string(&result));
+        assert!(i.quit_editor);
+        assert!(
+            !echoes
+                .borrow()
+                .iter()
+                .any(|text| text.contains("Kill ring is empty"))
+        );
+    });
+}
+
 /// TAB in the find-file minibuffer runs `minibuffer-complete' through
 /// the filename completion keymap (RET afterwards still exits).
 #[test]
@@ -535,7 +553,11 @@ fn tui_face_text_props_and_region_paint() {
         assert!(c0.underline, "prop face underline: {c0:?}");
         assert!(!grid.attrs[0][2].underline);
         // Overlay 'face '(bold).
-        assert!(grid.attrs[0][3].bold, "overlay face: {:?}", grid.attrs[0][3]);
+        assert!(
+            grid.attrs[0][3].bold,
+            "overlay face: {:?}",
+            grid.attrs[0][3]
+        );
         assert!(grid.attrs[0][4].bold);
         assert!(!grid.attrs[0][5].bold);
         // Active region mark(7)→point(2) covers cols 1..6: bg gray.

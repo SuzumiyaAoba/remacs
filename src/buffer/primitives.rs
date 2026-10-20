@@ -7703,21 +7703,34 @@ pub(crate) fn interprogram_cut(i: &mut Interp, text: Value) -> EvalResult {
 /// `kill-append' when `last-command' is `kill-region'; the obsolete
 /// `append-next-kill' command arranges the same via `last-command').
 pub(crate) fn push_kill_ring(i: &mut Interp, s: String) -> EvalResult {
+    push_kill_ring_value(i, Value::string(s))
+}
+
+/// Preserve a supplied kill string's properties, representation and identity.
+pub(crate) fn push_kill_ring_value(i: &mut Interp, text: Value) -> EvalResult {
     let kr = i.intern("kill-ring");
-    let cur = i.symbol_value(kr);
-    let mut items = cur.list_to_vec().unwrap_or_default();
-    items.insert(0, Value::string(s.clone()));
-    let max = i
+    let old = i.symbol_value(kr);
+    let mut ring = Value::cons(text.clone(), old);
+    let maximum = i
         .symbol_value(i.intern_soft("kill-ring-max").unwrap_or(0))
         .int()
-        .unwrap_or(120) as usize;
-    items.truncate(max);
-    i.obarray.symbol_mut(kr).value = Value::list(items);
-    // GNU resets the yank pointer to the ring head on each kill.
-    let ring = i.symbol_value(kr);
-    let ptr = i.intern("kill-ring-yank-pointer");
-    let _ = i.set_symbol(ptr, ring);
-    interprogram_cut(i, Value::string(s))
+        .unwrap_or(120);
+    if maximum == 0 {
+        ring = Value::Nil;
+    } else if maximum > 0 {
+        let mut tail = ring.clone();
+        for _ in 1..maximum {
+            let Value::Cons(cell) = tail else { break };
+            tail = cell.borrow().cdr.clone();
+        }
+        if let Value::Cons(cell) = tail {
+            cell.borrow_mut().cdr = Value::Nil;
+        }
+    }
+    i.set_symbol(kr, ring)?;
+    let pointer = i.intern("kill-ring-yank-pointer");
+    i.set_symbol(pointer, i.symbol_value(kr))?;
+    interprogram_cut(i, text)
 }
 fn f_append_next_kill(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU arranges the merge entirely through `this-command'/

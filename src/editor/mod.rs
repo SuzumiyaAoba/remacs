@@ -9724,8 +9724,8 @@ fn f_kill_new(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // strings pass; non-string SEQUENCES (nil, conses, vectors,
     // char-tables, bool-vectors) signal stringp; non-sequences (numbers,
     // symbols) signal sequencep — verified empirically on GNU 31.1.
-    let s = match &a[0] {
-        Value::Str(_) => want_str(i, &a[0])?,
+    match &a[0] {
+        Value::Str(_) => {}
         Value::Nil | Value::Cons(_) | Value::Vec(_) => {
             return Err(i.wrong_type_mut("stringp", &a[0]));
         }
@@ -9738,7 +9738,8 @@ fn f_kill_new(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             return Err(i.wrong_type_mut("sequencep", &a[0]));
         }
         other => return Err(i.wrong_type_mut("sequencep", other)),
-    };
+    }
+    let text = a[0].clone();
     let replace = !arg(&a, 1).is_nil();
     if replace {
         // REPLACE non-nil: overwrite the newest entry instead of pushing.
@@ -9746,22 +9747,21 @@ fn f_kill_new(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let cur = i.symbol_value(kr);
         let mut items = cur.list_to_vec().unwrap_or_default();
         if items.is_empty() {
-            items.insert(0, Value::string(s.clone()));
+            items.insert(0, text.clone());
         } else {
-            items[0] = Value::string(s.clone());
+            items[0] = text.clone();
         }
         i.obarray.symbol_mut(kr).value = Value::list(items);
         let ring = i.symbol_value(kr);
         let ptr = i.intern("kill-ring-yank-pointer");
         let _ = i.set_symbol(ptr, ring);
         // GNU: `(if interprogram-cut-function (funcall ... string))'.
-        crate::buffer::primitives::interprogram_cut(i, Value::string(s))?;
+        crate::buffer::primitives::interprogram_cut(i, text)?;
     } else {
-        crate::buffer::primitives::push_kill_ring(i, s)?;
+        crate::buffer::primitives::push_kill_ring_value(i, text)?;
     }
     Ok(Value::Nil)
 }
-
 fn f_kill_append(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU's kill-append is Lisp: it feeds `(concat cur STRING)' to
     // kill-new — so STRING is any sequence (sequencep), not just strings.
@@ -9799,54 +9799,74 @@ fn f_kill_append(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Nil)
 }
 
-/// Position of `kill-ring-yank-pointer' inside `kill-ring': the pointer
-/// is a tail cons of the ring (as in GNU), located by identity.
-fn yank_ptr_pos(i: &Interp, ring: &Value, len: usize) -> usize {
-    let ptr = i.symbol_value(i.intern_soft("kill-ring-yank-pointer").unwrap_or(0));
-    if !matches!(ptr, Value::Cons(_)) {
-        return 0;
-    }
-    let mut tail = ring.clone();
-    for idx in 0..len {
-        if eq_values(&tail, &ptr) {
-            return idx;
-        }
-        tail = nthcdr_of(&tail, 1);
-        if !matches!(tail, Value::Cons(_)) {
-            break;
-        }
-    }
-    0
-}
-
-/// Move `kill-ring-yank-pointer' to the tail at `pos'.
-fn set_yank_ptr(i: &mut Interp, ring: &Value, pos: usize) {
-    let new_ptr = nthcdr_of(ring, pos);
-    let ptrsym = i.intern("kill-ring-yank-pointer");
-    let _ = i.set_symbol(ptrsym, new_ptr);
-}
-
 fn f_current_kill(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let n = want_num_or_mark(i, &a[0])?;
-    let do_not_move = !arg(&a, 1).is_nil();
-    let kr = i.intern("kill-ring");
-    let ring = i.symbol_value(kr);
-    let items = ring.list_to_vec().unwrap_or_default();
-    if items.is_empty() {
+    // These are byte-op primitives in GNU's compiled current-kill.
+    fn primitive(i: &mut Interp, name: &str, args: Vec<Value>) -> EvalResult {
+        let subr = crate::lisp::builtins::arith::SUBRS
+            .iter()
+            .chain(crate::lisp::builtins::listfn::SUBRS.iter())
+            .find(|subr| subr.name == name)
+            .expect("current-kill primitive");
+        (subr.func)(i, args.into())
+    }
+    let n = arg(&a, 0);
+    let zero = primitive(i, "=", vec![n.clone(), Value::Int(0)])?.truthy();
+    let paste_symbol = i.intern("interprogram-paste-function");
+    let paste_function = i.symbol_value(paste_symbol);
+    let paste = if zero && paste_function.truthy() {
+        i.apply(&paste_function, vec![])?
+    } else {
+        Value::Nil
+    };
+    let ring_symbol = i.intern("kill-ring");
+    if paste.truthy() {
+        let depth = i.specbind_depth();
+        let result = (|| {
+            let cut = i.intern("interprogram-cut-function");
+            i.specbind(cut, Value::Nil)?;
+            i.specbind(paste_symbol, Value::Nil)?;
+            let kill_new = Value::Sym(i.intern("kill-new"));
+            if matches!(paste, Value::Cons(_)) {
+                // GNU reverses a copy so the external list is untouched.
+                let reverse = Value::Sym(i.intern("reverse"));
+                let reversed = i.apply(&reverse, vec![paste])?;
+                for string in crate::lisp::builtins::want_list(i, &reversed)? {
+                    i.apply(&kill_new, vec![string])?;
+                }
+            } else {
+                i.apply(&kill_new, vec![paste])?;
+            }
+            Ok(Value::Nil)
+        })();
+        i.unbind_to(depth)?;
+        result?;
+        return primitive(i, "car", vec![i.symbol_value(ring_symbol)]);
+    }
+    let ring = i.symbol_value(ring_symbol);
+    if ring.is_nil() {
         return Err(i.error("Kill ring is empty"));
     }
-    let len = items.len();
-    let base = yank_ptr_pos(i, &ring, len);
-    let pos = (((base as i128 + n) % len as i128) + len as i128) as usize % len;
-    if !do_not_move {
-        set_yank_ptr(i, &ring, pos);
+    let pointer_symbol = i.intern("kill-ring-yank-pointer");
+    let pointer_length = primitive(i, "length", vec![i.symbol_value(pointer_symbol)])?;
+    let offset = primitive(i, "-", vec![n.clone(), pointer_length])?;
+    let ring_length = primitive(i, "length", vec![ring.clone()])?;
+    let index = primitive(i, "mod", vec![offset, ring_length])?;
+    let tail = primitive(i, "nthcdr", vec![index, ring])?;
+    if !arg(&a, 1).truthy() {
+        i.set_symbol(pointer_symbol, tail.clone())?;
+        let selection = i.intern("yank-pop-change-selection");
+        if i.symbol_value(selection).truthy() && primitive(i, ">", vec![n, Value::Int(0)])?.truthy()
+        {
+            let cut_symbol = i.intern("interprogram-cut-function");
+            let cut = i.symbol_value(cut_symbol);
+            if cut.truthy() {
+                let string = primitive(i, "car", vec![tail.clone()])?;
+                i.apply(&cut, vec![string])?;
+            }
+        }
     }
-    match &items[pos] {
-        Value::Str(s) => Ok(Value::string(s.borrow().clone())),
-        other => Ok(other.clone()),
-    }
+    primitive(i, "car", vec![tail])
 }
-
 fn f_copy_region_as_kill(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let b = cur(i);
     let region = a.get(2).cloned().unwrap_or(Value::Nil);
@@ -9891,43 +9911,49 @@ fn f_copy_region_as_kill(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_yank(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU Fyank: a nil ARG (incl. omitted) means the newest
-    // kill — `(current-kill 0)' — so no number check applies.
-    let n = match a.first() {
-        None => 1,
-        Some(v) if v.is_nil() => 1,
-        Some(v @ Value::Cons(_)) => {
-            // C-u style arg: `current-kill 0' then rotate the pointer
-            // by (car ARG) — approximated as the numeric rotation.
-            v.list_to_vec()
-                .ok()
-                .and_then(|l| l.first().and_then(|x| x.int()))
-                .unwrap_or(1)
+    let prefix = arg(&a, 0);
+    let window_start = Value::Sym(i.intern("window-start"));
+    let start = i.apply(&window_start, vec![])?;
+    let yank_start = i.intern("yank-window-start");
+    i.set_symbol(yank_start, start)?;
+    let this_command = i.intern("this-command");
+    i.set_symbol(this_command, Value::t())?;
+    let push_mark = Value::Sym(i.intern("push-mark"));
+    i.apply(&push_mark, vec![])?;
+    let minus = i.intern("-");
+    let index = match &prefix {
+        Value::Nil | Value::Cons(_) => Value::Int(0),
+        Value::Sym(symbol) if *symbol == minus => Value::Int(-2),
+        _ => {
+            let subtract = crate::lisp::builtins::arith::SUBRS
+                .iter()
+                .find(|subr| subr.name == "1-")
+                .unwrap();
+            (subtract.func)(i, vec![prefix.clone()].into())?
         }
-        Some(v) => want_num_or_mark(i, v)?,
     };
-    let kr = i.intern("kill-ring");
-    let ring = i.symbol_value(kr);
-    let items = ring.list_to_vec().unwrap_or_default();
-    if items.is_empty() {
-        return Err(i.error("Kill ring is empty"));
+    let current_kill = Value::Sym(i.intern("current-kill"));
+    let string = i.apply(&current_kill, vec![index])?;
+    let insert = Value::Sym(i.intern("insert-for-yank"));
+    i.apply(&insert, vec![string])?;
+    if matches!(prefix, Value::Cons(_)) {
+        let mark = Value::Sym(i.intern("mark"));
+        let before = i.apply(&mark, vec![Value::t()])?;
+        let mark_marker = Value::Sym(i.intern("mark-marker"));
+        let marker = i.apply(&mark_marker, vec![])?;
+        let point = cur(i).borrow().point() + 1;
+        let buffer = i.buffer_value(i.current_buffer).unwrap();
+        let set_marker = Value::Sym(i.intern("set-marker"));
+        i.apply(&set_marker, vec![marker, Value::Int(point as i128), buffer])?;
+        let goto = Value::Sym(i.intern("goto-char"));
+        i.apply(&goto, vec![before])?;
     }
-    let len = items.len();
-    // GNU: yank N = current-kill (N-1) then insert at the new pointer.
-    let base = yank_ptr_pos(i, &ring, len);
-    let pos = (((base as i128 + n - 1) % len as i128) + len as i128) as usize % len;
-    set_yank_ptr(i, &ring, pos);
-    let s = match &items[pos] {
-        Value::Str(s) => s.borrow().clone(),
-        _ => String::new(),
-    };
-    let b = cur(i);
-    let pt = b.borrow().point();
-    b.borrow_mut().set_mark(pt);
-    crate::buffer::primitives::chg_insert_pt(i, &s, false)?;
+    if i.sym_is(&i.symbol_value(this_command), crate::lisp::obarray::sym::T) {
+        let yank = Value::Sym(i.intern("yank"));
+        i.set_symbol(this_command, yank)?;
+    }
     Ok(Value::Nil)
 }
-
 fn f_yank_pop(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU simple.el 31.1: when last-command isn't `yank', this is
     // `(yank-from-kill-ring (read-from-kill-ring "Yank from kill-ring: ")
