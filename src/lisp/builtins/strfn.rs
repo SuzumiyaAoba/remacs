@@ -5403,8 +5403,9 @@ fn f_string_to_unibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 /// `string-as-unibyte' — a unibyte string is returned unchanged; a
-/// multibyte string's chars are re-encoded as their UTF-8 bytes.
-fn f_string_as_unibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+/// multibyte string's chars use GNU's internal encoding (including
+/// surrogate and non-Unicode characters), with raw eight-bit chars unwrapped.
+pub(crate) fn f_string_as_unibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let s = want_string(i, &args[0])?;
     let multibyte = match &args[0] {
         Value::Str(r) => {
@@ -5418,8 +5419,11 @@ fn f_string_as_unibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             if let Some(b) = eight_bit_byte(c) {
                 o.push(b as char);
             } else {
-                let mut buf = [0u8; 4];
-                o.extend(c.encode_utf8(&mut buf).bytes().map(|b| b as char));
+                o.extend(
+                    super::coding_legacy::internal_encode(lisp_char_code(c) as u32)
+                        .into_iter()
+                        .map(|byte| byte as char),
+                );
             }
         }
         o
@@ -5503,21 +5507,24 @@ fn f_string_make_unibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
     Ok(v)
 }
 
-fn f_multibyte_string_p(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::from_bool(match &args[0] {
+pub(crate) fn string_multibyte_p(i: &Interp, value: &Value) -> bool {
+    match value {
         Value::Str(s) => {
             if i.is_unibyte_str(s) {
                 false
             } else if i.is_multibyte_str(s) {
                 true
             } else {
-                // Unmarked strings follow GNU's storage rule: any
-                // non-ASCII non-raw-byte char means multibyte.
+                // Unmarked strings follow GNU's storage rule.
                 content_is_multibyte(&s.borrow())
             }
         }
         _ => false,
-    }))
+    }
+}
+
+fn f_multibyte_string_p(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    Ok(Value::from_bool(string_multibyte_p(i, &args[0])))
 }
 
 fn f_unibyte_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {

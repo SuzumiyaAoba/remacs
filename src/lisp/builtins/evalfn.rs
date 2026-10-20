@@ -4979,38 +4979,46 @@ fn f_compiled_function_p(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult
 fn f_interactive_p(_i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Nil)
 }
+/// GNU validates the same three payload fields at both byte-code entry
+/// points, with a different error message for the object constructor.
+pub(crate) fn valid_byte_code_fields(code: &Value, constants: &Value, depth: &Value) -> bool {
+    matches!(code, Value::Str(_))
+        && matches!(constants, Value::Vec(_))
+        && depth.fixnump()
+        && depth.int().is_some_and(|depth| depth >= 0)
+}
+
 fn f_byte_code(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU `Fbyte_code': run a raw (bytecode, constants, depth) triple
     // as a zero-argument byte-code object; malformed operands signal
     // (error "Invalid byte-code").
-    match (&args[0], &args[1]) {
-        (Value::Str(_), Value::Vec(_)) => {}
-        _ => return Err(i.error("Invalid byte-code")),
+    if !valid_byte_code_fields(&args[0], &args[1], &args[2]) {
+        return Err(i.error("Invalid byte-code"));
     }
-    let _depth = &args[2];
-    crate::lisp::bytecode::exec_raw(i, &args[0], &args[1])
+    // GNU accepts old multibyte byte-code strings at this entry point,
+    // converting their storage bytes before constructing a compiled object.
+    let code = if super::strfn::string_multibyte_p(i, &args[0]) {
+        super::strfn::f_string_as_unibyte(i, vec![args[0].clone()].into())?
+    } else {
+        args[0].clone()
+    };
+    crate::lisp::bytecode::exec_raw(i, &code, &args[1])
 }
+
 fn f_make_byte_code(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU `make-byte-code': pack ARGLIST BYTE-CODE CONSTANTS DEPTH
     // (and optional doc/interactive slots) into a `#[...]' object.
     // The Lambda keeps the raw slots in `bc_items' so `aref'/`arrayp'
     // see GNU's element view and `bytecode::exec' can run it.
     let argdesc = args[0].clone();
-    // GNU's `validate_byte_code' (comp.c): BYTE-CODE must be a string,
+    // GNU's `validate_byte_code' (comp.c): BYTE-CODE must be unibyte,
     // CONSTANTS a vector, DEPTH a non-negative fixnum — any violation
     // signals `(error "Invalid byte-code object")'.  ARGLIST and the
     // trailing docstring/interactive slots are unchecked (argdesc `5'
     // produces the `#[5 ...]' object GNU also makes).
-    let invalid = {
-        let bad_str = !matches!(args[1], Value::Str(_));
-        let bad_vec = !matches!(args[2], Value::Vec(_));
-        let bad_depth = match &args[3] {
-            Value::Int(n) => *n < 0,
-            _ => true,
-        };
-        bad_str || bad_vec || bad_depth
-    };
-    if invalid {
+    if !valid_byte_code_fields(&args[1], &args[2], &args[3])
+        || super::strfn::string_multibyte_p(_i, &args[1])
+    {
         return Err(_i.error("Invalid byte-code object"));
     }
     let doc = args.get(4).and_then(|v| match v {

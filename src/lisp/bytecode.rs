@@ -543,7 +543,10 @@ fn step_op(
     match op {
         // Reserved invalid opcode — GNU treats it as corrupted
         // byte code.
-        0 => fail!(i.error("Invalid byte code")),
+        0 => fail!(i.error(format!(
+            "Invalid byte opcode: op={op}, ptr={}",
+            *pc - 1
+        ))),
         // stack-ref: push the element N below TOS.  N comes from the
         // 3-bit operand like the other 0..47 ops (6 = one following
         // byte, 7 = two following bytes); op 0 is reserved above.
@@ -1008,7 +1011,10 @@ fn step_op(
             }
         }
         192..=255 => push!(konst!(op - 192)),
-        _ => fail!(i.error("Invalid byte code")),
+        _ => fail!(i.error(format!(
+            "Invalid byte opcode: op={op}, ptr={}",
+            *pc - 1
+        ))),
     }
     Step::Next
 }

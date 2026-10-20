@@ -1004,17 +1004,19 @@ impl<'a> Reader<'a> {
                 //    && FIXNATP stack-depth)   — byte-code, or
                 //   (CONS code && (CONS||NIL) constants) — interpreted.
                 self.pos += 2;
-                let items = self.read_seq_unannotated(']')?;
+                let mut items = self.read_seq_unannotated(']')?;
                 let size = items.len();
                 let arglist = items.first().cloned().unwrap_or(Value::Nil);
-                let arglist_ok = matches!(arglist, Value::Nil | Value::Cons(_) | Value::Int(_));
+                let arglist_ok =
+                    matches!(arglist, Value::Nil | Value::Cons(_)) || arglist.fixnump();
                 let code_ok = match items.get(1) {
                     Some(Value::Str(_)) => {
                         // Byte-code: constants must be a vector and
                         // STACK_DEPTH (slot 3) a natural fixnum.
                         size > 3
-                            && matches!(items.get(2), Some(Value::Vec(_)))
-                            && matches!(items.get(3), Some(Value::Int(n)) if *n >= 0)
+                            && crate::lisp::builtins::evalfn::valid_byte_code_fields(
+                                &items[1], &items[2], &items[3],
+                            )
                     }
                     Some(Value::Cons(_)) => {
                         // Interpreted: constants (env) cons or nil.
@@ -1024,6 +1026,12 @@ impl<'a> Reader<'a> {
                 };
                 if !(size >= 3 && size <= 6 && arglist_ok && code_ok) {
                     return Err(read_err_sym(self.interp, "Invalid byte-code object"));
+                }
+                if crate::lisp::builtins::strfn::string_multibyte_p(self.interp, &items[1]) {
+                    items[1] = crate::lisp::builtins::strfn::f_string_as_unibyte(
+                        self.interp,
+                        vec![items[1].clone()].into(),
+                    )?;
                 }
                 let body = items.get(1).cloned().unwrap_or(Value::Nil);
                 let env = items.get(2).cloned().unwrap_or(Value::Nil);

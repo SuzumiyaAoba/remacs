@@ -1035,6 +1035,27 @@ losing weight. The inactive path only checks the running flags.
 Regression coverage: `tests/qa_profiler.el` (lifecycle, samples, bounded
 logs, all three report modes) and the profiler log weight-conservation test.
 
+## Byte-code diagnostics (`src/lisp/bytecode.rs`)
+
+`byte-code` validates a string, a constants vector, and a non-negative
+fixnum stack depth before execution. This legacy entry converts multibyte
+instruction strings to their storage bytes. `make-byte-code` requires an
+unibyte instruction string; the `#[...]` reader normalizes old multibyte
+streams and validates fixnum argument descriptors/depths. Invalid opcodes
+report their numeric value and byte offset. Storage conversion uses GNU's
+internal encoding, including surrogate and non-Unicode characters.
+
+Out-of-range constant reads remain an unresolved part of #121. GNU 31.1's
+release interpreter reads past the vector without checking. With the same
+`\305\207` program and `[1 2]` constants, the reference build returned the
+constants vector itself; allocating `(make-vector 32 12345)` after the
+constants vector changed that result to `12345`. Such heap-layout-dependent
+observations are not portable QA expected values. Remacs's existing nil
+fallback is unchanged pending a decision on these malformed inputs.
+
+Regression: `tests/qa_bytecode_errors.el` covers defined validation,
+invalid-opcode offsets, valid constant loads, and legacy string conversion.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source
