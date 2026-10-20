@@ -22,6 +22,9 @@ struct SpecBind {
     sym: SymId,
     /// `Some(buf)` = binding is buffer-local in `buf`; `None` = global cell.
     buf: Option<usize>,
+    /// Origin of a buffer-local-capable variable's default binding.
+    /// Only assignments made in this buffer suppress automatic locality.
+    default_buf: Option<usize>,
     /// Previous value (`None` = no local binding existed).
     old: Option<Value>,
 }
@@ -5409,21 +5412,30 @@ command-line arguments.\" \
             return Err(self.signal_data(sym::SETTING_CONSTANT, vec![self.sym(id)]));
         }
         let sym = self.obarray.symbol(id);
-        let is_auto_local = sym.make_local_if_set || sym.always_local;
-        let local = is_auto_local
-            || self
-                .buffers
-                .get(self.current_buffer)
-                .and_then(|b| {
-                    b.try_borrow()
-                        .ok()
-                        .map(|bb| bb.locals.contains_key(&id))
-                })
-                .unwrap_or(false);
+        let automatic = sym.make_local_if_set;
+        let always_local = sym.always_local;
+        let forwarded = sym.forwarded_variable;
+        let existing_local = self
+            .buffers
+            .get(self.current_buffer)
+            .and_then(|b| b.try_borrow().ok().map(|bb| bb.locals.contains_key(&id)))
+            .unwrap_or(false);
+        let default_shadow = automatic && !existing_local && self.specbind_shadows_current(id);
+        let local = always_local || existing_local || (automatic && !default_shadow);
         // GNU's set_internal fires variable watchers BEFORE the store:
         // a signalling watcher aborts the write entirely and observers
         // inside the watcher still see the old value.
-        self.fire_var_watchers(id, &val, "set", local.then_some(self.current_buffer))?;
+        self.fire_var_watchers(
+            id,
+            &val,
+            "set",
+            (local || default_shadow).then_some(self.current_buffer),
+        )?;
+        if default_shadow && forwarded && !always_local {
+            // GNU's forwarded per-buffer path also writes the default
+            // cell, notifying its watchers separately with WHERE=nil.
+            return self.set_symbol_default(id, val);
+        }
         if local {
             if let Some(b) = self.buffers.get(self.current_buffer) {
                 if let Ok(mut bb) = b.try_borrow_mut() {
@@ -5693,27 +5705,41 @@ command-line arguments.\" \
             return Err(self.signal_data(sym::SETTING_CONSTANT, vec![self.sym(id)]));
         }
         let sym = self.obarray.symbol(id);
-        let is_auto_local = sym.make_local_if_set || sym.always_local;
+        let can_local = sym.make_local_if_set || sym.always_local;
+        let always_local = sym.always_local;
+        let forwarded = sym.forwarded_variable;
         let mut bound_buf = None;
         // The current buffer's RefCell may already be borrowed when
         // specbind runs inside eval-driven macroexpansion (e.g. a
         // `with-temp-buffer' wrapper holding the buffer).  GNU binds
         // the local slot; when we can't borrow we must not panic —
         // fall back to the global binding for the duration.
-        let local_here = is_auto_local
+        let local_here = always_local
             || self
                 .buffers
                 .get(self.current_buffer)
-                .and_then(|b| {
-                    b.try_borrow()
-                        .ok()
-                        .map(|bb| bb.locals.contains_key(&id))
-                })
+                .and_then(|b| b.try_borrow().ok().map(|bb| bb.locals.contains_key(&id)))
                 .unwrap_or(false);
-        // GNU's set_internal fires watchers BEFORE the store: a
-        // signalling watcher aborts the binding push entirely.  The
-        // specpdl entry still goes on first — an erroring watcher
-        // leaves the binding popped by unwind, same as GNU.
+        if can_local && !local_here {
+            // GNU SPECPDL_LET_DEFAULT: bind the default cell, retaining
+            // the origin buffer so setq there updates this binding.
+            // Push before notifying watchers, which may change values.
+            let old = self.obarray.symbol(id).value.clone();
+            self.specbind.push(SpecBind {
+                sym: id,
+                buf: None,
+                default_buf: Some(self.current_buffer),
+                old: Some(old),
+            });
+            if forwarded {
+                return self.set_symbol_default(id, val);
+            }
+            self.fire_var_watchers(id, &val, "let", Some(self.current_buffer))?;
+            self.obarray.symbol_mut(id).value = val.clone();
+            self.sync_undo_inhibit(id, &val);
+            return Ok(());
+        }
+        // Notify watchers before replacing a local or plain value.
         self.fire_var_watchers(id, &val, "let", local_here.then_some(self.current_buffer))?;
         if local_here {
             if let Some(b) = self.buffers.get(self.current_buffer) {
@@ -5730,6 +5756,7 @@ command-line arguments.\" \
                     self.specbind.push(SpecBind {
                         sym: id,
                         buf: Some(self.current_buffer),
+                        default_buf: None,
                         old,
                     });
                     bound_buf = Some(self.current_buffer);
@@ -5743,6 +5770,7 @@ command-line arguments.\" \
             self.specbind.push(SpecBind {
                 sym: id,
                 buf: None,
+                default_buf: None,
                 old: Some(old),
             });
         }
@@ -5750,15 +5778,13 @@ command-line arguments.\" \
     }
 
     /// GNU `let_shadows_buffer_binding_p': true when a `let' bound the
-    /// DEFAULT cell of a buffer-local-capable variable — i.e. our
-    /// specbind entry wrote the global slot (`buf' None) for a symbol
-    /// marked `make_local_if_set' or `always_local'.  `SPECPDL_LET_LOCAL'
-    /// entries (`buf' Some) don't count, matching GNU's `!=
-    /// SPECPDL_LET_LOCAL' check.
+    /// DEFAULT cell of a buffer-local-capable variable in this buffer.
+    /// A binding made in another buffer does not prevent a new local
+    /// assignment here. Plain global and local bindings do not count.
     pub fn specbind_shadows_current(&self, id: SymId) -> bool {
-        let sym = self.obarray.symbol(id);
-        let can_local = sym.make_local_if_set || sym.always_local;
-        can_local && self.specbind.iter().any(|sb| sb.sym == id && sb.buf.is_none())
+        self.specbind
+            .iter()
+            .any(|sb| sb.sym == id && sb.default_buf == Some(self.current_buffer))
     }
 
     /// GNU `specpdl' walk for `defvaralias': any live `let' entry for
@@ -5773,6 +5799,14 @@ command-line arguments.\" \
             let Some(sb) = self.specbind.pop() else {
                 return Ok(());
             };
+            if sb.default_buf.is_some() {
+                // GNU restores a default through set_default_internal,
+                // notifying before the old value is written back.
+                if let Some(value) = sb.old {
+                    self.set_symbol_default(sb.sym, value)?;
+                }
+                continue;
+            }
             let mut restored = Value::Nil;
             match sb.buf {
                 Some(buf_id) => {
