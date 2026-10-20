@@ -785,6 +785,12 @@ fn beg_end(
 }
 
 fn f_current_indentation(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    // GNU SANE_TAB_WIDTH honors the current dynamic/buffer-local value
+    // and falls back to eight for values outside 1..=1000.
+    let tab_width = match i.symbol_value(i.intern_soft("tab-width").unwrap_or(0)) {
+        Value::Int(width @ 1..=1000) => width,
+        _ => 8,
+    };
     let b = cur(i);
     let bb = b.borrow();
     let pos = bb.point();
@@ -798,7 +804,7 @@ fn f_current_indentation(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
         }
         match bb.text.char_at(p) {
             ' ' => col += 1,
-            '\t' => col += 8 - (col % 8),
+            '\t' => col += tab_width - (col % tab_width),
             _ => break,
         }
         p += 1;

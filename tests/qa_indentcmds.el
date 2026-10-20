@@ -288,4 +288,49 @@
       (list (indent-new-comment-line) (buffer-string)))
     '(nil "(foo) ;c\n      ;mt"))
 
+;; Dynamically bound and buffer-local tab widths (#147).
+(qa (with-temp-buffer
+      (insert " \t x")
+      (let ((tab-width 4)) (current-indentation))) 5)
+(qa (with-temp-buffer
+      (insert " \t x")
+      (mapcar (lambda (width) (let ((tab-width width)) (current-indentation)))
+              '(1 2 3 4 8 12 1000))) '(3 3 4 5 9 13 1001))
+(qa (with-temp-buffer
+      (insert " \t x")
+      (mapcar (lambda (width) (let ((tab-width width)) (current-indentation)))
+              '(0 -1 1001 nil 4.0 bogus 2305843009213693952))) '(9 9 9 9 9 9 9))
+(qa (with-temp-buffer
+      (insert " \t x")
+      (setq-local tab-width 3)
+      (list (current-indentation)
+            (let ((tab-width 5))
+              (list (current-indentation)
+                    (let ((tab-width 2)) (current-indentation))
+                    (current-indentation)))
+            (current-indentation))) '(4 (6 3 6) 4))
+(qa (with-temp-buffer
+      (setq-local tab-width 3)
+      (insert " \t x")
+      (list (current-indentation)
+            (with-temp-buffer
+              (setq-local tab-width 5)
+              (insert " \t x")
+              (current-indentation))
+            (current-indentation))) '(4 6 4))
+(qa (with-temp-buffer
+      (insert " \t \t x")
+      (goto-char 3)
+      (let ((tab-width 3)) (list (current-indentation) (point)))) '(7 3))
+(qa (with-temp-buffer
+      (insert "  x\n \t y")
+      (let ((tab-width 4)) (list (current-indentation) (point)))) '(5 9))
+(qa (with-temp-buffer
+      (insert " \t ")
+      (let ((tab-width 4)) (list (current-indentation) (point)))) '(5 4))
+(qa (with-temp-buffer
+      (insert "x \t")
+      (let ((tab-width 4)) (current-indentation))) 0)
+(qa (with-temp-buffer
+      (let ((tab-width 4)) (current-indentation))) 0)
 (princ (qa--done))
