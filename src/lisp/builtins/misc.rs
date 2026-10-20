@@ -8799,119 +8799,139 @@ fn f_event_basic_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 pub(crate) fn f_event_convert_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let items = a[0].list_to_vec().unwrap_or_default();
-    if items.is_empty() {
-        return Ok(Value::Nil);
-    }
-    let basic = event_basic(i, items.last().unwrap())?;
-    // A base symbol with a single-char name is that char event
-    // (`(hyper a)' → hyper|?a).
-    let basic = match &basic {
-        Value::Nil => match items.last().unwrap() {
-            Value::Sym(s) => {
-                let name = i.symbol_name(*s);
-                let mut cs = name.chars();
-                match (cs.next(), cs.next()) {
-                    (Some(ch), None) => Value::Int(ch as i128),
-                    _ => basic,
-                }
-            }
-            _ => basic,
-        },
-        _ => basic,
-    };
+    let mut base = Value::Nil;
     let mut mods = 0i128;
-    let mut kmasks = 0i128;
-    for m in &items[..items.len() - 1] {
-        // Anything that isn't a modifier name is a second base.
-        let bit = if let Value::Sym(s) = m {
-            match i.symbol_name(*s).as_str() {
-                "control" => CHAR_CTL,
-                "meta" => CHAR_META,
-                "shift" => CHAR_SHIFT,
-                "hyper" => CHAR_HYPER,
-                "super" => CHAR_SUPER,
-                "alt" => CHAR_ALT,
-                // GNU's low mouse-event bits folded into char codes.
-                "down" => -2,
-                "drag" => -4,
-                "click" => -8,
-                "double" => -16,
-                "triple" => -32,
-                _ => 0,
-            }
+    let mut tail = a[0].clone();
+    // GNU FOR_EACH_TAIL_SAFE uses Brent's walk and stops on a cycle
+    // without signalling. Preserve its detection timing: a second base
+    // can signal before the cycle is detected.
+    let mut tortoise = tail.clone();
+    let mut span = 2usize;
+    let mut blocks = 0isize;
+    let mut steps = 2u16;
+    while let Value::Cons(cell) = tail {
+        let (event, next) = {
+            let cell = cell.borrow();
+            (cell.car.clone(), cell.cdr.clone())
+        };
+        // Only a symbol followed by another element can be a modifier.
+        let modifier = if matches!(next, Value::Cons(_)) {
+            i.sym_id(&event)
+                .map(|id| match i.symbol_name(id).as_str() {
+                    "A" | "alt" => CHAR_ALT,
+                    "C" | "ctrl" | "control" => CHAR_CTL,
+                    "H" | "hyper" => CHAR_HYPER,
+                    "M" | "meta" => CHAR_META,
+                    "S" | "shift" => CHAR_SHIFT,
+                    "s" | "super" => CHAR_SUPER,
+                    "up" => 1,
+                    "down" => 2,
+                    "drag" => 4,
+                    "click" => 8,
+                    "double" => 16,
+                    "triple" => 32,
+                    _ => 0,
+                })
+                .unwrap_or(0)
         } else {
             0
         };
-        if bit == 0 {
+        if modifier != 0 {
+            mods |= modifier;
+        } else if !base.is_nil() {
             return Err(i.error("Two bases given in one event"));
-        }
-        if bit < 0 {
-            kmasks |= -bit;
         } else {
-            mods |= bit;
+            base = event;
+        }
+        tail = next;
+        steps = steps.wrapping_sub(1);
+        let check_cycle = if steps != 0 {
+            true
+        } else {
+            blocks -= 1;
+            if blocks > 0 {
+                true
+            } else {
+                span = span.saturating_mul(2);
+                steps = span as u16;
+                blocks = (span >> 16) as isize;
+                tortoise = tail.clone();
+                false
+            }
+        };
+        if check_cycle && eq_values(&tail, &tortoise) {
+            break;
         }
     }
-    // A base symbol with a single-char name is that char event
-    // (`(hyper a)' → hyper|?a).
-    let basic = match &basic {
-        Value::Sym(s) => {
-            let name = i.symbol_name(*s);
-            let mut cs = name.chars();
-            match (cs.next(), cs.next()) {
-                (Some(ch), None) => Value::Int(ch as i128),
-                _ => basic.clone(),
-            }
+    if let Some(id) = i.sym_id(&base) {
+        let name = i.symbol_name(id);
+        let mut chars = name.chars();
+        if let (Some(ch), None) = (chars.next(), chars.next()) {
+            base = Value::Int(crate::lisp::value::lisp_char_code(ch));
         }
-        v => v.clone(),
+    }
+    if let Value::Int(code) = &base {
+        if base.fixnump() {
+            return Ok(Value::Int(crate::editor::apply_mods_ev(*code, mods)));
+        }
+    }
+    let Some(symbol) = i.sym_id(&base) else {
+        return Err(i.error("Invalid base event"));
     };
-    Ok(match basic {
-        Value::Int(c) => {
-            // Like keyboard input, shift folds a-z to A-Z and drops
-            // its bit; on other chars the bit stays.
-            let mut m = mods;
-            let mut ch = c;
-            if m & CHAR_SHIFT != 0 && (97..123).contains(&ch) {
-                ch -= 32;
-                m &= !CHAR_SHIFT;
+    // GNU apply_modifiers keeps the original base name, including any
+    // existing prefixes. Click is absent from both the name and cache key.
+    let cache_property = i.intern("modifier-cache");
+    let cache = i.get_prop(symbol, cache_property);
+    let index = mods & !8;
+    let mut entries = cache.clone();
+    while let Value::Cons(entry) = entries {
+        let pair = entry.borrow().car.clone();
+        entries = entry.borrow().cdr.clone();
+        if let Value::Cons(pair) = pair {
+            if matches!(pair.borrow().car, Value::Int(n) if n == index) {
+                return Ok(pair.borrow().cdr.clone());
             }
-            Value::Int(crate::editor::apply_mods_ev(ch, m, true) | kmasks & !0x20)
         }
-        Value::Sym(s) => {
-            // GNU name order: A- C- H- M- S- s- double- triple- down- drag- click-.
-            let mut prefix = String::new();
-            for (bit, name) in [
-                (CHAR_ALT, "A-"),
-                (CHAR_CTL, "C-"),
-                (CHAR_HYPER, "H-"),
-                (CHAR_META, "M-"),
-                (CHAR_SHIFT, "S-"),
-                (CHAR_SUPER, "s-"),
-            ] {
-                if mods & bit != 0 {
-                    prefix.push_str(name);
-                }
-            }
-            for (bit, name) in [
-                (16, "double-"),
-                (32, "triple-"),
-                (2, "down-"),
-                (4, "drag-"),
-                (8, "click-"),
-            ] {
-                if kmasks & bit != 0 {
-                    prefix.push_str(name);
-                }
-            }
-            Value::Sym(i.intern(&format!("{}{}", prefix, i.symbol_name(s))))
+    }
+    let mut name = String::new();
+    for (bit, prefix) in [
+        (CHAR_ALT, "A-"),
+        (CHAR_CTL, "C-"),
+        (CHAR_HYPER, "H-"),
+        (CHAR_META, "M-"),
+        (CHAR_SHIFT, "S-"),
+        (CHAR_SUPER, "s-"),
+        (16, "double-"),
+        (32, "triple-"),
+        (1, "up-"),
+        (2, "down-"),
+        (4, "drag-"),
+    ] {
+        if mods & bit != 0 {
+            name.push_str(prefix);
         }
-        other => other,
-    })
+    }
+    name.push_str(&i.symbol_name(symbol));
+    let converted = i.intern(&name);
+    let converted = i.sym(converted);
+    let entry = Value::cons(Value::Int(index), converted.clone());
+    i.put_prop(symbol, cache_property, Value::cons(entry, cache));
+    Ok(converted)
 }
 
 fn f_listify_key_sequence(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let keys = key_seq(i, &a[0])?;
-    Ok(Value::list(keys.into_iter().map(Value::Int).collect()))
+    let mut events = super::seq::seq_to_vec(i, &a[0])?;
+    // GNU subr.el preserves vector and multibyte-string elements.
+    if !matches!(a[0], Value::Vec(_)) && !super::strfn::string_multibyte_p(i, &a[0]) {
+        for event in &mut events {
+            if super::arith::f_gt(i, vec![event.clone(), Value::Int(127)].into())?.truthy() {
+                let modifier = i.intern("listify-key-sequence-1");
+                let modifier = i.eval(&Value::Sym(modifier))?;
+                *event = super::arith::f_logxor(i, vec![event.clone(), modifier].into())?;
+            }
+        }
+    }
+    Ok(Value::list(events))
 }
 
 fn f_key_valid_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

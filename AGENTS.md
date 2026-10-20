@@ -1311,3 +1311,21 @@ initial read, but `(POSITION POSITION)` when the initial read succeeds and
 the boundary search is out of range. An empty buffer at 500 still reports
 499; a five-character buffer at 7 reports `(7 7)`. `qa_textprops.el` pins
 these distinctions, narrowing, overlays, and next-property-change's LIMIT.
+
+Event conversion (`misc.rs`, `editor/mod.rs`) follows GNU's separate
+representations: `listify-key-sequence` preserves vector/multibyte-string
+elements and applies the `listify-key-sequence-1` XOR only to values above
+127 in other sequences. `event-convert-list` retains its original base,
+recognizes solitary modifier aliases only before another cons, and uses
+GNU's character/control folding and symbol modifier cache. Click does not
+appear in symbol names. `single-key-description` masks numeric events to
+28 bits and makes multibyte descriptions (including raw-byte characters),
+handles nil as a symbol, copies string inputs, and shares symbol-name with
+NO-ANGLES. The key parser consumes a modifier prefix only when another
+character follows it, so a lone `C-` remains literal. Regression coverage:
+`tests/qa_event_conversion.el`; text-char-description 128 already matched.
+
+`event-convert-list` also preserves `FOR_EACH_TAIL_SAFE` cycle behavior:
+Brent's walk stops without signalling, while a second base can fail before
+the cycle is detected. Its u16 step counter mirrors GNU's unsigned short
+counter; using a visited set changes these observable results.

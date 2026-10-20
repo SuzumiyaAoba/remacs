@@ -8754,6 +8754,10 @@ pub(crate) fn parse_key_token(i: &mut Interp, tok: &str) -> Result<Vec<Value>, F
     // GNU adds modifier bits arithmetically (C-C- on a char folds to
     // M-: C|C = META).  Prefixes strip in scan order, one char each.
     loop {
+        // GNU's prefix regexp requires a character after the hyphen.
+        if rest.len() <= 2 {
+            break;
+        }
         if let Some(r) = rest.strip_prefix("C-") {
             mods += CHAR_CTL;
             rest = r;
@@ -8870,33 +8874,24 @@ pub(crate) fn parse_key_token(i: &mut Interp, tok: &str) -> Result<Vec<Value>, F
     Ok(vec![Value::Int(ev)])
 }
 
-/// `evconv` selects event-convert-list semantics, where control on an
-/// uppercase letter yields shift|?C-x (C-A is C-S-a); `kbd` folds
-/// C-A to plain ?C-a instead.
-pub(crate) fn apply_mods_ev(c: i128, mods: i128, evconv: bool) -> i128 {
-    let mut m = mods;
-    let mut c = c;
-    if m & CHAR_CTL != 0 && (0..128).contains(&c) {
-        // Only the ASCII control set folds: @ A-Z [ \ ] ^ _ ? and
-        // lowercase a-z. Other chars keep the control bit (C-/ is
-        // (control /), not 15, like Emacs).
-        let folded = match c {
-            63 => Some((127, false)),
-            65..=90 => Some((c & 0x1f, evconv)),
-            64 | 91..=95 | 97..=122 => Some((c & 0x1f, false)),
-            _ => None,
-        };
-        if let Some((f, shifted)) = folded {
-            c = f;
-            m &= !CHAR_CTL;
-            if shifted {
-                m |= CHAR_SHIFT;
-            }
-        }
+/// GNU event-convert-list's character path, including make_ctrl_char.
+pub(crate) fn apply_mods_ev(mut c: i128, mut mods: i128) -> i128 {
+    if mods & CHAR_SHIFT != 0 && (97..=122).contains(&c) {
+        c -= 32;
+        mods &= !CHAR_SHIFT;
     }
-    // GNU keeps the shift bit on character events; it never folds
-    // shift into uppercase (`S-a' = shift|?a, `S-A' = shift|?A).
-    c | m
+    if mods & CHAR_CTL == 0 {
+        return mods | c;
+    }
+    // make_ctrl_char takes a C int; non-ASCII values retain control.
+    c = i128::from(c as i32);
+    c = match c {
+        65..=90 => (c & 31) | CHAR_SHIFT,
+        64 | 91..=95 | 97..=122 => c & 31,
+        0..=31 => c,
+        _ => c | CHAR_CTL,
+    };
+    (mods & !CHAR_CTL) | c
 }
 
 fn f_key_description(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -9038,10 +9033,8 @@ pub(crate) fn describe_key(k: i128) -> String {
     let mut base_ctrl = false;
     let named: Option<&'static str> = match bare {
         9 => {
-            // TAB decomposes to C-i when a "real" modifier is present
-            // (M-TAB is the event M-C-i); with only shift/control it
-            // keeps the key name.
-            if mods & (CHAR_META | CHAR_HYPER | CHAR_SUPER | CHAR_ALT) != 0 {
+            // GNU tab_as_ci decomposes TAB only with the meta bit.
+            if mods & CHAR_META != 0 {
                 base_ctrl = true;
                 None
             } else {
@@ -9172,12 +9165,17 @@ fn single_key_desc(i: &mut Interp, key: &Value, no_angles: bool) -> EvalResult {
             (cc.car.clone(), cc.cdr.clone())
         };
         if let (Value::Int(lo), Value::Int(hi)) = (&car, &cdr) {
-            let (lo, hi) = (*lo, *hi);
-            return Ok(Value::string(format!(
-                "{}..{}",
-                describe_key(lo),
-                describe_key(hi)
-            )));
+            if car.fixnump() && cdr.fixnump() {
+                let description = Value::string(format!(
+                    "{}..{}",
+                    describe_key(*lo & 0x0fff_ffff),
+                    describe_key(*hi & 0x0fff_ffff),
+                ));
+                if let Value::Str(text) = &description {
+                    i.mark_multibyte(text);
+                }
+                return Ok(description);
+            }
         }
     }
     // EVENT_HEAD: cons → car, else the object itself.
@@ -9186,12 +9184,20 @@ fn single_key_desc(i: &mut Interp, key: &Value, no_angles: bool) -> EvalResult {
         key = head;
     }
     match &key {
-        Value::Int(k) => Ok(Value::string(describe_key(*k))),
-        Value::Str(_) => Ok(key.clone()),
-        Value::Sym(s) => {
-            let name = i.symbol_name(*s).to_string();
+        Value::Int(k) if key.fixnump() => {
+            // GNU masks bits above meta and always makes a multibyte string.
+            let description = Value::string(describe_key(*k & 0x0fff_ffff));
+            if let Value::Str(text) = &description {
+                i.mark_multibyte(text);
+            }
+            Ok(description)
+        }
+        Value::Str(_) => crate::lisp::builtins::seq::f_copy_sequence(i, vec![key.clone()].into()),
+        Value::Sym(_) | Value::Nil => {
+            let symbol = i.sym_id(&key).unwrap();
+            let name = i.symbol_name(symbol);
             if no_angles {
-                return Ok(Value::string(name));
+                return crate::lisp::builtins::data::f_symbol_name(i, vec![key.clone()].into());
             }
             // GNU splits leading modifier prefixes and angles the base
             // key: `S-return' → "S-<return>", `C-M-down' → "C-M-<down>".

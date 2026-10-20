@@ -780,7 +780,7 @@ fn f_symbol_value(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     Ok(v)
 }
-fn f_symbol_name(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_symbol_name(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     let symbol = i.obarray.symbol_mut(id);
     let name = symbol

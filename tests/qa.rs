@@ -178,6 +178,7 @@ qa!(qa_indent, "qa_indent.el");
 qa!(qa_indentcmds, "qa_indentcmds.el");
 qa!(qa_indentfill, "qa_indentfill.el");
 qa!(qa_input, "qa_input.el");
+qa!(qa_event_conversion, "qa_event_conversion.el");
 qa!(qa_json, "qa_json.el");
 qa!(qa_kbd, "qa_kbd.el");
 qa!(qa_define_key_type, "qa_define_key_type.el");

@@ -578,7 +578,7 @@ fn f_le(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         )
     })
 }
-fn f_gt(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_gt(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     cmp_all(i, &args, |o| o == Some(std::cmp::Ordering::Greater))
 }
 fn f_ge(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -862,7 +862,7 @@ fn f_logior(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     Ok(Value::Int(acc))
 }
-fn f_logxor(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_logxor(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let mut acc = 0i128;
     for (ix, a) in args.iter().enumerate() {
         acc ^= logcoerce(i, a, ix == 0)?;
