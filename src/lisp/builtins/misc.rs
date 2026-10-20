@@ -16601,6 +16601,9 @@ fn f_set_buffer_multibyte(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // `enable-multibyte-characters' local and returns the flag.
     let sym = i.intern("enable-multibyte-characters");
     i.set_symbol(sym, a[0].clone())?;
+    if let Some(buffer) = i.current_buffer_ref() {
+        buffer.borrow().text.set_multibyte(a[0].truthy());
+    }
     Ok(a[0].clone())
 }
 

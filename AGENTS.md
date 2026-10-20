@@ -1083,6 +1083,26 @@ Regression coverage: dump graph/session unit tests, `tests/portable_dump.rs`
 (fresh copied executables, separate caches, corruption and startup metadata),
 and `tests/qa_pdumper.el` (GNU-verified errors and dump output).
 
+## Gap allocation (`src/buffer/gapbuf.rs`)
+
+The backing vector holds decoded characters but budgets Emacs encoded-byte
+capacity. `text_bytes` counts live storage (including two-byte eight-bit
+characters and five-byte extended Mule codes), so `gap-size` is byte
+headroom rather than the number of unused char slots. On exhaustion, add
+`max(missing_bytes, existing_characters / 64) + 2000`, then consume the
+inserted bytes. Deletion returns its encoded bytes to the gap.
+
+Read-only scan/syntax access uses a cached contiguous projection for a
+middle gap, and direct slices for end gaps; it must not move `gap-position`.
+Mutations invalidate that projection. Whole-text replacement reuses the
+allocation through delete/insert. Multibyte mode is shared with the text;
+portable images retain it along with physical gap geometry and ticks.
+This accounts for the existing decoded buffer representation; the separate
+known buffer encoding-conversion gaps are not hidden by the allocator.
+
+Regression coverage: `tests/qa_gap.el`, direct gap-buffer mutation/projection
+tests, and portable image round trips.
+
 ## Verification recipe
 
 ```sh

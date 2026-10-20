@@ -42,7 +42,7 @@ struct MainThreadData {
 #[derive(Serialize, Deserialize)]
 struct TextData {
     text: Vec<u32>,
-    gap: (usize, usize, u64),
+    gap: (usize, usize, u64, bool),
     intervals: Vec<(usize, usize, Vec<Ref>)>,
     ticks: [u64; 3],
     had_intervals: bool,

@@ -84,6 +84,9 @@ fn image_restores_shared_lisp_state_buffers_and_reports_actual_startup() {
         (narrow-to-region 2 7) (goto-char 4)
         (set (make-local-variable 'dump-local) dump112-cycle))
       (setq dump112-indirect (make-indirect-buffer dump112-buffer "dump112-indirect"))
+      (setq dump114-unibyte (get-buffer-create "dump114-unibyte"))
+      (with-current-buffer dump114-unibyte
+        (set-buffer-multibyte nil) (insert (unibyte-string 128 255)))
       (setq dump112-marker (with-current-buffer dump112-buffer (copy-marker 4)))
       (setq dump112-overlay (with-current-buffer dump112-buffer (make-overlay 2 3)))
       (overlay-put dump112-overlay 'dump-property dump112-cycle) (delete-overlay dump112-overlay)
@@ -113,9 +116,12 @@ fn image_restores_shared_lisp_state_buffers_and_reports_actual_startup() {
           (not (intern-soft "dump112-only-custom"))
           (equal (string-to-list dump112-mule) '(1114119 1114113))
           (not (multibyte-string-p dump112-bytes)) (= (aref dump112-bytes 2) 128) (= (aref dump112-bytes 3) 255)
-          (with-current-buffer dump112-buffer
+          (and (with-current-buffer dump112-buffer
             (and (= (point) 4) (= (point-min) 2) (= (point-max) 7)
+                 (= (gap-position) 8) (= (gap-size) 7)
                  (eq dump-local dump112-cycle) (eq (get-text-property 2 'dump-property) dump112-cycle)))
+               (with-current-buffer dump114-unibyte
+                 (and (not enable-multibyte-characters) (= (gap-position) 3) (= (gap-size) 18))))
           (eq (buffer-base-buffer dump112-indirect) dump112-buffer)
           (eq (marker-buffer dump112-marker) dump112-buffer) (= (marker-position dump112-marker) 4)
           (overlayp dump112-overlay) (not (overlay-buffer dump112-overlay))

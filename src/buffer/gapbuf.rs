@@ -10,6 +10,12 @@ pub struct GapBuffer {
     buf: Vec<char>,
     gap_start: usize,
     gap_end: usize, // exclusive
+    /// Live text's Emacs byte count. The vector length budgets byte
+    /// capacity even though individual slots store decoded characters.
+    text_bytes: usize,
+    multibyte: bool,
+    /// Contiguous read projection for a gap in the middle of the text.
+    flat: Option<Vec<char>>,
     /// Bumped by every content mutation; the newline cache below is
     /// valid only while it matches.  (`as_slice_mut' callers must not
     /// write — they don't today; mutating there would bypass this.)
@@ -22,11 +28,24 @@ pub struct GapBuffer {
 }
 
 // GNU `GAP_INIT' (buffer.c): a fresh buffer starts with a 20-byte
-// gap — here 20 chars (our gap is char-indexed).
+// gap. Storage is char-indexed; allocation headroom is budgeted in bytes.
 const GAP_INIT: usize = 20;
 
+fn storage_bytes(c: char, multibyte: bool) -> usize {
+    if !multibyte {
+        return 1;
+    }
+    match crate::lisp::value::lisp_char_code(c) {
+        0..=0x7f => 1,
+        0x80..=0x7ff | 0x3fff80..=0x3fffff => 2,
+        0x800..=0xffff => 3,
+        0x10000..=0x1fffff => 4,
+        _ => 5,
+    }
+}
+
 impl GapBuffer {
-    fn from_dump(text: &str, gap: (usize, usize, u64)) -> Result<Self, String> {
+    fn from_dump(text: &str, gap: (usize, usize, u64, bool)) -> Result<Self, String> {
         let chars: Vec<_> = text.chars().collect();
         if gap.0 > chars.len() {
             return Err("Invalid dumped gap position".into());
@@ -41,10 +60,17 @@ impl GapBuffer {
         buf.extend_from_slice(&chars[..gap.0]);
         buf.resize(gap.0 + gap.1, '\0');
         buf.extend_from_slice(&chars[gap.0..]);
+        let text_bytes = text.chars().map(|c| storage_bytes(c, gap.3)).sum();
+        if text_bytes > total {
+            return Err("Invalid dumped byte capacity".into());
+        }
         Ok(Self {
             buf,
             gap_start: gap.0,
             gap_end: gap.0 + gap.1,
+            text_bytes,
+            multibyte: gap.3,
+            flat: None,
             mod_count: gap.2,
             lines: RefCell::new(None),
         })
@@ -54,6 +80,9 @@ impl GapBuffer {
             buf: vec![0 as char; GAP_INIT],
             gap_start: 0,
             gap_end: GAP_INIT,
+            text_bytes: 0,
+            multibyte: true,
+            flat: None,
             mod_count: 0,
             lines: RefCell::new(None),
         }
@@ -75,6 +104,10 @@ impl GapBuffer {
     }
 
     pub fn gap_size(&self) -> usize {
+        self.buf.len() - self.text_bytes
+    }
+
+    fn gap_slots(&self) -> usize {
         self.gap_end - self.gap_start
     }
 
@@ -89,7 +122,6 @@ impl GapBuffer {
         if pos == self.gap_start {
             return;
         }
-        let gsize = self.gap_size();
         if pos < self.gap_start {
             // Shift text right into the gap.
             let n = self.gap_start - pos;
@@ -104,18 +136,16 @@ impl GapBuffer {
             self.gap_start = pos;
             self.gap_end += n;
         }
-        let _ = gsize;
     }
 
-    /// Grow the gap so at least `need` chars fit, GNU make_gap_larger
-    /// style: grow by `GAP_BYTES_DFL' (2000) minimum so a fresh
-    /// 20-char gap reports (gap-size) => 2000 after any insert.
+    /// GNU make_gap/make_gap_larger: add the missing bytes (at least
+    /// 1/64 of existing characters), then 2000 bytes of spare headroom.
     fn ensure_gap(&mut self, need: usize) {
         if self.gap_size() >= need {
             return;
         }
         const GAP_BYTES_DFL: usize = 2000;
-        let grow = need.max(GAP_BYTES_DFL);
+        let grow = (need - self.gap_size()).max(self.len() / 64) + GAP_BYTES_DFL;
         let old_len = self.buf.len();
         self.buf.resize(old_len + grow, 0 as char);
         // Move post-gap text to the new end.
@@ -124,8 +154,7 @@ impl GapBuffer {
         self.gap_end += grow;
     }
 
-    /// The logical text as one contiguous slice: moves the gap to the
-    /// end first (O(tail) once; free on repeat calls while unedited).
+    /// The logical text as one contiguous slice without moving the gap.
     /// Used by scan/regexp paths that need random `&[char]` access
     /// without allocating a `Vec<char>` copy per call.
     pub fn as_slice(&mut self) -> &[char] {
@@ -135,20 +164,36 @@ impl GapBuffer {
     /// Mutable variant used to project a `RefCell<GapBuffer>` borrow
     /// into `&mut [char]` (`SharedText::as_slice`).
     fn as_slice_mut(&mut self) -> &mut [char] {
-        self.move_gap(self.len());
-        &mut self.buf[..self.gap_start]
+        if self.gap_end == self.buf.len() {
+            return &mut self.buf[..self.gap_start];
+        }
+        if self.gap_start == 0 {
+            return &mut self.buf[self.gap_end..];
+        }
+        if self.flat.is_none() {
+            let mut flat = Vec::with_capacity(self.len());
+            flat.extend_from_slice(&self.buf[..self.gap_start]);
+            flat.extend_from_slice(&self.buf[self.gap_end..]);
+            self.flat = Some(flat);
+        }
+        self.flat.as_mut().unwrap().as_mut_slice()
     }
 
     /// Insert `text` at logical position `pos`.
     pub fn insert(&mut self, pos: usize, text: &str) {
+        if text.is_empty() {
+            return;
+        }
         self.mod_count = self.mod_count.wrapping_add(1);
+        self.flat = None;
         self.move_gap(pos);
-        let n = text.chars().count();
-        self.ensure_gap(n);
+        let bytes = text.chars().map(|c| storage_bytes(c, self.multibyte)).sum();
+        self.ensure_gap(bytes);
         for c in text.chars() {
             self.buf[self.gap_start] = c;
             self.gap_start += 1;
         }
+        self.text_bytes += bytes;
     }
 
     /// Delete `[start, end)`.
@@ -158,8 +203,13 @@ impl GapBuffer {
             return;
         }
         self.mod_count = self.mod_count.wrapping_add(1);
+        self.flat = None;
+        let bytes: usize = (start..end)
+            .map(|k| storage_bytes(self.char_at(k), self.multibyte))
+            .sum();
         self.move_gap(start);
         self.gap_end = (self.gap_end + (end - start)).min(self.buf.len());
+        self.text_bytes -= bytes;
     }
 
     /// Overwrite the char at logical index `i` in place. Unlike
@@ -168,11 +218,18 @@ impl GapBuffer {
     pub fn set_char_at(&mut self, i: usize, c: char) {
         debug_assert!(i < self.len());
         self.mod_count = self.mod_count.wrapping_add(1);
+        self.flat = None;
+        let before = storage_bytes(self.char_at(i), self.multibyte);
+        let after = storage_bytes(c, self.multibyte);
+        if after > before {
+            self.ensure_gap(after - before);
+        }
         if i < self.gap_start {
             self.buf[i] = c;
         } else {
             self.buf[i + (self.gap_end - self.gap_start)] = c;
         }
+        self.text_bytes = self.text_bytes - before + after;
     }
 
     /// Extract `[start, end)` as a String.
@@ -193,12 +250,22 @@ impl GapBuffer {
 
     /// Replace whole contents.
     pub fn set_text(&mut self, s: &str) {
-        self.buf.clear();
-        self.buf
-            .resize(GAP_INIT.max(s.chars().count() * 2), 0 as char);
-        self.gap_start = 0;
-        self.gap_end = self.buf.len();
+        self.delete(0, self.len());
         self.insert(0, s);
+    }
+
+    pub fn set_multibyte(&mut self, multibyte: bool) {
+        if self.multibyte == multibyte {
+            return;
+        }
+        let bytes = (0..self.len())
+            .map(|k| storage_bytes(self.char_at(k), multibyte))
+            .sum();
+        if bytes > self.text_bytes {
+            self.ensure_gap(bytes - self.text_bytes);
+        }
+        self.text_bytes = bytes;
+        self.multibyte = multibyte;
     }
 
     /// Sorted char positions of every `\n', built once per mod_count
@@ -294,12 +361,13 @@ impl SharedText {
         Rc::as_ptr(&self.inner) as usize
     }
 
-    pub(crate) fn dump_gap(&self) -> (usize, usize, u64) {
+    pub(crate) fn dump_gap(&self) -> (usize, usize, u64, bool) {
         let inner = self.inner.borrow();
         (
             inner.gap_start,
-            inner.gap_end - inner.gap_start,
+            inner.gap_slots(),
             inner.mod_count,
+            inner.multibyte,
         )
     }
 
@@ -308,7 +376,7 @@ impl SharedText {
         intervals: Vec<(usize, usize, Vec<crate::lisp::Value>)>,
         ticks: [u64; 3],
         had_intervals: bool,
-        gap: (usize, usize, u64),
+        gap: (usize, usize, u64, bool),
     ) -> Result<Self, String> {
         let shared = Self::new();
         *shared.inner.borrow_mut() = GapBuffer::from_dump(text, gap)?;
@@ -406,10 +474,14 @@ impl SharedText {
         self.inner.borrow().len()
     }
 
-    /// The unused gap between `gap_start' and `gap_end' (GNU
-    /// `gap-size'; grows only — deletions don't shrink it).
+    /// Unused encoded-byte headroom (GNU GAP_SIZE), consumed by insertion
+    /// and increased by deletion or allocation. Char slots are separate.
     pub fn gap_size(&self) -> usize {
         self.inner.borrow().gap_size()
+    }
+
+    pub fn set_multibyte(&self, multibyte: bool) {
+        self.inner.borrow_mut().set_multibyte(multibyte);
     }
 
     /// The gap's leading edge in logical chars (GNU `GPT').
@@ -496,5 +568,70 @@ impl SharedText {
 impl Default for SharedText {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn byte_budget_tracks_multibyte_insert_delete_and_snapshot() {
+        let mut gap = GapBuffer::new();
+        gap.insert(0, "日本語");
+        assert_eq!((gap.len(), gap.gap_position(), gap.gap_size()), (3, 3, 11));
+        gap.insert(1, "é");
+        assert_eq!(gap.text(), "日é本語");
+        assert_eq!(gap.gap_size(), 9);
+        gap.delete(0, 2);
+        assert_eq!(gap.text(), "本語");
+        assert_eq!(gap.gap_size(), 14);
+        let restored = GapBuffer::from_dump(
+            &gap.text(),
+            (gap.gap_start, gap.gap_slots(), gap.mod_count, gap.multibyte),
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                restored.text(),
+                restored.gap_position(),
+                restored.gap_size()
+            ),
+            ("本語".into(), 0, 14)
+        );
+    }
+
+    #[test]
+    fn read_projection_preserves_gap_and_invalidates_after_mutation() {
+        let mut gap = GapBuffer::new();
+        gap.insert(0, "abcdef");
+        gap.insert(2, "X");
+        assert_eq!(gap.as_slice().iter().collect::<String>(), "abXcdef");
+        assert_eq!(gap.gap_position(), 3);
+        gap.set_char_at(0, 'Z');
+        assert_eq!(gap.as_slice().iter().collect::<String>(), "ZbXcdef");
+        assert_eq!(gap.gap_position(), 3);
+        gap.delete(1, 4);
+        assert_eq!(gap.as_slice().iter().collect::<String>(), "Zdef");
+        assert_eq!(gap.gap_position(), 1);
+        let before = (gap.gap_position(), gap.gap_size());
+        gap.insert(4, "");
+        assert_eq!((gap.gap_position(), gap.gap_size()), before);
+    }
+
+    #[test]
+    fn replacing_text_reuses_capacity_and_gap_growth_scales_with_existing_text() {
+        let mut gap = GapBuffer::new();
+        gap.insert(0, &"a".repeat(100_000));
+        assert_eq!(gap.gap_size(), 2000);
+        for _ in 0..2000 {
+            gap.insert(gap.len(), "b");
+        }
+        assert_eq!(gap.gap_size(), 0);
+        gap.insert(gap.len(), "c");
+        assert_eq!(gap.gap_size(), 3592);
+        gap.set_text("x");
+        assert_eq!(gap.text(), "x");
+        assert_eq!(gap.gap_size(), 105592);
     }
 }

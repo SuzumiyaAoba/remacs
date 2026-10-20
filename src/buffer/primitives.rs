@@ -13936,8 +13936,7 @@ fn f_gap_position(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Int(b.text.gap_position() as i128 + 1))
 }
 fn f_gap_size(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    // GNU GAP_SIZE — the
-    // unused gap region; grows on insert, never shrinks.
+    // GNU GAP_SIZE: unused Emacs storage bytes, not Rust char slots.
     let buf2 = cur(i);
     let b2 = buf2.borrow();
     Ok(Value::Int(b2.text.gap_size() as i128))
