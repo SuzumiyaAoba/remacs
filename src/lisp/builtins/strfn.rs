@@ -225,8 +225,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         "string-make-multibyte",
         1,
         1,
-        f_string_to_multibyte,
-        "Return STRING unchanged."
+        f_string_make_multibyte,
+        "Convert STRING to multibyte, preserving ASCII and multibyte inputs."
     ),
     S!(
         "string-equal-ignore-case",
@@ -5334,6 +5334,17 @@ fn f_format_spec(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::string(out))
 }
 
+/// Unlike string-to-multibyte, ASCII input needs no representation change.
+/// GNU also preserves its identity and text properties in this case.
+fn f_string_make_multibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    let string = want_string(i, &args[0])?;
+    if string.is_ascii() {
+        Ok(args[0].clone())
+    } else {
+        f_string_to_multibyte(i, args)
+    }
+}
+
 /// `string-to-multibyte' — in a unibyte string, each byte-value char
 /// ≥0x80 becomes an eight-bit char (0x3FFF80 + byte − 0x80); a
 /// multibyte string is returned unchanged.
@@ -5345,6 +5356,9 @@ fn f_string_to_multibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
         }
         _ => false,
     };
+    if !unibyte_in {
+        return Ok(args[0].clone());
+    }
     let out: String = s
         .chars()
         .map(|c| {
