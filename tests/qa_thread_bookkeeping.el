@@ -72,4 +72,19 @@
   (qa (thread-join th) 23)
   (qa (thread-join th) 23)
   (qa (thread-live-p th) nil))
+;; Issue #154: literal error validation and synchronous custom self-delivery.
+(qa-err-data (thread-signal (current-thread) 'nosuchsig '(d))
+             'error '("Invalid error symbol" nosuchsig))
+(qa-err-data (thread-signal (current-thread) 'error '("self-delivery"))
+             'error '("self-delivery"))
+(define-error 'qa154-error "Thread signal regression")
+(qa-err-data (thread-signal (current-thread) 'qa154-error '(d)) 'qa154-error '(d))
+(qa (let ((continued nil) (clean nil))
+      (list (condition-case e
+                (unwind-protect
+                    (progn (thread-signal (current-thread) 'qa154-error '(d))
+                           (setq continued t))
+                  (setq clean t))
+              (qa154-error e)) continued clean))
+    '((qa154-error d) nil t))
 (princ (qa--done)) (terpri)
