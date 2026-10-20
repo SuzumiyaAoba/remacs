@@ -2783,6 +2783,20 @@ fn f_error_message_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult
 /// Format an error object `(SYMBOL . DATA)` the way Emacs's
 /// `print_error_message` does.
 pub fn error_message(i: &mut Interp, obj: &Value) -> String {
+    // GNU print.c's FOR_EACH_TAIL prints every cons in the data, then
+    // ignores a dotted atom tail.  Keep the existing cycle guard: only
+    // use each_car after list_to_vec has proved the list is acyclic.
+    fn data_items(data: &Value) -> Vec<Value> {
+        match data.list_to_vec() {
+            Ok(items) => items,
+            Err(crate::lisp::value::ListError::Dotted(_)) => {
+                let mut items = Vec::new();
+                data.each_car(|item| items.push(item.clone()));
+                items
+            }
+            Err(crate::lisp::value::ListError::Circular(_)) => Vec::new(),
+        }
+    }
     let (errname, data) = match obj {
         Value::Cons(c) => {
             let b = c.borrow();
@@ -2802,11 +2816,7 @@ pub fn error_message(i: &mut Interp, obj: &Value) -> String {
         };
         file_error = false;
         tail_list = match &data {
-            Value::Cons(c) => c
-                .borrow()
-                .cdr
-                .list_to_vec()
-                .unwrap_or_default(),
+            Value::Cons(c) => data_items(&c.borrow().cdr),
             _ => Vec::new(),
         };
     } else {
@@ -2827,7 +2837,7 @@ pub fn error_message(i: &mut Interp, obj: &Value) -> String {
         }
         errmsg = msg;
         file_error = ferror;
-        tail_list = data.list_to_vec().unwrap_or_default();
+        tail_list = data_items(&data);
     }
     let (errmsg, tail, from_prop): (Value, &[Value], bool) = if file_error && !tail_list.is_empty()
     {

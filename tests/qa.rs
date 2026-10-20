@@ -125,6 +125,7 @@ qa!(qa_eieio2, "qa_eieio2.el");
 qa!(qa_edge_semantics, "qa_edge_semantics.el");
 qa!(qa_err2, "qa_err2.el");
 qa!(qa_errors, "qa_errors.el");
+qa!(qa_dotted_error_data, "qa_dotted_error_data.el");
 qa!(qa_eval, "qa_eval.el");
 qa!(qa_eval_narrowing, "qa_eval_narrowing.el");
 qa!(qa_eval_lexenv, "qa_eval_lexenv.el");
