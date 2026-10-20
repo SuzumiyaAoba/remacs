@@ -1831,7 +1831,7 @@ fn pixel_edges_of(i: &mut Interp, v: &Value) -> Result<(i128, i128, i128, i128),
 }
 
 fn f_window_pixel_edges4(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = crate::editor::win_err_live(i, &arg(&a, 0))?;
+    let _ = crate::editor::win_err_valid(i, &arg(&a, 0))?;
     let (l, t, r, b) = pixel_edges_of(i, &arg(&a, 0))?;
     Ok(Value::list(vec![
         Value::Int(l),
@@ -2751,31 +2751,88 @@ fn f_terminal_list(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::list(vec![terminal_token(i)]))
 }
 
-/// `window-text-pixel-size' — fixed-pitch model: (WIDTH . HEIGHT)
-/// in pixels; MODE-AND-HEADER-LINE arg adds the header rows (1).
+/// Batch text has no displayed glyph dimensions; requested mode,
+/// header and tab lines still contribute their terminal cell heights.
 fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    if let Some(v) = a.first() {
-        match v {
-            Value::Nil | Value::Window(_) => {}
-            other => return Err(i.wrong_type_mut("window-live-p", other)),
+    let w = win_live(i, &arg(&a, 0))?;
+    let (buffer, height, minibuffer, params) = {
+        let w = w.borrow();
+        (w.buffer, w.height, w.minibuffer, w.params.clone())
+    };
+    let (beg, end) = i
+        .buffers
+        .get(buffer)
+        .map(|b| {
+            let b = b.borrow();
+            (b.begv as i128 + 1, b.text_len() as i128 + 1)
+        })
+        .unwrap_or((1, 1));
+    let from = arg(&a, 1);
+    let (start, offset) = match &from {
+        Value::Nil => (beg, 0),
+        Value::Sym(s) if *s == sym::T => (beg, 0),
+        Value::Cons(c) => {
+            let (position, offset) = {
+                let c = c.borrow();
+                (c.car.clone(), c.cdr.clone())
+            };
+            let start = crate::lisp::builtins::want_int_or_mark(i, &position)?.clamp(beg, end);
+            let offset = crate::lisp::builtins::want_fixnum(i, &offset)? as libc::c_int;
+            (start, offset)
+        }
+        _ => (
+            crate::lisp::builtins::want_int_or_mark(i, &from)?.clamp(beg, end),
+            0,
+        ),
+    };
+    let to = arg(&a, 2);
+    if !to.is_nil() && i.sym_id(&to) != Some(sym::T) {
+        crate::lisp::builtins::want_int_or_mark(i, &to)?;
+    }
+
+    // Read formats in WINDOW's buffer, which can differ from the
+    // caller's current buffer. Window parameters override those values.
+    let saved = i.current_buffer;
+    i.set_current_buffer(buffer);
+    let mut formats = Vec::new();
+    for name in ["mode-line-format", "header-line-format", "tab-line-format"] {
+        let symbol = i.intern(name);
+        let parameter = crate::lisp::eval::plist_get(&params, symbol);
+        let enabled = if i
+            .sym_id(&parameter)
+            .is_some_and(|s| i.symbol_name(s) == "none")
+        {
+            false
+        } else {
+            parameter.truthy() || i.symbol_value(symbol).truthy()
+        };
+        formats.push(enabled);
+    }
+    i.set_current_buffer(saved);
+    let mode = !minibuffer && formats[0] && height > 1;
+    let header = !minibuffer && formats[1] && height > 1 + usize::from(mode);
+    let tab = !minibuffer && formats[2] && height > 1 + usize::from(mode) + usize::from(header);
+    let lines = arg(&a, 5);
+    let all = i.sym_id(&lines) == Some(sym::T);
+    let mut measured_height = 0;
+    for (name, wanted) in [
+        ("mode-line", mode),
+        ("header-line", header),
+        ("tab-line", tab),
+    ] {
+        if wanted && (all || i.sym_id(&lines).is_some_and(|s| i.symbol_name(s) == name)) {
+            measured_height += 1;
         }
     }
-    // FROM/TO: nil (BEGV/ZV) and t are special, a cons carries a position
-    // in its car; anything else goes through fix_position, which signals
-    // number-or-marker-p.
-    for k in 1..3 {
-        match a.get(k) {
-            None
-            | Some(
-                Value::Nil | Value::Int(_) | Value::Marker(_) | Value::Float(_) | Value::Cons(_),
-            ) => {}
-            Some(Value::Sym(s)) if *s == crate::lisp::sym::T => {}
-            Some(other) => return Err(i.wrong_type_mut("number-or-marker-p", other)),
-        }
+    if offset != 0 {
+        Ok(Value::list(vec![
+            Value::Int(0),
+            Value::Int(measured_height),
+            Value::Int(start),
+        ]))
+    } else {
+        Ok(Value::cons(Value::Int(0), Value::Int(measured_height)))
     }
-    // Nothing has ever been displayed in batch: the text area is
-    // degenerate (0 . 0) no matter the arguments.
-    Ok(Value::cons(Value::Int(0), Value::Int(0)))
 }
 
 /// tty output-buffer helpers on a non-tty terminal → GNU error.

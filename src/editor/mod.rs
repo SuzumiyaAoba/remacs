@@ -50,7 +50,7 @@ pub struct Window {
     pub dedicated: Value,
     /// Minibuffer windows are special.
     pub minibuffer: bool,
-    /// This window's parameters alist.
+    /// Window parameters in a flat plist (GNU exposes an alist).
     pub params: Value,
     /// Fringes/margins.
     pub margins: (usize, usize),
@@ -4192,20 +4192,87 @@ fn f_one_window_p(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(f.borrow().windows.len() == 1))
 }
 
-fn f_next_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let w = win_live(i, &arg(&a, 0))?;
-    match window_cycle(i, 1, &w) {
-        Some(n) => Ok(Value::Window(n)),
-        None => Ok(Value::Nil),
+fn next_window_in_cycle(i: &mut Interp, a: crate::lisp::Argv, forward: bool) -> EvalResult {
+    let from = win_live(i, &arg(&a, 0))?;
+    let Some(origin) = frame_of_window(i, &from) else {
+        return Ok(Value::Window(from));
+    };
+    let minibuf = arg(&a, 1);
+    let mini = origin.borrow().minibuffer.clone();
+    let active_mini = if minibuf.is_nil() && i.minibuf_level > 0 {
+        sel_frame(i).and_then(|f| f.borrow().minibuffer.clone())
+    } else {
+        None
+    };
+    let include_all_mini = i.sym_id(&minibuf) == Some(sym::T);
+    let all_frames = arg(&a, 2);
+    let frames = match &all_frames {
+        Value::Frame(f) => {
+            let f = frame_live(i, &Value::Frame(f.clone()))?;
+            if !Rc::ptr_eq(&f, &origin) {
+                let first = f.borrow().windows.first().cloned();
+                return Ok(first.map(Value::Window).unwrap_or(Value::Window(from)));
+            }
+            vec![f]
+        }
+        Value::Sym(s) if *s == sym::T || i.symbol_name(*s) == "visible" => i.frames.clone(),
+        Value::Int(0) => i.frames.clone(),
+        Value::Nil if include_all_mini || active_mini.is_some() => i
+            .frames
+            .iter()
+            .filter(|f| {
+                Rc::ptr_eq(f, &origin)
+                    || mini.as_ref().is_some_and(|m| {
+                        f.borrow()
+                            .minibuffer
+                            .as_ref()
+                            .is_some_and(|other| Rc::ptr_eq(m, other))
+                    })
+            })
+            .cloned()
+            .collect(),
+        _ => vec![origin],
+    };
+    // Frames in the current terminal model are visible. Keep minibuffer
+    // windows in the ring even when excluded, so FROM can locate one.
+    let mut windows = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for frame in frames {
+        let frame = frame.borrow();
+        if frame.dead {
+            continue;
+        }
+        for window in frame.windows.iter().chain(frame.minibuffer.iter()) {
+            let w = window.borrow();
+            if !w.dead && w.horiz.is_none() && seen.insert(w.id) {
+                windows.push(window.clone());
+            }
+        }
     }
+    let Some(start) = windows.iter().position(|w| Rc::ptr_eq(w, &from)) else {
+        return Ok(Value::Window(from));
+    };
+    for step in 1..=windows.len() {
+        let offset = if forward { step } else { windows.len() - step };
+        let candidate = &windows[(start + offset) % windows.len()];
+        if !candidate.borrow().minibuffer
+            || include_all_mini
+            || active_mini
+                .as_ref()
+                .is_some_and(|m| Rc::ptr_eq(m, candidate))
+        {
+            return Ok(Value::Window(candidate.clone()));
+        }
+    }
+    Ok(Value::Window(from))
+}
+
+fn f_next_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    next_window_in_cycle(i, a, true)
 }
 
 fn f_previous_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let w = win_live(i, &arg(&a, 0))?;
-    match window_cycle(i, -1, &w) {
-        Some(n) => Ok(Value::Window(n)),
-        None => Ok(Value::Nil),
-    }
+    next_window_in_cycle(i, a, false)
 }
 
 fn f_walk_windows(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -4718,14 +4785,17 @@ fn f_scroll_down_line(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     f_scroll_down(i, crate::lisp::Argv::new(vec![Value::Int(n)]))
 }
 fn f_window_left(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU window.c: same-level left sibling — nil at the leftmost
-    // child and at the root (never self, never wraps to the frame
-    // cycle).  The old window_cycle call both ignored WINDOW and
-    // returned the window itself when no sibling existed, which
-    // looped `window--atom-check-1's recursive right-sibling walk.
+    // GNU window.el excludes nil and parentless windows, unlike the
+    // general previous-sibling primitive's root/minibuffer chain.
+    if a[0].is_nil() || win_valid(i, &a[0])?.borrow().parent.is_none() {
+        return Ok(Value::Nil);
+    }
     crate::editor::winxtra::siblings(i, &arg(&a, 0), false)
 }
 fn f_window_right(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    if a[0].is_nil() || win_valid(i, &a[0])?.borrow().parent.is_none() {
+        return Ok(Value::Nil);
+    }
     crate::editor::winxtra::siblings(i, &arg(&a, 0), true)
 }
 fn f_scroll_up_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -5017,13 +5087,11 @@ fn f_set_window_dedicated_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
 }
 fn f_window_parameter(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_any(i, &arg(&a, 0))?;
-    let ps = want_sym(i, &a[1])?;
-    Ok(crate::lisp::eval::plist_get(&w.borrow().params, ps))
+    Ok(crate::lisp::eval::plist_get_v(&w.borrow().params, &a[1]))
 }
 fn f_set_window_parameter(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_any(i, &arg(&a, 0))?;
-    let ps = want_sym(i, &a[1])?;
-    let new = crate::lisp::eval::plist_put(&w.borrow().params, ps, a[2].clone());
+    let new = crate::lisp::eval::plist_put_front(&w.borrow().params, &a[1], a[2].clone());
     w.borrow_mut().params = new;
     Ok(a[2].clone())
 }
