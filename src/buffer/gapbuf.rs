@@ -31,7 +31,7 @@ pub struct GapBuffer {
 // gap. Storage is char-indexed; allocation headroom is budgeted in bytes.
 const GAP_INIT: usize = 20;
 
-fn storage_bytes(c: char, multibyte: bool) -> usize {
+pub(super) fn storage_bytes(c: char, multibyte: bool) -> usize {
     if !multibyte {
         return 1;
     }

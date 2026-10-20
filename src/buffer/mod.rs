@@ -882,9 +882,9 @@ impl Buffer {
         self.push_undo(Value::cons(Value::string(text), Value::Int(sbeg)));
     }
 
-    /// Casifying replaces text without relocating markers. Record its
-    /// aggregate undo pair without deletion's marker-adjustment records.
-    pub(crate) fn record_casify(
+    /// Record an in-place replacement without relocating markers or
+    /// adding deletion's marker-adjustment records.
+    pub(crate) fn record_change(
         &mut self,
         start: usize,
         old: &str,
@@ -959,6 +959,27 @@ impl Buffer {
         let t = self.text.mod_tick.get() + Self::modiff_incr(nchars);
         self.text.mod_tick.set(t);
         self.text.chars_mod_tick.set(t);
+    }
+
+    /// GNU modify_text for an in-place edit: one first-change record,
+    /// one composite tick. NOUNDO suppresses undo/file locking and follows
+    /// subst-char-in-region's SAVE_MODIFF adjustment.
+    pub(crate) fn prepare_inplace_change(&mut self, nchars: usize, no_undo: bool) {
+        let saved = self.text.save_tick.get();
+        if !no_undo {
+            if self.text.mod_tick.get() as i64 <= saved as i64 {
+                self.record_first_change();
+            }
+            self.note_modified(true);
+        }
+        let tick = self.text.mod_tick.get() + Self::modiff_incr(nchars);
+        self.text.mod_tick.set(tick);
+        self.text.chars_mod_tick.set(tick);
+        self.text.save_tick.set(if no_undo && saved == tick - 1 {
+            tick
+        } else {
+            saved
+        });
     }
 
     /// GNU `modify_text_properties': first-change record (when this is

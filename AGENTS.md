@@ -439,7 +439,7 @@ preserve intervals; expansion inserts extra prefix characters with only
 the previous character's rear-sticky properties. Like GNU's
 `replace_range_2` with MARKERS=nil, marker/overlay character positions
 stay fixed while point and the selected buffer's accessible end grow.
-`record_casify` saves an aggregate undo pair with the original string's
+`record_change` saves an aggregate undo pair with the original string's
 properties. Undo insertion restores those properties before change hooks.
 `undo-boundary` adds a nil marker only to a nonempty history without
 an existing boundary. An empty history stays nil, but still remembers
@@ -1267,3 +1267,13 @@ gzip -dc $GNU/<path>.el.gz | cmp - lisp/<file>.el
 # parse-check all files without evaluating (see git history for script)
 ./target/debug/remacs --batch --eval '(load "/tmp/parsecheck6.el")'
 ```
+
+`subst-char-in-region` validates equal internal byte lengths in multibyte
+buffers before scanning, including empty and no-match regions. Unibyte
+buffers truncate both characters to eight bits. It restarts the scan after
+before-change hooks, changes characters without moving point or markers,
+and records each replacement with `record_change`, preserving properties.
+`prepare_inplace_change` adds the first-change record and composite tick
+once. NOUNDO temporarily disables undo and hides the visited file name;
+its SAVE_MODIFF adjustment follows GNU even when a multi-character range
+still becomes modified. `tests/qa_substitute_chars.el` pins these details.

@@ -2396,85 +2396,112 @@ fn f_transpose_regions(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_subst_char_in_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    check_writable(i)?;
-    // GNU Fsubst_char_in_region: validate_interval_range on START/END
-    // signals (args-out-of-range BUFFER START END) when out of bounds
-    // — no clamping.
-    let (s_raw, e_raw) = (
+    let b = cur(i);
+    let (start, end) = (
         crate::lisp::builtins::want_int_or_mark(i, &a[0])?,
         crate::lisp::builtins::want_int_or_mark(i, &a[1])?,
     );
-    let (begv, len) = {
-        let b = cur(i);
-        let bb = b.borrow();
-        (bb.begv as i128, bb.text_len() as i128)
-    };
-    // GNU validate_region swaps START/END when START>END first, so a
-    // reversed-but-in-range pair is legal and the out-of-range payload
-    // carries the NORMALIZED pair.
-    let (s_raw, e_raw) = if s_raw > e_raw {
-        (e_raw, s_raw)
-    } else {
-        (s_raw, e_raw)
-    };
-    if s_raw < begv + 1 || e_raw > len + 1 {
-        return Err(err_sym(
-            i,
-            "args-out-of-range",
-            vec![
-                Value::Buffer(cur(i)),
-                Value::Int(s_raw),
-                Value::Int(e_raw),
-            ],
-        ));
+    let (start, end) = (start.min(end), start.max(end));
+    fn bounds(
+        i: &mut Interp,
+        b: &crate::lisp::value::BufferRef,
+        start: i128,
+        end: i128,
+    ) -> Result<(usize, usize), Flow> {
+        let buffer = b.borrow();
+        if start < buffer.begv as i128 + 1 || end > buffer.zv as i128 + 1 {
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![Value::Buffer(b.clone()), Value::Int(start), Value::Int(end)],
+            ));
+        }
+        Ok((start as usize - 1, end as usize - 1))
     }
-    let (s, e) = (s_raw as usize - 1, e_raw as usize - 1);
+    let (s, e) = bounds(i, &b, start, end)?;
     let from = match &a[2] {
-        Value::Int(n) if (0..=0x3FFFFF).contains(n) => *n as u32,
+        Value::Int(n) if (0..=0x3fffff).contains(n) => *n as u32,
         other => return Err(i.wrong_type_mut("characterp", other)),
     };
     let to = match &a[3] {
-        Value::Int(n) if (0..=0x3FFFFF).contains(n) => *n as u32,
+        Value::Int(n) if (0..=0x3fffff).contains(n) => *n as u32,
         other => return Err(i.wrong_type_mut("characterp", other)),
     };
-    let fc = char::from_u32(from).unwrap_or('\u{FFFD}');
-    let tc = char::from_u32(to).unwrap_or('\u{FFFD}');
-    // GNU calls modify_text (before-change + MODIFF bump) only when a
-    // match exists, at the FIRST match position, covering [pos, end);
-    // after-change spans first..last substitution.  No match -> no
-    // hooks, no tick, nil.
-    let (first, last) = {
-        let b = cur(i);
-        let bb = b.borrow();
-        let mut first = None;
-        let mut last = 0;
-        for p in s..e.min(bb.text.len()) {
-            if bb.text.char_at(p) == fc {
-                if first.is_none() {
-                    first = Some(p);
-                }
-                last = p + 1;
+    let multi_symbol = i.intern("enable-multibyte-characters");
+    let multibyte = i.symbol_value(multi_symbol).truthy();
+    let character = |code: u32| {
+        let code = if multibyte {
+            code
+        } else {
+            let byte = code as u8;
+            if byte < 128 {
+                u32::from(byte)
+            } else {
+                0x3fff00 + u32::from(byte)
             }
-        }
-        match first {
-            Some(f) => (f, last),
-            None => return Ok(Value::Nil),
-        }
+        };
+        crate::lisp::value::lisp_char(code)
+            .unwrap_or_else(|| crate::lisp::value::mule_seq_char(code))
     };
-    crate::lisp::builtins::evalfn::signal_before_change(i, first + 1, e + 1)?;
+    let (fc, tc) = (character(from), character(to));
+    if multibyte && super::gapbuf::storage_bytes(fc, true) != super::gapbuf::storage_bytes(tc, true)
     {
-        let b = cur(i);
-        let mut bb = b.borrow_mut();
-        // GNU substitutes in place: point and markers are undisturbed.
-        for p in first..e.min(bb.text.len()) {
-            if bb.text.char_at(p) == fc {
-                bb.text.set_char_at(p, tc);
-            }
-        }
-        bb.note_text_change(e - first);
+        return Err(i.error_q(
+            "Characters in `subst-char-in-region' have different byte-lengths",
+            &[],
+        ));
     }
-    crate::lisp::builtins::evalfn::signal_after_change(i, first + 1, last + 1, (last - first) as i128)?;
-    Ok(Value::Nil)
+    let first = (s..e).find(|pos| b.borrow().text.char_at(*pos) == fc);
+    let Some(first) = first else {
+        return Ok(Value::Nil);
+    };
+    let no_undo = arg(&a, 4).truthy();
+    let depth = i.specbind_depth();
+    let result = (|| {
+        if no_undo {
+            let undo = i.intern("buffer-undo-list");
+            let filename = i.intern("buffer-file-name");
+            i.specbind(undo, Value::t())?;
+            i.specbind(filename, Value::Nil)?;
+        }
+        crate::lisp::builtins::evalfn::signal_before_change(i, first + 1, e + 1)?;
+        b.borrow_mut().prepare_inplace_change(e - first, no_undo);
+        // GNU restarts after before-change hooks, including range validation.
+        let (s, e) = bounds(i, &b, start, end)?;
+        let mut changed = None;
+        let mut last = 0;
+        for pos in s..e {
+            if b.borrow().text.char_at(pos) != fc {
+                continue;
+            }
+            if !no_undo {
+                let properties = b.borrow().text.props.borrow().slice(pos, pos + 1);
+                let undo = b.borrow_mut().record_change(pos, &fc.to_string(), 1);
+                if let Some(undo) = undo {
+                    i.set_str_props(&undo, properties);
+                    if multibyte {
+                        i.mark_multibyte(&undo);
+                    } else {
+                        i.mark_unibyte(&undo);
+                    }
+                }
+            }
+            b.borrow().text.set_char_at(pos, tc);
+            changed.get_or_insert(pos);
+            last = pos + 1;
+        }
+        if let Some(first) = changed {
+            crate::lisp::builtins::evalfn::signal_after_change(
+                i,
+                first + 1,
+                last + 1,
+                (last - first) as i128,
+            )?;
+        }
+        Ok(Value::Nil)
+    })();
+    i.unbind_to(depth)?;
+    result
 }
 
 /// GNU `check_translation': VAL is an alist (([FROM-CHAR ...] . TO)

@@ -1077,7 +1077,7 @@ pub(crate) fn apply_case_text(
         .props
         .borrow()
         .slice(start, start + old_len);
-    let undo = buffer.borrow_mut().record_casify(start, old, new_len);
+    let undo = buffer.borrow_mut().record_change(start, old, new_len);
     let mut output = new.chars();
     let mut pos = start;
     for width in widths {
