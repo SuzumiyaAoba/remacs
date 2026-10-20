@@ -174,4 +174,16 @@
      (qa182-seq-string (list 'deep qa182-seq-a 'extra 1))
      (qa182-seq-string (list 'deep qa182-seq-b)))
     'error '("Stack overflow in equal"))
+;; GH #125: the constructor's plist order does not affect property equality.
+(qa (equal-including-properties
+     (propertize "abc" 'a 1 'b 2)
+     (propertize "abc" 'b 2 'a 1)) t)
+(qa (equal-including-properties
+     (propertize "abc" 'a 1 'b 2)
+     (propertize "abc" 'b 3 'a 1)) nil)
+(qa (let ((a (propertize "abc" 'a 1 'b 2))
+          (b (propertize "abc" 'b 2 'a 1)))
+      (add-text-properties 1 2 '(c 3 d 4) a)
+      (add-text-properties 1 2 '(d 4 c 3) b)
+      (equal-including-properties a b)) t)
 (princ (qa--done)) (terpri)
