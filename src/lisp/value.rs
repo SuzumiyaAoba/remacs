@@ -161,7 +161,7 @@ pub struct LispHash {
     /// Cache the policy independently of an interpreter's symbol IDs:
     /// the allocation registry can contain objects from several interpreters.
     pub(crate) gc_weakness: Option<HashWeakness>,
-    /// The :size argument as given (GNU's `hash-table-size').
+    /// Current GNU entry capacity (the initial :size hint, then grown).
     pub size: i128,
     /// :rehash-size / :rehash-threshold values (GNU stores them and
     /// returns them verbatim from the accessors).
@@ -206,17 +206,20 @@ impl LispHash {
         if self.keys.0.iter().flatten().any(|(e, _)| *e == hk) {
             return;
         }
-        if self.user_test.is_some() || self.test == HashTest::Equal {
-            if self.collision_order.len() as i128 == self.size {
-                // GNU maybe_resize_hash_table re-links old entries by slot
-                // order, without calling either Lisp function again.
-                self.size = if self.size == 0 {
-                    6
-                } else {
-                    self.size.max(6) * if self.size <= 64 { 4 } else { 2 }
-                };
+        let collision_checked = self.user_test.is_some() || self.test == HashTest::Equal;
+        if self.keys.0.len() as i128 == self.size && self.keys.0.iter().all(Option::is_some) {
+            self.size = if self.size == 0 {
+                6
+            } else {
+                self.size.max(6) * if self.size <= 64 { 4 } else { 2 }
+            };
+            if collision_checked {
+                // Resizing re-links collision chains in slot order,
+                // without invoking the user comparison/hash functions.
                 self.collision_order = (0..self.keys.0.len()).collect();
             }
+        }
+        if collision_checked {
             let slot = self.free_slots.pop().unwrap_or(self.keys.0.len());
             self.collision_order.push(slot);
             if slot == self.keys.0.len() {

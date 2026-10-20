@@ -1442,7 +1442,6 @@ fn read_hash_literal(i: &mut Interp, fields: &[Value]) -> Result<Option<Value>, 
     }
     let mut test = HashTest::Eql;
     let mut data: Option<Vec<Value>> = None;
-    let mut size: i128 = 0;
     let mut weakness: Option<Value> = None;
     let mut k = 0;
     while k + 1 < fields.len() {
@@ -1469,11 +1468,8 @@ fn read_hash_literal(i: &mut Interp, fields: &[Value]) -> Result<Option<Value>, 
                     return Ok(None);
                 }
             }
-            "size" => {
-                if let Value::Int(n) = val {
-                    size = *n;
-                }
-            }
+            // GNU ignores the legacy hint in printed tables.
+            "size" => {}
             "weakness" => {
                 if matches!(val, Value::Sym(_) | Value::Nil) {
                     weakness = if val.is_nil() {
@@ -1494,7 +1490,9 @@ fn read_hash_literal(i: &mut Interp, fields: &[Value]) -> Result<Option<Value>, 
         return Ok(None);
     }
     let mut h = LispHash::new(test);
-    h.size = size;
+    // Literal data reserves one slot per pair before equivalent keys
+    // coalesce, unlike lazy default construction via make-hash-table.
+    h.size = data.as_ref().map_or(0, |pairs| pairs.len() / 2) as i128;
     h.gc_weakness = crate::lisp::value::HashWeakness::from_value(i, &weakness);
     h.weakness = weakness;
     let h = crate::lisp::memory::allocate(h, crate::lisp::Value::Hash);

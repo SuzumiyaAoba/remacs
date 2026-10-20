@@ -290,14 +290,16 @@ fn restored_weak_tables_keep_live_keys_and_release_unreachable_keys() {
         "ready"
     );
     std::fs::remove_dir_all(fixture.0.join("producer-cache")).unwrap();
-    let consumer = "(progn (garbage-collect) (garbage-collect) \
-        (prin1 (list (hash-table-count dump194-table) (gethash dump194-keep dump194-table))))";
+    let consumer = "(let ((capacity (hash-table-size dump194-table))) \
+        (garbage-collect) (garbage-collect) \
+        (prin1 (list capacity (hash-table-size dump194-table) \
+          (hash-table-count dump194-table) (gethash dump194-keep dump194-table))))";
     assert_eq!(
         Fixture::ok(fixture.eval(
             "consumer-cache",
             &["--dump-file", fixture.image().to_str().unwrap()],
             consumer
         )),
-        "(1 retained)"
+        "(1536 1536 1 retained)"
     );
 }
