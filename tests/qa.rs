@@ -321,6 +321,7 @@ qa!(qa_quoting_scope, "qa_quoting_scope.el");
 qa!(qa_symbol_print_escape, "qa_symbol_print_escape.el");
 qa!(qa_process, "qa_process.el");
 qa!(qa_accept_process_output, "qa_accept_process_output.el");
+qa!(qa_process_connection, "qa_process_connection.el");
 qa!(qa_process_stderr, "qa_process_stderr.el");
 qa!(qa_radix, "qa_radix.el");
 qa!(qa_read, "qa_read.el");

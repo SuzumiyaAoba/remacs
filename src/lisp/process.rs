@@ -10,7 +10,10 @@
 
 use std::collections::VecDeque;
 use std::io::{Read, Write};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::rc::Rc;
+
+mod child;
 
 use super::builtins::evalfn::timer_check;
 use super::builtins::{S, arg};
@@ -22,11 +25,14 @@ use super::{EvalResult, Interp};
 
 /// OS-level I/O behind a process object.
 pub enum ProcIo {
-    /// A real child subprocess connected through a pty (like GNU).
+    /// A real child with independently selected pipe/pty input and output.
     Child {
         child: std::process::Child,
-        /// Pty master: reads child stdout, writes child stdin.
-        master_fd: i32,
+        input_fd: Option<OwnedFd>,
+        output_fd: Option<OwnedFd>,
+        tty_fd: Option<OwnedFd>,
+        pty_input: bool,
+        pty_output: bool,
         stderr: Option<std::process::ChildStderr>,
         /// Unsent input, shared with reentrant sends from filters/timers.
         pending_input: VecDeque<u8>,
@@ -376,14 +382,13 @@ impl Drop for ProcIo {
     fn drop(&mut self) {
         match self {
             ProcIo::Child {
-                child, master_fd, ..
+                child, input_fd, output_fd, tty_fd, ..
             } => {
                 let _ = child.kill();
                 let _ = child.wait();
-                if *master_fd >= 0 {
-                    unsafe { libc::close(*master_fd) };
-                    *master_fd = -1;
-                }
+                input_fd.take();
+                output_fd.take();
+                tty_fd.take();
             }
             ProcIo::Pipe {
                 read_fd,
@@ -756,14 +761,19 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
             match &mut p.io {
                 ProcIo::Child {
                     child,
-                    master_fd,
+                    input_fd, output_fd, tty_fd,
                     stderr,
                     pending_input,
+                    ..
                 } => {
+                    // Observe exit before draining. If the child exits just
+                    // after an EAGAIN read, leave it for the next poll so
+                    // closing the channel cannot discard its final bytes.
+                    let exited = child.try_wait();
                     let mut buf = [0u8; 8192];
                     loop {
                         let n = unsafe {
-                            libc::read(*master_fd, buf.as_mut_ptr() as *mut _, buf.len())
+                            libc::read(output_fd.as_ref().map_or(-1, AsRawFd::as_raw_fd), buf.as_mut_ptr() as *mut _, buf.len())
                         };
                         if n > 0 {
                             events.push(Ev::Out(buf[..n as usize].to_vec(), false));
@@ -783,11 +793,14 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     }
                     // GNU notices process exit asynchronously; when output
                     // arrived this poll the exit is picked up next round.
-                    match child.try_wait() {
+                    match exited {
                         Ok(Some(st)) if events.is_empty() => {
-                            // Child is reaped; release the pty master.
-                            unsafe { libc::close(*master_fd) };
-                            *master_fd = -1;
+                            // Child is reaped; release both data channels and
+                            // the optional terminal control descriptor.
+                            input_fd.take();
+                            output_fd.take();
+                            tty_fd.take();
+                            stderr.take();
                             *pending_input = VecDeque::new();
                             if let Some(sig) = std::os::unix::process::ExitStatusExt::signal(&st) {
                                 p.status = "signal";
@@ -1360,6 +1373,30 @@ fn eol_normalize(name: &str) -> String {
     }
 }
 
+/// GNU is_pty_from_symbol: nil inherits the dynamic default on either side.
+fn child_pty_mode(i: &mut Interp, mode: &Value) -> Result<bool, Flow> {
+    if mode.is_nil() {
+        let variable = i.intern("process-connection-type");
+        return Ok(i.symbol_value(variable).truthy());
+    }
+    if let Value::Sym(symbol) = mode {
+        if *symbol == i.intern("pty") {
+            return Ok(true);
+        }
+        if *symbol == i.intern("pipe") {
+            return Ok(false);
+        }
+    }
+    Err(i.signal_data(
+        sym::FILE_MISSING,
+        vec![
+            Value::string("Unknown connection type"),
+            Value::string("No such file or directory"),
+            mode.clone(),
+        ],
+    ))
+}
+
 fn f_make_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU Fmake_process: nargs==0 returns nil before any checking.
     if a.is_empty() {
@@ -1391,29 +1428,17 @@ fn f_make_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let wta = i.intern("wrong-type-argument");
         return Err(i.signal_data(wta, vec![Value::Sym(pred), stop_v]));
     }
-    // GNU validates :connection-type early; anything but pty/pipe is a
-    // file-missing error naming the offending value.
     let ct_v = kw(i, &args, ":connection-type");
-    if ct_v.truthy() {
-        let ok = match &ct_v {
-            Value::Sym(s) => {
-                let n = i.symbol_name(*s);
-                n == "pty" || n == "pipe"
-            }
-            _ => false,
+    let (pty_input, pty_output) = if let Value::Cons(pair) = &ct_v {
+        let (input, output) = {
+            let pair = pair.borrow();
+            (pair.car.clone(), pair.cdr.clone())
         };
-        if !ok {
-            let fm = i.intern("file-missing");
-            return Err(i.signal_data(
-                fm,
-                vec![
-                    Value::string("Unknown connection type"),
-                    Value::string("No such file or directory"),
-                    ct_v,
-                ],
-            ));
-        }
-    }
+        (child_pty_mode(i, &input)?, child_pty_mode(i, &output)?)
+    } else {
+        let pty = child_pty_mode(i, &ct_v)?;
+        (pty, pty)
+    };
     let command = kw(i, &args, ":command");
     let cmd: Vec<String> = match &command {
         // GNU: non-list :command → (wrong-type-argument listp VALUE),
@@ -1453,97 +1478,28 @@ fn f_make_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
     }
     let split_stderr = stderr_dest.truthy();
-    // GNU connects child processes through a pty: stdout/stdin share the
-    // slave side, we keep the master.
-    let (master_fd, slave_fd, tty_name) = unsafe {
-        let mut master: libc::c_int = -1;
-        let mut slave: libc::c_int = -1;
-        if libc::openpty(
-            &mut master,
-            &mut slave,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        ) != 0
-        {
-            return Err(i.error("Process not started: openpty failed"));
-        }
-        let name = libc::ttyname(slave);
-        let name = if name.is_null() {
-            String::new()
-        } else {
-            std::ffi::CStr::from_ptr(name)
-                .to_string_lossy()
-                .into_owned()
-        };
-        // GNU's child_setup_tty configures the subprocess side of the
-        // pty: canonical input stays ON with VEOF=^D, so process-send-eof's
-        // ^D makes the child see end-of-file (and flushes a partial
-        // line); echo is off, output postprocessing on but without
-        // NL→CR-NL mapping, delays and tab expansion off, 8-bit clean,
-        // and erase/kill processing disabled.
-        let mut tio: libc::termios = std::mem::zeroed();
-        if libc::tcgetattr(slave, &mut tio) == 0 {
-            tio.c_oflag |= libc::OPOST;
-            tio.c_oflag &= !libc::ONLCR;
-            tio.c_oflag &= !(libc::NLDLY
-                | libc::CRDLY
-                | libc::TABDLY
-                | libc::BSDLY
-                | libc::VTDLY
-                | libc::FFDLY);
-            tio.c_lflag &= !libc::ECHO;
-            tio.c_lflag |= libc::ISIG;
-            tio.c_iflag &= !libc::ISTRIP;
-            tio.c_oflag &= !libc::TAB3;
-            tio.c_cflag = (tio.c_cflag & !libc::CSIZE) | libc::CS8;
-            tio.c_lflag |= libc::ICANON;
-            tio.c_cc[libc::VEOF] = 0o04; // Control-D
-            tio.c_cc[libc::VERASE] = libc::_POSIX_VDISABLE;
-            tio.c_cc[libc::VKILL] = libc::_POSIX_VDISABLE;
-            libc::tcsetattr(slave, libc::TCSANOW, &tio);
-        }
-        (master, slave, name)
-    };
-    // A pipe-process :stderr gets the pipe's write end dup'd straight
-    // onto the child's stderr (GNU wires the fd, it doesn't route
-    // bytes), then relinquishes the parent's copy.
-    let mut stderr_pipe_wfd: Option<i32> = None;
-    if let Value::Process(sp) = &stderr_dest {
-        let mut spb = sp.borrow_mut();
-        if let ProcIo::Pipe { child_wfd, .. } = &mut spb.io {
+    // Transfer an explicitly supplied pipe's writer to the child, as GNU
+    // does. Other :stderr destinations are drained through a separate pipe.
+    let stderr_pipe = if let Value::Process(sp) = &stderr_dest {
+        let mut sp = sp.borrow_mut();
+        if let ProcIo::Pipe { child_wfd, .. } = &mut sp.io {
             if *child_wfd >= 0 {
-                stderr_pipe_wfd = Some(std::mem::replace(child_wfd, -1));
-            }
-        }
-    }
-    let mut command = std::process::Command::new(&cmd[0]);
-    command.args(&cmd[1..]);
-    {
-        use std::os::unix::io::FromRawFd;
-        unsafe {
-            let in_f = std::fs::File::from_raw_fd(libc::dup(slave_fd));
-            let out_f = std::fs::File::from_raw_fd(libc::dup(slave_fd));
-            command.stdin(std::process::Stdio::from(in_f));
-            command.stdout(std::process::Stdio::from(out_f));
-            if let Some(wfd) = stderr_pipe_wfd {
-                let err_f = std::fs::File::from_raw_fd(wfd);
-                command.stderr(std::process::Stdio::from(err_f));
-            } else if split_stderr {
-                command.stderr(std::process::Stdio::piped());
+                let fd = std::mem::replace(child_wfd, -1);
+                // SAFETY: the pipe relinquishes its sole ownership here.
+                Some(unsafe { OwnedFd::from_raw_fd(fd) })
             } else {
-                let err_f = std::fs::File::from_raw_fd(libc::dup(slave_fd));
-                command.stderr(std::process::Stdio::from(err_f));
+                None
             }
+        } else {
+            unreachable!()
         }
-    }
-    let mut child = match command.spawn() {
-        Ok(c) => c,
-        Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
-            unsafe {
-                libc::close(master_fd);
-                libc::close(slave_fd);
-            }
+    } else {
+        None
+    };
+    let (io, tty_name) = match child::spawn(&cmd, pty_input, pty_output, stderr_pipe, split_stderr)
+    {
+        Ok(transport) => transport,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Err(i.signal_data(
                 sym::FILE_MISSING,
                 vec![
@@ -1553,35 +1509,14 @@ fn f_make_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 ],
             ));
         }
-        Err(e) => {
-            unsafe {
-                libc::close(master_fd);
-                libc::close(slave_fd);
-            }
-            return Err(i.error(format!("Process not started: {e}")));
-        }
+        Err(e) => return Err(i.error(format!("Process not started: {e}"))),
     };
-    unsafe { libc::close(slave_fd) };
-    nonblock_fd(master_fd);
-    let stderr = child.stderr.take();
-    {
-        use std::os::unix::io::AsRawFd;
-        if let Some(s) = &stderr {
-            nonblock_fd(s.as_raw_fd());
-        }
-    }
-    let pid = child.id() as i32;
-    let mut p = base_proc(
-        name,
-        "real",
-        ProcIo::Child {
-            child,
-            master_fd,
-            stderr,
-            pending_input: VecDeque::new(),
-        },
-    );
-    p.tty_name = Value::string(tty_name);
+    let pid = match &io {
+        ProcIo::Child { child, .. } => child.id() as i32,
+        _ => unreachable!(),
+    };
+    let mut p = base_proc(name, "real", io);
+    p.tty_name = tty_name.map(Value::string).unwrap_or(Value::Nil);
     p.pid = pid;
     let pref = finish_setup(i, p, &args, true)?;
     i.processes.push(pref.clone());
@@ -2643,7 +2578,48 @@ fn f_set_process_sentinel(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_process_tty_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let p = want_proc(i, &a[0])?;
-    Ok(p.borrow().tty_name.clone())
+    let stream = arg(&a, 1);
+    let p = p.borrow();
+    let uses_tty = if stream.is_nil() {
+        true
+    } else {
+        let stdin = i.intern("stdin");
+        let stdout = i.intern("stdout");
+        let stderr = i.intern("stderr");
+        match &stream {
+            Value::Sym(id) if *id == stdin => matches!(
+                &p.io,
+                ProcIo::Child {
+                    pty_input: true,
+                    ..
+                }
+            ),
+            Value::Sym(id) if *id == stdout => matches!(
+                &p.io,
+                ProcIo::Child {
+                    pty_output: true,
+                    ..
+                }
+            ),
+            Value::Sym(id) if *id == stderr => {
+                matches!(
+                    &p.io,
+                    ProcIo::Child {
+                        pty_output: true,
+                        ..
+                    }
+                ) && p.stderr_dest.is_nil()
+            }
+            _ => {
+                return Err(i.signal_data(sym::ERROR, vec![Value::string("Unknown stream"), stream]));
+            }
+        }
+    };
+    Ok(if uses_tty {
+        p.tty_name.clone()
+    } else {
+        Value::Nil
+    })
 }
 
 fn f_process_coding_system(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -2962,18 +2938,20 @@ fn write_child_input(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult
                 return Err(i.error("Process is not running"));
             }
             let ProcIo::Child {
-                master_fd,
+                input_fd,
                 pending_input,
                 ..
             } = &mut pb.io
             else {
                 return Err(i.error("Writing to process: broken pipe"));
             };
-            if *master_fd < 0 {
-                return Err(i.error("Writing to process: broken pipe"));
-            }
+            let Some(input) = input_fd.as_ref() else {
+                // GNU redirects later writes to /dev/null after pipe EOF.
+                *pending_input = VecDeque::new();
+                return Ok(Value::Nil);
+            };
             write_pending_input(pending_input, |rest| {
-                let n = unsafe { libc::write(*master_fd, rest.as_ptr().cast(), rest.len()) };
+                let n = unsafe { libc::write(input.as_raw_fd(), rest.as_ptr().cast(), rest.len()) };
                 if n < 0 {
                     Err(std::io::Error::last_os_error())
                 } else {
@@ -3105,8 +3083,19 @@ fn f_process_send_eof(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         return Ok(arg(&a, 0));
     }
     if matches!(p.borrow().io, ProcIo::Child { .. }) {
-        // The VEOF character must follow any input queued by an outer send.
-        write_child_input(i, &p, b"\x04")?;
+        let pty_input = matches!(
+            &p.borrow().io,
+            ProcIo::Child {
+                pty_input: true,
+                ..
+            }
+        );
+        write_child_input(i, &p, if pty_input { b"\x04" } else { b"" })?;
+        if !pty_input {
+            if let ProcIo::Child { input_fd, .. } = &mut p.borrow_mut().io {
+                input_fd.take();
+            }
+        }
     } else {
         let mut pb = p.borrow_mut();
         match &mut pb.io {
@@ -3532,7 +3521,10 @@ fn f_delete_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         ev = match &mut pb.io {
             ProcIo::Child {
                 child,
-                master_fd,
+                input_fd,
+                output_fd,
+                tty_fd,
+                stderr,
                 pending_input,
                 ..
             } => {
@@ -3541,10 +3533,10 @@ fn f_delete_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 // Reap the child and release the pty — otherwise fds and
                 // zombies accumulate until openpty starts failing.
                 let _ = child.wait();
-                if *master_fd >= 0 {
-                    unsafe { libc::close(*master_fd) };
-                    *master_fd = -1;
-                }
+                input_fd.take();
+                output_fd.take();
+                tty_fd.take();
+                stderr.take();
                 if final_seen {
                     // Keep the observed status; the sentinel already ran.
                     ("signal", libc::SIGKILL)
@@ -3640,7 +3632,7 @@ fn f_process_running_child_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
             return Err(i.error(format!("Process {name} is not active")));
         }
         let fd = match &pb.io {
-            ProcIo::Child { master_fd, .. } => *master_fd,
+            ProcIo::Child { tty_fd, .. } => tty_fd.as_ref().map_or(-1, AsRawFd::as_raw_fd),
             _ => -1,
         };
         (pb.pid, fd)

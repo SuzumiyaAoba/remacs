@@ -530,6 +530,28 @@ Design notes:
 Verified: `treesit.el`, `json-ts-mode`, `c-ts-mode`, `rust-ts-mode`
 load, parse, and fontify correctly under `--batch`.
 
+## Subprocess pipe and PTY transports (`src/lisp/process/child.rs`)
+
+`make-process` selects stdin and stdout independently: `pipe`, `pty`, or
+the `(INPUT . OUTPUT)` pair; nil on either side inherits the dynamic
+`process-connection-type`. Stderr shares stdout unless explicitly separated.
+`process-tty-name` accepts `stdin`, `stdout`, or `stderr` to inspect a stream;
+its nil default reports a terminal used by either side.
+
+`ProcIo::Child` owns separate stdin/stdout descriptors plus an optional PTY
+control descriptor. Every descriptor is close-on-exec. Pipes preserve raw
+control bytes; `process-send-eof` drains pending input and closes only the
+stdin writer, leaving stdout readable. Later writes to a still-running
+pipe child are discarded, matching GNU's `/dev/null` redirection. PTY input
+keeps GNU's canonical discipline and VEOF behavior. Normal exit, deletion
+and failed spawn release all owned descriptors, including separate stderr.
+Observe child exit before draining output so final bytes cannot arrive
+between an empty read and a decision to close the channel.
+
+Regressions: `qa_process_connection.el` checks GNU's transport matrix and
+stream selectors; `tests/process_pipe.rs` verifies kernel FIFOs, raw bytes,
+EOF, descriptor closure and failed-spawn cleanup.
+
 ## External libraries (`src/lisp/dynlib.rs` + builtins)
 
 Optional GNU libraries are dlopen'd at runtime (`dynlib::Library`):
