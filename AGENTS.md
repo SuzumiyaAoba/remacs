@@ -148,6 +148,11 @@ the shared Lisp name object for identity/properties and later mutations,
 and allocate automatic F names per interpreter. Existing minibuffer
 ownership cannot be changed to a different kind or window. Quote errors
 through `error_q`. Regressions: `qa_frame_parameters`.
+Frame/buffer change snapshots retain the frame's name object, rather
+than a fresh string that would compare non-EQ on every query. Track
+read-only/modified flags, not modification ticks, and ignore space-prefixed
+buffers. Sole-frame deletion has distinct default/FORCE errors.
+Regressions: `qa_frame_buffer_changes`.
 
 ## Startup profiling (`REMACS_BOOT_PROF=1`)
 

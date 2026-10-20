@@ -1,0 +1,100 @@
+;;; -*- lexical-binding: t; -*-
+;; Issue #107: unchanged snapshots settle, and FORCE selects the correct
+;; sole-frame deletion error. Frame-name sharing in #106 fixes the stale
+;; always-changed result; these tests pin its observable transitions.
+(defvar qa107-state nil)
+(defvar qa107-other nil)
+(defvar qa107-value)
+(qa (progn (frame-or-buffer-changed-p nil) (frame-or-buffer-changed-p nil)) nil)
+(qa (let ((qa107-state nil))
+      (list (frame-or-buffer-changed-p 'qa107-state)
+            (frame-or-buffer-changed-p 'qa107-state))) '(t nil))
+(qa (let ((qa107-state 5))
+      (let ((changed (frame-or-buffer-changed-p 'qa107-state)))
+        (list changed (vectorp qa107-state)
+              (eq (aref qa107-state 0) (selected-frame))
+              (eq (aref qa107-state 1) (frame-parameter nil 'name))
+              (frame-or-buffer-changed-p 'qa107-state)))) '(t t t t nil))
+(qa (let ((qa107-state nil) (qa107-other nil))
+      (list (frame-or-buffer-changed-p 'qa107-state)
+            (frame-or-buffer-changed-p 'qa107-state)
+            (frame-or-buffer-changed-p 'qa107-other)
+            (frame-or-buffer-changed-p 'qa107-other)
+            (frame-or-buffer-changed-p 'qa107-state))) '(t nil t nil nil))
+(dolist (qa107-value '(5 "x" [] (a)))
+  (qa-err-data (frame-or-buffer-changed-p qa107-value)
+               'wrong-type-argument (list 'symbolp qa107-value)))
+(makunbound 'qa107-unbound)
+(qa-err-data (frame-or-buffer-changed-p 'qa107-unbound) 'void-variable '(qa107-unbound))
+(qa-err-data (frame-or-buffer-changed-p t) 'setting-constant '(t))
+(qa-err-data (frame-or-buffer-changed-p :qa107-constant)
+             'setting-constant '(:qa107-constant))
+
+(qa (let ((qa107-state nil) (saved-name (frame-parameter nil 'name)))
+      (unwind-protect
+          (progn
+            (frame-or-buffer-changed-p 'qa107-state)
+            (set-frame-parameter nil 'name "qa107-renamed")
+            (list (frame-or-buffer-changed-p 'qa107-state)
+                  (frame-or-buffer-changed-p 'qa107-state)))
+        (set-frame-parameter nil 'name saved-name))) '(t nil))
+(qa (let ((qa107-state nil) (saved-name (frame-parameter nil 'name))
+          (name (copy-sequence "qa107-name")))
+      (unwind-protect
+          (progn
+            (set-frame-parameter nil 'name name)
+            (frame-or-buffer-changed-p 'qa107-state)
+            (aset name 0 ?X)
+            (list (frame-or-buffer-changed-p 'qa107-state)
+                  (eq (aref qa107-state 1) name)))
+        (set-frame-parameter nil 'name saved-name))) '(nil t))
+(qa (let ((qa107-state nil) buffer result)
+      (unwind-protect
+          (progn
+            (frame-or-buffer-changed-p 'qa107-state)
+            (setq buffer (generate-new-buffer "qa107-visible"))
+            (push (frame-or-buffer-changed-p 'qa107-state) result)
+            (push (frame-or-buffer-changed-p 'qa107-state) result)
+            (with-current-buffer buffer
+              (setq buffer-read-only t)
+              (push (frame-or-buffer-changed-p 'qa107-state) result)
+              (push (frame-or-buffer-changed-p 'qa107-state) result)
+              (setq buffer-read-only nil)
+              (frame-or-buffer-changed-p 'qa107-state)
+              (set-buffer-modified-p t)
+              (push (frame-or-buffer-changed-p 'qa107-state) result)
+              (push (frame-or-buffer-changed-p 'qa107-state) result)
+              (insert "already dirty")
+              (push (frame-or-buffer-changed-p 'qa107-state) result)
+              (set-buffer-modified-p nil)
+              (push (frame-or-buffer-changed-p 'qa107-state) result)
+              (push (frame-or-buffer-changed-p 'qa107-state) result))
+            (kill-buffer buffer)
+            (push (frame-or-buffer-changed-p 'qa107-state) result)
+            (push (frame-or-buffer-changed-p 'qa107-state) result)
+            (nreverse result))
+        (when (buffer-live-p buffer) (kill-buffer buffer))))
+    '(t nil t nil t nil nil t nil t nil))
+(qa (let ((qa107-state nil) buffer)
+      (unwind-protect
+          (progn
+            (frame-or-buffer-changed-p 'qa107-state)
+            (setq buffer (generate-new-buffer " qa107-hidden"))
+            (with-current-buffer buffer
+              (setq buffer-read-only t)
+              (set-buffer-modified-p t))
+            (let ((created (frame-or-buffer-changed-p 'qa107-state)))
+              (kill-buffer buffer)
+              (list created (frame-or-buffer-changed-p 'qa107-state))))
+        (when (buffer-live-p buffer) (kill-buffer buffer)))) '(nil nil))
+
+;; Default deletion protects the sole visible frame. FORCE bypasses that
+;; check but still cannot remove the only frame on the terminal.
+(qa-err-data (delete-frame) 'error '("Attempt to delete the sole visible or iconified frame"))
+(qa-err-data (delete-frame (selected-frame)) 'error '("Attempt to delete the sole visible or iconified frame"))
+(qa-err-data (delete-frame nil t) 'error '("Attempt to delete the only frame"))
+(qa-err-data (delete-frame nil 0) 'error '("Attempt to delete the only frame"))
+(qa (frame-live-p (selected-frame)) t)
+(qa (length (frame-list)) 1)
+
+(princ (qa--done)) (terpri)

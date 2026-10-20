@@ -5122,7 +5122,12 @@ fn f_delete_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         return Ok(Value::Nil);
     }
     if i.frames.iter().filter(|x| !x.borrow().dead).count() <= 1 {
-        return Err(i.error("Attempt to delete the sole visible or iconified frame"));
+        let message = if arg(&a, 1).truthy() {
+            "Attempt to delete the only frame"
+        } else {
+            "Attempt to delete the sole visible or iconified frame"
+        };
+        return Err(i.error(message));
     }
     if sel_frame(i).is_some_and(|selected| Rc::ptr_eq(&selected, &f)) {
         let replacement = i
