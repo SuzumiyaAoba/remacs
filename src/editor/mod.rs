@@ -20191,18 +20191,15 @@ pub(crate) const KNOWN_FACES: &[&str] = &[
 pub(crate) fn face_known(i: &Interp, name: &str) -> bool {
     KNOWN_FACES.contains(&name) || i.face_table.iter().any(|(n, _)| n == name)
 }
-/// GNU's valid face attribute names (xfaces.c lface attrs + the
-/// keyword-only extras `face-attribute' accepts).  Unknown names get
-/// (error "Invalid face attribute name" ATTR) — checked BEFORE the
-/// face's own existence in the internal set/get paths.
+/// GNU face attributes accepted by the internal setter. The legacy
+/// :bold/:italic aliases are write-only; the getter rejects them.
 pub(crate) fn face_known_attr(attr: &str) -> bool {
     const KNOWN_ATTRS: &[&str] = &[
         ":font", ":fontset", ":family", ":foundry", ":width", ":height",
         ":weight", ":slant", ":foreground", ":distant-foreground",
         ":background", ":underline", ":overline", ":strike-through",
         ":box", ":inverse-video", ":stipple", ":extend", ":inherit",
-        ":bold", ":italic", ":fixed-pitch", ":variable-pitch",
-        ":tty-foreground", ":tty-background",
+        ":bold", ":italic",
     ];
     KNOWN_ATTRS.contains(&attr)
 }
@@ -20437,6 +20434,8 @@ fn face_attr(i: &mut Interp, name: &str, attr: &str, frame_is_t: bool) -> Value 
         ("default", ":background") => Value::string("unspecified-bg"),
         ("default", ":foreground") => Value::string("unspecified-fg"),
         ("default", ":family") | ("default", ":foundry") => Value::string("default"),
+        ("fixed-pitch", ":family") => Value::string("Monospace"),
+        ("variable-pitch", ":family") => Value::string("Sans Serif"),
         ("default", ":height") => Value::Int(1),
         (
             "default",
@@ -20464,10 +20463,8 @@ fn f_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Sym(s) => i.symbol_name(*s),
         other => return Err(i.wrong_type_mut("symbolp", other)),
     };
-    // GNU signals (error "Invalid face attribute name attr") for
-    // attribute names outside the known set — shared whitelist with
-    // the internal-set path.
-    if !face_known_attr(&attr) {
+    // The setter's legacy aliases are not readable attributes.
+    if !face_known_attr(&attr) || matches!(attr.as_str(), ":bold" | ":italic") {
         return Err(i.signal_data(
             sym::ERROR,
             vec![Value::string("Invalid face attribute name"), a[1].clone()],
@@ -20686,32 +20683,32 @@ fn f_copy_face(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_internal_set_lisp_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU arg order: FACE must be a symbol (a string is a plain
-    // symbolp error), then ATTR a symbol, then the face must exist —
-    // an unknown face is "Invalid face", not an implicit create.
-    let name = match i.sym_id(&a[0]) {
-        Some(s) => i.symbol_name(s),
+    // GNU checks FACE and ATTR as symbols before resolving FRAME.
+    let mut face = match i.sym_id(&a[0]) {
+        Some(s) => s,
         None => return Err(i.wrong_type_mut("symbolp", &a[0])),
     };
-    let attr = match i.sym_id(&a[1]) {
+    let mut attr = match i.sym_id(&a[1]) {
         Some(s) => i.symbol_name(s),
         None => return Err(i.wrong_type_mut("symbolp", &a[1])),
     };
-    // GNU xfaces.c checks the attribute name BEFORE frame/face —
-    // (nosuchface badattr) reports the attr error, not Invalid face.
-    if !crate::editor::face_known_attr(&attr) {
-        return Err(i.signal_data(
-            sym::ERROR,
-            vec![Value::string("Invalid face attribute name"), a[1].clone()],
-        ));
+    // Resolve aliases before creating anything, including aliases whose
+    // target has no face yet. Cycles signal without creating a face.
+    let alias = i.intern("face-alias");
+    let mut seen = std::collections::HashSet::new();
+    while face != sym::NIL {
+        if !seen.insert(face) {
+            let condition = i.intern("circular-list");
+            return Err(i.signal_data(condition, vec![a[0].clone()]));
+        }
+        let target = i.get_prop(face, alias);
+        match i.sym_id(&target) {
+            Some(s) if target.truthy() => face = s,
+            _ => break,
+        }
     }
-    // GNU checks FRAME (arg 4, check_lface_frame) after the symbol
-    // and attribute checks and BEFORE the face must exist.
+    let name = i.symbol_name(face);
     face_frame_live(i, &arg(&a, 3))?;
-    if !face_known(i, &name) {
-        let sym = i.intern("error");
-        return Err(i.signal_data(sym, vec![Value::string("Invalid face"), a[0].clone()]));
-    }
     // FRAME=t (4th arg) → new-frame defaults (face_t_table), mirrored
     // into the global lface inside `face--new-frame-defaults' like
     // GNU (which stores the lface directly); `frame' 0 → the defaults
@@ -20719,6 +20716,22 @@ fn f_internal_set_lisp_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> E
     // real frame or nil → the spec/realized layer only.
     let to_t = matches!(arg(&a, 3), Value::Sym(s) if s == sym::T);
     let zero = matches!(arg(&a, 3), Value::Int(0));
+    if !face_known(i, &name) {
+        // FRAME=t needs an existing global definition. FRAME=0 visits
+        // that layer first. A live frame creates the missing face even
+        // when the following attribute/value validation will fail.
+        if to_t || zero {
+            return Err(invalid_face(i, &Value::Sym(face)));
+        }
+        i.face_table.push((name.clone(), Value::Nil));
+        face_register_global(i, &name);
+    }
+    if !face_known_attr(&attr) {
+        return Err(i.signal_data(
+            sym::ERROR,
+            vec![Value::string("Invalid face attribute name"), a[1].clone()],
+        ));
+    }
     // GNU FRAME=t stores :ignore-defface for `unspecified' so frame
     // defaults ignore the defface layer.
     let mut value = a[2].clone();
@@ -20728,6 +20741,18 @@ fn f_internal_set_lisp_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> E
                 value = Value::Sym(i.intern(":ignore-defface"));
             }
         }
+    }
+    if matches!(attr.as_str(), ":bold" | ":italic") {
+        let bold = attr == ":bold";
+        let reset = matches!(&value, Value::Sym(s) if i.symbol_name(*s) == "reset");
+        if !reset {
+            value = Value::Sym(i.intern(if value.truthy() {
+                if bold { "bold" } else { "italic" }
+            } else {
+                "normal"
+            }));
+        }
+        attr = if bold { ":weight" } else { ":slant" }.to_string();
     }
     // GNU stores :box t as fixnum 1.
     if attr == ":box" && matches!(&value, Value::Sym(s) if *s == sym::T) {
@@ -20748,7 +20773,7 @@ fn f_internal_set_lisp_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> E
     if !to_t {
         set_face_attr(i, &name, &attr, value);
     }
-    Ok(Value::Nil)
+    Ok(Value::Sym(face))
 }
 
 fn f_set_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
