@@ -13265,15 +13265,8 @@ fn single_char_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalRe
         let bb = b.borrow();
         (bb.begv as i128 + 1, bb.zv as i128 + 1)
     };
-    if pos_v < beg1 || pos_v > zv1 {
-        // GNU reports the read position: pos for `next', pos-1 for
-        // `previous' (via the Fget_char_property(pos-1) call).
-        let rep = if forward {
-            a[0].clone()
-        } else {
-            Value::Int(pos_v - 1)
-        };
-        return Err(err_sym(i, "args-out-of-range", vec![rep]));
+    if forward && (pos_v < beg1 || pos_v > zv1) {
+        return Err(err_sym(i, "args-out-of-range", vec![a[0].clone()]));
     }
     // `get-char-property' at 1-based P on this buffer; reads outside
     // [BEGV+1, ZV+1] signal args-out-of-range (P), matching GNU's
@@ -13312,7 +13305,17 @@ fn single_char_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalRe
             // GNU: position = limit, floored at BEGV when below it.
             return Ok(Value::Int(lim.max(beg1)));
         }
-        let initial = at(i, pos_v - 1)?;
+        // GNU clamps against LIMIT before its first character read.
+        // If that read succeeds, the boundary search validates POSITION
+        // separately and reports the original position twice.
+        let initial = at(i, pos_v - i128::from(pos_v >= 0))?;
+        if pos_v < beg1 || pos_v > zv1 {
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![Value::Int(pos_v), Value::Int(pos_v)],
+            ));
+        }
         let mut p = pos_v;
         loop {
             let p2 = prev_char_prop_edge(i, &b.borrow(), p, lim);

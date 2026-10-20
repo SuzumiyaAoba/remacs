@@ -1302,3 +1302,12 @@ the alias chain, and resolves autoloads before inspecting the real spec.
 `commandp` stays passive. Autoload TYPE/FILE reads use bounded `nth`, so
 malformed prefixes retain GNU's listp error data without rejecting unused
 dotted tails. `tests/qa_autoload_dispatch.el` covers loading and ordering.
+
+`previous-single-char-property-change` clamps POSITION to LIMIT (floored at
+point-min) before reading any character. Otherwise it first reads POSITION
+minus one (negative positions stay unchanged), then validates POSITION for
+the boundary search. This ordering gives a bare read offset on an invalid
+initial read, but `(POSITION POSITION)` when the initial read succeeds and
+the boundary search is out of range. An empty buffer at 500 still reports
+499; a five-character buffer at 7 reports `(7 7)`. `qa_textprops.el` pins
+these distinctions, narrowing, overlays, and next-property-change's LIMIT.
