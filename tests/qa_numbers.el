@@ -379,4 +379,21 @@
 (qa (float (1+ most-positive-fixnum)) 2.305843009213694e+18)
 (qa (mod 0 3) 0)
 
+;; GH #127: NaN payload/sign and argument identity survive min/max.
+(dolist (qa127-function '(min max))
+  (let ((qa127-one 1.0e+NaN) (qa127-other -7.0e+NaN))
+    (qa-prin1 (funcall qa127-function qa127-one 1) "1.0e+NaN")
+    (qa-prin1 (funcall qa127-function 1 qa127-one) "1.0e+NaN")
+    (qa-prin1 (funcall qa127-function 1 qa127-other) "-7.0e+NaN")
+    (qa (eq (funcall qa127-function qa127-one) qa127-one) t)
+    (qa (eq (funcall qa127-function qa127-one 1) qa127-one) t)
+    (qa (eq (funcall qa127-function 1 qa127-one) qa127-one) t)
+    (qa (eq (funcall qa127-function qa127-one qa127-other) qa127-other) t)
+    (qa (eq (funcall qa127-function 1 qa127-one qa127-other) qa127-one) t)
+    (qa (eq (funcall qa127-function 1 qa127-one 'bad) qa127-one) t)
+    (qa-err-data (funcall qa127-function qa127-one 'bad)
+                 'wrong-type-argument '(number-or-marker-p bad))
+    (qa-err-data (funcall qa127-function 1 'bad qa127-one)
+                 'wrong-type-argument '(number-or-marker-p bad))))
+
 (princ (qa--done))
