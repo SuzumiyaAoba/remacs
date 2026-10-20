@@ -2802,30 +2802,34 @@ fn f_accept_process_output(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     let deadline = std::time::Instant::now()
         + std::time::Duration::from_secs_f64((secs + millis / 1000.0).max(0.0));
-    // Always poll at least once. GNU's wait_reading_process_output
-    // services every process channel each iteration — a specific
-    // target only decides the return value, so poll_all runs too
-    // (e.g. a server listener must accept while we wait on a client).
-    let mut got = match &target {
+    // PROCESS=nil ignores JUST-THIS-ONE. Otherwise every non-nil value
+    // confines reads to PROCESS; GNU additionally inhibits this wait's
+    // timers for fixnums (including zero), but not bignums or floats.
+    let just_this_one = target.is_some() && a.get(3).is_some_and(Value::truthy);
+    let inhibit_timers = just_this_one && a.get(3).is_some_and(Value::fixnump);
+    let poll = |i: &mut Interp| match &target {
         Some(p) => {
-            let t = poll_proc(i, p)?;
-            let _ = poll_all(i)?;
-            t
+            let got = poll_proc(i, p)?;
+            if !just_this_one {
+                // With the default flag, other channels still progress
+                // (e.g. a server listener while waiting on its client).
+                poll_all(i)?;
+            }
+            Ok(got)
         }
-        None => poll_all(i)?,
+        None => poll_all(i),
     };
+    // A due timer is serviced even when output is already buffered.
+    if !inhibit_timers {
+        timer_check(i)?;
+    }
+    let mut got = poll(i)?;
     while !got && std::time::Instant::now() < deadline {
         crate::lisp::eval::threads::pause(i, std::time::Duration::from_millis(5))?;
-        // wait_reading_process_output runs timer_check each iteration.
-        timer_check(i)?;
-        got = match &target {
-            Some(p) => {
-                let t = poll_proc(i, p)?;
-                let _ = poll_all(i)?;
-                t
-            }
-            None => poll_all(i)?,
-        };
+        if !inhibit_timers {
+            timer_check(i)?;
+        }
+        got = poll(i)?;
         // A dead target can't produce more output — GNU returns early.
         if let Some(p) = &target {
             if !p.borrow().alive() {

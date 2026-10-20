@@ -97,6 +97,9 @@ fn accept(listener: &TcpListener) -> TcpStream {
     loop {
         match listener.accept() {
             Ok((stream, _)) => {
+                // BSD accept inherits the listener's nonblocking flag;
+                // clear it so the peer's I/O timeouts actually wait.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(2)))
                     .unwrap();
@@ -283,8 +286,9 @@ fn nowait_kernel_success_orders_open_before_ready_input_and_early_send() {
     });
 }
 
-/// A bound but deliberately non-listening TCP socket owns the rejected port.
-/// Dropping a listener and then connecting would race unrelated port reuse.
+/// Reserve the endpoint until our nonblocking connect has started. macOS
+/// blackholes SYNs to a merely bound socket, so release it after connect.
+/// wait_for_rejection verifies that no reused listener became a peer.
 fn refused_endpoint() -> (OwnedFd, SocketAddr) {
     let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
     assert!(fd >= 0);
@@ -329,18 +333,62 @@ fn refused_endpoint() -> (OwnedFd, SocketAddr) {
     )
 }
 
+/// Wait for kernel completion without consuming SO_ERROR: the interpreter
+/// must still read and preserve ECONNREFUSED itself. getpeername can report
+/// EINVAL on macOS and ENOTCONN elsewhere; neither consumes the pending error.
+fn wait_for_rejection(fd: RawFd) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut descriptor = libc::pollfd {
+        fd,
+        events: libc::POLLOUT,
+        revents: 0,
+    };
+    loop {
+        let ready = unsafe { libc::poll(&mut descriptor, 1, 20) };
+        if ready > 0 {
+            break;
+        }
+        if ready < 0 {
+            assert_eq!(
+                std::io::Error::last_os_error().kind(),
+                std::io::ErrorKind::Interrupted
+            );
+        }
+        assert!(
+            Instant::now() < deadline,
+            "owned connect did not complete in the kernel"
+        );
+    }
+    assert_eq!(descriptor.revents & libc::POLLNVAL, 0);
+    let mut address: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let mut length = std::mem::size_of_val(&address) as libc::socklen_t;
+    assert_eq!(
+        unsafe {
+            libc::getpeername(
+                fd,
+                (&mut address as *mut libc::sockaddr_storage).cast(),
+                &mut length,
+            )
+        },
+        -1,
+        "a reused listener must not become a usable destination"
+    );
+}
+
 #[test]
 fn nowait_refusal_is_deferred_and_preserves_errno() {
     let _serial = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     on_big_stack(|| {
         let (mut i, _) = interp();
         setup(&mut i);
-        let (_reservation, address) = refused_endpoint();
+        let (reservation, address) = refused_endpoint();
         let process = connect(&mut i, address, ":sentinel #'nw-sentinel");
         let fd = pending_fd(&process);
         assert_nonblocking(fd);
         assert_eq!(printed(&mut i, "(process-status nw-client)"), "connect");
         assert_eq!(printed(&mut i, "(process-get nw-client 'events)"), "nil");
+        drop(reservation);
+        wait_for_rejection(fd);
         wait_for(&mut i, "(eq (process-status nw-client) 'failed)");
         assert_closed(fd);
         assert_eq!(printed(&mut i, "(process-live-p nw-client)"), "nil");
@@ -391,8 +439,11 @@ fn nowait_refusal_is_deferred_and_preserves_errno() {
             )
         );
 
+        let (reservation, address) = refused_endpoint();
         let process = connect(&mut i, address, ":sentinel #'nw-sentinel");
         let fd = pending_fd(&process);
+        drop(reservation);
+        wait_for_rejection(fd);
         let name = printed(&mut i, "(process-name nw-client)");
         assert_eq!(
             printed(
