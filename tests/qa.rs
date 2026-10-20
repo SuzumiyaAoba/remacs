@@ -340,6 +340,7 @@ qa!(qa_split_string, "qa_split_string.el");
 qa!(qa_string_search, "qa_string_search.el");
 qa!(qa_strings, "qa_strings.el");
 qa!(qa_string_make_multibyte, "qa_string_make_multibyte.el");
+qa!(qa_byte_character_conversion, "qa_byte_character_conversion.el");
 qa!(qa_strings2, "qa_strings2.el");
 qa!(qa_subrinfo, "qa_subrinfo.el");
 qa!(qa_subrx, "qa_subrx.el");

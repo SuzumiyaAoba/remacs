@@ -429,10 +429,11 @@ pub(crate) static SUBRS: &[Subr] = &[
 ];
 
 /// GNU: ASCII/Latin-1 chars (0..=0xFF) are their own unibyte byte,
-/// eight-bit chars (0x3FFF80..) map to the raw byte; others → -1.
+/// eight-bit chars (0x3FFF80..) map to the raw byte; other valid chars → -1.
+/// Values outside Emacs's full character range signal `characterp'.
 fn f_multibyte_char_to_unibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let c = match &args[0] {
-        Value::Int(n) => *n,
+        Value::Int(n) if (0..=0x3FFFFF).contains(n) => *n,
         v => return Err(i.wrong_type_mut("characterp", v)),
     };
     Ok(Value::Int(if (0..=0xFF).contains(&c) {
