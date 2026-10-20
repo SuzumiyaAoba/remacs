@@ -89,4 +89,18 @@
       (ignore-errors (re-search-forward "o")))
     (qa (equal md (match-data)) t)))
 
+;; GH #134: only complete start/end pairs survive set-match-data.
+(qa (progn (string-match "b" "abc") (set-match-data '(1)) (match-data)) nil)
+(qa (progn (string-match "b" "abc") (set-match-data '(1 2 3)) (match-data)) '(1 2))
+(qa (progn (string-match "b" "abc") (set-match-data '(ignored)) (match-data)) nil)
+(qa (progn (string-match "b" "abc") (set-match-data '(1 2 ignored)) (match-data)) '(1 2))
+(qa (progn (set-match-data '(1 2 3 4 5)) (match-data)) '(1 2 3 4))
+(qa (let ((data (list 1 2 3)))
+      (set-match-data data) data) '(1 2 3))
+(qa (with-temp-buffer
+      (insert "abc")
+      (let ((marker (copy-marker 2)))
+        (set-match-data (list 1 2 marker) t)
+        (eq (marker-buffer marker) (current-buffer)))) t)
+
 (princ (qa--done))
