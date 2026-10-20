@@ -1293,3 +1293,12 @@ when changed, otherwise nil (including an empty vector). `bool-vector-not`
 always returns its destination. `bool-vector-count-consecutive` accepts
 only nonnegative fixnum indices through the vector length, inclusive.
 `tests/qa_array.el` covers validation, aliases, and unchanged destinations.
+
+Interactive dispatch shares `Interp::call_interactively`: `command_execute`
+handles disabled commands and keyboard macros, then delegates; direct
+`call-interactively` validates KEYS first and bypasses disabled handling.
+`interactive-form` validates alias cycles, consults symbol overrides along
+the alias chain, and resolves autoloads before inspecting the real spec.
+`commandp` stays passive. Autoload TYPE/FILE reads use bounded `nth`, so
+malformed prefixes retain GNU's listp error data without rejecting unused
+dotted tails. `tests/qa_autoload_dispatch.el` covers loading and ordering.

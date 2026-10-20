@@ -1693,16 +1693,33 @@ pub(crate) fn f_indirect_function(i: &mut Interp, args: crate::lisp::Argv) -> Ev
     }
 }
 pub(crate) fn f_interactive_form(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let mut f = match &args[0] {
-        Value::Sym(id) => i.symbol_function(*id),
-        other => other.clone(),
-    };
-    // Advised functions: GNU's interactive-form delegates through the
-    // advice layers to the underlying definition (modulo
-    // :interactive-only merging — we expose the base spec).
-    f = i.advice_base_value(&f);
-    if let Value::Sym(id) = f {
+    // Validate alias cycles first, then consult properties along the chain,
+    // matching GNU data.c before it inspects the function definition.
+    let resolved = f_indirect_function(i, vec![args[0].clone()].into())?;
+    if resolved.is_nil() {
+        return Ok(Value::Nil);
+    }
+    let property = i.intern("interactive-form");
+    let mut f = args[0].clone();
+    while let Value::Sym(id) = f {
+        let form = i.get_prop(id, property);
+        if !form.is_nil() {
+            return Ok(form);
+        }
         f = i.symbol_function(id);
+    }
+    f = i.advice_base_value(&f);
+    if matches!(f, Value::Sym(_)) {
+        return f_interactive_form(i, vec![f].into());
+    }
+    let autoload = i.intern("autoload");
+    if matches!(&f, Value::Cons(c) if i.sym_is(&c.borrow().car, autoload)) {
+        // GNU passes CMD as FUNNAME; a bare autoload cons is not a symbol.
+        if !matches!(args[0], Value::Sym(_)) {
+            return Err(i.wrong_type_mut("symbolp", &args[0]));
+        }
+        let loaded = super::evalfn::autoload_do_load(i, f, false)?;
+        return f_interactive_form(i, vec![loaded].into());
     }
     match &f {
         Value::Subr(s) => {

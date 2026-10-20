@@ -12800,47 +12800,27 @@ command-line arguments.\" \
                 }
             }
         }
-        // Resolve to function, then call with interactive args.
-        // GNU `command-execute' → `call-interactively' resolves the
-        // symbol's cell through `indirect_function', which loads
-        // autoload cells; applying the raw `(autoload ...)' cons would
-        // hit apply's bare-cons `symbolp' check ("No file chosen" path
-        // in dired's mouse command, M-x on autoloaded commands).
-        // GNU command_execute: string/vector commands are keyboard
-        // macros — `Fexecute_kbd_macro' on them (batch runs it too:
-        // `(command-execute "a")' self-inserts `a' like GNU).
+        // Keyboard macros belong to command-execute, not call-interactively.
         if matches!(cmd, Value::Str(_) | Value::Vec(_)) {
             return crate::editor::f_execute_kbd_macro_pub(self, vec![cmd.clone()].into());
         }
-        let fun = match cmd {
-            Value::Sym(id) => {
-                let mut f = self.symbol_function(*id);
-                let auto_id = self.intern("autoload");
-                let is_auto = matches!(&f, Value::Cons(c) if self.sym_is(&c.borrow().car, auto_id));
-                if is_auto {
-                    f = crate::lisp::builtins::evalfn::autoload_do_load(self, f, false)?;
-                }
-                f
-            }
-            other => other.clone(),
-        };
+        self.call_interactively(cmd)
+    }
+
+    /// GNU call-interactively resolves the interactive form (and autoloads)
+    /// before rejecting a non-command. Direct calls bypass disabled handling.
+    pub fn call_interactively(&mut self, cmd: &Value) -> EvalResult {
+        let spec = crate::lisp::builtins::data::f_interactive_form(self, vec![cmd.clone()].into())?;
+        if !matches!(spec, Value::Cons(_)) {
+            return Err(self.wrong_type_mut("commandp", cmd));
+        }
         self.interactive_call_depth += 1;
-        let res = (|| {
-            // Interactive spec: GNU Fcall_interactively uses
-            // `interactive-form' for every function kind — lambdas,
-            // `#[...]' byte-code objects, oclosures (via
-            // `oclosure-interactive-form') and subrs — so a single
-            // `f_interactive_form' dispatch covers them all.
-            let spec =
-                crate::lisp::builtins::data::f_interactive_form(self, vec![fun.clone()].into())?;
-            if !spec.is_nil() {
-                let argv = self.eval_interactive_spec(&spec)?;
-                return self.apply(&fun, argv);
-            }
-            self.apply(&fun, vec![])
+        let result = (|| {
+            let argv = self.eval_interactive_spec(&spec)?;
+            self.apply(cmd, argv)
         })();
         self.interactive_call_depth = self.interactive_call_depth.saturating_sub(1);
-        res
+        result
     }
 
     /// Evaluate an `(interactive ...)` spec to an argv.

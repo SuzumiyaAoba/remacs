@@ -3695,13 +3695,15 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
     if !is_auto {
         return Ok(fundef);
     }
-    let cell = fundef.list_to_vec().unwrap_or_default();
-    let file = cell.get(1).cloned().unwrap_or(Value::Nil);
-    // (autoload FILE DOC INTERACTIVE TYPE) — TYPE non-nil = macro.
-    let is_macro_autoload = cell.get(4).map(|v| v.truthy()).unwrap_or(false);
+    // GNU inspects TYPE with nth before the macro-only early return.
+    // A dotted prefix reports listp on the original cell; a dotted tail
+    // beyond TYPE is never traversed and does not prevent loading.
+    let kind = super::listfn::f_nth(i, vec![Value::Int(4), fundef.clone()].into())?;
+    let is_macro_autoload = kind.truthy();
     if macro_only && !is_macro_autoload {
         return Ok(fundef);
     }
+    let file = super::listfn::f_nth(i, vec![Value::Int(1), fundef.clone()].into())?;
     let name = match &file {
         Value::Str(s) => s.borrow().clone(),
         _ => return Err(i.wrong_type_mut("stringp", &file)),
@@ -4311,12 +4313,6 @@ fn f_command_execute(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         if !matches!(keys, Value::Vec(_) | Value::Nil) {
             return Err(i.wrong_type_mut("vectorp", keys));
         }
-    }
-    // `commandp' without FOR-CALL-INTERACTIVELY — keyboard-macro
-    // strings already returned above, so non-command objects signal
-    // `(wrong-type-argument commandp)'.
-    if !crate::editor::f_commandp_pub(i, &args[0]) {
-        return Err(i.wrong_type_mut("commandp", &args[0]));
     }
     i.command_execute(&args[0])
 }

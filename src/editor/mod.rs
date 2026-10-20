@@ -17562,12 +17562,6 @@ fn f_yes_or_no_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 // ---------- commands ----------
 
-/// Shared `commandp' result used by `command-execute' (evalfn).
-pub(crate) fn f_commandp_pub(i: &mut Interp, v: &Value) -> bool {
-    f_commandp(i, vec![v.clone()].into())
-        .map(|r| r.truthy())
-        .unwrap_or(false)
-}
 fn f_commandp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let v = &a[0];
     // `(lambda (x) (interactive ...) ...)' as data — no resolution.
@@ -17671,22 +17665,13 @@ fn f_commandp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_call_interactively(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU signals (wrong-type-argument commandp CMD) for non-commands;
-    // CHECK_COMMAND is `commandp' with FOR-CALL-INTERACTIVELY=t, which
-    // also rejects keyboard-macro strings/vectors.  KEYS is
-    // CHECK_VECTOR'd right after (callint.c) — nil or a real vector.
-    // Fcall_interactively: CHECK_VECTOR(KEYS) runs BEFORE the Lisp-side
-    // CHECK_COMMAND (commandp with FOR-CALL-INTERACTIVELY=t) — `(f 'cons
-    // nil 5)' reports `vectorp 5', not `commandp cons'.
+    // GNU validates KEYS before interactive-form can trigger an autoload.
     if let Some(k) = a.get(2) {
         if !matches!(k, Value::Nil | Value::Vec(_)) {
             return Err(i.wrong_type_mut("vectorp", k));
         }
     }
-    if !f_commandp(i, vec![a[0].clone(), Value::t()].into())?.truthy() {
-        return Err(i.wrong_type_mut("commandp", &a[0]));
-    }
-    i.command_execute(&a[0])
+    i.call_interactively(&a[0])
 }
 
 fn f_execute_extended_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

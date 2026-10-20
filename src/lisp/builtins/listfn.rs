@@ -478,7 +478,7 @@ pub(crate) fn nthcdr_strict(i: &mut Interp, v: &Value, n: usize) -> Result<Value
     Ok(cur)
 }
 
-fn f_nth(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_nth(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // Emacs: a negative index behaves like 0; nth is car(nthcdr N).
     let n = want_int(i, &args[0])?.max(0);
     let tail = nthcdr_strict(i, &args[1], n as usize)?;
