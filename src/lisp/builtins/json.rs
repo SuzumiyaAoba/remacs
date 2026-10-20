@@ -509,7 +509,7 @@ impl<'a> Parser<'a> {
         if self.o.array_list {
             Ok(Value::list(items))
         } else {
-            Ok(Value::Vec(Rc::new(RefCell::new(items))))
+            Ok(Value::vector(items))
         }
     }
 
@@ -551,7 +551,7 @@ impl<'a> Parser<'a> {
                     h.map.insert(hk.clone(), v);
                     h.put_key(hk, key);
                 }
-                Value::Hash(Rc::new(RefCell::new(h)))
+                Value::Hash(Rc::new(RefCell::new(h))).tracked()
             }
             ObjType::Alist => {
                 let mut items = Vec::with_capacity(pairs.len());

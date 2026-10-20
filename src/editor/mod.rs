@@ -155,39 +155,42 @@ pub(crate) fn next_use_time() -> u64 {
 
 impl Window {
     pub fn new(buffer: usize) -> WindowRef {
-        Rc::new(RefCell::new(Window {
-            id: next_id(),
-            buffer,
-            point: 0,
-            start: 0,
-            hscroll: 0,
-            top: 0,
-            height: 24,
-            left: 0,
-            width: 80,
-            dedicated: Value::Nil,
-            minibuffer: false,
-            params: Value::Nil,
-            margins: (0, 0),
-            suspend_hscroll: false,
-            old_point: 0,
-            min_hscroll: 0,
-            // GNU bumps the use tick on selection, not creation; a
-            // fresh window reports 0 until first selected.
-            use_time: 0,
-            prev_buffers: Value::Nil,
-            next_buffers: Value::Nil,
-            horiz: None,
-            children: Vec::new(),
-            parent: None,
-            combination_limit: false,
-            dead: false,
-            new_total: 0,
-            new_pixel: 0,
-            new_normal: Value::Int(0),
-            old_buffer: Value::Nil,
-            cursor_type: Value::t(),
-        }))
+        crate::lisp::memory::allocate(
+            Window {
+                id: next_id(),
+                buffer,
+                point: 0,
+                start: 0,
+                hscroll: 0,
+                top: 0,
+                height: 24,
+                left: 0,
+                width: 80,
+                dedicated: Value::Nil,
+                minibuffer: false,
+                params: Value::Nil,
+                margins: (0, 0),
+                suspend_hscroll: false,
+                old_point: 0,
+                min_hscroll: 0,
+                // GNU bumps the use tick on selection, not creation; a
+                // fresh window reports 0 until first selected.
+                use_time: 0,
+                prev_buffers: Value::Nil,
+                next_buffers: Value::Nil,
+                horiz: None,
+                children: Vec::new(),
+                parent: None,
+                combination_limit: false,
+                dead: false,
+                new_total: 0,
+                new_pixel: 0,
+                new_normal: Value::Int(0),
+                old_buffer: Value::Nil,
+                cursor_type: Value::t(),
+            },
+            crate::lisp::Value::Window,
+        )
     }
 
     /// An internal combination window (`vc' stacked / `hc' side by
@@ -284,24 +287,27 @@ impl Frame {
         // the root window; the mini window's use_time stays 0 (probe:
         // -Q batch reports window-use-time 1 / 0 / frame-use-time 1).
         main.borrow_mut().use_time = next_use_time();
-        Rc::new(RefCell::new(Frame {
-            id: next_frame_id(),
-            name: Rc::new(RefCell::new("F1".into())),
-            windows: vec![main.clone()],
-            selected: main.clone(),
-            minibuffer: Some(mb),
-            // GNU: the lone live window IS the root window.
-            root: Some(main),
-            menu_shift: false,
-            text_margin: 0,
-            width,
-            height,
-            old_selected: None,
-            buffer_list: vec![buffer],
-            buried_buffer_list: Vec::new(),
-            params: Value::Nil,
-            dead: false,
-        }))
+        crate::lisp::memory::allocate(
+            Frame {
+                id: next_frame_id(),
+                name: Value::string_ref("F1"),
+                windows: vec![main.clone()],
+                selected: main.clone(),
+                minibuffer: Some(mb),
+                // GNU: the lone live window IS the root window.
+                root: Some(main),
+                menu_shift: false,
+                text_margin: 0,
+                width,
+                height,
+                old_selected: None,
+                buffer_list: vec![buffer],
+                buried_buffer_list: Vec::new(),
+                params: Value::Nil,
+                dead: false,
+            },
+            crate::lisp::Value::Frame,
+        )
     }
 }
 
@@ -2883,11 +2889,11 @@ pub(crate) fn terminal_token(i: &mut Interp) -> Value {
     if let Some(t) = &i.terminal {
         return t.clone();
     }
-    let t = Value::Record(Rc::new(RefCell::new(vec![
+    let t = Value::record(vec![
         Value::Sym(i.intern("terminal")),
         Value::Int(0),
         Value::string("initial_terminal"),
-    ])));
+    ]);
     i.terminal = Some(t.clone());
     t
 }
@@ -3116,7 +3122,7 @@ fn window_configuration(i: &mut Interp) -> Value {
             ]));
         }
     }
-    Value::Record(Rc::new(RefCell::new(vec![
+    Value::record(vec![
         tag,
         frame_v,
         Value::list(specs),
@@ -3125,7 +3131,7 @@ fn window_configuration(i: &mut Interp) -> Value {
         // `set-window-configuration' restores it via
         // `set_buffer_internal' (slot index 4).
         i.buffer_value(i.current_buffer).unwrap_or(Value::Nil),
-    ])))
+    ])
 }
 
 /// Integer field N of a saved window spec (0 when absent/non-integer).
@@ -5519,7 +5525,7 @@ fn f_make_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let buf = i.current_buffer;
     let f = Frame::new_tty(buf, buf, 80, 25);
     let name = next_frame_name(i);
-    f.borrow_mut().name = Rc::new(RefCell::new(name));
+    f.borrow_mut().name = crate::lisp::Value::string_ref(name);
     i.frames.push(f.clone());
     Ok(Value::Frame(f))
 }
@@ -6456,7 +6462,7 @@ fn copy_keymap_elem(i: &Interp, v: &Value, depth: usize) -> Value {
                 .iter()
                 .map(|e| copy_keymap_elem(i, e, depth + 1))
                 .collect();
-            Value::Record(std::rc::Rc::new(std::cell::RefCell::new(items)))
+            Value::record(items)
         }
         Value::Vec(vv) => {
             let items: Vec<Value> = vv
@@ -6464,7 +6470,7 @@ fn copy_keymap_elem(i: &Interp, v: &Value, depth: usize) -> Value {
                 .iter()
                 .map(|e| copy_keymap_elem(i, e, depth + 1))
                 .collect();
-            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(items)))
+            Value::vector(items)
         }
         _ => v.clone(),
     }
@@ -7301,7 +7307,7 @@ fn f_define_key(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 elts.push(converted);
             }
             if changed {
-                Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(elts)))
+                Value::vector(elts)
             } else {
                 a[2].clone()
             }
@@ -7342,9 +7348,7 @@ fn f_define_key(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             // GNU Fdefine_key: "Key sequence %s starts with non-prefix
             // key %s" — sequence and prefix rendered via key-description.
             let render = |i: &mut Interp, ks: &[i128]| -> String {
-                let v = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-                    ks.iter().map(|&c| Value::Int(c)).collect(),
-                )));
+                let v = Value::vector(ks.iter().map(|&c| Value::Int(c)).collect());
                 f_key_description(i, vec![v].into())
                     .map(|r| i.princ_to_string(&r))
                     .unwrap_or_default()
@@ -7999,10 +8003,7 @@ fn f_command_remapping(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     let position = a.get(1).cloned().unwrap_or(Value::Nil);
     let keymaps = a.get(2).cloned().unwrap_or(Value::Nil);
-    let key = Value::Vec(Rc::new(RefCell::new(vec![
-        Value::Sym(i.intern("remap")),
-        Value::Sym(cmd),
-    ])));
+    let key = Value::vector(vec![Value::Sym(i.intern("remap")), Value::Sym(cmd)]);
     let v = if keymaps.is_nil() {
         f_key_binding(
             i,
@@ -8333,7 +8334,7 @@ fn where_is_collect(
                         let cell = Value::cons(Value::Int(lo), Value::Int(hi));
                         let mut v = elts.clone();
                         v.push(cell);
-                        sequences.push(Value::Vec(Rc::new(RefCell::new(v))));
+                        sequences.push(Value::vector(v));
                     }
                     continue;
                 }
@@ -8348,7 +8349,7 @@ fn where_is_collect(
                 } else {
                     v.push(key);
                 }
-                sequences.push(Value::Vec(Rc::new(RefCell::new(v))));
+                sequences.push(Value::vector(v));
             }
         }
     }
@@ -8619,7 +8620,7 @@ fn f_kbd(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             .collect();
         Ok(Value::string(s))
     } else {
-        Ok(Value::Vec(Rc::new(RefCell::new(keys))))
+        Ok(Value::vector(keys))
     }
 }
 
@@ -8694,10 +8695,7 @@ fn parse_key_word(i: &mut Interp, word: &str) -> Result<Vec<Value>, Flow> {
         let mx = i.intern("execute-extended-command");
         let bound = f_key_binding(
             i,
-            vec![Value::Vec(Rc::new(RefCell::new(vec![Value::Int(
-                CHAR_META + b'x' as i128,
-            )])))]
-            .into(),
+            vec![Value::vector(vec![Value::Int(CHAR_META + b'x' as i128)])].into(),
         )
         .unwrap_or(Value::Nil);
         let mut evs: Vec<Value> = if matches!(&bound, Value::Sym(s) if *s == mx) {
@@ -9404,7 +9402,7 @@ fn f_substitute_command_keys(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
                                         if !desc.is_empty() {
                                             desc.push(' ');
                                         }
-                                        let v = Value::Vec(Rc::new(RefCell::new(vec![kv.clone()])));
+                                        let v = Value::vector(vec![kv.clone()]);
                                         if let Ok(Value::Str(s)) =
                                             f_key_description(i, vec![v].into())
                                         {
@@ -9649,7 +9647,7 @@ fn f_read_key_sequence(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 char::from_u32(k as u32).unwrap_or(' ').to_string(),
             ));
         }
-        return Ok(Value::Vec(Rc::new(RefCell::new(vec![ev]))));
+        return Ok(Value::vector(vec![ev]));
     }
     // Read one key through the front-end; batch mode consumes a char.
     if i.minibuf_reader.is_some() {
@@ -9663,7 +9661,7 @@ fn f_read_key_sequence(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     char::from_u32(k as u32).unwrap_or(' ').to_string(),
                 ));
             }
-            return Ok(Value::Vec(Rc::new(RefCell::new(vec![Value::Int(k)]))));
+            return Ok(Value::vector(vec![Value::Int(k)]));
         }
     }
     if i.minibuf_reader.is_none() && i.noninteractive {
@@ -9681,11 +9679,11 @@ fn f_read_key_sequence(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 fn f_read_key_sequence_vector(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if let Some(ev) = pop_unread_command_event(i) {
-        return Ok(Value::Vec(Rc::new(RefCell::new(vec![ev]))));
+        return Ok(Value::vector(vec![ev]));
     }
     if i.minibuf_reader.is_none() && i.noninteractive {
         let k = i.batch_read_char()?;
-        return Ok(Value::Vec(Rc::new(RefCell::new(vec![Value::Int(k)]))));
+        return Ok(Value::vector(vec![Value::Int(k)]));
     }
     let _ = a;
     if i.minibuf_reader.is_none() {
@@ -9693,7 +9691,7 @@ fn f_read_key_sequence_vector(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
         // on an empty sequence; EOF unwinds to the enclosing handler.
         return Err(batch_eof(i));
     }
-    Ok(Value::Vec(Rc::new(RefCell::new(Vec::new()))))
+    Ok(Value::vector(Vec::new()))
 }
 fn f_this_command_keys(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     let _ = i;
@@ -9701,9 +9699,7 @@ fn f_this_command_keys(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 }
 fn f_this_command_keys_vector(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     let _ = i;
-    Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-        Vec::new(),
-    ))))
+    Ok(Value::vector(Vec::new()))
 }
 
 // ---------- kill ring ----------
@@ -12335,11 +12331,14 @@ fn insert_file_contents_impl(i: &mut Interp, a: crate::lisp::Argv, literal: bool
             for window in &frame.borrow().windows {
                 let w = window.borrow();
                 if !w.dead && !w.minibuffer && w.buffer == saved.buffer {
-                    let marker = Rc::new(RefCell::new(crate::lisp::value::Marker {
-                        buffer: Some(saved.buffer),
-                        position: w.point,
-                        insertion_type: false,
-                    }));
+                    let marker = crate::lisp::memory::allocate(
+                        crate::lisp::value::Marker {
+                            buffer: Some(saved.buffer),
+                            position: w.point,
+                            insertion_type: false,
+                        },
+                        crate::lisp::Value::Marker,
+                    );
                     cur(i).borrow_mut().register_marker(&marker);
                     positions.push((marker.clone(), w.point));
                     windows.push((window.clone(), marker, std::cell::Cell::new(w.point)));
@@ -14766,13 +14765,17 @@ fn f_kill_whole_line(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     cur(i).borrow_mut().set_point(s);
     // GNU's Lisp `kill-whole-line' ends with `(set-marker regions-begin
     // nil)' which RETURNS the (now-detached) marker, not nil.
-    Ok(crate::lisp::value::Value::Marker(Rc::new(RefCell::new(
-        crate::lisp::value::Marker {
-            buffer: None,
-            position: 0,
-            insertion_type: false,
-        },
-    ))))
+    Ok(
+        crate::lisp::value::Value::Marker(crate::lisp::memory::allocate(
+            crate::lisp::value::Marker {
+                buffer: None,
+                position: 0,
+                insertion_type: false,
+            },
+            crate::lisp::Value::Marker,
+        ))
+        .tracked(),
+    )
 }
 
 fn f_kill_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -16806,7 +16809,7 @@ fn substring_str_value(i: &mut Interp, v: &Value, n: usize) -> Value {
         return v.clone();
     };
     let text: String = src.borrow().chars().take(n).collect();
-    let ns = std::rc::Rc::new(std::cell::RefCell::new(text));
+    let ns = crate::lisp::Value::string_ref(text);
     if i.has_str_props(src) {
         let ivs: Vec<(usize, usize, Vec<Value>)> = i
             .str_props(src)
@@ -17623,7 +17626,7 @@ fn macro_events_value(events: &[Value]) -> Value {
     // GNU's `make_event_array`: nil count → empty vector; all
     // characters → string; otherwise a vector.
     if events.is_empty() {
-        return Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(Vec::new())));
+        return Value::vector(Vec::new());
     }
     if events
         .iter()
@@ -17638,7 +17641,7 @@ fn macro_events_value(events: &[Value]) -> Value {
             .collect();
         Value::string(s)
     } else {
-        Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(events.to_vec())))
+        Value::vector(events.to_vec())
     }
 }
 
@@ -19056,11 +19059,11 @@ pub(crate) fn f_make_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     let idx = bb.overlays.len();
     // The Lisp handle is `[overlay BUFFER INDEX]' — kept on the
     // Overlay itself so queries return the identical object (`eq').
-    let handle = Value::Vec(Rc::new(RefCell::new(vec![
+    let handle = Value::vector(vec![
         Value::Sym(i.intern("overlay")),
         Value::Int(bid as i128),
         Value::Int(idx as i128),
-    ])));
+    ]);
     i.register_overlay(&handle);
     bb.overlays.push(crate::buffer::Overlay {
         start: s,
@@ -20128,7 +20131,7 @@ pub(crate) fn face_register_global(i: &mut Interp, name: &str) {
     let mut v = vec![Value::Sym(i.intern("face"))];
     let un = Value::Sym(i.intern("unspecified"));
     v.resize(20, un);
-    let lface = Value::Vec(Rc::new(RefCell::new(v)));
+    let lface = Value::vector(v);
     let id = i.get_prop(sym, face_prop);
     if let Some(d) = i.intern_soft("face--new-frame-defaults") {
         if let Value::Hash(h) = i.symbol_value(d) {
@@ -20389,7 +20392,7 @@ fn f_facep(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     v.push(Value::Sym(i.intern("face")));
     let un = Value::Sym(i.intern("unspecified"));
     v.resize(20, un);
-    Ok(Value::Vec(Rc::new(RefCell::new(v))))
+    Ok(Value::vector(v))
 }
 
 fn f_face_list(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
@@ -21635,11 +21638,11 @@ fn f_copy_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let b = i.buffers.get(bid).unwrap();
     let mut bb = b.borrow_mut();
     let new_idx = bb.overlays.len();
-    let handle = Value::Vec(Rc::new(RefCell::new(vec![
+    let handle = Value::vector(vec![
         Value::Sym(i.intern("overlay")),
         Value::Int(bid as i128),
         Value::Int(new_idx as i128),
-    ])));
+    ]);
     i.register_overlay(&handle);
     bb.overlays.push(crate::buffer::Overlay {
         handle: handle.clone(),
@@ -21872,7 +21875,7 @@ fn f_read_kbd_macro(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU's read-kbd-macro always returns a vector (unlike `kbd').
     let s = want_str(i, &a[0])?;
     let keys = parse_kbd(i, &s)?;
-    Ok(Value::Vec(Rc::new(RefCell::new(keys))))
+    Ok(Value::vector(keys))
 }
 
 fn f_momentary_string_display(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
@@ -22204,7 +22207,7 @@ fn f_byteorder(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 
 fn f_standard_display_european_internal(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     // GNU returns the previous glyph-display flag as a one-element vector.
-    Ok(Value::Vec(Rc::new(RefCell::new(vec![Value::Int(39)]))))
+    Ok(Value::vector(vec![Value::Int(39)]))
 }
 
 /// Called by `Interp::new` to wire editor subrs and create the initial frame.

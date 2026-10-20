@@ -5,7 +5,6 @@
 //! by name with plists, char-code property tables (general-category
 //! provided for ASCII), and coding-system type resolution.
 
-use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::misc::{coding_known, is_char_table};
@@ -145,7 +144,7 @@ fn f_define_charset(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             cs.push(Value::Int(if d < dim { 0xFF } else { 0 }));
         }
         props.push(symv(i, ":code-space"));
-        props.push(Value::Vec(Rc::new(RefCell::new(cs))));
+        props.push(Value::vector(cs));
     }
     // Pad :code-space to 8 elements (GNU vconcats zeros).
     if let Some(ix) = prop_ix(i, &props, ":code-space") {
@@ -231,7 +230,7 @@ fn builtin_charset_plist(i: &mut Interp, name: &str) -> Option<Value> {
         symv(i, ":dimension"),
         Value::Int(dim.into()),
         symv(i, ":code-space"),
-        Value::Vec(Rc::new(RefCell::new(spacev))),
+        Value::vector(spacev),
         symv(i, ":iso-final-char"),
         if fin < 0 {
             Value::Nil
@@ -716,9 +715,7 @@ fn unidata_word_list_decode(
                 Some(v) => {
                     if name_mode {
                         match v {
-                            Value::Sym(sid) => {
-                                Value::Str(Rc::new(RefCell::new(i.symbol_name(*sid))))
-                            }
+                            Value::Sym(sid) => Value::string(i.symbol_name(*sid)),
                             other => other.clone(),
                         }
                     } else {
@@ -727,9 +724,7 @@ fn unidata_word_list_decode(
                 }
                 None => {
                     if name_mode {
-                        Value::Str(Rc::new(RefCell::new(
-                            char::from_u32(c).unwrap_or('\0').to_string(),
-                        )))
+                        Value::string(char::from_u32(c).unwrap_or('\0').to_string())
                     } else {
                         Value::Int(c as i128)
                     }
@@ -837,7 +832,7 @@ fn unidata_get_name(i: &mut Interp, ch: u32, raw: &Value, tbl: &Value) -> Value 
                             after_dash = dash;
                             parts.push(w);
                         }
-                        Value::Str(Rc::new(RefCell::new(parts.concat())))
+                        Value::string(parts.concat())
                     }
                 };
                 misc::ct_set(i, tbl, first + k as u32, name.clone());
@@ -884,25 +879,23 @@ fn unidata_get_name(i: &mut Interp, ch: u32, raw: &Value, tbl: &Value) -> Value 
                     } else {
                         jamo_name(2, t as usize - 1)
                     };
-                    Value::Str(Rc::new(RefCell::new(format!(
+                    Value::string(format!(
                         "HANGUL SYLLABLE {}{}{}",
                         jamo_name(0, l),
                         jamo_name(1, v),
                         tail
-                    ))))
+                    ))
                 }
                 "CJK IDEOGRAPH"
                 | "TANGUT IDEOGRAPH"
                 | "CJK COMPATIBILITY IDEOGRAPH"
                 | "HIGH SURROGATE"
-                | "LOW SURROGATE" => {
-                    Value::Str(Rc::new(RefCell::new(format!("{}-{:04X}", name, ch))))
-                }
-                "VARIATION SELECTOR" => Value::Str(Rc::new(RefCell::new(format!(
+                | "LOW SURROGATE" => Value::string(format!("{}-{:04X}", name, ch)),
+                "VARIATION SELECTOR" => Value::string(format!(
                     "{}-{}",
                     name,
                     ch.wrapping_sub(0xE0100).wrapping_add(17)
-                )))),
+                )),
                 _ => Value::Nil,
             }
         }
@@ -1337,10 +1330,7 @@ fn f_define_translation_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
         tid += 1;
     }
     vec[tid] = Value::cons(Value::Sym(id), table.clone());
-    let _ = i.set_symbol(
-        ttv,
-        Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec))),
-    );
+    let _ = i.set_symbol(ttv, Value::vector(vec));
     let prop = i.intern("translation-table");
     i.put_prop(id, prop, table);
     let tidp = i.intern("translation-table-id");

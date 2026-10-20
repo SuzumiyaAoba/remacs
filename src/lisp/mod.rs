@@ -13,6 +13,7 @@ mod embedded_cache;
 pub mod error;
 pub mod eval;
 pub mod load;
+pub(crate) mod memory;
 pub mod obarray;
 pub mod prelude;
 pub mod print;

@@ -738,9 +738,7 @@ fn f_reverse(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             return Ok(Value::string(s.borrow().chars().rev().collect::<String>()));
         }
         Value::Vec(v) => {
-            return Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-                v.borrow().iter().rev().cloned().collect(),
-            ))));
+            return Ok(Value::vector(v.borrow().iter().rev().cloned().collect()));
         }
         Value::Record(_) if crate::lisp::builtins::misc::is_bool_vector(i, &args[0]) => {
             let mut bits = crate::lisp::builtins::misc::bool_vec_of(i, &args[0])?;
@@ -1201,7 +1199,7 @@ fn f_delete(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                     kept.push(x.clone());
                 }
             }
-            Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(kept))))
+            Ok(Value::vector(kept))
         }
         Value::Cons(_) | Value::Nil => del_impl(i, &args[0], &args[1], false),
         other => Err(i.wrong_type_mut("sequencep", other)),
@@ -1234,9 +1232,7 @@ fn f_copy_tree(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             }
             Value::Vec(vec) if vecp => {
                 let b = vec.borrow();
-                Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-                    b.iter().map(|x| cp(x, vecp)).collect(),
-                )))
+                Value::vector(b.iter().map(|x| cp(x, vecp)).collect())
             }
             other => other.clone(),
         }
@@ -1677,19 +1673,19 @@ fn f_apply_partially(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         dumped_doc: false,
         compiled: false,
         advice_link: None,
-        bc_items: Some(std::rc::Rc::new(std::cell::RefCell::new(vec![
+        bc_items: Some(crate::lisp::Value::vector_ref(vec![
             Value::Int(128),
             byte_str_s,
-            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(consts))),
+            Value::vector(consts),
             Value::Int(6),
             Value::string("\n\n(fn &rest ARGS2)"),
-        ]))),
+        ])),
         bc_closure: false,
         bc_prog: std::cell::RefCell::new(None),
         doc_value: None,
         env_value: None,
     };
-    Ok(Value::Lambda(std::rc::Rc::new(lam)))
+    Ok(Value::Lambda(std::rc::Rc::new(lam)).tracked())
 }
 
 fn f_assoc_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -1834,7 +1830,7 @@ fn remove_impl(
                     kept.push(x.clone());
                 }
             }
-            Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(kept))))
+            Ok(Value::vector(kept))
         }
         Value::Cons(_) | Value::Nil => {
             let items = copy_list_items(i, seq)?;

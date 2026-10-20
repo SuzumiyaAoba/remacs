@@ -686,7 +686,7 @@ fn sf_defun(i: &mut Interp, args: Value) -> EvalResult {
     // dynamic model; under lexical-binding it captures the file env.
     lambda.env = i.lambda_env();
     let function = if i.boot_loading {
-        Value::Lambda(Rc::new(lambda))
+        Value::Lambda(Rc::new(lambda)).tracked()
     } else {
         i.function_from_parts(
             params.clone(),
@@ -723,7 +723,7 @@ fn sf_defmacro(i: &mut Interp, args: Value) -> EvalResult {
     lambda.is_macro = true;
     lambda.env = i.lambda_env();
     let function = if i.boot_loading {
-        Value::Lambda(Rc::new(lambda))
+        Value::Lambda(Rc::new(lambda)).tracked()
     } else {
         let function = i.function_from_parts(
             params.clone(),

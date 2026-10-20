@@ -8,7 +8,6 @@
 //! it drains pending output into filters or process buffers and runs
 //! sentinels on status transitions.
 
-use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::rc::Rc;
@@ -323,10 +322,7 @@ impl DatagramIo {
                     + std::mem::size_of::<libc::sa_family_t>();
                 Value::cons(
                     Value::Int(0),
-                    Value::Vec(Rc::new(RefCell::new(vec![
-                        Value::Int(0);
-                        self.address_size - header
-                    ]))),
+                    Value::vector(vec![Value::Int(0); self.address_size - header]),
                 )
             })
     }
@@ -370,7 +366,7 @@ fn socket_addr_value(addr: std::net::SocketAddr) -> Value {
             .collect(),
     };
     parts.push(Value::Int(addr.port() as i128));
-    Value::Vec(Rc::new(RefCell::new(parts)))
+    Value::vector(parts)
 }
 
 impl Drop for ProcIo {
@@ -927,40 +923,43 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     let pb = pref.borrow();
                     (pb.filter.clone(), pb.sentinel.clone(), pb.plist.clone())
                 };
-                let child_proc = Rc::new(RefCell::new(Proc {
-                    // GNU names the accepted process "<host:port>".
-                    name: unique_process_name(i, &format!("<{addr}>")),
-                    kind: "network",
-                    command: Value::Nil,
-                    io: ProcIo::Net(stream),
-                    pid: 0,
-                    status: "open",
-                    exit_status: 0,
-                    connect_error: Value::Nil,
-                    buffer,
-                    mark: Some(free_process_marker()),
-                    filter,
-                    sentinel,
-                    plist,
-                    query_on_exit: true,
-                    kill_without_query: false,
-                    tty_name: Value::Nil,
-                    coding: ("utf-8-unix".into(), "utf-8-unix".into()),
-                    stderr_dest: Value::Nil,
-                    inherit_coding: false,
-                    connection_type: Value::Nil,
-                    contact,
-                    dead: false,
-                    reported: false,
-                    opening: false,
-                    start_stopped: false,
-                    pending_status: None,
-                    gnutls: None,
-                    gnutls_initstage: 0,
-                    gnutls_log_level: 0,
-                    gnutls_async_connected: Value::Nil,
-                    gnutls_async_signalled: Value::Nil,
-                }));
+                let child_proc = crate::lisp::memory::allocate(
+                    Proc {
+                        // GNU names the accepted process "<host:port>".
+                        name: unique_process_name(i, &format!("<{addr}>")),
+                        kind: "network",
+                        command: Value::Nil,
+                        io: ProcIo::Net(stream),
+                        pid: 0,
+                        status: "open",
+                        exit_status: 0,
+                        connect_error: Value::Nil,
+                        buffer,
+                        mark: Some(free_process_marker()),
+                        filter,
+                        sentinel,
+                        plist,
+                        query_on_exit: true,
+                        kill_without_query: false,
+                        tty_name: Value::Nil,
+                        coding: ("utf-8-unix".into(), "utf-8-unix".into()),
+                        stderr_dest: Value::Nil,
+                        inherit_coding: false,
+                        connection_type: Value::Nil,
+                        contact,
+                        dead: false,
+                        reported: false,
+                        opening: false,
+                        start_stopped: false,
+                        pending_status: None,
+                        gnutls: None,
+                        gnutls_initstage: 0,
+                        gnutls_log_level: 0,
+                        gnutls_async_connected: Value::Nil,
+                        gnutls_async_signalled: Value::Nil,
+                    },
+                    crate::lisp::Value::Process,
+                );
                 i.processes.push(child_proc);
                 run_sentinel(i, pref, "open", 0)?;
             }
@@ -981,39 +980,42 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     let pb = pref.borrow();
                     (pb.filter.clone(), pb.sentinel.clone(), pb.plist.clone())
                 };
-                let child_proc = Rc::new(RefCell::new(Proc {
-                    name: unique_process_name(i, &name),
-                    kind: "network",
-                    command: Value::Nil,
-                    io: ProcIo::LocalNet(stream),
-                    pid: 0,
-                    status: "open",
-                    exit_status: 0,
-                    connect_error: Value::Nil,
-                    buffer,
-                    mark: Some(free_process_marker()),
-                    filter,
-                    sentinel,
-                    plist,
-                    query_on_exit: true,
-                    kill_without_query: false,
-                    tty_name: Value::Nil,
-                    coding: ("utf-8-unix".into(), "utf-8-unix".into()),
-                    stderr_dest: Value::Nil,
-                    inherit_coding: false,
-                    connection_type: Value::Nil,
-                    contact,
-                    dead: false,
-                    reported: false,
-                    opening: false,
-                    start_stopped: false,
-                    pending_status: None,
-                    gnutls: None,
-                    gnutls_initstage: 0,
-                    gnutls_log_level: 0,
-                    gnutls_async_connected: Value::Nil,
-                    gnutls_async_signalled: Value::Nil,
-                }));
+                let child_proc = crate::lisp::memory::allocate(
+                    Proc {
+                        name: unique_process_name(i, &name),
+                        kind: "network",
+                        command: Value::Nil,
+                        io: ProcIo::LocalNet(stream),
+                        pid: 0,
+                        status: "open",
+                        exit_status: 0,
+                        connect_error: Value::Nil,
+                        buffer,
+                        mark: Some(free_process_marker()),
+                        filter,
+                        sentinel,
+                        plist,
+                        query_on_exit: true,
+                        kill_without_query: false,
+                        tty_name: Value::Nil,
+                        coding: ("utf-8-unix".into(), "utf-8-unix".into()),
+                        stderr_dest: Value::Nil,
+                        inherit_coding: false,
+                        connection_type: Value::Nil,
+                        contact,
+                        dead: false,
+                        reported: false,
+                        opening: false,
+                        start_stopped: false,
+                        pending_status: None,
+                        gnutls: None,
+                        gnutls_initstage: 0,
+                        gnutls_log_level: 0,
+                        gnutls_async_connected: Value::Nil,
+                        gnutls_async_signalled: Value::Nil,
+                    },
+                    crate::lisp::Value::Process,
+                );
                 i.processes.push(child_proc);
                 run_sentinel(i, pref, "open", 0)?;
             }
@@ -1185,11 +1187,14 @@ fn unique_process_name(i: &Interp, requested: &str) -> String {
 }
 
 fn free_process_marker() -> MarkerRef {
-    Rc::new(RefCell::new(Marker {
-        buffer: None,
-        position: 0,
-        insertion_type: false,
-    }))
+    crate::lisp::memory::allocate(
+        Marker {
+            buffer: None,
+            position: 0,
+            insertion_type: false,
+        },
+        crate::lisp::Value::Marker,
+    )
 }
 
 /// Associate a process mark only when its new non-nil buffer differs.
@@ -1322,7 +1327,10 @@ fn finish_setup(
         p.command = kw(i, args, ":command");
     }
     p.name = unique_process_name(i, &p.name);
-    Ok(Rc::new(RefCell::new(p)))
+    Ok(crate::lisp::memory::allocate(
+        p,
+        crate::lisp::Value::Process,
+    ))
 }
 
 fn eol_normalize(name: &str) -> String {
@@ -2204,7 +2212,7 @@ fn addr_vec(host: &str, port: u16) -> Value {
         octets.push(Value::Int(0));
     }
     octets.push(Value::Int(port as i128));
-    Value::Vec(Rc::new(RefCell::new(octets)))
+    Value::vector(octets)
 }
 
 fn f_make_serial_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -3848,13 +3856,13 @@ unsafe fn sockaddr_to_value(sa: *const libc::sockaddr) -> Option<Value> {
             let sin = unsafe { &*(sa as *const libc::sockaddr_in) };
             let b = sin.sin_addr.s_addr.to_ne_bytes();
             let port = u16::from_be(sin.sin_port) as i128;
-            Some(Value::Vec(Rc::new(RefCell::new(vec![
+            Some(Value::vector(vec![
                 Value::Int(b[0] as i128),
                 Value::Int(b[1] as i128),
                 Value::Int(b[2] as i128),
                 Value::Int(b[3] as i128),
                 Value::Int(port),
-            ]))))
+            ]))
         }
         libc::AF_INET6 => {
             let sin6 = unsafe { &*(sa as *const libc::sockaddr_in6) };
@@ -3866,7 +3874,7 @@ unsafe fn sockaddr_to_value(sa: *const libc::sockaddr) -> Option<Value> {
                 ));
             }
             elems.push(Value::Int(u16::from_be(sin6.sin6_port) as i128));
-            Some(Value::Vec(Rc::new(RefCell::new(elems))))
+            Some(Value::vector(elems))
         }
         _ => None,
     }

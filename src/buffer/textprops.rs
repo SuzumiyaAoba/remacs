@@ -7,13 +7,13 @@
 use std::ops::Deref;
 
 use crate::buffer::TextProp;
-use crate::lisp::builtins::eq_values;
 use crate::lisp::Value;
+use crate::lisp::builtins::eq_values;
 
 #[derive(Clone)]
 pub struct TextProperties {
     flat: Vec<TextProp>,
-    intervals: Vec<(usize, usize, Vec<Value>)>,
+    intervals: crate::lisp::memory::Intervals,
     len: usize,
 }
 
@@ -29,7 +29,7 @@ impl TextProperties {
     pub(crate) fn new() -> Self {
         Self {
             flat: Vec::new(),
-            intervals: Vec::new(),
+            intervals: Default::default(),
             len: 0,
         }
     }
@@ -135,7 +135,7 @@ impl TextProperties {
         self.ensure_tree();
         let mut out = Vec::with_capacity(self.intervals.len() + 2);
         let mut replacement = Some(plist);
-        for (a, b, old) in std::mem::take(&mut self.intervals) {
+        for (a, b, old) in std::mem::take(&mut self.intervals).into_vec() {
             if b <= start || a >= end {
                 out.push((a, b, old));
                 continue;
@@ -150,7 +150,7 @@ impl TextProperties {
                 out.push((end, b, old));
             }
         }
-        self.intervals = out;
+        self.intervals = out.into();
         self.rebuild_flat();
     }
 
@@ -171,7 +171,7 @@ impl TextProperties {
         // is the entire buffer. Even inherited insertion preserves the
         // source's plist order in this case.
         if start == 0 && source.last().is_some_and(|iv| iv.1 == self.len) {
-            self.intervals = source.to_vec();
+            self.intervals = source.to_vec().into();
             self.rebuild_flat();
             return;
         }
@@ -211,7 +211,7 @@ impl TextProperties {
         }
         let mut out = Vec::with_capacity(self.intervals.len() + 2);
         let mut inserted = false;
-        for (a, b, plist) in std::mem::take(&mut self.intervals) {
+        for (a, b, plist) in std::mem::take(&mut self.intervals).into_vec() {
             if b <= pos {
                 out.push((a, b, plist));
                 continue;
@@ -228,7 +228,7 @@ impl TextProperties {
         if !inserted {
             out.push((pos, pos + n, Vec::new()));
         }
-        self.intervals = out;
+        self.intervals = out.into();
         self.rebuild_flat();
     }
 
@@ -255,19 +255,21 @@ impl TextProperties {
             index > 0 && Self::plists_equal(&self.intervals[index - 1].2, &self.intervals[index].2);
         let join_right = index + 1 < self.intervals.len()
             && Self::plists_equal(&self.intervals[index].2, &self.intervals[index + 1].2);
+        let mut intervals = self.intervals.edit();
         if join_left {
-            self.intervals[index - 1].1 = end;
-            self.intervals.remove(index);
+            intervals[index - 1].1 = end;
+            intervals.remove(index);
             if split_original && join_right {
-                self.intervals[index - 1].1 = self.intervals[index].1;
-                self.intervals.remove(index);
+                intervals[index - 1].1 = intervals[index].1;
+                intervals.remove(index);
             }
         } else if join_right {
-            self.intervals[index + 1].0 = base;
-            self.intervals.remove(index);
+            intervals[index + 1].0 = base;
+            intervals.remove(index);
         } else {
             return;
         }
+        drop(intervals);
         self.rebuild_flat();
     }
 
@@ -290,19 +292,21 @@ impl TextProperties {
             }
         };
         self.intervals = std::mem::take(&mut self.intervals)
+            .into_vec()
             .into_iter()
             .filter_map(|(a, b, plist)| {
                 let a = adjusted(a);
                 let b = adjusted(b);
                 (a < b).then_some((a, b, plist))
             })
-            .collect();
+            .collect::<Vec<_>>()
+            .into();
         self.rebuild_flat();
     }
 
     fn ensure_tree(&mut self) {
         if self.intervals.is_empty() && self.len != 0 {
-            self.intervals.push((0, self.len, Vec::new()));
+            self.intervals.edit().push((0, self.len, Vec::new()));
         }
     }
 
@@ -310,7 +314,7 @@ impl TextProperties {
     /// interval. None means preserve that interval and all its boundaries.
     fn edit(&mut self, start: usize, end: usize, change: impl Fn(&[Value]) -> Option<Vec<Value>>) {
         let mut out = Vec::with_capacity(self.intervals.len() + 2);
-        for (a, b, plist) in std::mem::take(&mut self.intervals) {
+        for (a, b, plist) in std::mem::take(&mut self.intervals).into_vec() {
             if b <= start || a >= end {
                 out.push((a, b, plist));
                 continue;
@@ -327,7 +331,7 @@ impl TextProperties {
                 out.push((end, b, plist));
             }
         }
-        self.intervals = out;
+        self.intervals = out.into();
     }
 
     fn key_id(key: &Value) -> Option<u32> {
@@ -353,7 +357,7 @@ impl TextProperties {
 
     fn rebuild_flat(&mut self) {
         self.flat.clear();
-        for (start, end, plist) in &self.intervals {
+        for (start, end, plist) in self.intervals.iter() {
             // Legacy readers scan records backwards. Reverse pairs here
             // so those readers see the canonical plist's original order.
             for pair in plist.chunks_exact(2).rev() {
@@ -369,10 +373,11 @@ impl TextProperties {
         }
         debug_assert!(self.intervals.is_empty() || self.intervals[0].0 == 0);
         debug_assert!(self.intervals.last().is_none_or(|iv| iv.1 == self.len));
-        debug_assert!(self
-            .intervals
-            .iter()
-            .all(|(a, b, pl)| a < b && pl.len() % 2 == 0));
+        debug_assert!(
+            self.intervals
+                .iter()
+                .all(|(a, b, pl)| a < b && pl.len() % 2 == 0)
+        );
         debug_assert!(self.intervals.windows(2).all(|ivs| ivs[0].1 == ivs[1].0));
     }
 }

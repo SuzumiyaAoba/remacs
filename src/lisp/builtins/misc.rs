@@ -2032,7 +2032,8 @@ pub(crate) fn f_make_interpreted_closure(i: &mut Interp, args: crate::lisp::Argv
         bc_items: l.bc_items.clone(),
         bc_closure: l.bc_closure,
         bc_prog: std::cell::RefCell::new(None),
-    })))
+    }))
+    .tracked())
 }
 
 /// Build an interpreted-closure Lambda from ARGLIST, BODY (a list of
@@ -2131,12 +2132,13 @@ pub(crate) fn make_interpreted_closure(
         dumped_doc: false,
         compiled: elc_compiled,
         advice_link: None,
-        bc_items: bc_items.map(|v| Rc::new(RefCell::new(v))),
+        bc_items: bc_items.map(|v| crate::lisp::Value::vector_ref(v)),
         bc_closure: false,
         bc_prog: std::cell::RefCell::new(None),
         doc_value: bc_doc,
         env_value: None,
     }))
+    .tracked()
 }
 
 /// GNU's closure element view for `aref'/`length'/`copy-sequence':
@@ -2159,7 +2161,7 @@ pub(crate) fn lambda_slot_values(l: &Lambda) -> Vec<Value> {
         match forms.len() {
             1 => Some(forms.into_iter().next().unwrap()),
             0 => None,
-            _ => Some(Value::Vec(Rc::new(RefCell::new(forms)))),
+            _ => Some(Value::vector(forms)),
         }
     });
     // GNU sizes by `!NILP (iform)' — `(interactive)' alone still
@@ -2267,7 +2269,7 @@ fn f_keymap_canonicalize(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let dk = Value::Sym(i.intern("define-key"));
     for (lo, hi, def) in ranges {
         let rk = Value::cons(Value::Int(lo), Value::Int(hi));
-        let kv = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![rk])));
+        let kv = Value::vector(vec![rk]);
         i.apply(&dk, vec![map.clone(), kv, def])?;
     }
     // Merge duplicate keys; GNU pushes each binding then nconcs, so the
@@ -2506,12 +2508,7 @@ fn f_accessible_keymaps(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     let out: Vec<Value> = maps
         .into_iter()
-        .map(|(pfx, m)| {
-            Value::cons(
-                Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(pfx))),
-                m,
-            )
-        })
+        .map(|(pfx, m)| Value::cons(Value::vector(pfx), m))
         .collect();
     Ok(Value::list(out))
 }
@@ -2973,7 +2970,7 @@ fn describe_vector(
     let key_desc = Value::Sym(i.intern("key-description"));
     let indent_to = Value::Sym(i.intern("indent-to"));
     let shadow_maps = shadow.list_to_vec().unwrap_or_default();
-    let kludge = |k: i128| Value::Vec(Rc::new(RefCell::new(vec![Value::Int(k)])));
+    let kludge = |k: i128| Value::vector(vec![Value::Int(k)]);
     // STOP/TO: GNU never lets a char-table run cross 0x3FFF80.
     let (stop0, to): (i128, i128) = if is_ct {
         (0x3FFF80, CT_MAX_CHAR as i128 + 1)
@@ -3525,7 +3522,7 @@ fn f_frame_or_buffer_changed_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     };
     if changed {
         if let Some(id) = var {
-            i.set_symbol(id, Value::Vec(Rc::new(RefCell::new(cur))))?;
+            i.set_symbol(id, Value::vector(cur))?;
         } else {
             i.frame_state_seen = Some(cur);
         }
@@ -3791,11 +3788,11 @@ pub(crate) fn as_sympos(v: &Value) -> Option<(SymId, i128)> {
 
 /// Build an enabled `symbols-with-pos-enabled' sympos for BARE at POS.
 pub(crate) fn make_sympos(bare: SymId, pos: i128) -> Value {
-    Value::Record(std::rc::Rc::new(std::cell::RefCell::new(vec![
+    Value::record(vec![
         Value::Int(SYMPOS_MAGIC),
         Value::Sym(bare),
         Value::Int(pos),
-    ])))
+    ])
 }
 
 /// Strip an enabled sympos to its bare symbol; everything else is
@@ -3819,11 +3816,11 @@ pub(crate) fn sympos_enabled_p(i: &mut Interp) -> bool {
 
 /// Build a `symbol-with-pos' object for SYM at POS.
 pub(crate) fn make_symbol_with_pos(i: &mut Interp, sym: SymId, pos: i128) -> Value {
-    Value::Record(std::rc::Rc::new(std::cell::RefCell::new(vec![
+    Value::record(vec![
         Value::Sym(i.intern("symbol-with-pos")),
         Value::Sym(sym),
         Value::Int(pos),
-    ])))
+    ])
 }
 
 fn f_bare_symbol(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -6827,7 +6824,7 @@ pub(crate) fn make_category_table_value(i: &mut Interp, standard: bool) -> Value
     // GNU extra slot 0: docstring vector of 95 (indexed by cat - 32);
     // extra slot 1 starts nil and becomes an `equal' hash-table
     // hash-consing category sets on the first `modify-category-entry'.
-    let docs = Rc::new(RefCell::new(vec![Value::Nil; 95]));
+    let docs = crate::lisp::Value::vector_ref(vec![Value::Nil; 95]);
     let tag = Value::Sym(i.intern("category-table"));
     let t = make_ct(
         i,
@@ -6994,7 +6991,7 @@ fn cat_docs(v: &Rc<RefCell<Vec<Value>>>) -> Rc<RefCell<Vec<Value>>> {
     let rr = v.borrow();
     match rr.get(3) {
         Some(Value::Vec(d)) => d.clone(),
-        _ => Rc::new(RefCell::new(vec![Value::Nil; 95])),
+        _ => crate::lisp::Value::vector_ref(vec![Value::Nil; 95]),
     }
 }
 
@@ -7112,9 +7109,10 @@ fn cat_set_hash(t: &Rc<RefCell<Vec<Value>>>) -> Rc<RefCell<crate::lisp::value::L
             return h.clone();
         }
     }
-    let h = Rc::new(RefCell::new(crate::lisp::value::LispHash::new(
-        crate::lisp::value::HashTest::Equal,
-    )));
+    let h = crate::lisp::memory::allocate(
+        crate::lisp::value::LispHash::new(crate::lisp::value::HashTest::Equal),
+        crate::lisp::Value::Hash,
+    );
     if t.borrow().len() > 4 {
         t.borrow_mut()[4] = Value::Hash(h.clone());
     }
@@ -7924,14 +7922,17 @@ fn f_make_thread(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Some(Value::Nil) | None => None,
         Some(other) => return Err(i.wrong_type_mut("stringp", other)),
     };
-    let t = std::rc::Rc::new(std::cell::RefCell::new(crate::lisp::value::Thread {
-        name,
-        alive: true,
-        result: None,
-        last_error: None,
-        pending_signal: None,
-        finished: false,
-    }));
+    let t = crate::lisp::memory::allocate(
+        crate::lisp::value::Thread {
+            name,
+            alive: true,
+            result: None,
+            last_error: None,
+            pending_signal: None,
+            finished: false,
+        },
+        crate::lisp::Value::Thread,
+    );
     i.threads.push(t.clone());
     let idx = i.threads.len() - 1;
     let saved = i.current_thread;
@@ -8012,7 +8013,8 @@ fn f_make_mutex(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     Ok(Value::Mutex(std::rc::Rc::new(std::cell::RefCell::new(
         crate::lisp::value::Mutex { name, owner: None },
-    ))))
+    )))
+    .tracked())
 }
 
 fn f_mutex_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -8055,7 +8057,8 @@ fn f_make_condition_variable(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
             name,
             mutex: Value::Mutex(m),
         },
-    ))))
+    )))
+    .tracked())
 }
 
 fn f_condition_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -8116,9 +8119,7 @@ fn f_make_finalizer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !super::data::functionp_val(i, &a[0]) {
         return Err(i.wrong_type_mut("functionp", &a[0]));
     }
-    Ok(Value::Finalizer(std::rc::Rc::new(std::cell::RefCell::new(
-        a[0].clone(),
-    ))))
+    Ok(Value::Finalizer(std::rc::Rc::new(std::cell::RefCell::new(a[0].clone()))).tracked())
 }
 
 fn f_byte_to_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -8255,15 +8256,12 @@ pub(crate) fn bool_vec_of(i: &mut Interp, v: &Value) -> Result<Vec<bool>, Flow> 
 }
 
 pub(crate) fn make_bool_vector(i: &mut Interp, bits: Vec<bool>) -> Value {
-    let data = Value::Vec(Rc::new(RefCell::new(
+    let data = Value::vector(
         bits.into_iter()
             .map(|b| Value::Int(if b { 1 } else { 0 }))
             .collect(),
-    )));
-    Value::Record(Rc::new(RefCell::new(vec![
-        Value::Sym(i.intern("bool-vector")),
-        data,
-    ])))
+    );
+    Value::record(vec![Value::Sym(i.intern("bool-vector")), data])
 }
 
 fn f_bool_vector_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -8992,7 +8990,7 @@ fn f_key_parse(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // -> sequencep error) then `string-match' (non-string sequence ->
     // stringp error).  nil has length 0 and returns [].
     if a[0].is_nil() {
-        return Ok(Value::Vec(Rc::new(RefCell::new(vec![]))));
+        return Ok(Value::vector(vec![]));
     }
     if !matches!(
         a[0],
@@ -9006,7 +9004,7 @@ fn f_key_parse(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     for tok in s.split(' ').filter(|t| !t.is_empty()) {
         out.extend(parse_key_token(i, tok)?);
     }
-    Ok(Value::Vec(Rc::new(RefCell::new(out))))
+    Ok(Value::vector(out))
 }
 
 // ---------- misc ----------
@@ -9198,7 +9196,7 @@ fn f_help_function_arglist(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             if *s == i.intern("lambda") || *s == i.intern("closure"));
             if head_lam {
                 if let Ok(l) = i.lambda_from_form(&v, None) {
-                    v = Value::Lambda(std::rc::Rc::new(l));
+                    v = Value::Lambda(std::rc::Rc::new(l)).tracked();
                 }
             }
         }
@@ -10572,12 +10570,12 @@ fn f_coding_system_eol_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     }
     let base = coding_canonical(i, &a[0]);
     // Base system: vector of the three EOL variants.
-    Ok(Value::Vec(Rc::new(RefCell::new(
+    Ok(Value::vector(
         ["unix", "dos", "mac"]
             .iter()
             .map(|s| Value::Sym(i.intern(&format!("{base}-{s}"))))
             .collect(),
-    ))))
+    ))
 }
 fn f_coding_system_aliases(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU checks CHECK_SYMBOL
@@ -11422,7 +11420,7 @@ fn f_internal_make_lisp_face(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     for _ in 0..19 {
         v.push(unspec.clone());
     }
-    Ok(Value::Vec(Rc::new(RefCell::new(v))))
+    Ok(Value::vector(v))
 }
 
 /// `internal-copy-lisp-face' — GNU Finternal_copy_lisp_face order:
@@ -12331,9 +12329,7 @@ fn f_font_shape_gstring(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Err(i.signal_data(
         sym::ERROR,
         vec![
-            Value::Str(std::rc::Rc::new(std::cell::RefCell::new(
-                "Invalid glyph-string: ".to_string(),
-            ))),
+            Value::string("Invalid glyph-string: ".to_string()),
             a[0].clone(),
         ],
     ))
@@ -14951,10 +14947,10 @@ pub(crate) fn is_char_table(i: &Interp, v: &Value) -> bool {
 /// [1..=64] top blocks), every slot = INIT.  GNU's `make_vector'
 /// also initializes the defalt slot to INIT.
 pub(crate) fn make_ct(i: &mut Interp, subtype: Value, init: Value, extras: Vec<Value>) -> Value {
-    let vec = Value::Vec(Rc::new(RefCell::new(vec![init.clone(); 65])));
+    let vec = Value::vector(vec![init.clone(); 65]);
     let mut rec = vec![Value::Sym(i.intern("char-table")), subtype, vec];
     rec.extend(extras);
-    let t = Value::Record(Rc::new(RefCell::new(rec)));
+    let t = Value::record(rec);
     if !init.is_nil() {
         i.set_char_table_defalt(&t, init);
     }
@@ -15007,7 +15003,7 @@ fn make_sub_ct(i: &mut Interp, depth: usize, min_char: u32, fill: Value) -> Valu
     v.push(Value::Int(depth as i128));
     v.push(Value::Int(min_char as i128));
     v.extend(std::iter::repeat_n(fill, CHARTAB_SIZE[depth]));
-    Value::Record(Rc::new(RefCell::new(v)))
+    Value::record(v)
 }
 
 /// Raw value stored for C in the 65-slot contents vec CB — no
@@ -15090,7 +15086,7 @@ fn uniprop_uncompress(tag: SymId, vec: &Rc<RefCell<Vec<Value>>>, slot: usize, mi
             _ => {}
         }
     }
-    let sub = Value::Record(Rc::new(RefCell::new(rec)));
+    let sub = Value::record(rec);
     if let Some(s) = vec.borrow_mut().get_mut(slot) {
         *s = sub.clone();
     }
@@ -15355,7 +15351,7 @@ fn sub_ct_copy(i: &mut Interp, v: &Value) -> Value {
             });
         }
     }
-    Value::Record(Rc::new(RefCell::new(rec)))
+    Value::record(rec)
 }
 
 /// `copy_char_table': deep copy of TABLE's contents (recursive
@@ -15394,7 +15390,7 @@ pub(crate) fn ct_copy(i: &mut Interp, table: &Value) -> Value {
     let mut nv = Vec::with_capacity(65);
     nv.push(Value::Nil);
     nv.extend(copied);
-    let contents_rc = Rc::new(RefCell::new(nv));
+    let contents_rc = crate::lisp::Value::vector_ref(nv);
     ct_refresh_ascii(i, &contents_rc);
     let mut rec = vec![
         Value::Sym(i.intern("char-table")),
@@ -15402,7 +15398,7 @@ pub(crate) fn ct_copy(i: &mut Interp, table: &Value) -> Value {
         Value::Vec(contents_rc),
     ];
     rec.extend(extras);
-    let t = Value::Record(Rc::new(RefCell::new(rec)));
+    let t = Value::record(rec);
     let defalt = i.char_table_defalt(table);
     if !defalt.is_nil() {
         i.set_char_table_defalt(&t, defalt);
@@ -16176,10 +16172,10 @@ fn f_suppress_keymap(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU remaps self-insert-command, preserving explicit bindings.
     let nodigits = arg(&a, 1).truthy();
     let define_key = Value::Sym(i.intern("define-key"));
-    let keys = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
+    let keys = Value::vector(vec![
         Value::Sym(i.intern("remap")),
         Value::Sym(i.intern("self-insert-command")),
-    ])));
+    ]);
     let undefined = Value::Sym(i.intern("undefined"));
     i.apply(&define_key, vec![a[0].clone(), keys, undefined])?;
     if !nodigits {
@@ -16257,7 +16253,7 @@ fn f_set_char_table_extra_slot(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
 }
 
 fn f_record(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::Record(Rc::new(RefCell::new(a.as_slice().to_vec()))))
+    Ok(Value::record(a.as_slice().to_vec()))
 }
 
 fn f_recordp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -16539,18 +16535,11 @@ fn f_version_list_not_zero(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         .unwrap_or(Value::Int(0)))
 }
 
-fn f_memory_use_counts(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    // (CONSES FLOATS VECTOR-CELLS SYMBOLS STRING-CHARS INTERVALS STRINGS)
-    let bufs = i.buffers.list().len() as i128;
-    Ok(Value::list(vec![
-        Value::Int(0),
-        Value::Int(0),
-        Value::Int(0),
-        Value::Int(0),
-        Value::Int(0),
-        Value::Int(0),
-        Value::Int(bufs),
-    ]))
+fn f_memory_use_counts(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    let counts = crate::lisp::memory::counts();
+    Ok(Value::list(
+        counts.into_iter().map(|n| Value::Int(n as i128)).collect(),
+    ))
 }
 
 fn f_group_gid(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
@@ -16896,16 +16885,16 @@ fn f_locale_info(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     match item.as_str() {
         "codeset" => Ok(lang(codeset).map(Value::string).unwrap_or(Value::Nil)),
-        "days" => Ok(Value::Vec(Rc::new(RefCell::new(
+        "days" => Ok(Value::vector(
             (0..7)
                 .map(|d| lang(day1 + d).map(Value::string).unwrap_or(Value::Nil))
                 .collect(),
-        )))),
-        "months" => Ok(Value::Vec(Rc::new(RefCell::new(
+        )),
+        "months" => Ok(Value::vector(
             (0..12)
                 .map(|m| lang(mon1 + m).map(Value::string).unwrap_or(Value::Nil))
                 .collect(),
-        )))),
+        )),
         _ => Ok(Value::Nil),
     }
 }
@@ -17434,10 +17423,10 @@ fn f_font_spec(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
         idx += 2;
     }
-    Ok(Value::Record(Rc::new(RefCell::new(vec![
+    Ok(Value::record(vec![
         Value::Sym(i.intern("font-spec")),
         Value::list(a.as_slice().to_vec()),
-    ]))))
+    ]))
 }
 
 /// `put-image` — GNU requires an image spec (list headed `image') and
@@ -17745,13 +17734,13 @@ fn f_network_lookup_address_info(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
         match sa {
             std::net::SocketAddr::V4(v4) if want4 => {
                 let o = v4.ip().octets();
-                out.push(Value::Vec(Rc::new(RefCell::new(vec![
+                out.push(Value::vector(vec![
                     Value::Int(o[0] as i128),
                     Value::Int(o[1] as i128),
                     Value::Int(o[2] as i128),
                     Value::Int(o[3] as i128),
                     Value::Int(0),
-                ]))));
+                ]));
             }
             std::net::SocketAddr::V6(v6) if want6 => {
                 let mut elts: Vec<Value> = v6
@@ -17761,7 +17750,7 @@ fn f_network_lookup_address_info(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
                     .map(|s| Value::Int(*s as i128))
                     .collect();
                 elts.push(Value::Int(0));
-                out.push(Value::Vec(Rc::new(RefCell::new(elts))));
+                out.push(Value::vector(elts));
             }
             _ => {}
         }
@@ -17814,57 +17803,39 @@ fn f_set_file_selinux_context(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
     Ok(Value::Nil)
 }
 
-/// `garbage-collect-heapsize` — GNU-shaped stats alist; we don't track
-/// per-type counts, so report what we know and zeros elsewhere.
-/// GNU `Fgarbage_collect_maybe': FACTOR is CHECK_FIXNAT (wholenump);
-/// the collection itself is a no-op here.
+/// GNU's FACTOR must be a nonnegative fixnum. Zero never collects.
 fn f_garbage_collect_maybe(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match &a[0] {
-        Value::Int(n) if *n >= 0 => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("wholenump", other)),
+    let factor = match &a[0] {
+        Value::Int(n) if *n >= 0 && *n <= crate::lisp::value::FIXNUM_MAX => *n as u64,
+        other => return Err(i.wrong_type_mut("wholenump", other)),
+    };
+    if factor == 0 {
+        return Ok(Value::Nil);
     }
+    let threshold = i.intern("gc-cons-threshold");
+    let mut threshold = match i.symbol_value(threshold) {
+        Value::Int(n) => n.max(0) as u64,
+        _ => 800_000,
+    };
+    let percentage = i.intern("gc-cons-percentage");
+    if let Value::Float(percentage) = i.symbol_value(percentage) {
+        if *percentage > 0.0 {
+            threshold = threshold
+                .max((crate::lisp::memory::heap_stats().bytes as f64 * *percentage) as u64);
+        }
+    }
+    if crate::lisp::memory::allocated_since_gc() > threshold / factor {
+        return Ok(if crate::lisp::memory::collect_interp(i) {
+            Value::t()
+        } else {
+            Value::Nil
+        });
+    }
+    Ok(Value::Nil)
 }
 
 fn f_gc_heapsize(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    let syms = i.obarray.all_ids().len() as i128;
-    let bufs = i.buffers.list().len() as i128;
-    let names: Vec<crate::lisp::value::SymId> = [
-        "conses",
-        "symbols",
-        "strings",
-        "string-bytes",
-        "vectors",
-        "vector-slots",
-        "floats",
-        "intervals",
-        "buffers",
-    ]
-    .iter()
-    .map(|n| i.intern(n))
-    .collect();
-    let mk = |idx: usize, unit: i128, used: i128| {
-        Value::list(vec![
-            Value::Sym(names[idx]),
-            Value::Int(unit),
-            Value::Int(used),
-            Value::Int(0),
-        ])
-    };
-    Ok(Value::list(vec![
-        mk(0, 16, 0),
-        mk(1, 48, syms),
-        mk(2, 32, 0),
-        Value::list(vec![Value::Sym(names[3]), Value::Int(1), Value::Int(0)]),
-        mk(4, 16, 0),
-        mk(5, 8, 0),
-        mk(6, 8, 0),
-        mk(7, 56, 0),
-        Value::list(vec![
-            Value::Sym(names[8]),
-            Value::Int(1064),
-            Value::Int(bufs),
-        ]),
-    ]))
+    Ok(crate::lisp::memory::report(i))
 }
 
 /// `make-closure` — GNU's `Fmake_closure': splice the runtime
@@ -17887,7 +17858,7 @@ fn f_make_closure(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let mut spliced: Vec<Value> = env.to_vec();
     spliced.extend_from_slice(&old[env.len().min(old.len())..]);
     drop(old);
-    new_items[2] = Value::Vec(Rc::new(RefCell::new(spliced)));
+    new_items[2] = Value::vector(spliced);
     Ok(Value::Lambda(Rc::new(Lambda {
         is_macro: l.is_macro,
         required: l.required.clone(),
@@ -17904,12 +17875,13 @@ fn f_make_closure(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         dumped_doc: l.dumped_doc,
         compiled: l.compiled,
         advice_link: l.advice_link.clone(),
-        bc_items: Some(Rc::new(RefCell::new(new_items))),
+        bc_items: Some(crate::lisp::Value::vector_ref(new_items)),
         bc_closure: true,
         bc_prog: std::cell::RefCell::new(None),
         doc_value: l.doc_value.clone(),
         env_value: l.env_value.clone(),
-    })))
+    }))
+    .tracked())
 }
 
 /// `bidi-find-overridden-directionality` (FROM TO OBJECT &optional BASE-DIR):
@@ -18066,7 +18038,7 @@ fn f_composition_get_gstring(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     // nil] for unshaped glyphs.
     let mut lglyphs = Vec::new();
     for (_idx, ch) in chars.iter().enumerate() {
-        lglyphs.push(Value::Vec(Rc::new(RefCell::new(vec![
+        lglyphs.push(Value::vector(vec![
             Value::Int(0),
             Value::Int(0),
             Value::Int(*ch as i128),
@@ -18077,7 +18049,7 @@ fn f_composition_get_gstring(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
             Value::Int(1),
             Value::Int(0),
             Value::Nil,
-        ]))));
+        ]));
     }
     let utf8_unix = i.intern("utf-8-unix");
     let cs = Value::Sym(utf8_unix);
@@ -18085,12 +18057,12 @@ fn f_composition_get_gstring(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     for ch in &chars {
         hdr.push(Value::Int(*ch as i128));
     }
-    let mut v = vec![Value::Vec(Rc::new(RefCell::new(hdr))), Value::Nil];
+    let mut v = vec![Value::vector(hdr), Value::Nil];
     v.extend(lglyphs);
     while v.len() < 10 {
         v.push(Value::Nil);
     }
-    Ok(Value::Vec(Rc::new(RefCell::new(v))))
+    Ok(Value::vector(v))
 }
 
 fn f_composition_sort_rules(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -18548,7 +18520,7 @@ fn f_face_attributes_as_vector(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
         }
         cur = next;
     }
-    Ok(Value::Vec(Rc::new(RefCell::new(slots))))
+    Ok(Value::vector(slots))
 }
 
 fn f_profiler_memory_start(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {

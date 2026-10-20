@@ -349,19 +349,19 @@ fn with_set<R>(
 }
 
 fn make_db_record(i: &mut Interp, id: u64) -> Rc<RefCell<Vec<Value>>> {
-    Rc::new(RefCell::new(vec![
+    crate::lisp::Value::vector_ref(vec![
         Value::Sym(i.intern("sqlite")),
         Value::Sym(i.intern("db")),
         Value::Int(id as i128),
-    ]))
+    ])
 }
 
 fn make_set_record(i: &mut Interp, id: u64) -> Rc<RefCell<Vec<Value>>> {
-    Rc::new(RefCell::new(vec![
+    crate::lisp::Value::vector_ref(vec![
         Value::Sym(i.intern("sqlite")),
         Value::Sym(i.intern("set")),
         Value::Int(id as i128),
-    ]))
+    ])
 }
 
 /// Lisp VALUE → sqlite bind value.

@@ -982,6 +982,35 @@ Open divergence classes under triage:
   collected ~840 entries from before the `cl--loop-expand`/`equal`
   fixes); the harness re-records genuine offenders.
 
+## Managed memory statistics (`src/lisp/memory.rs`)
+
+`memory-use-counts` records cumulative cons, float, vector-cell, symbol,
+string-byte, interval, and string allocations. Route new managed objects
+through `Cons::new`, `Value::float`, `Value::string[_ref]`,
+`Value::vector[_ref]`, `Value::record`, `memory::allocate`, or `.tracked()`.
+Aliases are deduplicated by allocation identity. Buffer text and internal
+Rust work arrays are not Lisp vector allocations.
+`Rc::get_mut` also tests weak observers: closure metadata updates must use
+`memory::update_unique_lambda` to release the accounting observer for the
+update while still respecting actual shared or weak references.
+
+`garbage-collect` and `garbage-collect-heapsize` report the actual Rust
+object sizes and live allocation counts, with GNU's nine row shapes.
+Weak references observe object lifetimes without keeping objects alive;
+periodic reaping bounds stale accounting entries. Explicit collection also
+prunes dead string metadata, updates `gcs-done`/`gc-elapsed`, and runs
+`post-gc-hook`. Ordinary payloads are dropped by reference counting.
+`FREE` describes reusable capacity, not cumulative drops: conses, floats,
+and string objects have no free pool; symbol/interval/vector storage can
+have spare capacity. Vector-slot and pseudovector rows overlap, as in GNU;
+these statistics are not a process RSS measurement.
+
+This observes the existing Rc allocator rather than adding a tracing GC:
+Rc cycles and objects retained by runtime tables remain allocated and
+therefore remain in `USED`. Interval ownership is tracked once per shared
+buffer text or string property tree, not again for its legacy flat view.
+Regression coverage: `tests/qa_memory_statistics.el` and `memory::tests`.
+
 ## Verification recipe
 
 ```sh

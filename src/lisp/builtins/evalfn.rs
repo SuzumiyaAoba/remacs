@@ -7,7 +7,6 @@ use crate::lisp::SymId;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Marker, Subr, Value};
-use std::cell::RefCell;
 use std::rc::Rc;
 
 pub(crate) static SUBRS: &[Subr] = &[
@@ -4142,11 +4141,14 @@ fn eval_buffer_source(
                         let point = b.point();
                         b.set_point(point);
                         if matches!(end, Value::Int(_)) {
-                            let marker = Rc::new(RefCell::new(Marker {
-                                buffer: Some(b.id),
-                                position: b.zv,
-                                insertion_type: false,
-                            }));
+                            let marker = crate::lisp::memory::allocate(
+                                Marker {
+                                    buffer: Some(b.id),
+                                    position: b.zv,
+                                    insertion_type: false,
+                                },
+                                crate::lisp::Value::Marker,
+                            );
                             b.register_marker(&marker);
                             end = Value::Marker(marker);
                         }
@@ -4226,11 +4228,14 @@ fn eval_buffer_source(
                 let stop = !read_function.is_nil() && buffer.borrow().point() == buffer.borrow().zv;
                 if !start.is_nil() && !stop {
                     let mut b = buffer.borrow_mut();
-                    let marker = Rc::new(RefCell::new(Marker {
-                        buffer: Some(b.id),
-                        position: b.point(),
-                        insertion_type: false,
-                    }));
+                    let marker = crate::lisp::memory::allocate(
+                        Marker {
+                            buffer: Some(b.id),
+                            position: b.point(),
+                            insertion_type: false,
+                        },
+                        crate::lisp::Value::Marker,
+                    );
                     b.register_marker(&marker);
                     start = Value::Marker(marker);
                 }
@@ -4801,26 +4806,12 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_garbage_collect(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {
-    // GNU shape: (NAME SIZE USED FREE) triples per category, except
-    // string-bytes/buffers which lack the FREE count.
-    let n = i.obarray.len() as i128;
-    let item = |i: &mut Interp, name: &str, vals: &[i128]| {
-        let mut v = vec![Value::Sym(i.intern(name))];
-        v.extend(vals.iter().map(|x| Value::Int(*x)));
-        Value::list(v)
-    };
-    Ok(Value::list(vec![
-        item(i, "conses", &[16, n, 0]),
-        item(i, "symbols", &[48, n, 0]),
-        item(i, "strings", &[32, 0, 0]),
-        item(i, "string-bytes", &[1, 0]),
-        item(i, "vectors", &[16, 0]),
-        item(i, "vector-slots", &[8, 0, 0]),
-        item(i, "floats", &[8, 0, 0]),
-        item(i, "intervals", &[56, 0, 0]),
-        item(i, "buffers", &[1064, 0]),
-    ]))
+    if !crate::lisp::memory::collect_interp(i) {
+        return Ok(Value::Nil);
+    }
+    Ok(crate::lisp::memory::report(i))
 }
+
 fn f_memory_info(_i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {
     // GNU returns nil where the kernel gives no memory-info query
     // interface (macOS, and thus our batch probes).
@@ -4935,7 +4926,7 @@ fn f_internal_make_closure(i: &mut Interp, args: crate::lisp::Argv) -> EvalResul
     let env = crate::lisp::eval::lexenv_from_value(env_v);
     let mut lam = i.parse_lambda(params, &body, None)?;
     lam.env = env;
-    Ok(Value::Lambda(std::rc::Rc::new(lam)))
+    Ok(Value::Lambda(std::rc::Rc::new(lam)).tracked())
 }
 
 fn f_macroexp_parse_body(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -5032,32 +5023,29 @@ fn f_make_byte_code(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         // use of `Lambda.interactive' expects that wrapper.
         Value::list(vec![Value::Sym(_i.intern("interactive")), spec.clone()])
     });
-    Ok(Value::Lambda(std::rc::Rc::new(
-        crate::lisp::value::Lambda {
-            is_macro: false,
-            required: Vec::new(),
-            optional: Vec::new(),
-            rest: None,
-            body: Vec::new(),
-            env: None,
-            doc,
-            interactive,
-            name: None,
-            bad_arglist: false,
-            arglist: Some(argdesc),
-            plain: false,
-            dumped_doc: false,
-            compiled: false,
-            advice_link: None,
-            bc_items: Some(std::rc::Rc::new(std::cell::RefCell::new(
-                args.as_slice().to_vec(),
-            ))),
-            bc_closure: false,
-            bc_prog: std::cell::RefCell::new(None),
-            doc_value: None,
-            env_value: None,
-        },
-    )))
+    Ok(Value::Lambda(std::rc::Rc::new(crate::lisp::value::Lambda {
+        is_macro: false,
+        required: Vec::new(),
+        optional: Vec::new(),
+        rest: None,
+        body: Vec::new(),
+        env: None,
+        doc,
+        interactive,
+        name: None,
+        bad_arglist: false,
+        arglist: Some(argdesc),
+        plain: false,
+        dumped_doc: false,
+        compiled: false,
+        advice_link: None,
+        bc_items: Some(crate::lisp::Value::vector_ref(args.as_slice().to_vec())),
+        bc_closure: false,
+        bc_prog: std::cell::RefCell::new(None),
+        doc_value: None,
+        env_value: None,
+    }))
+    .tracked())
 }
 fn f_subr_native_lambda_list(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // Emacs 31: t for primitives, wrong-type-argument otherwise.
@@ -5093,11 +5081,14 @@ fn f_smae_save(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     };
     let m = match mark {
         Some(pos) => {
-            let mk = Rc::new(RefCell::new(Marker {
-                buffer: Some(buf),
-                position: pos,
-                insertion_type: false,
-            }));
+            let mk = crate::lisp::memory::allocate(
+                Marker {
+                    buffer: Some(buf),
+                    position: pos,
+                    insertion_type: false,
+                },
+                crate::lisp::Value::Marker,
+            );
             b.borrow_mut().register_marker(&mk);
             Value::Marker(mk)
         }

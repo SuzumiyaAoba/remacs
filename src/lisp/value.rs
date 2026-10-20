@@ -107,7 +107,9 @@ pub struct Cons {
 
 impl Cons {
     pub fn new(car: Value, cdr: Value) -> ConsRef {
-        Rc::new(RefCell::new(Cons { car, cdr }))
+        let cell = Rc::new(RefCell::new(Cons { car, cdr }));
+        super::memory::allocated(&Value::Cons(cell.clone()));
+        cell
     }
 }
 
@@ -658,12 +660,37 @@ impl Value {
     }
 
     pub fn string(s: impl Into<String>) -> Value {
-        Value::Str(Rc::new(RefCell::new(s.into())))
+        Value::Str(Self::string_ref(s))
+    }
+
+    pub fn string_ref(s: impl Into<String>) -> StrRef {
+        let string = Rc::new(RefCell::new(s.into()));
+        super::memory::allocated(&Value::Str(string.clone()));
+        string
+    }
+
+    pub fn vector_ref(values: Vec<Value>) -> VecRef {
+        let vector = Rc::new(RefCell::new(values));
+        super::memory::allocated(&Value::Vec(vector.clone()));
+        vector
+    }
+
+    pub fn vector(values: Vec<Value>) -> Value {
+        Value::Vec(Self::vector_ref(values))
+    }
+
+    pub fn record(values: Vec<Value>) -> Value {
+        Value::Record(Self::vector_ref(values))
+    }
+
+    pub fn tracked(self) -> Value {
+        super::memory::allocated(&self);
+        self
     }
 
     /// A fresh float object (each call yields a distinct `eq' identity).
     pub fn float(x: f64) -> Value {
-        Value::Float(Rc::new(x))
+        Value::Float(Rc::new(x)).tracked()
     }
 
     pub fn list(items: Vec<Value>) -> Value {
@@ -776,8 +803,6 @@ impl fmt::Debug for Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
-    use std::rc::Rc;
 
     #[test]
     fn debug_fmt_covers_every_variant() {
@@ -794,10 +819,14 @@ mod tests {
             (Value::Sym(7), "Sym(7)"),
             (Value::cons(Value::Nil, Value::Nil), "Cons(..)"),
             (Value::string("hi"), "\"hi\""),
-            (Value::Vec(Rc::new(RefCell::new(vec![]))), "Vec(..)"),
-            (Value::Record(Rc::new(RefCell::new(vec![]))), "Record(..)"),
+            (Value::vector(vec![]), "Vec(..)"),
+            (Value::record(vec![]), "Record(..)"),
             (
-                Value::Hash(Rc::new(RefCell::new(LispHash::new(HashTest::Eq)))),
+                Value::Hash(crate::lisp::memory::allocate(
+                    LispHash::new(HashTest::Eq),
+                    crate::lisp::Value::Hash,
+                ))
+                .tracked(),
                 "Hash(..)",
             ),
             (Value::Subr(&SUBR), "#<subr x>"),

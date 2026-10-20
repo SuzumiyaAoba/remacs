@@ -136,7 +136,7 @@ unsafe extern "C" fn api_int(_e: EmEnv, n: i64) -> EmObj {
     reg(Value::Int(n as i128))
 }
 unsafe extern "C" fn api_float(_e: EmEnv, f: f64) -> EmObj {
-    reg(Value::Float(Rc::new(f)))
+    reg(Value::float(f))
 }
 unsafe extern "C" fn api_str(_e: EmEnv, p: *const c_char, n: usize) -> EmObj {
     let b = unsafe { std::slice::from_raw_parts(p as *const u8, n) };
@@ -530,10 +530,10 @@ fn unit_tag(i: &mut Interp) -> SymId {
 
 fn unit_value(i: &mut Interp, idx: usize) -> Value {
     let tag = unit_tag(i);
-    Value::Vec(Rc::new(std::cell::RefCell::new(vec![
+    Value::vector(vec![
         Value::Sym(tag),
         Value::Int(idx as i128),
-    ])))
+    ])
 }
 
 fn unit_index(i: &mut Interp, v: &Value) -> Result<usize, Flow> {
@@ -1545,6 +1545,7 @@ impl FileEmitter {
                     let mut lambda = form_to_lambda(i, &parts[2], &body, is_macro);
                     lambda.env = i.lexenv.clone();
                     let lambda = Rc::new(lambda);
+                    crate::lisp::memory::allocated(&Value::Lambda(lambda.clone()));
                     let name = i.symbol_name(id);
                     let (entry, desc) =
                         emit_fn(i, &name, &lambda, self.serial, self.has_declarations);

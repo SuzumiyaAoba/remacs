@@ -2179,11 +2179,11 @@ fn str_slice(i: &mut Interp, src: &Value, f: usize, t: usize) -> Value {
         _ => return src.clone(),
     };
     let chars: Vec<char> = s.chars().collect();
-    let ns = std::rc::Rc::new(std::cell::RefCell::new(
+    let ns = crate::lisp::Value::string_ref(
         chars[f.min(chars.len())..t.min(chars.len())]
             .iter()
             .collect::<String>(),
-    ));
+    );
     if let Value::Str(src_s) = src {
         if i.has_str_props(src_s) {
             let ivs: Vec<(usize, usize, Vec<Value>)> = i
@@ -2708,19 +2708,14 @@ fn f_make_translation_table_from_alist(i: &mut Interp, a: crate::lisp::Argv) -> 
                 let mut vl = match &val {
                     Value::Cons(_) => val.list_to_vec().unwrap_or_default(),
                     _ => vec![Value::cons(
-                        Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Int(
-                            idx,
-                        )]))),
+                        Value::vector(vec![Value::Int(idx)]),
                         val.clone(),
                     )],
                 };
-                let f =
-                    match &from {
-                        Value::Int(c) => Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-                            vec![Value::Int(*c)],
-                        ))),
-                        _ => from.clone(),
-                    };
+                let f = match &from {
+                    Value::Int(c) => Value::vector(vec![Value::Int(*c)]),
+                    _ => from.clone(),
+                };
                 vl.push(Value::cons(f, to));
                 Value::list(vl)
             } else if matches!(from, Value::Int(_)) {

@@ -2694,11 +2694,10 @@ fn f_frame_face_hash_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 }
             }
         }
-        h.map
-            .insert(key.clone(), Value::Vec(Rc::new(RefCell::new(v))));
+        h.map.insert(key.clone(), Value::vector(v));
         h.put_key(key, sym);
     }
-    Ok(Value::Hash(Rc::new(RefCell::new(h))))
+    Ok(Value::Hash(Rc::new(RefCell::new(h))).tracked())
 }
 
 /// `controlling-tty-p' — GNU validates the optional TERMINAL with

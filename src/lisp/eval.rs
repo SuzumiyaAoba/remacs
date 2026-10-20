@@ -693,7 +693,7 @@ pub struct Interp {
         usize,
         (
             std::rc::Weak<std::cell::RefCell<String>>,
-            Vec<(usize, usize, Vec<Value>)>,
+            super::memory::Intervals,
         ),
     >,
     /// GNU's `zero_vector': the single shared 0-length vector —
@@ -1144,7 +1144,7 @@ impl Interp {
             handler_bindings: Vec::new(),
             case_handlers: Vec::new(),
             var_watchers: Vec::new(),
-            threads: vec![std::rc::Rc::new(std::cell::RefCell::new(
+            threads: vec![crate::lisp::memory::allocate(
                 crate::lisp::value::Thread {
                     name: None,
                     alive: true,
@@ -1153,7 +1153,8 @@ impl Interp {
                     pending_signal: None,
                     finished: false,
                 },
-            ))],
+                crate::lisp::Value::Thread,
+            )],
             current_thread: 0,
             thread_last_error: Value::Nil,
             standard_case_table: None,
@@ -1181,7 +1182,7 @@ impl Interp {
             unibyte_strings: HashMap::default(),
             multibyte_strings: HashMap::default(),
             string_props: HashMap::default(),
-            zero_vector: Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(Vec::new()))),
+            zero_vector: Value::vector(Vec::new()),
         };
         let _init_t0 = std::time::Instant::now();
         crate::lisp::builtins::install(&mut interp);
@@ -5170,12 +5171,12 @@ command-line arguments.\" \
     pub fn str_props_mut(
         &mut self,
         s: &crate::lisp::value::StrRef,
-    ) -> &mut Vec<(usize, usize, Vec<Value>)> {
-        &mut self
-            .string_props
+    ) -> super::memory::IntervalMut<'_> {
+        self.string_props
             .entry(std::rc::Rc::as_ptr(s) as usize)
-            .or_insert_with(|| (std::rc::Rc::downgrade(s), Vec::new()))
+            .or_insert_with(|| (std::rc::Rc::downgrade(s), Default::default()))
             .1
+            .edit()
     }
 
     /// Does a prop interval tree exist for this string?  GNU's
@@ -5204,7 +5205,7 @@ command-line arguments.\" \
     ) {
         self.string_props.insert(
             std::rc::Rc::as_ptr(s) as usize,
-            (std::rc::Rc::downgrade(s), v),
+            (std::rc::Rc::downgrade(s), v.into()),
         );
     }
 
@@ -7190,7 +7191,7 @@ command-line arguments.\" \
         ]);
         let mut lam = self.lambda_from_form(&form, None)?;
         lam.advice_link = Some(idx);
-        Ok(Value::Lambda(Rc::new(lam)))
+        Ok(Value::Lambda(Rc::new(lam)).tracked())
     }
 
     /// Compose KEY's advice entries into the function-cell value: each
@@ -8379,11 +8380,11 @@ command-line arguments.\" \
         // dumped library code, including constructors reached via cconv.
         // Never rewrite a shared object returned by a custom constructor.
         if let Value::Lambda(lambda) = &mut value {
-            if let Some(lambda) = Rc::get_mut(lambda) {
+            super::memory::update_unique_lambda(lambda, |lambda| {
                 lambda.compiled |= self.loading_dumped || self.dumped_call_depth > 0;
                 lambda.dumped_doc |= self.loading_dumped;
                 lambda.plain = self.explicit_eval_depth > 0;
-            }
+            });
         }
         Ok(value)
     }
@@ -9907,13 +9908,10 @@ command-line arguments.\" \
         // The `obarray' variable's record; its Rc identity is stored on
         // the interpreter so primitives can tell the default symbol
         // table from a custom `obarray-make' record.
-        let default_obarray_rec = std::rc::Rc::new(std::cell::RefCell::new(vec![
+        let default_obarray_rec = crate::lisp::Value::vector_ref(vec![
             Value::Sym(self.intern("obarray")),
-            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
-                Value::Nil;
-                4
-            ]))),
-        ]));
+            Value::vector(vec![Value::Nil; 4]),
+        ]);
         self.default_obarray = Some(default_obarray_rec.clone());
 
         // Initial values.
@@ -10670,10 +10668,7 @@ command-line arguments.\" \
             // make_nil_vector (256)'; mule-conf.el `aset's into it.
             (
                 "latin-extra-code-table",
-                Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
-                    Value::Nil;
-                    256
-                ]))),
+                Value::vector(vec![Value::Nil; 256]),
             ),
             ("translation-table-for-input", Value::Nil),
             ("file-name-handler-alist", Value::Nil),
@@ -11282,11 +11277,14 @@ command-line arguments.\" \
             })
             .unwrap_or((0, None, false));
         let mut mk = |pos| {
-            let m = Rc::new(RefCell::new(Marker {
-                buffer: Some(buf),
-                position: pos,
-                insertion_type: false,
-            }));
+            let m = crate::lisp::memory::allocate(
+                Marker {
+                    buffer: Some(buf),
+                    position: pos,
+                    insertion_type: false,
+                },
+                crate::lisp::Value::Marker,
+            );
             if let Some(b) = self.buffers.get(buf) {
                 b.borrow_mut().register_marker(&m);
             }
@@ -11337,11 +11335,14 @@ command-line arguments.\" \
             })
             .unwrap_or((0, 0));
         let mk = |pos, itype| {
-            let m = Rc::new(RefCell::new(Marker {
-                buffer: Some(buf),
-                position: pos,
-                insertion_type: itype,
-            }));
+            let m = crate::lisp::memory::allocate(
+                Marker {
+                    buffer: Some(buf),
+                    position: pos,
+                    insertion_type: itype,
+                },
+                crate::lisp::Value::Marker,
+            );
             if let Some(b) = self.buffers.get(buf) {
                 b.borrow_mut().register_marker(&m);
             }
@@ -12776,17 +12777,13 @@ command-line arguments.\" \
                                     }
                                     MinibufInput::Key(k) => {
                                         if c == 'K' {
-                                            out.push(Value::Vec(Rc::new(RefCell::new(vec![
-                                                Value::Int(k),
-                                            ]))));
+                                            out.push(Value::vector(vec![Value::Int(k)]));
                                         } else if k < 128 {
                                             out.push(Value::string(
                                                 char::from_u32(k as u32).unwrap_or(' ').to_string(),
                                             ));
                                         } else {
-                                            out.push(Value::Vec(Rc::new(RefCell::new(vec![
-                                                Value::Int(k),
-                                            ]))));
+                                            out.push(Value::vector(vec![Value::Int(k)]));
                                         }
                                     }
                                     MinibufInput::Text(t) => {
@@ -12798,9 +12795,7 @@ command-line arguments.\" \
                                 // getchar yields a one-key sequence.
                                 let k = self.batch_read_char()?;
                                 if c == 'K' {
-                                    out.push(Value::Vec(Rc::new(RefCell::new(vec![Value::Int(
-                                        k,
-                                    )]))));
+                                    out.push(Value::vector(vec![Value::Int(k)]));
                                 } else {
                                     out.push(Value::string(
                                         char::from_u32(k as u32).unwrap_or(' ').to_string(),

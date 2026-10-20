@@ -743,11 +743,14 @@ impl Buffer {
     /// reads as unset) when none exists yet.
     pub fn mark_marker(&mut self) -> MarkerRef {
         if self.mark.is_none() {
-            self.mark = Some(Rc::new(RefCell::new(Marker {
-                buffer: None,
-                position: 0,
-                insertion_type: false,
-            })));
+            self.mark = Some(crate::lisp::memory::allocate(
+                Marker {
+                    buffer: None,
+                    position: 0,
+                    insertion_type: false,
+                },
+                crate::lisp::Value::Marker,
+            ));
         }
         self.mark.as_ref().unwrap().clone()
     }
@@ -1052,7 +1055,7 @@ impl BufferSet {
             self.undo_sym,
             self.undo_inhibit.clone(),
         );
-        let rc = Rc::new(RefCell::new(buf));
+        let rc = crate::lisp::memory::allocate(buf, crate::lisp::Value::Buffer);
         rc.borrow().text.add_viewer(&rc);
         self.bufs.push(Some(rc));
         self.name_map.insert(final_name, id);
@@ -1084,7 +1087,7 @@ impl BufferSet {
         if !with_last {
             buf.last_name = None;
         }
-        let rc = Rc::new(RefCell::new(buf));
+        let rc = crate::lisp::memory::allocate(buf, crate::lisp::Value::Buffer);
         rc.borrow().text.add_viewer(&rc);
         self.bufs.push(Some(rc));
         self.name_map.insert(name.to_string(), id);

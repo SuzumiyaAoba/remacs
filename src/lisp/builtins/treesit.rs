@@ -11,9 +11,7 @@
 //! without new `Value' variants.  Rust objects live in `TsState'
 //! (an `Interp' field), addressed by the integer ids in the records.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
 
 use tree_sitter::{Language, Node, Parser, Point, Range, Tree, TreeCursor, ffi};
 use tree_sitter_language::LanguageFn;
@@ -137,7 +135,7 @@ fn tag_record(tag: SymId, rest: Vec<Value>) -> Value {
     let mut v = Vec::with_capacity(rest.len() + 1);
     v.push(Value::Sym(tag));
     v.extend(rest);
-    Value::Record(Rc::new(RefCell::new(v)))
+    Value::record(v)
 }
 
 /// If `v' is a tagged record `[TAG ...]', return the rest of the slots.

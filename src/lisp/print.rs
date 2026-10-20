@@ -1772,9 +1772,11 @@ pub fn f_print_preprocess(i: &mut Interp, a: crate::lisp::Argv) -> crate::lisp::
     let nt_id = i.intern("print-number-table");
     let mut nt = i.symbol_value(nt_id);
     if !matches!(nt, Value::Hash(_)) {
-        nt = Value::Hash(Rc::new(RefCell::new(crate::lisp::value::LispHash::new(
-            crate::lisp::value::HashTest::Eq,
-        ))));
+        nt = Value::Hash(crate::lisp::memory::allocate(
+            crate::lisp::value::LispHash::new(crate::lisp::value::HashTest::Eq),
+            crate::lisp::Value::Hash,
+        ))
+        .tracked();
         let _ = i.set_symbol(nt_id, nt.clone());
     }
     let Value::Hash(h) = nt else {

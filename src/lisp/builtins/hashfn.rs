@@ -397,7 +397,7 @@ pub(crate) fn f_make_hash_table(i: &mut Interp, args: crate::lisp::Argv) -> Eval
     h.rehash_threshold = rehash_threshold;
     h.test_name = test_name;
     h.user_test = user_test;
-    Ok(Value::Hash(Rc::new(RefCell::new(h))))
+    Ok(Value::Hash(Rc::new(RefCell::new(h))).tracked())
 }
 
 /// Never retain a RefCell borrow across Lisp: callbacks can inspect the
@@ -618,7 +618,7 @@ fn f_copy_hash_table(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             let mut nh = h.borrow().clone();
             // A copy made inside a callback is independently mutable.
             nh.mutable = true;
-            Ok(Value::Hash(Rc::new(RefCell::new(nh))))
+            Ok(Value::Hash(Rc::new(RefCell::new(nh))).tracked())
         }
         other => Err(i.wrong_type_mut("hash-table-p", other)),
     }

@@ -1247,9 +1247,7 @@ pub fn dispatch_key_core(
                 i.kbd_macro_events.push(Value::Int(key));
             }
         }
-        let seq = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-            keys.iter().map(|k| Value::Int(*k)).collect(),
-        )));
+        let seq = Value::vector(keys.iter().map(|k| Value::Int(*k)).collect());
         // Look up the key sequence.
         let binding = lookup_command(i, &seq);
         match binding {
@@ -1970,9 +1968,7 @@ fn isearch_loop<T: KeyIo>(
             IsearchAction::Abort | IsearchAction::Done => break,
             IsearchAction::ReDispatch(other) => {
                 st.clear(i);
-                let seq = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Int(
-                    other,
-                )])));
+                let seq = Value::vector(vec![Value::Int(other)]);
                 if let LookupResult::Command(cmd) = lookup_command(i, &seq) {
                     if i.command_execute(&cmd).is_ok() {
                         post_command_undo_boundary(i);
@@ -2934,11 +2930,7 @@ mod tests {
     #[test]
     fn lookup_routes_to_bindings() {
         let mut i = crate::lisp::Interp::new();
-        let seq = |k: i128| {
-            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Int(
-                k,
-            )])))
-        };
+        let seq = |k: i128| Value::vector(vec![Value::Int(k)]);
         // 'a' -> t default -> self-insert-command
         match lookup_command(&mut i, &seq(97)) {
             LookupResult::Command(v) => {
@@ -2959,10 +2951,7 @@ mod tests {
             LookupResult::Prefix
         ));
         // C-x C-c -> save-buffers-kill-terminal (GNU's binding)
-        let two = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
-            Value::Int(24),
-            Value::Int(3),
-        ])));
+        let two = Value::vector(vec![Value::Int(24), Value::Int(3)]);
         match lookup_command(&mut i, &two) {
             LookupResult::Command(v) => {
                 assert_eq!(i.princ_to_string(&v), "save-buffers-kill-terminal")

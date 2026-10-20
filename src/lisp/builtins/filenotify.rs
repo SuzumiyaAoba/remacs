@@ -255,9 +255,7 @@ pub(crate) fn dispatch_special_event(
     }
     let lookup = Value::Sym(intern(i, "lookup-key"));
     let vec = match &key {
-        Value::Sym(s) => Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Sym(
-            *s,
-        )]))),
+        Value::Sym(s) => Value::vector(vec![Value::Sym(*s)]),
         _ => return Ok(Value::Nil),
     };
     let binding = i.apply(&lookup, vec![map, vec, Value::t()])?;
@@ -277,9 +275,7 @@ fn f_insert_special_event(i: &mut crate::lisp::eval::Interp, a: crate::lisp::Arg
     let map = i.symbol_value(sem);
     let lookup = Value::Sym(intern(i, "lookup-key"));
     let vec = match &key {
-        Value::Sym(s) => Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Sym(
-            *s,
-        )]))),
+        Value::Sym(s) => Value::vector(vec![Value::Sym(*s)]),
         _ => return Ok(Value::Nil),
     };
     let binding = i.apply(&lookup, vec![map, vec, Value::t()])?;

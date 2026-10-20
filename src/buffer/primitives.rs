@@ -4558,11 +4558,14 @@ fn f_eolp(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 }
 
 pub(crate) fn new_marker_at(i: &mut Interp, buf: usize, pos: usize) -> Value {
-    let m = Rc::new(RefCell::new(Marker {
-        buffer: Some(buf),
-        position: pos,
-        insertion_type: false,
-    }));
+    let m = crate::lisp::memory::allocate(
+        Marker {
+            buffer: Some(buf),
+            position: pos,
+            insertion_type: false,
+        },
+        crate::lisp::Value::Marker,
+    );
     if let Some(b) = i.buffers.get(buf) {
         b.borrow_mut().register_marker(&m);
     }
@@ -8069,11 +8072,14 @@ fn f_push_mark(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let max = buf_var(i, &bb, i.intern_soft("mark-ring-max").unwrap_or(0))
             .int()
             .unwrap_or(16) as usize;
-        let m = Rc::new(RefCell::new(Marker {
-            buffer: Some(bb.id),
-            position: old,
-            insertion_type: false,
-        }));
+        let m = crate::lisp::memory::allocate(
+            Marker {
+                buffer: Some(bb.id),
+                position: old,
+                insertion_type: false,
+            },
+            crate::lisp::Value::Marker,
+        );
         bb.register_marker(&m);
         let new_ring = Value::cons(marker_value(m), old_ring.clone());
         // GNU's push-mark grabs (nth mark-ring-max mark-ring) BEFORE
@@ -8131,11 +8137,14 @@ fn f_push_mark(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Some(Value::Marker(m)) if m.borrow().buffer == Some(bb.id)
     );
     if !same_buf {
-        let m = Rc::new(RefCell::new(Marker {
-            buffer: Some(bb.id),
-            position: p,
-            insertion_type: false,
-        }));
+        let m = crate::lisp::memory::allocate(
+            Marker {
+                buffer: Some(bb.id),
+                position: p,
+                insertion_type: false,
+            },
+            crate::lisp::Value::Marker,
+        );
         bb.register_marker(&m);
         let mut items = gring;
         items.insert(0, marker_value(m));
@@ -8182,11 +8191,14 @@ fn f_pop_mark(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
         // reference to the ring's head cons sees the appended copy —
         // e.g. (prog1 (list mark-ring) (pop-mark)) prints it.
         if let Some(mpos) = bb.mark_position() {
-            let m = Rc::new(RefCell::new(Marker {
-                buffer: Some(bb.id),
-                position: mpos,
-                insertion_type: false,
-            }));
+            let m = crate::lisp::memory::allocate(
+                Marker {
+                    buffer: Some(bb.id),
+                    position: mpos,
+                    insertion_type: false,
+                },
+                crate::lisp::Value::Marker,
+            );
             bb.register_marker(&m);
             let mut tail = ring.clone();
             loop {
@@ -9639,11 +9651,14 @@ fn f_markerp(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_make_marker(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    Ok(marker_value(Rc::new(RefCell::new(Marker {
-        buffer: None,
-        position: 0,
-        insertion_type: false,
-    }))))
+    Ok(marker_value(crate::lisp::memory::allocate(
+        Marker {
+            buffer: None,
+            position: 0,
+            insertion_type: false,
+        },
+        crate::lisp::Value::Marker,
+    )))
 }
 
 fn f_copy_marker(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -9652,11 +9667,14 @@ fn f_copy_marker(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // not the point marker — `(copy-marker nil)' is how Lisp makes a
     // detached marker for later `set-marker' use.
     if arg(&a, 0).is_nil() {
-        let r = Rc::new(RefCell::new(Marker {
-            buffer: None,
-            position: 0,
-            insertion_type: arg(&a, 1).truthy(),
-        }));
+        let r = crate::lisp::memory::allocate(
+            Marker {
+                buffer: None,
+                position: 0,
+                insertion_type: arg(&a, 1).truthy(),
+            },
+            crate::lisp::Value::Marker,
+        );
         return Ok(marker_value(r));
     }
     match &a[0] {
@@ -9669,7 +9687,7 @@ fn f_copy_marker(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 // the source marker's insertion type.
                 insertion_type: a.get(1).map(|v| v.truthy()).unwrap_or(false),
             };
-            let r = Rc::new(RefCell::new(nm));
+            let r = crate::lisp::memory::allocate(nm, crate::lisp::Value::Marker);
             if let Some(bid) = mm.buffer {
                 if let Some(b) = i.buffers.get(bid) {
                     b.borrow_mut().register_marker(&r);
@@ -9686,11 +9704,14 @@ fn f_copy_marker(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 Value::Int(n) => pos_idx(len, *n),
                 _ => i.buffers.get(bid).map(|b| b.borrow().point()).unwrap_or(0),
             };
-            let r = Rc::new(RefCell::new(Marker {
-                buffer: Some(bid),
-                position: pos,
-                insertion_type: itype,
-            }));
+            let r = crate::lisp::memory::allocate(
+                Marker {
+                    buffer: Some(bid),
+                    position: pos,
+                    insertion_type: itype,
+                },
+                crate::lisp::Value::Marker,
+            );
             if let Some(b) = i.buffers.get(bid) {
                 b.borrow_mut().register_marker(&r);
             }
@@ -10401,12 +10422,15 @@ fn f_match_data(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                         Some(p) if use_markers => {
                             let buffer = md.buffer.as_ref().unwrap();
                             let live = buffer.borrow().live;
-                            let m = Rc::new(RefCell::new(Marker {
-                                buffer: live.then(|| buffer.borrow().id),
-                                // Fset_marker clamps against full buffer bounds, not narrowing.
-                                position: (p + off - 1).min(buffer.borrow().text.len()),
-                                insertion_type: false,
-                            }));
+                            let m = crate::lisp::memory::allocate(
+                                Marker {
+                                    buffer: live.then(|| buffer.borrow().id),
+                                    // Fset_marker clamps against full buffer bounds, not narrowing.
+                                    position: (p + off - 1).min(buffer.borrow().text.len()),
+                                    insertion_type: false,
+                                },
+                                crate::lisp::Value::Marker,
+                            );
                             if live {
                                 buffer.borrow_mut().register_marker(&m);
                             }
@@ -13563,7 +13587,7 @@ fn f_propertize(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             // GNU copies the string (with its intervals) and adds the
             // arg plist props over the whole length.
             let len = str_len(s);
-            let ns = Rc::new(RefCell::new(s.borrow().clone()));
+            let ns = crate::lisp::Value::string_ref(s.borrow().clone());
             let out = Value::Str(ns.clone());
             let mut ivs = i.str_props(s).to_vec();
             let pairs: Vec<(Value, Value)> = a[1..]

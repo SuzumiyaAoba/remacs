@@ -1,8 +1,5 @@
 //! Sequence subrs: elt, aref, aset, copy-sequence, mapcar, sort, etc.
 
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use super::{S, arg, eq_values, equal_values, want_fixnum, want_int, want_list};
 use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
@@ -376,7 +373,7 @@ fn seq_from_like(_i: &mut Interp, like: &Value, items: Vec<Value>) -> Value {
             }
             Value::string(s)
         }
-        Value::Vec(_) => Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(items))),
+        Value::Vec(_) => Value::vector(items),
         _ => Value::list(items),
     }
     .clone()
@@ -651,7 +648,7 @@ pub(crate) fn f_copy_sequence(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
         }
         Value::Str(s) => {
             // A real copy: new identity, own copy of prop intervals.
-            let ns = std::rc::Rc::new(std::cell::RefCell::new(s.borrow().clone()));
+            let ns = crate::lisp::Value::string_ref(s.borrow().clone());
             if i.has_str_props(s) {
                 let ivs = i.str_props(s).to_vec();
                 i.set_str_props(&ns, ivs);
@@ -669,9 +666,7 @@ pub(crate) fn f_copy_sequence(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
         // elements; sharing the backing store would let `aset' mutate
         // the original (CC Mode's `c-find-assignment-for-mode' relies
         // on the copy for its source-position backup).
-        Value::Vec(v) => Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-            v.borrow().clone(),
-        )))),
+        Value::Vec(v) => Ok(Value::vector(v.borrow().clone())),
         // Hash tables aren't sequences in GNU (`sequencep' is nil):
         // `copy-sequence' signals `wrong-type-argument sequencep'.
         // Char-tables copy through `copy_char_table' (deep trie copy,
@@ -688,20 +683,16 @@ pub(crate) fn f_copy_sequence(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
                 _ => None,
             };
             if let Some(bits) = bits {
-                rec[1] = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(bits)));
+                rec[1] = Value::vector(bits);
             }
-            Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
-                rec,
-            ))))
+            Ok(Value::record(rec))
         }
         // Char-tables copy through `copy_char_table' (deep trie copy,
         // shared slot objects); other Records shallow-copy the vec.
         Value::Record(_) if super::misc::is_char_table(i, &args[0]) => {
             Ok(super::misc::ct_copy(i, &args[0]))
         }
-        Value::Record(r) => Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
-            r.borrow().clone(),
-        )))),
+        Value::Record(r) => Ok(Value::record(r.borrow().clone())),
         other => Err(i.wrong_type_mut("sequencep", other)),
     }
 }
@@ -919,7 +910,8 @@ fn f_sort(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     };
     match &args[0] {
         Value::Cons(_) => {
-            let items = Rc::new(RefCell::new(want_list(i, &args[0])?));
+            // This is a sorting work array, not a managed Lisp vector.
+            let items = std::rc::Rc::new(std::cell::RefCell::new(want_list(i, &args[0])?));
             super::sort::tim_sort(i, items.clone(), &lessp, &keyf, reverse)?;
             if !in_place {
                 return Ok(Value::list(items.borrow().clone()));
@@ -939,7 +931,7 @@ fn f_sort(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             let items = if in_place {
                 v.clone()
             } else {
-                Rc::new(RefCell::new(v.borrow().clone()))
+                crate::lisp::Value::vector_ref(v.borrow().clone())
             };
             super::sort::tim_sort(i, items.clone(), &lessp, &keyf, reverse)?;
             Ok(Value::Vec(items))
@@ -954,9 +946,7 @@ fn f_string_to_sequence(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let ty = arg(&args, 1);
     match i.sym_id(&ty) {
         Some(s) if s == i.intern("list") || s == 0 => Ok(Value::list(items)),
-        Some(s) if s == i.intern("vector") => {
-            Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(items))))
-        }
+        Some(s) if s == i.intern("vector") => Ok(Value::vector(items)),
         Some(s) if s == i.intern("string") => Ok(args[0].clone()),
         _ => Ok(Value::list(items)),
     }
@@ -1056,9 +1046,7 @@ fn f_make_vector(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         // GNU: allocate_clear_vector(0) returns the shared zero_vector.
         return Ok(i.zero_vector.clone());
     }
-    Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-        vec![args[1].clone(); n],
-    ))))
+    Ok(Value::vector(vec![args[1].clone(); n]))
 }
 
 fn f_vector(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -1066,9 +1054,7 @@ fn f_vector(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     if args.is_empty() {
         return Ok(i.zero_vector.clone());
     }
-    Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-        args.as_slice().to_vec(),
-    ))))
+    Ok(Value::vector(args.as_slice().to_vec()))
 }
 
 fn f_bool_vector(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -1171,7 +1157,7 @@ fn f_seq_concatenate(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(if ty == list_id {
         Value::list(items)
     } else if ty == vec_id {
-        Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(items)))
+        Value::vector(items)
     } else if ty == str_id {
         let mut s = String::new();
         for v in items {
@@ -1410,7 +1396,7 @@ fn f_seq_into(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(if ty == list_id {
         Value::list(items)
     } else if ty == vec_id {
-        Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(items)))
+        Value::vector(items)
     } else if ty == str_id {
         let mut s = String::new();
         for v in items {
@@ -1500,10 +1486,7 @@ fn f_make_char_table(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // property (e.g. disp-table.el puts 18 on `display-table').
     let subtype = arg(&args, 0);
     let init = arg(&args, 1);
-    let vec = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
-        init.clone();
-        65
-    ])));
+    let vec = Value::vector(vec![init.clone(); 65]);
     let prop = i.intern("char-table-extra-slots");
     // GNU `CHECK_FIXNAT': a non-nil property must be a natural number
     // — `(wholenump PROP)', not silently zero slots.
@@ -1517,7 +1500,7 @@ fn f_make_char_table(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     };
     let mut rec = vec![Value::Sym(i.intern("char-table")), subtype, vec];
     rec.resize(3 + n, Value::Nil);
-    let t = Value::Record(std::rc::Rc::new(std::cell::RefCell::new(rec)));
+    let t = Value::record(rec);
     if !init.is_nil() {
         i.set_char_table_defalt(&t, init);
     }
@@ -1527,10 +1510,7 @@ fn f_make_char_table(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 /// `f_make_char_table' factored for non-call sites (eval.rs seeds
 /// `keyboard-translate-table' before Lisp runs).
 pub(crate) fn make_char_table_raw(i: &mut Interp, subtype: Value, init: Value) -> Value {
-    let vec = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
-        init.clone();
-        65
-    ])));
+    let vec = Value::vector(vec![init.clone(); 65]);
     let prop = i.intern("char-table-extra-slots");
     let n =
         match crate::lisp::builtins::data::f_get(i, vec![subtype.clone(), Value::Sym(prop)].into())
@@ -1540,7 +1520,7 @@ pub(crate) fn make_char_table_raw(i: &mut Interp, subtype: Value, init: Value) -
         };
     let mut rec = vec![Value::Sym(i.intern("char-table")), subtype, vec];
     rec.resize(3 + n, Value::Nil);
-    let t = Value::Record(std::rc::Rc::new(std::cell::RefCell::new(rec)));
+    let t = Value::record(rec);
     if !init.is_nil() {
         i.set_char_table_defalt(&t, init);
     }

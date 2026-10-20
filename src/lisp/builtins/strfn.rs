@@ -617,7 +617,7 @@ pub(crate) fn f_concat(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             _ => {}
         }
     }
-    let ns = std::rc::Rc::new(std::cell::RefCell::new(out));
+    let ns = crate::lisp::Value::string_ref(out);
     if any_multi {
         i.mark_multibyte(&ns);
     } else {
@@ -644,7 +644,7 @@ fn f_vconcat(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         // decoding their storage proxies as multibyte eight-bit characters.
         out.extend(super::seq::seq_to_vec(i, a)?);
     }
-    Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(out))))
+    Ok(Value::vector(out))
 }
 
 pub(crate) fn f_substring(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -695,9 +695,9 @@ fn substring_impl(i: &mut Interp, args: crate::lisp::Argv, copy_props: bool) -> 
     }
     let slice: Vec<Value> = chars[f as usize..t as usize].to_vec();
     if is_vec {
-        Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(slice))))
+        Ok(Value::vector(slice))
     } else {
-        let ns = std::rc::Rc::new(std::cell::RefCell::new(
+        let ns = crate::lisp::Value::string_ref(
             slice
                 .iter()
                 .filter_map(|v| match v {
@@ -708,7 +708,7 @@ fn substring_impl(i: &mut Interp, args: crate::lisp::Argv, copy_props: bool) -> 
                     _ => None,
                 })
                 .collect::<String>(),
-        ));
+        );
         // Substrings preserve the source representation even when the
         // slice contains only ASCII or raw encoded bytes. mule-cmds.el's
         // encode-coding-char relies on this for its byte-string result.
@@ -1546,7 +1546,7 @@ fn f_string_replace(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         // GNU returns the original object when nothing matched.
         return Ok(args[2].clone());
     }
-    let ns = std::rc::Rc::new(std::cell::RefCell::new(out));
+    let ns = crate::lisp::Value::string_ref(out);
     if let Value::Str(src) = &args[2] {
         if i.has_str_props(src) {
             let mut ivs: Vec<(usize, usize, Vec<Value>)> = Vec::new();
@@ -4974,7 +4974,7 @@ fn f_string_to_vector(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             })
         })
         .collect();
-    Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(items))))
+    Ok(Value::vector(items))
 }
 
 fn f_string_bytes(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -5092,7 +5092,7 @@ fn f_subst_char_in_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult
                 }
                 unreachable!()
             }
-            Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(out))))
+            Ok(Value::vector(out))
         }
         SubstSeq::Str(chars) => {
             let from = from_c.unwrap_or('\u{10FFFF}');

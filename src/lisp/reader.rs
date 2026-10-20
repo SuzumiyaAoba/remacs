@@ -224,7 +224,7 @@ impl<'a> Reader<'a> {
                 if items.is_empty() {
                     Ok(self.interp.zero_vector.clone())
                 } else {
-                    Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(items))))
+                    Ok(Value::vector(items))
                 }
             }
             Some('\'') => {
@@ -983,7 +983,7 @@ impl<'a> Reader<'a> {
                     let mut rec = Vec::with_capacity(items.len() + 1);
                     rec.push(Value::Sym(self.interp.intern("sub-char-table")));
                     rec.extend(items);
-                    return Ok(Value::Record(Rc::new(std::cell::RefCell::new(rec))));
+                    return Ok(Value::record(rec));
                 }
                 if items.len() < 68 {
                     return Err(read_err(self.interp, "Invalid size char-table"));
@@ -996,10 +996,10 @@ impl<'a> Reader<'a> {
                 let mut rec = vec![
                     Value::Sym(self.interp.intern("char-table")),
                     purpose,
-                    Value::Vec(Rc::new(std::cell::RefCell::new(slots))),
+                    Value::vector(slots),
                 ];
                 rec.extend(items.iter().skip(68).cloned());
-                let t = Value::Record(Rc::new(std::cell::RefCell::new(rec)));
+                let t = Value::record(rec);
                 if !defalt.is_nil() {
                     self.interp.set_char_table_defalt(&t, defalt);
                 }
@@ -1072,9 +1072,7 @@ impl<'a> Reader<'a> {
                         }
                     }
                 }
-                Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
-                    items,
-                ))))
+                Ok(Value::record(items))
             }
             Some('_') => {
                 // `#_' — read the next token as an interned symbol
@@ -1491,7 +1489,7 @@ fn read_hash_literal(i: &mut Interp, fields: &[Value]) -> Result<Option<Value>, 
     let mut h = LispHash::new(test);
     h.size = size;
     h.weakness = weakness;
-    let h = std::rc::Rc::new(std::cell::RefCell::new(h));
+    let h = crate::lisp::memory::allocate(h, crate::lisp::Value::Hash);
     if let Some(pairs) = data {
         let mut it = pairs.into_iter();
         while let (Some(ky), Some(vl)) = (it.next(), it.next()) {

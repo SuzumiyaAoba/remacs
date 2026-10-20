@@ -1217,7 +1217,7 @@ fn f_make_record(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let mut v = Vec::with_capacity(n + 1);
     v.push(args[0].clone());
     v.extend(std::iter::repeat_n(args[2].clone(), n));
-    Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(v))))
+    Ok(Value::record(v))
 }
 
 fn f_text_quoting_style(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {
@@ -1608,16 +1608,12 @@ pub(crate) fn resolve_obarray(i: &mut Interp, v: Option<&Value>) -> Result<Optio
                     return Ok(Some(v0));
                 }
                 if matches!(v0, Value::Int(0)) {
-                    let rec = Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
-                        vec![
-                            obarray_tag(i),
-                            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-                                Vec::new(),
-                            ))),
-                            // GNU uses make_obarray(0): one bucket.
-                            Value::Int(0),
-                        ],
-                    )));
+                    let rec = Value::record(vec![
+                        obarray_tag(i),
+                        Value::vector(Vec::new()),
+                        // GNU uses make_obarray(0): one bucket.
+                        Value::Int(0),
+                    ]);
                     vec.borrow_mut()[0] = rec.clone();
                     return Ok(Some(rec));
                 }
@@ -1938,13 +1934,11 @@ fn f_obarray_make(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         }
         Some(v) => return Err(i.wrong_type_mut("wholenump", v)),
     };
-    Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
-        vec![
-            obarray_tag(i),
-            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(Vec::new()))),
-            Value::Int(bits as i128),
-        ],
-    ))))
+    Ok(Value::record(vec![
+        obarray_tag(i),
+        Value::vector(Vec::new()),
+        Value::Int(bits as i128),
+    ]))
 }
 fn f_obarrayp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(is_obarray(i, &args[0])))

@@ -46,6 +46,18 @@ pub struct Symbol {
     pub var_alias: Option<SymId>,
 }
 
+impl Drop for Symbol {
+    fn drop(&mut self) {
+        super::memory::symbol_freed();
+    }
+}
+
+impl Drop for Obarray {
+    fn drop(&mut self) {
+        super::memory::symbol_capacity(self.symbols.capacity(), 0);
+    }
+}
+
 /// Well-known symbol ids, interned at startup. Adding a new entry here
 /// requires interning it in `Obarray::new` in the same order.
 pub mod sym {
@@ -220,6 +232,7 @@ impl Obarray {
             gensym_counter: 0,
             gensym_n: 0,
         };
+        super::memory::symbol_capacity(0, ob.symbols.capacity());
         for name in CORE_SYMBOLS {
             ob.intern(name);
         }
@@ -245,6 +258,7 @@ impl Obarray {
         }
         let id = self.symbols.len() as SymId;
         self.map.insert(name.to_string(), id);
+        let old_capacity = self.symbols.capacity();
         self.symbols.push(Symbol {
             name: name.to_string(),
             value: Value::Sym(sym::UNBOUND),
@@ -260,6 +274,8 @@ impl Obarray {
             uninterned: false,
             var_alias: None,
         });
+        super::memory::symbol_allocated();
+        super::memory::symbol_capacity(old_capacity, self.symbols.capacity());
         if name.starts_with(':') {
             self.symbols[id as usize].value = Value::Sym(id);
         }
@@ -279,6 +295,7 @@ impl Obarray {
         let key = format!("#uninterned#{}\x00{}", name, self.gensym_counter);
         let id = self.symbols.len() as SymId;
         self.map.insert(key, id);
+        let old_capacity = self.symbols.capacity();
         self.symbols.push(Symbol {
             name: name.to_string(),
             value: Value::Sym(sym::UNBOUND),
@@ -294,6 +311,8 @@ impl Obarray {
             uninterned: true,
             var_alias: None,
         });
+        super::memory::symbol_allocated();
+        super::memory::symbol_capacity(old_capacity, self.symbols.capacity());
         id
     }
 
