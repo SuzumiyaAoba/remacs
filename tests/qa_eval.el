@@ -201,4 +201,51 @@
 (qa (let ((byte-compile-warnings nil))
       (funcall (byte-compile '(lambda () (unwind-protect))))) nil)
 
+;; Symbol-based updates versus lexical compiler expansion (#146).
+;; Runtime symbol-based modification addresses dynamic/global cells.
+(qa (eval '(let ((qa146-local nil)) (add-to-list 'qa146-local 'v) qa146-local) nil) '(v))
+(qa (eval '(let ((qa146-local nil)) (add-to-ordered-list 'qa146-local 'v 1) qa146-local) nil) '(v))
+(qa (eval '(let ((qa146-local nil)) (symbol-value 'qa146-local)) nil) nil)
+(qa-err-data (eval '(let ((qa146-local nil)) (add-to-list 'qa146-local 'v) qa146-local) t)
+             'void-variable '(qa146-local))
+(qa-err-data (eval '(let ((qa146-local nil)) (add-to-ordered-list 'qa146-local 'v 1) qa146-local) t)
+             'void-variable '(qa146-local))
+(qa-err-data (eval '(let ((qa146-local nil)) (symbol-value 'qa146-local)) t)
+             'void-variable '(qa146-local))
+(qa (progn (set 'qa146-shadow '(old))
+      (unwind-protect
+          (eval '(let ((qa146-shadow nil))
+                   (add-to-list 'qa146-shadow 'v)
+                   (list qa146-shadow (symbol-value 'qa146-shadow))) t)
+        (makunbound 'qa146-shadow))) '(nil (v old)))
+(qa (progn (set 'qa146-ordered-shadow '(old))
+      (unwind-protect
+          (eval '(let ((qa146-ordered-shadow nil))
+                   (add-to-ordered-list 'qa146-ordered-shadow 'v 1)
+                   (list qa146-ordered-shadow (symbol-value 'qa146-ordered-shadow))) t)
+        (makunbound 'qa146-ordered-shadow)
+        (put 'qa146-ordered-shadow 'list-order nil))) '(nil (v old)))
+;; Loading a lexical file expands add-to-list's compiler macro. The
+;; runtime function still rejects lexical locals, as documented by GNU.
+(defmacro qa146-load-source (source)
+  `(let ((file (make-temp-file "qa146-" nil ".el")) (qa146-answer nil))
+     (unwind-protect
+         (progn
+           (write-region (concat ";;; -*- lexical-binding: t; -*-\n" ,source) nil file nil 'silent)
+           (load file nil t t)
+           qa146-answer)
+       (delete-file file))))
+(qa (qa146-load-source
+     "(set 'qa146-answer (let ((qa146-file nil)) (add-to-list 'qa146-file 'v) qa146-file))\n") '(v))
+(qa (qa146-load-source
+     "(set 'qa146-answer (condition-case e (let ((qa146-ordered-file nil)) (add-to-ordered-list 'qa146-ordered-file 'v 1) qa146-ordered-file) (error e)))\n")
+    '(void-variable qa146-ordered-file))
+(qa (let ((lexical-binding t) (byte-compile-warnings nil))
+      (funcall (byte-compile '(lambda () (let ((qa146-compiled nil))
+                                         (add-to-list 'qa146-compiled 'v) qa146-compiled))))) '(v))
+(qa-err-data (let ((lexical-binding t) (byte-compile-warnings nil))
+               (funcall (byte-compile '(lambda () (let ((qa146-compiled-ordered nil))
+                                                  (add-to-ordered-list 'qa146-compiled-ordered 'v 1)
+                                                  qa146-compiled-ordered)))))
+             'void-variable '(qa146-compiled-ordered))
 (princ (qa--done))
