@@ -5,6 +5,7 @@ use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, Value};
+use num_traits::ToPrimitive;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -478,19 +479,58 @@ pub(crate) fn nthcdr_strict(i: &mut Interp, v: &Value, n: usize) -> Result<Value
     Ok(cur)
 }
 
+fn nthcdr_integer(i: &mut Interp, list: &Value, count: &Value) -> EvalResult {
+    if let Value::Int(n) = count {
+        if *n <= 127 {
+            return nthcdr_strict(i, list, n.max(&0).to_owned() as usize);
+        }
+    }
+    let n = count
+        .as_bigint()
+        .ok_or_else(|| i.wrong_type_mut("integerp", count))?;
+    if n.sign() != num_bigint::Sign::Plus {
+        return Ok(list.clone());
+    }
+    if let Some(small) = n.to_usize().filter(|n| *n <= 127) {
+        return nthcdr_strict(i, list, small);
+    }
+    // Large indices must stop at nil or jump around a detected cycle,
+    // rather than converting the index to a wrapping machine counter.
+    let limit = n.to_usize();
+    let mut nodes: Vec<Value> = Vec::new();
+    let mut visited: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    let mut tail = list.clone();
+    while limit.is_none_or(|limit| nodes.len() < limit) {
+        match tail {
+            Value::Nil => return Ok(Value::Nil),
+            Value::Cons(ref cell) => {
+                let pointer = Rc::as_ptr(cell) as usize;
+                if let Some(&start) = visited.get(&pointer) {
+                    let period = nodes.len() - start;
+                    let remaining = (&n - num_bigint::BigInt::from(nodes.len()))
+                        % num_bigint::BigInt::from(period);
+                    return Ok(nodes[start + remaining.to_usize().unwrap()].clone());
+                }
+                visited.insert(pointer, nodes.len());
+                nodes.push(tail.clone());
+                let next = cell.borrow().cdr.clone();
+                tail = next;
+            }
+            _ => return Err(i.wrong_type_mut("listp", list)),
+        }
+    }
+    Ok(tail)
+}
 pub(crate) fn f_nth(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // Emacs: a negative index behaves like 0; nth is car(nthcdr N).
-    let n = want_int(i, &args[0])?.max(0);
-    let tail = nthcdr_strict(i, &args[1], n as usize)?;
+    let tail = nthcdr_integer(i, &args[1], &args[0])?;
     match tail {
-        Value::Cons(c) => Ok(c.borrow().car.clone()),
+        Value::Cons(cell) => Ok(cell.borrow().car.clone()),
         Value::Nil => Ok(Value::Nil),
         ref other => Err(i.wrong_type_mut("listp", other)),
     }
 }
 fn f_nthcdr(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let n = want_int(i, &args[0])?.max(0);
-    nthcdr_strict(i, &args[1], n as usize)
+    nthcdr_integer(i, &args[1], &args[0])
 }
 /// GNU subr.el `safe-length' walk: count cons cells, stop at a
 /// non-cons tail or on a cycle (tortoise/hare); returns the count.
@@ -540,6 +580,13 @@ fn f_last(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             let m = safe_len(&args[0]);
             Ok(nthcdr_of(&args[0], (m - 1).max(0) as usize))
         }
+        Some(Value::BigInt(n)) if n.to_i128().is_none() => {
+            Ok(if n.sign() == num_bigint::Sign::Minus {
+                Value::Nil
+            } else {
+                args[0].clone()
+            })
+        }
         Some(Value::Float(n)) => {
             // Comparisons accept floats, but subtraction retains the float
             // type, so only the nthcdr branch rejects it as non-integer.
@@ -574,6 +621,15 @@ fn f_butlast(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // `length' on a non-sequence signals `sequencep'; `take' walks
     // `(nthcdr k list)' and `car's each cell, so an atom tail signals
     // `listp' on that tail (strings/vectors take the same path).
+    if let Some(Value::BigInt(n)) = args.get(1) {
+        if n.to_i128().is_none() {
+            if n.sign() == num_bigint::Sign::Minus {
+                return Ok(args[0].clone());
+            }
+            super::seq::seq_to_vec(i, &args[0])?;
+            return Ok(Value::Nil);
+        }
+    }
     let n = match args.get(1) {
         None | Some(Value::Nil) => 1,
         Some(v) => crate::editor::want_num_or_mark(i, v)?,

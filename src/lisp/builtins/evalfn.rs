@@ -4631,16 +4631,22 @@ fn tm_zone_name(tm: &super::misc::Tm) -> String {
     }
 }
 fn f_float_time(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let t = match args.get(0) {
-        Some(v) => super::misc::lisp_time_to_ps(i, v)?,
-        None => super::misc::lisp_time_to_ps(i, &Value::Nil)?,
-    };
-    // GNU `decode_float' computes seconds and the sub-second part as
-    // separate doubles — a single `i128 as f64' division loses the low
-    // bits (1592230530000000000ps rounds above the integer).
-    let secs = t.div_euclid(1_000_000_000_000) as f64;
-    let frac = t.rem_euclid(1_000_000_000_000) as f64 / 1e12;
-    Ok(Value::float(secs + frac))
+    let value = args.get(0).unwrap_or(&Value::Nil);
+    if let Value::Float(n) = value {
+        if n.is_finite() {
+            return Ok(Value::float(**n));
+        }
+    }
+    let (ticks, hz) = super::misc::decode_big_ticks_hz(i, value)?;
+    let ratio = num_rational::BigRational::new(ticks, hz);
+    let value = num_traits::ToPrimitive::to_f64(&ratio).unwrap_or_else(|| {
+        if num_traits::Signed::is_negative(&ratio) {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        }
+    });
+    Ok(Value::float(value))
 }
 
 /// How `format-time-string' renders %Z for a given ZONE argument.

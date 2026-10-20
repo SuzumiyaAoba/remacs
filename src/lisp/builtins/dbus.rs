@@ -414,6 +414,7 @@ fn object_to_dbus_type(i: &mut Interp, v: &Value) -> i32 {
     match v {
         Value::Int(n) if *n >= 0 => return DBUS_TYPE_UINT32,
         Value::Int(_) => return DBUS_TYPE_INT32,
+        Value::BigInt(_) => return DBUS_TYPE_INVALID,
         Value::Float(_) => return DBUS_TYPE_DOUBLE,
         Value::Str(_) => return DBUS_TYPE_STRING,
         Value::Cons(_) => {
@@ -476,7 +477,7 @@ fn check_fixnum(i: &mut Interp, v: &Value) -> Result<(), Flow> {
 
 fn check_number(i: &mut Interp, v: &Value) -> Result<(), Flow> {
     match v {
-        Value::Int(_) | Value::Float(_) => Ok(()),
+        Value::Int(_) | Value::BigInt(_) | Value::Float(_) => Ok(()),
         _ => Err(i.wrong_type_mut("numberp", v)),
     }
 }
@@ -750,19 +751,45 @@ fn xd_signature(
 // ---------------------------------------------------------------------------
 
 fn extract_signed(i: &mut Interp, v: &Value, lo: i64, hi: i64) -> Result<i64, Flow> {
-    match v {
-        Value::Int(n) if *n >= lo as i128 && *n <= hi as i128 => Ok(*n as i64),
-        _ => Err(i.wrong_type_mut("integerp", v)),
-    }
+    check_number(i, v)?;
+    let value = if let Value::Float(n) = v {
+        let n = **n;
+        (lo as f64 <= n && n < 1.0 + hi as f64 && n.fract() == 0.0).then_some(n as i64)
+    } else {
+        v.int()
+            .filter(|n| *n >= lo as i128 && *n <= hi as i128)
+            .map(|n| n as i64)
+    };
+    value.ok_or_else(|| {
+        let condition = i.intern("args-out-of-range");
+        i.signal_data(
+            condition,
+            vec![
+                v.clone(),
+                Value::integer(lo as i128),
+                Value::integer(hi as i128),
+            ],
+        )
+    })
 }
-
 fn extract_unsigned(i: &mut Interp, v: &Value, hi: u64) -> Result<u64, Flow> {
-    match v {
-        Value::Int(n) if *n >= 0 && *n <= hi as i128 => Ok(*n as u64),
-        _ => Err(i.wrong_type_mut("integerp", v)),
-    }
+    check_number(i, v)?;
+    let value = if let Value::Float(n) = v {
+        let n = **n;
+        (0.0 <= n && n < 1.0 + hi as f64 && n.fract() == 0.0).then_some(n as u64)
+    } else {
+        v.int()
+            .filter(|n| *n >= 0 && *n <= hi as i128)
+            .map(|n| n as u64)
+    };
+    value.ok_or_else(|| {
+        let condition = i.intern("args-out-of-range");
+        i.signal_data(
+            condition,
+            vec![v.clone(), Value::Int(0), Value::integer(hi as i128)],
+        )
+    })
 }
-
 /// `xd_append_arg' — serialize one typed Lisp arg into the iter.
 fn xd_append_arg(
     i: &mut Interp,
@@ -873,6 +900,7 @@ fn xd_append_arg(
                 DBUS_TYPE_DOUBLE => {
                     let val = match object {
                         Value::Int(n) => *n as f64,
+                        Value::BigInt(_) => super::want_num(i, object)?,
                         Value::Float(f) => **f,
                         _ => return Err(i.wrong_type_mut("numberp", object)),
                     };
@@ -1011,7 +1039,7 @@ fn xd_retrieve_arg(i: &mut Interp, dtype: i32, iter: *mut DBusMessageIter) -> Va
             DBUS_TYPE_BYTE => {
                 let mut val: u8 = 0;
                 (d.dbus_message_iter_get_basic)(iter, &mut val as *mut u8 as *mut c_void);
-                Value::list(vec![sym, Value::Int(val as i128)])
+                Value::list(vec![sym, Value::integer(val as i128)])
             }
             DBUS_TYPE_BOOLEAN => {
                 let mut val: u32 = 0;
@@ -1021,32 +1049,32 @@ fn xd_retrieve_arg(i: &mut Interp, dtype: i32, iter: *mut DBusMessageIter) -> Va
             DBUS_TYPE_INT16 => {
                 let mut val: i16 = 0;
                 (d.dbus_message_iter_get_basic)(iter, &mut val as *mut i16 as *mut c_void);
-                Value::list(vec![sym, Value::Int(val as i128)])
+                Value::list(vec![sym, Value::integer(val as i128)])
             }
             DBUS_TYPE_UINT16 => {
                 let mut val: u16 = 0;
                 (d.dbus_message_iter_get_basic)(iter, &mut val as *mut u16 as *mut c_void);
-                Value::list(vec![sym, Value::Int(val as i128)])
+                Value::list(vec![sym, Value::integer(val as i128)])
             }
             DBUS_TYPE_INT32 => {
                 let mut val: i32 = 0;
                 (d.dbus_message_iter_get_basic)(iter, &mut val as *mut i32 as *mut c_void);
-                Value::list(vec![sym, Value::Int(val as i128)])
+                Value::list(vec![sym, Value::integer(val as i128)])
             }
             DBUS_TYPE_UINT32 | DBUS_TYPE_UNIX_FD => {
                 let mut val: u32 = 0;
                 (d.dbus_message_iter_get_basic)(iter, &mut val as *mut u32 as *mut c_void);
-                Value::list(vec![sym, Value::Int(val as i128)])
+                Value::list(vec![sym, Value::integer(val as i128)])
             }
             DBUS_TYPE_INT64 => {
                 let mut val: i64 = 0;
                 (d.dbus_message_iter_get_basic)(iter, &mut val as *mut i64 as *mut c_void);
-                Value::list(vec![sym, Value::Int(val as i128)])
+                Value::list(vec![sym, Value::integer(val as i128)])
             }
             DBUS_TYPE_UINT64 => {
                 let mut val: u64 = 0;
                 (d.dbus_message_iter_get_basic)(iter, &mut val as *mut u64 as *mut c_void);
-                Value::list(vec![sym, Value::Int(val as i128)])
+                Value::list(vec![sym, Value::integer(val as i128)])
             }
             DBUS_TYPE_DOUBLE => {
                 let mut val: f64 = 0.0;
@@ -2008,7 +2036,7 @@ pub(crate) fn install(i: &mut Interp) {
     ] {
         let s = intern(i, name);
         if var_needs_set(i, s) {
-            let _ = i.set_symbol(s, Value::Int(val as i128));
+            let _ = i.set_symbol(s, Value::integer(val as i128));
         }
     }
 
@@ -2034,5 +2062,60 @@ pub(crate) fn install(i: &mut Interp) {
         if !i.features.contains(&f) {
             i.features.push(f);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bignum_integer_arguments_use_checked_dbus_ranges() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut i = Interp::new();
+                let maximum = Value::integer(u64::MAX as i128);
+                let minimum = Value::integer(i64::MIN as i128);
+                let mut signature = String::new();
+                xd_signature(
+                    &mut i,
+                    &mut signature,
+                    DBUS_TYPE_UINT64,
+                    DBUS_TYPE_INVALID,
+                    &maximum,
+                )
+                .unwrap();
+                assert_eq!(signature, "t");
+                assert_eq!(
+                    extract_unsigned(&mut i, &maximum, u64::MAX).unwrap(),
+                    u64::MAX
+                );
+                assert_eq!(
+                    extract_signed(&mut i, &minimum, i64::MIN, i64::MAX).unwrap(),
+                    i64::MIN
+                );
+                // Untagged bignums are not guessed to be a 32-bit D-Bus type.
+                assert_eq!(object_to_dbus_type(&mut i, &maximum), DBUS_TYPE_INVALID);
+                let too_large = Value::from_bigint(num_bigint::BigInt::from(1) << 130usize);
+                let Err(Flow::Signal(condition, data, _)) =
+                    extract_unsigned(&mut i, &too_large, u64::MAX)
+                else {
+                    panic!("large unsigned integer must signal a range error");
+                };
+                assert_eq!(
+                    i.symbol_name(i.sym_id(&condition).unwrap()),
+                    "args-out-of-range"
+                );
+                let data = data.list_to_vec().unwrap();
+                assert!(crate::lisp::builtins::eql_values(&data[0], &too_large));
+                assert_eq!(
+                    data[2].as_bigint().unwrap(),
+                    num_bigint::BigInt::from(u64::MAX)
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

@@ -9,6 +9,7 @@ use crate::lisp::value::{
 };
 use std::cell::Ref;
 use std::rc::Rc;
+use num_traits::{FromPrimitive, Signed, ToPrimitive, Zero};
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!("string", many 0, f_string, "Concatenate characters into a string."),
@@ -1170,10 +1171,9 @@ fn f_string_to_number(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             .chars()
             .take_while(|c| c.to_digit(base as u32).is_some())
             .collect();
-        let v = i128::from_str_radix(&take, base as u32)
-            .map(|n| if neg { -n } else { n })
-            .unwrap_or(0);
-        return Ok(Value::Int(v));
+        let v = num_bigint::BigInt::parse_bytes(take.as_bytes(), base as u32)
+            .unwrap_or_default();
+        return Ok(Value::from_bigint(if neg { -v } else { v }));
     }
     // Emacs parses the longest valid numeric prefix ("10abc" -> 10).
     let prefix = number_prefix(t);
@@ -1244,6 +1244,7 @@ fn scan_digits(cs: &[char], mut p: usize) -> usize {
 fn f_number_to_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[0] {
         Value::Int(n) => Ok(Value::string(n.to_string())),
+        Value::BigInt(n) => Ok(Value::string(n.to_string())),
         Value::Float(f) => Ok(Value::string(i.format_float_output(**f))),
         other => Err(i.wrong_type_mut("numberp", other)),
     }
@@ -4172,6 +4173,12 @@ fn sxhash_obj(i: &Interp, v: &Value, depth: usize) -> u64 {
         return sxhash_sym_hash(i, id);
     }
     match v {
+        Value::BigInt(n) => {
+            let (sign, limbs) = n.to_u64_digits();
+            let mut hash = u64::from(sign == num_bigint::Sign::Minus);
+            for limb in limbs { hash = sxhash_combine(hash, limb); }
+            hash
+        }
         // XUFIXNUM: the fixnum's value bits — the low 62 bits of the
         // two's-complement representation.  Beyond the fixnum range
         // these are GNU bignums, hashed per sxhash_bignum.
@@ -4295,6 +4302,7 @@ fn sxhash_eq(i: &Interp, v: &Value) -> u64 {
 
 fn sxhash_obj_ptr5(v: &Value) -> u64 {
     let p = match v {
+        Value::BigInt(n) => Rc::as_ptr(n) as usize,
         Value::Vec(x) | Value::Record(x) => Rc::as_ptr(x) as usize,
         Value::Hash(x) => Rc::as_ptr(x) as usize,
         Value::Lambda(x) => Rc::as_ptr(x) as usize,
@@ -4343,7 +4351,7 @@ fn f_sxhash_eq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_sxhash_eql(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let h = match &args[0] {
         // FLOATP or BIGNUMP → sxhash, else sxhash_eq.
-        Value::Float(_) => sxhash_obj(i, &args[0], 0),
+        Value::Float(_) | Value::BigInt(_) => sxhash_obj(i, &args[0], 0),
         Value::Int(n) if !(SXHASH_FIXNUM_MIN..=SXHASH_FIXNUM_MAX).contains(n) => {
             sxhash_obj(i, &args[0], 0)
         }
@@ -4649,6 +4657,11 @@ fn format_impl_spans(
                         s.insert_str(sign_len, &"0".repeat(zeros));
                         (s, false) // sign flags already applied by snprintf
                     }
+                    Value::BigInt(n) => {
+                        let digits = n.magnitude().to_str_radix(10);
+                        let zeros = prec.unwrap_or(0).saturating_sub(digits.len());
+                        (format!("{}{}{}", if n.is_negative() { "-" } else { "" }, "0".repeat(zeros), digits), !n.is_negative())
+                    }
                     Value::Int(n) => {
                         let n = *n;
                         // C printf integer precision: minimum digit count,
@@ -4708,14 +4721,14 @@ fn format_impl_spans(
                 // GNU: the sign precedes any alt-form prefix, and the
                 // precision pads the digit run.
                 let digits = match letter {
-                    'o' => format!("{:o}", n.unsigned_abs()),
-                    'x' => format!("{:x}", n.unsigned_abs()),
-                    'X' => format!("{:X}", n.unsigned_abs()),
-                    _ => format!("{:b}", n.unsigned_abs()),
+                    'o' => format!("{:o}", n.magnitude()),
+                    'x' => format!("{:x}", n.magnitude()),
+                    'X' => format!("{:X}", n.magnitude()),
+                    _ => format!("{:b}", n.magnitude()),
                 };
                 let digits = prec_pad_int(digits, prec);
                 let mut s = String::new();
-                if n < 0 {
+                if n.is_negative() {
                     s.push('-');
                 }
                 match letter {
@@ -4725,7 +4738,7 @@ fn format_impl_spans(
                         }
                     }
                     _ => {
-                        if alt && n != 0 {
+                        if alt && !n.is_zero() {
                             s.push_str(match letter {
                                 'x' => "0x",
                                 'X' => "0X",
@@ -4952,10 +4965,11 @@ fn fmt_type_err(i: &Interp) -> super::Flow {
     i.error_q("Format specifier doesn't match argument type", &[])
 }
 
-fn int_of(i: &Interp, v: &Value) -> Result<i128, super::Flow> {
+fn int_of(i: &Interp, v: &Value) -> Result<num_bigint::BigInt, super::Flow> {
     match v {
-        Value::Int(n) => Ok(*n),
-        Value::Float(f) if f.is_finite() => Ok(**f as i128),
+        Value::Int(n) => Ok((*n).into()),
+        Value::BigInt(n) => Ok((**n).clone()),
+        Value::Float(f) if f.is_finite() => Ok(num_bigint::BigInt::from_f64(f.trunc()).unwrap()),
         Value::Float(_) => Err(i.signal_data(
             i.intern_soft("overflow-error").unwrap_or(sym::ERROR),
             vec![],
@@ -4967,6 +4981,11 @@ fn int_of(i: &Interp, v: &Value) -> Result<i128, super::Flow> {
 fn float_of(i: &Interp, v: &Value) -> Result<f64, super::Flow> {
     match v {
         Value::Int(n) => Ok(*n as f64),
+        Value::BigInt(n) => Ok(n.to_f64().unwrap_or(if n.is_negative() {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        })),
         Value::Float(f) => Ok(**f),
         _ => Err(fmt_type_err(i)),
     }

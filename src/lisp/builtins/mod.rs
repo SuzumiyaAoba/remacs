@@ -40,6 +40,7 @@ use super::Interp;
 use super::error::Flow;
 use super::obarray::sym;
 use super::value::{Arity, FIXNUM_MAX, FIXNUM_MIN, Subr, SymId, Value};
+use num_traits::ToPrimitive;
 
 /// Declare a subr entry.
 macro_rules! S {
@@ -346,13 +347,17 @@ pub(crate) fn arg(args: &[Value], i: usize) -> Value {
 pub(crate) fn want_int(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
     match v {
         Value::Int(n) => Ok(*n),
+        Value::BigInt(n) => n.to_i128().ok_or_else(|| {
+            let condition = i.intern("args-out-of-range");
+            i.signal_data(condition, vec![v.clone()])
+        }),
         _ => Err(i.wrong_type_mut("integerp", v)),
     }
 }
 
-/// GNU `CHECK_FIXNUM': same range as `want_int' here (no bignums), but
-/// the error predicate is `fixnump' — `aref', `elt', `string-as-unibyte',
-/// `aset' and friends all use it.
+/// GNU `CHECK_FIXNUM' rejects bignums rather than projecting them into
+/// a bounded Rust integer. `aref', `aset' and related array operations
+/// use the `fixnump' error predicate.
 pub(crate) fn want_fixnum(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
     // GNU CHECK_FIXNUM: fixnums are signed 62-bit (MOST_POSITIVE_FIXNUM
     // = 2^61-1); larger integers (bignum literals) signal too.
@@ -372,6 +377,7 @@ pub(crate) fn want_fixnum(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
 pub(crate) fn want_int_or_mark(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
     match v {
         Value::Int(n) => Ok(*n),
+        Value::BigInt(_) => want_int(i, v),
         Value::Marker(m) if m.borrow().buffer.is_some() => Ok(m.borrow().position as i128 + 1),
         Value::Marker(_) => Err(i.error("Marker does not point anywhere")),
         other => Err(i.wrong_type_mut("integer-or-marker-p", other)),
@@ -385,6 +391,7 @@ pub(crate) fn want_int_or_mark(i: &mut Interp, v: &Value) -> Result<i128, Flow> 
 pub(crate) fn want_num_or_mark(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
     match v {
         Value::Int(n) => Ok(*n),
+        Value::BigInt(_) => want_int(i, v),
         Value::Marker(m) if m.borrow().buffer.is_some() => Ok(m.borrow().position as i128 + 1),
         Value::Marker(_) => Err(i.error("Marker does not point anywhere")),
         Value::Float(f) => Ok(**f as i128),
@@ -395,6 +402,13 @@ pub(crate) fn want_num_or_mark(i: &mut Interp, v: &Value) -> Result<i128, Flow> 
 pub(crate) fn want_num(i: &mut Interp, v: &Value) -> Result<f64, Flow> {
     match v {
         Value::Int(n) => Ok(*n as f64),
+        Value::BigInt(n) => Ok(n
+            .to_f64()
+            .unwrap_or(if n.sign() == num_bigint::Sign::Minus {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            })),
         Value::Float(f) => Ok(**f),
         // GNU CHECK_NUMBER_OR_MARKER_COERCE: dead markers error.
         Value::Marker(m) if m.borrow().buffer.is_some() => Ok(m.borrow().position as f64 + 1.0),
@@ -449,15 +463,13 @@ pub fn eq_values(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Nil, Value::Nil) => true,
         (Value::Nil, Value::Sym(0)) | (Value::Sym(0), Value::Nil) => true,
-        // Fixnums are immediates: `eq' compares values.  Integers outside
-        // the fixnum range are heap-allocated bignums in GNU, so two
-        // distinct objects with the same value are not `eq'.  Our Int is
-        // an inline i128 with no object identity; the fixnum-range check
-        // gives the right answer for every pair of distinct objects —
-        // the only divergence left is (eq x x) on a single bignum.
+        // Fixnums are immediate values. Canonical bignums use the Rc
+        // identity arm below; wider legacy/native Int projections have
+        // no heap identity and must not compare as immediate fixnums.
         (Value::Int(x), Value::Int(y)) => x == y && (FIXNUM_MIN..=FIXNUM_MAX).contains(x),
         // Emacs floats are heap objects: `eq' compares object identity.
         (Value::Float(x), Value::Float(y)) => std::rc::Rc::ptr_eq(x, y),
+        (Value::BigInt(x), Value::BigInt(y)) => std::rc::Rc::ptr_eq(x, y),
         (Value::Sym(x), Value::Sym(y)) => x == y,
         (Value::Cons(x), Value::Cons(y)) => std::rc::Rc::ptr_eq(x, y),
         (Value::Str(x), Value::Str(y)) => std::rc::Rc::ptr_eq(x, y),
@@ -487,6 +499,10 @@ pub fn eql_values(a: &Value, b: &Value) -> bool {
         // eql compares numbers by value — including bignums, which are
         // not `eq' unless literally the same object.
         (Value::Int(x), Value::Int(y)) => x == y,
+        (Value::BigInt(x), Value::BigInt(y)) => **x == **y,
+        (Value::BigInt(x), Value::Int(y)) | (Value::Int(y), Value::BigInt(x)) => {
+            x.to_i128() == Some(*y)
+        }
         (Value::Float(x), Value::Float(y)) => (**x).to_bits() == (**y).to_bits(),
         _ => eq_values(a, b),
     }

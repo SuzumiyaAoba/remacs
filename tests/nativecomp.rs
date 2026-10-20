@@ -471,3 +471,16 @@ fn direct_string_constants_preserve_source_kinds() {
         "((t t t t t) (t t t t t))"
     );
 }
+
+#[test]
+fn arbitrary_precision_arithmetic_survives_native_calls() {
+    if !avail() {
+        return;
+    }
+    assert_eq!(
+        ev("(let* ((n (expt 2 130)) \
+                   (f (native-compile (lambda (n) (list (1+ n) (- n) (* n n)))))) \
+             (list (native-comp-function-p f) (mapcar #'number-to-string (funcall f n))))"),
+        "(t (\"1361129467683753853853498429727072845825\" \"-1361129467683753853853498429727072845824\" \"1852673427797059126777135760139006525652319754650249024631321344126610074238976\"))"
+    );
+}

@@ -483,6 +483,7 @@ impl Interp {
         match v {
             Value::Nil => out.push_str("nil"),
             Value::Int(i) => self.print_integer(*i, out, true),
+            Value::BigInt(i) => { let _ = write!(out, "{i}"); },
             Value::Float(f) => {
                 let _ = write!(out, "{}", self.format_float_output(**f));
             }
@@ -901,6 +902,7 @@ impl Interp {
         }
         match v {
             Value::Int(i) => self.print_integer(*i, out, false),
+            Value::BigInt(i) => { let _ = write!(out, "{i}"); },
             Value::Str(s) => out.push_str(&s.borrow()),
             // princ prints symbol names raw — no backslash escapes.
             Value::Sym(id) => out.push_str(&self.symbol_name(*id)),

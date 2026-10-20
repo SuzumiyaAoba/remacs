@@ -384,20 +384,8 @@ fn f_elt(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // argument must satisfy CHECK_ARRAY(sequence, sequencep)
     // before `aref's fixnum check on N runs.
     match &args[0] {
-        Value::Nil => {
-            // GNU Fnthcdr's CHECK_INTEGER: `(integerp N)'.
-            want_int(i, &args[1])?;
-            Ok(Value::Nil)
-        }
-        Value::Cons(_) => {
-            // GNU Fnthcdr's CHECK_INTEGER: `(integerp N)'.
-            let n = want_int(i, &args[1])?;
-            let tail = super::listfn::nthcdr_strict(i, &args[0], n.max(0) as usize)?;
-            match tail {
-                Value::Cons(c) => Ok(c.borrow().car.clone()),
-                Value::Nil => Ok(Value::Nil),
-                ref other => Err(i.wrong_type_mut("listp", other)),
-            }
+        Value::Nil | Value::Cons(_) => {
+            super::listfn::f_nth(i, vec![args[1].clone(), args[0].clone()].into())
         }
         Value::Str(s) => {
             let n = want_fixnum(i, &args[1])?;

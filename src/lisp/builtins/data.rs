@@ -398,7 +398,7 @@ fn equalp_values(i: &Interp, down: &Value, a: &Value, b: &Value) -> Result<bool,
         Value::Int(m) => m,
         _ => n,
     };
-    let numberp = |v: &Value| matches!(v, Value::Int(_) | Value::Float(_));
+    let numberp = |v: &Value| matches!(v, Value::Int(_) | Value::BigInt(_) | Value::Float(_));
     Ok(match (a, b) {
         _ if numberp(a) => numberp(b) && num_eq(a, b),
         (Value::Str(x), Value::Str(y)) => {
@@ -459,15 +459,7 @@ fn equalp_values(i: &Interp, down: &Value, a: &Value, b: &Value) -> Result<bool,
 }
 
 fn num_eq(a: &Value, b: &Value) -> bool {
-    let f = |v: &Value| match v {
-        Value::Int(n) => Some(*n as f64),
-        Value::Float(x) => Some(**x),
-        _ => None,
-    };
-    match (f(a), f(b)) {
-        (Some(x), Some(y)) => x == y,
-        _ => false,
-    }
+    super::arith::number_order(a, b) == Some(std::cmp::Ordering::Equal)
 }
 
 fn f_equalp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -673,7 +665,7 @@ fn f_characterp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_integer_or_marker_p(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(matches!(
         &args[0],
-        Value::Int(_) | Value::Marker(_)
+        Value::Int(_) | Value::BigInt(_) | Value::Marker(_)
     )))
 }
 fn f_arrayp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -710,7 +702,7 @@ fn f_special_form_p(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_type_of(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let name = match &args[0] {
         Value::Nil => "symbol",
-        Value::Int(_) => "integer",
+        Value::Int(_) | Value::BigInt(_) => "integer",
         Value::Float(_) => "float",
         Value::Sym(_) => "symbol",
         Value::Cons(_) => "cons",

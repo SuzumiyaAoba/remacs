@@ -300,6 +300,7 @@ fn qa_native_parse_errors() {
     run("qa_native_parse_errors.el");
 }
 qa!(qa_numbers, "qa_numbers.el");
+qa!(qa_arbitrary_precision, "qa_arbitrary_precision.el");
 qa!(qa_obarray, "qa_obarray.el");
 qa!(qa_unintern_identity, "qa_unintern_identity.el");
 qa!(qa_overlay, "qa_overlay.el");

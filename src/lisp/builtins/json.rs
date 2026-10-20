@@ -474,8 +474,8 @@ impl<'a> Parser<'a> {
         }
         let txt: String = self.s[start..self.pos].iter().collect();
         if !is_float {
-            if let Ok(n) = txt.parse::<i128>() {
-                return Ok(Value::Int(n));
+            if let Ok(n) = txt.parse::<num_bigint::BigInt>() {
+                return Ok(Value::from_bigint(n));
             }
         }
         txt.parse::<f64>()
@@ -668,6 +668,7 @@ fn ser_value(i: &mut Interp, v: &Value, o: &Opts, out: &mut String) -> Result<()
     match v {
         Value::Nil => out.push_str("{}"),
         Value::Int(n) => out.push_str(&n.to_string()),
+        Value::BigInt(n) => out.push_str(&n.to_string()),
         Value::Float(f) => {
             if !f.is_finite() {
                 return Err(json_value_err(i, v));

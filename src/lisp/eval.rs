@@ -6454,6 +6454,7 @@ command-line arguments.\" \
         match form {
             Value::Nil => self.eval_symbol(sym::NIL),
             Value::Int(_)
+            | Value::BigInt(_)
             | Value::Float(_)
             | Value::Str(_)
             | Value::Vec(_)

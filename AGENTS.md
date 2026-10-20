@@ -901,13 +901,14 @@ qa-xf back to qa and watch it go XPASS→pass):
   recorded boot differs (GNU within_one_second rule); `write-file'
   runs the GNU files.el tail (mode/hack-local-variables) so
   require-final-newline applies (qa_bufferfile clean).
-- `numbers`: no bignums — out-of-fixnum ints are inline i128 values,
-  so `(eq X Y)' on two equal bignums is nil like GNU (eql/equal
-  compare by value; a shared bignum `eq' to itself diverges since
-  there is no heap identity — unpinned, would need boxed ints).
-  Comparisons are exact (no f64 coercion): `<`/`=`/`/=`/`min`/`max`
-  over ≥2^61 values and `random' (BSD TYPE_3 + GNU string seeding)
-  all match GNU bit-for-bit; qa_numbers/qa_miscfn clean.
+- `numbers`: arbitrary-precision integers use immutable `Rc<BigInt>`
+  objects (`num-bigint`); fixnums retain the fast inline integer path.
+  Construct numeric results with `Value::integer` / `from_bigint` to
+  canonicalize the fixnum boundary. `eq` preserves bignum identity;
+  `eql`/`equal` compare their values. Exact integer/float comparisons,
+  integer rounding of large floats, shifts, bitwise operations, printing,
+  readers, and seeded BSD TYPE_3 random (including GMP-style 64-bit limb
+  generation for large limits) share the unbounded numeric model.
   Hash dispatch uses the inclusive signed fixnum range: the minimum
   fixnum must not enter the bignum hash path via an absolute-value
   comparison. `qa_sxhash_boundaries` pins numeric/content hashes and
@@ -1329,3 +1330,15 @@ character follows it, so a lone `C-` remains literal. Regression coverage:
 Brent's walk stops without signalling, while a second base can fail before
 the cycle is detected. Its u16 step counter mirrors GNU's unsigned short
 counter; using a visited set changes these observable results.
+
+Arbitrary-precision integration (`qa_arbitrary_precision.el`) also covers
+bytecode/native arithmetic and immutable integer sharing. Portable images
+encode bignums as heap nodes rather than inline decimal references, so
+aliases and eq-hash keys survive restoration. Bounded C/Rust interfaces
+use checked integer projections; integer predicates must include `BigInt`
+rather than matching only `Value::Int`. JSON uses full decimal integers,
+SQLite binds checked signed 64-bit values, and explicitly typed D-Bus
+integers validate their native ranges. Time arithmetic/conversion retains
+BigInt tick/frequency pairs and GNU's resolution normalization; conversion
+to floating time uses exact rational values. Internal position helpers may
+still use i128 after the relevant API validates the requested bounds.

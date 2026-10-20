@@ -2153,17 +2153,19 @@ fn arg(args: &[Value], i: usize) -> Value {
 fn want_int(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
     match v {
         Value::Int(n) => Ok(*n),
+        Value::BigInt(_) => crate::lisp::builtins::want_int(i, v),
         Value::Marker(m) => Ok(m.borrow().position as i128 + 1),
         _ => Err(i.wrong_type_mut("integer-or-marker-p", v)),
     }
 }
 /// GNU buffer.c `fix_position': fixnum → value; marker → charpos
 /// (detached signals "Marker does not point anywhere"); other
-/// non-integers → `integer-or-marker-p'.  (Bignum saturation exists
-/// in GNU but our inline ints are already fixnum-range.)
+/// non-integers → `integer-or-marker-p'. Wide integers retain their
+/// value until the caller validates or clamps the requested position.
 fn want_int_or_marker_pos(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
     match v {
         Value::Int(n) => Ok(*n),
+        Value::BigInt(_) => crate::lisp::builtins::want_int(i, v),
         Value::Marker(m) => {
             let m = m.borrow();
             if m.buffer.is_none() {

@@ -133,7 +133,7 @@ unsafe extern "C" fn api_t(_e: EmEnv) -> EmObj {
     reg(Value::t())
 }
 unsafe extern "C" fn api_int(_e: EmEnv, n: i64) -> EmObj {
-    reg(Value::Int(n as i128))
+    reg(Value::integer(n as i128))
 }
 unsafe extern "C" fn api_float(_e: EmEnv, f: f64) -> EmObj {
     reg(Value::float(f))

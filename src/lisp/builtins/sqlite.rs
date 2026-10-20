@@ -369,9 +369,10 @@ fn bind_val(i: &mut Interp, v: &Value) -> Result<SVal, Flow> {
     use SVal as R;
     Ok(match v {
         Value::Nil => R::N,
-        Value::Int(n) => R::I(
-            i64::try_from(*n)
-                .map_err(|_| sqlite_err(i, vec![Value::string("integer out of range")].into()))?,
+        Value::Int(_) | Value::BigInt(_) => R::I(
+            v.int()
+                .and_then(|n| i64::try_from(n).ok())
+                .ok_or_else(|| sqlite_err(i, vec![Value::string("integer out of range")].into()))?,
         ),
         Value::Float(f) => R::F(**f),
         Value::Str(s) => R::T(if i.is_unibyte_str(s) {
@@ -402,7 +403,7 @@ fn bind_args(i: &mut Interp, v: &Value) -> Result<Vec<SVal>, Flow> {
 
 fn sval_to_value(i: &mut Interp, s: &SVal) -> Value {
     match s {
-        SVal::I(n) => Value::Int(*n as i128),
+        SVal::I(n) => Value::integer(*n as i128),
         SVal::F(f) => Value::float(*f),
         SVal::T(t) => Value::string(String::from_utf8_lossy(t).into_owned()),
         // BLOBs are byte sequences, even when they happen to be valid UTF-8.

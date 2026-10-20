@@ -5,6 +5,8 @@
 //! can leak — acceptable for now, and the architecture note in AGENTS.md
 //! documents this as a deliberate simplification over Emacs's mark-and-sweep.
 
+use num_bigint::BigInt;
+use num_traits::ToPrimitive;
 use rustc_hash::FxHashMap as HashMap;
 use std::cell::RefCell;
 use std::fmt;
@@ -66,8 +68,7 @@ pub struct CondVar {
 }
 
 /// Emacs fixnum range on 64-bit builds: 62 bits (2 tag bits in C).
-/// Integers outside this range are bignums — we represent all integers
-/// as i128 so promotion is exact for any value a real program produces.
+/// Integers outside this range are immutable heap-allocated bignums.
 pub const FIXNUM_MAX: i128 = (1i128 << 61) - 1;
 pub const FIXNUM_MIN: i128 = -(1i128 << 61);
 
@@ -75,6 +76,7 @@ pub const FIXNUM_MIN: i128 = -(1i128 << 61);
 pub enum Value {
     Nil,
     Int(i128),
+    BigInt(Rc<BigInt>),
     /// Emacs floats are heap objects: two reads of `1.0` are distinct
     /// objects, so `eq` compares identity (Rc pointer), not value.
     Float(Rc<f64>),
@@ -248,6 +250,7 @@ pub enum HashKey {
     True,
     Sym(SymId),
     Int(i128),
+    BigInt(BigInt),
     /// Bit pattern so -0.0/NaN behave deterministically.
     Float(u64),
     Str(String),
@@ -646,6 +649,39 @@ impl Value {
     pub fn int(&self) -> Option<i128> {
         match self {
             Value::Int(n) => Some(*n),
+            Value::BigInt(n) => n.to_i128(),
+            _ => None,
+        }
+    }
+
+    /// Canonical integer construction: immediate fixnum or a fresh bignum.
+    pub fn integer(n: i128) -> Value {
+        if (FIXNUM_MIN..=FIXNUM_MAX).contains(&n) {
+            Value::Int(n)
+        } else {
+            Value::BigInt(Rc::new(BigInt::from(n))).tracked()
+        }
+    }
+
+    pub fn from_bigint(n: BigInt) -> Value {
+        if let Some(n) = n
+            .to_i128()
+            .filter(|n| (FIXNUM_MIN..=FIXNUM_MAX).contains(n))
+        {
+            Value::Int(n)
+        } else {
+            Value::BigInt(Rc::new(n)).tracked()
+        }
+    }
+
+    pub fn integerp(&self) -> bool {
+        matches!(self, Value::Int(_) | Value::BigInt(_))
+    }
+
+    pub fn as_bigint(&self) -> Option<BigInt> {
+        match self {
+            Value::Int(n) => Some(BigInt::from(*n)),
+            Value::BigInt(n) => Some((**n).clone()),
             _ => None,
         }
     }
@@ -778,6 +814,7 @@ impl fmt::Debug for Value {
         match self {
             Value::Nil => write!(f, "nil"),
             Value::Int(i) => write!(f, "{i}"),
+            Value::BigInt(i) => write!(f, "{i}"),
             Value::Float(x) => write!(f, "{}", **x),
             Value::Sym(id) => write!(f, "Sym({id})"),
             Value::Cons(_) => write!(f, "Cons(..)"),

@@ -44,6 +44,7 @@ pub(super) enum Node {
         properties: Option<Vec<(usize, usize, Vec<Ref>)>>,
     },
     Float(u64),
+    BigInt(String),
     Cons(Ref, Ref),
     Vector(Vec<Ref>),
     OverlayVector(Vec<Ref>),
@@ -240,6 +241,7 @@ fn identity(value: &Value) -> Option<(u8, usize)> {
         Value::Cons(v) => rc!(v, 1),
         Value::Str(v) => rc!(v, 2),
         Value::Float(v) => rc!(v, 3),
+        Value::BigInt(v) => rc!(v, 11),
         Value::Vec(v) | Value::Record(v) => rc!(v, 4),
         Value::Hash(v) => rc!(v, 5),
         Value::Lambda(v) => rc!(v, 6),
@@ -428,6 +430,7 @@ impl<'a> Encoder<'a> {
                 Node::Cons(self.value(&cell.car)?, self.value(&cell.cdr)?)
             }
             Value::Float(value) => Node::Float(value.to_bits()),
+            Value::BigInt(value) => Node::BigInt(value.to_string()),
             Value::Vec(values) | Value::Record(values) => {
                 let overlay = self.interp.is_overlay(&Value::Vec(values.clone()));
                 let values = values.borrow();
@@ -639,6 +642,9 @@ impl<'a> Decoder<'a> {
                 }
                 Node::String { text, .. } => Some(Value::string(decode_text(text))),
                 Node::Float(bits) => Some(Value::float(f64::from_bits(*bits))),
+                Node::BigInt(text) => Some(Value::from_bigint(
+                    text.parse().map_err(|_| "Invalid dumped bignum")?,
+                )),
                 Node::Cons(_, _) => Some(Value::cons(Value::Nil, Value::Nil)),
                 Node::Vector(items) | Node::OverlayVector(items) => {
                     Some(Value::vector(vec![Value::Nil; items.len()]))
@@ -1049,6 +1055,11 @@ mod tests {
             let key = crate::lisp::builtins::hashfn::hash_key_for(&i, &float, HashTest::Eq);
             hash.borrow_mut().map.insert(key.clone(), cell.clone());
             hash.borrow_mut().put_key(key, float.clone());
+            let big_number = num_bigint::BigInt::from(1) << 130usize;
+            let big = Value::from_bigint(big_number.clone());
+            let big_key = crate::lisp::builtins::hashfn::hash_key_for(&i, &big, HashTest::Eq);
+            hash.borrow_mut().map.insert(big_key.clone(), cell.clone());
+            hash.borrow_mut().put_key(big_key, big.clone());
             let value = Value::vector(vec![
                 cell.clone(),
                 cell,
@@ -1056,6 +1067,9 @@ mod tests {
                 float,
                 Value::Hash(hash),
                 Value::Int(i128::MAX),
+                big.clone(),
+                big,
+                Value::from_bigint(big_number.clone()),
             ]);
             let Value::Vec(vector) = roundtrip(&mut i, &value) else {
                 panic!("vector");
@@ -1083,6 +1097,15 @@ mod tests {
                 &vector[0]
             ));
             assert!(matches!(vector[5], Value::Int(i128::MAX)));
+            assert_eq!(vector[6].as_bigint().unwrap(), big_number);
+            assert!(crate::lisp::builtins::eq_values(&vector[6], &vector[7]));
+            assert!(!crate::lisp::builtins::eq_values(&vector[6], &vector[8]));
+            assert!(crate::lisp::builtins::eql_values(&vector[6], &vector[8]));
+            let key = crate::lisp::builtins::hashfn::hash_key_for(&i, &vector[6], HashTest::Eq);
+            assert!(crate::lisp::builtins::eq_values(
+                &hash.borrow().map[&key],
+                &vector[0]
+            ));
         });
     }
 

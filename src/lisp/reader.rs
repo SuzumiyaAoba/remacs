@@ -512,11 +512,14 @@ impl<'a> Reader<'a> {
                 // 8-bit metafied chars), so key lookup sees M-x.
                 let base =
                     v & !(CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT);
-                Ok((char::from_u32(if base < 0x80 {
-                    base as u32 | 0x80
-                } else {
-                    base as u32
-                }), false))
+                Ok((
+                    char::from_u32(if base < 0x80 {
+                        base as u32 | 0x80
+                    } else {
+                        base as u32
+                    }),
+                    false,
+                ))
             }
             Some('^') => match self.next() {
                 None => Err(eof_err(self.interp)),
@@ -1079,7 +1082,11 @@ impl<'a> Reader<'a> {
             Some('|') | Some('<') => {
                 // GNU's read point is past `#' when these signal.
                 self.pos += 1;
-                let c = if matches!(self.peek(), Some('|')) { "|" } else { "<" };
+                let c = if matches!(self.peek(), Some('|')) {
+                    "|"
+                } else {
+                    "<"
+                };
                 Err(read_err_sym(self.interp, &format!("#{c}")))
             }
             Some('$') => {
@@ -1099,17 +1106,17 @@ impl<'a> Reader<'a> {
             Some('x') | Some('X') => {
                 self.pos += 2;
                 let n = self.read_radix_int(16)?;
-                Ok(Value::Int(n))
+                Ok(Value::from_bigint(n))
             }
             Some('o') | Some('O') => {
                 self.pos += 2;
                 let n = self.read_radix_int(8)?;
-                Ok(Value::Int(n))
+                Ok(Value::from_bigint(n))
             }
             Some('b') | Some('B') => {
                 self.pos += 2;
                 let n = self.read_radix_int(2)?;
-                Ok(Value::Int(n))
+                Ok(Value::from_bigint(n))
             }
             Some(c) if c.is_ascii_digit() => {
                 // #Nr radix, #N= label, #N# label reference.
@@ -1136,11 +1143,13 @@ impl<'a> Reader<'a> {
                             return Err(read_err(self.interp, &format!("integer, radix {n}")));
                         }
                         let v = self.read_radix_int(n as u32)?;
-                        Ok(Value::Int(v))
+                        Ok(Value::from_bigint(v))
                     }
                     Some('=') | Some('#')
                         if n > ((1u64 << 61) - 1)
-                            || self.interp.intern_soft("read-circle")
+                            || self
+                                .interp
+                                .intern_soft("read-circle")
                                 .is_some_and(|id| self.interp.symbol_value(id).is_nil()) =>
                     {
                         Err(self.hash_number_error(start))
@@ -1214,7 +1223,7 @@ impl<'a> Reader<'a> {
         read_err_sym(self.interp, &token)
     }
 
-    fn read_radix_int(&mut self, radix: u32) -> Result<i128, Flow> {
+    fn read_radix_int(&mut self, radix: u32) -> Result<num_bigint::BigInt, Flow> {
         if !(2..=36).contains(&radix) {
             return Err(read_err_radix(self.interp, radix));
         }
@@ -1229,16 +1238,13 @@ impl<'a> Reader<'a> {
             }
             _ => false,
         };
-        let mut n: i128 = 0;
+        let mut n = num_bigint::BigInt::from(0);
         let mut any = false;
         while let Some(c) = self.peek() {
             if c.is_alphanumeric() {
                 match c.to_digit(radix) {
                     Some(d) => {
-                        n = n
-                            .checked_mul(radix as i128)
-                            .and_then(|x| x.checked_add(d as i128))
-                            .unwrap_or(i128::MAX);
+                        n = n * radix + d;
                         any = true;
                         self.pos += 1;
                     }
@@ -1353,7 +1359,13 @@ pub fn parse_number(tok: &str) -> Option<Value> {
         return None;
     }
     if let Ok(i) = tok.parse::<i128>() {
-        return Some(Value::Int(i));
+        return Some(Value::integer(i));
+    }
+    let digits = tok.strip_prefix(['+', '-']).unwrap_or(tok);
+    if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+        if let Ok(i) = tok.parse::<num_bigint::BigInt>() {
+            return Some(Value::from_bigint(i));
+        }
     }
     if let Some(f) = parse_float(tok) {
         return Some(Value::float(f));
@@ -1365,8 +1377,8 @@ pub fn parse_number(tok: &str) -> Option<Value> {
                 .bytes()
                 .all(|b| b.is_ascii_digit() || b == b'+' || b == b'-')
         {
-            if let Ok(i) = head.parse::<i128>() {
-                return Some(Value::Int(i));
+            if let Ok(i) = head.parse::<num_bigint::BigInt>() {
+                return Some(Value::from_bigint(i));
             }
         }
     }
@@ -1544,11 +1556,7 @@ fn parse_float(tok: &str) -> Option<f64> {
                 return Some(if rest == "NaN" {
                     let mantissa: f64 = tok[..i - 2].parse().unwrap_or(0.0);
                     let payload = (mantissa.abs() as u64) & ((1u64 << 51) - 1);
-                    f64::from_bits(
-                        0x7ff8_0000_0000_0000
-                            | (neg as u64) << 63
-                            | payload,
-                    )
+                    f64::from_bits(0x7ff8_0000_0000_0000 | (neg as u64) << 63 | payload)
                 } else if neg {
                     f64::NEG_INFINITY
                 } else {

@@ -88,6 +88,7 @@ fn heap_size<T>() -> usize {
 enum Object {
     Cons(Weak<RefCell<Cons>>),
     Float(Weak<f64>),
+    BigInt(Weak<num_bigint::BigInt>),
     String(Weak<RefCell<String>>),
     Vector(Weak<RefCell<Vec<Value>>>),
     Hash(Weak<RefCell<LispHash>>),
@@ -109,8 +110,8 @@ impl Object {
             match self { $(Self::$variant(value) => value.strong_count() != 0,)* }
         }; }
         alive!(
-            Cons, Float, String, Vector, Hash, Lambda, Buffer, Marker, Window, Frame, Process,
-            Thread, Mutex, CondVar, Finalizer
+            Cons, Float, BigInt, String, Vector, Hash, Lambda, Buffer, Marker, Window, Frame,
+            Process, Thread, Mutex, CondVar, Finalizer
         )
     }
 
@@ -133,6 +134,12 @@ impl Object {
                 bytes: float_size(),
                 ..Metrics::default()
             },
+            Self::BigInt(weak) => {
+                let bytes = weak
+                    .upgrade()
+                    .map_or(0, |n| n.bits().div_ceil(64) as usize * 8);
+                vector(heap_size::<num_bigint::BigInt>() + bytes)
+            }
             Self::String(weak) => {
                 let string = weak.upgrade();
                 let string = string.as_ref().and_then(|s| s.try_borrow().ok());
@@ -220,6 +227,7 @@ pub fn allocated(value: &Value) {
     let (id, object) = match value {
         Value::Cons(v) => object!(v, Cons),
         Value::Float(v) => object!(v, Float),
+        Value::BigInt(v) => object!(v, BigInt),
         Value::Str(v) => object!(v, String),
         Value::Vec(v) | Value::Record(v) => object!(v, Vector),
         Value::Hash(v) => object!(v, Hash),

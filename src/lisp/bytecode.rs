@@ -769,7 +769,8 @@ fn step_op(
             let v = pop!();
             let d = if op == 83 { -1.0 } else { 1.0 };
             push!(match v {
-                Value::Int(n) => Value::Int(n + d as i128),
+                Value::Int(n) => n.checked_add(d as i128).map(Value::integer).unwrap_or_else(|| Value::from_bigint(num_bigint::BigInt::from(n) + d as i128)),
+                Value::BigInt(n) => Value::from_bigint(n.as_ref() + d as i128),
                 Value::Float(f) => Value::float(*f + d),
                 other => fail!(i.wrong_type_mut("number-or-marker-p", &other)),
             });
@@ -783,7 +784,8 @@ fn step_op(
         91 => {
             let v = pop!();
             push!(match v {
-                Value::Int(n) => Value::Int(-n),
+                Value::Int(n) => n.checked_neg().map(Value::integer).unwrap_or_else(|| Value::from_bigint(-num_bigint::BigInt::from(n))),
+                Value::BigInt(n) => Value::from_bigint(-n.as_ref()),
                 Value::Float(f) => Value::float(-*f),
                 other => fail!(i.wrong_type_mut("number-or-marker-p", &other)),
             });

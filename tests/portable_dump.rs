@@ -207,3 +207,32 @@ fn invalid_images_fail_before_command_execution() {
         assert!(!String::from_utf8_lossy(&output.stdout).contains("COMMAND-RAN"));
     }
 }
+
+#[test]
+fn image_restores_arbitrary_integers_and_identity_keys() {
+    let fixture = Fixture::new();
+    let producer = format!(
+        "(progn (setq dump2-number (expt 2 130) dump2-alias dump2-number \
+                       dump2-distinct (expt 2 130) dump2-index (make-hash-table :test 'eq)) \
+                (puthash dump2-number 'saved dump2-index) \
+                (dump-emacs-portable {} t) (princ \"created\"))",
+        literal(&fixture.image())
+    );
+    assert_eq!(
+        Fixture::ok(fixture.eval("producer-cache", &[], &producer)),
+        "created"
+    );
+    let consumer = "(prin1 (list (integerp dump2-number) (bignump dump2-number) \
+                            (eq dump2-number dump2-alias) (eq dump2-number dump2-distinct) \
+                            (eql dump2-number dump2-distinct) \
+                            (gethash dump2-number dump2-index) (gethash dump2-distinct dump2-index) \
+                            (number-to-string (1+ dump2-number))))";
+    assert_eq!(
+        Fixture::ok(fixture.eval(
+            "consumer-cache",
+            &["--dump-file", fixture.image().to_str().unwrap()],
+            consumer
+        )),
+        r#"(t t t nil t saved nil "1361129467683753853853498429727072845825")"#
+    );
+}

@@ -4,6 +4,9 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use num_bigint::BigInt;
+use num_integer::Integer;
+use num_traits::{ToPrimitive, Zero};
 
 use super::{S, arg, want_int, want_list, want_string, want_sym};
 use crate::lisp::Interp;
@@ -1740,6 +1743,11 @@ fn f_gensym(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     if matches!(counter_val, Value::Sym(s) if s == sym::UNBOUND) {
         return Err(i.signal_data(sym::VOID_VARIABLE, vec![Value::Sym(counter_sym)]));
     }
+    if let Value::BigInt(n) = &counter_val {
+        let name = format!("{}{}", prefix, n);
+        i.obarray.symbol_mut(counter_sym).value = Value::from_bigint(n.as_ref() + 1);
+        return Ok(Value::Sym(i.obarray.make_symbol(&name)));
+    }
     let n = match &counter_val {
         Value::Int(n) => *n,
         Value::Marker(m) => {
@@ -1757,9 +1765,13 @@ fn f_gensym(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // interned.  Skipping existing names incorrectly advances the counter
     // (including g0-g3 interned while loading our source libraries).
     let name = format!("{}{}", prefix, n);
-    i.obarray.symbol_mut(counter_sym).value = Value::Int(n + 1);
+    i.obarray.symbol_mut(counter_sym).value = n
+        .checked_add(1)
+        .map(Value::integer)
+        .unwrap_or_else(|| Value::from_bigint(BigInt::from(n) + 1));
     Ok(Value::Sym(i.obarray.make_symbol(&name)))
 }
+
 /// GNU `lisp_func_arity' walk over a raw interpreted arglist:
 /// non-symbol elements and a bare `. tail' (not after `&rest') make
 /// the arglist malformed → None → invalid-function.
@@ -3936,20 +3948,22 @@ pub(crate) fn lisp_time_to_ns(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
 }
 
 fn scaled_lisp_time(i: &mut Interp, v: &Value, scale: i128) -> Result<i128, Flow> {
-    let (ticks, hz) = decode_ticks_hz(i, v)?;
-    let whole = ticks.div_euclid(hz).checked_mul(scale);
-    let fraction = ticks.rem_euclid(hz).checked_mul(scale).map(|n| n / hz);
-    whole
-        .zip(fraction)
-        .and_then(|(whole, fraction)| whole.checked_add(fraction))
+    let (ticks, hz) = decode_big_ticks_hz(i, v)?;
+    (ticks * scale)
+        .div_floor(&hz)
+        .to_i128()
         .ok_or_else(|| i.error("Specified time is not representable"))
 }
 
 /// GNU CFORM_SECS_ONLY ignores fractional fields in old list timestamps.
 pub(crate) fn lisp_time_seconds(i: &mut Interp, v: &Value) -> Result<i64, Flow> {
-    let (ticks, hz) = decode_time_parts(i, v, true)?;
-    i64::try_from(ticks.div_euclid(hz)).map_err(|_| i.error("Specified time is not representable"))
+    let (ticks, hz) = decode_time_parts_big(i, v, true)?;
+    ticks
+        .div_floor(&hz)
+        .to_i64()
+        .ok_or_else(|| i.error("Specified time is not representable"))
 }
+
 
 pub(crate) fn us_to_lisp_time(us: i128) -> Value {
     let secs = us.div_euclid(1_000_000);
@@ -4617,45 +4631,82 @@ pub(crate) fn decode_ticks_hz(i: &mut Interp, v: &Value) -> Result<(i128, i128),
     decode_time_parts(i, v, false)
 }
 
-fn decode_time_parts(i: &mut Interp, v: &Value, seconds_only: bool) -> Result<(i128, i128), Flow> {
-    match v {
+/// Exact integer tick representation used by the Lisp time operations.
+pub(crate) fn decode_big_ticks_hz(i: &mut Interp, value: &Value) -> Result<(BigInt, BigInt), Flow> {
+    decode_time_parts_big(i, value, false)
+}
+fn decode_time_parts_big(
+    i: &mut Interp,
+    value: &Value,
+    seconds_only: bool,
+) -> Result<(BigInt, BigInt), Flow> {
+    if let Some(n) = value.as_bigint() {
+        return Ok((n, BigInt::from(1)));
+    }
+    match value {
         Value::Nil => {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default();
-            Ok((now.as_nanos() as i128 * 1000, 1_000_000_000_000))
+            Ok((BigInt::from(now.as_nanos()), BigInt::from(1_000_000_000)))
         }
-        Value::Int(n) => Ok((*n, 1)),
-        Value::Float(f) if f.is_nan() => Err(i.error("Invalid time specification")),
-        Value::Float(f) if !f.is_finite() => Err(i.error("Specified time is not representable")),
-        Value::Float(f) => Ok(((**f * 1e12).floor() as i128, 1_000_000_000_000)),
+        Value::Float(n) => {
+            let n = **n;
+            if n.is_nan() {
+                return Err(i.error("Invalid time specification"));
+            }
+            if !n.is_finite() {
+                return Err(i.error("Specified time is not representable"));
+            }
+            if n == 0.0 {
+                return Ok((BigInt::from(0), BigInt::from(1)));
+            }
+            // GNU double_integer_scale retains trailing mantissa zeros.
+            let bits = n.to_bits();
+            let exponent = ((bits >> 52) & 0x7ff) as i32;
+            let fraction = bits & ((1u64 << 52) - 1);
+            let (mantissa, exponent) = if exponent == 0 {
+                (fraction, -1074)
+            } else {
+                (fraction | (1u64 << 52), exponent - 1075)
+            };
+            let mut ticks = BigInt::from(mantissa);
+            let hz = if exponent < 0 {
+                BigInt::from(1) << (-exponent) as usize
+            } else {
+                ticks <<= exponent as usize;
+                BigInt::from(1)
+            };
+            if n.is_sign_negative() {
+                ticks = -ticks;
+            }
+            Ok((ticks, hz))
+        }
         Value::Cons(first) => {
             let (high, tail) = {
                 let first = first.borrow();
                 (first.car.clone(), first.cdr.clone())
             };
-            let Value::Int(high) = high else {
-                return Err(i.error("Invalid time specification"));
-            };
+            let high = high
+                .as_bigint()
+                .ok_or_else(|| i.error("Invalid time specification"))?;
             let Value::Cons(second) = tail else {
-                return match tail {
-                    Value::Int(hz) if hz > 0 => Ok((high, hz)),
-                    _ => Err(i.error("Invalid time specification")),
-                };
+                let hz = tail
+                    .as_bigint()
+                    .filter(|n| n.sign() == num_bigint::Sign::Plus)
+                    .ok_or_else(|| i.error("Invalid time specification"))?;
+                return Ok((high, hz));
             };
             let (low, tail) = {
                 let second = second.borrow();
                 (second.car.clone(), second.cdr.clone())
             };
-            let Value::Int(low) = low else {
-                return Err(i.error("Invalid time specification"));
-            };
-            let seconds = high
-                .checked_mul(65536)
-                .and_then(|n| n.checked_add(low))
-                .ok_or_else(|| i.error("Specified time is not representable"))?;
+            let low = low
+                .as_bigint()
+                .ok_or_else(|| i.error("Invalid time specification"))?;
+            let seconds = high * 65536 + low;
             if seconds_only || tail.is_nil() {
-                return Ok((seconds, 1));
+                return Ok((seconds, BigInt::from(1)));
             }
             let (usec, psec, hz) = match tail {
                 Value::Cons(third) => {
@@ -4664,54 +4715,59 @@ fn decode_time_parts(i: &mut Interp, v: &Value, seconds_only: bool) -> Result<(i
                         Value::Cons(fourth) => (
                             third.car.clone(),
                             fourth.borrow().car.clone(),
-                            1_000_000_000_000,
+                            1_000_000_000_000i128,
                         ),
                         _ => (third.car.clone(), Value::Int(0), 1_000_000),
                     }
                 }
                 usec => (usec, Value::Int(0), 1_000_000),
             };
-            // GNU only consumes these four fields; any remaining tail,
-            // including a circular one, is ignored rather than traversed.
             if !usec.fixnump() || !psec.fixnump() {
                 return Err(i.error("Invalid time specification"));
             }
-            let (Value::Int(usec), Value::Int(psec)) = (usec, psec) else {
-                unreachable!()
-            };
-            let ticks = seconds
-                .checked_mul(hz)
-                .and_then(|n| n.checked_add(usec * (hz / 1_000_000)))
-                .and_then(|n| n.checked_add(psec))
-                .ok_or_else(|| i.error("Specified time is not representable"))?;
-            Ok((ticks, hz))
+            let ticks = seconds * hz + usec.int().unwrap() * (hz / 1_000_000) + psec.int().unwrap();
+            Ok((ticks, BigInt::from(hz)))
         }
         _ => Err(i.error("Invalid time specification")),
     }
 }
 
-fn gcd128(a: i128, b: i128) -> i128 {
-    let (mut a, mut b) = (a.abs(), b.abs());
-    while b != 0 {
-        let t = b;
-        b = a % b;
-        a = t;
+/// Bounded projection for platform date/time interfaces. Keep the exact
+/// frequency when it fits; otherwise retain the picoseconds they can use.
+fn decode_time_parts(
+    i: &mut Interp,
+    value: &Value,
+    seconds_only: bool,
+) -> Result<(i128, i128), Flow> {
+    let (ticks, hz) = decode_time_parts_big(i, value, seconds_only)?;
+    if let (Some(ticks), Some(hz)) = (ticks.to_i128(), hz.to_i128()) {
+        return Ok((ticks, hz));
     }
-    a
+    let common = ticks.gcd(&hz);
+    let (ticks, hz) = (ticks / &common, hz / common);
+    if let (Some(ticks), Some(hz)) = (ticks.to_i128(), hz.to_i128()) {
+        return Ok((ticks, hz));
+    }
+    let ps: BigInt = (ticks * 1_000_000_000_000i128).div_floor(&hz);
+    ps.to_i128()
+        .map(|ps| (ps, 1_000_000_000_000))
+        .ok_or_else(|| i.error("Specified time is not representable"))
 }
-
-/// GNU `ticks_hz_list4`: (HI LO US PS) from TICKS/HZ, dropping excess
-/// precision (floor arithmetic).
-fn ticks_hz_list4(ticks: i128, hz: i128) -> Value {
-    let ps = (ticks * 1_000_000_000_000).div_euclid(hz);
-    let secs = ps.div_euclid(1_000_000_000_000);
-    let rem = ps.rem_euclid(1_000_000_000_000);
+fn ticks_hz_list4_big(ticks: BigInt, hz: BigInt) -> Value {
+    let trillion = BigInt::from(1_000_000_000_000i128);
+    let ps = (ticks * &trillion).div_floor(&hz);
+    let (seconds, fraction) = ps.div_mod_floor(&trillion);
+    let (high, low) = seconds.div_mod_floor(&BigInt::from(65536));
+    let (micro, pico) = fraction.div_mod_floor(&BigInt::from(1_000_000));
     Value::list(vec![
-        Value::Int(secs.div_euclid(65536)),
-        Value::Int(secs.rem_euclid(65536)),
-        Value::Int(rem / 1_000_000),
-        Value::Int(rem % 1_000_000),
+        Value::from_bigint(high),
+        Value::from_bigint(low),
+        Value::from_bigint(micro),
+        Value::from_bigint(pico),
     ])
+}
+fn ticks_hz_list4(ticks: i128, hz: i128) -> Value {
+    ticks_hz_list4_big(ticks.into(), hz.into())
 }
 
 /// True for a (TICKS . HZ) cons — a cons whose cdr is not a cons.
@@ -4729,48 +4785,48 @@ fn is_ticks_hz_form(v: &Value) -> bool {
 /// nil, or an hz that does not divide 1e12 yields (TICKS . HZ);
 /// otherwise the (HI LO US PS) list form.
 fn time_arith(i: &mut Interp, a: &[Value], sub: bool) -> EvalResult {
-    let (ta, ha) = decode_ticks_hz(i, &a[0])?;
-    let (tb, hb) = decode_ticks_hz(i, &a[1])?;
-    let (ticks, hz) = if ha == hb {
-        (if sub { ta - tb } else { ta + tb }, ha)
+    let (ta, ha) = decode_big_ticks_hz(i, &a[0])?;
+    let (tb, hb) = decode_big_ticks_hz(i, &a[1])?;
+    let minimum = ha.clone().min(hb.clone());
+    let same_frequency = ha == hb;
+    let common = ha.gcd(&hb);
+    let ma = &hb / &common;
+    let mb = &ha / &common;
+    let mut hz = ha * &ma;
+    let mut ticks = if sub {
+        ta * ma - tb * mb
     } else {
-        let g = gcd128(ha, hb);
-        let fa = ha / g;
-        let fb = hb / g;
-        let mut iticks = if sub {
-            fb * ta - fa * tb
-        } else {
-            fb * ta + fa * tb
-        };
-        let mut ihz = fa * hb;
-        let ig = gcd128(iticks, ihz);
-        if ig > 1 {
-            iticks /= ig;
-            ihz /= ig;
-            let hzmin = ha.min(hb);
-            if ihz < hzmin {
-                let rescale = hzmin.div_euclid(ihz) + i128::from(hzmin % ihz != 0);
-                iticks *= rescale;
-                ihz *= rescale;
+        ta * ma + tb * mb
+    };
+    if !same_frequency {
+        // GNU reduces the result, then rescales to at least the smaller
+        // input frequency. Keeping the raw lcm can change the output form.
+        let reduction = ticks.gcd(&hz);
+        if reduction > BigInt::from(1) {
+            ticks /= &reduction;
+            hz /= reduction;
+            if hz < minimum {
+                let scale = minimum.div_ceil(&hz);
+                ticks *= &scale;
+                hz *= scale;
             }
         }
-        (iticks, ihz)
-    };
-    if hz == 1 {
-        return Ok(Value::Int(ticks));
     }
-    Ok(
-        if !current_time_list(i)
-            || is_ticks_hz_form(&a[0])
-            || is_ticks_hz_form(&a[1])
-            || hz <= 0
-            || 1_000_000_000_000i128 % hz != 0
-        {
-            Value::cons(Value::Int(ticks), Value::Int(hz))
-        } else {
-            ticks_hz_list4(ticks, hz)
-        },
-    )
+    if hz == BigInt::from(1) {
+        return Ok(Value::from_bigint(ticks));
+    }
+    if is_ticks_hz_form(&a[0])
+        || is_ticks_hz_form(&a[1])
+        || !current_time_list(i)
+        || !(BigInt::from(1_000_000_000_000i128) % &hz).is_zero()
+    {
+        Ok(Value::cons(
+            Value::from_bigint(ticks),
+            Value::from_bigint(hz),
+        ))
+    } else {
+        Ok(ticks_hz_list4_big(ticks, hz))
+    }
 }
 
 fn f_time_add(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -4796,87 +4852,92 @@ fn f_time_subtract(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_time_less_p(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU time_cmp: eq args are equal; same-cdr conses compare cars
-    // only (hz left unvalidated — "(time-equal-p X X) does not signal
-    // an error if X is not a valid time value").
-    let a = &args[0];
-    let b = &args[1];
+    let (a, b) = (&args[0], &args[1]);
     if eq_values(a, b) {
-        return Ok(Value::Nil);
+        return Ok(Value::from_bool(false));
     }
-    if let (Value::Cons(ca), Value::Cons(cb)) = (a, b) {
-        let (acar, acdr, bcar, bcdr) = {
-            let (ba, bb) = (ca.borrow(), cb.borrow());
-            (ba.car.clone(), ba.cdr.clone(), bb.car.clone(), bb.cdr.clone())
-        };
-        if eq_values(&acdr, &bcdr) {
-            if let (Value::Int(x), Value::Int(y)) = (&acar, &bcar) {
-                return Ok(Value::from_bool(x < y));
+    if let (Value::Cons(a), Value::Cons(b)) = (a, b) {
+        let (a, b) = (a.borrow(), b.borrow());
+        if eq_values(&a.cdr, &b.cdr) {
+            if let (Some(a), Some(b)) = (a.car.as_bigint(), b.car.as_bigint()) {
+                return Ok(Value::from_bool(a < b));
             }
         }
     }
-    let a = lisp_time_to_ps(i, &args[0])?;
-    let b = lisp_time_to_ps(i, &args[1])?;
-    Ok(Value::from_bool(a < b))
+    let (a, ah) = decode_big_ticks_hz(i, &args[0])?;
+    let (b, bh) = decode_big_ticks_hz(i, &args[1])?;
+    Ok(Value::from_bool(a * bh < b * ah))
 }
 
 fn f_time_equal_p(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let a = &args[0];
-    let b = &args[1];
+    let (a, b) = (&args[0], &args[1]);
     if eq_values(a, b) {
         return Ok(Value::from_bool(true));
     }
-    if let (Value::Cons(ca), Value::Cons(cb)) = (a, b) {
-        let (acar, acdr, bcar, bcdr) = {
-            let (ba, bb) = (ca.borrow(), cb.borrow());
-            (ba.car.clone(), ba.cdr.clone(), bb.car.clone(), bb.cdr.clone())
-        };
-        if eq_values(&acdr, &bcdr) {
-            if let (Value::Int(x), Value::Int(y)) = (&acar, &bcar) {
-                return Ok(Value::from_bool(x == y));
+    if let (Value::Cons(a), Value::Cons(b)) = (a, b) {
+        let (a, b) = (a.borrow(), b.borrow());
+        if eq_values(&a.cdr, &b.cdr) {
+            if let (Some(a), Some(b)) = (a.car.as_bigint(), b.car.as_bigint()) {
+                return Ok(Value::from_bool(a == b));
             }
         }
     }
-    let a = lisp_time_to_ps(i, &args[0])?;
-    let b = lisp_time_to_ps(i, &args[1])?;
-    Ok(Value::from_bool(a == b))
+    let (a, ah) = decode_big_ticks_hz(i, &args[0])?;
+    let (b, bh) = decode_big_ticks_hz(i, &args[1])?;
+    Ok(Value::from_bool(a * bh == b * ah))
 }
 
 fn f_time_convert(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU timefns.c Ftime_convert: decode to (TICKS . HZ); FORM nil
-    // defers to `current-time-list' (t => `list'), `list' yields
-    // (HI LO US PS), `integer' yields whole seconds (floor), `t'
-    // yields (TICKS . HZ) preserving the input's own HZ, and a
-    // positive integer FORM yields (floor(TICKS*FORM/HZ) . FORM).
-    let (ticks, hz) = decode_ticks_hz(i, &args[0])?;
-    match args.get(1) {
-        None | Some(Value::Nil) => Ok(if current_time_list(i) {
-            ticks_hz_list4(ticks, hz)
-        } else {
-            Value::cons(Value::Int(ticks), Value::Int(hz))
-        }),
-        Some(Value::Int(form)) if *form > 0 => Ok(Value::cons(
-            Value::Int((ticks * *form).div_euclid(hz)),
-            Value::Int(*form),
-        )),
-        Some(v) => {
-            let name = i.sym_id(v).map(|s| i.symbol_name(s)).unwrap_or_default();
-            if name == "integer" {
-                Ok(Value::Int(ticks.div_euclid(hz)))
-            } else if name == "t" {
-                Ok(Value::cons(Value::Int(ticks), Value::Int(hz)))
-            } else if name == "list" {
-                Ok(ticks_hz_list4(ticks, hz))
-            } else {
-                // GNU: (error "Invalid time frequency" FORM).
-                Err(i.signal_data(
-                    sym::ERROR,
-                    vec![Value::string("Invalid time frequency"), v.clone()],
-                ))
+    let (ticks, hz) = decode_big_ticks_hz(i, &args[0])?;
+    let form = args.get(1);
+    let name = form
+        .and_then(|v| i.sym_id(v))
+        .map(|id| i.symbol_name(id))
+        .unwrap_or_default();
+    let default = form.is_none_or(Value::is_nil);
+    if name == "list" || (default && current_time_list(i)) {
+        return Ok(ticks_hz_list4_big(ticks, hz));
+    }
+    if name == "integer" {
+        if args[0].integerp() {
+            return Ok(args[0].clone());
+        }
+        return Ok(Value::from_bigint(ticks.div_floor(&hz)));
+    }
+    if name == "t" || default {
+        if let Value::Cons(pair) = &args[0] {
+            let pair = pair.borrow();
+            if pair.car.integerp() && pair.cdr.integerp() {
+                return Ok(args[0].clone());
             }
         }
+        if args[0].integerp() {
+            return Ok(Value::cons(args[0].clone(), Value::Int(1)));
+        }
+        return Ok(Value::cons(
+            Value::from_bigint(ticks),
+            Value::from_bigint(hz),
+        ));
     }
+    let form = form.unwrap();
+    if let Some(frequency) = form
+        .as_bigint()
+        .filter(|n| n.sign() == num_bigint::Sign::Plus)
+    {
+        if let Value::Cons(pair) = &args[0] {
+            if eq_values(form, &pair.borrow().cdr) {
+                return Ok(args[0].clone());
+            }
+        }
+        let converted = (ticks * frequency).div_floor(&hz);
+        return Ok(Value::cons(Value::from_bigint(converted), form.clone()));
+    }
+    Err(i.signal_data(
+        sym::ERROR,
+        vec![Value::string("Invalid time frequency"), form.clone()],
+    ))
 }
+
 
 fn f_load_average(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // getloadavg(3): 1/5/15-minute averages; GNU USE-FLOATS t
@@ -8141,7 +8202,8 @@ fn f_signal_names(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 
 fn f_cl_type_of(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let name = match &a[0] {
-        Value::Int(_) => "fixnum",
+        Value::Int(n) if (crate::lisp::value::FIXNUM_MIN..=crate::lisp::value::FIXNUM_MAX).contains(n) => "fixnum",
+        Value::Int(_) | Value::BigInt(_) => "bignum",
         Value::Float(_) => "float",
         Value::Sym(_) => "symbol",
         // GNU `cl-type-of' reports `null' for nil and a record's type
@@ -8398,7 +8460,7 @@ fn f_bool_vector_consec(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 use crate::editor::err_sym;
 use crate::editor::{
     CHAR_ALT, CHAR_CTL, CHAR_HYPER, CHAR_META, CHAR_SHIFT, CHAR_SUPER, WindowRef, is_keymap,
-    key_seq, parse_key_token, sel_frame, sel_window, w_parent,
+    parse_key_token, sel_frame, sel_window, w_parent,
 };
 
 fn f_eventp(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -12581,7 +12643,7 @@ fn coding_region_source(i: &mut Interp, a: &[Value]) -> Result<(Vec<i128>, Value
     for v in &a[..2] {
         let position = match v {
             Value::Int(n) if v.fixnump() => *n,
-            Value::Int(_) => {
+            Value::Int(_) | Value::BigInt(_) => {
                 let buffer = i.buffer_value(i.current_buffer).unwrap_or(Value::Nil);
                 return Err(i.signal_data(
                     sym::ARGS_OUT_OF_RANGE,
@@ -18255,6 +18317,7 @@ fn f_check_coding_systems_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
     let coerce = |i: &mut Interp, v: &Value| -> Result<i128, Flow> {
         match v {
             Value::Int(n) => Ok(*n),
+            Value::BigInt(_) => crate::lisp::builtins::want_int(i, v),
             Value::Marker(m) => Ok(m.borrow().position as i128 + 1),
             other => Err(i.wrong_type_mut("integer-or-marker-p", other)),
         }

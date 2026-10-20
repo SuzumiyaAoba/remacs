@@ -129,6 +129,7 @@ fn eq_key(v: &Value) -> HashKey {
     match v {
         Value::Nil => HashKey::Nil,
         Value::Int(n) => HashKey::Int(*n),
+        Value::BigInt(n) => HashKey::Ptr(Rc::as_ptr(n) as usize),
         // GNU: floats are heap objects; `eq' is identity.
         // Two literal `1.0's must NOT hash equal — key on the Rc.
         Value::Float(f) => HashKey::Ptr(Rc::as_ptr(f) as usize),
@@ -156,6 +157,10 @@ fn eql_key(v: &Value) -> HashKey {
     // eql: numbers compare by value, everything else like eq.
     match v {
         Value::Int(n) => HashKey::Int(*n),
+        Value::BigInt(n) => match v.int() {
+            Some(n) => HashKey::Int(n),
+            None => HashKey::BigInt((**n).clone()),
+        },
         Value::Float(f) => HashKey::Float(f.to_bits()),
         _ => eq_key(v),
     }

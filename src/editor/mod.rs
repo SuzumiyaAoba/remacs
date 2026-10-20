@@ -2337,6 +2337,7 @@ pub(crate) fn num_or_mark(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
 pub(crate) fn want_num_or_mark(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
     match v {
         Value::Int(n) => Ok(*n),
+        Value::BigInt(_) => crate::lisp::builtins::want_int(i, v),
         Value::Float(x) => Ok(**x as i128),
         Value::Marker(m) if m.borrow().buffer.is_some() => Ok(m.borrow().position as i128 + 1),
         Value::Marker(_) => Err(i.error("Marker does not point anywhere")),
