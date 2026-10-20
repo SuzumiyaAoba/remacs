@@ -1064,13 +1064,21 @@ fn f_frexp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_ldexp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU Fildexp: SGN is FIXNUM-checked first, then X is number-checked.
+    // GNU checks the exponent first and saturates it to the C int range.
     let e = match &args[1] {
-        Value::Int(n) => *n as i32,
+        Value::Int(n) => {
+            (*n).clamp(libc::c_int::MIN as i128, libc::c_int::MAX as i128) as libc::c_int
+        }
         other => return Err(i.wrong_type_mut("fixnump", other)),
     };
     let x = want_number(i, &args[0])?;
-    Ok(Value::float(x * 2f64.powi(e)))
+    #[cfg_attr(unix, link(name = "m"))]
+    unsafe extern "C" {
+        fn ldexp(x: f64, exponent: libc::c_int) -> f64;
+    }
+    // Multiplying by powi would round 2^-1074 to zero before scaling X,
+    // and can turn zero/infinity inputs into NaNs at extreme exponents.
+    Ok(Value::float(unsafe { ldexp(x, e) }))
 }
 
 /// GNU's ffloor/fceiling/fround/ftruncate require a FLOAT argument.
