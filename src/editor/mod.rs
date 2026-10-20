@@ -15529,61 +15529,139 @@ fn f_set_window_cursor_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     Ok(t.clone())
 }
 
-/// Minimum-size tuples for `window-state-get' headers:
-/// (min-height min-width min-height-ignore min-width-ignore
-/// min-height-safe min-width-safe).  Internal windows combine their
-/// children: sum along the split axis, max on the cross axis (GNU
-/// `window--min-size-1').  Leaves report the -Q defaults; the
-/// minibuffer's height minimums collapse to 1.
-fn win_node_mins(i: &mut Interp, w: &WindowRef) -> [i128; 6] {
-    let (horiz, mini, kids, ml, mr) = {
-        let wb = w.borrow();
+/// GNU window--min-size-1 in the grid frame's 1x1 character metrics.
+/// State headers and the public minimum-size query share this calculation.
+pub(crate) fn window_minimum(
+    i: &mut Interp,
+    w: &WindowRef,
+    horizontal: bool,
+    ignore: &Value,
+    pixelwise: bool,
+) -> i128 {
+    let (children, direction, buffer, minibuffer, margins, size, params) = {
+        let w = w.borrow();
         (
-            wb.horiz,
-            wb.minibuffer,
-            wb.children.clone(),
-            wb.margins.0 as i128,
-            wb.margins.1 as i128,
+            w.children.clone(),
+            w.horiz,
+            w.buffer,
+            w.minibuffer,
+            w.margins,
+            if horizontal { w.width } else { w.height },
+            w.params.clone(),
         )
     };
-    match horiz {
-        Some(hor) => {
-            let mut acc: Option<[i128; 6]> = None;
-            for k in &kids {
-                let m = win_node_mins(i, k);
-                acc = Some(match acc {
-                    None => m,
-                    Some(a) => {
-                        if hor {
-                            // side-by-side: heights max, widths sum
-                            [
-                                a[0].max(m[0]),
-                                a[1] + m[1],
-                                a[2].max(m[2]),
-                                a[3] + m[3],
-                                a[4].max(m[4]),
-                                a[5] + m[5],
-                            ]
-                        } else {
-                            // stacked: heights sum, widths max
-                            [
-                                a[0] + m[0],
-                                a[1].max(m[1]),
-                                a[2] + m[2],
-                                a[3].max(m[3]),
-                                a[4] + m[4],
-                                a[5].max(m[5]),
-                            ]
-                        }
-                    }
-                });
-            }
-            acc.unwrap_or([0; 6])
-        }
-        None if mini => [1, 10, 1, 2, 1, 2],
-        // min-width-ignore includes the window's margins.
-        None => [4, 10, 2, 2 + ml + mr, 1, 2],
+    if let Some(direction) = direction {
+        let sizes: Vec<_> = children
+            .iter()
+            .map(|child| window_minimum(i, child, horizontal, ignore, pixelwise))
+            .collect();
+        return if direction == horizontal {
+            sizes.into_iter().sum()
+        } else {
+            sizes.into_iter().max().unwrap_or(0)
+        };
     }
+    let variable = |i: &mut Interp, name: &str| {
+        let symbol = i.intern(name);
+        i.buffers
+            .get(buffer)
+            .and_then(|b| b.borrow().locals.get(&symbol).cloned())
+            .unwrap_or_else(|| i.obarray.symbol(symbol).value.clone())
+    };
+    let safe = variable(
+        i,
+        if horizontal {
+            "window-safe-min-width"
+        } else {
+            "window-safe-min-height"
+        },
+    )
+    .int()
+    .unwrap_or(if horizontal { 2 } else { 1 });
+    let ignore_safe = i.sym_id(ignore).is_some_and(|s| i.symbol_name(s) == "safe");
+    let ignore_restrictions = match ignore {
+        Value::Window(other) if !other.borrow().dead => Rc::ptr_eq(w, other),
+        Value::Nil => false,
+        Value::Sym(s) if i.symbol_name(*s) == "preserved" => false,
+        _ => true,
+    };
+    if !ignore_restrictions {
+        let fixed = variable(i, "window-size-fixed");
+        let fixed_axis = if let Value::Sym(symbol) = fixed {
+            match i.symbol_name(symbol).as_str() {
+                "height" => !horizontal,
+                "width" => horizontal,
+                "t" => true,
+                _ => false,
+            }
+        } else {
+            false
+        };
+        if fixed_axis {
+            return size as i128;
+        }
+    }
+    if ignore_safe {
+        return safe;
+    }
+    let decoration = if horizontal {
+        let min_margins = i.intern("min-margins");
+        let min_margins = crate::lisp::eval::plist_get(&params, min_margins);
+        let (left, right) = match min_margins {
+            Value::Cons(c) => {
+                let c = c.borrow();
+                (c.car.clone(), c.cdr.clone())
+            }
+            _ => (Value::Nil, Value::Nil),
+        };
+        let margin = |value: Value, fallback: usize| match value {
+            Value::Int(n) => n as f64,
+            Value::Float(n) => *n,
+            _ => fallback as f64,
+        };
+        (margin(left, margins.0) + margin(right, margins.1)).ceil() as i128
+    } else if minibuffer {
+        0
+    } else {
+        ["mode-line-format", "header-line-format", "tab-line-format"]
+            .iter()
+            .filter(|name| variable(i, name).truthy())
+            .count() as i128
+    };
+    let preferred = if ignore_restrictions {
+        0
+    } else if pixelwise && !horizontal && minibuffer {
+        1
+    } else {
+        variable(
+            i,
+            if horizontal {
+                "window-min-width"
+            } else {
+                "window-min-height"
+            },
+        )
+        .int()
+        .unwrap_or(if horizontal { 10 } else { 4 })
+    };
+    (safe + decoration).max(preferred)
+}
+
+/// Minimum-size tuples in the exact header order, including independently
+/// computed pixel minima (the minibuffer's pixel minimum is special).
+fn win_node_mins(i: &mut Interp, w: &WindowRef) -> [i128; 12] {
+    let safe = Value::Sym(i.intern("safe"));
+    let mut minima = [0; 12];
+    for (pixelwise, offset) in [(false, 0), (true, 6)] {
+        for (index, ignore) in [Value::Nil, Value::t(), safe.clone()]
+            .into_iter()
+            .enumerate()
+        {
+            minima[offset + index * 2] = window_minimum(i, w, false, &ignore, pixelwise);
+            minima[offset + index * 2 + 1] = window_minimum(i, w, true, &ignore, pixelwise);
+        }
+    }
+    minima
 }
 
 /// Is V a list whose car is SYM named NAME?
@@ -15842,12 +15920,12 @@ fn f_window_state_get(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         ac_i(i, "min-width-ignore", m[3]),
         ac_i(i, "min-height-safe", m[4]),
         ac_i(i, "min-width-safe", m[5]),
-        ac_i(i, "min-pixel-height", m[0]),
-        ac_i(i, "min-pixel-width", m[1]),
-        ac_i(i, "min-pixel-height-ignore", m[2]),
-        ac_i(i, "min-pixel-width-ignore", m[3]),
-        ac_i(i, "min-pixel-height-safe", m[4]),
-        ac_i(i, "min-pixel-width-safe", m[5]),
+        ac_i(i, "min-pixel-height", m[6]),
+        ac_i(i, "min-pixel-width", m[7]),
+        ac_i(i, "min-pixel-height-ignore", m[8]),
+        ac_i(i, "min-pixel-width-ignore", m[9]),
+        ac_i(i, "min-pixel-height-safe", m[10]),
+        ac_i(i, "min-pixel-width-safe", m[11]),
     ]);
     let mut items = vec![header];
     items.extend(win_state_items(i, &w, writable, false));

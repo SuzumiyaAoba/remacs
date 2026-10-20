@@ -1138,8 +1138,15 @@ fn f_win_min_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     let horiz = arg(&a, 1).truthy();
     let ignore = arg(&a, 2);
-    Ok(Value::Int(crate::lisp::builtins::misc::win_min_size(
-        i, &wv, horiz, &ignore,
+    let Value::Window(window) = wv else {
+        return Err(err_not_valid_window(i, &wv));
+    };
+    Ok(Value::Int(crate::editor::window_minimum(
+        i,
+        &window,
+        horiz,
+        &ignore,
+        arg(&a, 3).truthy(),
     )))
 }
 
@@ -1168,7 +1175,12 @@ fn f_window_safe_min_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         ref other => return Err(err_not_valid_window(i, other)),
     }
     let horiz = arg(&a, 1).truthy();
-    Ok(Value::Int(if horiz { 2 } else { 1 }))
+    let symbol = i.intern(if horiz {
+        "window-safe-min-width"
+    } else {
+        "window-safe-min-height"
+    });
+    Ok(i.symbol_value(symbol))
 }
 
 fn f_window_resize(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

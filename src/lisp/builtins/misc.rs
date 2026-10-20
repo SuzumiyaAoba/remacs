@@ -14196,35 +14196,16 @@ fn win_dims(i: &Interp, v: &Value) -> (usize, usize) {
     .unwrap_or((80, 24))
 }
 
-/// `window-min-size' for a leaf window at -Q: safe-minimum plus
-/// window decorations (mode-line counts vertically), clamped to the
-/// user minimum unless IGNORE suppresses it.
+/// Character-unit minimum used by resizing and sizable queries.
+/// Keep these callers consistent with state serialization and window-min-size.
 pub(crate) fn win_min_size(i: &mut Interp, wv: &Value, horiz: bool, ignore: &Value) -> i128 {
-    if i.sym_id(ignore).map(|id| i.symbol_name(id) == "safe") == Some(true) {
-        return if horiz { 2 } else { 1 };
-    }
-    // safe-min + decorations: vertical adds the mode-line (1);
-    // horizontal adds margins/fringes/scroll-bars (0 on a tty frame).
-    // The minibuffer window has no mode line, so its base is 1.
-    let mini = matches!(wv, Value::Window(w) if w.borrow().minibuffer);
-    let base: i128 = if horiz {
-        2
-    } else if mini {
-        1
-    } else {
-        2
+    let window = match wv {
+        Value::Window(w) => Some(w.clone()),
+        _ => crate::editor::sel_window(i),
     };
-    let ignore_p = match ignore {
-        Value::Window(iw) => match wv {
-            Value::Window(w) => !Rc::ptr_eq(w, iw),
-            _ => true,
-        },
-        Value::Nil => false,
-        Value::Sym(s) => i.symbol_name(*s) != "preserved",
-        _ => true,
-    };
-    let minvar: i128 = if horiz { 10 } else { 4 };
-    base.max(if ignore_p { 0 } else { minvar })
+    window.map_or(0, |w| {
+        crate::editor::window_minimum(i, &w, horiz, ignore, false)
+    })
 }
 
 /// `window-sizable' — GNU: normalize WINDOW (plain "N is not a valid

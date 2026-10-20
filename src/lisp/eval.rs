@@ -10304,7 +10304,36 @@ command-line arguments.\" \
             ("overriding-terminal-local-map", Value::Nil),
             ("char-property-alias-alist", Value::Nil),
             ("default-text-properties", Value::Nil),
-            ("mode-line-format", Value::Nil),
+            // GNU bindings.el's standard format.  A nil placeholder suppresses
+            // the mode line when computing window minimum heights.
+            (
+                "mode-line-format",
+                Value::list(vec![
+                    Value::string("%e"),
+                    Value::Sym(self.intern("mode-line-front-space")),
+                    Value::Sym(self.intern("mode-line-mule-info")),
+                    Value::Sym(self.intern("mode-line-client")),
+                    Value::Sym(self.intern("mode-line-modified")),
+                    Value::Sym(self.intern("mode-line-remote")),
+                    Value::Sym(self.intern("mode-line-window-dedicated")),
+                    Value::Sym(self.intern("mode-line-frame-identification")),
+                    Value::Sym(self.intern("mode-line-buffer-identification")),
+                    Value::string("   "),
+                    Value::Sym(self.intern("mode-line-position")),
+                    Value::list(vec![
+                        Value::Sym(self.intern("project-mode-line")),
+                        Value::Sym(self.intern("project-mode-line-format")),
+                    ]),
+                    Value::list(vec![
+                        Value::Sym(self.intern("vc-mode")),
+                        Value::Sym(self.intern("vc-mode")),
+                    ]),
+                    Value::string("  "),
+                    Value::Sym(self.intern("mode-line-modes")),
+                    Value::Sym(self.intern("mode-line-misc-info")),
+                    Value::Sym(self.intern("mode-line-end-spaces")),
+                ]),
+            ),
             ("mode-name", Value::Nil),
             ("header-line-format", Value::Nil),
             ("tab-line-format", Value::Nil),

@@ -368,6 +368,7 @@ qa!(qa_undo, "qa_undo.el");
 qa!(qa_vector, "qa_vector.el");
 qa!(qa_window, "qa_window.el");
 qa!(qa_winstate, "qa_winstate.el");
+qa!(qa_window_state_minimum, "qa_window_state_minimum.el");
 qa!(qa_xref, "qa_xref.el");
 
 qa!(qa_buffer_name_validation, "qa_buffer_name_validation.el");
