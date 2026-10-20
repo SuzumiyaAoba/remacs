@@ -418,6 +418,14 @@ string objects and the old ring tail. `yank` delegates selection to
 point/mark without activating the region. Regressions: `qa_current_kill`
 and `tui_yank_imports_external_text_and_preserves_properties`.
 
+`kill-do-not-save-duplicates` compares only the newest kill using
+`equal-including-properties`; matching text with different properties
+still adds an entry. Skipping a duplicate retains the old head object,
+resets the yank pointer, and still notifies the cut function with the
+new argument. It does not remove matching older entries. REPLACE uses
+`setcar` semantics on an existing ring, retaining the head cons and tail.
+Regression: `qa_kill_new`.
+
 ## Case conversion and symbol names
 
 GNU casefiddle has distinct string paths: nonempty unibyte strings use

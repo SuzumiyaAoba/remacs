@@ -302,6 +302,7 @@ qa!(qa_overlay, "qa_overlay.el");
 qa!(qa_overlays, "qa_overlays.el");
 qa!(qa_overlay_equality, "qa_overlay_equality.el");
 qa!(qa_current_kill, "qa_current_kill.el");
+qa!(qa_kill_new, "qa_kill_new.el");
 qa!(qa_pcase, "qa_pcase.el");
 qa!(qa_plists, "qa_plists.el");
 qa!(qa_point, "qa_point.el");

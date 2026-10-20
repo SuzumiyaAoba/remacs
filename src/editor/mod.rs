@@ -9740,22 +9740,30 @@ fn f_kill_new(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         other => return Err(i.wrong_type_mut("sequencep", other)),
     }
     let text = a[0].clone();
-    let replace = !arg(&a, 1).is_nil();
-    if replace {
-        // REPLACE non-nil: overwrite the newest entry instead of pushing.
-        let kr = i.intern("kill-ring");
-        let cur = i.symbol_value(kr);
-        let mut items = cur.list_to_vec().unwrap_or_default();
-        if items.is_empty() {
-            items.insert(0, text.clone());
-        } else {
-            items[0] = text.clone();
+    let ring_symbol = i.intern("kill-ring");
+    let ring = i.symbol_value(ring_symbol);
+    let duplicates = i.intern("kill-do-not-save-duplicates");
+    if i.symbol_value(duplicates).truthy() {
+        let head = match &ring {
+            Value::Nil => Value::Nil,
+            Value::Cons(cell) => cell.borrow().car.clone(),
+            other => return Err(i.wrong_type_mut("listp", other)),
+        };
+        if crate::lisp::builtins::equal_values_including_properties(i, &text, &head)? {
+            let pointer = i.intern("kill-ring-yank-pointer");
+            i.set_symbol(pointer, ring)?;
+            crate::buffer::primitives::interprogram_cut(i, text)?;
+            return Ok(Value::Nil);
         }
-        i.obarray.symbol_mut(kr).value = Value::list(items);
-        let ring = i.symbol_value(kr);
-        let ptr = i.intern("kill-ring-yank-pointer");
-        let _ = i.set_symbol(ptr, ring);
-        // GNU: `(if interprogram-cut-function (funcall ... string))'.
+    }
+    if arg(&a, 1).truthy() && !ring.is_nil() {
+        // GNU REPLACE changes the existing head cons, preserving its tail.
+        let Value::Cons(cell) = &ring else {
+            return Err(i.wrong_type_mut("listp", &ring));
+        };
+        cell.borrow_mut().car = text.clone();
+        let pointer = i.intern("kill-ring-yank-pointer");
+        i.set_symbol(pointer, ring)?;
         crate::buffer::primitives::interprogram_cut(i, text)?;
     } else {
         crate::buffer::primitives::push_kill_ring_value(i, text)?;
