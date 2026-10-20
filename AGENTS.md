@@ -793,6 +793,41 @@ and right-padding; `%F` applies its width to the year field. Regressions:
 `qa_time_modifiers`, `qa_time_zero_zone`, `qa_timefmt`, and the portable
 formatter unit test that rejects nonportable calls to its native callback.
 
+## Cooperative Lisp threads (`src/lisp/threads.rs`)
+
+`make-thread` queues a `corosensei` coroutine; it returns before the worker
+runs. `thread-yield`, joins, sleeps, mutex/condition waits, timed event reads,
+process polling and terminal input loops provide scheduling points. Workers
+share the interpreter's OS thread, so `Rc` values and native-comp TLS handles
+never cross OS threads. Each coroutine reserves a 64 MiB virtual stack for
+the Rust evaluator's larger frames.
+
+Do not pass a raw shared `&mut Interp` between suspended stacks. Every stack
+has its own interpreter storage: owned runtime boxes move through coroutine
+inputs/yields, leaving a vacant, unevaluated interpreter in the suspended
+storage. `ThreadContext` parks stack-specific fields (lexical environment,
+dynamic bindings, current buffer, handlers, search registers, load/eval
+flags, backtrace) on its own coroutine stack. Dynamic cells are exchanged in
+reverse/forward binding order without firing watchers, exposing global
+values to other threads and preserving each thread's nested bindings.
+The scoped yielder pointer only refers to its own live coroutine stack;
+there is no `Send` implementation for the interpreter or Lisp values.
+Native call-local TLS (`OBJTAB`, `PENDING`, `ACTIVE_NATIVE`, compiler context)
+is parked with that stack too; native code/metadata registries stay shared.
+Native callbacks and entries use `C-unwind`, and generated C includes unwind
+tables, so destroying a worker suspended inside native code releases its
+Rust frames. Never take TLS from a vacant runtime during forced unwinding:
+that TLS currently belongs to the resumer.
+
+Mutexes track an owner and recursive count. Condition waits release all
+levels and restore them after notification or signaling; `thread--blocker`
+reports the actual wait object. Portable images preserve mutex depth, with
+old owned-mutex images interpreted as one level. Scheduling is cooperative:
+ordinary computation and blocking foreign calls do not preempt themselves.
+
+Regressions: `qa_thread_scheduling.el`, `qa_thread_bookkeeping.el`, the
+`eval::threads` unit tests, and CLI/TUI/portable-image thread tests.
+
 ## GNU-compat QA suite (`tests/qa.rs` + `tests/qa_*.el`)
 
 Each `qa_*.el` file is a flat list of `(qa FORM EXPECTED)` checks driven

@@ -4450,12 +4450,26 @@ pub(crate) fn timer_check(i: &mut Interp) -> EvalResult {
 
 /// Sleep for SECS seconds, firing due timers during the wait like
 /// GNU's `wait_reading_process_output'.
+pub(crate) fn thread_wait_events(i: &mut Interp) -> Result<(), Flow> {
+    crate::lisp::eval::threads::drain_main_events(i)?;
+    timer_check(i)?;
+    crate::lisp::process::poll_all(i)?;
+    crate::lisp::builtins::filenotify::drain(i)?;
+    crate::lisp::builtins::dbus::drain(i)?;
+    Ok(())
+}
+
 fn sleep_firing_timers(i: &mut Interp, secs: f64) -> EvalResult {
     if secs <= 0.0 {
+        crate::lisp::eval::threads::yield_now(i)?;
         return timer_check(i).map(|_| Value::Nil);
     }
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs_f64(secs.min(3600.0));
+    if crate::lisp::eval::threads::sleep_worker(i, deadline)? {
+        return Ok(Value::Nil);
+    }
     loop {
+        crate::lisp::eval::threads::yield_now(i)?;
         timer_check(i)?;
         // GNU's wait also drains subprocess output (filters/buffers/
         // sentinels) — sit-for/sleep-for both pump.

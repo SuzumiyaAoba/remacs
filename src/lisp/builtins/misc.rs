@@ -440,7 +440,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_thread_join,
         "Wait for THREAD and return its result."
     ),
-    S!("thread-yield", 0, 0, f_nil, "Yield to other threads."),
+    S!("thread-yield", 0, 0, f_thread_yield, "Yield to other threads."),
     S!(
         "thread-last-error",
         0,
@@ -7951,8 +7951,6 @@ fn f_thread_live_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_make_thread(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // (make-thread FUNCTION &optional NAME) — cooperative model: run
-    // the function now; completion ends its lifetime before returning.
     let fun = a[0].clone();
     let name = match a.get(1) {
         Some(Value::Str(s)) => Some(s.borrow().clone()),
@@ -7966,52 +7964,46 @@ fn f_make_thread(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             result: None,
             last_error: None,
             pending_signal: None,
+            blocker: None,
             finished: false,
         },
         crate::lisp::Value::Thread,
     );
     i.threads.push(t.clone());
-    let idx = i.threads.len() - 1;
-    let saved = i.current_thread;
-    i.current_thread = idx;
-    let r = i.apply(&fun, vec![]);
-    i.current_thread = saved;
-    {
-        let mut tb = t.borrow_mut();
-        tb.finished = true;
-        tb.alive = false;
-        match r {
-            Ok(v) => tb.result = Some(v),
-            Err(Flow::Signal(s, d, _)) => {
-                let cond = Value::cons(s.clone(), d.clone());
-                tb.last_error = Some(cond.clone());
-                i.thread_last_error = cond;
-            }
-            Err(e) => {
-                tb.last_error = Some(Value::Nil);
-                return Err(e);
-            }
-        }
+    if let Err(error) = crate::lisp::eval::threads::spawn(i, fun, t.clone()) {
+        i.threads.pop();
+        return Err(error);
     }
     Ok(Value::Thread(t))
 }
 
 fn f_thread_join(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // Completed cooperative threads already hold their result.
     let t = want_thread(i, &a[0])?;
     if std::rc::Rc::ptr_eq(&t, &i.threads[i.current_thread]) {
         return Err(i.error("Cannot join current thread"));
     }
-    let (pending, result) = {
-        let thread = t.borrow();
-        (thread.pending_signal.clone(), thread.result.clone())
-    };
+    // GNU captures a target's pending signal before waiting, even if the
+    // target subsequently handles it. A completed target retains it.
+    let pending = t.borrow().pending_signal.clone();
+    if !t.borrow().finished {
+        crate::lisp::eval::threads::wait(
+            i,
+            crate::lisp::eval::threads::Wait::Join(t.clone()),
+            Some(Value::Thread(t.clone())),
+        )?;
+    }
+    let result = t.borrow().result.clone();
     if let Some((symbol, data)) = pending {
         if !symbol.is_nil() {
             return super::evalfn::f_signal(i, vec![symbol, data].into());
         }
     }
     Ok(result.unwrap_or(Value::Nil))
+}
+
+fn f_thread_yield(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    crate::lisp::eval::threads::yield_now(i)?;
+    Ok(Value::Nil)
 }
 
 fn f_thread_last_error(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -8049,7 +8041,11 @@ fn f_make_mutex(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Some(other) => return Err(i.wrong_type_mut("stringp", other)),
     };
     Ok(Value::Mutex(std::rc::Rc::new(std::cell::RefCell::new(
-        crate::lisp::value::Mutex { name, owner: None },
+        crate::lisp::value::Mutex {
+            name,
+            owner: None,
+            count: 0,
+        },
     )))
     .tracked())
 }
@@ -8065,16 +8061,49 @@ fn f_mutex_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_mutex_lock(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let m = want_mutex(i, &a[0])?;
-    m.borrow_mut().owner = Some(Value::Thread(i.threads[i.current_thread].clone()));
-    Ok(Value::Nil)
+    loop {
+        let current = Value::Thread(i.threads[i.current_thread].clone());
+        let available = {
+            let mut mutex = m.borrow_mut();
+            if mutex
+                .owner
+                .as_ref()
+                .is_none_or(|owner| super::eq_values(owner, &current))
+            {
+                mutex.owner = Some(current);
+                mutex.count += 1;
+                true
+            } else {
+                false
+            }
+        };
+        if available {
+            return Ok(Value::Nil);
+        }
+        crate::lisp::eval::threads::wait(
+            i,
+            crate::lisp::eval::threads::Wait::Mutex(m.clone()),
+            Some(a[0].clone()),
+        )?;
+    }
 }
 
 fn f_mutex_unlock(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let m = want_mutex(i, &a[0])?;
-    if m.borrow().owner.is_none() {
+    let current = Value::Thread(i.threads[i.current_thread].clone());
+    let mut mutex = m.borrow_mut();
+    if !mutex
+        .owner
+        .as_ref()
+        .is_some_and(|owner| super::eq_values(owner, &current))
+    {
+        drop(mutex);
         return Err(i.error("Cannot unlock mutex owned by another thread"));
     }
-    m.borrow_mut().owner = None;
+    mutex.count -= 1;
+    if mutex.count == 0 {
+        mutex.owner = None;
+    }
     Ok(Value::Nil)
 }
 
@@ -8093,6 +8122,7 @@ fn f_make_condition_variable(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
         crate::lisp::value::CondVar {
             name,
             mutex: Value::Mutex(m),
+            waiters: Vec::new(),
         },
     )))
     .tracked())
@@ -8125,9 +8155,6 @@ fn condition_mutex_held(i: &Interp, c: &crate::lisp::value::CondVarRef) -> bool 
 }
 
 fn f_condition_wait(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU signals when the condvar's mutex isn't held by the current
-    // thread. With the cooperative model a held mutex means "wait"
-    // returns immediately — there is no other thread to wake us.
     let c = want_condvar(i, &a[0])?;
     if !condition_mutex_held(i, &c) {
         return Err(i.error_q(
@@ -8135,6 +8162,34 @@ fn f_condition_wait(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             &[],
         ));
     }
+    let mutex = c.borrow().mutex.clone();
+    let Value::Mutex(m) = &mutex else {
+        unreachable!()
+    };
+    let count = {
+        let mut held = m.borrow_mut();
+        let count = held.count;
+        held.owner = None;
+        held.count = 0;
+        count
+    };
+    let notified = std::rc::Rc::new(std::cell::Cell::new(false));
+    c.borrow_mut()
+        .waiters
+        .push(std::rc::Rc::downgrade(&notified));
+    let result = crate::lisp::eval::threads::wait(
+        i,
+        crate::lisp::eval::threads::Wait::Condition(notified.clone()),
+        Some(a[0].clone()),
+    );
+    c.borrow_mut().waiters.retain(|w| {
+        w.upgrade()
+            .is_some_and(|w| !std::rc::Rc::ptr_eq(&w, &notified))
+    });
+    // A signaled waiter still reacquires its mutex before unwinding.
+    f_mutex_lock(i, vec![mutex.clone()].into())?;
+    m.borrow_mut().count = count;
+    result?;
     Ok(Value::Nil)
 }
 
@@ -8146,6 +8201,35 @@ fn f_condition_notify(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             &[],
         ));
     }
+    let all = arg(&a, 1).truthy();
+    let mut notified = false;
+    c.borrow_mut().waiters.retain(|weak| {
+        let Some(waiter) = weak.upgrade() else {
+            return false;
+        };
+        if !waiter.get() && (all || !notified) {
+            waiter.set(true);
+            notified = true;
+        }
+        true
+    });
+    // GNU briefly releases every recursive level while notifying, then
+    // reacquires the mutex before returning to Lisp.
+    let mutex = c.borrow().mutex.clone();
+    let Value::Mutex(m) = &mutex else {
+        unreachable!()
+    };
+    let count = {
+        let mut held = m.borrow_mut();
+        let count = held.count;
+        held.owner = None;
+        held.count = 0;
+        count
+    };
+    let result = crate::lisp::eval::threads::yield_now(i);
+    f_mutex_lock(i, vec![mutex.clone()].into())?;
+    m.borrow_mut().count = count;
+    result?;
     Ok(Value::Nil)
 }
 
@@ -12630,11 +12714,13 @@ fn f_thread_signal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if std::rc::Rc::ptr_eq(&thread, &i.threads[i.current_thread]) {
         return super::evalfn::f_signal(i, a[1..].to_vec().into());
     }
-    // No scheduling is needed to retain a signal for a completed target.
-    // GNU defers validation until join and keeps the signal for repeat joins.
-    if thread.borrow().finished {
-        thread.borrow_mut().pending_signal = Some((a[1].clone(), a[2].clone()));
+    if std::rc::Rc::ptr_eq(&thread, &i.threads[0]) {
+        crate::lisp::eval::threads::signal_main(i, a[1].clone(), a[2].clone());
+        return Ok(Value::Nil);
     }
+    // Live targets receive this at their next scheduling boundary. For
+    // completed targets GNU retains it for later (including repeat) joins.
+    thread.borrow_mut().pending_signal = Some((a[1].clone(), a[2].clone()));
     Ok(Value::Nil)
 }
 
@@ -17283,10 +17369,10 @@ fn f_thread_set_buffer_disposition(i: &mut Interp, a: crate::lisp::Argv) -> Eval
     Ok(Value::Nil)
 }
 
-/// `thread--blocker` — GNU checks THREADP; nil (no blocker tracked).
+/// The mutex, condition variable or thread this thread is waiting for.
 fn f_thread_blocker(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = want_thread(i, &a[0])?;
-    Ok(Value::Nil)
+    let t = want_thread(i, &a[0])?;
+    Ok(t.borrow().blocker.clone().unwrap_or(Value::Nil))
 }
 
 /// `optimize-char-table' — collapse uniform sub-tables bottom-up

@@ -303,3 +303,31 @@ fn restored_weak_tables_keep_live_keys_and_release_unreachable_keys() {
         "(1536 1536 1 retained)"
     );
 }
+
+#[test]
+fn image_restores_recursive_mutex_ownership() {
+    let fixture = Fixture::new();
+    let producer = format!(
+        "(progn (setq dump196-mutex (make-mutex \"recursive\")) \
+          (mutex-lock dump196-mutex) (mutex-lock dump196-mutex) \
+          (dump-emacs-portable {} t) (princ \"ready\"))",
+        literal(&fixture.image())
+    );
+    assert_eq!(
+        Fixture::ok(fixture.eval("producer-cache", &[], &producer)),
+        "ready"
+    );
+    let consumer = "(progn (mutex-unlock dump196-mutex) \
+        (let ((worker (make-thread (lambda () (with-mutex dump196-mutex 42))))) \
+          (thread-yield) \
+          (let ((blocked (eq (thread--blocker worker) dump196-mutex))) \
+            (mutex-unlock dump196-mutex) (prin1 (list blocked (thread-join worker))))))";
+    assert_eq!(
+        Fixture::ok(fixture.eval(
+            "consumer-cache",
+            &["--dump-file", fixture.image().to_str().unwrap()],
+            consumer
+        )),
+        "(t 42)"
+    );
+}

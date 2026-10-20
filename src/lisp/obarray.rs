@@ -228,6 +228,16 @@ pub struct Obarray {
 }
 
 impl Obarray {
+    /// No symbols or reserved capacity: only for an unevaluated runtime slot.
+    pub(crate) fn empty() -> Self {
+        Self {
+            map: HashMap::default(),
+            symbols: Vec::new(),
+            gensym_counter: 0,
+            gensym_n: 0,
+        }
+    }
+
     pub fn new() -> Self {
         let mut ob = Obarray {
             map: HashMap::with_capacity_and_hasher(4096, rustc_hash::FxBuildHasher::default()),

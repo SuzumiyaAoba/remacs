@@ -38,7 +38,7 @@ use crate::lisp::{EvalResult, Flow, Interp, SymId, sym};
 /// `OBJTAB` (0 is the error sentinel `EM_INVALID`).
 type EmObj = u64;
 type EmEnv = usize;
-type EmEntry = unsafe extern "C" fn(*const EmApi, EmEnv, *const EmObj, i64) -> EmObj;
+type EmEntry = unsafe extern "C-unwind" fn(*const EmApi, EmEnv, *const EmObj, i64) -> EmObj;
 
 const EM_INVALID: EmObj = 0;
 
@@ -50,6 +50,32 @@ thread_local! {
     static META: RefCell<Vec<NativeMeta>> = RefCell::new(Vec::new());
     static UNITS: RefCell<Vec<Unit>> = RefCell::new(Vec::new());
     static CTXT: RefCell<Option<String>> = RefCell::new(None);
+}
+
+/// Call-local handles belong to a Lisp stack: truncate(mark) in one native
+/// call must never discard another, suspended call's handles.
+#[derive(Default)]
+pub(crate) struct ThreadState {
+    objects: Vec<Value>,
+    pending: Option<Flow>,
+    active: Option<usize>,
+    context: Option<String>,
+}
+
+pub(crate) fn take_thread_state() -> ThreadState {
+    ThreadState {
+        objects: OBJTAB.with(|v| std::mem::take(&mut *v.borrow_mut())),
+        pending: PENDING.with(|v| v.borrow_mut().take()),
+        active: ACTIVE_NATIVE.replace(None),
+        context: CTXT.with(|v| v.borrow_mut().take()),
+    }
+}
+
+pub(crate) fn restore_thread_state(state: ThreadState) {
+    OBJTAB.with(|v| *v.borrow_mut() = state.objects);
+    PENDING.with(|v| *v.borrow_mut() = state.pending);
+    ACTIVE_NATIVE.set(state.active);
+    CTXT.with(|v| *v.borrow_mut() = state.context);
 }
 
 fn reg(v: Value) -> EmObj {
@@ -91,64 +117,64 @@ unsafe fn outcome(_e: EmEnv, r: Result<Value, Flow>) -> EmObj {
 
 #[repr(C)]
 struct EmApi {
-    mk_nil: unsafe extern "C" fn(EmEnv) -> EmObj,
-    mk_t: unsafe extern "C" fn(EmEnv) -> EmObj,
-    mk_int: unsafe extern "C" fn(EmEnv, i64) -> EmObj,
-    mk_float: unsafe extern "C" fn(EmEnv, f64) -> EmObj,
-    mk_str: unsafe extern "C" fn(EmEnv, *const c_char, usize) -> EmObj,
-    intern: unsafe extern "C" fn(EmEnv, *const c_char, usize) -> EmObj,
+    mk_nil: unsafe extern "C-unwind" fn(EmEnv) -> EmObj,
+    mk_t: unsafe extern "C-unwind" fn(EmEnv) -> EmObj,
+    mk_int: unsafe extern "C-unwind" fn(EmEnv, i64) -> EmObj,
+    mk_float: unsafe extern "C-unwind" fn(EmEnv, f64) -> EmObj,
+    mk_str: unsafe extern "C-unwind" fn(EmEnv, *const c_char, usize) -> EmObj,
+    intern: unsafe extern "C-unwind" fn(EmEnv, *const c_char, usize) -> EmObj,
     /// Parse a printed literal (`read-from-string').
-    read: unsafe extern "C" fn(EmEnv, *const c_char, usize) -> EmObj,
+    read: unsafe extern "C-unwind" fn(EmEnv, *const c_char, usize) -> EmObj,
     /// Truth test (non-nil → 1).
-    truthy: unsafe extern "C" fn(EmEnv, EmObj) -> i64,
+    truthy: unsafe extern "C-unwind" fn(EmEnv, EmObj) -> i64,
     /// `funcall' a function object or symbol.
-    call: unsafe extern "C" fn(EmEnv, EmObj, *const EmObj, i64) -> EmObj,
+    call: unsafe extern "C-unwind" fn(EmEnv, EmObj, *const EmObj, i64) -> EmObj,
     /// `eval' a form.
-    eval: unsafe extern "C" fn(EmEnv, EmObj) -> EmObj,
+    eval: unsafe extern "C-unwind" fn(EmEnv, EmObj) -> EmObj,
     /// Call a lambda/subr object with argv (fallback path).
-    call_lambda: unsafe extern "C" fn(EmEnv, EmObj, *const EmObj, i64) -> EmObj,
+    call_lambda: unsafe extern "C-unwind" fn(EmEnv, EmObj, *const EmObj, i64) -> EmObj,
     /// `set' a (dynamic/global) variable symbol.
-    sym_set: unsafe extern "C" fn(EmEnv, EmObj, EmObj) -> EmObj,
+    sym_set: unsafe extern "C-unwind" fn(EmEnv, EmObj, EmObj) -> EmObj,
     /// Record a non-local exit; always returns EM_INVALID.
-    signal: unsafe extern "C" fn(EmEnv, EmObj, EmObj) -> EmObj,
-    car: unsafe extern "C" fn(EmEnv, EmObj) -> EmObj,
-    cdr: unsafe extern "C" fn(EmEnv, EmObj) -> EmObj,
-    cons: unsafe extern "C" fn(EmEnv, EmObj, EmObj) -> EmObj,
-    listn: unsafe extern "C" fn(EmEnv, *const EmObj, i64) -> EmObj,
+    signal: unsafe extern "C-unwind" fn(EmEnv, EmObj, EmObj) -> EmObj,
+    car: unsafe extern "C-unwind" fn(EmEnv, EmObj) -> EmObj,
+    cdr: unsafe extern "C-unwind" fn(EmEnv, EmObj) -> EmObj,
+    cons: unsafe extern "C-unwind" fn(EmEnv, EmObj, EmObj) -> EmObj,
+    listn: unsafe extern "C-unwind" fn(EmEnv, *const EmObj, i64) -> EmObj,
     /// Registration entry used by generated init code.
-    defsubr: unsafe extern "C" fn(*const EmApi, EmEnv, i64, *const c_void) -> i64,
+    defsubr: unsafe extern "C-unwind" fn(*const EmApi, EmEnv, i64, *const c_void) -> i64,
     /// Read a function constant once, retaining its Value rather than a
     /// temporary OBJTAB handle. Appended to preserve the old unit ABI.
-    read_constant: unsafe extern "C" fn(EmEnv, *const c_char, usize) -> EmObj,
-    string_constant: unsafe extern "C" fn(EmEnv, *const c_char, usize) -> EmObj,
-    float_constant: unsafe extern "C" fn(EmEnv, f64) -> EmObj,
+    read_constant: unsafe extern "C-unwind" fn(EmEnv, *const c_char, usize) -> EmObj,
+    string_constant: unsafe extern "C-unwind" fn(EmEnv, *const c_char, usize) -> EmObj,
+    float_constant: unsafe extern "C-unwind" fn(EmEnv, f64) -> EmObj,
     /// Preserve the source string's byte-kind flags; appended for old units.
-    string_constant_kind: unsafe extern "C" fn(EmEnv, *const c_char, usize, i64) -> EmObj,
+    string_constant_kind: unsafe extern "C-unwind" fn(EmEnv, *const c_char, usize, i64) -> EmObj,
 }
 
-unsafe extern "C" fn api_nil(_e: EmEnv) -> EmObj {
+unsafe extern "C-unwind" fn api_nil(_e: EmEnv) -> EmObj {
     reg(Value::Nil)
 }
-unsafe extern "C" fn api_t(_e: EmEnv) -> EmObj {
+unsafe extern "C-unwind" fn api_t(_e: EmEnv) -> EmObj {
     reg(Value::t())
 }
-unsafe extern "C" fn api_int(_e: EmEnv, n: i64) -> EmObj {
+unsafe extern "C-unwind" fn api_int(_e: EmEnv, n: i64) -> EmObj {
     reg(Value::integer(n as i128))
 }
-unsafe extern "C" fn api_float(_e: EmEnv, f: f64) -> EmObj {
+unsafe extern "C-unwind" fn api_float(_e: EmEnv, f: f64) -> EmObj {
     reg(Value::float(f))
 }
-unsafe extern "C" fn api_str(_e: EmEnv, p: *const c_char, n: usize) -> EmObj {
+unsafe extern "C-unwind" fn api_str(_e: EmEnv, p: *const c_char, n: usize) -> EmObj {
     let b = unsafe { std::slice::from_raw_parts(p as *const u8, n) };
     reg(Value::string(String::from_utf8_lossy(b)))
 }
-unsafe extern "C" fn api_intern(e: EmEnv, p: *const c_char, n: usize) -> EmObj {
+unsafe extern "C-unwind" fn api_intern(e: EmEnv, p: *const c_char, n: usize) -> EmObj {
     let b = unsafe { std::slice::from_raw_parts(p as *const u8, n) };
     let i = host(e);
     let s = String::from_utf8_lossy(b);
     reg(Value::Sym(i.intern(&s)))
 }
-unsafe extern "C" fn api_read(e: EmEnv, p: *const c_char, n: usize) -> EmObj {
+unsafe extern "C-unwind" fn api_read(e: EmEnv, p: *const c_char, n: usize) -> EmObj {
     let b = unsafe { std::slice::from_raw_parts(p as *const u8, n) };
     let i = host(e);
     let s = String::from_utf8_lossy(b).into_owned();
@@ -179,13 +205,13 @@ fn native_constant(key: ConstantKey, create: impl FnOnce() -> EmObj) -> EmObj {
     handle
 }
 
-unsafe extern "C" fn api_read_constant(e: EmEnv, p: *const c_char, n: usize) -> EmObj {
+unsafe extern "C-unwind" fn api_read_constant(e: EmEnv, p: *const c_char, n: usize) -> EmObj {
     native_constant(ConstantKey::Read(p as usize, n), || api_read(e, p, n))
 }
-unsafe extern "C" fn api_string_constant(e: EmEnv, p: *const c_char, n: usize) -> EmObj {
+unsafe extern "C-unwind" fn api_string_constant(e: EmEnv, p: *const c_char, n: usize) -> EmObj {
     native_constant(ConstantKey::String(p as usize, n), || api_str(e, p, n))
 }
-unsafe extern "C" fn api_string_constant_kind(
+unsafe extern "C-unwind" fn api_string_constant_kind(
     e: EmEnv,
     p: *const c_char,
     n: usize,
@@ -205,13 +231,13 @@ unsafe extern "C" fn api_string_constant_kind(
         handle
     })
 }
-unsafe extern "C" fn api_float_constant(e: EmEnv, f: f64) -> EmObj {
+unsafe extern "C-unwind" fn api_float_constant(e: EmEnv, f: f64) -> EmObj {
     native_constant(ConstantKey::Float(f.to_bits()), || api_float(e, f))
 }
-unsafe extern "C" fn api_truthy(_e: EmEnv, h: EmObj) -> i64 {
+unsafe extern "C-unwind" fn api_truthy(_e: EmEnv, h: EmObj) -> i64 {
     (!obj(h).is_nil()) as i64
 }
-unsafe extern "C" fn api_call(e: EmEnv, f: EmObj, argv: *const EmObj, argc: i64) -> EmObj {
+unsafe extern "C-unwind" fn api_call(e: EmEnv, f: EmObj, argv: *const EmObj, argc: i64) -> EmObj {
     let i = host(e);
     // `call' takes already-evaluated values → `apply', not
     // `call_function' (which evals each arg as a form).
@@ -221,12 +247,12 @@ unsafe extern "C" fn api_call(e: EmEnv, f: EmObj, argv: *const EmObj, argc: i64)
     let f = obj(f);
     outcome(e, i.apply(&f, args))
 }
-unsafe extern "C" fn api_eval(e: EmEnv, form: EmObj) -> EmObj {
+unsafe extern "C-unwind" fn api_eval(e: EmEnv, form: EmObj) -> EmObj {
     let i = host(e);
     let form = obj(form);
     outcome(e, i.eval(&form))
 }
-unsafe extern "C" fn api_sym_set(e: EmEnv, s: EmObj, v: EmObj) -> EmObj {
+unsafe extern "C-unwind" fn api_sym_set(e: EmEnv, s: EmObj, v: EmObj) -> EmObj {
     let i = host(e);
     let (s, v) = (obj(s), obj(v));
     match s {
@@ -237,11 +263,11 @@ unsafe extern "C" fn api_sym_set(e: EmEnv, s: EmObj, v: EmObj) -> EmObj {
         other => outcome(e, Err(i.wrong_type_mut("symbolp", &other))),
     }
 }
-unsafe extern "C" fn api_signal(_e: EmEnv, s: EmObj, d: EmObj) -> EmObj {
+unsafe extern "C-unwind" fn api_signal(_e: EmEnv, s: EmObj, d: EmObj) -> EmObj {
     PENDING.with(|p| *p.borrow_mut() = Some(Flow::Signal(obj(s), obj(d), false)));
     EM_INVALID
 }
-unsafe extern "C" fn api_car(e: EmEnv, h: EmObj) -> EmObj {
+unsafe extern "C-unwind" fn api_car(e: EmEnv, h: EmObj) -> EmObj {
     let v = obj(h);
     match &v {
         Value::Cons(c) => reg(c.borrow().car.clone()),
@@ -252,7 +278,7 @@ unsafe extern "C" fn api_car(e: EmEnv, h: EmObj) -> EmObj {
         }
     }
 }
-unsafe extern "C" fn api_cdr(e: EmEnv, h: EmObj) -> EmObj {
+unsafe extern "C-unwind" fn api_cdr(e: EmEnv, h: EmObj) -> EmObj {
     let v = obj(h);
     match &v {
         Value::Cons(c) => reg(c.borrow().cdr.clone()),
@@ -263,16 +289,16 @@ unsafe extern "C" fn api_cdr(e: EmEnv, h: EmObj) -> EmObj {
         }
     }
 }
-unsafe extern "C" fn api_cons(_e: EmEnv, a: EmObj, d: EmObj) -> EmObj {
+unsafe extern "C-unwind" fn api_cons(_e: EmEnv, a: EmObj, d: EmObj) -> EmObj {
     reg(Value::cons(obj(a), obj(d)))
 }
-unsafe extern "C" fn api_listn(_e: EmEnv, argv: *const EmObj, n: i64) -> EmObj {
+unsafe extern "C-unwind" fn api_listn(_e: EmEnv, argv: *const EmObj, n: i64) -> EmObj {
     let items: Vec<Value> = (0..n.max(0) as usize)
         .map(|k| obj(unsafe { *argv.add(k) }))
         .collect();
     reg(Value::list(items))
 }
-unsafe extern "C" fn api_defsubr(
+unsafe extern "C-unwind" fn api_defsubr(
     _api: *const EmApi,
     e: EmEnv,
     unit: i64,
@@ -447,7 +473,7 @@ struct Unit {
     _lib: libloading::Library,
 }
 
-type UnitInit = unsafe extern "C" fn(*const EmApi, EmEnv, i64) -> i32;
+type UnitInit = unsafe extern "C-unwind" fn(*const EmApi, EmEnv, i64) -> i32;
 
 enum LoadError {
     Open(String),
@@ -1474,6 +1500,8 @@ fn run_cc(c_src: &str, out_path: &str) -> Result<(), String> {
         .args([
             "-O1",
             "-fPIC",
+            "-fexceptions",
+            "-funwind-tables",
             "-shared",
             "-Wno-unused",
             "-x",

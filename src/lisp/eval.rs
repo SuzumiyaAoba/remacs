@@ -17,6 +17,9 @@ use super::obarray::sym;
 use super::reader::Reader;
 use super::value::{Argv, Arity, Cons, Lambda, Marker, SymId, Value};
 
+#[path = "threads.rs"]
+pub(crate) mod threads;
+
 /// A saved dynamic binding (specbind entry).
 struct SpecBind {
     sym: SymId,
@@ -591,6 +594,8 @@ pub struct Interp {
     pub threads: Vec<crate::lisp::value::ThreadRef>,
     /// Index into `threads` of the currently running thread.
     pub current_thread: usize,
+    pub(crate) thread_scheduler: threads::Scheduler,
+    thread_yielder: Option<std::ptr::NonNull<threads::ThreadYielder>>,
     /// `thread-last-error' state: the (sym . data) condition of the
     /// most recent thread function failure.
     pub thread_last_error: Value,
@@ -871,147 +876,14 @@ fn boot_lib(i: &mut Interp, name: &str) {
 }
 
 impl Interp {
-    pub fn new() -> Interp {
-        let mut obarray = Obarray::new();
-        let standard_output_sym = obarray.intern("standard-output");
-        let emacs_sym = obarray.intern("emacs");
-        // GNU batch's feature list (NS tty build ordering);
-        // `provide' appends to this.
-        let feature_syms: Vec<SymId> = [
-            "japan-util",
-            "rmc",
-            "iso-transl",
-            "tooltip",
-            "cconv",
-            "eldoc",
-            "paren",
-            "electric",
-            "uniquify",
-            "ediff-hook",
-            "vc-hooks",
-            "lisp-float-type",
-            "elisp-mode",
-            "mwheel",
-            "term/ns-win",
-            "ns-win",
-            "ucs-normalize",
-            "mule-util",
-            "term/common-win",
-            "tool-bar",
-            // `subr-x' is deliberately absent: GNU -Q reports
-            // `(featurep 'subr-x)' => nil (subr-x.el isn't in loadup),
-            // even though the amalgamated file's dump-side defs are
-            // loaded via `boot_lib' below.  Registering the feature
-            // would make `(require 'subr-x)' a no-op and leave the
-            // real subr-x names (hash-table-keys, thread-first, ...)
-            // void — qa_subrx2's GNU-verified checks.
-            "dnd",
-            "fontset",
-            "image",
-            "regexp-opt",
-            "fringe",
-            "tabulated-list",
-            "replace",
-            "newcomment",
-            "text-mode",
-            "lisp-mode",
-            "prog-mode",
-            "register",
-            "page",
-            "tab-bar",
-            "menu-bar",
-            "rfn-eshadow",
-            "isearch",
-            "easymenu",
-            "timer",
-            "select",
-            "scroll-bar",
-            "mouse",
-            "jit-lock",
-            "font-lock",
-            "syntax",
-            "font-core",
-            "term/tty-colors",
-            "frame",
-            "minibuffer",
-            "nadvice",
-            "seq",
-            "simple",
-            "cl-generic",
-            "indonesian",
-            "philippine",
-            "cham",
-            "georgian",
-            "utf-8-lang",
-            "misc-lang",
-            "vietnamese",
-            "tibetan",
-            "thai",
-            "tai-viet",
-            "lao",
-            "korean",
-            "japanese",
-            "eucjp-ms",
-            "cp51932",
-            "hebrew",
-            "greek",
-            "romanian",
-            "slovak",
-            "czech",
-            "european",
-            "ethiopic",
-            "indian",
-            "cyrillic",
-            "chinese",
-            "composite",
-            "emoji-zwj",
-            "charscript",
-            "charprop",
-            "case-table",
-            "epa-hook",
-            "jka-cmpr-hook",
-            "help",
-            "abbrev",
-            "obarray",
-            "oclosure",
-            "cl-preloaded",
-            "button",
-            "loaddefs",
-            "theme-loaddefs",
-            "faces",
-            "cus-face",
-            "macroexp",
-            "files",
-            "window",
-            "text-properties",
-            "overlay",
-            "sha1",
-            "md5",
-            "base64",
-            "format",
-            "env",
-            "code-pages",
-            "mule",
-            "custom",
-            "widget",
-            "keymap",
-            "hashtable-print-readable",
-            "backquote",
-            "threads",
-            "kqueue",
-            "cocoa",
-            "ns",
-            "multi-tty",
-            "make-network-process",
-            "tty-child-frames",
-            "native-compile",
-        ]
-        .iter()
-        .map(|s| obarray.intern(s))
-        .chain(std::iter::once(emacs_sym))
-        .collect();
-        let dump_features = feature_syms.clone();
-        let mut interp = Interp {
+    /// Storage used while the live runtime is owned by another coroutine.
+    /// It is never evaluated; all live state travels through owned boxes.
+    pub(crate) fn vacant() -> Self {
+        Self::uninitialized(Obarray::empty(), 0, Vec::new())
+    }
+
+    fn uninitialized(obarray: Obarray, standard_output_sym: SymId, feature_syms: Vec<SymId>) -> Self {
+        Interp {
             obarray,
             specbind: Vec::new(),
             catch_tags: Vec::new(),
@@ -1154,18 +1026,10 @@ impl Interp {
             handler_bindings: Vec::new(),
             case_handlers: Vec::new(),
             var_watchers: Vec::new(),
-            threads: vec![crate::lisp::memory::allocate(
-                crate::lisp::value::Thread {
-                    name: None,
-                    alive: true,
-                    result: None,
-                    last_error: None,
-                    pending_signal: None,
-                    finished: false,
-                },
-                crate::lisp::Value::Thread,
-            )],
+            threads: Vec::new(),
             current_thread: 0,
+            thread_scheduler: Default::default(),
+            thread_yielder: None,
             thread_last_error: Value::Nil,
             standard_case_table: None,
             standard_category_table: None,
@@ -1197,7 +1061,162 @@ impl Interp {
             multibyte_strings: HashMap::default(),
             string_props: HashMap::default(),
             zero_vector: Value::vector(Vec::new()),
-        };
+        }
+    }
+
+    pub fn new() -> Interp {
+        let mut obarray = Obarray::new();
+        let standard_output_sym = obarray.intern("standard-output");
+        let emacs_sym = obarray.intern("emacs");
+        // GNU batch's feature list (NS tty build ordering);
+        // `provide' appends to this.
+        let feature_syms: Vec<SymId> = [
+            "japan-util",
+            "rmc",
+            "iso-transl",
+            "tooltip",
+            "cconv",
+            "eldoc",
+            "paren",
+            "electric",
+            "uniquify",
+            "ediff-hook",
+            "vc-hooks",
+            "lisp-float-type",
+            "elisp-mode",
+            "mwheel",
+            "term/ns-win",
+            "ns-win",
+            "ucs-normalize",
+            "mule-util",
+            "term/common-win",
+            "tool-bar",
+            // `subr-x' is deliberately absent: GNU -Q reports
+            // `(featurep 'subr-x)' => nil (subr-x.el isn't in loadup),
+            // even though the amalgamated file's dump-side defs are
+            // loaded via `boot_lib' below.  Registering the feature
+            // would make `(require 'subr-x)' a no-op and leave the
+            // real subr-x names (hash-table-keys, thread-first, ...)
+            // void — qa_subrx2's GNU-verified checks.
+            "dnd",
+            "fontset",
+            "image",
+            "regexp-opt",
+            "fringe",
+            "tabulated-list",
+            "replace",
+            "newcomment",
+            "text-mode",
+            "lisp-mode",
+            "prog-mode",
+            "register",
+            "page",
+            "tab-bar",
+            "menu-bar",
+            "rfn-eshadow",
+            "isearch",
+            "easymenu",
+            "timer",
+            "select",
+            "scroll-bar",
+            "mouse",
+            "jit-lock",
+            "font-lock",
+            "syntax",
+            "font-core",
+            "term/tty-colors",
+            "frame",
+            "minibuffer",
+            "nadvice",
+            "seq",
+            "simple",
+            "cl-generic",
+            "indonesian",
+            "philippine",
+            "cham",
+            "georgian",
+            "utf-8-lang",
+            "misc-lang",
+            "vietnamese",
+            "tibetan",
+            "thai",
+            "tai-viet",
+            "lao",
+            "korean",
+            "japanese",
+            "eucjp-ms",
+            "cp51932",
+            "hebrew",
+            "greek",
+            "romanian",
+            "slovak",
+            "czech",
+            "european",
+            "ethiopic",
+            "indian",
+            "cyrillic",
+            "chinese",
+            "composite",
+            "emoji-zwj",
+            "charscript",
+            "charprop",
+            "case-table",
+            "epa-hook",
+            "jka-cmpr-hook",
+            "help",
+            "abbrev",
+            "obarray",
+            "oclosure",
+            "cl-preloaded",
+            "button",
+            "loaddefs",
+            "theme-loaddefs",
+            "faces",
+            "cus-face",
+            "macroexp",
+            "files",
+            "window",
+            "text-properties",
+            "overlay",
+            "sha1",
+            "md5",
+            "base64",
+            "format",
+            "env",
+            "code-pages",
+            "mule",
+            "custom",
+            "widget",
+            "keymap",
+            "hashtable-print-readable",
+            "backquote",
+            "threads",
+            "kqueue",
+            "cocoa",
+            "ns",
+            "multi-tty",
+            "make-network-process",
+            "tty-child-frames",
+            "native-compile",
+        ]
+        .iter()
+        .map(|s| obarray.intern(s))
+        .chain(std::iter::once(emacs_sym))
+        .collect();
+        let dump_features = feature_syms.clone();
+        let mut interp = Self::uninitialized(obarray, standard_output_sym, feature_syms);
+        interp.threads.push(crate::lisp::memory::allocate(
+            crate::lisp::value::Thread {
+                name: None,
+                alive: true,
+                result: None,
+                last_error: None,
+                pending_signal: None,
+                blocker: None,
+                finished: false,
+            },
+            crate::lisp::Value::Thread,
+        ));
         let _init_t0 = std::time::Instant::now();
         crate::lisp::builtins::install(&mut interp);
         if std::env::var_os("REMACS_BOOT_PROF").is_some() {

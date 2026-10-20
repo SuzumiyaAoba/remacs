@@ -467,7 +467,7 @@ impl Graph {
                 }
                 Value::Thread(thread) => {
                     let thread = borrow!(thread);
-                    for value in [&thread.result, &thread.last_error] {
+                    for value in [&thread.result, &thread.last_error, &thread.blocker] {
                         if let Some(value) = value {
                             self.edge(owner, value, true);
                         }

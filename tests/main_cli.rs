@@ -77,6 +77,22 @@ fn eval_runs_lisp() {
 }
 
 #[test]
+fn a_worker_can_exit_the_batch_process() {
+    let (out, _, code) = remacs(
+        &[
+            "-Q",
+            "--batch",
+            "--eval",
+            "(progn (make-thread (lambda () (thread-yield) (kill-emacs 23))) \
+           (thread-yield) (thread-yield) (princ \"unreachable\"))",
+        ],
+        "",
+    );
+    assert_eq!(code, 23);
+    assert_eq!(out, "");
+}
+
+#[test]
 fn quick_start_symbol_metadata_matches_gnu() {
     // Probe before loading Lisp source: those loads may legitimately
     // require cl-macs, pcase, gv and icons and change their metadata.

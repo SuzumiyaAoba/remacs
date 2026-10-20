@@ -1167,6 +1167,11 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
     // `universal-argument' continuation behavior).
     let mut arg_mode = false;
     loop {
+        if let Err(flow) = crate::lisp::eval::threads::yield_now(i)
+            .and_then(|_| crate::lisp::builtins::evalfn::thread_wait_events(i))
+        {
+            report_flow(i, flow);
+        }
         if i.quit_editor {
             break;
         }
@@ -1949,15 +1954,21 @@ fn isearch_loop<T: KeyIo>(
 ) -> io::Result<()> {
     let mut st = Isearch::new(i, backward, regexp);
     loop {
+        if let Err(flow) = crate::lisp::eval::threads::yield_now(i)
+            .and_then(|_| crate::lisp::builtins::evalfn::thread_wait_events(i))
+        {
+            report_flow(i, flow);
+            st.clear(i);
+            break;
+        }
         {
             let mut t = term.borrow_mut();
             let _ = t.render(i);
             let _ = t.draw_echo(&st.label());
         }
-        let key = term
-            .borrow_mut()
-            .poll_key(Duration::from_secs(86400))?
-            .unwrap_or(0);
+        let Some(key) = term.borrow_mut().poll_key(Duration::from_millis(50))? else {
+            continue;
+        };
         let action = st.step(i, key);
         // Rebuild the isearch/lazy-highlight overlays so the next
         // render paints the matches (GNU: isearch-update →
@@ -2063,6 +2074,8 @@ fn minibuf_loop<T: KeyIo>(
     let mut keys: Vec<i128> = Vec::new();
     let mut arg_mode = false;
     loop {
+        crate::lisp::eval::threads::yield_now(i)?;
+        crate::lisp::builtins::evalfn::thread_wait_events(i)?;
         {
             let mut t = term.borrow_mut();
             let shown = if single {
@@ -2074,7 +2087,7 @@ fn minibuf_loop<T: KeyIo>(
         }
         // Propagate io errors — swallowing them as None spins an
         // infinite poll loop on a dead input source.
-        let code = match term.borrow_mut().poll_key(Duration::from_secs(86400)) {
+        let code = match term.borrow_mut().poll_key(Duration::from_millis(50)) {
             Ok(Some(k)) => k,
             Ok(None) => continue,
             Err(e) => return Err(i.error(format!("minibuffer input: {e}"))),

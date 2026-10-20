@@ -46,6 +46,59 @@ fn availability_and_feature() {
 }
 
 #[test]
+fn interleaved_threads_preserve_native_handles_and_constant_contexts() {
+    if !avail() {
+        return;
+    }
+    let path = scratch(
+        "threads196.el",
+        r#";;; -*- lexical-binding: t; -*-
+(defun nc196-a (x)
+  (let ((saved (vector x "alpha")))
+    (thread-yield)
+    (list (aref saved 0) (eq (aref saved 1) "alpha"))))
+(defun nc196-b (x)
+  (let ((saved (vector x "beta")))
+    (thread-yield)
+    (list (aref saved 0) (eq (aref saved 1) "beta"))))
+"#,
+    );
+    assert_eq!(
+        ev(&format!(
+            "(progn (native-elisp-load (native-compile {path:?})) \
+          (let ((a (make-thread (lambda () (nc196-a 11)))) \
+                (b (make-thread (lambda () (nc196-b 22))))) \
+            (thread-yield) (thread-yield) \
+            (list (thread-join a) (thread-join b) \
+              (native-comp-function-p (symbol-function 'nc196-a)) \
+              (native-comp-function-p (symbol-function 'nc196-b)))))"
+        )),
+        "((11 t) (22 t) t t)"
+    );
+}
+
+#[test]
+fn dropping_a_suspended_native_worker_unwinds_across_the_c_boundary() {
+    if !avail() {
+        return;
+    }
+    let path = scratch(
+        "drop-thread196.el",
+        "(defun nc196-drop () (thread-yield) 7)\n",
+    );
+    // ev drops its interpreter before returning. The worker is still
+    // suspended inside generated C, so its stack must be unwound safely.
+    assert_eq!(
+        ev(&format!(
+            "(progn (native-elisp-load (native-compile {path:?})) \
+          (make-thread (lambda () (nc196-drop))) \
+          (thread-yield) 'paused)"
+        )),
+        "paused"
+    );
+}
+
+#[test]
 fn native_feature_name_does_not_depend_on_runtime_compiler() {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

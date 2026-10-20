@@ -100,6 +100,56 @@ fn run_on_big_stack(f: impl FnOnce() + Send + 'static) {
 }
 
 #[test]
+fn tui_schedules_workers_while_waiting_for_input() {
+    struct IdleIo {
+        script: ScriptIo,
+        idle_polls: usize,
+    }
+    impl KeyIo for IdleIo {
+        fn poll_key(&mut self, duration: Duration) -> io::Result<Option<i128>> {
+            if self.idle_polls > 0 {
+                self.idle_polls -= 1;
+                Ok(None)
+            } else {
+                self.script.poll_key(duration)
+            }
+        }
+        fn unread(&mut self, key: i128) {
+            self.script.unread(key)
+        }
+        fn render(&mut self, i: &Interp) -> io::Result<()> {
+            self.script.render(i)
+        }
+        fn draw_echo(&mut self, text: &str) -> io::Result<()> {
+            self.script.draw_echo(text)
+        }
+        fn size(&self) -> (usize, usize) {
+            self.script.size()
+        }
+    }
+    run_on_big_stack(|| {
+        let mut i = Interp::new();
+        i.eval_str(
+            "(setq qa196-tui-stage 0) \
+            (make-thread (lambda () (setq qa196-tui-stage 1) \
+              (thread-yield) (setq qa196-tui-stage 2)))",
+        )
+        .unwrap();
+        let io = IdleIo {
+            idle_polls: 4,
+            script: ScriptIo {
+                keys: vec![C_X, 3].into(),
+                echoes: Rc::new(RefCell::new(Vec::new())),
+                grids: Rc::new(RefCell::new(Vec::new())),
+            },
+        };
+        remacs::term::run_editor_with(io, &mut i).unwrap();
+        let value = i.eval_str("qa196-tui-stage").unwrap();
+        assert!(matches!(value, remacs::lisp::Value::Int(2)));
+    });
+}
+
+#[test]
 fn tui_session_find_file_mx_switch_save_quit() {
     run_on_big_stack(move || {
         let file = std::env::temp_dir().join("remacs_tui_session.txt");

@@ -9705,7 +9705,7 @@ fn f_read_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             if std::time::Instant::now() >= deadline {
                 return Ok(Value::Nil);
             }
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            crate::lisp::eval::threads::pause(i, std::time::Duration::from_millis(1))?;
         }
     }
     if i.minibuf_reader.is_none() && i.noninteractive {

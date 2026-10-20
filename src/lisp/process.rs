@@ -1944,7 +1944,7 @@ fn write_datagram(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
                 // Nested sends append whole messages behind the pending one.
                 timer_check(i)?;
                 poll_all(i)?;
-                std::thread::sleep(std::time::Duration::from_millis(5));
+                crate::lisp::eval::threads::pause(i, std::time::Duration::from_millis(5))?;
             }
             Err(e) => {
                 let symbol = i.intern("file-error");
@@ -2815,7 +2815,7 @@ fn f_accept_process_output(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         None => poll_all(i)?,
     };
     while !got && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        crate::lisp::eval::threads::pause(i, std::time::Duration::from_millis(5))?;
         // wait_reading_process_output runs timer_check each iteration.
         timer_check(i)?;
         got = match &target {
@@ -2987,7 +2987,7 @@ fn write_child_input(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult
                 // processes) and timers instead of just waiting for POLLOUT.
                 timer_check(i)?;
                 poll_all(i)?;
-                std::thread::sleep(std::time::Duration::from_millis(5));
+                crate::lisp::eval::threads::pause(i, std::time::Duration::from_millis(5))?;
             }
             Err(_) => return Err(i.error("Writing to process: broken pipe")),
         }
@@ -3006,7 +3006,7 @@ fn proc_write(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
         timer_check(i)?;
         poll_all(i)?;
         if matches!(p.borrow().io, ProcIo::Connecting(_)) && !p.borrow().dead {
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            crate::lisp::eval::threads::pause(i, std::time::Duration::from_millis(5))?;
         }
     }
     if matches!(p.borrow().io, ProcIo::Datagram(_)) {

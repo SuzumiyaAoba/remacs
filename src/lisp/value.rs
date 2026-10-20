@@ -33,9 +33,8 @@ pub type MutexRef = Rc<RefCell<Mutex>>;
 pub type CondVarRef = Rc<RefCell<CondVar>>;
 pub type FinalizerRef = Rc<RefCell<Value>>;
 
-/// A Lisp thread object. Threads run synchronously at `make-thread'
-/// time (cooperative model: no preemption), so a created thread is
-/// dead but joinable by the time `make-thread' returns.
+/// A Lisp thread object. Its coroutine runs on the interpreter's OS thread
+/// and releases execution at Lisp yield and blocking operations.
 #[derive(Debug)]
 pub struct Thread {
     pub name: Option<String>,
@@ -47,17 +46,19 @@ pub struct Thread {
     pub last_error: Option<Value>,
     /// A later signal to a completed thread, observed by `thread-join'.
     pub pending_signal: Option<(Value, Value)>,
+    /// Lisp object this thread is waiting for, if any.
+    pub blocker: Option<Value>,
     /// True once the function has run to completion.
     pub finished: bool,
 }
 
-/// A mutex object (`make-mutex'). With the cooperative thread model a
-/// mutex can only ever be held by the running thread.
+/// A recursive Lisp mutex (`make-mutex').
 #[derive(Debug)]
 pub struct Mutex {
     pub name: Option<String>,
     /// `Some(thread)` while locked; cooperative model keeps this simple.
     pub owner: Option<Value>,
+    pub count: usize,
 }
 
 /// A condition variable (`make-condition-variable').
@@ -65,6 +66,7 @@ pub struct Mutex {
 pub struct CondVar {
     pub name: Option<String>,
     pub mutex: Value,
+    pub waiters: Vec<std::rc::Weak<std::cell::Cell<bool>>>,
 }
 
 /// Emacs fixnum range on 64-bit builds: 62 bits (2 tag bits in C).

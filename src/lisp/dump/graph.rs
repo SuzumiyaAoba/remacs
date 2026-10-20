@@ -62,6 +62,8 @@ pub(super) enum Node {
     Mutex {
         name: Option<Vec<u32>>,
         owner: Option<Ref>,
+        #[serde(default)]
+        count: usize,
     },
     CondVar {
         name: Option<Vec<u32>>,
@@ -567,6 +569,7 @@ impl<'a> Encoder<'a> {
                 Node::Mutex {
                     name: m.name.as_deref().map(encode_text),
                     owner: self.optional(&m.owner)?,
+                    count: m.count,
                 }
             }
             Value::CondVar(condvar) => {
@@ -688,6 +691,7 @@ impl<'a> Decoder<'a> {
                     Mutex {
                         name: name.as_deref().map(decode_text),
                         owner: None,
+                        count: 0,
                     },
                     Value::Mutex,
                 ))),
@@ -695,6 +699,7 @@ impl<'a> Decoder<'a> {
                     CondVar {
                         name: name.as_deref().map(decode_text),
                         mutex: Value::Nil,
+                        waiters: Vec::new(),
                     },
                     Value::CondVar,
                 ))),
@@ -939,8 +944,11 @@ impl<'a> Decoder<'a> {
                     *env.raw.borrow_mut() = raw;
                     *env.declared.borrow_mut() = declared;
                 }
-                (Node::Mutex { owner, .. }, Some(Value::Mutex(mutex))) => {
-                    mutex.borrow_mut().owner = self.optional(i, owner)?;
+                (Node::Mutex { owner, count, .. }, Some(Value::Mutex(mutex))) => {
+                    let mut mutex = mutex.borrow_mut();
+                    mutex.owner = self.optional(i, owner)?;
+                    // Earlier images had one lock level for an owned mutex.
+                    mutex.count = if mutex.owner.is_some() { (*count).max(1) } else { 0 };
                 }
                 (Node::CondVar { mutex, .. }, Some(Value::CondVar(condvar))) => {
                     condvar.borrow_mut().mutex = self.value(i, mutex)?;

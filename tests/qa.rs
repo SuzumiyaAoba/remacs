@@ -407,6 +407,7 @@ qa!(qa_time_zero_zone, "qa_time_zero_zone.el");
 qa!(qa_time_modifiers, "qa_time_modifiers.el");
 
 qa!(qa_thread_bookkeeping, "qa_thread_bookkeeping.el");
+qa!(qa_thread_scheduling, "qa_thread_scheduling.el");
 
 qa!(qa_file_replace, "qa_file_replace.el");
 
