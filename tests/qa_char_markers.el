@@ -1,0 +1,40 @@
+;;; -*- lexical-binding: t; -*-
+(qa-err-data (char-after (make-marker)) 'error '("Marker does not point anywhere"))
+(qa-err-data (char-before (make-marker)) 'error '("Marker does not point anywhere"))
+(qa-err-data (with-temp-buffer (insert "abc") (char-after (make-marker)))
+             'error '("Marker does not point anywhere"))
+(qa-err-data (with-temp-buffer (insert "abc") (char-before (make-marker)))
+             'error '("Marker does not point anywhere"))
+(qa-err-data (with-temp-buffer
+              (insert "abc") (let ((marker (copy-marker 2)))
+                (set-marker marker nil) (char-after marker)))
+             'error '("Marker does not point anywhere"))
+(qa-err-data (with-temp-buffer
+              (insert "abc") (let ((marker (copy-marker 2)))
+                (set-marker marker nil) (char-before marker)))
+             'error '("Marker does not point anywhere"))
+(qa (with-temp-buffer
+      (insert "abc")
+      (list (char-after (copy-marker 2)) (char-before (copy-marker 2))
+            (char-after (point-max-marker)) (char-before (point-min-marker)))) '(98 97 nil nil))
+(qa (let ((buffer (generate-new-buffer " *qa135-source*")) marker)
+      (unwind-protect
+          (progn
+            (with-current-buffer buffer (insert "XYZ") (setq marker (copy-marker 2)))
+            (with-temp-buffer (insert "abc") (list (char-after marker) (char-before marker))))
+        (kill-buffer buffer))) '(98 97))
+(qa-err-data (let* ((buffer (generate-new-buffer " *qa135-killed*"))
+                   (marker (with-current-buffer buffer (point-marker))))
+              (kill-buffer buffer) (char-after marker))
+             'error '("Marker does not point anywhere"))
+(qa-err-data (let* ((buffer (generate-new-buffer " *qa135-killed*"))
+                   (marker (with-current-buffer buffer (point-marker))))
+              (kill-buffer buffer) (char-before marker))
+             'error '("Marker does not point anywhere"))
+(qa (with-temp-buffer
+      (insert "abcd") (let ((before (copy-marker 1)) (inside (copy-marker 3)) (after (copy-marker 5)))
+        (narrow-to-region 2 4)
+        (list (char-after before) (char-before before)
+              (char-after inside) (char-before inside)
+              (char-after after) (char-before after)))) '(nil nil 99 98 nil nil))
+(princ (qa--done))

@@ -4652,7 +4652,13 @@ fn f_char_after(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU uses the RAW position (1-based int arg, 0-based marker pos,
     // current point): out-of-range answers nil, never a clamp.
     let p: i128 = match a.get(0) {
-        Some(Value::Marker(m)) => m.borrow().position as i128,
+        Some(Value::Marker(m)) => {
+            let marker = m.borrow();
+            if marker.buffer.is_none() {
+                return Err(i.error("Marker does not point anywhere"));
+            }
+            marker.position as i128
+        }
         Some(Value::Nil) | None => bb.point() as i128,
         Some(v) => want_int(i, v)? - 1,
     };
@@ -4673,7 +4679,13 @@ fn f_char_before(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow();
     let p: i128 = match a.get(0) {
-        Some(Value::Marker(m)) => m.borrow().position as i128,
+        Some(Value::Marker(m)) => {
+            let marker = m.borrow();
+            if marker.buffer.is_none() {
+                return Err(i.error("Marker does not point anywhere"));
+            }
+            marker.position as i128
+        }
         Some(Value::Nil) | None => bb.point() as i128,
         Some(v) => want_int(i, v)? - 1,
     };
@@ -4688,7 +4700,6 @@ fn f_char_before(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         bb.text.char_at(p),
     )))
 }
-
 fn f_following_char(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow();
