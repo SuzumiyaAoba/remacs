@@ -141,6 +141,14 @@ uid/gid and permissions independently; macOS ACL copying is explicit and
 does not clone times. Existing hard-link targets still
 require overwrite permission, like GNU. Regressions: `qa_copy_file_times`.
 
+Frame parameter updates validate the full alist and every element before
+applying it in reverse, so the first duplicate wins. Both setter APIs use
+the same store logic. TTY name/font reports come from frame state; keep
+the shared Lisp name object for identity/properties and later mutations,
+and allocate automatic F names per interpreter. Existing minibuffer
+ownership cannot be changed to a different kind or window. Quote errors
+through `error_q`. Regressions: `qa_frame_parameters`.
+
 ## Startup profiling (`REMACS_BOOT_PROF=1`)
 
 Before full eager source expansion, warm release `--batch` startup

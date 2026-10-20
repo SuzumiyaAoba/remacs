@@ -810,7 +810,7 @@ impl Interp {
                 let _ = write!(
                     out,
                     "#<frame {} {:#x}>",
-                    f.borrow().name,
+                    f.borrow().name.borrow().as_str(),
                     Rc::as_ptr(f) as usize
                 );
             }

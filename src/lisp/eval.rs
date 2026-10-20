@@ -442,6 +442,8 @@ pub struct Interp {
     pub tz_rule: Option<String>,
     /// All frames (the first is the initial tty frame).
     pub frames: Vec<crate::editor::FrameRef>,
+    /// Next unused automatic terminal frame name (the initial frame is F1).
+    pub(crate) next_frame_name: u64,
     /// The selected frame.
     pub selected_frame: Option<crate::editor::FrameRef>,
     /// Set by `kill-emacs` to exit the command loop.
@@ -1098,6 +1100,7 @@ impl Interp {
             out_last_char: None,
             tz_rule: None,
             frames: Vec::new(),
+            next_frame_name: 2,
             selected_frame: None,
             quit_editor: false,
             minibuf_reader: None,

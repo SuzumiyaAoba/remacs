@@ -3468,7 +3468,7 @@ fn frame_buffer_state(i: &mut Interp) -> Vec<Value> {
     for f in &i.frames {
         let name = f.borrow().name.clone();
         v.push(Value::Frame(f.clone()));
-        v.push(Value::string(name));
+        v.push(Value::Str(name));
     }
     for id in i.buffers.list() {
         let Some(b) = i.buffers.get(id) else {

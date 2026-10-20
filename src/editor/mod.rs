@@ -13,7 +13,7 @@ use crate::lisp::builtins::listfn::nthcdr_of;
 use crate::lisp::builtins::{eq_values, equal_values};
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
-use crate::lisp::value::{Subr, SymId, Value};
+use crate::lisp::value::{StrRef, Subr, SymId, Value};
 
 pub(crate) mod winxtra;
 
@@ -96,7 +96,9 @@ pub type WindowRef = Rc<RefCell<Window>>;
 /// An editor frame (a terminal or GUI frame).
 pub struct Frame {
     pub id: usize,
-    pub name: String,
+    /// The Lisp name string, shared so mutations and text properties
+    /// remain visible to frame reporting, printing, and name allocation.
+    pub name: StrRef,
     /// Live leaf windows in display order (internal windows live in
     /// the tree hanging off `root', NOT here).
     pub windows: Vec<WindowRef>,
@@ -284,7 +286,7 @@ impl Frame {
         main.borrow_mut().use_time = next_use_time();
         Rc::new(RefCell::new(Frame {
             id: next_frame_id(),
-            name: "F1".into(),
+            name: Rc::new(RefCell::new("F1".into())),
             windows: vec![main.clone()],
             selected: main.clone(),
             minibuffer: Some(mb),
@@ -5157,6 +5159,15 @@ fn f_frame_parameter(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let f = frame_of(i, &arg(&a, 0))?;
     let ps = want_sym(i, &a[1])?;
     let name = i.symbol_name(ps);
+    if f.borrow().dead {
+        return Ok(Value::Nil);
+    }
+    if name == "name" {
+        return Ok(Value::Str(f.borrow().name.clone()));
+    }
+    if name == "font" {
+        return Ok(Value::string("tty"));
+    }
     if name == "buffer-list" || name == "buried-buffer-list" {
         let f = f.borrow();
         let ids = if name == "buffer-list" {
@@ -5168,14 +5179,13 @@ fn f_frame_parameter(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             ids.iter().filter_map(|id| i.buffer_value(*id)).collect(),
         ));
     }
-    let v = crate::lisp::eval::plist_get(&f.borrow().params, ps);
+    let v = crate::lisp::eval::plist_get_v(&f.borrow().params, &i.sym(ps));
     if !v.is_nil() {
         return Ok(v);
     }
     let name = i.symbol_name(ps);
     let ff = f.borrow();
     Ok(match name.as_str() {
-        "name" => Value::string(ff.name.clone()),
         "width" => Value::Int(ff.width as i128),
         "height" => Value::Int(ff.height as i128),
         "modeline" => Value::t(),
@@ -5190,7 +5200,6 @@ fn f_frame_parameter(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         // Values mirror the `f_frame_parameters' defaults list.
         "tab-bar-lines" => Value::Int(0),
         "menu-bar-lines" => Value::Int(1),
-        "font" => Value::string("tty"),
         "background-color" => Value::string("unspecified-bg"),
         "foreground-color" => Value::string("unspecified-fg"),
         "cursor-color" => Value::string("white"),
@@ -5202,6 +5211,9 @@ fn f_frame_parameter(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 pub(crate) fn f_frame_parameters(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let f = frame_of(i, &arg(&a, 0))?;
+    if f.borrow().dead {
+        return Ok(Value::Nil);
+    }
     let (stored, name, w, h, mbuf, buffers, buried) = {
         let ff = f.borrow();
         let items = ff.params.list_to_vec().unwrap_or_default();
@@ -5225,7 +5237,7 @@ pub(crate) fn f_frame_parameters(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
         );
         (
             stored,
-            ff.name.clone(),
+            Value::Str(ff.name.clone()),
             ff.width,
             ff.height,
             ff.minibuffer.is_some(),
@@ -5247,7 +5259,7 @@ pub(crate) fn f_frame_parameters(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
         ("modeline", Value::t()),
         ("width", Value::Int(w as i128)),
         ("height", Value::Int(h as i128)),
-        ("name", Value::string(name)),
+        ("name", name),
         ("font", Value::string("tty")),
         ("background-color", Value::string("unspecified-bg")),
         ("foreground-color", Value::string("unspecified-fg")),
@@ -5260,6 +5272,7 @@ pub(crate) fn f_frame_parameters(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
     for (k, dv) in defaults {
         let kid = i.intern(k);
         let from_store = stored.iter().find_map(|v| match v {
+            _ if k == "name" || k == "font" => None,
             Value::Cons(c) if matches!(c.borrow().car, Value::Sym(s) if s == kid) => {
                 Some(c.borrow().cdr.clone())
             }
@@ -5287,9 +5300,73 @@ pub(crate) fn f_frame_parameters(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
     }
     Ok(Value::list(out))
 }
-fn store_frame_parameter(i: &Interp, f: &FrameRef, ps: SymId, value: Value) {
-    let name = i.symbol_name(ps);
-    if name == "buffer-list" || name == "buried-buffer-list" {
+fn next_frame_name(i: &mut Interp) -> String {
+    loop {
+        let name = format!("F{}", i.next_frame_name);
+        i.next_frame_name += 1;
+        if !i
+            .frames
+            .iter()
+            .any(|f| !f.borrow().dead && *f.borrow().name.borrow() == name)
+        {
+            return name;
+        }
+    }
+}
+
+fn automatic_frame_name(name: &str) -> bool {
+    name.starts_with('F') && name.len() > 1 && name[1..].bytes().all(|b| b.is_ascii_digit())
+}
+
+fn store_frame_parameter(
+    i: &mut Interp,
+    f: &FrameRef,
+    key: Value,
+    mut value: Value,
+) -> Result<(), Flow> {
+    let ps = i.sym_id(&key);
+    let name = ps.map(|ps| i.symbol_name(ps));
+    let key = ps.map(|ps| i.sym(ps)).unwrap_or(key);
+    if name.as_deref() == Some("minibuffer") {
+        let mut old = crate::lisp::eval::plist_get_v(&f.borrow().params, &key);
+        if old.is_nil() && f.borrow().minibuffer.is_some() {
+            old = Value::t();
+        }
+        if let Value::Window(window) = &value {
+            if window.borrow().dead || !window.borrow().minibuffer {
+                return Err(i.error_q(
+                    "The `minibuffer' parameter does not specify a valid minibuffer window",
+                    &[],
+                ));
+            }
+            let only = i.intern("only");
+            if i.sym_is(&old, sym::T) || i.sym_is(&old, only) {
+                if !f
+                    .borrow()
+                    .minibuffer
+                    .as_ref()
+                    .is_some_and(|w| Rc::ptr_eq(w, window))
+                {
+                    let message = if i.sym_is(&old, only) {
+                        "Can't change the minibuffer window of a minibuffer-only frame"
+                    } else {
+                        "Can't change the minibuffer window of a frame with its own minibuffer"
+                    };
+                    return Err(i.error_q(message, &[]));
+                }
+                value = old;
+            } else {
+                f.borrow_mut().minibuffer = Some(window.clone());
+            }
+        } else if !old.is_nil() {
+            if matches!(old, Value::Window(_)) && value.is_nil() {
+                value = old;
+            } else if !eq_values(&old, &value) {
+                return Err(i.error_q("Can't change the `minibuffer' parameter of this frame", &[]));
+            }
+        }
+    }
+    if matches!(name.as_deref(), Some("buffer-list" | "buried-buffer-list")) {
         let mut ids = Vec::new();
         let mut tail = value;
         while let Value::Cons(c) = tail {
@@ -5305,37 +5382,69 @@ fn store_frame_parameter(i: &Interp, f: &FrameRef, ps: SymId, value: Value) {
             }
             tail = rest;
         }
-        if name == "buffer-list" {
+        if name.as_deref() == Some("buffer-list") {
             f.borrow_mut().buffer_list = ids;
         } else {
             f.borrow_mut().buried_buffer_list = ids;
         }
     } else {
-        let new = crate::lisp::eval::plist_put(&f.borrow().params, ps, value);
+        let new = crate::lisp::eval::plist_put_front(&f.borrow().params, &key, value.clone());
         f.borrow_mut().params = new;
+        if name.as_deref() == Some("name") {
+            let current = f.borrow().name.borrow().clone();
+            let new_value = if value.is_nil() {
+                if automatic_frame_name(&current) {
+                    return Ok(());
+                }
+                Value::string(next_frame_name(i))
+            } else {
+                let new_name = want_str(i, &value)?;
+                if new_name == current {
+                    return Ok(());
+                }
+                if automatic_frame_name(&new_name)
+                    && i.frames
+                        .iter()
+                        .any(|frame| !frame.borrow().dead && *frame.borrow().name.borrow() == new_name)
+                {
+                    return Err(i.error_q(
+                        "Frame of the form F<num> named `%s' already exists",
+                        &[&new_name],
+                    ));
+                }
+                value
+            };
+            let Value::Str(name) = new_value else {
+                unreachable!()
+            };
+            f.borrow_mut().name = name;
+        }
     }
+    Ok(())
 }
 
 fn f_modify_frame_parameters(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let f = frame_live(i, &arg(&a, 0))?;
-    let alist = a[1].list_to_vec().unwrap_or_default();
+    let alist = crate::lisp::builtins::want_list(i, &a[1])?;
+    let mut parameters = Vec::with_capacity(alist.len());
     for pair in alist {
-        if let Value::Cons(c) = &pair {
-            let (k, v) = {
+        parameters.push(match pair {
+            Value::Nil => (Value::Nil, Value::Nil),
+            Value::Cons(c) => {
                 let b = c.borrow();
                 (b.car.clone(), b.cdr.clone())
-            };
-            if let Some(ps) = i.sym_id(&k) {
-                store_frame_parameter(i, &f, ps, v);
             }
-        }
+            other => return Err(i.wrong_type_mut("listp", &other)),
+        });
+    }
+    for (key, value) in parameters.into_iter().rev() {
+        store_frame_parameter(i, &f, key, value)?;
     }
     Ok(Value::Nil)
 }
 fn f_set_frame_parameter(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let f = frame_live(i, &arg(&a, 0))?;
-    let ps = want_sym(i, &a[1])?;
-    store_frame_parameter(i, &f, ps, a[2].clone());
+    store_frame_parameter(i, &f, a[1].clone(), a[2].clone())?;
     Ok(Value::Nil)
 }
 
@@ -5404,6 +5513,8 @@ fn f_make_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // On a tty, a "new frame" is a new full-screen view sharing the tty.
     let buf = i.current_buffer;
     let f = Frame::new_tty(buf, buf, 80, 25);
+    let name = next_frame_name(i);
+    f.borrow_mut().name = Rc::new(RefCell::new(name));
     i.frames.push(f.clone());
     Ok(Value::Frame(f))
 }
