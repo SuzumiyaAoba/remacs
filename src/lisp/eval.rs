@@ -6322,23 +6322,26 @@ command-line arguments.\" \
                     .collect::<String>()
             );
         }
+        // GNU consults the live limit on every entry, so a lower `let'
+        // or `setq' must take effect before comparing against the cache.
+        let vid = self.intern("max-lisp-eval-depth");
+        if let Value::Int(d) = self.symbol_value(vid) {
+            self.max_lisp_eval_depth = d.clamp(0, usize::MAX as i128) as usize;
+        }
         if self.eval_depth > self.max_lisp_eval_depth {
-            // GNU reads Vmax_lisp_eval_depth on every entry: `setq' and
-            // dynamic `let' both change the live limit, so resync the
-            // cached field from the variable before failing.
-            let vid = self.intern("max-lisp-eval-depth");
-            if let Value::Int(d) = self.symbol_value(vid) {
-                if d > 0 {
-                    self.max_lisp_eval_depth = d as usize;
-                }
+            // GNU raises undersized limits to 100 only when exceeded.
+            // This internal adjustment does not invoke variable watchers.
+            if self.max_lisp_eval_depth < 100 {
+                self.max_lisp_eval_depth = 100;
+                self.obarray.symbol_mut(vid).value = Value::Int(100);
             }
             if self.eval_depth > self.max_lisp_eval_depth {
+                let depth = Value::Int(self.eval_depth as i128);
                 self.eval_depth -= 1;
                 // GNU eval.c: the depth cap signals `excessive-lisp-nesting'
                 // (subordinate to `recursion-error'), not a generic `error'.
                 let nsym = self.intern("excessive-lisp-nesting");
-                let msg = Value::string("Lisp nesting exceeds `max-lisp-eval-depth'");
-                return Err(self.signal_data(nsym, vec![msg]));
+                return Err(self.signal_data(nsym, vec![depth]));
             }
         }
         let result = self.eval_inner(form);
