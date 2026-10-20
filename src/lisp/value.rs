@@ -123,6 +123,30 @@ pub enum HashTest {
     Equal,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HashWeakness {
+    Key,
+    Value,
+    KeyAndValue,
+    KeyOrValue,
+}
+
+impl HashWeakness {
+    pub(crate) fn from_value(i: &crate::lisp::Interp, value: &Option<Value>) -> Option<Self> {
+        let name = value
+            .as_ref()
+            .and_then(|value| i.sym_id(value))
+            .map(|id| i.symbol_name(id));
+        match name.as_deref() {
+            Some("key") => Some(Self::Key),
+            Some("value") => Some(Self::Value),
+            Some("key-and-value" | "t") => Some(Self::KeyAndValue),
+            Some("key-or-value") => Some(Self::KeyOrValue),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct LispHash {
     pub test: HashTest,
@@ -132,10 +156,11 @@ pub struct LispHash {
     /// slot order: entries append at the end, `remhash' leaves a
     /// tombstone and the next `puthash' reuses the first free slot.
     pub keys: KeySlots,
-    /// :weakness argument recorded for `hash-table-weakness` (#<..>
-    /// printed representation). Weak references aren't implemented;
-    /// the tag is metadata only.
+    /// Lisp-visible weakness, also retained in printed/dumped tables.
     pub weakness: Option<Value>,
+    /// Cache the policy independently of an interpreter's symbol IDs:
+    /// the allocation registry can contain objects from several interpreters.
+    pub(crate) gc_weakness: Option<HashWeakness>,
     /// The :size argument as given (GNU's `hash-table-size').
     pub size: i128,
     /// :rehash-size / :rehash-threshold values (GNU stores them and
@@ -162,6 +187,7 @@ impl LispHash {
             map: HashMap::default(),
             keys: KeySlots(Vec::new()),
             weakness: None,
+            gc_weakness: None,
             size: 0,
             rehash_size: Value::float(1.5),
             rehash_threshold: Value::float(0.8125),

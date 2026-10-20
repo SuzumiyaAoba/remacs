@@ -1113,7 +1113,8 @@ update while still respecting actual shared or weak references.
 
 `garbage-collect` and `garbage-collect-heapsize` report the actual Rust
 object sizes and live allocation counts, with GNU's nine row shapes.
-Weak references observe object lifetimes without keeping objects alive;
+The allocation registry's weak references observe object lifetimes without
+keeping objects alive;
 periodic reaping bounds stale accounting entries. Explicit collection also
 prunes dead string metadata, updates `gcs-done`/`gc-elapsed`, and runs
 `post-gc-hook`. Ordinary payloads are dropped by reference counting.
@@ -1122,11 +1123,24 @@ and string objects have no free pool; symbol/interval/vector storage can
 have spare capacity. Vector-slot and pseudovector rows overlap, as in GNU;
 these statistics are not a process RSS measurement.
 
-This observes the existing Rc allocator rather than adding a tracing GC:
-Rc cycles and objects retained by runtime tables remain allocated and
-therefore remain in `USED`. Interval ownership is tracked once per shared
+Allocation accounting observes the existing Rc allocator. Cycles not broken
+by weak-entry or side-table removal, and objects retained by runtime tables,
+remain allocated and therefore remain in `USED`. Interval ownership is tracked
+once per shared
 buffer text or string property tree, not again for its legacy flat view.
 Regression coverage: `tests/qa_memory_statistics.el` and `memory::tests`.
+
+Weak hash entries are swept by `src/lisp/memory/weak.rs`: an ownership graph
+counts internal Rc references, marks external owners, and follows conditional
+key/value edges to a fixed point. `key-and-value` requires both endpoints to
+be live; `key-or-value` requires either. Shared lexical environments and text
+property storage are visited once, while borrowed payloads are retained for
+that collection. Scalar symbol IDs keep their existing obarray lifetime, and
+obarray-owned values remain roots; this does not introduce general symbol or
+cycle reclamation. Hash tables cache their GC policy independently of symbol
+IDs, rebuilding it when reading literals or restoring portable images.
+Regression coverage: `qa_weak_hash`, the borrowed-table memory unit test, and
+the portable-image weak-table test.
 
 ## Profiler logs (`src/lisp/profiler.rs`)
 

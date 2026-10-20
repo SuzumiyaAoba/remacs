@@ -3,9 +3,11 @@
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 struct Fixture(PathBuf);
+static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 impl Fixture {
     fn new() -> Self {
         let nonce = SystemTime::now()
@@ -13,7 +15,11 @@ impl Fixture {
             .unwrap()
             .as_nanos();
         let fixture = Self(
-            std::env::temp_dir().join(format!("remacs-load-path-{}-{nonce}", std::process::id())),
+            std::env::temp_dir().join(format!(
+                "remacs-load-path-{}-{nonce}-{}",
+                std::process::id(),
+                NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+            )),
         );
         for name in ["bin", "work", "cache", "A", "B"] {
             std::fs::create_dir_all(fixture.0.join(name)).unwrap();

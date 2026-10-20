@@ -401,6 +401,7 @@ pub(crate) fn f_make_hash_table(i: &mut Interp, args: crate::lisp::Argv) -> Eval
     let rehash_size = Value::float(1.5);
     let rehash_threshold = Value::float(0.8125);
     let mut h = LispHash::new(test);
+    h.gc_weakness = crate::lisp::value::HashWeakness::from_value(i, &weakness);
     h.weakness = weakness;
     h.size = size;
     h.rehash_size = rehash_size;

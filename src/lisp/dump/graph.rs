@@ -965,6 +965,8 @@ impl<'a> Decoder<'a> {
                     let mut table = table.borrow_mut();
                     table.size = data.size.parse().map_err(|_| "Invalid dumped hash size")?;
                     table.weakness = self.optional(i, &data.weakness)?;
+                    table.gc_weakness =
+                        crate::lisp::value::HashWeakness::from_value(i, &table.weakness);
                     table.rehash_size = self.value(i, &data.rehash_size)?;
                     table.rehash_threshold = self.value(i, &data.rehash_threshold)?;
                     table.test_name = self.value(i, &data.test_name)?;

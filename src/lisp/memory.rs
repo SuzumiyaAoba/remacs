@@ -1,6 +1,6 @@
 //! Allocation counters and liveness of managed Lisp objects.
 //!
-//! Weak entries observe Rc lifetimes without keeping values alive. Dead
+//! The allocation registry uses Weak entries without keeping values alive. Dead
 //! entries are periodically removed, bounding accounting overhead between
 //! explicit collections. Rc releases objects immediately; there is no cons,
 //! float, or string-object free list to report as reusable storage.
@@ -13,6 +13,8 @@ use std::rc::{Rc, Weak};
 use rustc_hash::FxHashMap;
 
 use super::value::*;
+
+mod weak;
 
 pub const CONS: usize = 0;
 pub const FLOAT: usize = 1;
@@ -299,6 +301,25 @@ pub fn collect() {
     OBJECTS.with(|objects| objects.borrow_mut().reap());
 }
 
+fn prune_side_tables(i: &mut super::Interp) {
+    loop {
+        let before = i.string_props.len();
+        i.string_props
+            .retain(|_, (owner, _)| owner.strong_count() != 0);
+        if i.string_props.len() == before {
+            break;
+        }
+    }
+    i.unibyte_strings
+        .retain(|_, owner| owner.strong_count() != 0);
+    i.multibyte_strings
+        .retain(|_, owner| owner.strong_count() != 0);
+    i.char_table_parents
+        .retain(|(_, owner, _)| owner.strong_count() != 0);
+    i.char_table_defalts
+        .retain(|(_, owner, _)| owner.strong_count() != 0);
+}
+
 /// Release stale side-table roots before observing Rc liveness. Ordinary
 /// object payloads are reclaimed as soon as their last strong Rc is dropped.
 pub fn collect_interp(i: &mut super::Interp) -> bool {
@@ -313,19 +334,14 @@ pub fn collect_interp(i: &mut super::Interp) -> bool {
     }
     let _guard = Guard;
     let start = std::time::Instant::now();
+    // Memoized expansions are implementation caches, not Lisp roots.
+    i.macro_cache.clear();
+    i.macroexpand_all_cache.borrow_mut().1.clear();
+    prune_side_tables(i);
+    weak::sweep(i);
     // A dead string's property values can own another string with its
     // own property tree. Prune to a fixed point, regardless of map order.
-    loop {
-        let before = i.string_props.len();
-        i.string_props
-            .retain(|_, (weak, _)| weak.strong_count() != 0);
-        if i.string_props.len() == before {
-            break;
-        }
-    }
-    i.unibyte_strings.retain(|_, weak| weak.strong_count() != 0);
-    i.multibyte_strings
-        .retain(|_, weak| weak.strong_count() != 0);
+    prune_side_tables(i);
     collect();
     LAST_GC_BYTES.with(|bytes| bytes.set(allocated_bytes()));
     let done = i.intern("gcs-done");

@@ -1495,6 +1495,7 @@ fn read_hash_literal(i: &mut Interp, fields: &[Value]) -> Result<Option<Value>, 
     }
     let mut h = LispHash::new(test);
     h.size = size;
+    h.gc_weakness = crate::lisp::value::HashWeakness::from_value(i, &weakness);
     h.weakness = weakness;
     let h = crate::lisp::memory::allocate(h, crate::lisp::Value::Hash);
     if let Some(pairs) = data {

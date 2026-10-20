@@ -272,3 +272,32 @@ fn image_restores_autosave_counters_for_base_and_indirect_buffers() {
         "(autosaved t (t t))"
     );
 }
+
+#[test]
+fn restored_weak_tables_keep_live_keys_and_release_unreachable_keys() {
+    let fixture = Fixture::new();
+    let producer = format!(
+        r#"(progn
+          (setq dump194-table (make-hash-table :test 'eq :weakness 'key))
+          (setq dump194-keep (vector 'keep))
+          (puthash dump194-keep 'retained dump194-table)
+          (dotimes (n 1000) (puthash (vector n) n dump194-table))
+          (dump-emacs-portable {} t) (prin1 'ready))"#,
+        literal(&fixture.image())
+    );
+    assert_eq!(
+        Fixture::ok(fixture.eval("producer-cache", &[], &producer)),
+        "ready"
+    );
+    std::fs::remove_dir_all(fixture.0.join("producer-cache")).unwrap();
+    let consumer = "(progn (garbage-collect) (garbage-collect) \
+        (prin1 (list (hash-table-count dump194-table) (gethash dump194-keep dump194-table))))";
+    assert_eq!(
+        Fixture::ok(fixture.eval(
+            "consumer-cache",
+            &["--dump-file", fixture.image().to_str().unwrap()],
+            consumer
+        )),
+        "(1 retained)"
+    );
+}

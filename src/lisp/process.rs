@@ -480,6 +480,22 @@ pub struct GnutlsState {
 }
 
 impl Proc {
+    pub(crate) fn gc_values(&self) -> [&Value; 11] {
+        [
+            &self.command,
+            &self.connect_error,
+            &self.filter,
+            &self.sentinel,
+            &self.plist,
+            &self.tty_name,
+            &self.stderr_dest,
+            &self.connection_type,
+            &self.contact,
+            &self.gnutls_async_connected,
+            &self.gnutls_async_signalled,
+        ]
+    }
+
     pub fn alive(&self) -> bool {
         matches!(self.status, "run" | "stop" | "open" | "listen" | "connect")
     }
