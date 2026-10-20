@@ -96,6 +96,18 @@ graph decoding, preserving shared filename strings and hash keys.
 Unrelated equal strings and external/edited sources retain their values.
 Regressions: `qa_dump_history` and `tests/dump_history_startup.rs`.
 
+On-disk `load` classifies compiled input with GNU's
+`safe_to_load_version` rule: inspect the first 512 raw bytes, search
+after the first newline using `bytecomp-version-regexp` with case
+folding, and preserve match data. An actual `.elc` suffix requires a
+valid compiler header (empty regular files are accepted); the ELC
+marker alone does not suffice. Initialize the regexp before boot source
+loads. Recognized headers select the direct compiled reader even for
+`.el` names. Compressed `.elc.gz` files follow the decompression/source
+path and may contain ordinary source, as in GNU. `--script` uses buffer
+evaluation and bypasses this classification. Regression:
+`qa_load_elc_header`.
+
 Both `read` and `read-positioning-symbols` resolve nil/omitted streams
 through `standard-input`. Source loads expose the existing input buffer;
 direct/compiled loads expose the private uninterned `get-file-char`

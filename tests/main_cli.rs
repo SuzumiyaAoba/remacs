@@ -237,6 +237,21 @@ fn script_loads_file() {
 }
 
 #[test]
+fn source_with_elc_suffix_requires_script_evaluation() {
+    let file = std::env::temp_dir().join(format!("remacs-cli-header-{}.elc", std::process::id()));
+    std::fs::write(&file, "(princ \"source-script\")").unwrap();
+    let path = file.to_str().unwrap();
+    let (output, error, code) = remacs(&["--batch", "-l", path], "");
+    assert_ne!(code, 0);
+    assert!(output.is_empty());
+    assert!(error.contains("was not compiled in Emacs"), "{error}");
+    let (output, error, code) = remacs(&["--script", path], "");
+    let _ = std::fs::remove_file(&file);
+    assert_eq!(code, 0, "{error}");
+    assert_eq!(output, "source-script");
+}
+
+#[test]
 fn script_missing_file_errors() {
     let (_o, e, code) = remacs(&["--script", "/nonexistent/remacs-nope.el"], "");
     assert_ne!(code, 0);

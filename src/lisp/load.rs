@@ -2868,69 +2868,110 @@ fn eval_file_lex_dumped(
     force_lex: bool,
     dumped_like: bool,
 ) -> EvalResult {
+    // Compressed files follow jka-compr's source path: only an actual
+    // .elc suffix forces rejection when the compiler header is absent.
+    let elc = path.ends_with(".elc");
+    if !force_lex
+        && elc
+        && std::fs::metadata(path).is_ok_and(|metadata| !metadata.is_file() && !metadata.is_dir())
+    {
+        return Err(i.error_q("File `%s' was not compiled in Emacs", &[path]));
+    }
     // GNU decodes the file with `utf-8-emacs' (load-coding auto-detect):
     // internal charset `emacs' chars (4-byte leads 0xF5..0xF7, codes
     // > #x10FFFF) decode without error.  Our strings can't hold those
     // codes, so decode them to distinct private-use chars — `?X'
     // literals and `eq'/`memq' comparisons stay consistent within a
     // file (ethio-util.el relies on this).
-    let src = match std::fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => match std::fs::read(path) {
-            Ok(b) => decode_load_bytes(&b),
-            Err(e) => {
-                return Err(i.signal_data(
-                    crate::lisp::sym::FILE_ERROR,
-                    vec![
-                        Value::string("Opening input file"),
-                        Value::string(e.to_string()),
-                        Value::string(path),
-                    ],
-                ));
-            }
-        },
-        Err(e) => {
-            // GNU signals `file-missing' for ENOENT, `file-error' for
-            // other failures, with data (FORMAT REASON PATH).
-            let sym = if e.kind() == std::io::ErrorKind::NotFound {
-                i.intern("file-missing")
-            } else {
-                crate::lisp::sym::FILE_ERROR
-            };
-            return Err(i.signal_data(
-                sym,
+    let bytes = std::fs::read(path).map_err(|error| {
+        let symbol = if error.kind() == std::io::ErrorKind::NotFound {
+            i.intern("file-missing")
+        } else {
+            crate::lisp::sym::FILE_ERROR
+        };
+        i.signal_data(
+            symbol,
+            vec![
+                Value::string("Opening input file"),
+                Value::string(error.to_string()),
+                Value::string(path),
+            ],
+        )
+    })?;
+    let bytes = if path.ends_with(".gz") {
+        gunzip(&bytes).ok_or_else(|| {
+            i.signal_data(
+                crate::lisp::sym::FILE_ERROR,
                 vec![
                     Value::string("Opening input file"),
-                    Value::string(e.to_string()),
+                    Value::string("Malformed or misplaced compressed data"),
                     Value::string(path),
                 ],
-            ));
-        }
-    };
-    // `load-file-rep-suffixes' decompression: a `.gz' candidate is the
-    // gzipped form of the source — GNU routes this through jka-compr;
-    // flate2 gives the same bytes.
-    let src = if path.ends_with(".gz") {
-        match std::fs::read(path).ok().and_then(|b| gunzip(&b)) {
-            Some(bytes) => decode_load_bytes(&bytes),
-            None => {
-                return Err(i.signal_data(
-                    crate::lisp::sym::FILE_ERROR,
-                    vec![
-                        Value::string("Opening input file"),
-                        Value::string("Malformed or misplaced compressed data"),
-                        Value::string(path),
-                    ],
-                ));
-            }
-        }
+            )
+        })?
     } else {
-        src
+        bytes
     };
+    // Fload validates the compiler header before reading/evaluating forms.
+    // --script uses eval-buffer instead and does not impose this check.
+    let version = if force_lex {
+        0
+    } else {
+        compiled_file_version(i, &bytes)?
+    };
+    if !force_lex && elc && version == 0 {
+        return Err(i.error_q("File `%s' was not compiled in Emacs", &[path]));
+    }
+    let compiled = !force_lex && (elc || version > 1);
+    let src = decode_load_bytes(&bytes);
     // Track load-file-name / load-in-progress like Emacs does.  GNU
     // binds `load-file-name' to the filename `openp' located — the
     // tried path itself, not its truename.
-    eval_src_opts(i, path, &src, force_lex, dumped_like)
+    eval_src_kind(i, path, &src, force_lex, dumped_like, compiled)
+}
+
+/// GNU safe_to_load_version: inspect at most 512 raw bytes, searching
+/// after the first newline. Empty files return 1; zero rejects .elc.
+/// The marker alone is insufficient, and historical headers remain valid.
+fn compiled_file_version(i: &mut Interp, bytes: &[u8]) -> Result<i32, crate::lisp::Flow> {
+    let bytes = &bytes[..bytes.len().min(512)];
+    if bytes.is_empty() {
+        return Ok(1);
+    }
+    let Some(newline) = bytes.iter().position(|byte| *byte == b'\n') else {
+        return Ok(0);
+    };
+    let variable = i.intern("bytecomp-version-regexp");
+    let pattern = i.symbol_value(variable);
+    let Value::Str(pattern) = &pattern else {
+        return Err(i.wrong_type_mut("stringp", &pattern));
+    };
+    let regexp = super::regexp::compile_case(pattern.borrow().as_str(), true).map_err(|error| {
+        let symbol = i.intern("invalid-regexp");
+        i.signal_data(symbol, vec![Value::string(error.0)])
+    })?;
+    let chars: Vec<_> = bytes[newline..]
+        .iter()
+        .map(|byte| char::from(*byte))
+        .collect();
+    let syntax = crate::editor::re_syntax(i);
+    if super::regexp::search(
+        &regexp,
+        &chars,
+        0,
+        &syntax,
+        &crate::editor::re_category(i),
+        super::regexp::NO_POINT,
+    )
+    .is_none()
+    {
+        return Ok(0);
+    }
+    Ok(if newline > 4 {
+        i32::from(bytes[4] as i8)
+    } else {
+        1
+    })
 }
 
 /// Decompress gzip data; None on malformed input.
@@ -2954,16 +2995,23 @@ fn eval_src_opts(
     force_lex: bool,
     dumped_like: bool,
 ) -> EvalResult {
+    let compiled = src.starts_with(";ELC\u{1f}\u{0}\u{0}\u{0}");
+    eval_src_kind(i, file, src, force_lex, dumped_like, compiled)
+}
+
+fn eval_src_kind(
+    i: &mut Interp,
+    file: &str,
+    src: &str,
+    force_lex: bool,
+    dumped_like: bool,
+    compiled: bool,
+) -> EvalResult {
     // On-disk source loads use GNU's load-with-code-conversion buffer.
     // Boot/embedded libraries model dumped code, and compiled streams
     // have their own direct reader, so neither acquires this buffer.
     // --script's distinct current-buffer/shebang rules stay on its existing path.
-    let source = !force_lex
-        && !i.boot_loading
-        && !file.starts_with("builtin:")
-        && !file.ends_with(".elc")
-        && !file.ends_with(".elc.gz")
-        && !src.starts_with(";ELC\u{1f}");
+    let source = !force_lex && !i.boot_loading && !file.starts_with("builtin:") && !compiled;
     if source {
         let flags = i
             .lisp_stack
@@ -2990,10 +3038,10 @@ fn eval_src_opts(
             Value::from_bool(flags.1.truthy()),
         ];
         i.with_call_frame("load-with-code-conversion", args, |i| {
-            eval_src_in_context(i, file, src, force_lex, dumped_like, source)
+            eval_src_in_context(i, file, src, force_lex, dumped_like, source, compiled)
         })
     } else {
-        eval_src_in_context(i, file, src, force_lex, dumped_like, source)
+        eval_src_in_context(i, file, src, force_lex, dumped_like, source, compiled)
     }
 }
 
@@ -3004,6 +3052,7 @@ fn eval_src_in_context(
     force_lex: bool,
     dumped_like: bool,
     source: bool,
+    compiled: bool,
 ) -> EvalResult {
     let load_buffer = if source {
         let dir_sym = i.intern("default-directory");
@@ -3052,7 +3101,15 @@ fn eval_src_in_context(
             let input = i.intern("standard-input");
             i.specbind(input, Value::Sym(stream_symbol))?;
         }
-        eval_src_opts_inner(i, file, src, force_lex, dumped_like, load_buffer.as_ref())
+        eval_src_opts_inner(
+            i,
+            file,
+            src,
+            force_lex,
+            dumped_like,
+            load_buffer.as_ref(),
+            compiled,
+        )
     })();
     if let Some(saved) = saved_excursion {
         i.restore_excursion_state(saved);
@@ -3080,7 +3137,6 @@ fn eval_src_in_context(
     }
     result
 }
-
 fn eval_src_opts_inner(
     i: &mut Interp,
     file: &str,
@@ -3088,6 +3144,7 @@ fn eval_src_opts_inner(
     force_lex: bool,
     dumped_like: bool,
     load_buffer: Option<&crate::lisp::value::BufferRef>,
+    compiled: bool,
 ) -> EvalResult {
     let lfn = i.intern("load-file-name");
     let ltfn = i.intern("load-true-file-name");
@@ -3138,12 +3195,12 @@ fn eval_src_opts_inner(
     // GNU's `internal--get-default-lexical-binding': a non-empty file
     // with no cookie gets a `files missing-lexbind-cookie' warning
     // before its forms run.  (--script forces lexical, so no warning.)
-    // Byte-compiled `.elc' files carry their own `;ELC\0\0\0' magic —
+    // Compiled streams were recognized from their compiler headers;
     // GNU does not warn for them either.
     if !lex_on
         && !src.is_empty()
         && !file.starts_with("builtin:")
-        && !src.starts_with(";ELC\u{1f}\u{0}\u{0}\u{0}")
+        && !compiled
     {
         let ty = Value::list(vec![
             Value::Sym(i.intern("files")),
@@ -3184,12 +3241,11 @@ fn eval_src_opts_inner(
     // `dumped_doc' docstring semantics.
     let was_dumped = i.loading_dumped;
     i.loading_dumped |= dumped_like || file.starts_with("builtin:");
-    // A `;ELC\x1f\0\0\0' stream marks `#[...]' literals read from it
+    // A validated compiled stream marks `#[...]' literals read from it
     // as compiled functions (GNU's byte-code objects); combined with
     // `loading_dumped' they present the nativecomp `subr' surface.
-    let is_elc = src.starts_with(";ELC\u{1f}\u{0}\u{0}\u{0}");
     let was_elc = i.reading_elc;
-    i.reading_elc = was_elc || is_elc;
+    i.reading_elc = was_elc || compiled;
     // GNU lread.c Fload: `found' is consed onto Vloads_in_progress
     // BEFORE the recursion check, so the signal's datum — `(found .
     // loads-in-progress)' — contains the offending entry.  The error
@@ -3213,7 +3269,7 @@ fn eval_src_opts_inner(
     }
     let compiled_library = i.loading_compiled_library;
     let r = i.with_eval_context(compiled_library, |i| {
-        eval_str_for_load(i, file, &src, load_buffer)
+        eval_str_for_load(i, file, &src, load_buffer, compiled)
     });
     let popped = i.loads_in_progress.pop();
     debug_assert!(popped.as_deref() == Some(file));
@@ -3331,6 +3387,7 @@ fn eval_str_for_load(
     file: &str,
     src: &str,
     load_buffer: Option<&crate::lisp::value::BufferRef>,
+    compiled: bool,
 ) -> EvalResult {
     let stream = if load_buffer.is_none() {
         i.load_stream.clone()
@@ -3350,11 +3407,7 @@ fn eval_str_for_load(
     // The symbol itself remains live so redefinitions during the load
     // affect later calls.  Compiled streams have already been expanded.
     let expander = i.intern("internal-macroexpand-for-load");
-    let expander = if i.fbound_p(expander)
-        && !file.ends_with(".elc")
-        && !file.ends_with(".elc.gz")
-        && !src.starts_with(";ELC\u{1f}")
-    {
+    let expander = if i.fbound_p(expander) && !compiled {
         Value::Sym(expander)
     } else {
         Value::Nil

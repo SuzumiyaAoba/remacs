@@ -9804,6 +9804,7 @@ command-line arguments.\" \
             "load-force-doc-strings",
             "load-prefer-newer",
             "load-read-function",
+            "bytecomp-version-regexp",
             "locale-coding-system",
             "macroexp--debug-eager",
             "macroexpand-all-environment",
@@ -10779,6 +10780,10 @@ command-line arguments.\" \
             ),
             ("load-prefer-newer", Value::Nil),
             ("load-read-function", Value::Sym(self.intern("read"))),
+            (
+                "bytecomp-version-regexp",
+                Value::string(r"^;;;.\(in Emacs version\|bytecomp version FSF\)"),
+            ),
             ("obarray-size", Value::Int(15121)),
             ("max-image-size", Value::float(10.0)),
             ("image-scaling-factor", Value::Sym(self.intern("auto"))),
