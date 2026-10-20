@@ -4804,7 +4804,10 @@ fn f_count_lines(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         crate::lisp::builtins::want_int_or_mark(i, &a[0])?,
         crate::lisp::builtins::want_int_or_mark(i, &a[1])?,
     );
-    let (lo, hi) = (bb.begv as i128 + 1, bb.zv as i128 + 1);
+    // GNU's simple.el temporarily replaces the restriction with START..END.
+    // narrow-to-region validates against the complete buffer, so a previous
+    // narrowing must not reject otherwise valid positions.
+    let (lo, hi) = (1, bb.text.len() as i128 + 1);
     if s_arg < lo || s_arg > hi || e_arg < lo || e_arg > hi {
         drop(bb);
         let sym = i.intern("args-out-of-range");
