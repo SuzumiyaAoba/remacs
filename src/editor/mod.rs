@@ -19684,15 +19684,17 @@ fn documentation_reference(i: &mut Interp, reference: &Value) -> EvalResult {
 
 fn f_documentation_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
-    let prop = want_sym(i, &a[1])?;
-    let mut tem = i.get_prop(sid, prop);
+    // GNU doc.c uses Fget: only SYMBOL is type-checked; PROP is an
+    // arbitrary eq-comparable key, just as with get and put.
+    let prop = &a[1];
+    let mut tem = crate::lisp::eval::plist_get_v(&i.obarray.symbol(sid).plist, prop);
     let vd = i.intern("variable-documentation");
-    if tem.is_nil() && prop == vd {
+    if tem.is_nil() && i.sym_id(prop) == Some(vd) {
         // GNU doc.c: a variable with no doc of its own falls through
         // to its `variable-alias' target's property.
         let ind = i.var_alias_target(sid);
         if ind != sid {
-            tem = i.get_prop(ind, prop);
+            tem = i.get_prop(ind, vd);
         }
     }
     // GNU: fixnum 0 counts as no doc.
