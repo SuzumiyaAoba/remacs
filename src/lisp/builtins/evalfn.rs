@@ -3975,6 +3975,16 @@ fn f_eval_buffer(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let Some(buffer) = i.buffers.get(buf_id) else {
         return Err(i.error("No such buffer"));
     };
+    let filename = match arg(&args, 2) {
+        Value::Nil => buffer
+            .borrow()
+            .file_name
+            .as_ref()
+            .map(Value::string)
+            .unwrap_or(Value::Nil),
+        filename @ Value::Str(_) => filename,
+        other => return Err(i.wrong_type_mut("stringp", &other)),
+    };
     let saved = i.save_excursion_state(false);
     let begv = buffer.borrow().begv;
     buffer.borrow_mut().set_point(begv);
@@ -3986,45 +3996,20 @@ fn f_eval_buffer(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         arg(&args, 1),
         Value::Nil,
         arg(&args, 4).truthy(),
+        filename,
     );
     i.restore_excursion_state(saved);
-    // GNU readevalloop: a non-nil FILENAME is what `load-history'
-    // records — `loadhist_initialize' pushes (FILENAME) onto
-    // `current-load-list' and `build_load_history' stores it
-    // verbatim (no expansion) under the file's assoc entry.
-    if r.is_ok() {
-        if let Some(Value::Str(f)) = args.get(2) {
-            let fname = f.borrow().clone();
-            let lh = i.intern("load-history");
-            let cur = match i.symbol_value(lh) {
-                Value::Sym(s) if s == crate::lisp::sym::UNBOUND => Value::Nil,
-                v => v,
-            };
-            let fval = Value::string(fname.clone());
-            let mut kept = Vec::new();
-            for e in cur.list_to_vec().unwrap_or_default() {
-                let same = match &e {
-                    Value::Cons(c) => {
-                        crate::lisp::builtins::equal_values(i, &c.borrow().car, &fval)?
-                    }
-                    _ => false,
-                };
-                if !same {
-                    kept.push(e);
-                }
-            }
-            // GNU: an existing entry keeps its stored entries and just
-            // gets new symbols merged; simplest faithful shape for a
-            // form-free eval-buffer is the bare (FILENAME) head.
-            let entry = Value::cons(fval, Value::Nil);
-            i.obarray.symbol_mut(lh).value = Value::cons(entry, Value::list(kept));
-        }
-    }
     r
 }
 
 fn f_eval_region(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let buffer = i.buffers.get(i.current_buffer).unwrap();
+    let filename = buffer
+        .borrow()
+        .file_name
+        .as_ref()
+        .map(Value::string)
+        .unwrap_or(Value::Nil);
     eval_buffer_source(
         i,
         &buffer,
@@ -4033,6 +4018,7 @@ fn f_eval_region(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         arg(&args, 2),
         arg(&args, 3),
         false,
+        filename,
     )
 }
 
@@ -4047,7 +4033,19 @@ fn eval_buffer_source(
     printflag: Value,
     read_function: Value,
     allow_print: bool,
+    filename: Value,
 ) -> EvalResult {
+    let filename = if let Value::Str(text) = &filename {
+        let text = text.borrow().clone();
+        if std::path::Path::new(&text).is_absolute() || text.starts_with('~') {
+            Value::string(crate::editor::expand_file_name_str(i, &text))
+        } else {
+            filename
+        }
+    } else {
+        filename
+    };
+    let mut entire = None;
     let depth = i.specbind_depth();
     let lex_on = i
         .intern_soft("lexical-binding")
@@ -4061,7 +4059,9 @@ fn eval_buffer_source(
             None
         },
     );
-    let result = i.with_eval_context(false, |i| {
+    let mut result = i.with_eval_context(false, |i| {
+        let current = i.intern("current-load-list");
+        i.specbind(current, Value::list(vec![filename.clone()]))?;
         let input = i.intern("standard-input");
         let list = i.intern("eval-buffer-list");
         let old_list = i.symbol_value(list);
@@ -4154,6 +4154,10 @@ fn eval_buffer_source(
                         }
                     }
                 }
+                if entire.is_none() {
+                    let buffer = buffer.borrow();
+                    entire = Some(buffer.point() == 0 && buffer.zv == buffer.text.len());
+                }
                 // Read only BEGV..ZV, keeping offsets relative to BEGV for
                 // invalid-read-syntax locations.  Reuse unchanged source
                 // text; forms can edit it or change its restriction.
@@ -4206,9 +4210,8 @@ fn eval_buffer_source(
                     _ => false,
                 };
                 let form = if builtin_read {
-                    let (result, position) = super::readfn::read_parser_at(
-                        i, chars.clone(), pos, None, true,
-                    );
+                    let (result, position) =
+                        super::readfn::read_parser_at(i, chars.clone(), pos, None, true);
                     buffer.borrow_mut().set_point(begv + position);
                     match result {
                         Ok(Some(form)) => form,
@@ -4267,10 +4270,16 @@ fn eval_buffer_source(
             }
         }
     });
+    if result.is_ok() {
+        if let Err(error) = crate::lisp::load::build_history(i, filename, entire.unwrap_or(false)) {
+            result = Err(error);
+        }
+    }
     i.lexenv = saved_lexenv;
     i.unbind_to(depth)?;
     result
 }
+
 fn f_command_execute(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU simple.el
     // `command-execute': unless SPECIAL, the pending `prefix-arg' first

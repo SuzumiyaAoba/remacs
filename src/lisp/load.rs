@@ -2727,6 +2727,38 @@ fn bundled_source_file(
     materialized_source_file(i, name, key, source)
 }
 
+/// Definition provenance must use shipped source, not a cwd/lisp override.
+pub(crate) fn dump_source_file(i: &mut Interp, name: &str) -> Result<String, crate::lisp::Flow> {
+    let (key, source) = embedded_key(name)
+        .ok_or_else(|| i.error(format!("Missing dumped library source: {name}")))?;
+    let filename = format!("{}.el", key.replace('/', "-"));
+    for directory in builtin_dirs() {
+        let path = Path::new(&directory).join(&filename);
+        if path.is_file() && path_is_bundled_source(&path.to_string_lossy()) {
+            return Ok(path.to_string_lossy().into_owned());
+        }
+    }
+    materialized_source_file(i, name, key, source)
+}
+
+pub(crate) fn bundled_history_path(file: &str) -> bool {
+    file.starts_with("builtin:") || path_is_bundled_source(file)
+}
+
+/// Only unchanged shipped sources can be republished by a portable image.
+pub(crate) fn dump_source_identity(file: &str) -> Option<&'static str> {
+    let prelude = concat!(env!("CARGO_MANIFEST_DIR"), "/src/lisp/prelude.el");
+    let (key, source) = if file == prelude {
+        ("remacs-prelude", super::prelude::PRELUDE)
+    } else {
+        if !path_is_bundled_source(file) {
+            return None;
+        }
+        embedded_entry(file)?
+    };
+    (std::fs::read(file).ok()?.as_slice() == source.as_bytes()).then_some(key)
+}
+
 fn materialized_source_file(
     i: &mut Interp,
     name: &str,
@@ -3140,7 +3172,7 @@ fn eval_src_opts_inner(
     // second feature set, so nothing is synced from `i.features' here.
     // The interpreter's `features' vec is only a boot-time ledger for
     // the dump/prelude bookkeeping.
-    i.specbind(cll, Value::Nil)?;
+    i.specbind(cll, Value::list(vec![Value::string(file)]))?;
     // GNU readevalloop keeps top-level dynamic declarations local to
     // this load, while allowing successive forms to share them.
     let dynvars = i.intern("macroexp--dynvars");
@@ -3201,37 +3233,81 @@ fn eval_src_opts_inner(
     // Keep dynamic load bindings balanced if history comparison signals.
     let r = (|| {
         if r.is_ok() {
-            // GNU records the file in `load-history': (FILE . ENTRIES),
-            // newest file first, entries in evaluation order.  Reloading a
-            // file REPLACES its entry rather than adding a duplicate.
-            let mut entries = i.symbol_value(cll).list_to_vec().unwrap_or_default();
-            entries.reverse();
-            let entry = Value::cons(Value::string(file), Value::list(entries));
-            let lh = i.intern("load-history");
-            let cur = match i.symbol_value(lh) {
-                // Loads can run before the prelude `defvar' initializes it.
-                Value::Sym(s) if s == crate::lisp::sym::UNBOUND => Value::Nil,
-                v => v,
-            };
-            let fname = Value::string(file);
-            let mut kept = Vec::new();
-            for e in cur.list_to_vec().unwrap_or_default() {
-                let same = match &e {
-                    Value::Cons(c) => {
-                        crate::lisp::builtins::equal_values(i, &c.borrow().car, &fname)?
-                    }
-                    _ => false,
-                };
-                if !same {
-                    kept.push(e);
-                }
-            }
-            i.obarray.symbol_mut(lh).value = Value::cons(entry, Value::list(kept));
+            build_history(i, Value::string(file), true)?;
         }
         r
     })();
     i.unbind_to(mark)?;
     r
+}
+
+/// Finish GNU's readevalloop history. The filename marker is the last
+/// element of current-load-list and becomes the entry's car on reversal.
+pub(crate) fn build_history(i: &mut Interp, filename: Value, entire: bool) -> EvalResult {
+    let variable = i.intern("load-history");
+    let current_variable = i.intern("current-load-list");
+    let current = i.symbol_value(current_variable);
+    let new_items = crate::lisp::builtins::want_list(i, &current)?;
+    let mut root = i.symbol_value(variable);
+    if matches!(root, Value::Sym(symbol) if symbol == crate::lisp::sym::UNBOUND) {
+        root = Value::Nil;
+    }
+    let _ = crate::lisp::builtins::want_list(i, &root)?;
+    let mut tail = root.clone();
+    let mut previous: Option<crate::lisp::value::ConsRef> = None;
+    let mut found = false;
+    while let Value::Cons(cell) = tail {
+        let (entry, next) = {
+            let cell = cell.borrow();
+            (cell.car.clone(), cell.cdr.clone())
+        };
+        let (key, entries) = match &entry {
+            Value::Cons(entry) => {
+                let entry = entry.borrow();
+                (entry.car.clone(), entry.cdr.clone())
+            }
+            Value::Nil => (Value::Nil, Value::Nil),
+            _ => return Err(i.wrong_type_mut("listp", &entry)),
+        };
+        if crate::lisp::builtins::equal_values(i, &key, &filename)? {
+            found = true;
+            if entire {
+                if let Some(previous) = &previous {
+                    previous.borrow_mut().cdr = next.clone();
+                } else {
+                    root = next.clone();
+                }
+            } else {
+                // GNU compares each new item against the original entry
+                // snapshot when merging a partially evaluated buffer.
+                let old_items = crate::lisp::builtins::want_list(i, &entry)?;
+                for item in &new_items {
+                    let mut present = false;
+                    for old in &old_items {
+                        if crate::lisp::builtins::equal_values(i, item, old)? {
+                            present = true;
+                            break;
+                        }
+                    }
+                    if !present {
+                        cell.borrow_mut().car =
+                            Value::cons(key.clone(), Value::cons(item.clone(), entries.clone()));
+                    }
+                }
+                previous = Some(cell.clone());
+            }
+        } else {
+            previous = Some(cell.clone());
+        }
+        tail = next;
+    }
+    if entire || !found {
+        let entry = crate::lisp::builtins::seq::f_nreverse_seq(i, vec![current].into())?;
+        root = Value::cons(entry, root);
+        i.obarray.symbol_mut(current_variable).value = Value::t();
+    }
+    i.obarray.symbol_mut(variable).value = root;
+    Ok(Value::Nil)
 }
 
 /// GNU's `do-after-load-evaluation' (subr.el): run the matching

@@ -648,6 +648,8 @@ pub struct Interp {
     /// Pushed by `apply' so `mapbacktrace'/backtrace internals can
     /// walk the stack like GNU's specpdl entries do.
     pub lisp_stack: Vec<(Value, Argv)>,
+    /// Track runtime redefinitions, not artificial bootstrap cell shadows.
+    pub(crate) definition_history_enabled: bool,
     pub(crate) pending_frames: Vec<super::backtrace::PendingFrame>,
     /// Bound names for compiled lambdas that were `defalias'd while
     /// nameless (`#[...]' literals from `.elc' files).  Entries pair
@@ -1175,6 +1177,7 @@ impl Interp {
             char_table_defalts: Vec::new(),
             frame_state_seen: None,
             lisp_stack: Vec::new(),
+            definition_history_enabled: false,
             pending_frames: Vec::new(),
             compiled_fn_names: std::cell::RefCell::new(Vec::new()),
             subr_prof: std::collections::HashMap::new(),
@@ -4949,7 +4952,15 @@ command-line arguments.\" \
             }
         }
         crate::lisp::builtins::misc::install_variable_docs(&mut interp);
+        if std::env::var_os("REMACS_NO_PRELUDE").is_none()
+            && std::env::var_os("PRELUDE_MAX").is_none()
+        {
+            if let Err(error) = super::dump_history::restore(&mut interp) {
+                eprintln!("[boot-history] {error:?}");
+            }
+        }
         super::load::finish_load_path(&mut interp);
+        interp.definition_history_enabled = true;
         if std::env::var_os("REMACS_BOOT_PROF").is_some() {
             eprintln!(
                 "[init] total Interp::new: {}ms",
@@ -4992,6 +5003,7 @@ command-line arguments.\" \
         self.compiled_macro_expansion = false;
         self.reading_elc = false;
         self.boot_loading = false;
+        self.definition_history_enabled = true;
         self.loading_compiled_library = false;
         self.bc_depth = 0;
         self.expand_unadvised_depth = 0;
@@ -7635,8 +7647,70 @@ command-line arguments.\" \
         })
     }
 
+    /// GNU data.c's history is a filename/old-definition plist. Reusing
+    /// an inactive file removes its old change; repeating the active file
+    /// keeps the definition from before that file's first change.
+    fn record_function_history(&mut self, id: SymId) -> Result<(), Flow> {
+        let old = self.symbol_function(id);
+        if old.is_nil() || matches!(old, Value::Sym(s) if s == sym::UNBOUND) {
+            return Ok(());
+        }
+        let current = self.intern("current-load-list");
+        let entries = self.symbol_value(current).list_to_vec().unwrap_or_default();
+        let file = match entries.last() {
+            Some(file @ Value::Str(_)) => file.clone(),
+            _ => Value::Nil,
+        };
+        let property = self.intern("function-history");
+        let past = self.get_prop(id, property);
+        let fields = match past.list_to_vec() {
+            Ok(fields) => fields,
+            Err(super::value::ListError::Dotted(tail)) => {
+                return Err(self.wrong_type_mut("listp", &tail));
+            }
+            Err(super::value::ListError::Circular(tail)) => {
+                let error = self.intern("circular-list");
+                return Err(self.signal_data(error, vec![tail]));
+            }
+        };
+        for position in (0..fields.len()).step_by(2) {
+            if crate::lisp::builtins::equal_values(self, &fields[position], &file)? {
+                if position == 0 {
+                    return Ok(());
+                }
+                let mut previous = past.clone();
+                for _ in 0..position - 2 {
+                    let Value::Cons(cell) = previous else {
+                        unreachable!()
+                    };
+                    previous = cell.borrow().cdr.clone();
+                }
+                let mut matched = past.clone();
+                for _ in 0..position {
+                    let Value::Cons(cell) = matched else {
+                        unreachable!()
+                    };
+                    matched = cell.borrow().cdr.clone();
+                }
+                let Value::Cons(previous) = previous else {
+                    unreachable!()
+                };
+                let Value::Cons(matched) = matched else {
+                    unreachable!()
+                };
+                previous.borrow_mut().cdr = matched.borrow().cdr.clone();
+                break;
+            }
+        }
+        self.put_prop(id, property, Value::cons(file, Value::cons(old, past)));
+        Ok(())
+    }
+
     pub fn fset_defalias(&mut self, id: SymId, def: Value) -> Result<(), Flow> {
         self.check_function_assignment(id, &def)?;
+        if self.definition_history_enabled {
+            self.record_function_history(id)?;
+        }
         self.name_compiled_lambda(id, &def);
         if self.advice_bases.iter().any(|(s, _)| *s == id) {
             if let Some(pos) = self.advice_bases.iter().position(|(s, _)| *s == id) {

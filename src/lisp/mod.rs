@@ -13,6 +13,7 @@ pub mod dynlib;
 mod embedded_cache;
 pub mod error;
 pub mod dump;
+pub(crate) mod dump_history;
 pub mod eval;
 pub mod load;
 pub(crate) mod memory;

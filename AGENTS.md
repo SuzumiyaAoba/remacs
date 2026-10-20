@@ -76,6 +76,26 @@ Regressions: `qa_locate_embedded`, `tests/embedded_cache.rs`, and the
 standalone copied-binary tests in `tests/embedded_libraries.rs` (also
 run with `REMACS_NO_ELC`).
 
+`src/lisp/dump_history.json` records GNU 31.1's 136 dumped libraries and
+their definition/dependency ownership. Regenerate with
+`python3 tools/gen_dump_history.py --emacs /path/to/emacs-31.1` and use
+`--check` to verify it. At the end of bootstrap, `dump_history::restore`
+resolves these records to readable ported `.el` files; this does not
+evaluate definitions or change features. External loads and live
+Remacs-only helpers retain their own records. `builtin:` remains an
+internal bootstrap identity, never a public provenance filename.
+
+Runtime file/buffer evaluation initializes `current-load-list` with its
+filename marker and shares `load::build_history`; the marker list is
+reversed in place into the history entry. `defalias` tracks runtime
+`function-history` so unloading a redefinition restores the prior cell;
+artificial bootstrap cell replacements are excluded. Portable images
+record unchanged shipped source identities and filename object IDs.
+Restoration republishes those sources and relocates metadata before
+graph decoding, preserving shared filename strings and hash keys.
+Unrelated equal strings and external/edited sources retain their values.
+Regressions: `qa_dump_history` and `tests/dump_history_startup.rs`.
+
 Both `read` and `read-positioning-symbols` resolve nil/omitted streams
 through `standard-input`. Source loads expose the existing input buffer;
 direct/compiled loads expose the private uninterned `get-file-char`

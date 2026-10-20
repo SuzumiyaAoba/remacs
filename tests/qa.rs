@@ -342,6 +342,7 @@ qa!(qa_strings, "qa_strings.el");
 qa!(qa_string_make_multibyte, "qa_string_make_multibyte.el");
 qa!(qa_byte_character_conversion, "qa_byte_character_conversion.el");
 qa!(qa_bytecode_errors, "qa_bytecode_errors.el");
+qa!(qa_dump_history, "qa_dump_history.el");
 qa!(qa_strings2, "qa_strings2.el");
 qa!(qa_subrinfo, "qa_subrinfo.el");
 qa!(qa_subrx, "qa_subrx.el");

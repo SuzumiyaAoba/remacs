@@ -1068,7 +1068,7 @@ fn f_purecopy(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(args[0].clone())
 }
 
-fn f_nreverse_seq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_nreverse_seq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[0] {
         Value::Cons(_) => {
             // GNU reverses in place, detecting a cycle when the next

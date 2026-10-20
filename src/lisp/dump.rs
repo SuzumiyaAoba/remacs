@@ -4,6 +4,7 @@
 mod graph;
 mod runtime;
 mod session;
+mod sources;
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -279,6 +280,7 @@ pub fn load_with_arguments(
     if let Some(cache) = current_cache {
         archive.image.relocate_source_cache(&cache);
     }
+    archive.image.relocate_bundled_sources().map_err(&fail)?;
     let fresh: Vec<_> = STARTUP_VALUES
         .iter()
         .filter_map(|name| {

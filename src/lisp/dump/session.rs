@@ -13,6 +13,7 @@ use crate::lisp::{Interp, memory};
 pub(super) struct Image {
     pub nodes: Vec<Node>,
     source_caches: Vec<Vec<u32>>,
+    sources: super::sources::Sources,
     interned: Vec<Ref>,
     symbol_counters: (u64, u64),
     runtime: Runtime,
@@ -141,6 +142,17 @@ struct WindowData {
 }
 
 impl Image {
+    pub fn relocate_bundled_sources(&mut self) -> Result<()> {
+        let files = self.sources.relocate(&mut self.nodes)?;
+        for buffer in self.buffers.iter_mut().flatten() {
+            if let Some(file) = &mut buffer.file_name {
+                if let Some(new) = files.get(file) {
+                    *file = new.clone();
+                }
+            }
+        }
+        Ok(())
+    }
     pub fn relocate_source_cache(&mut self, root: &str) {
         fn replace(text: &mut Vec<u32>, old: &[u32], new: &[u32]) {
             if text.starts_with(old)
@@ -674,6 +686,7 @@ impl Image {
                 }
             }
         }
+        let sources = super::sources::Sources::capture(i, &mut encoder)?;
         let nodes = encoder.finish()?;
         let mut source_caches = Vec::new();
         if let Some(cache) = crate::lisp::embedded_cache::directory() {
@@ -688,6 +701,7 @@ impl Image {
         Ok(Self {
             nodes,
             source_caches,
+            sources,
             interned,
             symbol_counters: i.obarray.dump_counters(),
             runtime,
