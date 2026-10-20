@@ -2932,6 +2932,47 @@ fn eval_src_opts(
         && !file.ends_with(".elc")
         && !file.ends_with(".elc.gz")
         && !src.starts_with(";ELC\u{1f}");
+    if source {
+        let flags = i
+            .lisp_stack
+            .iter()
+            .rev()
+            .find_map(|(function, args)| {
+                let function = i.indirect_function_value(function);
+                match function {
+                    Value::Subr(subr) if subr.name == "load" => Some((
+                        args.get(1).cloned().unwrap_or(Value::Nil),
+                        args.get(2).cloned().unwrap_or(Value::Nil),
+                    )),
+                    Value::Subr(subr) if subr.name == "require" => {
+                        Some((args.get(2).cloned().unwrap_or(Value::Nil), Value::t()))
+                    }
+                    _ => None,
+                }
+            })
+            .unwrap_or((Value::Nil, Value::t()));
+        let args = vec![
+            Value::string(file),
+            Value::string(file),
+            Value::from_bool(flags.0.truthy()),
+            Value::from_bool(flags.1.truthy()),
+        ];
+        i.with_call_frame("load-with-code-conversion", args, |i| {
+            eval_src_in_context(i, file, src, force_lex, dumped_like, source)
+        })
+    } else {
+        eval_src_in_context(i, file, src, force_lex, dumped_like, source)
+    }
+}
+
+fn eval_src_in_context(
+    i: &mut Interp,
+    file: &str,
+    src: &str,
+    force_lex: bool,
+    dumped_like: bool,
+    source: bool,
+) -> EvalResult {
     let load_buffer = if source {
         let dir_sym = i.intern("default-directory");
         let dir = i.symbol_value(dir_sym);

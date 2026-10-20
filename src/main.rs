@@ -286,8 +286,7 @@ fn real_main(args: Vec<String>) {
                         .collect();
                     let lid = i.intern("command-line-args-left");
                     let _ = i.set_symbol_default(lid, Value::list(left));
-                    let form = format!("(funcall (intern {:?}))", args[idx]);
-                    if !run_batch(&mut i, &form, &args[idx - 1..]) {
+                    if !run_batch(&mut i, "", &args[idx - 1..]) {
                         batch_exit(&mut i, 255);
                     }
                     if i.quit_editor {
@@ -315,7 +314,7 @@ fn real_main(args: Vec<String>) {
             "--script" => {
                 idx += 1;
                 if idx < args.len() {
-                    if !load_file_script(&mut i, &args[idx]) {
+                    if !load_file_script(&mut i, &args[idx], &args[idx - 1..]) {
                         batch_exit(&mut i, 255);
                     }
                     batch_exit(&mut i, exit);
@@ -370,34 +369,43 @@ fn inhibit_startup(i: &mut Interp) {
     let _ = i.set_symbol_default(id, Value::t());
 }
 
-/// GNU batch error backtrace tail: the middle frame (`eval(FORM t)'
-/// for --eval, `load-with-code-conversion(...)' for -l), then the
-/// `command-line-1'/`command-line'/`normal-top-level' frames.
-fn print_batch_backtrace(i: &mut Interp, mid_frame: Option<String>, cli_rest: &[String]) {
-    // Lisp frames innermost-first, like GNU's `backtrace'.
-    for (fun, argv) in i.last_error_stack.borrow().iter().rev() {
-        let name = match fun {
+/// Run an actual command-line action with the Lisp-visible entry frames.
+fn with_command_line_frames(
+    i: &mut Interp,
+    cli_rest: &[String],
+    run: impl FnOnce(&mut Interp) -> remacs::lisp::EvalResult,
+) -> remacs::lisp::EvalResult {
+    let args = Value::list(
+        cli_rest
+            .iter()
+            .map(|arg| Value::string(arg.clone()))
+            .collect(),
+    );
+    i.with_call_frame("normal-top-level", vec![], |i| {
+        i.with_call_frame("command-line", vec![], |i| {
+            i.with_call_frame("command-line-1", vec![args], run)
+        })
+    })
+}
+
+/// The signal-time snapshot includes evaluated calls and pending forms,
+/// plus the host command-line scopes; no display-only padding is needed.
+fn print_batch_backtrace(i: &mut Interp) {
+    for frame in i.last_error_stack.borrow().iter().rev() {
+        let name = match &frame.function {
             Value::Sym(id) => i.symbol_name(*id),
             other => i.prin1_to_string(other),
         };
-        let args = argv
+        let args = frame
+            .arguments
+            .list_to_vec()
+            .unwrap_or_default()
             .iter()
-            .map(|v| i.prin1_to_string(v))
+            .map(|value| i.prin1_to_string(value))
             .collect::<Vec<_>>()
             .join(" ");
         eprintln!("  {}({})", name, args);
     }
-    if let Some(frame) = mid_frame {
-        eprintln!("  {}", frame);
-    }
-    let quoted = cli_rest
-        .iter()
-        .map(|a| format!("{:?}", a))
-        .collect::<Vec<_>>()
-        .join(" ");
-    eprintln!("  command-line-1(({}))", quoted);
-    eprintln!("  command-line()");
-    eprintln!("  normal-top-level()");
 }
 
 fn run_batch(i: &mut Interp, src: &str, cli_rest: &[String]) -> bool {
@@ -407,17 +415,23 @@ fn run_batch(i: &mut Interp, src: &str, cli_rest: &[String]) -> bool {
     }
     let nid = i.intern("noninteractive");
     let _ = i.set_symbol_default(nid, Value::t());
-    match i.eval_forms(src) {
+    let result = with_command_line_frames(i, cli_rest, |i| {
+        if matches!(
+            cli_rest.first().map(String::as_str),
+            Some("-f" | "--funcall")
+        ) {
+            let function = Value::Sym(i.intern(&cli_rest[1]));
+            i.apply(&function, vec![])
+        } else {
+            i.eval_forms(src)
+        }
+    });
+    match result {
         Ok(_) => true,
         Err(Flow::Exit(code)) => std::process::exit(code as i32),
         Err(flow) => {
             report_flow(i, flow);
-            // GNU's eval frame shows the read form and the lexical env.
-            let mid = i
-                .read_from_string(src, 0)
-                .ok()
-                .map(|(form, _)| format!("eval({} t)", i.prin1_to_string(&form)));
-            print_batch_backtrace(i, mid, cli_rest);
+            print_batch_backtrace(i);
             false
         }
     }
@@ -445,21 +459,12 @@ fn load_file(i: &mut Interp, path: &str, cli_rest: &[String]) -> bool {
     let nid = i.intern("noninteractive");
     let _ = i.set_symbol_default(nid, Value::t());
     let path = &cli_truename(i, path, true);
-    match remacs::lisp::load::eval_file(i, path) {
+    match with_command_line_frames(i, cli_rest, |i| remacs::lisp::load::eval_file(i, path)) {
         Ok(_) => true,
         Err(Flow::Exit(code)) => std::process::exit(code as i32),
         Err(flow) => {
             report_flow(i, flow);
-            // GNU resolves the truename; display both like
-            // load-with-code-conversion does.
-            let real = std::fs::canonicalize(path)
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|_| path.to_string());
-            let mid = Some(format!(
-                "load-with-code-conversion({:?} {:?} nil t)",
-                real, real
-            ));
-            print_batch_backtrace(i, mid, cli_rest);
+            print_batch_backtrace(i);
             false
         }
     }
@@ -467,7 +472,7 @@ fn load_file(i: &mut Interp, path: &str, cli_rest: &[String]) -> bool {
 
 /// `--script FILE`: batch load with `lexical-binding' forced on,
 /// matching GNU's `command-line--load-script'.
-fn load_file_script(i: &mut Interp, path: &str) -> bool {
+fn load_file_script(i: &mut Interp, path: &str, cli_rest: &[String]) -> bool {
     i.noninteractive = true;
     if i.output.is_none() {
         i.output = Some(OutputSink::Stdout);
@@ -475,11 +480,18 @@ fn load_file_script(i: &mut Interp, path: &str) -> bool {
     let nid = i.intern("noninteractive");
     let _ = i.set_symbol_default(nid, Value::t());
     let path = &cli_truename(i, path, false);
-    match remacs::lisp::load::eval_file_script(i, path) {
+    let mut script_args = cli_rest.to_vec();
+    script_args[0] = "-scriptload".to_string();
+    let result = with_command_line_frames(i, &script_args, |i| {
+        let function = Value::Sym(i.intern("command-line--load-script"));
+        i.apply(&function, vec![Value::string(path.clone())])
+    });
+    match result {
         Ok(_) => true,
         Err(Flow::Exit(code)) => std::process::exit(code as i32),
         Err(flow) => {
             report_flow(i, flow);
+            print_batch_backtrace(i);
             false
         }
     }

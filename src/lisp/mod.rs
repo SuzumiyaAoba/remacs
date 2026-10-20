@@ -1,6 +1,7 @@
 //! The Emacs Lisp subsystem: values, symbols, reader, printer,
 //! evaluator, special forms, builtins, regexp engine, loader.
 
+pub mod backtrace;
 pub mod builtins;
 pub(crate) mod bytecode;
 // Generated charset map data: the SJIS/JISX0201/BIG5-1/BIG5-2/VISCII

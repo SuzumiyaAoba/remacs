@@ -371,6 +371,8 @@ pub struct Interp {
     /// The currently executing Lisp function belongs to dumped code.
     /// Unlike dumped_call_depth, this does not include ancestor frames.
     pub current_lambda_dumped: bool,
+    /// Byte-compiled bodies have control flow, but no source special-form frames.
+    pub(crate) current_body_compiled: bool,
     /// Provenance of forms being inspected by macroexpand, independent
     /// of the dumped implementation of the macroexpansion machinery.
     pub compiled_macro_expansion: bool,
@@ -646,6 +648,7 @@ pub struct Interp {
     /// Pushed by `apply' so `mapbacktrace'/backtrace internals can
     /// walk the stack like GNU's specpdl entries do.
     pub lisp_stack: Vec<(Value, Argv)>,
+    pub(crate) pending_frames: Vec<super::backtrace::PendingFrame>,
     /// Bound names for compiled lambdas that were `defalias'd while
     /// nameless (`#[...]' literals from `.elc' files).  Entries pair
     /// a `Weak' with the name: `Weak::upgrade' failing means the
@@ -657,7 +660,7 @@ pub struct Interp {
     /// `lisp_stack' snapshot taken when the last signal was raised —
     /// the frames GNU's batch debugger prints after `Error:' (the live
     /// stack itself has already unwound by the time main sees it).
-    pub last_error_stack: std::cell::RefCell<Vec<(Value, Argv)>>,
+    pub last_error_stack: std::cell::RefCell<Vec<super::backtrace::Frame>>,
     /// CPU-time profiler running state.
     pub cpu_profiler: bool,
     pub(crate) profiling: super::profiler::State,
@@ -1091,6 +1094,7 @@ impl Interp {
             bc_depth: 0,
             macroexp_call_depth: 0,
             current_lambda_dumped: false,
+            current_body_compiled: false,
             compiled_macro_expansion: false,
             expand_unadvised_depth: 0,
             loading_compiled_library: false,
@@ -1171,6 +1175,7 @@ impl Interp {
             char_table_defalts: Vec::new(),
             frame_state_seen: None,
             lisp_stack: Vec::new(),
+            pending_frames: Vec::new(),
             compiled_fn_names: std::cell::RefCell::new(Vec::new()),
             subr_prof: std::collections::HashMap::new(),
             cur_head_form: Value::Nil,
@@ -4983,6 +4988,7 @@ command-line arguments.\" \
         self.dumped_call_depth = 0;
         self.macroexp_call_depth = 0;
         self.current_lambda_dumped = false;
+        self.current_body_compiled = false;
         self.compiled_macro_expansion = false;
         self.reading_elc = false;
         self.boot_loading = false;
@@ -5014,6 +5020,7 @@ command-line arguments.\" \
         self.current_thread = 0;
         self.threads.truncate(1);
         self.lisp_stack.clear();
+        self.pending_frames.clear();
         self.last_error_stack.borrow_mut().clear();
         self.cur_head_form = Value::Nil;
         self.memory_profiler = false;
@@ -5849,7 +5856,7 @@ command-line arguments.\" \
 
     /// `(signal sym (data...))` where data is already a list.
     pub fn signal(&self, sym_id: SymId, data: Value) -> Flow {
-        *self.last_error_stack.borrow_mut() = self.lisp_stack.clone();
+        *self.last_error_stack.borrow_mut() = self.backtrace_snapshot();
         if std::env::var_os("QUITDBG").is_some() && sym_id == sym::QUIT {
             let names: Vec<String> = self
                 .lisp_stack
@@ -5866,7 +5873,7 @@ command-line arguments.\" \
 
     /// `(signal sym data-list-from-vec)`.
     pub fn signal_data(&self, sym_id: SymId, data: Vec<Value>) -> Flow {
-        *self.last_error_stack.borrow_mut() = self.lisp_stack.clone();
+        *self.last_error_stack.borrow_mut() = self.backtrace_snapshot();
         if std::env::var_os("QUITDBG").is_some() && sym_id == sym::QUIT {
             let names: Vec<String> = self
                 .lisp_stack
@@ -6036,11 +6043,13 @@ command-line arguments.\" \
         compiled_library: bool,
         evaluate: impl FnOnce(&mut Self) -> T,
     ) -> T {
+        let saved_compiled = std::mem::replace(&mut self.current_body_compiled, false);
         let saved_lambda = std::mem::replace(&mut self.current_lambda_dumped, false);
         let saved_expansion = std::mem::replace(&mut self.compiled_macro_expansion, false);
         let saved_library = std::mem::replace(&mut self.loading_compiled_library, compiled_library);
         let result = evaluate(self);
         self.current_lambda_dumped = saved_lambda;
+        self.current_body_compiled = saved_compiled;
         self.compiled_macro_expansion = saved_expansion;
         self.loading_compiled_library = saved_library;
         result
@@ -6199,7 +6208,7 @@ command-line arguments.\" \
             let lb = self.intern("lexical-binding");
             let _ = self.specbind(lb, Value::t());
             let saved_lexenv = std::mem::replace(&mut self.lexenv, lexenv_root());
-            let r = self.eval(&form);
+            let r = self.with_call_frame("eval", vec![form.clone(), Value::t()], |i| i.eval(&form));
             self.lexenv = saved_lexenv;
             self.unbind_to(mark)?;
             match r {
@@ -6301,6 +6310,10 @@ command-line arguments.\" \
         }
         let result = self.eval_inner(form);
         self.eval_depth -= 1;
+        self.offer_flow(result)
+    }
+
+    pub(crate) fn offer_flow(&mut self, result: EvalResult) -> EvalResult {
         match result {
             Err(Flow::Signal(sig, data, false)) => match self.offer_signal(&sig, &data) {
                 Ok(()) => Err(Flow::Signal(sig, data, true)),
@@ -6478,6 +6491,21 @@ command-line arguments.\" \
 
     /// Evaluate a compound form `(fn . args)`.
     fn eval_form(&mut self, form: &Value) -> EvalResult {
+        let Value::Cons(cell) = form else {
+            unreachable!()
+        };
+        let (head, args) = {
+            let cell = cell.borrow();
+            (cell.car.clone(), cell.cdr.clone())
+        };
+        let head = crate::lisp::builtins::misc::unpos(&head);
+        self.with_pending_frame(head, args, |i, frame| {
+            let result = i.eval_form_inner(form, frame);
+            i.offer_flow(result)
+        })
+    }
+
+    fn eval_form_inner(&mut self, form: &Value, frame: usize) -> EvalResult {
         if self.quit_flag {
             self.quit_flag = false;
             if std::env::var_os("QUITDBG").is_some() {
@@ -6624,7 +6652,13 @@ command-line arguments.\" \
                 // advice machinery's own calls recurse.
                 if self.dumped_call_depth > 0 {
                     if let Some(s) = self.byte_op_subr(id) {
-                        return self.call_function(&Value::Subr(s), &args, Some(id));
+                        return self.call_function_len(
+                            &Value::Subr(s),
+                            &args,
+                            Some(id),
+                            spine_len,
+                            frame,
+                        );
                     }
                 }
                 if self.is_macro_function(&fun) {
@@ -6664,7 +6698,7 @@ command-line arguments.\" \
                         .insert(key, (self.macro_gen, fun, expansion.clone(), form.clone()));
                     return self.eval(&expansion);
                 }
-                self.call_function_len(&fun, &args, Some(id), spine_len)
+                self.call_function_len(&fun, &args, Some(id), spine_len, frame)
             }
             Value::Cons(_) => {
                 // `((lambda (x) ...) a b)` — function position lambda is
@@ -6679,17 +6713,18 @@ command-line arguments.\" \
                     // binding, no closure conversion, `invalid-
                     // function'/`wna' data is the form itself.
                     let argv = self.eval_args_len(&args, spine_len)?;
-                    return self.call_lambda_form(&head, argv);
+                    self.finish_pending_frame(frame);
+                    return self.apply_resolved(&head, argv, head.clone());
                 }
                 // GNU uses the cons HEAD itself as the function object:
                 // `(lambda ...)'/`(closure ...)'/`(macro . f)' are
                 // callable, anything else signals invalid-function with
                 // the cons (e.g. (('q)) → invalid-function (quote q)).
-                self.call_function_len(&head, &args, None, spine_len)
+                self.call_function_len(&head, &args, None, spine_len, frame)
             }
             _ => {
                 let fun = self.eval(&head)?;
-                self.call_function_len(&fun, &args, None, spine_len)
+                self.call_function_len(&fun, &args, None, spine_len, frame)
             }
         }
     }
@@ -6752,7 +6787,11 @@ command-line arguments.\" \
         args: &Value,
         sym_name: Option<SymId>,
     ) -> EvalResult {
-        self.call_function_len(fun, args, sym_name, -1)
+        let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
+        self.with_pending_frame(shown, args.clone(), |i, frame| {
+            let result = i.call_function_len(fun, args, sym_name, -1, frame);
+            i.offer_flow(result)
+        })
     }
 
     /// `call_function` with a precomputed spine length (-1 = unknown).
@@ -6763,6 +6802,7 @@ command-line arguments.\" \
         args: &Value,
         sym_name: Option<SymId>,
         spine_len: i128,
+        frame: usize,
     ) -> EvalResult {
         let fun = crate::lisp::builtins::misc::unpos(fun);
         match &fun {
@@ -6812,7 +6852,8 @@ command-line arguments.\" \
                         other => {
                             // Emacs reports the originally called symbol
                             // in arity errors, not the resolved one.
-                            return self.call_function(&other, args, sym_name);
+                            return self
+                                .call_function_len(&other, args, sym_name, spine_len, frame);
                         }
                     }
                 }
@@ -6831,6 +6872,7 @@ command-line arguments.\" \
                     };
                     self.check_arity_subr_n(s, n, sym_name)?;
                     let argv = self.eval_args_len(args, spine_len)?;
+                    self.finish_pending_frame(frame);
                     // Record the frame like apply_resolved does — GNU's
                     // specpdl holds every call, so backtraces show the
                     // innermost subr (`car(5)') too.
@@ -6838,6 +6880,7 @@ command-line arguments.\" \
                     self.profiler_checkpoint();
                     self.lisp_stack.push((shown, argv.clone()));
                     let r = (s.func)(self, argv);
+                    let r = self.offer_flow(r);
                     self.profiler_checkpoint();
                     self.lisp_stack.pop();
                     r
@@ -6885,6 +6928,7 @@ command-line arguments.\" \
                     }
                 }
                 let argv = self.eval_args_len(args, spine_len)?;
+                self.finish_pending_frame(frame);
                 let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
                 self.apply_resolved(&fun, argv, shown)
             }
@@ -6910,7 +6954,9 @@ command-line arguments.\" \
                     // lambda call — `function' is no macro here, so GNU
                     // `invalid-function' on the cons.
                     let argv = self.eval_args_len(args, spine_len)?;
-                    return self.call_lambda_form(&fun, argv);
+                    self.finish_pending_frame(frame);
+                    let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
+                    return self.apply_resolved(&fun, argv, shown);
                 }
                 let auto_id = self.intern("autoload");
                 if self.sym_is(&car, auto_id) {
@@ -6918,7 +6964,7 @@ command-line arguments.\" \
                     // the real definition (macro autoloads expand).
                     let newdef =
                         crate::lisp::builtins::evalfn::autoload_do_load(self, fun.clone(), false)?;
-                    return self.call_function(&newdef, args, sym_name);
+                    return self.call_function_len(&newdef, args, sym_name, spine_len, frame);
                 }
                 if self.dbg_flags & 0x01 != 0 {
                     eprintln!(
@@ -7136,6 +7182,7 @@ command-line arguments.\" \
                     self.profiler_checkpoint();
                     self.lisp_stack.push((shown, argv.clone()));
                     let r = (s.func)(self, argv);
+                    let r = self.offer_flow(r);
                     self.profiler_checkpoint();
                     self.lisp_stack.pop();
                     if let Some(t0) = t0 {
@@ -7169,6 +7216,7 @@ command-line arguments.\" \
                 self.profiler_checkpoint();
                 self.lisp_stack.push((shown.clone(), argv.clone()));
                 let r = self.call_lambda(l, argv, &shown);
+                let r = self.offer_flow(r);
                 self.profiler_checkpoint();
                 self.lisp_stack.pop();
                 r
@@ -7189,6 +7237,7 @@ command-line arguments.\" \
                     self.profiler_checkpoint();
                     self.lisp_stack.push((shown.clone(), argv.clone()));
                     let r = self.call_lambda_form(fun, argv);
+                    let r = self.offer_flow(r);
                     self.profiler_checkpoint();
                     self.lisp_stack.pop();
                     return r;
@@ -7614,12 +7663,18 @@ command-line arguments.\" \
             self.dumped_call_depth += 1;
         }
         let saved_lambda = std::mem::replace(&mut self.current_lambda_dumped, l.dumped_doc);
+        let saved_compiled = self.current_body_compiled;
         let r = if l.dumped_doc {
+            self.current_body_compiled = bump;
             self.call_lambda_inner(l, argv, shown)
         } else {
-            self.with_eval_context(false, |i| i.call_lambda_inner(l, argv, shown))
+            self.with_eval_context(false, |i| {
+                i.current_body_compiled = bump;
+                i.call_lambda_inner(l, argv, shown)
+            })
         };
         self.current_lambda_dumped = saved_lambda;
+        self.current_body_compiled = saved_compiled;
         if bump {
             self.dumped_call_depth -= 1;
         }
@@ -7768,6 +7823,10 @@ command-line arguments.\" \
     /// GNU's `Fprogn (XCDR (XCDR fun))': cons elements evaluate, a
     /// non-cons tail ends evaluation silently.
     fn call_lambda_form(&mut self, fun: &Value, argv: Argv) -> EvalResult {
+        self.with_eval_context(false, |i| i.call_lambda_form_inner(fun, argv))
+    }
+
+    fn call_lambda_form_inner(&mut self, fun: &Value, argv: Argv) -> EvalResult {
         let cdr = match fun {
             Value::Cons(c) => c.borrow().cdr.clone(),
             _ => unreachable!(),

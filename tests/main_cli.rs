@@ -331,10 +331,21 @@ fn pty_editor_smoke() {
         return;
     }
     let mut cmd = Command::new("script");
-    cmd.args(["-q", "/dev/null", env!("CARGO_BIN_EXE_remacs"), "-nw"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+    // Headless runners give script a 0x0 PTY. Set the geometry that
+    // this split-window / mode-line test actually requires; otherwise
+    // the clamped 10x3 screen truncates "scratch" before the wait below.
+    cmd.args([
+        "-q",
+        "/dev/null",
+        "/bin/sh",
+        "-c",
+        "stty rows 24 cols 80; exec \"$1\" -nw",
+        "remacs-pty",
+        env!("CARGO_BIN_EXE_remacs"),
+    ])
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::null());
     let mut child = cmd.spawn().expect("spawn script");
     let mut stdin = child.stdin.take().unwrap();
     // Collect rendered output in the background so we can wait for the

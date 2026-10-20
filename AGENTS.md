@@ -1035,6 +1035,29 @@ losing weight. The inactive path only checks the running flags.
 Regression coverage: `tests/qa_profiler.el` (lifecycle, samples, bounded
 logs, all three report modes) and the profiler log weight-conservation test.
 
+## Live backtraces (`src/lisp/backtrace.rs`)
+
+`lisp_stack` holds evaluated calls for the profiler and evaluator. Source
+expressions add scoped `pending_frames` at the current call-stack depth;
+`backtrace_snapshot` merges both in dynamic order, preserving raw argument
+forms with `evald=nil` until the call enters its function. Macro invocation
+frames remain around expansion, as in GNU `eval_sub`. Compiled-equivalent
+bodies suppress source control-flow frames (`current_body_compiled`);
+explicit `eval`/source loads/raw lambdas reset that provenance.
+
+`mapbacktrace`, `backtrace-frame--internal`, and signal-time snapshots share
+this representation. Offer fresh signals before their live call/expression
+scope unwinds so handlers can inspect the signaling frame. Host CLI actions
+record their actual `normal-top-level`/`command-line`/`command-line-1` scopes;
+source loads record `load-with-code-conversion`, `--eval` records each `eval`,
+and `-f` directly invokes its function. `--script` runs the real GNU
+`command-line--load-script` callback path. Batch error output prints the
+captured frames, without appending a second fabricated CLI tail. Frame counts
+depend on evaluation context and native/interpreted implementation details;
+never satisfy a count mismatch by padding to a constant.
+
+Regression suites: `tests/qa_backtrace_frames.el`, `tests/backtrace_cli.rs`.
+
 ## Portable images (`src/lisp/dump/`)
 
 `dump-emacs-portable` writes a real Remacs image; `--dump-file FILE`

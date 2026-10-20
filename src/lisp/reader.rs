@@ -43,56 +43,43 @@ pub struct Reader<'a> {
 
 fn read_err(interp: &mut Interp, msg: &str) -> Flow {
     let sym_id = interp.intern("invalid-read-syntax");
-    Flow::Signal(
-        Value::Sym(sym_id),
-        Value::list(vec![Value::string(msg)]),
-        false,
-    )
+    interp.signal_data(sym_id, vec![Value::string(msg)])
 }
 
 /// `invalid-read-syntax' with a symbol argument, like Emacs's `#|', `#z'.
 fn read_err_sym(interp: &mut Interp, name: &str) -> Flow {
     let sym_id = interp.intern("invalid-read-syntax");
-    let data = Value::list(vec![Value::string(name)]);
-    Flow::Signal(Value::Sym(sym_id), data, false)
+    interp.signal_data(sym_id, vec![Value::string(name)])
 }
 
 /// `invalid-read-syntax' for radix integers: `(integer, radix N)'.
 fn read_err_radix(interp: &mut Interp, radix: u32) -> Flow {
     let sym_id = interp.intern("invalid-read-syntax");
-    let data = Value::list(vec![Value::string(format!("integer, radix {radix}"))]);
-    Flow::Signal(Value::Sym(sym_id), data, false)
+    interp.signal_data(
+        sym_id,
+        vec![Value::string(format!("integer, radix {radix}"))],
+    )
 }
 
 fn eof_err(interp: &mut Interp) -> Flow {
     let sym_id = interp.intern("end-of-file");
-    // Refresh last_error_stack like `signal()` so a read error's
-    // backtrace isn't attributed to the previous signal's frames.
-    *interp.last_error_stack.borrow_mut() = interp.lisp_stack.clone();
-    Flow::Signal(Value::Sym(sym_id), Value::Nil, false)
+    interp.signal(sym_id, Value::Nil)
 }
 
 /// GNU `error ()' inside the reader (bad escapes, bad modifiers) —
 /// (error "msg"), distinct from `invalid-read-syntax'.
 fn plain_err(interp: &mut Interp, msg: &str) -> Flow {
     let sym_id = interp.intern("error");
-    Flow::Signal(
-        Value::Sym(sym_id),
-        Value::list(vec![Value::string(msg)]),
-        false,
-    )
+    interp.signal_data(sym_id, vec![Value::string(msg)])
 }
 
 /// GNU signals a plain `error' when a \u or \U escape exceeds the
 /// Unicode range: (error "Non-Unicode character: 0x%x").
 fn non_unicode_err(interp: &mut Interp, n: i128) -> Flow {
     let sym_id = interp.intern("error");
-    Flow::Signal(
-        Value::Sym(sym_id),
-        Value::list(vec![Value::string(format!(
-            "Non-Unicode character: 0x{n:x}"
-        ))]),
-        false,
+    interp.signal_data(
+        sym_id,
+        vec![Value::string(format!("Non-Unicode character: 0x{n:x}"))],
     )
 }
 

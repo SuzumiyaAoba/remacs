@@ -17417,8 +17417,7 @@ fn f_set_file_acl(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// for each live frame, innermost first, then returns nil.
 fn f_mapbacktrace(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let fun = a[0].clone();
-    let t = Value::Sym(sym::T);
-    let frames: Vec<(Value, crate::lisp::Argv)> = i.lisp_stack.iter().rev().cloned().collect();
+    let frames: Vec<_> = i.backtrace_snapshot().into_iter().rev().collect();
     // GNU mapbacktrace: when FUNCTION is non-nil, frames below its
     // nearest activation are discarded — the BASE frame itself is the
     // first one delivered.  If BASE never appears on the stack, nothing
@@ -17430,8 +17429,8 @@ fn f_mapbacktrace(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             // resolved function value for direct calls but the symbol
             // for `apply'-driven ones.
             let base_fn = i.indirect_function_value(v);
-            match frames.iter().position(|(fval, _)| {
-                crate::lisp::builtins::eq_values(&i.indirect_function_value(fval), &base_fn)
+            match frames.iter().position(|frame| {
+                crate::lisp::builtins::eq_values(&i.indirect_function_value(&frame.function), &base_fn)
             }) {
                 Some(p) => p,
                 None => return Ok(Value::Nil),
@@ -17439,13 +17438,13 @@ fn f_mapbacktrace(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
         _ => 0,
     };
-    for (fval, args) in &frames[start..] {
+    for frame in &frames[start..] {
         i.apply(
             &fun,
             vec![
-                t.clone(),
-                fval.clone(),
-                Value::list(args.as_slice().to_vec()),
+                Value::from_bool(frame.evaluated),
+                frame.function.clone(),
+                frame.arguments.clone(),
                 Value::Nil,
             ],
         )?;
@@ -18186,13 +18185,13 @@ fn f_backtrace_frame_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
         }
     }
     // Walk innermost→outermost over the live call stack.
-    let stack: Vec<(Value, crate::lisp::Argv)> = i.lisp_stack.iter().rev().cloned().collect();
+    let stack: Vec<_> = i.backtrace_snapshot().into_iter().rev().collect();
     let mut idx = 0usize;
     if !base.is_nil() {
         let base_fn = i.indirect_function_value(&base);
         let mut found = None;
-        for (k, (fval, _)) in stack.iter().enumerate() {
-            let ffn = i.indirect_function_value(fval);
+        for (k, frame) in stack.iter().enumerate() {
+            let ffn = i.indirect_function_value(&frame.function);
             if crate::lisp::builtins::eq_values(&ffn, &base_fn) {
                 found = Some(k);
                 break;
@@ -18204,16 +18203,16 @@ fn f_backtrace_frame_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
         }
     }
     idx += nframes;
-    let Some((fval, args)) = stack.get(idx) else {
+    let Some(frame) = stack.get(idx) else {
         return Ok(Value::Nil);
     };
-    let (fval, args) = (fval.clone(), args.clone());
+    let frame = frame.clone();
     i.apply(
         &fun,
         vec![
-            Value::t(),
-            fval,
-            Value::list(args.as_slice().to_vec()),
+            Value::from_bool(frame.evaluated),
+            frame.function,
+            frame.arguments,
             Value::Nil,
         ],
     )
