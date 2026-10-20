@@ -17,6 +17,7 @@ pub(crate) mod memory;
 pub mod obarray;
 pub mod prelude;
 pub mod print;
+pub(crate) mod profiler;
 pub mod process;
 pub mod reader;
 pub mod regexp;

@@ -1513,19 +1513,25 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_cursor_info,
         "Cursor info for WINDOW."
     ),
-    S!("profiler-cpu-log", 0, 0, f_nil, "CPU profiler log."),
+    S!(
+        "profiler-cpu-log",
+        0,
+        0,
+        crate::lisp::profiler::cpu_log,
+        "CPU profiler log."
+    ),
     S!(
         "profiler-cpu-stop",
         0,
         0,
-        f_profiler_cpu_stop,
+        crate::lisp::profiler::stop_cpu,
         "Stop CPU profiler."
     ),
     S!(
         "profiler-memory-log",
         0,
         0,
-        f_profiler_memory_log,
+        crate::lisp::profiler::memory_log,
         "Memory profiler log."
     ),
     S!(
@@ -1539,14 +1545,14 @@ pub(crate) static SUBRS: &[Subr] = &[
         "profiler-memory-start",
         0,
         0,
-        f_profiler_memory_start,
+        crate::lisp::profiler::start_memory,
         "Start memory profiler."
     ),
     S!(
         "profiler-memory-stop",
         0,
         0,
-        f_profiler_memory_stop,
+        crate::lisp::profiler::stop_memory,
         "Stop memory profiler."
     ),
     S!(
@@ -1612,7 +1618,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_flex_cost_gotoh,
         "Flex completion cost via Gotoh alignment."
     ),
-    S!("profiler-cpu-start", 1, 1, f_profiler_cpu_start, ""),
+    S!(
+        "profiler-cpu-start",
+        1,
+        1,
+        crate::lisp::profiler::start_cpu,
+        ""
+    ),
     S!(
         "backtrace-eval",
         2,
@@ -18302,34 +18314,12 @@ fn f_flex_cost_gotoh(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::list(out))
 }
 
-/// `profiler-cpu-start` — flag only, no real sampler; GNU requires
-/// INTERVAL to be a positive integer (ms) and errors otherwise.
-fn f_profiler_cpu_start(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match &a[0] {
-        Value::Int(n) if *n >= 1 => {
-            if i.cpu_profiler {
-                return Err(i.error("CPU profiler is already running"));
-            }
-            i.cpu_profiler = true;
-            Ok(Value::t())
-        }
-        _ => Err(i.error("Invalid sampling interval")),
-    }
-}
-
 fn f_profiler_cpu_running_p(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     Ok(if i.cpu_profiler {
         Value::t()
     } else {
         Value::Nil
     })
-}
-
-/// `profiler-cpu-stop` — GNU returns whether it was running.
-fn f_profiler_cpu_stop(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    let was = i.cpu_profiler;
-    i.cpu_profiler = false;
-    Ok(if was { Value::t() } else { Value::Nil })
 }
 
 /// `check-coding-systems-region` — GNU Fcheck_coding_systems_region:
@@ -18523,11 +18513,6 @@ fn f_face_attributes_as_vector(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     Ok(Value::vector(slots))
 }
 
-fn f_profiler_memory_start(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    i.memory_profiler = true;
-    Ok(Value::t())
-}
-
 /// `profiler-memory-running-p` — whether the memory profiler is on.
 fn f_profiler_memory_running_p(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     Ok(if i.memory_profiler {
@@ -18535,19 +18520,6 @@ fn f_profiler_memory_running_p(i: &mut Interp, _a: crate::lisp::Argv) -> EvalRes
     } else {
         Value::Nil
     })
-}
-
-/// `profiler-memory-stop` — GNU returns whether it was running.
-fn f_profiler_memory_stop(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    let was = i.memory_profiler;
-    i.memory_profiler = false;
-    Ok(if was { Value::t() } else { Value::Nil })
-}
-
-/// `profiler-memory-log` — nil when not running.
-fn f_profiler_memory_log(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    let _ = i;
-    Ok(Value::Nil)
 }
 
 /// `subr-native-elisp-p' — t when SUBR is a native-compiled Lisp

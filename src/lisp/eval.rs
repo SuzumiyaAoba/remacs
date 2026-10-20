@@ -598,8 +598,7 @@ pub struct Interp {
     pub ccl_program_count: usize,
     /// `register-code-conversion-map' registration counter.
     pub code_conv_map_count: usize,
-    /// `profiler-memory-running-p' state — our memory profiler is a
-    /// bookkeeping-only stub, but start/stop toggle it like GNU.
+    /// Memory profiler running state; log data lives in `profiling`.
     pub memory_profiler: bool,
     /// `advice-add' registry: SYM → ordered (WHERE . (FUN . NAME))
     /// entries; the oldest is innermost, like GNU's oclosure chain.
@@ -659,8 +658,9 @@ pub struct Interp {
     /// the frames GNU's batch debugger prints after `Error:' (the live
     /// stack itself has already unwound by the time main sees it).
     pub last_error_stack: std::cell::RefCell<Vec<(Value, Argv)>>,
-    /// `profiler-cpu-running-p' state flag (no real sampler).
+    /// CPU-time profiler running state.
     pub cpu_profiler: bool,
+    pub(crate) profiling: super::profiler::State,
     /// The sole terminal object (`terminal-list', `frame-terminal'):
     /// a lazily-created record `#s(terminal 0 "initial_terminal")'.
     pub terminal: Option<Value>,
@@ -1175,6 +1175,7 @@ impl Interp {
             cur_head_form: Value::Nil,
             last_error_stack: std::cell::RefCell::new(Vec::new()),
             cpu_profiler: false,
+            profiling: Default::default(),
             terminal: None,
             terminal_params: Vec::new(),
             x_display_attempted: false,
@@ -6186,6 +6187,7 @@ command-line arguments.\" \
     // ---------- eval ----------
 
     pub fn eval(&mut self, form: &Value) -> EvalResult {
+        self.profiler_poll();
         self.eval_depth += 1;
         if self.dbg_flags & 0x02 != 0 && self.eval_depth > 0 && self.eval_depth % 200 == 0 {
             eprintln!(
@@ -6752,8 +6754,10 @@ command-line arguments.\" \
                     // specpdl holds every call, so backtraces show the
                     // innermost subr (`car(5)') too.
                     let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
+                    self.profiler_checkpoint();
                     self.lisp_stack.push((shown, argv.clone()));
                     let r = (s.func)(self, argv);
+                    self.profiler_checkpoint();
                     self.lisp_stack.pop();
                     r
                 }
@@ -7048,8 +7052,10 @@ command-line arguments.\" \
                     self.check_arity_subr(s, &argv, None)?;
                     let prof = self.dbg_flags & 0x1000000 != 0;
                     let t0 = prof.then(std::time::Instant::now);
+                    self.profiler_checkpoint();
                     self.lisp_stack.push((shown, argv.clone()));
                     let r = (s.func)(self, argv);
+                    self.profiler_checkpoint();
                     self.lisp_stack.pop();
                     if let Some(t0) = t0 {
                         let e = self.subr_prof.entry(s.name).or_default();
@@ -7079,8 +7085,10 @@ command-line arguments.\" \
                 } else {
                     argv
                 };
+                self.profiler_checkpoint();
                 self.lisp_stack.push((shown.clone(), argv.clone()));
                 let r = self.call_lambda(l, argv, &shown);
+                self.profiler_checkpoint();
                 self.lisp_stack.pop();
                 r
             }
@@ -7097,8 +7105,10 @@ command-line arguments.\" \
                     // GNU `Ffuncall' calls the raw cons directly via
                     // `funcall_lambda' — no closure conversion, dynamic
                     // binding, `invalid-function' datum is the form.
+                    self.profiler_checkpoint();
                     self.lisp_stack.push((shown.clone(), argv.clone()));
                     let r = self.call_lambda_form(fun, argv);
+                    self.profiler_checkpoint();
                     self.lisp_stack.pop();
                     return r;
                 }

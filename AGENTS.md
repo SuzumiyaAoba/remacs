@@ -1011,6 +1011,30 @@ therefore remain in `USED`. Interval ownership is tracked once per shared
 buffer text or string property tree, not again for its legacy flat view.
 Regression coverage: `tests/qa_memory_statistics.el` and `memory::tests`.
 
+## Profiler logs (`src/lisp/profiler.rs`)
+
+CPU and memory profilers keep independent pending logs across stop/start.
+Export returns an `equal` hash table, clears the pending log, and creates
+a fresh one when the profiler is still running. A started profiler has a
+log even before its first sample; nil means no pending run. CPU intervals
+are positive fixnums in nanoseconds, with the running-state error checked
+before interval validation. `lisp/profiler.el` remains GNU's original UI.
+
+The sampler uses thread CPU time (`clock_gettime`, process CPU fallback)
+at interpreter safe points rather than accessing Rc objects in SIGPROF.
+Calls flush before stack pushes/pops; interpreted and byte-code loops poll
+periodically. A long primitive is charged at its return boundary. Memory
+weights come from actual allocation bytes tracked by `memory.rs`; paused
+allocations and export's own allocations are excluded from that channel.
+Backtraces put the innermost function first, truncate/pad to the configured
+depth, and retain their actual callable objects. Logs honor the configured
+entry limit, evict low-weight traces, and preserve evicted weight under
+`[Discarded\ Samples nil]`. Export also accumulates equal rows without
+losing weight. The inactive path only checks the running flags.
+
+Regression coverage: `tests/qa_profiler.el` (lifecycle, samples, bounded
+logs, all three report modes) and the profiler log weight-conservation test.
+
 ## Verification recipe
 
 ```sh

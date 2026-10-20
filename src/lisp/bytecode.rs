@@ -341,6 +341,7 @@ fn dispatch(
 ) -> EvalResult {
     let mut pc = 0usize;
     loop {
+        i.profiler_poll();
         if i.quit_flag {
             i.quit_flag = false;
             return Err(Flow::Quit);
