@@ -14291,78 +14291,79 @@ pub(crate) fn process_directory(i: &mut Interp) -> Result<String, Flow> {
     Ok(directory)
 }
 
-/// Resolve PROGRAM like GNU callproc.c's openp() over `exec-path':
-/// absolute/relative-with-slash names are tried as-is, others get
-/// prefixed by each `exec-path' element.  A directory hit counts as
-/// EACCES (execvp cannot exec it), which GNU reports as
-/// `permission-denied', not `file-missing'.
-pub(crate) fn dif_resolve_program(i: &mut Interp, prog: &str, directory: &str) -> Result<String, Flow> {
-    let mut dirs: Vec<String> = if prog.contains('/') {
-        vec![String::new()]
-    } else {
-        let ep = i
-            .symbol_value(i.intern_soft("exec-path").unwrap_or(0))
-            .list_to_vec()
-            .unwrap_or_default();
-        ep.iter()
-            .filter_map(|v| match v {
-                Value::Str(s) => Some(s.borrow().clone()),
-                _ => None,
-            })
-            .collect()
-    };
-    // GNU openp() appends the buffer's default-directory to the exec
-    // path when searching (callproc.c): a program name colliding with
-    // a non-executable file or directory in cwd reports EACCES, not
-    // ENOENT.  Mirror by appending "" (= cwd) last.
-    if !prog.contains('/') {
-        dirs.push(String::new());
+/// Search exec-path in order, like GNU openp. A nil path/element uses
+/// the launching directory; other elements follow expand-file-name's
+/// directory rules. Only make-process bypasses the path for an absolute
+/// program (call-process still needs a list to search).
+pub(crate) fn dif_resolve_program(
+    i: &mut Interp,
+    prog: &str,
+    directory: &str,
+    direct_absolute: bool,
+) -> Result<String, Flow> {
+    let mut path = i
+        .intern_soft("exec-path")
+        .map(|symbol| i.symbol_value(symbol))
+        .unwrap_or(Value::Nil);
+    let absolute = f_file_name_absolute_p(i, vec![Value::string(prog)].into())?.truthy();
+    if path.is_nil() || (direct_absolute && absolute) {
+        path = Value::list(vec![Value::Nil]);
     }
-    let mut eacces = false;
-    let mut found = None;
-    for d in dirs {
-        let cand = if d.is_empty() {
-            prog.to_string()
-        } else {
-            format!("{}/{}", d.trim_end_matches('/'), prog)
+    // Keep nil positions and dotted prefixes. Bound circular input to
+    // its distinct cons cells rather than getting stuck collecting it.
+    let mut entries = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    while let Value::Cons(cell) = path {
+        if !seen.insert(Rc::as_ptr(&cell)) {
+            break;
+        }
+        let cell = cell.borrow();
+        entries.push(cell.car.clone());
+        path = cell.cdr.clone();
+    }
+    let mut last_error = std::io::Error::from_raw_os_error(libc::ENOENT);
+    for entry in entries {
+        let base = match entry {
+            Value::Nil => directory.to_string(),
+            Value::Str(value) => expand_against_dir(i, &value.borrow(), directory),
+            // GNU expand-file-name treats a non-string non-nil base as /.
+            _ => "/".to_string(),
         };
-        let cand = expand_against_dir(i, &cand, directory);
-        match std::fs::metadata(&cand) {
-            Ok(md) => {
-                if md.is_dir() {
-                    eacces = true;
-                    continue;
-                }
-                use std::os::unix::fs::PermissionsExt;
-                if md.permissions().mode() & 0o111 != 0 {
-                    found = Some(cand);
-                    break;
-                }
-                eacces = true;
+        let candidate = expand_against_dir(i, prog, &base);
+        let candidate = candidate.strip_prefix("/:").unwrap_or(&candidate);
+        let candidate = candidate.split('\0').next().unwrap_or_default();
+        let accessible = (|| -> std::io::Result<()> {
+            let path = std::ffi::CString::new(candidate.as_bytes()).unwrap();
+            if unsafe {
+                libc::faccessat(libc::AT_FDCWD, path.as_ptr(), libc::X_OK, libc::AT_EACCESS)
+            } != 0
+            {
+                return Err(std::io::Error::last_os_error());
             }
-            Err(e) => {
-                if e.raw_os_error() == Some(13) {
-                    eacces = true;
+            if std::fs::metadata(candidate)?.is_dir() {
+                return Err(std::io::Error::from_raw_os_error(libc::EISDIR));
+            }
+            Ok(())
+        })();
+        match accessible {
+            Ok(()) => return Ok(candidate.to_string()),
+            Err(error) => {
+                // A later missing entry does not erase a more specific
+                // failure, such as EACCES, EISDIR or ELOOP.
+                if !matches!(error.raw_os_error(), Some(libc::ENOENT | libc::ENOTDIR)) {
+                    last_error = error;
                 }
             }
         }
+        if absolute {
+            break;
+        }
     }
-    if let Some(f) = found {
-        return Ok(f);
-    }
-    let (sym, msg) = if eacces {
-        ("permission-denied", "Permission denied")
-    } else {
-        ("file-missing", "No such file or directory")
-    };
-    let sid = i.intern(sym);
-    Err(i.signal_data(
-        sid,
-        vec![
-            Value::string("Searching for program"),
-            Value::string(msg),
-            Value::string(prog),
-        ],
+    Err(report_file_errno(
+        i,
+        "Searching for program",
+        vec![Value::string(prog)],
+        &last_error,
     ))
 }
 
@@ -14583,7 +14584,7 @@ fn f_call_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     } else {
         None
     };
-    let resolved = dif_resolve_program(i, &prog, &directory)?;
+    let resolved = dif_resolve_program(i, &prog, &directory, false)?;
     let mut cmd = std::process::Command::new(&resolved);
     cmd.current_dir(&directory);
     crate::lisp::process::environment::apply(i, &mut cmd);
@@ -14758,7 +14759,7 @@ fn f_call_process_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         want_str(i, v)?;
     }
     let directory = process_directory(i)?;
-    let prog = dif_resolve_program(i, &prog, &directory)?;
+    let prog = dif_resolve_program(i, &prog, &directory, false)?;
     let mut cmd = std::process::Command::new(&prog);
     cmd.current_dir(&directory);
     crate::lisp::process::environment::apply(i, &mut cmd);

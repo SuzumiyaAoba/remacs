@@ -753,6 +753,14 @@ corrected to the logical child directory, including symlinks; an unset
 PWD stays unset. Invalid directories signal `Setting current directory`
 with the original Lisp name. Regression: `qa_process_directory`.
 
+Executable lookup preserves `exec-path` element order, including nil
+entries for the child directory and dotted list prefixes. A nil path
+uses that directory; a nonempty path has no implicit cwd fallback.
+Relative program names containing slashes still search each entry.
+`faccessat(..., X_OK, AT_EACCESS)` checks effective execution permission;
+later missing candidates preserve earlier specific errors (permission,
+directory, symlink loop). Regression: `qa_process_exec_path`.
+
 ## Minibuffer reads (`src/lisp/eval.rs` + `src/editor/mod.rs` + `src/term`)
 
 GNU structure kept: `read-file-name`/`completing-read`/`read-buffer`

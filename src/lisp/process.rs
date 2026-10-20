@@ -1584,7 +1584,7 @@ fn f_make_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     } else { String::new() };
     // Resolve against Lisp exec-path before installing the child's PATH.
     let directory = crate::editor::process_directory(i)?;
-    let resolved = crate::editor::dif_resolve_program(i, &cmd[0], &directory)?;
+    let resolved = crate::editor::dif_resolve_program(i, &cmd[0], &directory, true)?;
     let mut child_command = std::process::Command::new(resolved);
     child_command.current_dir(directory);
     child_command.args(&cmd[1..]);
@@ -3670,7 +3670,7 @@ fn f_internal_default_process_filter(i: &mut Interp, a: crate::lisp::Argv) -> Ev
 
 fn run_lines(i: &mut Interp, prog: &str, args: &[String], ignore_status: bool) -> EvalResult {
     let directory = crate::editor::process_directory(i)?;
-    let resolved = crate::editor::dif_resolve_program(i, prog, &directory)?;
+    let resolved = crate::editor::dif_resolve_program(i, prog, &directory, false)?;
     let mut command = std::process::Command::new(resolved);
     command.current_dir(directory);
     environment::apply(i, &mut command);
