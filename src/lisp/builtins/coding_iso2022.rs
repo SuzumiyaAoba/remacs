@@ -128,9 +128,36 @@ pub(super) fn encode_with_preferences(
     finish: bool,
     preferred: &[Option<String>],
 ) -> Option<Vec<u8>> {
+    encode_stream(
+        i,
+        coding,
+        text,
+        finish,
+        preferred,
+        &mut EncoderState::default(),
+    )
+}
+
+#[derive(Default)]
+pub(crate) struct EncoderState {
+    registers: Option<[Option<String>; 4]>,
+    gl: usize,
+}
+
+pub(super) fn encode_stream(
+    i: &mut Interp,
+    coding: &Value,
+    text: &str,
+    finish: bool,
+    preferred: &[Option<String>],
+    stream: &mut EncoderState,
+) -> Option<Vec<u8>> {
     let sp = spec(i, coding)?;
-    let mut state = sp.initial.clone();
-    let mut gl = 0;
+    let mut state = stream
+        .registers
+        .take()
+        .unwrap_or_else(|| sp.initial.clone());
+    let mut gl = stream.gl;
     let mut out = Vec::new();
     for (index, ch) in text.chars().enumerate() {
         if let Some(b) = eight_bit_byte(ch) {
@@ -233,6 +260,8 @@ pub(super) fn encode_with_preferences(
         }
         reset(&mut out, &sp, &mut state, &mut gl);
     }
+    stream.registers = Some(state);
+    stream.gl = gl;
     Some(out)
 }
 
@@ -262,10 +291,60 @@ pub(super) fn decode_with_native(
     native: &[Option<char>],
     storage_bytes: usize,
 ) -> Option<(String, Vec<(usize, usize, String)>)> {
+    decode_inner(
+        i,
+        coding,
+        bytes,
+        native,
+        storage_bytes,
+        &mut DecoderState::default(),
+        true,
+    )
+}
+
+#[derive(Default)]
+pub(crate) struct DecoderState {
+    registers: Option<[Option<String>; 4]>,
+    gl: usize,
+    gr: Option<usize>,
+    pending: Vec<u8>,
+}
+
+impl DecoderState {
+    pub(crate) fn has_pending(&self) -> bool { !self.pending.is_empty() }
+}
+
+pub(super) fn decode_stream(
+    i: &mut Interp,
+    coding: &Value,
+    bytes: &[u8],
+    stream: &mut DecoderState,
+    finish: bool,
+) -> Option<(String, Vec<(usize, usize, String)>)> {
+    // Check the codec before consuming pending input: other codec families
+    // use their own stream state.
+    spec(i, coding)?;
+    let mut input = std::mem::take(&mut stream.pending);
+    input.extend_from_slice(bytes);
+    decode_inner(i, coding, &input, &[], input.len(), stream, finish)
+}
+
+fn decode_inner(
+    i: &mut Interp,
+    coding: &Value,
+    bytes: &[u8],
+    native: &[Option<char>],
+    storage_bytes: usize,
+    stream: &mut DecoderState,
+    finish: bool,
+) -> Option<(String, Vec<(usize, usize, String)>)> {
     let sp = spec(i, coding)?;
-    let mut state = sp.initial.clone();
-    let mut gl = 0usize;
-    let mut gr = 1usize;
+    let mut state = stream
+        .registers
+        .take()
+        .unwrap_or_else(|| sp.initial.clone());
+    let mut gl = stream.gl;
+    let mut gr = stream.gr.unwrap_or(1);
     let mut p = 0;
     let mut out = String::new();
     let mut spans: Vec<(usize, usize, String)> = Vec::new();
@@ -296,6 +375,24 @@ pub(super) fn decode_with_native(
         }
         let b = bytes[p];
         if b == 27 && sp.flag("designation") {
+            if !finish {
+                let mut end = p + 1;
+                if end == bytes.len() {
+                    break;
+                }
+                if bytes[end] == b'$' {
+                    end += 1;
+                }
+                if end == bytes.len() {
+                    break;
+                }
+                if (b'('..=b'/').contains(&bytes[end]) {
+                    end += 1;
+                }
+                if end == bytes.len() {
+                    break;
+                }
+            }
             let mut q = p + 1;
             let mut dim = 1;
             if bytes.get(q) == Some(&b'$') {
@@ -386,6 +483,10 @@ pub(super) fn decode_with_native(
                 single = true;
             }
         }
+        if !finish && single && p == bytes.len() {
+            p = start;
+            break;
+        }
         let tw_name = if sp.tw && single && reg == 2 {
             if let Some(&plane) = bytes.get(p) {
                 if (0xa1..=0xa7).contains(&plane) {
@@ -400,6 +501,10 @@ pub(super) fn decode_with_native(
         } else {
             None
         };
+        if !finish && single && p == bytes.len() {
+            p = start;
+            break;
+        }
         let active = tw_name.as_ref().or(state[reg].as_ref());
         // Controls and SPACE/DEL bypass a 94-character graphic set.
         let ordinary_ascii = !single
@@ -422,6 +527,24 @@ pub(super) fn decode_with_native(
         }
         if let Some(s) = active.and_then(|n| sp.get(n)) {
             let end = p + s.dim;
+            if !finish && end > bytes.len() {
+                let high = bytes[p] >= 128;
+                let graphic = bytes[p] & 0x7f;
+                let valid = (!single || sp.flag("7-bit") || high)
+                    && if s.chars96 {
+                        (32..=127).contains(&graphic)
+                    } else {
+                        (33..=126).contains(&graphic) || s.name == "ascii" && !high
+                    };
+                if valid
+                    && bytes[p + 1..]
+                        .iter()
+                        .all(|b| (*b >= 128) == high && (32..=127).contains(&(*b & 0x7f)))
+                {
+                    p = start;
+                    break;
+                }
+            }
             if end <= bytes.len() {
                 let hi = bytes[p] >= 128;
                 let mut packed = 0i64;
@@ -492,5 +615,9 @@ pub(super) fn decode_with_native(
         gl = 0;
         state[0] = Some("ascii".into());
     }
+    stream.registers = Some(state);
+    stream.gl = gl;
+    stream.gr = Some(gr);
+    stream.pending = bytes[p..].to_vec();
     Some((out, spans))
 }

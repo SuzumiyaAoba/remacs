@@ -12793,7 +12793,7 @@ pub(crate) fn coding_canonical(i: &Interp, v: &Value) -> String {
 
 /// Follow aliases before selecting an EOL subsidiary; a bare base uses
 /// automatic EOL detection when decoding and LF when encoding.
-fn coding_fixed_eol(i: &Interp, v: &Value) -> Option<usize> {
+pub(crate) fn coding_fixed_eol(i: &Interp, v: &Value) -> Option<usize> {
     let Value::Sym(s) = v else { return Some(0) };
     let mut name = i.symbol_name(*s).to_string();
     for _ in 0..32 {
@@ -12815,6 +12815,17 @@ fn coding_fixed_eol(i: &Interp, v: &Value) -> Option<usize> {
 }
 
 fn encode_coding_text(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    encode_process_text(i, a, None, false)
+}
+
+/// Pure conversion shared by strings and process encoders. Process callers
+/// keep ISO designation state and suppress a signature already emitted.
+pub(crate) fn encode_process_text(
+    i: &mut Interp,
+    a: crate::lisp::Argv,
+    iso: Option<&mut super::coding_iso2022::EncoderState>,
+    signature_written: bool,
+) -> EvalResult {
     let text = want_string(i, &a[0])?;
     f_check_coding_system(i, vec![a[1].clone()].into())?;
     let canonical = coding_canonical(i, &a[1]);
@@ -12864,13 +12875,26 @@ fn encode_coding_text(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let default = crate::lisp::eval::plist_get(&plist, default_key)
         .int()
         .unwrap_or(32) as u32;
-    let bytes = if let Some(bytes) = super::coding_unicode::encode(&canonical, &input, default) {
+    let iso = if let Some(state) = iso {
+        super::coding_iso2022::encode_stream(i, &coding, &input, false, &preferred, state)
+    } else {
+        super::coding_iso2022::encode_with_preferences(i, &coding, &input, true, &preferred)
+    };
+    let bytes = if let Some(mut bytes) = super::coding_unicode::encode(&canonical, &input, default)
+    {
+        if signature_written {
+            if (canonical == "utf-16" || canonical.ends_with("-with-signature"))
+                && canonical.starts_with("utf-16")
+            {
+                bytes.drain(..2);
+            } else if matches!(canonical.as_str(), "utf-8-auto" | "utf-8-with-signature") {
+                bytes.drain(..3);
+            }
+        }
         bytes
     } else if canonical == "chinese-hz" {
         encode_hz(i, &input)
-    } else if let Some(bytes) =
-        super::coding_iso2022::encode_with_preferences(i, &coding, &input, true, &preferred)
-    {
+    } else if let Some(bytes) = iso {
         bytes
     } else if let Some(bytes) = super::coding_legacy::encode(i, &coding, &input, true) {
         bytes
@@ -13409,6 +13433,53 @@ pub(crate) fn decode_file_bytes(
     Ok((decoded, used))
 }
 
+pub(crate) fn process_encode_source(i: &mut Interp, source: Value, coding: &Value) -> EvalResult {
+    let hook = region_conversion_hook(i, coding, true)?;
+    if hook.is_nil() {
+        return Ok(source);
+    }
+    with_coding_buffer(i, &source, true, |i| {
+        let len = crate::buffer::primitives::cur(i).borrow().text_len();
+        coding_safe_call(i, &hook, vec![Value::Int(1), Value::Int(len as i128 + 1)])?;
+        coding_buffer_string(i)
+    })
+}
+
+pub(crate) fn process_decode_bytes(
+    i: &mut Interp,
+    bytes: &[u8],
+    coding: &Value,
+    iso: &mut super::coding_iso2022::DecoderState,
+    first: bool,
+    finish: bool,
+) -> Result<(Value, Value), Flow> {
+    let source = Value::string(bytes.iter().map(|b| *b as char).collect::<String>());
+    if let Value::Str(r) = &source {
+        i.mark_unibyte(r);
+    }
+    let coding = if coding.is_nil() {
+        Value::Sym(i.intern("no-conversion"))
+    } else {
+        coding.clone()
+    };
+    f_check_coding_system(i, vec![coding.clone()].into())?;
+    let (converted, used, raw) =
+        decode_region_text_stream(i, &source, &coding, Some(iso), first, finish)?;
+    Ok((coding_string_result(i, &converted, raw)?, used))
+}
+
+pub(crate) fn process_decode_result(i: &mut Interp, value: Value, coding: &Value) -> EvalResult {
+    let hook = region_conversion_hook(i, coding, false)?;
+    if hook.is_nil() {
+        return Ok(value);
+    }
+    let count = want_string(i, &value)?.chars().count();
+    with_coding_buffer(i, &value, false, |i| {
+        region_post_read(i, &hook, 0, count)?;
+        coding_buffer_string(i)
+    })
+}
+
 pub(crate) fn f_encode_coding_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     code_convert_string(i, a, true)
 }
@@ -13501,6 +13572,17 @@ fn decode_region_text(
     source: &Value,
     requested: &Value,
 ) -> Result<(Value, Value, bool), Flow> {
+    decode_region_text_stream(i, source, requested, None, true, true)
+}
+
+fn decode_region_text_stream(
+    i: &mut Interp,
+    source: &Value,
+    requested: &Value,
+    mut iso: Option<&mut super::coding_iso2022::DecoderState>,
+    first: bool,
+    finish: bool,
+) -> Result<(Value, Value, bool), Flow> {
     let text = want_string(i, source)?;
     let unibyte = matches!(source, Value::Str(r) if i.is_unibyte_str(r));
     let mut bytes = Vec::new();
@@ -13540,7 +13622,14 @@ fn decode_region_text(
         .collect();
     canonical = super::coding_unicode::resolve(&canonical, &units, !unibyte);
     if canonical.starts_with("utf-16") {
-        let text = super::coding_unicode::decode_utf16(&canonical, &units);
+        let decode_name = if !first {
+            canonical
+                .strip_suffix("-with-signature")
+                .unwrap_or(&canonical)
+        } else {
+            &canonical
+        };
+        let text = super::coding_unicode::decode_utf16(decode_name, &units);
         let (text, detected) =
             super::coding_unicode::normalize_eol(&text, if inhibit { Some(0) } else { fixed });
         let eol = if inhibit { None } else { detected };
@@ -13624,9 +13713,11 @@ fn decode_region_text(
                 .collect(),
             Vec::new(),
         ))
-    } else if let Some(result) =
+    } else if let Some(result) = if let Some(state) = iso.as_deref_mut() {
+        super::coding_iso2022::decode_stream(i, &codec, &bytes, state, finish)
+    } else {
         super::coding_iso2022::decode_with_native(i, &codec, &bytes, &native, storage_bytes)
-    {
+    } {
         Some(result)
     } else if native.iter().any(Option::is_some)
         && !matches!(canonical.as_str(), "utf-8-emacs" | "utf-7" | "utf-7-imap")
@@ -13666,7 +13757,7 @@ fn decode_region_text(
                 at += 1;
             }
             let part = &bytes[start..at];
-            let segment_canonical = if start > 0
+            let segment_canonical = if (start > 0 || !first)
                 && matches!(canonical.as_str(), "utf-8-auto" | "utf-8-with-signature")
             {
                 "utf-8"

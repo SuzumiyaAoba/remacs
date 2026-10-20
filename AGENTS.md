@@ -552,6 +552,32 @@ Regressions: `qa_process_connection.el` checks GNU's transport matrix and
 stream selectors; `tests/process_pipe.rs` verifies kernel FIFOs, raw bytes,
 EOF, descriptor closure and failed-spawn cleanup.
 
+## Process coding (`process/coding.rs` + `builtins/coding_stream.rs`)
+
+Asynchronous child, pipe, TCP, Unix and datagram I/O uses the shared
+string/file codecs. Constructor coding names are validated before creating
+OS I/O; `set-process-coding-system` validates both directions before changing
+either. Accepted network processes inherit the listener's coding names with
+fresh decoder/encoder state. Separately buffered stderr uses its own default
+coding, matching GNU's separate stderr process.
+
+The stream layer retains only incomplete character/EOL bytes and finite
+ISO-2022 designation state. UTF-16 signatures are emitted once per encoder
+run. Unibyte sends bypass character conversion while preserving EOL
+conversion; they reset encoder state even when empty. UTF-7 and HZ keep GNU's
+Lisp converter behavior per read, with only their underlying UTF-8 framing
+carried between reads.
+
+Conversion hooks run outside the process's RefCell borrow. Codec state and
+coding names are stored before post-read hooks or filters can reenter I/O.
+Filter strings retain byte kind and charset properties; default insertion
+maps raw bytes into multibyte buffers' eight-bit characters. Flush pending
+input at natural EOF before the terminal sentinel, including the incomplete
+character rule for empty datagrams.
+
+Regressions: `qa_process_coding.el`, existing coding/network QA, and the
+`coding_stream` boundary/state unit tests.
+
 ## External libraries (`src/lisp/dynlib.rs` + builtins)
 
 Optional GNU libraries are dlopen'd at runtime (`dynlib::Library`):

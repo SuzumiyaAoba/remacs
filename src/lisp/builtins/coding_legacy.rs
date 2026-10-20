@@ -78,6 +78,72 @@ fn sjis_encode(i: &Interp, c: i64) -> Option<Vec<u8>> {
     };
     Some(vec![lead, trail])
 }
+
+/// Complete external character prefix for a streaming charset decoder.
+/// This uses the same charset maps and ordering as decode_with_native.
+pub(crate) fn complete_prefix(i: &mut Interp, coding: &Value, bytes: &[u8]) -> Option<usize> {
+    let (_, kind, plist) = attrs(i, coding)?;
+    if kind != "charset" && kind != "shift-jis" {
+        return None;
+    }
+    let sets = specs(i, &plist);
+    let mut at = 0;
+    while at < bytes.len() {
+        let b = bytes[at];
+        if kind == "shift-jis" {
+            if (0x81..=0x9f).contains(&b) || (0xe0..=0xef).contains(&b) {
+                if at + 1 == bytes.len() {
+                    return Some(at);
+                }
+                let trail = bytes[at + 1];
+                if (0x40..=0xfc).contains(&trail) && trail != 0x7f {
+                    at += 2;
+                    continue;
+                }
+            }
+            at += 1;
+            continue;
+        }
+        let mut found = None;
+        for (name, len, ranges) in &sets {
+            if at + len > bytes.len() {
+                continue;
+            }
+            if ranges.len() == *len
+                && bytes[at..at + len]
+                    .iter()
+                    .zip(ranges)
+                    .any(|(b, (lo, hi))| (*b as i64) < *lo || (*b as i64) > *hi)
+            {
+                continue;
+            }
+            let code = bytes[at..at + len]
+                .iter()
+                .fold(0i64, |code, b| (code << 8) | *b as i64);
+            if charset::charset_decode(i, name, code).is_some() {
+                found = Some(*len);
+                break;
+            }
+        }
+        if let Some(len) = found {
+            at += len;
+            continue;
+        }
+        let left = &bytes[at..];
+        if sets.iter().any(|(_, len, ranges)| {
+            *len > left.len()
+                && !ranges.is_empty()
+                && left
+                    .iter()
+                    .zip(ranges)
+                    .all(|(b, (lo, hi))| (*b as i64) >= *lo && (*b as i64) <= *hi)
+        }) {
+            return Some(at);
+        }
+        at += 1;
+    }
+    Some(at)
+}
 fn encode_with(i: &Interp, sets: &[CharsetSpec], sjis: bool, c: u32) -> Option<Vec<u8>> {
     if c >= 0x3fff80 {
         return Some(vec![c as u8]);

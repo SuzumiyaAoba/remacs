@@ -14,6 +14,7 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::rc::Rc;
 
 mod child;
+mod coding;
 
 use super::builtins::evalfn::timer_check;
 use super::builtins::{S, arg};
@@ -245,8 +246,6 @@ pub struct DatagramIo {
     /// GNU snapshots read-process-output-max when the socket is created.
     read_max: usize,
     /// UTF-8 decoders retain incomplete characters across receive calls.
-    decode_pending: Vec<u8>,
-    decode_coding: String,
     /// Only unlink a pathname this process successfully bound itself.
     bound_path: Option<String>,
     /// Whole messages survive nonblocking retries; GNU uses the current peer.
@@ -436,6 +435,7 @@ pub struct Proc {
     pub tty_name: Value,
     /// (decoding . encoding) coding system names.
     pub coding: (String, String),
+    codecs: coding::State,
     /// Where stderr goes: nil (discard), t (main output), buffer, or process.
     pub stderr_dest: Value,
     pub inherit_coding: bool,
@@ -566,6 +566,119 @@ fn str_value(v: &Value) -> Option<String> {
     }
 }
 
+fn coding_value(i: &mut Interp, name: &str) -> Value {
+    if name == "nil" {
+        Value::Nil
+    } else {
+        symv(i, name)
+    }
+}
+
+fn buffer_multibyte(i: &mut Interp, buffer: usize) -> bool {
+    let variable = i.intern("enable-multibyte-characters");
+    i.buffers
+        .get(buffer)
+        .and_then(|b| b.borrow().locals.get(&variable).cloned())
+        .unwrap_or_else(|| i.obarray.symbol(variable).value.clone())
+        .truthy()
+}
+
+fn decode_process_output(
+    i: &mut Interp,
+    process: &ProcessRef,
+    bytes: &[u8],
+    stderr: bool,
+    finish: bool,
+    buffer: Option<usize>,
+) -> EvalResult {
+    let default_filter = {
+        let p = process.borrow();
+        p.filter.is_nil()
+            || matches!(p.filter, Value::Sym(id) if id == i.intern("internal-default-process-filter"))
+    };
+    let raw =
+        buffer.is_some_and(|buffer| (stderr || default_filter) && !buffer_multibyte(i, buffer));
+    let (value, used) = {
+        let mut p = process.borrow_mut();
+        let name = if stderr {
+            p.codecs.stderr_name.clone()
+        } else {
+            p.coding.0.clone()
+        };
+        let state = if stderr {
+            &mut p.codecs.error
+        } else {
+            &mut p.codecs.output
+        };
+        let (value, used) = state.decode(i, &name, bytes, finish, raw)?;
+        if stderr {
+            p.codecs.stderr_name = used.clone();
+        } else {
+            p.coding.0 = used.clone();
+        }
+        (value, used)
+    };
+    let coding = coding_value(i, &used);
+    let last = i.intern("last-coding-system-used");
+    i.obarray.symbol_mut(last).value = coding.clone();
+    if value.is_nil() {
+        return Ok(value);
+    }
+    super::builtins::misc::process_decode_result(i, value, &coding)
+}
+
+fn encode_process_input(
+    i: &mut Interp,
+    process: &ProcessRef,
+    value: Value,
+) -> Result<Vec<u8>, Flow> {
+    prepare_process_write(i, process)?;
+    let multibyte = super::builtins::strfn::string_multibyte_p(i, &value);
+    let mut name = process.borrow().coding.1.clone();
+    let mut coding = coding_value(i, &name);
+    if multibyte {
+        name = coding::encoding_name(i, &coding)?;
+        coding = coding_value(i, &name);
+        process.borrow_mut().coding.1 = name.clone();
+    }
+    let value = if multibyte {
+        super::builtins::misc::process_encode_source(i, value, &coding)?
+    } else {
+        value
+    };
+    let bytes = process.borrow_mut().codecs.input.encode(i, &name, value)?;
+    let last = i.intern("last-coding-system-used");
+    i.obarray.symbol_mut(last).value = coding;
+    Ok(bytes)
+}
+
+fn insert_coded_into_buffer(i: &mut Interp, buffer: usize, position: Option<usize>, value: &Value) {
+    let Value::Str(source) = value else { return };
+    let multi = buffer_multibyte(i, buffer);
+    let unibyte = i.is_unibyte_str(source);
+    let text: String = source
+        .borrow()
+        .chars()
+        .map(|c| {
+            if !multi {
+                super::value::eight_bit_byte(c).unwrap_or(c as u8) as char
+            } else if unibyte && (128..=255).contains(&(c as u32)) {
+                super::value::lisp_char(0x3fff00 + c as u32).unwrap()
+            } else {
+                c
+            }
+        })
+        .collect();
+    let _ = crate::buffer::primitives::chg_with_buffer(i, buffer, |i| {
+        let at = position
+            .unwrap_or_else(|| cur_text_len(i))
+            .min(cur_text_len(i));
+        crate::buffer::primitives::chg_insert(i, at, &text)?;
+        crate::buffer::primitives::copy_str_props(i, source, at);
+        Ok(Value::Nil)
+    });
+}
+
 /// Decode-process-output hook point: raw bytes → string.
 /// We keep this UTF-8-lossy like GNU's default undecided/utf-8 handling.
 fn decode(bytes: &[u8]) -> String {
@@ -597,17 +710,15 @@ fn deliver_output(
                     let t = target.clone();
                     deliver_output(i, &t, out, false)?;
                 } else if let Some(bid) = i.buffer_id_of(v) {
-                    insert_into_buffer(i, bid, None, &decode(&out));
+                    let value = decode_process_output(i, pref, &out, true, false, Some(bid))?;
+                    insert_coded_into_buffer(i, bid, None, &value);
                 }
             }
         }
         return Ok(());
     }
-    let value = if matches!(pref.borrow().io, ProcIo::Datagram(_)) {
-        decode_datagram(i, pref, &out, false)?
-    } else {
-        Value::string(decode(&out))
-    };
+    let buffer = pref.borrow().buffer;
+    let value = decode_process_output(i, pref, &out, false, false, buffer)?;
     deliver_decoded(i, pref, value)
 }
 
@@ -637,7 +748,7 @@ fn deliver_decoded(i: &mut Interp, pref: &ProcessRef, value: Value) -> Result<()
                     .unwrap_or(0)
             });
         let n = text.chars().count();
-        insert_into_buffer(i, bid, Some(pos), &text);
+        insert_coded_into_buffer(i, bid, Some(pos), &value);
         if let Some(m) = &mark {
             m.borrow_mut().position = pos + n;
         }
@@ -645,19 +756,6 @@ fn deliver_decoded(i: &mut Interp, pref: &ProcessRef, value: Value) -> Result<()
     Ok(())
 }
 
-fn insert_into_buffer(i: &mut Interp, bid: usize, pos: Option<usize>, text: &str) {
-    if i.buffers.get(bid).is_some() {
-        // GNU inserts process output via `insert-before-markers'-style
-        // insertion in the process buffer, running its change hooks.
-        let _ = crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
-            let at = match pos {
-                Some(p) => p.min(cur_text_len(i)),
-                None => cur_text_len(i),
-            };
-            crate::buffer::primitives::chg_insert(i, at, text)
-        });
-    }
-}
 
 fn cur_text_len(i: &mut Interp) -> usize {
     crate::buffer::primitives::cur(i).borrow().text_len()
@@ -761,7 +859,9 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
             match &mut p.io {
                 ProcIo::Child {
                     child,
-                    input_fd, output_fd, tty_fd,
+                    input_fd,
+                    output_fd,
+                    tty_fd,
                     stderr,
                     pending_input,
                     ..
@@ -773,7 +873,11 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     let mut buf = [0u8; 8192];
                     loop {
                         let n = unsafe {
-                            libc::read(output_fd.as_ref().map_or(-1, AsRawFd::as_raw_fd), buf.as_mut_ptr() as *mut _, buf.len())
+                            libc::read(
+                                output_fd.as_ref().map_or(-1, AsRawFd::as_raw_fd),
+                                buf.as_mut_ptr() as *mut _,
+                                buf.len(),
+                            )
                         };
                         if n > 0 {
                             events.push(Ev::Out(buf[..n as usize].to_vec(), false));
@@ -916,6 +1020,15 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
         match ev {
             Ev::Out(bytes, stderr) => deliver_output(i, pref, bytes, stderr)?,
             Ev::Exit(st, code) => {
+                let buffer = pref.borrow().buffer;
+                let tail = decode_process_output(i, pref, &[], false, true, buffer)?;
+                deliver_decoded(i, pref, tail)?;
+                let stderr = pref.borrow().stderr_dest.clone();
+                if let Some(buffer) = i.buffer_id_of(&stderr) {
+                    let tail = decode_process_output(i, pref, &[], true, true, Some(buffer))?;
+                    insert_coded_into_buffer(i, buffer, None, &tail);
+                }
+
                 // GNU's status_notify: a process reaching `exit',
                 // `signal' or `closed' is removed from the process list
                 // (delete-exited-processes defaults to t) BEFORE the
@@ -948,9 +1061,15 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                 // GNU's accepted process inherits the listener's
                 // filter, sentinel and plist (server-process-filter
                 // runs on the connection, not the listener).
-                let (filter, sentinel, plist) = {
+                let (filter, sentinel, plist, coding, inherit_coding) = {
                     let pb = pref.borrow();
-                    (pb.filter.clone(), pb.sentinel.clone(), pb.plist.clone())
+                    (
+                        pb.filter.clone(),
+                        pb.sentinel.clone(),
+                        pb.plist.clone(),
+                        pb.coding.clone(),
+                        pb.inherit_coding,
+                    )
                 };
                 let child_proc = crate::lisp::memory::allocate(
                     Proc {
@@ -971,9 +1090,10 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                         query_on_exit: true,
                         kill_without_query: false,
                         tty_name: Value::Nil,
-                        coding: ("utf-8-unix".into(), "utf-8-unix".into()),
+                        coding,
+                        codecs: Default::default(),
                         stderr_dest: Value::Nil,
-                        inherit_coding: false,
+                        inherit_coding,
                         connection_type: Value::Nil,
                         contact,
                         dead: false,
@@ -1005,9 +1125,15 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     .unwrap_or_else(|| "<local socket>".to_string());
                 let contact = Value::list(vec![Value::string(name.clone())]);
                 // Same GNU inheritance rule as the TCP accept path.
-                let (filter, sentinel, plist) = {
+                let (filter, sentinel, plist, coding, inherit_coding) = {
                     let pb = pref.borrow();
-                    (pb.filter.clone(), pb.sentinel.clone(), pb.plist.clone())
+                    (
+                        pb.filter.clone(),
+                        pb.sentinel.clone(),
+                        pb.plist.clone(),
+                        pb.coding.clone(),
+                        pb.inherit_coding,
+                    )
                 };
                 let child_proc = crate::lisp::memory::allocate(
                     Proc {
@@ -1027,9 +1153,10 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                         query_on_exit: true,
                         kill_without_query: false,
                         tty_name: Value::Nil,
-                        coding: ("utf-8-unix".into(), "utf-8-unix".into()),
+                        coding,
+                        codecs: Default::default(),
                         stderr_dest: Value::Nil,
-                        inherit_coding: false,
+                        inherit_coding,
                         connection_type: Value::Nil,
                         contact,
                         dead: false,
@@ -1154,11 +1281,12 @@ fn poll_datagram(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                 did = true;
                 deliver_output(i, pref, bytes[..n].to_vec(), false)?;
             }
-            Ok(0) if matches!(&pref.borrow().io, ProcIo::Datagram(io) if !io.decode_pending.is_empty()) =>
+            Ok(0) if pref.borrow().codecs.output.has_pending() =>
             {
                 // GNU first flushes an incomplete character as raw bytes. That
                 // read produced output; a later empty datagram closes it.
-                let value = decode_datagram(i, pref, &[], true)?;
+                let buffer = pref.borrow().buffer;
+                let value = decode_process_output(i, pref, &[], false, true, buffer)?;
                 did = true;
                 deliver_decoded(i, pref, value)?;
             }
@@ -1264,6 +1392,7 @@ fn base_proc(name: String, kind: &'static str, io: ProcIo) -> Proc {
         kill_without_query: false,
         tty_name: Value::Nil,
         coding: ("utf-8-unix".into(), "utf-8-unix".into()),
+        codecs: Default::default(),
         stderr_dest: Value::Nil,
         inherit_coding: false,
         connection_type: Value::Nil,
@@ -1288,6 +1417,7 @@ fn finish_setup(
     args: &Value,
     want_command: bool,
 ) -> Result<ProcessRef, Flow> {
+    p.coding = coding::constructor(i, args, p.kind == "pipe")?;
     let b = kw(i, args, ":buffer");
     if b.truthy() {
         // GNU creates the named buffer when it doesn't exist.
@@ -1330,28 +1460,6 @@ fn finish_setup(
     if sd.truthy() {
         p.stderr_dest = sd;
     }
-    let coding = kw(i, args, ":coding");
-    let decode_side = match &coding {
-        Value::Cons(c) => Some(c.borrow().car.clone()),
-        v if v.truthy() => Some(v.clone()),
-        _ => None,
-    };
-    if let Some(v) = decode_side.filter(|v| v.truthy()) {
-        match &v {
-            Value::Sym(s) => p.coding.0 = eol_normalize(&i.symbol_name(*s)),
-            Value::Str(s) => p.coding.0 = eol_normalize(&s.borrow()),
-            _ => {}
-        }
-    }
-    let encode_side = match &coding {
-        Value::Cons(c) => Some(c.borrow().cdr.clone()),
-        _ => None,
-    };
-    if let Some(v) = encode_side.filter(|v| v.truthy()) {
-        if let Value::Sym(s) = &v {
-            p.coding.1 = eol_normalize(&i.symbol_name(*s));
-        }
-    }
     if want_command {
         p.command = kw(i, args, ":command");
     }
@@ -1362,16 +1470,7 @@ fn finish_setup(
     ))
 }
 
-fn eol_normalize(name: &str) -> String {
-    // GNU normalizes eol-variant coding systems to -unix on posix; names
-    // that are already eol-invariant (latin-1, raw-text) pass through.
-    match name {
-        "utf-8" | "utf-8-auto" | "mule-utf-8" => "utf-8-unix".to_string(),
-        "undecided" => "undecided-unix".to_string(),
-        "prefer-utf-8" => "prefer-utf-8-unix".to_string(),
-        s => s.to_string(),
-    }
-}
+
 
 /// GNU is_pty_from_symbol: nil inherits the dynamic default on either side.
 fn child_pty_mode(i: &mut Interp, mode: &Value) -> Result<bool, Flow> {
@@ -1459,6 +1558,7 @@ fn f_make_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
         _ => return Err(i.wrong_type_mut("listp", &command)),
     };
+    coding::constructor(i, &args, false)?;
     if cmd.is_empty() {
         // GNU allows make-process without :command — a "run"-status
         // process with no io backend.
@@ -1478,6 +1578,9 @@ fn f_make_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
     }
     let split_stderr = stderr_dest.truthy();
+    let stderr_coding = if split_stderr && !matches!(stderr_dest, Value::Process(_)) {
+        coding::constructor(i, &Value::Nil, true)?.0
+    } else { String::new() };
     // Transfer an explicitly supplied pipe's writer to the child, as GNU
     // does. Other :stderr destinations are drained through a separate pipe.
     let stderr_pipe = if let Value::Process(sp) = &stderr_dest {
@@ -1517,6 +1620,7 @@ fn f_make_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     let mut p = base_proc(name, "real", io);
     p.tty_name = tty_name.map(Value::string).unwrap_or(Value::Nil);
+    p.codecs.stderr_name = stderr_coding;
     p.pid = pid;
     let pref = finish_setup(i, p, &args, true)?;
     i.processes.push(pref.clone());
@@ -1543,6 +1647,7 @@ fn f_make_pipe_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Nil => return Err(i.error("Missing :name keyword parameter")),
         _ => return Err(i.error(":name value not a string")),
     };
+    coding::constructor(i, &args, true)?;
     let mut fds = [0i32; 2];
     if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
         return Err(i.error("Cannot create pipe"));
@@ -1755,8 +1860,6 @@ fn make_datagram_process(i: &mut Interp, name: String, args: &Value) -> EvalResu
         } else {
             None
         },
-        decode_pending: Vec::new(),
-        decode_coding: String::new(),
         pending: VecDeque::new(),
     };
     let local = match &io.socket {
@@ -1799,17 +1902,6 @@ fn make_datagram_process(i: &mut Interp, name: String, args: &Value) -> EvalResu
     p.status = "open";
     p.contact = contact;
     let pref = finish_setup(i, p, args, false)?;
-    let coding = kw(i, args, ":coding");
-    let (decode, encode) = match &coding {
-        Value::Cons(pair) => (pair.borrow().car.clone(), pair.borrow().cdr.clone()),
-        _ => (coding.clone(), coding),
-    };
-    if let Value::Sym(s) = decode {
-        pref.borrow_mut().coding.0 = i.symbol_name(s);
-    }
-    if let Value::Sym(s) = encode {
-        pref.borrow_mut().coding.1 = i.symbol_name(s);
-    }
     i.processes.push(pref.clone());
     Ok(Value::Process(pref))
 }
@@ -1909,6 +2001,7 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Sym(id) if name_v.truthy() => i.symbol_name(*id),
         _ => return Err(i.error("Network process name not given")),
     };
+    coding::constructor(i, &args, false)?;
     let type_v = kw(i, &args, ":type");
     if matches!(&type_v, Value::Sym(id) if i.symbol_name(*id) == "datagram") {
         return make_datagram_process(i, name, &args);
@@ -2187,6 +2280,7 @@ fn f_make_serial_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !kw(i, &args, ":speed").truthy() {
         return Err(i.error(":speed not specified"));
     }
+    coding::constructor(i, &args, false)?;
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -2630,65 +2724,12 @@ fn f_process_coding_system(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_set_process_coding_system(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let p = want_proc(i, &a[0])?;
-    // GNU requires symbol args (wrong-type-argument symbolp otherwise);
-    // the decode side is stored verbatim while the encode side gets the
-    // canonical name with the -unix eol variant. Omitted args default
-    // to nil / raw-text-unix.
-    for (arg, side) in [(a.get(1), false), (a.get(2), true)] {
-        match arg {
-            Some(Value::Sym(s)) => {
-                let name = i.symbol_name(*s);
-                let mut pb = p.borrow_mut();
-                let slot = if side {
-                    &mut pb.coding.1
-                } else {
-                    &mut pb.coding.0
-                };
-                *slot = if side {
-                    coding_canonical_unix(&name)
-                } else {
-                    name
-                };
-            }
-            Some(Value::Nil) | None => {
-                let mut pb = p.borrow_mut();
-                let slot = if side {
-                    &mut pb.coding.1
-                } else {
-                    &mut pb.coding.0
-                };
-                *slot = if side {
-                    "raw-text-unix".into()
-                } else {
-                    "nil".into()
-                };
-            }
-            Some(v) => {
-                let v = v.clone();
-                return Err(i.wrong_type_mut("symbolp", &v));
-            }
-        }
-    }
+    let read = arg(&a, 1);
+    let write = arg(&a, 2);
+    let read_name = coding::name(i, &read)?;
+    let write_name = coding::encoding_name(i, &write)?;
+    p.borrow_mut().coding = (read_name, write_name);
     Ok(Value::Nil)
-}
-
-/// Canonical name + `-unix` suffix for the encode side of
-/// `set-process-coding-system` (latin-1 → iso-latin-1-unix,
-/// binary → raw-text-unix, utf-8 → utf-8-unix).
-fn coding_canonical_unix(name: &str) -> String {
-    let canon = match name.strip_prefix("latin-") {
-        Some(n) => format!("iso-latin-{n}"),
-        None => match name {
-            "binary" => "raw-text".to_string(),
-            "sjis" => "shift-jis".to_string(),
-            s => s.to_string(),
-        },
-    };
-    if canon.ends_with("-unix") || canon.ends_with("-dos") || canon.ends_with("-mac") {
-        canon
-    } else {
-        format!("{canon}-unix")
-    }
 }
 
 fn f_process_inherit_coding_system_flag(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -2816,77 +2857,16 @@ fn f_accept_process_output(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(got))
 }
 
-fn decode_datagram(i: &mut Interp, p: &ProcessRef, bytes: &[u8], finish: bool) -> EvalResult {
-    let coding = p.borrow().coding.0.clone();
-    let mut input = bytes.to_vec();
-    {
-        let mut pb = p.borrow_mut();
-        if let ProcIo::Datagram(io) = &mut pb.io {
-            if io.decode_coding != coding {
-                io.decode_pending.clear();
-                io.decode_coding = coding.clone();
-            }
-            if coding.starts_with("utf-8") || coding.starts_with("undecided") {
-                let mut pending = std::mem::take(&mut io.decode_pending);
-                pending.extend(input);
-                input = pending;
-                let mut at = 0;
-                while !finish && at < input.len() {
-                    match std::str::from_utf8(&input[at..]) {
-                        Ok(_) => break,
-                        Err(error) => {
-                            at += error.valid_up_to();
-                            if let Some(len) = error.error_len() {
-                                at += len;
-                            } else {
-                                io.decode_pending = input.split_off(at);
-                                break;
-                            }
-                        }
-                    }
-                }
-                if input.is_empty() {
-                    return Ok(Value::Nil);
-                }
-            }
-        }
-    }
-    let value = Value::string(input.iter().map(|b| *b as char).collect::<String>());
-    if let Value::Str(s) = &value {
-        i.mark_unibyte(s);
-    }
-    if matches!(coding.as_str(), "binary" | "no-conversion") {
-        return Ok(value);
-    }
-    let coding = symv(i, &coding);
-    super::builtins::misc::f_decode_coding_string(i, vec![value, coding].into())
-}
-
-fn encode_datagram(i: &mut Interp, p: &ProcessRef, text: Value) -> Result<Vec<u8>, Flow> {
-    let name = p.borrow().coding.1.clone();
-    let coding = symv(i, &name);
-    let encoded = super::builtins::misc::f_encode_coding_string(i, vec![text, coding].into())?;
-    // GNU resolves an automatic encoder EOL on its first actual send.
-    if !matches!(name.as_str(), "binary" | "no-conversion") {
-        p.borrow_mut().coding.1 = coding_canonical_unix(&name);
-    }
-    Ok(super::builtins::misc::lisp_string_bytes(i, &encoded))
-}
-
 fn f_process_send_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU checks STRING before decoding PROCESS (CHECK_STRING is
     // arg 1's contract in process.c), then decodes PROCESS through
     // `get_process' — buffers/names resolve like the other control verbs.
-    let text = match &a[1] {
-        Value::Str(s) => s.borrow().clone(),
-        _ => return Err(i.wrong_type_mut("stringp", &a[1])),
-    };
-    let p = get_process(i, &a[0])?;
-    if matches!(p.borrow().io, ProcIo::Datagram(_)) {
-        let bytes = encode_datagram(i, &p, a[1].clone())?;
-        return proc_write(i, &p, &bytes);
+    if !matches!(&a[1], Value::Str(_)) {
+        return Err(i.wrong_type_mut("stringp", &a[1]));
     }
-    proc_write(i, &p, text.as_bytes())
+    let p = get_process(i, &a[0])?;
+    let bytes = encode_process_input(i, &p, a[1].clone())?;
+    proc_write(i, &p, &bytes)
 }
 
 /// Try one nonblocking write, retaining exactly the unwritten suffix.
@@ -2976,7 +2956,7 @@ fn write_child_input(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult
     }
 }
 
-fn proc_write(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
+fn prepare_process_write(i: &mut Interp, p: &ProcessRef) -> Result<(), Flow> {
     // GNU waits for connection completion while servicing the event loop.
     // Never hold a RefCell borrow across callbacks or fall back to a blocking
     // socket; a timer/sentinel can cancel this wait by deleting the process.
@@ -2991,13 +2971,7 @@ fn proc_write(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
             crate::lisp::eval::threads::pause(i, std::time::Duration::from_millis(5))?;
         }
     }
-    if matches!(p.borrow().io, ProcIo::Datagram(_)) {
-        return write_datagram(i, p, bytes);
-    }
-    if matches!(p.borrow().io, ProcIo::Child { .. }) {
-        return write_child_input(i, p, bytes);
-    }
-    let mut pb = p.borrow_mut();
+    let pb = p.borrow();
     if !pb.dead && (pb.status == "failed" || pb.pending_status == Some("failed")) {
         let code = if pb.connect_error.truthy() {
             i.princ_to_string(&pb.connect_error)
@@ -3015,6 +2989,21 @@ fn proc_write(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
         }
         return Err(i.error("Process is not running"));
     }
+    if matches!(pb.io, ProcIo::Child { .. }) && pb.status != "run" {
+        return Err(i.error("Process is not running"));
+    }
+    Ok(())
+}
+
+fn proc_write(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
+    prepare_process_write(i, p)?;
+    if matches!(p.borrow().io, ProcIo::Datagram(_)) {
+        return write_datagram(i, p, bytes);
+    }
+    if matches!(p.borrow().io, ProcIo::Child { .. }) {
+        return write_child_input(i, p, bytes);
+    }
+    let mut pb = p.borrow_mut();
     // Route through the TLS record layer once gnutls-boot completed
     // (GNU's emacs_gnutls_write).
     if matches!(pb.io, ProcIo::Net(_)) && crate::lisp::builtins::gnutls::tls_ready(&pb) {
@@ -3053,27 +3042,22 @@ fn f_process_send_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         return Err(i.wrong_type_mut("integer-or-marker-p", &a[2]));
     };
     let bid = i.current_buffer;
-    let text = i
+    let (lo, hi) = i
         .buffers
         .get(bid)
         .map(|b| {
-            let bb = b.borrow();
-            let s = ((s - 1).max(0) as usize).min(bb.text_len());
-            let e = ((e - 1).max(0) as usize).min(bb.text_len());
-            let (lo, hi) = if s <= e { (s, e) } else { (e, s) };
-            bb.text
-                .text()
-                .chars()
-                .skip(lo)
-                .take(hi - lo)
-                .collect::<String>()
+            let b = b.borrow();
+            let start = ((s - 1).max(0) as usize).min(b.text_len());
+            let end = ((e - 1).max(0) as usize).min(b.text_len());
+            (start.min(end), start.max(end))
         })
-        .unwrap_or_default();
-    if matches!(p.borrow().io, ProcIo::Datagram(_)) {
-        let bytes = encode_datagram(i, &p, Value::string(text))?;
-        return proc_write(i, &p, &bytes);
-    }
-    proc_write(i, &p, text.as_bytes())
+        .unwrap_or((0, 0));
+    let text = crate::buffer::primitives::f_buffer_substring(
+        i,
+        vec![Value::Int(lo as i128 + 1), Value::Int(hi as i128 + 1)].into(),
+    )?;
+    let bytes = encode_process_input(i, &p, text)?;
+    proc_write(i, &p, &bytes)
 }
 
 fn f_process_send_eof(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -3661,7 +3645,7 @@ fn f_internal_default_process_filter(i: &mut Interp, a: crate::lisp::Argv) -> Ev
     if let Some(bid) = buffer {
         let pos = mark.as_ref().map(|m| m.borrow().position);
         let n = text.chars().count();
-        insert_into_buffer(i, bid, pos, &text);
+        insert_coded_into_buffer(i, bid, pos, &a[1]);
         if let (Some(m), Some(p0)) = (&mark, pos) {
             m.borrow_mut().position = p0 + n;
         }
