@@ -502,6 +502,11 @@ Regression suite: `tests/nsgui.rs` (macOS-gated, 4 tests).
 Not a libgccjit port — an equivalent pipeline: parse `.el`, generate
 C, compile with system `cc` into a shared object named `*.eln`, and
 `dlopen` it. `(native-comp-available-p)` is t iff `cc` is usable.
+The backend feature is `native-compile`; do not also provide `native-comp`.
+Feature presence describes the included backend while the availability
+predicate probes the runtime compiler. Optional `dbusbind`/`lcms2`
+features remain gated by successful runtime library loading.
+Regressions: `qa_feature_capabilities` and `tests/nativecomp.rs`.
 
 Architecture:
 

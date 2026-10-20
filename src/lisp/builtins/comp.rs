@@ -2577,13 +2577,12 @@ pub(crate) const SUBRS: &[Subr] = &[
 ];
 
 pub(crate) fn install(i: &mut Interp) {
-    // The `native-comp' feature is registered only when a working C
-    // compiler exists — same contract as GNU's deferred probe.
-    if compiler_available() {
-        let f = i.intern("native-comp");
-        if !i.features.contains(&f) {
-            i.features.push(f);
-        }
+    // GNU advertises the compiled-in backend as `native-compile'.
+    // Runtime compiler usability is a separate native-comp-available-p
+    // probe; there is no additional `native-comp' feature.
+    let f = i.intern("native-compile");
+    if !i.features.contains(&f) {
+        i.features.push(f);
     }
 }
 

@@ -26,10 +26,13 @@ fn scratch(name: &str, body: &str) -> String {
 
 #[test]
 fn availability_and_feature() {
+    assert_eq!(
+        ev("(list (featurep 'native-compile) (featurep 'native-comp))"),
+        "(t nil)"
+    );
     if !avail() {
         return;
     }
-    assert_eq!(ev("(featurep 'native-comp)"), "t");
     // remacs emits C via cc — no libgccjit, so nil like a
     // --without-native-compilation check on the jit version.
     assert_eq!(ev("(comp-libgccjit-version)"), "nil");
@@ -40,6 +43,32 @@ fn availability_and_feature() {
     assert_eq!(ev("(fboundp 'native-compile-async)"), "t");
     assert_eq!(ev("(fboundp 'native-compile-directory)"), "t");
     assert_eq!(ev("(fboundp 'batch-native-compile)"), "t");
+}
+
+#[test]
+fn native_feature_name_does_not_depend_on_runtime_compiler() {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root =
+        std::env::temp_dir().join(format!("remacs-no-compiler-{}-{nonce}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_remacs"))
+        .env("PATH", &root)
+        .env_remove("REMACS_CC")
+        .env_remove("EMACSLOADPATH")
+        .env_remove("REMACS_NO_ELC")
+        .args(["-Q", "--batch", "--eval",
+            "(prin1 (list (featurep 'native-compile) (featurep 'native-comp) (native-comp-available-p)))"])
+        .output().unwrap();
+    let _ = std::fs::remove_dir_all(root);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "(t nil nil)");
 }
 
 // ---------------------------------------------------------------
