@@ -782,7 +782,11 @@ fn f_symbol_value(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 fn f_symbol_name(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
-    Ok(Value::string(i.symbol_name(id)))
+    let symbol = i.obarray.symbol_mut(id);
+    let name = symbol
+        .name_string
+        .get_or_insert_with(|| Value::string_ref(symbol.name.clone()));
+    Ok(Value::Str(name.clone()))
 }
 fn f_symbol_function(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
@@ -1299,12 +1303,17 @@ fn f_intern(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                         return Ok(sym);
                     }
                     let id = i.make_symbol(&name);
+                    i.obarray.symbol_mut(id).name_string = Some(s.clone());
                     let sym = i.sym(id);
                     obarray_push(i, ob, &sym);
                     return Ok(sym);
                 }
             }
+            let existing = i.intern_soft(&name);
             let id = i.intern(&name);
+            if existing.is_none() {
+                i.obarray.symbol_mut(id).name_string = Some(s.clone());
+            }
             Ok(i.sym(id))
         }
         _ => Err(i.wrong_type_mut("stringp", &args[0])),
@@ -1399,7 +1408,11 @@ fn f_make_symbol(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Str(s) => s.borrow().clone(),
         _ => return Err(i.wrong_type_mut("stringp", &args[0])),
     };
-    Ok(Value::Sym(i.make_symbol(&name)))
+    let id = i.make_symbol(&name);
+    if let Value::Str(string) = &args[0] {
+        i.obarray.symbol_mut(id).name_string = Some(string.clone());
+    }
+    Ok(Value::Sym(id))
 }
 /// An obarray is represented as a record whose slot 0 is the symbol
 /// `obarray` and whose slot 1 is a vector of buckets; GNU's obarrays

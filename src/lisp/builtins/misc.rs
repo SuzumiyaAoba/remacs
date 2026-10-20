@@ -12546,53 +12546,6 @@ fn f_thread_signal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Nil)
 }
 
-/// GNU `Fcheck_region'-style validation: START and END must be
-/// integers (or markers) inside the accessible portion —
-/// 1-based positions in BEGV+1 ..= TEXT_LEN+1 with START <= END.
-/// Returns `args-out-of-range (START END)' otherwise.
-pub(crate) fn check_region_positions(i: &mut Interp, a: &[Value]) -> Result<(), Flow> {
-    let (lo, hi) = i
-        .buffers
-        .get(i.current_buffer)
-        .map(|b| {
-            let bb = b.borrow();
-            (bb.begv, bb.text_len())
-        })
-        .unwrap_or((0, 0));
-    let (start, end) = match (&a[0], &a[1]) {
-        (Value::Int(s), Value::Int(e)) => (*s, *e),
-        // GNU decodes each bound via integer-or-marker-p IN ORDER —
-        // arg0 errors before arg1; a DETACHED marker signals
-        // "Marker does not point anywhere" (CHECK_FIXNUM_COERCE_MARKER).
-        (s, e) => {
-            let mut mv = |v: &Value| -> Result<i128, Flow> {
-                match v {
-                    Value::Int(n) => Ok(*n),
-                    Value::Marker(m) if m.borrow().buffer.is_some() => {
-                        Ok(m.borrow().position as i128 + 1)
-                    }
-                    Value::Marker(_) => Err(i.error("Marker does not point anywhere")),
-                    _ => Err(i.wrong_type_mut("integer-or-marker-p", v)),
-                }
-            };
-            let sv = mv(s)?;
-            let ev = mv(e)?;
-            (sv, ev)
-        }
-    };
-    if start < lo as i128 + 1 || end > hi as i128 + 1 || start > end {
-        let s = i.intern("args-out-of-range");
-        // GNU's region check reports (args-out-of-range BUFFER S E).
-        let buf = i
-            .buffers
-            .get(i.current_buffer)
-            .map(|b| Value::Buffer(b.clone()))
-            .unwrap_or(Value::Nil);
-        return Err(i.signal_data(s, vec![buf, a[0].clone(), a[1].clone()]));
-    }
-    Ok(())
-}
-
 fn coding_region_source(i: &mut Interp, a: &[Value]) -> Result<(Vec<i128>, Value), Flow> {
     let mut positions = Vec::new();
     for v in &a[..2] {

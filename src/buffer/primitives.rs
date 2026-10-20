@@ -2257,6 +2257,15 @@ pub(crate) fn chg_insert(i: &mut Interp, pos: usize, s: &str) -> EvalResult {
 
 /// `insert'/`insert-before-markers' at point (advances point).
 pub(crate) fn chg_insert_pt(i: &mut Interp, s: &str, before_markers: bool) -> EvalResult {
+    chg_insert_pt_props(i, s, before_markers, None)
+}
+
+fn chg_insert_pt_props(
+    i: &mut Interp,
+    s: &str,
+    before_markers: bool,
+    properties: Option<&crate::lisp::value::StrRef>,
+) -> EvalResult {
     let n = s.chars().count();
     if n == 0 {
         return Ok(Value::Nil);
@@ -2274,6 +2283,9 @@ pub(crate) fn chg_insert_pt(i: &mut Interp, s: &str, before_markers: bool) -> Ev
         }
         bb.point()
     };
+    if let Some(properties) = properties {
+        copy_str_props(i, properties, q - n);
+    }
     signal_after_change(i, q + 1 - n, q + 1, 0)
 }
 
@@ -2472,6 +2484,41 @@ fn rear_nonsticky_covers_bb(
     prop_list_covers(i, v, prop)
 }
 
+/// Case expansion inherits only the left interval's rear-sticky
+/// properties; unlike insert-and-inherit it ignores the right interval.
+pub(crate) fn case_left_properties(
+    i: &mut Interp,
+    buffer: &crate::lisp::value::BufferRef,
+    pos: usize,
+) -> Vec<Value> {
+    if pos == 0 {
+        return Vec::new();
+    }
+    let buffer = buffer.borrow();
+    let intervals = buffer.text.props.borrow().slice(pos - 1, pos);
+    let Some((_, _, plist)) = intervals.first() else {
+        return Vec::new();
+    };
+    let rear = i.intern("rear-nonsticky");
+    let nonsticky = prop_at_bb(i, &buffer, pos - 1, rear);
+    let listed = nonsticky.list_to_vec().unwrap_or_default();
+    plist
+        .chunks_exact(2)
+        .filter(|pair| {
+            if crate::lisp::builtins::eq_values(&pair[0], &Value::Sym(rear)) {
+                return false;
+            }
+            if matches!(nonsticky, Value::Cons(_)) {
+                !listed
+                    .iter()
+                    .any(|key| crate::lisp::builtins::eq_values(key, &pair[0]))
+            } else {
+                !nonsticky.truthy()
+            }
+        })
+        .flat_map(|pair| pair.iter().cloned())
+        .collect()
+}
 fn rear_nonsticky_covers(i: &mut Interp, pos: usize, prop: u32) -> bool {
     let ns = i.intern("rear-nonsticky");
     let v = prop_at(i, pos, ns);
@@ -13591,6 +13638,11 @@ fn f_propertize(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             // arg plist props over the whole length.
             let len = str_len(s);
             let ns = crate::lisp::Value::string_ref(s.borrow().clone());
+            if i.is_unibyte_str(s) {
+                i.mark_unibyte(&ns);
+            } else if i.is_multibyte_str(s) {
+                i.mark_multibyte(&ns);
+            }
             let out = Value::Str(ns.clone());
             let mut ivs = i.str_props(s).to_vec();
             let pairs: Vec<(Value, Value)> = a[1..]
@@ -13821,10 +13873,10 @@ fn undo_apply_one(
                     let s = text.borrow().clone();
                     if pos < 0 {
                         b.borrow_mut().set_point((-pos - 1).max(0) as usize);
-                        chg_insert_pt(i, &s, false)?;
+                        chg_insert_pt_props(i, &s, false, Some(text))?;
                     } else {
                         b.borrow_mut().set_point((pos - 1).max(0) as usize);
-                        chg_insert_pt(i, &s, false)?;
+                        chg_insert_pt_props(i, &s, false, Some(text))?;
                         b.borrow_mut().set_point((pos - 1).max(0) as usize);
                     }
                 }

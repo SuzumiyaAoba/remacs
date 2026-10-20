@@ -83,6 +83,7 @@ impl Node {
                 for r in [&s.value, &s.function, &s.plist]
                     .into_iter()
                     .chain(s.alias.iter())
+                    .chain(s.name_string.iter())
                 {
                     add(&mut out, r);
                 }
@@ -165,6 +166,7 @@ impl Node {
 #[derive(Serialize, Deserialize)]
 pub(super) struct SymbolData {
     pub name: Vec<u32>,
+    pub name_string: Option<Ref>,
     pub uninterned: bool,
     pub initial_obarray: bool,
     pub void_marker: bool,
@@ -359,6 +361,11 @@ impl<'a> Encoder<'a> {
                     let symbol = self.interp.obarray.symbol(id);
                     let data = SymbolData {
                         name: encode_text(&symbol.name),
+                        name_string: symbol
+                            .name_string
+                            .as_ref()
+                            .map(|string| self.value(&Value::Str(string.clone())))
+                            .transpose()?,
                         uninterned: symbol.uninterned,
                         initial_obarray: self.interp.obarray.is_initial_symbol(id),
                         void_marker: id == sym::UNBOUND,
@@ -975,7 +982,16 @@ impl<'a> Decoder<'a> {
                 let function = self.value(i, &data.function)?;
                 let plist = self.value(i, &data.plist)?;
                 let alias = data.alias.as_ref().map(|r| self.symbol(r)).transpose()?;
+                let name_string = data
+                    .name_string
+                    .as_ref()
+                    .map(|reference| match self.value(i, reference)? {
+                        Value::Str(string) => Ok(string),
+                        _ => Err("Invalid dumped symbol name string".to_string()),
+                    })
+                    .transpose()?;
                 let symbol = i.obarray.symbol_mut(id);
+                symbol.name_string = name_string;
                 symbol.value = value;
                 symbol.function = function;
                 symbol.plist = plist;

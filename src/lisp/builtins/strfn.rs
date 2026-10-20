@@ -901,12 +901,71 @@ fn casify(i: &mut Interp, arg: &Value, op: CaseOp) -> EvalResult {
         }
         Value::Str(s) => {
             let src = s.borrow().clone();
-            Ok(Value::string(case_str(i, &src, op, &down, &up, &title)))
+            if src.is_empty() {
+                return Ok(arg.clone());
+            }
+            if !string_multibyte_p(i, arg) {
+                let output = super::seq::f_copy_sequence(i, vec![arg.clone()].into())?;
+                let Value::Str(string) = &output else {
+                    unreachable!()
+                };
+                *string.borrow_mut() = case_unibyte_str(i, &src, op, &down, &up, &title);
+                i.mark_unibyte(string);
+                Ok(output)
+            } else {
+                // GNU's multibyte branch allocates a fresh string and
+                // deliberately carries no text-property intervals.
+                let output = Value::string_ref(case_str(i, &src, op, &down, &up, &title));
+                i.mark_multibyte(&output);
+                Ok(Value::Str(output))
+            }
         }
         other => Err(i.wrong_type_mut("char-or-string-p", other)),
     }
 }
 
+/// GNU do_casify_unibyte_string applies only single-character mappings.
+/// Raw bytes are byte8 characters; ASCII mappings that need multibyte
+/// storage fall back to Unicode's ASCII case rather than changing type.
+fn case_unibyte_str(
+    i: &mut Interp,
+    src: &str,
+    op: CaseOp,
+    down: &Value,
+    up: &Value,
+    title: &Value,
+) -> String {
+    let syntax = crate::editor::syntax_table_entries(i);
+    let symbols_as_words = i
+        .intern_soft("case-symbols-as-words")
+        .is_some_and(|id| i.symbol_value(id).truthy());
+    let mut in_word = false;
+    let mut output = String::new();
+    for ch in src.chars() {
+        let code = lisp_char_code(ch) as u32;
+        let syntax = crate::editor::syntax_entry_code(syntax.as_ref(), ch);
+        let word = syntax == b'w' || (symbols_as_words && syntax == b'_');
+        let downcase = op == CaseOp::Down || (op == CaseOp::Cap && in_word && word);
+        let mut cased = match op {
+            CaseOp::Up => ct_case(i, up, code),
+            CaseOp::Down => ct_case(i, down, code),
+            _ if word && !in_word => title_char(i, title, up, code),
+            CaseOp::Cap if word => ct_case(i, down, code),
+            _ => code,
+        };
+        in_word = word;
+        if code < 128 && cased >= 128 && !(0x3fff80..=0x3fffff).contains(&cased) {
+            let ascii = code as u8;
+            cased = if downcase {
+                ascii.to_ascii_lowercase()
+            } else {
+                ascii.to_ascii_uppercase()
+            } as u32;
+        }
+        output.push(char::from(cased as u8));
+    }
+    output
+}
 /// Casify a source string per GNU casefiddle (shared by the string
 /// functions, the *-region commands, and the *-word commands).
 /// `title' is the Unicode `titlecase' property table fetched by the
@@ -918,6 +977,31 @@ pub(crate) fn case_str(
     down: &Value,
     up: &Value,
     title: &Value,
+) -> String {
+    case_str_impl(i, src, op, down, up, title, None)
+}
+
+pub(crate) fn case_str_with_widths(
+    i: &mut Interp,
+    src: &str,
+    op: CaseOp,
+    down: &Value,
+    up: &Value,
+    title: &Value,
+) -> (String, Vec<usize>) {
+    let mut widths = Vec::new();
+    let output = case_str_impl(i, src, op, down, up, title, Some(&mut widths));
+    (output, widths)
+}
+
+fn case_str_impl(
+    i: &mut Interp,
+    src: &str,
+    op: CaseOp,
+    down: &Value,
+    up: &Value,
+    title: &Value,
+    mut widths: Option<&mut Vec<usize>>,
 ) -> String {
     let chars: Vec<char> = src.chars().collect();
     let syn = crate::editor::syntax_table_entries(i);
@@ -931,6 +1015,7 @@ pub(crate) fn case_str(
     let mut out = String::new();
     let mut in_word = false;
     for (idx, &c) in chars.iter().enumerate() {
+        let before = out.len();
         let cp = c as u32;
         match op {
             CaseOp::Up => {
@@ -966,78 +1051,85 @@ pub(crate) fn case_str(
                 }
             }
         }
+        if let Some(widths) = widths.as_mut() {
+            widths.push(out[before..].chars().count());
+        }
     }
     out
 }
 
-/// `upcase-region', `downcase-region', `capitalize-region',
-/// `upcase-initials-region': recase the region in place via the
-/// buffer's case table, returning nil.
-fn casify_region(i: &mut Interp, args: &[Value], op: CaseOp) -> EvalResult {
-    // GNU casify_pnc_region: a non-nil REGION-NONCONTIGUOUS-P ignores
-    // BEG/END and casifies `(region-extract-function 'bounds)' — the
-    // mark/point stretch, erroring without a mark — before any arg
-    // type check on BEG/END.
-    let Some(b) = i.buffers.get(i.current_buffer) else {
-        return Ok(Value::Nil);
-    };
-    let (s, e) = if args.get(2).map(|v| v.truthy()).unwrap_or(false) {
-        let (lo, hi) = crate::buffer::primitives::mark_region_bounds(i)?;
-        let len = b.borrow().text_len();
-        (lo.min(len), hi.min(len))
-    } else {
-        crate::lisp::builtins::misc::check_region_positions(i, args)?;
-        let d = |v: &Value| match v {
-            Value::Int(n) => *n,
-            Value::Marker(m) => m.borrow().position as i128 + 1,
-            _ => 0,
-        };
-        (
-            (d(&args[0]) - 1).max(0) as usize,
-            (d(&args[1]) - 1).max(0) as usize,
-        )
-    };
-    let down = i.current_case_table();
-    let up = case_extra(&down, 0).unwrap_or_else(|| down.clone());
-    let title = match op {
-        CaseOp::Cap | CaseOp::CapUp => {
-            crate::lisp::builtins::charset::unicode_prop_table(i, "titlecase")
+/// GNU replace_range_2 with MARKERS=nil: overwrite characters while
+/// leaving marker/overlay character positions intact. Only point and ZV
+/// move on expansion. Caller owns change hooks and the composite tick.
+pub(crate) fn apply_case_text(
+    i: &mut Interp,
+    buffer: &crate::lisp::value::BufferRef,
+    start: usize,
+    old: &str,
+    new: &str,
+    widths: &[usize],
+) {
+    let old_len = old.chars().count();
+    let new_len = new.chars().count();
+    let old_props = buffer
+        .borrow()
+        .text
+        .props
+        .borrow()
+        .slice(start, start + old_len);
+    let undo = buffer.borrow_mut().record_casify(start, old, new_len);
+    let mut output = new.chars();
+    let mut pos = start;
+    for width in widths {
+        if *width == 1 {
+            buffer.borrow().text.set_char_at(pos, output.next().unwrap());
+            pos += 1;
+            continue;
         }
-        _ => Value::Nil,
-    };
-    let (start, end) = (s, e);
-    let old = b.borrow().text.substring(start, end);
-    let new = case_str(i, &old, op, &down, &up, &title);
-    crate::lisp::builtins::evalfn::signal_before_change(i, start + 1, end + 1)?;
-    let old_len = end - start;
-    let n_new = new.chars().count();
-    let changed = new != old;
-    {
-        let mut bb = b.borrow_mut();
-        if changed {
-            bb.raw_delete_region(start, end);
-            bb.raw_insert_at(start, &new);
+        let mapped: Vec<_> = output.by_ref().take(*width).collect();
+        debug_assert!(!mapped.is_empty());
+        if *width > 1 {
+            let extra = width - 1;
+            let inherited = crate::buffer::primitives::case_left_properties(i, buffer, pos);
+            let mut buffer = buffer.borrow_mut();
+            let split = buffer
+                .text
+                .props
+                .borrow()
+                .intervals()
+                .iter()
+                .any(|(a, b, _)| *a < pos && pos < *b);
+            let prefix: String = mapped[..extra].iter().collect();
+            buffer.text.insert(pos, &prefix);
+            buffer.zv += extra;
+            if buffer.point() > pos {
+                let point = buffer.point() + extra;
+                buffer.set_point(point);
+            }
+            let mut props = buffer.text.props_write();
+            props.graft(pos, &[(0, extra, inherited)], false);
+            props.finish_inherited_insert(pos, extra, split);
+        }
+        let buffer = buffer.borrow();
+        buffer
+            .text
+            .set_char_at(pos + width - 1, *mapped.last().unwrap());
+        pos += width;
+    }
+    if let Some(undo) = undo {
+        i.set_str_props(&undo, old_props);
+        let multi = i.intern("enable-multibyte-characters");
+        if buffer.borrow().locals.get(&multi).is_none_or(Value::truthy) {
+            i.mark_multibyte(&undo);
         } else {
-            bb.record_delete(start, old.clone());
-            bb.record_insert(start, n_new);
+            i.mark_unibyte(&undo);
         }
-        bb.note_text_change(old_len);
     }
-    if changed {
-        crate::lisp::builtins::evalfn::signal_after_change(
-            i,
-            start + 1,
-            start + 1 + n_new,
-            old_len as i128,
-        )?;
-    }
-    Ok(Value::Nil)
 }
 
 fn f_upcase_initials_region(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    casify_region(i, &args, CaseOp::CapUp)
+    crate::editor::region_op(i, &args, CaseOp::CapUp)
 }
-
 fn f_upcase(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     casify(i, &args[0], CaseOp::Up)
 }

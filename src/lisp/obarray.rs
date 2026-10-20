@@ -11,6 +11,9 @@ use super::value::{SymId, Value};
 /// Per-symbol storage.
 pub struct Symbol {
     pub name: String,
+    /// Lisp-visible name, retained by identity when supplied to intern/
+    /// make-symbol. Internal names allocate this lazily on symbol-name.
+    pub name_string: Option<super::value::StrRef>,
     /// Global value cell. Dynamic bindings save/restore this slot
     /// (the specbind stack), so lookup is always O(1).
     pub value: Value,
@@ -261,6 +264,7 @@ impl Obarray {
         let old_capacity = self.symbols.capacity();
         self.symbols.push(Symbol {
             name: name.to_string(),
+            name_string: None,
             value: Value::Sym(sym::UNBOUND),
             function: Value::Sym(sym::UNBOUND),
             plist: Value::Nil,
@@ -298,6 +302,7 @@ impl Obarray {
         let old_capacity = self.symbols.capacity();
         self.symbols.push(Symbol {
             name: name.to_string(),
+            name_string: None,
             value: Value::Sym(sym::UNBOUND),
             function: Value::Sym(sym::UNBOUND),
             plist: Value::Nil,
@@ -345,9 +350,7 @@ impl Obarray {
             .map
             .keys()
             .filter(|k| {
-                k.len() > 1
-                    && k.starts_with('g')
-                    && k[1..].chars().all(|c| c.is_ascii_digit())
+                k.len() > 1 && k.starts_with('g') && k[1..].chars().all(|c| c.is_ascii_digit())
             })
             .cloned()
             .collect();

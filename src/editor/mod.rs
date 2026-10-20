@@ -14956,8 +14956,12 @@ fn f_zap_to_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn region_op(i: &mut Interp, a: &[Value], op: crate::lisp::builtins::strfn::CaseOp) -> EvalResult {
-    use crate::lisp::builtins::strfn::{case_extra, case_str};
+pub(crate) fn region_op(
+    i: &mut Interp,
+    a: &[Value],
+    op: crate::lisp::builtins::strfn::CaseOp,
+) -> EvalResult {
+    use crate::lisp::builtins::strfn::{apply_case_text, case_extra, case_str_with_widths};
     let b = cur(i);
     let down = i.current_case_table();
     let up = case_extra(&down, 0).unwrap_or_else(|| down.clone());
@@ -14982,7 +14986,7 @@ fn region_op(i: &mut Interp, a: &[Value], op: crate::lisp::builtins::strfn::Case
         let (s, e) = (s.min(e), s.max(e));
         (s, e, bb.text.substring(s, e))
     };
-    let new = case_str(i, &old, op, &down, &up, &title);
+    let (new, widths) = case_str_with_widths(i, &old, op, &down, &up, &title);
     // GNU `casify_region': `modify_text' fires whenever the region is
     // non-empty (before-change + MODIFF bump even when nothing
     // changed); `after-change' fires only when case actually changed,
@@ -15006,18 +15010,8 @@ fn region_op(i: &mut Interp, a: &[Value], op: crate::lisp::builtins::strfn::Case
     } else {
         (0, old_len)
     };
-    {
-        let b = cur(i);
-        let mut bb = b.borrow_mut();
-        if changed {
-            bb.raw_delete_region(s, e);
-            bb.raw_insert_at(s, &new);
-        } else {
-            bb.record_delete(s, old.clone());
-            bb.record_insert(s, n_new);
-        }
-        bb.note_text_change(old_len);
-    }
+    apply_case_text(i, &b, s, &old, &new, &widths);
+    b.borrow_mut().note_text_change(old_len);
     if changed {
         let span_new = n_new - (old_len - last_old);
         crate::lisp::builtins::evalfn::signal_after_change(
@@ -15029,7 +15023,6 @@ fn region_op(i: &mut Interp, a: &[Value], op: crate::lisp::builtins::strfn::Case
     }
     Ok(Value::Nil)
 }
-
 fn f_upcase_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     region_op(i, &a, crate::lisp::builtins::strfn::CaseOp::Up)
 }
@@ -15041,7 +15034,7 @@ fn f_capitalize_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn word_op(i: &mut Interp, a: &[Value], op: crate::lisp::builtins::strfn::CaseOp) -> EvalResult {
-    use crate::lisp::builtins::strfn::{case_extra, case_str};
+    use crate::lisp::builtins::strfn::{apply_case_text, case_extra, case_str_with_widths};
     // GNU casify_word: the optional ARG is decoded with CHECK_FIXNUM
     // — nil and non-numbers both signal wrong-type-argument fixnump.
     let n = crate::lisp::builtins::want_fixnum(i, &arg(a, 0))?;
@@ -15080,7 +15073,7 @@ fn word_op(i: &mut Interp, a: &[Value], op: crate::lisp::builtins::strfn::CaseOp
     }
     let (s, e) = (start.min(p), start.max(p));
     let old = b.borrow().text.substring(s, e);
-    let new = case_str(i, &old, op, &down, &up, &title);
+    let (new, widths) = case_str_with_widths(i, &old, op, &down, &up, &title);
     // GNU `casify_region' shape (see region_op).
     crate::lisp::builtins::evalfn::signal_before_change(i, s + 1, e + 1)?;
     let old_len = e - s;
@@ -15101,17 +15094,8 @@ fn word_op(i: &mut Interp, a: &[Value], op: crate::lisp::builtins::strfn::CaseOp
     } else {
         (0, old_len)
     };
-    {
-        let mut bb = b.borrow_mut();
-        if changed {
-            bb.raw_delete_region(s, e);
-            bb.raw_insert_at(s, &new);
-        } else {
-            bb.record_delete(s, old.clone());
-            bb.record_insert(s, n_new);
-        }
-        bb.note_text_change(old_len);
-    }
+    apply_case_text(i, &b, s, &old, &new, &widths);
+    b.borrow_mut().note_text_change(old_len);
     if changed {
         let span_new = n_new - (old_len - last_old);
         crate::lisp::builtins::evalfn::signal_after_change(
@@ -15128,7 +15112,6 @@ fn word_op(i: &mut Interp, a: &[Value], op: crate::lisp::builtins::strfn::CaseOp
     }
     Ok(Value::Nil)
 }
-
 fn f_upcase_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     word_op(i, &a, crate::lisp::builtins::strfn::CaseOp::Up)
 }

@@ -882,6 +882,29 @@ impl Buffer {
         self.push_undo(Value::cons(Value::string(text), Value::Int(sbeg)));
     }
 
+    /// Casifying replaces text without relocating markers. Record its
+    /// aggregate undo pair without deletion's marker-adjustment records.
+    pub(crate) fn record_casify(
+        &mut self,
+        start: usize,
+        old: &str,
+        new_len: usize,
+    ) -> Option<crate::lisp::value::StrRef> {
+        if self.undo_disabled() {
+            return None;
+        }
+        self.record_point(start + 1);
+        let position = if self.point == start + old.chars().count() {
+            -(start as i128 + 1)
+        } else {
+            start as i128 + 1
+        };
+        let text = Value::string_ref(old);
+        self.push_undo(Value::cons(Value::Str(text.clone()), Value::Int(position)));
+        self.record_insert(start, new_len);
+        Some(text)
+    }
+
     /// The effective value of PROP (last write wins) at 0-based POS,
     /// or nil when no covering entry exists.
     pub fn prop_value_at(&self, pos: usize, prop: u32) -> Value {

@@ -400,6 +400,29 @@ pcase, cl-loop, load and CLI suites.
 - `PRELUDE_MAX` env var truncates prelude evaluation for bisection;
   `--ieval` bisects a form interactively; `WHILE_WATCH` traces eval loops.
 
+## Case conversion and symbol names
+
+GNU casefiddle has distinct string paths: nonempty unibyte strings use
+single-character mappings on a copy, retaining properties and byte
+representation; multibyte strings allocate a fresh multibyte result
+without properties. Empty strings return the original object.
+`propertize` must preserve explicit representation flags when copying.
+
+Region and word casing share `apply_case_text`. Character replacements
+preserve intervals; expansion inserts extra prefix characters with only
+the previous character's rear-sticky properties. Like GNU's
+`replace_range_2` with MARKERS=nil, marker/overlay character positions
+stay fixed while point and the selected buffer's accessible end grow.
+`record_casify` saves an aggregate undo pair with the original string's
+properties. Undo insertion restores those properties before change hooks.
+
+`Symbol.name_string` retains the Lisp name string by identity for new
+`intern`/`make-symbol` calls; internal names acquire a stable string
+lazily. Existing interned names keep their original string. Portable
+images encode the name as a graph reference so aliases, representation,
+and live properties survive restoration. Regressions:
+`qa_case_name_properties` and `tests/portable_dump.rs`.
+
 ## Custom hash-table tests
 
 `define-hash-table-test` tables capture their comparison/hash functions at

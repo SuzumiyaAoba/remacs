@@ -74,6 +74,8 @@ fn image_restores_shared_lisp_state_buffers_and_reports_actual_startup() {
       (setq dump112-float 1.25 dump112-hash (make-hash-table :test 'eq))
       (puthash dump112-float dump112-cycle dump112-hash)
       (setq dump112-symbol (make-symbol "dump112-name"))
+      (setq dump124-name (propertize (string-to-multibyte "dump124-name") 'dump124-tag 124))
+      (setq dump124-symbol (make-symbol dump124-name))
       (setq dump112-obarray (obarray-make))
       (setq dump112-other-symbol (intern "dump112-only-custom" dump112-obarray))
       (string #x110005) (setq dump112-mule (string #x110007 #x110001))
@@ -112,6 +114,11 @@ fn image_restores_shared_lisp_state_buffers_and_reports_actual_startup() {
           (= (funcall (car dump112-shared)) 7) (= (funcall (cadr dump112-shared)) 7)
           (eq (gethash dump112-float dump112-hash) dump112-cycle)
           (not (intern-soft (symbol-name dump112-symbol)))
+          (eq dump124-name (symbol-name dump124-symbol))
+          (= (get-text-property 0 'dump124-tag (symbol-name dump124-symbol)) 124)
+          (multibyte-string-p (symbol-name dump124-symbol))
+          (progn (put-text-property 0 1 'dump124-later t dump124-name)
+                 (get-text-property 0 'dump124-later (symbol-name dump124-symbol)))
           (eq (intern-soft "dump112-only-custom" dump112-obarray) dump112-other-symbol)
           (not (intern-soft "dump112-only-custom"))
           (equal (string-to-list dump112-mule) '(1114119 1114113))
@@ -142,7 +149,7 @@ fn image_restores_shared_lisp_state_buffers_and_reports_actual_startup() {
         &["--dump-file", fixture.image().to_str().unwrap()],
         &code,
     ));
-    assert_eq!(result, format!("({})", vec!["t"; 27].join(" ")));
+    assert_eq!(result, format!("({})", vec!["t"; 31].join(" ")));
     let equals = format!("--dump-file={}", fixture.image().display());
     assert_eq!(
         Fixture::ok(fixture.eval(
