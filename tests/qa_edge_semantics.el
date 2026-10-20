@@ -156,4 +156,20 @@
 (qa-err-data (read-from-string "#12") 'invalid-read-syntax '("#12"))
 (qa-err-data (read-from-string "#9#") 'invalid-read-syntax '("#9#"))
 
+;; GH #133: concat validates mapped elements before a separator.
+(qa-err-data (mapconcat #'identity '(1) nil)
+             'wrong-type-argument '(sequencep 1))
+(qa-err-data (mapconcat #'identity '("a" "b") t)
+             'wrong-type-argument '(sequencep t))
+(qa-err-data (mapconcat #'identity '(1 "b") t)
+             'wrong-type-argument '(sequencep 1))
+(qa (let ((seen nil))
+      (let ((result (condition-case error
+                        (mapconcat (lambda (value) (push value seen) value) '(1 "b") t)
+                      (error (list (car error) (cdr error))))))
+        (list result (nreverse seen)))) '((wrong-type-argument (sequencep 1)) (1 "b")))
+(qa (mapconcat 'qa133-missing-function nil 5) "")
+(qa-err-data (mapconcat (lambda (_) (error "mapped")) '("a" "b") t)
+             'error '("mapped"))
+
 (princ (qa--done))
