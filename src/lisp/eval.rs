@@ -6400,7 +6400,7 @@ command-line arguments.\" \
         Ok(())
     }
 
-    /// Run `add-variable-watcher' functions for `id' after a change.
+    /// Run `add-variable-watcher' functions before changing `id'.
     /// GNU calls each watcher as (SYM NEWVAL OPERATION WHERE).
     pub(crate) fn fire_var_watchers(
         &mut self,

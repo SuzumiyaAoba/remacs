@@ -816,21 +816,21 @@ fn f_set(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(args[1].clone())
 }
 fn f_add_variable_watcher(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // (add-variable-watcher SYM WATCH-FN) — watcher is called as
-    // (SYM NEWVAL OP WHERE) after each change.
     let id = want_sym(i, &args[0])?;
-    // GNU add_variable_watcher: SYMBOLP on SYM; the watcher accepts any
-    // symbol (it needn't be fbound) or a non-symbol function.
-    // GNU add_variable_watcher stores WATCH-FN unchecked — a bogus
-    // watcher only fails later, at fire time.
-    i.var_watchers.push((id, args[1].clone()));
+    let id = i.var_alias_target(id);
+    // GNU stores unchecked functions, prepending only when `member'
+    // (equal, rather than eq) does not find an existing watcher.
+    for (symbol, watcher) in &i.var_watchers {
+        if *symbol == id && equal_values(i, watcher, &args[1])? {
+            return Ok(Value::Nil);
+        }
+    }
+    i.var_watchers.insert(0, (id, args[1].clone()));
     Ok(Value::Nil)
 }
 fn f_get_variable_watchers(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU eval.c get watchers: non-symbol argument returns nil, no
-    // type check (watchers are keyed on symbols only).
     let id = match i.sym_id(&args[0]) {
-        Some(id) => id,
+        Some(id) => i.var_alias_target(id),
         None => return Ok(Value::Nil),
     };
     let list: Vec<Value> = i
@@ -843,12 +843,16 @@ fn f_get_variable_watchers(i: &mut Interp, args: crate::lisp::Argv) -> EvalResul
 }
 fn f_remove_variable_watcher(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
-    if let Some(pos) = i
-        .var_watchers
-        .iter()
-        .position(|(s, f)| *s == id && crate::lisp::builtins::eq_values(f, &args[1]))
-    {
-        i.var_watchers.remove(pos);
+    let id = i.var_alias_target(id);
+    // GNU `delete' removes every equal occurrence.
+    let mut pos = 0;
+    while pos < i.var_watchers.len() {
+        let (symbol, watcher) = &i.var_watchers[pos];
+        if *symbol == id && equal_values(i, watcher, &args[1])? {
+            i.var_watchers.remove(pos);
+        } else {
+            pos += 1;
+        }
     }
     Ok(Value::Nil)
 }
@@ -968,6 +972,10 @@ fn f_defvaralias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             name
         )));
     }
+    // Notify before installing the alias. Watchers see the old cell,
+    // the proposed base as NEWVAL, and can abort the aliasing.
+    let watched = i.var_alias_target(newv);
+    i.fire_var_watchers(watched, &args[1], "defvaralias", None)?;
     let prop = i.intern("variable-alias");
     i.put_prop(newv, prop, args[1].clone());
     i.obarray.symbol_mut(newv).special = true;

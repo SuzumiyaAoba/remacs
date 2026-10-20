@@ -1277,3 +1277,11 @@ and records each replacement with `record_change`, preserving properties.
 once. NOUNDO temporarily disables undo and hides the visited file name;
 its SAVE_MODIFF adjustment follows GNU even when a multi-character range
 still becomes modified. `tests/qa_substitute_chars.el` pins these details.
+
+Variable watchers (`data.rs`, `Interp::var_watchers`) register on the
+ultimate variable alias target. New watchers run first; add/remove use
+`equal` for GNU's `member`/`delete` semantics. `defvaralias` notifies the
+old cell's watchers before installing the new alias, with BASE as NEWVAL
+and `defvaralias` as OPERATION; an error aborts aliasing. Per-buffer `setq`
+and `set` both notify for `fill-column` in GNU 31.1, despite the original
+issue report's claim. `tests/qa_variable_watchers.el` pins these behaviors.
