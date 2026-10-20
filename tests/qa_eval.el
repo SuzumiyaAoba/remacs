@@ -186,4 +186,19 @@
     '((2 4) 1 7))
 (qa (with-temp-buffer (insert "hi") (buffer-string)) "hi")
 
+;; GH #132: interpreted min arity is 1; byte compilation folds the empty form.
+(qa-err-data (unwind-protect) 'wrong-number-of-arguments '(unwind-protect 0))
+(qa (unwind-protect nil) nil)
+(qa (unwind-protect 42) 42)
+(qa (let ((cleaned nil)) (list (unwind-protect 7 (setq cleaned t)) cleaned)) '(7 t))
+(qa (let ((cleaned nil))
+      (list (catch 'escape (unwind-protect (throw 'escape 9) (setq cleaned t))) cleaned)) '(9 t))
+(qa-err-data (unwind-protect nil (error "cleanup")) 'error '("cleanup"))
+(qa-err-data (unwind-protect (error "body") (error "cleanup")) 'error '("cleanup"))
+(qa (func-arity 'unwind-protect) '(1 . unevalled))
+(qa (subr-arity (symbol-function 'unwind-protect)) '(1 . unevalled))
+(require 'bytecomp)
+(qa (let ((byte-compile-warnings nil))
+      (funcall (byte-compile '(lambda () (unwind-protect))))) nil)
+
 (princ (qa--done))
