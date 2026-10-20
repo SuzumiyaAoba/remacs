@@ -307,7 +307,7 @@ pub(super) fn decode_with_native(
     }
     Some((out, spans))
 }
-pub(super) fn internal_encode(c: u32) -> Vec<u8> {
+pub(crate) fn internal_encode(c: u32) -> Vec<u8> {
     if c >= 0x3fff80 {
         return vec![c as u8];
     }

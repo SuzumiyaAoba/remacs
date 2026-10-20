@@ -21,7 +21,7 @@ fn escape_char_for_string(c: char, out: &mut String, nl: bool, mb: bool, cc: boo
             let _ = write!(out, "\\{:o}", c as u32);
         }
         c if mb && (c as u32) > 0x7f => {
-            let _ = write!(out, "\\x{:04x}", c as u32);
+            let _ = write!(out, "\\x{:04x}", super::value::lisp_char_code(c));
         }
         c => out.push(c),
     }
@@ -608,13 +608,10 @@ impl Interp {
                 } else {
                     for c in s.borrow().chars() {
                         // Eight-bit chars print as their byte's octal
-                        // escape even in multibyte strings; surrogate
-                        // proxies print as U+FFFD like GNU's raw
-                        // surrogate display.
+                        // escape even in multibyte strings. Other proxy
+                        // chars retain their logical code for sinks.
                         if let Some(b) = crate::lisp::value::eight_bit_byte(c) {
                             let _ = write!(out, "\\{:03o}", b);
-                        } else if crate::lisp::value::surrogate_code(c).is_some() {
-                            out.push('\u{FFFD}');
                         } else {
                             escape_char_for_string(c, out, nl, mb, cc);
                         }

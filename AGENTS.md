@@ -423,6 +423,16 @@ images encode the name as a graph reference so aliases, representation,
 and live properties survive restoration. Regressions:
 `qa_case_name_properties` and `tests/portable_dump.rs`.
 
+## Character strings and output
+
+`char-to-string` retains every accepted Emacs character code through
+`lisp_char` or the Mule proxy registry. Non-ASCII results are explicitly
+multibyte, including eight-bit character codes. Surrogates remain logical
+characters internally; readable printing must retain them (or escape the
+logical code), and batch stdout must encode them with `internal_encode`.
+Encoding the Rust proxy scalar directly emits the wrong bytes. Regressions:
+`qa_char_to_string` and the byte comparisons in `tests/char_output_cli.rs`.
+
 ## Custom hash-table tests
 
 `define-hash-table-test` tables capture their comparison/hash functions at

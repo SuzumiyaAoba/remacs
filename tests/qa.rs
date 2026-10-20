@@ -77,6 +77,7 @@ qa!(qa_buffmenu, "qa_buffmenu.el");
 qa!(qa_case, "qa_case.el");
 qa!(qa_case_name_properties, "qa_case_name_properties.el");
 qa!(qa_char, "qa_char.el");
+qa!(qa_char_to_string, "qa_char_to_string.el");
 qa!(qa_charset, "qa_charset.el");
 qa!(qa_character_width_table, "qa_character_width_table.el");
 qa!(

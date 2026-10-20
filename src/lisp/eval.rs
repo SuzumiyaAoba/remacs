@@ -11875,6 +11875,7 @@ command-line arguments.\" \
                                 || crate::lisp::value::print_eight_bit_byte(c).is_some()
                                 || crate::lisp::value::raw_byte_marker(c).is_some()
                                 || crate::lisp::value::mule_seq_code(c).is_some()
+                                || crate::lisp::value::surrogate_code(c).is_some()
                         }) {
                             let mut bytes = Vec::with_capacity(s.len());
                             for c in s.chars() {
@@ -11884,6 +11885,10 @@ command-line arguments.\" \
                                     bytes.extend_from_slice(&crate::lisp::value::mule_high_bytes(
                                         code,
                                     ));
+                                } else if let Some(code) = crate::lisp::value::surrogate_code(c) {
+                                    bytes.extend_from_slice(
+                                        &crate::lisp::builtins::coding_legacy::internal_encode(code),
+                                    );
                                 } else {
                                     let b = crate::lisp::value::eight_bit_byte(c)
                                         .or_else(|| crate::lisp::value::print_eight_bit_byte(c))

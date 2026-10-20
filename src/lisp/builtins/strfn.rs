@@ -1271,8 +1271,13 @@ fn f_char_to_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         // GNU CHECK_CHARACTER: any fixnum 0..#x3FFFFF is a char;
         // eight-bit codes map to PUA proxies like the rest of strfn.
         Value::Int(n) if (0..=0x3f_ffff).contains(n) => {
-            let c = lisp_char(*n as u32).unwrap_or('\u{FFFD}');
-            Ok(Value::string(c.to_string()))
+            let code = *n as u32;
+            let c = lisp_char(code).unwrap_or_else(|| crate::lisp::value::mule_seq_char(code));
+            let string = Value::string_ref(c.to_string());
+            if code >= 128 {
+                i.mark_multibyte(&string);
+            }
+            Ok(Value::Str(string))
         }
         other => Err(i.wrong_type_mut("characterp", other)),
     }
