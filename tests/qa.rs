@@ -300,6 +300,7 @@ qa!(qa_obarray, "qa_obarray.el");
 qa!(qa_unintern_identity, "qa_unintern_identity.el");
 qa!(qa_overlay, "qa_overlay.el");
 qa!(qa_overlays, "qa_overlays.el");
+qa!(qa_overlay_equality, "qa_overlay_equality.el");
 qa!(qa_pcase, "qa_pcase.el");
 qa!(qa_plists, "qa_plists.el");
 qa!(qa_point, "qa_point.el");

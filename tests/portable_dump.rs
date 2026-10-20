@@ -92,6 +92,10 @@ fn image_restores_shared_lisp_state_buffers_and_reports_actual_startup() {
       (setq dump112-marker (with-current-buffer dump112-buffer (copy-marker 4)))
       (setq dump112-overlay (with-current-buffer dump112-buffer (make-overlay 2 3)))
       (overlay-put dump112-overlay 'dump-property dump112-cycle) (delete-overlay dump112-overlay)
+      (setq dump128-overlay (with-current-buffer dump112-buffer (make-overlay 2 3)))
+      (overlay-put dump128-overlay 'dump-property dump112-cycle) (delete-overlay dump128-overlay)
+      (setq dump128-index (make-hash-table :test 'equal))
+      (puthash dump112-overlay 'overlay-value dump128-index)
       (setq after-pdump-load-hook (list (lambda () (setq dump112-hook-ran t))))
       (dump-emacs-portable {} t)
       (prin1 (list (pdumper-stats) (> (file-attribute-size (file-attributes {})) 100))))"#,
@@ -133,6 +137,8 @@ fn image_restores_shared_lisp_state_buffers_and_reports_actual_startup() {
           (eq (marker-buffer dump112-marker) dump112-buffer) (= (marker-position dump112-marker) 4)
           (overlayp dump112-overlay) (not (overlay-buffer dump112-overlay))
           (eq (overlay-get dump112-overlay 'dump-property) dump112-cycle)
+          (equal dump112-overlay dump128-overlay)
+          (eq (gethash dump128-overlay dump128-index) 'overlay-value)
           dump112-hook-ran
           (eq (cdr (assq 'dumped-with-pdumper stats)) t)
           (floatp (cdr (assq 'load-time stats))) (> (cdr (assq 'load-time stats)) 0)
@@ -149,7 +155,7 @@ fn image_restores_shared_lisp_state_buffers_and_reports_actual_startup() {
         &["--dump-file", fixture.image().to_str().unwrap()],
         &code,
     ));
-    assert_eq!(result, format!("({})", vec!["t"; 31].join(" ")));
+    assert_eq!(result, format!("({})", vec!["t"; 33].join(" ")));
     let equals = format!("--dump-file={}", fixture.image().display());
     assert_eq!(
         Fixture::ok(fixture.eval(

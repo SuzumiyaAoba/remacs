@@ -187,6 +187,11 @@ fn equal_key(
             return None;
         }
     }
+    // Overlay contents live outside the handle vector and may be cyclic.
+    // Use the existing bounded sxhash bucket + equal collision comparison.
+    if interp.is_overlay(v) {
+        return None;
+    }
     let out = match v {
         Value::Str(s) => HashKey::Str(s.borrow().clone()),
         Value::Marker(m) => {

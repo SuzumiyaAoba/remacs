@@ -5210,6 +5210,27 @@ command-line arguments.\" \
             .is_some_and(|registered| Rc::ptr_eq(&registered, handle))
     }
 
+    /// Snapshot the editor data behind a genuine overlay handle. Never
+    /// interpret an ordinary vector with overlay-looking slots as an overlay.
+    pub(crate) fn overlay_state(&self, value: &Value) -> Option<crate::buffer::Overlay> {
+        if !self.is_overlay(value) {
+            return None;
+        }
+        let Value::Vec(handle) = value else {
+            return None;
+        };
+        let (buffer, slot) = {
+            let handle = handle.borrow();
+            (
+                usize::try_from(handle.get(1)?.int()?).ok()?,
+                usize::try_from(handle.get(2)?.int()?).ok()?,
+            )
+        };
+        let buffer = self.buffers.get(buffer)?;
+        let state = buffer.borrow().overlays.get(slot).cloned();
+        state
+    }
+
     /// Mark a string as unibyte (encoder output); `prin1' escapes
     /// its ≥0x80 byte-chars as `\NNN' octal like GNU.
     pub fn mark_unibyte(&mut self, s: &crate::lisp::value::StrRef) {

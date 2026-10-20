@@ -433,6 +433,22 @@ logical code), and batch stdout must encode them with `internal_encode`.
 Encoding the Rust proxy scalar directly emits the wrong bytes. Regressions:
 `qa_char_to_string` and the byte comparisons in `tests/char_output_cli.rs`.
 
+## Overlay equality
+
+Registered `[overlay BID IDX]` handles are pseudovectors, not ordinary
+vectors for equality. `overlay_state` reads their current editor data.
+GNU compares buffer and live bounds, then the ordered overlay plist at
+depth + 1; insertion flags do not participate, and detached bounds are
+ignored. A look-alike ordinary vector must remain a different type.
+
+The shared comparison carries the `equal-including-properties` mode into
+containers and overlay plists. String interval property values still use
+ordinary `equal` at depth zero, as GNU's `intervals_equal_1` does.
+Equal-table normalization sends overlays (including nested ones) through
+the existing bounded semantic sxhash and collision comparison, rather
+than hashing the handle's identity slots. Regressions:
+`qa_overlay_equality` and deleted-overlay keys in `tests/portable_dump.rs`.
+
 ## Custom hash-table tests
 
 `define-hash-table-test` tables capture their comparison/hash functions at

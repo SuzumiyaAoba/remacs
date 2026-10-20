@@ -7,11 +7,11 @@ pub(crate) mod arith;
 pub(crate) mod backquote;
 pub(crate) mod bidi_table;
 pub(crate) mod charset;
+pub(crate) mod coding_detect;
+pub(crate) mod coding_detection;
 pub(crate) mod coding_iso2022;
 pub(crate) mod coding_legacy;
 pub(crate) mod coding_unicode;
-pub(crate) mod coding_detect;
-pub(crate) mod coding_detection;
 pub(crate) mod comp;
 pub(crate) mod csl_table;
 pub(crate) mod data;
@@ -32,8 +32,8 @@ pub(crate) mod seq;
 pub(crate) mod sort;
 pub(crate) mod sqlite;
 pub(crate) mod strfn;
-pub(crate) mod treesit;
 pub(crate) mod timefmt;
+pub(crate) mod treesit;
 pub(crate) mod xml;
 
 use super::Interp;
@@ -499,7 +499,48 @@ pub fn eql_values(a: &Value, b: &Value) -> bool {
 /// a failed comparison.
 pub fn equal_values(interp: &Interp, a: &Value, b: &Value) -> Result<bool, Flow> {
     let mut seen = None;
-    equal_values_1(interp, a, b, 0, &mut seen)
+    equal_values_1(interp, a, b, 0, &mut seen, false)
+}
+
+/// The same recursive comparison with string text properties enabled.
+/// Property values themselves still use ordinary equal, as in GNU's
+/// compare_string_intervals -> intervals_equal_1.
+pub(crate) fn equal_values_including_properties(
+    interp: &Interp,
+    a: &Value,
+    b: &Value,
+) -> Result<bool, Flow> {
+    equal_values_1(interp, a, b, 0, &mut None, true)
+}
+
+fn equal_string_properties(
+    interp: &Interp,
+    a: &crate::lisp::value::StrRef,
+    b: &crate::lisp::value::StrRef,
+) -> Result<bool, Flow> {
+    let (ia, ib) = (interp.str_props(a).to_vec(), interp.str_props(b).to_vec());
+    for position in 0..a.borrow().chars().count() {
+        let pa = crate::buffer::primitives::str_plist_at(&ia, position);
+        let pb = crate::buffer::primitives::str_plist_at(&ib, position);
+        for (a, b_at_pos) in pa.chunks(2).zip(pb.chunks(2)) {
+            if a.len() != 2 {
+                return Ok(false);
+            }
+            let Some(b) = pb.chunks(2).find(|b| eq_values(&b[0], &a[0])) else {
+                return Ok(false);
+            };
+            if b.len() != 2 || !equal_values(interp, &b[1], &a[1])? {
+                return Ok(false);
+            }
+            if b_at_pos.len() != 2 {
+                return Ok(false);
+            }
+        }
+        if pa.len() != pb.len() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 type EqualSeen = std::collections::HashSet<(usize, usize)>;
@@ -525,6 +566,7 @@ fn equal_values_1(
     b: &Value,
     depth: u32,
     seen: &mut Option<EqualSeen>,
+    with_properties: bool,
 ) -> Result<bool, Flow> {
     // GNU checks the limit before identity, type, or memo shortcuts.
     // An identical leaf at depth 201 therefore still signals an error.
@@ -548,8 +590,22 @@ fn equal_values_1(
     if eq_values(a, b) {
         return Ok(true);
     }
+    if interp.is_overlay(a) || interp.is_overlay(b) {
+        return match (interp.overlay_state(a), interp.overlay_state(b)) {
+            (Some(a), Some(b))
+                if a.buffer == b.buffer
+                    && (a.buffer.is_none() || (a.start == b.start && a.end == b.end)) =>
+            {
+                equal_values_1(interp, &a.plist, &b.plist, depth + 1, seen, with_properties)
+            }
+            _ => Ok(false),
+        };
+    }
     Ok(match (a, b) {
-        (Value::Str(x), Value::Str(y)) => *x.borrow() == *y.borrow(),
+        (Value::Str(x), Value::Str(y)) => {
+            *x.borrow() == *y.borrow()
+                && (!with_properties || equal_string_properties(interp, x, y)?)
+        }
         (Value::Marker(x), Value::Marker(y)) => {
             // GNU `equal' on markers compares buffer + position (they're
             // `misc' objects with value semantics), not identity.
@@ -578,7 +634,8 @@ fn equal_values_1(
                             let bb = bc.borrow();
                             (bb.car.clone(), bb.cdr.clone())
                         };
-                        if !equal_values_1(interp, &acar, &bcar, depth + 1, seen)? {
+                        if !equal_values_1(interp, &acar, &bcar, depth + 1, seen, with_properties)?
+                        {
                             return Ok(false);
                         }
                         ax = acdr;
@@ -613,24 +670,33 @@ fn equal_values_1(
                     (Value::Cons(_), _) => return Ok(false),
                     _ if one_cycle => return Ok(false),
                     _ => {
-                        return equal_values_1(interp, &ax, &bx, depth + 1, seen);
+                        return equal_values_1(interp, &ax, &bx, depth + 1, seen, with_properties);
                     }
                 }
             }
         }
-        (Value::Vec(x), Value::Vec(y)) | (Value::Record(x), Value::Record(y)) => {
-            equal_items(interp, &x.borrow(), &y.borrow(), depth, seen)?
-        }
+        (Value::Vec(x), Value::Vec(y)) | (Value::Record(x), Value::Record(y)) => equal_items(
+            interp,
+            &x.borrow(),
+            &y.borrow(),
+            depth,
+            seen,
+            with_properties,
+        )?,
         (Value::Lambda(x), Value::Lambda(y)) => {
             // `#[...]' byte-code objects are pseudovectors in GNU:
             // `equal' compares their elements (argdesc, bytecode
             // string, constants vector, ...) pairwise.
             match (&x.bc_items, &y.bc_items) {
                 (Some(xi), Some(yi)) => {
-                    return Ok(
-                        equal_items(interp, &xi.borrow(), &yi.borrow(), depth, seen)?
-                            && x.env.is_none() == y.env.is_none(),
-                    );
+                    return Ok(equal_items(
+                        interp,
+                        &xi.borrow(),
+                        &yi.borrow(),
+                        depth,
+                        seen,
+                        with_properties,
+                    )? && x.env.is_none() == y.env.is_none());
                 }
                 (None, None) => {}
                 _ => return Ok(false),
@@ -649,7 +715,7 @@ fn equal_values_1(
                 }
                 match (&a.default, &b.default) {
                     (Some(d), Some(e)) => {
-                        if !equal_values_1(interp, d, e, depth + 1, seen)? {
+                        if !equal_values_1(interp, d, e, depth + 1, seen, with_properties)? {
                             return Ok(false);
                         }
                     }
@@ -657,7 +723,7 @@ fn equal_values_1(
                     _ => return Ok(false),
                 }
             }
-            equal_items(interp, &x.body, &y.body, depth, seen)?
+            equal_items(interp, &x.body, &y.body, depth, seen, with_properties)?
                 && x.env.is_none() == y.env.is_none()
         }
         _ => eql_values(a, b),
@@ -670,12 +736,13 @@ fn equal_items(
     b: &[Value],
     depth: u32,
     seen: &mut Option<EqualSeen>,
+    with_properties: bool,
 ) -> Result<bool, Flow> {
     if a.len() != b.len() {
         return Ok(false);
     }
     for (a, b) in a.iter().zip(b.iter()) {
-        if !equal_values_1(interp, a, b, depth + 1, seen)? {
+        if !equal_values_1(interp, a, b, depth + 1, seen, with_properties)? {
             return Ok(false);
         }
     }

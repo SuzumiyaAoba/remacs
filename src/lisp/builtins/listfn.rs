@@ -1762,44 +1762,7 @@ fn f_assoc_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_equal_incl_props(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let ok = match (&args[0], &args[1]) {
-        (Value::Str(sa), Value::Str(sb)) => {
-            let (ta, tb) = (sa.borrow(), sb.borrow());
-            if *ta != *tb {
-                return Ok(Value::Nil);
-            }
-            // GNU's `intervals_equal_1' matches property names by
-            // `eq', independently of order, then calls `equal' on
-            // each value at depth zero (not on the whole plist).
-            let (ia, ib) = (i.str_props(sa).to_vec(), i.str_props(sb).to_vec());
-            for p in 0..ta.chars().count() {
-                let pa = crate::buffer::primitives::str_plist_at(&ia, p);
-                let pb = crate::buffer::primitives::str_plist_at(&ib, p);
-                for (a, b_at_pos) in pa.chunks(2).zip(pb.chunks(2)) {
-                    if a.len() != 2 {
-                        return Ok(Value::Nil);
-                    }
-                    let Some(b) = pb.chunks(2).find(|b| eq_values(&b[0], &a[0])) else {
-                        return Ok(Value::Nil);
-                    };
-                    if b.len() != 2 || !equal_values(i, &b[1], &a[1])? {
-                        return Ok(Value::Nil);
-                    }
-                    if b_at_pos.len() != 2 {
-                        return Ok(Value::Nil);
-                    }
-                }
-                // Match GNU's ordering: a visited value can signal
-                // before a later difference in plist lengths.
-                if pa.len() != pb.len() {
-                    return Ok(Value::Nil);
-                }
-            }
-            true
-        }
-        _ => equal_values(i, &args[0], &args[1])?,
-    };
-    Ok(Value::from_bool(ok))
+    super::equal_values_including_properties(i, &args[0], &args[1]).map(Value::from_bool)
 }
 
 // ---------- remove/delete (sequence-generic) ----------
