@@ -1285,3 +1285,11 @@ old cell's watchers before installing the new alias, with BASE as NEWVAL
 and `defvaralias` as OPERATION; an error aborts aliasing. Per-buffer `setq`
 and `set` both notify for `fill-column` in GNU 31.1, despite the original
 issue report's claim. `tests/qa_variable_watchers.el` pins these behaviors.
+
+Bool-vector binary operations validate a non-nil destination's type and
+length; `wrong-length-argument` carries the two source lengths plus the
+destination length when supplied. A supplied destination is returned only
+when changed, otherwise nil (including an empty vector). `bool-vector-not`
+always returns its destination. `bool-vector-count-consecutive` accepts
+only nonnegative fixnum indices through the vector length, inclusive.
+`tests/qa_array.el` covers validation, aliases, and unchanged destinations.

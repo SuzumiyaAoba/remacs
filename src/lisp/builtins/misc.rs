@@ -8323,28 +8323,37 @@ fn f_bool_vector_not(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn bv_binop(i: &mut Interp, a: &[Value], f: fn(bool, bool) -> bool) -> EvalResult {
     let x = bool_vec_of(i, &a[0])?;
     let y = bool_vec_of(i, &a[1])?;
-    if x.len() != y.len() {
-        let s = i.intern("wrong-length-argument");
-        return Err(i.signal_data(
-            s,
-            vec![Value::Int(x.len() as i128), Value::Int(y.len() as i128)],
-        ));
+    let target = arg(a, 2);
+    let dest = if target.is_nil() {
+        None
+    } else {
+        Some(bool_vec_of(i, &target)?)
+    };
+    if x.len() != y.len() || dest.as_ref().is_some_and(|d| d.len() != x.len()) {
+        // GNU includes DEST's length only when a destination was supplied.
+        let mut lengths = vec![Value::Int(x.len() as i128), Value::Int(y.len() as i128)];
+        if let Some(dest) = &dest {
+            lengths.push(Value::Int(dest.len() as i128));
+        }
+        let symbol = i.intern("wrong-length-argument");
+        return Err(i.signal_data(symbol, lengths));
     }
     let out: Vec<bool> = x.iter().zip(&y).map(|(p, q)| f(*p, *q)).collect();
-    let target = arg(a, 2);
-    if !target.is_nil() && is_bool_vector(i, &target) {
+    if let Some(dest) = dest {
+        // A supplied destination is returned only when its contents change.
+        // Snapshots of both sources also make aliasing DEST with either safe.
+        if dest == out {
+            return Ok(Value::Nil);
+        }
         if let Value::Record(r) = &target {
             let rr = r.borrow();
             if let Some(Value::Vec(b)) = rr.get(1) {
-                let mut bb = b.borrow_mut();
-                if bb.len() == out.len() {
-                    for (k, v) in bb.iter_mut().zip(&out) {
-                        *k = Value::Int(if *v { 1 } else { 0 });
-                    }
-                    return Ok(target.clone());
+                for (bit, value) in b.borrow_mut().iter_mut().zip(out) {
+                    *bit = Value::Int(i128::from(value));
                 }
             }
         }
+        return Ok(target);
     }
     Ok(make_bool_vector(i, out))
 }
@@ -8368,18 +8377,19 @@ fn f_bool_vector_count(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_bool_vector_consec(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU: (bool-vector-count-consecutive A B I) — length of the run of
-    // B-valued elements starting at index I.
     let x = bool_vec_of(i, &a[0])?;
     let b = !a[1].is_nil();
-    let Value::Int(at) = a[2] else {
-        return Err(i.wrong_type_mut("wholenump", &a[2]));
+    let at = match &a[2] {
+        Value::Int(n) if (0..=crate::lisp::value::FIXNUM_MAX).contains(n) => *n as usize,
+        other => return Err(i.wrong_type_mut("wholenump", other)),
     };
-    if at < 0 {
-        return Err(i.wrong_type_mut("wholenump", &a[2]));
+    // GNU allows the index just past the last bit, yielding zero.
+    if at > x.len() {
+        let symbol = i.intern("args-out-of-range");
+        return Err(i.signal_data(symbol, vec![a[0].clone(), a[2].clone()]));
     }
     Ok(Value::Int(
-        x.iter().skip(at as usize).take_while(|v| **v == b).count() as i128,
+        x.iter().skip(at).take_while(|v| **v == b).count() as i128,
     ))
 }
 
