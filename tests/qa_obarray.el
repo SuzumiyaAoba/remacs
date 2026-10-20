@@ -201,4 +201,23 @@
             (eq (intern "n" ob1) (intern "n" ob2))))
     '(t nil))
 
+
+;; Invalid obarrays and gensym counter errors (#145).
+(qa-err-data (intern "a" (make-vector 1 'x)) 'wrong-type-argument '(obarrayp [x]))
+(qa (let ((table (make-vector 1 0))) (intern "a" table) (obarrayp (aref table 0))) t)
+(qa-err-data (intern-soft "a" (make-vector 1 'x)) 'wrong-type-argument '(obarrayp [x]))
+(qa-err-data (intern 7 (make-vector 1 'x)) 'wrong-type-argument '(obarrayp [x]))
+(qa (let ((table (make-vector 1 'x)))
+      (condition-case nil (intern "a" table) (error nil)) table) [x])
+(qa-err-data (let ((gensym-counter "x")) (gensym))
+             'wrong-type-argument '(number-or-marker-p "x"))
+(qa-err-data (let ((gensym-counter nil)) (gensym))
+             'wrong-type-argument '(number-or-marker-p nil))
+(qa-err-data (let ((gensym-counter 'bad)) (gensym "prefix"))
+             'wrong-type-argument '(number-or-marker-p bad))
+(qa (let ((gensym-counter "x"))
+      (condition-case nil (gensym) (error nil)) gensym-counter) "x")
+(qa (let* ((gensym-counter 7) (symbol (gensym "qa145-")))
+      (list (symbol-name symbol) gensym-counter (intern-soft (symbol-name symbol))))
+    '("qa145-7" 8 nil))
 (princ (qa--done))
