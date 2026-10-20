@@ -993,13 +993,14 @@ impl Buffer {
         }
     }
 
-    /// GNU `undo-boundary': push nil unless the list already starts
-    /// with a boundary; always records the pre-command point.
+    /// Add a boundary only to nonempty history without one. Remember
+    /// the pre-command point even when recording history is empty.
     pub fn undo_boundary(&mut self) {
         if self.undo_disabled() {
             return;
         }
         let at_boundary = match &self.undo_list() {
+            Value::Nil => true,
             Value::Cons(c) => matches!(c.borrow().car, Value::Nil),
             _ => false,
         };

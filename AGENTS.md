@@ -441,6 +441,9 @@ the previous character's rear-sticky properties. Like GNU's
 stay fixed while point and the selected buffer's accessible end grow.
 `record_casify` saves an aggregate undo pair with the original string's
 properties. Undo insertion restores those properties before change hooks.
+`undo-boundary` adds a nil marker only to a nonempty history without
+an existing boundary. An empty history stays nil, but still remembers
+the pre-command point for the next edit (`qa_undo`).
 
 `Symbol.name_string` retains the Lisp name string by identity for new
 `intern`/`make-symbol` calls; internal names acquire a stable string

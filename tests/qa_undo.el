@@ -91,4 +91,18 @@
 ;; == amalgamating-undo-limit value ==
 (qa amalgamating-undo-limit 20)
 
+;; GH #131: empty histories have no boundary, but still remember point.
+(qa (with-temp-buffer (buffer-enable-undo) (setq buffer-undo-list nil)
+      (undo-boundary) buffer-undo-list) nil)
+(qa (with-temp-buffer (buffer-enable-undo) (setq buffer-undo-list nil)
+      (undo-boundary) (undo-boundary) buffer-undo-list) nil)
+(qa (with-temp-buffer (buffer-enable-undo) (setq buffer-undo-list nil)
+      (undo-boundary) (insert "ab") buffer-undo-list) '((1 . 3) (t . 0)))
+(qa (with-temp-buffer (buffer-enable-undo) (setq buffer-undo-list nil)
+      (insert "ab") (undo-boundary) (undo-boundary) buffer-undo-list) '(nil (1 . 3) (t . 0)))
+(qa (with-temp-buffer (setq buffer-undo-list t) (undo-boundary) buffer-undo-list) t)
+(qa (with-temp-buffer (insert "ab") (buffer-enable-undo)
+      (setq buffer-undo-list nil) (goto-char 2) (undo-boundary) (goto-char 1)
+      (insert "x") buffer-undo-list) '((1 . 2) 2))
+
 (princ (qa--done))
