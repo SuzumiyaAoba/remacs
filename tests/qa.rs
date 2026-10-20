@@ -409,6 +409,7 @@ qa!(qa_time_modifiers, "qa_time_modifiers.el");
 qa!(qa_thread_bookkeeping, "qa_thread_bookkeeping.el");
 qa!(qa_thread_scheduling, "qa_thread_scheduling.el");
 qa!(qa_thread_isolation, "qa_thread_isolation.el");
+qa!(qa_mutex_ownership, "qa_mutex_ownership.el");
 
 qa!(qa_file_replace, "qa_file_replace.el");
 
