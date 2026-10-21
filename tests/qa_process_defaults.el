@@ -55,7 +55,7 @@
     (qa (marker-buffer m) nil) (qa (marker-position m) nil)
     (qa (marker-insertion-type m) t)
     (qa-same (set-process-buffer p b) b)
-    (qa-xf (eq (process-buffer p) b) t "preexisting killed process-buffer identity")
+    (qa (eq (process-buffer p) b) t)
     (qa (marker-buffer (process-mark p)) nil)
     (qa-err (set-process-buffer p "qa54-a") 'wrong-type-argument))
    (set-process-sentinel p 'ignore) (delete-process p)

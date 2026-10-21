@@ -721,6 +721,16 @@ spelling. Regression: `qa_network_accept_callbacks`.
 Keep the constructor's log function in `Proc.log` and include it in
 `Proc::gc_values`; changing a returned contact list must not replace it.
 
+`Proc.buffer_object` is the canonical Lisp buffer reference and is included
+in `Proc::gc_values`. It survives `BufferSet` unlinking the killed buffer;
+`Proc.buffer` remains the operational id used by live-buffer I/O lookups.
+Constructor attachment and `set-process-buffer` update both, while nil
+explicitly releases the reference. Network/pipe/serial setters also update
+the contact plist's `:buffer`, independently of the canonical slot. Marker
+detachment still follows buffer death. Regressions: `qa_process_buffer_identity`
+(GC, dead attachment, name reuse, deletion, contact mutation) and the promoted
+check in `qa_process_defaults`.
+
 IP contact addresses come from the socket's real local/peer endpoints,
 including after DNS resolution. Synchronous and asynchronous clients both
 honor the requested address family. Accepted connections copy the listener's
@@ -1204,8 +1214,9 @@ qa-xf back to qa and watch it go XPASS→pass):
 - Indirect buffers: fixed — text, modification/save ticks, text properties,
   and the undo list are shared via SharedText (per GNU's buffer_text).
   BEGV/ZV/point/markers
-  stay per-buffer, `buffer-base-buffer` returns a live object (killed
-  buffers remain in `BufferSet` with live=false), `buffer-swap-text`
+  stay per-buffer, `buffer-base-buffer` returns the buffer object. Lisp
+  references can retain killed objects after `BufferSet` unlinks them.
+  `buffer-swap-text`
   errors on indirect buffers, `set-buffer-multibyte` errors on
   indirect buffers, buffer-list-update-hook runs on create/kill/bury,
   and `set-buffer` syncs the undo list with the base. Auto-save history

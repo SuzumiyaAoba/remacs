@@ -540,6 +540,9 @@ pub struct Proc {
     connect_error: Value,
     /// Buffer receiving default-filter output.
     pub buffer: Option<usize>,
+    /// Lisp identity survives removal of a killed buffer from BufferSet.
+    /// Keep the operational id above separate from this GC-visible reference.
+    buffer_object: Value,
     /// Insertion marker into `buffer`.
     pub mark: Option<MarkerRef>,
     pub filter: Value,
@@ -605,8 +608,9 @@ pub struct GnutlsState {
 }
 
 impl Proc {
-    pub(crate) fn gc_values(&self) -> [&Value; 12] {
+    pub(crate) fn gc_values(&self) -> [&Value; 13] {
         [
+            &self.buffer_object,
             &self.command,
             &self.connect_error,
             &self.filter,
@@ -1340,6 +1344,7 @@ fn poll_proc_once(
                         exit_status: 0,
                         connect_error: Value::Nil,
                         buffer,
+                        buffer_object: Value::Nil,
                         mark: Some(free_process_marker()),
                         filter,
                         sentinel,
@@ -1407,6 +1412,7 @@ fn poll_proc_once(
                         exit_status: 0,
                         connect_error: Value::Nil,
                         buffer,
+                        buffer_object: Value::Nil,
                         mark: Some(free_process_marker()),
                         filter,
                         sentinel,
@@ -1651,6 +1657,7 @@ fn base_proc(name: String, kind: &'static str, io: ProcIo) -> Proc {
         exit_status: 0,
         connect_error: Value::Nil,
         buffer: None,
+        buffer_object: Value::Nil,
         mark: Some(free_process_marker()),
         filter: Value::Nil,
         sentinel: Value::Nil,
@@ -1698,6 +1705,10 @@ fn finish_setup(
             },
         };
         p.buffer = Some(bid);
+        p.buffer_object = match b {
+            Value::Buffer(_) => b,
+            _ => i.buffer_value(bid).unwrap_or(Value::Nil),
+        };
     }
     update_process_marker(i, &mut p);
     p.filter = kw(i, args, ":filter");
@@ -2746,8 +2757,7 @@ fn f_process_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_process_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let p = want_proc(i, &a[0])?;
-    let bid = p.borrow().buffer;
-    Ok(bid.and_then(|b| i.buffer_value(b)).unwrap_or(Value::Nil))
+    Ok(p.borrow().buffer_object.clone())
 }
 
 fn f_set_process_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -2758,9 +2768,14 @@ fn f_set_process_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         other => return Err(i.wrong_type_mut("bufferp", other)),
     };
     let mut pb = p.borrow_mut();
+    pb.buffer_object = a[1].clone();
     if pb.buffer != bid {
         pb.buffer = bid;
         update_process_marker(i, &mut pb);
+    }
+    if matches!(pb.kind, "pipe" | "network" | "serial") {
+        let key = i.intern(":buffer");
+        pb.contact = super::eval::plist_put(&pb.contact, key, a[1].clone());
     }
     Ok(a[1].clone())
 }
