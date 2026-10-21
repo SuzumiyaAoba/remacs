@@ -99,4 +99,104 @@
       (if (equal qa93-suffix ".el") '(invalid-read-syntax "#01=" 2 4)
         '(invalid-read-syntax "#01="))))
 
+;; Issue #262: buffer/marker positions are consumed before errors propagate.
+(defun qa262-error (text marker-source)
+ (with-temp-buffer
+  (insert text) (goto-char 1)
+  (let* ((marker (and marker-source (point-marker)))
+         (source (or marker (current-buffer)))
+         (err (condition-case err (read source) (error err))))
+   (list (car err) (if marker (marker-position marker) (point)) (point)
+         (if (eq (car err) 'end-of-file)
+             (if marker (null (cdr err)) (eq (cadr err) (current-buffer)))
+           (cdr err))))))
+
+(qa
+(qa262-error "(" nil)
+'(end-of-file 2 2 t)
+)
+
+(qa
+(qa262-error "(a" nil)
+'(end-of-file 3 3 t)
+)
+
+(qa
+(qa262-error "[a" nil)
+'(end-of-file 3 3 t)
+)
+
+(qa
+(qa262-error "\"a" nil)
+'(end-of-file 3 3 t)
+)
+
+(qa
+(qa262-error "'" nil)
+'(end-of-file 2 2 t)
+)
+
+(qa
+(qa262-error "\n(a" nil)
+'(end-of-file 4 4 t)
+)
+
+(qa
+(qa262-error ") (b)" nil)
+'(invalid-read-syntax 2 2 (")" 1 1))
+)
+
+(qa
+(qa262-error "(" t)
+'(end-of-file 2 1 t)
+)
+
+(qa
+(qa262-error "(a" t)
+'(end-of-file 3 1 t)
+)
+
+(qa
+(qa262-error "[a" t)
+'(end-of-file 3 1 t)
+)
+
+(qa
+(qa262-error "\"a" t)
+'(end-of-file 3 1 t)
+)
+
+(qa
+(qa262-error "'" t)
+'(end-of-file 2 1 t)
+)
+
+(qa
+(qa262-error "\n(a" t)
+'(end-of-file 4 1 t)
+)
+
+(qa
+(qa262-error ") (b)" t)
+'(invalid-read-syntax 2 1 (")"))
+)
+
+(qa
+(with-temp-buffer
+  (insert "(a) (b)") (goto-char 1)
+  (list (read (current-buffer)) (point) (read (current-buffer))
+	(point)))
+'((a) 4 (b) 8)
+)
+
+(qa
+(with-temp-buffer
+  (insert "(a) (b)")
+  (let ((marker (point-min-marker)))
+    (list (read marker) (marker-position marker) (point) (read marker)
+	  (marker-position marker) (point))))
+'((a) 4 8 (b) 8 8)
+)
+
+
 (princ (qa--done)) (terpri)

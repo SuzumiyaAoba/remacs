@@ -1643,6 +1643,10 @@ before symbol interning, including invalid character-literal delimiters.
 controls through space plus NBSP, not Unicode White_Space; preserve original
 Lisp codes in direct and hex-escaped Mule characters. `qa_reader_function_stream`
 pins one-form consumption, callbacks, errors, GC/reentry, labels and byte kinds.
+`qa_reader_error_context` separately pins #262's error-position contract:
+buffer and marker cursors advance before parse errors propagate, marker reads
+leave the buffer's own point unchanged, and EOF data identifies the proper
+input kind. This behavior was already provided by the #93 reader fix.
 
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
