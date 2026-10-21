@@ -12,8 +12,10 @@
 //! (an `Interp' field), addressed by the integer ids in the records.
 
 use std::collections::HashMap;
+use std::cell::RefCell;
+use std::rc::Rc;
 
-use tree_sitter::{Language, Node, Parser, Point, Range, Tree, TreeCursor, ffi};
+use tree_sitter::{InputEdit, Language, Node, Parser, Point, Range, Tree, TreeCursor, ffi};
 use tree_sitter_language::LanguageFn;
 
 use super::{S, arg, want_fixnum, want_int, want_string, want_sym};
@@ -40,6 +42,9 @@ struct LoadedLang {
 pub struct TsParser {
     parser: Parser,
     tree: Option<Tree>,
+    pending: Rc<RefCell<PendingTree>>,
+    edit_observer: crate::buffer::EditObserver,
+    edit_subscription: Option<crate::buffer::EditSubscription>,
     /// The buffer this parser parses (base buffer for indirect buffers).
     buffer: BufferRef,
     /// The `Value::Buffer' originally handed to Lisp (identity matters
@@ -605,6 +610,198 @@ fn ranges_value(changed: &[(usize, usize)]) -> Value {
     out
 }
 
+fn point_at_byte(text: &str, byte: usize) -> Point {
+    let prefix = &text.as_bytes()[..byte];
+    Point {
+        row: prefix.iter().filter(|byte| **byte == b'\n').count(),
+        column: prefix
+            .iter()
+            .rposition(|byte| *byte == b'\n')
+            .map_or(byte, |newline| byte - newline - 1),
+    }
+}
+
+/// Combine edits since the last parse into one valid incremental edit.
+/// Keep boundaries on characters, while TSPoint columns count UTF-8 bytes.
+fn input_edit(old: &str, new: &str) -> Option<InputEdit> {
+    if old == new {
+        return None;
+    }
+    let start = old
+        .chars()
+        .zip(new.chars())
+        .take_while(|(a, b)| a == b)
+        .map(|(character, _)| character.len_utf8())
+        .sum();
+    let suffix: usize = old[start..]
+        .chars()
+        .rev()
+        .zip(new[start..].chars().rev())
+        .take_while(|(a, b)| a == b)
+        .map(|(character, _)| character.len_utf8())
+        .sum();
+    let old_end = old.len() - suffix;
+    let new_end = new.len() - suffix;
+    Some(InputEdit {
+        start_byte: start,
+        old_end_byte: old_end,
+        new_end_byte: new_end,
+        start_position: point_at_byte(old, start),
+        old_end_position: point_at_byte(old, old_end),
+        new_end_position: point_at_byte(new, new_end),
+    })
+}
+
+#[derive(Default)]
+struct PendingTree {
+    tree: Option<Tree>,
+    text: String,
+    begv: usize,
+    zv: usize,
+}
+
+impl PendingTree {
+    fn replace(&mut self, start: usize, end: usize, text: &str) {
+        let byte_at = |index| {
+            self.text
+                .char_indices()
+                .nth(index)
+                .map_or(self.text.len(), |(byte, _)| byte)
+        };
+        let start = byte_at(start);
+        let end = byte_at(end).max(start);
+        if self.text.len() - (end - start) + text.len() > u32::MAX as usize {
+            self.tree = None;
+            return;
+        }
+        let start_position = point_at_byte(&self.text, start);
+        let mut new_end_position = start_position;
+        for byte in text.bytes() {
+            if byte == b'\n' {
+                new_end_position.row += 1;
+                new_end_position.column = 0;
+            } else {
+                new_end_position.column += 1;
+            }
+        }
+        let edit = InputEdit {
+            start_byte: start,
+            old_end_byte: end,
+            new_end_byte: start + text.len(),
+            start_position,
+            old_end_position: point_at_byte(&self.text, end),
+            new_end_position,
+        };
+        if let Some(tree) = &mut self.tree {
+            tree.edit(&edit);
+        }
+        self.text.replace_range(start..end, text);
+    }
+
+    fn apply(&mut self, change: crate::buffer::TextChange<'_>) {
+        if self.tree.is_none() {
+            return;
+        }
+        match change {
+            crate::buffer::TextChange::Insert { at, text } => {
+                let length = text.chars().count();
+                if at < self.begv {
+                    self.begv += length;
+                    self.zv += length;
+                } else if at <= self.zv {
+                    self.replace(at - self.begv, at - self.begv, text);
+                    self.zv += length;
+                }
+            }
+            crate::buffer::TextChange::Delete { start, end } => {
+                let lo = start.max(self.begv);
+                let hi = end.min(self.zv);
+                if lo < hi {
+                    self.replace(lo - self.begv, hi - self.begv, "");
+                }
+                let adjusted = |position: usize| {
+                    if position >= end {
+                        position - (end - start)
+                    } else {
+                        position.min(start)
+                    }
+                };
+                self.begv = adjusted(self.begv);
+                self.zv = adjusted(self.zv);
+            }
+            crate::buffer::TextChange::Character { at, character } => {
+                if at >= self.begv && at < self.zv {
+                    let mut bytes = [0; 4];
+                    self.replace(
+                        at - self.begv,
+                        at - self.begv + 1,
+                        character.encode_utf8(&mut bytes),
+                    );
+                }
+            }
+            crate::buffer::TextChange::Reset { text } => {
+                self.replace(0, self.text.chars().count(), text);
+                self.begv = 0;
+                self.zv = text.chars().count();
+            }
+        }
+    }
+
+    fn sync_context(&mut self, text: &str, begv: usize, zv: usize) {
+        // Narrowing/widening and adopting another SharedText are context
+        // changes rather than ordinary edits. Ordinary changes have
+        // already been applied individually, preserving changed ranges.
+        if self.text != text {
+            if let (Some(tree), Some(edit)) = (&mut self.tree, input_edit(&self.text, text)) {
+                tree.edit(&edit);
+            }
+            self.text = text.to_string();
+        }
+        self.begv = begv;
+        self.zv = zv;
+    }
+}
+
+#[cfg(test)]
+mod edit_tests {
+    use super::*;
+
+    #[test]
+    fn unicode_edit_boundaries_and_columns_use_utf8_bytes() {
+        let edit = input_edit("{\n  \"あ\":1\n}", "{\n  \"あ\":null\n}").unwrap();
+        assert_eq!(
+            (edit.start_byte, edit.old_end_byte, edit.new_end_byte),
+            (10, 11, 14)
+        );
+        assert_eq!(edit.start_position, Point::new(1, 8));
+        assert_eq!(edit.old_end_position, Point::new(1, 9));
+        assert_eq!(edit.new_end_position, Point::new(1, 12));
+        let edit = input_edit("\"あ\"", "\"い\"").unwrap();
+        assert_eq!(
+            (edit.start_byte, edit.old_end_byte, edit.new_end_byte),
+            (1, 4, 4)
+        );
+    }
+
+    #[test]
+    fn deleted_lines_and_empty_inputs_keep_valid_points() {
+        let edit = input_edit("[\n1\n]", "[1]").unwrap();
+        assert_eq!(
+            (edit.start_byte, edit.old_end_byte, edit.new_end_byte),
+            (1, 4, 2)
+        );
+        assert_eq!(edit.old_end_position, Point::new(2, 0));
+        assert_eq!(edit.new_end_position, Point::new(0, 2));
+        let edit = input_edit("", "[null]").unwrap();
+        assert_eq!(
+            (edit.start_byte, edit.old_end_byte, edit.new_end_byte),
+            (0, 0, 6)
+        );
+        assert_eq!(edit.start_position, Point::new(0, 0));
+        assert!(input_edit("same", "same").is_none());
+    }
+}
+
 fn reparse(i: &mut Interp, pid: u64, buf: &BufferRef) -> Result<Vec<(usize, usize)>, Flow> {
     let (text, begv, zv, tick) = {
         let b = buf.borrow();
@@ -617,20 +814,30 @@ fn reparse(i: &mut Interp, pid: u64, buf: &BufferRef) -> Result<Vec<(usize, usiz
     if text.len() > u32::MAX as usize {
         return Err(sig(i, "treesit-buffer-too-large", vec![]));
     }
-    let old_tree = i.treesit.parsers.get_mut(&pid).and_then(|p| p.tree.take());
     let p = i.treesit.parsers.get_mut(&pid).unwrap();
-    let new_tree = p.parser.parse(&text, old_tree.as_ref());
+    if !p
+        .edit_subscription
+        .as_ref()
+        .is_some_and(|subscription| subscription.matches(&buf.borrow().text))
+    {
+        p.edit_subscription.take();
+        p.edit_subscription = Some(buf.borrow().text.observe_edits(&p.edit_observer));
+    }
+    let pending_state = p.pending.clone();
+    let mut pending = pending_state.borrow_mut();
+    pending.sync_context(&text, begv, zv);
+    let new_tree = p.parser.parse(&text, pending.tree.as_ref());
     let new_tree = match new_tree {
         Some(t) => t,
         None => {
-            p.tree = old_tree;
+            drop(pending);
             return Err(sig(i, "treesit-parse-error", vec![]));
         }
     };
     // Changed byte regions between the old and new tree, mapped to
     // charpos ranges.
     let mut changed: Vec<(usize, usize)> = Vec::new();
-    if let Some(old) = &old_tree {
+    if let Some(old) = &pending.tree {
         let b = buf.borrow();
         for r in old.changed_ranges(&new_tree) {
             let sb = byte_to_charpos(&b, r.start_byte as usize) as usize;
@@ -641,6 +848,10 @@ fn reparse(i: &mut Interp, pid: u64, buf: &BufferRef) -> Result<Vec<(usize, usiz
         }
     }
     p.tree = Some(new_tree);
+    // Only the original stored tree supplies Lisp nodes. The copy is
+    // exclusively the incrementally edited base for the next parse.
+    pending.tree = p.tree.clone();
+    pending.text = text;
     p.buf_tick = tick;
     p.begv = begv;
     p.zv = zv;
@@ -889,11 +1100,22 @@ fn f_parser_create(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     i.treesit.next_id += 1;
     let tag_id = sname(i, "treesit-parser");
     let self_val = tag_record(tag_id, vec![Value::Int(id as i128)]);
+    let pending = Rc::new(RefCell::new(PendingTree::default()));
+    let edit_pending = pending.clone();
+    let edit_observer: crate::buffer::EditObserver = Rc::new(RefCell::new(
+        move |change: crate::buffer::TextChange<'_>| {
+            edit_pending.borrow_mut().apply(change);
+        },
+    ));
+    let edit_subscription = Some(buf.borrow().text.observe_edits(&edit_observer));
     i.treesit.parsers.insert(
         id,
         TsParser {
             parser,
             tree: None,
+            pending,
+            edit_observer,
+            edit_subscription,
             buffer: buf,
             buffer_val: buf_val,
             self_val: self_val.clone(),
@@ -917,7 +1139,10 @@ fn f_parser_create(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_parser_delete(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let pid = want_parser(i, &a[0])?;
-    i.treesit.parsers.get_mut(&pid).unwrap().deleted = true;
+    let parser = i.treesit.parsers.get_mut(&pid).unwrap();
+    parser.deleted = true;
+    parser.edit_subscription.take();
+    parser.pending.borrow_mut().tree = None;
     Ok(Value::Nil)
 }
 

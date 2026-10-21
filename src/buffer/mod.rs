@@ -15,7 +15,7 @@ use std::rc::{Rc, Weak};
 
 use crate::lisp::value::{BufferRef, Marker, MarkerRef, SymId, Value};
 
-pub use gapbuf::{GapBuffer, SharedText};
+pub use gapbuf::{EditObserver, EditSubscription, GapBuffer, SharedText, TextChange};
 
 /// Ordinary locals retain their creation order, as GNU's local-var alist does.
 pub type BufferLocals =

@@ -516,6 +516,17 @@ Design notes:
   *different* `TSTree`; root id even differs). Nodes must come from the
   parser's *stored* tree — see `stored_root()` which detaches via
   `Node::into_raw`/`from_raw`.
+- `SharedText` publishes physical insert/delete/character/reset edits to
+  weak Rust observers, independently of Lisp modification hooks. Each
+  parser owns an edited copy of its last tree plus the visible UTF-8
+  input/bounds. Apply every edit in order: combining distant edits into
+  one replacement gives correct syntax but incorrect notifier ranges.
+  The original tree remains stored for existing Lisp nodes until parsing
+  succeeds. Nodes never come from the edited copy. Parser deletion drops
+  its subscription; text-storage changes reattach it, and independent
+  buffer copies start without observers. Narrowing/context changes sync
+  the visible input separately. Regressions: `qa_treesit_edit` and the
+  UTF-8 point/edit-observer lifetime unit checks.
 - Node staleness is GNU-style: `check_node` compares `parse_count`;
   `treesit-node-check 'outdated` is passive (nil until a reparse
   happens elsewhere).

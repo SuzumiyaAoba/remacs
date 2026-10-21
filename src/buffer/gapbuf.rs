@@ -2,7 +2,41 @@
 //! movable gap so insert/delete near point is O(gap move + insert size).
 
 use std::cell::{RefCell, RefMut};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
+
+#[derive(Clone, Copy)]
+pub enum TextChange<'a> {
+    Insert { at: usize, text: &'a str },
+    Delete { start: usize, end: usize },
+    Character { at: usize, character: char },
+    Reset { text: &'a str },
+}
+
+pub type EditObserver = Rc<RefCell<dyn for<'a> FnMut(TextChange<'a>)>>;
+type WeakObserver = Weak<RefCell<dyn for<'a> FnMut(TextChange<'a>)>>;
+
+/// Weak registration: text storage never owns a parser or its callbacks.
+pub struct EditSubscription {
+    source: Weak<RefCell<GapBuffer>>,
+    observers: Weak<RefCell<Vec<WeakObserver>>>,
+    observer: WeakObserver,
+}
+
+impl EditSubscription {
+    pub fn matches(&self, text: &SharedText) -> bool {
+        self.source.ptr_eq(&Rc::downgrade(&text.inner))
+    }
+}
+
+impl Drop for EditSubscription {
+    fn drop(&mut self) {
+        if let Some(observers) = self.observers.upgrade() {
+            observers
+                .borrow_mut()
+                .retain(|observer| !observer.ptr_eq(&self.observer));
+        }
+    }
+}
 
 /// A buffer of `char`s with a gap at the editing position.
 #[derive(Clone)]
@@ -335,6 +369,7 @@ impl Default for GapBuffer {
 #[derive(Clone)]
 pub struct SharedText {
     inner: Rc<RefCell<GapBuffer>>,
+    edit_observers: Rc<RefCell<Vec<WeakObserver>>>,
     /// Buffers viewing this text (self-registered at Buffer::new /
     /// make-indirect-buffer). GNU keeps the marker chain + BEGV/ZV
     /// inside the shared `buffer_text'; viewers let edits seen through
@@ -392,6 +427,7 @@ impl SharedText {
     pub fn new() -> Self {
         SharedText {
             inner: Rc::new(RefCell::new(GapBuffer::new())),
+            edit_observers: Rc::new(RefCell::new(Vec::new())),
             viewers: Rc::new(RefCell::new(Vec::new())),
             props: Rc::new(RefCell::new(crate::buffer::textprops::TextProperties::new())),
             // Creation counts as the first modification (Emacs's fresh
@@ -408,6 +444,7 @@ impl SharedText {
     pub fn deep_clone(&self) -> Self {
         SharedText {
             inner: Rc::new(RefCell::new(self.inner.borrow().clone())),
+            edit_observers: Rc::new(RefCell::new(Vec::new())),
             viewers: Rc::new(RefCell::new(Vec::new())),
             props: Rc::new(RefCell::new(self.props.borrow().clone())),
             mod_tick: Rc::new(std::cell::Cell::new(self.mod_tick.get())),
@@ -430,6 +467,29 @@ impl SharedText {
             return;
         }
         viewers.push(Rc::downgrade(b));
+    }
+
+    pub fn observe_edits(&self, observer: &EditObserver) -> EditSubscription {
+        let observer = Rc::downgrade(observer);
+        self.edit_observers.borrow_mut().push(observer.clone());
+        EditSubscription {
+            source: Rc::downgrade(&self.inner),
+            observers: Rc::downgrade(&self.edit_observers),
+            observer,
+        }
+    }
+
+    fn notify_edit(&self, change: TextChange<'_>) {
+        let mut observers = self.edit_observers.borrow_mut();
+        observers.retain(|observer| observer.strong_count() != 0);
+        let callbacks: Vec<_> = observers.iter().filter_map(Weak::upgrade).collect();
+        drop(observers);
+        // The text/property borrows have ended. These are low-level Rust
+        // callbacks, not Lisp modification hooks, so inhibited hooks do
+        // not hide edits from incremental parsers.
+        for callback in callbacks {
+            callback.borrow_mut()(change);
+        }
     }
 
     /// Drop `b` from the viewer list (`buffer-swap-text' migrates
@@ -513,22 +573,34 @@ impl SharedText {
 
     /// Insert `text` at logical position `pos`.
     pub fn insert(&self, pos: usize, text: &str) {
+        let pos = pos.min(self.len());
         let n = text.chars().count();
         self.inner.borrow_mut().insert(pos, text);
         // Props live in the shared text (GNU buffer_text intervals):
         // adjust once here so every viewer sees the same shift.
         self.adjust_props_insert(pos, n);
+        if n != 0 {
+            self.notify_edit(TextChange::Insert { at: pos, text });
+        }
     }
 
     /// Delete `[start, end)`.
     pub fn delete(&self, start: usize, end: usize) {
+        let end = end.min(self.len());
         self.adjust_props_delete(start, end);
-        self.inner.borrow_mut().delete(start, end)
+        self.inner.borrow_mut().delete(start, end);
+        if start < end {
+            self.notify_edit(TextChange::Delete { start, end });
+        }
     }
 
     /// Overwrite the char at logical index `i` in place.
     pub fn set_char_at(&self, i: usize, c: char) {
-        self.inner.borrow_mut().set_char_at(i, c)
+        self.inner.borrow_mut().set_char_at(i, c);
+        self.notify_edit(TextChange::Character {
+            at: i,
+            character: c,
+        });
     }
 
     /// Extract `[start, end)` as a String.
@@ -547,6 +619,7 @@ impl SharedText {
         let mut props = crate::buffer::textprops::TextProperties::new();
         props.insert(0, s.chars().count());
         *self.props.borrow_mut() = props;
+        self.notify_edit(TextChange::Reset { text: s });
     }
 
     /// Which line `pos` is on (0-based).
@@ -573,6 +646,45 @@ impl Default for SharedText {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn edit_observers_follow_shared_storage_without_owning_it() {
+        let text = super::SharedText::new();
+        let snapshots = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let output = snapshots.clone();
+        let viewed = text.clone();
+        let observer: super::EditObserver = std::rc::Rc::new(std::cell::RefCell::new(
+            move |_change: super::TextChange<'_>| output.borrow_mut().push(viewed.text()),
+        ));
+        let subscription = text.observe_edits(&observer);
+        assert!(subscription.matches(&text));
+        text.insert(0, "ab");
+        text.clone().set_char_at(1, 'x');
+        text.delete(0, 1);
+        text.set_text("[]");
+        assert_eq!(&*snapshots.borrow(), &["ab", "ax", "x", "[]"]);
+        let independent = text.deep_clone();
+        assert!(!subscription.matches(&independent));
+        independent.insert(0, "copy");
+        assert_eq!(snapshots.borrow().len(), 4);
+        drop(subscription);
+        text.insert(0, "later");
+        assert_eq!(snapshots.borrow().len(), 4);
+    }
+
+    #[test]
+    fn abandoned_edit_observers_are_not_called() {
+        let text = super::SharedText::new();
+        let observer: super::EditObserver =
+            std::rc::Rc::new(std::cell::RefCell::new(|_change: super::TextChange<'_>| {
+                panic!("dropped observer called")
+            }));
+        let subscription = text.observe_edits(&observer);
+        drop(observer);
+        text.insert(0, "safe");
+        drop(subscription);
+        assert_eq!(text.text(), "safe");
+    }
+
     use super::*;
 
     #[test]
