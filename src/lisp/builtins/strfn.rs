@@ -4376,16 +4376,20 @@ fn f_sxhash_including_props(i: &mut Interp, args: crate::lisp::Argv) -> EvalResu
 fn f_clear_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[0] {
         Value::Str(s) => {
-            // GNU memsets the byte storage: the string keeps its
-            // length (in bytes) but becomes all NULs — and unibyte.
-            let n = s.borrow().len();
-            *s.borrow_mut() = "\0".repeat(n);
-            i.mark_unibyte(s);
+            // GNU clears the logical byte allocation; nonempty strings
+            // become unibyte, while the empty string keeps its byte kind.
+            let n = string_storage_bytes(i, s);
+            i.clear_str_props(s);
+            if n != 0 {
+                *s.borrow_mut() = "\0".repeat(n);
+                i.mark_unibyte(s);
+            }
             Ok(Value::Nil)
         }
         other => Err(i.wrong_type_mut("stringp", other)),
     }
 }
+
 fn f_store_substring(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let idx = want_int(i, &args[1])?;
     match &args[0] {
@@ -5081,16 +5085,17 @@ fn f_string_to_vector(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::vector(items))
 }
 
-fn f_string_bytes(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let s = want_string(i, &args[0])?;
+fn string_storage_bytes(i: &Interp, string: &crate::lisp::value::StrRef) -> usize {
     // Unibyte strings hold chars as raw bytes (eight-bit PUA proxies)
     // — GNU's byte count is the char count; multibyte strings count
     // per-char Emacs storage: UTF-8 through 0x1fffff, five bytes for
     // extended Mule codes, and two bytes for eight-bit characters.
     // Count original Lisp codes, not our surrogate/Mule proxy chars.
-    let n = match &args[0] {
-        Value::Str(r) if i.is_unibyte_str(r) => s.chars().count(),
-        _ => s
+    if i.is_unibyte_str(string) {
+        string.borrow().chars().count()
+    } else {
+        string
+            .borrow()
             .chars()
             .map(|c| match lisp_char_code(c) {
                 0..=0x7f => 1,
@@ -5099,9 +5104,15 @@ fn f_string_bytes(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                 0x10000..=0x1fffff => 4,
                 _ => 5,
             })
-            .sum(),
-    };
-    Ok(Value::Int(n as i128))
+            .sum()
+    }
+}
+
+fn f_string_bytes(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    match &args[0] {
+        Value::Str(string) => Ok(Value::Int(string_storage_bytes(i, string) as i128)),
+        other => Err(i.wrong_type_mut("stringp", other)),
+    }
 }
 
 fn f_subst_char_in_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {

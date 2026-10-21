@@ -1813,3 +1813,11 @@ share that width. Count logical surrogate/Mule/eight-bit codes, not the UTF-8
 width of Rust proxy characters. Validate ITEM even for empty strings, retain
 properties/identity/kind, and leave failed fills unchanged. Regression:
 `qa_fillarray_strings` covers the representation and width matrix.
+
+`clear-string` shares `string-bytes`' logical Emacs storage-byte counter,
+clears the whole property tree, and replaces nonempty data with that many
+unibyte NUL characters. Rust UTF-8 proxy storage is not the Lisp byte count.
+The GNU 31.1 oracle preserves the byte kind of empty strings, including
+explicit multibyte empties. Keep the original object and aliases, with
+independent copies unchanged. Regression: `qa_clear_string` covers raw-byte,
+surrogate/Mule, mixed-width, properties, repeated calls, GC and empty cases.
