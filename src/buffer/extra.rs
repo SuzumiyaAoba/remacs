@@ -1266,7 +1266,7 @@ fn f_sort_paragraphs(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 if p >= zv {
                     break;
                 }
-                let syn = crate::editor::re_syntax(i);
+                let syn = crate::editor::re_syntax_for_current_buffer(i);
                 let (text, begv) = {
                     let b = cur(i);
                     let bb = b.borrow();
@@ -1546,7 +1546,7 @@ fn re_search_fwd(
         )
     };
     let bound_idx = bound.map(|b| b.saturating_sub(begv)).unwrap_or(text.len());
-    let syn = crate::editor::re_syntax(i);
+    let syn = crate::editor::re_syntax_for_buffer(i, begv);
     match crate::lisp::regexp::search_full(
         re,
         &text,
@@ -1963,7 +1963,7 @@ fn f_how_many(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         .truthy();
     let re = crate::lisp::regexp::compile_case(&pat, case_fold)
         .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
-    let syn = crate::editor::re_syntax(i);
+    let syn = crate::editor::re_syntax_for_buffer(i, s);
     let b = cur(i);
     let bb = b.borrow();
     let chars: Vec<char> = bb.text.substring(s, e).chars().collect();
@@ -2001,7 +2001,7 @@ fn delete_lines_matching(i: &mut Interp, a: &[Value], keep_match: bool) -> EvalR
         .truthy();
     let re = crate::lisp::regexp::compile_case(&pat, case_fold)
         .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
-    let syn = crate::editor::re_syntax(i);
+    let syn = crate::editor::re_syntax_for_buffer(i, s);
     let b = cur(i);
     let bb = b.borrow_mut();
     let region = bb.text.substring(s, e);
@@ -2072,7 +2072,7 @@ fn f_replace_regexp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let re = crate::lisp::regexp::compile_case(&pat, case_fold)
         .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
     let (s, e) = beg_end(i, &a, 2, 3)?;
-    let syn = crate::editor::re_syntax(i);
+    let syn = crate::editor::re_syntax_for_buffer(i, s);
     let b = cur(i);
     let bb = b.borrow_mut();
     let region: Vec<char> = bb.text.substring(s, e).chars().collect();
@@ -2235,7 +2235,7 @@ fn f_replace_regexp_in_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
     let mut pieces: Vec<String> = Vec::new();
     let mut pos = start;
     let mut n = 0usize;
-    let syn = crate::editor::re_syntax(i);
+    let syn = crate::editor::re_syntax_for_string(i, &a[2]);
     while pos < l {
         let regs = match crate::lisp::regexp::search_full(
             &re,

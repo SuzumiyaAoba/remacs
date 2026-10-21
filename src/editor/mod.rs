@@ -18679,6 +18679,13 @@ pub(crate) fn syntax_table_entries(i: &Interp) -> Option<SynTable> {
             .map(|ssid| i.symbol_value(ssid))
             .filter(|t| is_syntax_table(i, t))?,
     };
+    syntax_table_snapshot(i, table)
+}
+
+fn syntax_table_snapshot(i: &Interp, table: Value) -> Option<SynTable> {
+    if !is_syntax_table(i, &table) {
+        return None;
+    }
     let mut levels = Vec::new();
     let mut cur = table;
     let mut guard = 0;
@@ -18743,6 +18750,7 @@ pub(crate) fn re_syntax(i: &Interp) -> RegexSyntax {
     let snapshot_extra =
         |slot| case_extra(&down, slot).and_then(|table| CharTableSnapshot::new(i, &table));
     RegexSyntax {
+        properties: Vec::new(),
         syntax: syntax_table_entries(i),
         down: CharTableSnapshot::new(i, &down),
         up: snapshot_extra(0),
@@ -18754,13 +18762,87 @@ pub(crate) fn re_syntax(i: &Interp) -> RegexSyntax {
     }
 }
 
+enum RegexSyntaxProperty {
+    Entry(u8),
+    Table(SynTable),
+}
+
 pub(crate) struct RegexSyntax {
+    properties: Vec<(usize, usize, RegexSyntaxProperty)>,
     syntax: Option<SynTable>,
     down: Option<crate::lisp::builtins::misc::CharTableSnapshot>,
     up: Option<crate::lisp::builtins::misc::CharTableSnapshot>,
     canon: Option<crate::lisp::builtins::misc::CharTableSnapshot>,
     equiv: Option<crate::lisp::builtins::misc::CharTableSnapshot>,
     category: Option<crate::lisp::builtins::misc::CharTableSnapshot>,
+}
+
+fn regex_syntax_properties(
+    i: &Interp,
+    intervals: &[(usize, usize, Vec<Value>)],
+) -> Vec<(usize, usize, RegexSyntaxProperty)> {
+    let enabled = i
+        .intern_soft("parse-sexp-lookup-properties")
+        .is_some_and(|id| i.symbol_value(id).truthy());
+    if !enabled {
+        return Vec::new();
+    }
+    let Some(syntax) = i.intern_soft("syntax-table") else {
+        return Vec::new();
+    };
+    let category = i.intern_soft("category");
+    intervals
+        .iter()
+        .filter_map(|(start, end, plist)| {
+            let property = |id| {
+                plist
+                    .chunks_exact(2)
+                    .find(|p| matches!(p[0], Value::Sym(s) if s == id))
+                    .map(|p| p[1].clone())
+            };
+            let mut value = property(syntax).unwrap_or(Value::Nil);
+            if value.is_nil() {
+                if let Some(Value::Sym(symbol)) = category.and_then(property) {
+                    value = i.get_prop(symbol, syntax);
+                }
+            }
+            let entry = match &value {
+                Value::Cons(cell) => match cell.borrow().car {
+                    Value::Int(code) => SYNTAX_CLASS_CHARS
+                        .get(code as usize & 0xf)
+                        .map(|c| RegexSyntaxProperty::Entry(*c as u8)),
+                    _ => None,
+                },
+                _ => syntax_table_snapshot(i, value).map(RegexSyntaxProperty::Table),
+            }?;
+            Some((*start, *end, entry))
+        })
+        .collect()
+}
+
+/// Regex source offsets are relative to ORIGIN, which can be BEGV or
+/// the beginning of a buffer substring used by a higher-level command.
+pub(crate) fn re_syntax_for_buffer(i: &Interp, origin: usize) -> RegexSyntax {
+    let mut syntax = re_syntax(i);
+    if let Some(buffer) = i.current_buffer_ref() {
+        let b = buffer.borrow();
+        let intervals = b.text.props.borrow().slice(origin, b.text.len().min(b.zv));
+        syntax.properties = regex_syntax_properties(i, &intervals);
+    }
+    syntax
+}
+
+pub(crate) fn re_syntax_for_current_buffer(i: &Interp) -> RegexSyntax {
+    let origin = i.current_buffer_ref().map_or(0, |b| b.borrow().begv);
+    re_syntax_for_buffer(i, origin)
+}
+
+pub(crate) fn re_syntax_for_string(i: &Interp, value: &Value) -> RegexSyntax {
+    let mut syntax = re_syntax(i);
+    if let Value::Str(text) = value {
+        syntax.properties = regex_syntax_properties(i, i.str_props(text));
+    }
+    syntax
 }
 
 impl RegexSyntax {
@@ -18853,6 +18935,22 @@ impl crate::lisp::regexp::Syntax for RegexSyntax {
 
     fn code(&self, c: char) -> u8 {
         syntax_entry_code(self.syntax.as_ref(), c)
+    }
+
+    fn code_at(&self, c: char, pos: usize) -> u8 {
+        // Match the interval precedence of get-text-property, including
+        // property literals whose source ranges are not sorted.
+        if let Some((_, _, property)) = self
+            .properties
+            .iter()
+            .find(|(start, end, _)| *start <= pos && pos < *end)
+        {
+            return match property {
+                RegexSyntaxProperty::Entry(code) => *code,
+                RegexSyntaxProperty::Table(table) => syntax_entry_code(Some(table), c),
+            };
+        }
+        self.code(c)
     }
 
     fn posix(&self, name: &str, c: char, fold: bool) -> bool {

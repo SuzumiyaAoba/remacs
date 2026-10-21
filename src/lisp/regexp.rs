@@ -69,24 +69,24 @@ struct CharSet {
 }
 
 impl CharSet {
-    fn base_match(&self, c: char, syn: SynFn, cat: CatFn) -> bool {
+    fn base_match(&self, c: char, syn: SynFn, cat: CatFn, pos: usize) -> bool {
         self.singles.contains(&c)
             || self.ranges.iter().any(|(lo, hi)| c >= *lo && c <= *hi)
             || self
                 .syntax
                 .iter()
-                .any(|(code, neg)| syntax_match(*code, c, syn) != *neg)
+                .any(|(code, neg)| syntax_match(*code, c, syn, pos) != *neg)
             || self.cats.iter().any(|(bit, neg)| cat(c, *bit) != *neg)
     }
 
-    fn contains(&self, c: char, case_fold: bool, syn: SynFn, cat: CatFn) -> bool {
-        let mut found = self.base_match(c, syn, cat)
+    fn contains(&self, c: char, case_fold: bool, syn: SynFn, cat: CatFn, pos: usize) -> bool {
+        let mut found = self.base_match(c, syn, cat, pos)
             || self
                 .posix
                 .iter()
                 .any(|(name, neg)| syn.posix(name, c, case_fold) != *neg);
         if !found && case_fold {
-            found = syn.case_match(c, &mut |variant| self.base_match(variant, syn, cat));
+            found = syn.case_match(c, &mut |variant| self.base_match(variant, syn, cat, pos));
         }
         found != self.negated
     }
@@ -111,8 +111,8 @@ pub fn syntax_code(c: char) -> u8 {
     }
 }
 
-fn syntax_match(code: u8, c: char, syn: SynFn) -> bool {
-    let sc = syn.code(c);
+fn syntax_match(code: u8, c: char, syn: SynFn, pos: usize) -> bool {
+    let sc = syn.code_at(c, pos);
     // GNU accepts `-` as an alias for the whitespace class.
     sc == code || (code == b'-' && sc == b' ')
 }
@@ -177,6 +177,10 @@ const KNOWN_POSIX: &[&str] = &[
 /// supplies its live GNU syntax, case and Unicode category tables.
 pub trait Syntax {
     fn code(&self, c: char) -> u8;
+
+    fn code_at(&self, c: char, _pos: usize) -> u8 {
+        self.code(c)
+    }
 
     fn case_eq(&self, a: char, b: char) -> bool {
         char_eq(a, b, true)
@@ -278,12 +282,12 @@ pub fn std_syntax(c: char) -> u8 {
     syntax_code(c)
 }
 
-fn is_word_char(c: char, syn: SynFn) -> bool {
-    syn.code(c) == b'w'
+fn is_word_char(c: char, syn: SynFn, pos: usize) -> bool {
+    syn.code_at(c, pos) == b'w'
 }
 
-fn is_sym_char(c: char, syn: SynFn) -> bool {
-    matches!(syn.code(c), b'w' | b'_')
+fn is_sym_char(c: char, syn: SynFn, pos: usize) -> bool {
+    matches!(syn.code_at(c, pos), b'w' | b'_')
 }
 
 // ---------- parsing ----------
@@ -1020,7 +1024,7 @@ fn run(
                 }
             }
             Inst::Class(set) => {
-                if sp < cap && set.contains(text[sp], re.case_fold, syn, cat) {
+                if sp < cap && set.contains(text[sp], re.case_fold, syn, cat, sp) {
                     sp += 1;
                     pc += 1;
                 } else {
@@ -1074,8 +1078,8 @@ fn run(
                 }
             }
             Inst::WordB => {
-                let before = sp > 0 && is_word_char(text[sp - 1], syn);
-                let after = sp < text.len() && is_word_char(text[sp], syn);
+                let before = sp > 0 && is_word_char(text[sp - 1], syn, sp - 1);
+                let after = sp < text.len() && is_word_char(text[sp], syn, sp);
                 if before != after {
                     pc += 1;
                 } else {
@@ -1083,8 +1087,8 @@ fn run(
                 }
             }
             Inst::NotWordB => {
-                let before = sp > 0 && is_word_char(text[sp - 1], syn);
-                let after = sp < text.len() && is_word_char(text[sp], syn);
+                let before = sp > 0 && is_word_char(text[sp - 1], syn, sp - 1);
+                let after = sp < text.len() && is_word_char(text[sp], syn, sp);
                 if before == after {
                     pc += 1;
                 } else {
@@ -1092,8 +1096,8 @@ fn run(
                 }
             }
             Inst::WordStart => {
-                let before = sp > 0 && is_word_char(text[sp - 1], syn);
-                let after = sp < text.len() && is_word_char(text[sp], syn);
+                let before = sp > 0 && is_word_char(text[sp - 1], syn, sp - 1);
+                let after = sp < text.len() && is_word_char(text[sp], syn, sp);
                 if !before && after {
                     pc += 1;
                 } else {
@@ -1101,8 +1105,8 @@ fn run(
                 }
             }
             Inst::WordEnd => {
-                let before = sp > 0 && is_word_char(text[sp - 1], syn);
-                let after = sp < text.len() && is_word_char(text[sp], syn);
+                let before = sp > 0 && is_word_char(text[sp - 1], syn, sp - 1);
+                let after = sp < text.len() && is_word_char(text[sp], syn, sp);
                 if before && !after {
                     pc += 1;
                 } else {
@@ -1110,8 +1114,8 @@ fn run(
                 }
             }
             Inst::SymStart => {
-                let before = sp > 0 && is_sym_char(text[sp - 1], syn);
-                let after = sp < text.len() && is_sym_char(text[sp], syn);
+                let before = sp > 0 && is_sym_char(text[sp - 1], syn, sp - 1);
+                let after = sp < text.len() && is_sym_char(text[sp], syn, sp);
                 if !before && after {
                     pc += 1;
                 } else {
@@ -1119,8 +1123,8 @@ fn run(
                 }
             }
             Inst::SymEnd => {
-                let before = sp > 0 && is_sym_char(text[sp - 1], syn);
-                let after = sp < text.len() && is_sym_char(text[sp], syn);
+                let before = sp > 0 && is_sym_char(text[sp - 1], syn, sp - 1);
+                let after = sp < text.len() && is_sym_char(text[sp], syn, sp);
                 if before && !after {
                     pc += 1;
                 } else {

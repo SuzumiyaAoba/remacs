@@ -364,6 +364,7 @@ qa!(qa_reader_error_context, "qa_reader_error_context.el");
 qa!(qa_reader_circles, "qa_reader_circles.el");
 qa!(qa_rect, "qa_rect.el");
 qa!(qa_regex, "qa_regex.el");
+qa!(qa_regex_properties, "qa_regex_properties.el");
 qa!(qa_regexp_classes, "qa_regexp_classes.el");
 qa!(qa_regexp_errors, "qa_regexp_errors.el");
 qa!(qa_regexpopt, "qa_regexpopt.el");

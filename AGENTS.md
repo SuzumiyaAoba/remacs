@@ -1716,6 +1716,15 @@ replaces those cars with nil, even with no match data. New buffer-match
 markers are freshly allocated rather than reusing old marker objects.
 `qa_match` pins these #275 identity, padding, extension and marker rules.
 
+Regexp syntax escapes and word/symbol boundaries use position-aware
+`Syntax::code_at`. Source-specific snapshots apply `syntax-table` text
+properties, including table-valued entries and category-derived values,
+when `parse-sexp-lookup-properties` is non-nil. Buffer offsets are relative
+to the searched source origin; string searches use the string's own
+intervals. POSIX classes keep their static syntax classification. Ordinary
+`re_syntax` remains property-free for plain-text engine clients.
+`qa_regex_properties` pins these #276 source and boundary distinctions.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

@@ -7110,7 +7110,7 @@ fn f_looking_back(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     } else {
         (lo..=pos).rev().collect()
     };
-    let syn = crate::editor::re_syntax(i);
+    let syn = crate::editor::re_syntax_for_current_buffer(i);
     for start in order {
         if let Some(regs) = crate::lisp::regexp::match_at_end(
             &re,
@@ -10213,7 +10213,7 @@ fn buffer_search_chars(chars: &[char], unibyte: bool) -> std::borrow::Cow<'_, [c
 fn f_looking_at_impl(i: &mut Interp, a: crate::lisp::Argv, posix: bool) -> EvalResult {
     let re = regexp_compile(i, &a[0])?;
     let unibyte = buffer_is_unibyte(i);
-    let syn = crate::editor::re_syntax(i);
+    let syn = crate::editor::re_syntax_for_current_buffer(i);
     let regs = {
         let b = cur(i);
         let bb = b.borrow_mut();
@@ -10305,7 +10305,7 @@ fn f_string_match_impl(i: &mut Interp, a: crate::lisp::Argv, posix: bool) -> Eva
         .truthy();
     let re = crate::lisp::regexp::compile_case(&pat, case_fold)
         .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
-    let syn = crate::editor::re_syntax(i);
+    let syn = crate::editor::re_syntax_for_string(i, &a[1]);
     match crate::lisp::regexp::search_full(
         &re,
         &chars,
@@ -10402,7 +10402,7 @@ pub(crate) fn search_common(
             return Err(i.error("Invalid search bound (wrong side of point)"));
         }
     }
-    let syn = crate::editor::re_syntax(i);
+    let syn = crate::editor::re_syntax_for_current_buffer(i);
     // GNU Fsearch_forward: literal search folds through the buffer's
     // case table when `case-fold-search' is non-nil.
     let literal_fold = i
