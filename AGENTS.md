@@ -168,10 +168,14 @@ root; absolute targets replace it. Nil/symbol arguments report
 metadata-cloning `fs::copy`. Without KEEP-TIME, new files get current
 times and existing destinations retain their atime. KEEP-TIME restores
 both source times through that descriptor, including for read-only modes.
-Reject a destination on the input inode before truncating it. Preserve
-uid/gid and permissions independently; macOS ACL copying is explicit and
+Like GNU, open/truncate the destination before comparing the open file
+descriptors' device/inode identities; self-copies signal `file-error`
+after truncating the input. Overwrite refusal and output-open errors take
+precedence. Directory targets require a trailing slash. Preserve uid/gid
+and permissions independently; macOS ACL copying is explicit and
 does not clone times. Existing hard-link targets still
-require overwrite permission, like GNU. Regressions: `qa_copy_file_times`.
+require overwrite permission, like GNU. Regressions: `qa_copy_file_times`,
+`qa_copy_file_self`.
 
 Frame parameter updates validate the full alist and every element before
 applying it in reverse, so the first duplicate wins. Both setter APIs use

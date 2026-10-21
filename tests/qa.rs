@@ -152,6 +152,7 @@ qa!(qa_filesys, "qa_filesys.el");
 qa!(qa_file_directory_handlers, "qa_file_directory_handlers.el");
 qa!(qa_file_truename_roots, "qa_file_truename_roots.el");
 qa!(qa_copy_file_times, "qa_copy_file_times.el");
+qa!(qa_copy_file_self, "qa_copy_file_self.el");
 qa!(qa_file_remote, "qa_file_remote.el");
 qa!(qa_fill, "qa_fill.el");
 qa!(qa_fontlock, "qa_fontlock.el");

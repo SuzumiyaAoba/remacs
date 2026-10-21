@@ -12260,9 +12260,8 @@ fn f_copy_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             ],
         ));
     }
-    // GNU: a NEWNAME ending in '/' (or naming an existing directory)
-    // copies FILE into it under the same basename.
-    if to.ends_with('/') || std::fs::metadata(&to).map(|m| m.is_dir()).unwrap_or(false) {
+    // GNU recognizes a directory target by the trailing slash.
+    if to.ends_with('/') {
         let base = from.rsplit('/').next().unwrap_or(&from);
         to = format!("{}{}", to.trim_end_matches('/'), {
             // keep a single separator
@@ -12292,7 +12291,38 @@ fn f_copy_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             _ => {}
         }
     }
-    if f_file_equal_p(i, vec![Value::string(&from), Value::string(&to)].into())?.truthy() {
+    // GNU opens (and truncates) the output before comparing file identities.
+    // Compare the open descriptors so aliases and renamed paths refer to the
+    // files actually opened. In particular, a self-copy still truncates the
+    // input, but reports an error instead of succeeding with an empty copy.
+    let mut input = std::fs::File::open(&from)
+        .map_err(|e| report_file_errno(i, "Opening input file", vec![Value::string(&from)], &e))?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        let mask = if keep_uid_gid { 0o700 } else { 0o777 };
+        options.mode(meta.mode() & mask);
+    }
+    let mut output = options
+        .open(&to)
+        .map_err(|e| report_file_errno(i, "Opening output file", vec![Value::string(&to)], &e))?;
+    #[cfg(unix)]
+    let same_file = {
+        use std::os::unix::fs::MetadataExt;
+        let input_meta = input.metadata().map_err(|e| {
+            report_file_errno(i, "Input file status", vec![Value::string(&from)], &e)
+        })?;
+        let output_meta = output.metadata().map_err(|e| {
+            report_file_errno(i, "Output file status", vec![Value::string(&to)], &e)
+        })?;
+        input_meta.dev() == output_meta.dev() && input_meta.ino() == output_meta.ino()
+    };
+    #[cfg(not(unix))]
+    let same_file =
+        f_file_equal_p(i, vec![Value::string(&from), Value::string(&to)].into())?.truthy();
+    if same_file {
         return Err(i.signal_data(
             sym::FILE_ERROR,
             vec![
@@ -12307,16 +12337,6 @@ fn f_copy_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // is nil. Copy data into an open destination, as GNU does, retaining
     // an existing destination's atime and giving new files current times.
     let copied = (|| -> std::io::Result<(std::fs::File, std::fs::File)> {
-        let mut input = std::fs::File::open(&from)?;
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-            let mask = if keep_uid_gid { 0o700 } else { 0o777 };
-            options.mode(meta.mode() & mask);
-        }
-        let mut output = options.open(&to)?;
         std::io::copy(&mut input, &mut output)?;
         Ok((input, output))
     })();
@@ -12372,8 +12392,8 @@ fn f_copy_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     } else {
                         default_file_modes() as u32 & 0o777
                     };
-                    let _ = output
-                        .set_permissions(std::fs::Permissions::from_mode(meta.mode() & mask));
+                    let _ =
+                        output.set_permissions(std::fs::Permissions::from_mode(meta.mode() & mask));
                 }
                 #[cfg(not(unix))]
                 let _ = output.set_permissions(meta.permissions());
