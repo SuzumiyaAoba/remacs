@@ -499,6 +499,11 @@ comparison limit requests plain replacement (returns t); expiration falls
 back and returns nil. Match the actual GNU 31.1 sixth-argument behavior:
 INHERIT is passed as `replace_range`'s ADJUST_MATCH_DATA flag while its
 property-inheritance flag stays false. Regression: `qa_replace_region_contents`.
+`qa_replace_region_properties` separately pins source properties on inserted
+runs: strings, narrowed buffers, source vectors and callback results preserve
+their clipped intervals and property-value identity, while equal characters
+keep the target's old properties. Plain replacement on zero limits or timeout
+copies the entire source's properties, including explicit nil values.
 
 `Symbol.name_string` retains the Lisp name string by identity for new
 `intern`/`make-symbol` calls; internal names acquire a stable string
