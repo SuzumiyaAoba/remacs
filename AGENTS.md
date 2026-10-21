@@ -1699,6 +1699,16 @@ origin, rather than the current BEGV. Widening or re-narrowing after a search
 must not retarget captures. `qa_replace` pins #273 with ASCII/multibyte
 text and subgroup replacement.
 
+`replace-match` string results retain source/replacement properties and
+unibyte/multibyte representation through real Lisp substring/concat values.
+Back-references copy source intervals; escaped slashes keep the first
+slash interval. Buffer replacements retain replacement properties only
+when literal or processing no backslash, matching GNU's `really_changed`
+branch. Install intervals inside the single replacement change, before
+after-change hooks. Apply buffer case transfer afterward with region
+casing; string case transfer uses the ordinary string casing rules.
+`qa_replace_metadata` pins #274 properties, representation, hooks and undo.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

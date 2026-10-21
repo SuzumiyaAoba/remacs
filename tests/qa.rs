@@ -368,6 +368,7 @@ qa!(qa_regexp_classes, "qa_regexp_classes.el");
 qa!(qa_regexp_errors, "qa_regexp_errors.el");
 qa!(qa_regexpopt, "qa_regexpopt.el");
 qa!(qa_replace, "qa_replace.el");
+qa!(qa_replace_metadata, "qa_replace_metadata.el");
 qa!(qa_replace_region_contents, "qa_replace_region_contents.el");
 qa!(qa_replace_region_narrowing, "qa_replace_region_narrowing.el");
 qa!(qa_replace_region_properties, "qa_replace_region_properties.el");

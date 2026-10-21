@@ -918,7 +918,7 @@ fn push_down(
     }
 }
 
-fn casify(i: &mut Interp, arg: &Value, op: CaseOp) -> EvalResult {
+pub(crate) fn casify(i: &mut Interp, arg: &Value, op: CaseOp) -> EvalResult {
     let down = i.current_case_table();
     let up = case_extra(&down, 0).unwrap_or_else(|| down.clone());
     // GNU `prepare_casing_context': capitalize ops use the Unicode

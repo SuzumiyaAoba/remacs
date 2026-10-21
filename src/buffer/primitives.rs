@@ -2345,7 +2345,13 @@ pub(crate) fn chg_delete(i: &mut Interp, s0: usize, e0: usize) -> Result<String,
 /// elogb(del+ins)+1 — `replace-match', not the two pairs a
 /// delete+insert would produce.  Signals (S0+1, E0+1) before and
 /// (S0+1, S0+1+N_INS, N_DEL) after.
-pub(crate) fn chg_replace(i: &mut Interp, s0: usize, e0: usize, s: &str) -> EvalResult {
+pub(crate) fn chg_replace(
+    i: &mut Interp,
+    s0: usize,
+    e0: usize,
+    s: &str,
+    properties: &[(usize, usize, Vec<Value>)],
+) -> EvalResult {
     let n_ins = s.chars().count();
     if s0 < e0 {
         text_ro_range(i, s0, e0)?;
@@ -2359,6 +2365,11 @@ pub(crate) fn chg_replace(i: &mut Interp, s0: usize, e0: usize, s: &str) -> Eval
         let d = e.saturating_sub(s0);
         delete_preserving_undo(i, &mut bb, s0, e0, true);
         bb.raw_insert_at(s0, s);
+        if n_ins > 0 {
+            let mut props = bb.text.props_write();
+            props.set(s0, s0 + n_ins, Vec::new());
+            props.graft(s0, properties, false);
+        }
         bb.note_text_change(d + n_ins);
         d
     };
@@ -10985,6 +10996,77 @@ fn group_text(i: &mut Interp, md: &MatchData, src: &[char], n: usize) -> Result<
     }
 }
 
+fn replacement_slice(i: &mut Interp, text: &Value, start: usize, end: usize) -> EvalResult {
+    crate::lisp::builtins::strfn::f_substring(
+        i,
+        vec![
+            text.clone(),
+            Value::Int(start as i128),
+            Value::Int(end as i128),
+        ]
+        .into(),
+    )
+}
+
+fn expand_replacement_string(
+    i: &mut Interp,
+    replacement: &Value,
+    literal: bool,
+    md: &MatchData,
+    source: &Value,
+    subexp: usize,
+) -> EvalResult {
+    if literal {
+        return Ok(replacement.clone());
+    }
+    let Value::Str(text) = replacement else {
+        unreachable!()
+    };
+    let chars: Vec<_> = text.borrow().chars().collect();
+    let mut parts = Vec::new();
+    let mut last = 0;
+    let mut pos = 0;
+    while pos < chars.len() {
+        if chars[pos] != '\\' {
+            pos += 1;
+            continue;
+        }
+        let slash = pos;
+        pos += 1;
+        let Some(&escaped) = chars.get(pos) else {
+            return Err(i.error("Invalid use of `\\' in replacement text"));
+        };
+        pos += 1;
+        let group = match escaped {
+            '&' => Some(subexp),
+            '1'..='9' => Some(escaped as usize - '0' as usize),
+            '\\' => {
+                // GNU keeps the first slash's properties and deletes the second.
+                parts.push(replacement_slice(i, replacement, last, pos - 1)?);
+                last = pos;
+                None
+            }
+            '?' => None,
+            _ => return Err(i.error("Invalid use of `\\' in replacement text")),
+        };
+        if let Some(group) = group {
+            if slash > last {
+                parts.push(replacement_slice(i, replacement, last, slash)?);
+            }
+            let range = match (md.regs.get(group * 2), md.regs.get(group * 2 + 1)) {
+                (Some(Some(start)), Some(Some(end))) => (*start, *end),
+                _ => (0, 0),
+            };
+            parts.push(replacement_slice(i, source, range.0, range.1)?);
+            last = pos;
+        }
+    }
+    if pos > last {
+        parts.push(replacement_slice(i, replacement, last, pos)?);
+    }
+    crate::lisp::builtins::strfn::f_concat(i, parts.into())
+}
+
 fn f_replace_match(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU Freplace_match:
     // CHECK_STRING(NEWTEXT), optional STRING is CHECK_STRING too, and
@@ -10998,7 +11080,7 @@ fn f_replace_match(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let literal = a.get(2).map(|v| v.truthy()).unwrap_or(false);
     let str_arg = match a.get(3) {
         None | Some(Value::Nil) => None,
-        Some(Value::Str(s)) => Some(s.borrow().clone()),
+        Some(value @ Value::Str(_)) => Some(value.clone()),
         Some(other) => return Err(i.wrong_type_mut("stringp", other)),
     };
     let md = match &i.match_data {
@@ -11031,7 +11113,10 @@ fn f_replace_match(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     // STRING path: substitute within the given string's match registers.
     if let Some(text) = str_arg {
-        let src: Vec<char> = text.chars().collect();
+        let Value::Str(source) = &text else {
+            unreachable!()
+        };
+        let src: Vec<char> = source.borrow().chars().collect();
         // GNU applyes case transference (`case_action') in the string
         // path too: FIXEDCASE skips it, and the casing is taken from
         // the replaced group's text.
@@ -11059,15 +11144,16 @@ fn f_replace_match(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 vec![Value::Int(s as i128), Value::Int(e as i128)],
             ));
         }
-        let mut rep = expand_replacement(i, &newtext, literal, &md, &src)?;
+        let mut rep = expand_replacement_string(i, &a[0], literal, &md, &text, subexp)?;
         if !fixedcase {
             let old: String = src[s.min(src.len())..e.min(src.len())].iter().collect();
-            rep = match_case(i, &old, &rep);
+            if let Some(op) = replacement_case_action(i, &old) {
+                rep = crate::lisp::builtins::strfn::casify(i, &rep, op)?;
+            }
         }
-        let mut out: String = src[..s.min(src.len())].iter().collect();
-        out.push_str(&rep);
-        out.extend(src[e.min(src.len())..].iter());
-        return Ok(Value::string(out));
+        let before = replacement_slice(i, &text, 0, s.min(src.len()))?;
+        let after = replacement_slice(i, &text, e.min(src.len()), src.len())?;
+        return crate::lisp::builtins::strfn::f_concat(i, vec![before, rep, after].into());
     }
     // GNU Freplace_match (search.c): with nil STRING the registers are
     // always checked against the CURRENT buffer's BEGV..ZV — even when the
@@ -11118,16 +11204,47 @@ fn f_replace_match(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // Registers remain relative to the restriction used by the search,
     // even when the caller subsequently widens or narrows the buffer.
     let source_base = if md.in_buffer { md.base } else { bb.begv };
-    let src: Vec<char> = bb.text.substring(source_base, bb.text.len()).chars().collect();
+    let src: Vec<char> = bb
+        .text
+        .substring(source_base, bb.text.len())
+        .chars()
+        .collect();
     let tlen = bb.text.len();
     drop(bb);
-    let mut rep = expand_replacement(i, &newtext, literal, &md, &src)?;
-    if !fixedcase {
-        rep = match_case(i, &old, &rep);
+    let (mut rep, properties) = if literal || !newtext.contains('\\') {
+        let Value::Str(replacement) = &a[0] else {
+            unreachable!()
+        };
+        (newtext.clone(), str_ivs_for_edit(i, replacement))
+    } else {
+        // GNU rebuilds buffer replacements that process any escape as
+        // plain text, dropping all replacement/capture properties.
+        (
+            expand_replacement(i, &newtext, literal, &md, &src)?,
+            Vec::new(),
+        )
+    };
+    if buffer_is_unibyte(i) {
+        rep = unibyte_insert_text(&rep);
     }
     let rep_len = rep.chars().count();
-    // GNU `replace_range': a single change pair, not delete+insert.
-    chg_replace(i, start, end.min(tlen), &rep)?;
+    let action = if fixedcase {
+        None
+    } else {
+        replacement_case_action(i, &old)
+    };
+    // Install properties before after-change hooks, as GNU replace_range does.
+    chg_replace(i, start, end.min(tlen), &rep, &properties)?;
+    if let Some(op) = action {
+        crate::editor::region_op(
+            i,
+            &[
+                Value::Int(start as i128 + 1),
+                Value::Int((start + rep_len) as i128 + 1),
+            ],
+            op,
+        )?;
+    }
     cur(i).borrow_mut().set_point(start + rep_len);
     Ok(Value::Nil)
 }
@@ -11192,8 +11309,11 @@ fn f_match_substitute_replacement(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
 
 /// GNU Freplace_match case_action: inspect word initials using the current
 /// syntax and case tables, then apply upcase or upcase-initials to NEW.
-pub(crate) fn match_case(i: &mut Interp, old: &str, new: &str) -> String {
-    use crate::lisp::builtins::strfn::{CaseOp, case_extra, case_str, ct_case};
+fn replacement_case_action(
+    i: &mut Interp,
+    old: &str,
+) -> Option<crate::lisp::builtins::strfn::CaseOp> {
+    use crate::lisp::builtins::strfn::{CaseOp, case_extra, ct_case};
 
     let syntax = crate::editor::syntax_table_entries(i);
     let down = i.current_case_table();
@@ -11202,8 +11322,7 @@ pub(crate) fn match_case(i: &mut Interp, old: &str, new: &str) -> String {
         .intern_soft("case-symbols-as-words")
         .is_some_and(|id| i.symbol_value(id).truthy());
     let mut previous = '\n';
-    let (mut multi, mut lower, mut nonuppercase_initial, mut upper) =
-        (false, false, false, false);
+    let (mut multi, mut lower, mut nonuppercase_initial, mut upper) = (false, false, false, false);
     for ch in old.chars() {
         let code = crate::lisp::value::lisp_char_code(ch) as u32;
         let uppercase = ct_case(i, &down, code) != code;
@@ -11232,8 +11351,18 @@ pub(crate) fn match_case(i: &mut Interp, old: &str, new: &str) -> String {
     } else if !nonuppercase_initial && upper {
         CaseOp::Up
     } else {
+        return None;
+    };
+    Some(op)
+}
+
+pub(crate) fn match_case(i: &mut Interp, old: &str, new: &str) -> String {
+    use crate::lisp::builtins::strfn::{CaseOp, case_extra, case_str};
+    let Some(op) = replacement_case_action(i, old) else {
         return new.to_string();
     };
+    let down = i.current_case_table();
+    let up = case_extra(&down, 0).unwrap_or_else(|| down.clone());
     let title = if op == CaseOp::CapUp {
         crate::lisp::builtins::charset::unicode_prop_table(i, "titlecase")
     } else {
