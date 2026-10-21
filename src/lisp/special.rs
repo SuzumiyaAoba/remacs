@@ -1113,9 +1113,15 @@ fn sf_save_excursion(i: &mut Interp, args: Value) -> EvalResult {
 }
 
 fn sf_save_mark_and_excursion(i: &mut Interp, args: Value) -> EvalResult {
-    let saved = i.save_excursion_state(true);
+    // Match simple.el's macro: save the mark, restore ordinary excursion
+    // first, then restore the mark (and its hooks) as unwind-protect cleanup.
+    let save_mark = Value::Sym(i.intern("save-mark-and-excursion--save"));
+    let mark = i.apply(&save_mark, vec![])?;
+    let saved = i.save_excursion_state(false);
     let r = i.eval_progn(&args);
     i.restore_excursion_state(saved);
+    let restore_mark = Value::Sym(i.intern("save-mark-and-excursion--restore"));
+    i.apply(&restore_mark, vec![mark])?;
     r
 }
 

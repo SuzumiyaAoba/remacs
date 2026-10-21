@@ -546,6 +546,18 @@ The append suite also pins lower/upper/outside source restriction errors,
 unchanged destination/current-buffer/point on errors, and nil/reversed valid
 bounds (`append-to-buffer` uses the transfer primitive's validation).
 
+`save-mark-and-excursion`'s direct special-form path uses the same mark
+save/restore helpers as its macro expansion. Restore point/current buffer
+before mark cleanup, and propagate cleanup errors ahead of body errors.
+An initially unset mark must detach again; activation values are copied
+verbatim through normal variable binding/watch semantics. Saved markers
+track their actual buffer, including a foreign mark marker. The prelude
+macro uses a fresh uninterned saved-variable symbol to avoid capture.
+Regression: `qa_mark_excursion` covers direct, expanded and byte-compiled
+paths, hook state/order, binding values, GC, nested scopes and nonlocal exits.
+Its hook-count fixtures bind transient-mark-mode explicitly because the
+library harness and CLI startup have different preexisting mode defaults.
+
 `Symbol.name_string` retains the Lisp name string by identity for new
 `intern`/`make-symbol` calls; internal names acquire a stable string
 lazily. Existing interned names keep their original string. Portable

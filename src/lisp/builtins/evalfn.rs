@@ -5136,30 +5136,30 @@ fn f_smae_save(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     let Some(b) = i.buffers.get(buf) else {
         return Ok(Value::cons(Value::Nil, Value::Nil));
     };
-    let (mark, active) = {
-        let bb = b.borrow();
-        let ma = i.intern_soft("mark-active").unwrap_or(0);
-        (
-            bb.mark_position(),
-            bb.locals.get(&ma).map(|v| v.truthy()).unwrap_or(false),
-        )
+    let mark = {
+        let mark = b.borrow_mut().mark_marker();
+        let mark = mark.borrow();
+        mark.buffer.map(|buffer| (buffer, mark.position))
     };
     let m = match mark {
-        Some(pos) => {
+        Some((buffer, pos)) => {
             let mk = crate::lisp::memory::allocate(
                 Marker {
-                    buffer: Some(buf),
+                    buffer: Some(buffer),
                     position: pos,
                     insertion_type: false,
                 },
                 crate::lisp::Value::Marker,
             );
-            b.borrow_mut().register_marker(&mk);
+            if let Some(buffer) = i.buffers.get(buffer) {
+                buffer.borrow_mut().register_marker(&mk);
+            }
             Value::Marker(mk)
         }
         None => Value::Nil,
     };
-    Ok(Value::cons(m, if active { Value::t() } else { Value::Nil }))
+    let active = i.intern("mark-active");
+    Ok(Value::cons(m, i.symbol_value(active)))
 }
 
 /// `save-mark-and-excursion--restore` — restore mark position (when the
@@ -5192,10 +5192,6 @@ fn f_smae_restore(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         };
         (pos, m)
     };
-    let cur_active = {
-        let ma = i.intern_soft("mark-active").unwrap_or(0);
-        b.borrow().locals.get(&ma).cloned().unwrap_or(Value::Nil)
-    };
     let nmark = if saved_mark.is_nil() {
         // (set-marker (mark-marker) nil): detach the mark marker.
         markm.borrow_mut().buffer = None;
@@ -5220,12 +5216,11 @@ fn f_smae_restore(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         mm.borrow_mut().buffer = None;
         np
     };
-    {
-        let ma = i.intern_soft("mark-active").unwrap_or(0);
-        // GNU assigns `mark-active' the saved cdr verbatim (no truthy
-        // normalization).
-        b.borrow_mut().locals.insert(ma, saved_active.clone());
-    }
+    // Read activation after moving the mark, then assign through normal
+    // variable binding/watch semantics, preserving a non-boolean value.
+    let ma = i.intern("mark-active");
+    let cur_active = i.symbol_value(ma);
+    i.set_symbol(ma, saved_active.clone())?;
     // GNU runs activate-mark-hook when the restored flag is non-nil and
     // the mark moved or was inactive; deactivate-mark-hook when the flag
     // went nil from non-nil.

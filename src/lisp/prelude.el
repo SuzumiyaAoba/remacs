@@ -7445,9 +7445,10 @@ uncaught (at debugger-entry time, in the raising dynamic context)."
 ;; special-form table, so the cells exist for `macroexpand'/introspection.
 (defmacro save-mark-and-excursion (&rest body)
   "Like `save-excursion', but also save and restore the mark state."
-  (list 'let (list (list 'saved-marker '(save-mark-and-excursion--save)))
-        (list 'unwind-protect (cons 'save-excursion body)
-              '(save-mark-and-excursion--restore saved-marker))))
+  (let ((saved-marker-sym (make-symbol "saved-marker")))
+    (list 'let (list (list saved-marker-sym '(save-mark-and-excursion--save)))
+          (list 'unwind-protect (cons 'save-excursion body)
+                (list 'save-mark-and-excursion--restore saved-marker-sym)))))
 
 (defmacro track-mouse (&rest body)
   "Evaluate BODY with mouse movement events enabled."

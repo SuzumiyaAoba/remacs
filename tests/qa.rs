@@ -220,6 +220,7 @@ qa!(qa_mapring, "qa_mapring.el");
 qa!(qa_mark, "qa_mark.el");
 qa!(qa_marker, "qa_marker.el");
 qa!(qa_markers, "qa_markers.el");
+qa!(qa_mark_excursion, "qa_mark_excursion.el");
 qa!(qa_match, "qa_match.el");
 qa!(qa_math, "qa_math.el");
 qa!(qa_minibuf, "qa_minibuf.el");
