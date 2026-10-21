@@ -3165,27 +3165,43 @@ fn f_process_send_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU decodes PROCESS through `get_process' (buffer names too)
     // BEFORE `validate_region' checks START/END.
     let p = get_process(i, &a[0])?;
-    let Some(s) = a[1].int() else {
-        return Err(i.wrong_type_mut("integer-or-marker-p", &a[1]));
+    let position = |i: &mut Interp, value: &Value| -> Result<Option<i128>, Flow> {
+        match value {
+            // A bignum outside i128 is a valid integer argument, but
+            // cannot fit any buffer. Check END's type before bounds.
+            Value::Int(_) | Value::BigInt(_) => Ok(value.int()),
+            Value::Marker(marker) => {
+                let marker = marker.borrow();
+                if marker.buffer.is_some() {
+                    Ok(Some(marker.position as i128 + 1))
+                } else {
+                    Err(i.error("Marker does not point anywhere"))
+                }
+            }
+            _ => Err(i.wrong_type_mut("integer-or-marker-p", value)),
+        }
     };
-    let Some(e) = a[2].int() else {
-        return Err(i.wrong_type_mut("integer-or-marker-p", &a[2]));
+    let start = position(i, &a[1])?;
+    let end = position(i, &a[2])?;
+    let valid = match (start, end, i.current_buffer_ref()) {
+        (Some(start), Some(end), Some(buffer)) => {
+            let buffer = buffer.borrow();
+            let lo = buffer.begv as i128 + 1;
+            let hi = buffer.zv.min(buffer.text_len()) as i128 + 1;
+            (lo..=hi).contains(&start) && (lo..=hi).contains(&end)
+        }
+        _ => false,
     };
-    let bid = i.current_buffer;
-    let (lo, hi) = i
-        .buffers
-        .get(bid)
-        .map(|b| {
-            let b = b.borrow();
-            let start = ((s - 1).max(0) as usize).min(b.text_len());
-            let end = ((e - 1).max(0) as usize).min(b.text_len());
-            (start.min(end), start.max(end))
-        })
-        .unwrap_or((0, 0));
-    let text = crate::buffer::primitives::f_buffer_substring(
-        i,
-        vec![Value::Int(lo as i128 + 1), Value::Int(hi as i128 + 1)].into(),
-    )?;
+    if !valid {
+        let buffer = i.buffer_value(i.current_buffer).unwrap_or(Value::Nil);
+        // Preserve the original order and marker identities in errors.
+        return Err(i.signal_data(
+            sym::ARGS_OUT_OF_RANGE,
+            vec![buffer, a[1].clone(), a[2].clone()],
+        ));
+    }
+    let text =
+        crate::buffer::primitives::f_buffer_substring(i, vec![a[1].clone(), a[2].clone()].into())?;
     let bytes = encode_process_input(i, &p, text)?;
     proc_write(i, &p, &bytes)
 }

@@ -578,6 +578,15 @@ character rule for empty datagrams.
 Regressions: `qa_process_coding.el`, existing coding/network QA, and the
 `coding_stream` boundary/state unit tests.
 
+`process-send-region` resolves PROCESS before validating START/END.
+Both positions accept integers and live markers (including markers from
+another buffer); bounds use the current buffer's accessible BEGV..ZV.
+Range errors preserve the source buffer and original endpoint order and
+marker identities. Wide bignums are range errors after both argument
+types have been checked. Valid regions retain byte kind and text
+properties through `buffer-substring`; endpoints are never clamped.
+Regression: `qa_process_send_region` (marker, narrowing and wire checks).
+
 ## Process input pause (`src/lisp/process.rs`)
 
 The canonical `filter=t` stops descriptor reads, including pipe, local,
