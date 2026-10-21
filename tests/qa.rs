@@ -360,6 +360,7 @@ qa!(qa_regexp_errors, "qa_regexp_errors.el");
 qa!(qa_regexpopt, "qa_regexpopt.el");
 qa!(qa_replace, "qa_replace.el");
 qa!(qa_replace_region_contents, "qa_replace_region_contents.el");
+qa!(qa_replace_region_narrowing, "qa_replace_region_narrowing.el");
 qa!(qa_replace_region_properties, "qa_replace_region_properties.el");
 qa!(qa_replace_bounds, "qa_replace_bounds.el");
 qa!(qa_replace_case, "qa_replace_case.el");

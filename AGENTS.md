@@ -504,6 +504,10 @@ runs: strings, narrowed buffers, source vectors and callback results preserve
 their clipped intervals and property-value identity, while equal characters
 keep the target's old properties. Plain replacement on zero limits or timeout
 copies the entire source's properties, including explicit nil values.
+`qa_replace_region_narrowing` pins accessible SOURCE bounds in normal,
+zero-limit and timeout paths, including empty ranges and Unicode offsets.
+Reading a source preserves its point/restriction and restores the caller's
+current buffer even when a source vector fails range validation.
 
 `Symbol.name_string` retains the Lisp name string by identity for new
 `intern`/`make-symbol` calls; internal names acquire a stable string
