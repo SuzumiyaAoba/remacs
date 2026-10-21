@@ -2434,6 +2434,118 @@ pub(crate) fn chg_replace_contents(
     signal_after_change(i, start + 1, start + inserted + 1, (end - start) as i128)
 }
 
+/// GNU transpose-regions is one in-place edit. Neither overlays nor the
+/// active restriction move; marker/point relocation is a separate step.
+pub(crate) fn chg_transpose_regions(
+    i: &mut Interp,
+    regions: [usize; 4],
+    original: [usize; 4],
+    leave_markers: bool,
+) -> EvalResult {
+    let [start1, end1, start2, end2] = regions;
+    let buffer = cur(i);
+    // GNU captures buffer_intervals before running modification hooks.
+    let had_intervals = !buffer.borrow().text.props.borrow().intervals().is_empty();
+    check_writable(i)?;
+    barf_if_file_locked(i)?;
+    text_ro_range(i, start1, end2)?;
+    signal_before_change(i, start1 + 1, end2 + 1)?;
+    if !crate::lisp::builtins::evalfn::mod_hooks_inhibited(i) {
+        let deactivate_mark = i.intern("deactivate-mark");
+        i.set_symbol(deactivate_mark, Value::t())?;
+    }
+    let multibyte = i.intern("enable-multibyte-characters");
+    {
+        let mut b = buffer.borrow_mut();
+        if end2 > b.text.len() {
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![
+                    Value::Buffer(buffer.clone()),
+                    Value::Int(start1 as i128 + 1),
+                    Value::Int(end2 as i128 + 1),
+                ],
+            ));
+        }
+        b.prepare_inplace_change(end2 - start1, false);
+        let multibyte = b.locals.get(&multibyte).is_none_or(Value::truthy);
+        let first = b.text.substring(start1, end1);
+        let middle = b.text.substring(end1, start2);
+        let second = b.text.substring(start2, end2);
+        let (len1, len2) = (end1 - start1, end2 - start2);
+        let source_properties = |start, end| {
+            if had_intervals {
+                b.text.props.borrow().slice(start, end)
+            } else {
+                Vec::new()
+            }
+        };
+        let props1 = source_properties(start1, end1);
+        let props2 = source_properties(start2, end2);
+        let props_mid = source_properties(end1, start2);
+        let changes = if len1 == len2 && end1 != start2 {
+            vec![(start1, end1), (start2, end2)]
+        } else {
+            vec![(start1, end2)]
+        };
+        for (start, end) in changes {
+            let old = b.text.substring(start, end);
+            let properties = buf_props_as_ivs(&b.text.props.borrow(), start, end);
+            if let Some(undo) = b.record_change(start, &old, end - start) {
+                if !properties.is_empty() {
+                    i.set_str_props(&undo, properties);
+                }
+                if multibyte {
+                    i.mark_multibyte(&undo);
+                } else {
+                    i.mark_unibyte(&undo);
+                }
+            }
+        }
+        let [a, b_end, c, d] = original;
+        let clear = if len1 == len2 {
+            vec![(a, b_end), (c, d)]
+        } else {
+            vec![(a.min(d), a.max(d))]
+        };
+        for (start, end) in clear {
+            if start == end {
+                continue;
+            }
+            let intervals = b.text.props.borrow().intervals().to_vec();
+            if intervals.is_empty() {
+                continue;
+            }
+            // set_text_properties_1 records the original complete intervals.
+            // Boundary splits create new nil-plist intervals before clearing.
+            for (a, z, plist) in intervals {
+                if start <= a && z <= end {
+                    for pair in plist.chunks_exact(2) {
+                        b.record_prop_change(pair[0].clone(), pair[1].clone(), a + 1, z + 1);
+                    }
+                }
+            }
+            b.text.props_write().set(start, end, Vec::new());
+        }
+        if len1 != len2 && !props_mid.is_empty() {
+            b.text.props_write().graft(start1 + len2, &props_mid, false);
+        }
+        if !props1.is_empty() {
+            b.text.props_write().graft(end2 - len1, &props1, false);
+        }
+        if !props2.is_empty() {
+            b.text.props_write().graft(start1, &props2, false);
+        }
+        if !leave_markers {
+            b.transpose_markers(regions);
+        }
+        let replacement = second + &middle + &first;
+        b.text.replace_same_length(start1, end2, &replacement);
+    }
+    signal_after_change(i, start1 + 1, end2 + 1, (end2 - start1) as i128)
+}
+
 /// `code_convert_region' signals one replacement with the GNU
 /// encode/decode point timing. Both original endpoint markers remain
 /// at the corresponding endpoints, including after post-read edits.

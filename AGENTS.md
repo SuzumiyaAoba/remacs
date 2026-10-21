@@ -513,6 +513,22 @@ path; unused vector slots are ignored (`qa_replace_region_narrowing`).
 The same suite checks callback-visible target bounds, point clamping and
 restoration after normal returns, errors, throws and callback buffer switches.
 
+`transpose-regions` uses one in-place overwrite and one before/after hook
+pair. Point and markers follow GNU's three-segment permutation (start
+inclusive, final end exclusive), regardless of marker insertion type;
+LEAVE-MARKERS preserves character coordinates. Overlays remain fixed.
+Indirect viewers' saved point/restriction markers move with the shared
+text. Undo records equal separated regions individually, otherwise the
+whole span; source properties and byte kind survive. Attribute clearing
+records property undo without extra hooks or ticks. An interfering gap
+moves to the nearer span boundary, choosing the end on a tie. One Replace
+observer edit updates tree-sitter without transient delete/insert states.
+Regressions: `qa_transpose_regions`, `qa_treesit_edit`, and the shared-text
+observer unit test.
+Like GNU's modification preparation, transposition sets `deactivate-mark`
+after successful before-change hooks. Inhibited modification hooks and the
+adjacent-empty no-op leave it unchanged.
+
 `Symbol.name_string` retains the Lisp name string by identity for new
 `intern`/`make-symbol` calls; internal names acquire a stable string
 lazily. Existing interned names keep their original string. Portable

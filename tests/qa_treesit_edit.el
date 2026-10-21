@@ -90,6 +90,38 @@
       (qa (qa210-case "[1,2]" (lambda () (goto-char 2) (delete-char 1) (insert "1"))) t)
       (qa (qa210-case "[1,2]" (lambda () (subst-char-in-region 2 3 ?1 ?x))) t)
       (qa (qa210-case "[\"é\",2]" (lambda () (subst-char-in-region 3 4 ?é ?β))) t)
+      ;; Transposition is one overwrite even when the swapped pieces have
+      ;; different character counts and UTF-8 byte widths.
+      (qa (qa210-case "[1,\"あ\"]" (lambda () (transpose-regions 2 3 4 7))) t)
+      (qa-lex
+       (with-temp-buffer
+         (insert "xxx [1,\"あ\"] yyy")
+         (narrow-to-region 5 12)
+         (let ((parser (treesit-parser-create 'json)))
+           (unwind-protect
+               (progn
+                 (treesit-parser-root-node parser)
+                 (transpose-regions 6 7 8 11 t)
+                 (qa210-fresh-equal parser))
+             (treesit-parser-delete parser))))
+       t)
+      (qa-lex
+       (with-temp-buffer
+         (insert "[\"あβ\"]--[1,2]")
+         (let* ((base (current-buffer))
+                (view (make-indirect-buffer base " *qa240-parser-view*")))
+           (unwind-protect
+               (with-current-buffer view
+                 (narrow-to-region 2 6)
+                 (let ((parser (treesit-parser-create 'json)))
+                   (unwind-protect
+                       (progn
+                         (treesit-parser-root-node parser)
+                         (with-current-buffer base (transpose-regions 1 7 9 14))
+                         (qa210-fresh-equal parser))
+                     (treesit-parser-delete parser))))
+             (kill-buffer view))))
+       t)
       (qa (qa210-notification)
           '("(document (array (null) (number) (number) (number) (false)))" (((2 . 6) (13 . 18)))))
       ;; Narrowing changes the parser's visible input and global offsets.

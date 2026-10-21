@@ -816,6 +816,43 @@ impl Buffer {
         undo
     }
 
+    /// GNU editfns.c transpose_markers. Overlays keep their coordinates,
+    /// and marker insertion types do not participate in this permutation.
+    pub(crate) fn transpose_markers(&mut self, regions: [usize; 4]) {
+        let [start1, end1, start2, end2] = regions;
+        let map = |position: usize| {
+            if position < start1 || position >= end2 {
+                position
+            } else if position < end1 {
+                position + end2 - end1
+            } else if position < start2 {
+                position + (end2 - start2) - (end1 - start1)
+            } else {
+                position - (start2 - start1)
+            }
+        };
+        let adjust = |buffer: &mut Buffer, inactive: bool| {
+            buffer.point = map(buffer.point);
+            for marker in buffer.markers.iter().filter_map(Weak::upgrade) {
+                let mut marker = marker.borrow_mut();
+                if marker.buffer == Some(buffer.id) {
+                    marker.position = map(marker.position);
+                }
+            }
+            if inactive {
+                let (begv, zv) = (map(buffer.begv), map(buffer.zv));
+                // GNU can reverse inactive restriction markers when both
+                // boundaries cross regions. Keep our buffer interval valid.
+                buffer.begv = begv.min(zv);
+                buffer.zv = begv.max(zv);
+            }
+        };
+        adjust(self, false);
+        self.text
+            .clone()
+            .each_sibling(self.id, |buffer| adjust(buffer, true));
+    }
+
     pub fn register_marker(&mut self, m: &Rc<RefCell<Marker>>) {
         // A marker must appear once per buffer: repeated `set-marker'
         // calls on the same marker must not multiply-count its

@@ -2321,7 +2321,6 @@ fn f_replace_regexp_in_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
 }
 
 fn f_transpose_regions(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    check_writable(i)?;
     // GNU editfns.c Ftranspose_regions: validate_region each pair
     // (type check, swap within pair, bounds signal), then swap the two
     // PAIRS when `start2 < end1', then signal `error' "Transposed
@@ -2339,17 +2338,14 @@ fn f_transpose_regions(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             return Err(err_sym(
                 i,
                 "args-out-of-range",
-                vec![
-                    Value::Buffer(cur(i)),
-                    Value::Int(s),
-                    Value::Int(e),
-                ],
+                vec![Value::Buffer(cur(i)), Value::Int(s), Value::Int(e)],
             ));
         }
         Ok((s as usize - 1, e as usize - 1))
     };
     let (mut s1, mut e1) = valr(0, 1)?;
     let (mut s2, mut e2) = valr(2, 3)?;
+    let original = [s1, e1, s2, e2];
     if s2 < e1 {
         std::mem::swap(&mut s1, &mut s2);
         std::mem::swap(&mut e1, &mut e2);
@@ -2366,16 +2362,12 @@ fn f_transpose_regions(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if (s1 == e1 || s2 == e2) && e1 == s2 {
         return Ok(Value::Nil);
     }
-    let b = cur(i);
-    let bb = b.borrow_mut();
-    let t1 = bb.text.substring(s1, e1);
-    let t2 = bb.text.substring(s2, e2);
-    drop(bb);
-    crate::buffer::primitives::chg_delete(i, s2, e2)?;
-    crate::buffer::primitives::chg_insert(i, s2, &t1)?;
-    crate::buffer::primitives::chg_delete(i, s1, e1)?;
-    crate::buffer::primitives::chg_insert(i, s1, &t2)?;
-    Ok(Value::Nil)
+    crate::buffer::primitives::chg_transpose_regions(
+        i,
+        [s1, e1, s2, e2],
+        original,
+        arg(&a, 4).truthy(),
+    )
 }
 
 fn f_subst_char_in_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

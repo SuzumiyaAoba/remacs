@@ -128,6 +128,7 @@ qa!(qa_equal_callers, "qa_equal_callers.el");
 qa!(qa_equal_runtime, "qa_equal_runtime.el");
 qa!(qa_eieio2, "qa_eieio2.el");
 qa!(qa_edge_semantics, "qa_edge_semantics.el");
+qa!(qa_transpose_regions, "qa_transpose_regions.el");
 qa!(qa_err2, "qa_err2.el");
 qa!(qa_errors, "qa_errors.el");
 qa!(qa_dotted_error_data, "qa_dotted_error_data.el");

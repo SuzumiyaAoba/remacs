@@ -747,6 +747,16 @@ impl PendingTree {
                     );
                 }
             }
+            crate::buffer::TextChange::Replace { start, end, text } => {
+                // Same-character-length overwrite: restrictions keep their
+                // positions, while UTF-8 byte offsets can change.
+                let lo = start.max(self.begv);
+                let hi = end.min(self.zv);
+                if lo < hi {
+                    let visible: String = text.chars().skip(lo - start).take(hi - lo).collect();
+                    self.replace(lo - self.begv, hi - self.begv, &visible);
+                }
+            }
             crate::buffer::TextChange::Reset { text } => {
                 self.replace(0, self.text.chars().count(), text);
                 self.begv = 0;

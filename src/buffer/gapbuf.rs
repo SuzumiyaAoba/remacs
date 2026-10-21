@@ -9,6 +9,7 @@ pub enum TextChange<'a> {
     Insert { at: usize, text: &'a str },
     Delete { start: usize, end: usize },
     Character { at: usize, character: char },
+    Replace { start: usize, end: usize, text: &'a str },
     Reset { text: &'a str },
 }
 
@@ -603,6 +604,44 @@ impl SharedText {
         });
     }
 
+    /// Replace characters without moving positions or property intervals.
+    /// A single edit reaches observers after the complete text is installed.
+    pub(crate) fn replace_same_length(&self, start: usize, end: usize, text: &str) {
+        assert_eq!(end - start, text.chars().count());
+        {
+            let mut buffer = self.inner.borrow_mut();
+            let before: usize = (start..end)
+                .map(|position| storage_bytes(buffer.char_at(position), buffer.multibyte))
+                .sum();
+            let after: usize = text
+                .chars()
+                .map(|c| storage_bytes(c, buffer.multibyte))
+                .sum();
+            if after > before {
+                buffer.ensure_gap(after - before);
+            }
+            // GNU transpose-regions moves an interfering gap to the nearer
+            // boundary, choosing the end on a tie. An outside gap stays put.
+            let gap = buffer.gap_position();
+            if start < gap && gap < end {
+                buffer.move_gap(if gap - start < end - gap { start } else { end });
+            }
+            let slots = buffer.gap_slots();
+            for (position, character) in (start..end).zip(text.chars()) {
+                let physical = if position < buffer.gap_start {
+                    position
+                } else {
+                    position + slots
+                };
+                buffer.buf[physical] = character;
+            }
+            buffer.text_bytes = buffer.text_bytes - before + after;
+            buffer.mod_count = buffer.mod_count.wrapping_add(1);
+            buffer.flat = None;
+        }
+        self.notify_edit(TextChange::Replace { start, end, text });
+    }
+
     /// Extract `[start, end)` as a String.
     pub fn substring(&self, start: usize, end: usize) -> String {
         self.inner.borrow().substring(start, end)
@@ -646,6 +685,39 @@ impl Default for SharedText {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn equal_length_replacement_is_one_complete_observer_edit() {
+        let text = super::SharedText::new();
+        text.insert(0, "ab--日本語");
+        text.inner.borrow_mut().move_gap(2);
+        let capacity = text.gap_size();
+        let _cached = text.as_slice().to_vec();
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let seen_by_observer = seen.clone();
+        let view = text.clone();
+        let observer: super::EditObserver = std::rc::Rc::new(std::cell::RefCell::new(
+            move |change: super::TextChange<'_>| {
+                let super::TextChange::Replace { start, end, text } = change else {
+                    panic!("replacement split into separate edits");
+                };
+                seen_by_observer
+                    .borrow_mut()
+                    .push((start, end, text.to_owned(), view.text()));
+            },
+        ));
+        let _subscription = text.observe_edits(&observer);
+        text.replace_same_length(0, 7, "日本語--ab");
+        assert_eq!(
+            &*seen.borrow(),
+            &[(0, 7, "日本語--ab".to_owned(), "日本語--ab".to_owned())]
+        );
+        assert_eq!(text.len(), 7);
+        assert_eq!(text.inner.borrow().text_bytes, "日本語--ab".len());
+        assert_eq!(text.gap_size(), capacity);
+        assert_eq!(text.gap_position(), 0);
+        assert_eq!(text.as_slice().iter().collect::<String>(), "日本語--ab");
+    }
+
     #[test]
     fn edit_observers_follow_shared_storage_without_owning_it() {
         let text = super::SharedText::new();
