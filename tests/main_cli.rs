@@ -493,6 +493,139 @@ fn file_arg_enters_interactive_path() {
     let _ = std::fs::remove_file(&dir);
 }
 
+// Issue #226: file arguments are actions in the same stream as --eval.
+struct FileArgumentFixture(std::path::PathBuf);
+impl FileArgumentFixture {
+    fn new() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "remacs-cli-files-{}-{nonce}-{id}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("sub/first file.txt"), "alpha\n").unwrap();
+        std::fs::write(dir.join("second.txt"), "beta\n").unwrap();
+        Self(dir)
+    }
+
+    fn check(&self, args: &[&str], expected: &str) {
+        if let Some(gnu) = std::env::var_os("GNU_EMACS") {
+            let result = Command::new(gnu)
+                .current_dir(&self.0)
+                .args(args)
+                .output()
+                .unwrap();
+            assert_eq!(
+                result.status.code(),
+                Some(0),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert_eq!(String::from_utf8_lossy(&result.stdout), expected);
+        }
+        for source in [false, true] {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_remacs"));
+            command.current_dir(&self.0).args(args);
+            if source {
+                command.env("REMACS_NO_ELC", "1");
+            } else {
+                command.env_remove("REMACS_NO_ELC");
+            }
+            let result = command.output().unwrap();
+            assert_eq!(
+                result.status.code(),
+                Some(0),
+                "source={source}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&result.stdout),
+                expected,
+                "source={source}"
+            );
+        }
+    }
+}
+impl Drop for FileArgumentFixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn batch_file_arguments_use_the_startup_directory_in_order() {
+    let files = FileArgumentFixture::new();
+    files.check(
+        &[
+            "-Q",
+            "--batch",
+            "sub/first file.txt",
+            "--eval",
+            "(princ (buffer-string))",
+            "second.txt",
+            "--execute",
+            "(princ (buffer-string))",
+        ],
+        "alpha\nbeta\n",
+    );
+    // Batch is a startup switch even when it follows the first file.
+    files.check(
+        &[
+            "-Q",
+            "sub/first file.txt",
+            "--batch",
+            "--eval",
+            "(princ (buffer-string))",
+        ],
+        "alpha\n",
+    );
+}
+
+#[test]
+fn batch_file_arguments_reselect_existing_buffers_and_keep_point() {
+    let files = FileArgumentFixture::new();
+    files.check(
+        &[
+            "-Q",
+            "--batch",
+            "sub/first file.txt",
+            "--eval",
+            "(progn (princ (buffer-string)) (goto-char 3))",
+            "second.txt",
+            "--eval",
+            "(princ (buffer-string))",
+            "sub/first file.txt",
+            "--eval",
+            "(prin1 (list (point) (buffer-string)))",
+        ],
+        "alpha\nbeta\n(3 \"alpha\n\")",
+    );
+}
+
+#[test]
+fn batch_file_arguments_reach_exit_hooks_and_allow_new_files() {
+    let files = FileArgumentFixture::new();
+    files.check(
+        &[
+            "-Q",
+            "--batch",
+            "--eval",
+            "(add-hook 'kill-emacs-hook (lambda () (princ (buffer-string))))",
+            "sub/first file.txt",
+            "second.txt",
+        ],
+        "beta\n",
+    );
+    files.check(&["-Q", "--batch", "new file.txt", "--eval",
+                  "(prin1 (list (file-name-nondirectory buffer-file-name) (buffer-string) (file-exists-p buffer-file-name)))"],
+                "(\"new file.txt\" \"\" nil)");
+    assert!(!files.0.join("new file.txt").exists());
+}
 #[test]
 fn execute_alias_works() {
     let (o, _e, code) = remacs(&["--execute", "(princ 7)"], "");

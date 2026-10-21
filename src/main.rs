@@ -186,6 +186,11 @@ fn real_main(args: Vec<String>) {
 
     let mut batch = false;
     let exit = 0i32;
+    // GNU captures this directory once before processing file arguments.
+    // Visiting a file changes its buffer's default-directory, but must not
+    // change the base used for the next command-line file name.
+    let directory_symbol = i.intern("command-line-default-directory");
+    let file_directory = i.symbol_value(directory_symbol);
 
     let mut arguments = cli::arguments(&args);
     while let Some(argument) = arguments.next() {
@@ -195,8 +200,16 @@ fn real_main(args: Vec<String>) {
                 // Visit files in command-line order, including in batch
                 // mode, so later actions and exit hooks see them.
                 inhibit_startup(&mut i);
-                let form = format!("(find-file {:?})", name);
-                match i.eval_str(&form) {
+                let result = (|| {
+                    let expand = Value::Sym(i.intern("expand-file-name"));
+                    let file = i.apply(
+                        &expand,
+                        vec![Value::string(name), file_directory.clone()],
+                    )?;
+                    let visit = Value::Sym(i.intern("find-file"));
+                    i.apply(&visit, vec![file])
+                })();
+                match result {
                     Ok(_) => {}
                     Err(Flow::Exit(code)) => std::process::exit(code as i32),
                     Err(flow) => {

@@ -1496,6 +1496,13 @@ options. Preserve lexical evaluation and the real `eval` backtrace frame;
 `eval_forms` remains the separate all-forms API. Regressions: the
 `eval_first_*` cases in `tests/main_cli.rs`.
 
+CLI file arguments are visited inline, including in batch mode, so later
+actions and exit hooks see their buffers. Resolve every relative name
+against the captured `command-line-default-directory`, not the previously
+visited buffer's directory. Pass filename values to the Lisp functions
+directly instead of interpolating them into source. Regressions:
+`batch_file_arguments_*` in `tests/main_cli.rs` (normal/source startup).
+
 ## Portable images (`src/lisp/dump/`)
 
 `dump-emacs-portable` writes a real Remacs image; `--dump-file FILE`
