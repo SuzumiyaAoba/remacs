@@ -527,6 +527,11 @@ Design notes:
   buffer copies start without observers. Narrowing/context changes sync
   the visible input separately. Regressions: `qa_treesit_edit` and the
   UTF-8 point/edit-observer lifetime unit checks.
+- Parsers belong to the requested buffer, including indirect buffers.
+  Resolve/reuse/list them by that buffer's identity, not its base buffer.
+  Shared text edits reach each parser through the physical edit observers;
+  narrowing, parse generations, tags, included ranges and buffer lifetime
+  remain independent. Regression: `tests/qa_treesit_indirect.el`.
 - Node staleness is GNU-style: `check_node` compares `parse_count`;
   `treesit-node-check 'outdated` is passive (nil until a reparse
   happens elsewhere). Node records and cache keys include that generation:

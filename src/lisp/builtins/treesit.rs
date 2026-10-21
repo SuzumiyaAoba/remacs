@@ -45,7 +45,7 @@ pub struct TsParser {
     pending: Rc<RefCell<PendingTree>>,
     edit_observer: crate::buffer::EditObserver,
     edit_subscription: Option<crate::buffer::EditSubscription>,
-    /// The buffer this parser parses (base buffer for indirect buffers).
+    /// The buffer this parser parses, including its own narrowing/lifetime.
     buffer: BufferRef,
     /// The `Value::Buffer' originally handed to Lisp (identity matters
     /// for `treesit-parser-list' filtering).
@@ -1028,7 +1028,8 @@ fn language_needs_linecol(i: &mut Interp, lang: SymId) -> bool {
         .unwrap_or(false)
 }
 
-/// `(BUFFER)' arg → (base BufferRef, base buffer Value).  nil = current.
+/// `(BUFFER)' arg → its BufferRef and Value. nil = current.
+/// Indirect buffers share text, but own their parsers and parse context.
 fn want_buffer_or_current(i: &mut Interp, v: &Value) -> Result<(BufferRef, Value), Flow> {
     let (buf, buf_val) = match v {
         Value::Nil => {
@@ -1041,11 +1042,6 @@ fn want_buffer_or_current(i: &mut Interp, v: &Value) -> Result<(BufferRef, Value
         Value::Buffer(b) => (b.clone(), v.clone()),
         other => return Err(i.wrong_type_mut("bufferp", other)),
     };
-    // Indirect buffers use their base buffer's parsers.
-    if let Some(base) = buf.borrow().base_buffer.clone() {
-        let val = i.buffer_value(base.borrow().id).unwrap_or(buf_val);
-        return Ok((base, val));
-    }
     Ok((buf, buf_val))
 }
 
