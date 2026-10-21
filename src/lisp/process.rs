@@ -16,6 +16,7 @@ use std::rc::Rc;
 mod child;
 mod coding;
 pub(crate) mod environment;
+mod wait;
 
 use super::builtins::evalfn::timer_check;
 use super::builtins::{S, arg};
@@ -2912,25 +2913,21 @@ fn f_accept_process_output(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Some(v) => Some(want_proc(i, v)?),
         None => None,
     };
-    // GNU accepts any number for SECONDS (fractional waits), a fixnum
-    // for MILLISEC.
-    let secs = match a.get(1) {
-        None | Some(Value::Nil) => 0.0,
-        Some(Value::Int(n)) => *n as f64,
-        Some(Value::Float(f)) => **f,
-        Some(v) => {
-            let wta = i.intern("wrong-type-argument");
-            let fxp = i.intern("numberp");
-            return Err(i.signal_data(wta, vec![Value::Sym(fxp), v.clone()]));
-        }
-    };
+    // The obsolete MILLISEC convention checks it first and requires
+    // a fixnum SECONDS too. Without it, SECONDS is a fixnum or float.
     let millis = match a.get(2) {
         None | Some(Value::Nil) => 0.0,
-        Some(Value::Int(n)) => *n as f64,
+        Some(v) if v.fixnump() => v.int().unwrap() as f64 / 1000.0,
+        Some(v) => return Err(i.wrong_type_mut("fixnump", v)),
+    };
+    let legacy = !matches!(a.get(2), None | Some(Value::Nil));
+    let secs = match a.get(1) {
+        None | Some(Value::Nil) => 0.0,
+        Some(v) if v.fixnump() => v.int().unwrap() as f64,
+        Some(v) if legacy => return Err(i.wrong_type_mut("fixnump", v)),
+        Some(Value::Float(value)) => **value,
         Some(v) => {
-            let wta = i.intern("wrong-type-argument");
-            let fxp = i.intern("fixnump");
-            return Err(i.signal_data(wta, vec![Value::Sym(fxp), v.clone()]));
+            return Err(i.wrong_type_mut("numberp", v));
         }
     };
     // Only a specified PROCESS with both time arguments nil/omitted
@@ -2939,14 +2936,7 @@ fn f_accept_process_output(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let indefinite = target.is_some()
         && matches!(a.get(1), None | Some(Value::Nil))
         && matches!(a.get(2), None | Some(Value::Nil));
-    let deadline = if indefinite {
-        None
-    } else {
-        Some(
-            std::time::Instant::now()
-                + std::time::Duration::from_secs_f64((secs + millis / 1000.0).max(0.0)),
-        )
-    };
+    let mut timeout = wait::Timeout::new((!indefinite).then_some(secs + millis));
     // PROCESS=nil ignores JUST-THIS-ONE. Otherwise every non-nil value
     // confines reads to PROCESS; GNU additionally inhibits this wait's
     // timers for fixnums (including zero), but not bignums or floats.
@@ -2967,24 +2957,28 @@ fn f_accept_process_output(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
         None => poll_all(i),
     };
-    // A due timer is serviced even when output is already buffered.
-    if !inhibit_timers {
-        timer_check(i)?;
-    }
-    let mut got = poll(i)?;
-    while !got && deadline.map_or(true, |deadline| std::time::Instant::now() < deadline) {
-        // A dead target cannot produce output. Check before yielding,
-        // including when there is no deadline to terminate the loop.
-        if target.as_ref().is_some_and(|p| !p.borrow().alive()) {
-            break;
-        }
-        crate::lisp::eval::threads::pause(i, std::time::Duration::from_millis(5))?;
+    loop {
+        // Service timers before validating the effective select timeout:
+        // a future timer can make an enormous user timeout valid, and a
+        // one-shot timer can remove that bound when its callback runs.
         if !inhibit_timers {
             timer_check(i)?;
         }
-        got = poll(i)?;
+        if target.as_ref().is_some_and(|p| {
+            let p = p.borrow();
+            !p.alive()
+                || matches!(p.io, ProcIo::Listen(_) | ProcIo::LocalListen(..))
+                || (p.status == "stop" && matches!(p.io, ProcIo::Child { .. }))
+        }) {
+            return poll(i).map(Value::from_bool);
+        }
+        timeout.validate(i, inhibit_timers)?;
+        let got = poll(i)?;
+        if got || timeout.expired() {
+            return Ok(Value::from_bool(got));
+        }
+        crate::lisp::eval::threads::pause(i, std::time::Duration::from_millis(5))?;
     }
-    Ok(Value::from_bool(got))
 }
 
 fn f_process_send_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

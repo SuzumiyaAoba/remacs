@@ -24,6 +24,91 @@ fn remacs(args: &[&str], stdin: &str) -> (String, String, i32) {
     )
 }
 
+#[cfg(target_os = "macos")]
+fn remacs_before_deadline(args: &[&str]) -> (String, String, i32) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_remacs"))
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn remacs");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let output = child.wait_with_output().unwrap();
+            panic!(
+                "remacs did not finish: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let output = child.wait_with_output().unwrap();
+    (
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+        output.status.code().unwrap_or(-1),
+    )
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn huge_process_timeout_is_catchable_and_evaluation_continues() {
+    let (out, err, code) = remacs_before_deadline(&["-Q", "--batch", "--eval",
+        "(progn (prin1 (condition-case err (accept-process-output nil 1e30) (file-error err))) (terpri) (princ \"AUDIT-DONE\"))"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(
+        out,
+        "(file-error \"Failed select\" \"Invalid argument\")\nAUDIT-DONE"
+    );
+    assert!(!err.contains("panicked"), "{err}");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn unhandled_huge_process_timeout_is_a_failure_exit() {
+    let (out, err, code) = remacs_before_deadline(&[
+        "-Q",
+        "--batch",
+        "--eval",
+        "(progn (accept-process-output nil 1e30) (princ \"unreachable\"))",
+    ]);
+    assert_ne!(code, 0, "{out}\n{err}");
+    assert!(!out.contains("unreachable"), "{out}");
+    assert!(err.contains("Failed select"), "{err}");
+    assert!(!err.contains("panicked"), "{err}");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn huge_process_timeout_does_not_reuse_a_child_exit_notification() {
+    let (out, err, code) = remacs_before_deadline(&["-Q", "--batch", "--eval",
+        "(let ((p (make-pipe-process :name \"timeout-target\" :noquery t :sentinel #'ignore)) \
+               (other (make-process :name \"timeout-exit\" :noquery t :connection-type 'pipe :sentinel #'ignore :command '(\"/bin/sh\" \"-c\" \"exit 0\")))) \
+          (unwind-protect \
+              (progn \
+                (let ((deadline (+ (float-time) 3)) done) \
+                  (while (and (not done) (< (float-time) deadline)) \
+                    (let* ((attrs (process-attributes (process-id other))) (state (cdr (assq 'state attrs)))) \
+                      (setq done (or (null attrs) (and (stringp state) (string-prefix-p \"Z\" state))))) \
+                    (unless done (thread-yield))) \
+                  (unless done (error \"Child did not exit\"))) \
+                (prin1 (condition-case err (accept-process-output p 1e30 nil t) (file-error err))) \
+                (princ \" AUDIT-DONE\")) \
+            (mapc #'delete-process (list p other))))"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(
+        out,
+        "(file-error \"Failed select\" \"Invalid argument\") AUDIT-DONE"
+    );
+    assert!(!err.contains("panicked"), "{err}");
+}
+
 #[test]
 fn version_prints_and_exits() {
     let (o, _e, code) = remacs(&["--version"], "");

@@ -4448,6 +4448,36 @@ pub(crate) fn timer_check(i: &mut Interp) -> EvalResult {
     Ok(Value::Nil)
 }
 
+/// The next active ordinary timer bounds wait_reading_process_output's
+/// select timeout, even when the caller requested an enormous delay.
+pub(crate) fn next_timer_delay(i: &mut Interp) -> Option<f64> {
+    let symbol = i.intern("timer-list");
+    let timers = i.symbol_value(symbol).list_to_vec().ok()?;
+    let now = super::misc::lisp_time_to_ns(i, &Value::Nil).ok()?;
+    timers
+        .into_iter()
+        .filter_map(|timer| {
+            let when = match timer {
+                Value::Vec(value) => {
+                    let value = value.borrow();
+                    if value.len() < 9 || value[0].truthy() || value[5].is_nil() {
+                        return None;
+                    }
+                    Value::list(vec![
+                        value[1].clone(),
+                        value[2].clone(),
+                        value[3].clone(),
+                        value[8].clone(),
+                    ])
+                }
+                _ => return None,
+            };
+            let when = super::misc::lisp_time_to_ns(i, &when).ok()?;
+            Some(when.saturating_sub(now).max(0) as f64 / 1_000_000_000.0)
+        })
+        .min_by(f64::total_cmp)
+}
+
 /// Sleep for SECS seconds, firing due timers during the wait like
 /// GNU's `wait_reading_process_output'.
 pub(crate) fn thread_wait_events(i: &mut Interp) -> Result<(), Flow> {

@@ -49,15 +49,64 @@ fn main() {
         )
     });
     if headless {
-        let child = std::thread::Builder::new()
-            .name("remacs-main".into())
-            .stack_size(512 * 1024 * 1024)
-            .spawn(move || real_main(args))
-            .expect("failed to spawn interpreter thread");
-        let _ = child.join();
+        run_headless(move || real_main(args));
         return;
     }
     real_main(args);
+}
+
+fn run_headless(run: impl FnOnce() + Send + 'static) {
+    let child = std::thread::Builder::new()
+        .name("remacs-main".into())
+        .stack_size(512 * 1024 * 1024)
+        .spawn(run)
+        .expect("failed to spawn interpreter thread");
+    if let Err(panic) = child.join() {
+        // Preserve the worker panic and Rust's failure exit status;
+        // returning normally here used to report success to the caller.
+        std::panic::resume_unwind(panic);
+    }
+}
+
+#[cfg(test)]
+mod headless_tests {
+    use super::run_headless;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
+    #[test]
+    fn waits_for_the_interpreter_worker_to_finish() {
+        let completed = Arc::new(AtomicBool::new(false));
+        let worker_completed = completed.clone();
+        run_headless(move || worker_completed.store(true, Ordering::SeqCst));
+        assert!(completed.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn worker_panic_propagates_after_unwinding_its_resources() {
+        struct Cleanup(Arc<AtomicBool>);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let cleaned = Arc::new(AtomicBool::new(false));
+        let worker_cleaned = cleaned.clone();
+        let panic = std::panic::catch_unwind(move || {
+            run_headless(move || {
+                let _cleanup = Cleanup(worker_cleaned);
+                panic!("interpreter worker failure");
+            })
+        })
+        .expect_err("worker panic was swallowed");
+        assert_eq!(
+            panic.downcast_ref::<&str>(),
+            Some(&"interpreter worker failure")
+        );
+        assert!(cleaned.load(Ordering::SeqCst));
+    }
 }
 
 fn real_main(args: Vec<String>) {

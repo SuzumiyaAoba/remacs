@@ -330,6 +330,7 @@ qa!(qa_process_directory, "qa_process_directory.el");
 qa!(qa_process_exec_path, "qa_process_exec_path.el");
 qa!(qa_process_filter_pause, "qa_process_filter_pause.el");
 qa!(qa_process_send_region, "qa_process_send_region.el");
+qa!(qa_process_timeout, "qa_process_timeout.el");
 qa!(qa_process_stderr, "qa_process_stderr.el");
 qa!(qa_radix, "qa_radix.el");
 qa!(qa_read, "qa_read.el");

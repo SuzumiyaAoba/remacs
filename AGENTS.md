@@ -612,6 +612,20 @@ Polling other processes excludes the already-polled target so output
 cannot be consumed there with its return value discarded. Regression:
 `qa_accept_process_wait` (timers, threads and a queued-output race).
 
+Large `accept-process-output` timeouts use elapsed floating-point
+accounting, never unchecked Duration/Instant construction. The effective
+wait is bounded by the next active ordinary timer (unless inhibited);
+child-exit notifications also force one nonblocking turn. Large effective
+waits are validated with the host's `pselect` on an internal ready,
+close-on-exec socket, so validation never sleeps or consumes process data.
+OS failures signal `file-error` with `Failed select` and the actual errno.
+This preserves timer-before-error ordering and platform-specific limits.
+Listener targets return without selecting; stopped connections retain
+their select-timeout validation. Exit notifications bound only one turn.
+Regression: `qa_process_timeout`, plus CLI catch/exit/notification checks.
+The headless entry point propagates unexpected interpreter-worker panics
+after worker cleanup, instead of silently reporting exit status zero.
+
 ## External libraries (`src/lisp/dynlib.rs` + builtins)
 
 Optional GNU libraries are dlopen'd at runtime (`dynlib::Library`):
