@@ -1582,6 +1582,14 @@ call, avoiding an untraced persistent GC edge in the cache. Regression:
 `qa_bytecode_mutation` covers shared code, operands, raw `byte-code`, watchers,
 callbacks, recursion, unrelated string edits and GC.
 
+`aset` rejects byte-code function objects with `wrong-type-argument arrayp`,
+even for a negative or out-of-range fixnum index. Its index type check still
+comes first (`fixnump`, including marker and bignum rejection). `aref` can
+read function slots; returned instruction strings and constants vectors stay
+mutable, but replacing the slots is forbidden. `qa_bytecode_slots` covers
+four/six-slot constructors, reader literals, error data identity, unchanged
+slots/results, nested content updates and ordinary mutable-array controls.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

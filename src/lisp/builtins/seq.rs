@@ -491,8 +491,8 @@ fn f_aref(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_aset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU `Faset': CHECK_FIXNUM_COERCE_MARKer's index check precedes
-    // the per-type dispatch — non-fixnums are `(fixnump IDX)'.
+    // GNU `Faset' checks the fixnum index before dispatching on ARRAY.
+    // Unlike aref, it rejects closure and byte-code function objects.
     let n = want_fixnum(i, &args[1])?;
     match &args[0] {
         Value::Vec(v) => {
@@ -600,22 +600,6 @@ fn f_aset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             // Ordinary records: GNU allows writing any slot (even the
             // tag at index 0).
             let mut items = r.borrow_mut();
-            if n < 0 || n as usize >= items.len() {
-                return Err(i.signal_data(
-                    sym::ARGS_OUT_OF_RANGE,
-                    vec![args[0].clone(), args[1].clone()],
-                ));
-            }
-            items[n as usize] = args[2].clone();
-            Ok(args[2].clone())
-        }
-        Value::Lambda(l) => {
-            // `#[...]' byte-code objects: GNU permits `aset' into the
-            // element vector (e.g. replacing the constants slot).
-            let Some(items) = &l.bc_items else {
-                return Err(i.wrong_type_mut("arrayp", &args[0]));
-            };
-            let mut items = items.borrow_mut();
             if n < 0 || n as usize >= items.len() {
                 return Err(i.signal_data(
                     sym::ARGS_OUT_OF_RANGE,
