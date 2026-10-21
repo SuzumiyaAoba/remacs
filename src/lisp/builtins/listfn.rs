@@ -787,11 +787,25 @@ fn f_nconc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     Ok(result)
 }
-fn f_reverse(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_reverse(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // Emacs: reverse works on any sequence, preserving its type.
     match &args[0] {
         Value::Str(s) => {
-            return Ok(Value::string(s.borrow().chars().rev().collect::<String>()));
+            // GNU uses unibyte storage when SCHARS == SBYTES, even for
+            // explicitly multibyte ASCII/empty input. Properties are omitted.
+            let multibyte = super::strfn::string_multibyte_p(i, &args[0]) && !s.borrow().is_ascii();
+            if s.borrow().is_empty() && !super::strfn::string_multibyte_p(i, &args[0]) {
+                return Ok(args[0].clone());
+            }
+            let result = Value::string(s.borrow().chars().rev().collect::<String>());
+            if let Value::Str(output) = &result {
+                if multibyte {
+                    i.mark_multibyte(output);
+                } else {
+                    i.mark_unibyte(output);
+                }
+            }
+            return Ok(result);
         }
         Value::Vec(v) => {
             return Ok(Value::vector(v.borrow().iter().rev().cloned().collect()));
@@ -810,6 +824,7 @@ fn f_reverse(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         other => return Err(i.wrong_type_mut("sequencep", other)),
     }
 }
+
 fn f_setcar(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let c = want_cons(i, &args[0])?;
     c.borrow_mut().car = args[1].clone();

@@ -1111,25 +1111,9 @@ pub(crate) fn f_nreverse_seq(i: &mut Interp, args: crate::lisp::Argv) -> EvalRes
             v.borrow_mut().reverse();
             Ok(args[0].clone())
         }
-        Value::Str(s) => {
-            // GNU ≥29 reverses a copy: the argument string is not
-            // mutated and a new string object is returned.  Text
-            // properties are reversed with the characters.
-            let src = s.borrow().clone();
-            let n = src.chars().count();
-            let ns = Value::string(src.chars().rev().collect::<String>());
-            if let Value::Str(ns_ref) = &ns {
-                if i.has_str_props(s) {
-                    let ivs: Vec<(usize, usize, Vec<Value>)> = i
-                        .str_props(s)
-                        .iter()
-                        .map(|(a, b, pl)| (n.saturating_sub(*b), n.saturating_sub(*a), pl.clone()))
-                        .collect();
-                    i.set_str_props(ns_ref, ivs);
-                }
-            }
-            Ok(ns)
-        }
+        // GNU delegates string nreverse directly to reverse: copy the
+        // characters and storage kind, without retaining text properties.
+        Value::Str(_) => super::listfn::f_reverse(i, args),
         Value::Nil => Ok(Value::Nil),
         other => Err(i.wrong_type_mut("arrayp", other)),
     }

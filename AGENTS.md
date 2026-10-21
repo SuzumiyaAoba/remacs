@@ -1821,3 +1821,10 @@ The GNU 31.1 oracle preserves the byte kind of empty strings, including
 explicit multibyte empties. Keep the original object and aliases, with
 independent copies unchanged. Regression: `qa_clear_string` covers raw-byte,
 surrogate/Mule, mixed-width, properties, repeated calls, GC and empty cases.
+
+String `nreverse` delegates to `reverse`, as GNU fns.c does: leave the input
+unchanged and omit output properties. Explicitly record the output byte kind.
+GNU chooses unibyte storage when character count equals byte count, including
+multibyte ASCII/empty input; other multibyte text keeps its encoded characters.
+An empty unibyte input is returned unchanged. `qa_reverse_strings` pins raw
+bytes 0..255, aliases, properties, GC, repeated reversals and proxy characters.
