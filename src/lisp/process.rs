@@ -729,7 +729,7 @@ fn deliver_decoded(i: &mut Interp, pref: &ProcessRef, value: Value) -> Result<()
         (p.filter.clone(), p.buffer, p.mark.clone())
     };
     // An incomplete multibyte character does not invoke a filter yet.
-    if value.is_nil() {
+    if value.is_nil() || matches!(filter, Value::Sym(s) if s == sym::T) {
         return Ok(());
     }
     let text = str_value(&value).unwrap_or_default();
@@ -803,25 +803,74 @@ fn run_sentinel(i: &mut Interp, pref: &ProcessRef, status: &str, code: i32) -> R
     Ok(())
 }
 
-/// Poll one process: drain output, observe exit. Returns true if anything
-/// was consumed/changed.
-fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
-    if pref.borrow().dead || pref.borrow().opening {
-        return Ok(false);
+#[derive(Default)]
+struct PollOutput {
+    main: bool,
+    any: bool,
+}
+
+impl From<bool> for PollOutput {
+    fn from(main: bool) -> Self {
+        Self { main, any: main }
     }
-    if matches!(pref.borrow().io, ProcIo::Connecting(_)) {
-        return poll_connect(i, pref);
+}
+
+/// A separate stderr pipe advances global I/O but does not satisfy a
+/// wait specifically for the child's stdout.
+fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<PollOutput, Flow> {
+    if matches!(pref.borrow().io, ProcIo::Datagram(_)) {
+        // The message-oriented path already dispatches between reads
+        // and bounds each turn to 64 packets.
+        return poll_proc_once(i, pref, false, false);
     }
-    {
-        let p = pref.borrow();
-        if matches!(p.io, ProcIo::Net(_))
-            && (p.status == "stop" || matches!(p.filter, Value::Sym(s) if s == sym::T))
-        {
-            return Ok(false);
+    let mut output = PollOutput::default();
+    // Dispatch each read before reading again: a filter may stop input,
+    // delete the process, or recursively wait on the same descriptor.
+    // Bound a busy channel so other processes and timers get a turn.
+    for turn in 0..64 {
+        let got = poll_proc_once(i, pref, output.any, turn % 2 != 0)?;
+        output.main |= got.main;
+        output.any |= got.any;
+        if !got.any {
+            break;
         }
     }
+    Ok(output)
+}
+
+fn poll_proc_once(
+    i: &mut Interp,
+    pref: &ProcessRef,
+    defer_child_exit: bool,
+    stderr_first: bool,
+) -> Result<PollOutput, Flow> {
+    {
+        let p = pref.borrow();
+        if p.dead || p.opening || (p.reported && matches!(p.status, "exit" | "signal" | "closed")) {
+            return Ok(PollOutput::default());
+        }
+    }
+    if matches!(pref.borrow().io, ProcIo::Connecting(_)) {
+        return poll_connect(i, pref).map(PollOutput::from);
+    }
+    let input_paused = {
+        let p = pref.borrow();
+        let paused = matches!(p.filter, Value::Sym(s) if s == sym::T);
+        // A child must still be reaped while input is paused. Listening
+        // servers keep accepting and give new peers the inherited filter.
+        if (paused
+            && !matches!(
+                p.io,
+                ProcIo::Child { .. } | ProcIo::Listen(_) | ProcIo::LocalListen(..)
+            ))
+            || (matches!(p.io, ProcIo::Net(_)) && p.status == "stop")
+        {
+            return Ok(PollOutput::default());
+        }
+        paused
+    };
     if matches!(pref.borrow().io, ProcIo::Datagram(_)) {
-        return poll_datagram(i, pref);
+        return poll_datagram(i, pref).map(PollOutput::from);
     }
     enum Ev {
         Out(Vec<u8>, bool),
@@ -841,7 +890,7 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                 match crate::lisp::builtins::gnutls::record_read(&p, &mut buf) {
                     n if n > 0 => {
                         events.push(Ev::Out(buf[..n as usize].to_vec(), false));
-                        continue;
+                        break;
                     }
                     0 => {
                         // Peer sent close_notify (or a fatal
@@ -872,34 +921,56 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     // closing the channel cannot discard its final bytes.
                     let exited = child.try_wait();
                     let mut buf = [0u8; 8192];
-                    loop {
-                        let n = unsafe {
-                            libc::read(
-                                output_fd.as_ref().map_or(-1, AsRawFd::as_raw_fd),
-                                buf.as_mut_ptr() as *mut _,
-                                buf.len(),
-                            )
+                    let mut read_stderr = |buf: &mut [u8]| -> Option<Vec<u8>> {
+                        let stream = stderr.as_mut()?;
+                        loop {
+                            match stream.read(buf) {
+                                Ok(n) if n > 0 => return Some(buf[..n].to_vec()),
+                                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                                    continue
+                                }
+                                _ => return None,
+                            }
+                        }
+                    };
+                    // Deliver at most one channel's chunk before running
+                    // callbacks. Alternate priority so neither stream can
+                    // starve the other, and nested waits cannot reorder
+                    // stderr bytes already read by an outer poll.
+                    if stderr_first || input_paused {
+                        if let Some(bytes) = read_stderr(&mut buf) {
+                            events.push(Ev::Out(bytes, true));
+                        }
+                    }
+                    if events.is_empty() && !input_paused {
+                        let n = loop {
+                            let n = unsafe {
+                                libc::read(
+                                    output_fd.as_ref().map_or(-1, AsRawFd::as_raw_fd),
+                                    buf.as_mut_ptr() as *mut _,
+                                    buf.len(),
+                                )
+                            };
+                            if n >= 0
+                                || std::io::Error::last_os_error().kind()
+                                    != std::io::ErrorKind::Interrupted
+                            {
+                                break n;
+                            }
                         };
                         if n > 0 {
                             events.push(Ev::Out(buf[..n as usize].to_vec(), false));
-                        } else {
-                            break;
                         }
                     }
-                    if let Some(s) = stderr.as_mut() {
-                        loop {
-                            match s.read(&mut buf) {
-                                Ok(0) => break,
-                                Ok(n) => events.push(Ev::Out(buf[..n].to_vec(), true)),
-                                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                                Err(_) => break,
-                            }
+                    if events.is_empty() && !stderr_first && !input_paused {
+                        if let Some(bytes) = read_stderr(&mut buf) {
+                            events.push(Ev::Out(bytes, true));
                         }
                     }
                     // GNU notices process exit asynchronously; when output
                     // arrived this poll the exit is picked up next round.
                     match exited {
-                        Ok(Some(st)) if events.is_empty() => {
+                        Ok(Some(st)) if events.is_empty() && !defer_child_exit => {
                             // Child is reaped; release both data channels and
                             // the optional terminal control descriptor.
                             input_fd.take();
@@ -930,6 +1001,7 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                             unsafe { libc::read(*read_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
                         if n > 0 {
                             events.push(Ev::Out(buf[..n as usize].to_vec(), false));
+                            break;
                         } else {
                             // EOF once every writer (a child's stderr dup)
                             // is gone — GNU marks the pipe "closed".
@@ -958,7 +1030,11 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                                 }
                                 break;
                             }
-                            Ok(n) => events.push(Ev::Out(buf[..n].to_vec(), false)),
+                            Ok(n) => {
+                                events.push(Ev::Out(buf[..n].to_vec(), false));
+                                break;
+                            }
+                            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
                             Err(_) => break,
                         }
@@ -966,7 +1042,10 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                 }
                 ProcIo::Listen(l) => loop {
                     match l.accept() {
-                        Ok((stream, addr)) => events.push(Ev::Accepted(stream, addr)),
+                        Ok((stream, addr)) => {
+                            events.push(Ev::Accepted(stream, addr));
+                            break;
+                        }
                         Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
                         Err(_) => break,
                     }
@@ -984,7 +1063,11 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                                 }
                                 break;
                             }
-                            Ok(n) => events.push(Ev::Out(buf[..n].to_vec(), false)),
+                            Ok(n) => {
+                                events.push(Ev::Out(buf[..n].to_vec(), false));
+                                break;
+                            }
+                            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
                             Err(_) => break,
                         }
@@ -992,7 +1075,10 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                 }
                 ProcIo::LocalListen(l, _) => loop {
                     match l.accept() {
-                        Ok((stream, _addr)) => events.push(Ev::AcceptedLocal(stream)),
+                        Ok((stream, _addr)) => {
+                            events.push(Ev::AcceptedLocal(stream));
+                            break;
+                        }
                         Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
                         Err(_) => break,
                     }
@@ -1002,7 +1088,11 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     loop {
                         match f.read(&mut buf) {
                             Ok(0) => break,
-                            Ok(n) => events.push(Ev::Out(buf[..n].to_vec(), false)),
+                            Ok(n) => {
+                                events.push(Ev::Out(buf[..n].to_vec(), false));
+                                break;
+                            }
+                            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
                             Err(_) => break,
                         }
@@ -1016,14 +1106,23 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
     }
     // accept-process-output returns t only when new output data
     // arrived — exits and accepts don't count in GNU.
-    let did = events.iter().any(|e| matches!(e, Ev::Out(..)));
+    let output = PollOutput {
+        main: events.iter().any(|e| matches!(e, Ev::Out(_, false))),
+        any: events.iter().any(|e| matches!(e, Ev::Out(..))),
+    };
     for ev in events {
         match ev {
             Ev::Out(bytes, stderr) => deliver_output(i, pref, bytes, stderr)?,
             Ev::Exit(st, code) => {
                 let buffer = pref.borrow().buffer;
-                let tail = decode_process_output(i, pref, &[], false, true, buffer)?;
-                deliver_decoded(i, pref, tail)?;
+                if matches!(pref.borrow().filter, Value::Sym(s) if s == sym::T) {
+                    // GNU discards unread stdout when a paused child exits;
+                    // pending decoder bytes must not reappear after resume.
+                    pref.borrow_mut().codecs.output = Default::default();
+                } else {
+                    let tail = decode_process_output(i, pref, &[], false, true, buffer)?;
+                    deliver_decoded(i, pref, tail)?;
+                }
                 let stderr = pref.borrow().stderr_dest.clone();
                 if let Some(buffer) = i.buffer_id_of(&stderr) {
                     let tail = decode_process_output(i, pref, &[], true, true, Some(buffer))?;
@@ -1178,7 +1277,7 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
             }
         }
     }
-    Ok(did)
+    Ok(output)
 }
 
 /// Complete a nonblocking handshake before any filter can read from it.
@@ -1322,7 +1421,7 @@ pub(crate) fn poll_all(i: &mut Interp) -> Result<bool, Flow> {
         if p.borrow().dead {
             continue;
         }
-        did |= poll_proc(i, &p)?;
+        did |= poll_proc(i, &p)?.any;
     }
     Ok(did)
 }
@@ -2839,7 +2938,7 @@ fn f_accept_process_output(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let inhibit_timers = just_this_one && a.get(3).is_some_and(Value::fixnump);
     let poll = |i: &mut Interp| match &target {
         Some(p) => {
-            let got = poll_proc(i, p)?;
+            let got = poll_proc(i, p)?.main;
             if !just_this_one {
                 // With the default flag, other channels still progress
                 // (e.g. a server listener while waiting on its client).

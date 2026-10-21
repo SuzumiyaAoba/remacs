@@ -578,6 +578,22 @@ character rule for empty datagrams.
 Regressions: `qa_process_coding.el`, existing coding/network QA, and the
 `coding_stream` boundary/state unit tests.
 
+## Process input pause (`src/lisp/process.rs`)
+
+The canonical `filter=t` stops descriptor reads, including pipe, local,
+TCP/TLS and serial input. Listening servers still accept connections;
+their accepted peers inherit the filter. Child exit notification and
+separate stderr keep progressing while stdout is paused. A targeted
+`accept-process-output` waits for stdout; a global wait also counts stderr.
+
+`poll_proc` dispatches a single read before the next read, so callbacks
+can pause, delete or recursively wait without consuming later chunks in
+advance. Each turn is bounded, stdout/stderr priority alternates, and the
+datagram path retains its own packet bound. Exited paused children discard
+unread stdout and decoder tails; reported terminal processes cannot flush
+the same tail again after the filter changes. Regression:
+`qa_process_filter_pause` (24 GNU checks, including 50 KB pause/resume).
+
 ## External libraries (`src/lisp/dynlib.rs` + builtins)
 
 Optional GNU libraries are dlopen'd at runtime (`dynlib::Library`):
