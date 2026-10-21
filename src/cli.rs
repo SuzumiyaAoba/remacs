@@ -23,16 +23,21 @@ pub struct Arguments<'a> {
     options: bool,
 }
 
-impl Arguments<'_> {
-    /// Batch functions can pop their own operands from
-    /// `command-line-args-left`.  Skip such a consumed prefix without
-    /// interpreting it (a consumed `--` is not our separator).
-    pub fn retain_remaining(&mut self, remaining: &[String]) {
-        let pending = &self.args[self.index..];
-        if pending.ends_with(remaining) {
-            self.index = self.args.len() - remaining.len();
-        }
-    }
+/// Options whose next argument is an operand even when it resembles an
+/// option or the standalone separator. Shared with the live Lisp dispatcher.
+pub fn takes_operand(name: &str) -> bool {
+    matches!(
+        name,
+        "--eval"
+            | "--execute"
+            | "--load"
+            | "-l"
+            | "--script"
+            | "--ieval"
+            | "-f"
+            | "--funcall"
+            | "--dump-file"
+    )
 }
 
 impl<'a> Iterator for Arguments<'a> {
@@ -51,8 +56,7 @@ impl<'a> Iterator for Arguments<'a> {
                 continue;
             }
             match name {
-                "--eval" | "--execute" | "--load" | "-l" | "--script" | "--ieval" | "-f"
-                | "--funcall" | "--dump-file" => {
+                _ if takes_operand(name) => {
                     // Keep a missing operand as an option, for the existing
                     // command handler's missing-argument behavior.
                     self.index += usize::from(self.index < self.args.len());
@@ -234,38 +238,5 @@ mod tests {
             (strings(&["--eval", "x"]), Some("--batch".into()))
         );
         assert!(dump_file(&strings(&["--dump-file"])).is_err());
-    }
-    #[test]
-    fn consumed_function_operands_do_not_become_files_or_separators() {
-        let args = strings(&["-f", "consume", "file", "--", "--eval", "one"]);
-        let mut parsed = arguments(&args);
-        assert_eq!(
-            parsed.next(),
-            Some(Argument::Option {
-                index: 0,
-                name: "-f"
-            })
-        );
-        parsed.retain_remaining(&strings(&["--eval", "one"]));
-        assert_eq!(
-            parsed.next(),
-            Some(Argument::Option {
-                index: 4,
-                name: "--eval"
-            })
-        );
-        assert_eq!(parsed.next(), None);
-
-        let mut parsed = arguments(&args);
-        parsed.next();
-        parsed.retain_remaining(&strings(&["--", "--eval", "one"]));
-        assert_eq!(parsed.next(), Some(Argument::File("--eval")));
-        assert_eq!(parsed.next(), Some(Argument::File("one")));
-        assert_eq!(parsed.next(), None);
-
-        let mut parsed = arguments(&args);
-        parsed.next();
-        parsed.retain_remaining(&[]);
-        assert_eq!(parsed.next(), None);
     }
 }

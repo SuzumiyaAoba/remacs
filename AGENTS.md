@@ -1503,6 +1503,15 @@ visited buffer's directory. Pass filename values to the Lisp functions
 directly instead of interpolating them into source. Regressions:
 `batch_file_arguments_*` in `tests/main_cli.rs` (normal/source startup).
 
+The headless CLI consumes the live Lisp `command-line-args-left` list one
+string at a time. Lisp actions can consume a prefix, remove middle entries,
+replace/prepend arguments, or mutate operand strings; do not reconstruct
+the queue from the original argv or require a retained suffix. Validate
+each element/tail only when reached, preserving earlier output before
+`stringp`/`listp` errors. Shared option arity still distinguishes operands
+from the standalone `--` separator. Regressions:
+`tests/cli_argument_queue.rs`, `tests/cli_separator.rs`, nativecomp CLI tests.
+
 ## Portable images (`src/lisp/dump/`)
 
 `dump-emacs-portable` writes a real Remacs image; `--dump-file FILE`

@@ -192,34 +192,73 @@ fn real_main(args: Vec<String>) {
     let directory_symbol = i.intern("command-line-default-directory");
     let file_directory = i.symbol_value(directory_symbol);
 
-    let mut arguments = cli::arguments(&args);
-    while let Some(argument) = arguments.next() {
-        let (mut idx, arg) = match argument {
-            cli::Argument::Option { index, name } => (index, name),
-            cli::Argument::File(name) => {
-                // Visit files in command-line order, including in batch
-                // mode, so later actions and exit hooks see them.
-                inhibit_startup(&mut i);
-                let result = (|| {
-                    let expand = Value::Sym(i.intern("expand-file-name"));
-                    let file = i.apply(
-                        &expand,
-                        vec![Value::string(name), file_directory.clone()],
-                    )?;
-                    let visit = Value::Sym(i.intern("find-file"));
-                    i.apply(&visit, vec![file])
-                })();
-                match result {
-                    Ok(_) => {}
-                    Err(Flow::Exit(code)) => std::process::exit(code as i32),
-                    Err(flow) => {
-                        report_flow(&mut i, flow);
-                        batch_exit(&mut i, 255);
-                    }
-                }
-                continue;
+    let left_symbol = i.intern("command-line-args-left");
+    let _ = i.set_symbol_default(
+        left_symbol,
+        Value::list(args.iter().map(Value::string).collect()),
+    );
+    let mut parse_options = true;
+    loop {
+        let cli_rest = i.symbol_value(left_symbol);
+        if cli_rest.is_nil() {
+            break;
+        }
+        let token = match with_command_line_frames(&mut i, cli_rest.clone(), |i| {
+            pop_cli_string(i, left_symbol)
+        }) {
+            Ok(Value::Str(text)) => text.borrow().clone(),
+            Ok(_) => unreachable!(),
+            Err(flow) => {
+                report_flow(&mut i, flow);
+                print_batch_backtrace(&mut i);
+                batch_exit(&mut i, 255);
             }
         };
+        if parse_options && token == "--" {
+            parse_options = false;
+            continue;
+        }
+        let one = [token.clone()];
+        let option = parse_options
+            && matches!(
+                cli::arguments(&one).next(),
+                Some(cli::Argument::Option { .. })
+            );
+        if !option {
+            // File arguments are actions; later actions and exit hooks see
+            // their buffers, but every relative path uses the startup base.
+            inhibit_startup(&mut i);
+            let result = (|| {
+                let expand = Value::Sym(i.intern("expand-file-name"));
+                let file = i.apply(&expand, vec![Value::string(&token), file_directory.clone()])?;
+                let visit = Value::Sym(i.intern("find-file"));
+                i.apply(&visit, vec![file])
+            })();
+            match result {
+                Ok(_) => {}
+                Err(Flow::Exit(code)) => std::process::exit(code as i32),
+                Err(flow) => {
+                    report_flow(&mut i, flow);
+                    batch_exit(&mut i, 255);
+                }
+            }
+            continue;
+        }
+        let mut args = vec![token.clone()];
+        if cli::takes_operand(&token) {
+            match with_command_line_frames(&mut i, cli_rest.clone(), |i| {
+                pop_cli_string(i, left_symbol)
+            }) {
+                Ok(Value::Str(text)) => args.push(text.borrow().clone()),
+                Ok(_) => unreachable!(),
+                Err(flow) => {
+                    report_flow(&mut i, flow);
+                    print_batch_backtrace(&mut i);
+                    batch_exit(&mut i, 255);
+                }
+            }
+        }
+        let (mut idx, arg) = (0, token.as_str());
         match arg {
             "-Q" | "--quick" => {
                 // GNU: -Q inhibits site/user init, the splash screen,
@@ -309,7 +348,7 @@ fn real_main(args: Vec<String>) {
                     // GNU `command-line-1': -eval/-execute set
                     // `inhibit-startup-screen' before evaluating.
                     inhibit_startup(&mut i);
-                    if !run_batch(&mut i, &args[idx], &args[idx - 1..]) {
+                    if !run_batch(&mut i, &args[idx], cli_rest.clone(), false) {
                         // GNU's `command-line-1': a signaled error
                         // aborts the remaining args and exits 255
                         // (after running `kill-emacs-hook').
@@ -324,7 +363,7 @@ fn real_main(args: Vec<String>) {
                 idx += 1;
                 if idx < args.len() {
                     batch = true;
-                    if !load_file(&mut i, &args[idx], &args[idx - 1..]) {
+                    if !load_file(&mut i, &args[idx], cli_rest.clone()) {
                         batch_exit(&mut i, 255);
                     }
                     if i.quit_editor {
@@ -342,41 +381,20 @@ fn real_main(args: Vec<String>) {
                     batch = true;
                     // GNU `command-line-1': -f/-funcall inhibit too.
                     inhibit_startup(&mut i);
-                    let left: Vec<Value> = args[idx + 1..]
-                        .iter()
-                        .map(|a| Value::string(a.clone()))
-                        .collect();
-                    let lid = i.intern("command-line-args-left");
-                    let _ = i.set_symbol_default(lid, Value::list(left));
-                    if !run_batch(&mut i, "", &args[idx - 1..]) {
+                    if !run_batch(&mut i, &args[idx], cli_rest.clone(), true) {
                         batch_exit(&mut i, 255);
                     }
                     if i.quit_editor {
                         std::process::exit(exit);
                     }
-                    // Functions such as batch-native-compile consume
-                    // filenames themselves.  Do not visit those again.
-                    if let Ok(left) = i.symbol_value(lid).list_to_vec() {
-                        let remaining: Option<Vec<String>> = left
-                            .iter()
-                            .map(|value| {
-                                if let Value::Str(text) = value {
-                                    Some(text.borrow().clone())
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-                        if let Some(remaining) = remaining {
-                            arguments.retain_remaining(&remaining);
-                        }
-                    }
+                    // The next iteration reads the live Lisp value. Functions
+                    // may consume, replace, or mutate any remaining arguments.
                 }
             }
             "--script" => {
                 idx += 1;
                 if idx < args.len() {
-                    if !load_file_script(&mut i, &args[idx], &args[idx - 1..]) {
+                    if !load_file_script(&mut i, &args[idx], cli_rest.clone()) {
                         batch_exit(&mut i, 255);
                     }
                     batch_exit(&mut i, exit);
@@ -386,7 +404,15 @@ fn real_main(args: Vec<String>) {
                 // Already accounted for by the pre-`Interp::new'
                 // dispatch (this process only runs headless paths).
             }
-            _ => unreachable!("CLI parser returned an unhandled option"),
+            _ => {
+                let flow = with_command_line_frames(&mut i, cli_rest, |i| {
+                    Err(i.error(&format!("Unknown option `{arg}'")))
+                })
+                .unwrap_err();
+                report_flow(&mut i, flow);
+                print_batch_backtrace(&mut i);
+                batch_exit(&mut i, 255);
+            }
         }
     }
 
@@ -399,9 +425,7 @@ fn real_main(args: Vec<String>) {
     // Reaching here means a batch flag or -nw was given; with a batch
     // flag we already exited above, and the genuine GUI case was
     // dispatched before Interp::new on the main thread.  What remains
-    // is the terminal editor — including a trailing flag that lost
-    // its operand (e.g. `remacs --eval' with no form), where GNU
-    // would still open an interactive session.
+    // is the terminal editor.
 
     // Interactive terminal: files have been visited; run the editor loop.
     match remacs::term::run_editor(&mut i) {
@@ -431,21 +455,33 @@ fn inhibit_startup(i: &mut Interp) {
     let _ = i.set_symbol_default(id, Value::t());
 }
 
+/// Pop one argument from the live Lisp queue. Validate lazily so a bad
+/// later element does not prevent earlier actions from running.
+fn pop_cli_string(i: &mut Interp, left: remacs::lisp::SymId) -> remacs::lisp::EvalResult {
+    let (value, tail) = match i.symbol_value(left) {
+        Value::Nil => (Value::Nil, Value::Nil),
+        Value::Cons(cell) => {
+            let pair = cell.borrow();
+            (pair.car.clone(), pair.cdr.clone())
+        }
+        other => return Err(i.wrong_type_mut("listp", &other)),
+    };
+    i.set_symbol(left, tail)?;
+    if !matches!(&value, Value::Str(_)) {
+        return Err(i.wrong_type_mut("stringp", &value));
+    }
+    Ok(value)
+}
+
 /// Run an actual command-line action with the Lisp-visible entry frames.
 fn with_command_line_frames(
     i: &mut Interp,
-    cli_rest: &[String],
+    cli_rest: Value,
     run: impl FnOnce(&mut Interp) -> remacs::lisp::EvalResult,
 ) -> remacs::lisp::EvalResult {
-    let args = Value::list(
-        cli_rest
-            .iter()
-            .map(|arg| Value::string(arg.clone()))
-            .collect(),
-    );
     i.with_call_frame("normal-top-level", vec![], |i| {
         i.with_call_frame("command-line", vec![], |i| {
-            i.with_call_frame("command-line-1", vec![args], run)
+            i.with_call_frame("command-line-1", vec![cli_rest], run)
         })
     })
 }
@@ -470,7 +506,7 @@ fn print_batch_backtrace(i: &mut Interp) {
     }
 }
 
-fn run_batch(i: &mut Interp, src: &str, cli_rest: &[String]) -> bool {
+fn run_batch(i: &mut Interp, src: &str, cli_rest: Value, funcall: bool) -> bool {
     i.noninteractive = true;
     if i.output.is_none() {
         i.output = Some(OutputSink::Stdout);
@@ -478,11 +514,8 @@ fn run_batch(i: &mut Interp, src: &str, cli_rest: &[String]) -> bool {
     let nid = i.intern("noninteractive");
     let _ = i.set_symbol_default(nid, Value::t());
     let result = with_command_line_frames(i, cli_rest, |i| {
-        if matches!(
-            cli_rest.first().map(String::as_str),
-            Some("-f" | "--funcall")
-        ) {
-            let function = Value::Sym(i.intern(&cli_rest[1]));
+        if funcall {
+            let function = Value::Sym(i.intern(src));
             i.apply(&function, vec![])
         } else {
             i.eval_first_form(src)
@@ -513,7 +546,7 @@ fn cli_truename(i: &mut Interp, path: &str, regular_only: bool) -> String {
     if ok { real } else { ex }
 }
 
-fn load_file(i: &mut Interp, path: &str, cli_rest: &[String]) -> bool {
+fn load_file(i: &mut Interp, path: &str, cli_rest: Value) -> bool {
     i.noninteractive = true;
     if i.output.is_none() {
         i.output = Some(OutputSink::Stdout);
@@ -534,7 +567,7 @@ fn load_file(i: &mut Interp, path: &str, cli_rest: &[String]) -> bool {
 
 /// `--script FILE`: batch load with `lexical-binding' forced on,
 /// matching GNU's `command-line--load-script'.
-fn load_file_script(i: &mut Interp, path: &str, cli_rest: &[String]) -> bool {
+fn load_file_script(i: &mut Interp, path: &str, cli_rest: Value) -> bool {
     i.noninteractive = true;
     if i.output.is_none() {
         i.output = Some(OutputSink::Stdout);
@@ -542,9 +575,12 @@ fn load_file_script(i: &mut Interp, path: &str, cli_rest: &[String]) -> bool {
     let nid = i.intern("noninteractive");
     let _ = i.set_symbol_default(nid, Value::t());
     let path = &cli_truename(i, path, false);
-    let mut script_args = cli_rest.to_vec();
-    script_args[0] = "-scriptload".to_string();
-    let result = with_command_line_frames(i, &script_args, |i| {
+    let tail = match cli_rest {
+        Value::Cons(cell) => cell.borrow().cdr.clone(),
+        _ => Value::Nil,
+    };
+    let script_args = Value::cons(Value::string("-scriptload"), tail);
+    let result = with_command_line_frames(i, script_args, |i| {
         let function = Value::Sym(i.intern("command-line--load-script"));
         i.apply(&function, vec![Value::string(path.clone())])
     });
