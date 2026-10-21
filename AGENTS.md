@@ -545,6 +545,11 @@ Design notes:
   Query `#match?` regexps are always case-sensitive, independent of
   `case-fold-search`; leave that variable's value unchanged. Regression:
   `tests/qa_treesit_query_case.el`.
+  Predicate capture-name lookup selects the last same-name capture in
+  each match, matching GNU's reversed internal capture list. Public
+  capture/group/node-only results retain query order. This applies to
+  `#eq?`, `#match?` and `#pred?`; it is not an all-captures test.
+  Regression: `tests/qa_treesit_repeat_capture.el`.
 - Notifier add/remove validate the parser before checking `symbolp`;
   symbols need not be bound to functions. Registration is unique by `eq`,
   public lists are fresh copies in registration order, and dispatch runs

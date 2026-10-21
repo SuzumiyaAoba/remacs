@@ -2004,7 +2004,10 @@ fn capture_name_to_node(
     _i: &Interp,
 ) -> Result<Value, Vec<Value>> {
     if let Value::Sym(target) = name {
-        for cap in captures {
+        // GNU builds the predicate's capture list by consing in query
+        // order, so lookup sees the last same-name capture first. Keep
+        // our output vector in query order and reverse only this lookup.
+        for cap in captures.iter().rev() {
             if let Value::Cons(c) = cap {
                 let (k, v) = {
                     let cc = c.borrow();
