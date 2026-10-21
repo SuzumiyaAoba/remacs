@@ -459,4 +459,40 @@
  '(t t nil))
 
 
+;; Issue #253: concat-origin properties stay on the input, not the result.
+(qa
+ (let*
+     ((s (concat (propertize "a" 'face 'bold) "bc"))
+      (before (object-intervals s)) (out (nreverse s)))
+   (list (substring-no-properties out)
+	 (mapcar (lambda (p) (get-text-property p 'face out)) '(0 1 2))
+	 (mapcar (lambda (p) (get-text-property p 'face s)) '(0 1 2))
+	 (equal before (object-intervals s))))
+ '("cba" (nil nil nil) (bold nil nil) t))
+
+(qa
+ (let*
+     ((s (concat (propertize "a" 'face 'bold) "bc"))
+      (before (object-intervals s)) (out (reverse s)))
+   (list (substring-no-properties out)
+	 (mapcar (lambda (p) (get-text-property p 'face out)) '(0 1 2))
+	 (mapcar (lambda (p) (get-text-property p 'face s)) '(0 1 2))
+	 (equal before (object-intervals s))))
+ '("cba" (nil nil nil) (bold nil nil) t))
+
+(qa
+ (let*
+     ((payload (list 'shared))
+      (s (propertize "abcd" 'qa253 payload 'face 'bold))
+      (out (nreverse s)))
+   (let ((clean (object-intervals out)))
+     (put-text-property 0 2 'qa253 'out-only out) (garbage-collect)
+     (list clean (eq (get-text-property 0 'qa253 s) payload)
+	   (get-text-property 0 'qa253 out)
+	   (get-text-property 0 'face out)
+	   (get-text-property 0 'face s) (substring-no-properties s)
+	   (substring-no-properties out))))
+ '(nil t out-only nil bold "abcd" "dcba"))
+
+
 (princ (qa--done)) (terpri)
