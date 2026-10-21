@@ -542,6 +542,9 @@ Design notes:
   Regression: `tests/qa_treesit_node_generation.el`.
 - Query capture uses raw `ts_query_cursor_next_match` FFI; a match may
   carry 0 captures (predicate-only patterns).
+  Query `#match?` regexps are always case-sensitive, independent of
+  `case-fold-search`; leave that variable's value unchanged. Regression:
+  `tests/qa_treesit_query_case.el`.
 - Notifier add/remove validate the parser before checking `symbolp`;
   symbols need not be bound to functions. Registration is unique by `eq`,
   public lists are fresh copies in registration order, and dispatch runs

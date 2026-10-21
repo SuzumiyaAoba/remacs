@@ -335,6 +335,7 @@ qa!(qa_treesit_edit, "qa_treesit_edit.el");
 qa!(qa_treesit_node_generation, "qa_treesit_node_generation.el");
 qa!(qa_treesit_indirect, "qa_treesit_indirect.el");
 qa!(qa_treesit_notifiers, "qa_treesit_notifiers.el");
+qa!(qa_treesit_query_case, "qa_treesit_query_case.el");
 qa!(qa_process_stderr, "qa_process_stderr.el");
 qa!(qa_radix, "qa_radix.el");
 qa!(qa_read, "qa_read.el");

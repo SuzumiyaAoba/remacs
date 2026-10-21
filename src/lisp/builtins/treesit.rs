@@ -2082,11 +2082,9 @@ fn predicate_match(i: &mut Interp, args: &[Value], captures: &[Value]) -> Result
     let node = capture_name_to_node(&capname, captures, i)?;
     let text =
         captured_node_text(i, &node).map_err(|_| vec![Value::string("Cannot get node text")])?;
-    let case_fold = {
-        let cf = i.intern_soft("case-fold-search");
-        cf.map(|s| i.symbol_value(s).truthy()).unwrap_or(false)
-    };
-    let re = crate::lisp::regexp::compile_case(&pat, case_fold)
+    // GNU query predicates match case-sensitively, independently of the
+    // caller's buffer-local or dynamically bound search settings.
+    let re = crate::lisp::regexp::compile_case(&pat, false)
         .map_err(|e| vec![Value::string(format!("Invalid regexp: {}", e.0))])?;
     let syn = crate::editor::re_syntax(i);
     let chars: Vec<char> = text.chars().collect();
