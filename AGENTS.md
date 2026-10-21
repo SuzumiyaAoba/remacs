@@ -542,6 +542,9 @@ change; no modification or mark deactivation occurs. Regressions:
 `qa_append_to_buffer` and `qa_buffer_transfer` (byte-mode conversion,
 restrictions, reversed/marker bounds, self-copy, read-only/error ordering,
 hook context and window points).
+The append suite also pins lower/upper/outside source restriction errors,
+unchanged destination/current-buffer/point on errors, and nil/reversed valid
+bounds (`append-to-buffer` uses the transfer primitive's validation).
 
 `Symbol.name_string` retains the Lisp name string by identity for new
 `intern`/`make-symbol` calls; internal names acquire a stable string

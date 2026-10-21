@@ -283,4 +283,50 @@
  '(2 5 (5 #("[abc]" 1 4 (face bold)))))
 
 
+;; Issue #243: validate the source restriction before modifying the target.
+(defun qa243-bounds (start end)
+  (let ((target (generate-new-buffer " *qa243-target*")))
+    (unwind-protect
+        (progn
+          (with-current-buffer target (insert "<>") (goto-char 2))
+          (with-temp-buffer
+            (insert "[abc]") (narrow-to-region 2 5) (goto-char 3)
+            (let* ((source (current-buffer))
+                   (result (condition-case err
+                               (progn (append-to-buffer target start end) 'copied)
+                             (error (car err)))))
+              (list result (eq source (current-buffer)) (point) (point-min) (point-max)
+                    (with-current-buffer target (list (buffer-string) (point)))))))
+      (kill-buffer target))))
+
+(qa
+ (let ((target (generate-new-buffer " *qa243-target*")))
+   (unwind-protect
+       (with-temp-buffer
+	 (insert "[abc]") (narrow-to-region 2 5)
+	 (list
+	  (condition-case err
+	      (progn (append-to-buffer target 1 6) 'copied)
+	    (error (car err)))
+	  (with-current-buffer target (buffer-string))))
+     (kill-buffer target)))
+ '(args-out-of-range ""))
+
+(qa (qa243-bounds 1 6) '(args-out-of-range t 3 2 5 ("<>" 2)))
+
+(qa (qa243-bounds 1 4) '(args-out-of-range t 3 2 5 ("<>" 2)))
+
+(qa (qa243-bounds 2 6) '(args-out-of-range t 3 2 5 ("<>" 2)))
+
+(qa (qa243-bounds 0 99) '(args-out-of-range t 3 2 5 ("<>" 2)))
+
+(qa (qa243-bounds nil nil) '(copied t 3 2 5 ("<abc>" 5)))
+
+(qa (qa243-bounds 5 2) '(copied t 3 2 5 ("<abc>" 5)))
+
+(qa (qa243-bounds 2 5) '(copied t 3 2 5 ("<abc>" 5)))
+
+(qa (qa243-bounds 'bad 'bad) '(wrong-type-argument t 3 2 5 ("<>" 2)))
+
+
 (princ (qa--done)) (terpri)
