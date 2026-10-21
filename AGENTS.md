@@ -1678,6 +1678,11 @@ hook, reset source point afterward, and restore bindings, lexical environment
 and caller point on errors. `eval-region` keeps the caller mode and ignores
 header cookies. `qa_eval_lexical` pins these #266 rules.
 
+`qa_eval_narrowing` also pins #267 READ-FUNCTION: pass the source buffer,
+read each form through the callback, prefer it over `load-read-function`,
+skip comment-only input, evaluate substituted forms, and unwind reader errors.
+The #264 shared evaluation loop already provided this behavior.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

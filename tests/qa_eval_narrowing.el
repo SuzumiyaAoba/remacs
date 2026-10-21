@@ -370,4 +370,84 @@
 '(done "" "" "\n3\n\n7\n" t (7 3))
 )
 
+;; Issue #267: READ-FUNCTION supplies each form and takes precedence.
+(defvar qa267-events nil)
+(qa
+(let ((calls 0) (seen nil))
+  (with-temp-buffer
+    (insert "(+ 1 2)")
+    (eval-region (point-min) (point-max) nil
+		 (lambda (stream)
+		   (setq calls (1+ calls) seen (bufferp stream))
+		   (read stream))))
+  (list calls seen))
+'(1 t)
+)
+
+(qa
+(let ((qa267-events nil))
+  (with-temp-buffer
+    (insert "(push 'first qa267-events)\n(push 'second qa267-events)")
+    (let ((source (current-buffer)))
+      (eval-region (point-min) (point-max) nil
+		   (lambda (stream)
+		     (push (eq stream source) qa267-events)
+		     (read stream)))))
+  (nreverse qa267-events))
+'(t first t second)
+)
+
+(qa
+(let ((calls 0) (other-calls 0))
+  (with-temp-buffer
+    (insert "42")
+    (let
+	((load-read-function
+	  (lambda (stream) (setq other-calls (1+ other-calls))
+	    (read stream))))
+      (eval-region (point-min) (point-max) nil
+		   (lambda (stream) (setq calls (1+ calls))
+		     (read stream)))))
+  (list calls other-calls))
+'(1 0)
+)
+
+(qa
+(let ((calls 0))
+  (with-temp-buffer
+    (insert " ; comment\n 	")
+    (eval-region (point-min) (point-max) nil
+		 (lambda (stream) (setq calls (1+ calls))
+		   (read stream))))
+  calls)
+'0
+)
+
+(qa
+(let ((qa267-events nil))
+  (with-temp-buffer
+    (insert "42")
+    (eval-region (point-min) (point-max) nil
+		 (lambda (stream) (read stream)
+		   '(push 'replacement qa267-events))))
+  qa267-events)
+'(replacement)
+)
+
+(qa
+(let
+    ((standard-output 'ignore) (standard-input 'ignore)
+     (eval-buffer-list '(outer)))
+  (with-temp-buffer
+    (insert "42") (goto-char 2)
+    (list
+     (condition-case e
+	 (eval-region 1 (point-max) nil
+		      (lambda (_) (error "reader failed")))
+       (error e))
+     (point) standard-output standard-input eval-buffer-list)))
+'((error "reader failed") 2 ignore ignore (outer))
+)
+
+
 (princ (qa--done)) (terpri)
