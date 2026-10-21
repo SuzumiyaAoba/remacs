@@ -332,6 +332,7 @@ qa!(qa_process_filter_pause, "qa_process_filter_pause.el");
 qa!(qa_process_send_region, "qa_process_send_region.el");
 qa!(qa_process_timeout, "qa_process_timeout.el");
 qa!(qa_treesit_edit, "qa_treesit_edit.el");
+qa!(qa_treesit_node_generation, "qa_treesit_node_generation.el");
 qa!(qa_process_stderr, "qa_process_stderr.el");
 qa!(qa_radix, "qa_radix.el");
 qa!(qa_read, "qa_read.el");

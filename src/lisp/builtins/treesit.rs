@@ -5,9 +5,9 @@
 //! `tree-sitter/' under `user-emacs-directory', then bare `dlopen'.
 //!
 //! Lisp objects are represented as records: `[treesit-parser ID]',
-//! `[treesit-node PARSER-ID NODE-ID]', `[treesit-compiled-query ID]'.
+//! `[treesit-node PARSER-ID NODE-ID GENERATION]', `[treesit-compiled-query ID]'.
 //! That gives `type-of' the right symbol, `eq' object identity, and
-//! `equal' node identity (same parser + same tree-sitter node id)
+//! `equal' node identity (same parser, tree generation and node id)
 //! without new `Value' variants.  Rust objects live in `TsState'
 //! (an `Interp' field), addressed by the integer ids in the records.
 
@@ -77,6 +77,10 @@ struct TsNodeObj {
     parse_count: u64,
 }
 
+/// Native node ids may be reused by later trees. A Lisp node always
+/// retains the generation of the tree from which it was obtained.
+type NodeKey = (u64, usize, u64);
+
 struct TsQueryObj {
     source: Value,
     language: SymId,
@@ -97,8 +101,8 @@ pub struct TsState {
     parsers: HashMap<u64, TsParser>,
     /// Parser ids in creation order (`treesit-parser-list' order).
     parser_order: Vec<u64>,
-    /// Node objects keyed by (parser id, `ts_node.id()`).
-    nodes: HashMap<(u64, usize), TsNodeObj>,
+    /// Node objects keyed by (parser id, `ts_node.id()', generation).
+    nodes: HashMap<NodeKey, TsNodeObj>,
     queries: HashMap<u64, TsQueryObj>,
     languages: HashMap<SymId, LoadedLang>,
     /// Global line-column tracking flag (`treesit-tracking-line-column-p').
@@ -176,29 +180,26 @@ fn want_parser(i: &mut Interp, v: &Value) -> Result<u64, Flow> {
     Err(i.wrong_type_mut("treesit-parser-p", v))
 }
 
-fn node_entry(i: &mut Interp, v: &Value) -> Result<(u64, usize), Flow> {
-    if let Some(rest) = tagged(i, v, "treesit-node") {
-        if rest.len() == 2 {
-            if let (Value::Int(p), Value::Int(n)) = (rest[0].clone(), rest[1].clone()) {
-                let key = (p as u64, n as usize);
-                if i.treesit.nodes.contains_key(&key) {
-                    return Ok(key);
-                }
-            }
-        }
+fn node_entry(i: &mut Interp, v: &Value) -> Result<NodeKey, Flow> {
+    if let Some(key) = node_entry_soft(i, v) {
+        return Ok(key);
     }
     Err(i.wrong_type_mut("treesit-node-p", v))
 }
 
-fn node_entry_soft(i: &Interp, v: &Value) -> Option<(u64, usize)> {
+fn node_entry_soft(i: &Interp, v: &Value) -> Option<NodeKey> {
     let tag = i.intern_soft("treesit-node")?;
     if let Value::Record(r) = v {
         let rr = r.borrow();
-        if let (Some(Value::Sym(s)), Some(Value::Int(p)), Some(Value::Int(n))) =
-            (rr.first(), rr.get(1), rr.get(2))
+        if let [
+            Value::Sym(s),
+            Value::Int(p),
+            Value::Int(n),
+            Value::Int(generation),
+        ] = rr.as_slice()
         {
             if *s == tag {
-                let key = (*p as u64, *n as usize);
+                let key = (*p as u64, *n as usize, *generation as u64);
                 if i.treesit.nodes.contains_key(&key) {
                     return Some(key);
                 }
@@ -209,7 +210,7 @@ fn node_entry_soft(i: &Interp, v: &Value) -> Option<(u64, usize)> {
 }
 
 /// `treesit_check_node': object exists, is up-to-date, buffer alive.
-fn check_node(i: &mut Interp, v: &Value) -> Result<(u64, usize), Flow> {
+fn check_node(i: &mut Interp, v: &Value) -> Result<NodeKey, Flow> {
     let key = node_entry(i, v)?;
     let entry = &i.treesit.nodes[&key];
     let p = &i.treesit.parsers[&entry.parser_id];
@@ -251,13 +252,14 @@ fn parser_live(i: &Interp, id: u64) -> bool {
 }
 
 /// Wrap `node` in a fresh `[treesit-node ...]' record, registering the
-/// node under (parser_id, node.id()).
+/// node under (parser_id, node.id(), generation). Rewrapping a node in
+/// the same tree preserves `equal'; a later tree cannot refresh it.
 fn make_node(i: &mut Interp, parser_id: u64, node: Node) -> Value {
     let nid = node.id();
     let pc = i.treesit.parsers[&parser_id].parse_count;
     let node_static: Node<'static> = unsafe { std::mem::transmute(node) };
     i.treesit.nodes.insert(
-        (parser_id, nid),
+        (parser_id, nid, pc),
         TsNodeObj {
             node: node_static,
             parser_id,
@@ -267,11 +269,15 @@ fn make_node(i: &mut Interp, parser_id: u64, node: Node) -> Value {
     let tag = sname(i, "treesit-node");
     tag_record(
         tag,
-        vec![Value::Int(parser_id as i128), Value::Int(nid as i128)],
+        vec![
+            Value::Int(parser_id as i128),
+            Value::Int(nid as i128),
+            Value::Int(pc as i128),
+        ],
     )
 }
 
-fn ts_node_of<'a>(i: &'a Interp, key: (u64, usize)) -> &'a Node<'static> {
+fn ts_node_of<'a>(i: &'a Interp, key: NodeKey) -> &'a Node<'static> {
     &i.treesit.nodes[&key].node
 }
 
@@ -1670,9 +1676,7 @@ fn f_node_eq(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let k1 = node_entry(i, &a[0])?;
     let k2 = node_entry(i, &a[1])?;
     let (e1, e2) = (&i.treesit.nodes[&k1], &i.treesit.nodes[&k2]);
-    let same = e1.parser_id == e2.parser_id
-        && e1.parse_count == e2.parse_count
-        && e1.node.id() == e2.node.id();
+    let same = e1.parser_id == e2.parser_id && e1.parse_count == e2.parse_count && k1.1 == k2.1;
     Ok(Value::from_bool(same))
 }
 
@@ -1901,7 +1905,7 @@ fn f_query_compile(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 /// Resolve NODE to a node key (accepts node, parser, or language
 /// symbol), like `treesit_resolve_node'.
-fn resolve_node(i: &mut Interp, v: &Value) -> Result<(u64, usize), Flow> {
+fn resolve_node(i: &mut Interp, v: &Value) -> Result<NodeKey, Flow> {
     if is_node_obj(i, v) {
         return check_node(i, v);
     }
@@ -2196,8 +2200,9 @@ fn f_query_capture(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         return Err(i.wrong_type_mut("treesit-query-p", &query));
     }
 
-    let (pid, node_key) = resolve_node(i, &node)?;
-    let ts_node = *ts_node_of(i, (pid, node_key));
+    let node_key = resolve_node(i, &node)?;
+    let pid = node_key.0;
+    let ts_node = *ts_node_of(i, node_key);
     let parser_lang = i.treesit.parsers[&pid].language;
 
     // A compiled query must match the node's parser language (GNU
@@ -3165,17 +3170,19 @@ pub(crate) fn treesit_repr(i: &Interp, items: &[Value]) -> Option<String> {
             }
         }
         "treesit-node" => {
-            let (pid, nid) = match (items.get(1), items.get(2)) {
-                (Some(Value::Int(p)), Some(Value::Int(n))) => (*p as u64, *n as usize),
+            let key = match (items.get(1), items.get(2), items.get(3)) {
+                (Some(Value::Int(p)), Some(Value::Int(n)), Some(Value::Int(generation))) => {
+                    (*p as u64, *n as usize, *generation as u64)
+                }
                 _ => return Some("#<treesit-node>".into()),
             };
-            let entry = i.treesit.nodes.get(&(pid, nid))?;
+            let entry = i.treesit.nodes.get(&key)?;
             let p = i.treesit.parsers.get(&entry.parser_id)?;
             let outdated = entry.parse_count != p.parse_count;
-            let ty = entry.node.kind();
             if outdated {
-                Some(format!("#<treesit-node {ty} (outdated)>"))
+                Some("#<treesit-node-outdated>".into())
             } else {
+                let ty = entry.node.kind();
                 let b = p.buffer.borrow();
                 let s = byte_to_charpos(&b, entry.node.start_byte());
                 let e = byte_to_charpos(&b, entry.node.end_byte());

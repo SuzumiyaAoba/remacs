@@ -510,7 +510,7 @@ same as GNU.
 Design notes:
 
 - Objects are Lisp records `[treesit-parser ID]` / `[treesit-node PID
-  NID]` / `[treesit-compiled-query ID]`; `print.rs` renders them as
+  NID GENERATION]` / `[treesit-compiled-query ID]`; `print.rs` renders them as
   `#<treesit-...>'.
 - **Never derive nodes from `Tree::clone()`** — it's `ts_tree_copy` (a
   *different* `TSTree`; root id even differs). Nodes must come from the
@@ -529,7 +529,12 @@ Design notes:
   UTF-8 point/edit-observer lifetime unit checks.
 - Node staleness is GNU-style: `check_node` compares `parse_count`;
   `treesit-node-check 'outdated` is passive (nil until a reparse
-  happens elsewhere).
+  happens elsewhere). Node records and cache keys include that generation:
+  native node-id reuse cannot refresh an old Lisp node. Outdated printing
+  returns `#<treesit-node-outdated>` before accessing the native node,
+  whose original tree may already be freed. Same-generation wrappers
+  remain `equal` and `treesit-node-eq` while distinct under `eq`.
+  Regression: `tests/qa_treesit_node_generation.el`.
 - Query capture uses raw `ts_query_cursor_next_match` FFI; a match may
   carry 0 captures (predicate-only patterns).
 - `treesit-node-type` and `treesit-node-field-name-for-child` return
