@@ -84,19 +84,127 @@ fn f_noop(_i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Nil)
 }
 
+// GNU print.c print_create_variable_mapping. The historical spelling is
+// an accepted alias, including its duplicate binding when defaults are used.
+const PRINT_SETTINGS: [(&str, &str, bool); 17] = [
+    ("length", "print-length", false),
+    ("level", "print-level", false),
+    ("circle", "print-circle", false),
+    ("quoted", "print-quoted", true),
+    ("escape-newlines", "print-escape-newlines", false),
+    (
+        "escape-control-characters",
+        "print-escape-control-characters",
+        false,
+    ),
+    ("escape-nonascii", "print-escape-nonascii", false),
+    ("escape-multibyte", "print-escape-multibyte", false),
+    (
+        "charset-text-property",
+        "print-charset-text-property",
+        false,
+    ),
+    ("unreadable-function", "print-unreadable-function", false),
+    ("unreadeable-function", "print-unreadable-function", false),
+    ("gensym", "print-gensym", false),
+    ("continuous-numbering", "print-continuous-numbering", false),
+    ("number-table", "print-number-table", false),
+    ("float-format", "float-output-format", false),
+    (
+        "integers-as-characters",
+        "print-integers-as-characters",
+        false,
+    ),
+    ("symbols-bare", "print-symbols-bare", false),
+];
+
+fn with_print_overrides(
+    i: &mut Interp,
+    overrides: &Value,
+    string_output: bool,
+    body: impl FnOnce(&mut Interp) -> EvalResult,
+) -> EvalResult {
+    let mark = i.specbind_depth();
+    let result = (|| {
+        if string_output {
+            let hooks = i.intern("inhibit-modification-hooks");
+            i.specbind(hooks, Value::t())?;
+        }
+        if !overrides.is_nil() {
+            // GNU creates the complete mapping even for an invalid override.
+            let mapping: Vec<_> = PRINT_SETTINGS
+                .iter()
+                .map(|(key, variable, default)| (i.intern(key), i.intern(variable), *default))
+                .collect();
+            let bind_defaults = |i: &mut Interp| -> Result<(), crate::lisp::error::Flow> {
+                for &(_, variable, default) in &mapping {
+                    i.specbind(variable, Value::from_bool(default))?;
+                }
+                Ok(())
+            };
+            if i.sym_is(overrides, sym::T) {
+                bind_defaults(i)?;
+            } else {
+                let mut remaining = overrides.clone();
+                let mut visited = std::collections::HashSet::new();
+                while !remaining.is_nil() {
+                    let Value::Cons(cell) = &remaining else {
+                        return Err(i.wrong_type_mut("consp", &remaining));
+                    };
+                    if !visited.insert(std::rc::Rc::as_ptr(cell) as usize) {
+                        return Err(i.signal_data(sym::CIRCULAR_LIST, vec![remaining.clone()]));
+                    }
+                    let setting = cell.borrow().car.clone();
+                    if i.sym_is(&setting, sym::T) {
+                        bind_defaults(i)?;
+                    } else if let Value::Cons(pair) = setting {
+                        let (key, value) = {
+                            let pair = pair.borrow();
+                            (pair.car.clone(), pair.cdr.clone())
+                        };
+                        let variable = mapping
+                            .iter()
+                            .find(|(key_id, _, _)| super::eq_values(&key, &Value::Sym(*key_id)))
+                            .map(|(_, variable, _)| *variable);
+                        let Some(variable) = variable else {
+                            return Err(i.wrong_type_mut("symbolp", &Value::Nil));
+                        };
+                        i.specbind(variable, value)?;
+                    } else {
+                        return Err(i.wrong_type_mut("consp", &setting));
+                    }
+                    // A variable watcher can change the remaining alist.
+                    let next = cell.borrow().cdr.clone();
+                    if !next.is_nil() && !matches!(next, Value::Cons(_)) {
+                        return Err(i.wrong_type_mut("consp", &remaining));
+                    }
+                    remaining = next;
+                }
+            }
+        }
+        body(i)
+    })();
+    i.unbind_to(mark)?;
+    result
+}
+
 fn f_prin1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU print.c Fprin1: OVERRIDES is
-    // validated (non-nil must be t or a cons) BEFORE the stream is
-    // resolved — print_bind_overrides runs inside print_to_buffer/string
-    // ahead of the destination lookup.
-    let ov = arg(&args, 2);
-    if !ov.is_nil() && !i.sym_is(&ov, sym::T) && !matches!(ov, Value::Cons(_)) {
-        return Err(i.wrong_type_mut("consp", &ov));
-    }
-    let stream = i.checked_output_stream(&arg(&args, 1))?;
-    let s = i.print_to_string_cb(&args[0])?;
-    i.write_output_to(&s, &stream)?;
-    Ok(args[0].clone())
+    // GNU captures a nil destination's standard-output value before
+    // override watchers run, but validates that destination afterwards.
+    let output = arg(&args, 1);
+    let output = if output.is_nil() {
+        let standard = i.intern("standard-output");
+        let value = i.symbol_value(standard);
+        if value.is_nil() { Value::t() } else { value }
+    } else {
+        output
+    };
+    with_print_overrides(i, &arg(&args, 2), false, |i| {
+        let stream = i.checked_output_stream(&output)?;
+        let s = i.print_to_string_cb(&args[0])?;
+        i.write_output_to(&s, &stream)?;
+        Ok(args[0].clone())
+    })
 }
 
 fn f_princ(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -196,23 +304,15 @@ fn write_char_text_code(mut code: u32) -> u32 {
 }
 
 fn f_prin1_to_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU print_bind_overrides: OVERRIDES non-nil must be t or a cons —
-    // other atoms signal `consp' on the whole OVERRIDES arg.
-    let ov = arg(&args, 2);
-    if !ov.is_nil() && !i.sym_is(&ov, sym::T) && !matches!(ov, Value::Cons(_)) {
-        return Err(i.wrong_type_mut("consp", &ov));
-    }
-    let noescape = arg(&args, 1).truthy();
-    let s = if noescape {
-        i.princ_to_string_cb(&args[0])?
-    } else {
-        i.print_to_string_cb(&args[0])?
-    };
-    // String sinks render eight-bit bytes as `\NNN' ASCII text like GNU's
-    // strout — sentinels never reach the Lisp value.
-    Ok(Value::string(
-        crate::lisp::eval::Interp::sink_text(&s).as_ref(),
-    ))
+    with_print_overrides(i, &arg(&args, 2), true, |i| {
+        let s = if arg(&args, 1).truthy() {
+            i.princ_to_string_cb(&args[0])?
+        } else {
+            i.print_to_string_cb(&args[0])?
+        };
+        // Text sinks expose byte8 sentinels as GNU's escaped ASCII text.
+        Ok(Value::string(Interp::sink_text(&s).as_ref()))
+    })
 }
 
 fn f_with_output_to_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {

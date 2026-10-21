@@ -5768,7 +5768,17 @@ command-line arguments.\" \
             self.sync_undo_inhibit(id, &val);
             return Ok(());
         }
-        // Notify watchers before replacing a local or plain value.
+        // GNU saves the plain value before notifying watchers: they may
+        // write the same variable or signal while the binding is installed.
+        let saved_global = !local_here;
+        if saved_global {
+            self.specbind.push(SpecBind {
+                sym: id,
+                buf: None,
+                default_buf: None,
+                old: Some(self.obarray.symbol(id).value.clone()),
+            });
+        }
         self.fire_var_watchers(id, &val, "let", local_here.then_some(self.current_buffer))?;
         if local_here {
             if let Some(b) = self.buffers.get(self.current_buffer) {
@@ -5793,15 +5803,16 @@ command-line arguments.\" \
             }
         }
         if bound_buf.is_none() {
-            let old = self.obarray.symbol(id).value.clone();
+            if !saved_global {
+                self.specbind.push(SpecBind {
+                    sym: id,
+                    buf: None,
+                    default_buf: None,
+                    old: Some(self.obarray.symbol(id).value.clone()),
+                });
+            }
             self.obarray.symbol_mut(id).value = val.clone();
             self.sync_undo_inhibit(id, &val);
-            self.specbind.push(SpecBind {
-                sym: id,
-                buf: None,
-                default_buf: None,
-                old: Some(old),
-            });
         }
         Ok(())
     }
@@ -5836,16 +5847,20 @@ command-line arguments.\" \
                 }
                 continue;
             }
-            let mut restored = Value::Nil;
+            let restored = sb.old.clone().unwrap_or(Value::Nil);
+            // GNU notifies before storing the restored value. A global
+            // forwarded variable goes through set_default_internal and
+            // set_internal, producing set followed by unlet notifications.
+            if sb.buf.is_none() && self.obarray.symbol(sb.sym).forwarded_variable {
+                self.fire_var_watchers(sb.sym, &restored, "set", None)?;
+            }
+            self.fire_var_watchers(sb.sym, &restored, "unlet", sb.buf)?;
             match sb.buf {
                 Some(buf_id) => {
                     if let Some(b) = self.buffers.get(buf_id) {
                         let mut bb = b.borrow_mut();
                         match sb.old {
-                            Some(v) => {
-                                restored = v.clone();
-                                bb.locals.insert(sb.sym, v)
-                            }
+                            Some(v) => bb.locals.insert(sb.sym, v),
                             None => bb.locals.shift_remove(&sb.sym),
                         };
                         if sb.sym == self.bfn_sym {
@@ -5858,14 +5873,11 @@ command-line arguments.\" \
                 }
                 None => {
                     if let Some(v) = sb.old {
-                        restored = v.clone();
                         self.obarray.symbol_mut(sb.sym).value = v.clone();
                         self.sync_undo_inhibit(sb.sym, &v);
                     }
                 }
             }
-            // GNU fires 'unlet watchers with the restored value.
-            self.fire_var_watchers(sb.sym, &restored, "unlet", sb.buf)?;
         }
         Ok(())
     }

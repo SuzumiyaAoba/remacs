@@ -1648,6 +1648,20 @@ buffer and marker cursors advance before parse errors propagate, marker reads
 leave the buffer's own point unchanged, and EOF data identifies the proper
 input kind. This behavior was already provided by the #93 reader fix.
 
+`prin1` and `prin1-to-string` apply GNU's OVERRIDES mapping with temporary
+specbindings. Keep all 17 entries, including `unreadeable-function`'s historic
+alias and duplicate default binding. Settings apply left to right; a `t`
+element resets all mapping defaults. Unknown keys signal `(symbolp nil)`,
+and malformed tails report the remaining cons. Validate before destination
+lookup, while capturing nil destinations' `standard-output` value first.
+Bindings survive formatting/output callbacks and unwind on errors. Unreadable
+callbacks temporarily bind their printer to nil; top-level print resets the
+number table without watcher notification when numbering is not continuous.
+Watcher binding notifications precede stores; global values are saved before
+`let` watchers, and forwarded global restoration emits `set` then `unlet`.
+`qa_print_overrides` covers defaults, ordering, settings, sinks, errors,
+restoration, callbacks and watcher state.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

@@ -324,6 +324,7 @@ qa!(qa_plists, "qa_plists.el");
 qa!(qa_point, "qa_point.el");
 qa!(qa_pp, "qa_pp.el");
 qa!(qa_printvars, "qa_printvars.el");
+qa!(qa_print_overrides, "qa_print_overrides.el");
 qa!(qa_write_char, "qa_write_char.el");
 qa!(qa_output_streams, "qa_output_streams.el");
 qa!(qa_print_variables, "qa_print_variables.el");

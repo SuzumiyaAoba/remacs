@@ -286,6 +286,7 @@ impl Interp {
     /// replaced by the callback's return value (must be a string), and
     /// a thrown tag/signal propagates as usual Lisp flow.
     pub fn print_to_string_cb(&mut self, v: &Value) -> Result<String, crate::lisp::error::Flow> {
+        self.reset_print_numbering();
         UNREADABLE_HITS.with(|u| u.borrow_mut().clear());
         let mut s = String::new();
         let mark = BEING_PRINTED.with(|bp| bp.borrow().len());
@@ -304,7 +305,7 @@ impl Interp {
         }
         // Splice right-to-left so recorded offsets stay valid.
         for (lo, hi, obj) in hits.into_iter().rev() {
-            let r = self.apply(&f, vec![obj, Value::t()])?;
+            let r = self.call_unreadable_printer(&f, obj, true)?;
             if let Value::Str(rep) = r {
                 s.replace_range(lo..hi, &rep.borrow());
             }
@@ -314,6 +315,7 @@ impl Interp {
 
     /// `princ` variant of `print_to_string_cb'.
     pub fn princ_to_string_cb(&mut self, v: &Value) -> Result<String, crate::lisp::error::Flow> {
+        self.reset_print_numbering();
         UNREADABLE_HITS.with(|u| u.borrow_mut().clear());
         let mut s = String::new();
         let mark = BEING_PRINTED.with(|bp| bp.borrow().len());
@@ -331,7 +333,7 @@ impl Interp {
             return Ok(s);
         }
         for (lo, hi, obj) in hits.into_iter().rev() {
-            let r = self.apply(&f, vec![obj, Value::Nil])?;
+            let r = self.call_unreadable_printer(&f, obj, false)?;
             if let Value::Str(rep) = r {
                 s.replace_range(lo..hi, &rep.borrow());
             }
@@ -348,6 +350,42 @@ impl Interp {
         CIRCLE.with(|c| *c.borrow_mut() = prev_circle);
         BEING_PRINTED.with(|bp| bp.borrow_mut().truncate(mark));
         Self::sink_text(&s).into_owned()
+    }
+
+    fn call_unreadable_printer(
+        &mut self,
+        callback: &Value,
+        object: Value,
+        escape: bool,
+    ) -> Result<Value, crate::lisp::error::Flow> {
+        let mark = self.specbind_depth();
+        let result = (|| {
+            // GNU suppresses recursive use of the same unreadable printer.
+            let variable = self.intern("print-unreadable-function");
+            self.specbind(variable, Value::Nil)?;
+            self.apply(callback, vec![object, Value::from_bool(escape)])
+        })();
+        self.unbind_to(mark)?;
+        result
+    }
+
+    /// GNU print's direct C assignment resets numbering without notifying
+    /// Lisp variable watchers, including when print-circle is nil.
+    fn reset_print_numbering(&mut self) {
+        if self.print_var("print-continuous-numbering").truthy()
+            && !self.print_var("print-number-table").is_nil()
+        {
+            return;
+        }
+        PRINT_NUMBER_INDEX.with(|index| index.set(0));
+        let symbol = self.intern("print-number-table");
+        if let Some(buffer) = self.current_buffer_ref() {
+            if let Some(value) = buffer.borrow_mut().locals.get_mut(&symbol) {
+                *value = Value::Nil;
+                return;
+            }
+        }
+        self.obarray.symbol_mut(symbol).value = Value::Nil;
     }
 
     /// When `print-circle' is non-nil, pre-scan V for shared/cyclic
