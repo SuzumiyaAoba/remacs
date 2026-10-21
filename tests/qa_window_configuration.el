@@ -853,4 +853,191 @@
 )
 
 
+;; Issue #284: snapshots own persistent associations and merge only saved keys.
+(defun qa284-with-window (function)
+ (qa277-window-fixture (lambda (_buffer old)
+  (let ((new (split-window old nil 'right))) (funcall function new (frame-root-window))))))
+(defun qa284-basic (flag internal)
+ (qa284-with-window
+  (lambda (leaf root)
+   (let* ((window (if internal root leaf)) (key (make-symbol "qa284"))
+          (window-persistent-parameters (list (cons key flag))))
+    (set-window-parameter window key 1)
+    (let ((saved (current-window-configuration)))
+     (set-window-parameter window key 2) (set-window-configuration saved)
+     (let ((first (window-parameter window key)))
+      (set-window-parameter window key 3) (set-window-configuration saved)
+      (list first (window-parameter window key))))))))
+(qa
+(qa284-basic nil nil)
+'(2 3)
+)
+
+(qa
+(qa284-basic nil t)
+'(2 3)
+)
+
+(qa
+(qa284-basic t nil)
+'(1 1)
+)
+
+(qa
+(qa284-basic t t)
+'(1 1)
+)
+
+(qa
+(qa284-basic 'writable nil)
+'(1 1)
+)
+
+(qa
+(qa284-basic 'writable t)
+'(1 1)
+)
+
+(qa
+(qa284-basic 'other nil)
+'(1 1)
+)
+
+(qa
+(qa284-basic 'other t)
+'(1 1)
+)
+
+(qa
+(qa284-with-window
+ (lambda (window _root)
+   (let*
+       ((key (make-symbol "qa284-absent"))
+	(window-persistent-parameters (list (cons key t)))
+	(saved (current-window-configuration)))
+     (set-window-configuration saved)
+     (list (window-parameter window key)
+	   (not (null (assq key (window-parameters window))))))))
+'(nil nil)
+)
+
+(qa
+(qa284-with-window
+ (lambda (window _root)
+   (let*
+       ((key (make-symbol "qa284-absent"))
+	(window-persistent-parameters (list (cons key t)))
+	(saved (current-window-configuration)))
+     (set-window-parameter window key 2)
+     (set-window-configuration saved)
+     (list (window-parameter window key)
+	   (not (null (assq key (window-parameters window))))))))
+'(nil t)
+)
+
+(qa
+(qa284-with-window
+ (lambda (window _root)
+   (let*
+       ((key (make-symbol "qa284-nil"))
+	(window-persistent-parameters (list (cons key t))))
+     (set-window-parameter window key nil)
+     (let ((saved (current-window-configuration)))
+       (set-window-parameter window key 2)
+       (set-window-configuration saved)
+       (list (window-parameter window key)
+	     (not (null (assq key (window-parameters window)))))))))
+'(nil t)
+)
+
+(qa
+(qa284-with-window
+ (lambda (window _root)
+   (let*
+       ((key (make-symbol "qa284-sharing")) (value (list 1))
+	(window-persistent-parameters (list (cons key t))))
+     (set-window-parameter window key value)
+     (let ((saved (current-window-configuration)))
+       (setcar value 9) (set-window-parameter window key 'other)
+       (set-window-configuration saved)
+       (list (eq (window-parameter window key) value)
+	     (window-parameter window key))))))
+'(t (9))
+)
+
+(qa
+(qa284-with-window
+ (lambda (window _root)
+   (let*
+       ((key (make-symbol "qa284-change-flags"))
+	(window-persistent-parameters (list (cons key t))))
+     (set-window-parameter window key 1)
+     (let ((saved (current-window-configuration)))
+       (let ((window-persistent-parameters nil))
+	 (set-window-parameter window key 2)
+	 (set-window-configuration saved))
+       (window-parameter window key)))))
+'1
+)
+
+(qa
+(qa284-with-window
+ (lambda (window _root)
+   (let*
+       ((key (make-symbol "qa284-other"))
+	(keep (make-symbol "qa284-persistent"))
+	(window-persistent-parameters (list (cons keep t))))
+     (set-window-parameter window keep 1)
+     (set-window-parameter window key 'old)
+     (let ((saved (current-window-configuration)))
+       (set-window-parameter window keep 2)
+       (set-window-parameter window key 'new)
+       (set-window-configuration saved)
+       (list (window-parameter window keep)
+	     (window-parameter window key))))))
+'(1 new)
+)
+
+(qa
+(qa284-with-window
+ (lambda (window _root)
+   (let*
+       ((key (make-symbol "qa284-cycle")) (entry (list (cons key t)))
+	(window-persistent-parameters entry))
+     (setcdr entry entry) (set-window-parameter window key 1)
+     (let ((saved (current-window-configuration)))
+       (set-window-parameter window key 2)
+       (set-window-configuration saved)
+       (list (null window-persistent-parameters)
+	     (window-parameter window key))))))
+'(t 2)
+)
+
+(qa
+(qa284-with-window
+ (lambda (window _root)
+   (let*
+       ((key (make-symbol "qa284-dotted"))
+	(window-persistent-parameters (cons (cons key t) 'tail)))
+     (set-window-parameter window key 1)
+     (let ((saved (current-window-configuration)))
+       (set-window-parameter window key 2)
+       (set-window-configuration saved) (window-parameter window key)))))
+'1
+)
+
+(qa
+(qa284-with-window
+ (lambda (window _root)
+   (let*
+       ((key (make-symbol "qa284-junk"))
+	(window-persistent-parameters (list 'junk nil 42 (cons key t))))
+     (set-window-parameter window key 1)
+     (let ((saved (current-window-configuration)))
+       (set-window-parameter window key 2)
+       (set-window-configuration saved) (window-parameter window key)))))
+'1
+)
+
+
 (princ (qa--done)) (terpri)

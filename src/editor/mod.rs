@@ -3131,7 +3131,65 @@ fn window_config_point_insertion_type(i: &Interp, buffer: usize) -> bool {
         .truthy()
 }
 
-fn window_config_tree(window: &WindowRef) -> Value {
+fn window_config_persistent_keys(i: &mut Interp) -> Vec<Value> {
+    let symbol = i.intern("window-persistent-parameters");
+    let symbol = i.var_alias_target(symbol);
+    let mut tail = i.symbol_value(symbol);
+    let mut seen = std::collections::HashSet::new();
+    let mut keys = Vec::new();
+    while let Value::Cons(cell) = tail {
+        if !seen.insert(Rc::as_ptr(&cell) as usize) {
+            // GNU clears a cyclic specification directly, without
+            // notifying variable watchers, instead of traversing forever.
+            if let Some(buffer) = i.current_buffer_ref() {
+                if let Some(value) = buffer.borrow_mut().locals.get_mut(&symbol) {
+                    *value = Value::Nil;
+                    return Vec::new();
+                }
+            }
+            i.obarray.symbol_mut(symbol).value = Value::Nil;
+            return Vec::new();
+        }
+        let entry = cell.borrow().car.clone();
+        if let Value::Cons(pair) = entry {
+            let pair = pair.borrow();
+            if !pair.cdr.is_nil() {
+                keys.push(pair.car.clone());
+            }
+        }
+        tail = cell.borrow().cdr.clone();
+    }
+    keys
+}
+
+fn window_config_parameters(parameters: &Value, keys: &[Value]) -> Value {
+    // Copy associations, but retain the parameter values themselves.
+    Value::list(
+        keys.iter()
+            .rev()
+            .map(|key| Value::cons(key.clone(), crate::lisp::eval::plist_get_v(parameters, key)))
+            .collect(),
+    )
+}
+
+fn restore_window_config_parameters(parameters: &mut Value, saved: &Value) {
+    let mut tail = saved.clone();
+    while let Value::Cons(cell) = tail {
+        if let Value::Cons(pair) = &cell.borrow().car {
+            let pair = pair.borrow();
+            // A missing/nil saved value clears an existing non-nil
+            // association but never creates a new nil association.
+            if !pair.cdr.is_nil() || !crate::lisp::eval::plist_get_v(parameters, &pair.car).is_nil()
+            {
+                *parameters =
+                    crate::lisp::eval::plist_put_front(parameters, &pair.car, pair.cdr.clone());
+            }
+        }
+        tail = cell.borrow().cdr.clone();
+    }
+}
+
+fn window_config_tree(window: &WindowRef, keys: &[Value]) -> Value {
     let window_data = window.borrow();
     Value::vector(vec![
         Value::Window(window.clone()),
@@ -3142,10 +3200,15 @@ fn window_config_tree(window: &WindowRef) -> Value {
             window_data
                 .children
                 .iter()
-                .map(window_config_tree)
+                .map(|child| window_config_tree(child, keys))
                 .collect(),
         ),
         Value::from_bool(window_data.combination_limit),
+        if window_data.horiz.is_some() {
+            window_config_parameters(&window_data.params, keys)
+        } else {
+            Value::Nil
+        },
     ])
 }
 
@@ -3154,6 +3217,7 @@ struct SavedWindowTree {
     horizontal: Option<bool>,
     children: Vec<SavedWindowTree>,
     combination_limit: bool,
+    parameters: Value,
 }
 
 fn read_window_config_tree(
@@ -3196,6 +3260,7 @@ fn read_window_config_tree(
         horizontal,
         children,
         combination_limit: fields.get(3).is_some_and(Value::truthy),
+        parameters: fields.get(4).cloned().unwrap_or(Value::Nil),
     })
 }
 
@@ -3223,6 +3288,9 @@ fn restore_window_config_tree(tree: &SavedWindowTree, parent: Option<&WindowRef>
     window.horiz = tree.horizontal;
     window.children = children;
     window.combination_limit = tree.combination_limit;
+    if tree.horizontal.is_some() {
+        restore_window_config_parameters(&mut window.params, &tree.parameters);
+    }
     if let Some((left, top, right, bottom)) = bounds {
         window.left = left;
         window.top = top;
@@ -3237,6 +3305,7 @@ fn restore_window_config_tree(tree: &SavedWindowTree, parent: Option<&WindowRef>
 
 fn window_configuration(i: &mut Interp) -> Value {
     let tag = Value::Sym(i.intern("window-configuration"));
+    let persistent_keys = window_config_persistent_keys(i);
     let frame_v = i
         .selected_frame
         .as_ref()
@@ -3248,7 +3317,9 @@ fn window_configuration(i: &mut Interp) -> Value {
     let mut frame_size = Value::Nil;
     if let Some(f) = i.selected_frame.as_ref() {
         let fr = f.borrow();
-        tree = fr.root.as_ref().map_or(Value::Nil, window_config_tree);
+        tree = fr.root.as_ref().map_or(Value::Nil, |root| {
+            window_config_tree(root, &persistent_keys)
+        });
         let menu_lines = i
             .intern_soft("menu-bar-lines")
             .and_then(|symbol| {
@@ -3296,7 +3367,7 @@ fn window_configuration(i: &mut Interp) -> Value {
                 Value::Int(wb.width as i128),
                 wb.dedicated.clone(),
                 Value::from_bool(wb.minibuffer),
-                wb.params.clone(),
+                window_config_parameters(&wb.params, &persistent_keys),
                 wb.prev_buffers.clone(),
                 wb.next_buffers.clone(),
                 mark,
@@ -3323,7 +3394,7 @@ fn window_configuration(i: &mut Interp) -> Value {
                 Value::Int(mb.width as i128),
                 mb.dedicated.clone(),
                 Value::Sym(sym::T),
-                mb.params.clone(),
+                window_config_parameters(&mb.params, &persistent_keys),
                 mb.prev_buffers.clone(),
                 mb.next_buffers.clone(),
                 Value::Nil,
@@ -3597,6 +3668,9 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -
             wb.left = spec_int(&v, 7).max(0) as usize;
             wb.width = spec_int(&v, 8).max(0) as usize;
             wb.dedicated = v.get(9).cloned().unwrap_or(Value::Nil);
+            if let Some(parameters) = v.get(11) {
+                restore_window_config_parameters(&mut wb.params, parameters);
+            }
             wb.dead = false;
             restore_window_view(i, &mut wb, &v, true);
             mini_top = Some(spec_int(&v, 5));
@@ -3661,7 +3735,9 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -
             wb.new_total = (nh - 1).max(0);
             wb.new_pixel = (nh - 1).max(0);
             wb.dedicated = v.get(9).cloned().unwrap_or(Value::Nil);
-            wb.params = v.get(11).cloned().unwrap_or(Value::Nil);
+            if let Some(parameters) = v.get(11) {
+                restore_window_config_parameters(&mut wb.params, parameters);
+            }
             wb.prev_buffers = v.get(12).cloned().unwrap_or(Value::Nil);
             wb.next_buffers = v.get(13).cloned().unwrap_or(Value::Nil);
             wb.dead = false;

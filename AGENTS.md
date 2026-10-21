@@ -1781,6 +1781,14 @@ public Lisp splitter does. Release frame borrows before either callback.
 Local hook t sentinels expand default hooks in place.
 `qa_window_scroll_hooks` pins these #283 context and notification rules.
 
+Configuration parameter snapshots contain fresh associations for non-nil
+`window-persistent-parameters` entries; values themselves remain shared.
+Restore only saved keys into live leaf/minibuffer/internal window params,
+leaving nonpersistent keys alone and avoiding new nil associations.
+Tree slot 4 carries internal-window parameter snapshots. Cyclic persistence
+specifications reset to nil as GNU does; dotted tails stop traversal.
+`qa_window_configuration` pins these #284 snapshot and restore rules.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source
