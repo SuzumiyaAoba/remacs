@@ -987,34 +987,48 @@ fn f_fillarray(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             Ok(args[0].clone())
         }
         Value::Str(s) => {
-            // GNU replaces each character with ITEM.  A unibyte
-            // (all-ASCII) string filled with a non-ASCII char takes
-            // ITEM's low byte; shrinking a multibyte char signals.
             let item = match &args[1] {
                 Value::Int(n) if (0..=0x3fffff).contains(n) => *n as u32,
                 _ => return Err(i.wrong_type_mut("characterp", &args[1])),
             };
+            let multibyte = super::strfn::string_multibyte_p(i, &args[0]);
             let mut st = s.borrow_mut();
             let n = st.chars().count();
-            let all_ascii = st.chars().all(|c| (c as u32) < 0x80);
-            let new: String = if item < 0x80 {
-                if !all_ascii {
-                    return Err(i.error("Attempt to change byte length of a string"));
-                }
-                std::iter::repeat_n(item as u8 as char, n).collect()
-            } else if all_ascii {
-                let low = char::from_u32(item & 0xff).unwrap_or('\u{fffd}');
-                std::iter::repeat_n(low, n).collect()
+            if n == 0 {
+                return Ok(args[0].clone());
+            }
+            let character = if multibyte {
+                crate::lisp::value::lisp_char(item)
+                    .unwrap_or_else(|| crate::lisp::value::mule_seq_char(item))
             } else {
-                let ilen = char::from_u32(item).map_or(4, |c| c.len_utf8());
-                if !st.chars().all(|c| c.len_utf8() == ilen) {
+                let byte = item & 0xff;
+                crate::lisp::value::lisp_char(if byte < 128 { byte } else { 0x3fff00 + byte })
+                    .unwrap()
+            };
+            if multibyte {
+                // GNU compares total Emacs storage bytes, not Rust UTF-8
+                // proxy widths or the width of each original character.
+                let width = |c| match crate::lisp::value::lisp_char_code(c) {
+                    0..=0x7f => 1usize,
+                    0x80..=0x7ff | 0x3fff80..=0x3fffff => 2,
+                    0x800..=0xffff => 3,
+                    0x10000..=0x1fffff => 4,
+                    _ => 5,
+                };
+                let bytes: usize = st.chars().map(width).sum();
+                if n.checked_mul(width(character)) != Some(bytes) {
                     return Err(i.error("Attempt to change byte length of a string"));
                 }
-                let c = char::from_u32(item).unwrap_or('\u{fffd}');
-                std::iter::repeat_n(c, n).collect()
-            };
-            *st = new;
+            }
+            *st = std::iter::repeat_n(character, n).collect();
             drop(st);
+            // Preserve inferred ASCII-unibyte strings even when their new
+            // contents consist entirely of raw-eight-bit proxy characters.
+            if multibyte {
+                i.mark_multibyte(s);
+            } else {
+                i.mark_unibyte(s);
+            }
             Ok(args[0].clone())
         }
         other => Err(i.wrong_type_mut("arrayp", other)),

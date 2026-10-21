@@ -1804,3 +1804,12 @@ conversion as `char-to-string`, preserving surrogate, byte8, and Mule
 characters. Validate LENGTH then INIT before allocation checks. The ASCII
 zero default remains unibyte for byte-oriented code such as md4.el.
 `tests/qa_strings.el` covers these cases.
+
+String `fillarray` uses the effective stored byte kind, including explicit
+multibyte ASCII and raw-byte unibyte strings. Unibyte fills truncate ITEM to
+one byte; multibyte fills require character count times ITEM's Emacs byte
+width to equal the original total byte count. Original characters need not
+share that width. Count logical surrogate/Mule/eight-bit codes, not the UTF-8
+width of Rust proxy characters. Validate ITEM even for empty strings, retain
+properties/identity/kind, and leave failed fills unchanged. Regression:
+`qa_fillarray_strings` covers the representation and width matrix.
