@@ -590,6 +590,17 @@ Regressions: `qa_process_connection.el` checks GNU's transport matrix and
 stream selectors; `tests/process_pipe.rs` verifies kernel FIFOs, raw bytes,
 EOF, descriptor closure and failed-spawn cleanup.
 
+`process-send-eof` half-closes TCP and Unix streams with `shutdown(Write)`
+while retaining their read descriptor and live status. `Proc.write_eof`
+models GNU's subsequent `/dev/null` writes: validate/encode normally, then
+discard output, including TLS output, and make repeated EOF harmless.
+Pending TCP connections finish through the existing event-loop wait;
+listeners signal a not-running error and datagram EOF remains a no-op.
+Return the original argument, including names, buffers and nil. EOF does
+not add an ISO-2022 reset or an unused UTF-16 signature. Regressions:
+`qa_process_network_eof` and `tests/network_eof.rs` (owned IPv4/IPv6/Unix
+sockets, actual kernel EOF, receive continuity and descriptor closure).
+
 ## Process coding (`process/coding.rs` + `builtins/coding_stream.rs`)
 
 Asynchronous child, pipe, TCP, Unix and datagram I/O uses the shared

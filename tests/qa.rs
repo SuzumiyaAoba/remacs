@@ -331,6 +331,7 @@ qa!(qa_process_exec_path, "qa_process_exec_path.el");
 qa!(qa_process_filter_pause, "qa_process_filter_pause.el");
 qa!(qa_process_send_region, "qa_process_send_region.el");
 qa!(qa_process_timeout, "qa_process_timeout.el");
+qa!(qa_process_network_eof, "qa_process_network_eof.el");
 qa!(qa_treesit_edit, "qa_treesit_edit.el");
 qa!(qa_treesit_node_generation, "qa_treesit_node_generation.el");
 qa!(qa_treesit_indirect, "qa_treesit_indirect.el");

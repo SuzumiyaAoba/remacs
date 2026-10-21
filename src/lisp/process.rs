@@ -438,6 +438,9 @@ pub struct Proc {
     /// (decoding . encoding) coding system names.
     pub coding: (String, String),
     codecs: coding::State,
+    /// Non-PTY output redirects to a null sink after process-send-eof,
+    /// while the input stream and externally visible status stay live.
+    write_eof: bool,
     /// Where stderr goes: nil (discard), t (main output), buffer, or process.
     pub stderr_dest: Value,
     pub inherit_coding: bool,
@@ -1193,6 +1196,7 @@ fn poll_proc_once(
                         tty_name: Value::Nil,
                         coding,
                         codecs: Default::default(),
+                        write_eof: false,
                         stderr_dest: Value::Nil,
                         inherit_coding,
                         connection_type: Value::Nil,
@@ -1256,6 +1260,7 @@ fn poll_proc_once(
                         tty_name: Value::Nil,
                         coding,
                         codecs: Default::default(),
+                        write_eof: false,
                         stderr_dest: Value::Nil,
                         inherit_coding,
                         connection_type: Value::Nil,
@@ -1498,6 +1503,7 @@ fn base_proc(name: String, kind: &'static str, io: ProcIo) -> Proc {
         tty_name: Value::Nil,
         coding: ("utf-8-unix".into(), "utf-8-unix".into()),
         codecs: Default::default(),
+        write_eof: false,
         stderr_dest: Value::Nil,
         inherit_coding: false,
         connection_type: Value::Nil,
@@ -3121,6 +3127,9 @@ fn prepare_process_write(i: &mut Interp, p: &ProcessRef) -> Result<(), Flow> {
 
 fn proc_write(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
     prepare_process_write(i, p)?;
+    if p.borrow().write_eof {
+        return Ok(Value::Nil);
+    }
     if matches!(p.borrow().io, ProcIo::Datagram(_)) {
         return write_datagram(i, p, bytes);
     }
@@ -3202,9 +3211,17 @@ fn f_process_send_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_process_send_eof(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU: PROCESS nil/omitted → the process of the current buffer.
-    let p = get_process(i, &arg(&a, 0))?;
+    let original = arg(&a, 0);
+    let p = get_process(i, &original)?;
     if matches!(p.borrow().io, ProcIo::Datagram(_)) {
-        return Ok(arg(&a, 0));
+        return Ok(original);
+    }
+    prepare_process_write(i, &p)?;
+    if matches!(p.borrow().io, ProcIo::Listen(_) | ProcIo::LocalListen(..)) {
+        return Err(i.error(format!("Process {} not running: listen", p.borrow().name)));
+    }
+    if p.borrow().write_eof {
+        return Ok(original);
     }
     if matches!(p.borrow().io, ProcIo::Child { .. }) {
         let pty_input = matches!(
@@ -3219,6 +3236,7 @@ fn f_process_send_eof(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             if let ProcIo::Child { input_fd, .. } = &mut p.borrow_mut().io {
                 input_fd.take();
             }
+            p.borrow_mut().write_eof = true;
         }
     } else {
         let mut pb = p.borrow_mut();
@@ -3226,12 +3244,24 @@ fn f_process_send_eof(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             ProcIo::Pipe { sink_fd, .. } => unsafe {
                 libc::close(*sink_fd);
                 *sink_fd = -1;
+                pb.write_eof = true;
             },
+            ProcIo::Net(stream) => {
+                // GNU ignores shutdown errors and redirects later writes
+                // to /dev/null. Keep the socket's read side available.
+                let _ = stream.shutdown(std::net::Shutdown::Write);
+                pb.write_eof = true;
+            }
+            ProcIo::LocalNet(stream) => {
+                let _ = stream.shutdown(std::net::Shutdown::Write);
+                pb.write_eof = true;
+            }
+            ProcIo::None => pb.write_eof = true,
             _ => {}
         }
     }
-    // GNU returns the process.
-    Ok(Value::Process(p))
+    // GNU returns the argument itself, including names, buffers and nil.
+    Ok(original)
 }
 
 // ---------- control ----------
@@ -3708,6 +3738,7 @@ fn f_delete_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
             ProcIo::LocalNet(s) => {
                 let _ = s.shutdown(std::net::Shutdown::Both);
+                pb.io = ProcIo::None;
                 pb.status = "closed";
                 ("deleted", 0)
             }
