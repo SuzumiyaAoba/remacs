@@ -1839,3 +1839,14 @@ buffer's `tab-width`, accept integers in 1..1000, and use 8 for other values.
 Regression: `qa_string_width_tabs` covers valid/invalid settings, substring
 bounds, buffer-local and dynamic bindings, padding and ellipsis. Non-TAB
 widths are explicitly set where startup character-width tables differ.
+
+`string-glyph-split` groups explicit non-nil `composition` property ranges,
+joining adjacent EQ values across unrelated property changes (including
+category-derived values). Static string ranges are found by
+`find-composition-internal`, so GNU's autoloaded Lisp wrapper receives them;
+the wrapper uses the range even when the composition is invalid. Both it
+and the Rust fallback use substring's byte-kind/property copying. Regression:
+`qa_string_glyph_split` covers range boundaries,
+identity, properties, raw bytes and surrogate/Mule characters. Its temporary
+buffer is longer than each input because GNU clips the string search LIMIT
+to the current buffer's ZV; short buffers can make GNU's wrapper loop backward.

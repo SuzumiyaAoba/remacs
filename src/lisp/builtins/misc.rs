@@ -18254,9 +18254,9 @@ fn f_composition_sort_rules(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
 }
 
 /// `find-composition-internal` — GNU decodes POS/LIMIT with
-/// integer_or_marker checks; we keep no composition tables, so the
-/// result is always nil.
-fn f_find_composition_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+/// integer_or_marker checks. Static string properties are available without
+/// a display composition cache; automatic/detailed compositions still need it.
+pub(crate) fn f_find_composition_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // (POSITION LIMIT STRING DETAIL-P)
     // GNU Ffind_composition_internal: POS via fix_position (markers
     // coerce, detached → "Marker does not point anywhere"), LIMIT
@@ -18265,11 +18265,10 @@ fn f_find_composition_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     // `args-out-of-range (STRING POS)'; a nil STRING bounds POS to
     // BEGV..ZV with `args-out-of-range (BUFFER POS)'.
     let pos = crate::lisp::builtins::want_int_or_mark(i, &a[0])?;
-    if let Some(lim) = a.get(1) {
-        if lim.truthy() {
-            let _ = crate::lisp::builtins::want_int_or_mark(i, lim)?;
-        }
-    }
+    let limit = match a.get(1) {
+        Some(lim) if lim.truthy() => crate::lisp::builtins::want_int_or_mark(i, lim)?,
+        _ => -1,
+    };
     match a.get(2) {
         Some(Value::Str(s)) => {
             let n = s.borrow().chars().count() as i128;
@@ -18292,6 +18291,73 @@ fn f_find_composition_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
             if !(lo..=hi).contains(&pos) {
                 let buf = Value::Buffer(crate::buffer::primitives::cur(i));
                 return Err(err_sym(i, "args-out-of-range", vec![buf, a[0].clone()]));
+            }
+        }
+    }
+    if let Some(Value::Str(src)) = a.get(2) {
+        if !arg(&a, 3).truthy() {
+            let composition = Value::Sym(i.intern("composition"));
+            let intervals = i.str_props(src).to_vec();
+            let mut ranges: Vec<(usize, usize, Value)> = Vec::new();
+            for (from, to, _) in intervals {
+                let value = crate::buffer::primitives::f_get_text_property(
+                    i,
+                    vec![Value::Int(from as i128), composition.clone(), a[2].clone()].into(),
+                )?;
+                if value.is_nil() {
+                    continue;
+                }
+                if let Some((_, end, previous)) = ranges.last_mut() {
+                    if *end == from && super::eq_values(previous, &value) {
+                        *end = to;
+                        continue;
+                    }
+                }
+                ranges.push((from, to, value));
+            }
+            let found = ranges
+                .iter()
+                .find(|(from, to, _)| *from as i128 <= pos && pos < *to as i128)
+                .or_else(|| {
+                    if limit > pos {
+                        ranges
+                            .iter()
+                            .find(|(from, _, _)| pos < *from as i128 && (*from as i128) < limit)
+                    } else if limit >= 0 && limit < pos {
+                        ranges
+                            .iter()
+                            .rev()
+                            .find(|(_, to, _)| limit < *to as i128 && (*to as i128) <= pos)
+                    } else {
+                        None
+                    }
+                });
+            if let Some((from, to, property)) = found {
+                // GNU composition_valid_p accepts an unregistered
+                // ((LENGTH . COMPONENTS) . MOD-FUNC) with matching length.
+                let valid = if let Value::Cons(prop) = property {
+                    if let Value::Cons(head) = &prop.borrow().car {
+                        let head = head.borrow();
+                        head.car.int() == Some((to - from) as i128)
+                            && matches!(
+                                head.cdr,
+                                Value::Nil
+                                    | Value::Int(_)
+                                    | Value::Str(_)
+                                    | Value::Vec(_)
+                                    | Value::Cons(_)
+                            )
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                return Ok(Value::list(vec![
+                    Value::Int(*from as i128),
+                    Value::Int(*to as i128),
+                    Value::from_bool(valid),
+                ]));
             }
         }
     }

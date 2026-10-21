@@ -312,7 +312,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         1,
         1,
         f_string_glyph_split,
-        "Split into grapheme clusters (chars)."
+        "Split STRING into a list of strings representing separate glyphs."
     ),
     S!("sxhash-equal", 1, 1, f_sxhash, "Hash of OBJECT."),
     S!("sxhash", 1, 1, f_sxhash, "Hash of OBJECT."),
@@ -2161,11 +2161,35 @@ fn f_string_distance(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Int(prev[m] as i128))
 }
 fn f_string_glyph_split(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    Ok(Value::list(
-        s.chars().map(|c| Value::string(c.to_string())).collect(),
-    ))
+    let length = Value::Sym(i.intern("length"));
+    let len = i.apply(&length, vec![args[0].clone()])?.int().unwrap_or(0);
+    let mut pieces = Vec::new();
+    let mut start = 0;
+    while start < len {
+        let comp = misc::f_find_composition_internal(
+            i,
+            vec![
+                Value::Int(start),
+                Value::Int(start + 1),
+                args[0].clone(),
+                Value::Nil,
+            ]
+            .into(),
+        )?;
+        let end = comp
+            .list_to_vec()
+            .ok()
+            .and_then(|range| range.get(1).and_then(Value::int))
+            .unwrap_or(start + 1);
+        pieces.push(f_substring(
+            i,
+            vec![args[0].clone(), Value::Int(start), Value::Int(end)].into(),
+        )?);
+        start = end;
+    }
+    Ok(Value::list(pieces))
 }
+
 // GNU sxhash (src/fns.c): EMACS_UINT is 64-bit, fixnums are 62-bit.
 // sxhash_combine (x, y) = (x << 4) + (x >> 60) + y   (wrapping)
 // SXHASH_REDUCE (x)     = (x ^ (x >> 2)) & (2^62 - 1)
