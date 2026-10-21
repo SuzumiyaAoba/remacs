@@ -1633,6 +1633,17 @@ both fold modes, equal-code controls, valid custom non-Unicode case pairs,
 and the unibyte-buffer raw-byte alias rule. Unsupported Rust `char` values
 must retain their Lisp integer identity rather than comparing two `None`s.
 
+Functional `read` sources share the normal parser through lazy `Reader`
+input: zero-argument calls supply characters, one-argument calls return
+lookahead, and any non-character return means EOF. Do not collect the source
+to EOF or repeatedly parse prefixes. Input/peek errors propagate immediately;
+callback EOF data is preserved. Token and escape boundaries return lookahead
+before symbol interning, including invalid character-literal delimiters.
+`#@00` explicitly drains its source as GNU does. Reader whitespace is ASCII
+controls through space plus NBSP, not Unicode White_Space; preserve original
+Lisp codes in direct and hex-escaped Mule characters. `qa_reader_function_stream`
+pins one-form consumption, callbacks, errors, GC/reentry, labels and byte kinds.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

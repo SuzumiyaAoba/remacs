@@ -176,20 +176,18 @@ fn f_read(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         other => {
             // GNU Fread: any other STREAM is FUNCALLed to produce
             // chars — non-functions surface `invalid-function'.
-            let mut src = String::new();
-            loop {
-                let c = i.apply(other, vec![])?;
-                match c {
-                    Value::Int(n) => {
-                        if let Some(ch) = char::from_u32(n as u32) {
-                            src.push(ch);
-                        }
-                    }
-                    _ => break,
-                }
+            let sympos_enabled = super::misc::sympos_enabled_p(i);
+            let result = {
+                let mut reader = crate::lisp::reader::Reader::with_function(i, other.clone());
+                reader.sympos_enabled = sympos_enabled;
+                reader.read()
+            };
+            match result {
+                Ok(Some(value)) => Ok(value),
+                Ok(None) => Err(i.signal_data(sym::END_OF_FILE, vec![])),
+                // Preserve signals from the callback, including its EOF data.
+                Err(error) => Err(error),
             }
-            let (v, _) = i.read_from_string(&src, 0)?;
-            Ok(v)
         }
     }
 }

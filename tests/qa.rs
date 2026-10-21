@@ -357,6 +357,7 @@ qa!(qa_process_stderr, "qa_process_stderr.el");
 qa!(qa_radix, "qa_radix.el");
 qa!(qa_read, "qa_read.el");
 qa!(qa_readprint, "qa_readprint.el");
+qa!(qa_reader_function_stream, "qa_reader_function_stream.el");
 qa!(qa_reader_error_context, "qa_reader_error_context.el");
 qa!(qa_reader_circles, "qa_reader_circles.el");
 qa!(qa_rect, "qa_rect.el");

@@ -25,6 +25,9 @@ pub const CHAR_META: i128 = 0x0800_0000;
 pub struct Reader<'a> {
     chars: Rc<Vec<char>>,
     pos: usize,
+    /// A functional character source, filled only when parsing needs input.
+    function_source: Option<Value>,
+    source_eof: bool,
     interp: &'a mut Interp,
     /// `#N=` labels seen so far (shared structure refs via `#N#`).
     labels: HashMap<u64, Value>,
@@ -94,6 +97,8 @@ impl<'a> Reader<'a> {
         Reader {
             chars,
             pos: 0,
+            function_source: None,
+            source_eof: false,
             interp,
             labels: HashMap::default(),
             annotate_pos: None,
@@ -110,40 +115,96 @@ impl<'a> Reader<'a> {
         self.pos = pos.min(self.chars.len());
     }
 
-    fn peek(&self) -> Option<char> {
-        self.chars.get(self.pos).copied()
+    pub fn with_function(interp: &'a mut Interp, source: Value) -> Reader<'a> {
+        let mut reader = Self::with_chars(interp, Rc::new(Vec::new()));
+        reader.function_source = Some(source);
+        reader
     }
 
-    fn peek_at(&self, n: usize) -> Option<char> {
-        self.chars.get(self.pos + n).copied()
+    fn fill_to(&mut self, index: usize) -> Result<(), Flow> {
+        while index >= self.chars.len() && !self.source_eof {
+            let Some(source) = &self.function_source else {
+                break;
+            };
+            let value = self.interp.apply(source, vec![])?;
+            let character = match value {
+                Value::Int(code) if (0..=0x3fffff).contains(&code) => {
+                    super::value::lisp_char(code as u32)
+                        .unwrap_or_else(|| super::value::mule_seq_char(code as u32))
+                }
+                // GNU source_function_get treats every non-character as EOF.
+                _ => {
+                    self.source_eof = true;
+                    break;
+                }
+            };
+            Rc::make_mut(&mut self.chars).push(character);
+        }
+        Ok(())
     }
 
-    fn next(&mut self) -> Option<char> {
-        let c = self.peek();
+    fn peek(&mut self) -> Result<Option<char>, Flow> {
+        self.peek_at(0)
+    }
+
+    fn peek_at(&mut self, n: usize) -> Result<Option<char>, Flow> {
+        let index = self.pos + n;
+        self.fill_to(index)?;
+        Ok(self.chars.get(index).copied())
+    }
+
+    fn next(&mut self) -> Result<Option<char>, Flow> {
+        let c = self.peek()?;
         if c.is_some() {
             self.pos += 1;
         }
-        c
+        Ok(c)
+    }
+
+    /// Return lookahead through the source's one-argument unread protocol.
+    /// Static source cursors are already positioned before that character.
+    fn unread_from(&mut self, position: usize) -> Result<(), Flow> {
+        let Some(source) = &self.function_source else {
+            return Ok(());
+        };
+        let pending: Vec<char> = self.chars[position.min(self.chars.len())..].to_vec();
+        for character in pending.iter().rev() {
+            self.interp.apply(
+                source,
+                vec![Value::Int(super::value::lisp_char_code(*character))],
+            )?;
+        }
+        if !pending.is_empty() {
+            Rc::make_mut(&mut self.chars).truncate(position);
+            self.source_eof = false;
+        }
+        Ok(())
+    }
+
+    fn is_layout(c: char) -> bool {
+        // GNU read0/read_symbol: ASCII controls through space and NBSP,
+        // not the broader Unicode White_Space property.
+        c <= ' ' || c == '\u{a0}'
     }
 
     /// Skip whitespace and comments. Returns true at EOF.
     fn skip_layout(&mut self) -> Result<bool, Flow> {
         loop {
-            match self.peek() {
+            match self.peek()? {
                 None => return Ok(true),
-                Some(c) if c.is_whitespace() => {
+                Some(c) if Self::is_layout(c) => {
                     self.pos += 1;
                 }
                 Some(';') => {
-                    while let Some(c) = self.peek() {
+                    while let Some(c) = self.peek()? {
                         self.pos += 1;
                         if c == '\n' {
                             break;
                         }
                     }
                 }
-                Some('#') if self.peek_at(1) == Some('!') => {
-                    while let Some(c) = self.peek() {
+                Some('#') if self.peek_at(1)? == Some('!') => {
+                    while let Some(c) = self.peek()? {
                         self.pos += 1;
                         if c == '\n' {
                             break;
@@ -161,6 +222,9 @@ impl<'a> Reader<'a> {
     /// computed at the reader position where the error surfaced.
     pub fn read(&mut self) -> Result<Option<Value>, Flow> {
         let r = self.read_inner();
+        if r.is_ok() {
+            self.unread_from(self.pos)?;
+        }
         if let Err(Flow::Signal(s, data, b)) = &r {
             let irs = self.interp.intern("invalid-read-syntax");
             if self.from_buffer && self.interp.sym_id(s) == Some(irs) {
@@ -197,7 +261,7 @@ impl<'a> Reader<'a> {
         (line, col + 1)
     }
     fn read_object(&mut self) -> Result<Value, Flow> {
-        match self.peek() {
+        match self.peek()? {
             None => Err(eof_err(self.interp)),
             Some('(') => {
                 self.pos += 1;
@@ -232,7 +296,7 @@ impl<'a> Reader<'a> {
             }
             Some(',') => {
                 self.pos += 1;
-                let which = match self.peek() {
+                let which = match self.peek()? {
                     Some('@') => {
                         self.pos += 1;
                         sym::COMMA_AT
@@ -251,7 +315,7 @@ impl<'a> Reader<'a> {
             }
             Some('?') => {
                 self.pos += 1;
-                let n = match self.next() {
+                let n = match self.next()? {
                     None => return Err(eof_err(self.interp)),
                     // GNU accepts literal `? ' / `?\t' with no
                     // delimiter check (so `(list ? x)' works).
@@ -264,7 +328,7 @@ impl<'a> Reader<'a> {
                     }
                     Some(c) => {
                         self.check_char_delim()?;
-                        c as i128
+                        super::value::lisp_char_code(c)
                     }
                 };
                 // GNU folds byte8 chars (0x3FFF80..0x3FFFFF) back to
@@ -281,7 +345,7 @@ impl<'a> Reader<'a> {
             }
             Some('#') => self.read_dispatch(),
             Some(')') | Some(']') => Err(read_err(self.interp, ")")),
-            Some('.') if self.at_dot_token() => Err(read_err(self.interp, ".")),
+            Some('.') if self.at_dot_token()? => Err(read_err(self.interp, ".")),
             _ => self.read_atom(),
         }
     }
@@ -294,7 +358,7 @@ impl<'a> Reader<'a> {
             if self.skip_layout()? {
                 return Err(eof_err(self.interp));
             }
-            let c = self.peek().unwrap();
+            let c = self.peek()?.unwrap();
             if c == close {
                 self.pos += 1;
                 let mut tail = Value::Nil;
@@ -305,11 +369,11 @@ impl<'a> Reader<'a> {
             }
             // A `.' directly before the close paren is the symbol `\.'
             // (Emacs reads `(a .)' as (a \.), `[a .]' as [a \.]).
-            if c == '.' && self.peek_at(1) == Some(close) {
+            if c == '.' && self.peek_at(1)? == Some(close) {
                 items.push(self.read_atom()?);
                 continue;
             }
-            if c == '.' && self.at_dot_token() {
+            if c == '.' && self.at_dot_token()? {
                 // GNU: a dotting token as the first element is illegal
                 // ("." in wrong context → invalid-read-syntax).
                 if items.is_empty() {
@@ -321,11 +385,11 @@ impl<'a> Reader<'a> {
                 }
                 // GNU: `(a . )' is invalid — the dot must be followed
                 // by an object, not the close paren.
-                if self.peek() == Some(close) {
+                if self.peek()? == Some(close) {
                     return Err(read_err(self.interp, ")"));
                 }
                 let tail = self.read_object()?;
-                if self.skip_layout()? || self.peek() != Some(close) {
+                if self.skip_layout()? || self.peek()? != Some(close) {
                     // Emacs: (invalid-read-syntax "expected )")
                     return Err(read_err(self.interp, "expected )"));
                 }
@@ -350,12 +414,14 @@ impl<'a> Reader<'a> {
     /// directly before `)' or `]' as the symbol `\.', and a `.'
     /// followed by any other delimiter (whitespace, quotes, openers) as
     /// the dotted-tail token.
-    fn at_dot_token(&self) -> bool {
-        debug_assert_eq!(self.peek(), Some('.'));
-        match self.peek_at(1) {
+    fn at_dot_token(&mut self) -> Result<bool, Flow> {
+        debug_assert_eq!(self.peek()?, Some('.'));
+        let result = match self.peek_at(1)? {
             None => true,
-            Some(c) => c.is_whitespace() || matches!(c, '(' | '[' | '"' | '\'' | '`' | ',' | ';'),
-        }
+            Some(c) => Self::is_layout(c) || matches!(c, '(' | '[' | '"' | '\'' | '`' | ',' | ';'),
+        };
+        self.unread_from(self.pos + 1)?;
+        Ok(result)
     }
 
     /// Read a sequence of objects until `close` (for vectors).
@@ -365,13 +431,13 @@ impl<'a> Reader<'a> {
             if self.skip_layout()? {
                 return Err(eof_err(self.interp));
             }
-            if self.peek() == Some(close) {
+            if self.peek()? == Some(close) {
                 self.pos += 1;
                 return Ok(items);
             }
             // `.' directly before `]' reads as the symbol `\.'
             // (Emacs: `[a .]' → [a \.]).
-            if self.peek() == Some('.') && self.peek_at(1) == Some(close) {
+            if self.peek()? == Some('.') && self.peek_at(1)? == Some(close) {
                 items.push(self.read_atom()?);
                 continue;
             }
@@ -395,7 +461,7 @@ impl<'a> Reader<'a> {
         let mut out = String::new();
         let mut multibyte = false;
         loop {
-            match self.next() {
+            match self.next()? {
                 None => return Err(eof_err(self.interp)),
                 Some('"') => {
                     let v = Value::string(out);
@@ -441,7 +507,7 @@ impl<'a> Reader<'a> {
     /// read_escape: \u/\U/\N and >2-digit \x escapes read real
     /// characters even when they fit a byte).  None = `\<newline>'.
     fn read_string_escape(&mut self) -> Result<(Option<char>, bool), Flow> {
-        match self.next() {
+        match self.next()? {
             None => Err(eof_err(self.interp)),
             Some('\n') => Ok((None, false)),
             Some(' ') => Ok((Some(' '), false)),
@@ -465,7 +531,13 @@ impl<'a> Reader<'a> {
                 {
                     return Err(read_err(self.interp, "Invalid modifier in string"));
                 }
-                Ok((crate::lisp::value::lisp_char(n as u32), digits > 2))
+                Ok((
+                    Some(
+                        crate::lisp::value::lisp_char(n as u32)
+                            .unwrap_or_else(|| crate::lisp::value::mule_seq_char(n as u32)),
+                    ),
+                    digits > 2,
+                ))
             }
             Some('u') => {
                 let n = self.read_exact_hex(4)?;
@@ -482,7 +554,7 @@ impl<'a> Reader<'a> {
                 let n = self.read_named_char()?;
                 Ok((crate::lisp::value::lisp_char(n as u32), true))
             }
-            Some('C') if self.peek() == Some('-') => {
+            Some('C') if self.peek()? == Some('-') => {
                 self.pos += 1;
                 let v = self.read_char_literal()?;
                 // Strings hold plain chars: fold C- like ?\C-x (control
@@ -505,7 +577,7 @@ impl<'a> Reader<'a> {
                 }
                 Ok((char::from_u32(ch as u32), false))
             }
-            Some('M') if self.peek() == Some('-') => {
+            Some('M') if self.peek()? == Some('-') => {
                 self.pos += 1;
                 let v = self.read_char_literal()?;
                 // Meta chars live in strings as base+128 (like GNU's
@@ -521,7 +593,7 @@ impl<'a> Reader<'a> {
                     false,
                 ))
             }
-            Some('^') => match self.next() {
+            Some('^') => match self.next()? {
                 None => Err(eof_err(self.interp)),
                 Some(' ') => Ok((Some('\0'), false)),
                 Some(c) => match ctrl_fold(c as i128) {
@@ -536,7 +608,7 @@ impl<'a> Reader<'a> {
             Some(c) if c.is_digit(8) => {
                 let mut n = (c as i128) - ('0' as i128);
                 for _ in 0..2 {
-                    match self.peek() {
+                    match self.peek()? {
                         Some(d) if d.is_digit(8) => {
                             n = n * 8 + (d as i128 - '0' as i128);
                             self.pos += 1;
@@ -548,6 +620,7 @@ impl<'a> Reader<'a> {
                 if (0x80..0x100).contains(&n) {
                     n = 0x3F_FF00 + n;
                 }
+                self.unread_from(self.pos)?;
                 Ok((crate::lisp::value::lisp_char(n as u32), false))
             }
             Some(c) => Ok((Some(c), false)),
@@ -557,10 +630,10 @@ impl<'a> Reader<'a> {
     /// Read a char literal after `?` or `\` inside a string modifier.
     /// Returns the char code with modifier bits.
     fn read_char_literal(&mut self) -> Result<i128, Flow> {
-        match self.next() {
+        match self.next()? {
             None => Err(eof_err(self.interp)),
             Some('\\') => self.read_char_escape(),
-            Some(c) => Ok(c as i128),
+            Some(c) => Ok(super::value::lisp_char_code(c)),
         }
     }
 
@@ -568,7 +641,10 @@ impl<'a> Reader<'a> {
     /// EOF, a control/space char (code ≤ 32), or one of
     /// `"' ; ( ) [ ] # ? ` , .'.
     fn check_char_delim(&mut self) -> Result<(), Flow> {
-        match self.peek() {
+        let delimiter = self.peek()?;
+        // GNU returns this character even when it makes the literal invalid.
+        self.unread_from(self.pos)?;
+        match delimiter {
             None => Ok(()),
             Some(c) if (c as u32) <= 32 => Ok(()),
             Some('"' | '\'' | ';' | '(' | ')' | '[' | ']' | '#' | '?' | '`' | ',' | '.') => Ok(()),
@@ -582,7 +658,7 @@ impl<'a> Reader<'a> {
     fn read_hex_char_escape(&mut self) -> Result<(i128, usize), Flow> {
         let mut val: i128 = 0;
         let mut count = 0usize;
-        while let Some(c) = self.peek() {
+        while let Some(c) = self.peek()? {
             match c.to_digit(16) {
                 Some(d) => {
                     val = val
@@ -604,6 +680,7 @@ impl<'a> Reader<'a> {
                 None => break,
             }
         }
+        self.unread_from(self.pos)?;
         if count == 0 {
             return Err(plain_err(
                 self.interp,
@@ -621,7 +698,7 @@ impl<'a> Reader<'a> {
     fn read_exact_hex(&mut self, n: usize) -> Result<i128, Flow> {
         let mut v: i128 = 0;
         for _ in 0..n {
-            match self.next() {
+            match self.next()? {
                 None => {
                     return Err(plain_err(
                         self.interp,
@@ -648,13 +725,13 @@ impl<'a> Reader<'a> {
     /// GNU `\N{name}' — Unicode char name (whitespace normalized to a
     /// single space) or `U+XXXX'.
     fn read_named_char(&mut self) -> Result<i128, Flow> {
-        if self.next() != Some('{') {
+        if self.next()? != Some('{') {
             return Err(read_err(self.interp, "Expected opening brace after \\N"));
         }
         let mut name = String::new();
         let mut ws = false;
         loop {
-            match self.next() {
+            match self.next()? {
                 None => return Err(eof_err(self.interp)),
                 Some('}') => break,
                 Some(c) if (c as u32) >= 0x80 => {
@@ -691,10 +768,10 @@ impl<'a> Reader<'a> {
 
     /// Char literal after `?\`.
     fn read_char_escape(&mut self) -> Result<i128, Flow> {
-        match self.next() {
+        match self.next()? {
             None => Err(eof_err(self.interp)),
             // Modifier prefixes must come first: `?\C-a`, `?\M-x`, `?\s-k`.
-            Some(c @ ('C' | 'M' | 'S' | 'H' | 'A' | 's')) if self.peek() == Some('-') => {
+            Some(c @ ('C' | 'M' | 'S' | 'H' | 'A' | 's')) if self.peek()? == Some('-') => {
                 self.pos += 1;
                 let bit = match c {
                     'C' => CHAR_CTL,
@@ -730,7 +807,10 @@ impl<'a> Reader<'a> {
             Some('n') => Ok(10),
             Some('r') => Ok(13),
             // `\s' not followed by `-' is just a space (GNU).
-            Some('s') => Ok(32),
+            Some('s') => {
+                self.unread_from(self.pos)?;
+                Ok(32)
+            }
             Some('t') => Ok(9),
             Some('v') => Ok(11),
             Some('x') => self.read_hex_char_escape().map(|(n, _)| n),
@@ -739,6 +819,7 @@ impl<'a> Reader<'a> {
                 if n > 0x10_ffff {
                     return Err(non_unicode_err(self.interp, n));
                 }
+                self.unread_from(self.pos)?;
                 Ok(n)
             }
             Some('U') => {
@@ -746,14 +827,15 @@ impl<'a> Reader<'a> {
                 if n > 0x10_ffff {
                     return Err(non_unicode_err(self.interp, n));
                 }
+                self.unread_from(self.pos)?;
                 Ok(n)
             }
             Some('N') => self.read_named_char(),
             Some('^') => {
-                let inner = match self.next() {
+                let inner = match self.next()? {
                     None => return Err(eof_err(self.interp)),
                     Some('\\') => self.read_char_escape()?,
-                    Some(c) => c as i128,
+                    Some(c) => super::value::lisp_char_code(c),
                 };
                 const ALL_MODS: i128 =
                     CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT;
@@ -772,7 +854,7 @@ impl<'a> Reader<'a> {
             Some(c) if c.is_digit(8) => {
                 let mut n = (c as i128) - ('0' as i128);
                 for _ in 0..2 {
-                    match self.peek() {
+                    match self.peek()? {
                         Some(d) if d.is_digit(8) => {
                             n = n * 8 + (d as i128 - '0' as i128);
                             self.pos += 1;
@@ -784,16 +866,17 @@ impl<'a> Reader<'a> {
                 if (0x80..0x100).contains(&n) {
                     n = 0x3F_FF00 + n;
                 }
+                self.unread_from(self.pos)?;
                 Ok(n)
             }
-            Some(c) => Ok(c as i128),
+            Some(c) => Ok(super::value::lisp_char_code(c)),
         }
     }
 
     /// `#`-dispatch read.
     fn read_dispatch(&mut self) -> Result<Value, Flow> {
-        debug_assert_eq!(self.peek(), Some('#'));
-        match self.peek_at(1) {
+        debug_assert_eq!(self.peek()?, Some('#'));
+        match self.peek_at(1)? {
             Some('\'') => {
                 self.pos += 2;
                 if self.skip_layout()? {
@@ -806,7 +889,7 @@ impl<'a> Reader<'a> {
                 self.pos += 2;
                 // Uninterned symbol; GNU accepts an empty name (`#:'),
                 // which reads back as `##'.
-                let (tok, _) = self.read_symbol_token();
+                let (tok, _) = self.read_symbol_token()?;
                 Ok(Value::Sym(self.interp.make_symbol(&tok)))
             }
             Some('#') => {
@@ -821,7 +904,7 @@ impl<'a> Reader<'a> {
                 // LSB-first within each string byte.
                 self.pos += 2;
                 let mut n: u32 = 0;
-                while let Some(d) = self.peek() {
+                while let Some(d) = self.peek()? {
                     if d.is_ascii_digit() {
                         n = n * 10 + d.to_digit(10).unwrap();
                         self.pos += 1;
@@ -829,7 +912,7 @@ impl<'a> Reader<'a> {
                         break;
                     }
                 }
-                if self.next() != Some('"') {
+                if self.next()? != Some('"') {
                     return Err(read_err(self.interp, "#&"));
                 }
                 let s = self.read_string()?;
@@ -878,7 +961,7 @@ impl<'a> Reader<'a> {
                 self.pos += 2;
                 let mut n: usize = 0;
                 let mut digits = 0;
-                while let Some(c) = self.peek() {
+                while let Some(c) = self.peek()? {
                     if c.is_ascii_digit() {
                         n = n * 10 + (c as usize - '0' as usize);
                         self.pos += 1;
@@ -888,10 +971,14 @@ impl<'a> Reader<'a> {
                     }
                 }
                 if digits == 2 && n == 0 {
-                    self.pos = self.chars.len();
+                    if self.function_source.is_some() {
+                        while self.next()?.is_some() {}
+                    } else {
+                        self.pos = self.chars.len();
+                    }
                     return Ok(Value::Nil);
                 }
-                while let Some(c) = self.peek() {
+                while let Some(c) = self.peek()? {
                     self.pos += 1;
                     if c == '\u{1f}' {
                         break;
@@ -938,11 +1025,11 @@ impl<'a> Reader<'a> {
                 // sub char-table.  Both land in the Record layout
                 // used by misc::char_table_vec.
                 self.pos += 2;
-                let sub = self.peek() == Some('^');
+                let sub = self.peek()? == Some('^');
                 if sub {
                     self.pos += 1;
                 }
-                if self.next() != Some('[') {
+                if self.next()? != Some('[') {
                     return Err(read_err_sym(self.interp, "#^"));
                 }
                 let items = self.read_seq_unannotated(']')?;
@@ -1054,7 +1141,7 @@ impl<'a> Reader<'a> {
                 // `#s(...)' — record object; `#s(hash-table ...)' reads
                 // a real hash table (GNU's printed-hash-table format).
                 self.pos += 2;
-                if self.peek() != Some('(') {
+                if self.peek()? != Some('(') {
                     return Err(read_err_sym(self.interp, "#s "));
                 }
                 self.pos += 1;
@@ -1076,13 +1163,13 @@ impl<'a> Reader<'a> {
                 // `#_' — read the next token as an interned symbol
                 // (symbol-with-position marker in byte-compiled files).
                 self.pos += 2;
-                let (tok, _) = self.read_symbol_token();
+                let (tok, _) = self.read_symbol_token()?;
                 Ok(Value::Sym(self.interp.intern(&tok)))
             }
             Some('|') | Some('<') => {
                 // GNU's read point is past `#' when these signal.
                 self.pos += 1;
-                let c = if matches!(self.peek(), Some('|')) {
+                let c = if matches!(self.peek()?, Some('|')) {
                     "|"
                 } else {
                     "<"
@@ -1123,7 +1210,7 @@ impl<'a> Reader<'a> {
                 let start = self.pos;
                 self.pos += 1;
                 let mut n: u64 = 0;
-                while let Some(d) = self.peek() {
+                while let Some(d) = self.peek()? {
                     if d.is_ascii_digit() {
                         self.pos += 1;
                         n = match n
@@ -1137,7 +1224,7 @@ impl<'a> Reader<'a> {
                         break;
                     }
                 }
-                match self.next() {
+                match self.next()? {
                     Some('r') | Some('R') => {
                         if n > u32::MAX as u64 {
                             return Err(read_err(self.interp, &format!("integer, radix {n}")));
@@ -1227,7 +1314,7 @@ impl<'a> Reader<'a> {
         if !(2..=36).contains(&radix) {
             return Err(read_err_radix(self.interp, radix));
         }
-        let neg = match self.peek() {
+        let neg = match self.peek()? {
             Some('-') => {
                 self.pos += 1;
                 true
@@ -1240,7 +1327,7 @@ impl<'a> Reader<'a> {
         };
         let mut n = num_bigint::BigInt::from(0);
         let mut any = false;
-        while let Some(c) = self.peek() {
+        while let Some(c) = self.peek()? {
             if c.is_alphanumeric() {
                 match c.to_digit(radix) {
                     Some(d) => {
@@ -1257,6 +1344,7 @@ impl<'a> Reader<'a> {
         if !any {
             return Err(read_err_radix(self.interp, radix));
         }
+        self.unread_from(self.pos)?;
         Ok(if neg { -n } else { n })
     }
 
@@ -1264,7 +1352,7 @@ impl<'a> Reader<'a> {
     /// `#` terminates (expression-prefix syntax); `?` does not
     /// (it's a symbol constituent in elisp).
     fn is_terminator(c: char) -> bool {
-        c.is_whitespace()
+        Self::is_layout(c)
             || matches!(
                 c,
                 '(' | ')' | '[' | ']' | '"' | '\'' | '`' | ',' | ';' | '#'
@@ -1274,16 +1362,16 @@ impl<'a> Reader<'a> {
     /// Read a raw token (symbol constituent chars, `\` escapes included).
     /// The returned bool reports whether any `\` escape was consumed, so
     /// `read_atom' can tell `.' (dotting token) apart from `\.' (symbol).
-    fn read_symbol_token(&mut self) -> (String, bool) {
+    fn read_symbol_token(&mut self) -> Result<(String, bool), Flow> {
         let mut tok = String::new();
         let mut escaped = false;
-        while let Some(c) = self.peek() {
+        while let Some(c) = self.peek()? {
             if Self::is_terminator(c) {
                 break;
             }
             if c == '\\' {
                 self.pos += 1;
-                if let Some(e) = self.next() {
+                if let Some(e) = self.next()? {
                     tok.push(e);
                     escaped = true;
                     continue;
@@ -1293,13 +1381,14 @@ impl<'a> Reader<'a> {
             tok.push(c);
             self.pos += 1;
         }
-        (tok, escaped)
+        self.unread_from(self.pos)?;
+        Ok((tok, escaped))
     }
 
     /// Read a token and classify: number, symbol, or error.
     fn read_atom(&mut self) -> Result<Value, Flow> {
         let start = self.pos;
-        let (tok, escaped) = self.read_symbol_token();
+        let (tok, escaped) = self.read_symbol_token()?;
         if tok.is_empty() {
             return Err(read_err(self.interp, "empty token"));
         }
@@ -1317,7 +1406,7 @@ impl<'a> Reader<'a> {
             // `\.' is always the symbol `.' (GNU reads (a \. b) as a
             // 3-element list whose middle element is the `.' symbol).
             "." if escaped => {}
-            "." if matches!(self.peek(), Some(')') | Some(']')) => {}
+            "." if matches!(self.peek()?, Some(')') | Some(']')) => {}
             "." => return Err(read_err(self.interp, ".")),
             _ => {}
         }
