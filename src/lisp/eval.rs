@@ -698,6 +698,9 @@ pub struct Interp {
     /// Strings produced by multibyte decoders — `multibyte-string-p'
     /// is t for them even when their contents are pure ASCII.
     pub multibyte_strings: HashMap<usize, std::rc::Weak<std::cell::RefCell<String>>>,
+    /// Destructive string-data changes; byte-code dispatch uses this to
+    /// notice instruction edits made by Lisp during a running call.
+    pub(crate) string_data_tick: u64,
     /// Text properties attached to string objects: pointer identity →
     /// (weak backref, sorted disjoint intervals (start, end, plist)).
     /// GNU keeps dead interval boundaries after property removal, so
@@ -1059,6 +1062,7 @@ impl Interp {
             color_db_init: false,
             unibyte_strings: HashMap::default(),
             multibyte_strings: HashMap::default(),
+            string_data_tick: 0,
             string_props: HashMap::default(),
             zero_vector: Value::vector(Vec::new()),
         }
@@ -5303,6 +5307,10 @@ command-line arguments.\" \
             .get(&(std::rc::Rc::as_ptr(s) as usize))
             .and_then(|w| w.upgrade())
             .is_some()
+    }
+
+    pub(crate) fn note_string_data_change(&mut self) {
+        self.string_data_tick = self.string_data_tick.wrapping_add(1);
     }
 
     /// Text-prop interval list for a string object (empty when none).

@@ -422,11 +422,9 @@ pub struct Lambda {
     /// routes natively and must not confuse with closures whose captured
     /// variables happen to sit in consts[0].
     pub bc_closure: bool,
-    /// Cached decoded program for `#[...]' byte-code objects
-    /// (instruction bytes + argdesc + consts snapshot).  Rebuilt by
-    /// `bytecode::exec' when `bc_items[0..3]' change identity — GNU
-    /// permits `aset' on the element vector, so the cache validates
-    /// against the slot values, never just presence.
+    /// Cached instruction bytes and argument metadata. Rebuilt when the
+    /// argument/code slots change or the instruction string is edited;
+    /// constants are read live from their vector rather than snapshotted.
     pub(crate) bc_prog: RefCell<Option<Rc<crate::lisp::bytecode::BcProg>>>,
     /// GNU closure slot 4: the docstring *value* — a string for
     /// documented functions, but `(:documentation FORM)' may produce

@@ -1571,6 +1571,17 @@ fallback is unchanged pending a decision on these malformed inputs.
 Regression: `tests/qa_bytecode_errors.el` covers defined validation,
 invalid-opcode offsets, valid constant loads, and legacy string conversion.
 
+Byte-code caches validate the instruction string's contents as well as its
+slot identity. Lisp can edit future instructions during a running call,
+including through variable watchers or recursive calls. Destructive string
+writers (`aset`, `fillarray`, `clear-string`, `store-substring`, and in-place
+`subst-char-in-string`) must call `note_string_data_change`. Dispatch checks
+that tick between instructions and decodes changed source into a local copy;
+unchanged code keeps the cached bytes. The source Value stays on the active
+call, avoiding an untraced persistent GC edge in the cache. Regression:
+`qa_bytecode_mutation` covers shared code, operands, raw `byte-code`, watchers,
+callbacks, recursion, unrelated string edits and GC.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

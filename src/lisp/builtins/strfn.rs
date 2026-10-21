@@ -4415,6 +4415,7 @@ fn f_clear_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             i.clear_str_props(s);
             if n != 0 {
                 *s.borrow_mut() = "\0".repeat(n);
+                i.note_string_data_change();
                 i.mark_unibyte(s);
             }
             Ok(Value::Nil)
@@ -4447,6 +4448,7 @@ fn f_store_substring(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                 }
                 chars[at as usize] = *c;
                 *s.borrow_mut() = chars.iter().collect();
+                i.note_string_data_change();
             }
             Ok(args[0].clone())
         }
@@ -5259,6 +5261,7 @@ fn f_subst_char_in_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult
             if inplace {
                 if let Value::Str(s) = s_v {
                     *s.borrow_mut() = replaced;
+                    i.note_string_data_change();
                     return Ok(args[2].clone());
                 }
                 unreachable!()

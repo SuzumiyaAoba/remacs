@@ -564,6 +564,7 @@ fn f_aset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                 chars[n as usize] = c;
             }
             *s.borrow_mut() = chars.into_iter().collect();
+            i.note_string_data_change();
             Ok(args[2].clone())
         }
         Value::Record(r) if super::misc::is_bool_vector(i, &args[0]) => {
@@ -1022,6 +1023,7 @@ fn f_fillarray(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             }
             *st = std::iter::repeat_n(character, n).collect();
             drop(st);
+            i.note_string_data_change();
             // Preserve inferred ASCII-unibyte strings even when their new
             // contents consist entirely of raw-eight-bit proxy characters.
             if multibyte {

@@ -21,6 +21,7 @@ use super::error::Flow;
 use super::eval::{ExcursionState, Interp, RestrictionState};
 use super::obarray::sym;
 use super::value::{Lambda, SymId, Value, lisp_char_code};
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -60,14 +61,15 @@ pub(crate) fn is_byte_code(items: &[Value]) -> bool {
         && matches!(&items[2], Value::Vec(_))
         && items[3].int().is_some()
 }
-/// Decoded byte-code program cached on `Lambda::bc_prog'.  Built once
-/// per `bc_items' contents; identity of the argdesc/code/consts slots
-/// is recorded so a Lisp `aset' on the element vector forces a rebuild.
+/// Decoded byte-code program cached on `Lambda::bc_prog'. The code slot
+/// is mutable through its string, so identity alone cannot validate it.
 pub(crate) struct BcProg {
     /// Identity of `items[0]' (argdesc) for staleness checks.
     argdesc_key: usize,
     /// Identity of `items[1]' (byte string) for staleness checks.
     code_key: usize,
+    /// Source contents at decode time, including raw-byte proxy scalars.
+    source_text: String,
     /// Decoded instruction bytes.
     code: Vec<u8>,
     /// `parse_argdesc' results.
@@ -131,19 +133,17 @@ pub(crate) fn exec(
     let argdesc = items.first().cloned().unwrap_or(Value::Nil);
     let bytestr = items.get(1).cloned().unwrap_or(Value::Nil);
     let consts = items.get(2).cloned().unwrap_or(Value::Nil);
-    // Cached decoded program, keyed on the identity of the argdesc and
-    // code slots — a Lisp `aset' on the element vector writes a new
-    // Value (new Rc) and forces a rebuild.  The constants vector is
-    // passed by reference and read live per `konst', so in-place
-    // `aset' on it is visible mid-call like GNU.
+    // Retain both code-slot identity and its decoded source contents:
+    // in-place string edits preserve the Rc address. Constants stay live
+    // and are read from their vector for every constant instruction.
     let prog = {
         let key_a = slot_key(&argdesc);
         let key_c = slot_key(&bytestr);
-        let hit = l
-            .bc_prog
-            .borrow()
-            .as_ref()
-            .is_some_and(|p| p.argdesc_key == key_a && p.code_key == key_c);
+        let hit = l.bc_prog.borrow().as_ref().is_some_and(|p| {
+            p.argdesc_key == key_a
+                && p.code_key == key_c
+                && matches!(&bytestr, Value::Str(s) if s.borrow().as_str() == p.source_text)
+        });
         if hit {
             l.bc_prog.borrow().clone().unwrap()
         } else {
@@ -155,6 +155,10 @@ pub(crate) fn exec(
             let p = Rc::new(BcProg {
                 argdesc_key: key_a,
                 code_key: key_c,
+                source_text: match &bytestr {
+                    Value::Str(s) => s.borrow().clone(),
+                    _ => unreachable!(), // code_bytes validated the string.
+                },
                 code,
                 req,
                 max,
@@ -179,11 +183,11 @@ pub(crate) fn exec(
             }
             std::process::exit(3);
         }
-        let r = run(i, &prog, &consts, &argv, who, named);
+        let r = run(i, &prog, &bytestr, &consts, &argv, who, named);
         i.bc_depth -= 1;
         return r;
     }
-    run(i, &prog, &consts, &argv, who, named)
+    run(i, &prog, &bytestr, &consts, &argv, who, named)
 }
 
 /// `(byte-code BYTESTR CONSTVEC DEPTH)' entry point — no arguments.
@@ -193,18 +197,23 @@ pub(crate) fn exec_raw(i: &mut Interp, bytestr: &Value, consts: &Value) -> EvalR
     let prog = BcProg {
         argdesc_key: 0,
         code_key: 0,
+        source_text: match bytestr {
+            Value::Str(s) => s.borrow().clone(),
+            _ => unreachable!(), // code_bytes validated the string.
+        },
         code,
         req,
         max,
         has_rest,
         dyn_names: dyn_names.map(Rc::new),
     };
-    run(i, &prog, consts, &[], None, false)
+    run(i, &prog, bytestr, consts, &[], None, false)
 }
 
 fn run(
     i: &mut Interp,
     prog: &BcProg,
+    source: &Value,
     consts: &Value,
     argv: &[Value],
     who: Option<&Value>,
@@ -293,7 +302,8 @@ fn run(
     let catch_depth = i.catch_tags.len();
     let r = dispatch(
         i,
-        &prog.code,
+        prog,
+        source,
         consts.as_ref(),
         &mut stack,
         &mut unwinds,
@@ -333,15 +343,31 @@ fn unwind_one(i: &mut Interp, u: Unwind) {
 /// is consulted innermost-first; unclaimed exits propagate.
 fn dispatch(
     i: &mut Interp,
-    code: &[u8],
+    prog: &BcProg,
+    source: &Value,
     consts: &RefCell<Vec<Value>>,
     stack: &mut Vec<Value>,
     unwinds: &mut Vec<Unwind>,
     handlers: &mut Vec<BcHandler>,
 ) -> EvalResult {
+    let mut code = Cow::Borrowed(prog.code.as_slice());
+    let mut source_text = Cow::Borrowed(prog.source_text.as_str());
+    let mut seen_tick = None;
     let mut pc = 0usize;
     loop {
         i.profiler_poll();
+        // A Lisp call, watcher or unwind handler may edit future
+        // instructions in this very invocation. The global tick makes
+        // the common, unchanged instruction path constant-time.
+        if seen_tick != Some(i.string_data_tick) {
+            if let Value::Str(s) = source {
+                if s.borrow().as_str() != source_text.as_ref() {
+                    code = Cow::Owned(code_bytes(i, source)?);
+                    source_text = Cow::Owned(s.borrow().clone());
+                }
+            }
+            seen_tick = Some(i.string_data_tick);
+        }
         if i.quit_flag {
             i.quit_flag = false;
             return Err(Flow::Quit);
@@ -382,7 +408,16 @@ fn dispatch(
             }
         }
         pc += 1;
-        match step_op(i, code, consts, stack, unwinds, handlers, &mut pc, op) {
+        match step_op(
+            i,
+            code.as_ref(),
+            consts,
+            stack,
+            unwinds,
+            handlers,
+            &mut pc,
+            op,
+        ) {
             Step::Next => {}
             Step::Return(v) => return Ok(v),
             Step::Flow(Flow::Signal(sig, data, offered)) => {
