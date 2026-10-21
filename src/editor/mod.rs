@@ -64,6 +64,9 @@ pub struct Window {
     pub height: usize,
     pub left: usize,
     pub width: usize,
+    /// GNU normal_lines/normal_cols: intended height/width fractions,
+    /// retained independently of integer cell rounding during layout.
+    pub normal_size: (f64, f64),
     /// GNU `suspend_auto_hscroll': set by `scroll-left'/-right'/
     /// `set-window-hscroll'; auto-hscroll stays off until point
     /// changes (compared against `old_point' at redisplay).
@@ -210,6 +213,7 @@ impl Window {
                 height: 24,
                 left: 0,
                 width: 80,
+                normal_size: (1.0, 1.0),
                 dedicated: Value::Nil,
                 minibuffer: false,
                 params: Value::Nil,
@@ -3189,6 +3193,21 @@ fn restore_window_config_parameters(parameters: &mut Value, saved: &Value) {
     }
 }
 
+fn window_normal_size_value(window: &Window) -> Value {
+    Value::cons(
+        Value::float(window.normal_size.0),
+        Value::float(window.normal_size.1),
+    )
+}
+
+fn read_window_normal_size(value: &Value) -> Option<(f64, f64)> {
+    let Value::Cons(pair) = value else {
+        return None;
+    };
+    let pair = pair.borrow();
+    Some((state_float(&pair.car)?, state_float(&pair.cdr)?))
+}
+
 fn window_config_tree(window: &WindowRef, keys: &[Value]) -> Value {
     let window_data = window.borrow();
     Value::vector(vec![
@@ -3209,6 +3228,7 @@ fn window_config_tree(window: &WindowRef, keys: &[Value]) -> Value {
         } else {
             Value::Nil
         },
+        window_normal_size_value(&window_data),
     ])
 }
 
@@ -3218,6 +3238,7 @@ struct SavedWindowTree {
     children: Vec<SavedWindowTree>,
     combination_limit: bool,
     parameters: Value,
+    normal_size: Option<(f64, f64)>,
 }
 
 fn read_window_config_tree(
@@ -3261,6 +3282,7 @@ fn read_window_config_tree(
         children,
         combination_limit: fields.get(3).is_some_and(Value::truthy),
         parameters: fields.get(4).cloned().unwrap_or(Value::Nil),
+        normal_size: fields.get(5).and_then(read_window_normal_size),
     })
 }
 
@@ -3288,6 +3310,9 @@ fn restore_window_config_tree(tree: &SavedWindowTree, parent: Option<&WindowRef>
     window.horiz = tree.horizontal;
     window.children = children;
     window.combination_limit = tree.combination_limit;
+    if let Some(normal_size) = tree.normal_size {
+        window.normal_size = normal_size;
+    }
     if tree.horizontal.is_some() {
         restore_window_config_parameters(&mut window.params, &tree.parameters);
     }
@@ -3376,6 +3401,7 @@ fn window_configuration(i: &mut Interp) -> Value {
                 Value::Int(wb.min_hscroll as i128),
                 Value::from_bool(wb.suspend_hscroll),
                 window_config_marker(i, wb.buffer, wb.old_point, insertion_type),
+                window_normal_size_value(&wb),
             ]));
         }
         // GNU configs record the minibuffer window's geometry too; it
@@ -3403,6 +3429,7 @@ fn window_configuration(i: &mut Interp) -> Value {
                 Value::Int(mb.min_hscroll as i128),
                 Value::from_bool(mb.suspend_hscroll),
                 window_config_marker(i, mb.buffer, mb.old_point, false),
+                window_normal_size_value(&mb),
             ]));
         }
     }
@@ -3432,6 +3459,9 @@ fn spec_int(v: &[Value], n: usize) -> i128 {
 }
 
 fn restore_window_view(i: &Interp, window: &mut Window, spec: &[Value], restore_positions: bool) {
+    if let Some(normal_size) = spec.get(20).and_then(read_window_normal_size) {
+        window.normal_size = normal_size;
+    }
     if restore_positions {
         if let Some(buffer) = i.buffers.get(window.buffer) {
             let buffer = buffer.borrow();
@@ -4193,10 +4223,22 @@ pub(crate) fn f_split_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     let buf = w.borrow().buffer;
     let new = Window::new(buf);
     record_buffer_display(i, buf);
-    let (wl, wt, ww_, wh) = {
+    let (wl, wt, ww_, wh, normal_size) = {
         let wb = w.borrow();
-        (wb.left, wb.top, wb.width, wb.height)
+        (wb.left, wb.top, wb.width, wb.height, wb.normal_size)
     };
+    let total = if hor { ww_ } else { wh };
+    let new_extent = match size {
+        None => (total / 2) as f64,
+        Some(size) if size >= 0 => (total as i128 - size) as f64,
+        Some(size) => (-size) as f64,
+    };
+    let new_normal = if size.is_none() {
+        0.5
+    } else {
+        new_extent / total as f64
+    };
+    let keep_normal = 1.0 - new_normal;
     // Geometry: halve W along the split axis and place NEW on SIDE.
     let (w_new_geo, n_geo) = {
         let (keep, sz) = if hor {
@@ -4270,6 +4312,26 @@ pub(crate) fn f_split_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
         .unwrap_or(false);
     if reuse {
         let p = parent.unwrap();
+        {
+            let original = if hor { normal_size.1 } else { normal_size.0 };
+            let parent_total = {
+                let parent = p.borrow();
+                if hor { parent.width } else { parent.height }
+            };
+            let added = if size.is_none() {
+                original / 2.0
+            } else {
+                new_extent / parent_total as f64
+            };
+            let kept = original - added;
+            if hor {
+                w.borrow_mut().normal_size.1 = kept;
+                new.borrow_mut().normal_size.1 = added;
+            } else {
+                w.borrow_mut().normal_size.0 = kept;
+                new.borrow_mut().normal_size.0 = added;
+            }
+        }
         let mut pb = p.borrow_mut();
         let pos = pb
             .children
@@ -4281,8 +4343,19 @@ pub(crate) fn f_split_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
         new.borrow_mut().parent = Some(Rc::downgrade(&p));
     } else {
         let p = Window::new_internal(hor, wl, wt, ww_, wh);
+        w.borrow_mut().normal_size = if hor {
+            (1.0, keep_normal)
+        } else {
+            (keep_normal, 1.0)
+        };
+        new.borrow_mut().normal_size = if hor {
+            (1.0, new_normal)
+        } else {
+            (new_normal, 1.0)
+        };
         {
             let mut pb = p.borrow_mut();
+            pb.normal_size = normal_size;
             pb.parent = w.borrow().parent.clone();
             // below/right → (W NEW); above/left → (NEW W).
             if side == 0 || side == 2 {
@@ -4442,6 +4515,11 @@ fn f_delete_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             };
             let mut tb = t.borrow_mut();
             if horiz {
+                tb.normal_size.1 += w.borrow().normal_size.1;
+            } else {
+                tb.normal_size.0 += w.borrow().normal_size.0;
+            }
+            if horiz {
                 if tl + tw == dl {
                     // T directly left of W: extend right.
                     tb.width += dsize;
@@ -4465,7 +4543,7 @@ fn f_delete_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         // takes the parent's slot and geometry, recursively upward.
         let mut cur = p;
         loop {
-            let (pl, pt, pw, ph, pparent, kids) = {
+            let (pl, pt, pw, ph, pparent, kids, normal_size) = {
                 let cb = cur.borrow();
                 (
                     cb.left,
@@ -4474,6 +4552,7 @@ fn f_delete_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     cb.height,
                     cb.parent.clone(),
                     cb.children.clone(),
+                    cb.normal_size,
                 )
             };
             if kids.len() != 1 {
@@ -4487,6 +4566,7 @@ fn f_delete_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 sb.width = pw;
                 sb.height = ph;
                 sb.parent = pparent.clone();
+                sb.normal_size = normal_size;
             }
             {
                 let mut cb = cur.borrow_mut();
@@ -4575,6 +4655,7 @@ fn f_delete_other_windows(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         wb.height = rh;
         wb.parent = None;
         wb.dead = false;
+        wb.normal_size = (1.0, 1.0);
     }
     ff.root = Some(w.clone());
     ff.selected = w.clone();
@@ -16637,15 +16718,7 @@ fn win_state_items(
             wb.children.clone(),
         )
     };
-    // normal sizes: this window's fraction of its parent along each
-    // axis (1.0 for parentless windows).
-    let (nh, nw) = match w_parent(w) {
-        Some(p) => {
-            let pb = p.borrow();
-            (ww_of(pb.height, wh), ww_of(pb.width, ww))
-        }
-        None => (1.0, 1.0),
-    };
+    let (nh, nw) = w.borrow().normal_size;
     let mut items = match horiz {
         Some(hor) => {
             let tag = i.intern(if hor { "hc" } else { "vc" });
@@ -16784,14 +16857,6 @@ fn restore_window_state_parameters(
         }
     }
     Ok(())
-}
-
-fn ww_of(total: usize, part: usize) -> f64 {
-    if total == 0 {
-        1.0
-    } else {
-        part as f64 / total as f64
-    }
 }
 
 /// The leaf `(buffer BUFFER . STATE)' spec — buffer object (or name
@@ -17009,6 +17074,8 @@ fn win_state_materialize(
                 (l, pos, wd, size)
             };
             let child = win_state_materialize(i, f, cs, cl, ct, cw, ch, selected)?;
+            let normal = size as f64 / axis.max(1) as f64;
+            child.borrow_mut().normal_size = if horiz { (1.0, normal) } else { (normal, 1.0) };
             child.borrow_mut().parent = Some(Rc::downgrade(&node));
             kids.push(child);
             pos += size;
@@ -17190,6 +17257,7 @@ fn f_window_state_put(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let sel_was_w = f.borrow().selected.borrow().id == w.borrow().id;
     let mut selected: Option<WindowRef> = None;
     let node = win_state_materialize(i, &f, &items[1..], wl, wt, ww, wh, &mut selected)?;
+    node.borrow_mut().normal_size = w.borrow().normal_size;
     // Splice the new node into the tree where W sat.
     match &par {
         Some(p) => {
@@ -22396,9 +22464,38 @@ fn f_face_underline_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 const WINDOW_MIN_HEIGHT: usize = 4;
 const WINDOW_MIN_WIDTH: usize = 10;
 
+/// Refresh a normal dimension after an explicit geometry change.
+pub(crate) fn update_window_normal_size(window: &WindowRef, horizontal: bool) {
+    let normal = w_parent(window).map_or(1.0, |parent| {
+        let parent = parent.borrow();
+        let window = window.borrow();
+        if parent.horiz != Some(horizontal) {
+            1.0
+        } else {
+            let (size, total) = if horizontal {
+                (window.width, parent.width)
+            } else {
+                (window.height, parent.height)
+            };
+            size as f64 / total.max(1) as f64
+        }
+    });
+    let mut window = window.borrow_mut();
+    if horizontal {
+        window.normal_size.1 = normal;
+    } else {
+        window.normal_size.0 = normal;
+    }
+}
+
 /// Adjust WINDOW's height (or width when HORIZ) by DELTA cells,
 /// taking/giving space from another window in the frame.
 fn window_resize(i: &mut Interp, w: &WindowRef, delta: i128, horiz: bool) -> Result<(), Flow> {
+    let old_size = if horiz {
+        w.borrow().width
+    } else {
+        w.borrow().height
+    };
     let f = sel_frame(i).ok_or_else(|| i.error("No frame"))?;
     let wid = w.borrow().id;
     let others: Vec<WindowRef> = {
@@ -22431,6 +22528,17 @@ fn window_resize(i: &mut Interp, w: &WindowRef, delta: i128, horiz: bool) -> Res
         if let Some(o) = others.first() {
             let mut oo = o.borrow_mut();
             oo.height = (oo.height as i128 - actual).max(WINDOW_MIN_HEIGHT as i128) as usize;
+        }
+    }
+    let new_size = if horiz {
+        w.borrow().width
+    } else {
+        w.borrow().height
+    };
+    if old_size != new_size {
+        update_window_normal_size(w, horiz);
+        if let Some(other) = others.first() {
+            update_window_normal_size(other, horiz);
         }
     }
     Ok(())
@@ -22509,6 +22617,7 @@ fn f_balance_windows(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         for (k, w) in wins.iter().enumerate() {
             // Give the remainder to the first window.
             w.borrow_mut().height = each + if k == 0 { total % wins.len() } else { 0 };
+            update_window_normal_size(w, false);
         }
     }
     Ok(Value::t())

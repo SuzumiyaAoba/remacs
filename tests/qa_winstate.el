@@ -556,4 +556,172 @@
 '(t (9))
 )
 
+;; Issue #286: normal dimensions follow the immediate parent combination.
+;; Derive expected fractions from local dimensions: batch frame heights differ.
+(defun qa286-fixture (function)
+  (save-window-excursion
+    (delete-other-windows)
+    (funcall function (selected-window))))
+(defun qa286-normal (window)
+  (list (window-normal-size window) (window-normal-size window t)))
+(defun qa286-split (side size)
+  (qa286-fixture
+   (lambda (old)
+     (let* ((horizontal (memq side '(left right)))
+            (total (window-total-size old horizontal))
+            (expected-new (if (null size) 0.5
+                            (/ (float (if (< size 0) (- size) (- total size))) total)))
+            (expected-old (- 1.0 expected-new))
+            (new (split-window old size side)))
+       (list (equal (qa286-normal old)
+                    (if horizontal (list 1.0 expected-old) (list expected-old 1.0)))
+             (equal (qa286-normal new)
+                    (if horizontal (list 1.0 expected-new) (list expected-new 1.0)))
+             (qa286-normal (window-parent new)))))))
+
+(qa
+(qa286-split 'right 20)
+'(t t (1.0 1.0))
+)
+
+(qa
+(qa286-split 'left 20)
+'(t t (1.0 1.0))
+)
+
+(qa
+(qa286-split 'below 10)
+'(t t (1.0 1.0))
+)
+
+(qa
+(qa286-split 'above 10)
+'(t t (1.0 1.0))
+)
+
+(qa
+(qa286-split 'right nil)
+'(t t (1.0 1.0))
+)
+
+(qa
+(qa286-split 'below nil)
+'(t t (1.0 1.0))
+)
+
+(qa
+(qa286-split 'right -20)
+'(t t (1.0 1.0))
+)
+
+(qa
+(qa286-split 'below -10)
+'(t t (1.0 1.0))
+)
+
+(qa
+(qa286-fixture
+ (lambda (left)
+  (let* ((right (split-window left 20 'right))
+         (total (window-total-height right))
+         (expected-new (/ (float (- total 10)) total))
+         (bottom (split-window right 10 'below)))
+   (list (qa286-normal left)
+         (equal (qa286-normal right) (list (- 1.0 expected-new) 1.0))
+         (equal (qa286-normal bottom) (list expected-new 1.0))
+         (qa286-normal (window-parent bottom)) (qa286-normal (frame-root-window))))))
+'((1.0 0.25) t t (1.0 0.75) (1.0 1.0))
+)
+
+(qa
+(qa286-fixture
+ (lambda (left)
+  (let* ((middle (split-window left 20 'right))
+         (right (split-window middle 30 'right)))
+   (mapcar #'qa286-normal (list left middle right (frame-root-window))))))
+'((1.0 0.25) (1.0 0.375) (1.0 0.375) (1.0 1.0))
+)
+
+(qa
+(qa286-fixture
+ (lambda (left)
+  (let* ((right (split-window left 20 'right))
+         (saved (current-window-configuration)))
+   (split-window right 10 'below)
+   (set-window-configuration saved)
+   (list (qa286-normal left) (qa286-normal right)))))
+'((1.0 0.25) (1.0 0.75))
+)
+
+(qa
+(qa286-fixture
+ (lambda (left)
+  (let ((right (split-window left 20 'right)))
+   (set-window-new-normal right 0.9)
+   (list (qa286-normal left) (qa286-normal right) (window-new-normal right)))))
+'((1.0 0.25) (1.0 0.75) 0.9)
+)
+
+(qa
+(list (qa286-normal (frame-root-window)) (qa286-normal (minibuffer-window)))
+'((1.0 1.0) (1.0 1.0))
+)
+
+(qa
+(qa286-fixture
+ (lambda (left)
+  (let* ((middle (split-window left 20 'right))
+         (right (split-window middle 30 'right)))
+   (delete-window middle)
+   (list (qa286-normal left) (qa286-normal right)
+         (progn (delete-window left) (qa286-normal right))))))
+'((1.0 0.625) (1.0 0.375) (1.0 1.0))
+)
+
+(qa
+(qa286-fixture
+ (lambda (left)
+  (let ((right (split-window left 20 'right)))
+   (delete-other-windows right) (qa286-normal right))))
+'(1.0 1.0)
+)
+
+(qa
+(qa286-fixture
+ (lambda (left)
+  (let ((right (split-window left 20 'right)))
+   (enlarge-window 5 t)
+   (list (qa286-normal left) (qa286-normal right)))))
+'((1.0 0.3125) (1.0 0.6875))
+)
+
+(qa
+(qa286-fixture
+ (lambda (top)
+  (split-window top nil 'below)
+  (let ((state (window-state-get nil t)))
+   (delete-other-windows)
+   (window-state-put (read (prin1-to-string state)))
+   (let ((root (frame-root-window)))
+    (list (mapcar (lambda (window)
+                    (list (= (window-normal-size window)
+                             (/ (float (window-total-height window))
+                                (window-total-height root)))
+                          (window-normal-size window t)))
+                  (window-list))
+          (= 1.0 (apply #'+ (mapcar #'window-normal-size (window-list)))))))))
+'(((t 1.0) (t 1.0)) t)
+)
+
+(qa
+(qa286-fixture
+ (lambda (top)
+  (let* ((bottom (split-window top nil 'below))
+         (saved (current-window-configuration)))
+   (enlarge-window 1)
+   (set-window-configuration saved)
+   (list (qa286-normal top) (qa286-normal bottom)))))
+'((0.5 1.0) (0.5 1.0))
+)
+
 (princ (qa--done))

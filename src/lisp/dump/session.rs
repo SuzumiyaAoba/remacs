@@ -121,6 +121,8 @@ struct WindowData {
     height: usize,
     left: usize,
     width: usize,
+    #[serde(default)]
+    normal_size: Option<(f64, f64)>,
     dedicated: Ref,
     minibuffer: bool,
     params: Ref,
@@ -461,8 +463,19 @@ impl Image {
                 .parse()
                 .map_err(|_| "Invalid dumped pixel size")?;
             w.new_normal = new_normal;
+            w.normal_size = data.normal_size.unwrap_or((1.0, 1.0));
             w.old_buffer = old_buffer;
             w.cursor_type = cursor_type;
+        }
+        // Older images have only integer geometry; recover their
+        // fractions after all parent and child rectangles are restored.
+        for data in &self.window_data {
+            if data.normal_size.is_none() {
+                if let Some(Value::Window(window)) = externals.get(&format!("window:{}", data.id)) {
+                    crate::editor::update_window_normal_size(window, false);
+                    crate::editor::update_window_normal_size(window, true);
+                }
+            }
         }
         for data in &self.frame_data {
             let Value::Frame(object) = externals
@@ -860,6 +873,7 @@ impl Image {
             height: w.height,
             left: w.left,
             width: w.width,
+            normal_size: Some(w.normal_size),
             dedicated: e.value(&w.dedicated)?,
             minibuffer: w.minibuffer,
             params: e.value(&w.params)?,
@@ -896,6 +910,38 @@ impl Image {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_roundtrip_preserves_normal_window_sizes() {
+        std::thread::Builder::new()
+            .stack_size(128 << 20)
+            .spawn(|| {
+                let mut source = Interp::new();
+                source.eval_str("(split-window nil 20 'right)").unwrap();
+                let image = Image::capture(&source).unwrap();
+                let bytes = serde_json::to_vec(&image).unwrap();
+                let image: Image = serde_json::from_slice(&bytes).unwrap();
+                let mut restored = Interp::new();
+                image.restore(&mut restored).unwrap();
+                let sizes = restored
+                    .eval_str("(mapcar (lambda (w) (window-normal-size w t)) (window-list))")
+                    .unwrap();
+                assert_eq!(restored.prin1_to_string(&sizes), "(0.25 0.75)");
+                let mut legacy = serde_json::to_value(&image).unwrap();
+                for window in legacy["window_data"].as_array_mut().unwrap() {
+                    window.as_object_mut().unwrap().remove("normal_size");
+                }
+                let legacy: Image = serde_json::from_value(legacy).unwrap();
+                legacy.restore(&mut restored).unwrap();
+                let sizes = restored
+                    .eval_str("(mapcar (lambda (w) (window-normal-size w t)) (window-list))")
+                    .unwrap();
+                assert_eq!(restored.prin1_to_string(&sizes), "(0.25 0.75)");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 
     #[test]
     fn complete_session_roundtrip_preserves_program_buffers_and_dispatch_metadata() {

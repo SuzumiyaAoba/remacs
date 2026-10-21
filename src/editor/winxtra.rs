@@ -2904,8 +2904,14 @@ fn f_frame_pointer_visible_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
 /// `window-normal-size' — GNU Fwindow_normal_size decodes WINDOW with
 /// decode_valid_window (wrong-type `window-valid-p').
 fn f_window_normal_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = win_valid(i, &arg(&a, 0))?;
-    Ok(Value::float(1.0))
+    let window = win_valid(i, &arg(&a, 0))?;
+    let window = window.borrow();
+    let size = if arg(&a, 1).truthy() {
+        window.normal_size.1
+    } else {
+        window.normal_size.0
+    };
+    Ok(Value::float(size))
 }
 
 /// `window-resize-apply' — GNU Fwindow_resize_apply: decode_live_frame

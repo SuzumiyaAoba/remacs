@@ -1796,6 +1796,15 @@ and is synthesized only when absent. `window-state-put` resets existing
 values to nil before merging saved associations into the internal plist,
 including internal tree nodes. `qa_winstate` pins these #285 rules.
 
+Window normal sizes live in `Window.normal_size` (height, width), separately
+from rounded integer geometry and the pending `new_normal` slot. Splitting
+computes the new fraction first and subtracts it from the old fraction;
+unspecified sizes halve the intended fraction even for odd cell counts.
+New internal parents inherit the replaced window's fractions. Deletion,
+explicit resizing, configuration/state restoration and session dumps carry
+the values; legacy dumps infer fractions from geometry. Configuration leaf
+slot 20 and tree slot 5 hold normal sizes. `qa_winstate` covers #286.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source
