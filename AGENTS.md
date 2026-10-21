@@ -620,6 +620,20 @@ spelling. Regression: `qa_network_accept_callbacks`.
 Keep the constructor's log function in `Proc.log` and include it in
 `Proc::gc_values`; changing a returned contact list must not replace it.
 
+IP contact addresses come from the socket's real local/peer endpoints,
+including after DNS resolution. Synchronous and asynchronous clients both
+honor the requested address family. Accepted connections copy the listener's
+creation plist and override server/host/service/local/remote; the reported
+service is the peer port. Preserve the original hostname for outgoing clients.
+`process-contact` with t returns the stored plist, matching GNU's shared-data
+identity. Unix addresses are unibyte strings from a zero-initialized sockaddr
+and its bounded reported length; retain anonymous/abstract embedded NUL bytes.
+Retain Unix accept's peer address before callbacks or a fast disconnect;
+accepted descriptors remain close-on-exec. Outgoing Unix remote information
+keeps the actual connect pathname spelling, including symbolic links.
+Regressions: `qa_network_contacts` and kernel endpoint checks in
+`tests/network_eof.rs`, including simultaneous IPv4/IPv6 listeners for DNS.
+
 ## Process coding (`process/coding.rs` + `builtins/coding_stream.rs`)
 
 Asynchronous child, pipe, TCP, Unix and datagram I/O uses the shared

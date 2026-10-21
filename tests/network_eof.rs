@@ -1,4 +1,4 @@
-//! Kernel evidence for stream EOF and immediate listener deletion.
+//! Kernel evidence for network EOF, listener lifetime and contact endpoints.
 mod common;
 use common::*;
 use remacs::lisp::process::ProcIo;
@@ -32,6 +32,7 @@ impl OwnedDirectory {
 
 impl Drop for OwnedDirectory {
     fn drop(&mut self) {
+        let _ = std::fs::remove_file(self.0.join("alias.sock"));
         let _ = std::fs::remove_file(self.0.join("owned.sock"));
         let _ = std::fs::remove_dir(&self.0);
     }
@@ -292,5 +293,268 @@ fn deleted_listeners_release_ports_paths_and_recycled_descriptors() {
         let mut bytes = [0; 4];
         peer.read_exact(&mut bytes).unwrap();
         assert_eq!(&bytes, b"PING");
+    });
+}
+
+fn contact_address(i: &mut Interp, expression: &str) -> std::net::SocketAddr {
+    let value = eval(i, &format!("(format-network-address {expression})"));
+    let Value::Str(text) = value else {
+        panic!("missing socket address: {expression}")
+    };
+    let address = text
+        .borrow()
+        .parse()
+        .unwrap_or_else(|e| panic!("{expression}: {e}"));
+    address
+}
+
+fn contact_bytes(i: &mut Interp, expression: &str) -> Vec<u8> {
+    let value = eval(i, expression);
+    let Value::Str(text) = value else {
+        panic!("missing local address: {expression}")
+    };
+    assert!(
+        i.is_unibyte_str(&text),
+        "Unix addresses must preserve raw bytes"
+    );
+    let bytes = text
+        .borrow()
+        .chars()
+        .map(|c| u8::try_from(c as u32).unwrap())
+        .collect();
+    bytes
+}
+
+fn anonymous_address(socket: RawFd) -> Vec<u8> {
+    let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    // Detect padding that was not actually returned by the kernel rather
+    // than accidentally agreeing with the implementation's zeroed buffer.
+    unsafe {
+        std::ptr::write_bytes(
+            (&mut address as *mut libc::sockaddr_un).cast::<u8>(),
+            0xa5,
+            std::mem::size_of_val(&address),
+        );
+    }
+    let mut length = std::mem::size_of_val(&address) as libc::socklen_t;
+    assert_eq!(
+        unsafe {
+            libc::getsockname(
+                socket,
+                (&mut address as *mut libc::sockaddr_un).cast(),
+                &mut length,
+            )
+        },
+        0
+    );
+    let header = std::mem::offset_of!(libc::sockaddr_un, sun_path);
+    let count = (length as usize)
+        .min(std::mem::size_of_val(&address))
+        .saturating_sub(header);
+    unsafe { std::slice::from_raw_parts(address.sun_path.as_ptr().cast(), count).to_vec() }
+}
+
+fn wait_accepted(i: &mut Interp, phase: &str) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !eval(i, "(processp contact220-peer)").truthy() {
+        assert!(Instant::now() < deadline, "{phase}: contact test accept timed out");
+        eval(i, "(accept-process-output nil 0.01)");
+    }
+}
+
+#[test]
+fn contact_endpoints_match_kernel_addresses_and_resolved_address_families() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    on_big_stack(|| {
+        let (mut i, _) = interp();
+        i.noninteractive = true;
+        let v4 = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = v4.local_addr().unwrap().port();
+        let v6 = TcpListener::bind((Ipv6Addr::LOCALHOST, port)).ok();
+        v4.set_nonblocking(true).unwrap();
+        if let Some(listener) = &v6 {
+            listener.set_nonblocking(true).unwrap();
+        }
+        for (family, host) in [
+            ("ipv4", "127.0.0.1"),
+            ("ipv4", "localhost"),
+            ("ipv6", "::1"),
+            ("ipv6", "localhost"),
+        ] {
+            if family == "ipv6" && v6.is_none() {
+                continue;
+            }
+            // Every candidate is an owned loopback endpoint. In particular,
+            // the other family also listens on this port, so ignoring the
+            // requested family cannot hide behind connection refusal.
+            use std::net::ToSocketAddrs;
+            let candidates: Vec<_> = (host, port).to_socket_addrs().unwrap().collect();
+            assert!(candidates.iter().all(|a| a.ip().is_loopback()));
+            if !candidates.iter().any(|a| a.is_ipv4() == (family == "ipv4")) {
+                continue;
+            }
+            let listener = if family == "ipv4" {
+                &v4
+            } else {
+                v6.as_ref().unwrap()
+            };
+            for nowait in [false, true] {
+                let process = connect(
+                    &mut i,
+                    &format!(
+                        ":host {host:?} :family '{family} :service {port} :nowait {}",
+                        if nowait { "t" } else { "nil" }
+                    ),
+                );
+                eval(&mut i, "(process-send-string eof217 \"READY\")");
+                let mut peer = accept(|| listener.accept().map(|(stream, _)| stream));
+                peer.set_nonblocking(false).unwrap();
+                peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                let mut data = [0; 5];
+                peer.read_exact(&mut data).unwrap();
+                assert_eq!(&data, b"READY");
+                assert_eq!(
+                    contact_address(&mut i, "(process-contact eof217 :remote)"),
+                    peer.local_addr().unwrap()
+                );
+                assert_eq!(
+                    contact_address(&mut i, "(process-contact eof217 :local)"),
+                    peer.peer_addr().unwrap()
+                );
+                assert_eq!(
+                    printed(&mut i, "(process-contact eof217 :host)"),
+                    format!("{host:?}")
+                );
+                let socket = fd(&process);
+                eval(&mut i, "(delete-process eof217)");
+                closed(socket);
+            }
+        }
+        drop(v6);
+        drop(v4);
+        eval(&mut i, "(defvar contact220-peer nil) (defun contact220-log (_server peer _message)
+            (process-put peer 'at-log-local (process-contact peer :local))
+            (process-put peer 'at-log-remote (process-contact peer :remote)) (setq contact220-peer peer))");
+        for host in ["127.0.0.1", "::1"] {
+            if host == "::1" && TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).is_err() {
+                continue;
+            }
+            let family = if host == "::1" { "ipv6" } else { "ipv4" };
+            let server = eval(
+                &mut i,
+                &format!(
+                    "(setq contact220-peer nil contact220-server (make-network-process :name \"contact-server\" :host {host:?} :family '{family} :service 0 :server t :noquery t :filter #'ignore :sentinel #'ignore :log #'contact220-log))"
+                ),
+            );
+            let address = {
+                let Value::Process(p) = &server else {
+                    unreachable!()
+                };
+                let p = p.borrow();
+                let ProcIo::Listen(l) = &p.io else {
+                    unreachable!()
+                };
+                l.local_addr().unwrap()
+            };
+            assert_eq!(
+                contact_address(&mut i, "(process-contact contact220-server :local)"),
+                address
+            );
+            let client =
+                std::net::TcpStream::connect_timeout(&address, Duration::from_secs(2)).unwrap();
+            wait_accepted(&mut i, "INET");
+            for expression in [
+                "(process-contact contact220-peer :remote)",
+                "(process-get contact220-peer 'at-log-remote)",
+            ] {
+                assert_eq!(
+                    contact_address(&mut i, expression),
+                    client.local_addr().unwrap()
+                );
+            }
+            for expression in [
+                "(process-contact contact220-peer :local)",
+                "(process-get contact220-peer 'at-log-local)",
+            ] {
+                assert_eq!(
+                    contact_address(&mut i, expression),
+                    client.peer_addr().unwrap()
+                );
+            }
+            assert_eq!(
+                printed(&mut i, "(process-contact contact220-peer :server)"),
+                "nil"
+            );
+            assert_eq!(
+                printed(&mut i, "(process-contact contact220-server :server)"),
+                "t"
+            );
+            eval(
+                &mut i,
+                "(delete-process contact220-peer) (delete-process contact220-server)",
+            );
+            assert_eq!(
+                contact_address(&mut i, "(process-contact contact220-peer :remote)"),
+                client.local_addr().unwrap()
+            );
+        }
+        let directory = OwnedDirectory::new();
+        let path = directory.0.join("owned.sock");
+        eval(
+            &mut i,
+            &format!(
+                "(setq contact220-peer nil contact220-server (make-network-process :name \"contact-local\" :family 'local :service {:?} :server t :noquery t :filter #'ignore :sentinel #'ignore :log #'contact220-log))",
+                path.to_str().unwrap()
+            ),
+        );
+        let client = std::os::unix::net::UnixStream::connect(&path).unwrap();
+        wait_accepted(&mut i, "Unix connected");
+        let accepted = eval(&mut i, "contact220-peer");
+        let flags = unsafe { libc::fcntl(fd(&accepted), libc::F_GETFD) };
+        assert!(flags >= 0 && flags & libc::FD_CLOEXEC != 0);
+        assert_eq!(
+            contact_bytes(&mut i, "(process-contact contact220-peer :remote)"),
+            anonymous_address(client.as_raw_fd())
+        );
+        assert_eq!(
+            contact_bytes(&mut i, "(process-contact contact220-peer :local)"),
+            path.to_str().unwrap().as_bytes()
+        );
+        eval(
+            &mut i,
+            "(delete-process contact220-peer) (setq contact220-peer nil)",
+        );
+        drop(client);
+        let short_client = std::os::unix::net::UnixStream::connect(&path).unwrap();
+        let short_address = anonymous_address(short_client.as_raw_fd());
+        drop(short_client);
+        wait_accepted(&mut i, "Unix early close");
+        assert_eq!(
+            contact_bytes(&mut i, "(process-contact contact220-peer :remote)"),
+            short_address
+        );
+        eval(
+            &mut i,
+            "(delete-process contact220-peer) (delete-process contact220-server)",
+        );
+        std::fs::remove_file(&path).unwrap();
+        let listener = UnixListener::bind(&path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let alias = directory.0.join("alias.sock");
+        std::os::unix::fs::symlink(&path, &alias).unwrap();
+        let process = connect(
+            &mut i,
+            &format!(":family 'local :service {:?}", alias.to_str().unwrap()),
+        );
+        let _peer = accept(|| listener.accept().map(|(stream, _)| stream));
+        assert_eq!(
+            contact_bytes(&mut i, "(process-contact eof217 :local)"),
+            anonymous_address(fd(&process))
+        );
+        assert_eq!(
+            contact_bytes(&mut i, "(process-contact eof217 :remote)"),
+            alias.to_str().unwrap().as_bytes()
+        );
+        eval(&mut i, "(delete-process eof217)");
     });
 }

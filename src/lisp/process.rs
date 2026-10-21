@@ -376,6 +376,117 @@ fn socket_addr_value(addr: std::net::SocketAddr) -> Value {
     Value::vector(parts)
 }
 
+fn unix_address_bytes(address: &libc::sockaddr_un, length: libc::socklen_t) -> Vec<u8> {
+    let start = std::mem::offset_of!(libc::sockaddr_un, sun_path);
+    let length = (length as usize)
+        .min(std::mem::size_of_val(address))
+        .saturating_sub(start);
+    let bytes =
+        unsafe { std::slice::from_raw_parts(address.sun_path.as_ptr().cast::<u8>(), length) };
+    let end = if bytes.first().is_some_and(|byte| *byte != 0) {
+        bytes
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(bytes.len())
+    } else {
+        bytes.len()
+    };
+    bytes[..end].to_vec()
+}
+
+fn unix_address_value(i: &mut Interp, bytes: &[u8]) -> Value {
+    let value = Value::string(bytes.iter().map(|byte| *byte as char).collect::<String>());
+    if let Value::Str(text) = &value {
+        i.mark_unibyte(text);
+    }
+    value
+}
+
+fn unix_local_addr(i: &mut Interp, fd: i32) -> Option<Value> {
+    let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    let mut length = std::mem::size_of_val(&address) as libc::socklen_t;
+    let pointer = (&mut address as *mut libc::sockaddr_un).cast();
+    let result = unsafe { libc::getsockname(fd, pointer, &mut length) };
+    (result == 0).then(|| unix_address_value(i, &unix_address_bytes(&address, length)))
+}
+
+fn accept_local(
+    listener: &std::os::unix::net::UnixListener,
+) -> std::io::Result<(std::os::unix::net::UnixStream, Vec<u8>)> {
+    // getpeername can fail after a fast disconnect. Retain accept's
+    // address just as GNU does, without allocating Lisp under the I/O borrow.
+    // Configure the listener: accepted sockets inherit this option, but
+    // setting it after a fast disconnect fails with EINVAL on Apple.
+    #[cfg(target_vendor = "apple")]
+    {
+        let enabled: libc::c_int = 1;
+        if unsafe {
+            libc::setsockopt(
+                listener.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_NOSIGPIPE,
+                (&enabled as *const libc::c_int).cast(),
+                std::mem::size_of_val(&enabled) as libc::socklen_t,
+            )
+        } != 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    let mut length = std::mem::size_of_val(&address) as libc::socklen_t;
+    let pointer = (&mut address as *mut libc::sockaddr_un).cast();
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let fd = unsafe {
+        libc::accept4(
+            listener.as_raw_fd(),
+            pointer,
+            &mut length,
+            libc::SOCK_CLOEXEC,
+        )
+    };
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let fd = unsafe { libc::accept(listener.as_raw_fd(), pointer, &mut length) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let owned = unsafe { OwnedFd::from_raw_fd(fd) };
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok((
+        std::os::unix::net::UnixStream::from(owned),
+        unix_address_bytes(&address, length),
+    ))
+}
+
+fn accepted_contact(
+    i: &mut Interp,
+    server: &ProcessRef,
+    host: Value,
+    service: Option<Value>,
+    remote: Value,
+    local: Option<Value>,
+) -> EvalResult {
+    let parent = server.borrow().contact.clone();
+    let mut contact = super::builtins::seq::f_copy_sequence(i, vec![parent].into())?;
+    for (key, value) in [
+        (":server", Value::Nil),
+        (":host", host),
+        (":remote", remote),
+    ] {
+        contact = super::eval::plist_put(&contact, i.intern(key), value);
+    }
+    if let Some(service) = service {
+        contact = super::eval::plist_put(&contact, i.intern(":service"), service);
+    }
+    if let Some(local) = local {
+        contact = super::eval::plist_put(&contact, i.intern(":local"), local);
+    }
+    Ok(contact)
+}
+
 impl Drop for ProcIo {
     /// Close leaked fds and reap children so an Interp (or dropped
     /// process object) can't exhaust the system's pty table — the unit
@@ -922,7 +1033,7 @@ fn poll_proc_once(
         Out(Vec<u8>, bool),
         Exit(&'static str, i32),
         Accepted(std::net::TcpStream, std::net::SocketAddr),
-        AcceptedLocal(std::os::unix::net::UnixStream),
+        AcceptedLocal(std::os::unix::net::UnixStream, Vec<u8>),
     }
     let mut events = Vec::new();
     {
@@ -1120,9 +1231,9 @@ fn poll_proc_once(
                     }
                 }
                 ProcIo::LocalListen(l, _) => loop {
-                    match l.accept() {
-                        Ok((stream, _addr)) => {
-                            events.push(Ev::AcceptedLocal(stream));
+                    match accept_local(l) {
+                        Ok((stream, remote)) => {
+                            events.push(Ev::AcceptedLocal(stream, remote));
                             break;
                         }
                         Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
@@ -1199,10 +1310,9 @@ fn poll_proc_once(
                 // The accepted process gets its own buffer in GNU (nil
                 // by default — data doesn't land in the server's).
                 let buffer = None;
-                let contact = Value::list(vec![
-                    Value::string(addr.ip().to_string()),
-                    Value::Int(addr.port() as i128),
-                ]);
+                let contact = accepted_contact(i, pref,
+                    Value::string(accepted_host(addr.ip())), Some(Value::Int(addr.port() as i128)),
+                    socket_addr_value(addr), stream.local_addr().ok().map(socket_addr_value))?;
 
                 // GNU's accepted process inherits the listener's
                 // filter, sentinel and plist (server-process-filter
@@ -1260,7 +1370,7 @@ fn poll_proc_once(
                 i.processes.push(child_proc.clone());
                 notify_accept(i, pref, &child_proc, &accepted_host(addr.ip()))?;
             }
-            Ev::AcceptedLocal(stream) => {
+            Ev::AcceptedLocal(stream, remote) => {
                 // Local-socket accept — GNU names the child after the
                 // peer's socket address when it has one.
                 let _ = stream.set_nonblocking(true);
@@ -1271,7 +1381,9 @@ fn poll_proc_once(
                     .and_then(|a| a.as_pathname().map(|p| p.display().to_string()))
                     .map(|p| format!("<{p}>"))
                     .unwrap_or_else(|| "<local socket>".to_string());
-                let contact = Value::list(vec![Value::string(name.clone())]);
+                let remote = unix_address_value(i, &remote);
+                let local = unix_local_addr(i, stream.as_raw_fd());
+                let contact = accepted_contact(i, pref, Value::t(), None, remote, local)?;
                 // Same GNU inheritance rule as the TCP accept path.
                 let (filter, sentinel, plist, coding, inherit_coding) = {
                     let pb = pref.borrow();
@@ -2204,8 +2316,13 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
             items.push(v);
         }
-        items.extend(extra);
-        Value::list(items)
+        let mut contact = Value::list(items);
+        for pair in extra.chunks_exact(2) {
+            if let Value::Sym(key) = pair[0] {
+                contact = super::eval::plist_put(&contact, key, pair[1].clone());
+            }
+        }
+        contact
     };
     // `:family local' — Unix-domain sockets; :service is the socket path.
     let family_v = kw(i, &args, ":family");
@@ -2239,14 +2356,10 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 )
             })?;
             let _ = listener.set_nonblocking(true);
+            let local = unix_local_addr(i, listener.as_raw_fd()).unwrap_or(Value::Nil);
             let mut p = base_proc(name, "network", ProcIo::LocalListen(listener, path.clone()));
             p.status = "listen";
-            let local_kw = symv(i, ":local");
-            p.contact = {
-                let mut items: Vec<Value> = args.list_to_vec().unwrap_or_default();
-                items.extend(vec![local_kw, Value::string(path.clone())]);
-                Value::list(items)
-            };
+            p.contact = super::eval::plist_put(&args, i.intern(":local"), local);
             let pref = finish_setup(i, p, &args, false)?;
             i.processes.push(pref.clone());
             return Ok(Value::Process(pref));
@@ -2265,14 +2378,14 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
         };
         let _ = stream.set_nonblocking(true);
+        let local = unix_local_addr(i, stream.as_raw_fd()).unwrap_or(Value::Nil);
+        // GNU reports the address passed to connect, preserving symlink
+        // spelling and remaining valid if the remote end immediately closes.
+        let remote = unix_address_value(i, path.as_bytes());
         let mut p = base_proc(name, "network", ProcIo::LocalNet(stream));
         p.status = "open";
-        let local_kw = symv(i, ":local");
-        p.contact = {
-            let mut items: Vec<Value> = args.list_to_vec().unwrap_or_default();
-            items.extend(vec![local_kw, Value::string(path)]);
-            Value::list(items)
-        };
+        p.contact = super::eval::plist_put(&args, i.intern(":local"), local);
+        p.contact = super::eval::plist_put(&p.contact, i.intern(":remote"), remote);
         let pref = finish_setup(i, p, &args, false)?;
         i.processes.push(pref.clone());
         return Ok(Value::Process(pref));
@@ -2312,11 +2425,12 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             )
         })?;
         let _ = listener.set_nonblocking(true);
-        let local_port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
+        let local_address = listener.local_addr().ok();
+        let local_port = local_address.map(|address| address.port()).unwrap_or(port);
         let mut p = base_proc(name, "network", ProcIo::Listen(listener));
         p.status = "listen";
         let local_kw = symv(i, ":local");
-        let local_v = addr_vec("127.0.0.1", local_port);
+        let local_v = local_address.map(socket_addr_value).unwrap_or(Value::Nil);
         p.contact = contact_plist(i, local_port, vec![local_kw, local_v]);
         let pref = finish_setup(i, p, &args, false)?;
         i.processes.push(pref.clone());
@@ -2324,34 +2438,28 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     let port = service_port(i, &service)?;
     let nowait = kw(i, &args, ":nowait").truthy();
-    let connection = if nowait {
-        use std::net::ToSocketAddrs;
-        // Name resolution follows the platform's resolver; no TCP handshake
-        // is allowed to block, including fallback to another resolved address.
-        (host.as_str(), port)
-            .to_socket_addrs()
-            .and_then(|addresses| {
-                let family = match family_v {
-                    Value::Sym(s) => i.symbol_name(s),
-                    _ => String::new(),
-                };
-                TcpConnect::start(
-                    addresses
-                        .filter(|addr| match family.as_str() {
-                            "ipv4" => addr.is_ipv4(),
-                            "ipv6" => addr.is_ipv6(),
-                            _ => true,
-                        })
-                        .collect(),
-                )
-                .map(ProcIo::Connecting)
-            })
-    } else {
-        std::net::TcpStream::connect((host.as_str(), port)).and_then(|stream| {
-            stream.set_nonblocking(true)?;
-            Ok(ProcIo::Net(stream))
-        })
+    use std::net::ToSocketAddrs;
+    let family = match family_v {
+        Value::Sym(s) => i.symbol_name(s),
+        _ => String::new(),
     };
+    let connection = (host.as_str(), port).to_socket_addrs().and_then(|addresses| {
+        let addresses: Vec<_> = addresses.filter(|address| match family.as_str() {
+            "ipv4" => address.is_ipv4(),
+            "ipv6" => address.is_ipv6(),
+            _ => true,
+        }).collect();
+        if nowait {
+            // Resolution follows the system resolver; every attempted
+            // handshake remains nonblocking, including address fallback.
+            TcpConnect::start(addresses.into()).map(ProcIo::Connecting)
+        } else {
+            std::net::TcpStream::connect(addresses.as_slice()).and_then(|stream| {
+                stream.set_nonblocking(true)?;
+                Ok(ProcIo::Net(stream))
+            })
+        }
+    });
     let io = match connection {
         Ok(io) => io,
         Err(e) => {
@@ -2396,11 +2504,8 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 .unwrap_or(Value::Nil),
         ),
         ProcIo::Net(stream) => (
-            addr_vec(&host, port),
-            addr_vec(
-                "127.0.0.1",
-                stream.local_addr().map(|a| a.port()).unwrap_or(0),
-            ),
+            stream.peer_addr().ok().map(socket_addr_value).unwrap_or(Value::Nil),
+            stream.local_addr().ok().map(socket_addr_value).unwrap_or(Value::Nil),
         ),
         _ => unreachable!("TCP client backend"),
     };
@@ -2414,20 +2519,6 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let pref = finish_setup(i, p, &args, false)?;
     i.processes.push(pref.clone());
     Ok(Value::Process(pref))
-}
-
-/// `[a b c d port]` address vector like GNU's contact format.
-fn addr_vec(host: &str, port: u16) -> Value {
-    let mut octets: Vec<Value> = host
-        .split('.')
-        .filter_map(|o| o.parse::<u8>().ok())
-        .map(|o| Value::Int(o as i128))
-        .collect();
-    while octets.len() < 4 {
-        octets.push(Value::Int(0));
-    }
-    octets.push(Value::Int(port as i128));
-    Value::vector(octets)
 }
 
 fn f_make_serial_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
