@@ -640,13 +640,21 @@ fn f_ngettext(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_vconcat(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let mut out: Vec<Value> = Vec::new();
-    for a in args.iter() {
-        // Like append, preserve raw bytes in unibyte strings rather than
-        // decoding their storage proxies as multibyte eight-bit characters.
-        out.extend(super::seq::seq_to_vec(i, a)?);
+    let mut out = Vec::new();
+    for sequence in args.iter() {
+        match sequence {
+            // GNU concat_to_vector accepts CLOSUREP as a slot sequence.
+            Value::Lambda(function) => out.extend(misc::lambda_slot_values(function)),
+            // Preserve raw bytes in unibyte strings, original Lisp codes
+            // in multibyte strings, and the shared elements of sequences.
+            _ => out.extend(super::seq::seq_to_vec(i, sequence)?),
+        }
     }
-    Ok(Value::vector(out))
+    Ok(if out.is_empty() {
+        i.zero_vector.clone()
+    } else {
+        Value::vector(out)
+    })
 }
 
 pub(crate) fn f_substring(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -5065,28 +5073,8 @@ fn f_string_to_list(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     super::listfn::f_append(i, vec![args[0].clone(), Value::Nil].into())
 }
 fn f_string_to_vector(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // Emacs accepts nil (treated as the empty sequence).
-    let s = match &args[0] {
-        Value::Nil => String::new(),
-        v => want_string(i, v)?,
-    };
-    let unibyte = match &args[0] {
-        Value::Str(r) => i.is_unibyte_str(r),
-        _ => false,
-    };
-    let items: Vec<Value> = s
-        .chars()
-        .map(|c| {
-            Value::Int(if unibyte {
-                crate::lisp::value::eight_bit_byte(c)
-                    .map(|b| b as i128)
-                    .unwrap_or((c as u32) as i128 & 0xFF)
-            } else {
-                lisp_char_code(c)
-            })
-        })
-        .collect();
-    Ok(Value::vector(items))
+    // GNU subr.el: (vconcat STRING), including non-string inputs.
+    f_vconcat(i, args)
 }
 
 fn string_storage_bytes(i: &Interp, string: &crate::lisp::value::StrRef) -> usize {

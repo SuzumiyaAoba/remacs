@@ -1599,6 +1599,14 @@ The list spine is fresh but elements stay shared. `qa_string_to_list` covers
 aliasing, dotted/cyclic errors, closure slots, byte kinds, boolean vectors,
 and direct multi-argument append/tail behavior.
 
+`string-to-vector` delegates to `vconcat`, including lists, vectors,
+boolean vectors and closure slots. `vconcat` keeps its own list traversal
+(GNU checks the full list's length, unlike append's initial CAR copy),
+and returns the shared `zero_vector` when empty. Nonempty results have a
+fresh vector spine with shared elements. `qa_string_to_vector` pins these
+rules, all 256 raw bytes, proxy characters, circular error tails, type/error
+data identity and direct vconcat behavior.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source
