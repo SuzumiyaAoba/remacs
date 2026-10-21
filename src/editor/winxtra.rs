@@ -2925,9 +2925,24 @@ fn f_window_resize_apply_total(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
 
 /// `run-window-scroll-functions' — GNU Frun_window_scroll_functions
 /// decodes WINDOW with decode_live_window (wrong-type `window-live-p').
-fn f_run_window_scroll_functions(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = win_live(i, &arg(&a, 0))?;
-    Ok(Value::Nil)
+pub(crate) fn f_run_window_scroll_functions(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let argument = arg(&a, 0);
+    let window = win_live(i, &argument)?;
+    let buffer = window.borrow().buffer;
+    let caller = i.current_buffer;
+    i.set_current_buffer(buffer);
+    let hook = i.intern("window-scroll-functions");
+    let start = Value::Int(window.borrow().start as i128 + 1);
+    // GNU passes the original WINDOW argument: nil stays nil even
+    // though decode_live_window has resolved the selected window.
+    let result = crate::lisp::builtins::evalfn::f_run_hook_with_args(
+        i,
+        vec![Value::Sym(hook), argument, start].into(),
+    );
+    if i.buffer_live(caller) {
+        i.set_current_buffer(caller);
+    }
+    result
 }
 
 /// `frame-scale-factor' — GNU Fframe_scale_factor decodes FRAME with

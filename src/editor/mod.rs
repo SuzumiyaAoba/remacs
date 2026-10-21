@@ -4245,6 +4245,13 @@ pub(crate) fn f_split_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
         .unwrap_or(ff.windows.len());
     ff.windows
         .insert(idx + usize::from(side == 0 || side == 2), new.clone());
+    drop(ff);
+    // GNU's internal buffer installation runs the primitive hook;
+    // the public Lisp splitter then calls the public runner as well.
+    // Release frame borrows before either notification enters Lisp.
+    winxtra::f_run_window_scroll_functions(i, vec![Value::Window(new.clone())].into())?;
+    let run_scroll = i.intern("run-window-scroll-functions");
+    i.apply(&Value::Sym(run_scroll), vec![Value::Window(new.clone())])?;
     Ok(Value::Window(new))
 }
 

@@ -2346,8 +2346,8 @@ fn hook_fns(i: &Interp, hook: &Value) -> Vec<Value> {
         Some(s) => i.var_alias_target(s),
         None => return Vec::new(),
     };
-    // GNU `run-hooks': when the buffer-local binding contains `t' as
-    // an element, the global (default) value is run at the end.
+    // A local `t' sentinel runs the default hook at that position;
+    // local functions after the sentinel still run afterwards.
     let local = i.buffers.get(i.current_buffer).and_then(|b| {
         b.try_borrow()
             .ok()
@@ -2355,11 +2355,13 @@ fn hook_fns(i: &Interp, hook: &Value) -> Vec<Value> {
     });
     match local {
         Some(v) => {
-            let mut fns = hook_list(&v);
-            if fns.iter().any(|f| i.sym_is(f, sym::T)) {
-                fns.retain(|f| !i.sym_is(f, sym::T));
-                let mut globals = hook_list(&i.obarray.symbol(id).value);
-                fns.append(&mut globals);
+            let mut fns = Vec::new();
+            for function in hook_list(&v) {
+                if i.sym_is(&function, sym::T) {
+                    fns.extend(hook_list(&i.obarray.symbol(id).value));
+                } else {
+                    fns.push(function);
+                }
             }
             fns
         }
@@ -2385,7 +2387,7 @@ fn f_run_hooks(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_run_hook_with_args(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_run_hook_with_args(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let hook = args[0].clone();
     want_hook_sym(i, &hook)?;
     let fns = hook_fns(i, &hook);

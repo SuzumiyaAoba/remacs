@@ -1772,6 +1772,15 @@ nil)` history only when an apply entry ran and history identity did not
 change. Point-only and undo-disabled ordinary edits do not create it.
 `qa_undo` pins these #282 history and explicit-apply distinctions.
 
+`run-window-scroll-functions` switches to the window's buffer for hook
+lookup/calls and restores a live caller buffer on normal return, errors
+and throws. Pass the original WINDOW argument (nil stays nil) and the
+1-based saved window start. Splitting first notifies through the internal
+buffer-installation primitive, then invokes the public runner once, as GNU's
+public Lisp splitter does. Release frame borrows before either callback.
+Local hook t sentinels expand default hooks in place.
+`qa_window_scroll_hooks` pins these #283 context and notification rules.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

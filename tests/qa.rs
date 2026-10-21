@@ -442,6 +442,7 @@ qa!(qa_string_width_tabs, "qa_string_width_tabs.el");
 qa!(qa_string_glyph_split, "qa_string_glyph_split.el");
 qa!(qa_window, "qa_window.el");
 qa!(qa_window_configuration, "qa_window_configuration.el");
+qa!(qa_window_scroll_hooks, "qa_window_scroll_hooks.el");
 qa!(qa_winstate, "qa_winstate.el");
 qa!(qa_window_state_minimum, "qa_window_state_minimum.el");
 qa!(qa_xref, "qa_xref.el");
