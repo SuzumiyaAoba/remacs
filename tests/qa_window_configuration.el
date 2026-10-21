@@ -577,4 +577,280 @@
 )
 
 
+;; Issue #280: only factory configurations have the native opaque type.
+(defun qa280-probe (kind operation)
+ (let ((value (pcase kind ('real (current-window-configuration))
+               ('fake (record 'window-configuration nil nil nil))
+               ('uninterned (record (make-symbol "window-configuration") nil nil nil)))))
+  (condition-case error-data
+   (pcase operation
+    ('predicates (list (window-configuration-p value) (recordp value)
+                      (arrayp value) (vectorp value) (sequencep value) (symbol-name (type-of value))))
+    ('frame (eq (window-configuration-frame value) (selected-frame)))
+    ('length (length value))
+    ('aref (type-of (aref value 0)))
+    ('aref-bad-index (aref value 'bad))
+    ('aset-bad-index (aset value 'bad nil))
+    ('elt (elt value 0))
+    ('elt-bad-index (elt value 'bad))
+    ('copy (let ((copy (copy-sequence value))) (list (window-configuration-p copy) (recordp copy) (eq copy value))))
+    ('print (prin1-to-string value))
+    ('copy-tree (eq value (copy-tree value t)))
+    ('fillarray (fillarray value nil))
+    ('reverse (reverse value))
+    ('nreverse (nreverse value))
+    ('aset (let ((result (condition-case e (progn (aset value 0 'changed) 'changed)
+                          (error (list (car e) (cadr e))))))
+            (list result (window-configuration-p value) (recordp value)))))
+   (error (list (car error-data) (cadr error-data))))))
+(qa
+(qa280-probe 'real 'predicates)
+'(t nil nil nil nil "window-configuration")
+)
+
+(qa
+(qa280-probe 'real 'frame)
+'t
+)
+
+(qa
+(qa280-probe 'real 'length)
+'(wrong-type-argument sequencep)
+)
+
+(qa
+(qa280-probe 'real 'aref)
+'(wrong-type-argument arrayp)
+)
+
+(qa
+(qa280-probe 'real 'aref-bad-index)
+'(wrong-type-argument fixnump)
+)
+
+(qa
+(qa280-probe 'real 'aset-bad-index)
+'(wrong-type-argument fixnump)
+)
+
+(qa
+(qa280-probe 'real 'copy)
+'(wrong-type-argument sequencep)
+)
+
+(qa
+(qa280-probe 'real 'print)
+'"#<window-configuration>"
+)
+
+(qa
+(qa280-probe 'real 'aset)
+'((wrong-type-argument arrayp) t nil)
+)
+
+(qa
+(qa280-probe 'fake 'predicates)
+'(nil t nil nil nil "window-configuration")
+)
+
+(qa
+(qa280-probe 'fake 'frame)
+'(wrong-type-argument window-configuration-p)
+)
+
+(qa
+(qa280-probe 'fake 'length)
+'4
+)
+
+(qa
+(qa280-probe 'fake 'aref)
+'symbol
+)
+
+(qa
+(qa280-probe 'fake 'aref-bad-index)
+'(wrong-type-argument fixnump)
+)
+
+(qa
+(qa280-probe 'fake 'aset-bad-index)
+'(wrong-type-argument fixnump)
+)
+
+(qa
+(qa280-probe 'fake 'copy)
+'(nil t nil)
+)
+
+(qa
+(qa280-probe 'fake 'print)
+'"#s(window-configuration nil nil nil)"
+)
+
+(qa
+(qa280-probe 'fake 'aset)
+'(changed nil t)
+)
+
+(qa
+(qa280-probe 'uninterned 'predicates)
+'(nil t nil nil nil "window-configuration")
+)
+
+(qa
+(qa280-probe 'uninterned 'frame)
+'(wrong-type-argument window-configuration-p)
+)
+
+(qa
+(qa280-probe 'uninterned 'length)
+'4
+)
+
+(qa
+(qa280-probe 'uninterned 'aref)
+'symbol
+)
+
+(qa
+(qa280-probe 'uninterned 'aref-bad-index)
+'(wrong-type-argument fixnump)
+)
+
+(qa
+(qa280-probe 'uninterned 'aset-bad-index)
+'(wrong-type-argument fixnump)
+)
+
+(qa
+(qa280-probe 'uninterned 'copy)
+'(nil t nil)
+)
+
+(qa
+(qa280-probe 'uninterned 'print)
+'"#s(window-configuration nil nil nil)"
+)
+
+(qa
+(qa280-probe 'uninterned 'aset)
+'(changed nil t)
+)
+
+(qa
+(qa280-probe 'real 'elt)
+'(wrong-type-argument sequencep)
+)
+
+(qa
+(qa280-probe 'real 'elt-bad-index)
+'(wrong-type-argument sequencep)
+)
+
+(qa
+(qa280-probe 'real 'copy-tree)
+'t
+)
+
+(qa
+(qa280-probe 'real 'reverse)
+'(wrong-type-argument sequencep)
+)
+
+(qa
+(qa280-probe 'real 'nreverse)
+'(wrong-type-argument arrayp)
+)
+
+(qa
+(let*
+    ((fake (record 'window-configuration (selected-frame) nil nil))
+     (copy (copy-sequence fake)))
+  (list (window-configuration-p fake) (window-configuration-p copy)
+	(condition-case e (window-configuration-frame fake)
+	  (error (list (car e) (cadr e))))))
+'(nil nil (wrong-type-argument window-configuration-p))
+)
+
+(qa
+(let
+    ((fake
+      (car (read-from-string "#s(window-configuration nil nil nil)"))))
+  (list (recordp fake) (window-configuration-p fake)
+	(prin1-to-string fake)))
+'(t nil "#s(window-configuration nil nil nil)")
+)
+
+(qa
+(let ((fake (record 'window-configuration nil nil nil)))
+  (list (equal fake (copy-sequence fake))
+	(eq fake (copy-sequence fake))))
+'(t nil)
+)
+
+(qa
+(let
+    ((real (current-window-configuration))
+     (fake (record 'window-configuration nil nil nil)))
+  (list (equal real fake) (equal fake real) (equal real real)))
+'(nil nil t)
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (_buffer window)
+   (let ((before (current-window-configuration)))
+     (goto-char 12) (set-window-start window 12 t)
+     (set-window-hscroll window 3)
+     (let ((after (current-window-configuration)))
+       (list (equal before after) (equal (list before) (list after))
+	     (equal-including-properties before after))))))
+'(nil nil nil)
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (_buffer window)
+   (let ((before (current-window-configuration)))
+     (set-window-margins window 2 3)
+     (let ((after (current-window-configuration)))
+       (list (equal before after)
+	     (equal (vector before) (vector after)))))))
+'(nil nil)
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (_buffer window) (require 'cl-lib)
+   (let ((before (current-window-configuration)))
+     (set-window-hscroll window 3)
+     (cl-equalp before (current-window-configuration)))))
+'nil
+)
+
+(qa
+(let ((saved (current-window-configuration)))
+  (dotimes (_ 20) (current-window-configuration)) (garbage-collect)
+  (list (window-configuration-p saved) (recordp saved)
+	(window-configuration-p
+	 (record 'window-configuration (selected-frame) nil nil))))
+'(t nil nil)
+)
+
+(qa
+(qa280-probe 'real 'fillarray)
+'(wrong-type-argument arrayp)
+)
+
+(qa
+(let
+    ((a (current-window-configuration))
+     (b (current-window-configuration)))
+  (list (eq a b) (equal a b) (equal a a) (equal (list a) (list b))
+	(compare-window-configurations a b)))
+'(nil nil t nil t)
+)
+
+
 (princ (qa--done)) (terpri)

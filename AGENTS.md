@@ -1749,8 +1749,17 @@ and current-buffer identity, selected-window correspondence, full leaf
 geometry, margins and tree shape. Point/start/hscroll and window identity
 are ignored, as are dedication and combination-limit flags. Record slot
 6 captures frame dimensions instead of reading the subsequently mutable
-frame object. The pure layout comparator can be shared with native-object
-equality. The same QA suite pins these #279 distinctions.
+frame object. The pure helper implements the explicit layout
+comparison. The same QA suite pins these #279 distinctions.
+
+Genuine window configurations are registered by Rc identity in a
+thread-local weak registry. Type checks and decoders require this factory
+identity, so an ordinary record with the same tag remains an ordinary
+record. Genuine configurations print opaquely, reject record/array access
+and sequence copying, and compare by object identity for `equal`, property-aware
+equality and `cl-equalp`, including nested occurrences. Weak registration
+does not retain snapshots or confuse reused allocation addresses. The
+same QA suite pins these #280 factory/forgery and opaque-type rules.
 
 ## Live backtraces (`src/lisp/backtrace.rs`)
 

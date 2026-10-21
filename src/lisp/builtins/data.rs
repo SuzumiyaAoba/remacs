@@ -394,6 +394,11 @@ fn f_equal(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 /// numbers — no case fold), strings fold case via the buffer's case
 /// table, conses/vectors/records recurse, everything else uses `equal'.
 fn equalp_values(i: &Interp, down: &Value, a: &Value, b: &Value) -> Result<bool, Flow> {
+    if crate::editor::window_configuration_object(a)
+        || crate::editor::window_configuration_object(b)
+    {
+        return equal_values(i, a, b);
+    }
     let down1 = |n: i128| match crate::lisp::builtins::misc::char_table_ref(i, down, n as usize) {
         Value::Int(m) => m,
         _ => n,

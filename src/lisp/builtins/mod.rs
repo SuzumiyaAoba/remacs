@@ -607,6 +607,13 @@ fn equal_values_1(
     if eq_values(a, b) {
         return Ok(true);
     }
+    let left_config = crate::editor::window_configuration_object(a);
+    let right_config = crate::editor::window_configuration_object(b);
+    if left_config || right_config {
+        // GNU configurations are opaque for equal. Identity was handled
+        // above; layout equivalence is a separate explicit operation.
+        return Ok(false);
+    }
     if interp.is_overlay(a) || interp.is_overlay(b) {
         return match (interp.overlay_state(a), interp.overlay_state(b)) {
             (Some(a), Some(b))

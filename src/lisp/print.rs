@@ -1006,6 +1006,10 @@ impl Interp {
         bq: bool,
         princ: bool,
     ) {
+        if crate::editor::window_configuration_object(&Value::Record(items.clone())) {
+            out.push_str("#<window-configuration>");
+            return;
+        }
         macro_rules! inner {
             ($v:expr) => {
                 if princ {
@@ -1041,10 +1045,6 @@ impl Interp {
                         let _ = write!(out, "#<symbol {} at {}>", name, p);
                         return;
                     }
-                }
-                if self.symbol_name(*t) == "window-configuration" {
-                    let _ = write!(out, "#<window-configuration>");
-                    return;
                 }
                 // Obarrays print `#<obarray n=COUNT>' — COUNT is
                 // the number of interned symbols.

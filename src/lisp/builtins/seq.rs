@@ -380,6 +380,9 @@ fn seq_from_like(_i: &mut Interp, like: &Value, items: Vec<Value>) -> Value {
 }
 
 fn f_elt(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    if crate::editor::window_configuration_object(&args[0]) {
+        return Err(i.wrong_type_mut("sequencep", &args[0]));
+    }
     // GNU Felt: cons/nil go through `nthcdr'; every other
     // argument must satisfy CHECK_ARRAY(sequence, sequencep)
     // before `aref's fixnum check on N runs.
@@ -452,6 +455,9 @@ fn f_aref(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // per-type dispatch on ARRAY — even a non-array argument
     // reports `(fixnump IDX)' when IDX isn't a fixnum.
     want_fixnum(i, &args[1])?;
+    if crate::editor::window_configuration_object(&args[0]) {
+        return Err(i.wrong_type_mut("arrayp", &args[0]));
+    }
     match &args[0] {
         Value::Str(_) | Value::Vec(_) => {}
         Value::Record(r) => {
@@ -494,6 +500,9 @@ fn f_aset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU `Faset' checks the fixnum index before dispatching on ARRAY.
     // Unlike aref, it rejects closure and byte-code function objects.
     let n = want_fixnum(i, &args[1])?;
+    if crate::editor::window_configuration_object(&args[0]) {
+        return Err(i.wrong_type_mut("arrayp", &args[0]));
+    }
     match &args[0] {
         Value::Vec(v) => {
             let mut items = v.borrow_mut();
@@ -614,6 +623,9 @@ fn f_aset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 pub(crate) fn f_copy_sequence(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    if crate::editor::window_configuration_object(&args[0]) {
+        return Err(i.wrong_type_mut("sequencep", &args[0]));
+    }
     match &args[0] {
         Value::Cons(_) => {
             let items = super::listfn::copy_list_items(i, &args[0])?;

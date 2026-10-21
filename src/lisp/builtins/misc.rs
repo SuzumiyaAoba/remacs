@@ -16465,6 +16465,7 @@ fn f_recordp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     Ok(Value::from_bool(
         matches!(a[0], Value::Record(_))
+            && !crate::editor::window_configuration_object(&a[0])
             && !font_spec
             && as_sympos(&a[0]).is_none()
             && !crate::lisp::builtins::data::is_obarray(i, &a[0]),

@@ -15,6 +15,35 @@ use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{StrRef, Subr, SymId, Value};
 
+std::thread_local! {
+    // Native configuration identity must not be forgeable by a record tag.
+    // Weak handles neither keep snapshots alive nor allow pointer reuse.
+    static WINDOW_CONFIGURATIONS: RefCell<std::collections::HashMap<usize, std::rc::Weak<RefCell<Vec<Value>>>>> = RefCell::new(std::collections::HashMap::new());
+}
+
+pub(crate) fn window_configuration_object(value: &Value) -> bool {
+    let Value::Record(record) = value else {
+        return false;
+    };
+    WINDOW_CONFIGURATIONS.with(|objects| {
+        objects
+            .borrow()
+            .get(&(Rc::as_ptr(record) as usize))
+            .and_then(std::rc::Weak::upgrade)
+            .is_some_and(|object| Rc::ptr_eq(&object, record))
+    })
+}
+
+fn register_window_configuration(value: &Value) {
+    if let Value::Record(record) = value {
+        WINDOW_CONFIGURATIONS.with(|objects| {
+            let mut objects = objects.borrow_mut();
+            objects.retain(|_, object| object.strong_count() > 0);
+            objects.insert(Rc::as_ptr(record) as usize, Rc::downgrade(record));
+        });
+    }
+}
+
 pub(crate) mod winxtra;
 
 /// An editor window: a viewport into a buffer, or an internal
@@ -3306,7 +3335,7 @@ fn window_configuration(i: &mut Interp) -> Value {
             ]));
         }
     }
-    Value::record(vec![
+    let configuration = Value::record(vec![
         tag,
         frame_v,
         Value::list(specs),
@@ -3317,7 +3346,9 @@ fn window_configuration(i: &mut Interp) -> Value {
         i.buffer_value(i.current_buffer).unwrap_or(Value::Nil),
         tree,
         frame_size,
-    ])
+    ]);
+    register_window_configuration(&configuration);
+    configuration
 }
 
 /// Numeric/marker field N, with positions kept 0-based internally.
@@ -3357,6 +3388,9 @@ fn restore_window_view(i: &Interp, window: &mut Window, spec: &[Value], restore_
 }
 
 fn window_config_parts(tag: SymId, v: &Value) -> Option<(Value, Vec<Value>, Value)> {
+    if !window_configuration_object(v) {
+        return None;
+    }
     let r = match v {
         Value::Record(r) => r.clone(),
         _ => return None,
@@ -3376,6 +3410,9 @@ fn window_config_parts(tag: SymId, v: &Value) -> Option<(Value, Vec<Value>, Valu
 /// Saved current buffer of a config record (slot 4), or None for
 /// configs written before the slot existed.
 fn window_config_curbuf(tag: SymId, v: &Value) -> Option<Value> {
+    if !window_configuration_object(v) {
+        return None;
+    }
     let r = match v {
         Value::Record(r) => r.borrow(),
         _ => return None,
@@ -3386,14 +3423,8 @@ fn window_config_curbuf(tag: SymId, v: &Value) -> Option<Value> {
     r.get(4).cloned()
 }
 
-fn f_window_configuration_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let tag = i.intern("window-configuration");
-    Ok(Value::from_bool(match &a[0] {
-        Value::Record(r) => {
-            matches!(r.borrow().first(), Some(Value::Sym(s)) if *s == tag)
-        }
-        _ => false,
-    }))
+fn f_window_configuration_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    Ok(Value::from_bool(window_configuration_object(&a[0])))
 }
 
 pub(crate) fn f_current_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -3769,8 +3800,8 @@ fn window_config_frame_size_equal(left: Option<&Value>, right: Option<&Value>) -
     }
 }
 
-/// GNU compares layout rather than scrolling, cursor positions or window
-/// identities. Keep this pure so native equality can share the same rule.
+/// The explicit layout comparison ignores scrolling, cursor positions and
+/// window identities; ordinary equal retains native object identity.
 pub(crate) fn window_configuration_layout_equal(left: &Value, right: &Value) -> bool {
     let (Value::Record(left), Value::Record(right)) = (left, right) else {
         return false;
