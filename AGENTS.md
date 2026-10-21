@@ -177,6 +177,14 @@ does not clone times. Existing hard-link targets still
 require overwrite permission, like GNU. Regressions: `qa_copy_file_times`,
 `qa_copy_file_self`.
 
+`rename-file` checks source/destination entries with `symlink_metadata`,
+so dangling and looping symlinks can be renamed and count as existing
+destinations. `copy-file` first opens with exclusive creation; after an
+existing-entry error it enforces overwrite permission, then opens with
+truncate but without create. Thus a dangling destination never creates
+its missing referent. Source errors take precedence over collisions.
+Regressions: `qa_file_broken_symlinks`.
+
 Frame parameter updates validate the full alist and every element before
 applying it in reverse, so the first duplicate wins. Both setter APIs use
 the same store logic. TTY name/font reports come from frame state; keep

@@ -12118,19 +12118,17 @@ fn f_rename_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU checks the source FIRST: a missing FILE signals
     // file-missing ("Renaming" strerror FILE NEWNAME) before the
     // destination collision check runs.
-    if !std::path::Path::new(&from).exists() {
-        return Err(i.signal_data(
-            sym::FILE_MISSING,
-            vec![
-                Value::string("Renaming"),
-                Value::string("No such file or directory"),
-                Value::string(from),
-                Value::string(to),
-            ],
+    if let Err(e) = std::fs::symlink_metadata(&from) {
+        return Err(report_file_errno(
+            i,
+            "Renaming",
+            vec![Value::string(from), Value::string(to)],
+            &e,
         ));
     }
-    // GNU: OK-IF-ALREADY-EXISTS nil/missing → file-already-exists
-    if std::path::Path::new(&to).exists() {
+    // A dangling symlink is an existing directory entry, even though its
+    // referent is missing. Do not follow it for overwrite protection.
+    if std::fs::symlink_metadata(&to).is_ok() {
         match a.get(2) {
             None | Some(Value::Nil) | Some(Value::Int(_)) => {
                 let tag = i.intern("file-already-exists");
@@ -12144,24 +12142,12 @@ fn f_rename_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     match std::fs::rename(&from, &to) {
         Ok(()) => Ok(Value::Nil),
-        // GNU report_file_error: ("Renaming" strerror FILE NEWNAME),
-        // ENOENT → `file-missing'.
-        Err(e) => {
-            let s = if e.kind() == std::io::ErrorKind::NotFound {
-                sym::FILE_MISSING
-            } else {
-                sym::FILE_ERROR
-            };
-            Err(i.signal_data(
-                s,
-                vec![
-                    Value::string("Renaming"),
-                    Value::string(file_error_string(&e)),
-                    Value::string(from),
-                    Value::string(to),
-                ],
-            ))
-        }
+        Err(e) => Err(report_file_errno(
+            i,
+            "Renaming",
+            vec![Value::string(from), Value::string(to)],
+            &e,
+        )),
     }
 }
 
@@ -12268,29 +12254,6 @@ fn f_copy_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             format!("/{}", base)
         });
     }
-    let already_exists = std::path::Path::new(&to).exists();
-    if already_exists {
-        match a.get(2) {
-            // nil → file-already-exists, no overwrite.
-            None | Some(Value::Nil) => {
-                let tag = i.intern("file-already-exists");
-                return Err(i.signal_data(
-                    tag,
-                    vec![Value::string("File already exists"), Value::string(to)],
-                ));
-            }
-            // An integer requests confirmation in GNU. This headless
-            // path rejects an existing target.
-            Some(Value::Int(_)) => {
-                let tag = i.intern("file-already-exists");
-                return Err(i.signal_data(
-                    tag,
-                    vec![Value::string("File already exists"), Value::string(to)],
-                ));
-            }
-            _ => {}
-        }
-    }
     // GNU opens (and truncates) the output before comparing file identities.
     // Compare the open descriptors so aliases and renamed paths refer to the
     // files actually opened. In particular, a self-copy still truncates the
@@ -12298,16 +12261,48 @@ fn f_copy_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let mut input = std::fs::File::open(&from)
         .map_err(|e| report_file_errno(i, "Opening input file", vec![Value::string(&from)], &e))?;
     let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
+    // O_EXCL checks directory entries, including dangling/looping links.
+    // For an existing entry GNU reopens with O_TRUNC but without O_CREAT,
+    // so overwriting a dangling link must not create its missing referent.
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
         let mask = if keep_uid_gid { 0o700 } else { 0o777 };
         options.mode(meta.mode() & mask);
     }
-    let mut output = options
-        .open(&to)
-        .map_err(|e| report_file_errno(i, "Opening output file", vec![Value::string(&to)], &e))?;
+    let (mut output, already_exists) = match options.open(&to) {
+        Ok(output) => (output, false),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            match a.get(2) {
+                // Integers request confirmation; the headless path refuses.
+                None | Some(Value::Nil) | Some(Value::Int(_)) => {
+                    let tag = i.intern("file-already-exists");
+                    return Err(i.signal_data(
+                        tag,
+                        vec![Value::string("File already exists"), Value::string(to)],
+                    ));
+                }
+                _ => {}
+            }
+            let output = std::fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(&to)
+                .map_err(|e| {
+                    report_file_errno(i, "Opening output file", vec![Value::string(&to)], &e)
+                })?;
+            (output, true)
+        }
+        Err(e) => {
+            return Err(report_file_errno(
+                i,
+                "Opening output file",
+                vec![Value::string(&to)],
+                &e,
+            ))
+        }
+    };
     #[cfg(unix)]
     let same_file = {
         use std::os::unix::fs::MetadataExt;

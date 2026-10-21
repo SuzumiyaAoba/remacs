@@ -1,0 +1,76 @@
+;;; -*- lexical-binding: t; -*-
+;; Issue #223: rename acts on symlink entries; copy follows the source,
+;; but an existing dangling/looping destination still requires overwrite.
+(defvar qa223-op)
+(defvar qa223-source-kind)
+(defvar qa223-dest-kind)
+(defvar qa223-overwrite)
+(defvar qa223-dir)
+(defvar qa223-source)
+(defvar qa223-dest)
+(defvar qa223-missing)
+(defvar qa223-error)
+(defvar qa223-expected-error)
+
+(dolist (qa223-op '(rename-file copy-file))
+  (dolist (qa223-source-kind '(regular broken symlink-loop missing))
+    (dolist (qa223-dest-kind '(missing regular broken symlink-loop))
+      (dolist (qa223-overwrite '(nil t))
+        (let* ((qa223-dir (make-temp-file "qa223-symlink-" t))
+               (qa223-source (expand-file-name "source" qa223-dir))
+               (qa223-dest (expand-file-name "dest" qa223-dir))
+               (qa223-missing (expand-file-name "missing" qa223-dir)))
+          (unwind-protect
+              (progn
+                (cond
+                 ((eq qa223-source-kind 'regular) (with-temp-file qa223-source (insert "original")))
+                 ((eq qa223-source-kind 'broken) (make-symbolic-link "missing" qa223-source))
+                 ((eq qa223-source-kind 'symlink-loop) (make-symbolic-link "source" qa223-source)))
+                (cond
+                 ((eq qa223-dest-kind 'regular) (with-temp-file qa223-dest (insert "old")))
+                 ((eq qa223-dest-kind 'broken) (make-symbolic-link "missing" qa223-dest))
+                 ((eq qa223-dest-kind 'symlink-loop) (make-symbolic-link "dest" qa223-dest)))
+                (let* ((qa223-error
+                        (condition-case error
+                            (funcall qa223-op qa223-source qa223-dest qa223-overwrite)
+                          (error (mapcar (lambda (x) (cond ((equal x qa223-source) 'SOURCE)
+                                                         ((equal x qa223-dest) 'DEST) (t x)))
+                                         error))))
+                       (qa223-expected-error
+                        (cond
+                         ((and (eq qa223-op 'rename-file) (eq qa223-source-kind 'missing))
+                          '(file-missing "Renaming" "No such file or directory" SOURCE DEST))
+                         ((and (eq qa223-op 'copy-file) (memq qa223-source-kind '(broken missing)))
+                          '(file-missing "Opening input file" "No such file or directory" SOURCE))
+                         ((and (eq qa223-op 'copy-file) (eq qa223-source-kind 'symlink-loop))
+                          '(file-error "Opening input file" "Too many levels of symbolic links" SOURCE))
+                         ((and (not qa223-overwrite) (not (eq qa223-dest-kind 'missing)))
+                          '(file-already-exists "File already exists" DEST))
+                         ((and (eq qa223-op 'copy-file) (eq qa223-dest-kind 'broken))
+                          '(file-missing "Opening output file" "No such file or directory" DEST))
+                         ((and (eq qa223-op 'copy-file) (eq qa223-dest-kind 'symlink-loop))
+                          '(file-error "Opening output file" "Too many levels of symbolic links" DEST)))))
+                  (qa qa223-error qa223-expected-error)
+                  (qa (list (file-exists-p qa223-source) (file-symlink-p qa223-source)
+                            (file-exists-p qa223-dest) (file-symlink-p qa223-dest)
+                            (file-exists-p qa223-missing)
+                            (when (file-regular-p qa223-source)
+                              (with-temp-buffer (insert-file-contents-literally qa223-source) (buffer-string)))
+                            (when (file-regular-p qa223-dest)
+                              (with-temp-buffer (insert-file-contents-literally qa223-dest) (buffer-string))))
+                      (let* ((moved (and (eq qa223-op 'rename-file) (null qa223-expected-error)))
+                             (written (null qa223-expected-error))
+                             (source-kind (if moved 'missing qa223-source-kind))
+                             (dest-kind (if written qa223-source-kind qa223-dest-kind)))
+                        (list (eq source-kind 'regular)
+                              (cond ((eq source-kind 'broken) "missing")
+                                    ((eq source-kind 'symlink-loop) "source"))
+                              (eq dest-kind 'regular)
+                              (cond ((eq dest-kind 'broken) "missing")
+                                    ((eq dest-kind 'symlink-loop) (if moved "source" "dest")))
+                              nil
+                              (when (eq source-kind 'regular) "original")
+                              (when (eq dest-kind 'regular) (if written "original" "old")))))))
+            (delete-directory qa223-dir t)))))))
+
+(princ (qa--done)) (terpri)
