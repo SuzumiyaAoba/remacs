@@ -1789,6 +1789,13 @@ Tree slot 4 carries internal-window parameter snapshots. Cyclic persistence
 specifications reset to nil as GNU does; dotted tails stop traversal.
 `qa_window_configuration` pins these #284 snapshot and restore rules.
 
+Window-state parameter slots are alists with fresh associations and shared
+values. `window-state-get` keeps non-nil persistence flags, or exactly
+`writable` flags for writable states; `clone-of` follows the same filter
+and is synthesized only when absent. `window-state-put` resets existing
+values to nil before merging saved associations into the internal plist,
+including internal tree nodes. `qa_winstate` pins these #285 rules.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

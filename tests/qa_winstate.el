@@ -375,4 +375,185 @@
 (qa-err (frameset-save 'qaws-x) 'wrong-type-argument)
 (qa-err (frameset-restore 'qaws-x) 'cl-assertion-failed)
 
+;; Issue #285: persistent state parameters use independent alist associations.
+(defun qa285-fixture (function)
+  (save-window-excursion
+    (delete-other-windows)
+    (let* ((leaf (split-window nil nil 'right))
+           (root (frame-root-window)))
+      (funcall function leaf root))))
+(defun qa285-get (flag writable internal)
+  (qa285-fixture
+   (lambda (leaf root)
+     (let* ((key (make-symbol "probe"))
+            (window (if internal root leaf))
+            (window-persistent-parameters (list (cons key flag))))
+       (set-window-parameter window key 1)
+       (cdr (assq key (cdr (assq 'parameters (window-state-get window writable)))))))))
+(defun qa285-clone (flag writable present)
+  (qa285-fixture
+   (lambda (leaf _root)
+     (let ((window-persistent-parameters (list (cons 'clone-of flag))))
+       (when present (set-window-parameter leaf 'clone-of 'original))
+       (let* ((state (window-state-get leaf writable))
+              (pair (assq 'clone-of (cdr (assq 'parameters state)))))
+         (list (not (null pair)) (eq (cdr pair) leaf) (eq (cdr pair) 'original)))))))
+(defun qa285-put (kind)
+  (qa285-fixture
+   (lambda (window _root)
+     (let* ((window-persistent-parameters nil)
+            (key (make-symbol "saved")) (other (make-symbol "other"))
+            (state (window-state-get window t)))
+       (set-window-parameter window key 2)
+       (set-window-parameter window other 9)
+       (when kind (setq state (append state (list (cons 'parameters (list (cons key (if (eq kind 'nil-value) nil 1))))))))
+       (window-state-put state window)
+       (list (window-parameter window key) (window-parameter window other)
+             (not (null (assq other (window-parameters window)))))))))
+
+(qa
+(list (qa285-get 'nil nil nil) (qa285-get 'nil t nil))
+'(nil nil)
+)
+
+(qa
+(list (qa285-get 't nil nil) (qa285-get 't t nil))
+'(1 nil)
+)
+
+(qa
+(list (qa285-get 'writable nil nil) (qa285-get 'writable t nil))
+'(1 1)
+)
+
+(qa
+(list (qa285-get 'other nil nil) (qa285-get 'other t nil))
+'(1 nil)
+)
+
+(qa
+(list (qa285-get 'nil nil t) (qa285-get 'nil t t))
+'(nil nil)
+)
+
+(qa
+(list (qa285-get 't nil t) (qa285-get 't t t))
+'(1 nil)
+)
+
+(qa
+(list (qa285-get 'writable nil t) (qa285-get 'writable t t))
+'(1 1)
+)
+
+(qa
+(list (qa285-get 'other nil t) (qa285-get 'other t t))
+'(1 nil)
+)
+
+(qa
+(list (qa285-clone 'nil nil nil) (qa285-clone 'nil nil t) (qa285-clone 'nil t nil) (qa285-clone 'nil t t))
+'((nil nil nil) (nil nil nil) (nil nil nil) (nil nil nil))
+)
+
+(qa
+(list (qa285-clone 't nil nil) (qa285-clone 't nil t) (qa285-clone 't t nil) (qa285-clone 't t t))
+'((t t nil) (t nil t) (nil nil nil) (nil nil nil))
+)
+
+(qa
+(list (qa285-clone 'writable nil nil) (qa285-clone 'writable nil t) (qa285-clone 'writable t nil) (qa285-clone 'writable t t))
+'((t t nil) (t nil t) (t t nil) (t nil t))
+)
+
+(qa
+(list (qa285-clone 'other nil nil) (qa285-clone 'other nil t) (qa285-clone 'other t nil) (qa285-clone 'other t t))
+'((t t nil) (t nil t) (nil nil nil) (nil nil nil))
+)
+
+(qa
+(qa285-put 'nil)
+'(nil nil t)
+)
+
+(qa
+(qa285-put 'value)
+'(1 nil t)
+)
+
+(qa
+(qa285-put 'nil-value)
+'(nil nil t)
+)
+
+(qa
+(qa285-fixture
+ (lambda (window _root)
+  (let* ((key (make-symbol "copy")) (value (list 1))
+         (window-persistent-parameters (list (cons key 'writable))))
+   (set-window-parameter window key value)
+   (let* ((state (window-state-get window t))
+          (pair (assq key (cdr (assq 'parameters state)))))
+    (set-window-parameter window key 'changed)
+    (setcar value 9)
+    (list (eq (cdr pair) value) (cdr pair)
+          (progn (setcdr pair 'snapshot) (window-parameter window key)))))))
+'(t (9) changed)
+)
+
+(qa
+(qa285-fixture
+ (lambda (window _root)
+  (let* ((key (make-symbol "nil"))
+         (window-persistent-parameters (list (cons key 'writable))))
+   (set-window-parameter window key nil)
+   (let ((pair (assq key (cdr (assq 'parameters (window-state-get window t))))))
+    (list (not (null pair)) (cdr pair))))))
+'(t nil)
+)
+
+(qa
+(qa285-fixture
+ (lambda (leaf root)
+  (let* ((key 'qa285-tree-key)
+         (window-persistent-parameters (list (cons key 'writable))))
+   (set-window-parameter root key 11)
+   (set-window-parameter leaf key 22)
+   (let ((state (window-state-get root t)))
+    (delete-other-windows)
+    (window-state-put (read (prin1-to-string state)) (selected-window))
+    (let* ((new-root (frame-root-window))
+           (first (window-child new-root))
+           (second (window-next-sibling first)))
+     (list (window-parameter new-root key)
+           (window-parameter first key)
+           (window-parameter second key)))))))
+'(11 nil 22)
+)
+
+(qa
+(qa285-fixture
+ (lambda (window _root)
+  (let ((window-persistent-parameters '((clone-of . writable))))
+   (set-window-parameter window 'clone-of nil)
+   (let ((pair (assq 'clone-of (cdr (assq 'parameters (window-state-get window t))))))
+    (list (not (null pair)) (cdr pair))))))
+'(t nil)
+)
+
+(qa
+(qa285-fixture
+ (lambda (window _root)
+  (let* ((key (make-symbol "restore-copy")) (value (list 1))
+         (window-persistent-parameters nil)
+         (state (window-state-get window t)) (pair (cons key value)))
+   (setq state (append state (list (cons 'parameters (list pair)))))
+   (window-state-put state window)
+   (setcdr pair 'snapshot)
+   (setcar value 9)
+   (list (eq (window-parameter window key) value)
+         (window-parameter window key)))))
+'(t (9))
+)
+
 (princ (qa--done))

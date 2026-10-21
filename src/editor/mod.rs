@@ -16620,7 +16620,12 @@ fn ac_i(i: &mut Interp, k: &str, n: i128) -> Value {
 /// `window--state-get-1' node body: returns the list ITEMS — TAG,
 /// optional `(last . t)', size slots, slots, then children for
 /// internal windows.  The caller prepends the min-size header.
-fn win_state_items(i: &mut Interp, w: &WindowRef, writable: bool, last: bool) -> Vec<Value> {
+fn win_state_items(
+    i: &mut Interp,
+    w: &WindowRef,
+    writable: bool,
+    last: bool,
+) -> Result<Vec<Value>, Flow> {
     let (horiz, ww, wh, climit, params, kids) = {
         let wb = w.borrow();
         (
@@ -16691,21 +16696,26 @@ fn win_state_items(i: &mut Interp, w: &WindowRef, writable: bool, last: bool) ->
             items
         }
     };
-    // The `parameters' slot carries the (clone-of . W) back-reference
-    // on non-writable states plus the window's own parameters; it is
-    // dropped entirely from writable states when empty.
+    // GNU copies persistent associations, not the internal flat plist.
     let mut pitems: Vec<Value> = Vec::new();
-    if !writable {
-        pitems.push(Value::cons(
-            Value::Sym(i.intern("clone-of")),
-            Value::Window(w.clone()),
-        ));
-    }
     if let Ok(ps) = params.list_to_vec() {
-        pitems.extend(ps);
+        for pair in ps.chunks_exact(2) {
+            if window_state_parameter_persistent(i, &pair[0], writable)? {
+                pitems.push(Value::cons(pair[0].clone(), pair[1].clone()));
+            }
+        }
     }
-    let has_params = !pitems.is_empty();
-    if has_params {
+    pitems.reverse();
+    let clone_of = Value::Sym(i.intern("clone-of"));
+    if window_state_parameter_persistent(i, &clone_of, writable)?
+        && !pitems.iter().any(|pair| match pair {
+            Value::Cons(cell) => crate::lisp::builtins::eq_values(&cell.borrow().car, &clone_of),
+            _ => false,
+        })
+    {
+        pitems.insert(0, Value::cons(clone_of, Value::Window(w.clone())));
+    }
+    if !pitems.is_empty() {
         let mut pv = vec![Value::Sym(i.intern("parameters"))];
         pv.extend(pitems);
         // GNU emits parameters BEFORE the buffer slot on leaves and
@@ -16721,11 +16731,59 @@ fn win_state_items(i: &mut Interp, w: &WindowRef, writable: bool, last: bool) ->
     if horiz.is_some() {
         let n = kids.len();
         for (idx, k) in kids.iter().enumerate() {
-            let mut child = win_state_items(i, k, writable, idx + 1 == n);
+            let mut child = win_state_items(i, k, writable, idx + 1 == n)?;
             items.push(Value::list(std::mem::take(&mut child)));
         }
     }
-    items
+    Ok(items)
+}
+
+fn window_state_parameter_persistent(
+    i: &mut Interp,
+    key: &Value,
+    writable: bool,
+) -> Result<bool, Flow> {
+    let specification = i.intern("window-persistent-parameters");
+    let specification = i.var_alias_target(specification);
+    let assq = Value::Sym(i.intern("assq"));
+    let association = i.apply(&assq, vec![key.clone(), i.symbol_value(specification)])?;
+    let flag = match association {
+        Value::Cons(cell) => cell.borrow().cdr.clone(),
+        _ => Value::Nil,
+    };
+    Ok(flag.truthy()
+        && (!writable
+            || crate::lisp::builtins::eq_values(&flag, &Value::Sym(i.intern("writable")))))
+}
+
+fn restore_window_state_parameters(
+    i: &mut Interp,
+    window: &WindowRef,
+    items: &[Value],
+) -> Result<(), Flow> {
+    // State restoration resets current values even when no parameters
+    // were saved; GNU retains the existing associations with nil values.
+    let existing = window.borrow().params.list_to_vec().unwrap_or_default();
+    for pair in existing.chunks_exact(2) {
+        let mut data = window.borrow_mut();
+        data.params = crate::lisp::eval::plist_put_front(&data.params, &pair[0], Value::Nil);
+    }
+    if let Some(Value::Cons(slot)) = state_assq(i, items, "parameters") {
+        let parameters = slot.borrow().cdr.clone();
+        for pair in crate::lisp::builtins::want_list(i, &parameters)? {
+            let (key, value) = match pair {
+                Value::Cons(cell) => {
+                    let cell = cell.borrow();
+                    (cell.car.clone(), cell.cdr.clone())
+                }
+                Value::Nil => (Value::Nil, Value::Nil),
+                other => return Err(i.wrong_type_mut("listp", &other)),
+            };
+            let mut data = window.borrow_mut();
+            data.params = crate::lisp::eval::plist_put_front(&data.params, &key, value);
+        }
+    }
+    Ok(())
 }
 
 fn ww_of(total: usize, part: usize) -> f64 {
@@ -16820,7 +16878,7 @@ fn leaf_buffer_state(
 /// `window-state-get' — serializes the frame's window tree (or the
 /// given node).  Element 0 is the min-size header, element 1 the
 /// `leaf'/`vc'/`hc' tag; WRITABLE substitutes buffer names and
-/// integer positions for objects and drops the clone-of slot.
+/// integer positions for objects and saves only writable parameters.
 fn f_window_state_get(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = match arg(&a, 0) {
         // GNU serializes the frame's ROOT window by default.
@@ -16857,7 +16915,7 @@ fn f_window_state_get(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         ac_i(i, "min-pixel-width-safe", m[11]),
     ]);
     let mut items = vec![header];
-    items.extend(win_state_items(i, &w, writable, false));
+    items.extend(win_state_items(i, &w, writable, false)?);
     Ok(Value::list(items))
 }
 
@@ -16961,6 +17019,7 @@ fn win_state_materialize(
                 node.borrow_mut().combination_limit = c.borrow().cdr.truthy();
             }
         }
+        restore_window_state_parameters(i, &node, &items[1..])?;
         let _ = f;
         Ok(node)
     } else {
@@ -17023,14 +17082,7 @@ fn win_state_materialize(
                 w.borrow_mut().dedicated = d.borrow().cdr.clone();
             }
         }
-        if let Some(ps) = state_assq(i, &items[1..], "parameters") {
-            if let Value::Cons(c) = ps {
-                let mut pl = c.borrow().cdr.list_to_vec().unwrap_or_default();
-                // strip the clone-of back-reference
-                pl.retain(|e| !list_car_is(i, e, "clone-of"));
-                w.borrow_mut().params = Value::list(pl);
-            }
-        }
+        restore_window_state_parameters(i, &w, &items[1..])?;
         Ok(w)
     }
 }
@@ -17120,13 +17172,7 @@ fn f_window_state_put(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 }
             }
         }
-        if let Some(ps) = state_assq(i, &items[2..], "parameters") {
-            if let Value::Cons(c) = ps {
-                let mut pl = c.borrow().cdr.list_to_vec().unwrap_or_default();
-                pl.retain(|e| !list_car_is(i, e, "clone-of"));
-                w.borrow_mut().params = Value::list(pl);
-            }
-        }
+        restore_window_state_parameters(i, &w, &items[2..])?;
         return Ok(Value::Nil);
     }
     if tag != "vc" && tag != "hc" {
