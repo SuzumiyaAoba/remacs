@@ -11,7 +11,7 @@
 //! without new `Value' variants.  Rust objects live in `TsState'
 //! (an `Interp' field), addressed by the integer ids in the records.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -1256,41 +1256,49 @@ fn f_buffer_root_node(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// Convert `(BEG . END)' charpos ranges into `TSRange's in visible-text
 /// byte offsets, like `treesit_make_ts_ranges'.
 fn make_ts_ranges(i: &mut Interp, ranges: &Value, buf: &BufferRef) -> Result<Vec<Range>, Flow> {
-    let items = ranges.list_to_vec().map_err(|e| match e {
-        crate::lisp::value::ListError::Circular(tail) => {
-            i.signal_data(sym::CIRCULAR_LIST, vec![tail])
-        }
-        crate::lisp::value::ListError::Dotted(t) => i.wrong_type_mut("listp", &t),
-    })?;
-    let mut out = Vec::with_capacity(items.len());
-    let mut prev_end: i128 = i128::MIN;
-    {
-        let b = buf.borrow();
-        for item in &items {
-            let (beg, end) = match item {
-                Value::Cons(c) => {
-                    let cc = c.borrow();
-                    (fix_position(i, &cc.car)?, fix_position(i, &cc.cdr)?)
+    let mut out = Vec::new();
+    let mut tail = ranges.clone();
+    let mut seen = HashSet::new();
+    let b = buf.borrow();
+    let mut prev_end = b.begv as i128 + 1;
+    let hi = b.zv as i128 + 1;
+    loop {
+        let (item, next) = match &tail {
+            Value::Nil => break,
+            Value::Cons(c) => {
+                if !seen.insert(Rc::as_ptr(c)) {
+                    return Err(i.signal_data(sym::CIRCULAR_LIST, vec![tail.clone()]));
                 }
-                other => return Err(i.wrong_type_mut("consp", other)),
-            };
-            let lo = b.begv as i128 + 1;
-            let hi = b.zv as i128 + 1;
-            if beg < lo || beg > hi || end < lo || end > hi || beg > end {
-                return Err(sig(i, "treesit-range-invalid", vec![item.clone()]));
+                let cc = c.borrow();
+                (cc.car.clone(), cc.cdr.clone())
             }
-            if beg < prev_end {
-                // GNU requires ordered non-overlapping ranges.
-                return Err(sig(i, "treesit-range-invalid", vec![item.clone()]));
+            _ => return Err(i.wrong_type_mut("listp", ranges)),
+        };
+        let (beg, end) = match item {
+            Value::Cons(c) => {
+                let cc = c.borrow();
+                (want_fixnum(i, &cc.car)?, want_fixnum(i, &cc.cdr)?)
             }
-            prev_end = end;
-            out.push(Range {
-                start_byte: charpos_to_byte(&b, beg),
-                end_byte: charpos_to_byte(&b, end),
-                start_point: Point { row: 0, column: 0 },
-                end_point: Point { row: 0, column: 0 },
-            });
+            other => return Err(i.wrong_type_mut("consp", &other)),
+        };
+        if !(prev_end <= beg && beg <= end && end <= hi) {
+            return Err(sig(
+                i,
+                "treesit-range-invalid",
+                vec![
+                    Value::string("RANGE is either overlapping, out-of-order or out-of-range"),
+                    ranges.clone(),
+                ],
+            ));
         }
+        prev_end = end;
+        out.push(Range {
+            start_byte: charpos_to_byte(&b, beg),
+            end_byte: charpos_to_byte(&b, end),
+            start_point: Point { row: 0, column: 0 },
+            end_point: Point { row: 0, column: 0 },
+        });
+        tail = next;
     }
     Ok(out)
 }

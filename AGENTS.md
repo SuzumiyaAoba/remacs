@@ -550,6 +550,11 @@ Design notes:
   capture/group/node-only results retain query order. This applies to
   `#eq?`, `#match?` and `#pred?`; it is not an all-captures test.
   Regression: `tests/qa_treesit_repeat_capture.el`.
+- Included-range validation runs in list order with fixnum endpoints.
+  Bounds/ordering/overlap errors carry GNU's explanation and the original
+  whole range list; improper-list errors also retain that original list.
+  Validate each prefix before inspecting its tail and retain cycle
+  detection. Regression: `tests/qa_treesit_ranges.el`.
 - Notifier add/remove validate the parser before checking `symbolp`;
   symbols need not be bound to functions. Registration is unique by `eq`,
   public lists are fresh copies in registration order, and dispatch runs
