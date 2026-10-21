@@ -185,6 +185,21 @@ truncate but without create. Thus a dangling destination never creates
 its missing referent. Source errors take precedence over collisions.
 Regressions: `qa_file_broken_symlinks`.
 
+`file-exists-p`, `file-readable-p`, `file-writable-p`, modes/times setters,
+copy/rename/delete, and insert/write dispatch through the shared
+operation-aware filename-handler finder.
+Keep unchanged absolute filename objects (properties and identity), pass
+all optional arguments, and search input before output (write: filename
+before raw VISIT). Insert handlers bypass offset checks and REPLACE's
+physical-file point restoration, but still run the common decoding/hook
+tail; nil results synthesize `(filename count)`. Literal reads bind GNU's
+conversion/hook/handler inhibitors. Write handlers get normalized regions
+and the default LOCKNAME object; VISIT updates only filename/save state,
+leaving truename, modtime, and default-directory to the handler.
+Assign save ticks directly in these handler branches: unlike
+`set-buffer-modified-p`, GNU does not release the live file lock there.
+Regressions: `qa_file_primitive_handlers`, `qa_file_handler_io`.
+
 Frame parameter updates validate the full alist and every element before
 applying it in reverse, so the first duplicate wins. Both setter APIs use
 the same store logic. TTY name/font reports come from frame state; keep

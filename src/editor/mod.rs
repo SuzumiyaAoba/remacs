@@ -10305,6 +10305,43 @@ fn want_filename(i: &mut Interp, v: &Value) -> Result<String, Flow> {
     }
 }
 
+/// GNU checks the source name first, then the destination (or VISIT).
+/// Keep operation filtering and recursive-handler inhibition in one finder.
+pub(crate) fn file_handler(
+    i: &mut Interp,
+    operation: &str,
+    files: &[&str],
+) -> Option<(Value, Value)> {
+    let op = Value::Sym(i.intern(operation));
+    for file in files {
+        if let Some(handler) = crate::buffer::extra::find_file_name_handler(i, file, op.clone()) {
+            return Some((handler, op));
+        }
+    }
+    None
+}
+
+/// expand-file-name keeps an already expanded filename object, including
+/// its properties and byte kind. Preserve that identity at handler calls.
+pub(crate) fn file_name_argument(original: &Value, expanded: &str) -> Value {
+    match original {
+        Value::Str(name) if name.borrow().as_str() == expanded => original.clone(),
+        _ => Value::string(expanded),
+    }
+}
+
+fn copy_target_name(from: &str, to: String) -> String {
+    if to.ends_with('/') {
+        format!(
+            "{}/{}",
+            to.trim_end_matches('/'),
+            from.rsplit('/').next().unwrap_or(from)
+        )
+    } else {
+        to
+    }
+}
+
 /// GNU `getenv' consults `process-environment' only (it is
 /// initialized from the OS environment at startup).  Returns the
 /// variable's value, or None when unset.
@@ -10488,6 +10525,9 @@ pub(crate) fn default_directory(i: &Interp) -> String {
 
 fn f_file_exists_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let p = want_filename(i, &a[0])?;
+    if let Some((handler, op)) = file_handler(i, "file-exists-p", &[&p]) {
+        return i.apply(&handler, vec![op, file_name_argument(&a[0], &p)]);
+    }
     Ok(Value::from_bool(std::path::Path::new(&p).exists()))
 }
 fn f_file_directory_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -10500,6 +10540,9 @@ fn f_file_regular_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 fn f_file_readable_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let p = want_filename(i, &a[0])?;
+    if let Some((handler, op)) = file_handler(i, "file-readable-p", &[&p]) {
+        return i.apply(&handler, vec![op, file_name_argument(&a[0], &p)]);
+    }
     // GNU fileio.c `check_file_access': access(2) R_OK — a file whose
     // mode denies read (EACCES) is nil even though stat() succeeds,
     // and directories count as readable.  Mere existence is not
@@ -10520,6 +10563,9 @@ fn f_file_readable_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 fn f_file_writable_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let p = want_filename(i, &a[0])?;
+    if let Some((handler, op)) = file_handler(i, "file-writable-p", &[&p]) {
+        return i.apply(&handler, vec![op, file_name_argument(&a[0], &p)]);
+    }
     let path = std::path::Path::new(&p);
     if path.exists() {
         // GNU uses access(2) W_OK, which also works on directories;
@@ -10783,6 +10829,9 @@ fn f_file_modes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     } else {
         p.trim_end_matches('/')
     };
+    if let Some((handler, op)) = file_handler(i, "file-modes", &[p]) {
+        return i.apply(&handler, vec![op, file_name_argument(&a[0], p), arg(&a, 1)]);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -10804,6 +10853,12 @@ fn f_set_file_modes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // when FILENAME isn't a string.
     let mode = crate::lisp::builtins::want_fixnum(i, &a[1])? as u32;
     let p = want_filename(i, &a[0])?;
+    if let Some((handler, op)) = file_handler(i, "set-file-modes", &[&p]) {
+        return i.apply(
+            &handler,
+            vec![op, file_name_argument(&a[0], &p), a[1].clone(), arg(&a, 2)],
+        );
+    }
     let nofollow = match a.get(2) {
         Some(Value::Sym(s)) => i.symbol_name(*s) == "nofollow",
         Some(v) => v.truthy(),
@@ -12054,6 +12109,12 @@ fn f_delete_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             ));
         }
     }
+    if let Some((handler, op)) = file_handler(i, "delete-file", &[&p]) {
+        return i.apply(
+            &handler,
+            vec![op, file_name_argument(&a[0], &p), arg(&a, 1)],
+        );
+    }
     match std::fs::remove_file(&p) {
         Ok(()) => Ok(Value::Nil),
         // GNU's delete-file quietly returns nil when the file is missing.
@@ -12114,7 +12175,18 @@ fn f_delete_directory_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
 }
 fn f_rename_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let from = want_filename(i, &a[0])?;
-    let to = want_filename(i, &a[1])?;
+    let to = copy_target_name(from.trim_end_matches('/'), want_filename(i, &a[1])?);
+    if let Some((handler, op)) = file_handler(i, "rename-file", &[&from, &to]) {
+        return i.apply(
+            &handler,
+            vec![
+                op,
+                file_name_argument(&a[0], &from),
+                file_name_argument(&a[1], &to),
+                arg(&a, 2),
+            ],
+        );
+    }
     // GNU checks the source FIRST: a missing FILE signals
     // file-missing ("Renaming" strerror FILE NEWNAME) before the
     // destination collision check runs.
@@ -12211,7 +12283,21 @@ fn f_copy_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // (copy-file FILENAME NEWNAME &optional OK-IF-ALREADY-EXISTS
     //   KEEP-TIME PRESERVE-UID-GID PRESERVE-PERMISSIONS)
     let from = want_filename(i, &a[0])?;
-    let mut to = want_filename(i, &a[1])?;
+    let to = copy_target_name(&from, want_filename(i, &a[1])?);
+    if let Some((handler, op)) = file_handler(i, "copy-file", &[&from, &to]) {
+        return i.apply(
+            &handler,
+            vec![
+                op,
+                file_name_argument(&a[0], &from),
+                file_name_argument(&a[1], &to),
+                arg(&a, 2),
+                arg(&a, 3),
+                arg(&a, 4),
+                arg(&a, 5),
+            ],
+        );
+    }
     let keep_time = a.get(3).map(|v| v.truthy()).unwrap_or(false);
     let keep_uid_gid = a.get(4).map(|v| v.truthy()).unwrap_or(false);
     let preserve_permissions = a.get(5).map(|v| v.truthy()).unwrap_or(false);
@@ -12245,14 +12331,6 @@ fn f_copy_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 Value::string(from),
             ],
         ));
-    }
-    // GNU recognizes a directory target by the trailing slash.
-    if to.ends_with('/') {
-        let base = from.rsplit('/').next().unwrap_or(&from);
-        to = format!("{}{}", to.trim_end_matches('/'), {
-            // keep a single separator
-            format!("/{}", base)
-        });
     }
     // GNU opens (and truncates) the output before comparing file identities.
     // Compare the open descriptors so aliases and renamed paths refer to the
@@ -12463,7 +12541,125 @@ fn replace_file_transform(
     }
 }
 
+fn post_insert_file_contents(
+    i: &mut Interp,
+    a: &[Value],
+    mut inserted_chars: i128,
+    do_replace: bool,
+) -> Result<i128, Flow> {
+    fn count(i: &mut Interp, value: Value) -> Result<i128, Flow> {
+        let b = cur(i);
+        let bb = b.borrow();
+        let available = (bb.text_len() - bb.point()) as i128;
+        match value {
+            Value::Int(n) if n >= 0 && n <= available => Ok(n),
+            other => Err(i.wrong_type_mut("inserted-chars", &other)),
+        }
+    }
+    let aifs = i.intern_soft("after-insert-file-set-coding");
+    if aifs.is_some_and(|s| i.fbound_p(s)) {
+        let visitv = a.get(1).cloned().unwrap_or(Value::Nil);
+        let value = i.apply(
+            &Value::Sym(aifs.unwrap()),
+            vec![Value::Int(inserted_chars), visitv],
+        )?;
+        if value.truthy() {
+            inserted_chars = count(i, value)?;
+        }
+    }
+    if inserted_chars > 0 {
+        let fd = i.intern_soft("format-decode");
+        if fd.is_some_and(|s| i.fbound_p(s)) {
+            let visitv = a.get(1).cloned().unwrap_or(Value::Nil);
+            if do_replace {
+                if let Some(m) = replace_file_transform(i, &Value::Sym(fd.unwrap()), Some(visitv))?
+                {
+                    inserted_chars = m;
+                }
+            } else {
+                let value = i.apply(
+                    &Value::Sym(fd.unwrap()),
+                    vec![Value::Nil, Value::Int(inserted_chars), visitv],
+                )?;
+                inserted_chars = count(i, value)?;
+            }
+        }
+        let aiff = i.intern_soft("after-insert-file-functions");
+        let fnlist = aiff
+            .map(|s| i.symbol_value(s))
+            .and_then(|v| v.list_to_vec().ok())
+            .unwrap_or_default();
+        for f in fnlist {
+            if do_replace {
+                if let Some(m) = replace_file_transform(i, &f, None)? {
+                    inserted_chars = m;
+                }
+            } else {
+                let value = i.apply(&f, vec![Value::Int(inserted_chars)])?;
+                if value.truthy() {
+                    inserted_chars = count(i, value)?;
+                }
+            }
+        }
+    }
+    Ok(inserted_chars)
+}
+
 fn insert_file_contents_impl(i: &mut Interp, a: crate::lisp::Argv, literal: bool) -> EvalResult {
+    let visit = arg(&a, 1);
+    if visit.truthy() && cur(i).borrow().base_buffer.is_some() {
+        return Err(i.error("Cannot do file visiting in an indirect buffer"));
+    }
+    crate::buffer::primitives::check_writable(i)?;
+    let path = want_filename(i, &a[0])?;
+    if let Some((handler, op)) = file_handler(i, "insert-file-contents", &[&path]) {
+        // Handlers own insertion and point placement, even for REPLACE.
+        // GNU still runs the common decoding/hook tail after dispatch.
+        let filename = file_name_argument(&a[0], &path);
+        let result = i.apply(
+            &handler,
+            vec![
+                op,
+                filename.clone(),
+                visit.clone(),
+                arg(&a, 2),
+                arg(&a, 3),
+                arg(&a, 4),
+            ],
+        )?;
+        let available = {
+            let b = cur(i);
+            let bb = b.borrow();
+            (bb.text_len() - bb.point()) as i128
+        };
+        // GNU inspects only two cons cells, including dotted/cyclic values.
+        let second = match &result {
+            Value::Cons(first) => match &first.borrow().cdr {
+                Value::Cons(second) => second.borrow().car.clone(),
+                _ => Value::Nil,
+            },
+            _ => Value::Nil,
+        };
+        let count = match second {
+            Value::Int(n) if n >= 0 && n <= available => n,
+            _ => 0,
+        };
+        if visit.truthy() {
+            // GNU assigns SAVE_MODIFF/AUTOSAVE_MODIFF directly here;
+            // set-buffer-modified-p would additionally release a live lock.
+            let b = cur(i);
+            let mut bb = b.borrow_mut();
+            let tick = bb.text.mod_tick.get();
+            bb.text.save_tick.set(tick);
+            bb.auto_save_tick = tick;
+        }
+        let count = post_insert_file_contents(i, &a, count, arg(&a, 4).truthy())?;
+        return if result.is_nil() {
+            Ok(Value::list(vec![filename, Value::Int(count)]))
+        } else {
+            Ok(result)
+        };
+    }
     // GNU restores REPLACE's original point through a marker, including when
     // a modification or post-insert hook signals an error.
     let saved = a
@@ -12770,54 +12966,10 @@ fn insert_file_contents_inner(
         // the undecided placeholder), `format-decode' handles text
         // formats, and `after-insert-file-functions' may adjust the
         // character count returned to the caller.
-        let mut inserted_chars = n as i128;
-        {
-            if let Some(lcs) = i.intern_soft("last-coding-system-used") {
-                i.set_symbol(lcs, coding)?;
-            }
-            let aifs = i.intern_soft("after-insert-file-set-coding");
-            if aifs.is_some_and(|s| i.fbound_p(s)) {
-                let visitv = a.get(1).cloned().unwrap_or(Value::Nil);
-                if let Value::Int(m) = i.apply(
-                    &Value::Sym(aifs.unwrap()),
-                    vec![Value::Int(inserted_chars), visitv],
-                )? {
-                    inserted_chars = m;
-                }
-            }
-            if inserted_chars > 0 {
-                let fd = i.intern_soft("format-decode");
-                if fd.is_some_and(|s| i.fbound_p(s)) {
-                    let visitv = a.get(1).cloned().unwrap_or(Value::Nil);
-                    if do_replace {
-                        if let Some(m) =
-                            replace_file_transform(i, &Value::Sym(fd.unwrap()), Some(visitv))?
-                        {
-                            inserted_chars = m;
-                        }
-                    } else if let Value::Int(m) = i.apply(
-                        &Value::Sym(fd.unwrap()),
-                        vec![Value::Nil, Value::Int(inserted_chars), visitv],
-                    )? {
-                        inserted_chars = m;
-                    }
-                }
-                let aiff = i.intern_soft("after-insert-file-functions");
-                let fnlist = aiff
-                    .map(|s| i.symbol_value(s))
-                    .and_then(|v| v.list_to_vec().ok())
-                    .unwrap_or_default();
-                for f in fnlist {
-                    if do_replace {
-                        if let Some(m) = replace_file_transform(i, &f, None)? {
-                            inserted_chars = m;
-                        }
-                    } else if let Value::Int(m) = i.apply(&f, vec![Value::Int(inserted_chars)])? {
-                        inserted_chars = m;
-                    }
-                }
-            }
+        if let Some(lcs) = i.intern_soft("last-coding-system-used") {
+            i.set_symbol(lcs, coding)?;
         }
+        let inserted_chars = post_insert_file_contents(i, &a, n as i128, do_replace)?;
         Ok(Value::list(vec![
             Value::string(path),
             Value::Int(inserted_chars),
@@ -12830,46 +12982,158 @@ fn f_insert_file_contents(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_insert_file_contents_literally(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    insert_file_contents_impl(i, a, true)
+    // GNU files.el's wrapper inhibits transformations, including when a
+    // handler delegates recursively to insert-file-contents.
+    let depth = i.specbind_depth();
+    let result = (|| {
+        let operation = Value::Sym(i.intern("insert-file-contents"));
+        let inhibit_op = i.intern("inhibit-file-name-operation");
+        let inhibit_handlers = i.intern("inhibit-file-name-handlers");
+        let previous = if crate::lisp::builtins::eq_values(&i.symbol_value(inhibit_op), &operation)
+        {
+            i.symbol_value(inhibit_handlers)
+        } else {
+            Value::Nil
+        };
+        let handlers = [
+            "jka-compr-handler",
+            "image-file-handler",
+            "epa-file-handler",
+        ]
+        .into_iter()
+        .rev()
+        .fold(previous, |tail, name| {
+            Value::cons(Value::Sym(i.intern(name)), tail)
+        });
+        for name in ["format-alist", "after-insert-file-functions"] {
+            let symbol = i.intern(name);
+            i.specbind(symbol, Value::Nil)?;
+        }
+        let coding = Value::Sym(i.intern("no-conversion"));
+        for name in ["coding-system-for-read", "coding-system-for-write"] {
+            let symbol = i.intern(name);
+            i.specbind(symbol, coding.clone())?;
+        }
+        i.specbind(inhibit_handlers, handlers)?;
+        i.specbind(inhibit_op, operation)?;
+        insert_file_contents_impl(i, a, true)
+    })();
+    i.unbind_to(depth)?;
+    result
 }
 
 fn f_write_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // (write-region START END FILENAME &optional APPEND VISIT LOCKNAME
-    // MUSTBENEW) — START may be a string, in which case END is ignored.
-    // GNU runs validate_region on non-string START before CHECK_STRING
-    // on FILENAME, so a bogus START reports integer-or-marker-p first.
-    let text = if let Value::Str(sv) = &a[0] {
-        Value::Str(sv.clone())
+    let visit = arg(&a, 4);
+    let visiting =
+        matches!(&visit, Value::Str(_)) || matches!(&visit, Value::Sym(s) if *s == sym::T);
+    if visiting && cur(i).borrow().base_buffer.is_some() {
+        return Err(i.error("Cannot do file visiting in an indirect buffer"));
+    }
+    // validate_region coerces markers and sorts endpoints before dispatch.
+    // Nil/string START instead forwards END unchanged to the handler.
+    let (start, end) = if a[0].is_nil() || matches!(&a[0], Value::Str(_)) {
+        (a[0].clone(), a[1].clone())
     } else {
+        let x = want_int(i, &a[0])?;
+        let y = want_int(i, &a[1])?;
+        let (x, y) = (x.min(y), x.max(y));
         let b = cur(i);
         let bb = b.borrow();
-        // Nil START writes the entire buffer and ignores END.
-        // Otherwise GNU validate_region accepts either endpoint order,
-        // but requires both positions to lie inside the restriction.
-        let (start, end) = if a[0].is_nil() {
-            (0, bb.text.len())
-        } else {
-            let start = want_int(i, &a[0])?;
-            let end = want_int(i, &a[1])?;
-            let (start, end) = (start.min(end), start.max(end));
-            if start < bb.begv as i128 + 1 || end > bb.zv as i128 + 1 {
-                return Err(i.signal_data(
-                    sym::ARGS_OUT_OF_RANGE,
-                    vec![Value::Buffer(b.clone()), a[0].clone(), a[1].clone()],
-                ));
-            }
-            (start as usize - 1, end as usize - 1)
-        };
-        drop(bb);
-        buffer_file_text(i, start, end)
+        if x < bb.begv as i128 + 1 || y > bb.zv as i128 + 1 {
+            return Err(i.signal_data(
+                sym::ARGS_OUT_OF_RANGE,
+                vec![Value::Buffer(b.clone()), a[0].clone(), a[1].clone()],
+            ));
+        }
+        (Value::Int(x), Value::Int(y))
     };
     let path = want_filename(i, &a[2])?;
-    // Reject an invalid lock name before opening or truncating the file.
-    if let Some(lockname) = a.get(5) {
-        if !matches!(lockname, Value::Nil | Value::Str(_)) {
-            return Err(i.wrong_type_mut("stringp", lockname));
+    let mustbenew = arg(&a, 6);
+    let excl = Value::Sym(i.intern("excl"));
+    if mustbenew.truthy() && !crate::lisp::builtins::eq_values(&mustbenew, &excl) {
+        if let Ok(meta) = std::fs::symlink_metadata(&path) {
+            if meta.is_dir() {
+                return Err(i.signal_data(
+                    sym::FILE_ERROR,
+                    vec![Value::string("File is a directory"), Value::string(&path)],
+                ));
+            }
+            let query = Value::Sym(i.intern("y-or-n-p"));
+            let answer = i.apply(
+                &query,
+                vec![Value::string(format!(
+                    "File {} already exists; overwrite anyway? ",
+                    path
+                ))],
+            )?;
+            if answer.is_nil() {
+                let tag = i.intern("file-already-exists");
+                return Err(i.signal_data(
+                    tag,
+                    vec![Value::string("File already exists"), Value::string(&path)],
+                ));
+            }
         }
     }
+    let filename = file_name_argument(&a[2], &path);
+    let visit_file = match &visit {
+        Value::Str(_) => file_name_argument(&visit, &want_filename(i, &visit)?),
+        _ => filename.clone(),
+    };
+    let lockname = if arg(&a, 5).is_nil() {
+        visit_file.clone()
+    } else {
+        arg(&a, 5)
+    };
+    let visit_raw = match &visit {
+        Value::Str(name) => Some(name.borrow().clone()),
+        _ => None,
+    };
+    let mut names = vec![path.as_str()];
+    if let Some(name) = &visit_raw {
+        names.push(name);
+    }
+    if let Some((handler, op)) = file_handler(i, "write-region", &names) {
+        let result = i.apply(
+            &handler,
+            vec![
+                op,
+                start,
+                end,
+                filename.clone(),
+                arg(&a, 3),
+                visit,
+                lockname,
+                mustbenew,
+            ],
+        )?;
+        if visiting {
+            // GNU's handler branch records the visited name and save tick,
+            // leaving truename, default-directory, and modtime to the handler.
+            let bfn = i.intern("buffer-file-name");
+            let visit_name = want_str(i, &visit_file)?;
+            let b = cur(i);
+            let mut bb = b.borrow_mut();
+            bb.file_name = Some(visit_name);
+            bb.locals.insert(bfn, visit_file);
+            // The handler path preserves any lock on the previous name.
+            bb.text.save_tick.set(bb.text.mod_tick.get());
+        }
+        return Ok(result);
+    }
+    // Physical output still validates LOCKNAME before opening the file.
+    if !matches!(&lockname, Value::Str(_)) {
+        return Err(i.wrong_type_mut("stringp", &lockname));
+    }
+    let text = match &start {
+        Value::Str(_) => start.clone(),
+        Value::Nil => {
+            let len = cur(i).borrow().text.len();
+            buffer_file_text(i, 0, len)
+        }
+        Value::Int(x) => buffer_file_text(i, *x as usize - 1, end.int().unwrap() as usize - 1),
+        _ => unreachable!(),
+    };
     write_file_string(i, &path, &text, &a)
 }
 

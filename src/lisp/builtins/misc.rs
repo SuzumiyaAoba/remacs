@@ -5762,6 +5762,17 @@ fn f_set_file_times(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         let f = want_string(i, &args[0])?;
         crate::editor::expand_file_name_str(i, &f)
     };
+    if let Some((handler, op)) = crate::editor::file_handler(i, "set-file-times", &[&name]) {
+        return i.apply(
+            &handler,
+            vec![
+                op,
+                crate::editor::file_name_argument(&args[0], &name),
+                time,
+                args.get(2).cloned().unwrap_or(Value::Nil),
+            ],
+        );
+    }
     let secs = ns.div_euclid(1_000_000_000) as i64;
     let nsec = ns.rem_euclid(1_000_000_000) as i64;
     #[cfg(unix)]
