@@ -510,6 +510,8 @@ Reading a source preserves its point/restriction and restores the caller's
 current buffer even when a source vector fails range validation.
 Source vectors also accept marker endpoints and reversed bounds on the diff
 path; unused vector slots are ignored (`qa_replace_region_narrowing`).
+The same suite checks callback-visible target bounds, point clamping and
+restoration after normal returns, errors, throws and callback buffer switches.
 
 `Symbol.name_string` retains the Lisp name string by identity for new
 `intern`/`make-symbol` calls; internal names acquire a stable string

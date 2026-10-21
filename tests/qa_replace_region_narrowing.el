@@ -197,4 +197,110 @@
  '("NEW" ("xxNEWyy" 8 1 8)))
 
 
+;; Issue #239: callbacks see only the target region; unwind restores the caller.
+(qa
+ (with-temp-buffer
+   (insert "[abc]")
+   (let (seen)
+     (replace-region-contents 2 5
+			      (lambda nil
+				(setq seen
+				      (list (point-min) (point-max)
+					    (buffer-string)))
+				"X"))
+     (list seen (buffer-string) (point-min) (point-max))))
+ '((2 5 "abc") "[X]" 1 4))
+
+(qa
+ (with-temp-buffer
+   (insert "[preabcpost]") (narrow-to-region 2 12) (goto-char 2)
+   (let (seen)
+     (replace-region-contents 5 8
+			      (lambda nil
+				(setq seen
+				      (list (point-min) (point-max)
+					    (point) (buffer-string)))
+				(goto-char (point-min)) "X"))
+     (list seen (buffer-string) (point) (point-min) (point-max))))
+ '((5 8 5 "abc") "preXpost" 2 2 10))
+
+(qa
+ (with-temp-buffer
+   (insert "[preabcpost]") (narrow-to-region 2 12) (goto-char 6)
+   (let (seen)
+     (replace-region-contents 5 8
+			      (lambda nil
+				(setq seen
+				      (list (point-min) (point-max)
+					    (point) (buffer-string)))
+				(goto-char (point-min)) "X"))
+     (list seen (buffer-string) (point) (point-min) (point-max))))
+ '((5 8 6 "abc") "preXpost" 6 2 10))
+
+(qa
+ (with-temp-buffer
+   (insert "[preabcpost]") (narrow-to-region 2 12) (goto-char 10)
+   (let (seen)
+     (replace-region-contents 5 8
+			      (lambda nil
+				(setq seen
+				      (list (point-min) (point-max)
+					    (point) (buffer-string)))
+				(goto-char (point-min)) "X"))
+     (list seen (buffer-string) (point) (point-min) (point-max))))
+ '((5 8 8 "abc") "preXpost" 8 2 10))
+
+(qa
+ (with-temp-buffer
+   (insert "[preabcpost]") (narrow-to-region 2 12) (goto-char 6)
+   (let (seen)
+     (list
+      (condition-case nil
+	  (replace-region-contents 5 8
+				   (lambda nil
+				     (setq seen
+					   (list (point-min)
+						 (point-max)
+						 (buffer-string)))
+				     (widen) (goto-char (point-max))
+				     (error "stop")))
+	(error 'caught))
+      seen (buffer-string) (point) (point-min) (point-max))))
+ '(caught (5 8 "abc") "preabcpost" 6 2 12))
+
+(qa
+ (with-temp-buffer
+   (insert "[preabcpost]") (narrow-to-region 2 12) (goto-char 6)
+   (let (seen)
+     (list
+      (catch 'qa239-stop
+	(replace-region-contents 5 8
+				 (lambda nil
+				   (setq seen
+					 (list (point-min) (point-max)
+					       (buffer-string)))
+				   (widen) (goto-char (point-max))
+				   (throw 'qa239-stop 'caught))))
+      seen (buffer-string) (point) (point-min) (point-max))))
+ '(caught (5 8 "abc") "preabcpost" 6 2 12))
+
+(qa
+ (let ((other (generate-new-buffer " *qa239-other*")))
+   (unwind-protect
+       (with-temp-buffer
+	 (insert "[abc]")
+	 (let ((target (current-buffer)) seen)
+	   (replace-region-contents 2 5
+				    (lambda nil
+				      (setq seen
+					    (list (point-min)
+						  (point-max)
+						  (buffer-string)))
+				      (set-buffer other) "X"))
+	   (list seen (eq target (current-buffer)) (buffer-string)
+		 (point-min) (point-max))))
+     (kill-buffer other)))
+ '((2 5 "abc") t "[X]" 1 4))
+
+
 (princ (qa--done)) (terpri)
