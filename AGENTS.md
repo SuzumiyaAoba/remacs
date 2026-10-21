@@ -1521,6 +1521,14 @@ errors. GUI startup shares the same helper and interleaves directory options
 with file visits. Regressions: `tests/cli_load_path.rs` and the headless GUI
 logic-thread directory test.
 
+`cli::normalize_option` provides canonical names and inline values for
+supported GNU spellings (single-hyphen long aliases and double-hyphen
+`=VALUE`). Keep raw argv tokens and indices intact; normalize only when
+scanning or executing options, never operands or filenames after `--`.
+The startup scans, live Lisp queue, GUI startup, and dump parsing share
+this view. Empty inline values are present operands. Regressions:
+`tests/cli_option_forms.rs` and parser unit cases.
+
 ## Portable images (`src/lisp/dump/`)
 
 `dump-emacs-portable` writes a real Remacs image; `--dump-file FILE`

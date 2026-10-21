@@ -23,9 +23,58 @@ pub struct Arguments<'a> {
     options: bool,
 }
 
-/// Options whose next argument is an operand even when it resembles an
-/// option or the standalone separator. Shared with the live Lisp dispatcher.
-pub fn takes_operand(name: &str) -> bool {
+/// An execution view of a spelling; the original argv token is retained.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OptionForm<'a> {
+    pub name: &'static str,
+    pub value: Option<&'a str>,
+}
+
+/// Normalize supported GNU aliases and double-hyphen inline values. Do not
+/// call this on operands or filenames after the standalone separator.
+pub fn normalize_option(raw: &str) -> Option<OptionForm<'_>> {
+    let (spelling, value) = if raw.starts_with("--") {
+        match raw.split_once('=') {
+            Some((name, value)) => (name, Some(value)),
+            None => (raw, None),
+        }
+    } else {
+        (raw, None)
+    };
+    let name = match spelling {
+        "--eval" | "-eval" => "--eval",
+        "--execute" | "-execute" => "--execute",
+        "--load" | "-load" => "--load",
+        "-l" => "-l",
+        "--funcall" | "-funcall" => "--funcall",
+        "-f" => "-f",
+        "--directory" | "-directory" => "--directory",
+        "-L" => "-L",
+        "--script" | "-script" => "--script",
+        "--dump-file" => "--dump-file",
+        "--ieval" => "--ieval",
+        "--batch" | "-batch" => "--batch",
+        "-Q" => "-Q",
+        "--quick" | "-quick" => "--quick",
+        "-q" => "-q",
+        "--no-init" | "--no-init-file" | "-no-init-file" => "--no-init",
+        "--no-x-resources" | "-no-x-resources" => "--no-x-resources",
+        "-nw" | "--no-window-system" => "-nw",
+        "--version" | "-version" => "--version",
+        _ => return None,
+    };
+    if value.is_some()
+        && !matches!(
+            name,
+            "--eval" | "--execute" | "--load" | "--funcall" | "--directory" | "--dump-file"
+        )
+    {
+        return None;
+    }
+    Some(OptionForm { name, value })
+}
+
+fn needs_operand(name: &str) -> bool {
     matches!(
         name,
         "--eval"
@@ -40,6 +89,12 @@ pub fn takes_operand(name: &str) -> bool {
             | "-L"
             | "--directory"
     )
+}
+
+/// Whether this spelling consumes the next token, rather than an inline value.
+pub fn takes_operand(name: &str) -> bool {
+    normalize_option(name)
+        .is_some_and(|option| option.value.is_none() && needs_operand(option.name))
 }
 
 impl<'a> Iterator for Arguments<'a> {
@@ -57,18 +112,11 @@ impl<'a> Iterator for Arguments<'a> {
                 self.options = false;
                 continue;
             }
-            match name {
-                _ if takes_operand(name) => {
-                    // Keep a missing operand as an option, for the existing
-                    // command handler's missing-argument behavior.
-                    self.index += usize::from(self.index < self.args.len());
-                }
-                _ if name.starts_with("--dump-file=") => {}
-                _ if name.starts_with("--directory=") => {}
-                "--batch" | "-batch" | "-Q" | "--quick" | "-q" | "--no-init"
-                | "-no-x-resources" | "--no-x-resources" | "-nw" | "--no-window-system"
-                | "--version" => {}
-                _ => return Some(Argument::File(name)),
+            if normalize_option(name).is_none() {
+                return Some(Argument::File(name));
+            }
+            if takes_operand(name) {
+                self.index += usize::from(self.index < self.args.len());
             }
             return Some(Argument::Option {
                 index: current,
@@ -80,7 +128,7 @@ impl<'a> Iterator for Arguments<'a> {
 
 pub fn options(args: &[String]) -> impl Iterator<Item = &str> {
     arguments(args).filter_map(|arg| match arg {
-        Argument::Option { name, .. } => Some(name),
+        Argument::Option { name, .. } => normalize_option(name).map(|option| option.name),
         Argument::File(_) => None,
     })
 }
@@ -92,16 +140,17 @@ pub fn dump_file(args: &[String]) -> Result<(Vec<String>, Option<String>), Strin
     let mut image = None;
     for argument in arguments(args) {
         if let Argument::Option { index, name } = argument {
-            if name == "--dump-file" {
-                let value = args
-                    .get(index + 1)
+            let option = normalize_option(name).expect("recognized option");
+            if option.name == "--dump-file" {
+                let value = option
+                    .value
+                    .or_else(|| args.get(index + 1).map(String::as_str))
                     .ok_or("Option --dump-file requires an argument")?;
-                image = Some(value.clone());
-                removed.insert(index);
-                removed.insert(index + 1);
-            } else if let Some(value) = name.strip_prefix("--dump-file=") {
                 image = Some(value.to_owned());
                 removed.insert(index);
+                if option.value.is_none() {
+                    removed.insert(index + 1);
+                }
             }
         }
     }
@@ -173,11 +222,68 @@ mod tests {
     #[test]
     fn inline_directory_is_an_option_but_not_an_operand_pair() {
         let args = strings(&["--directory=--eval", "file"]);
+        assert_eq!(options(&args).collect::<Vec<_>>(), vec!["--directory"]);
+        assert_eq!(arguments(&args).last(), Some(Argument::File("file")));
+    }
+
+    #[test]
+    fn aliases_and_inline_values_share_the_execution_view() {
+        for (raw, canonical) in [
+            ("-eval", "--eval"),
+            ("-execute", "--execute"),
+            ("-load", "--load"),
+            ("-funcall", "--funcall"),
+            ("-directory", "--directory"),
+            ("-script", "--script"),
+            ("-quick", "--quick"),
+            ("-version", "--version"),
+            ("-no-init-file", "--no-init"),
+            ("--no-init-file", "--no-init"),
+            ("-batch", "--batch"),
+        ] {
+            let form = normalize_option(raw).unwrap();
+            assert_eq!(form.name, canonical);
+            assert_eq!(form.value, None);
+            let args = strings(&[raw, "--"]);
+            assert_eq!(options(&args).next(), Some(canonical));
+        }
+        for raw in ["--eval=(princ \"a=b\")", "--execute=(princ \"a=b\")"] {
+            assert_eq!(
+                normalize_option(raw).unwrap().value,
+                Some("(princ \"a=b\")")
+            );
+            assert!(!takes_operand(raw));
+        }
+        assert_eq!(normalize_option("--eval=").unwrap().value, Some(""));
+        for raw in [
+            "-eval=(princ 7)",
+            "-execute=x",
+            "-LA",
+            "-no-window-system",
+            "--quick=x",
+        ] {
+            assert!(normalize_option(raw).is_none(), "{raw}");
+        }
+    }
+
+    #[test]
+    fn canonical_startup_scan_keeps_raw_tokens_and_operand_boundaries() {
+        let args = strings(&[
+            "-load",
+            "--eval=(princ 7)",
+            "-eval",
+            "--",
+            "--directory=--batch",
+            "--",
+            "-version",
+        ]);
         assert_eq!(
             options(&args).collect::<Vec<_>>(),
-            vec!["--directory=--eval"]
+            vec!["--load", "--eval", "--directory"]
         );
-        assert_eq!(arguments(&args).last(), Some(Argument::File("file")));
+        assert_eq!(arguments(&args).last(), Some(Argument::File("-version")));
+        assert_eq!(args[0], "-load");
+        assert_eq!(args[1], "--eval=(princ 7)");
     }
 
     #[test]

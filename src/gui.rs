@@ -394,20 +394,23 @@ fn apply_startup_arguments(
                 crate::cli::Argument::File(name) => {
                     visit(i, name)?;
                 }
-                crate::cli::Argument::Option {
-                    index,
-                    name: "-L" | "--directory",
-                } => {
-                    let directory = arguments
-                        .get(index + 1)
-                        .map(crate::lisp::Value::string)
-                        .unwrap_or(crate::lisp::Value::Nil);
-                    paths.add(i, directory)?;
+                crate::cli::Argument::Option { index, name } => {
+                    let option = crate::cli::normalize_option(name).expect("recognized option");
+                    if matches!(option.name, "-L" | "--directory") {
+                        let value = option
+                            .value
+                            .or_else(|| arguments.get(index + 1).map(String::as_str));
+                        paths.add(
+                            i,
+                            value
+                                .map(crate::lisp::Value::string)
+                                .unwrap_or(crate::lisp::Value::Nil),
+                        )?;
+                    } else if matches!(option.name, "-Q" | "--quick" | "--no-x-resources") {
+                        let resources = i.intern("inhibit-x-resources");
+                        i.set_symbol_default(resources, crate::lisp::Value::t())?;
+                    }
                 }
-                crate::cli::Argument::Option { name, .. } if name.starts_with("--directory=") => {
-                    paths.add(i, crate::lisp::Value::string(&name[12..]))?;
-                }
-                _ => {}
             }
         }
     }
@@ -823,16 +826,14 @@ mod tests {
                 let _ = std::fs::remove_dir_all(&self.0);
             }
         }
-        let root = Owned(
-            std::env::temp_dir().join(format!(
-                "remacs-gui-load-path-{}-{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            )),
-        );
+        let root = Owned(std::env::temp_dir().join(format!(
+                    "remacs-gui-load-path-{}-{}",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos()
+                )));
         for (name, value) in [("A", "loaded-A"), ("B", "loaded-B")] {
             std::fs::create_dir_all(root.0.join(name)).unwrap();
             std::fs::write(
@@ -848,7 +849,7 @@ mod tests {
             vec![file.clone()],
             None,
             vec![
-                "-L".into(),
+                "-directory".into(),
                 root.0.join("A").to_string_lossy().into_owned(),
                 format!("--directory={}", root.0.join("B").display()),
                 file,

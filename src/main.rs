@@ -219,13 +219,12 @@ fn real_main(args: Vec<String>) {
             parse_options = false;
             continue;
         }
-        let one = [token.clone()];
-        let option = parse_options
-            && matches!(
-                cli::arguments(&one).next(),
-                Some(cli::Argument::Option { .. })
-            );
-        if !option {
+        let option = if parse_options {
+            cli::normalize_option(&token)
+        } else {
+            None
+        };
+        if option.is_none() {
             // File arguments are actions; later actions and exit hooks see
             // their buffers, but every relative path uses the startup base.
             inhibit_startup(&mut i);
@@ -245,8 +244,11 @@ fn real_main(args: Vec<String>) {
             }
             continue;
         }
+        let option = option.expect("recognized option");
         let mut args = vec![token.clone()];
-        if cli::takes_operand(&token) {
+        if let Some(value) = option.value {
+            args.push(value.to_owned());
+        } else if cli::takes_operand(&token) {
             match with_command_line_frames(&mut i, cli_rest.clone(), |i| {
                 pop_cli_string(i, left_symbol)
             }) {
@@ -259,7 +261,7 @@ fn real_main(args: Vec<String>) {
                 }
             }
         }
-        let (mut idx, arg) = (0, token.as_str());
+        let (mut idx, arg) = (0, option.name);
         match arg {
             "-Q" | "--quick" => {
                 // GNU: -Q inhibits site/user init, the splash screen,
@@ -345,16 +347,6 @@ fn real_main(args: Vec<String>) {
             "-L" | "--directory" => {
                 let result = with_command_line_frames(&mut i, cli_rest, |i| {
                     load_path_options.add(i, Value::string(&args[1]))
-                });
-                if let Err(flow) = result {
-                    report_flow(&mut i, flow);
-                    print_batch_backtrace(&mut i);
-                    batch_exit(&mut i, 255);
-                }
-            }
-            _ if arg.starts_with("--directory=") => {
-                let result = with_command_line_frames(&mut i, cli_rest, |i| {
-                    load_path_options.add(i, Value::string(&arg[12..]))
                 });
                 if let Err(flow) = result {
                     report_flow(&mut i, flow);
