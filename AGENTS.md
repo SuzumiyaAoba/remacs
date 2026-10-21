@@ -1744,6 +1744,14 @@ from their restored children. Validate topology and leaf membership
 before changing live state. The same QA suite pins #278 nesting, root
 identity, repeated switching, node liveness and `window-tree` equality.
 
+Configuration comparison uses captured frame dimensions/menu rows, frame
+and current-buffer identity, selected-window correspondence, full leaf
+geometry, margins and tree shape. Point/start/hscroll and window identity
+are ignored, as are dedication and combination-limit flags. Record slot
+6 captures frame dimensions instead of reading the subsequently mutable
+frame object. The pure layout comparator can be shared with native-object
+equality. The same QA suite pins these #279 distinctions.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

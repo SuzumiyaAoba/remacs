@@ -3068,7 +3068,7 @@ fn f_fontset_list(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 
 /// Window configuration specs retain live markers for point/start so
 /// edits between capture and restore move saved positions like GNU.
-/// Record: [tag frame SPECS SELECTED CURRENT-BUFFER TREE]. Each spec is
+/// Record: [tag frame SPECS SELECTED CURRENT-BUFFER TREE FRAME-SIZE]. Each spec is
 /// [window buffer-id point start hscroll top height left width dedicated
 ///  minibuffer params prev-buffers next-buffers mark left-margin right-margin
 ///  min-hscroll suspend-hscroll old-point]. Positions are 0-based internally.
@@ -3216,9 +3216,21 @@ fn window_configuration(i: &mut Interp) -> Value {
     let mut specs = Vec::new();
     let mut selected = Value::Nil;
     let mut tree = Value::Nil;
+    let mut frame_size = Value::Nil;
     if let Some(f) = i.selected_frame.as_ref() {
         let fr = f.borrow();
         tree = fr.root.as_ref().map_or(Value::Nil, window_config_tree);
+        let menu_lines = i
+            .intern_soft("menu-bar-lines")
+            .and_then(|symbol| {
+                crate::lisp::eval::plist_get_v(&fr.params, &Value::Sym(symbol)).int()
+            })
+            .unwrap_or(1);
+        frame_size = Value::vector(vec![
+            Value::Int(fr.width as i128),
+            Value::Int(fr.height as i128),
+            Value::Int(menu_lines),
+        ]);
         let sel_id = fr.selected.borrow().id;
         for w in &fr.windows {
             let wb = w.borrow();
@@ -3304,6 +3316,7 @@ fn window_configuration(i: &mut Interp) -> Value {
         // `set_buffer_internal' (slot index 4).
         i.buffer_value(i.current_buffer).unwrap_or(Value::Nil),
         tree,
+        frame_size,
     ])
 }
 
@@ -3715,42 +3728,114 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -
     Ok(Value::Sym(sym::T))
 }
 
-/// GNU `compare_window_configurations': equal means same buffers shown
-/// in windows of the same size/position, in the same order.
+fn window_config_tree_shape_equal(left: &Value, right: &Value) -> bool {
+    if left.is_nil() || right.is_nil() {
+        return left.is_nil() && right.is_nil();
+    }
+    let read = |value| {
+        read_window_config_tree(
+            value,
+            &mut std::collections::HashSet::new(),
+            &mut std::collections::HashSet::new(),
+        )
+    };
+    let (Some(left), Some(right)) = (read(left), read(right)) else {
+        return false;
+    };
+    let mut pending = vec![(&left, &right)];
+    while let Some((left, right)) = pending.pop() {
+        if left.horizontal != right.horizontal || left.children.len() != right.children.len() {
+            return false;
+        }
+        pending.extend(left.children.iter().zip(&right.children));
+    }
+    true
+}
+
+fn window_config_frame_size_equal(left: Option<&Value>, right: Option<&Value>) -> bool {
+    match (left, right) {
+        (None, None) | (Some(Value::Nil), Some(Value::Nil)) => true,
+        (Some(Value::Vec(left)), Some(Value::Vec(right))) => {
+            let left = left.borrow();
+            let right = right.borrow();
+            left.len() == 3
+                && right.len() == 3
+                && left
+                    .iter()
+                    .zip(right.iter())
+                    .all(|(a, b)| matches!((a,b), (Value::Int(a),Value::Int(b)) if a == b))
+        }
+        _ => false,
+    }
+}
+
+/// GNU compares layout rather than scrolling, cursor positions or window
+/// identities. Keep this pure so native equality can share the same rule.
+pub(crate) fn window_configuration_layout_equal(left: &Value, right: &Value) -> bool {
+    let (Value::Record(left), Value::Record(right)) = (left, right) else {
+        return false;
+    };
+    if Rc::ptr_eq(left, right) {
+        return true;
+    }
+    let left = left.borrow();
+    let right = right.borrow();
+    if !eq_values(
+        left.get(1).unwrap_or(&Value::Nil),
+        right.get(1).unwrap_or(&Value::Nil),
+    ) || !eq_values(
+        left.get(4).unwrap_or(&Value::Nil),
+        right.get(4).unwrap_or(&Value::Nil),
+    ) || !window_config_frame_size_equal(left.get(6), right.get(6))
+        || !window_config_tree_shape_equal(
+            left.get(5).unwrap_or(&Value::Nil),
+            right.get(5).unwrap_or(&Value::Nil),
+        )
+    {
+        return false;
+    }
+    let specs = |fields: &[Value]| fields.get(2).and_then(|value| value.list_to_vec().ok());
+    let (Some(left_specs), Some(right_specs)) = (specs(&left), specs(&right)) else {
+        return false;
+    };
+    if left_specs.len() != right_specs.len() {
+        return false;
+    }
+    let selected_left = left.get(3).unwrap_or(&Value::Nil);
+    let selected_right = right.get(3).unwrap_or(&Value::Nil);
+    for (left, right) in left_specs.iter().zip(&right_specs) {
+        let (Ok(left), Ok(right)) = (left.list_to_vec(), right.list_to_vec()) else {
+            return false;
+        };
+        if eq_values(left.first().unwrap_or(&Value::Nil), selected_left)
+            != eq_values(right.first().unwrap_or(&Value::Nil), selected_right)
+        {
+            return false;
+        }
+        // Buffer, complete geometry and margins define the visible layout.
+        // GNU ignores point/start/hscroll, dedication and combination limits.
+        for field in [1, 5, 6, 7, 8, 15, 16] {
+            if !eq_values(
+                left.get(field).unwrap_or(&Value::Nil),
+                right.get(field).unwrap_or(&Value::Nil),
+            ) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 pub(crate) fn f_window_configuration_equal_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let tag = i.intern("window-configuration");
-    for v in &a[..2] {
-        if window_config_parts(tag, v).is_none() {
-            return Err(i.wrong_type_mut("window-configuration-p", v));
+    for value in &a[..2] {
+        if window_config_parts(tag, value).is_none() {
+            return Err(i.wrong_type_mut("window-configuration-p", value));
         }
     }
-    let (_, s1, _) = window_config_parts(tag, &a[0]).unwrap();
-    let (_, s2, _) = window_config_parts(tag, &a[1]).unwrap();
-    if s1.len() != s2.len() {
-        return Ok(Value::Nil);
-    }
-    for (x, y) in s1.iter().zip(s2.iter()) {
-        let (xv, yv) = match (x.list_to_vec(), y.list_to_vec()) {
-            (Ok(xv), Ok(yv)) => (xv, yv),
-            _ => return Ok(Value::Nil),
-        };
-        // Compare buffer id, geometry, point and start (indices 1..7).
-        for n in 1..8 {
-            if matches!(n, 2 | 3) {
-                if spec_int(&xv, n) != spec_int(&yv, n) {
-                    return Ok(Value::Nil);
-                }
-                continue;
-            }
-            if !crate::lisp::eq_values(
-                xv.get(n).unwrap_or(&Value::Nil),
-                yv.get(n).unwrap_or(&Value::Nil),
-            ) {
-                return Ok(Value::Nil);
-            }
-        }
-    }
-    Ok(Value::Sym(sym::T))
+    Ok(Value::from_bool(window_configuration_layout_equal(
+        &a[0], &a[1],
+    )))
 }
 
 pub(crate) fn f_window_configuration_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

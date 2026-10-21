@@ -391,4 +391,190 @@
 )
 
 
+;; Issue #279: compare visible layout, excluding point/scrolling details.
+(qa
+(qa277-window-fixture
+ (lambda (buffer window)
+   (let ((before (current-window-configuration)))
+     (compare-window-configurations before
+				    (current-window-configuration)))))
+'t
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (buffer window)
+   (let ((before (current-window-configuration)))
+     (goto-char 12)
+     (compare-window-configurations before
+				    (current-window-configuration)))))
+'t
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (buffer window)
+   (let ((before (current-window-configuration)))
+     (set-window-start window 23 t)
+     (compare-window-configurations before
+				    (current-window-configuration)))))
+'t
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (buffer window)
+   (let ((before (current-window-configuration)))
+     (set-window-hscroll window 7)
+     (compare-window-configurations before
+				    (current-window-configuration)))))
+'t
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (buffer window)
+   (let ((before (current-window-configuration)))
+     (set-window-start window 23 t) (set-window-hscroll window 7)
+     (compare-window-configurations before
+				    (current-window-configuration)))))
+'t
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (buffer window)
+   (let ((before (current-window-configuration)))
+     (set-window-margins window 2 3)
+     (compare-window-configurations before
+				    (current-window-configuration)))))
+'nil
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (buffer window)
+   (let ((before (current-window-configuration)))
+     (set-window-dedicated-p window t)
+     (compare-window-configurations before
+				    (current-window-configuration)))))
+'t
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (buffer window)
+   (let ((before (current-window-configuration)))
+     (set-window-start window 12 t)
+     (window-configuration-equal-p before
+				   (current-window-configuration)))))
+'t
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (buffer window) (split-window window nil 'right)
+   (let ((before (current-window-configuration)))
+     (set-window-combination-limit (frame-root-window) t)
+     (compare-window-configurations before
+				    (current-window-configuration)))))
+'t
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (buffer window)
+   (let ((second (split-window window nil 'below)))
+     (let ((before (current-window-configuration)))
+       (select-window second)
+       (compare-window-configurations before
+				      (current-window-configuration))))))
+'nil
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (buffer window)
+   (let ((other (generate-new-buffer " *qa279-other*")))
+     (unwind-protect
+	 (let ((before (current-window-configuration)))
+	   (with-current-buffer other
+	     (compare-window-configurations before
+					    (current-window-configuration))))
+       (kill-buffer other)))))
+'nil
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (buffer window)
+   (let ((other (generate-new-buffer " *qa279-other*")))
+     (unwind-protect
+	 (let ((before (current-window-configuration)))
+	   (set-window-buffer window other)
+	   (compare-window-configurations before
+					  (current-window-configuration)))
+       (kill-buffer other)))))
+'nil
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (buffer window)
+   (let ((second (split-window window nil 'below)))
+     (let ((before (current-window-configuration)))
+       (delete-window second) (split-window window nil 'below)
+       (compare-window-configurations before
+				      (current-window-configuration))))))
+'t
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (_buffer window)
+   (let ((right (split-window window nil 'right)))
+     (split-window window nil 'below) (split-window right nil 'below)
+     (let ((before (current-window-configuration)))
+       (delete-other-windows window)
+       (let ((bottom (split-window window nil 'below)))
+	 (split-window window nil 'right)
+	 (split-window bottom nil 'right))
+       (compare-window-configurations before
+				      (current-window-configuration))))))
+'nil
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (_buffer _window)
+   (let*
+       ((frame (selected-frame))
+	(old (frame-parameter frame 'menu-bar-lines))
+	(before (current-window-configuration)))
+     (unwind-protect
+	 (progn
+	   (set-frame-parameter frame 'menu-bar-lines
+				(if (eq old 0) 1 0))
+	   (compare-window-configurations before
+					  (current-window-configuration)))
+       (set-frame-parameter frame 'menu-bar-lines old)))))
+'nil
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (_buffer _window)
+   (let*
+       ((frame (selected-frame)) (old (frame-parameter frame 'name))
+	(before (current-window-configuration)))
+     (unwind-protect
+	 (progn
+	   (set-frame-name "qa279-temporary")
+	   (compare-window-configurations before
+					  (current-window-configuration)))
+       (set-frame-name old)))))
+'t
+)
+
+
 (princ (qa--done)) (terpri)
