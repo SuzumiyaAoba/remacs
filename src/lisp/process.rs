@@ -1415,10 +1415,14 @@ fn poll_datagram(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
 
 /// Poll all live processes once; returns true if anything happened.
 pub(crate) fn poll_all(i: &mut Interp) -> Result<bool, Flow> {
+    poll_all_except(i, None)
+}
+
+fn poll_all_except(i: &mut Interp, except: Option<&ProcessRef>) -> Result<bool, Flow> {
     let procs = i.processes.clone();
     let mut did = false;
     for p in procs {
-        if p.borrow().dead {
+        if p.borrow().dead || except.is_some_and(|skip| Rc::ptr_eq(&p, skip)) {
             continue;
         }
         did |= poll_proc(i, &p)?.any;
@@ -2929,8 +2933,20 @@ fn f_accept_process_output(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             return Err(i.signal_data(wta, vec![Value::Sym(fxp), v.clone()]));
         }
     };
-    let deadline = std::time::Instant::now()
-        + std::time::Duration::from_secs_f64((secs + millis / 1000.0).max(0.0));
+    // Only a specified PROCESS with both time arguments nil/omitted
+    // waits indefinitely. PROCESS=nil still polls without waiting;
+    // an explicit zero (including MILLISEC=0) is a finite zero wait.
+    let indefinite = target.is_some()
+        && matches!(a.get(1), None | Some(Value::Nil))
+        && matches!(a.get(2), None | Some(Value::Nil));
+    let deadline = if indefinite {
+        None
+    } else {
+        Some(
+            std::time::Instant::now()
+                + std::time::Duration::from_secs_f64((secs + millis / 1000.0).max(0.0)),
+        )
+    };
     // PROCESS=nil ignores JUST-THIS-ONE. Otherwise every non-nil value
     // confines reads to PROCESS; GNU additionally inhibits this wait's
     // timers for fixnums (including zero), but not bignums or floats.
@@ -2942,7 +2958,10 @@ fn f_accept_process_output(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             if !just_this_one {
                 // With the default flag, other channels still progress
                 // (e.g. a server listener while waiting on its client).
-                poll_all(i)?;
+                // Do not read PROCESS a second time and discard its
+                // result: data arriving between polls would otherwise
+                // reach the filter while this wait keeps waiting.
+                poll_all_except(i, Some(p))?;
             }
             Ok(got)
         }
@@ -2953,18 +2972,17 @@ fn f_accept_process_output(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         timer_check(i)?;
     }
     let mut got = poll(i)?;
-    while !got && std::time::Instant::now() < deadline {
+    while !got && deadline.map_or(true, |deadline| std::time::Instant::now() < deadline) {
+        // A dead target cannot produce output. Check before yielding,
+        // including when there is no deadline to terminate the loop.
+        if target.as_ref().is_some_and(|p| !p.borrow().alive()) {
+            break;
+        }
         crate::lisp::eval::threads::pause(i, std::time::Duration::from_millis(5))?;
         if !inhibit_timers {
             timer_check(i)?;
         }
         got = poll(i)?;
-        // A dead target can't produce more output — GNU returns early.
-        if let Some(p) = &target {
-            if !p.borrow().alive() {
-                break;
-            }
-        }
     }
     Ok(Value::from_bool(got))
 }

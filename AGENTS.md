@@ -594,6 +594,15 @@ unread stdout and decoder tails; reported terminal processes cannot flush
 the same tail again after the filter changes. Regression:
 `qa_process_filter_pause` (24 GNU checks, including 50 KB pause/resume).
 
+`accept-process-output` waits indefinitely only when PROCESS is specified
+and both SECONDS and MILLISEC are nil/omitted. PROCESS=nil without a timeout
+polls immediately; an explicit zero in either time argument is finite.
+Dead targets return immediately. The wait keeps timers and cooperative
+threads progressing, respecting JUST-THIS-ONE's fixnum timer inhibition.
+Polling other processes excludes the already-polled target so output
+cannot be consumed there with its return value discarded. Regression:
+`qa_accept_process_wait` (timers, threads and a queued-output race).
+
 ## External libraries (`src/lisp/dynlib.rs` + builtins)
 
 Optional GNU libraries are dlopen'd at runtime (`dynlib::Library`):
