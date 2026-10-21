@@ -1662,6 +1662,12 @@ Watcher binding notifications precede stores; global values are saved before
 `qa_print_overrides` covers defaults, ordering, settings, sinks, errors,
 restoration, callbacks and watcher state.
 
+`qa_eval_narrowing` also pins #265 PRINTFLAG handling for both eval entry
+points: nil discards source output and results; buffer, marker and function
+streams receive source output plus printed evaluation results. The caller
+stream is restored, and non-nil PRINTFLAG records results in `values`.
+This behavior was already provided by the #264 live-buffer evaluation fix.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

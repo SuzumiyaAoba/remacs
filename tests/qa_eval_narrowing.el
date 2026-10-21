@@ -266,4 +266,108 @@
           (list (condition-case e (eval-region nil nil) (error (car e)))
                 (= (point) (point-max))))) '(invalid-read-syntax t)))
 
+;; Issue #265: PRINTFLAG chooses discard/output and evaluation-result printing.
+(defvar qa265-events nil)
+(defun qa265-run (kind mode body)
+ (let ((outer (generate-new-buffer " *qa265-outer*"))
+       (target (generate-new-buffer " *qa265-target*"))
+       (qa265-events nil))
+  (unwind-protect
+   (let ((standard-output outer) (values nil))
+    (let ((flag (cond ((eq mode 'buffer) target)
+                      ((eq mode 'marker) (with-current-buffer target (point-marker)))
+                      ((eq mode 'function) (lambda (char) (push char qa265-events)))
+                      (t nil))))
+     (list
+      (with-temp-buffer
+       (insert ";;; -*- lexical-binding: nil; -*-\n" body) (goto-char 1)
+       (condition-case err
+        (progn (if (eq kind 'buffer) (eval-buffer nil flag)
+                 (eval-region (point-min) (point-max) flag)) 'done)
+        (error (list (car err) (cdr err)))))
+      (with-current-buffer outer (buffer-string))
+      (with-current-buffer target (buffer-string))
+      (apply #'string (nreverse qa265-events))
+      (eq standard-output outer) values)))
+   (kill-buffer outer) (kill-buffer target))))
+(qa
+(qa265-run 'buffer 'discard "(princ \"payload\")")
+'(done "" "" "" t nil)
+)
+
+(qa
+(qa265-run 'buffer 'discard "(+ 1 2) (+ 3 4)")
+'(done "" "" "" t nil)
+)
+
+(qa
+(qa265-run 'buffer 'buffer "(princ \"payload\")")
+'(done "" "payload\n\"payload\"\n" "" t ("payload"))
+)
+
+(qa
+(qa265-run 'buffer 'buffer "(+ 1 2) (+ 3 4)")
+'(done "" "\n3\n\n7\n" "" t (7 3))
+)
+
+(qa
+(qa265-run 'buffer 'marker "(princ \"payload\")")
+'(done "" "payload\n\"payload\"\n" "" t ("payload"))
+)
+
+(qa
+(qa265-run 'buffer 'marker "(+ 1 2) (+ 3 4)")
+'(done "" "\n3\n\n7\n" "" t (7 3))
+)
+
+(qa
+(qa265-run 'buffer 'function "(princ \"payload\")")
+'(done "" "" "payload\n\"payload\"\n" t ("payload"))
+)
+
+(qa
+(qa265-run 'buffer 'function "(+ 1 2) (+ 3 4)")
+'(done "" "" "\n3\n\n7\n" t (7 3))
+)
+
+(qa
+(qa265-run 'region 'discard "(princ \"payload\")")
+'(done "" "" "" t nil)
+)
+
+(qa
+(qa265-run 'region 'discard "(+ 1 2) (+ 3 4)")
+'(done "" "" "" t nil)
+)
+
+(qa
+(qa265-run 'region 'buffer "(princ \"payload\")")
+'(done "" "payload\n\"payload\"\n" "" t ("payload"))
+)
+
+(qa
+(qa265-run 'region 'buffer "(+ 1 2) (+ 3 4)")
+'(done "" "\n3\n\n7\n" "" t (7 3))
+)
+
+(qa
+(qa265-run 'region 'marker "(princ \"payload\")")
+'(done "" "payload\n\"payload\"\n" "" t ("payload"))
+)
+
+(qa
+(qa265-run 'region 'marker "(+ 1 2) (+ 3 4)")
+'(done "" "\n3\n\n7\n" "" t (7 3))
+)
+
+(qa
+(qa265-run 'region 'function "(princ \"payload\")")
+'(done "" "" "payload\n\"payload\"\n" t ("payload"))
+)
+
+(qa
+(qa265-run 'region 'function "(+ 1 2) (+ 3 4)")
+'(done "" "" "\n3\n\n7\n" t (7 3))
+)
+
 (princ (qa--done)) (terpri)
