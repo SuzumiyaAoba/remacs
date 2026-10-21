@@ -1725,6 +1725,17 @@ intervals. POSIX classes keep their static syntax classification. Ordinary
 `re_syntax` remains property-free for plain-text engine clients.
 `qa_regex_properties` pins these #276 source and boundary distinctions.
 
+Window configurations save point/start/old-point with real markers, so
+subsequent edits move saved positions. Window point markers honor the
+buffer's `window-point-insertion-type`; start markers stay before inserted
+text. Restore point, start, hscroll/min-hscroll/suspension, old-point and
+margins for each live saved buffer. Preserve the saved current buffer's
+present point, choosing the final selected window's own pre-restore point
+when selection changed between windows showing that buffer. Before
+restoring, unshow outgoing windows under GNU's point-ownership rules;
+restored nonselected window points leave those buffer points alone.
+`qa_window_configuration` pins these #277 view restoration rules.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

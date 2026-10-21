@@ -2612,6 +2612,30 @@ pub(crate) fn forget_buffer_history(i: &mut Interp, bid: usize) {
     }
 }
 
+/// GNU unshow_buffer: retain the outgoing view's point unless it is
+/// owned by the selected window or another still-displayed point owner.
+fn unshow_window_buffer(i: &Interp, window: &WindowRef, selected_buffer: Option<usize>) {
+    let buffer_id = window.borrow().buffer;
+    if let Some(buffer) = i.buffers.get(buffer_id) {
+        let last = buffer
+            .borrow()
+            .last_selected_window
+            .as_ref()
+            .and_then(|w| w.upgrade());
+        let another_point_owner = last.as_ref().is_some_and(|last| {
+            !Rc::ptr_eq(last, window) && !last.borrow().dead && last.borrow().buffer == buffer_id
+        });
+        let mut buffer = buffer.borrow_mut();
+        buffer.last_window_start = window.borrow().start;
+        if selected_buffer != Some(buffer_id) && !another_point_owner {
+            buffer.set_point(window.borrow().point);
+        }
+        if last.as_ref().is_some_and(|last| Rc::ptr_eq(last, window)) {
+            buffer.last_selected_window = None;
+        }
+    }
+}
+
 pub(crate) fn f_set_window_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live(i, &arg(&a, 0))?;
     // GNU resolves BUFFER-OR-NAME with Fget_buffer, then CHECK_BUFFER.
@@ -2645,25 +2669,9 @@ pub(crate) fn f_set_window_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
         let record = Value::Sym(i.intern("record-window-buffer"));
         i.apply(&record, vec![Value::Window(w.clone())])?;
     }
-    // Preserve point owned by the selected window, or by another still
-    // displayed last-selected window.  Otherwise the outgoing window's
-    // point becomes the buffer's point, as in GNU `unshow_buffer'.
     let selected = sel_window(i);
-    let selected_bid = selected.as_ref().map(|s| s.borrow().buffer);
-    if let Some(old) = i.buffers.get(old_bid) {
-        let last = old.borrow().last_selected_window.as_ref().and_then(|w| w.upgrade());
-        let another_point_owner = last.as_ref().is_some_and(|last| {
-            !Rc::ptr_eq(last, &w) && !last.borrow().dead && last.borrow().buffer == old_bid
-        });
-        let mut old = old.borrow_mut();
-        old.last_window_start = w.borrow().start;
-        if selected_bid != Some(old_bid) && !another_point_owner {
-            old.set_point(w.borrow().point);
-        }
-        if last.as_ref().is_some_and(|last| Rc::ptr_eq(last, &w)) {
-            old.last_selected_window = None;
-        }
-    }
+    let selected_buffer = selected.as_ref().map(|window| window.borrow().buffer);
+    unshow_window_buffer(i, &w, selected_buffer);
     let (target_point, target_start) = i
         .buffers
         .get(bid)
@@ -2705,7 +2713,10 @@ pub(crate) fn f_set_window_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
             wb.suspend_hscroll = false;
         }
     }
-    if selected.as_ref().is_some_and(|selected| Rc::ptr_eq(selected, &w)) {
+    if selected
+        .as_ref()
+        .is_some_and(|selected| Rc::ptr_eq(selected, &w))
+    {
         if let Some(buffer) = i.buffers.get(bid) {
             buffer.borrow_mut().last_selected_window = Some(Rc::downgrade(&w));
         }
@@ -3055,14 +3066,42 @@ fn f_fontset_list(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     )]))
 }
 
-/// Opaque window-configuration token (`#<window-configuration>').
-/// Record layout: [tag frame SPECS SELECTED] where SPECS is a list of
-/// vectors, one per live window in display order:
-///   [window buffer-id point start hscroll top height left width
-///    dedicated margins params prev-buffers next-buffers mark]
-/// GNU reuses the same window objects on restore, so the spec keeps the
-/// `window' reference and `set-window-configuration' writes the saved
-/// fields back into it (reviving it if it died in the meantime).
+/// Window configuration specs retain live markers for point/start so
+/// edits between capture and restore move saved positions like GNU.
+/// Record: [tag frame SPECS SELECTED CURRENT-BUFFER]. Each spec is
+/// [window buffer-id point start hscroll top height left width dedicated
+///  minibuffer params prev-buffers next-buffers mark left-margin right-margin
+///  min-hscroll suspend-hscroll old-point]. Positions are 0-based internally.
+fn window_config_marker(i: &Interp, buffer: usize, position: usize, insertion_type: bool) -> Value {
+    let Some(buffer) = i.buffers.get(buffer) else {
+        return Value::Nil;
+    };
+    if !buffer.borrow().live {
+        return Value::Nil;
+    }
+    let marker = crate::lisp::memory::allocate(
+        crate::lisp::value::Marker {
+            buffer: Some(buffer.borrow().id),
+            position: position.min(buffer.borrow().text.len()),
+            insertion_type,
+        },
+        Value::Marker,
+    );
+    buffer.borrow_mut().register_marker(&marker);
+    Value::Marker(marker)
+}
+
+fn window_config_point_insertion_type(i: &Interp, buffer: usize) -> bool {
+    let Some(symbol) = i.intern_soft("window-point-insertion-type") else {
+        return false;
+    };
+    i.buffers
+        .get(buffer)
+        .and_then(|buffer| buffer.borrow().locals.get(&symbol).cloned())
+        .unwrap_or_else(|| i.obarray.symbol(symbol).value.clone())
+        .truthy()
+}
+
 fn window_configuration(i: &mut Interp) -> Value {
     let tag = Value::Sym(i.intern("window-configuration"));
     let frame_v = i
@@ -3097,11 +3136,12 @@ fn window_configuration(i: &mut Interp) -> Value {
                 .and_then(|b| b.borrow().mark_position())
                 .map(|m| Value::Int(m as i128))
                 .unwrap_or(Value::Nil);
+            let insertion_type = window_config_point_insertion_type(i, wb.buffer);
             specs.push(Value::list(vec![
                 Value::Window(w.clone()),
                 Value::Int(wb.buffer as i128),
-                Value::Int(point as i128),
-                Value::Int(wb.start as i128),
+                window_config_marker(i, wb.buffer, point, insertion_type),
+                window_config_marker(i, wb.buffer, wb.start, false),
                 Value::Int(wb.hscroll as i128),
                 Value::Int(wb.top as i128),
                 Value::Int(wb.height as i128),
@@ -3113,6 +3153,11 @@ fn window_configuration(i: &mut Interp) -> Value {
                 wb.prev_buffers.clone(),
                 wb.next_buffers.clone(),
                 mark,
+                Value::Int(wb.margins.0 as i128),
+                Value::Int(wb.margins.1 as i128),
+                Value::Int(wb.min_hscroll as i128),
+                Value::from_bool(wb.suspend_hscroll),
+                window_config_marker(i, wb.buffer, wb.old_point, insertion_type),
             ]));
         }
         // GNU configs record the minibuffer window's geometry too; it
@@ -3122,8 +3167,8 @@ fn window_configuration(i: &mut Interp) -> Value {
             specs.push(Value::list(vec![
                 Value::Window(m.clone()),
                 Value::Int(mb.buffer as i128),
-                Value::Int(mb.point as i128),
-                Value::Int(mb.start as i128),
+                window_config_marker(i, mb.buffer, mb.point, false),
+                window_config_marker(i, mb.buffer, mb.start, false),
                 Value::Int(mb.hscroll as i128),
                 Value::Int(mb.top as i128),
                 Value::Int(mb.height as i128),
@@ -3135,6 +3180,11 @@ fn window_configuration(i: &mut Interp) -> Value {
                 mb.prev_buffers.clone(),
                 mb.next_buffers.clone(),
                 Value::Nil,
+                Value::Int(mb.margins.0 as i128),
+                Value::Int(mb.margins.1 as i128),
+                Value::Int(mb.min_hscroll as i128),
+                Value::from_bool(mb.suspend_hscroll),
+                window_config_marker(i, mb.buffer, mb.old_point, false),
             ]));
         }
     }
@@ -3150,11 +3200,39 @@ fn window_configuration(i: &mut Interp) -> Value {
     ])
 }
 
-/// Integer field N of a saved window spec (0 when absent/non-integer).
+/// Numeric/marker field N, with positions kept 0-based internally.
 fn spec_int(v: &[Value], n: usize) -> i128 {
     match v.get(n) {
         Some(Value::Int(x)) => *x,
+        Some(Value::Marker(marker)) => marker.borrow().position as i128,
         _ => 0,
+    }
+}
+
+fn restore_window_view(i: &Interp, window: &mut Window, spec: &[Value], restore_positions: bool) {
+    if restore_positions {
+        if let Some(buffer) = i.buffers.get(window.buffer) {
+            let buffer = buffer.borrow();
+            let clip = |n| (spec_int(spec, n).max(0) as usize).clamp(buffer.begv, buffer.zv);
+            window.point = clip(2);
+            window.start = clip(3);
+            if spec.len() > 19 {
+                window.old_point = clip(19);
+            }
+        }
+    }
+    window.hscroll = spec_int(spec, 4).max(0) as usize;
+    if spec.len() > 16 {
+        window.margins = (
+            spec_int(spec, 15).max(0) as usize,
+            spec_int(spec, 16).max(0) as usize,
+        );
+    }
+    if spec.len() > 17 {
+        window.min_hscroll = spec_int(spec, 17).max(0) as usize;
+    }
+    if let Some(value) = spec.get(18) {
+        window.suspend_hscroll = value.truthy();
     }
 }
 
@@ -3216,6 +3294,44 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -
         None => return Err(i.wrong_type_mut("window-configuration-p", &a[0])),
     };
     let f = sel_frame(i).ok_or_else(|| i.error("No frame"))?;
+    // Preserve the saved current buffer's present point. If restoration
+    // changes which window shows it as selected, preserve that final
+    // window's own point rather than copying the old selected cursor.
+    let preserved = match window_config_curbuf(tag, &a[0]) {
+        Some(Value::Buffer(buffer)) if buffer.borrow().live => {
+            let buffer_id = buffer.borrow().id;
+            let mut point = buffer.borrow().point();
+            if let Value::Window(final_window) = &selected {
+                let old = f.borrow().selected.clone();
+                let final_window = final_window.borrow();
+                if !final_window.dead
+                    && final_window.buffer == buffer_id
+                    && final_window.id != old.borrow().id
+                    && (i.current_buffer != buffer_id || old.borrow().buffer == buffer_id)
+                {
+                    point = final_window.point;
+                }
+            }
+            Some((buffer_id, point))
+        }
+        _ => None,
+    };
+    // GNU swaps selected point into the window before unshowing the
+    // old tree, then saves outgoing points to buffers in reverse order.
+    let old_selected = f.borrow().selected.clone();
+    let selected_buffer = old_selected.borrow().buffer;
+    if let Some(buffer) = i.buffers.get(selected_buffer) {
+        old_selected.borrow_mut().point = buffer.borrow().point();
+    }
+    let mut outgoing = f.borrow().windows.clone();
+    if let Some(minibuffer) = &f.borrow().minibuffer {
+        outgoing.push(minibuffer.clone());
+    }
+    for window in outgoing.iter().rev() {
+        if !window.borrow().dead {
+            unshow_window_buffer(i, window, Some(selected_buffer));
+        }
+    }
     // Kill live windows that the configuration does not contain, then
     // rebuild the frame's window list from the saved specs (GNU writes
     // the saved contents back into the same window objects).
@@ -3310,6 +3426,7 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -
             wb.width = spec_int(&v, 8).max(0) as usize;
             wb.dedicated = v.get(9).cloned().unwrap_or(Value::Nil);
             wb.dead = false;
+            restore_window_view(i, &mut wb, &v, true);
             mini_top = Some(spec_int(&v, 5));
         }
     }
@@ -3376,6 +3493,8 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -
             wb.prev_buffers = v.get(12).cloned().unwrap_or(Value::Nil);
             wb.next_buffers = v.get(13).cloned().unwrap_or(Value::Nil);
             wb.dead = false;
+            let saved_buffer_live = i.buffer_live(bid);
+            restore_window_view(i, &mut wb, v, saved_buffer_live);
         }
         if let Some(Value::Int(m)) = v.get(14) {
             marks.push((spec_int(v, 1).max(0) as usize, (*m).max(0) as usize));
@@ -3426,11 +3545,20 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -
     if let Value::Window(w) = &selected {
         w.borrow_mut().use_time = next_use_time();
         let (bid, pt) = {
-            let wb = w.borrow();
+            let mut wb = w.borrow_mut();
+            if let Some((buffer, point)) = preserved {
+                if wb.buffer == buffer {
+                    wb.point = point;
+                }
+            }
             (wb.buffer, wb.point)
         };
         if let Some(b) = i.buffers.get(bid) {
-            b.borrow_mut().set_point(pt);
+            {
+                let mut buffer = b.borrow_mut();
+                buffer.set_point(pt);
+                buffer.last_selected_window = Some(Rc::downgrade(w));
+            }
             i.set_current_buffer(bid);
         }
     }
@@ -3445,6 +3573,11 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -
         let bid = b.borrow().id;
         if i.buffer_live(bid) {
             i.set_current_buffer(bid);
+            if let Some((buffer, point)) = preserved {
+                if buffer == bid {
+                    b.borrow_mut().set_point(point);
+                }
+            }
         }
     }
     Ok(Value::Sym(sym::T))
@@ -3471,6 +3604,12 @@ pub(crate) fn f_window_configuration_equal_p(i: &mut Interp, a: crate::lisp::Arg
         };
         // Compare buffer id, geometry, point and start (indices 1..7).
         for n in 1..8 {
+            if matches!(n, 2 | 3) {
+                if spec_int(&xv, n) != spec_int(&yv, n) {
+                    return Ok(Value::Nil);
+                }
+                continue;
+            }
             if !crate::lisp::eq_values(
                 xv.get(n).unwrap_or(&Value::Nil),
                 yv.get(n).unwrap_or(&Value::Nil),
