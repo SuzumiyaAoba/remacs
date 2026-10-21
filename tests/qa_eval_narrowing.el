@@ -450,4 +450,49 @@
 )
 
 
+;; Issue #268: the public evaluation functions return nil, not the last value.
+(qa
+(with-temp-buffer (insert "42") (eval-buffer))
+'nil
+)
+
+(qa
+(with-temp-buffer (insert "nil") (eval-buffer))
+'nil
+)
+
+(qa
+(with-temp-buffer (insert "(+ 1 2) (+ 3 4)") (eval-buffer))
+'nil
+)
+
+(qa
+(with-temp-buffer (insert "'(one two)") (eval-buffer))
+'nil
+)
+
+(qa
+(with-temp-buffer (insert "42") (eval-region (point-min) (point-max)))
+'nil
+)
+
+(qa
+(with-temp-buffer
+  (insert "nil") (eval-region (point-min) (point-max)))
+'nil
+)
+
+(qa
+(with-temp-buffer
+  (insert "(+ 1 2) (+ 3 4)") (eval-region (point-min) (point-max)))
+'nil
+)
+
+(qa
+(with-temp-buffer
+  (insert "'(one two)") (eval-region (point-min) (point-max)))
+'nil
+)
+
+
 (princ (qa--done)) (terpri)

@@ -1683,6 +1683,10 @@ read each form through the callback, prefer it over `load-read-function`,
 skip comment-only input, evaluate substituted forms, and unwind reader errors.
 The #264 shared evaluation loop already provided this behavior.
 
+The same suite pins #268 nil returns from both evaluation entry points for
+nil-valued, numeric, sequential and quoted-list source forms. Returned
+values stay independent from PRINTFLAG output; #264 already fixed the loop.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source
