@@ -12,6 +12,7 @@ use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::rc::Rc;
+use num_traits::ToPrimitive;
 
 mod child;
 mod coding;
@@ -3021,8 +3022,46 @@ fn f_set_process_inherit_coding_system_flag(i: &mut Interp, a: crate::lisp::Argv
     Ok(a[1].clone())
 }
 
-fn f_set_process_window_size(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::Nil)
+fn f_set_process_window_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let process = want_proc(i, &a[0])?;
+    // GNU checks both dimensions before considering the descriptor/kind,
+    // preserving the original integer in out-of-range error data.
+    let dimension = |i: &mut Interp, value: &Value| -> Result<u16, Flow> {
+        let number = match value {
+            Value::Int(number) => u16::try_from(*number).ok(),
+            Value::BigInt(number) => number.to_u16(),
+            other => return Err(i.wrong_type_mut("integerp", other)),
+        };
+        number.ok_or_else(|| {
+            i.signal_data(
+                sym::ARGS_OUT_OF_RANGE,
+                vec![value.clone(), Value::Int(0), Value::Int(u16::MAX as i128)],
+            )
+        })
+    };
+    let height = dimension(i, &a[1])?;
+    let width = dimension(i, &a[2])?;
+    let process = process.borrow();
+    // GNU uses infd (the child's output descriptor), rather than a tty
+    // available only on its input side in a mixed pipe/pty connection.
+    let fd = match &process.io {
+        ProcIo::Child {
+            output_fd: Some(fd),
+            ..
+        } => fd.as_raw_fd(),
+        ProcIo::Pipe { read_fd, .. } => *read_fd,
+        ProcIo::Serial(file) => file.as_raw_fd(),
+        _ => return Ok(Value::Nil),
+    };
+    let size = libc::winsize {
+        ws_row: height,
+        ws_col: width,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    Ok(Value::from_bool(
+        unsafe { libc::ioctl(fd, libc::TIOCSWINSZ, &size) } == 0,
+    ))
 }
 
 fn f_process_datagram_address(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

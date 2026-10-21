@@ -743,6 +743,15 @@ detachment still follows buffer death. Regressions: `qa_process_buffer_identity`
 (GC, dead attachment, name reuse, deletion, contact mutation) and the promoted
 check in `qa_process_defaults`.
 
+`set-process-window-size` checks PROCESS first, then HEIGHT/WIDTH as unsigned
+16-bit integers (including exact bignum range errors). It applies TIOCSWINSZ
+to the process input descriptor, which is a child's output-side fd; using
+the separate tty fd would incorrectly succeed on input-only PTY connections.
+Return t on ioctl success and nil for non-terminals, network processes or
+closed descriptors. Pixel fields are zero, matching GNU sysdep.c.
+`qa_process_window_size` reads real child terminal geometry for ordinary and
+mixed pipe/PTY connections, repeated resizes and both dimension boundaries.
+
 IP contact addresses come from the socket's real local/peer endpoints,
 including after DNS resolution. Synchronous and asynchronous clients both
 honor the requested address family. Accepted connections copy the listener's

@@ -65,6 +65,7 @@ qa!(qa_before_markers, "qa_before_markers.el");
 qa!(qa_float_output, "qa_float_output.el");
 qa!(qa_process_defaults, "qa_process_defaults.el");
 qa!(qa_process_buffer_identity, "qa_process_buffer_identity.el");
+qa!(qa_process_window_size, "qa_process_window_size.el");
 qa!(qa_process_names, "qa_process_names.el");
 qa!(qa_network_datagram, "qa_network_datagram.el");
 qa!(qa_network_nowait, "qa_network_nowait.el");
