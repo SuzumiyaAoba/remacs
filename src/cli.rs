@@ -37,6 +37,8 @@ pub fn takes_operand(name: &str) -> bool {
             | "-f"
             | "--funcall"
             | "--dump-file"
+            | "-L"
+            | "--directory"
     )
 }
 
@@ -62,6 +64,7 @@ impl<'a> Iterator for Arguments<'a> {
                     self.index += usize::from(self.index < self.args.len());
                 }
                 _ if name.starts_with("--dump-file=") => {}
+                _ if name.starts_with("--directory=") => {}
                 "--batch" | "-batch" | "-Q" | "--quick" | "-q" | "--no-init"
                 | "-no-x-resources" | "--no-x-resources" | "-nw" | "--no-window-system"
                 | "--version" => {}
@@ -149,6 +152,8 @@ mod tests {
             "-l",
             "--script",
             "--ieval",
+            "-L",
+            "--directory",
             "-f",
             "--funcall",
             "--dump-file",
@@ -163,6 +168,16 @@ mod tests {
                 assert_eq!(arguments(&args).last(), Some(Argument::File("--version")));
             }
         }
+    }
+
+    #[test]
+    fn inline_directory_is_an_option_but_not_an_operand_pair() {
+        let args = strings(&["--directory=--eval", "file"]);
+        assert_eq!(
+            options(&args).collect::<Vec<_>>(),
+            vec!["--directory=--eval"]
+        );
+        assert_eq!(arguments(&args).last(), Some(Argument::File("file")));
     }
 
     #[test]

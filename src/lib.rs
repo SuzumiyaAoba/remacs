@@ -6,6 +6,7 @@
 //! terminal front-end that never blocks the UI thread.
 
 pub mod buffer;
+pub mod cli;
 pub mod editor;
 pub mod gui;
 pub mod lisp;

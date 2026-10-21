@@ -367,6 +367,53 @@ fn start_logic(
     start_logic_with_dump(files, None, Vec::new())
 }
 
+fn apply_startup_arguments(
+    i: &mut Interp,
+    files: &[String],
+    arguments: &[String],
+) -> crate::lisp::EvalResult {
+    let base_symbol = i.intern("command-line-default-directory");
+    let base = i.symbol_value(base_symbol);
+    let visit = |i: &mut Interp, name: &str| {
+        let expand = crate::lisp::Value::Sym(i.intern("expand-file-name"));
+        let file = i.apply(
+            &expand,
+            vec![crate::lisp::Value::string(name), base.clone()],
+        )?;
+        let find = crate::lisp::Value::Sym(i.intern("find-file"));
+        i.apply(&find, vec![file])
+    };
+    if arguments.is_empty() {
+        for name in files {
+            visit(i, name)?;
+        }
+    } else {
+        let mut paths = crate::lisp::load::CommandLineLoadPath::default();
+        for argument in crate::cli::arguments(arguments) {
+            match argument {
+                crate::cli::Argument::File(name) => {
+                    visit(i, name)?;
+                }
+                crate::cli::Argument::Option {
+                    index,
+                    name: "-L" | "--directory",
+                } => {
+                    let directory = arguments
+                        .get(index + 1)
+                        .map(crate::lisp::Value::string)
+                        .unwrap_or(crate::lisp::Value::Nil);
+                    paths.add(i, directory)?;
+                }
+                crate::cli::Argument::Option { name, .. } if name.starts_with("--directory=") => {
+                    paths.add(i, crate::lisp::Value::string(&name[12..]))?;
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(crate::lisp::Value::Nil)
+}
+
 fn start_logic_with_dump(
     files: Vec<String>,
     dump_file: Option<String>,
@@ -398,11 +445,13 @@ fn start_logic_with_dump(
                     }
                 },
             };
-            let _ = startup_tx.send(Ok(()));
-            for f in &files {
-                let form = format!("(find-file {:?})", f);
-                let _ = i.eval_str(&form);
+            if let Err(error) = apply_startup_arguments(&mut i, &files, &arguments) {
+                let message = format!("GUI startup: {error:?}");
+                eprintln!("remacs: {message}");
+                let _ = startup_tx.send(Err(message));
+                return;
             }
+            let _ = startup_tx.send(Ok(()));
             let io = ChanIo {
                 events: event_rx,
                 grids: grid_tx,
@@ -764,6 +813,83 @@ mod tests {
             }
         }
         panic!("logic thread did not exit after C-x C-c");
+    }
+
+    #[test]
+    fn logic_thread_applies_directory_options_before_visiting_files() {
+        struct Owned(std::path::PathBuf);
+        impl Drop for Owned {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = Owned(
+            std::env::temp_dir().join(format!(
+                "remacs-gui-load-path-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            )),
+        );
+        for (name, value) in [("A", "loaded-A"), ("B", "loaded-B")] {
+            std::fs::create_dir_all(root.0.join(name)).unwrap();
+            std::fs::write(
+                root.0.join(name).join("qa229-gui.el"),
+                format!("(defun qa229-gui-value () \"{value}\")\n(provide 'qa229-gui)\n"),
+            )
+            .unwrap();
+        }
+        let file = root.0.join("payload.txt");
+        std::fs::write(&file, "GUI").unwrap();
+        let file = file.to_string_lossy().into_owned();
+        let (tx, rx) = super::start_logic_with_dump(
+            vec![file.clone()],
+            None,
+            vec![
+                "-L".into(),
+                root.0.join("A").to_string_lossy().into_owned(),
+                format!("--directory={}", root.0.join("B").display()),
+                file,
+            ],
+        )
+        .unwrap();
+        let wait_for = |text: &str| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(120);
+            loop {
+                if let Ok(grid) = rx.try_recv() {
+                    if grid.rows.iter().any(|row| row.contains(text)) {
+                        break;
+                    }
+                }
+                assert!(!rx.is_closed(), "logic thread closed before {text}");
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "no GUI grid contained {text}"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        wait_for("GUI");
+        tx.send(GuiEvent::Key(':' as i128 | CHAR_META)).unwrap();
+        for ch in "(progn (require 'qa229-gui) (insert (qa229-gui-value)) (set-buffer-modified-p nil))"
+            .chars()
+        {
+            tx.send(GuiEvent::Key(ch as i128)).unwrap();
+        }
+        tx.send(GuiEvent::Key(13)).unwrap();
+        wait_for("loaded-AGUI");
+        tx.send(GuiEvent::Key(24)).unwrap();
+        tx.send(GuiEvent::Key(3)).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !rx.is_closed() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "GUI logic thread did not quit"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]

@@ -9,7 +9,7 @@
 //!   --script FILE: batch + load
 //!   --version
 
-mod cli;
+use remacs::cli;
 
 use remacs::lisp::{Flow, Interp, OutputSink, Value};
 
@@ -198,6 +198,7 @@ fn real_main(args: Vec<String>) {
         Value::list(args.iter().map(Value::string).collect()),
     );
     let mut parse_options = true;
+    let mut load_path_options = remacs::lisp::load::CommandLineLoadPath::default();
     loop {
         let cli_rest = i.symbol_value(left_symbol);
         if cli_rest.is_nil() {
@@ -339,6 +340,26 @@ fn real_main(args: Vec<String>) {
                         }
                     }
                     std::process::exit(exit);
+                }
+            }
+            "-L" | "--directory" => {
+                let result = with_command_line_frames(&mut i, cli_rest, |i| {
+                    load_path_options.add(i, Value::string(&args[1]))
+                });
+                if let Err(flow) = result {
+                    report_flow(&mut i, flow);
+                    print_batch_backtrace(&mut i);
+                    batch_exit(&mut i, 255);
+                }
+            }
+            _ if arg.starts_with("--directory=") => {
+                let result = with_command_line_frames(&mut i, cli_rest, |i| {
+                    load_path_options.add(i, Value::string(&arg[12..]))
+                });
+                if let Err(flow) = result {
+                    report_flow(&mut i, flow);
+                    print_batch_backtrace(&mut i);
+                    batch_exit(&mut i, 255);
                 }
             }
             "--eval" | "--execute" => {

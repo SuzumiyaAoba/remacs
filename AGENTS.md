@@ -1512,6 +1512,15 @@ each element/tail only when reached, preserving earlier output before
 from the standalone `--` separator. Regressions:
 `tests/cli_argument_queue.rs`, `tests/cli_separator.rs`, nativecomp CLI tests.
 
+CLI `-L`/`--directory` (also `--directory=DIR`) update `load-path` after
+bootstrap, in argument order. `load::CommandLineLoadPath` implements GNU's
+cons splice cursor, including the head reset after a colon-prefixed append;
+retain duplicates and resolve relative directories against the current
+buffer. Call the real filename normalizer/expander, preserving empty-input
+errors. GUI startup shares the same helper and interleaves directory options
+with file visits. Regressions: `tests/cli_load_path.rs` and the headless GUI
+logic-thread directory test.
+
 ## Portable images (`src/lisp/dump/`)
 
 `dump-emacs-portable` writes a real Remacs image; `--dump-file FILE`
