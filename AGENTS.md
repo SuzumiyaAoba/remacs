@@ -528,6 +528,9 @@ observer unit test.
 Like GNU's modification preparation, transposition sets `deactivate-mark`
 after successful before-change hooks. Inhibited modification hooks and the
 adjacent-empty no-op leave it unchanged.
+`qa_transpose_properties` separately pins clipped and overlapping plists,
+explicit nil property presence, and shared property-value identity after GC
+for equal, unequal, adjacent and reversed regions with either marker flag.
 
 `Symbol.name_string` retains the Lisp name string by identity for new
 `intern`/`make-symbol` calls; internal names acquire a stable string
