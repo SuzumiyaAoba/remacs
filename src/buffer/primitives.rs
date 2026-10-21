@@ -10455,10 +10455,11 @@ pub(crate) fn search_common(
                     found = Some(regs);
                     cur_pos = if backward { s } else { e.max(s + 1) };
                     steps -= 1;
-                    if backward {
-                        if s == 0 {
-                            break;
-                        }
+                    // A zero-width match at the beginning can satisfy
+                    // every remaining repetition at that same position.
+                    // A nonempty match must still search for the rest.
+                    if backward && s == 0 && e == 0 {
+                        break;
                     }
                 }
                 // GNU: COUNT is all-or-nothing — a miss on any

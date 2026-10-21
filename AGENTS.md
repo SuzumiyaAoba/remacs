@@ -1687,6 +1687,13 @@ The same suite pins #268 nil returns from both evaluation entry points for
 nil-valued, numeric, sequential and quoted-list source forms. Returned
 values stay independent from PRINTFLAG output; #264 already fixed the loop.
 
+Backward buffer search must continue counting after a nonempty match at
+BEGV. Only a zero-width match there can satisfy remaining repetitions at
+the same position. `qa_search` pins #272 across literal, regexp and POSIX
+search, negative forward counts, NOERROR modes, narrowing and zero-width
+controls. An incomplete count keeps point for nil/t NOERROR and moves to
+the bound for other non-nil NOERROR values.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

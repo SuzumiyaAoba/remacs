@@ -792,4 +792,494 @@
       (list (re-search-backward "zzz" nil 1) (point)))
     '(nil 5))
 
+;; Issue #272: a partial backward match must not satisfy the full count.
+(defun qa272-run (function pattern count noerror &optional narrowed)
+ (with-temp-buffer
+  (when narrowed (insert "hidden "))
+  (let ((beg (point)))
+   (insert "a")
+   (when narrowed (narrow-to-region beg (point-max)))
+   (goto-char (point-max))
+   (list (condition-case e (funcall function pattern nil noerror count) (error e)) (point)))))
+(qa
+(qa272-run 'search-backward "a" 0 nil)
+'(2 2)
+)
+
+(qa
+(qa272-run 'search-backward "a" 0 t)
+'(2 2)
+)
+
+(qa
+(qa272-run 'search-backward "a" 0 'move)
+'(2 2)
+)
+
+(qa
+(qa272-run 'search-backward "a" 1 nil)
+'(1 1)
+)
+
+(qa
+(qa272-run 'search-backward "a" 1 t)
+'(1 1)
+)
+
+(qa
+(qa272-run 'search-backward "a" 1 'move)
+'(1 1)
+)
+
+(qa
+(qa272-run 'search-backward "a" 2 nil)
+'((search-failed "a") 2)
+)
+
+(qa
+(qa272-run 'search-backward "a" 2 t)
+'(nil 2)
+)
+
+(qa
+(qa272-run 'search-backward "a" 2 'move)
+'(nil 1)
+)
+
+(qa
+(qa272-run 'search-backward "a" 3 nil)
+'((search-failed "a") 2)
+)
+
+(qa
+(qa272-run 'search-backward "a" 3 t)
+'(nil 2)
+)
+
+(qa
+(qa272-run 'search-backward "a" 3 'move)
+'(nil 1)
+)
+
+(qa
+(qa272-run 're-search-backward "a" 0 nil)
+'(2 2)
+)
+
+(qa
+(qa272-run 're-search-backward "a" 0 t)
+'(2 2)
+)
+
+(qa
+(qa272-run 're-search-backward "a" 0 'move)
+'(2 2)
+)
+
+(qa
+(qa272-run 're-search-backward "a" 1 nil)
+'(1 1)
+)
+
+(qa
+(qa272-run 're-search-backward "a" 1 t)
+'(1 1)
+)
+
+(qa
+(qa272-run 're-search-backward "a" 1 'move)
+'(1 1)
+)
+
+(qa
+(qa272-run 're-search-backward "a" 2 nil)
+'((search-failed "a") 2)
+)
+
+(qa
+(qa272-run 're-search-backward "a" 2 t)
+'(nil 2)
+)
+
+(qa
+(qa272-run 're-search-backward "a" 2 'move)
+'(nil 1)
+)
+
+(qa
+(qa272-run 're-search-backward "a" 3 nil)
+'((search-failed "a") 2)
+)
+
+(qa
+(qa272-run 're-search-backward "a" 3 t)
+'(nil 2)
+)
+
+(qa
+(qa272-run 're-search-backward "a" 3 'move)
+'(nil 1)
+)
+
+(qa
+(qa272-run 'posix-search-backward "a" 0 nil)
+'(2 2)
+)
+
+(qa
+(qa272-run 'posix-search-backward "a" 0 t)
+'(2 2)
+)
+
+(qa
+(qa272-run 'posix-search-backward "a" 0 'move)
+'(2 2)
+)
+
+(qa
+(qa272-run 'posix-search-backward "a" 1 nil)
+'(1 1)
+)
+
+(qa
+(qa272-run 'posix-search-backward "a" 1 t)
+'(1 1)
+)
+
+(qa
+(qa272-run 'posix-search-backward "a" 1 'move)
+'(1 1)
+)
+
+(qa
+(qa272-run 'posix-search-backward "a" 2 nil)
+'((search-failed "a") 2)
+)
+
+(qa
+(qa272-run 'posix-search-backward "a" 2 t)
+'(nil 2)
+)
+
+(qa
+(qa272-run 'posix-search-backward "a" 2 'move)
+'(nil 1)
+)
+
+(qa
+(qa272-run 'posix-search-backward "a" 3 nil)
+'((search-failed "a") 2)
+)
+
+(qa
+(qa272-run 'posix-search-backward "a" 3 t)
+'(nil 2)
+)
+
+(qa
+(qa272-run 'posix-search-backward "a" 3 'move)
+'(nil 1)
+)
+
+(qa
+(qa272-run 'search-forward "a" 0 nil)
+'(2 2)
+)
+
+(qa
+(qa272-run 'search-forward "a" 0 t)
+'(2 2)
+)
+
+(qa
+(qa272-run 'search-forward "a" 0 'move)
+'(2 2)
+)
+
+(qa
+(qa272-run 'search-forward "a" -1 nil)
+'(1 1)
+)
+
+(qa
+(qa272-run 'search-forward "a" -1 t)
+'(1 1)
+)
+
+(qa
+(qa272-run 'search-forward "a" -1 'move)
+'(1 1)
+)
+
+(qa
+(qa272-run 'search-forward "a" -2 nil)
+'((search-failed "a") 2)
+)
+
+(qa
+(qa272-run 'search-forward "a" -2 t)
+'(nil 2)
+)
+
+(qa
+(qa272-run 'search-forward "a" -2 'move)
+'(nil 1)
+)
+
+(qa
+(qa272-run 'search-forward "a" -3 nil)
+'((search-failed "a") 2)
+)
+
+(qa
+(qa272-run 'search-forward "a" -3 t)
+'(nil 2)
+)
+
+(qa
+(qa272-run 'search-forward "a" -3 'move)
+'(nil 1)
+)
+
+(qa
+(qa272-run 're-search-forward "a" 0 nil)
+'(2 2)
+)
+
+(qa
+(qa272-run 're-search-forward "a" 0 t)
+'(2 2)
+)
+
+(qa
+(qa272-run 're-search-forward "a" 0 'move)
+'(2 2)
+)
+
+(qa
+(qa272-run 're-search-forward "a" -1 nil)
+'(1 1)
+)
+
+(qa
+(qa272-run 're-search-forward "a" -1 t)
+'(1 1)
+)
+
+(qa
+(qa272-run 're-search-forward "a" -1 'move)
+'(1 1)
+)
+
+(qa
+(qa272-run 're-search-forward "a" -2 nil)
+'((search-failed "a") 2)
+)
+
+(qa
+(qa272-run 're-search-forward "a" -2 t)
+'(nil 2)
+)
+
+(qa
+(qa272-run 're-search-forward "a" -2 'move)
+'(nil 1)
+)
+
+(qa
+(qa272-run 're-search-forward "a" -3 nil)
+'((search-failed "a") 2)
+)
+
+(qa
+(qa272-run 're-search-forward "a" -3 t)
+'(nil 2)
+)
+
+(qa
+(qa272-run 're-search-forward "a" -3 'move)
+'(nil 1)
+)
+
+(qa
+(qa272-run 'posix-search-forward "a" 0 nil)
+'(2 2)
+)
+
+(qa
+(qa272-run 'posix-search-forward "a" 0 t)
+'(2 2)
+)
+
+(qa
+(qa272-run 'posix-search-forward "a" 0 'move)
+'(2 2)
+)
+
+(qa
+(qa272-run 'posix-search-forward "a" -1 nil)
+'(1 1)
+)
+
+(qa
+(qa272-run 'posix-search-forward "a" -1 t)
+'(1 1)
+)
+
+(qa
+(qa272-run 'posix-search-forward "a" -1 'move)
+'(1 1)
+)
+
+(qa
+(qa272-run 'posix-search-forward "a" -2 nil)
+'((search-failed "a") 2)
+)
+
+(qa
+(qa272-run 'posix-search-forward "a" -2 t)
+'(nil 2)
+)
+
+(qa
+(qa272-run 'posix-search-forward "a" -2 'move)
+'(nil 1)
+)
+
+(qa
+(qa272-run 'posix-search-forward "a" -3 nil)
+'((search-failed "a") 2)
+)
+
+(qa
+(qa272-run 'posix-search-forward "a" -3 t)
+'(nil 2)
+)
+
+(qa
+(qa272-run 'posix-search-forward "a" -3 'move)
+'(nil 1)
+)
+
+(qa
+(qa272-run 'search-backward "" 1 t)
+'(2 2)
+)
+
+(qa
+(qa272-run 'search-backward "" 2 t)
+'(2 2)
+)
+
+(qa
+(qa272-run 'search-backward "" 3 t)
+'(2 2)
+)
+
+(qa
+(qa272-run 'search-backward "a" 2 nil t)
+'((search-failed "a") 9)
+)
+
+(qa
+(qa272-run 'search-backward "a" 2 t t)
+'(nil 9)
+)
+
+(qa
+(qa272-run 'search-backward "a" 2 'move t)
+'(nil 8)
+)
+
+(qa
+(qa272-run 're-search-backward "" 1 t)
+'(2 2)
+)
+
+(qa
+(qa272-run 're-search-backward "" 2 t)
+'(2 2)
+)
+
+(qa
+(qa272-run 're-search-backward "" 3 t)
+'(2 2)
+)
+
+(qa
+(qa272-run 're-search-backward "a" 2 nil t)
+'((search-failed "a") 9)
+)
+
+(qa
+(qa272-run 're-search-backward "a" 2 t t)
+'(nil 9)
+)
+
+(qa
+(qa272-run 're-search-backward "a" 2 'move t)
+'(nil 8)
+)
+
+(qa
+(qa272-run 'posix-search-backward "" 1 t)
+'(2 2)
+)
+
+(qa
+(qa272-run 'posix-search-backward "" 2 t)
+'(2 2)
+)
+
+(qa
+(qa272-run 'posix-search-backward "" 3 t)
+'(2 2)
+)
+
+(qa
+(qa272-run 'posix-search-backward "a" 2 nil t)
+'((search-failed "a") 9)
+)
+
+(qa
+(qa272-run 'posix-search-backward "a" 2 t t)
+'(nil 9)
+)
+
+(qa
+(qa272-run 'posix-search-backward "a" 2 'move t)
+'(nil 8)
+)
+
+(qa
+(qa272-run 're-search-backward "^" 3 t)
+'(1 1)
+)
+
+(qa
+(qa272-run 're-search-backward "a\\|^" 3 t)
+'(1 1)
+)
+
+(qa
+(qa272-run 're-search-backward "\\(a\\)" 3 t)
+'(nil 2)
+)
+
+(qa
+(qa272-run 'posix-search-backward "^" 3 t)
+'(1 1)
+)
+
+(qa
+(qa272-run 'posix-search-backward "a\\|^" 3 t)
+'(1 1)
+)
+
+(qa
+(qa272-run 'posix-search-backward "\\(a\\)" 3 t)
+'(nil 2)
+)
+
+
 (princ (qa--done))
