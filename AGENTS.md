@@ -542,6 +542,10 @@ Design notes:
   Regression: `tests/qa_treesit_node_generation.el`.
 - Query capture uses raw `ts_query_cursor_next_match` FFI; a match may
   carry 0 captures (predicate-only patterns).
+- Notifier add/remove validate the parser before checking `symbolp`;
+  symbols need not be bound to functions. Registration is unique by `eq`,
+  public lists are fresh copies in registration order, and dispatch runs
+  the latest registration first. Regression: `tests/qa_treesit_notifiers.el`.
 - `treesit-node-type` and `treesit-node-field-name-for-child` return
   *strings* (not symbols) like GNU.
 - `treesit-language-available-p` with DETAIL returns `(t . nil)` /

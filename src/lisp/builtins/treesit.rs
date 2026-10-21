@@ -597,7 +597,9 @@ fn ensure_parsed(i: &mut Interp, pid: u64) -> Result<Value, Flow> {
     let ranges_val = ranges_value(&changed);
     let pval = i.treesit.parsers[&pid].self_val.clone();
     let fns = i.treesit.parsers[&pid].notifiers.clone();
-    for f in fns {
+    // Keep the public list in registration order, but invoke the most
+    // recently registered notifier first (GNU's internal cons order).
+    for f in fns.into_iter().rev() {
         // Notifier receives values, not forms: `call_function' would
         // evaluate the ranges list as a call form.
         let _ = i.apply(&f, vec![ranges_val.clone(), pval.clone()]);
@@ -1340,13 +1342,18 @@ fn f_parser_notifiers(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_parser_add_notifier(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let pid = want_parser(i, &a[0])?;
+    want_sym(i, &a[1])?;
     let f = a[1].clone();
-    i.treesit.parsers.get_mut(&pid).unwrap().notifiers.push(f);
+    let p = i.treesit.parsers.get_mut(&pid).unwrap();
+    if !p.notifiers.iter().any(|x| super::eq_values(x, &f)) {
+        p.notifiers.push(f);
+    }
     Ok(Value::Nil)
 }
 
 fn f_parser_remove_notifier(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let pid = want_parser(i, &a[0])?;
+    want_sym(i, &a[1])?;
     let f = a[1].clone();
     let p = i.treesit.parsers.get_mut(&pid).unwrap();
     p.notifiers.retain(|x| !super::eq_values(x, &f));
