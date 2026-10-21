@@ -471,4 +471,125 @@
 )
 
 
+;; Issue #260: retain distinct non-Unicode codes while honoring real case pairs.
+(qa
+(let ((case-fold-search t))
+  (list (char-equal 1114112 1114113) (char-equal 55296 55297)
+	(char-equal 4194176 4194303)))
+'(nil nil nil)
+)
+
+(qa
+(let ((case-fold-search nil))
+  (list (char-equal 1114112 1114113) (char-equal 55296 55297)
+	(char-equal 4194176 4194303)))
+'(nil nil nil)
+)
+
+(qa
+(let ((case-fold-search t))
+  (mapcar (lambda (code) (char-equal code code))
+	  '(0 65 233 55296 57343 1114112 1310720 4194176 4194303)))
+'(t t t t t t t t t)
+)
+
+(qa
+(let ((case-fold-search nil))
+  (mapcar (lambda (code) (char-equal code code))
+	  '(0 65 233 55296 57343 1114112 1310720 4194176 4194303)))
+'(t t t t t t t t t)
+)
+
+(qa
+(let ((case-fold-search t))
+  (mapcar
+   (lambda (pair)
+     (list (char-equal (car pair) (cadr pair))
+	   (char-equal (cadr pair) (car pair))))
+   '((55296 55297) (56319 56320) (57343 1114112) (1114112 1114113)
+     (1114112 1310720) (4194176 4194303))))
+'((nil nil) (nil nil) (nil nil) (nil nil) (nil nil) (nil nil))
+)
+
+(qa
+(let ((case-fold-search nil))
+  (mapcar
+   (lambda (pair)
+     (list (char-equal (car pair) (cadr pair))
+	   (char-equal (cadr pair) (car pair))))
+   '((55296 55297) (56319 56320) (57343 1114112) (1114112 1114113)
+     (1114112 1310720) (4194176 4194303))))
+'((nil nil) (nil nil) (nil nil) (nil nil) (nil nil) (nil nil))
+)
+
+(qa
+(with-temp-buffer
+  (let*
+      ((table (copy-case-table (standard-case-table)))
+       (syntax (standard-syntax-table))
+       (old-upper (aref syntax 55296)) (old-lower (aref syntax 55297)))
+    (unwind-protect
+	(progn
+	  (set-case-syntax-pair 55296 55297 table)
+	  (set-case-table table)
+	  (list (let ((case-fold-search t)) (char-equal 55296 55297))
+		(let ((case-fold-search nil))
+		  (char-equal 55296 55297))))
+      (aset syntax 55296 old-upper) (aset syntax 55297 old-lower))))
+'(t nil)
+)
+
+(qa
+(with-temp-buffer
+  (let*
+      ((table (copy-case-table (standard-case-table)))
+       (syntax (standard-syntax-table))
+       (old-upper (aref syntax 1114112))
+       (old-lower (aref syntax 1310720)))
+    (unwind-protect
+	(progn
+	  (set-case-syntax-pair 1114112 1310720 table)
+	  (set-case-table table)
+	  (list
+	   (let ((case-fold-search t)) (char-equal 1114112 1310720))
+	   (let ((case-fold-search nil)) (char-equal 1114112 1310720))))
+      (aset syntax 1114112 old-upper) (aset syntax 1310720 old-lower))))
+'(t nil)
+)
+
+(qa
+(with-temp-buffer
+  (let*
+      ((table (copy-case-table (standard-case-table)))
+       (syntax (standard-syntax-table))
+       (old-upper (aref syntax 4194176))
+       (old-lower (aref syntax 4194303)))
+    (unwind-protect
+	(progn
+	  (set-case-syntax-pair 4194176 4194303 table)
+	  (set-case-table table)
+	  (list
+	   (let ((case-fold-search t)) (char-equal 4194176 4194303))
+	   (let ((case-fold-search nil)) (char-equal 4194176 4194303))))
+      (aset syntax 4194176 old-upper) (aset syntax 4194303 old-lower))))
+'(t nil)
+)
+
+(qa
+(with-temp-buffer
+  (set-buffer-multibyte t)
+  (list (let ((case-fold-search t)) (char-equal 233 4194281))
+	(let ((case-fold-search nil)) (char-equal 233 4194281))))
+'(nil nil)
+)
+
+(qa
+(with-temp-buffer
+  (set-buffer-multibyte nil)
+  (list (let ((case-fold-search t)) (char-equal 233 4194281))
+	(let ((case-fold-search nil)) (char-equal 233 4194281))))
+'(t nil)
+)
+
+
 (princ (qa--done)) (terpri)

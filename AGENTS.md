@@ -1628,6 +1628,10 @@ Unicode fallback. `RegexSyntax` supports surrogate/Mule mappings and walks
 equivalence cycles without per-candidate allocation. `qa_case_table_fold`
 covers custom/buffer-local maps, table reinstallations, bounds, classes,
 backreferences, POSIX searches, unibyte buffers and distinct non-Unicode codes.
+The same suite separately pins #260's Mule, surrogate and byte8 pairs under
+both fold modes, equal-code controls, valid custom non-Unicode case pairs,
+and the unibyte-buffer raw-byte alias rule. Unsupported Rust `char` values
+must retain their Lisp integer identity rather than comparing two `None`s.
 
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
