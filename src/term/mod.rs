@@ -666,22 +666,23 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
             Some(b) if text_rows > 0 => {
                 let (suspend_hs, old_pt, min_hs) = {
                     let wb = w.borrow();
-                    (wb.suspend_hscroll, wb.old_point, wb.min_hscroll)
+                    (wb.suspend_hscroll, wb.old_point_position(), wb.min_hscroll)
                 };
                 let bb = b.borrow();
-                let pt = if std::rc::Rc::ptr_eq(w, &fb.selected) {
+                let pt = (if std::rc::Rc::ptr_eq(w, &fb.selected) {
                     bb.point()
                 } else {
                     w.borrow().point
-                };
+                })
+                .clamp(bb.begv, bb.zv);
                 // GNU xdisp.c: point movement since the last redisplay
                 // lifts an hscroll suspension; then record it as the
                 // new old_point.
                 let mut wb_mut = w.borrow_mut();
-                if wb_mut.suspend_hscroll && pt != wb_mut.old_point {
+                if wb_mut.suspend_hscroll && pt != old_pt {
                     wb_mut.suspend_hscroll = false;
                 }
-                wb_mut.old_point = pt;
+                wb_mut.record_old_point(pt);
                 drop(wb_mut);
                 let suspend_hs = suspend_hs && pt == old_pt;
                 let pt_line = bb.text.line_of_pos(pt);

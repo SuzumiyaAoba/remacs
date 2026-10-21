@@ -434,6 +434,7 @@ impl Graph {
                         &window.next_buffers,
                         &window.new_normal,
                         &window.old_buffer,
+                        &window.old_point_marker,
                         &window.cursor_type,
                     ] {
                         self.edge(owner, value, true);

@@ -71,10 +71,10 @@ pub struct Window {
     /// `set-window-hscroll'; auto-hscroll stays off until point
     /// changes (compared against `old_point' at redisplay).
     pub suspend_hscroll: bool,
-    /// GNU `old_pointm': point value seen at the last redisplay.
-    /// Unlike GNU's marker this doesn't track edits — close enough
-    /// for the unsuspend check (edits at point move point anyway).
+    /// Last redisplay position, used as a cache before a marker is attached.
     pub old_point: usize,
+    /// GNU old_pointm: the past point position, tracking buffer edits.
+    pub old_point_marker: Value,
     /// GNU `min_hscroll': lower bound for auto-hscroll, set by
     /// interactive `scroll-left'/`-right' (SET-MINIMUM arg).
     pub min_hscroll: usize,
@@ -196,6 +196,26 @@ pub(crate) fn reserve_dump_ids(window: usize, frame: usize) {
 }
 
 impl Window {
+    pub(crate) fn old_point_position(&self) -> usize {
+        if let Value::Marker(marker) = &self.old_point_marker {
+            let marker = marker.borrow();
+            if marker.buffer == Some(self.buffer) {
+                return marker.position;
+            }
+        }
+        self.old_point
+    }
+
+    pub(crate) fn record_old_point(&mut self, position: usize) {
+        self.old_point = position;
+        if let Value::Marker(marker) = &self.old_point_marker {
+            let mut marker = marker.borrow_mut();
+            if marker.buffer == Some(self.buffer) {
+                marker.position = position;
+            }
+        }
+    }
+
     pub fn new(buffer: usize) -> WindowRef {
         crate::lisp::memory::allocate(
             Window {
@@ -215,6 +235,7 @@ impl Window {
                 margins: (0, 0),
                 suspend_hscroll: false,
                 old_point: 0,
+                old_point_marker: Value::Nil,
                 min_hscroll: 0,
                 // GNU bumps the use tick on selection, not creation; a
                 // fresh window reports 0 until first selected.
@@ -2730,7 +2751,7 @@ pub(crate) fn f_set_window_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
         wb.buffer = bid;
         if old_bid != bid || arg(&a, 2).is_nil() {
             wb.point = target_point;
-            wb.old_point = target_point;
+            set_window_old_point(i, &mut wb, target_point);
             wb.start = target_start;
             wb.hscroll = 0;
             wb.min_hscroll = 0;
@@ -3126,6 +3147,20 @@ fn window_config_point_insertion_type(i: &Interp, buffer: usize) -> bool {
         .truthy()
 }
 
+pub(crate) fn set_window_old_point(i: &Interp, window: &mut Window, position: usize) {
+    window.old_point = position;
+    let insertion_type = window_config_point_insertion_type(i, window.buffer);
+    if let Value::Marker(marker) = &window.old_point_marker {
+        let mut marker = marker.borrow_mut();
+        if marker.buffer == Some(window.buffer) {
+            marker.position = position;
+            marker.insertion_type = insertion_type;
+            return;
+        }
+    }
+    window.old_point_marker = window_config_marker(i, window.buffer, position, insertion_type);
+}
+
 fn window_config_persistent_keys(i: &mut Interp) -> Vec<Value> {
     let symbol = i.intern("window-persistent-parameters");
     let symbol = i.var_alias_target(symbol);
@@ -3391,7 +3426,7 @@ fn window_configuration(i: &mut Interp) -> Value {
                 Value::Int(wb.margins.1 as i128),
                 Value::Int(wb.min_hscroll as i128),
                 Value::from_bool(wb.suspend_hscroll),
-                window_config_marker(i, wb.buffer, wb.old_point, insertion_type),
+                window_config_marker(i, wb.buffer, wb.old_point_position(), insertion_type),
                 window_normal_size_value(&wb),
             ]));
         }
@@ -3419,7 +3454,7 @@ fn window_configuration(i: &mut Interp) -> Value {
                 Value::Int(mb.margins.1 as i128),
                 Value::Int(mb.min_hscroll as i128),
                 Value::from_bool(mb.suspend_hscroll),
-                window_config_marker(i, mb.buffer, mb.old_point, false),
+                window_config_marker(i, mb.buffer, mb.old_point_position(), false),
                 window_normal_size_value(&mb),
             ]));
         }
@@ -3454,14 +3489,18 @@ fn restore_window_view(i: &Interp, window: &mut Window, spec: &[Value], restore_
         window.normal_size = normal_size;
     }
     if restore_positions {
+        let mut old_point = None;
         if let Some(buffer) = i.buffers.get(window.buffer) {
             let buffer = buffer.borrow();
             let clip = |n| (spec_int(spec, n).max(0) as usize).clamp(buffer.begv, buffer.zv);
             window.point = clip(2);
             window.start = clip(3);
             if spec.len() > 19 {
-                window.old_point = clip(19);
+                old_point = Some(clip(19));
             }
+        }
+        if let Some(old_point) = old_point {
+            set_window_old_point(i, window, old_point);
         }
     }
     window.hscroll = spec_int(spec, 4).max(0) as usize;
@@ -4212,6 +4251,7 @@ pub(crate) fn f_split_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
         }
     }
     let buf = w.borrow().buffer;
+    let point = window_point(i, &w);
     let new = Window::new(buf);
     record_buffer_display(i, buf);
     let (wl, wt, ww_, wh, normal_size) = {
@@ -4278,7 +4318,8 @@ pub(crate) fn f_split_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     {
         let mut wb = w.borrow_mut();
         let mut nw = new.borrow_mut();
-        nw.point = wb.point;
+        nw.point = point;
+        set_window_old_point(i, &mut nw, point);
         nw.start = wb.start;
         nw.left = n_geo.0;
         nw.top = n_geo.1;
@@ -14508,6 +14549,8 @@ fn f_find_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         i.set_current_buffer(id);
         if let Some(w) = sel_window(i) {
             w.borrow_mut().buffer = id;
+            let point = b.borrow().point();
+            set_window_old_point(i, &mut w.borrow_mut(), point);
             record_buffer_display(i, id);
         }
     }
@@ -17103,6 +17146,9 @@ fn win_state_materialize(
             })
             .unwrap_or(i.current_buffer);
         let w = Window::new(bufid);
+        let point = i.buffers.get(bufid).map_or(0, |buffer| buffer.borrow().point());
+        w.borrow_mut().point = point;
+        set_window_old_point(i, &mut w.borrow_mut(), point);
         record_buffer_display(i, bufid);
         {
             let mut wb = w.borrow_mut();
@@ -17202,7 +17248,9 @@ fn f_window_state_put(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                         _ => None,
                     };
                     if let Some(bid) = bid {
+                        let point = i.buffers.get(bid).map_or(0, |buffer| buffer.borrow().point());
                         w.borrow_mut().buffer = bid;
+                        set_window_old_point(i, &mut w.borrow_mut(), point);
                         record_buffer_display(i, bid);
                     }
                 }
@@ -22808,6 +22856,8 @@ fn f_quit_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
             if let Some(other) = pick {
                 w.borrow_mut().buffer = other;
+                let point = i.buffers.get(other).map_or(0, |buffer| buffer.borrow().point());
+                set_window_old_point(i, &mut w.borrow_mut(), point);
                 record_buffer_display(i, other);
                 // GNU `set-window-buffer-start-and-point': sync current
                 // only when the selected window was showing the current
@@ -23541,6 +23591,13 @@ pub fn install_primitives(i: &mut Interp) {
         .or_else(|| i.buffers.by_name(" *Minibuf-0*"))
         .unwrap_or_else(|| i.create_buffer(" *Minibuf-0*"));
     let frame = Frame::new_tty(scratch, mb, 80, 25);
+    let initial_windows: Vec<_> = {
+        let frame = frame.borrow();
+        frame.windows.iter().chain(frame.minibuffer.iter()).cloned().collect()
+    };
+    for window in initial_windows {
+        set_window_old_point(i, &mut window.borrow_mut(), 0);
+    }
     // GNU make_initial_frame records the initial root as selection 1;
     // ordinary newly allocated windows keep their initial zero use time.
     frame.borrow().selected.borrow_mut().use_time = next_use_time(i);

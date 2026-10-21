@@ -1106,7 +1106,7 @@ fn f_window_top_px(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// `window-old-point' — GNU decodes a LIVE window (old_pointm).
 fn f_window_old_point(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live(i, &arg(&a, 0))?;
-    Ok(Value::Int(w.borrow().point as i128 + 1))
+    Ok(Value::Int(w.borrow().old_point_position() as i128 + 1))
 }
 
 fn f_window_buffer1(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

@@ -11488,9 +11488,11 @@ fn f_window_display_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         // GNU set-window-buffer: swap `buffer'; `old_buffer' is only
         // written when a buffer leaves a window (unshow_window), so this
         // path must NOT touch it.
+        let point = i.buffers.get(bid).map_or(0, |buffer| buffer.borrow().point());
         let mut wb = w.borrow_mut();
         wb.dedicated = Value::Nil;
         wb.buffer = bid;
+        crate::editor::set_window_old_point(i, &mut wb, point);
         // A brand-new window's `next-buffers' entry.
         if !wb.next_buffers.is_nil() {
             wb.next_buffers = Value::Nil;

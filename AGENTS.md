@@ -1091,7 +1091,7 @@ Horizontal scrolling follows GNU's `suspend_auto_hscroll' model:
 `Window.suspend_hscroll' (plus `min_hscroll' when given the
 interactive SET-MINIMUM arg) instead of moving point, and
 `render_grid' skips its cursor-column hscroll snap while suspended —
-clearing it as soon as `window.point != window.old_point' (the
+clearing it as soon as point differs from the edit-tracking old-point marker (the
 old_pointm check in GNU xdisp.c) and clamping the displayed cursor
 to the window edge meanwhile.  `auto-hscroll-mode' is read
 buffer-locally per window (t default).  `scroll-left'/`-right' are
@@ -1814,6 +1814,16 @@ do not lower the counter. Initial root selection records 1; other new
 windows start at 0. Display-buffer bumps delegate to the public function.
 Session images preserve the counter; legacy images infer the maximum saved
 window use time. `qa_winstate` and session tests pin these #287 rules.
+
+`window-old-point` reads `Window.old_point_marker`, independently of current
+point. Buffer installation and splitting attach this marker with the buffer's
+`window-point-insertion-type`; redisplay moves it to the point just displayed.
+`old_point` is only the fallback cache for windows without an attached marker.
+Configuration snapshots copy its current position into independent markers;
+GC traces the live marker and session images preserve it. Legacy images attach
+a new marker at the saved cache position. Split windows initialize point and
+old point from the canonical window point, including selected buffers whose
+buffer point has moved. `qa_winstate` and session tests pin these #288 rules.
 
 ## Live backtraces (`src/lisp/backtrace.rs`)
 

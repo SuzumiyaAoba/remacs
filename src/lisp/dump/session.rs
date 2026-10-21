@@ -131,6 +131,8 @@ struct WindowData {
     margins: (usize, usize),
     suspend_hscroll: bool,
     old_point: usize,
+    #[serde(default)]
+    old_point_marker: Option<Ref>,
     min_hscroll: usize,
     use_time: u64,
     prev_buffers: Ref,
@@ -432,6 +434,8 @@ impl Image {
             let new_normal = decoder.value(i, &data.new_normal)?;
             let old_buffer = decoder.value(i, &data.old_buffer)?;
             let cursor_type = decoder.value(i, &data.cursor_type)?;
+            let old_point_marker = data.old_point_marker.as_ref()
+                .map(|marker| decoder.value(i, marker)).transpose()?.unwrap_or(Value::Nil);
             let mut w = object.borrow_mut();
             w.buffer = data.buffer;
             w.point = data.point;
@@ -447,6 +451,7 @@ impl Image {
             w.margins = data.margins;
             w.suspend_hscroll = data.suspend_hscroll;
             w.old_point = data.old_point;
+            w.old_point_marker = old_point_marker;
             w.min_hscroll = data.min_hscroll;
             w.use_time = data.use_time;
             w.prev_buffers = prev_buffers;
@@ -472,6 +477,11 @@ impl Image {
         // Older images have only integer geometry; recover their
         // fractions after all parent and child rectangles are restored.
         for data in &self.window_data {
+            if data.old_point_marker.is_none() && !data.dead && data.horiz.is_none() {
+                if let Some(Value::Window(window)) = externals.get(&format!("window:{}", data.id)) {
+                    crate::editor::set_window_old_point(i, &mut window.borrow_mut(), data.old_point);
+                }
+            }
             if data.normal_size.is_none() {
                 if let Some(Value::Window(window)) = externals.get(&format!("window:{}", data.id)) {
                     crate::editor::update_window_normal_size(window, false);
@@ -884,7 +894,8 @@ impl Image {
             params: e.value(&w.params)?,
             margins: w.margins,
             suspend_hscroll: w.suspend_hscroll,
-            old_point: w.old_point,
+            old_point: w.old_point_position(),
+            old_point_marker: if w.old_point_marker.is_nil() { None } else { Some(e.value(&w.old_point_marker)?) },
             min_hscroll: w.min_hscroll,
             use_time: w.use_time,
             prev_buffers: e.value(&w.prev_buffers)?,
@@ -915,6 +926,72 @@ impl Image {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn window_old_point_markers_survive_redisplay_and_session_restore() {
+        std::thread::Builder::new()
+            .stack_size(128 << 20)
+            .spawn(|| {
+                let mut source = Interp::new();
+                source
+                    .eval_str(
+                        r#"(progn
+                  (erase-buffer) (insert "012345678901234567890123456789")
+                  (goto-char 5)
+                  (setq dump288-other (split-window nil 20 'right))
+                  (set-window-point dump288-other 14)
+                  (goto-char 1) (insert "abc"))"#,
+                    )
+                    .unwrap();
+                let image = Image::capture(&source).unwrap();
+                let bytes = serde_json::to_vec(&image).unwrap();
+                let image: Image = serde_json::from_slice(&bytes).unwrap();
+                let mut restored = Interp::new();
+                image.restore(&mut restored).unwrap();
+                let point = restored
+                    .eval_str(
+                        r#"(progn
+                  (goto-char 1) (insert "xyz")
+                  (window-old-point dump288-other))"#,
+                    )
+                    .unwrap();
+                assert_eq!(restored.prin1_to_string(&point), "11");
+                crate::term::render_grid(&restored, 80, 25);
+                let equal = restored
+                    .eval_str("(= (window-old-point dump288-other) (window-point dump288-other))")
+                    .unwrap();
+                assert!(equal.truthy());
+                let point = restored
+                    .eval_str(
+                        r#"(progn
+                  (goto-char 1) (insert "qq")
+                  (window-old-point dump288-other))"#,
+                    )
+                    .unwrap();
+                assert_eq!(restored.prin1_to_string(&point), "16");
+                let mut legacy = serde_json::to_value(&image).unwrap();
+                for window in legacy["window_data"].as_array_mut().unwrap() {
+                    window.as_object_mut().unwrap().remove("old_point_marker");
+                }
+                let legacy: Image = serde_json::from_value(legacy).unwrap();
+                legacy.restore(&mut restored).unwrap();
+                let point = restored
+                    .eval_str(
+                        r#"(progn
+                  (goto-char 1) (insert "z")
+                  (window-old-point dump288-other))"#,
+                    )
+                    .unwrap();
+                assert_eq!(restored.prin1_to_string(&point), "9");
+                restored.eval_str("(erase-buffer)").unwrap();
+                crate::term::render_grid(&restored, 80, 25);
+                let point = restored.eval_str("(window-old-point dump288-other)").unwrap();
+                assert_eq!(restored.prin1_to_string(&point), "1");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 
     #[test]
     fn window_use_counts_are_isolated_and_survive_session_restore() {

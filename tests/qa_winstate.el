@@ -857,4 +857,113 @@
 '(t t)
 )
 
+;; Issue #288: past window point is an independent marker.
+(defun qa288-fixture (position function)
+ (save-window-excursion
+  (delete-other-windows)
+  (with-temp-buffer
+   (switch-to-buffer (current-buffer))
+   (insert "012345678901234567890123456789\n") (goto-char position)
+   (funcall function (selected-window)))))
+
+
+(qa
+(qa288-fixture 1 (lambda (first) (let ((other (split-window first 20 'right))) (list (window-point other) (window-old-point other) (window-old-point first)))))
+'(1 1 1)
+)
+
+(qa
+(qa288-fixture 5 (lambda (first) (let ((other (split-window first 20 'right))) (list (window-point other) (window-old-point other) (window-old-point first)))))
+'(5 5 1)
+)
+
+(qa
+(qa288-fixture 10 (lambda (first) (let ((other (split-window first 20 'right))) (list (window-point other) (window-old-point other) (window-old-point first)))))
+'(10 10 1)
+)
+
+(qa
+(qa288-fixture 1 (lambda (first) (let ((other (split-window first 20 'right))) (set-window-point other 10) (list (window-point other) (window-old-point other)))))
+'(10 1)
+)
+
+(qa
+(qa288-fixture 1 (lambda (first) (let ((other (split-window first 20 'right))) (set-window-point other 10) (select-window other) (list (window-point other) (window-old-point other)))))
+'(10 1)
+)
+
+(qa
+(qa288-fixture 1 (lambda (_first) (goto-char 10) (list (point) (window-old-point))))
+'(10 1)
+)
+
+(qa
+(qa288-fixture 5 (lambda (first) (let* ((window-point-insertion-type nil) (other (split-window first 20 'right))) (goto-char 1) (insert "abc") (let ((before (window-old-point other))) (goto-char 8) (insert "xyz") (list before (window-old-point other))))))
+'(8 8)
+)
+
+(qa
+(qa288-fixture 5 (lambda (first) (let* ((window-point-insertion-type t) (other (split-window first 20 'right))) (goto-char 1) (insert "abc") (let ((before (window-old-point other))) (goto-char 8) (insert "xyz") (list before (window-old-point other))))))
+'(8 11)
+)
+
+(qa
+(qa288-fixture 10 (lambda (first) (let ((other (split-window first 20 'right))) (delete-region 1 6) (let ((before (window-old-point other))) (delete-region 1 8) (list before (window-old-point other))))))
+'(5 1)
+)
+
+(qa
+(qa288-fixture 5 (lambda (first) (let ((other (split-window first 20 'right))) (narrow-to-region 10 20) (list (point-min) (window-old-point other)))))
+'(10 5)
+)
+
+(qa
+(qa288-fixture 5 (lambda (first) (let ((other (split-window first 20 'right))) (garbage-collect) (goto-char 1) (insert "abc") (window-old-point other))))
+'8
+)
+
+(qa
+(qa288-fixture 5 (lambda (first) (let* ((other (split-window first 20 'right)) (saved (current-window-configuration))) (set-window-point other 10) (goto-char 1) (insert "abc") (set-window-configuration saved) (let ((before (window-old-point other))) (goto-char 1) (insert "xyz") (set-window-configuration saved) (list before (window-old-point other))))))
+'(8 11)
+)
+
+(qa
+(qa288-fixture 1 (lambda (first) (let ((other (split-window first 20 'right))) (set-window-point other 10) (set-window-buffer other (window-buffer first)) (list (window-point other) (window-old-point other)))))
+'(1 1)
+)
+
+(qa
+(qa288-fixture 1 (lambda (first) (let ((other (split-window first 20 'right))) (with-temp-buffer (insert "abcdefghij") (goto-char 7) (set-window-buffer other (current-buffer)) (let ((before (window-old-point other))) (goto-char 1) (insert "abc") (list before (window-old-point other)))))))
+'(7 10)
+)
+
+(qa
+(condition-case err (window-old-point 42) (error (list (car err) (cadr err))))
+'(wrong-type-argument window-live-p)
+)
+
+(qa
+(qa288-fixture 1 (lambda (first) (split-window first 20 'right) (condition-case err (window-old-point (frame-root-window)) (error (list (car err) (cadr err))))))
+'(wrong-type-argument window-live-p)
+)
+
+(qa
+(qa288-fixture 1 (lambda (first) (let ((other (split-window first 20 'right))) (delete-window other) (condition-case err (window-old-point other) (error (list (car err) (cadr err)))))))
+'(wrong-type-argument window-live-p)
+)
+
+(qa
+(qa288-fixture 5
+ (lambda (first)
+  (let* ((other (split-window first 20 'right))
+         (saved (current-window-configuration)))
+   (goto-char 7) (set-window-buffer other (window-buffer first))
+   (set-window-configuration saved)
+   (let ((before (window-old-point other)))
+    (goto-char 9) (set-window-buffer other (window-buffer first))
+    (set-window-configuration saved)
+    (list before (window-old-point other))))))
+'(5 5)
+)
+
 (princ (qa--done))

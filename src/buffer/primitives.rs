@@ -3311,6 +3311,8 @@ fn kill_buffer_teardown(i: &mut Interp, id: usize) -> bool {
         for window in frame.borrow().windows.clone() {
             if !window.borrow().dead && window.borrow().buffer == id {
                 window.borrow_mut().buffer = fallback;
+                let point = i.buffers.get(fallback).map_or(0, |buffer| buffer.borrow().point());
+                crate::editor::set_window_old_point(i, &mut window.borrow_mut(), point);
                 crate::editor::record_buffer_display(i, fallback);
             }
         }
