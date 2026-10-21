@@ -18769,9 +18769,10 @@ impl RegexSyntax {
         table
             .as_ref()
             .and_then(|t| match t.get(code) {
-                Value::Int(n) if (0..=0x3f_ffff).contains(&n) => {
+                Value::Int(n) if (0..=0x3f_ffff).contains(&n) => Some(
                     crate::lisp::value::lisp_char(n as u32)
-                }
+                        .unwrap_or_else(|| crate::lisp::value::mule_seq_char(n as u32)),
+                ),
                 _ => None,
             })
             .unwrap_or(c)
@@ -18816,6 +18817,40 @@ impl RegexSyntax {
 }
 
 impl crate::lisp::regexp::Syntax for RegexSyntax {
+    fn case_eq(&self, a: char, b: char) -> bool {
+        if self.canon.is_none() {
+            // During bootstrap no installed GNU case table is available.
+            return crate::lisp::regexp::Syntax::case_eq(&|c| self.code(c), a, b);
+        }
+        Self::mapped(&self.canon, a) == Self::mapped(&self.canon, b)
+    }
+
+    fn case_match(&self, c: char, test: &mut dyn FnMut(char) -> bool) -> bool {
+        if self.canon.is_none() || self.equiv.is_none() {
+            return crate::lisp::regexp::Syntax::case_match(&|c| self.code(c), c, test);
+        }
+        let mut next = Self::mapped(&self.canon, c);
+        // Brent's detector also terminates malformed equivalence chains,
+        // without allocating a set for every character-class candidate.
+        let mut anchor = next;
+        let (mut power, mut distance) = (1usize, 0usize);
+        loop {
+            if test(next) {
+                return true;
+            }
+            next = Self::mapped(&self.equiv, next);
+            distance += 1;
+            if next == anchor {
+                return false;
+            }
+            if distance == power {
+                anchor = next;
+                power = power.saturating_mul(2);
+                distance = 0;
+            }
+        }
+    }
+
     fn code(&self, c: char) -> u8 {
         syntax_entry_code(self.syntax.as_ref(), c)
     }

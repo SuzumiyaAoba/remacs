@@ -2036,12 +2036,29 @@ fn f_char_equal(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let fold = i
         .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
         .truthy();
-    let eq = a == b
-        || (fold
-            && char::from_u32(a as u32).and_then(|c| c.to_lowercase().next())
-                == char::from_u32(b as u32).and_then(|c| c.to_lowercase().next()));
-    Ok(Value::from_bool(eq))
+    if a == b {
+        return Ok(Value::t());
+    }
+    if !fold {
+        return Ok(Value::Nil);
+    }
+    let multibyte = i
+        .intern_soft("enable-multibyte-characters")
+        .map(|id| i.symbol_value(id).truthy())
+        .unwrap_or(true);
+    let char_code = |code: i128| {
+        if !multibyte && (128..=255).contains(&code) {
+            0x3fff00 + code as u32
+        } else {
+            code as u32
+        }
+    };
+    let down = i.current_case_table();
+    Ok(Value::from_bool(
+        ct_case(i, &down, char_code(a)) == ct_case(i, &down, char_code(b)),
+    ))
 }
+
 fn f_char_or_string_p(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(match &args[0] {
         // GNU CHARACTERP: valid character code only (0..=0x3FFFFF).
@@ -5284,10 +5301,46 @@ fn f_compare_strings(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let fold = arg(&args, 6).truthy();
     let ac: Vec<char> = v1[b1..e1].to_vec();
     let bc: Vec<char> = v2[b2..e2].to_vec();
-    // GNU compares char-by-char; IGNORE-CASE upcases each char first.
-    let up = |c: char| c.to_uppercase().next().unwrap_or(c);
+    // GNU upcases differing characters through the buffer's table,
+    // without full string expansions (sharp-s must not become S).
+    let multibyte = i
+        .intern_soft("enable-multibyte-characters")
+        .map(|id| i.symbol_value(id).truthy())
+        .unwrap_or(true);
+    let upcase = |i: &Interp, table: &Value, code: u32| {
+        // Fupcase's numeric path treats 0..255 as bytes in a unibyte
+        // buffer, even when compare-strings read them from multibyte text.
+        let byte_input = !multibyte && code < 256;
+        let source = if byte_input && code >= 128 {
+            code + 0x3fff00
+        } else {
+            code
+        };
+        let cased = ct_case(i, table, source);
+        if cased == source {
+            code
+        } else if byte_input && cased >= 128 {
+            if cased >= 0x3fff80 {
+                cased - 0x3fff00
+            } else {
+                cased & 0xff
+            }
+        } else {
+            cased
+        }
+    };
+    let mut up = None;
     for (k, (&a, &b)) in ac.iter().zip(bc.iter()).enumerate() {
-        let (a, b) = if fold { (up(a), up(b)) } else { (a, b) };
+        let (mut a, mut b) = (lisp_char_code(a) as u32, lisp_char_code(b) as u32);
+        if a != b && fold {
+            let table = up.get_or_insert_with(|| {
+                let down = i.current_case_table();
+                misc::set_case_table_fill(i, &down);
+                case_extra(&down, 0).unwrap_or(down)
+            });
+            a = upcase(i, table, a);
+            b = upcase(i, table, b);
+        }
         if a != b {
             let pos = k as i128 + 1;
             return Ok(Value::Int(if a < b { -pos } else { pos }));

@@ -1616,6 +1616,19 @@ locale/ignore-case arguments, as the GNU reference does. Equality and version
 comparison have different rules. `qa_string_order` covers raw bytes, proxy
 codes, live symbol names, prefixes, errors, aliases and byte-code opcode 153.
 
+Case folding uses distinct installed case maps: `char-equal` reads DOWNCASE,
+`compare-strings` upcases differing characters through UPCASE, and literal/
+regexp searches use CANON and EQUIV. Numeric upcasing follows GNU's unibyte
+buffer promotion/flattening rules, without full string expansions. It repairs
+invalidated extras only when upcasing is needed; equal characters skip that
+work. Search itself does not eagerly rebuild nil canonical extras.
+The regexp `Syntax` context supplies equality and class-equivalence callbacks
+for literals, backreferences and classes; plain engine clients retain their
+Unicode fallback. `RegexSyntax` supports surrogate/Mule mappings and walks
+equivalence cycles without per-candidate allocation. `qa_case_table_fold`
+covers custom/buffer-local maps, table reinstallations, bounds, classes,
+backreferences, POSIX searches, unibyte buffers and distinct non-Unicode codes.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

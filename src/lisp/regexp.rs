@@ -86,20 +86,7 @@ impl CharSet {
                 .iter()
                 .any(|(name, neg)| syn.posix(name, c, case_fold) != *neg);
         if !found && case_fold {
-            for lc in c.to_lowercase() {
-                if lc != c && self.base_match(lc, syn, cat) {
-                    found = true;
-                    break;
-                }
-            }
-            if !found {
-                for uc in c.to_uppercase() {
-                    if uc != c && self.base_match(uc, syn, cat) {
-                        found = true;
-                        break;
-                    }
-                }
-            }
+            found = syn.case_match(c, &mut |variant| self.base_match(variant, syn, cat));
         }
         found != self.negated
     }
@@ -190,6 +177,16 @@ const KNOWN_POSIX: &[&str] = &[
 /// supplies its live GNU syntax, case and Unicode category tables.
 pub trait Syntax {
     fn code(&self, c: char) -> u8;
+
+    fn case_eq(&self, a: char, b: char) -> bool {
+        char_eq(a, b, true)
+    }
+
+    fn case_match(&self, c: char, test: &mut dyn FnMut(char) -> bool) -> bool {
+        c.to_lowercase()
+            .chain(c.to_uppercase())
+            .any(|variant| variant != c && test(variant))
+    }
 
     fn posix(&self, name: &str, c: char, fold: bool) -> bool {
         posix_match(name, c, &|ch| self.code(ch), fold)
@@ -1007,7 +1004,7 @@ fn run(
     loop {
         match &re.prog[pc] {
             Inst::Char(c) => {
-                if sp < cap && char_eq(text[sp], *c, re.case_fold) {
+                if sp < cap && (text[sp] == *c || (re.case_fold && syn.case_eq(text[sp], *c))) {
                     sp += 1;
                     pc += 1;
                 } else {
@@ -1036,7 +1033,11 @@ fn run(
                     _ => return None,
                 };
                 let n = e - s;
-                if sp + n <= cap && (0..n).all(|k| char_eq(text[sp + k], text[s + k], re.case_fold))
+                if sp + n <= cap
+                    && (0..n).all(|k| {
+                        (text[sp + k] == text[s + k]
+                            || (re.case_fold && syn.case_eq(text[sp + k], text[s + k])))
+                    })
                 {
                     sp += n;
                     pc += 1;

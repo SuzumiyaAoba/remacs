@@ -10436,7 +10436,7 @@ pub(crate) fn search_common(
                         )
                     }
                 }
-                (_, Some(n)) => literal_search(text, n, cur_pos, backward, literal_fold),
+                (_, Some(n)) => literal_search(text, n, cur_pos, backward, literal_fold, &syn),
                 _ => None,
             };
             match hit {
@@ -10523,15 +10523,14 @@ pub(crate) fn search_common(
     }
 }
 
-/// Literal (non-regexp) search.  `case_fold` applies a simple
-/// per-char lowercase fold (GNU folds through the buffer's case
-/// table's canon; lowercase is equivalent for unicase chars).
+/// Literal search shares the regexp caller's installed case table.
 pub(crate) fn literal_search(
     text: &[char],
     needle: &str,
     from: usize,
     backward: bool,
     case_fold: bool,
+    syntax: crate::lisp::regexp::SynFn,
 ) -> Option<crate::lisp::regexp::Regs> {
     let n: Vec<char> = needle.chars().collect();
     if n.is_empty() {
@@ -10542,7 +10541,7 @@ pub(crate) fn literal_search(
             text[p..p + n.len()]
                 .iter()
                 .zip(n.iter())
-                .all(|(a, b)| a.to_lowercase().eq(b.to_lowercase()))
+                .all(|(a, b)| a == b || syntax.case_eq(*a, *b))
         } else {
             text[p..p + n.len()] == n[..]
         }

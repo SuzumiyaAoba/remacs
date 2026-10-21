@@ -390,6 +390,7 @@ qa!(qa_string_make_multibyte, "qa_string_make_multibyte.el");
 qa!(qa_string_to_list, "qa_string_to_list.el");
 qa!(qa_string_to_vector, "qa_string_to_vector.el");
 qa!(qa_string_order, "qa_string_order.el");
+qa!(qa_case_table_fold, "qa_case_table_fold.el");
 qa!(qa_byte_character_conversion, "qa_byte_character_conversion.el");
 qa!(qa_bytecode_errors, "qa_bytecode_errors.el");
 qa!(qa_bytecode_mutation, "qa_bytecode_mutation.el");
