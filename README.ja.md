@@ -77,6 +77,7 @@ remacs -Q --batch -l myfile.el
 remacs --script script.el
 remacs --batch -f batch-native-compile lisp/foo.el
 remacs --version
+remacs --help
 ```
 
 バッチモードは GNU と同様に `--funcall/-f`、`--load/-l`、

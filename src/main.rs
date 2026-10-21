@@ -13,6 +13,32 @@ use remacs::cli;
 
 use remacs::lisp::{Flow, Interp, OutputSink, Value};
 
+const HELP: &str = r#"Usage: remacs [OPTION...] [FILE...]
+An Emacs-compatible editor.
+
+Startup options:
+  --help, -help                 Display this help and exit
+  --version                    Display the version and exit
+  --batch                      Run without an interactive editor
+  -nw, --no-window-system       Use the terminal UI instead of the GUI
+  -Q, --quick                   Skip init files and X resources
+  -q, --no-init-file            Skip user init files
+  --no-x-resources              Ignore X resources
+  --dump-file FILE             Restore a portable Remacs image
+
+Actions are processed in command-line order:
+  --eval EXPR, --execute EXPR   Evaluate the first Lisp object in EXPR
+  -f, --funcall FUNCTION        Call FUNCTION
+  -l, --load FILE               Load a Lisp file or library
+  -L, --directory DIR           Add DIR to load-path; ':DIR' appends it
+  --script FILE                Load FILE with lexical binding, then exit
+  FILE                         Visit FILE before processing later actions
+  --                           Treat all following arguments as filenames
+
+GNU single-hyphen long aliases and --OPTION=VALUE are accepted where supported.
+For diagnostics, --ieval EXPR evaluates forms and locates an evaluation error.
+"#;
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // GNU sets its `noninteractive' flag during main()'s argv scan —
@@ -46,6 +72,7 @@ fn main() {
                 | "-nw"
                 | "--no-window-system"
                 | "--version"
+                | "--help"
         )
     });
     if headless {
@@ -115,6 +142,9 @@ fn real_main(args: Vec<String>) {
         println!("remacs 0.1 (Emacs-compatible editor in Rust)");
         return;
     }
+    // Version has GNU's priority; help still respects explicit/sidecar image
+    // validation, but can skip Lisp bootstrap when there is no image.
+    let help_requested = cli::options(&args).any(|a| a == "--help");
     let (args, dump_file) = match cli::dump_file(&args) {
         Ok(values) => values,
         Err(error) => {
@@ -129,26 +159,31 @@ fn real_main(args: Vec<String>) {
             .filter(|p| p.is_file())
             .map(|p| p.to_string_lossy().into_owned())
     });
+    if help_requested && dump_file.is_none() {
+        print!("{HELP}");
+        return;
+    }
 
     // GUI dispatch BEFORE `Interp::new': run_gui spawns its own
     // interpreter on the logic thread, so building one here would be
     // a thrown-away ~30s prelude — and any arg that forces batch or
     // the terminal front-end keeps this process headless.
-    let batch_arg = cli::options(&args).any(|a| {
-        matches!(
-            a,
-            "--batch"
-                | "-batch"
-                | "--eval"
-                | "--execute"
-                | "--load"
-                | "-l"
-                | "--script"
-                | "--ieval"
-                | "-f"
-                | "--funcall"
-        )
-    });
+    let batch_arg = help_requested
+        || cli::options(&args).any(|a| {
+            matches!(
+                a,
+                "--batch"
+                    | "-batch"
+                    | "--eval"
+                    | "--execute"
+                    | "--load"
+                    | "-l"
+                    | "--script"
+                    | "--ieval"
+                    | "-f"
+                    | "--funcall"
+            )
+        });
     let no_window_arg = cli::options(&args).any(|a| matches!(a, "-nw" | "--no-window-system"));
     if !batch_arg && !no_window_arg {
         let files: Vec<String> = cli::arguments(&args)
@@ -180,6 +215,10 @@ fn real_main(args: Vec<String>) {
             }
         }
     };
+    if help_requested {
+        print!("{HELP}");
+        return;
+    }
 
     // `command-line-args'/`invocation-name'/`invocation-directory' are
     // seeded in Interp::new (GNU init_cmdargs placement).

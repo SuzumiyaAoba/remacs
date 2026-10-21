@@ -61,6 +61,7 @@ pub fn normalize_option(raw: &str) -> Option<OptionForm<'_>> {
         "--no-x-resources" | "-no-x-resources" => "--no-x-resources",
         "-nw" | "--no-window-system" => "-nw",
         "--version" | "-version" => "--version",
+        "--help" | "-help" => "--help",
         _ => return None,
     };
     if value.is_some()
@@ -207,7 +208,16 @@ mod tests {
             "--funcall",
             "--dump-file",
         ] {
-            for operand in ["--", "--batch", "--script", "--version", "-nw", "--eval"] {
+            for operand in [
+                "--",
+                "--batch",
+                "--script",
+                "--version",
+                "--help",
+                "-help",
+                "-nw",
+                "--eval",
+            ] {
                 let args = strings(&[option, operand, "file", "--batch", "--", "--version"]);
                 assert_eq!(
                     options(&args).collect::<Vec<_>>(),
@@ -284,6 +294,25 @@ mod tests {
         assert_eq!(arguments(&args).last(), Some(Argument::File("-version")));
         assert_eq!(args[0], "-load");
         assert_eq!(args[1], "--eval=(princ 7)");
+    }
+
+    #[test]
+    fn help_is_a_startup_flag_only_outside_operands_and_separator() {
+        for spelling in ["--help", "-help"] {
+            assert_eq!(normalize_option(spelling).unwrap().name, "--help");
+            assert!(!takes_operand(spelling));
+            assert_eq!(
+                options(&strings(&[spelling])).collect::<Vec<_>>(),
+                vec!["--help"]
+            );
+            assert_eq!(options(&strings(&["--", spelling])).count(), 0);
+            assert_eq!(
+                options(&strings(&["--load", spelling])).collect::<Vec<_>>(),
+                vec!["--load"]
+            );
+        }
+        assert!(normalize_option("-h").is_none());
+        assert!(normalize_option("--help=value").is_none());
     }
 
     #[test]

@@ -1529,6 +1529,14 @@ The startup scans, live Lisp queue, GUI startup, and dump parsing share
 this view. Empty inline values are present operands. Regressions:
 `tests/cli_option_forms.rs` and parser unit cases.
 
+Startup `--help`/`-help` prints Remacs usage without Lisp boot when no image
+is selected, and without GUI creation. Selected portable images retain
+their existing validation/restore ordering before help; `--version` retains
+GNU's precedence over help. Keep help
+tokens literal when they are operands or follow `--`. GNU does not accept
+`-h` as help, and help inserted into the live Lisp queue after startup is
+still an unknown runtime option. Regressions: `tests/cli_help.rs`.
+
 ## Portable images (`src/lisp/dump/`)
 
 `dump-emacs-portable` writes a real Remacs image; `--dump-file FILE`
