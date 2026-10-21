@@ -335,6 +335,7 @@ qa!(qa_process_network_eof, "qa_process_network_eof.el");
 qa!(qa_network_listener_delete, "qa_network_listener_delete.el");
 qa!(qa_network_accept_callbacks, "qa_network_accept_callbacks.el");
 qa!(qa_network_contacts, "qa_network_contacts.el");
+qa!(qa_network_stop, "qa_network_stop.el");
 qa!(qa_treesit_edit, "qa_treesit_edit.el");
 qa!(qa_treesit_node_generation, "qa_treesit_node_generation.el");
 qa!(qa_treesit_indirect, "qa_treesit_indirect.el");

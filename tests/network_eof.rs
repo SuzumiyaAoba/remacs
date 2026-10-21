@@ -357,7 +357,10 @@ fn anonymous_address(socket: RawFd) -> Vec<u8> {
 fn wait_accepted(i: &mut Interp, phase: &str) {
     let deadline = Instant::now() + Duration::from_secs(3);
     while !eval(i, "(processp contact220-peer)").truthy() {
-        assert!(Instant::now() < deadline, "{phase}: contact test accept timed out");
+        assert!(
+            Instant::now() < deadline,
+            "{phase}: contact test accept timed out"
+        );
         eval(i, "(accept-process-output nil 0.01)");
     }
 }
@@ -556,5 +559,97 @@ fn contact_endpoints_match_kernel_addresses_and_resolved_address_families() {
             alias.to_str().unwrap().as_bytes()
         );
         eval(&mut i, "(delete-process eof217)");
+    });
+}
+
+fn check_paused_stream(i: &mut Interp, process: &Value, mut peer: impl Read + Write) {
+    eval(i, "(stop-process eof217) (stop-process eof217)");
+    assert_eq!(printed(i, "(process-status eof217)"), "stop");
+    assert_eq!(printed(i, "(process-command eof217)"), "t");
+    peer.write_all(b"DATA").unwrap();
+    eval(i, "(accept-process-output nil 0.03)");
+    assert_eq!(printed(i, "(process-get eof217 'text)"), "nil");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut pending = [0; 4];
+    loop {
+        let size = unsafe {
+            libc::recv(
+                fd(process),
+                pending.as_mut_ptr().cast(),
+                pending.len(),
+                libc::MSG_PEEK | libc::MSG_DONTWAIT,
+            )
+        };
+        if size == 4 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "paused input was consumed before resume"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(&pending, b"DATA");
+    eval(i, "(process-send-string eof217 \"OUT\")");
+    let mut output = [0; 3];
+    peer.read_exact(&mut output).unwrap();
+    assert_eq!(&output, b"OUT", "stopping input must preserve writes");
+    eval(i, "(continue-process eof217)");
+    assert_eq!(printed(i, "(process-status eof217)"), "open");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while printed(i, "(process-get eof217 'text)") != "\"DATA\"" {
+        assert!(
+            Instant::now() < deadline,
+            "resume did not deliver queued input"
+        );
+        eval(i, "(accept-process-output eof217 0.01 nil t)");
+    }
+    assert_eq!(printed(i, "(process-command eof217)"), "nil");
+    eval(i, "(delete-process eof217)");
+}
+
+#[test]
+fn network_stop_preserves_kernel_input_until_resume_and_keeps_writes_live() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    on_big_stack(|| {
+        let (mut i, _) = interp();
+        i.noninteractive = true;
+        let mut listeners = vec![TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap()];
+        if let Ok(v6) = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)) {
+            listeners.push(v6);
+        }
+        for listener in listeners {
+            listener.set_nonblocking(true).unwrap();
+            let address = listener.local_addr().unwrap();
+            let process = connect(
+                &mut i,
+                &format!(
+                    ":host {:?} :family '{} :service {}",
+                    address.ip().to_string(),
+                    if address.is_ipv4() { "ipv4" } else { "ipv6" },
+                    address.port()
+                ),
+            );
+            let peer = accept(|| listener.accept().map(|(stream, _)| stream));
+            peer.set_nonblocking(false).unwrap();
+            peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            peer.set_write_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            check_paused_stream(&mut i, &process, peer);
+        }
+        let directory = OwnedDirectory::new();
+        let path = directory.0.join("owned.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let process = connect(
+            &mut i,
+            &format!(":family 'local :service {:?}", path.to_str().unwrap()),
+        );
+        let peer = accept(|| listener.accept().map(|(stream, _)| stream));
+        peer.set_nonblocking(false).unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        peer.set_write_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        check_paused_stream(&mut i, &process, peer);
     });
 }

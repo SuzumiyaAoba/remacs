@@ -1013,14 +1013,15 @@ fn poll_proc_once(
     let input_paused = {
         let p = pref.borrow();
         let paused = matches!(p.filter, Value::Sym(s) if s == sym::T);
-        // A child must still be reaped while input is paused. Listening
-        // servers keep accepting and give new peers the inherited filter.
+        // A child must still be reaped while its filter is paused. Filter=t
+        // listeners keep accepting, but stop-process inhibits all network
+        // input, including Unix streams and listener accepts.
         if (paused
             && !matches!(
                 p.io,
                 ProcIo::Child { .. } | ProcIo::Listen(_) | ProcIo::LocalListen(..)
             ))
-            || (matches!(p.io, ProcIo::Net(_)) && p.status == "stop")
+            || (p.kind == "network" && p.status == "stop")
         {
             return Ok(PollOutput::default());
         }
@@ -3757,7 +3758,9 @@ fn f_stop_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         };
         if is_conn {
             let mut pb = p.borrow_mut();
-            pb.pending_status = Some(pb.status);
+            if pb.status != "stop" {
+                pb.pending_status = Some(pb.status);
+            }
             pb.status = "stop";
             if pb.kind == "network" {
                 pb.command = Value::t();

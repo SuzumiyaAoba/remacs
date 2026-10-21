@@ -671,6 +671,15 @@ Regression: `qa_process_send_region` (marker, narrowing and wire checks).
 
 ## Process input pause (`src/lisp/process.rs`)
 
+`stop-process` inhibits reads/accepts for every network backend, including
+Unix streams, TCP/Unix listeners and TLS. Connect completion still runs;
+stopping input preserves writes, queued kernel bytes and decoder state.
+Repeated stop must retain the first pre-stop status so one continue restores
+the connection/listener. Keep this separate from `filter=t`, whose listener
+exception still accepts peers; do not suppress buffered output from real
+OS-stopped child processes. Regressions: `qa_network_stop` and the stopped
+stream kernel peek test in `tests/network_eof.rs`.
+
 The canonical `filter=t` stops descriptor reads, including pipe, local,
 TCP/TLS and serial input. Listening servers still accept connections;
 their accepted peers inherit the filter. Child exit notification and
