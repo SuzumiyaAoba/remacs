@@ -1607,6 +1607,15 @@ fresh vector spine with shared elements. `qa_string_to_vector` pins these
 rules, all 256 raw bytes, proxy characters, circular error tails, type/error
 data identity and direct vconcat behavior.
 
+`string-lessp` compares unibyte bytes as 0..255 and multibyte characters by
+their original Lisp codes, including byte8, surrogate and Mule proxies.
+Use the actual Lisp-visible symbol-name string so its byte kind and mutable
+contents survive normalization; the obarray's internment key is insufficient.
+The NS `string-collate-lessp` fallback shares that ordering and ignores its
+locale/ignore-case arguments, as the GNU reference does. Equality and version
+comparison have different rules. `qa_string_order` covers raw bytes, proxy
+codes, live symbol names, prefixes, errors, aliases and byte-code opcode 153.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

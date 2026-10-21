@@ -776,11 +776,48 @@ fn f_string_equal(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let b = str_or_sym_arg(i, &args[1])?;
     Ok(Value::from_bool(a == b))
 }
-fn f_string_lessp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let a = str_or_sym_arg(i, &args[0])?;
-    let b = str_or_sym_arg(i, &args[1])?;
-    Ok(Value::from_bool(a < b))
+/// Keep the actual string object so ordering sees its byte kind and a
+/// symbol name's current contents, rather than its internment key.
+fn ordering_string(i: &mut Interp, value: &Value) -> Result<StrRef, Flow> {
+    match value {
+        Value::Str(s) => Ok(s.clone()),
+        Value::Nil | Value::Sym(_) => {
+            let Value::Str(name) = super::data::f_symbol_name(i, vec![value.clone()].into())?
+            else {
+                unreachable!()
+            };
+            Ok(name)
+        }
+        other => Err(i.wrong_type_mut("stringp", other)),
+    }
 }
+
+fn f_string_lessp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    let a = ordering_string(i, &args[0])?;
+    let b = ordering_string(i, &args[1])?;
+    let a_unibyte = i.is_unibyte_str(&a);
+    let b_unibyte = i.is_unibyte_str(&b);
+    // GNU string_cmp compares unibyte bytes as 0..255 and multibyte
+    // characters by their original Lisp codes, including byte8/Mule.
+    let code = |c: char, unibyte: bool| {
+        if unibyte {
+            eight_bit_byte(c)
+                .map(i128::from)
+                .unwrap_or(c as i128 & 0xff)
+        } else {
+            lisp_char_code(c)
+        }
+    };
+    let a = a.borrow();
+    let b = b.borrow();
+    Ok(Value::from_bool(
+        a.chars()
+            .map(|c| code(c, a_unibyte))
+            .cmp(b.chars().map(|c| code(c, b_unibyte)))
+            == std::cmp::Ordering::Less,
+    ))
+}
+
 fn f_string_collate_equalp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // On this build GNU takes the !__STDC_ISO_10646__ branch: a plain
     // Fstring_equal — symbols compare by name, LOCALE and IGNORE-CASE
@@ -790,9 +827,8 @@ fn f_string_collate_equalp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResul
     Ok(Value::from_bool(a == b))
 }
 fn f_string_collate_lessp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let a = str_or_sym_arg(i, &args[0])?;
-    let b = str_or_sym_arg(i, &args[1])?;
-    Ok(Value::from_bool(a < b))
+    // Match GNU's NS fallback, which ignores LOCALE and IGNORE-CASE.
+    f_string_lessp(i, args)
 }
 fn f_string_compare(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let a = want_string(i, &args[0])?;
