@@ -161,6 +161,90 @@ fn eval_runs_lisp() {
     assert_eq!(code, 0);
 }
 
+// Issue #225: the reference GNU 31.1 reads only the first object from
+// each argument. Later forms and even invalid trailing syntax are unread.
+#[test]
+fn eval_first_object_leaves_trailing_input_unread() {
+    for option in ["--eval", "--execute"] {
+        for (expression, expected) in [
+            ("(princ 1) (princ 2)", "1"),
+            ("(princ 1))", "1"),
+            ("; leading comment\n(princ 1) (error \"unread\")", "1"),
+            ("(princ 1) ; trailing comment", "1"),
+            ("nil (princ 2)", ""),
+            ("123", ""),
+        ] {
+            let args = ["-Q", "--batch", option, expression];
+            if let Some(gnu) = std::env::var_os("GNU_EMACS") {
+                let result = Command::new(gnu).args(args).output().unwrap();
+                assert_eq!(result.status.code(), Some(0), "{expression}");
+                assert_eq!(String::from_utf8_lossy(&result.stdout), expected);
+            }
+            let (output, errors, status) = remacs(&args, "");
+            assert_eq!(status, 0, "{option} {expression}: {errors}");
+            assert_eq!(output, expected, "{option} {expression}");
+        }
+    }
+}
+
+#[test]
+fn eval_first_read_error_aborts_remaining_options() {
+    for option in ["--eval", "--execute"] {
+        for (expression, condition) in [
+            ("", "end-of-file"),
+            (" \t\n", "end-of-file"),
+            ("; only a comment", "end-of-file"),
+            ("(princ 1", "end-of-file"),
+            (") (princ 2)", "invalid-read-syntax"),
+        ] {
+            // A read failure must exit 255 before a later action can exit 17.
+            let args = [
+                "-Q",
+                "--batch",
+                option,
+                expression,
+                "--eval",
+                "(kill-emacs 17)",
+            ];
+            if let Some(gnu) = std::env::var_os("GNU_EMACS") {
+                let result = Command::new(gnu).args(args).output().unwrap();
+                assert_eq!(result.status.code(), Some(255), "{expression}");
+                let diagnostic = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&result.stdout),
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                assert!(diagnostic.contains(condition), "{diagnostic}");
+            }
+            let (_output, errors, status) = remacs(&args, "");
+            assert_eq!(status, 255, "{option} {expression}: {errors}");
+            assert!(errors.contains(condition), "{errors}");
+        }
+    }
+}
+
+#[test]
+fn eval_first_form_keeps_lexical_evaluation_and_option_order() {
+    for (first, second) in [("--eval", "--execute"), ("--execute", "--eval")] {
+        let args = [
+            "-Q",
+            "--batch",
+            first,
+            "(setq qa225-value 41) (setq qa225-value 0)",
+            second,
+            "(prin1 (list lexical-binding (let ((x qa225-value)) (funcall (lambda () (+ x 1))))))",
+        ];
+        if let Some(gnu) = std::env::var_os("GNU_EMACS") {
+            let result = Command::new(gnu).args(args).output().unwrap();
+            assert_eq!(result.status.code(), Some(0));
+            assert_eq!(String::from_utf8_lossy(&result.stdout), "(t 42)");
+        }
+        let (output, errors, status) = remacs(&args, "");
+        assert_eq!(status, 0, "{errors}");
+        assert_eq!(output, "(t 42)");
+    }
+}
+
 #[test]
 fn a_worker_can_exit_the_batch_process() {
     let (out, _, code) = remacs(

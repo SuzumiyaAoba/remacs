@@ -6236,36 +6236,29 @@ command-line arguments.\" \
     /// runs `(let ((lexical-binding t)) (eval FORM t))' — the eval is
     /// always lexical, with `lexical-binding' bound to t inside.
     pub fn eval_first_form(&mut self, src: &str) -> EvalResult {
-        let chars: Rc<Vec<char>> = Rc::new(src.chars().collect());
-        let form = {
-            let mut reader = Reader::with_chars(self, chars.clone());
-            reader.read()?
-        };
-        match form {
-            Some(f) => {
-                let mark = self.specbind_depth();
-                let lb = self.intern("lexical-binding");
-                let _ = self.specbind(lb, Value::t());
-                let saved_lexenv = std::mem::replace(&mut self.lexenv, lexenv_root());
-                let r = self.eval(&f);
-                self.lexenv = saved_lexenv;
-                self.unbind_to(mark)?;
-                match r {
-                    Ok(v) => Ok(v),
-                    Err(Flow::Throw(tag, val)) => {
-                        let nc = self.intern("no-catch");
-                        Err(self.signal_data(nc, vec![tag, val]))
-                    }
-                    Err(f) => Err(f),
-                }
+        // read-from-string signals end-of-file for empty/comment-only input;
+        // the reader's end position is deliberately ignored by the CLI.
+        let (form, _) = self.read_from_string(src, 0)?;
+        let mark = self.specbind_depth();
+        let lb = self.intern("lexical-binding");
+        self.specbind(lb, Value::t())?;
+        let saved_lexenv = std::mem::replace(&mut self.lexenv, lexenv_root());
+        let result =
+            self.with_call_frame("eval", vec![form.clone(), Value::t()], |i| i.eval(&form));
+        self.lexenv = saved_lexenv;
+        self.unbind_to(mark)?;
+        match result {
+            Ok(value) => Ok(value),
+            Err(Flow::Throw(tag, value)) => {
+                let no_catch = self.intern("no-catch");
+                Err(self.signal_data(no_catch, vec![tag, value]))
             }
-            None => Ok(Value::Nil),
+            Err(flow) => Err(flow),
         }
     }
 
-    /// Evaluate every top-level form in SRC, returning the last
-    /// form's value — GNU `--eval' processes the whole string
-    /// (command-line-1 → readevalloop-style iteration).
+    /// Evaluate every top-level form in SRC, returning the last value.
+    /// Command-line --eval/--execute use eval_first_form instead.
     pub fn eval_forms(&mut self, src: &str) -> EvalResult {
         let mut pos = 0usize;
         let mut last = Value::Nil;

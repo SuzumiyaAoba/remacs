@@ -1488,6 +1488,14 @@ never satisfy a count mismatch by padding to a constant.
 
 Regression suites: `tests/qa_backtrace_frames.el`, `tests/backtrace_cli.rs`.
 
+CLI `--eval`/`--execute` use `eval_first_form`: read and evaluate one object,
+ignoring the remaining characters (including another form or invalid trailing
+syntax), as verified against the reference GNU 31.1 executable. Empty,
+comment-only, or malformed first input signals its read error and aborts later
+options. Preserve lexical evaluation and the real `eval` backtrace frame;
+`eval_forms` remains the separate all-forms API. Regressions: the
+`eval_first_*` cases in `tests/main_cli.rs`.
+
 ## Portable images (`src/lisp/dump/`)
 
 `dump-emacs-portable` writes a real Remacs image; `--dump-file FILE`

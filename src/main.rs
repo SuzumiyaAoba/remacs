@@ -472,7 +472,7 @@ fn run_batch(i: &mut Interp, src: &str, cli_rest: &[String]) -> bool {
             let function = Value::Sym(i.intern(&cli_rest[1]));
             i.apply(&function, vec![])
         } else {
-            i.eval_forms(src)
+            i.eval_first_form(src)
         }
     });
     match result {
