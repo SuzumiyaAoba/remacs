@@ -1,14 +1,17 @@
-//! Kernel evidence that process-send-eof half-closes connected streams.
+//! Kernel evidence for stream EOF and immediate listener deletion.
 mod common;
 use common::*;
 use remacs::lisp::process::ProcIo;
 use remacs::lisp::{Interp, Value};
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Ipv6Addr, TcpListener};
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+
+// Descriptor checks must not race another test reusing the descriptor.
+static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 struct OwnedDirectory(PathBuf);
 
@@ -52,6 +55,8 @@ fn fd(process: &Value) -> RawFd {
         ProcIo::Net(stream) => stream.as_raw_fd(),
         ProcIo::LocalNet(stream) => stream.as_raw_fd(),
         ProcIo::Connecting(connect) => connect.as_raw_fd(),
+        ProcIo::Listen(listener) => listener.as_raw_fd(),
+        ProcIo::LocalListen(listener, _) => listener.as_raw_fd(),
         _ => panic!("connected or connecting stream"),
     }
 }
@@ -121,6 +126,7 @@ fn check_peer(i: &mut Interp, mut peer: impl Read + Write, expected: &[u8], sock
 
 #[test]
 fn stream_eof_preserves_reads_discards_later_writes_and_closes_descriptors() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     on_big_stack(|| {
         let (mut i, _) = interp();
         i.noninteractive = true;
@@ -174,5 +180,117 @@ fn stream_eof_preserves_reads_discards_later_writes_and_closes_descriptors() {
         peer.set_write_timeout(Some(Duration::from_secs(2)))
             .unwrap();
         check_peer(&mut i, peer, b"\x1b$B$\x22", socket);
+    });
+}
+
+fn closed(socket: RawFd) {
+    assert_eq!(unsafe { libc::fcntl(socket, libc::F_GETFD) }, -1);
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::EBADF)
+    );
+}
+
+fn reuse_descriptor(source: RawFd, target: RawFd) -> Option<OwnedFd> {
+    if source == target {
+        return None;
+    }
+    // TARGET was just verified closed and all tests in this process are
+    // serialized. Force reuse instead of depending on allocator behavior.
+    assert_eq!(unsafe { libc::dup2(source, target) }, target);
+    Some(unsafe { OwnedFd::from_raw_fd(target) })
+}
+
+#[test]
+fn deleted_listeners_release_ports_paths_and_recycled_descriptors() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    on_big_stack(|| {
+        let (mut i, _) = interp();
+        i.noninteractive = true;
+        for host in ["127.0.0.1", "::1"] {
+            if host == "::1" && TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).is_err() {
+                continue;
+            }
+            let family = if host == "::1" { "ipv6" } else { "ipv4" };
+            let process = eval(
+                &mut i,
+                &format!(
+                    r#"(setq listener218 (make-network-process
+                :name "owned-listener" :host {host:?} :family '{family} :server t :service 0
+                :noquery t :sentinel #'ignore :filter #'ignore))"#
+                ),
+            );
+            let socket = fd(&process);
+            let address = {
+                let Value::Process(p) = &process else {
+                    unreachable!()
+                };
+                let p = p.borrow();
+                let ProcIo::Listen(listener) = &p.io else {
+                    unreachable!()
+                };
+                listener.local_addr().unwrap()
+            };
+            eval(&mut i, "(delete-process listener218)");
+            closed(socket);
+            let replacement =
+                TcpListener::bind(address).expect("held deleted process must release its port");
+            replacement.set_nonblocking(true).unwrap();
+            let _reused = reuse_descriptor(replacement.as_raw_fd(), socket);
+            eval(
+                &mut i,
+                "(delete-process listener218) (delete-process listener218)",
+            );
+            assert!(unsafe { libc::fcntl(socket, libc::F_GETFD) } >= 0);
+            let mut client =
+                std::net::TcpStream::connect_timeout(&address, Duration::from_secs(2)).unwrap();
+            client.write_all(b"PING").unwrap();
+            let mut peer = accept(|| replacement.accept().map(|(stream, _)| stream));
+            peer.set_nonblocking(false).unwrap();
+            peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            let mut bytes = [0; 4];
+            peer.read_exact(&mut bytes).unwrap();
+            assert_eq!(&bytes, b"PING");
+        }
+        let directory = OwnedDirectory::new();
+        let path = directory.0.join("owned.sock");
+        let process = eval(
+            &mut i,
+            &format!(
+                r#"(setq listener218 (make-network-process
+            :name "owned-local-listener" :family 'local :server t :service {:?}
+            :noquery t :sentinel #'ignore :filter #'ignore))"#,
+                path.to_str().unwrap()
+            ),
+        );
+        let socket = fd(&process);
+        assert!(path.exists());
+        eval(&mut i, "(delete-process listener218)");
+        closed(socket);
+        assert!(
+            path.exists(),
+            "GNU preserves the local socket pathname on delete"
+        );
+        std::fs::remove_file(&path).unwrap();
+        let replacement = UnixListener::bind(&path).unwrap();
+        replacement.set_nonblocking(true).unwrap();
+        let _reused = reuse_descriptor(replacement.as_raw_fd(), socket);
+        eval(
+            &mut i,
+            "(delete-process listener218) (delete-process listener218)",
+        );
+        assert!(
+            path.exists(),
+            "deleting the old object again must preserve the replacement path"
+        );
+        assert!(unsafe { libc::fcntl(socket, libc::F_GETFD) } >= 0);
+        let mut client = std::os::unix::net::UnixStream::connect(&path).unwrap();
+        client.write_all(b"PING").unwrap();
+        let mut peer = accept(|| replacement.accept().map(|(stream, _)| stream));
+        peer.set_nonblocking(false).unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let mut bytes = [0; 4];
+        peer.read_exact(&mut bytes).unwrap();
+        assert_eq!(&bytes, b"PING");
     });
 }

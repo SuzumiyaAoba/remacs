@@ -60,7 +60,7 @@ pub enum ProcIo {
     /// A connected local (Unix-domain) stream — `:family local'.
     LocalNet(std::os::unix::net::UnixStream),
     /// A listening local socket and its filesystem path (unlinked on
-    /// drop, like GNU removing the socket file).
+    /// owner drop; explicit deletion preserves GNU's socket pathname).
     LocalListen(std::os::unix::net::UnixListener, String),
     /// A serial port (file-backed).
     Serial(std::fs::File),
@@ -403,7 +403,9 @@ impl Drop for ProcIo {
                 }
             }
             ProcIo::LocalListen(_, path) => {
-                let _ = std::fs::remove_file(path);
+                if !path.is_empty() {
+                    let _ = std::fs::remove_file(path);
+                }
             }
             _ => {}
         }
@@ -3748,7 +3750,19 @@ fn f_delete_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 pb.status = "closed";
                 ("deleted", 0)
             }
-            ProcIo::Serial(_) | ProcIo::Listen(_) | ProcIo::LocalListen(..) | ProcIo::None => {
+            ProcIo::Listen(_) | ProcIo::LocalListen(..) => {
+                // Close before notifying, even when Lisp retains p. GNU
+                // leaves a local socket's pathname for its caller to remove.
+                if let ProcIo::LocalListen(_, path) = &mut pb.io {
+                    path.clear();
+                }
+                pb.io = ProcIo::None;
+                if !final_seen {
+                    pb.status = "closed";
+                }
+                ("deleted", 0)
+            }
+            ProcIo::Serial(_) | ProcIo::None => {
                 if !final_seen {
                     pb.status = "closed";
                 }

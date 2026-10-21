@@ -601,6 +601,14 @@ not add an ISO-2022 reset or an unused UTF-16 signature. Regressions:
 `qa_process_network_eof` and `tests/network_eof.rs` (owned IPv4/IPv6/Unix
 sockets, actual kernel EOF, receive continuity and descriptor closure).
 
+Deleting a TCP or Unix listener drops its backend before the deletion
+sentinel, even when Lisp keeps references. Repeated deletion must not close
+a recycled descriptor or affect a replacement listener. GNU leaves a Unix
+socket's filesystem pathname on explicit deletion: clear the backend's
+cleanup path before dropping it; callers unlink it before rebinding.
+Regressions: `qa_network_listener_delete` and the listener-lifetime test in
+`tests/network_eof.rs` (serialized descriptor-reuse checks).
+
 ## Process coding (`process/coding.rs` + `builtins/coding_stream.rs`)
 
 Asynchronous child, pipe, TCP, Unix and datagram I/O uses the shared
