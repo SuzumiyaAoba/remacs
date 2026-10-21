@@ -5,6 +5,7 @@
 pub mod extra;
 mod gapbuf;
 pub mod primitives;
+mod replace;
 pub(crate) mod textprops;
 
 pub use primitives::install_primitives;
@@ -745,6 +746,76 @@ impl Buffer {
         (removed, undo)
     }
 
+    /// GNU replace_range: record insertion before deletion, and keep the
+    /// two endpoints distinct even when markers have opposite insertion types.
+    pub(crate) fn raw_replace_region_with_undo(
+        &mut self,
+        start: usize,
+        end: usize,
+        replacement: &str,
+    ) -> Option<crate::lisp::value::StrRef> {
+        let inserted = replacement.chars().count();
+        let deleted = end - start;
+        if inserted == 0 && deleted == 0 {
+            return None;
+        }
+        // Undo inserts the old text before removing the new text.
+        self.record_insert(end, inserted);
+        let undo = if deleted > 0 {
+            self.record_delete_with_markers(start, self.text.substring(start, end), false)
+        } else {
+            None
+        };
+        self.text.delete(start, end);
+        self.text.insert(start, replacement);
+        let adjust = |buffer: &mut Buffer, active: bool| {
+            let relocate = |position: usize| {
+                if position >= end {
+                    position - deleted + inserted
+                } else if position > start {
+                    start
+                } else {
+                    position
+                }
+            };
+            if active && (buffer.point > start || buffer.point == end) {
+                buffer.point = start + inserted + buffer.point.saturating_sub(end);
+            } else if !active {
+                buffer.point = if deleted == 0 && buffer.point == start {
+                    start
+                } else {
+                    relocate(buffer.point)
+                };
+            }
+            if deleted == 0 {
+                buffer.adjust_markers_insert(start, inserted, false);
+                return;
+            }
+            for marker in buffer.markers.iter().filter_map(Weak::upgrade) {
+                let mut marker = marker.borrow_mut();
+                if marker.buffer == Some(buffer.id) {
+                    marker.position = relocate(marker.position);
+                }
+            }
+            buffer.begv = if buffer.begv == start {
+                start
+            } else {
+                relocate(buffer.begv)
+            };
+            buffer.zv = relocate(buffer.zv);
+            // GNU moves overlays by inserting at the OLD end first; doing
+            // deletion first would collapse or evaporate live overlays.
+            buffer.adjust_overlays_insert(end, inserted, true);
+            buffer.adjust_overlays_delete(start, end);
+        };
+        adjust(self, true);
+        self.text
+            .clone()
+            .each_sibling(self.id, |sibling| adjust(sibling, false));
+        self.note_text_change(deleted + inserted);
+        undo
+    }
+
     pub fn register_marker(&mut self, m: &Rc<RefCell<Marker>>) {
         // A marker must appear once per buffer: repeated `set-marker'
         // calls on the same marker must not multiply-count its
@@ -903,6 +974,15 @@ impl Buffer {
         beg: usize,
         text: String,
     ) -> Option<crate::lisp::value::StrRef> {
+        self.record_delete_with_markers(beg, text, true)
+    }
+
+    fn record_delete_with_markers(
+        &mut self,
+        beg: usize,
+        text: String,
+        record_markers: bool,
+    ) -> Option<crate::lisp::value::StrRef> {
         if self.undo_disabled() {
             return None;
         }
@@ -913,7 +993,9 @@ impl Buffer {
         } else {
             beg as i128 + 1
         };
-        self.record_marker_adjustments(beg, beg + n);
+        if record_markers {
+            self.record_marker_adjustments(beg, beg + n);
+        }
         let text = Value::string_ref(text);
         self.push_undo(Value::cons(Value::Str(text.clone()), Value::Int(sbeg)));
         Some(text)

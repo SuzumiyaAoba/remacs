@@ -1,7 +1,7 @@
 //! Extra buffer subrs: region commands, text-property scans, fields,
 //! indentation helpers, and encoding on regions.
 
-use crate::buffer::primitives::{buf_of, check_writable, cur, err_sym, pos_idx};
+use crate::buffer::primitives::{check_writable, cur, err_sym, pos_idx};
 use crate::lisp::Interp;
 use crate::lisp::builtins::{S, arg, want_int, want_string};
 use crate::lisp::error::{EvalResult, Flow};
@@ -356,7 +356,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         3,
         6,
         f_replace_region_contents,
-        "Replace region with SOURCE (a buffer, string, or fn)."
+        "Replace region with SOURCE, preserving unchanged text and markers. SOURCE may be a string, buffer, [BUFFER BEG END], or a function returning one."
     ),
     S!(
         "combine-after-change-execute",
@@ -629,30 +629,7 @@ fn f_find_file_name_handler(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
 }
 
 fn f_replace_region_contents(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // (replace-region-contents BEG END SOURCE &rest) — SOURCE is a
-    // buffer, a string, or a 0-arg function returning one.
-    let (s, e, _) = region_text(i, &a)?;
-    let src = a[2].clone();
-    let text = match &src {
-        Value::Str(st) => st.borrow().clone(),
-        Value::Buffer(_) => {
-            let b = buf_of(i, &src)?;
-            b.borrow().text.text()
-        }
-        Value::Sym(_) | Value::Lambda(_) | Value::Subr(_) | Value::Cons(_) => {
-            let r = i.apply(&src, vec![])?;
-            match &r {
-                Value::Str(st) => st.borrow().clone(),
-                Value::Buffer(_) => buf_of(i, &r)?.borrow().text.text(),
-                other => return Err(i.wrong_type_mut("stringp", other)),
-            }
-        }
-        other => return Err(i.wrong_type_mut("stringp", other)),
-    };
-    check_writable(i)?;
-    crate::buffer::primitives::chg_delete(i, s, e)?;
-    crate::buffer::primitives::chg_insert(i, s, &text)?;
-    Ok(Value::t())
+    super::replace::replace_region_contents(i, &a)
 }
 
 fn f_combine_after_change_execute(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
@@ -3715,7 +3692,7 @@ fn f_move_point_visually(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 // ---------- region encode/decode ----------
 
-fn region_text(i: &mut Interp, a: &[Value]) -> Result<(usize, usize, String), Flow> {
+pub(super) fn region_text(i: &mut Interp, a: &[Value]) -> Result<(usize, usize, String), Flow> {
     // GNU validate_region: BEG/END decode as integer-or-marker
     // (present-but-nil signals), are swapped into ascending order,
     // and must lie inside BEGV..ZV — otherwise

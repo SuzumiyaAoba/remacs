@@ -486,6 +486,20 @@ tree; explicit nil-valued properties remain present. Undo already inserts
 the saved string's properties. Regressions: `qa_undo_properties` (including
 redo, indirect views, narrowing, hooks, GC, and multibyte/unibyte history).
 
+`replace-region-contents` compares characters with GNU's bidirectional
+Myers algorithm (`buffer/replace.rs`), including the cost heuristics, then
+applies edit runs backwards. Equal islands retain their properties and
+markers; even an unchanged nonempty region gets one before/after hook
+pair, but no new modification tick or undo entry. `raw_replace_region_with_undo`
+records insertion before deletion and relocates both endpoints as a
+replacement, including sibling buffers and overlays. Sources honor buffer
+narrowing and `[BUFFER BEG END]`; deprecated callbacks temporarily narrow
+the target and restore excursion/restriction on errors. An integer zero
+comparison limit requests plain replacement (returns t); expiration falls
+back and returns nil. Match the actual GNU 31.1 sixth-argument behavior:
+INHERIT is passed as `replace_range`'s ADJUST_MATCH_DATA flag while its
+property-inheritance flag stays false. Regression: `qa_replace_region_contents`.
+
 `Symbol.name_string` retains the Lisp name string by identity for new
 `intern`/`make-symbol` calls; internal names acquire a stable string
 lazily. Existing interned names keep their original string. Portable

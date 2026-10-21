@@ -2365,6 +2365,75 @@ pub(crate) fn chg_replace(i: &mut Interp, s0: usize, e0: usize, s: &str) -> Eval
     signal_after_change(i, s0 + 1, s0 + 1 + n_ins, n_del as i128)
 }
 
+/// One diff run of replace-region-contents, including source properties.
+/// The caller can inhibit hooks while applying a complete edit script.
+pub(crate) fn chg_replace_contents(
+    i: &mut Interp,
+    start: usize,
+    end: usize,
+    text: &str,
+    properties: &[(usize, usize, Vec<Value>)],
+    adjust_match_data: bool,
+) -> EvalResult {
+    if start == end && text.is_empty() {
+        return Ok(Value::Nil);
+    }
+    check_writable(i)?;
+    barf_if_file_locked(i)?;
+    text_ro_range(i, start, end)?;
+    text_ro_insert(i, start)?;
+    signal_before_change(i, start + 1, end + 1)?;
+    let buffer = cur(i);
+    let mut buffer = buffer.borrow_mut();
+    let old_properties = buf_props_as_ivs(&buffer.text.props.borrow(), start, end);
+    let multibyte = i.intern("enable-multibyte-characters");
+    let multibyte = buffer.locals.get(&multibyte).is_none_or(Value::truthy);
+    let text = if multibyte {
+        text.to_owned()
+    } else {
+        unibyte_insert_text(text)
+    };
+    let inserted = text.chars().count();
+    if let Some(undo) = buffer.raw_replace_region_with_undo(start, end, &text) {
+        if !old_properties.is_empty() {
+            i.set_str_props(&undo, old_properties);
+        }
+        if multibyte {
+            i.mark_multibyte(&undo);
+        } else {
+            i.mark_unibyte(&undo);
+        }
+    }
+    if inserted > 0 {
+        // GNU currently passes INHERIT as replace_range's final
+        // ADJUST_MATCH_DATA flag; its actual inheritance flag is false.
+        buffer
+            .text
+            .props_write()
+            .set(start, start + inserted, Vec::new());
+        if !properties.is_empty() {
+            buffer.text.props_write().graft(start, properties, false);
+        }
+    }
+    drop(buffer);
+    if adjust_match_data {
+        if let Some(matches) = &mut i.match_data {
+            let bias = matches.base + usize::from(matches.in_buffer);
+            for (index, position) in matches.regs.iter_mut().enumerate() {
+                if let Some(position) = position {
+                    let old = *position + bias;
+                    if old >= end + 1 && (index % 2 != 0 || old > start + 1) {
+                        *position = (old + inserted - (end - start)).saturating_sub(bias);
+                    } else if old > start + 1 {
+                        *position = (start + 1).saturating_sub(bias);
+                    }
+                }
+            }
+        }
+    }
+    signal_after_change(i, start + 1, start + inserted + 1, (end - start) as i128)
+}
+
 /// `code_convert_region' signals one replacement with the GNU
 /// encode/decode point timing. Both original endpoint markers remain
 /// at the corresponding endpoints, including after post-read edits.
