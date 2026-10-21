@@ -5061,35 +5061,8 @@ fn f_make_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_string_to_list(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU: (append string nil) —
-    // nil → nil, strings → char list, other sequences → element list;
-    // a non-sequence signals `sequencep'.
-    match &args[0] {
-        Value::Nil => return Ok(Value::Nil),
-        Value::Cons(_) => return Ok(args[0].clone()),
-        Value::Vec(v) => return Ok(Value::list(v.borrow().clone())),
-        Value::Str(_) => {}
-        other => return Err(i.wrong_type_mut("sequencep", other)),
-    }
-    let s = want_string(i, &args[0])?;
-    // GNU: elements of a unibyte string are raw byte values.
-    let unibyte = match &args[0] {
-        Value::Str(r) => i.is_unibyte_str(r),
-        _ => false,
-    };
-    let items: Vec<Value> = s
-        .chars()
-        .map(|c| {
-            Value::Int(if unibyte {
-                crate::lisp::value::eight_bit_byte(c)
-                    .map(|b| b as i128)
-                    .unwrap_or((c as u32) as i128 & 0xFF)
-            } else {
-                lisp_char_code(c)
-            })
-        })
-        .collect();
-    Ok(Value::list(items))
+    // GNU subr.el: (append STRING nil), including non-string inputs.
+    super::listfn::f_append(i, vec![args[0].clone(), Value::Nil].into())
 }
 fn f_string_to_vector(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // Emacs accepts nil (treated as the empty sequence).

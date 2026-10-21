@@ -715,14 +715,29 @@ fn f_nbutlast(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     Ok(args[0].clone())
 }
-fn f_append(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_append(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     if args.is_empty() {
         return Ok(Value::Nil);
     }
     let mut out = Vec::new();
     for a in &args[..args.len() - 1] {
-        // Emacs accepts any sequence for non-last args.
-        out.extend(crate::lisp::builtins::seq::seq_to_vec(i, a)?);
+        match a {
+            Value::Cons(cell) => {
+                // GNU concat_to_list copies CAR before running
+                // FOR_EACH_TAIL on CDR. Starting the detector at the
+                // original head would signal a different circular tail.
+                let (head, rest) = {
+                    let cell = cell.borrow();
+                    (cell.car.clone(), cell.cdr.clone())
+                };
+                out.push(head);
+                out.extend(want_list(i, &rest)?);
+            }
+            // GNU also accepts closure slots here despite sequencep
+            // being nil for function objects.
+            Value::Lambda(function) => out.extend(super::misc::lambda_slot_values(function)),
+            _ => out.extend(super::seq::seq_to_vec(i, a)?),
+        }
     }
     // Last arg is the tail (may be non-list → dotted).
     let tail = args.last().unwrap().clone();
@@ -732,6 +747,7 @@ fn f_append(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     Ok(result)
 }
+
 fn f_nconc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let mut result = Value::Nil;
     let mut last_cons: Option<crate::lisp::value::ConsRef> = None;

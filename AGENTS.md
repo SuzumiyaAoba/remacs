@@ -1590,6 +1590,15 @@ mutable, but replacing the slots is forbidden. `qa_bytecode_slots` covers
 four/six-slot constructors, reader literals, error data identity, unchanged
 slots/results, nested content updates and ordinary mutable-array controls.
 
+`string-to-list` delegates to `(append INPUT nil)`, including non-string
+inputs. `append` copies the first list element before traversing its CDR;
+keep that GNU detector start so `circular-list` carries the same tail.
+It also copies interpreted/compiled closure slots, like GNU's CLOSUREP
+branch, while other sequences share the raw-byte-aware conversion helper.
+The list spine is fresh but elements stay shared. `qa_string_to_list` covers
+aliasing, dotted/cyclic errors, closure slots, byte kinds, boolean vectors,
+and direct multi-argument append/tail behavior.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source
