@@ -250,4 +250,108 @@
 )
 
 
+;; Issue #282: only apply entries can require a compensating undo record.
+(qa
+(with-temp-buffer
+  (insert "abc") (goto-char 1) (setq buffer-undo-list nil)
+  (list (primitive-undo 1 '(2)) (point) buffer-undo-list))
+'(nil 2 nil)
+)
+
+(qa
+(with-temp-buffer
+  (insert "abc") (goto-char 1) (setq buffer-undo-list t)
+  (list (primitive-undo 1 '(2)) (point) buffer-undo-list))
+'(nil 2 t)
+)
+
+(qa
+(with-temp-buffer
+  (insert "abc") (goto-char 1) (setq buffer-undo-list nil)
+  (list (primitive-undo 1 '(2 3 nil 1)) (point) buffer-undo-list))
+'((1) 3 nil)
+)
+
+(qa
+(with-temp-buffer
+  (insert "abc") (goto-char 1) (setq buffer-undo-list nil)
+  (list (primitive-undo 1.5 '(2 nil 3)) (point) buffer-undo-list))
+'(nil 3 nil)
+)
+
+(qa
+(with-temp-buffer
+  (insert "abc") (goto-char 1) (setq buffer-undo-list nil)
+  (list (primitive-undo 0 '(2)) (point) buffer-undo-list))
+'((2) 1 nil)
+)
+
+(qa
+(with-temp-buffer
+  (insert "abc") (goto-char 1) (setq buffer-undo-list nil)
+  (list (primitive-undo 1 '(nil nil)) (point) buffer-undo-list))
+'((nil) 1 nil)
+)
+
+(qa
+(with-temp-buffer
+  (setq buffer-undo-list nil)
+  (list (primitive-undo 1 '((apply ignore))) buffer-undo-list))
+'(nil ((apply cdr nil)))
+)
+
+(qa
+(with-temp-buffer
+  (setq buffer-undo-list t)
+  (list (primitive-undo 1 '((apply ignore))) buffer-undo-list))
+'(nil ((apply cdr nil) . t))
+)
+
+(qa
+(with-temp-buffer
+  (insert "abc") (goto-char 1) (setq buffer-undo-list nil)
+  (primitive-undo 1 '((apply goto-char 2)))
+  (list (point) buffer-undo-list))
+'(2 ((apply cdr nil)))
+)
+
+(qa
+(with-temp-buffer
+  (setq buffer-undo-list nil)
+  (primitive-undo 1
+		  (list
+		   (list 'apply
+			 (lambda nil (setq buffer-undo-list '(custom))))))
+  buffer-undo-list)
+'(custom)
+)
+
+(qa
+(with-temp-buffer
+  (setq buffer-undo-list nil)
+  (primitive-undo 1
+		  (list
+		   (list 'apply (lambda nil (setq buffer-undo-list t)))))
+  buffer-undo-list)
+'t
+)
+
+(qa
+(with-temp-buffer
+  (insert "abc") (goto-char 1)
+  (let ((old (list 'old)))
+    (setq buffer-undo-list old) (primitive-undo 1 '(2))
+    (list (point) (eq buffer-undo-list old) buffer-undo-list)))
+'(2 t (old))
+)
+
+(qa
+(with-temp-buffer
+  (insert "abc") (setq buffer-undo-list t)
+  (primitive-undo 1 '((1 . 4)))
+  (list (buffer-string) buffer-undo-list))
+'("" t)
+)
+
+
 (princ (qa--done))

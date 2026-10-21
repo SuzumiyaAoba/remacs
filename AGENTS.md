@@ -1766,6 +1766,12 @@ operation, including change hooks and apply callbacks. Restore the caller
 binding on success, errors and throws; do not suppress modification hooks.
 `qa_undo` pins these #281 protection and binding-lifetime rules.
 
+The undo dispatcher reports successful apply entries separately from
+position/text/property/modtime entries. Add the compensating `(apply cdr
+nil)` history only when an apply entry ran and history identity did not
+change. Point-only and undo-disabled ordinary edits do not create it.
+`qa_undo` pins these #282 history and explicit-apply distinctions.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

@@ -14187,14 +14187,14 @@ fn undo_time_equal(i: &Interp, a: &Value, b: &Value) -> Result<bool, Flow> {
 }
 
 /// Apply one non-nil undo element (the `pcase' dispatch of GNU's
-/// `primitive-undo').  Returns the remaining LIST after consuming any
-/// (MARKER . ADJUSTMENT) records that follow a (TEXT . POS) entry.
+/// `primitive-undo'). Consumes marker adjustments after a (TEXT . POS)
+/// entry and reports whether an apply entry completed successfully.
 fn undo_apply_one(
     i: &mut Interp,
     b: &Rc<RefCell<crate::buffer::Buffer>>,
     next: &Value,
     list: &mut Value,
-) -> Result<(), Flow> {
+) -> Result<bool, Flow> {
     match next {
         // POSITION: `(goto-char next)'.
         Value::Int(p) => {
@@ -14288,6 +14288,7 @@ fn undo_apply_one(
                         vec![Value::string("Undo function switched buffer")],
                     ));
                 }
+                return Ok(true);
             } else if let (Some(beg), Some(end)) = (car.int(), cdr.int()) {
                 // (BEG . END): range was inserted — delete it.
                 if undo_pos_oob(b, beg, end) {
@@ -14368,7 +14369,7 @@ fn undo_apply_one(
         }
         _ => return Err(undo_unrecognized(i, next)),
     }
-    Ok(())
+    Ok(false)
 }
 
 fn undo_unrecognized(i: &mut Interp, next: &Value) -> Flow {
@@ -14426,8 +14427,7 @@ fn primitive_undo_body(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             if matches!(next, Value::Nil) {
                 break;
             }
-            undo_apply_one(i, &b, &next, &mut list)?;
-            did_apply = true;
+            did_apply |= undo_apply_one(i, &b, &next, &mut list)?;
         }
         arg -= 1.0;
     }
