@@ -10737,10 +10737,50 @@ fn f_match_end(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 }
 
+fn reuse_match_data_values(i: &mut Interp, reuse: &Value, items: Vec<Value>) -> EvalResult {
+    if !matches!(reuse, Value::Cons(_)) {
+        return Ok(Value::list(items));
+    }
+    let mut values = items.into_iter();
+    let mut tail = reuse.clone();
+    let mut previous = None;
+    let mut visited = std::collections::HashSet::new();
+    while let Value::Cons(cell) = tail {
+        if !visited.insert(Rc::as_ptr(&cell) as usize) {
+            return Err(i.signal_data(sym::CIRCULAR_LIST, vec![reuse.clone()]));
+        }
+        cell.borrow_mut().car = values.next().unwrap_or(Value::Nil);
+        tail = cell.borrow().cdr.clone();
+        previous = Some(cell);
+    }
+    if values.len() > 0 {
+        // Extend short lists; retain an existing dotted tail when the
+        // cons cells were already sufficient, exactly as GNU does.
+        previous.unwrap().borrow_mut().cdr = Value::list(values.collect());
+    }
+    Ok(reuse.clone())
+}
+
 fn f_match_data(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let integers = a.get(0).map(|v| v.truthy()).unwrap_or(false);
-    let _reuse = a.get(1);
-    let _reseat = a.get(2);
+    let reuse = a.get(1).cloned().unwrap_or(Value::Nil);
+    if a.get(2).is_some_and(Value::truthy) {
+        // GNU detaches every old marker before checking whether there
+        // is any current match, including unused elements of REUSE.
+        let mut tail = reuse.clone();
+        let mut visited = std::collections::HashSet::new();
+        while let Value::Cons(cell) = tail {
+            if !visited.insert(Rc::as_ptr(&cell) as usize) {
+                return Err(i.signal_data(sym::CIRCULAR_LIST, vec![reuse.clone()]));
+            }
+            let old = cell.borrow().car.clone();
+            if let Value::Marker(marker) = old {
+                marker.borrow_mut().buffer = None;
+                cell.borrow_mut().car = Value::Nil;
+            }
+            tail = cell.borrow().cdr.clone();
+        }
+    }
     match &i.match_data {
         Some(md) => {
             // GNU: INTEGERS nil + a buffer match → real markers in the
@@ -10792,7 +10832,7 @@ fn f_match_data(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     items.push(Value::Buffer(buffer.clone()));
                 }
             }
-            Ok(Value::list(items))
+            reuse_match_data_values(i, &reuse, items)
         }
         None => Ok(Value::Nil),
     }

@@ -103,4 +103,194 @@
         (set-match-data (list 1 2 marker) t)
         (eq (marker-buffer marker) (current-buffer)))) t)
 
+;; Issue #275: reuse cons cells and reseat previous markers.
+(defun qa275-normalize (items source)
+ (mapcar (lambda (x) (cond ((markerp x) (list 'marker (marker-position x) (eq (marker-buffer x) source)))
+                         ((bufferp x) (list 'buffer (eq x source))) (t x))) items))
+(qa
+(let ((reuse nil))
+  (string-match "b" "abc")
+  (let ((out (match-data t reuse))) (list (eq out reuse) out reuse)))
+'(nil (1 2) nil)
+)
+
+(qa
+(let ((reuse 42))
+  (string-match "b" "abc")
+  (let ((out (match-data t reuse))) (list (eq out reuse) out reuse)))
+'(nil (1 2) 42)
+)
+
+(qa
+(let ((reuse 'old))
+  (string-match "b" "abc")
+  (let ((out (match-data t reuse))) (list (eq out reuse) out reuse)))
+'(nil (1 2) old)
+)
+
+(qa
+(let ((reuse (list 'old)))
+  (string-match "b" "abc")
+  (let ((out (match-data t reuse))) (list (eq out reuse) out reuse)))
+'(t (1 2) (1 2))
+)
+
+(qa
+(let ((reuse (list 'old 'old)))
+  (string-match "b" "abc")
+  (let ((out (match-data t reuse))) (list (eq out reuse) out reuse)))
+'(t (1 2) (1 2))
+)
+
+(qa
+(let ((reuse (make-list 6 'old)))
+  (string-match "b" "abc")
+  (let ((out (match-data t reuse))) (list (eq out reuse) out reuse)))
+'(t (1 2 nil nil nil nil) (1 2 nil nil nil nil))
+)
+
+(qa
+(let ((reuse (cons 'old 'tail)))
+  (string-match "b" "abc")
+  (let ((out (match-data t reuse))) (list (eq out reuse) out reuse)))
+'(t (1 2) (1 2))
+)
+
+(qa
+(let ((reuse (cons 'old (cons 'old (cons 'old 'tail)))))
+  (string-match "b" "abc")
+  (let ((out (match-data t reuse))) (list (eq out reuse) out reuse)))
+'(t (1 2 nil . tail) (1 2 nil . tail))
+)
+
+(qa
+(with-temp-buffer
+  (insert "ab") (goto-char 1) (re-search-forward "a")
+  (let*
+      ((source (current-buffer)) (reuse (match-data))
+       (start (car reuse)) (end (cadr reuse)))
+    (re-search-forward "b")
+    (let ((out (match-data nil reuse nil)))
+      (list (eq out reuse) (qa275-normalize out source)
+	    (list (marker-position start) (marker-position end)
+		  (eq (marker-buffer start) source)
+		  (eq (marker-buffer end) source))
+	    (eq (car out) start)))))
+'(t ((marker 2 t) (marker 3 t)) (1 2 t t) nil)
+)
+
+(qa
+(with-temp-buffer
+  (insert "ab") (goto-char 1) (re-search-forward "a")
+  (let*
+      ((source (current-buffer)) (reuse (match-data))
+       (start (car reuse)) (end (cadr reuse)))
+    (re-search-forward "b")
+    (let ((out (match-data nil reuse t)))
+      (list (eq out reuse) (qa275-normalize out source)
+	    (list (marker-position start) (marker-position end)
+		  (eq (marker-buffer start) source)
+		  (eq (marker-buffer end) source))
+	    (eq (car out) start)))))
+'(t ((marker 2 t) (marker 3 t)) (nil nil nil nil) nil)
+)
+
+(qa
+(with-temp-buffer
+  (insert "ab") (goto-char 1) (re-search-forward "a")
+  (let*
+      ((source (current-buffer)) (reuse (match-data))
+       (start (car reuse)) (end (cadr reuse)))
+    (re-search-forward "b")
+    (let ((out (match-data t reuse nil)))
+      (list (eq out reuse) (qa275-normalize out source)
+	    (list (marker-position start) (marker-position end)
+		  (eq (marker-buffer start) source)
+		  (eq (marker-buffer end) source))
+	    (eq (car out) start)))))
+'(t (2 3 (buffer t)) (1 2 t t) nil)
+)
+
+(qa
+(with-temp-buffer
+  (insert "ab") (goto-char 1) (re-search-forward "a")
+  (let*
+      ((source (current-buffer)) (reuse (match-data))
+       (start (car reuse)) (end (cadr reuse)))
+    (re-search-forward "b")
+    (let ((out (match-data t reuse t)))
+      (list (eq out reuse) (qa275-normalize out source)
+	    (list (marker-position start) (marker-position end)
+		  (eq (marker-buffer start) source)
+		  (eq (marker-buffer end) source))
+	    (eq (car out) start)))))
+'(t (2 3 (buffer t)) (nil nil nil nil) nil)
+)
+
+(qa
+(with-temp-buffer
+  (insert "ab") (goto-char 1) (re-search-forward "a")
+  (let*
+      ((source (current-buffer))
+       (reuse (append (match-data) (list (point-marker) 'old)))
+       (start (car reuse)) (end (cadr reuse)) (extra (nth 2 reuse)))
+    (string-match "b" "b")
+    (let ((out (match-data t reuse nil)))
+      (list (eq out reuse) out
+	    (mapcar
+	     (lambda (m)
+	       (list (marker-position m) (eq (marker-buffer m) source)))
+	     (list start end extra))))))
+'(t (0 1 nil nil) ((1 t) (2 t) (2 t)))
+)
+
+(qa
+(with-temp-buffer
+  (insert "ab") (goto-char 1) (re-search-forward "a")
+  (let*
+      ((source (current-buffer))
+       (reuse (append (match-data) (list (point-marker) 'old)))
+       (start (car reuse)) (end (cadr reuse)) (extra (nth 2 reuse)))
+    (string-match "b" "b")
+    (let ((out (match-data t reuse t)))
+      (list (eq out reuse) out
+	    (mapcar
+	     (lambda (m)
+	       (list (marker-position m) (eq (marker-buffer m) source)))
+	     (list start end extra))))))
+'(t (0 1 nil nil) ((nil nil) (nil nil) (nil nil)))
+)
+
+(qa
+(with-temp-buffer
+  (insert "a") (goto-char 1) (re-search-forward "a")
+  (let*
+      ((source (current-buffer)) (reuse (match-data))
+       (start (car reuse)))
+    (set-match-data nil)
+    (list (match-data t reuse nil) (qa275-normalize reuse source)
+	  (marker-position start) (eq (marker-buffer start) source))))
+'((nil nil) (nil nil) 1 t)
+)
+
+(qa
+(with-temp-buffer
+  (insert "a") (goto-char 1) (re-search-forward "a")
+  (let*
+      ((source (current-buffer)) (reuse (match-data))
+       (start (car reuse)))
+    (set-match-data nil)
+    (list (match-data t reuse t) (qa275-normalize reuse source)
+	  (marker-position start) (eq (marker-buffer start) source))))
+'((nil nil) (nil nil) nil nil)
+)
+
+(qa
+(let ((reuse (make-list 10 'old)))
+  (string-match "\\(a\\)?\\(b\\)\\(c\\)?" "b")
+  (let ((out (match-data t reuse))) (list (eq out reuse) out)))
+'(t (0 1 nil nil 0 1 nil nil nil nil))
+)
+
+
 (princ (qa--done))

@@ -1709,6 +1709,13 @@ after-change hooks. Apply buffer case transfer afterward with region
 casing; string case transfer uses the ordinary string casing rules.
 `qa_replace_metadata` pins #274 properties, representation, hooks and undo.
 
+`match-data` destructively fills REUSE cons cells, pads unused cars with
+nil, and extends short lists. Non-cons reuse is ignored; a sufficient
+dotted list keeps its tail. RESEAT first detaches all old markers and
+replaces those cars with nil, even with no match data. New buffer-match
+markers are freshly allocated rather than reusing old marker objects.
+`qa_match` pins these #275 identity, padding, extension and marker rules.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source
