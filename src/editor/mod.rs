@@ -10258,34 +10258,45 @@ fn f_copy_to_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_append_to_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // (append-to-buffer BUFFER START END) — GNU decodes
-    // `(get-buffer-create BUFFER)' first: CHECK_STRING on
-    // non-buffer/non-string, then validate_region for START/END.
-    let bid = match &a[0] {
-        Value::Buffer(b) => b.borrow().id,
-        Value::Str(s) => {
-            let name = s.borrow().clone();
-            match i.buffers.by_name(&name) {
-                Some(id) => id,
-                None => i.create_buffer(&name),
+    // GNU simple.el: retain the source buffer, resolve the destination and
+    // its windows, then insert through the property-aware transfer primitive.
+    let source = Value::Buffer(cur(i));
+    let get_buffer = Value::Sym(i.intern("get-buffer-create"));
+    let target = i.apply(&get_buffer, vec![a[0].clone()])?;
+    let get_windows = Value::Sym(i.intern("get-buffer-window-list"));
+    let mut windows = i.apply(&get_windows, vec![target.clone(), Value::t(), Value::t()])?;
+    let excursion = i.save_excursion_state(false);
+    let result = (|| {
+        let set_buffer = Value::Sym(i.intern("set-buffer"));
+        i.apply(&set_buffer, vec![target])?;
+        let point = Value::Int(cur(i).borrow().point() as i128 + 1);
+        let writable = Value::Sym(i.intern("barf-if-buffer-read-only"));
+        i.apply(&writable, vec![])?;
+        let insert = Value::Sym(i.intern("insert-buffer-substring"));
+        i.apply(&insert, vec![source, a[1].clone(), a[2].clone()])?;
+        loop {
+            let (window, next) = match windows {
+                Value::Nil => break,
+                Value::Cons(ref cell) => {
+                    let cell = cell.borrow();
+                    (cell.car.clone(), cell.cdr.clone())
+                }
+                ref other => return Err(i.wrong_type_mut("listp", other)),
+            };
+            let window_point = Value::Sym(i.intern("window-point"));
+            let position = i.apply(&window_point, vec![window.clone()])?;
+            let equal = Value::Sym(i.intern("="));
+            if i.apply(&equal, vec![position, point.clone()])?.truthy() {
+                let position = Value::Int(cur(i).borrow().point() as i128 + 1);
+                let set_point = Value::Sym(i.intern("set-window-point"));
+                i.apply(&set_point, vec![window, position])?;
             }
+            windows = next;
         }
-        other => return Err(i.wrong_type_mut("stringp", other)),
-    };
-    let text = {
-        let b = cur(i);
-        let bb = b.borrow();
-        let len = bb.text.len();
-        let s = (want_int(i, &a[1])?.max(1) as usize - 1).min(len);
-        let e = (want_int(i, &a[2])?.max(1) as usize - 1).min(len);
-        bb.text.substring(s.min(e), s.max(e))
-    };
-    if i.buffers.get(bid).is_some() {
-        crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
-            crate::buffer::primitives::chg_insert_pt(i, &text, false)
-        })?;
-    }
-    Ok(Value::Nil)
+        Ok(Value::Nil)
+    })();
+    i.restore_excursion_state(excursion);
+    result
 }
 
 // ---------- file I/O ----------

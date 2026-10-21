@@ -7421,9 +7421,21 @@ fn f_insert_buffer_substring(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
         value => return Err(i.wrong_type_mut("stringp", value)),
     };
     let (lo, hi) = buffer_transfer_bounds(i, &source, &arg(&a, 1), &arg(&a, 2))?;
+    let point = cur(i).borrow().point();
     if lo == hi {
-        return Ok(Value::Nil);
+        // GNU insert_from_buffer still reports the empty after-change.
+        return signal_after_change(i, point + 1, point + 1, 0);
     }
+    check_writable(i)?;
+    barf_if_file_locked(i)?;
+    text_ro_insert(i, point)?;
+    signal_before_change(i, point + 1, point + 1)?;
+    if !crate::lisp::builtins::evalfn::mod_hooks_inhibited(i) {
+        let deactivate = i.intern("deactivate-mark");
+        i.set_symbol(deactivate, Value::t())?;
+    }
+    // Read the source's current intervals after before-change hooks, then
+    // graft them as part of the insertion, before any after-change hook.
     let value = {
         let buffer = source.borrow();
         let value = Value::string(buffer.text.substring(lo, hi));
@@ -7437,7 +7449,25 @@ fn f_insert_buffer_substring(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
         }
         value
     };
-    insert_impl(i, &[value], false, false)
+    let Value::Str(string) = value else {
+        unreachable!()
+    };
+    let mut text = string.borrow().clone();
+    if buffer_is_unibyte(i) {
+        text = unibyte_insert_text(&text);
+    }
+    let properties = i.str_props(&string).to_vec();
+    let end = {
+        let destination = cur(i);
+        let mut buffer = destination.borrow_mut();
+        let base = buffer.point();
+        buffer.insert(&text);
+        if !properties.is_empty() {
+            buffer.text.props_write().graft(base, &properties, false);
+        }
+        buffer.point()
+    };
+    signal_after_change(i, point + 1, end + 1, 0)
 }
 
 fn f_self_insert_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

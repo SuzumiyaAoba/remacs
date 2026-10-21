@@ -532,6 +532,17 @@ adjacent-empty no-op leave it unchanged.
 explicit nil property presence, and shared property-value identity after GC
 for equal, unequal, adjacent and reversed regions with either marker flag.
 
+`append-to-buffer` follows simple.el's source/destination/window lookup and
+save-excursion ordering, then delegates to `insert-buffer-substring` instead
+of copying a plain Rust string. The transfer primitive snapshots properties
+after before-change hooks and grafts them before after-change hooks, with
+one text tick and no extra property tick. Even an erroring after hook sees
+the copied attributes. Empty transfers report only the zero-length after
+change; no modification or mark deactivation occurs. Regressions:
+`qa_append_to_buffer` and `qa_buffer_transfer` (byte-mode conversion,
+restrictions, reversed/marker bounds, self-copy, read-only/error ordering,
+hook context and window points).
+
 `Symbol.name_string` retains the Lisp name string by identity for new
 `intern`/`make-symbol` calls; internal names acquire a stable string
 lazily. Existing interned names keep their original string. Portable
