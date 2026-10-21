@@ -14382,6 +14382,19 @@ fn undo_unrecognized(i: &mut Interp, next: &Value) -> Flow {
 }
 
 fn f_primitive_undo(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let mark = i.specbind_depth();
+    let result = (|| {
+        // GNU simple.el primitive-undo keeps this binding through
+        // ordinary change hooks and apply callbacks as well as edits.
+        let read_only = i.intern("inhibit-read-only");
+        i.specbind(read_only, Value::t())?;
+        primitive_undo_body(i, a)
+    })();
+    i.unbind_to(mark)?;
+    result
+}
+
+fn primitive_undo_body(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // (primitive-undo N LIST) — GNU defun (simple.el): N counts undo
     // boundaries crossed, not entries.  Returns the remaining list.
     // GNU checks N through `(> arg 0)' each round: non-number/markers

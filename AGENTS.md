@@ -1761,6 +1761,11 @@ equality and `cl-equalp`, including nested occurrences. Weak registration
 does not retain snapshots or confuse reused allocation addresses. The
 same QA suite pins these #280 factory/forgery and opaque-type rules.
 
+`primitive-undo` binds `inhibit-read-only` to t for the complete undo
+operation, including change hooks and apply callbacks. Restore the caller
+binding on success, errors and throws; do not suppress modification hooks.
+`qa_undo` pins these #281 protection and binding-lifetime rules.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

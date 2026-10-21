@@ -105,4 +105,149 @@
       (setq buffer-undo-list nil) (goto-char 2) (undo-boundary) (goto-char 1)
       (insert "x") buffer-undo-list) '((1 . 2) 2))
 
+;; Issue #281: undo edits and callbacks run with inhibit-read-only bound.
+(qa
+(with-temp-buffer
+  (insert "abc") (put-text-property 1 4 'read-only nil)
+  (setq buffer-undo-list nil buffer-read-only nil)
+  (let ((inhibit-read-only '(locked)))
+    (list
+     (condition-case e (progn (primitive-undo 1 '((1 . 4))) 'undone)
+       (error e))
+     (buffer-substring-no-properties (point-min) (point-max))
+     inhibit-read-only)))
+'(undone "" (locked))
+)
+
+(qa
+(with-temp-buffer
+  (insert "abc") (put-text-property 1 4 'read-only nil)
+  (setq buffer-undo-list nil buffer-read-only t)
+  (let ((inhibit-read-only '(locked)))
+    (list
+     (condition-case e (progn (primitive-undo 1 '((1 . 4))) 'undone)
+       (error e))
+     (buffer-substring-no-properties (point-min) (point-max))
+     inhibit-read-only)))
+'(undone "" (locked))
+)
+
+(qa
+(with-temp-buffer
+  (insert "abc") (put-text-property 1 4 'read-only t)
+  (setq buffer-undo-list nil buffer-read-only nil)
+  (let ((inhibit-read-only '(locked)))
+    (list
+     (condition-case e (progn (primitive-undo 1 '((1 . 4))) 'undone)
+       (error e))
+     (buffer-substring-no-properties (point-min) (point-max))
+     inhibit-read-only)))
+'(undone "" (locked))
+)
+
+(qa
+(with-temp-buffer
+  (insert "abc") (put-text-property 1 4 'read-only t)
+  (setq buffer-undo-list nil buffer-read-only t)
+  (let ((inhibit-read-only '(locked)))
+    (list
+     (condition-case e (progn (primitive-undo 1 '((1 . 4))) 'undone)
+       (error e))
+     (buffer-substring-no-properties (point-min) (point-max))
+     inhibit-read-only)))
+'(undone "" (locked))
+)
+
+(qa
+(with-temp-buffer
+  (insert "abc") (put-text-property 1 4 'read-only 'locked)
+  (setq buffer-undo-list nil buffer-read-only nil)
+  (let ((inhibit-read-only '(locked)))
+    (list
+     (condition-case e (progn (primitive-undo 1 '((1 . 4))) 'undone)
+       (error e))
+     (buffer-substring-no-properties (point-min) (point-max))
+     inhibit-read-only)))
+'(undone "" (locked))
+)
+
+(qa
+(with-temp-buffer
+  (insert "abc") (put-text-property 1 4 'read-only 'locked)
+  (setq buffer-undo-list nil buffer-read-only t)
+  (let ((inhibit-read-only '(locked)))
+    (list
+     (condition-case e (progn (primitive-undo 1 '((1 . 4))) 'undone)
+       (error e))
+     (buffer-substring-no-properties (point-min) (point-max))
+     inhibit-read-only)))
+'(undone "" (locked))
+)
+
+(qa
+(with-temp-buffer
+  (insert "abc") (setq buffer-undo-list nil)
+  (let (events)
+    (let
+	((before-change-functions
+	  (list
+	   (lambda (beg end)
+	     (push (list 'before beg end inhibit-read-only) events))))
+	 (after-change-functions
+	  (list
+	   (lambda (beg end old)
+	     (push (list 'after beg end old inhibit-read-only) events)))))
+      (primitive-undo 1 '((1 . 4))))
+    (list (nreverse events) inhibit-read-only (buffer-string))))
+'(((before 1 4 t) (after 1 1 3 t)) nil "")
+)
+
+(qa
+(with-temp-buffer
+  (setq buffer-undo-list nil)
+  (let ((inhibit-read-only 'old) seen)
+    (primitive-undo 1
+		    (list
+		     (list 'apply
+			   (lambda nil (setq seen inhibit-read-only)))))
+    (list seen inhibit-read-only buffer-undo-list)))
+'(t old ((apply cdr nil)))
+)
+
+(qa
+(with-temp-buffer
+  (insert "abc") (setq buffer-undo-list nil)
+  (let
+      ((inhibit-read-only 'old)
+       (before-change-functions
+	(list (lambda (&rest _) (error "undo hook")))))
+    (list (condition-case e (primitive-undo 1 '((1 . 4))) (error e))
+	  inhibit-read-only (buffer-string))))
+'((error "undo hook") old "abc")
+)
+
+(qa
+(with-temp-buffer
+  (let ((inhibit-read-only 'old) seen)
+    (list
+     (catch 'qa281
+       (primitive-undo 1
+		       (list
+			(list 'apply
+			      (lambda nil
+				(setq seen inhibit-read-only)
+				(throw 'qa281 'jump))))))
+     seen inhibit-read-only)))
+'(jump t old)
+)
+
+(qa
+(with-temp-buffer
+  (let ((inhibit-read-only 'old))
+    (list (condition-case e (primitive-undo 'bad nil) (error e))
+	  inhibit-read-only)))
+'((wrong-type-argument number-or-marker-p bad) old)
+)
+
+
 (princ (qa--done))
