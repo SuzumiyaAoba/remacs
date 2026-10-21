@@ -609,6 +609,17 @@ cleanup path before dropping it; callers unlink it before rebinding.
 Regressions: `qa_network_listener_delete` and the listener-lifetime test in
 `tests/network_eof.rs` (serialized descriptor-reuse checks).
 
+Accepted TCP/Unix connections are registered before callbacks. Invoke
+`:log` with the listener, accepted process and `accept from HOST\n`, then
+read the accepted process's current sentinel and send `open from HOST\n`.
+Callbacks run without process borrows; log may replace functions, read
+input recursively, or delete either process. Deletion does not suppress
+the subsequent open notification; a log error propagates and stops it.
+Unix uses `-` for HOST; IPv6 preserves GNU's uncompressed native-word
+spelling. Regression: `qa_network_accept_callbacks`.
+Keep the constructor's log function in `Proc.log` and include it in
+`Proc::gc_values`; changing a returned contact list must not replace it.
+
 ## Process coding (`process/coding.rs` + `builtins/coding_stream.rs`)
 
 Asynchronous child, pipe, TCP, Unix and datagram I/O uses the shared

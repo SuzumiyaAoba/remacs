@@ -433,6 +433,8 @@ pub struct Proc {
     pub mark: Option<MarkerRef>,
     pub filter: Value,
     pub sentinel: Value,
+    /// The constructor's accept callback, independent of contact-list copies.
+    log: Value,
     pub plist: Value,
     pub query_on_exit: bool,
     pub kill_without_query: bool,
@@ -492,12 +494,13 @@ pub struct GnutlsState {
 }
 
 impl Proc {
-    pub(crate) fn gc_values(&self) -> [&Value; 11] {
+    pub(crate) fn gc_values(&self) -> [&Value; 12] {
         [
             &self.command,
             &self.connect_error,
             &self.filter,
             &self.sentinel,
+            &self.log,
             &self.plist,
             &self.tty_name,
             &self.stderr_dest,
@@ -795,18 +798,55 @@ fn event_string(status: &str, code: i32) -> String {
 
 /// Deliver a status change through the installed sentinel.
 fn run_sentinel(i: &mut Interp, pref: &ProcessRef, status: &str, code: i32) -> Result<(), Flow> {
+    run_sentinel_message(i, pref, event_string(status, code))
+}
+
+fn run_sentinel_message(i: &mut Interp, pref: &ProcessRef, message: String) -> Result<(), Flow> {
     let mut sentinel = pref.borrow().sentinel.clone();
     if sentinel.is_nil() {
         sentinel = symv(i, "internal-default-process-sentinel");
     }
     i.apply(
         &sentinel,
-        vec![
-            Value::Process(pref.clone()),
-            Value::string(event_string(status, code)),
-        ],
+        vec![Value::Process(pref.clone()), Value::string(message)],
     )?;
     Ok(())
+}
+
+fn accepted_host(address: std::net::IpAddr) -> String {
+    match address {
+        std::net::IpAddr::V4(address) => address.to_string(),
+        std::net::IpAddr::V6(address) => address
+            .octets()
+            .chunks_exact(2)
+            // GNU's accept notification formats the eight native-endian
+            // uint16_t words, without IPv6 compression.
+            .map(|word| format!("{:x}", u16::from_ne_bytes([word[0], word[1]])))
+            .collect::<Vec<_>>()
+            .join(":"),
+    }
+}
+
+fn notify_accept(
+    i: &mut Interp,
+    server: &ProcessRef,
+    client: &ProcessRef,
+    host: &str,
+) -> Result<(), Flow> {
+    let log = server.borrow().log.clone();
+    if !log.is_nil() {
+        i.apply(
+            &log,
+            vec![
+                Value::Process(server.clone()),
+                Value::Process(client.clone()),
+                Value::string(format!("accept from {host}\n")),
+            ],
+        )?;
+    }
+    // Fetch the sentinel after log: it may have replaced the function or
+    // deleted either process. GNU still issues this notification then.
+    run_sentinel_message(i, client, format!("open from {host}\n"))
 }
 
 #[derive(Default)]
@@ -1192,6 +1232,7 @@ fn poll_proc_once(
                         mark: Some(free_process_marker()),
                         filter,
                         sentinel,
+                        log: Value::Nil,
                         plist,
                         query_on_exit: true,
                         kill_without_query: false,
@@ -1216,8 +1257,8 @@ fn poll_proc_once(
                     },
                     crate::lisp::Value::Process,
                 );
-                i.processes.push(child_proc);
-                run_sentinel(i, pref, "open", 0)?;
+                i.processes.push(child_proc.clone());
+                notify_accept(i, pref, &child_proc, &accepted_host(addr.ip()))?;
             }
             Ev::AcceptedLocal(stream) => {
                 // Local-socket accept — GNU names the child after the
@@ -1256,6 +1297,7 @@ fn poll_proc_once(
                         mark: Some(free_process_marker()),
                         filter,
                         sentinel,
+                        log: Value::Nil,
                         plist,
                         query_on_exit: true,
                         kill_without_query: false,
@@ -1280,8 +1322,8 @@ fn poll_proc_once(
                     },
                     crate::lisp::Value::Process,
                 );
-                i.processes.push(child_proc);
-                run_sentinel(i, pref, "open", 0)?;
+                i.processes.push(child_proc.clone());
+                notify_accept(i, pref, &child_proc, "-")?;
             }
         }
     }
@@ -1499,6 +1541,7 @@ fn base_proc(name: String, kind: &'static str, io: ProcIo) -> Proc {
         mark: Some(free_process_marker()),
         filter: Value::Nil,
         sentinel: Value::Nil,
+        log: Value::Nil,
         plist: Value::Nil,
         query_on_exit: true,
         kill_without_query: false,
@@ -1546,6 +1589,9 @@ fn finish_setup(
     update_process_marker(i, &mut p);
     p.filter = kw(i, args, ":filter");
     p.sentinel = kw(i, args, ":sentinel");
+    if p.kind == "network" {
+        p.log = kw(i, args, ":log");
+    }
     if p.sentinel.is_nil() {
         p.sentinel = symv(i, "internal-default-process-sentinel");
     }
