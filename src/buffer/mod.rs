@@ -704,13 +704,23 @@ impl Buffer {
 
     /// `delete_region' without the MODIFF bump.
     pub fn raw_delete_region(&mut self, start: usize, end: usize) -> String {
+        self.raw_delete_region_with_undo(start, end).0
+    }
+
+    /// Return the newly recorded string so the interpreter can attach its
+    /// property intervals and byte kind before exposing the undo entry.
+    pub(crate) fn raw_delete_region_with_undo(
+        &mut self,
+        start: usize,
+        end: usize,
+    ) -> (String, Option<crate::lisp::value::StrRef>) {
         let start = start.min(self.text.len());
         let end = end.min(self.text.len());
         if start >= end {
-            return String::new();
+            return (String::new(), None);
         }
         let removed = self.text.substring(start, end);
-        self.record_delete(start, removed.clone());
+        let undo = self.record_delete(start, removed.clone());
         self.text.delete(start, end);
         let n = end - start;
         // Point: Emacs clamps it into [start] if inside, shifts if after.
@@ -732,7 +742,7 @@ impl Buffer {
             }
             sib.adjust_markers_delete(start, end)
         });
-        removed
+        (removed, undo)
     }
 
     pub fn register_marker(&mut self, m: &Rc<RefCell<Marker>>) {
@@ -887,10 +897,14 @@ impl Buffer {
 
     /// GNU `record_delete': TEXT is about to be deleted at BEG (0-based).
     /// The position is recorded negative when point is right after the
-    /// deleted text (so undo leaves point before the reinserted text).
-    pub fn record_delete(&mut self, beg: usize, text: String) {
+    /// deleted text, using GNU's deletion-position convention.
+    pub fn record_delete(
+        &mut self,
+        beg: usize,
+        text: String,
+    ) -> Option<crate::lisp::value::StrRef> {
         if self.undo_disabled() {
-            return;
+            return None;
         }
         self.record_point(beg + 1);
         let n = text.chars().count();
@@ -900,7 +914,9 @@ impl Buffer {
             beg as i128 + 1
         };
         self.record_marker_adjustments(beg, beg + n);
-        self.push_undo(Value::cons(Value::string(text), Value::Int(sbeg)));
+        let text = Value::string_ref(text);
+        self.push_undo(Value::cons(Value::Str(text.clone()), Value::Int(sbeg)));
+        Some(text)
     }
 
     /// Record an in-place replacement without relocating markers or

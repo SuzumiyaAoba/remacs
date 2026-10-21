@@ -15720,7 +15720,13 @@ fn f_indent_rigidly(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     pos += 1;
                 }
                 if d > 0 {
-                    bb.delete_region(pos - d, pos);
+                    crate::buffer::primitives::delete_preserving_undo(
+                        i,
+                        &mut bb,
+                        pos - d,
+                        pos,
+                        false,
+                    );
                     pos -= d;
                 }
             }

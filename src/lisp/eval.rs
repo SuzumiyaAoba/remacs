@@ -4765,7 +4765,9 @@ command-line arguments.\" \
                 if let Some(b) = interp.buffers.get(mb) {
                     let mut bb = b.borrow_mut();
                     let z = bb.text_len();
-                    bb.delete_region(0, z);
+                    crate::buffer::primitives::delete_preserving_undo(
+                        &mut interp, &mut bb, 0, z, false,
+                    );
                     bb.set_point(0);
                     bb.set_undo_list(Value::t());
                 }
@@ -12093,7 +12095,9 @@ command-line arguments.\" \
                 let n = count + 1;
                 // GNU del_range_both(prev_bol, this_bol): drop the old
                 // line (incl. newline), then re-append the suffix.
-                bb.delete_region(prev_bol, eol + 1);
+                crate::buffer::primitives::delete_preserving_undo(
+                    self, &mut bb, prev_bol, eol + 1, false,
+                );
                 let z3 = bb.text_len();
                 bb.raw_insert_at(z3, &format!("{}\n", s));
                 let z2 = bb.text_len();
@@ -12142,7 +12146,9 @@ command-line arguments.\" \
             }
         }
         if cut > 0 {
-            bb.delete_region(0, cut);
+            crate::buffer::primitives::delete_preserving_undo(
+                self, &mut bb, 0, cut, false,
+            );
         }
     }
 
@@ -12552,7 +12558,9 @@ command-line arguments.\" \
             bb.overlays.clear();
             let len = bb.text_len();
             if len > 0 {
-                bb.delete_region(0, len);
+                crate::buffer::primitives::delete_preserving_undo(
+                    self, &mut bb, 0, len, false,
+                );
             }
             bb.set_point(0);
             if !prompt.is_empty() {

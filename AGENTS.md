@@ -472,6 +472,16 @@ properties. Undo insertion restores those properties before change hooks.
 an existing boundary. An empty history stays nil, but still remembers
 the pre-command point for the next edit (`qa_undo`).
 
+Deleted undo entries must contain the original property's intervals and
+byte kind, not only text. `raw_delete_region_with_undo` returns the recorded
+string; interpreter deletion paths use `delete_preserving_undo` to copy
+the buffer range after before-change hooks and attach metadata before
+after-change hooks. Rectangle/indent/message/minibuffer and coding/replace
+paths share this bridge. Property-free ranges keep no string interval
+tree; explicit nil-valued properties remain present. Undo already inserts
+the saved string's properties. Regressions: `qa_undo_properties` (including
+redo, indirect views, narrowing, hooks, GC, and multibyte/unibyte history).
+
 `Symbol.name_string` retains the Lisp name string by identity for new
 `intern`/`make-symbol` calls; internal names acquire a stable string
 lazily. Existing interned names keep their original string. Portable

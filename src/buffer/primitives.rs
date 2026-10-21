@@ -2291,6 +2291,39 @@ fn chg_insert_pt_props(
     signal_after_change(i, q + 1 - n, q + 1, 0)
 }
 
+/// Native deletion with the same property-bearing undo string as GNU's
+/// make_buffer_string. Call after before-change hooks and before after hooks.
+pub(crate) fn delete_preserving_undo(
+    i: &mut Interp,
+    buffer: &mut Buffer,
+    start: usize,
+    end: usize,
+    raw: bool,
+) -> String {
+    let properties = if buffer.undo_disabled() {
+        Vec::new()
+    } else {
+        buf_props_as_ivs(&buffer.text.props.borrow(), start, end)
+    };
+    let multibyte = i.intern("enable-multibyte-characters");
+    let multibyte = buffer.locals.get(&multibyte).is_none_or(Value::truthy);
+    let (removed, undo) = buffer.raw_delete_region_with_undo(start, end);
+    if let Some(undo) = undo {
+        if !properties.is_empty() {
+            i.set_str_props(&undo, properties);
+        }
+        if multibyte {
+            i.mark_multibyte(&undo);
+        } else {
+            i.mark_unibyte(&undo);
+        }
+    }
+    if !raw && end > start {
+        buffer.note_text_change(end - start);
+    }
+    removed
+}
+
 /// `delete_region' over [S0,E0) (0-based) with signals; returns the
 /// removed text.
 pub(crate) fn chg_delete(i: &mut Interp, s0: usize, e0: usize) -> Result<String, Flow> {
@@ -2302,7 +2335,8 @@ pub(crate) fn chg_delete(i: &mut Interp, s0: usize, e0: usize) -> Result<String,
     check_writable(i)?;
     text_ro_range(i, s0, e0)?;
     signal_before_change(i, s0 + 1, e0 + 1)?;
-    let removed = cur(i).borrow_mut().delete_region(s0, e0);
+    let buffer = cur(i);
+    let removed = delete_preserving_undo(i, &mut buffer.borrow_mut(), s0, e0, false);
     signal_after_change(i, s0 + 1, s0 + 1, (e0 - s0) as i128)?;
     Ok(removed)
 }
@@ -2323,7 +2357,7 @@ pub(crate) fn chg_replace(i: &mut Interp, s0: usize, e0: usize, s: &str) -> Eval
         let mut bb = b.borrow_mut();
         let e = e0.min(bb.text.len());
         let d = e.saturating_sub(s0);
-        bb.raw_delete_region(s0, e0);
+        delete_preserving_undo(i, &mut bb, s0, e0, true);
         bb.raw_insert_at(s0, s);
         bb.note_text_change(d + n_ins);
         d
@@ -2378,7 +2412,7 @@ pub(crate) fn chg_coding_region(
         signal_before_change(i, start + 1, end + 1)?;
         {
             let mut b = buffer.borrow_mut();
-            b.raw_delete_region(start, end);
+            delete_preserving_undo(i, &mut b, start, end, true);
             b.raw_insert_at(start, text);
             let hook_point = if !replace {
                 point
@@ -8807,7 +8841,7 @@ fn rect_line_range(i: &mut Interp, a: &[Value]) -> Result<(usize, usize, i128, i
 fn rect_apply(
     i: &mut Interp,
     a: &[Value],
-    mut f: impl FnMut(&mut Buffer, usize, usize, i128, i128, i128) -> Result<(), Flow>,
+    mut f: impl FnMut(&mut Interp, &mut Buffer, usize, usize, i128, i128, i128) -> Result<(), Flow>,
 ) -> EvalResult {
     check_writable(i)?;
     let (sl, hi, c0, c1, tab) = rect_line_range(i, a)?;
@@ -8826,7 +8860,7 @@ fn rect_apply(
         signal_before_change(i, ls + 1, le + 1)?;
         {
             let mut bb = b.borrow_mut();
-            f(&mut bb, ls, le, c0, c1, tab)?;
+            f(i, &mut bb, ls, le, c0, c1, tab)?;
             final_point = bb.point();
         }
         let le2 = b.borrow().text.line_end(ls);
@@ -8840,6 +8874,7 @@ fn rect_apply(
 
 /// GNU delete-rectangle-line; returns the position of column SC.
 fn rect_delete_line(
+    i: &mut Interp,
     bb: &mut Buffer,
     ls: usize,
     le: usize,
@@ -8864,7 +8899,7 @@ fn rect_delete_line(
         let le2 = bb.text.line_end(ls);
         let (p1, _) = rect_move_to(bb, ls, le2, ec, tab, RectForce::Coerce);
         if p1 > p0 {
-            bb.delete_region(p0, p1);
+            delete_preserving_undo(i, bb, p0, p1, false);
         }
     }
     p0
@@ -8872,6 +8907,7 @@ fn rect_delete_line(
 
 /// GNU delete-extract-rectangle-line: kill the span, return the segment.
 fn rect_extract_delete_line(
+    i: &mut Interp,
     bb: &mut Buffer,
     ls: usize,
     le: usize,
@@ -8899,7 +8935,7 @@ fn rect_extract_delete_line(
     }
     let le2 = bb.text.line_end(ls);
     let (p1, _) = rect_move_to(bb, ls, le2, ec, tab, RectForce::T);
-    bb.delete_region(p0, p1)
+    delete_preserving_undo(i, bb, p0, p1, false)
 }
 
 /// GNU extract-rectangle-line: non-destructive, padded with spaces.
@@ -8988,7 +9024,9 @@ fn rect_extract_span(
         };
         if delete {
             let mut bb = b.borrow_mut();
-            segs.push(rect_extract_delete_line(&mut bb, ls, le, c0, c1, fill, tab));
+            segs.push(rect_extract_delete_line(
+                i, &mut bb, ls, le, c0, c1, fill, tab,
+            ));
         } else {
             let bb = b.borrow();
             segs.push(rect_extract_line(&bb.text, ls, le, c0, c1, tab));
@@ -9025,8 +9063,8 @@ fn f_copy_rectangle_as_kill(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
 
 fn f_delete_rectangle(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let fill = a.get(2).map(|v| v.truthy()).unwrap_or(false);
-    rect_apply(i, &a, |bb, ls, le, c0, c1, tab| {
-        let p0 = rect_delete_line(bb, ls, le, c0, c1, fill, tab);
+    rect_apply(i, &a, |i, bb, ls, le, c0, c1, tab| {
+        let p0 = rect_delete_line(i, bb, ls, le, c0, c1, fill, tab);
         bb.set_point(p0);
         Ok(())
     })
@@ -9034,7 +9072,7 @@ fn f_delete_rectangle(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_clear_rectangle(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let fill = a.get(2).map(|v| v.truthy()).unwrap_or(false);
-    rect_apply(i, &a, |bb, ls, le, c0, c1, tab| {
+    rect_apply(i, &a, |i, bb, ls, le, c0, c1, tab| {
         // GNU clear-rectangle-line.
         let eol_col = rect_col_at(&bb.text, ls, le, tab);
         let (p0, reached) = rect_move_to(
@@ -9051,12 +9089,12 @@ fn f_clear_rectangle(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         );
         if reached == c0 {
             if !fill && eol_col <= c1 {
-                bb.delete_region(p0, le);
+                delete_preserving_undo(i, bb, p0, le, false);
                 bb.set_point(p0);
             } else {
                 let le2 = bb.text.line_end(ls);
                 let (p1, _) = rect_move_to(bb, ls, le2, c1, tab, RectForce::T);
-                bb.delete_region(p0, p1);
+                delete_preserving_undo(i, bb, p0, p1, false);
                 let cur = rect_col_at(&bb.text, ls, p0, tab);
                 if c1 > cur {
                     bb.insert_at(p0, &" ".repeat((c1 - cur) as usize));
@@ -9072,7 +9110,7 @@ fn f_clear_rectangle(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_open_rectangle(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let fill = a.get(2).map(|v| v.truthy()).unwrap_or(false);
-    rect_apply(i, &a, |bb, ls, le, c0, c1, tab| {
+    rect_apply(i, &a, |_i, bb, ls, le, c0, c1, tab| {
         // GNU open-rectangle-line.
         let (p0, reached) = rect_move_to(
             bb,
@@ -9099,7 +9137,7 @@ fn f_open_rectangle(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_delete_whitespace_rectangle(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let fill = a.get(2).map(|v| v.truthy()).unwrap_or(false);
-    rect_apply(i, &a, |bb, ls, le, c0, _c1, tab| {
+    rect_apply(i, &a, |i, bb, ls, le, c0, _c1, tab| {
         // GNU delete-whitespace-rectangle-line (close-rectangle).
         let (p0, reached) = rect_move_to(
             bb,
@@ -9119,7 +9157,7 @@ fn f_delete_whitespace_rectangle(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
                 p1 += 1;
             }
             if p1 > p0 {
-                bb.delete_region(p0, p1);
+                delete_preserving_undo(i, bb, p0, p1, false);
             }
             bb.set_point(p0);
         }
@@ -9128,11 +9166,11 @@ fn f_delete_whitespace_rectangle(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
 }
 
 fn rect_string_lines(i: &mut Interp, a: &[Value], s: &str, delete: bool) -> EvalResult {
-    rect_apply(i, a, |bb, ls, le, c0, c1, tab| {
+    rect_apply(i, a, |i, bb, ls, le, c0, c1, tab| {
         // GNU string-rectangle-line.
         rect_move_to(bb, ls, le, c0, tab, RectForce::T);
         let p0 = if delete {
-            rect_delete_line(bb, ls, le, c0, c1, false, tab)
+            rect_delete_line(i, bb, ls, le, c0, c1, false, tab)
         } else {
             let le2 = bb.text.line_end(ls);
             rect_move_to(bb, ls, le2, c0, tab, RectForce::Nil).0
@@ -9304,7 +9342,7 @@ fn f_rectangle_number_lines(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     };
     let _ = (sl, hi);
     let mut n = start_at;
-    rect_apply(i, &a, |bb, ls, le, c0, _c1, tab| {
+    rect_apply(i, &a, |_i, bb, ls, le, c0, _c1, tab| {
         let (p0, _) = rect_move_to(bb, ls, le, c0, tab, RectForce::T);
         let s = rect_format(&fmt, n);
         n += 1;
