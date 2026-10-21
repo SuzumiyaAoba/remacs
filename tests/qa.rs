@@ -138,6 +138,7 @@ qa!(qa_errors, "qa_errors.el");
 qa!(qa_dotted_error_data, "qa_dotted_error_data.el");
 qa!(qa_eval, "qa_eval.el");
 qa!(qa_eval_narrowing, "qa_eval_narrowing.el");
+qa!(qa_eval_lexical, "qa_eval_lexical.el");
 qa!(qa_eval_lexenv, "qa_eval_lexenv.el");
 qa!(qa_closure_constructor, "qa_closure_constructor.el");
 qa!(qa_cl_boot_surface, "qa_cl_boot_surface.el");

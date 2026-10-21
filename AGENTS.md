@@ -1668,6 +1668,16 @@ streams receive source output plus printed evaluation results. The caller
 stream is restored, and non-nil PRINTFLAG records results in `values`.
 This behavior was already provided by the #264 live-buffer evaluation fix.
 
+`eval-buffer` selects lexical mode from the first accessible comment line
+(after an optional shebang), unless the source buffer already has a local
+`lexical-binding` slot. A missing cookie calls
+`internal--get-default-lexical-binding-function` with the source buffer, or
+uses `default-toplevel-value` when the hook is nil. Only the exact cookie
+value `nil` disables lexical mode. Bind output/eval-buffer-list before the
+hook, reset source point afterward, and restore bindings, lexical environment
+and caller point on errors. `eval-region` keeps the caller mode and ignores
+header cookies. `qa_eval_lexical` pins these #266 rules.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

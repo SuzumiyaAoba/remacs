@@ -4000,6 +4000,7 @@ fn f_eval_buffer(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         arg(&args, 1),
         Value::Nil,
         arg(&args, 4).truthy(),
+        true,
         filename,
     );
     i.restore_excursion_state(saved);
@@ -4022,8 +4023,46 @@ fn f_eval_region(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         arg(&args, 2),
         arg(&args, 3),
         false,
+        false,
         filename,
     )
+}
+
+/// GNU lread.c's lisp_file_lexical_cookie examines only the first comment
+/// line, or the comment immediately after a shebang. Return the stream
+/// position consumed by that examination so the fallback hook sees it.
+fn buffer_lexical_cookie(source: &str) -> (Option<bool>, usize) {
+    let chars: Vec<_> = source.chars().collect();
+    let mut start = 0;
+    if chars.starts_with(&['#', '!']) {
+        start = chars
+            .iter()
+            .position(|&c| c == '\n')
+            .map_or(chars.len(), |p| p + 1);
+    }
+    if chars.get(start) != Some(&';') {
+        return (None, start);
+    }
+    let end = chars[start..]
+        .iter()
+        .position(|&c| c == '\n')
+        .map_or(chars.len(), |p| start + p);
+    let consumed = (end + 1).min(chars.len());
+    let line: String = chars[start..end].iter().collect();
+    let Some(open) = line.find("-*-") else {
+        return (None, consumed);
+    };
+    let variables = &line[open + 3..];
+    let variables = variables.split("-*-").next().unwrap_or("");
+    let mut remaining = variables;
+    while let Some((name, rest)) = remaining.split_once(':') {
+        let (value, next) = rest.split_once(';').map_or((rest, ""), |parts| parts);
+        if name.trim_matches([' ', '\t']) == "lexical-binding" {
+            return (Some(value.trim_matches([' ', '\t']) != "nil"), consumed);
+        }
+        remaining = next;
+    }
+    (None, consumed)
 }
 
 /// Read the live buffer, as in GNU lread.c's readevalloop.  In particular,
@@ -4037,6 +4076,7 @@ fn eval_buffer_source(
     printflag: Value,
     read_function: Value,
     allow_print: bool,
+    read_lexical_cookie: bool,
     filename: Value,
 ) -> EvalResult {
     let filename = if let Value::Str(text) = &filename {
@@ -4051,26 +4091,8 @@ fn eval_buffer_source(
     };
     let mut entire = None;
     let depth = i.specbind_depth();
-    let lex_on = i
-        .intern_soft("lexical-binding")
-        .map(|s| i.symbol_value(s).truthy())
-        .unwrap_or(false);
-    let saved_lexenv = std::mem::replace(
-        &mut i.lexenv,
-        if lex_on {
-            crate::lisp::eval::lexenv_root()
-        } else {
-            None
-        },
-    );
+    let saved_lexenv = i.lexenv.clone();
     let mut result = i.with_eval_context(false, |i| {
-        let current = i.intern("current-load-list");
-        i.specbind(current, Value::list(vec![filename.clone()]))?;
-        let input = i.intern("standard-input");
-        let list = i.intern("eval-buffer-list");
-        let old_list = i.symbol_value(list);
-        i.specbind(input, Value::Buffer(buffer.clone()))?;
-        i.specbind(list, Value::cons(Value::Buffer(buffer.clone()), old_list))?;
         let output = i.intern("standard-output");
         let sink = if printflag.is_nil() && !allow_print {
             Value::Sym(i.intern("symbolp"))
@@ -4078,6 +4100,46 @@ fn eval_buffer_source(
             printflag.clone()
         };
         i.specbind(output, sink)?;
+        let list = i.intern("eval-buffer-list");
+        let old_list = i.symbol_value(list);
+        i.specbind(list, Value::cons(Value::Buffer(buffer.clone()), old_list))?;
+        let lexical = i.intern("lexical-binding");
+        if read_lexical_cookie {
+            // GNU eval-buffer only scans a cookie when the source buffer
+            // has no local binding. eval-region never scans a header.
+            if !buffer.borrow().locals.contains_key(&lexical) {
+                let (cookie, consumed) = {
+                    let b = buffer.borrow();
+                    buffer_lexical_cookie(&b.text.substring(b.begv, b.zv))
+                };
+                let begv = buffer.borrow().begv;
+                buffer.borrow_mut().set_point(begv + consumed);
+                let value = match cookie {
+                    Some(enabled) => Value::from_bool(enabled),
+                    None => {
+                        let hook = i.intern("internal--get-default-lexical-binding-function");
+                        let function = i.symbol_value(hook);
+                        if function.is_nil() {
+                            i.default_toplevel_value(lexical).unwrap_or(Value::Nil)
+                        } else {
+                            i.apply(&function, vec![Value::Buffer(buffer.clone())])?
+                        }
+                    }
+                };
+                i.specbind(lexical, value)?;
+            }
+            let begv = buffer.borrow().begv;
+            buffer.borrow_mut().set_point(begv);
+        }
+        i.lexenv = if i.symbol_value(lexical).truthy() {
+            crate::lisp::eval::lexenv_root()
+        } else {
+            None
+        };
+        let current = i.intern("current-load-list");
+        i.specbind(current, Value::list(vec![filename.clone()]))?;
+        let input = i.intern("standard-input");
+        i.specbind(input, Value::Buffer(buffer.clone()))?;
         let mut source_version = None;
         let mut source_tick = None;
         let mut chars = Rc::new(Vec::new());
