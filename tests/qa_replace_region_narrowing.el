@@ -121,4 +121,80 @@
  '(args-out-of-range t "old" (3 6)))
 
 
+;; Issue #238: vector sources accept reversed/marker bounds and extra slots.
+(qa
+ (let ((source (generate-new-buffer " *qa238-source*")))
+   (unwind-protect
+       (progn
+	 (with-current-buffer source (insert "xxNEWyy"))
+	 (let
+	     ((source-vector
+	       (with-current-buffer source (vector source 3 6))))
+	   (with-temp-buffer
+	     (insert "old")
+	     (replace-region-contents 1 4 source-vector)
+	     (list (buffer-string)
+		   (with-current-buffer source
+		     (list (buffer-string) (point) (point-min)
+			   (point-max)))))))
+     (kill-buffer source)))
+ '("NEW" ("xxNEWyy" 8 1 8)))
+
+(qa
+ (let ((source (generate-new-buffer " *qa238-source*")))
+   (unwind-protect
+       (progn
+	 (with-current-buffer source (insert "xxNEWyy"))
+	 (let
+	     ((source-vector
+	       (with-current-buffer source (vector source 6 3))))
+	   (with-temp-buffer
+	     (insert "old")
+	     (replace-region-contents 1 4 source-vector)
+	     (list (buffer-string)
+		   (with-current-buffer source
+		     (list (buffer-string) (point) (point-min)
+			   (point-max)))))))
+     (kill-buffer source)))
+ '("NEW" ("xxNEWyy" 8 1 8)))
+
+(qa
+ (let ((source (generate-new-buffer " *qa238-source*")))
+   (unwind-protect
+       (progn
+	 (with-current-buffer source (insert "xxNEWyy"))
+	 (let
+	     ((source-vector
+	       (with-current-buffer source
+		 (vector source (copy-marker 3) (copy-marker 6)))))
+	   (with-temp-buffer
+	     (insert "old")
+	     (replace-region-contents 1 4 source-vector)
+	     (list (buffer-string)
+		   (with-current-buffer source
+		     (list (buffer-string) (point) (point-min)
+			   (point-max)))))))
+     (kill-buffer source)))
+ '("NEW" ("xxNEWyy" 8 1 8)))
+
+(qa
+ (let ((source (generate-new-buffer " *qa238-source*")))
+   (unwind-protect
+       (progn
+	 (with-current-buffer source (insert "xxNEWyy"))
+	 (let
+	     ((source-vector
+	       (with-current-buffer source
+		 (vector source 3 6 'ignored))))
+	   (with-temp-buffer
+	     (insert "old")
+	     (replace-region-contents 1 4 source-vector)
+	     (list (buffer-string)
+		   (with-current-buffer source
+		     (list (buffer-string) (point) (point-min)
+			   (point-max)))))))
+     (kill-buffer source)))
+ '("NEW" ("xxNEWyy" 8 1 8)))
+
+
 (princ (qa--done)) (terpri)
