@@ -460,6 +460,10 @@ single-character mappings on a copy, retaining properties and byte
 representation; multibyte strings allocate a fresh multibyte result
 without properties. Empty strings return the original object.
 `propertize` must preserve explicit representation flags when copying.
+`qa_propertize_bytes` pins all 256 unibyte values through `aref`, list/vector
+conversion, repeated copies and GC, as well as explicit multibyte ASCII and
+raw-eight-bit multibyte strings; text and intervals are copied independently,
+while property values retain identity.
 
 Region and word casing share `apply_case_text`. Character replacements
 preserve intervals; expansion inserts extra prefix characters with only

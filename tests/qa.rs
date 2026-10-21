@@ -413,6 +413,7 @@ qa!(qa_types2, "qa_types2.el");
 qa!(qa_ucs, "qa_ucs.el");
 qa!(qa_undo, "qa_undo.el");
 qa!(qa_undo_properties, "qa_undo_properties.el");
+qa!(qa_propertize_bytes, "qa_propertize_bytes.el");
 qa!(qa_vector, "qa_vector.el");
 qa!(qa_window, "qa_window.el");
 qa!(qa_winstate, "qa_winstate.el");
