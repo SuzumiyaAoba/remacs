@@ -3068,7 +3068,7 @@ fn f_fontset_list(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 
 /// Window configuration specs retain live markers for point/start so
 /// edits between capture and restore move saved positions like GNU.
-/// Record: [tag frame SPECS SELECTED CURRENT-BUFFER]. Each spec is
+/// Record: [tag frame SPECS SELECTED CURRENT-BUFFER TREE]. Each spec is
 /// [window buffer-id point start hscroll top height left width dedicated
 ///  minibuffer params prev-buffers next-buffers mark left-margin right-margin
 ///  min-hscroll suspend-hscroll old-point]. Positions are 0-based internally.
@@ -3102,6 +3102,110 @@ fn window_config_point_insertion_type(i: &Interp, buffer: usize) -> bool {
         .truthy()
 }
 
+fn window_config_tree(window: &WindowRef) -> Value {
+    let window_data = window.borrow();
+    Value::vector(vec![
+        Value::Window(window.clone()),
+        window_data
+            .horiz
+            .map_or(Value::Nil, |horizontal| Value::Int(i128::from(horizontal))),
+        Value::list(
+            window_data
+                .children
+                .iter()
+                .map(window_config_tree)
+                .collect(),
+        ),
+        Value::from_bool(window_data.combination_limit),
+    ])
+}
+
+struct SavedWindowTree {
+    window: WindowRef,
+    horizontal: Option<bool>,
+    children: Vec<SavedWindowTree>,
+    combination_limit: bool,
+}
+
+fn read_window_config_tree(
+    value: &Value,
+    seen: &mut std::collections::HashSet<usize>,
+    leaves: &mut std::collections::HashSet<usize>,
+) -> Option<SavedWindowTree> {
+    let Value::Vec(vector) = value else {
+        return None;
+    };
+    let fields = vector.borrow().clone();
+    let Value::Window(window) = fields.first()? else {
+        return None;
+    };
+    let id = window.borrow().id;
+    if !seen.insert(id) {
+        return None;
+    }
+    let horizontal = match fields.get(1)? {
+        Value::Nil => None,
+        Value::Int(0) => Some(false),
+        Value::Int(1) => Some(true),
+        _ => return None,
+    };
+    let children = fields
+        .get(2)?
+        .list_to_vec()
+        .ok()?
+        .iter()
+        .map(|value| read_window_config_tree(value, seen, leaves))
+        .collect::<Option<Vec<_>>>()?;
+    if horizontal.is_none() != children.is_empty() {
+        return None;
+    }
+    if horizontal.is_none() {
+        leaves.insert(id);
+    }
+    Some(SavedWindowTree {
+        window: window.clone(),
+        horizontal,
+        children,
+        combination_limit: fields.get(3).is_some_and(Value::truthy),
+    })
+}
+
+fn restore_window_config_tree(tree: &SavedWindowTree, parent: Option<&WindowRef>) -> WindowRef {
+    let children: Vec<_> = tree
+        .children
+        .iter()
+        .map(|child| restore_window_config_tree(child, Some(&tree.window)))
+        .collect();
+    let bounds = children
+        .iter()
+        .map(|child| {
+            let child = child.borrow();
+            (
+                child.left,
+                child.top,
+                child.left.saturating_add(child.width),
+                child.top.saturating_add(child.height),
+            )
+        })
+        .reduce(|(l, t, r, b), (cl, ct, cr, cb)| (l.min(cl), t.min(ct), r.max(cr), b.max(cb)));
+    let mut window = tree.window.borrow_mut();
+    window.dead = false;
+    window.parent = parent.map(Rc::downgrade);
+    window.horiz = tree.horizontal;
+    window.children = children;
+    window.combination_limit = tree.combination_limit;
+    if let Some((left, top, right, bottom)) = bounds {
+        window.left = left;
+        window.top = top;
+        window.width = right.saturating_sub(left);
+        window.height = bottom.saturating_sub(top);
+        window.new_total = window.height as i128;
+        window.new_pixel = window.height as i128;
+    }
+    drop(window);
+    tree.window.clone()
+}
+
 fn window_configuration(i: &mut Interp) -> Value {
     let tag = Value::Sym(i.intern("window-configuration"));
     let frame_v = i
@@ -3111,8 +3215,10 @@ fn window_configuration(i: &mut Interp) -> Value {
         .unwrap_or(Value::Nil);
     let mut specs = Vec::new();
     let mut selected = Value::Nil;
+    let mut tree = Value::Nil;
     if let Some(f) = i.selected_frame.as_ref() {
         let fr = f.borrow();
+        tree = fr.root.as_ref().map_or(Value::Nil, window_config_tree);
         let sel_id = fr.selected.borrow().id;
         for w in &fr.windows {
             let wb = w.borrow();
@@ -3197,6 +3303,7 @@ fn window_configuration(i: &mut Interp) -> Value {
         // `set-window-configuration' restores it via
         // `set_buffer_internal' (slot index 4).
         i.buffer_value(i.current_buffer).unwrap_or(Value::Nil),
+        tree,
     ])
 }
 
@@ -3293,6 +3400,37 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -
         Some(p) => p,
         None => return Err(i.wrong_type_mut("window-configuration-p", &a[0])),
     };
+    // Parse the immutable topology before changing live windows. In
+    // particular, reject duplicate/cyclic nodes and mismatched leaf sets.
+    let tree_value = match &a[0] {
+        Value::Record(record) => record.borrow().get(5).cloned(),
+        _ => None,
+    };
+    let saved_tree = if let Some(value) = tree_value.filter(|value| !value.is_nil()) {
+        let mut seen = std::collections::HashSet::new();
+        let mut leaves = std::collections::HashSet::new();
+        let tree = read_window_config_tree(&value, &mut seen, &mut leaves)
+            .ok_or_else(|| i.wrong_type_mut("window-configuration-p", &a[0]))?;
+        let expected: std::collections::HashSet<_> = specs
+            .iter()
+            .filter_map(|spec| {
+                let fields = spec.list_to_vec().ok()?;
+                if fields.get(10).is_some_and(Value::truthy) {
+                    return None;
+                }
+                match fields.first()? {
+                    Value::Window(window) => Some(window.borrow().id),
+                    _ => None,
+                }
+            })
+            .collect();
+        if leaves != expected {
+            return Err(i.wrong_type_mut("window-configuration-p", &a[0]));
+        }
+        Some(tree)
+    } else {
+        None
+    };
     let f = sel_frame(i).ok_or_else(|| i.error("No frame"))?;
     // Preserve the saved current buffer's present point. If restoration
     // changes which window shows it as selected, preserve that final
@@ -3335,13 +3473,6 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -
     // Kill live windows that the configuration does not contain, then
     // rebuild the frame's window list from the saved specs (GNU writes
     // the saved contents back into the same window objects).
-    let saved_ids: Vec<usize> = specs
-        .iter()
-        .filter_map(|s| match s.list_to_vec().ok()?.first()? {
-            Value::Window(w) => Some(w.borrow().id),
-            _ => None,
-        })
-        .collect();
     // The current root extent must be measured before any window is
     // marked dead: it is the span of the live non-minibuffer windows.
     let mut cur_specs: Vec<Vec<Value>> = Vec::new();
@@ -3365,13 +3496,10 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -
             ]);
         }
     }
-    {
-        let fr = f.borrow_mut();
-        for w in &fr.windows {
-            if !saved_ids.contains(&w.borrow().id) {
-                w.borrow_mut().dead = true;
-            }
-        }
+    if let Some(root) = f.borrow().root.clone() {
+        // The saved topology holds its own child lists and revives the
+        // saved nodes. Unsaved internal windows must become dead too.
+        mark_tree_dead(&root);
     }
     let mut new_windows: Vec<WindowRef> = Vec::new();
     let mut marks: Vec<(usize, usize)> = Vec::new();
@@ -3504,31 +3632,35 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -
     {
         let mut fr = f.borrow_mut();
         fr.windows = new_windows;
-        // Detach stale tree links, then rebuild: a single restored
-        // leaf becomes the root (GNU); several get a synthetic vc
-        // internal spanning the frame (flat-config approximation).
+        // Detach stale leaf links, then reconstruct the saved tree
+        // from the same window objects and preserved directions.
         for w in &fr.windows {
             let mut wb = w.borrow_mut();
             wb.parent = None;
             wb.children.clear();
             wb.horiz = None;
         }
-        fr.root = match fr.windows.len() {
-            0 => None,
-            1 => Some(fr.windows[0].clone()),
-            _ => {
-                let mini_top = fr
-                    .minibuffer
-                    .as_ref()
-                    .map(|m| m.borrow().top)
-                    .unwrap_or(fr.height);
-                let top = fr.windows.iter().map(|w| w.borrow().top).min().unwrap_or(0);
-                let r = Window::new_internal(false, 0, top, fr.width, mini_top.saturating_sub(top));
-                r.borrow_mut().children = fr.windows.clone();
-                for w in &fr.windows {
-                    w.borrow_mut().parent = Some(Rc::downgrade(&r));
+        fr.root = if let Some(tree) = &saved_tree {
+            Some(restore_window_config_tree(tree, None))
+        } else {
+            match fr.windows.len() {
+                0 => None,
+                1 => Some(fr.windows[0].clone()),
+                _ => {
+                    let mini_top = fr
+                        .minibuffer
+                        .as_ref()
+                        .map(|m| m.borrow().top)
+                        .unwrap_or(fr.height);
+                    let top = fr.windows.iter().map(|w| w.borrow().top).min().unwrap_or(0);
+                    let r =
+                        Window::new_internal(false, 0, top, fr.width, mini_top.saturating_sub(top));
+                    r.borrow_mut().children = fr.windows.clone();
+                    for w in &fr.windows {
+                        w.borrow_mut().parent = Some(Rc::downgrade(&r));
+                    }
+                    Some(r)
                 }
-                Some(r)
             }
         };
         match &selected {

@@ -1736,6 +1736,14 @@ restoring, unshow outgoing windows under GNU's point-ownership rules;
 restored nonselected window points leave those buffer points alone.
 `qa_window_configuration` pins these #277 view restoration rules.
 
+Configuration record slot 5 snapshots the window tree independently of
+mutable live child lists. Restore original horizontal/vertical internal
+windows, parent links and combination limits; revive saved nodes and
+mark unsaved internal nodes dead. Derive restored internal rectangles
+from their restored children. Validate topology and leaf membership
+before changing live state. The same QA suite pins #278 nesting, root
+identity, repeated switching, node liveness and `window-tree` equality.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

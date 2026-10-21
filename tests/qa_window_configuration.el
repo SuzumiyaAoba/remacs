@@ -252,4 +252,143 @@
 )
 
 
+;; Issue #278: restore topology and original internal-window identity.
+(qa
+(qa277-window-fixture
+ (lambda (_buffer window) (split-window window nil 'right)
+   (let ((saved (current-window-configuration)))
+     (set-window-configuration saved)
+     (let ((root (frame-root-window)))
+       (list (eq (window-left-child root) window)
+	     (eq (window-top-child root) window)
+	     (length (window-list)))))))
+'(t nil 2)
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (_buffer window)
+   (let*
+       ((right (split-window window nil 'right))
+	(bottom (split-window right nil 'below))
+	(saved (current-window-configuration)))
+     (set-window-configuration saved)
+     (list (eq (window-parent window) (window-parent right))
+	   (eq (window-parent right) (window-parent bottom))))))
+'(nil t)
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (_buffer window) (split-window window nil 'right)
+   (let
+       ((root (frame-root-window))
+	(saved (current-window-configuration)))
+     (set-window-configuration saved)
+     (list (eq root (frame-root-window))
+	   (eq (window-parent window) root) (window-valid-p root)))))
+'(t t t)
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (_buffer window)
+   (let*
+       ((right (split-window window nil 'right))
+	(bottom (split-window right nil 'below))
+	(root (frame-root-window)) (inner (window-parent right))
+	(saved (current-window-configuration)))
+     (delete-other-windows window)
+     (let
+	 ((before
+	   (mapcar #'window-valid-p (list root inner right bottom))))
+       (set-window-configuration saved)
+       (list before
+	     (mapcar #'window-valid-p (list root inner right bottom))
+	     (eq root (frame-root-window))
+	     (eq (window-parent inner) root)
+	     (eq (window-parent right) inner)
+	     (eq (window-parent bottom) inner))))))
+'((nil nil nil nil) (t t t t) t t t t)
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (_buffer window) (split-window window nil 'right)
+   (let
+       ((root (frame-root-window))
+	(saved (current-window-configuration)))
+     (delete-other-windows window)
+     (let*
+	 ((new (split-window window nil 'below))
+	  (new-root (frame-root-window)))
+       (set-window-configuration saved)
+       (list (eq root (frame-root-window)) (window-valid-p new-root)
+	     (window-live-p new))))))
+'(t nil nil)
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (_buffer window) (split-window window nil 'right)
+   (let
+       ((horizontal (current-window-configuration))
+	(hroot (frame-root-window)))
+     (delete-other-windows window) (split-window window nil 'below)
+     (let
+	 ((vertical (current-window-configuration))
+	  (vroot (frame-root-window)))
+       (set-window-configuration horizontal)
+       (let ((first (eq (frame-root-window) hroot)))
+	 (set-window-configuration vertical)
+	 (let ((second (eq (frame-root-window) vroot)))
+	   (set-window-configuration horizontal)
+	   (list first second (eq (frame-root-window) hroot)
+		 (eq (window-left-child (frame-root-window)) window))))))))
+'(t t t t)
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (_buffer window)
+   (let*
+       ((right (split-window window nil 'right))
+	(left-bottom (split-window window nil 'below))
+	(right-bottom (split-window right nil 'below))
+	(saved (current-window-configuration)))
+     (delete-other-windows window) (set-window-configuration saved)
+     (list (eq (window-parent window) (window-parent left-bottom))
+	   (eq (window-parent right) (window-parent right-bottom))
+	   (eq (window-parent window) (window-parent right))
+	   (eq (window-parent (window-parent right))
+	       (frame-root-window))))))
+'(t t nil t)
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (_buffer window)
+   (let ((right (split-window window nil 'right)))
+     (split-window right nil 'below)
+     (let
+	 ((before (window-tree))
+	  (saved (current-window-configuration)))
+       (delete-other-windows window) (set-window-configuration saved)
+       (equal before (window-tree))))))
+'t
+)
+
+(qa
+(qa277-window-fixture
+ (lambda (_buffer window) (split-window window nil 'right)
+   (let ((root (frame-root-window)))
+     (set-window-combination-limit root t)
+     (let ((saved (current-window-configuration)))
+       (set-window-combination-limit root nil)
+       (set-window-configuration saved)
+       (window-combination-limit (frame-root-window))))))
+'t
+)
+
+
 (princ (qa--done)) (terpri)
