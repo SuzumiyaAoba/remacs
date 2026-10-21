@@ -724,4 +724,137 @@
 '((0.5 1.0) (0.5 1.0))
 )
 
+;; Issue #287: use-time bumps preserve the selected window as most recent.
+(defun qa287-fixture (function)
+  (save-window-excursion
+    (delete-other-windows)
+    (let* ((first (selected-window))
+           (second (split-window first 20 'right))
+           (third (split-window second 20 'right)))
+      (select-window first) (select-window second) (select-window third)
+      (funcall function first second third))))
+(defun qa287-times (windows) (mapcar #'window-use-time windows))
+
+(qa
+(qa287-fixture
+ (lambda (first second third)
+  (let* ((before (window-use-time third)) (result (window-bump-use-time first)))
+   (list (= result before) (= (window-use-time first) before)
+         (= (window-use-time third) (1+ before))
+         (> (window-use-time first) (window-use-time second))
+         (eq (selected-window) third)))))
+'(t t t t t)
+)
+
+(qa
+(qa287-fixture
+ (lambda (_first _second third)
+  (let ((before (window-use-time third)))
+   (list (window-bump-use-time third) (= before (window-use-time third))
+         (window-bump-use-time nil) (= before (window-use-time third))))))
+'(nil t nil t)
+)
+
+(qa
+(qa287-fixture
+ (lambda (first second third)
+  (select-window first 'norecord)
+  (let ((before (qa287-times (list first second third))))
+   (list (window-bump-use-time second)
+         (equal before (qa287-times (list first second third)))
+         (eq (selected-window) first)))))
+'(nil t t)
+)
+
+(qa
+(qa287-fixture
+ (lambda (first second third)
+  (select-window first 'norecord)
+  (delete-window third)
+  (let ((before (qa287-times (list first second))))
+   (list (window-bump-use-time second)
+         (equal before (qa287-times (list first second)))))))
+'(nil t)
+)
+
+(qa
+(qa287-fixture
+ (lambda (first _second third)
+  (let* ((before (window-use-time third))
+         (first-result (window-bump-use-time first))
+         (second-result (window-bump-use-time first)))
+   (list (= first-result before) (= second-result (1+ before))
+         (= (window-use-time third) (+ before 2))
+         (eq (selected-window) third)))))
+'(t t t t)
+)
+
+(qa
+(qa287-fixture
+ (lambda (_first _second third)
+  (let* ((mini (minibuffer-window)) (before (window-use-time third))
+         (result (window-bump-use-time mini)))
+   (list (= result before) (= (window-use-time mini) before)
+         (= (window-use-time third) (1+ before))
+         (eq (selected-window) third)))))
+'(t t t t)
+)
+
+(qa
+(condition-case err (window-bump-use-time 17)
+ (error (list (car err) (cadr err))))
+'(wrong-type-argument window-live-p)
+)
+
+(qa
+(qa287-fixture
+ (lambda (_first _second _third)
+  (condition-case err (window-bump-use-time (frame-root-window))
+   (error (list (car err) (cadr err))))))
+'(wrong-type-argument window-live-p)
+)
+
+(qa
+(qa287-fixture
+ (lambda (first _second third)
+  (select-window first) (delete-window third)
+  (condition-case err (window-bump-use-time third)
+   (error (list (car err) (cadr err))))))
+'(wrong-type-argument window-live-p)
+)
+
+(qa
+(qa287-fixture
+ (lambda (first _second third)
+  (let* ((before (window-use-time third))
+         (result (window--display-buffer (window-buffer first) first 'reuse '((bump-use-time . t)))))
+   (list (eq result first) (= (window-use-time first) before)
+         (= (window-use-time third) (1+ before)) (eq (selected-window) third)))))
+'(t t t t)
+)
+
+(qa
+(qa287-fixture
+ (lambda (first second third)
+  (select-window first 'norecord)
+  (let ((before (qa287-times (list first second third))))
+   (window--display-buffer (window-buffer second) second 'reuse '((bump-use-time . t)))
+   (equal before (qa287-times (list first second third))))))
+'t
+)
+
+(qa
+(qa287-fixture
+ (lambda (first second third)
+  (let ((original (symbol-function 'window-bump-use-time)) called
+        (before (qa287-times (list first second third))))
+   (unwind-protect
+       (progn
+         (fset 'window-bump-use-time (lambda (window) (setq called window)))
+         (window--display-buffer (window-buffer first) first 'reuse '((bump-use-time . t)))
+         (list (eq called first) (equal before (qa287-times (list first second third)))))
+     (fset 'window-bump-use-time original)))))
+'(t t)
+)
+
 (princ (qa--done))

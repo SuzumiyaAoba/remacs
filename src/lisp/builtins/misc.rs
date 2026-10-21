@@ -11528,7 +11528,8 @@ fn f_window_display_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             })
         };
         if bump {
-            w.borrow_mut().use_time = crate::editor::next_use_time();
+            let bump = Value::Sym(i.intern("window-bump-use-time"));
+            i.apply(&bump, vec![Value::Window(w.clone())])?;
         }
         // Dedicated policy: skip if already dedicated, or TYPE is `reuse'
         // on a non-side window; else ALIST's `dedicated' wins, else

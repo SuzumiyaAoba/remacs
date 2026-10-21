@@ -172,7 +172,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_list1,
         "Windows in cyclic order."
     ),
-    S!("window-bump-use-time", 0, 1, f_window_live_nil, ""),
+    S!("window-bump-use-time", 0, 1, f_window_bump_use_time, ""),
     S!(
         "window-discard-buffer-from-window",
         2,
@@ -2901,6 +2901,20 @@ fn f_frame_pointer_visible_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     let _ = frame_any(i, &arg(&a, 0))?;
     Ok(Value::t())
 }
+/// Mark WINDOW second most recently used only while the selected
+/// window still carries the latest selection count.
+fn f_window_bump_use_time(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let window = win_live(i, &arg(&a, 0))?;
+    let selected = sel_window(i).ok_or_else(|| i.error("No window"))?;
+    if Rc::ptr_eq(&window, &selected) || selected.borrow().use_time != i.window_select_count {
+        return Ok(Value::Nil);
+    }
+    let previous = i.window_select_count;
+    window.borrow_mut().use_time = previous;
+    selected.borrow_mut().use_time = crate::editor::next_use_time(i);
+    Ok(Value::Int(previous as i128))
+}
+
 /// `window-normal-size' — GNU Fwindow_normal_size decodes WINDOW with
 /// decode_valid_window (wrong-type `window-valid-p').
 fn f_window_normal_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

@@ -1805,6 +1805,16 @@ explicit resizing, configuration/state restoration and session dumps carry
 the values; legacy dumps infer fractions from geometry. Configuration leaf
 slot 20 and tree slot 5 hold normal sizes. `qa_winstate` covers #286.
 
+Window use times advance `Interp.window_select_count`, independently of
+other editor instances. `window-bump-use-time` only updates a nonselected
+live window when the selected window carries that latest count: the target
+gets the old count, the selected window gets the increment, and the old
+count is returned. No-record selections and deletion of the newest window
+do not lower the counter. Initial root selection records 1; other new
+windows start at 0. Display-buffer bumps delegate to the public function.
+Session images preserve the counter; legacy images infer the maximum saved
+window use time. `qa_winstate` and session tests pin these #287 rules.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

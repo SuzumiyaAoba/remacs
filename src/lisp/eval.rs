@@ -454,6 +454,8 @@ pub struct Interp {
     pub(crate) next_frame_name: u64,
     /// The selected frame.
     pub selected_frame: Option<crate::editor::FrameRef>,
+    /// GNU window_select_count, including selections of deleted windows.
+    pub(crate) window_select_count: u64,
     /// Set by `kill-emacs` to exit the command loop.
     pub quit_editor: bool,
     /// Interactive input hook installed by the terminal front-end.
@@ -987,6 +989,7 @@ impl Interp {
             frames: Vec::new(),
             next_frame_name: 2,
             selected_frame: None,
+            window_select_count: 0,
             quit_editor: false,
             minibuf_reader: None,
             batch_stdin: None,

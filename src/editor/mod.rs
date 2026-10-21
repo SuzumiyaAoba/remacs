@@ -178,24 +178,19 @@ pub(crate) fn next_frame_id() -> usize {
     NEXT_FRAME_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
-/// `window-use-time' tick — GNU bumps `window_select_count' at window
-/// creation and each selection, and reports the last tick a window got.
-static USE_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-pub(crate) fn next_use_time() -> u64 {
-    USE_TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+/// Advance GNU's selection counter within this editor instance.
+pub(crate) fn next_use_time(i: &mut Interp) -> u64 {
+    i.window_select_count += 1;
+    i.window_select_count
 }
 
-pub(crate) fn reserve_dump_ids(window: usize, frame: usize, use_time: u64) {
+pub(crate) fn reserve_dump_ids(window: usize, frame: usize) {
     NEXT_ID.fetch_max(
         window.saturating_add(1),
         std::sync::atomic::Ordering::Relaxed,
     );
     NEXT_FRAME_ID.fetch_max(
         frame.saturating_add(1),
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    USE_TICK.fetch_max(
-        use_time.saturating_add(1),
         std::sync::atomic::Ordering::Relaxed,
     );
 }
@@ -331,10 +326,6 @@ impl Frame {
             e.width = width;
             e.height = 1;
         }
-        // GNU make_initial_frame bumps window_select_count once for
-        // the root window; the mini window's use_time stays 0 (probe:
-        // -Q batch reports window-use-time 1 / 0 / frame-use-time 1).
-        main.borrow_mut().use_time = next_use_time();
         crate::lisp::memory::allocate(
             Frame {
                 id: next_frame_id(),
@@ -3825,7 +3816,7 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -
     // GNU re-selects the configuration's window, bumping its use-time,
     // and makes its buffer current with the saved point.
     if let Value::Window(w) = &selected {
-        w.borrow_mut().use_time = next_use_time();
+        w.borrow_mut().use_time = next_use_time(i);
         let (bid, pt) = {
             let mut wb = w.borrow_mut();
             if let Some((buffer, point)) = preserved {
@@ -4727,7 +4718,7 @@ pub(crate) fn f_select_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
     // Selecting the already-selected window records selection but must not
     // overwrite the buffer's current point with a stale window point.
     if arg(&a, 1).is_nil() {
-        w.borrow_mut().use_time = next_use_time();
+        w.borrow_mut().use_time = next_use_time(i);
         record_buffer_selection(i, bid)?;
     }
     Ok(a[0].clone())
@@ -23550,6 +23541,9 @@ pub fn install_primitives(i: &mut Interp) {
         .or_else(|| i.buffers.by_name(" *Minibuf-0*"))
         .unwrap_or_else(|| i.create_buffer(" *Minibuf-0*"));
     let frame = Frame::new_tty(scratch, mb, 80, 25);
+    // GNU make_initial_frame records the initial root as selection 1;
+    // ordinary newly allocated windows keep their initial zero use time.
+    frame.borrow().selected.borrow_mut().use_time = next_use_time(i);
     record_buffer_display(i, scratch);
     // Wire the frame's window buffer linkage.
     i.selected_frame = Some(frame.clone());

@@ -29,6 +29,8 @@ pub(super) struct Image {
     selected_frame: Option<Ref>,
     frame_data: Vec<FrameData>,
     window_data: Vec<WindowData>,
+    #[serde(default)]
+    window_select_count: Option<u64>,
     main_thread: MainThreadData,
 }
 
@@ -554,6 +556,13 @@ impl Image {
                 _ => Err("Invalid selected frame".to_owned()),
             })
             .transpose()?;
+        i.window_select_count = self.window_select_count.unwrap_or_else(|| {
+            self.window_data
+                .iter()
+                .map(|window| window.use_time)
+                .max()
+                .unwrap_or(0)
+        });
         let result = self
             .main_thread
             .result
@@ -595,11 +604,6 @@ impl Image {
         crate::editor::reserve_dump_ids(
             self.window_data.iter().map(|w| w.id).max().unwrap_or(0),
             self.frame_data.iter().map(|f| f.id).max().unwrap_or(0),
-            self.window_data
-                .iter()
-                .map(|w| w.use_time)
-                .max()
-                .unwrap_or(0),
         );
         Ok(())
     }
@@ -733,6 +737,7 @@ impl Image {
             selected_frame,
             frame_data,
             window_data,
+            window_select_count: Some(i.window_select_count),
             main_thread,
         })
     }
@@ -910,6 +915,39 @@ impl Image {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn window_use_counts_are_isolated_and_survive_session_restore() {
+        std::thread::Builder::new()
+                .stack_size(128 << 20)
+                .spawn(|| {
+                    let mut source = Interp::new();
+                    source.eval_str("(setq dump287-first (selected-window) dump287-other (split-window nil 20 'right))").unwrap();
+                    source.eval_str("(select-window dump287-first)").unwrap();
+                    // Another editor instance must not invalidate this instance's
+                    // most recent selection, even on the same host thread.
+                    let mut other = Interp::new();
+                    other.eval_str("(select-window (selected-window))").unwrap();
+                    let result = source.eval_str("(let ((before (window-use-time dump287-first))) (list (= before (window-bump-use-time dump287-other)) (= (window-use-time dump287-first) (1+ before))))").unwrap();
+                    assert_eq!(source.prin1_to_string(&result), "(t t)");
+                    source.eval_str("(select-window dump287-other) (select-window dump287-first t) (delete-window dump287-other) (setq dump287-other nil)").unwrap();
+                    let image = Image::capture(&source).unwrap();
+                    let bytes = serde_json::to_vec(&image).unwrap();
+                    let image: Image = serde_json::from_slice(&bytes).unwrap();
+                    let mut restored = Interp::new();
+                    image.restore(&mut restored).unwrap();
+                    // The deleted window's latest count must remain remembered.
+                    let result = restored.eval_str("(window-bump-use-time (minibuffer-window))").unwrap();
+                    assert!(result.is_nil());
+                    let mut legacy = serde_json::to_value(&image).unwrap();
+                    legacy.as_object_mut().unwrap().remove("window_select_count");
+                    let legacy: Image = serde_json::from_value(legacy).unwrap();
+                    legacy.restore(&mut restored).unwrap();
+                    let result = restored.eval_str("(select-window (selected-window)) (integerp (window-bump-use-time (minibuffer-window)))").unwrap();
+                    assert!(result.truthy());
+                })
+                .unwrap().join().unwrap();
+    }
 
     #[test]
     fn session_roundtrip_preserves_normal_window_sizes() {
