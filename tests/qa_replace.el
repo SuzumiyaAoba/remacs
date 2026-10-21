@@ -231,4 +231,107 @@
       (match-string 0 "abc"))
     "b")
 
+;; Issue #273: back-references retain their search-time buffer origin.
+(qa
+(with-temp-buffer
+  (insert "prefix ab suffix") (narrow-to-region 8 10)
+  (goto-char (point-min)) (re-search-forward "\\(a\\)\\(b\\)")
+  (replace-match "\\2\\1" t nil nil nil) (widen) (buffer-string))
+'"prefix ba suffix"
+)
+
+(qa
+(with-temp-buffer
+  (insert "prefix ab suffix") (narrow-to-region 8 10)
+  (goto-char (point-min)) (re-search-forward "\\(a\\)\\(b\\)")
+  (replace-match "\\2\\1" t nil nil 1) (widen) (buffer-string))
+'"prefix bab suffix"
+)
+
+(qa
+(with-temp-buffer
+  (insert "prefix ab suffix") (narrow-to-region 8 10)
+  (goto-char (point-min)) (re-search-forward "\\(a\\)\\(b\\)") (widen)
+  (replace-match "\\2\\1" t nil nil nil) (widen) (buffer-string))
+'"prefix ba suffix"
+)
+
+(qa
+(with-temp-buffer
+  (insert "prefix ab suffix") (narrow-to-region 8 10)
+  (goto-char (point-min)) (re-search-forward "\\(a\\)\\(b\\)") (widen)
+  (replace-match "\\2\\1" t nil nil 1) (widen) (buffer-string))
+'"prefix bab suffix"
+)
+
+(qa
+(with-temp-buffer
+  (insert "prefix ab suffix") (narrow-to-region 8 10)
+  (goto-char (point-min)) (re-search-forward "\\(a\\)\\(b\\)") (widen)
+  (narrow-to-region 2 (point-max))
+  (replace-match "\\2\\1" t nil nil nil) (widen) (buffer-string))
+'"prefix ba suffix"
+)
+
+(qa
+(with-temp-buffer
+  (insert "prefix ab suffix") (narrow-to-region 8 10)
+  (goto-char (point-min)) (re-search-forward "\\(a\\)\\(b\\)") (widen)
+  (narrow-to-region 2 (point-max))
+  (replace-match "\\2\\1" t nil nil 1) (widen) (buffer-string))
+'"prefix bab suffix"
+)
+
+(qa
+(with-temp-buffer
+  (insert "前置 甲乙 後置") (narrow-to-region 4 6)
+  (goto-char (point-min)) (re-search-forward "\\(甲\\)\\(乙\\)")
+  (replace-match "\\2\\1" t nil nil nil) (widen) (buffer-string))
+'"前置 乙甲 後置"
+)
+
+(qa
+(with-temp-buffer
+  (insert "前置 甲乙 後置") (narrow-to-region 4 6)
+  (goto-char (point-min)) (re-search-forward "\\(甲\\)\\(乙\\)")
+  (replace-match "\\2\\1" t nil nil 1) (widen) (buffer-string))
+'"前置 乙甲乙 後置"
+)
+
+(qa
+(with-temp-buffer
+  (insert "前置 甲乙 後置") (narrow-to-region 4 6)
+  (goto-char (point-min)) (re-search-forward "\\(甲\\)\\(乙\\)")
+  (widen) (replace-match "\\2\\1" t nil nil nil) (widen)
+  (buffer-string))
+'"前置 乙甲 後置"
+)
+
+(qa
+(with-temp-buffer
+  (insert "前置 甲乙 後置") (narrow-to-region 4 6)
+  (goto-char (point-min)) (re-search-forward "\\(甲\\)\\(乙\\)")
+  (widen) (replace-match "\\2\\1" t nil nil 1) (widen) (buffer-string))
+'"前置 乙甲乙 後置"
+)
+
+(qa
+(with-temp-buffer
+  (insert "前置 甲乙 後置") (narrow-to-region 4 6)
+  (goto-char (point-min)) (re-search-forward "\\(甲\\)\\(乙\\)")
+  (widen) (narrow-to-region 2 (point-max))
+  (replace-match "\\2\\1" t nil nil nil) (widen) (buffer-string))
+'"前置 乙甲 後置"
+)
+
+(qa
+(with-temp-buffer
+  (insert "前置 甲乙 後置") (narrow-to-region 4 6)
+  (goto-char (point-min)) (re-search-forward "\\(甲\\)\\(乙\\)")
+  (widen) (narrow-to-region 2 (point-max))
+  (replace-match "\\2\\1" t nil nil 1) (widen) (buffer-string))
+'"前置 乙甲乙 後置"
+)
+
+
 (princ (qa--done))

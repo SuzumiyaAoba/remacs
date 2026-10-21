@@ -11115,7 +11115,10 @@ fn f_replace_match(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow_mut();
     let old = bb.text.substring(start, end.min(bb.text.len()));
-    let src: Vec<char> = bb.text.substring(bb.begv, bb.text.len()).chars().collect();
+    // Registers remain relative to the restriction used by the search,
+    // even when the caller subsequently widens or narrows the buffer.
+    let source_base = if md.in_buffer { md.base } else { bb.begv };
+    let src: Vec<char> = bb.text.substring(source_base, bb.text.len()).chars().collect();
     let tlen = bb.text.len();
     drop(bb);
     let mut rep = expand_replacement(i, &newtext, literal, &md, &src)?;

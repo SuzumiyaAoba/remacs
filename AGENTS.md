@@ -1694,6 +1694,11 @@ search, negative forward counts, NOERROR modes, narrowing and zero-width
 controls. An incomplete count keeps point for nil/t NOERROR and moves to
 the bound for other non-nil NOERROR values.
 
+Replacement back-references use `MatchData.base`, the search-time buffer
+origin, rather than the current BEGV. Widening or re-narrowing after a search
+must not retarget captures. `qa_replace` pins #273 with ASCII/multibyte
+text and subgroup replacement.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source
