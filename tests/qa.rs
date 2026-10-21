@@ -427,6 +427,7 @@ qa!(qa_vector, "qa_vector.el");
 qa!(qa_fillarray_strings, "qa_fillarray_strings.el");
 qa!(qa_clear_string, "qa_clear_string.el");
 qa!(qa_reverse_strings, "qa_reverse_strings.el");
+qa!(qa_string_width_tabs, "qa_string_width_tabs.el");
 qa!(qa_window, "qa_window.el");
 qa!(qa_winstate, "qa_winstate.el");
 qa!(qa_window_state_minimum, "qa_window_state_minimum.el");

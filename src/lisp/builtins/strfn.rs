@@ -1670,12 +1670,21 @@ fn f_string_chop_newline(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
         s.strip_suffix('\n').unwrap_or(&s).to_string(),
     ))
 }
-/// Display column width of one character under GNU's `strwidth'
-/// rules: each character contributes its `char-width-table' width —
-/// tab is 8 flat (no tab-stop tracking) and newline counts 0.
+/// GNU's sanitized buffer-local TAB width.
+fn display_tab_width(i: &Interp) -> usize {
+    // GNU buffer.h sanitize_tab_width: any non-fixnum or value outside
+    // 1..=1000 falls back to 8, including zero, floats and bignums.
+    match i.intern_soft("tab-width").map(|id| i.symbol_value(id)) {
+        Some(Value::Int(width)) if (1..=1000).contains(&width) => width as usize,
+        _ => 8,
+    }
+}
+
+/// Display column width under GNU strwidth rules: TAB contributes the
+/// sanitized tab-width (without tab-stop tracking), and newline is zero.
 fn gnu_char_width(i: &Interp, c: char) -> usize {
     if c == '\t' {
-        8
+        display_tab_width(i)
     } else {
         gnu_char_code_width(i, lisp_char_code(c) as u32)
     }
@@ -4934,11 +4943,7 @@ fn format_char_width(i: &Interp, ch: char) -> usize {
         return 0;
     }
     if ch == '\t' {
-        return i
-            .intern_soft("tab-width")
-            .and_then(|id| i.symbol_value(id).int())
-            .filter(|width| *width >= 0)
-            .unwrap_or(8) as usize;
+        return display_tab_width(i);
     }
     if let Some(id) = i.intern_soft("char-width-table") {
         if let Value::Int(width) = misc::char_table_ref(
@@ -5330,9 +5335,7 @@ fn f_char_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     };
     // GNU `Fchar_width' reads the buffer-local `tab-width' for TAB.
     if c == '\t' as i128 {
-        let tid = i.intern("tab-width");
-        let tw = i.symbol_value(tid).int().unwrap_or(8);
-        return Ok(Value::Int(tw));
+        return Ok(Value::Int(display_tab_width(i) as i128));
     }
     let w = gnu_char_code_width(i, c as u32);
     Ok(Value::Int(w as i128))

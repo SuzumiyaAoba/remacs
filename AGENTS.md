@@ -1831,3 +1831,11 @@ bytes 0..255, aliases, properties, GC, repeated reversals and proxy characters.
 The same suite separately pins concat-origin property removal for both
 functions, preserving source intervals and property values when output
 properties are subsequently added (`nreverse`'s former separate path differed).
+
+TAB display widths share GNU's `sanitize_tab_width` rule: read the current
+buffer's `tab-width`, accept integers in 1..1000, and use 8 for other values.
+`string-width` adds that width for every TAB without tracking tab stops;
+`char-width`, format padding and truncation must use the same rule.
+Regression: `qa_string_width_tabs` covers valid/invalid settings, substring
+bounds, buffer-local and dynamic bindings, padding and ellipsis. Non-TAB
+widths are explicitly set where startup character-width tables differ.
