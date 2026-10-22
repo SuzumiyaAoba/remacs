@@ -737,7 +737,8 @@ fn cl_flet_lexical_escape() {
     // (eval FORM t) gives a fresh lexical env; under dynamic binding
     // GNU likewise fails to capture, so lexical eval is required.
     assert_eq!(
-        ev("(eval '(let ((f (cl-flet ((h (x) (* x 2)))
+        ev("(require 'cl-lib)
+            (eval '(let ((f (cl-flet ((h (x) (* x 2)))
                              (lambda (y) (h y)))))
                    (funcall f 5)) t)"),
         "10"
@@ -750,7 +751,8 @@ fn cl_labels_recursion() {
     // escaping closure over a recursive local function.
     assert_eq!(
         ev(
-            "(eval '(list (cl-labels ((f (n) (if (<= n 1) 1 (* n (f (1- n))))))
+            "(require 'cl-lib)
+            (eval '(list (cl-labels ((f (n) (if (<= n 1) 1 (* n (f (1- n))))))
                           (f 5))
                         (cl-labels ((ev (n) (if (= n 0) t (od (1- n))))
                                     (od (n) (if (= n 0) nil (ev (1- n)))))
@@ -1225,7 +1227,8 @@ fn cl_destructuring_bind_dotted_tail() {
     // GNU-verified on 31.1: a dotted pattern tail binds the rest
     // of the list, like `&rest'.
     assert_eq!(
-        ev("(list (cl-destructuring-bind (a . b) '(1 2 3) (list a b))
+        ev("(require 'cl-lib)
+            (list (cl-destructuring-bind (a . b) '(1 2 3) (list a b))
                  (cl-destructuring-bind (a b . c) '(1 2 3 4) (list a b c)))"),
         "((1 (2 3)) (1 2 (3 4)))"
     );
@@ -1237,7 +1240,8 @@ fn cl_defstruct_accepts_docstring() {
     // between the name and the slot list.
     assert_eq!(
         ev(
-            "(progn (cl-defstruct ec-probe-struct \"A struct doc.\" one (two 2))
+            "(require 'cl-lib)
+            (progn (cl-defstruct ec-probe-struct \"A struct doc.\" one (two 2))
                   (let ((s (make-ec-probe-struct :one 1)))
                     (list (ec-probe-struct-one s)
                           (ec-probe-struct-two s)
@@ -1738,7 +1742,8 @@ fn cl_loop_hash_iteration() {
     // GNU cl-loop: `for VAR being the hash-keys of TABLE using
     // (hash-values V)' and the hash-values counterpart.
     assert_eq!(
-        ev("(let ((h (make-hash-table :test 'equal)))
+        ev("(require 'cl-lib)
+            (let ((h (make-hash-table :test 'equal)))
               (puthash \"a\" 1 h)
               (puthash \"b\" 2 h)
               (list (sort (cl-loop for k being the hash-keys of h
