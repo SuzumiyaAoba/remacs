@@ -420,7 +420,10 @@ pub(crate) fn internal_decode(bs: &[u8]) -> String {
         for b in &bs[at + 1..at + n] {
             c = (c << 6) | (b & 63) as u32;
         }
-        if c < [0, 0, 0x80, 0x800, 0x10000, 0x200000][n] || (0xd800..=0xdfff).contains(&c) {
+        if c > 0x3fffff
+            || c < [0, 0, 0x80, 0x800, 0x10000, 0x200000][n]
+            || (0xd800..=0xdfff).contains(&c)
+        {
             out.push(raw(b));
             at += 1;
             continue;

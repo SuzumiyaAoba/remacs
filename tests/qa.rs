@@ -502,6 +502,7 @@ qa!(qa_org_deferred, "qa_org_deferred.el");
 qa!(qa_org_mode_startup, "qa_org_mode_startup.el");
 qa!(qa_closure_dotted_args, "qa_closure_dotted_args.el");
 qa!(qa_sqlite_directory, "qa_sqlite_directory.el");
+qa!(qa_sqlite_text, "qa_sqlite_text.el");
 
 qa!(qa_gensym_counter, "qa_gensym_counter.el");
 

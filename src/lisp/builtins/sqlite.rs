@@ -401,11 +401,33 @@ fn bind_args(i: &mut Interp, v: &Value) -> Result<Vec<SVal>, Flow> {
     items.iter().map(|x| bind_val(i, x)).collect()
 }
 
+// GNU uses its extended UTF-8 decoder without recording a coding system.
+// Invalid octets remain eight-bit characters; TEXT is always multibyte.
+fn text_to_value(i: &mut Interp, bytes: &[u8]) -> Value {
+    let mut text = super::coding_legacy::internal_decode(bytes);
+    let inhibit = i.intern("inhibit-eol-conversion");
+    if !i.symbol_value(inhibit).truthy() && bytes.contains(&b'\r') {
+        // GNU detects DOS from the first LF, even after an earlier lone CR.
+        // With no LF, CR selects Mac line endings.
+        let eol = match bytes.iter().position(|b| *b == b'\n') {
+            Some(at) if at > 0 && bytes[at - 1] == b'\r' => 1,
+            Some(_) => 0,
+            None => 2,
+        };
+        text = super::coding_unicode::normalize_eol(&text, Some(eol)).0;
+    }
+    let value = Value::string(text);
+    if let Value::Str(string) = &value {
+        i.mark_multibyte(string);
+    }
+    value
+}
+
 fn sval_to_value(i: &mut Interp, s: &SVal) -> Value {
     match s {
         SVal::I(n) => Value::integer(*n as i128),
         SVal::F(f) => Value::float(*f),
-        SVal::T(t) => Value::string(String::from_utf8_lossy(t).into_owned()),
+        SVal::T(text) => text_to_value(i, text),
         // BLOBs are byte sequences, even when they happen to be valid UTF-8.
         // Use the interpreter's unibyte representation without decoding them.
         SVal::B(b) => {
