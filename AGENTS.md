@@ -1142,6 +1142,17 @@ highlights incl. a `defhighlight' cache for font-lock runs.
 Regression: `isearch_extends_match_in_place_and_overlays_paint',
 `tui_isearch_highlights_matches', `tui_face_text_props_and_region_paint'.
 
+The GPUI view registers `EntityInputHandler` on its full-size canvas during
+paint. Plain characters arrive through OS text commits; only modifier and
+named command keys use `on_key_down`, preventing duplicate ASCII insertion.
+`GuiEvent::Text` forwards every Unicode scalar in order through `ChanIo` and
+the shared command loop, including supplementary and combining characters.
+The input client owns only provisional composition text, with UTF-16 ranges
+normalized at scalar boundaries; marked text is previewed and committed once.
+Candidate bounds follow the grid cursor. `gui::` tests cover registration,
+commands, composition ranges and a UTF-8 file saved through the logic thread
+(#292).
+
 
 ## Portable time formatting
 

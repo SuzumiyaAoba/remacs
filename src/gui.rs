@@ -18,9 +18,13 @@ use crate::editor::{CHAR_CTL, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
 use crate::lisp::Interp;
 use crate::term::{Grid, KeyIo, render_grid};
 
+mod input;
+use input::TextInputState;
+
 /// Messages the UI thread sends to the editor logic thread.
 enum GuiEvent {
     Key(i128),
+    Text(String),
     Resize(usize, usize),
 }
 
@@ -57,6 +61,12 @@ impl KeyIo for ChanIo {
         }
         match self.events.recv_timeout(dur) {
             Ok(GuiEvent::Key(k)) => Ok(Some(k)),
+            Ok(GuiEvent::Text(text)) => {
+                let mut chars = text.chars().map(|ch| ch as i128);
+                let first = chars.next();
+                self.pending.extend(chars.rev());
+                Ok(first)
+            }
             Ok(GuiEvent::Resize(c, r)) => {
                 self.cols = c.max(10);
                 self.rows = r.max(3);
@@ -162,6 +172,31 @@ fn keystroke_to_code(ks: &Keystroke) -> Option<i128> {
     Some(base | mods)
 }
 
+fn command_keystroke(ks: &Keystroke) -> bool {
+    ks.modifiers.control
+        || ks.modifiers.alt
+        || ks.modifiers.platform
+        || matches!(
+            ks.key.as_str(),
+            "return"
+                | "enter"
+                | "tab"
+                | "backspace"
+                | "escape"
+                | "pageup"
+                | "pagedown"
+                | "up"
+                | "down"
+                | "left"
+                | "right"
+                | "home"
+                | "end"
+                | "delete"
+                | "insert"
+        )
+        || (ks.key.starts_with('f') && ks.key[1..].parse::<u32>().is_ok())
+}
+
 // Colors (Tomorrow Night-ish, matching typical Emacs themes).
 const FG: u32 = 0xc5c8c6;
 const BG: u32 = 0x1d1f21;
@@ -177,6 +212,8 @@ struct EditorView {
     grid: Grid,
     cols: usize,
     rows: usize,
+    input: TextInputState,
+    cell_width: Pixels,
 }
 
 impl EditorView {
@@ -187,12 +224,14 @@ impl EditorView {
             grid: Grid::blank(0, 0),
             cols: 80,
             rows: 24,
+            input: TextInputState::default(),
+            cell_width: px(8.0),
         }
     }
 }
 
 impl Render for EditorView {
-    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let text_font = font("Menlo");
         let font_size = px(FONT_SIZE);
         let line_height = px(LINE_HEIGHT);
@@ -202,6 +241,7 @@ impl Render for EditorView {
             .advance(font_id, font_size, '0')
             .map(|s| s.width)
             .unwrap_or(px(8.0));
+        self.cell_width = cell_width;
 
         // Report grid-size changes to the logic thread.
         let vp = window.viewport_size();
@@ -217,126 +257,168 @@ impl Render for EditorView {
 
         let grid = self.grid.clone();
         let tx = self.tx.clone();
+        let entity = cx.entity();
+        let focus = self.focus.clone();
+        let marked = self.input.marked.clone();
+        let marked_cursor = self.input.selection_byte_end();
+        let composition_font = text_font.clone();
         div()
             .size_full()
             .bg(rgb(BG))
             .track_focus(&self.focus)
             .key_context("remacs")
-            .on_key_down(move |event: &KeyDownEvent, _window, _cx| {
-                if let Some(code) = keystroke_to_code(&event.keystroke) {
+            .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                // Printable text is delivered by the OS input handler. Sending
+                // it here as well would insert ordinary ASCII twice.
+                if command_keystroke(&event.keystroke)
+                    && let Some(code) = keystroke_to_code(&event.keystroke)
+                {
                     let _ = tx.send(GuiEvent::Key(code));
+                    window.prevent_default();
+                    cx.stop_propagation();
                 }
             })
-            .child(canvas(
-                move |_bounds, window, _cx| {
-                    // One TextRun per contiguous same-style span so
-                    // face attributes (colors, bold, underline, …)
-                    // land on the cells that carry them.
-                    let shaped: Vec<_> = grid
-                        .rows
-                        .iter()
-                        .enumerate()
-                        .map(|(y, row)| {
-                            let cells = grid.attrs.get(y);
-                            let mut runs: Vec<TextRun> = Vec::new();
-                            let mut cur: Option<crate::term::CellStyle> = None;
-                            let mut run_bytes = 0usize;
-                            let mut push_run = |st: crate::term::CellStyle, len: usize| {
-                                if len == 0 {
-                                    return;
-                                }
-                                let (fg, bg) = style_colors(st);
-                                let mut f = text_font.clone();
-                                if st.bold {
-                                    f = f.bold();
-                                }
-                                if st.italic {
-                                    f = f.italic();
-                                }
-                                runs.push(TextRun {
-                                    len,
-                                    font: f,
-                                    color: fg,
-                                    background_color: bg,
-                                    underline: st.underline.then(|| UnderlineStyle {
-                                        thickness: px(1.0),
-                                        color: None,
-                                        wavy: false,
-                                    }),
-                                    strikethrough: st.strike.then(|| StrikethroughStyle {
-                                        thickness: px(1.0),
-                                        color: None,
-                                    }),
-                                });
-                            };
-                            for (x, ch) in row.chars().enumerate() {
-                                let st = cells
-                                    .and_then(|c| c.get(x))
-                                    .copied()
-                                    .unwrap_or_default();
-                                match cur {
-                                    Some(c) if c == st => run_bytes += ch.len_utf8(),
-                                    _ => {
-                                        if let Some(c) = cur {
-                                            push_run(c, run_bytes);
+            .child(
+                canvas(
+                    move |_bounds, window, _cx| {
+                        // One TextRun per contiguous same-style span so
+                        // face attributes (colors, bold, underline, …)
+                        // land on the cells that carry them.
+                        let shaped: Vec<_> = grid
+                            .rows
+                            .iter()
+                            .enumerate()
+                            .map(|(y, row)| {
+                                let cells = grid.attrs.get(y);
+                                let mut runs: Vec<TextRun> = Vec::new();
+                                let mut cur: Option<crate::term::CellStyle> = None;
+                                let mut run_bytes = 0usize;
+                                let mut push_run = |st: crate::term::CellStyle, len: usize| {
+                                    if len == 0 {
+                                        return;
+                                    }
+                                    let (fg, bg) = style_colors(st);
+                                    let mut f = text_font.clone();
+                                    if st.bold {
+                                        f = f.bold();
+                                    }
+                                    if st.italic {
+                                        f = f.italic();
+                                    }
+                                    runs.push(TextRun {
+                                        len,
+                                        font: f,
+                                        color: fg,
+                                        background_color: bg,
+                                        underline: st.underline.then(|| UnderlineStyle {
+                                            thickness: px(1.0),
+                                            color: None,
+                                            wavy: false,
+                                        }),
+                                        strikethrough: st.strike.then(|| StrikethroughStyle {
+                                            thickness: px(1.0),
+                                            color: None,
+                                        }),
+                                    });
+                                };
+                                for (x, ch) in row.chars().enumerate() {
+                                    let st =
+                                        cells.and_then(|c| c.get(x)).copied().unwrap_or_default();
+                                    match cur {
+                                        Some(c) if c == st => run_bytes += ch.len_utf8(),
+                                        _ => {
+                                            if let Some(c) = cur {
+                                                push_run(c, run_bytes);
+                                            }
+                                            cur = Some(st);
+                                            run_bytes = ch.len_utf8();
                                         }
-                                        cur = Some(st);
-                                        run_bytes = ch.len_utf8();
                                     }
                                 }
+                                if let Some(c) = cur {
+                                    push_run(c, run_bytes);
+                                }
+                                if runs.is_empty() {
+                                    runs.push(TextRun {
+                                        len: 0,
+                                        font: text_font.clone(),
+                                        color: rgb(FG).into(),
+                                        background_color: None,
+                                        underline: None,
+                                        strikethrough: None,
+                                    });
+                                }
+                                window.text_system().shape_line(
+                                    row.clone().into(),
+                                    font_size,
+                                    &runs,
+                                    None,
+                                )
+                            })
+                            .collect();
+                        (shaped, grid)
+                    },
+                    move |bounds, (lines, grid), window, _cx| {
+                        window.handle_input(&focus, ElementInputHandler::new(bounds, entity), _cx);
+                        for (y, line) in lines.iter().enumerate() {
+                            let origin =
+                                point(bounds.left(), bounds.top() + line_height * (y as f32));
+                            if grid.mode_rows.contains(&y) {
+                                window.paint_quad(fill(
+                                    Bounds {
+                                        origin,
+                                        size: size(bounds.size.width, line_height),
+                                    },
+                                    rgb(MODE_BG),
+                                ));
                             }
-                            if let Some(c) = cur {
-                                push_run(c, run_bytes);
+                            let _ = line.paint(origin, line_height, window, _cx);
+                        }
+                        if let Some((cxp, yp)) = grid.cursor {
+                            let mut origin = point(
+                                bounds.left() + cell_width * (cxp as f32),
+                                bounds.top() + line_height * (yp as f32),
+                            );
+                            if !marked.is_empty() {
+                                let line = window.text_system().shape_line(
+                                    marked.clone().into(),
+                                    font_size,
+                                    &[TextRun {
+                                        len: marked.len(),
+                                        font: composition_font,
+                                        color: rgb(FG).into(),
+                                        background_color: None,
+                                        underline: Some(UnderlineStyle {
+                                            thickness: px(1.0),
+                                            color: None,
+                                            wavy: false,
+                                        }),
+                                        strikethrough: None,
+                                    }],
+                                    None,
+                                );
+                                window.paint_quad(fill(
+                                    Bounds {
+                                        origin,
+                                        size: size(line.width.max(cell_width), line_height),
+                                    },
+                                    rgb(BG),
+                                ));
+                                let _ = line.paint(origin, line_height, window, _cx);
+                                origin.x += line.x_for_index(marked_cursor);
                             }
-                            if runs.is_empty() {
-                                runs.push(TextRun {
-                                    len: 0,
-                                    font: text_font.clone(),
-                                    color: rgb(FG).into(),
-                                    background_color: None,
-                                    underline: None,
-                                    strikethrough: None,
-                                });
-                            }
-                            window.text_system().shape_line(
-                                row.clone().into(),
-                                font_size,
-                                &runs,
-                                None,
-                            )
-                        })
-                        .collect();
-                    (shaped, grid)
-                },
-                move |bounds, (lines, grid), window, _cx| {
-                    for (y, line) in lines.iter().enumerate() {
-                        let origin = point(bounds.left(), bounds.top() + line_height * (y as f32));
-                        if grid.mode_rows.contains(&y) {
                             window.paint_quad(fill(
                                 Bounds {
                                     origin,
-                                    size: size(bounds.size.width, line_height),
+                                    size: size(cell_width, line_height),
                                 },
-                                rgb(MODE_BG),
+                                rgba((CURSOR << 8) | 0x80),
                             ));
                         }
-                        let _ = line.paint(origin, line_height, window, _cx);
-                    }
-                    if let Some((cxp, yp)) = grid.cursor {
-                        let origin = point(
-                            bounds.left() + cell_width * (cxp as f32),
-                            bounds.top() + line_height * (yp as f32),
-                        );
-                        window.paint_quad(fill(
-                            Bounds {
-                                origin,
-                                size: size(cell_width, line_height),
-                            },
-                            rgba((CURSOR << 8) | 0x80),
-                        ));
-                    }
-                },
-            ))
+                    },
+                )
+                .size_full(),
+            )
     }
 }
 
@@ -552,11 +634,11 @@ fn build_editor_view(
 
 #[cfg(test)]
 mod tests {
-    use super::{ChanIo, EditorView, GuiEvent, build_editor_view, keystroke_to_code, start_logic};
+    use super::{ChanIo, EditorView, GuiEvent, build_editor_view, command_keystroke, keystroke_to_code, start_logic};
     use crate::editor::{CHAR_CTL, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
     use crate::lisp::Interp;
     use crate::term::{Grid, KeyIo};
-    use gpui::{Keystroke, Modifiers};
+    use gpui::{EntityInputHandler, Keystroke, Modifiers};
     use std::sync::mpsc::{self, Sender};
     use std::time::Duration;
 
@@ -579,6 +661,37 @@ mod tests {
             key: key.into(),
             key_char: key_char.map(|s| s.into()),
         }
+    }
+
+    #[test]
+    fn multichar_os_text_does_not_enter_the_command_key_path() {
+        assert!(!command_keystroke(&ks(
+            "日本語",
+            Some("日本語"),
+            false,
+            false,
+            false,
+            false
+        )));
+        assert!(!command_keystroke(&ks(
+            "",
+            Some("A日B"),
+            false,
+            false,
+            false,
+            false
+        )));
+        assert!(command_keystroke(&ks(
+            "return", None, false, false, false, false
+        )));
+        assert!(command_keystroke(&ks(
+            "x",
+            Some("x"),
+            true,
+            false,
+            false,
+            false
+        )));
     }
 
     #[test]
@@ -957,6 +1070,148 @@ mod tests {
             }
         }
         panic!("logic thread did not exit after scripted session");
+    }
+
+    #[test]
+    fn chanio_committed_text_preserves_unicode_and_unread_order() {
+        let (mut io, tx, _grx) = chan_pair();
+        tx.send(GuiEvent::Text("A日B😀e\u{301}".into())).unwrap();
+        assert_eq!(io.poll_key(Duration::ZERO).unwrap(), Some('A' as i128));
+        io.unread(7);
+        assert_eq!(io.poll_key(Duration::ZERO).unwrap(), Some(7));
+        for ch in "日B😀e\u{301}".chars() {
+            assert_eq!(io.poll_key(Duration::ZERO).unwrap(), Some(ch as i128));
+        }
+        tx.send(GuiEvent::Text(String::new())).unwrap();
+        assert_eq!(io.poll_key(Duration::ZERO).unwrap(), None);
+    }
+
+    #[test]
+    fn registered_input_delivers_text_once_and_keeps_commands_separate() {
+        let mut app = gpui::TestAppContext::single();
+        let (tx, rx) = mpsc::channel();
+        let handle = app.add_window(|window, cx| {
+            let view = EditorView::new(tx, cx);
+            view.focus.focus(window);
+            view
+        });
+        app.simulate_input(handle.into(), "Aa! 日本語😀");
+        let text: String = rx
+            .try_iter()
+            .filter_map(|event| match event {
+                GuiEvent::Text(text) => Some(text),
+                GuiEvent::Resize(..) => None,
+                GuiEvent::Key(code) => panic!("plain text also produced key {code}"),
+            })
+            .collect();
+        assert_eq!(text, "Aa! 日本語😀");
+        app.simulate_keystrokes(handle.into(), "ctrl-x ctrl-s alt-f cmd-x return backspace");
+        let codes: Vec<_> = rx
+            .try_iter()
+            .filter_map(|event| match event {
+                GuiEvent::Key(code) => Some(code),
+                GuiEvent::Resize(..) => None,
+                GuiEvent::Text(text) => panic!("command also inserted {text:?}"),
+            })
+            .collect();
+        assert_eq!(
+            codes,
+            vec![
+                24,
+                19,
+                'f' as i128 | CHAR_META,
+                'x' as i128 | CHAR_SUPER,
+                13,
+                127
+            ]
+        );
+    }
+
+    #[test]
+    fn input_handler_commits_multichar_text_and_composition_only_once() {
+        let mut app = gpui::TestAppContext::single();
+        let (tx, rx) = mpsc::channel();
+        let handle = app.add_window(|window, cx| {
+            let mut view = EditorView::new(tx, cx);
+            view.focus.focus(window);
+            view.grid = Grid::blank(80, 24);
+            view.grid.cursor = Some((2, 3));
+            view
+        });
+        handle
+            .update(&mut app, |view, window, cx| {
+                view.replace_and_mark_text_in_range(None, "にほん", Some(3..3), window, cx);
+                assert_eq!(view.marked_text_range(window, cx), Some(0..3));
+                view.replace_and_mark_text_in_range(None, "日本", Some(2..2), window, cx);
+            })
+            .unwrap();
+        app.run_until_parked();
+        assert!(
+            rx.try_iter()
+                .all(|event| matches!(event, GuiEvent::Resize(..)))
+        );
+        handle
+            .update(&mut app, |view, window, cx| {
+                view.replace_text_in_range(None, "日本語A日B😀e\u{301}", window, cx);
+                view.unmark_text(window, cx);
+                assert_eq!(view.marked_text_range(window, cx), None);
+                assert_eq!(
+                    view.selected_text_range(false, window, cx).unwrap().range,
+                    0..0
+                );
+            })
+            .unwrap();
+        let text: Vec<_> = rx
+            .try_iter()
+            .filter_map(|event| match event {
+                GuiEvent::Text(text) => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, vec!["日本語A日B😀e\u{301}"]);
+    }
+
+    #[test]
+    fn os_text_input_reaches_logic_and_saved_utf8_file() {
+        struct Owned(std::path::PathBuf);
+        impl Drop for Owned {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+        let file = Owned(
+            std::env::temp_dir().join(format!(
+                "remacs-gui-unicode-{}-{}.txt",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            )),
+        );
+        std::fs::write(&file.0, "").unwrap();
+        let (tx, grids) = start_logic(vec![file.0.to_string_lossy().into_owned()]).unwrap();
+        let mut app = gpui::TestAppContext::single();
+        let handle = app.add_window(|window, cx| build_editor_view(window, cx, tx, grids));
+        handle
+            .update(&mut app, |view, window, cx| {
+                view.replace_text_in_range(None, "日本語A日B😀e\u{301}", window, cx);
+            })
+            .unwrap();
+        app.simulate_keystrokes(handle.into(), "ctrl-x ctrl-s ctrl-x ctrl-c");
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
+        loop {
+            app.run_until_parked();
+            let text = std::fs::read_to_string(&file.0).unwrap();
+            if text.trim_end_matches('\n') == "日本語A日B😀e\u{301}" {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "saved GUI text was {text:?}"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]
