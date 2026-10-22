@@ -1889,17 +1889,29 @@ fn compile_runs_subprocess_to_exit() {
     // header/output/finish lines, and `process-status' stays `exit'
     // even after `delete-process' (GNU keeps the reported status).
     assert_eq!(
-        ev("(progn (require 'compile)
-                  (compile \"echo hello-out\")
-                  (let ((p (get-buffer-process \"*compilation*\")))
-                    (accept-process-output p 2)
-                    (delete-process p)
-                    (delete-process p)
-                    (list (process-status p)
-                          (with-current-buffer \"*compilation*\"
-                            (and (string-match-p \"Compilation finished\" (buffer-string))
-                                 (string-match-p \"hello-out\" (buffer-string))
-                                 t)))))"),
+        ev(r#"
+            (progn
+              (require 'compile)
+              (let ((shell-file-name "/bin/sh") (shell-command-switch "-c"))
+                ;; Output deliberately arrives before the process exits.
+                (compile "printf hello-out; sleep 0.25")
+                (let ((process (get-buffer-process "*compilation*"))
+                      (deadline (+ (float-time) 5)))
+                  (unwind-protect
+                      (progn
+                        (while (and (process-live-p process) (< (float-time) deadline))
+                          (accept-process-output process 0.1))
+                        (unless (eq (process-status process) 'exit)
+                          (error "Compilation did not exit before the deadline"))
+                        (delete-process process)
+                        (delete-process process)
+                        (list (process-status process)
+                              (with-current-buffer "*compilation*"
+                                (and (string-match-p "Compilation finished" (buffer-string))
+                                     (string-match-p "hello-out" (buffer-string))
+                                     t))))
+                    (when (process-live-p process) (delete-process process))))))
+        "#),
         "(exit t)"
     );
 }
