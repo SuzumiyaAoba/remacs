@@ -458,10 +458,7 @@ impl<'a> Parser<'a> {
                     self.pos += 1;
                     if self.byte_input && c as u32 >= 0x80 {
                         out.push(self.utf8_char(c as u8)?);
-                    } else if crate::lisp::value::eight_bit_byte(c).is_some()
-                        || crate::lisp::value::surrogate_code(c).is_some()
-                        || crate::lisp::value::mule_seq_code(c).is_some()
-                    {
+                    } else if !is_unicode_char(c) {
                         return Err(self.utf8_error());
                     } else {
                         out.push(c);
@@ -731,6 +728,23 @@ fn f_json_insert(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 // ---------- serializer ----------
 
+fn is_unicode_char(c: char) -> bool {
+    crate::lisp::value::eight_bit_byte(c).is_none()
+        && crate::lisp::value::surrogate_code(c).is_none()
+        && crate::lisp::value::mule_seq_code(c).is_none()
+}
+
+fn check_json_string(i: &mut Interp, value: &Value) -> Result<(), Flow> {
+    let Value::Str(string) = value else {
+        return Err(i.wrong_type_mut("stringp", value));
+    };
+    let text = string.borrow();
+    if (i.is_unibyte_str(string) && !text.is_ascii()) || !text.chars().all(is_unicode_char) {
+        return Err(json_value_err(i, value));
+    }
+    Ok(())
+}
+
 fn esc_into(s: &str, out: &mut String) {
     out.push('"');
     for c in s.chars() {
@@ -777,7 +791,10 @@ fn ser_value(i: &mut Interp, v: &Value, o: &Opts, out: &mut String) -> Result<()
             // 1e300 is "1e+300", not the raw decimal expansion.
             out.push_str(&crate::lisp::print::format_float(**f));
         }
-        Value::Str(s) => esc_into(&s.borrow(), out),
+        Value::Str(s) => {
+            check_json_string(i, v)?;
+            esc_into(&s.borrow(), out);
+        }
         Value::Sym(id) => {
             if *id == crate::lisp::obarray::sym::T {
                 out.push_str("true");
@@ -847,7 +864,12 @@ fn ser_value(i: &mut Interp, v: &Value, o: &Opts, out: &mut String) -> Result<()
                     }
                     first = false;
                     // Plist keys drop the leading ':'; alist keys don't.
-                    let raw = i.symbol_name(id);
+                    let key_name = super::data::f_symbol_name(i, vec![Value::Sym(id)].into())?;
+                    check_json_string(i, &key_name)?;
+                    let Value::Str(name_string) = key_name else {
+                        unreachable!()
+                    };
+                    let raw = name_string.borrow().clone();
                     let name = if is_alist {
                         raw.to_string()
                     } else {
@@ -884,7 +906,10 @@ fn ser_value(i: &mut Interp, v: &Value, o: &Opts, out: &mut String) -> Result<()
                 // GNU requires STRING hash keys for serialization
                 // (symbol keys signal wrong-type-argument stringp).
                 let name = match k {
-                    Value::Str(s) => s.borrow().clone(),
+                    Value::Str(s) => {
+                        check_json_string(i, &k)?;
+                        s.borrow().clone()
+                    }
                     other => return Err(i.wrong_type_mut("stringp", other)),
                 };
                 if n > 0 {
