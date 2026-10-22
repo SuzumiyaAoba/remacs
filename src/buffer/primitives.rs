@@ -2409,9 +2409,15 @@ pub(crate) fn chg_delete(i: &mut Interp, s0: usize, e0: usize) -> Result<String,
     }
     // GNU barf-if-buffer-read-only: kill/delete in a read-only buffer
     // signals `buffer-read-only' before touching text.
+    let target = cur(i);
     check_writable(i)?;
     text_ro_range(i, s0, e0)?;
     signal_before_change(i, s0 + 1, e0 + 1)?;
+    // GNU's preserved deletion marker becomes detached when its buffer
+    // dies in a hook. Do not delete text in the newly selected buffer.
+    if !target.borrow().live {
+        return Err(i.error("Marker does not point anywhere"));
+    }
     let buffer = cur(i);
     let removed = delete_preserving_undo(i, &mut buffer.borrow_mut(), s0, e0, false);
     signal_after_change(i, s0 + 1, s0 + 1, (e0 - s0) as i128)?;
