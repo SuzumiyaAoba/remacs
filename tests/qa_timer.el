@@ -127,4 +127,113 @@
 ;; == timer-event-handler is a command ==
 (qa (fboundp 'timer-event-handler) t)
 
+;; Issue #290: nonpositive waits leave due timers queued.
+(defun qa290-with-timers (thunk)
+ (let ((timer-list nil) (timer-idle-list nil))
+  (unwind-protect (funcall thunk)
+   (mapc #'cancel-timer timer-list) (mapc #'cancel-timer timer-idle-list))))
+(defun qa290-wait (function arguments)
+ (qa290-with-timers
+  (lambda ()
+   (let ((hits 0))
+    (run-at-time 0 nil (lambda () (setq hits (1+ hits))))
+    (let ((value (apply function arguments)))
+     (list value hits (not (null timer-list))))))))
+
+(qa
+(qa290-wait 'sleep-for '(0))
+'(nil 0 t)
+)
+
+(qa
+(qa290-wait 'sleep-for '(0.0))
+'(nil 0 t)
+)
+
+(qa
+(qa290-wait 'sleep-for '(-1))
+'(nil 0 t)
+)
+
+(qa
+(qa290-wait 'sleep-for '(-0.001))
+'(nil 0 t)
+)
+
+(qa
+(qa290-wait 'sleep-for '(0 0))
+'(nil 0 t)
+)
+
+(qa
+(qa290-wait 'sleep-for '(0 -1))
+'(nil 0 t)
+)
+
+(qa
+(qa290-wait 'sleep-for '(1 -1000))
+'(nil 0 t)
+)
+
+(qa
+(qa290-wait 'sleep-for '(-1 1000))
+'(nil 0 t)
+)
+
+(qa
+(qa290-wait 'sit-for '(0))
+'(t 0 t)
+)
+
+(qa
+(qa290-wait 'sit-for '(-1))
+'(t 0 t)
+)
+
+(qa
+(qa290-wait 'sit-for '(0 t))
+'(t 0 t)
+)
+
+(qa
+(qa290-wait 'sleep-for '(0.02))
+'(nil 1 nil)
+)
+
+(qa
+(qa290-wait 'sleep-for '(0 20))
+'(nil 1 nil)
+)
+
+(qa
+(qa290-wait 'sleep-for '(-1 1020))
+'(nil 1 nil)
+)
+
+(qa
+(qa290-wait 'sit-for '(0.02))
+'(t 1 nil)
+)
+
+(qa
+(qa290-with-timers
+ (lambda ()
+  (let ((hits 0))
+   (run-at-time 0 nil (lambda () (setq hits (1+ hits))))
+   (sleep-for 0)
+   (let ((before hits))
+    (sleep-for 0.02) (list before hits (null timer-list))))))
+'(0 1 t)
+)
+
+(qa
+(qa290-wait 'sleep-for '(0.0e+NaN))
+'(nil 0 t)
+)
+
+(qa
+(qa290-wait 'sit-for '(0.0e+NaN))
+'(t 0 t)
+)
+
 (princ (qa--done))

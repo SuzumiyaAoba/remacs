@@ -843,6 +843,13 @@ waits are validated with the host's `pselect` on an internal ready,
 close-on-exec socket, so validation never sleeps or consumes process data.
 OS failures signal `file-error` with `Failed select` and the actual errno.
 This preserves timer-before-error ordering and platform-specific limits.
+
+Nonpositive or NaN `sleep-for`/`sit-for` durations return without entering the
+timer/event pump or yielding a worker. The boundary is applied after combining
+seconds and optional milliseconds; positive totals retain the existing timer,
+process and thread pumping. `qa_timer` pins zero/negative totals, millisecond
+cancellation, positive controls, and a queued timer firing on the next wait
+(#290).
 Listener targets return without selecting; stopped connections retain
 their select-timeout validation. Exit notifications bound only one turn.
 Regression: `qa_process_timeout`, plus CLI catch/exit/notification checks.

@@ -4554,9 +4554,9 @@ pub(crate) fn thread_wait_events(i: &mut Interp) -> Result<(), Flow> {
 }
 
 fn sleep_firing_timers(i: &mut Interp, secs: f64) -> EvalResult {
-    if secs <= 0.0 {
-        crate::lisp::eval::threads::yield_now(i)?;
-        return timer_check(i).map(|_| Value::Nil);
+    if secs <= 0.0 || secs.is_nan() {
+        // GNU enters its wait/event pump only for a positive duration.
+        return Ok(Value::Nil);
     }
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs_f64(secs.min(3600.0));
     if crate::lisp::eval::threads::sleep_worker(i, deadline)? {
