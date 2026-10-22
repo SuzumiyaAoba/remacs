@@ -28222,14 +28222,26 @@ determined at run time.")
 	 2))
   "Imenu generic expression for Lisp mode.  See `imenu-generic-expression'.")
 
-(define-derived-mode lisp-data-mode prog-mode "Lisp-Data"
-  "Major mode for editing Lisp data (as opposed to code)."
-  ;; GNU `lisp-mode-variables' (emacs-lisp/lisp-mode.el), full body.
+;; Remacs: complete GNU Lisp initialization in the folded prelude.
+(defun lisp-mode-variables (&optional lisp-syntax keywords-case-insensitive
+                                      elisp)
+  "Common initialization routine for Lisp modes.
+The LISP-SYNTAX argument is used by code in inf-lisp.el and is
+\(uselessly) passed from pp.el, chistory.el, gnus-kill.el and
+score-mode.el.  KEYWORDS-CASE-INSENSITIVE non-nil means that for
+font-lock keywords will not be case sensitive."
+  (when lisp-syntax
+    (set-syntax-table lisp-mode-syntax-table))
   (setq-local paragraph-ignore-fill-prefix t)
   (setq-local fill-paragraph-function 'lisp-fill-paragraph)
   (setq-local adaptive-fill-function #'lisp-adaptive-fill)
+  ;; Adaptive fill mode gets in the way of auto-fill,
+  ;; and should make no difference for explicit fill
+  ;; because lisp-fill-paragraph should do the job.
+  ;;  I believe that newcomment's auto-fill code properly deals with it  -stef
+  ;;(setq-local adaptive-fill-mode nil)
   (setq-local indent-line-function 'lisp-indent-line)
-  (setq-local indent-region-function #'lisp-indent-region)
+  (setq-local indent-region-function 'lisp-indent-region)
   (setq-local comment-indent-function #'lisp-comment-indent)
   (setq-local outline-regexp (concat ";;;;* [^ \t\n]\\|(\\|\\("
                                      lisp-mode-autoload-regexp
@@ -28243,22 +28255,57 @@ determined at run time.")
   (setq-local comment-use-syntax t)
   (setq-local imenu-generic-expression lisp-imenu-generic-expression)
   (setq-local multibyte-syntax-as-symbol t)
+  ;; (setq-local syntax-begin-function 'beginning-of-defun)  ;;Bug#16247.
+  (setq font-lock-defaults
+	`(,(if elisp '(lisp-el-font-lock-keywords
+                       lisp-el-font-lock-keywords-1
+                       lisp-el-font-lock-keywords-2)
+             '(lisp-cl-font-lock-keywords
+               lisp-cl-font-lock-keywords-1
+               lisp-cl-font-lock-keywords-2))
+	  nil ,keywords-case-insensitive nil nil
+	  (font-lock-mark-block-function . mark-defun)
+          (font-lock-extra-managed-props help-echo)
+	  (font-lock-syntactic-face-function
+	   . lisp-font-lock-syntactic-face-function)))
   (setq-local prettify-symbols-alist lisp-prettify-symbols-alist)
   (setq-local electric-pair-skip-whitespace 'chomp)
-  (setq-local electric-pair-open-newline-between-pairs nil)
-  ;; GNU `lisp-data-mode' body (after lisp-mode-variables):
+  (setq-local electric-pair-open-newline-between-pairs nil))
+
+(define-derived-mode lisp-data-mode prog-mode "Lisp-Data"
+  "Major mode for buffers holding data written in Lisp syntax."
+  :group 'lisp
+  (lisp-mode-variables nil t nil)
   (setq-local electric-quote-string t)
   (setq imenu-case-fold-search nil)
   (setq-local hs-block-start-regexp "\\s(\\|\"")
   (setq-local hs-block-end-regexp "\\s)\\|\""))
 
 (define-derived-mode lisp-mode lisp-data-mode "Lisp"
-  "Major mode for editing Lisp code."
-  (setq-local indent-line-function #'lisp-indent-line)
-  (setq-local comment-start ";")
-  (setq-local comment-start-skip ";+ *")
-  ;; GNU lisp-mode.el: case-folding on for Imenu in Common Lisp.
+  "Major mode for editing programs in Common Lisp and other similar Lisps.
+Commands:
+Delete converts tabs to spaces as it moves back.
+Blank lines separate paragraphs.  Semicolons start comments.
+
+\\{lisp-mode-map}
+Note that `run-lisp' may be used either to start an inferior Lisp job
+or to switch back to an existing one."
+  (setq-local lisp-indent-function 'common-lisp-indent-function)
+  (setq-local find-tag-default-function 'lisp-find-tag-default)
+  (setq-local comment-start-skip
+	      "\\(\\(^\\|[^\\\n]\\)\\(\\\\\\\\\\)*\\)\\(;+\\|#|\\) *")
+  (setq-local comment-end-skip "[ \t]*\\(\\s>\\||#\\)")
+  (setq-local font-lock-comment-end-skip "|#")
   (setq imenu-case-fold-search t))
+
+(defun lisp-find-tag-default ()
+  (let ((default (find-tag-default)))
+    (when (stringp default)
+      (if (string-match ":+" default)
+          (substring default (match-end 0))
+	default))))
+
+(defalias 'common-lisp-mode 'lisp-mode)
 
 ;; Remacs: keep GNU's lexical/dynamic binding indicator and its live keymap.
 (define-derived-mode emacs-lisp-mode lisp-data-mode
