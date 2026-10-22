@@ -691,18 +691,64 @@ fn map_seq(
     match seq {
         Value::Nil => Ok(()),
         Value::Cons(_) => {
-            let items = want_list(i, seq)?;
-            for v in items {
-                f(i, &v)?;
+            // Validate once and keep GNU's original length cap. Read the
+            // next link after the callback, including edits to this cell.
+            let length = want_list(i, seq)?.len();
+            let mut tail = seq.clone();
+            for _ in 0..length {
+                let Value::Cons(cell) = tail else {
+                    break;
+                };
+                let value = cell.borrow().car.clone();
+                f(i, &value)?;
+                tail = cell.borrow().cdr.clone();
             }
             Ok(())
         }
         Value::Str(s) => {
-            let unibyte = i.is_unibyte_str(s);
-            let chars: Vec<char> = s.borrow().chars().collect();
-            for c in chars {
-                // Unibyte strings yield their raw byte values (GNU
-                // iterate-bytes), not the 0x3FFFxx char code.
+            let mut chars: Vec<char> = s.borrow().chars().collect();
+            let length = chars.len();
+            let mut tick = i.string_data_tick;
+            let mut kinds = (i.is_unibyte_str(s), i.is_multibyte_str(s));
+            let mut unibyte = !super::strfn::string_multibyte_p(i, seq);
+            let width = |character: char, unibyte: bool| -> usize {
+                if unibyte {
+                    return 1;
+                }
+                match crate::lisp::value::lisp_char_code(character) {
+                    0..=0x7f => 1,
+                    0x3fff80..=0x3fffff => 2,
+                    0x80..=0x7ff => 2,
+                    0x800..=0xffff => 3,
+                    0x10000..=0x1fffff => 4,
+                    _ => 5,
+                }
+            };
+            let mut character_index = 0;
+            let mut byte_index = 0;
+            for _ in 0..length {
+                let current_kinds = (i.is_unibyte_str(s), i.is_multibyte_str(s));
+                if i.string_data_tick != tick || current_kinds != kinds {
+                    // Immutable mapping stays linear. Mutating callbacks
+                    // refresh the view at GNU's native byte cursor, rather
+                    // than at a Rust proxy's UTF-8 offset or character index.
+                    chars = s.borrow().chars().collect();
+                    unibyte = !super::strfn::string_multibyte_p(i, seq);
+                    tick = i.string_data_tick;
+                    kinds = current_kinds;
+                    character_index = 0;
+                    let mut offset = 0;
+                    while character_index < chars.len() && offset < byte_index {
+                        offset += width(chars[character_index], unibyte);
+                        character_index += 1;
+                    }
+                    if offset != byte_index {
+                        return Err(i.error("String changed byte boundary during mapping"));
+                    }
+                }
+                let Some(c) = chars.get(character_index).copied() else {
+                    return Err(i.error("String changed length during mapping"));
+                };
                 let code = if unibyte {
                     crate::lisp::value::eight_bit_byte(c)
                         .map(|b| b as i128)
@@ -710,22 +756,36 @@ fn map_seq(
                 } else {
                     crate::lisp::value::lisp_char_code(c)
                 };
+                byte_index += width(c, unibyte);
+                character_index += 1;
                 f(i, &Value::Int(code))?;
             }
             Ok(())
         }
         Value::Vec(v) => {
-            let items = v.borrow().clone();
-            for x in items {
-                f(i, &x)?;
+            let length = v.borrow().len();
+            for index in 0..length {
+                let value = v.borrow().get(index).cloned().unwrap_or(Value::Nil);
+                f(i, &value)?;
             }
             Ok(())
         }
-        // GNU SEQUENCEP includes bool-vectors; map bits to t/nil.
-        Value::Record(_) if super::misc::is_bool_vector(i, seq) => {
-            let bits = super::misc::bool_vec_of(i, seq)?;
-            for b in bits {
-                f(i, &Value::from_bool(b))?;
+        Value::Record(record) if super::misc::is_bool_vector(i, seq) => {
+            let bits = {
+                let record = record.borrow();
+                match record.get(1) {
+                    Some(Value::Vec(bits)) => Some(bits.clone()),
+                    _ => None,
+                }
+            };
+            let Some(bits) = bits else {
+                return Err(i.wrong_type_mut("bool-vector-p", seq));
+            };
+            let length = bits.borrow().len();
+            for index in 0..length {
+                let value = Value::from_bool(matches!(bits.borrow().get(index),
+                    Some(Value::Int(bit)) if *bit != 0));
+                f(i, &value)?;
             }
             Ok(())
         }
@@ -754,21 +814,14 @@ fn f_mapc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_mapcan(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // (mapcan FUNCTION SEQUENCE &rest SEQUENCES) — apply FUNCTION to
-    // successive element tuples, then `nconc' the result lists.  GNU
-    // splices the function's own list objects into the answer (no
-    // copying), so the returned structure shares with them.
+    // Map the input live, then nconc all results. Collect first so an
+    // invalid result does not prevent later callbacks from running.
     let fun = args[0].clone();
-    let seqs: Vec<Vec<Value>> = args[1..]
-        .iter()
-        .map(|s| seq_to_vec(i, s))
-        .collect::<Result<_, _>>()?;
-    let n = seqs.iter().map(|s| s.len()).min().unwrap_or(0);
-    let mut results = Vec::with_capacity(n);
-    for k in 0..n {
-        let argv: Vec<Value> = seqs.iter().map(|s| s[k].clone()).collect();
-        results.push(i.apply(&fun, argv)?);
-    }
+    let mut results = Vec::new();
+    map_seq(i, &fun, &args[1], |i, value| {
+        results.push(i.apply(&fun, vec![value.clone()])?);
+        Ok(())
+    })?;
     let mut out = Value::Nil;
     let mut tail: Option<crate::lisp::value::ConsRef> = None;
     for (k, r) in results.iter().enumerate() {
