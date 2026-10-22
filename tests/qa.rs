@@ -431,6 +431,7 @@ qa!(qa_timefmt, "qa_timefmt.el");
 qa!(qa_timer, "qa_timer.el");
 qa!(qa_types2, "qa_types2.el");
 qa!(qa_ucs, "qa_ucs.el");
+qa!(qa_japanese, "qa_japanese.el");
 qa!(qa_undo, "qa_undo.el");
 qa!(qa_undo_properties, "qa_undo_properties.el");
 qa!(qa_propertize_bytes, "qa_propertize_bytes.el");

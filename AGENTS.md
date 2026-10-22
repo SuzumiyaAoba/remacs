@@ -353,6 +353,15 @@ top-level `setq'/`defconst'/`add-hook' forms (reset
 amalgam only take effect through the boot load; `tests/qa_subrx3.el'
 pins the post-boot behavior.
 
+`japan-util` is lazy in GNU -Q: its feature, private helpers, tables and
+conversion properties are absent until an autoload or require loads the file.
+Do not pre-provide it or fold its functions/data into the `subr-x` amalgam:
+live copies prevent `loaddefs` from installing autoloads and separate the
+converters from their data. The real `lisp/japan-util.el` initializes both
+together. `qa_japanese` checks the initial autoload surface, first-use loading,
+kana/width conversion, composition, region operations and explicit reload
+(#291).
+
 ## Source loading and eager macro expansion
 
 `load.rs` follows GNU `readevalloop`: call

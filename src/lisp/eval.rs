@@ -1078,7 +1078,6 @@ impl Interp {
         // GNU batch's feature list (NS tty build ordering);
         // `provide' appends to this.
         let feature_syms: Vec<SymId> = [
-            "japan-util",
             "rmc",
             "iso-transl",
             "tooltip",
