@@ -7329,11 +7329,13 @@ fn inherit_plist_at(i: &mut Interp, pos: usize) -> Vec<(u32, Value)> {
 }
 
 fn insert_impl(i: &mut Interp, a: &[Value], before_markers: bool, inherit: bool) -> EvalResult {
-    check_writable(i)?;
     let unibyte = buffer_is_unibyte(i);
     for v in a {
         match v {
             Value::Str(s) => {
+                if s.borrow().is_empty() {
+                    continue;
+                }
                 let mut t = s.borrow().clone();
                 if unibyte {
                     t = unibyte_insert_text(&t);
@@ -7497,6 +7499,9 @@ fn f_insert_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Some(other) if !other.is_nil() => return Err(i.wrong_type_mut("fixnump", other)),
         _ => 1,
     };
+    if count == 0 {
+        return Ok(Value::Nil);
+    }
     // GNU make_gap_larger: growth past BUF_BYTES_MAX (= MOST_POSITIVE_
     // FIXNUM - 1 on 64-bit) reports "Maximum buffer size exceeded".
     // Anything beyond our practical cap reports the same message — a
@@ -7872,8 +7877,6 @@ fn f_forward_visible_line(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_delete_and_extract_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    check_writable(i)?;
-    barf_if_file_locked(i)?;
     let s0 = want_int(i, &a[0])?;
     let e0 = want_int(i, &a[1])?;
     // GNU `validate_region' bounds-checks against the accessible
@@ -7893,6 +7896,11 @@ fn f_delete_and_extract_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
             ));
         }
     }
+    if s1 == e1 {
+        return Ok(Value::string(""));
+    }
+    check_writable(i)?;
+    barf_if_file_locked(i)?;
     let (s, e) = ((s1 - 1) as usize, (e1 - 1) as usize);
     // GNU `delete_and_extract' copies the deleted text WITH its text
     // properties — grab them before the delete reshapes the table.
@@ -7916,9 +7924,11 @@ fn f_delete_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_erase_buffer(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    check_writable(i)?;
-    barf_if_file_locked(i)?;
     let tlen = cur(i).borrow().text.len();
+    if tlen > 0 {
+        check_writable(i)?;
+        barf_if_file_locked(i)?;
+    }
     chg_delete(i, 0, tlen)?;
     let b = cur(i);
     let mut bb = b.borrow_mut();
