@@ -166,7 +166,6 @@ struct FaceCtx {
     // Symbol ids for property names (SymId::MAX = missing).
     face: u32,
     font_lock_face: u32,
-    window: u32,
     mark_active: u32,
     inherit: u32,
     /// `color-name-rgb-alist' folded into (canonical name -> rgb).
@@ -229,7 +228,6 @@ impl FaceCtx {
         FaceCtx {
             face: sym("face"),
             font_lock_face: sym("font-lock-face"),
-            window: sym("window"),
             mark_active: sym("mark-active"),
             inherit: sym(":inherit"),
             colors,
@@ -540,9 +538,7 @@ fn window_faces(
             if ov.buffer != Some(bb.id) || ov.start >= ov.end {
                 return false;
             }
-            let wv = ov.property(i, &Value::Sym(ctx.window));
-            // nil = all windows; non-nil must be this window object.
-            wv.is_nil() || crate::lisp::builtins::eq_values(&wv, win)
+            ov.matches_window(i, win)
         })
         .filter_map(|(_, ov)| {
             let fv = ov.property(i, &Value::Sym(ctx.face));

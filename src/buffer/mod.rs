@@ -307,6 +307,15 @@ pub struct Overlay {
 }
 
 impl Overlay {
+    pub(crate) fn matches_window(&self, i: &crate::lisp::Interp, window: &Value) -> bool {
+        let Some(property) = i.intern_soft("window") else {
+            return true;
+        };
+        let restriction = self.property(i, &Value::Sym(property));
+        !matches!(restriction, Value::Window(_))
+            || crate::lisp::builtins::eq_values(&restriction, window)
+    }
+
     pub(crate) fn property(&self, i: &crate::lisp::Interp, property: &Value) -> Value {
         if let Some(value) = crate::lisp::eval::plist_lookup_v(&self.plist, property) {
             return value;

@@ -734,3 +734,67 @@ fn tui_category_overlay_faces_follow_defaults_and_nil_shadows() {
         }
     })
 }
+
+#[test]
+fn tui_window_overlay_faces_match_window_property_queries() {
+    run_on_big_stack(move || {
+        let mut i = Interp::new();
+        i.eval_str(
+            r##"(with-current-buffer "*scratch*"
+              (erase-buffer) (delete-other-windows) (insert "abc\n") (goto-char 1)
+              (setq mark-active nil qa313-top (selected-window)
+                    qa313-bottom (split-window-below))
+              (put-text-property 1 4 'face '(:foreground "#0000ff")))"##,
+        )
+        .expect("set window face fixture");
+        for (restriction, top_red) in [
+            ("(overlay-put qa313-overlay 'window qa313-bottom)", false),
+            (
+                "(progn (put qa313-category 'window qa313-bottom)
+                (overlay-put qa313-overlay 'category qa313-category))",
+                false,
+            ),
+            ("(overlay-put qa313-overlay 'window t)", true),
+            (
+                "(progn (put qa313-category 'window qa313-bottom)
+                (overlay-put qa313-overlay 'category qa313-category)
+                (overlay-put qa313-overlay 'window nil))",
+                true,
+            ),
+        ] {
+            i.eval_str(&format!(
+                r##"(progn (delete-all-overlays)
+                  (setq qa313-category (make-symbol "qa313-paint")
+                        qa313-overlay (make-overlay 1 4))
+                  (overlay-put qa313-overlay 'face '(:foreground "#ff0000"))
+                  {restriction})"##
+            ))
+            .expect("set overlay window restriction");
+            let face = i.eval_str("(get-char-property 2 'face qa313-top)").unwrap();
+            let hex = if top_red { "#ff0000" } else { "#0000ff" };
+            assert_eq!(i.prin1_to_string(&face), format!("(:foreground \"{hex}\")"));
+            let insertion_face = i.eval_str("(get-pos-property 2 'face qa313-top)").unwrap();
+            assert_eq!(
+                i.prin1_to_string(&insertion_face),
+                "(:foreground \"#ff0000\")"
+            );
+            let grid = render_grid(&i, 80, 24);
+            // The grid scales the window tree to the requested terminal size.
+            // The lower text area starts after the first rendered mode line.
+            let bottom = grid.mode_rows.iter().copied().min().unwrap() + 1;
+            assert!(grid.rows[bottom].starts_with("abc"));
+            let top = if top_red { (255, 0, 0) } else { (0, 0, 255) };
+            assert_eq!(
+                grid.attrs[0][1].fg,
+                Some(remacs::term::CellColor(top.0, top.1, top.2))
+            );
+            assert_eq!(
+                grid.attrs[bottom][1].fg,
+                Some(remacs::term::CellColor(255, 0, 0)),
+                "lower window after {restriction}: row={bottom}, mode rows={:?}, rows={:?}",
+                grid.mode_rows,
+                grid.rows
+            );
+        }
+    })
+}

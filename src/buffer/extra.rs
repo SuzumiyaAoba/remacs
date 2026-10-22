@@ -3342,7 +3342,9 @@ fn f_get_char_prop_and_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
         return Ok(Value::cons(Value::Nil, Value::Nil));
     };
     let bb = b.borrow();
-    let (v, ov) = crate::buffer::primitives::char_prop_at_overlay(i, &bb, pos, prop);
+    let window = a.get(2).filter(|object| matches!(object, Value::Window(_)));
+    let (v, ov) =
+        crate::buffer::primitives::char_prop_at_overlay_for_window(i, &bb, pos, prop, window);
     Ok(Value::cons(v, ov))
 }
 

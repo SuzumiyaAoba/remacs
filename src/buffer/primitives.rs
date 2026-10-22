@@ -12868,11 +12868,26 @@ pub(crate) fn char_prop_at_overlay(
     pos: usize,
     prop: u32,
 ) -> (Value, Value) {
+    char_prop_at_overlay_for_window(i, bb, pos, prop, None)
+}
+
+pub(crate) fn char_prop_at_overlay_for_window(
+    i: &mut Interp,
+    bb: &crate::buffer::Buffer,
+    pos: usize,
+    prop: u32,
+    window: Option<&Value>,
+) -> (Value, Value) {
     let mut overlays: Vec<_> = bb
         .overlays
         .iter()
         .enumerate()
-        .filter(|(_, ov)| ov.buffer == Some(bb.id) && pos >= ov.start && pos < ov.end)
+        .filter(|(_, ov)| {
+            ov.buffer == Some(bb.id)
+                && pos >= ov.start
+                && pos < ov.end
+                && window.is_none_or(|window| ov.matches_window(i, window))
+        })
         .map(|(index, overlay)| (overlay, index))
         .collect();
     crate::buffer::sort_overlays_by_priority(i, &mut overlays);
@@ -12920,7 +12935,8 @@ pub(crate) fn f_get_char_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
         return Ok(Value::Nil);
     };
     let bb = b.borrow();
-    Ok(char_prop_at_overlay(i, &bb, pos, prop).0)
+    let window = a.get(2).filter(|object| matches!(object, Value::Window(_)));
+    Ok(char_prop_at_overlay_for_window(i, &bb, pos, prop, window).0)
 }
 
 /// `get-pos-property' — the property text inserted at POSITION would
@@ -12977,6 +12993,8 @@ pub(crate) fn f_get_pos_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
     };
     {
         let bb = b.borrow();
+        // GNU uses a WINDOW here only to select its buffer; unlike
+        // get-char-property it does not filter window-specific overlays.
         let (v, ov) = char_prop_at_overlay(i, &bb, pos, prop);
         if !ov.is_nil() {
             return Ok(v);
