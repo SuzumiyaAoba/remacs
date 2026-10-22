@@ -1,4 +1,12 @@
-;; Customize data API (custom.el core), GNU-compatible.
+;; Coverage workers own their Custom output instead of using developer init files.
+(require 'cl-lib)
+(defvar custom-file)
+(let* ((probe-custom-file
+        (make-temp-file (expand-file-name "custom-" default-directory)))
+       (custom-file probe-custom-file))
+  (unwind-protect
+      (progn
+;; Customize data API plus the Remacs custom-group-list compatibility helper.
 ;; Self-asserting: any mismatch signals `error'.
 
 ;; ---------- defcustom / custom-declare-variable ----------
@@ -210,3 +218,7 @@
   (cl-assert (eq (custom-make-theme-feature 'abc) 'abc-theme))
   (provide-theme 'probe-th)
   (cl-assert (featurep 'probe-th-theme)))
+
+)
+    ;; Lazy Custom initialization can change its own custom-file binding.
+    (when (file-exists-p probe-custom-file) (delete-file probe-custom-file))))

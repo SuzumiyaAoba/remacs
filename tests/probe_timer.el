@@ -2,6 +2,8 @@
 ;; Self-asserting: signals on mismatch.
 
 ;; Structure
+(require 'cl-lib)
+
 (cl-assert (timerp (timer-create)))
 (cl-assert (= (length (timer-create)) 10))
 (cl-assert (not (timerp 5)))

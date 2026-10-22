@@ -2,6 +2,8 @@
 ;; Self-asserting: any mismatch signals `error'.
 
 ;; ---------- startup/dump availability (GNU: dumped feature) ----------
+(require 'cl-lib)
+
 (cl-assert (featurep 'uniquify))
 (cl-assert (fboundp 'uniquify-rationalize-file-buffer-names))
 (cl-assert (fboundp 'uniquify--rename-buffer-advice))

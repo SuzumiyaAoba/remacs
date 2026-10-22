@@ -148,7 +148,9 @@
   (current-kill 0)
   (current-kill 1 t)
   (rotate-yank-pointer 1)
-  (yank-pop)
+  ;; With no preceding command-loop yank, this requests a selection.
+  ;; Coverage workers supply EOF rather than reading the developer's stdin.
+  (condition-case nil (yank-pop) (end-of-file nil))
   (kill-new "probe-kill")
   (kill-append " more" nil)
   kill-ring

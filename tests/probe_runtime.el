@@ -134,8 +134,13 @@
   (ignore-errors (fset 'fs2 (lambda (x) x))) (ignore-errors (fs2 5))
   (ignore-errors (fset 'fs3 '(lambda (x) x))) (ignore-errors (fs3 6))
   (ignore-errors (fmakunbound 'fs1)) (ignore-errors (fboundp 'fs1))
-  (ignore-errors (fmakunbound 'car)) (ignore-errors (fboundp 'car))
-  (ignore-errors (symbol-function 'car)) (ignore-errors (symbol-function 'fs3))
+  ;; Exercise the void function cell without poisoning later macro expansion.
+  (ignore-errors
+    (let ((definition (symbol-function 'car)))
+      (unwind-protect
+          (progn (fmakunbound 'car) (fboundp 'car) (symbol-function 'car))
+        (fset 'car definition))))
+  (ignore-errors (symbol-function 'fs3))
   (ignore-errors (symbol-function 'nosuch-xyz)) (ignore-errors (symbol-function 5))
   (ignore-errors (command-modes 'forward-char)) (ignore-errors (command-modes 'car))
   (ignore-errors (interactive-form 'forward-char)) (ignore-errors (interactive-form 'car))

@@ -119,16 +119,16 @@
   (insert "x"))
 
 ;; ---- buffers ----
-;; Run in a temp buffer with content: GNU `bury-buffer' on the
-;; selected window's buffer switches to `other-buffer' (and
-;; `unbury-buffer' switches to `last-buffer'), so against *scratch*
-;; the substring calls below error with args-out-of-range.
+;; Preserve the seeded current buffer across commands that switch it.
+;; Otherwise later substring operations run on an unrelated empty or
+;; read-only buffer instead of the fixture, under GNU as well.
 (with-temp-buffer
   (insert "xyz")
   (generate-new-buffer-name "probe-nm")
   (generate-new-buffer " probe-hidden")
-  (bury-buffer)
-  (unbury-buffer)
+  (save-current-buffer
+    (bury-buffer)
+    (unbury-buffer))
   (buffer-list)
   (other-buffer)
   (last-buffer)

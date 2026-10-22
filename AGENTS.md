@@ -1236,6 +1236,32 @@ ordinary computation and blocking foreign calls do not preempt themselves.
 Regressions: `qa_thread_scheduling.el`, `qa_thread_bookkeeping.el`, the
 `eval::threads` unit tests, and CLI/TUI/portable-image thread tests.
 
+## Coverage probes (`src/lib.rs` + `tests/probe_all.rs`)
+
+`tests/support/probe.rs` runs each probe in an independent copy of the same
+instrumented test binary, with a 64 MiB evaluator stack, private working
+directory and EOF stdin. The parent serializes probes that compete for
+ptys/ports and enforces a 120-second child deadline; Unix timeouts kill the
+owned process group. Logs use files so inherited pipe writers cannot stall
+collection, and a completion handshake prevents an empty test selection
+from passing. Stderr is restored after probes that redirect debugging output.
+
+Evaluate each file once. Do not replay failed files in their already-mutated
+interpreter to locate errors. The side-effect fixture pins this, and watchdog
+tests verify timeout cleanup, lock release, subsequent execution and failure
+status. `probe_eval14.el` renders primitive bindings descriptions in fresh
+output buffers while retaining explicit source-buffer arguments: earlier
+`edit-abbrevs` changes the current buffer and enables `jit-lock-after-change`,
+making repeated bulk output state-dependent. The
+buffer, editor and runtime fixtures likewise restore the seeded current
+buffer across bury/unbury, handle the expected EOF from an input-free
+yank selector, and restore `car` after testing its void function cell.
+The Custom fixture uses an owned temporary `custom-file`. These preserve
+the probe calls and negative branches without leaking state into later
+calls or depending on developer init files. Probes explicitly require
+`cl-lib` for `cl-assert` and `subr-x` for threading macros instead of relying
+on a preceding probe to have loaded them (#298).
+
 ## GNU-compat QA suite (`tests/qa.rs` + `tests/qa_*.el`)
 
 Each `qa_*.el` file is a flat list of `(qa FORM EXPECTED)` checks driven

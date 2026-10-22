@@ -2,6 +2,8 @@
 ;;; Self-asserting: signals on mismatch.  -*- lexical-binding: t -*-
 
 ;; forward-page / backward-page (GNU textmodes/page.el)
+(require 'cl-lib)
+
 (with-temp-buffer
   (insert "p1a\np1b\n\fp2a\np2b\np2c\n\fp3a\n")
   (goto-char 1)

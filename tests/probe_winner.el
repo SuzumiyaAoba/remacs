@@ -2,6 +2,8 @@
 ;; Self-asserting: any mismatch signals `error'.
 
 ;; ---------- startup/dump availability (GNU: autoload cookie) ----------
+(require 'cl-lib)
+
 (cl-assert (autoloadp (symbol-function 'winner-mode)))
 (cl-assert (not (featurep 'winner)))
 (require 'winner)

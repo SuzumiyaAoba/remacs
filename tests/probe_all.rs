@@ -2,6 +2,8 @@
 //! wrapped in ignore-errors. Exercises dispatch/validation paths and
 //! catches panics (which abort the whole test).
 mod common;
+#[path = "support/probe.rs"]
+mod probe_support;
 
 use common::*;
 
@@ -9,20 +11,13 @@ macro_rules! probe {
     ($name:ident, $file:literal) => {
         #[test]
         fn $name() {
-            // Prelude eval + deep probes exceed the default test-thread
-            // stack; run on a dedicated big-stack thread.
-            std::thread::Builder::new()
-                .stack_size(64 * 1024 * 1024)
-                .spawn(|| {
-                    let (mut i, _) = interp();
-                    match i.eval_str(include_str!($file)) {
-                        Ok(_) => {}
-                        Err(f) => panic!("probe failed: {:?}", f),
-                    }
-                })
-                .unwrap()
-                .join()
-                .unwrap();
+            probe_support::run(stringify!($name), $file, || {
+                let (mut i, _) = interp();
+                match i.eval_str(include_str!($file)) {
+                    Ok(_) => {}
+                    Err(f) => panic!("probe {} failed: {}", $file, flow_str(&mut i, &f)),
+                }
+            });
         }
     };
 }

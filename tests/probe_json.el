@@ -2,6 +2,8 @@
 ;; object types, array types, null/false objects, error paths.
 
 ;; --- parse-string basics -------------------------------------------------
+(require 'cl-lib)
+
 (let ((h (json-parse-string "{\"a\":1,\"b\":[true,false,null],\"c\":\"x\"}")))
   (cl-assert (hash-table-p h))
   (cl-assert (= (gethash "a" h) 1))

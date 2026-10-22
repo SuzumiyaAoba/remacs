@@ -1,5 +1,7 @@
 ;; Visited-file modtime + file-lock primitives, GNU-compatible.
 ;; Self-asserting: any mismatch signals `error'.
+(require 'cl-lib)
+
 (let* ((dir (make-temp-file "remacs-lock" t))
        (f (expand-file-name "exists.txt" dir))
        (missing (expand-file-name "absent.txt" dir))

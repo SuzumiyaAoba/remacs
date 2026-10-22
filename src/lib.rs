@@ -13,16 +13,15 @@ pub mod lisp;
 pub mod term;
 
 #[cfg(test)]
+#[path = "../tests/support/probe.rs"]
+mod probe_support;
+
+#[cfg(test)]
 mod coverage_tests {
     //! Mirror of tests/probe_all.rs: the unit-test binary carries its
     //! own instrumented copy of this crate, so the probe suite must run
     //! here too for coverage to count.
     use crate::lisp::Interp;
-
-    // Probes that spawn child/pipe/network/serial processes compete for
-    // ptys and ports; serialize them so a parallel burst can't exhaust
-    // the system.
-    static PROBE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// Run `body` on a dedicated 64 MiB-stack thread — the evaluator
     /// legitimately recurses several MB deep on the probes, and
@@ -36,65 +35,89 @@ mod coverage_tests {
             .expect("probe thread panicked");
     }
 
+    fn eval_probe(file: &str, source: &str) {
+        let mut i = Interp::new();
+        match i.eval_str(source) {
+            Ok(_) => {}
+            Err(f) => {
+                let flow_desc = match &f {
+                    crate::lisp::Flow::Signal(s, d, _) => {
+                        format!("signal {} {}", i.prin1_to_string(s), i.prin1_to_string(d))
+                    }
+                    other => format!("{other:?}"),
+                };
+                panic!("probe {} failed: {}", file, flow_desc);
+            }
+        }
+    }
+
     macro_rules! probe {
         ($name:ident, $file:literal) => {
             #[test]
             fn $name() {
-                probe_stack(|| {
-                    let _lock = PROBE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-                    let mut i = Interp::new();
-                    let src = include_str!(concat!("../tests/", $file));
-                    match i.eval_str(src) {
-                        Ok(_) => {}
-                        Err(f) => {
-                            // Bisect to the failing top-level form so
-                            // flaky failures identify themselves.
-                            let chars: std::rc::Rc<Vec<char>> =
-                                std::rc::Rc::new(src.chars().collect());
-                            let mut pos = 0usize;
-                            let mut report = String::new();
-                            loop {
-                                let next = {
-                                    let mut r = crate::lisp::reader::Reader::with_chars(
-                                        &mut i,
-                                        chars.clone(),
-                                    );
-                                    r.set_position(pos);
-                                    match r.read() {
-                                        Ok(Some(_)) => r.position(),
-                                        _ => break,
-                                    }
-                                };
-                                let form_src = &src[pos..next];
-                                let form = {
-                                    let mut r = crate::lisp::reader::Reader::new(&mut i, form_src);
-                                    match r.read() {
-                                        Ok(Some(v)) => v,
-                                        _ => break,
-                                    }
-                                };
-                                match i.eval(&form) {
-                                    Err(e) => {
-                                        report = format!(" at byte {pos}: {form_src} => {e:?}");
-                                        break;
-                                    }
-                                    Ok(_) => pos = next,
-                                }
-                            }
-                            let flow_desc = match &f {
-                                crate::lisp::Flow::Signal(s, d, _) => format!(
-                                    "signal {} {}",
-                                    i.prin1_to_string(s),
-                                    i.prin1_to_string(d)
-                                ),
-                                other => format!("{other:?}"),
-                            };
-                            panic!("probe {} failed: {}{}", $file, flow_desc, report);
-                        }
-                    }
-                });
+                crate::probe_support::run(
+                    concat!("coverage_tests::", stringify!($name)),
+                    $file,
+                    || {
+                        eval_probe($file, include_str!(concat!("../tests/", $file)));
+                    },
+                );
             }
         };
+    }
+
+    #[test]
+    #[ignore = "subprocess fixture for u_probe_error_is_not_replayed"]
+    fn probe_error_fixture() {
+        probe_stack(|| {
+            let path = std::env::var("REMACS_PROBE_ERROR_COUNT").unwrap();
+            let source = format!(
+                "(progn (write-region \"once\\n\" nil {path:?} t (quote silent)) (error \"intentional probe failure\"))"
+            );
+            eval_probe("error-fixture", &source);
+        });
+    }
+
+    #[test]
+    fn u_probe_error_is_not_replayed() {
+        struct Count(std::path::PathBuf);
+        impl Drop for Count {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("remacs-probe-count-{}-{nonce}", std::process::id()));
+        std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let count = Count(path);
+        let report = crate::probe_support::run_command(
+            std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "coverage_tests::probe_error_fixture",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env("REMACS_PROBE_ERROR_COUNT", &count.0),
+            std::time::Duration::from_secs(120),
+        )
+        .unwrap();
+        assert!(!report.timed_out);
+        assert!(!report.status.success());
+        assert!(
+            report.tail.contains("intentional probe failure"),
+            "{}",
+            report.tail
+        );
+        assert_eq!(std::fs::read_to_string(&count.0).unwrap(), "once\n");
     }
 
     probe!(u_probe_all, "probe_all.el");

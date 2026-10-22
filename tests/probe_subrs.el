@@ -1,5 +1,7 @@
 ;; Missing-subr batch: new primitives, handler-bind, watchers.
 ;; Differential-verified against GNU Emacs 31.1.
+(require 'subr-x)
+
 (progn
   ;; trivial builtins
   (princ (list 'a (subr-primitive-p (symbol-function 'car))

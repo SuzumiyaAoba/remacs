@@ -92,7 +92,7 @@ pub fn ev_result(src: &str) -> Result<String, String> {
     })
 }
 
-fn flow_str(i: &mut Interp, f: &Flow) -> String {
+pub(crate) fn flow_str(i: &mut Interp, f: &Flow) -> String {
     match f {
         Flow::Signal(sym, data, _) => {
             let name = match sym {
