@@ -488,6 +488,7 @@ qa!(qa_temp_private_modes, "qa_temp_private_modes.el");
 qa!(qa_temp_text_bytes, "qa_temp_text_bytes.el");
 qa!(qa_file_handler_metadata, "qa_file_handler_metadata.el");
 qa!(qa_set_file_times_flags, "qa_set_file_times_flags.el");
+qa!(qa_temp_directory, "qa_temp_directory.el");
 
 qa!(qa_gensym_counter, "qa_gensym_counter.el");
 

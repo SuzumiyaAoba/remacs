@@ -12657,13 +12657,15 @@ fn f_make_temp_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("sequencep", other)),
     };
-    let prefix = if raw.starts_with('/') || raw.starts_with('~') {
-        expand_file_name_str(i, &raw)
+    let temporary = i.intern("temporary-file-directory");
+    let directory = i.symbol_value(temporary);
+    let prefix = if matches!(raw.as_str(), "" | "." | "..") {
+        // GNU keeps these literal prefixes instead of normalizing them.
+        let directory = f_file_name_as_directory(i, vec![directory].into())?;
+        format!("{}{}", want_str(i, &directory)?, raw)
     } else {
-        std::env::temp_dir()
-            .join(&raw)
-            .to_string_lossy()
-            .into_owned()
+        let expanded = f_expand_file_name(i, vec![a[0].clone(), directory].into())?;
+        want_str(i, &expanded)?
     };
     let dir_flag = a.get(1).map(|v| v.truthy()).unwrap_or(false);
     let suffix = match a.get(2) {
