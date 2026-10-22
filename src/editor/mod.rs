@@ -16333,7 +16333,7 @@ fn f_indent_line_to(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let wlen = ws.chars().count();
     if wlen > 0 {
         cur(i).borrow_mut().set_point(ls);
-        crate::buffer::primitives::f_insert_and_inherit(i, vec![Value::string(ws)].into())?;
+        crate::buffer::primitives::chg_insert_and_inherit_pt(i, &ws)?;
     }
     cur(i).borrow_mut().set_point(ls + wlen);
     // GNU `indent-line-to' returns COLUMN only when it indented forward;
@@ -16383,7 +16383,7 @@ fn f_indent_to(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             c += 1;
         }
         drop(bb);
-        crate::buffer::primitives::f_insert_and_inherit(i, vec![Value::string(s)].into())?;
+        crate::buffer::primitives::chg_insert_and_inherit_pt(i, &s)?;
     }
     Ok(Value::Int(mincol))
 }

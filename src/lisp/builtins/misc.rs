@@ -6660,7 +6660,11 @@ fn f_insert_byte(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     let ch = crate::lisp::value::lisp_char(code).unwrap_or('\u{fffd}');
     let s: String = std::iter::repeat_n(ch, count.max(0) as usize).collect();
-    crate::buffer::primitives::chg_insert_pt(i, &s, false)?;
+    if a.get(2).is_some_and(Value::truthy) {
+        crate::buffer::primitives::chg_insert_and_inherit_pt(i, &s)?;
+    } else {
+        crate::buffer::primitives::chg_insert_pt(i, &s, false)?;
+    }
     Ok(Value::Nil)
 }
 

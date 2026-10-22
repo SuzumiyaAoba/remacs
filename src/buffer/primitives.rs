@@ -2259,13 +2259,21 @@ pub(crate) fn chg_insert(i: &mut Interp, pos: usize, s: &str) -> EvalResult {
 
 /// `insert'/`insert-before-markers' at point (advances point).
 pub(crate) fn chg_insert_pt(i: &mut Interp, s: &str, before_markers: bool) -> EvalResult {
-    chg_insert_pt_props(i, s, before_markers, None, false)
+    chg_insert_pt_props(i, s, before_markers, None, false, false)
+}
+
+pub(crate) fn chg_insert_and_inherit_pt(i: &mut Interp, s: &str) -> EvalResult {
+    if !s.is_empty() {
+        check_writable(i)?;
+        barf_if_file_locked(i)?;
+    }
+    chg_insert_pt_props(i, s, false, None, false, true)
 }
 
 /// Insert Unicode JSON text as characters or UTF-8 bytes according to the
 /// buffer mode after before-change hooks have prepared the destination.
 pub(crate) fn chg_insert_utf8_pt(i: &mut Interp, s: &str) -> EvalResult {
-    chg_insert_pt_props(i, s, false, None, true)
+    chg_insert_pt_props(i, s, false, None, true, false)
 }
 
 fn chg_insert_pt_props(
@@ -2274,6 +2282,7 @@ fn chg_insert_pt_props(
     before_markers: bool,
     properties: Option<&crate::lisp::value::StrRef>,
     utf8_bytes: bool,
+    inherit: bool,
 ) -> EvalResult {
     if s.is_empty() {
         return Ok(Value::Nil);
@@ -2281,6 +2290,22 @@ fn chg_insert_pt_props(
     let p = cur(i).borrow().point();
     text_ro_insert(i, p)?;
     signal_before_change(i, p + 1, p + 1)?;
+    // Hooks can change both point and the source's sticky properties.
+    let base = cur(i).borrow().point();
+    let inherited = if inherit {
+        inherit_plist_at(i, base)
+    } else {
+        Vec::new()
+    };
+    let split_original = inherit
+        && cur(i)
+            .borrow()
+            .text
+            .props
+            .borrow()
+            .intervals()
+            .iter()
+            .any(|(start, end, _)| *start < base && base < *end);
     let unibyte = utf8_bytes && {
         let multibyte = i.intern("enable-multibyte-characters");
         i.symbol_value(multibyte).is_nil()
@@ -2298,6 +2323,23 @@ fn chg_insert_pt_props(
             bb.insert_before_markers(&text);
         } else {
             bb.insert(&text);
+        }
+        if inherit {
+            if !inherited.is_empty() {
+                let mut properties = bb.text.props_write();
+                for (property, value) in inherited {
+                    properties.push(TextProp {
+                        start: base,
+                        end: base + n,
+                        prop: property,
+                        value,
+                    });
+                }
+            }
+            bb.text
+                .props
+                .borrow_mut()
+                .finish_inherited_insert(base, n, split_original);
         }
         bb.point()
     };
@@ -7425,7 +7467,7 @@ fn f_insert_before_markers(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     insert_impl(i, &a, true, false)
 }
 
-pub(crate) fn f_insert_and_inherit(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+fn f_insert_and_inherit(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     insert_impl(i, &a, false, true)
 }
 
@@ -7458,7 +7500,11 @@ fn f_insert_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     check_writable(i)?;
     let s: String = std::iter::repeat(c).take(count as usize).collect();
-    insert_str_at_point(i, &s, false)?;
+    if arg(&a, 2).truthy() {
+        chg_insert_and_inherit_pt(i, &s)?;
+    } else {
+        insert_str_at_point(i, &s, false)?;
+    }
     Ok(Value::Nil)
 }
 
@@ -14378,10 +14424,10 @@ fn undo_apply_one(
                     let s = text.borrow().clone();
                     if pos < 0 {
                         b.borrow_mut().set_point((-pos - 1).max(0) as usize);
-                        chg_insert_pt_props(i, &s, false, Some(text), false)?;
+                        chg_insert_pt_props(i, &s, false, Some(text), false, false)?;
                     } else {
                         b.borrow_mut().set_point((pos - 1).max(0) as usize);
-                        chg_insert_pt_props(i, &s, false, Some(text), false)?;
+                        chg_insert_pt_props(i, &s, false, Some(text), false, false)?;
                         b.borrow_mut().set_point((pos - 1).max(0) as usize);
                     }
                 }
