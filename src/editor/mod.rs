@@ -11673,7 +11673,7 @@ fn expand_against_dir(i: &mut Interp, name: &str, dir: &str) -> String {
         normalize_path(&format!("{}{}{}", d, sep, name))
     }
 }
-fn f_expand_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_expand_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let name = want_str(i, &a[0])?;
     // GNU expands DIRECTORY against `default-directory' and appends
     // NAME; an expandable `~' in NAME ignores DIRECTORY entirely, an

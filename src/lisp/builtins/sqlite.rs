@@ -434,7 +434,12 @@ fn f_sqlite_open(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     let conn = match &file {
         Value::Nil => Connection::open_in_memory_with_flags(flags),
-        Value::Str(s) => Connection::open_with_flags(s.borrow().as_str(), flags),
+        Value::Str(_) => {
+            // GNU expands every non-nil filename before opening SQLite.
+            let expanded = crate::editor::f_expand_file_name(i, vec![file.clone()].into())?;
+            let name = want_string(i, &expanded)?;
+            Connection::open_with_flags(&name, flags)
+        }
         _ => return Err(i.wrong_type_mut("stringp", &file)),
     };
     match conn {
