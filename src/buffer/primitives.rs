@@ -7425,7 +7425,7 @@ fn f_insert_before_markers(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     insert_impl(i, &a, true, false)
 }
 
-fn f_insert_and_inherit(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_insert_and_inherit(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     insert_impl(i, &a, false, true)
 }
 
