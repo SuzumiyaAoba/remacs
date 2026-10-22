@@ -7368,17 +7368,11 @@ Return the window used to display BUFFER, like GNU's
 	    (throw 'prev nil)))))
     (if window
 	(window--display-buffer buffer window 'reuse)
-      ;; GNU's `display-buffer-fallback-action': pop-up-window comes
-      ;; BEFORE use-some-window, so a fresh split wins over reusing
-      ;; the selected window for a buffer that was never shown.
-      (let ((new-window (split-window)))
-	(if (window-live-p new-window)
-	    (window--display-buffer buffer new-window 'window)
-	  ;; `display-buffer-use-some-window': GNU's last reuse attempt.
-	  (setq window (display-buffer-use-some-window buffer nil))
-	  (if window
-	      (window--display-buffer buffer window 'reuse)
-	    (window--display-buffer buffer (split-window) 'window)))))))
+      ;; Remacs: Use GNU's split policy (largest/LRU candidates and
+      ;; caught split errors), then reuse an existing window (#294).
+      (or (and pop-up-windows
+               (display-buffer-pop-up-window buffer nil))
+          (display-buffer-use-some-window buffer nil)))))
 
 ;; ---------- subr.el-level utilities ----------
 (defalias 'cl-subseq #'seq-subseq)

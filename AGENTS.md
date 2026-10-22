@@ -388,6 +388,12 @@ pcase, cl-loop, load and CLI suites.
 inputs preserve their identity even with an invalid unused environment.
 Regression: `qa_macro_environment` (54 GNU-verified checks, #293).
 
+`display-buffer` falls back through the existing GNU
+`display-buffer-pop-up-window` action and then `display-buffer-use-some-window`.
+The split policy honors `pop-up-windows`, tries largest/LRU candidates, and
+catches split errors rather than repeatedly splitting the selected window.
+Regression: `qa_display_fallback` (8 GNU-verified checks) and `qa_buffmenu` (#294).
+
 
 
 ## Known runtime gaps (not port defects)
