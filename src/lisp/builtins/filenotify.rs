@@ -48,7 +48,9 @@ const HAVE_KQUEUE: bool = false;
 // Global kernel-side state
 // ---------------------------------------------------------------------------
 
-/// The shared kqueue fd (GNU's `kqueuefd').
+/// The process-lifetime shared kqueue fd (GNU's `kqueuefd').
+/// Keep it alive with the once-started reader, even without active watches.
+/// Closing it at the last watch would stop the reader permanently.
 static KQ_FD: AtomicI32 = AtomicI32::new(-1);
 /// Raw `(fd, fflags)' events read off the kqueue fd by the reader thread.
 static PENDING: Mutex<Vec<(i32, u32)>> = Mutex::new(Vec::new());
@@ -448,13 +450,6 @@ fn f_kqueue_rm_watch(i: &mut crate::lisp::eval::Interp, a: crate::lisp::Argv) ->
     i.filenotify.watches.remove(pos);
     unsafe { libc::close(desc as i32) };
 
-    // GNU closes the kqueue fd when the watch list is empty.
-    if i.filenotify.watches.is_empty() {
-        let kq = KQ_FD.swap(-1, Ordering::SeqCst);
-        if kq >= 0 {
-            unsafe { libc::close(kq) };
-        }
-    }
     Ok(Value::t())
 }
 
@@ -671,12 +666,6 @@ fn dispatch_kevent(
             i.filenotify.watches.remove(pos);
         }
         unsafe { libc::close(fd) };
-        if i.filenotify.watches.is_empty() {
-            let kq = KQ_FD.swap(-1, Ordering::SeqCst);
-            if kq >= 0 {
-                unsafe { libc::close(kq) };
-            }
-        }
     }
     Ok(Value::Nil)
 }

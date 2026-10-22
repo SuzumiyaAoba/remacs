@@ -63,3 +63,24 @@ fn directory_callback_creates_another_child() {
         "notify_directory_create.el",
     );
 }
+
+#[test]
+fn last_watch_removal_can_be_rearmed() {
+    run_case("last_watch_removal_can_be_rearmed", "notify_watch_rearm.el");
+}
+
+#[test]
+fn rearm_works_with_another_watch_alive() {
+    run_case(
+        "rearm_works_with_another_watch_alive",
+        "notify_watch_guardian.el",
+    );
+}
+
+#[test]
+fn last_deleted_watch_can_be_rearmed() {
+    run_case(
+        "last_deleted_watch_can_be_rearmed",
+        "notify_watch_delete.el",
+    );
+}
