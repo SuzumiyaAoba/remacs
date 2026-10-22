@@ -84,3 +84,35 @@ fn last_deleted_watch_can_be_rearmed() {
         "notify_watch_delete.el",
     );
 }
+
+#[test]
+fn callback_errors_preserve_other_file_notifications() {
+    run_case(
+        "callback_errors_preserve_other_file_notifications",
+        "notify_queue_error.el",
+    );
+}
+
+#[test]
+fn callbacks_without_errors_deliver_both_files() {
+    run_case(
+        "callbacks_without_errors_deliver_both_files",
+        "notify_queue_healthy.el",
+    );
+}
+
+#[test]
+fn callback_errors_preserve_directory_notifications() {
+    run_case(
+        "callback_errors_preserve_directory_notifications",
+        "notify_queue_directory.el",
+    );
+}
+
+#[test]
+fn nested_reads_keep_notification_order() {
+    run_case(
+        "nested_reads_keep_notification_order",
+        "notify_queue_nested.el",
+    );
+}

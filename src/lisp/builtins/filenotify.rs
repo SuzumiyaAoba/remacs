@@ -7,7 +7,7 @@
 //! `sleep-firing-timers' wait loop (the remacs equivalent of GNU's
 //! `kbd_buffer_store_event' + command-loop dispatch).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -81,16 +81,18 @@ pub(crate) struct KqWatch {
 /// Interp-side watch table (GNU's `watch_list').
 pub struct FnState {
     watches: Vec<KqWatch>,
+    pending_notifications: VecDeque<Value>,
 }
 
 impl FnState {
     pub(crate) fn has_dump_resources(&self) -> bool {
-        !self.watches.is_empty()
+        !self.watches.is_empty() || !self.pending_notifications.is_empty()
     }
 
     pub fn new() -> Self {
         FnState {
             watches: Vec::new(),
+            pending_notifications: VecDeque::new(),
         }
     }
 }
@@ -670,9 +672,19 @@ fn dispatch_kevent(
     Ok(Value::Nil)
 }
 
+// Pop before calling Lisp: an error consumes only the current event, and a
+// nested read can deliver the older notifications still waiting in this queue.
+fn dispatch_pending(i: &mut crate::lisp::eval::Interp) -> EvalResult {
+    while let Some(event) = i.filenotify.pending_notifications.pop_front() {
+        dispatch_special_event(i, &event)?;
+    }
+    Ok(Value::Nil)
+}
+
 /// Drain kernel events into Lisp callbacks — called from the
 /// `sleep_firing_timers' wait pump (and `accept-process-output').
 pub fn drain(i: &mut crate::lisp::eval::Interp) -> EvalResult {
+    dispatch_pending(i)?;
     let raw: Vec<(i32, u32)> = {
         let mut p = PENDING.lock().unwrap();
         std::mem::take(&mut *p)
@@ -687,10 +699,8 @@ pub fn drain(i: &mut crate::lisp::eval::Interp) -> EvalResult {
     for (fd, fflags) in raw {
         dispatch_kevent(i, fd, fflags, &mut notifications)?;
     }
-    for event in notifications {
-        dispatch_special_event(i, &event)?;
-    }
-    Ok(Value::Nil)
+    i.filenotify.pending_notifications.extend(notifications);
+    dispatch_pending(i)
 }
 
 // ---------------------------------------------------------------------------
