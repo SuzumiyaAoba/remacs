@@ -4030,6 +4030,11 @@ pub(crate) fn load_library_opts_msg(
         .strip_suffix(".el")
         .or_else(|| name.strip_suffix(".elc"))
         .unwrap_or(name);
+    // GNU ships shortdoc's definitions as compiled data.  Eagerly expanding
+    // that data would autoload shortdoc, which requires the same file again.
+    // Other compiled twins remain restricted to the boot window.
+    let compiled_twin_allowed =
+        i.boot_loading || (stem == "shortdoc-doc" && !name.ends_with(".el"));
     let found = locate_full(i, name, nosuffix, mustsuffix);
     let bundled = match &found {
         Some(Found::File(path)) => path_is_bundled_source(path) && embedded(path).is_some(),
@@ -4075,21 +4080,13 @@ pub(crate) fn load_library_opts_msg(
             eval_gnu_subr_x(i, &file, bundled)
         }
         Some(Found::File(path)) => {
-            // Bundled tree: an on-disk `.el' of a boot library stands in
-            // for the same file GNU dumped byte-compiled — the
-            // generated `lisp-elc/STEM.elc' blob is its compiled twin
-            // and wins per openp's .elc-before-.el order, unless
-            // `load-prefer-newer' treats it as stale.  `REMACS_NO_ELC'
-            // drops the twin back to source for debugging/parity
-            // AOT `lisp-elc/STEM.elc' twins exist for the dump-time
-            // libraries.  They are loaded only at boot (`boot_loading')
-            // so their macroexpansion state never leaks into the user
-            // session — the load-order cascade that used to poison
-            // `(load "nadvice")' post-boot can't trigger outside this
-            // window.  `REMACS_NO_ELC' drops back to interpreted
-            // source for debugging/parity.
+            // Boot twins stand in for GNU's dumped bytecode.  The data-only
+            // shortdoc-doc twin is also used after boot, avoiding its source
+            // macro's mutual dependency with shortdoc.  Other libraries keep
+            // their post-boot source behavior.  Explicit source loads, user
+            // overrides, load-prefer-newer and REMACS_NO_ELC retain the source.
             let use_elc = can_elc
-                && i.boot_loading
+                && compiled_twin_allowed
                 && std::env::var_os("REMACS_NO_ELC").is_none()
                 && !nosuffix
                 && !mustsuffix
@@ -4161,17 +4158,18 @@ pub(crate) fn load_library_opts_msg(
         }
         // Fall back to the embedded copy of a built-in library, so that
         // autoloads work even when the lisp/ dir isn't reachable by path.
-        // A `lisp-elc' blob wins over embedded source during boot
-        // (`boot_loading' scopes it, so the compiled twin can't leak
-        // state into the post-boot session — the .el-fallback path it
-        // used to poison is gone); `REMACS_NO_ELC' disables it.
+        // A `lisp-elc' blob wins during boot or for shortdoc's compiled data.
+        // Other twins remain scoped to boot, preserving post-boot source
+        // definitions.  REMACS_NO_ELC disables implicit compiled twins.
         None if gnu_subr_x => {
             announce(i, name);
             eval_gnu_subr_x(i, "builtin:subr-x", bundled)
         }
-        None => match embedded_elc(stem)
-            .filter(|_| can_elc && i.boot_loading && std::env::var_os("REMACS_NO_ELC").is_none())
-        {
+        None => match embedded_elc(stem).filter(|_| {
+            can_elc
+                && compiled_twin_allowed
+                && std::env::var_os("REMACS_NO_ELC").is_none()
+        }) {
             Some(src) => {
                 announce(i, name);
                 let virtual_path = format!("builtin:{}", stem);

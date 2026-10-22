@@ -503,6 +503,8 @@ qa!(qa_org_mode_startup, "qa_org_mode_startup.el");
 qa!(qa_closure_dotted_args, "qa_closure_dotted_args.el");
 qa!(qa_sqlite_directory, "qa_sqlite_directory.el");
 qa!(qa_sqlite_text, "qa_sqlite_text.el");
+qa!(qa_shortdoc_data, "qa_shortdoc_data.el");
+qa!(qa_shortdoc_source_first, "qa_shortdoc_source_first.el");
 
 qa!(qa_gensym_counter, "qa_gensym_counter.el");
 
