@@ -665,6 +665,16 @@ fn json_value_err(i: &mut Interp, v: &Value) -> Flow {
 }
 
 fn ser_value(i: &mut Interp, v: &Value, o: &Opts, out: &mut String) -> Result<(), Flow> {
+    // GNU compares arbitrary sentinel objects by identity before dispatching
+    // on their type; null takes precedence if both options name the same value.
+    if crate::lisp::builtins::eq_values(&o.null_obj, v) {
+        out.push_str("null");
+        return Ok(());
+    }
+    if crate::lisp::builtins::eq_values(&o.false_obj, v) {
+        out.push_str("false");
+        return Ok(());
+    }
     match v {
         Value::Nil => out.push_str("{}"),
         Value::Int(n) => out.push_str(&n.to_string()),
@@ -679,11 +689,7 @@ fn ser_value(i: &mut Interp, v: &Value, o: &Opts, out: &mut String) -> Result<()
         }
         Value::Str(s) => esc_into(&s.borrow(), out),
         Value::Sym(id) => {
-            if crate::lisp::builtins::eq_values(&o.null_obj, v) {
-                out.push_str("null");
-            } else if crate::lisp::builtins::eq_values(&o.false_obj, v) {
-                out.push_str("false");
-            } else if *id == crate::lisp::obarray::sym::T {
+            if *id == crate::lisp::obarray::sym::T {
                 out.push_str("true");
             } else {
                 return Err(json_value_err(i, v));
