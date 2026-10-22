@@ -10984,6 +10984,16 @@ fn want_filename(i: &mut Interp, v: &Value) -> Result<String, Flow> {
     }
 }
 
+fn expand_and_dir_to_file(i: &mut Interp, original: &Value) -> EvalResult {
+    let expanded = want_filename(i, original)?;
+    let filename = file_name_argument(original, &expanded);
+    if expanded.chars().count() > 1 && expanded.ends_with('/') {
+        f_directory_file_name(i, vec![filename].into())
+    } else {
+        Ok(filename)
+    }
+}
+
 /// GNU checks the source name first, then the destination (or VISIT).
 /// Keep operation filtering and recursive-handler inhibition in one finder.
 pub(crate) fn file_handler(
@@ -11210,13 +11220,23 @@ fn f_file_exists_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(std::path::Path::new(&p).exists()))
 }
 fn f_file_directory_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let p = want_filename(i, &a[0])?;
+    let filename = expand_and_dir_to_file(i, &a[0])?;
+    let p = want_str(i, &filename)?;
+    if let Some((handler, op)) = file_handler(i, "file-directory-p", &[&p]) {
+        return i.apply(&handler, vec![op, filename]);
+    }
     Ok(Value::from_bool(std::path::Path::new(&p).is_dir()))
 }
+
 fn f_file_regular_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let p = want_filename(i, &a[0])?;
+    let filename = expand_and_dir_to_file(i, &a[0])?;
+    let p = want_str(i, &filename)?;
+    if let Some((handler, op)) = file_handler(i, "file-regular-p", &[&p]) {
+        return i.apply(&handler, vec![op, filename]);
+    }
     Ok(Value::from_bool(std::path::Path::new(&p).is_file()))
 }
+
 fn f_file_readable_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let p = want_filename(i, &a[0])?;
     if let Some((handler, op)) = file_handler(i, "file-readable-p", &[&p]) {
@@ -11280,6 +11300,9 @@ fn f_file_writable_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 fn f_file_executable_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let p = want_filename(i, &a[0])?;
+    if let Some((handler, op)) = file_handler(i, "file-executable-p", &[&p]) {
+        return i.apply(&handler, vec![op, file_name_argument(&a[0], &p)]);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -11289,8 +11312,12 @@ fn f_file_executable_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     Ok(Value::Nil)
 }
+
 fn f_file_symlink_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let p = want_filename(i, &a[0])?;
+    if let Some((handler, op)) = file_handler(i, "file-symlink-p", &[&p]) {
+        return i.apply(&handler, vec![op, file_name_argument(&a[0], &p)]);
+    }
     match std::fs::symlink_metadata(&p) {
         Ok(m) if m.file_type().is_symlink() => {
             let target = std::fs::read_link(&p)
@@ -11301,9 +11328,21 @@ fn f_file_symlink_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         _ => Ok(Value::Nil),
     }
 }
+
 fn f_file_newer_than_file_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let p1 = want_filename(i, &a[0])?;
-    let p2 = want_filename(i, &a[1])?;
+    // C validates both input strings before either directory-name handler.
+    for value in &a[..2] {
+        if !matches!(value, Value::Str(_)) {
+            return Err(i.wrong_type_mut("stringp", value));
+        }
+    }
+    let first = expand_and_dir_to_file(i, &a[0])?;
+    let second = expand_and_dir_to_file(i, &a[1])?;
+    let p1 = want_str(i, &first)?;
+    let p2 = want_str(i, &second)?;
+    if let Some((handler, op)) = file_handler(i, "file-newer-than-file-p", &[&p1, &p2]) {
+        return i.apply(&handler, vec![op, first, second]);
+    }
     let m1 = std::fs::metadata(&p1).and_then(|m| m.modified());
     let m2 = std::fs::metadata(&p2).and_then(|m| m.modified());
     match (m1, m2) {
@@ -11312,6 +11351,7 @@ fn f_file_newer_than_file_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         _ => Ok(Value::Nil),
     }
 }
+
 /// `getpwuid (uid)' -> `pw_name' like GNU's stat_uname.
 #[cfg(unix)]
 fn uid_to_name(uid: i128) -> Option<String> {
@@ -11392,6 +11432,15 @@ fn f_file_attributes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU expands FILENAME (tilde, `$HOME', relative paths resolve
     // against default-directory) before the lstat.
     let p = expand_file_name_str(i, &p);
+    if let Some((handler, op)) = file_handler(i, "file-attributes", &[&p]) {
+        // GNU omits a nil ID-FORMAT for older file name handlers.
+        let mut arguments = vec![op, file_name_argument(&a[0], &p)];
+        let format = arg(&a, 1);
+        if !format.is_nil() {
+            arguments.push(format);
+        }
+        return i.apply(&handler, arguments);
+    }
     file_attributes_at(i, &p, &arg(&a, 1))
 }
 
@@ -11871,6 +11920,13 @@ fn f_file_name_as_directory(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
 }
 fn f_directory_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let s = want_str(i, &a[0])?;
+    if let Some((handler, op)) = file_handler(i, "directory-file-name", &[&s]) {
+        let handled = i.apply(&handler, vec![op, a[0].clone()])?;
+        if matches!(&handled, Value::Str(_)) {
+            return Ok(handled);
+        }
+        return Err(i.error("Invalid handler in `file-name-handler-alist'"));
+    }
     // GNU (fileio.c): strip trailing slashes, but a name made solely
     // of slashes is already a directory name and stays unchanged
     // (`directory-file-name' of "/" is "/", of "//" is "//").
@@ -11879,6 +11935,7 @@ fn f_directory_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     Ok(Value::string(s.trim_end_matches('/').to_string()))
 }
+
 fn f_file_name_concat(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU files.el: nil components count as empty strings; empty
     // leading components don't force a leading slash.
@@ -12662,9 +12719,11 @@ fn f_make_temp_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_file_local_copy(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU CHECK_STRINGs FILENAME first; all files are local here,
-    // so a valid name always maps to nil.
-    want_str(i, &a[0])?;
+    // GNU files.el dispatches on the original, unexpanded FILE.
+    let name = want_str(i, &a[0])?;
+    if let Some((handler, op)) = file_handler(i, "file-local-copy", &[&name]) {
+        return i.apply(&handler, vec![op, a[0].clone()]);
+    }
     Ok(Value::Nil)
 }
 
@@ -14928,6 +14987,16 @@ fn remote_prefix(i: &mut Interp, file: &str) -> EvalResult {
 }
 
 fn f_file_equal_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU's Lisp wrapper checks the first raw name for a handler before
+    // it examines the second name, and forwards both original values.
+    let first = want_str(i, &a[0])?;
+    if let Some((handler, op)) = file_handler(i, "file-equal-p", &[&first]) {
+        return i.apply(&handler, vec![op, a[0].clone(), a[1].clone()]);
+    }
+    let second = want_str(i, &a[1])?;
+    if let Some((handler, op)) = file_handler(i, "file-equal-p", &[&second]) {
+        return i.apply(&handler, vec![op, a[0].clone(), a[1].clone()]);
+    }
     let f1 = want_filename(i, &a[0])?;
     let f2 = want_filename(i, &a[1])?;
     #[cfg(unix)]

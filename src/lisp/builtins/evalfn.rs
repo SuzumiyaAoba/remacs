@@ -3945,12 +3945,25 @@ fn f_access_file(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
     let expanded = crate::editor::expand_file_name_str(i, &name);
+    let fmt = args.get(1).cloned().unwrap_or(Value::Nil);
+    if !matches!(&fmt, Value::Str(_)) {
+        return Err(i.wrong_type_mut("stringp", &fmt));
+    }
+    if let Some((handler, op)) = crate::editor::file_handler(i, "access-file", &[&expanded]) {
+        return i.apply(
+            &handler,
+            vec![
+                op,
+                crate::editor::file_name_argument(&args[0], &expanded),
+                fmt,
+            ],
+        );
+    }
     match std::fs::File::open(&expanded) {
         Ok(_) => Ok(Value::Nil),
         Err(e) => {
             let estr = e.to_string();
             let estr = estr.split(" (os error").next().unwrap_or(&estr).to_string();
-            let fmt = args.get(1).cloned().unwrap_or(Value::Nil);
             Err(i.signal_data(
                 sym::FILE_MISSING,
                 vec![fmt, Value::string(estr), args[0].clone()],
