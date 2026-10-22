@@ -12592,6 +12592,7 @@ fn f_make_temp_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_make_temp_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
     // GNU expands relative prefixes under `temporary-file-directory`,
     // GNU's Lisp `make-temp-file' signals SEQUENCEP on a non-string
     // prefix (its `(zerop (length prefix))' hits length first).
@@ -12615,11 +12616,12 @@ fn f_make_temp_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     for _ in 0..64 {
         let name = format!("{}{}{}", prefix, temp_name_seed(), suffix);
         let r = if dir_flag {
-            std::fs::create_dir(&name)
+            std::fs::DirBuilder::new().mode(0o700).create(&name)
         } else {
             std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
+                .mode(0o600)
                 .open(&name)
                 .map(|_| ())
         };

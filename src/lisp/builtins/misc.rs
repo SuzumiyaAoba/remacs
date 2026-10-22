@@ -5487,7 +5487,7 @@ fn f_buffer_hash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 // ---------- files ----------
 
 fn f_make_temp_file_internal(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
     // GNU Fmake_temp_file_internal: PREFIX is used VERBATIM — never
     // expanded against temporary-file-directory — so a relative prefix
     // resolves in the working directory (make-temp-file wraps it to
@@ -5526,7 +5526,10 @@ fn f_make_temp_file_internal(i: &mut Interp, args: crate::lisp::Argv) -> EvalRes
         counter = counter.wrapping_add(1);
         let cand = format!("{}{}{}", prefix, tempname_suffix(counter), suffix);
         let res: Result<Option<std::fs::File>, std::io::Error> = match kind {
-            Kind::Dir => std::fs::create_dir(&cand).map(|_| None),
+            Kind::Dir => std::fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&cand)
+                .map(|_| None),
             Kind::NoCreate => match std::fs::symlink_metadata(&cand) {
                 Ok(_) => Err(std::io::Error::from_raw_os_error(libc::EEXIST)),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
