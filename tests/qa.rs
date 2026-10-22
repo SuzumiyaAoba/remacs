@@ -483,6 +483,7 @@ qa!(qa_completion_regexp_errors, "qa_completion_regexp_errors.el");
 qa!(qa_completion_string_flags, "qa_completion_string_flags.el");
 qa!(qa_delete_killed_target, "qa_delete_killed_target.el");
 qa!(qa_delete_relocation, "qa_delete_relocation.el");
+qa!(qa_extract_metadata, "qa_extract_metadata.el");
 
 qa!(qa_gensym_counter, "qa_gensym_counter.el");
 

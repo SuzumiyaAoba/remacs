@@ -2404,8 +2404,24 @@ pub(crate) fn delete_preserving_undo(
 /// `delete_region' over [S0,E0) (0-based) with signals; returns the
 /// removed text.
 pub(crate) fn chg_delete(i: &mut Interp, s0: usize, e0: usize) -> Result<String, Flow> {
+    chg_delete_inner(i, s0, e0, false).map(|deleted| deleted.text)
+}
+
+#[derive(Default)]
+struct DeletedText {
+    text: String,
+    properties: Vec<(usize, usize, Vec<Value>)>,
+    multibyte: bool,
+}
+
+fn chg_delete_inner(
+    i: &mut Interp,
+    s0: usize,
+    e0: usize,
+    extract: bool,
+) -> Result<DeletedText, Flow> {
     if s0 >= e0 {
-        return Ok(String::new());
+        return Ok(DeletedText::default());
     }
     // GNU barf-if-buffer-read-only: kill/delete in a read-only buffer
     // signals `buffer-read-only' before touching text.
@@ -2431,9 +2447,24 @@ pub(crate) fn chg_delete(i: &mut Interp, s0: usize, e0: usize) -> Result<String,
     }
     let buffer = cur(i);
     let end = start.saturating_add(e0 - s0).min(buffer.borrow().zv);
+    // Snapshot the actual range after before hooks, before deletion or
+    // after hooks can alter its intervals or the buffer's byte mode.
+    let (properties, multibyte) = if extract {
+        let buffer = buffer.borrow();
+        (
+            buf_props_as_ivs(&buffer.text.props.borrow(), start, end),
+            transfer_buffer_multibyte(i, &buffer),
+        )
+    } else {
+        (Vec::new(), false)
+    };
     let removed = delete_preserving_undo(i, &mut buffer.borrow_mut(), start, end, false);
     signal_after_change(i, start + 1, start + 1, end.saturating_sub(start) as i128)?;
-    Ok(removed)
+    Ok(DeletedText {
+        text: removed,
+        properties,
+        multibyte,
+    })
 }
 
 /// GNU `replace_range': ONE before/after pair and one MODIFF bump of
@@ -7920,18 +7951,16 @@ fn f_delete_and_extract_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     check_writable(i)?;
     barf_if_file_locked(i)?;
     let (s, e) = ((s1 - 1) as usize, (e1 - 1) as usize);
-    // GNU `delete_and_extract' copies the deleted text WITH its text
-    // properties — grab them before the delete reshapes the table.
-    let ivs = {
-        let b = cur(i);
-        let bb = b.borrow();
-        buf_props_as_ivs(&bb.text.props.borrow(), s, e)
-    };
-    let text = chg_delete(i, s, e)?;
-    let v = Value::string(text);
-    if !ivs.is_empty() {
-        if let Value::Str(sr) = &v {
-            i.set_str_props(sr, ivs);
+    let deleted = chg_delete_inner(i, s, e, true)?;
+    let v = Value::string(deleted.text);
+    if let Value::Str(string) = &v {
+        if deleted.multibyte {
+            i.mark_multibyte(string);
+        } else {
+            i.mark_unibyte(string);
+        }
+        if !deleted.properties.is_empty() {
+            i.set_str_props(string, deleted.properties);
         }
     }
     Ok(v)
