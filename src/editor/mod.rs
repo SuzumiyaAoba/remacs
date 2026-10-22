@@ -18080,13 +18080,18 @@ fn common_prefix_len(a: &str, b: &str, n: usize, ignore_case: bool) -> usize {
 }
 
 /// `substring(BESTMATCH, 0, N)' for a string Value, preserving text
-/// properties like GNU's Fsubstring.
+/// properties and byte representation like GNU's Fsubstring.
 fn substring_str_value(i: &mut Interp, v: &Value, n: usize) -> Value {
     let Value::Str(src) = v else {
         return v.clone();
     };
     let text: String = src.borrow().chars().take(n).collect();
     let ns = crate::lisp::Value::string_ref(text);
+    if crate::lisp::builtins::strfn::string_multibyte_p(i, v) {
+        i.mark_multibyte(&ns);
+    } else {
+        i.mark_unibyte(&ns);
+    }
     if i.has_str_props(src) {
         let ivs: Vec<(usize, usize, Vec<Value>)> = i
             .str_props(src)
