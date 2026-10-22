@@ -2495,6 +2495,77 @@ mod tests {
         );
     }
 
+    #[test]
+    fn modified_named_keys_follow_lisp_bindings() {
+        let mut i = Interp::new();
+        i.eval_str("(progn (insert \"alpha\\nbeta\") (goto-char (point-max)))")
+            .unwrap();
+        let mut keys = Vec::new();
+        let mut arg_mode = false;
+        for (key, expected) in [(KeyCode::Home, "1"), (KeyCode::End, "11")] {
+            let code = key_event_to_code(ev(key, KeyModifiers::CONTROL)).unwrap();
+            dispatch_key_core(&mut i, code, &mut keys, &mut arg_mode, None).unwrap();
+            let point = i.eval_str("(point)").unwrap();
+            assert_eq!(i.prin1_to_string(&point), expected);
+        }
+        i.eval_str("(setq qa297-hit 0)").unwrap();
+        for (key, modifiers, name) in [
+            (
+                KeyCode::F(5),
+                KeyModifiers::ALT | KeyModifiers::SHIFT,
+                "M-S-f5",
+            ),
+            (
+                KeyCode::Right,
+                KeyModifiers::CONTROL | KeyModifiers::SUPER,
+                "C-s-right",
+            ),
+            (
+                KeyCode::Left,
+                KeyModifiers::HYPER | KeyModifiers::SHIFT,
+                "H-S-left",
+            ),
+            (
+                KeyCode::Delete,
+                KeyModifiers::CONTROL
+                    | KeyModifiers::ALT
+                    | KeyModifiers::SHIFT
+                    | KeyModifiers::SUPER
+                    | KeyModifiers::HYPER,
+                "C-H-M-S-s-delete",
+            ),
+        ] {
+            i.eval_str(&format!(
+                "(global-set-key [{name}] (lambda () (interactive) (setq qa297-hit (1+ qa297-hit))))"
+            ))
+            .unwrap();
+            let code = key_event_to_code(ev(key, modifiers)).unwrap();
+            dispatch_key_core(&mut i, code, &mut keys, &mut arg_mode, None).unwrap();
+        }
+        let hit = i.eval_str("qa297-hit").unwrap();
+        assert_eq!(i.prin1_to_string(&hit), "4");
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn modified_named_keys_round_trip_without_hashing_the_prefix() {
+        use crate::editor::{event_code_for, key_name_for};
+        let left = event_code_for("left") | CHAR_CTL | CHAR_META;
+        assert_eq!(event_code_for("M-C-left"), left);
+        assert_eq!(event_code_for("C-M-left"), left);
+        assert_eq!(key_name_for(left).as_deref(), Some("C-M-left"));
+        assert_eq!(crate::editor::describe_key(left), "C-M-<left>");
+        // These names have identical initial hash slots. Modifier handling
+        // must preserve the existing collision resolution for base names.
+        let dp = event_code_for("dp");
+        let f2 = event_code_for("f2");
+        assert_ne!(dp, f2);
+        assert_eq!(event_code_for("C-dp"), dp | CHAR_CTL);
+        assert_eq!(event_code_for("C-f2"), f2 | CHAR_CTL);
+        assert_eq!(key_name_for(dp | CHAR_CTL).as_deref(), Some("C-dp"));
+        assert_eq!(key_name_for(f2 | CHAR_CTL).as_deref(), Some("C-f2"));
+    }
+
     // ---------- input loops ----------
 
     /// An Interp whose current buffer is a minibuffer that already

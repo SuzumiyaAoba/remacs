@@ -7621,7 +7621,30 @@ pub(crate) fn key_seq(i: &mut Interp, v: &Value) -> Result<Vec<i128>, Flow> {
 pub(crate) const NAMED_KEY_BASE: i128 = 0x4000_0000;
 pub(crate) const NAMED_KEY_MASK: i128 = 0x1f_ffff;
 
-pub(crate) fn event_code_for(name: &str) -> i128 {
+const NAMED_KEY_MODIFIERS: [(i128, &str); 6] = [
+    (CHAR_ALT, "A-"),
+    (CHAR_CTL, "C-"),
+    (CHAR_HYPER, "H-"),
+    (CHAR_META, "M-"),
+    (CHAR_SHIFT, "S-"),
+    (CHAR_SUPER, "s-"),
+];
+
+pub(crate) fn event_code_for(mut name: &str) -> i128 {
+    // Keymaps supply symbols such as C-home; front-ends supply the
+    // home code with CHAR_CTL set. Hash only the base name so both
+    // paths describe the same event (#297).
+    let mut modifiers = 0;
+    while name.len() > 2 {
+        let Some((bit, prefix)) = NAMED_KEY_MODIFIERS
+            .iter()
+            .find(|(_, prefix)| name.starts_with(*prefix))
+        else {
+            break;
+        };
+        modifiers |= *bit;
+        name = &name[prefix.len()..];
+    }
     let h = {
         let mut h = 0usize;
         for b in name.bytes() {
@@ -7638,9 +7661,9 @@ pub(crate) fn event_code_for(name: &str) -> i128 {
             match map.get(&code) {
                 None => {
                     map.insert(code, name.to_string());
-                    return code;
+                    return code | modifiers;
                 }
-                Some(existing) if existing == name => return code,
+                Some(existing) if existing == name => return code | modifiers,
                 Some(_) => {
                     code += 1;
                     if code > NAMED_KEY_BASE + NAMED_KEY_MASK {
@@ -7650,7 +7673,7 @@ pub(crate) fn event_code_for(name: &str) -> i128 {
             }
         }
     }
-    NAMED_KEY_BASE + (h & NAMED_KEY_MASK)
+    (NAMED_KEY_BASE + (h & NAMED_KEY_MASK)) | modifiers
 }
 
 fn named_key_names() -> &'static std::sync::Mutex<Option<std::collections::HashMap<i128, String>>> {
@@ -7664,13 +7687,23 @@ fn named_key_names() -> &'static std::sync::Mutex<Option<std::collections::HashM
 /// `down` rather than a raw integer.
 /// Return the event name for a named-key code, if registered.
 pub(crate) fn key_name_for(code: i128) -> Option<String> {
-    if code < NAMED_KEY_BASE || code > NAMED_KEY_BASE + NAMED_KEY_MASK {
+    let modifier_mask = NAMED_KEY_MODIFIERS.iter().fold(0, |mask, (bit, _)| mask | bit);
+    let bare = code & !modifier_mask;
+    if bare < NAMED_KEY_BASE || bare > NAMED_KEY_BASE + NAMED_KEY_MASK {
         return None;
     }
-    named_key_names()
+    let name = named_key_names()
         .lock()
         .ok()
-        .and_then(|g| g.as_ref().and_then(|m| m.get(&code).cloned()))
+        .and_then(|g| g.as_ref().and_then(|m| m.get(&bare).cloned()))?;
+    let mut result = String::new();
+    for (bit, prefix) in NAMED_KEY_MODIFIERS {
+        if code & bit != 0 {
+            result.push_str(prefix);
+        }
+    }
+    result.push_str(&name);
+    Some(result)
 }
 
 /// GNU `get_keyelt': unwrap a keymap binding's definition — strip
@@ -7730,9 +7763,10 @@ fn access_keymap(
     t_ok: bool,
     noinherit: bool,
 ) -> Result<Option<Value>, Flow> {
-    // A meta-bit key is looked up through the map's meta-prefix (27)
-    // binding — M-x means ESC x.
-    if key & META_BIT != 0 {
+    // Only character events use the meta-prefix submap. A named event
+    // such as M-left remains one symbol even though its packed code
+    // now carries the same modifier bits as front-end input.
+    if key < NAMED_KEY_BASE && key & META_BIT != 0 {
         let esc_b = access_keymap(i, km, 27, t_ok, noinherit)?;
         let esc = match &esc_b {
             Some(v) => keymap_def(i, v.clone())?,
@@ -8036,12 +8070,12 @@ fn f_define_key(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         // GNU returns nil for an empty key sequence.
         return Ok(Value::Nil);
     }
-    // GNU Fdefine_key metizes: an event carrying the meta bit is
+    // GNU Fdefine_key metizes: a character carrying the meta bit is
     // defined through the meta-prefix (27) submap with the bit
     // stripped — [?\M-x] means [27 ?x].
     let mut keys = Vec::with_capacity(raw_keys.len());
     for &k in &raw_keys {
-        if k & CHAR_META != 0 {
+        if k < NAMED_KEY_BASE && k & CHAR_META != 0 {
             keys.push(27);
             keys.push(k & !CHAR_META);
         } else {

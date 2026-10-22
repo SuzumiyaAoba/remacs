@@ -816,6 +816,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn modified_named_keys_follow_gui_command_bindings() {
+        let mut i = Interp::new();
+        i.eval_str("(progn (insert \"alpha\\nbeta\") (goto-char (point-max)))")
+            .unwrap();
+        let mut keys = Vec::new();
+        let mut arg_mode = false;
+        let home = keystroke_to_code(&ks("home", None, true, false, false, false)).unwrap();
+        crate::term::dispatch_key_core(&mut i, home, &mut keys, &mut arg_mode, None).unwrap();
+        let point = i.eval_str("(point)").unwrap();
+        assert_eq!(i.prin1_to_string(&point), "1");
+        i.eval_str("(progn (defun qa297-gui-command () (interactive) (insert \"GUI\")) (global-set-key [C-M-S-s-f5] (quote qa297-gui-command)))")
+            .unwrap();
+        let command = keystroke_to_code(&ks("f5", None, true, true, true, true)).unwrap();
+        crate::term::dispatch_key_core(&mut i, command, &mut keys, &mut arg_mode, None).unwrap();
+        let text = i.eval_str("(buffer-string)").unwrap();
+        assert_eq!(i.princ_to_string(&text), "GUIalpha\nbeta");
+        assert!(keys.is_empty());
+    }
+
     fn chan_pair() -> (ChanIo, Sender<GuiEvent>, smol::channel::Receiver<Grid>) {
         let (etx, erx) = mpsc::channel();
         let (gtx, grx) = smol::channel::bounded(1);

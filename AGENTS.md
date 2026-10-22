@@ -394,6 +394,13 @@ would overwrite that definition with the bootstrap token parser, losing
 repeat counts, menus, comments and whitespace handling. Regression:
 `qa_key_parse` (35 GNU-verified checks, #296).
 
+Named key codes hash the base event name and carry A/C/H/M/S/s in modifier
+bits, so Lisp symbols such as `C-home` match front-end base-plus-modifier
+events. Reverse lookup reconstructs canonical prefixes. Only character
+Meta events use the ESC submap; `M-left` remains a single symbol even if
+ESC has a non-prefix binding. Regression: `qa_modified_named_keys` and
+the GUI/terminal `modified_named_keys` tests (#297).
+
 `display-buffer` falls back through the existing GNU
 `display-buffer-pop-up-window` action and then `display-buffer-use-some-window`.
 The split policy honors `pop-up-windows`, tries largest/LRU candidates, and
