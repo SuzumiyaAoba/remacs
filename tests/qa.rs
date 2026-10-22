@@ -149,6 +149,8 @@ qa!(qa_basic_faces, "qa_basic_faces.el");
 qa!(qa_face, "qa_face.el");
 qa!(qa_face3, "qa_face3.el");
 qa!(qa_faces2, "qa_faces2.el");
+qa!(qa_face_remap_autoload, "qa_face_remap_autoload.el");
+qa!(qa_face_remap_require, "qa_face_remap_require.el");
 qa!(qa_fileattr, "qa_fileattr.el");
 qa!(qa_file_modes, "qa_file_modes.el");
 qa!(qa_extension_period, "qa_extension_period.el");
