@@ -12690,10 +12690,7 @@ fn f_make_temp_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         match r {
             Ok(mut output) => {
                 if let Some(text) = a.get(3) {
-                    if text.truthy() {
-                        if !matches!(text, Value::Str(_)) {
-                            return Err(i.wrong_type_mut("stringp", text));
-                        }
+                    if matches!(text, Value::Str(string) if !string.borrow().is_empty()) {
                         let bytes = temp_file_text_bytes(i, &name, text)?;
                         if let Some(file) = &mut output {
                             use std::io::Write;
