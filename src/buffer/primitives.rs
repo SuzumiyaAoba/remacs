@@ -2412,15 +2412,27 @@ pub(crate) fn chg_delete(i: &mut Interp, s0: usize, e0: usize) -> Result<String,
     let target = cur(i);
     check_writable(i)?;
     text_ro_range(i, s0, e0)?;
-    signal_before_change(i, s0 + 1, e0 + 1)?;
+    // GNU del_range_1 preserves the start in a non-advancing marker,
+    // then keeps the original length and clamps the end after hooks.
+    let Value::Marker(start_marker) = new_marker_at(i, i.current_buffer, s0) else {
+        unreachable!()
+    };
+    let prepared = signal_before_change(i, s0 + 1, e0 + 1);
+    let start = {
+        let mut marker = start_marker.borrow_mut();
+        marker.buffer = None;
+        marker.position
+    };
+    prepared?;
     // GNU's preserved deletion marker becomes detached when its buffer
     // dies in a hook. Do not delete text in the newly selected buffer.
     if !target.borrow().live {
         return Err(i.error("Marker does not point anywhere"));
     }
     let buffer = cur(i);
-    let removed = delete_preserving_undo(i, &mut buffer.borrow_mut(), s0, e0, false);
-    signal_after_change(i, s0 + 1, s0 + 1, (e0 - s0) as i128)?;
+    let end = start.saturating_add(e0 - s0).min(buffer.borrow().zv);
+    let removed = delete_preserving_undo(i, &mut buffer.borrow_mut(), start, end, false);
+    signal_after_change(i, start + 1, start + 1, end.saturating_sub(start) as i128)?;
     Ok(removed)
 }
 
