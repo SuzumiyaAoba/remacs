@@ -5854,6 +5854,18 @@ command-line arguments.\" \
                 }
                 continue;
             }
+            // GNU restores LET_LOCAL only while that original buffer's
+            // binding still exists. A killed binding must not be recreated,
+            // nor receive an unlet watcher notification.
+            if let Some(buffer_id) = sb.buf {
+                let still_local = self.buffers.get(buffer_id).is_some_and(|buffer| {
+                    self.obarray.symbol(sb.sym).always_local
+                        || buffer.borrow().locals.contains_key(&sb.sym)
+                });
+                if !still_local {
+                    continue;
+                }
+            }
             let restored = sb.old.clone().unwrap_or(Value::Nil);
             // GNU notifies before storing the restored value. A global
             // forwarded variable goes through set_default_internal and
