@@ -1,0 +1,27 @@
+;;; qa_closure_dotted_args.el --- Defer malformed arglist errors until calls -*- lexical-binding: t; -*-
+(defun qa349-call (args values)
+  (let ((function (make-interpreted-closure args '(nil) '(t))))
+    (condition-case err
+        (apply function values)
+      (error (list (car err) (eq (cadr err) function) (aref function 0))))))
+
+(qa (functionp (make-interpreted-closure '(a . b) '(a) nil)) t)
+(qa (aref (make-interpreted-closure '(a . b) '(a) nil) 0) '(a . b))
+(qa (functionp (make-interpreted-closure '(a b . c) '(a) '(t))) t)
+(qa (qa349-call '(a . b) '(1 2 3)) '(invalid-function t (a . b)))
+(qa (qa349-call '(a b . c) '(1 2 3)) '(invalid-function t (a b . c)))
+(qa (qa349-call '(&optional a . b) nil) '(invalid-function t (&optional a . b)))
+(qa (qa349-call '(&rest a . b) '(1 2)) '(invalid-function t (&rest a . b)))
+(qa (qa349-call '(a . b) nil) '(wrong-number-of-arguments t (a . b)))
+(qa-err (eval '(funcall (lambda (a . b) (list a b)) 1 2 3) t) 'invalid-function)
+(qa-err (eval '(funcall (lambda (a b . c) (list a b c)) 1 2 3) t) 'invalid-function)
+(qa-err (eval '(funcall (lambda (a . b) (list a b)) 1 2) nil) 'invalid-function)
+(qa-err-data (make-interpreted-closure 'a '(nil) nil) 'wrong-type-argument '(listp a))
+(qa-err-data (make-interpreted-closure 42 '(nil) nil) 'wrong-type-argument '(listp 42))
+(qa-err-data (make-interpreted-closure [] '(nil) nil) 'wrong-type-argument '(listp []))
+;; BODY is checked first, even if ARGS is also invalid.
+(qa-err-data (make-interpreted-closure 42 nil nil) 'wrong-type-argument '(consp nil))
+(qa (funcall (make-interpreted-closure '(a . nil) '(a) '(t)) 7) 7)
+(qa (funcall (make-interpreted-closure '(a &optional b &rest c) '((list a b c)) '(t)) 1 2 3 4)
+    '(1 2 (3 4)))
+(princ (qa--done))

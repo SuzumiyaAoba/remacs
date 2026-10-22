@@ -2017,12 +2017,10 @@ pub(crate) fn f_make_interpreted_closure(i: &mut Interp, args: crate::lisp::Argv
     if !matches!(args[1], Value::Cons(_)) {
         return Err(i.wrong_type_mut("consp", &args[1]));
     }
-    match args[0].list_to_vec() {
-        Ok(_) => {}
-        Err(crate::lisp::value::ListError::Dotted(tail)) => {
-            return Err(i.wrong_type_mut("listp", &tail));
-        }
-        Err(_) => return Err(i.wrong_type_mut("listp", &args[0])),
+    // CHECK_LIST checks the outer shape only.  The binding walk diagnoses
+    // a dotted argument tail when the resulting closure is called.
+    if !matches!(args[0], Value::Nil | Value::Cons(_)) {
+        return Err(i.wrong_type_mut("listp", &args[0]));
     }
     let doc = args.get(3).cloned().filter(|v| !v.is_nil());
     let iform = args.get(4).cloned().filter(|v| !v.is_nil());
