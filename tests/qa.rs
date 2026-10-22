@@ -470,6 +470,7 @@ qa!(qa_overlay_arguments, "qa_overlay_arguments.el");
 qa!(qa_overlay_priority, "qa_overlay_priority.el");
 qa!(qa_overlay_evaporation, "qa_overlay_evaporation.el");
 qa!(qa_overlay_target_buffer, "qa_overlay_target_buffer.el");
+qa!(qa_overlay_category, "qa_overlay_category.el");
 
 qa!(qa_gensym_counter, "qa_gensym_counter.el");
 

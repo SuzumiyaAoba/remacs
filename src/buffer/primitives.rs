@@ -12877,7 +12877,7 @@ pub(crate) fn char_prop_at_overlay(
         .collect();
     crate::buffer::sort_overlays_by_priority(i, &mut overlays);
     for (ov, _) in overlays.into_iter().rev() {
-        let v = crate::lisp::eval::plist_get(&ov.plist, prop);
+        let v = ov.property(i, &Value::Sym(prop));
         if !v.is_nil() {
             return (v, ov.handle.clone());
         }

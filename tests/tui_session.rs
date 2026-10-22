@@ -696,3 +696,41 @@ fn tui_overlay_priority_matches_effective_face() {
         }
     })
 }
+
+#[test]
+fn tui_category_overlay_faces_follow_defaults_and_nil_shadows() {
+    run_on_big_stack(move || {
+        let mut i = Interp::new();
+        i.eval_str(
+            r##"(with-current-buffer "*scratch*"
+              (erase-buffer) (insert "abc\n") (goto-char 1)
+              (setq mark-active nil
+                    qa312-category (make-symbol "qa312-paint")
+                    qa312-overlay (make-overlay 1 4))
+              (put qa312-category 'face '(:foreground "#ff0000"))
+              (overlay-put qa312-overlay 'category qa312-category))"##,
+        )
+        .expect("set inherited overlay face");
+        for (change, expected) in [
+            ("nil", (255, 0, 0)),
+            (
+                r##"(put qa312-category 'face '(:foreground "#0000ff"))"##,
+                (0, 0, 255),
+            ),
+            (
+                r##"(progn (overlay-put qa312-overlay 'face nil)
+                (put-text-property 1 4 'face '(:foreground "#00ff00")))"##,
+                (0, 255, 0),
+            ),
+        ] {
+            i.eval_str(change).expect("change inherited face");
+            let grid = render_grid(&i, 80, 24);
+            assert_eq!(
+                grid.attrs[0][1].fg,
+                Some(remacs::term::CellColor(expected.0, expected.1, expected.2)),
+                "category face after {change}: {:?}",
+                grid.attrs[0][1]
+            );
+        }
+    })
+}

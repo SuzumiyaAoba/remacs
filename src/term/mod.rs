@@ -540,12 +540,12 @@ fn window_faces(
             if ov.buffer != Some(bb.id) || ov.start >= ov.end {
                 return false;
             }
-            let wv = crate::lisp::eval::plist_get(&ov.plist, ctx.window);
+            let wv = ov.property(i, &Value::Sym(ctx.window));
             // nil = all windows; non-nil must be this window object.
             wv.is_nil() || crate::lisp::builtins::eq_values(&wv, win)
         })
         .filter_map(|(_, ov)| {
-            let fv = crate::lisp::eval::plist_get(&ov.plist, ctx.face);
+            let fv = ov.property(i, &Value::Sym(ctx.face));
             if fv.is_nil() {
                 return None;
             }
