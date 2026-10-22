@@ -612,6 +612,14 @@ Encoding the Rust proxy scalar directly emits the wrong bytes. Regressions:
 
 Registered `[overlay BID IDX]` handles are pseudovectors, not ordinary
 vectors for equality. `overlay_state` reads their current editor data.
+When a buffer is killed, its canonical handles append their plist and
+insertion flags, so detached state lives with the Lisp object rather than
+the dead buffer. Moved-away stubs must never overwrite that state. Revival
+registers a fresh live slot and drops the inline state; image restoration
+must prefer inline state over potentially reused numeric buffer ids.
+Overlay copies and `overlay-properties` copy plist cells, retaining shared
+property values. Regressions: `qa_overlay_lifetime` and killed-overlay
+state in `tests/portable_dump.rs`.
 GNU compares buffer and live bounds, then the ordered overlay plist at
 depth + 1; insertion flags do not participate, and detached bounds are
 ignored. A look-alike ordinary vector must remain a different type.

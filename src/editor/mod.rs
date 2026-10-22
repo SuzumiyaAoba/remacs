@@ -20474,7 +20474,7 @@ pub(crate) fn f_make_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
 fn overlay_of(i: &mut Interp, v: &Value) -> Result<(usize, usize), Flow> {
     if let Value::Vec(vec) = v {
         let vv = vec.borrow();
-        if vv.len() == 3 {
+        if vv.len() == 3 || vv.len() == 7 {
             if let (Value::Sym(tag), Value::Int(bid), Value::Int(idx)) = (&vv[0], &vv[1], &vv[2]) {
                 if i.sym_id(&Value::Sym(*tag)) == i.intern_soft("overlay") {
                     return Ok((*bid as usize, *idx as usize));
@@ -20486,10 +20486,8 @@ fn overlay_of(i: &mut Interp, v: &Value) -> Result<(usize, usize), Flow> {
 }
 
 /// Look up the Overlay a handle points at, if its slot still exists.
-fn overlay_slot(i: &Interp, bid: usize, idx: usize) -> Option<crate::buffer::Overlay> {
-    i.buffers
-        .get(bid)
-        .and_then(|b| b.borrow().overlays.get(idx).cloned())
+fn overlay_slot(i: &Interp, handle: &Value) -> Option<crate::buffer::Overlay> {
+    i.overlay_state(handle)
 }
 
 fn f_delete_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -20534,9 +20532,10 @@ fn f_move_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     let s = (s.max(0) as usize).min(len);
     let e = (e.max(0) as usize).min(len);
-    let Some(ov) = overlay_slot(i, bid, idx) else {
+    let Some(ov) = overlay_slot(i, &a[0]) else {
         return Ok(a[0].clone());
     };
+    let detached = crate::buffer::Overlay::detached_state(&a[0]).is_some();
     if s == e {
         let property = Value::Sym(i.intern("evaporate"));
         // overlay-get includes a category's inherited evaporate value.
@@ -20545,12 +20544,14 @@ fn f_move_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             return Ok(a[0].clone());
         }
     }
-    if nbid != bid {
+    if nbid != bid || detached {
         // Cross-buffer move: leave a dead stub behind and push a new
         // entry into the target buffer, then retarget the handle.
-        if let Some(ob) = i.buffers.get(bid) {
-            if let Some(old) = ob.borrow_mut().overlays.get_mut(idx) {
-                old.buffer = None;
+        if !detached {
+            if let Some(ob) = i.buffers.get(bid) {
+                if let Some(old) = ob.borrow_mut().overlays.get_mut(idx) {
+                    old.buffer = None;
+                }
             }
         }
         let nidx = {
@@ -20563,6 +20564,7 @@ fn f_move_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             let mut vv = v.borrow_mut();
             vv[1] = Value::Int(nbid as i128);
             vv[2] = Value::Int(nidx as i128);
+            vv.truncate(3);
         }
         let nb = i.buffers.get(nbid).unwrap();
         let mut nbb = nb.borrow_mut();
@@ -20583,22 +20585,22 @@ fn f_move_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_overlay_start(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let (bid, idx) = overlay_of(i, &a[0])?;
-    Ok(match overlay_slot(i, bid, idx) {
+    overlay_of(i, &a[0])?;
+    Ok(match overlay_slot(i, &a[0]) {
         Some(ov) if ov.buffer.is_some() => Value::Int(ov.start as i128 + 1),
         _ => Value::Nil,
     })
 }
 fn f_overlay_end(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let (bid, idx) = overlay_of(i, &a[0])?;
-    Ok(match overlay_slot(i, bid, idx) {
+    overlay_of(i, &a[0])?;
+    Ok(match overlay_slot(i, &a[0]) {
         Some(ov) if ov.buffer.is_some() => Value::Int(ov.end as i128 + 1),
         _ => Value::Nil,
     })
 }
 fn f_overlay_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let (bid, idx) = overlay_of(i, &a[0])?;
-    Ok(match overlay_slot(i, bid, idx) {
+    overlay_of(i, &a[0])?;
+    Ok(match overlay_slot(i, &a[0]) {
         Some(ov) => ov
             .buffer
             .and_then(|id| i.buffer_value(id))
@@ -20615,29 +20617,33 @@ fn f_overlay_put(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // keys are compared with `eq' in the overlay plist (Foverlay_put's
     // CHECK_SYMBOL is on the OVERLAY arg, not PROP).
     let evap = i.intern("evaporate");
-    if let Some(b) = i.buffers.get(bid) {
-        let mut bb = b.borrow_mut();
-        if let Some(ov) = bb.overlays.get_mut(idx) {
-            if eq_values(&a[1], &Value::Sym(evap)) {
-                // Cached flag so the deletion path needs no interner.
-                ov.evaporate = a[2].truthy();
-                // Foverlay_put immediately detaches an empty overlay
-                // when its evaporate property becomes non-nil.
-                if ov.evaporate && ov.start == ov.end {
-                    ov.buffer = None;
-                }
+    if let Some(mut ov) = overlay_slot(i, &a[0]) {
+        if eq_values(&a[1], &Value::Sym(evap)) {
+            // Cached flag so the deletion path needs no interner.
+            ov.evaporate = a[2].truthy();
+            // Foverlay_put immediately detaches an empty overlay
+            // when its evaporate property becomes non-nil.
+            if ov.evaporate && ov.start == ov.end {
+                ov.buffer = None;
             }
-            // GNU Foverlay_put conses a NEW property onto the front of
-            // the plist (existing keys update in place) — append-order
-            // plist_put_v would print keys oldest-first, not GNU order.
-            ov.plist = crate::lisp::eval::plist_put_front(&ov.plist, &a[1], a[2].clone());
+        }
+        // GNU Foverlay_put conses a NEW property onto the front of
+        // the plist (existing keys update in place) — append-order
+        // plist_put_v would print keys oldest-first, not GNU order.
+        ov.plist = crate::lisp::eval::plist_put_front(&ov.plist, &a[1], a[2].clone());
+        if crate::buffer::Overlay::detached_state(&a[0]).is_some() {
+            ov.save_detached_state();
+        } else if let Some(buffer) = i.buffers.get(bid) {
+            if let Some(slot) = buffer.borrow_mut().overlays.get_mut(idx) {
+                *slot = ov;
+            }
         }
     }
     Ok(a[2].clone())
 }
 fn f_overlay_get(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let (bid, idx) = overlay_of(i, &a[0])?;
-    Ok(match overlay_slot(i, bid, idx) {
+    overlay_of(i, &a[0])?;
+    Ok(match overlay_slot(i, &a[0]) {
         Some(ov) => {
             // GNU `lookup_char_property': a present key wins even
             // when its value is nil; else fall back to the
@@ -20661,11 +20667,9 @@ fn f_overlay_get(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     })
 }
 fn f_overlay_properties(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let (bid, idx) = overlay_of(i, &a[0])?;
-    Ok(match overlay_slot(i, bid, idx) {
-        Some(ov) => ov.plist,
-        _ => Value::Nil,
-    })
+    overlay_of(i, &a[0])?;
+    let plist = overlay_slot(i, &a[0]).map_or(Value::Nil, |ov| ov.plist);
+    crate::lisp::builtins::seq::f_copy_sequence(i, vec![plist].into())
 }
 fn f_overlayp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(i.is_overlay(&a[0])))
@@ -23093,17 +23097,23 @@ fn f_scroll_other_window_down(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
 // ---------- overlays (missing pieces) ----------
 
 fn f_copy_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let (bid, idx) = overlay_of(i, &a[0])?;
-    let ov = match overlay_slot(i, bid, idx) {
+    let (bid, _) = overlay_of(i, &a[0])?;
+    let mut ov = match overlay_slot(i, &a[0]) {
         Some(o) => o,
         None => return Err(i.wrong_type_mut("overlayp", &a[0])),
     };
-    let b = i.buffers.get(bid).unwrap();
+    ov.plist = crate::lisp::builtins::seq::f_copy_sequence(i, vec![ov.plist.clone()].into())?;
+    let owner = if crate::buffer::Overlay::detached_state(&a[0]).is_some() {
+        i.current_buffer
+    } else {
+        bid
+    };
+    let b = i.buffers.get(owner).unwrap();
     let mut bb = b.borrow_mut();
     let new_idx = bb.overlays.len();
     let handle = Value::vector(vec![
         Value::Sym(i.intern("overlay")),
-        Value::Int(bid as i128),
+        Value::Int(owner as i128),
         Value::Int(new_idx as i128),
     ]);
     i.register_overlay(&handle);

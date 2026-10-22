@@ -5246,6 +5246,11 @@ command-line arguments.\" \
         if !self.is_overlay(value) {
             return None;
         }
+        // A restored image can reuse the old owner's numeric buffer id.
+        // Inline detached state therefore takes precedence over live slots.
+        if let Some(state) = crate::buffer::Overlay::detached_state(value) {
+            return Some(state);
+        }
         let Value::Vec(handle) = value else {
             return None;
         };

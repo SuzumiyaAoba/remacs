@@ -283,9 +283,8 @@ pub struct TextProp {
 
 /// A simplified overlay (start, end, plist).
 ///
-/// Entries are never removed from `Buffer::overlays' (handles hold
-/// `(buffer-id, index)` pairs); `buffer' becomes `None' when the
-/// overlay is deleted or moved to another buffer.
+/// Entries keep stable indices while their owner buffer lives. Before the
+/// buffer is destroyed, canonical handles retain their detached Lisp state.
 #[derive(Clone)]
 pub struct Overlay {
     pub start: usize,
@@ -304,6 +303,56 @@ pub struct Overlay {
     /// The canonical `[overlay BID IDX]' Lisp handle — reused by
     /// `overlays-at' & friends so `eq' holds for the same overlay.
     pub handle: Value,
+}
+
+impl Overlay {
+    /// Detached state belongs to the handle, without retaining the dead
+    /// buffer or adding strong roots to the interpreter's weak registry.
+    pub(crate) fn detached_state(handle: &Value) -> Option<Self> {
+        let Value::Vec(values) = handle else {
+            return None;
+        };
+        let values = values.borrow();
+        if values.len() != 7 {
+            return None;
+        }
+        Some(Self {
+            start: 0,
+            end: 0,
+            buffer: None,
+            plist: values[3].clone(),
+            front_advance: values[4].truthy(),
+            rear_advance: values[5].truthy(),
+            evaporate: values[6].truthy(),
+            handle: handle.clone(),
+        })
+    }
+
+    pub(crate) fn save_detached_state(&self) {
+        let Value::Vec(handle) = &self.handle else {
+            return;
+        };
+        let mut values = handle.borrow_mut();
+        if values.len() < 3 {
+            return;
+        }
+        values.truncate(3);
+        values.extend([
+            self.plist.clone(),
+            Value::from_bool(self.front_advance),
+            Value::from_bool(self.rear_advance),
+            Value::from_bool(self.evaporate),
+        ]);
+    }
+
+    fn owns_handle_at(&self, buffer: usize, slot: usize) -> bool {
+        let Value::Vec(handle) = &self.handle else {
+            return false;
+        };
+        matches!(handle.borrow().as_slice(),
+            [_, Value::Int(owner), Value::Int(index)]
+                if *owner == buffer as i128 && *index == slot as i128)
+    }
 }
 
 impl Buffer {
@@ -1402,8 +1451,13 @@ impl BufferSet {
                 m.borrow_mut().buffer = None;
             }
             // Overlays detach too (`overlay-buffer' → nil).
-            for ov in &mut bb.overlays {
+            for (slot, ov) in bb.overlays.iter_mut().enumerate() {
                 ov.buffer = None;
+                // Moved overlays leave stubs behind. Only the current owner
+                // may snapshot a handle, or an old stub could overwrite it.
+                if ov.owns_handle_at(id, slot) {
+                    ov.save_detached_state();
+                }
             }
         }
         let name = self.bufs[id].as_ref().unwrap().borrow().name.clone();

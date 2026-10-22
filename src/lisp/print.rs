@@ -409,23 +409,11 @@ impl Interp {
     /// `#<overlay from B to E in NAME>' (or `#<overlay in no buffer>'
     /// once detached/killed).
     fn overlay_repr(&self, items: &Rc<RefCell<Vec<Value>>>) -> Option<String> {
-        let vv = items.borrow();
-        if vv.len() != 3 {
+        let value = Value::Vec(items.clone());
+        if !self.is_overlay(&value) {
             return None;
         }
-        let (bid, idx) = match (&vv[0], &vv[1], &vv[2]) {
-            (Value::Sym(tag), Value::Int(b), Value::Int(x))
-                if Some(*tag) == self.intern_soft("overlay") =>
-            {
-                (*b as usize, *x as usize)
-            }
-            _ => return None,
-        };
-        let ov = match self
-            .buffers
-            .get(bid)
-            .and_then(|b| b.borrow().overlays.get(idx).cloned())
-        {
+        let ov = match self.overlay_state(&value) {
             Some(o) => o,
             // Detached/killed handles still print as overlays.
             None => return Some("#<overlay in no buffer>".into()),

@@ -96,6 +96,11 @@ fn image_restores_shared_lisp_state_buffers_and_reports_actual_startup() {
       (overlay-put dump128-overlay 'dump-property dump112-cycle) (delete-overlay dump128-overlay)
       (setq dump128-index (make-hash-table :test 'equal))
       (puthash dump112-overlay 'overlay-value dump128-index)
+      (let ((source (generate-new-buffer " *dump307-source*")))
+        (with-current-buffer source (insert "abcd"))
+        (setq dump307-killed (make-overlay 1 3 source t t))
+        (overlay-put dump307-killed 'dump-property dump112-cycle)
+        (kill-buffer source))
       (setq after-pdump-load-hook (list (lambda () (setq dump112-hook-ran t))))
       (dump-emacs-portable {} t)
       (prin1 (list (pdumper-stats) (> (file-attribute-size (file-attributes {})) 100))))"#,
@@ -139,6 +144,14 @@ fn image_restores_shared_lisp_state_buffers_and_reports_actual_startup() {
           (eq (overlay-get dump112-overlay 'dump-property) dump112-cycle)
           (equal dump112-overlay dump128-overlay)
           (eq (gethash dump128-overlay dump128-index) 'overlay-value)
+          (overlayp dump307-killed) (not (overlay-buffer dump307-killed))
+          (eq (overlay-get dump307-killed 'dump-property) dump112-cycle)
+          (with-temp-buffer
+            (insert "abcd") (move-overlay dump307-killed 2 4)
+            (and (eq (overlay-buffer dump307-killed) (current-buffer))
+                 (= (overlay-start dump307-killed) 2)
+                 (= (overlay-end dump307-killed) 4)
+                 (eq (overlay-get dump307-killed 'dump-property) dump112-cycle)))
           dump112-hook-ran
           (eq (cdr (assq 'dumped-with-pdumper stats)) t)
           (floatp (cdr (assq 'load-time stats))) (> (cdr (assq 'load-time stats)) 0)
@@ -155,7 +168,7 @@ fn image_restores_shared_lisp_state_buffers_and_reports_actual_startup() {
         &["--dump-file", fixture.image().to_str().unwrap()],
         &code,
     ));
-    assert_eq!(result, format!("({})", vec!["t"; 33].join(" ")));
+    assert_eq!(result, format!("({})", vec!["t"; 37].join(" ")));
     let equals = format!("--dump-file={}", fixture.image().display());
     assert_eq!(
         Fixture::ok(fixture.eval(
