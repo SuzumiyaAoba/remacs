@@ -155,6 +155,7 @@ qa!(qa_json_sentinels, "qa_json_sentinels.el");
 qa!(qa_json_narrow, "qa_json_narrow.el");
 qa!(qa_json_utf8, "qa_json_utf8.el");
 qa!(qa_json_output, "qa_json_output.el");
+qa!(qa_json_insert_bytes, "qa_json_insert_bytes.el");
 qa!(qa_fileattr, "qa_fileattr.el");
 qa!(qa_file_modes, "qa_file_modes.el");
 qa!(qa_extension_period, "qa_extension_period.el");

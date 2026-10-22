@@ -722,7 +722,7 @@ fn f_json_parse_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_json_insert(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let s = serialize(i, &a[0], &a[1..])?;
-    crate::buffer::primitives::chg_insert_pt(i, &s, false)?;
+    crate::buffer::primitives::chg_insert_utf8_pt(i, &s)?;
     Ok(Value::Nil)
 }
 

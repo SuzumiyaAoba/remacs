@@ -2259,7 +2259,13 @@ pub(crate) fn chg_insert(i: &mut Interp, pos: usize, s: &str) -> EvalResult {
 
 /// `insert'/`insert-before-markers' at point (advances point).
 pub(crate) fn chg_insert_pt(i: &mut Interp, s: &str, before_markers: bool) -> EvalResult {
-    chg_insert_pt_props(i, s, before_markers, None)
+    chg_insert_pt_props(i, s, before_markers, None, false)
+}
+
+/// Insert Unicode JSON text as characters or UTF-8 bytes according to the
+/// buffer mode after before-change hooks have prepared the destination.
+pub(crate) fn chg_insert_utf8_pt(i: &mut Interp, s: &str) -> EvalResult {
+    chg_insert_pt_props(i, s, false, None, true)
 }
 
 fn chg_insert_pt_props(
@@ -2267,21 +2273,31 @@ fn chg_insert_pt_props(
     s: &str,
     before_markers: bool,
     properties: Option<&crate::lisp::value::StrRef>,
+    utf8_bytes: bool,
 ) -> EvalResult {
-    let n = s.chars().count();
-    if n == 0 {
+    if s.is_empty() {
         return Ok(Value::Nil);
     }
     let p = cur(i).borrow().point();
     text_ro_insert(i, p)?;
     signal_before_change(i, p + 1, p + 1)?;
+    let unibyte = utf8_bytes && {
+        let multibyte = i.intern("enable-multibyte-characters");
+        i.symbol_value(multibyte).is_nil()
+    };
+    let text = if unibyte {
+        std::borrow::Cow::Owned(s.bytes().map(char::from).collect::<String>())
+    } else {
+        std::borrow::Cow::Borrowed(s)
+    };
+    let n = text.chars().count();
     let q = {
         let b = cur(i);
         let mut bb = b.borrow_mut();
         if before_markers {
-            bb.insert_before_markers(s);
+            bb.insert_before_markers(&text);
         } else {
-            bb.insert(s);
+            bb.insert(&text);
         }
         bb.point()
     };
@@ -14333,10 +14349,10 @@ fn undo_apply_one(
                     let s = text.borrow().clone();
                     if pos < 0 {
                         b.borrow_mut().set_point((-pos - 1).max(0) as usize);
-                        chg_insert_pt_props(i, &s, false, Some(text))?;
+                        chg_insert_pt_props(i, &s, false, Some(text), false)?;
                     } else {
                         b.borrow_mut().set_point((pos - 1).max(0) as usize);
-                        chg_insert_pt_props(i, &s, false, Some(text))?;
+                        chg_insert_pt_props(i, &s, false, Some(text), false)?;
                         b.borrow_mut().set_point((pos - 1).max(0) as usize);
                     }
                 }
