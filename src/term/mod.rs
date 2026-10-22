@@ -166,7 +166,6 @@ struct FaceCtx {
     // Symbol ids for property names (SymId::MAX = missing).
     face: u32,
     font_lock_face: u32,
-    priority: u32,
     window: u32,
     mark_active: u32,
     inherit: u32,
@@ -230,7 +229,6 @@ impl FaceCtx {
         FaceCtx {
             face: sym("face"),
             font_lock_face: sym("font-lock-face"),
-            priority: sym("priority"),
             window: sym("window"),
             mark_active: sym("mark-active"),
             inherit: sym(":inherit"),
@@ -494,9 +492,9 @@ fn builtin_face_defaults(i: &Interp, name: &str) -> StyleMix {
 /// faces and `face'/`font-lock-face' text-property runs collected
 /// once per render, and the active-region range.
 struct WindowFaces {
-    /// Overlay (start, end, face-value, priority, creation index),
-    /// applied low→high: ascending priority, oldest first.
-    overlays: Vec<(usize, usize, Value, i128, usize)>,
+    /// Overlay snapshots and face values. Precedence is computed for the
+    /// overlays covering each position, including interval containment.
+    overlays: Vec<(crate::buffer::Overlay, Value)>,
     /// 'face/'font-lock-face' text-property runs: (start, end, value,
     /// insertion index).  Later-inserted props merge on top (GNU's
     /// interval "last write wins").
@@ -526,17 +524,15 @@ fn window_faces(
             (mm.buffer == Some(bb.id)).then_some(mm.position)
         });
         match (active, mark) {
-            (true, Some(mk)) if mk != bb.point() => {
-                Some((mk.min(bb.point()), mk.max(bb.point())))
-            }
+            (true, Some(mk)) if mk != bb.point() => Some((mk.min(bb.point()), mk.max(bb.point()))),
             _ => None,
         }
     };
     // Overlays covering this buffer, for this window (a `window'
     // property restricts an overlay to one window — lazy-highlight
-    // uses it).  Merge order: ascending priority, oldest first —
-    // GNU's overlays_at sorted order reversed.
-    let mut overlays: Vec<(usize, usize, Value, i128, usize)> = bb
+    // uses it). Face candidates retain their slot order until point-specific
+    // priority/containment ordering is computed below.
+    let overlays: Vec<(crate::buffer::Overlay, Value)> = bb
         .overlays
         .iter()
         .enumerate()
@@ -548,23 +544,14 @@ fn window_faces(
             // nil = all windows; non-nil must be this window object.
             wv.is_nil() || crate::lisp::builtins::eq_values(&wv, win)
         })
-        .filter_map(|(idx, ov)| {
+        .filter_map(|(_, ov)| {
             let fv = crate::lisp::eval::plist_get(&ov.plist, ctx.face);
             if fv.is_nil() {
                 return None;
             }
-            Some((
-                ov.start,
-                ov.end,
-                fv,
-                crate::lisp::eval::plist_get(&ov.plist, ctx.priority)
-                    .int()
-                    .unwrap_or(0),
-                idx,
-            ))
+            Some((ov.clone(), fv))
         })
         .collect();
-    overlays.sort_by_key(|(_, _, _, p, idx)| (*p, *idx));
     let prop_faces: Vec<(usize, usize, Value, usize)> = bb
         .text
         .props
@@ -585,12 +572,7 @@ fn window_faces(
 /// `compute_char_face' order: `default' seeds, the active `region'
 /// face, then text-property faces (insertion order — last write
 /// wins), then overlays in ascending priority.
-fn style_at_pos(
-    i: &Interp,
-    ctx: &mut FaceCtx,
-    wf: &WindowFaces,
-    pos: usize,
-) -> CellStyle {
+fn style_at_pos(i: &Interp, ctx: &mut FaceCtx, wf: &WindowFaces, pos: usize) -> CellStyle {
     let mut mix = ctx.named(i, "default", 0);
     if let Some((rs, re)) = wf.region {
         if pos >= rs && pos < re {
@@ -603,11 +585,17 @@ fn style_at_pos(
             mix.merge(&ctx.face_value(i, &v, 0));
         }
     }
-    for (s, e, fv, _, _) in &wf.overlays {
-        if pos >= *s && pos < *e {
-            let fv = fv.clone();
-            mix.merge(&ctx.face_value(i, &fv, 0));
-        }
+    let mut overlays: Vec<_> = wf
+        .overlays
+        .iter()
+        .enumerate()
+        .filter(|(_, (overlay, _))| pos >= overlay.start && pos < overlay.end)
+        .map(|(index, (overlay, _))| (overlay, index))
+        .collect();
+    crate::buffer::sort_overlays_by_priority(i, &mut overlays);
+    for (_, index) in overlays {
+        let face = wf.overlays[index].1.clone();
+        mix.merge(&ctx.face_value(i, &face, 0));
     }
     mix.finish()
 }

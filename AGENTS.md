@@ -632,6 +632,15 @@ the existing bounded semantic sxhash and collision comparison, rather
 than hashing the handle's identity slots. Regressions:
 `qa_overlay_equality` and deleted-overlay keys in `tests/portable_dump.rs`.
 
+Overlay precedence shares GNU's primary priority, containment and secondary
+priority comparison between sorted queries, effective character properties
+and rendered faces. Priority components are fixnums; a cons supplies both
+components, including `(nil . N)`. Category defaults apply unless explicitly
+shadowed. The comparison can be non-transitive for crossing intervals, so the
+shared sorter remains bounded without assuming a total order. Face candidates
+are ordered per position. Regressions: `qa_overlay_priority` and
+`tui_overlay_priority_matches_effective_face`.
+
 ## Custom hash-table tests
 
 `define-hash-table-test` tables capture their comparison/hash functions at

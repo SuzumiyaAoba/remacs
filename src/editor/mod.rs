@@ -20647,25 +20647,7 @@ fn f_overlay_put(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_overlay_get(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     overlay_of(i, &a[0])?;
     Ok(match overlay_slot(i, &a[0]) {
-        Some(ov) => {
-            // GNU `lookup_char_property': a present key wins even
-            // when its value is nil; else fall back to the
-            // `category' symbol's plist (symbol keys only).
-            match crate::lisp::eval::plist_lookup_v(&ov.plist, &a[1]) {
-                Some(v) => v,
-                None => {
-                    let cat = i.intern_soft("category");
-                    let cs = cat.and_then(|c| match crate::lisp::eval::plist_get(&ov.plist, c) {
-                        Value::Sym(s) => Some(s),
-                        _ => None,
-                    });
-                    match (cs, i.sym_id(&a[1])) {
-                        (Some(cs), Some(ps)) => i.get_prop(cs, ps),
-                        _ => Value::Nil,
-                    }
-                }
-            }
-        }
+        Some(ov) => ov.property(i, &a[1]),
         _ => Value::Nil,
     })
 }
@@ -20678,14 +20660,6 @@ fn f_overlayp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(i.is_overlay(&a[0])))
 }
 
-/// 'priority' property of OV as an int (nil → 0), for GNU ordering.
-fn overlay_priority(i: &Interp, ov: &crate::buffer::Overlay) -> i128 {
-    let p = i.intern_soft("priority").unwrap_or(u32::MAX);
-    crate::lisp::eval::plist_get(&ov.plist, p)
-        .int()
-        .unwrap_or(0)
-}
-
 /// GNU's interval tree keeps overlays ordered by (start asc, newest
 /// first).  `overlays-in'/`overlays-at' (SORTED nil) return that
 /// order verbatim.
@@ -20693,16 +20667,11 @@ fn overlay_pos_order(hits: &mut Vec<(&crate::buffer::Overlay, usize)>) {
     hits.sort_by_key(|(ov, idx)| (ov.start, std::cmp::Reverse(*idx)));
 }
 
-/// `overlays-at POS SORTED' order: priority descending, then end
-/// ascending, then newest first (GNU check_priorities/insertion).
+/// `overlays-at POS SORTED' uses GNU priority/containment precedence,
+/// highest first. Keep the existing slot order for exact ties.
 fn overlay_sorted_order(i: &Interp, hits: &mut Vec<(&crate::buffer::Overlay, usize)>) {
-    hits.sort_by_key(|(ov, idx)| {
-        (
-            std::cmp::Reverse(overlay_priority(i, ov)),
-            ov.end,
-            std::cmp::Reverse(*idx),
-        )
-    });
+    crate::buffer::sort_overlays_by_priority(i, hits);
+    hits.reverse();
 }
 
 fn f_overlays_at(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

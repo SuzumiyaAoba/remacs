@@ -12835,8 +12835,8 @@ pub(crate) fn f_get_text_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
 }
 
 /// GNU `get_char_property_and_overlay' order: among the overlays
-/// covering POS, the winner is the one with the highest `priority',
-/// then the smallest end, then the most recently created.  Returns
+/// covering POS, precedence follows primary priority, containment and
+/// secondary priority. Returns
 /// the effective value of PROP at 0-based POS (overlays first, then
 /// the text property), plus the winning overlay's handle when the
 /// value came from an overlay.
@@ -12846,30 +12846,19 @@ pub(crate) fn char_prop_at_overlay(
     pos: usize,
     prop: u32,
 ) -> (Value, Value) {
-    let prio = i.intern("priority");
-    let mut best: Option<(i128, std::cmp::Reverse<usize>, usize, Value, Value)> = None;
-    for (idx, ov) in bb.overlays.iter().enumerate() {
-        if ov.buffer != Some(bb.id) || pos < ov.start || pos >= ov.end {
-            continue;
-        }
+    let mut overlays: Vec<_> = bb
+        .overlays
+        .iter()
+        .enumerate()
+        .filter(|(_, ov)| ov.buffer == Some(bb.id) && pos >= ov.start && pos < ov.end)
+        .map(|(index, overlay)| (overlay, index))
+        .collect();
+    crate::buffer::sort_overlays_by_priority(i, &mut overlays);
+    for (ov, _) in overlays.into_iter().rev() {
         let v = crate::lisp::eval::plist_get(&ov.plist, prop);
-        if v.is_nil() {
-            continue;
+        if !v.is_nil() {
+            return (v, ov.handle.clone());
         }
-        let p = crate::lisp::eval::plist_get(&ov.plist, prio)
-            .int()
-            .unwrap_or(0);
-        let key = (p, std::cmp::Reverse(ov.end), idx);
-        let better = match &best {
-            None => true,
-            Some((bp, bend, bidx, _, _)) => key > (*bp, *bend, *bidx),
-        };
-        if better {
-            best = Some((p, std::cmp::Reverse(ov.end), idx, v, ov.handle.clone()));
-        }
-    }
-    if let Some((_, _, _, v, h)) = best {
-        return (v, h);
     }
     (prop_at_bb(i, bb, pos, prop), Value::Nil)
 }

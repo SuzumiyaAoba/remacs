@@ -12,6 +12,7 @@ pub use primitives::install_primitives;
 
 use rustc_hash::FxHashMap as HashMap;
 use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::rc::{Rc, Weak};
 
 use crate::lisp::value::{BufferRef, Marker, MarkerRef, SymId, Value};
@@ -306,6 +307,69 @@ pub struct Overlay {
 }
 
 impl Overlay {
+    pub(crate) fn property(&self, i: &crate::lisp::Interp, property: &Value) -> Value {
+        if let Some(value) = crate::lisp::eval::plist_lookup_v(&self.plist, property) {
+            return value;
+        }
+        let category =
+            i.intern_soft("category").and_then(|key| {
+                match crate::lisp::eval::plist_get(&self.plist, key) {
+                    Value::Sym(symbol) => Some(symbol),
+                    _ => None,
+                }
+            });
+        match (category, i.sym_id(property)) {
+            (Some(category), Some(property)) => i.get_prop(category, property),
+            _ => Value::Nil,
+        }
+    }
+
+    fn priority(&self, i: &crate::lisp::Interp) -> (i128, i128) {
+        fn part(value: &Value) -> i128 {
+            if value.fixnump() {
+                value.int().unwrap_or(0)
+            } else {
+                0
+            }
+        }
+        let Some(priority) = i.intern_soft("priority") else {
+            return (0, 0);
+        };
+        let value = self.property(i, &Value::Sym(priority));
+        if let Value::Cons(cell) = &value {
+            let cell = cell.borrow();
+            (part(&cell.car), part(&cell.cdr))
+        } else {
+            (part(&value), 0)
+        }
+    }
+
+    /// GNU compare_overlays, low precedence first. Containment wins over
+    /// secondary priority; exact remaining ties are resolved by the caller.
+    fn compare_priority(&self, other: &Self, i: &crate::lisp::Interp) -> Ordering {
+        let (primary, secondary) = self.priority(i);
+        let (other_primary, other_secondary) = other.priority(i);
+        if primary != other_primary {
+            primary.cmp(&other_primary)
+        } else if self.start < other.start {
+            if self.end < other.end && secondary > other_secondary {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        } else if self.start > other.start {
+            if self.end > other.end && secondary < other_secondary {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        } else if self.end != other.end {
+            other.end.cmp(&self.end)
+        } else {
+            secondary.cmp(&other_secondary)
+        }
+    }
+
     /// Detached state belongs to the handle, without retaining the dead
     /// buffer or adding strong roots to the interpreter's weak registry.
     pub(crate) fn detached_state(handle: &Value) -> Option<Self> {
@@ -352,6 +416,53 @@ impl Overlay {
         matches!(handle.borrow().as_slice(),
             [_, Value::Int(owner), Value::Int(index)]
                 if *owner == buffer as i128 && *index == slot as i128)
+    }
+}
+
+/// Order low to high, preserving the existing slot order for exact ties.
+/// GNU's containment/secondary comparison can be non-transitive for crossing
+/// intervals, so use bounded sorting without std's total-order requirement.
+pub(crate) fn sort_overlays_by_priority(
+    i: &crate::lisp::Interp,
+    overlays: &mut [(&Overlay, usize)],
+) {
+    let compare = |left: &(&Overlay, usize), right: &(&Overlay, usize)| {
+        left.0
+            .compare_priority(right.0, i)
+            .then_with(|| left.1.cmp(&right.1))
+    };
+    let count = overlays.len();
+    if count <= 16 {
+        for index in 1..count {
+            let mut position = index;
+            while position > 0 && compare(&overlays[position - 1], &overlays[position]).is_gt() {
+                overlays.swap(position - 1, position);
+                position -= 1;
+            }
+        }
+        return;
+    }
+    let mut source = overlays.to_vec();
+    let mut width = 1;
+    while width < count {
+        for begin in (0..count).step_by(width * 2) {
+            let middle = (begin + width).min(count);
+            let end = (middle + width).min(count);
+            let (mut left, mut right) = (begin, middle);
+            for destination in &mut overlays[begin..end] {
+                if right == end
+                    || (left < middle && !compare(&source[left], &source[right]).is_gt())
+                {
+                    *destination = source[left];
+                    left += 1;
+                } else {
+                    *destination = source[right];
+                    right += 1;
+                }
+            }
+        }
+        source.copy_from_slice(overlays);
+        width *= 2;
     }
 }
 

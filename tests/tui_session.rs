@@ -654,3 +654,45 @@ fn tui_face_text_props_and_region_paint() {
         assert!(grid.attrs[0][6].bg.is_none(), "cell 6 outside region");
     })
 }
+
+#[test]
+fn tui_overlay_priority_matches_effective_face() {
+    run_on_big_stack(move || {
+        let mut i = Interp::new();
+        for (bounds, apriority, bpriority, expected) in [
+            ((1, 7, 1, 7), "'(nil . 10)", "'(nil . 1)", (255, 0, 0)),
+            ((3, 5, 1, 5), "0", "0", (255, 0, 0)),
+            ((1, 5, 1, 7), "'(nil . 1)", "'(nil . 10)", (255, 0, 0)),
+            ((1, 7, 1, 7), "'(nil . 1)", "'(nil . 10)", (0, 0, 255)),
+            ((3, 5, 1, 7), "1", "2", (0, 0, 255)),
+        ] {
+            let (abegin, aend, bbegin, bend) = bounds;
+            i.eval_str(&format!(
+                r##"(with-current-buffer "*scratch*"
+                  (erase-buffer) (delete-all-overlays) (insert "abcdef\n")
+                  (setq mark-active nil) (goto-char 1)
+                  (let ((a (make-overlay {abegin} {aend}))
+                        (b (make-overlay {bbegin} {bend})))
+                    (overlay-put a 'priority {apriority})
+                    (overlay-put b 'priority {bpriority})
+                    (overlay-put a 'face '(:foreground "#ff0000"))
+                    (overlay-put b 'face '(:foreground "#0000ff"))))"##
+            ))
+            .expect("set overlay precedence");
+            let face = i.eval_str("(get-char-property 3 'face)").unwrap();
+            let hex = if expected == (255, 0, 0) {
+                "#ff0000"
+            } else {
+                "#0000ff"
+            };
+            assert_eq!(i.prin1_to_string(&face), format!("(:foreground \"{hex}\")"));
+            let grid = render_grid(&i, 80, 24);
+            assert_eq!(
+                grid.attrs[0][2].fg,
+                Some(remacs::term::CellColor(expected.0, expected.1, expected.2)),
+                "painted precedence for {bounds:?}: {:?}",
+                grid.attrs[0][2]
+            );
+        }
+    })
+}
