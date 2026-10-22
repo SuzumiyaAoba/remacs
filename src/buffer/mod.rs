@@ -298,8 +298,8 @@ pub struct Overlay {
     pub front_advance: bool,
     /// `rear-advance': insertions exactly at `end' push it forward.
     pub rear_advance: bool,
-    /// `evaporate': the overlay detaches when a deletion leaves it
-    /// empty (cached so deletion paths need no symbol interning).
+    /// Effective `evaporate', refreshed after before-change hooks by Lisp
+    /// deletion paths, including category defaults and shared-text views.
     pub evaporate: bool,
     /// The canonical `[overlay BID IDX]' Lisp handle — reused by
     /// `overlays-at' & friends so `eq' holds for the same overlay.
@@ -847,7 +847,7 @@ impl Buffer {
             }
             // GNU `evaporate-overlays': an overlay left empty by the
             // deletion detaches when its `evaporate' property is set.
-            if ov.evaporate && ov.start >= ov.end {
+            if ov.evaporate && ov.start == start && ov.end == start {
                 ov.buffer = None;
             }
         }

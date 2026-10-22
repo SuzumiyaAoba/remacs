@@ -2307,6 +2307,22 @@ fn chg_insert_pt_props(
     signal_after_change(i, q + 1 - n, q + 1, 0)
 }
 
+fn refresh_overlay_evaporation(i: &mut Interp, buffer: &mut Buffer) {
+    let property = Value::Sym(i.intern("evaporate"));
+    let refresh = |buffer: &mut Buffer| {
+        for overlay in &mut buffer.overlays {
+            if overlay.buffer == Some(buffer.id) {
+                overlay.evaporate = overlay.property(i, &property).truthy();
+            }
+        }
+    };
+    refresh(buffer);
+    buffer
+        .text
+        .clone()
+        .each_sibling(buffer.id, |sibling| refresh(sibling));
+}
+
 /// Native deletion with the same property-bearing undo string as GNU's
 /// make_buffer_string. Call after before-change hooks and before after hooks.
 pub(crate) fn delete_preserving_undo(
@@ -2316,6 +2332,9 @@ pub(crate) fn delete_preserving_undo(
     end: usize,
     raw: bool,
 ) -> String {
+    if end > start {
+        refresh_overlay_evaporation(i, buffer);
+    }
     let properties = if buffer.undo_disabled() {
         Vec::new()
     } else {
@@ -2421,6 +2440,9 @@ pub(crate) fn chg_replace_contents(
         unibyte_insert_text(text)
     };
     let inserted = text.chars().count();
+    if end > start {
+        refresh_overlay_evaporation(i, &mut buffer);
+    }
     if let Some(undo) = buffer.raw_replace_region_with_undo(start, end, &text) {
         if !old_properties.is_empty() {
             i.set_str_props(&undo, old_properties);
