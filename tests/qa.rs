@@ -495,6 +495,7 @@ qa!(qa_permanent_local_hooks, "qa_permanent_local_hooks.el");
 qa!(qa_erase_buffer_widen, "qa_erase_buffer_widen.el");
 qa!(qa_local_dynamic_unwind, "qa_local_dynamic_unwind.el");
 qa!(qa_handler_dynamic_order, "qa_handler_dynamic_order.el");
+qa!(qa_called_interactively_frames, "qa_called_interactively_frames.el");
 
 qa!(qa_gensym_counter, "qa_gensym_counter.el");
 

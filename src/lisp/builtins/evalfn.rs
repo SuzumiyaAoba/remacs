@@ -4402,12 +4402,74 @@ fn f_command_execute(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     i.command_execute(&args[0])
 }
-fn f_called_interactively_p(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {
-    // True while a `call-interactively'/command-loop call is on the
-    // stack (the KIND argument selects among frames; the depth flag
-    // collapses them like a batch GNU where only `any' matters).
-    Ok(Value::from_bool(i.interactive_call_depth > 0))
+fn f_called_interactively_p(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    if i.interactive_call_depth == 0 {
+        return Ok(Value::Nil);
+    }
+    if i.sym_is(&arg(&args, 0), sym::INTERACTIVE) {
+        let batch = i.intern("noninteractive");
+        let keyboard_macro = i.intern("executing-kbd-macro");
+        if i.symbol_value(batch).truthy() || i.symbol_value(keyboard_macro).truthy() {
+            return Ok(Value::Nil);
+        }
+    }
+    // Port subr.el's frame walk. Pending special-form frames do not count
+    // as containing functions, and interactive-p is only a wrapper.
+    let frames: Vec<_> = i.backtrace_snapshot().into_iter().rev().collect();
+    let wrapper = i.intern("interactive-p");
+    let skip_hook = Value::Sym(i.intern("called-interactively-p-functions"));
+    let run_hook = Value::Sym(i.intern("run-hook-with-args-until-success"));
+    let frame_value = |frame: &crate::lisp::backtrace::Frame| {
+        Value::cons(
+            Value::from_bool(frame.evaluated),
+            Value::cons(frame.function.clone(), frame.arguments.clone()),
+        )
+    };
+    let mut index = 1; // Frame zero is this checker.
+    while let Some(frame) = frames.get(index) {
+        if !frame.evaluated || i.sym_is(&frame.function, wrapper) {
+            index += 1;
+            continue;
+        }
+        let next = frames.get(index + 1);
+        let skip = i.apply(
+            &run_hook,
+            vec![
+                skip_hook.clone(),
+                Value::Int((index + 2) as i128),
+                frame_value(frame),
+                next.map(|frame| frame_value(frame)).unwrap_or(Value::Nil),
+            ],
+        )?;
+        if !skip.is_nil() {
+            let Some(count) = skip.int().filter(|count| *count >= 0) else {
+                return Err(i.wrong_type_mut("natnump", &skip));
+            };
+            let count = usize::try_from(count).unwrap_or(usize::MAX);
+            index = index.saturating_add(count.saturating_add(1));
+            continue;
+        }
+        let caller = i.indirect_function_value(&frame.function);
+        // This bridge represents GNU's Lisp interactive-p wrapper, and
+        // native-compiled subrs are functions rather than C primitives.
+        if matches!(&caller, Value::Subr(subr)
+            if subr.name != "interactive-p" && super::comp::is_native(subr).is_none())
+        {
+            return Ok(Value::Nil);
+        }
+        let Some(next) = next else {
+            return Ok(Value::Nil);
+        };
+        let dispatcher = i.indirect_function_value(&next.function);
+        let original = i.intern("internal--funcall-interactively");
+        return Ok(Value::from_bool(super::eq_values(
+            &dispatcher,
+            &i.symbol_value(original),
+        )));
+    }
+    Ok(Value::Nil)
 }
+
 fn f_funcall_with_delayed_message(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // ARGS =
     // (TIMEOUT MESSAGE FUNCTION): GNU CHECK_NUMBER's TIMEOUT and
@@ -5117,8 +5179,10 @@ fn f_compiled_function_p(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult
         _ => false,
     }))
 }
-fn f_interactive_p(_i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::Nil)
+fn f_interactive_p(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {
+    // Keep the GNU Lisp wrapper's distinct frame, including through aliases.
+    let checker = Value::Sym(i.intern("called-interactively-p"));
+    i.apply(&checker, vec![Value::Sym(sym::INTERACTIVE)])
 }
 /// GNU validates the same three payload fields at both byte-code entry
 /// points, with a different error message for the object constructor.

@@ -12924,7 +12924,13 @@ command-line arguments.\" \
         self.interactive_call_depth += 1;
         let result = (|| {
             let argv = self.eval_interactive_spec(&spec)?;
-            self.apply(cmd, argv)
+            // GNU dispatches through this symbol, preserving its real frame
+            // and honoring a function-cell redefinition.
+            let mut arguments = Vec::with_capacity(argv.len() + 1);
+            arguments.push(cmd.clone());
+            arguments.extend(argv);
+            let dispatcher = Value::Sym(self.intern("funcall-interactively"));
+            self.apply(&dispatcher, arguments)
         })();
         self.interactive_call_depth = self.interactive_call_depth.saturating_sub(1);
         result
