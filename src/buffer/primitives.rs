@@ -4452,6 +4452,8 @@ fn reset_mode_slots(i: &mut Interp, buffer: &mut crate::buffer::Buffer) {
 }
 
 pub(crate) fn f_kill_all_local_variables(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU runs old-mode cleanup before touching any local state.
+    call_hook(i, "change-major-mode-hook")?;
     // GNU reset_buffer_local_variables also resets the buffer's
     // syntax-table, case-table and category-table fields to the
     // standard objects (buffer slots, not Lisp locals, so they
