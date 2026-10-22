@@ -8,7 +8,15 @@ use std::rc::Rc;
 
 /// A fresh interpreter with captured output.
 pub fn interp() -> (Interp, Rc<RefCell<String>>) {
-    let mut i = Interp::new();
+    capture_output(Interp::new())
+}
+
+/// GNU --batch conditions must be present while startup Lisp is evaluated.
+pub fn batch_interp() -> (Interp, Rc<RefCell<String>>) {
+    capture_output(Interp::new_with_noninteractive(true))
+}
+
+fn capture_output(mut i: Interp) -> (Interp, Rc<RefCell<String>>) {
     let out = Rc::new(RefCell::new(String::new()));
     i.output = Some(OutputSink::Buffer(out.clone()));
     (i, out)

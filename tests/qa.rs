@@ -15,16 +15,14 @@ use common::*;
 /// environment as the GNU `-l' run (noninteractive=t, load context).
 fn run(file: &'static str) {
     let src = format!(
-        "(progn (setq noninteractive t) \
-                (load {:?}) (load {:?}) nil)",
+        "(progn (load {:?}) (load {:?}) nil)",
         format!("{}/tests/qa_framework.el", env!("CARGO_MANIFEST_DIR")),
         format!("{}/tests/{}", env!("CARGO_MANIFEST_DIR"), file)
     );
     std::thread::Builder::new()
         .stack_size(64 * 1024 * 1024)
         .spawn(move || {
-            let (mut i, out) = interp();
-            i.noninteractive = true;
+            let (mut i, out) = batch_interp();
             match i.eval_str(&src) {
                 Ok(_) => {
                     let o = out.borrow();

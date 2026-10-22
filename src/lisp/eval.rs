@@ -884,10 +884,15 @@ impl Interp {
     /// Storage used while the live runtime is owned by another coroutine.
     /// It is never evaluated; all live state travels through owned boxes.
     pub(crate) fn vacant() -> Self {
-        Self::uninitialized(Obarray::empty(), 0, Vec::new())
+        Self::uninitialized(Obarray::empty(), 0, Vec::new(), false)
     }
 
-    fn uninitialized(obarray: Obarray, standard_output_sym: SymId, feature_syms: Vec<SymId>) -> Self {
+    fn uninitialized(
+        obarray: Obarray,
+        standard_output_sym: SymId,
+        feature_syms: Vec<SymId>,
+        noninteractive: bool,
+    ) -> Self {
         Interp {
             obarray,
             specbind: Vec::new(),
@@ -964,7 +969,7 @@ impl Interp {
             // `main' argv-scans --batch/--script before `Interp::new'
             // (GNU does the same in its C main), so startup-time Lisp
             // already sees the batch state.
-            noninteractive: std::env::var_os("REMACS_NONINTERACTIVE").is_some(),
+            noninteractive,
             default_obarray: None,
             loads_in_progress: Vec::new(),
             load_stream: None,
@@ -1072,6 +1077,12 @@ impl Interp {
     }
 
     pub fn new() -> Interp {
+        Self::new_with_noninteractive(std::env::var_os("REMACS_NONINTERACTIVE").is_some())
+    }
+
+    /// Set the batch condition before initializing Lisp and loading libraries.
+    /// Callers can select it without changing the process-wide environment.
+    pub fn new_with_noninteractive(noninteractive: bool) -> Interp {
         let mut obarray = Obarray::new();
         let standard_output_sym = obarray.intern("standard-output");
         let emacs_sym = obarray.intern("emacs");
@@ -1210,7 +1221,8 @@ impl Interp {
         .chain(std::iter::once(emacs_sym))
         .collect();
         let dump_features = feature_syms.clone();
-        let mut interp = Self::uninitialized(obarray, standard_output_sym, feature_syms);
+        let mut interp =
+            Self::uninitialized(obarray, standard_output_sym, feature_syms, noninteractive);
         interp.threads.push(crate::lisp::memory::allocate(
             crate::lisp::value::Thread {
                 name: None,
@@ -10284,7 +10296,7 @@ command-line arguments.\" \
             ("case-replace", Value::t()),
             (
                 "noninteractive",
-                if std::env::var_os("REMACS_NONINTERACTIVE").is_some() {
+                if self.noninteractive {
                     Value::t()
                 } else {
                     Value::Nil
