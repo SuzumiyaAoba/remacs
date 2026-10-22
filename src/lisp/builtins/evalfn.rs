@@ -3915,6 +3915,7 @@ fn f_handler_bind_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // dynamic signal handlers while running the 0-argument BODY-FN.
     let body = args[0].clone();
     let base = i.handler_bindings.len();
+    let case_depth = i.case_handlers.len();
     // Pairs are consulted innermost-first (reverse stack order), so
     // push them in reverse to consult them in argument order, with all
     // of this call's bindings inner to any outer `handler-bind-1'.
@@ -3929,7 +3930,7 @@ fn f_handler_bind_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let mut k = args.len().saturating_sub(1);
     while k >= 2 {
         i.handler_bindings
-            .push((args[k - 1].clone(), args[k].clone()));
+            .push((args[k - 1].clone(), args[k].clone(), case_depth));
         k -= 2;
     }
     let r = i.apply(&body, vec![]);

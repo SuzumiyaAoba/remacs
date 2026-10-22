@@ -54,6 +54,17 @@ enum BcHandlerKind {
     CondCase { conditions: Value },
 }
 
+fn pop_handler_scope(i: &mut Interp, handler: &BcHandler) {
+    match &handler.kind {
+        BcHandlerKind::Catch { .. } => {
+            i.catch_tags.pop();
+        }
+        BcHandlerKind::CondCase { .. } => {
+            i.case_handlers.pop();
+        }
+    }
+}
+
 /// `bc_items' has byte-code object shape `[argdesc str consts depth ..]'.
 pub(crate) fn is_byte_code(items: &[Value]) -> bool {
     items.len() >= 4
@@ -300,6 +311,7 @@ fn run(
     // subr call from inside byte code sees it like a Lisp-level `catch'
     // (GNU's Bpushcatch pushes onto the same handlerlist Fthrow scans).
     let catch_depth = i.catch_tags.len();
+    let case_depth = i.case_handlers.len();
     let r = dispatch(
         i,
         prog,
@@ -310,6 +322,7 @@ fn run(
         &mut handlers,
     );
     i.catch_tags.truncate(catch_depth);
+    i.case_handlers.truncate(case_depth);
     // Any unwind records still open (a nonlocal exit or an unbalanced
     // `unbind' count) get cleaned here — GNU's specpdl does the same.
     unwind_all(i, &mut unwinds);
@@ -431,9 +444,7 @@ fn dispatch(
                         _ => false,
                     };
                     let h = handlers.pop().unwrap();
-                    if matches!(h.kind, BcHandlerKind::Catch { .. }) {
-                        i.catch_tags.pop();
-                    }
+                    pop_handler_scope(i, &h);
                     if hit {
                         while unwinds.len() > h.unwind_depth {
                             let u = unwinds.pop().unwrap();
@@ -460,9 +471,7 @@ fn dispatch(
                         _ => false,
                     };
                     let h = handlers.pop().unwrap();
-                    if matches!(h.kind, BcHandlerKind::Catch { .. }) {
-                        i.catch_tags.pop();
-                    }
+                    pop_handler_scope(i, &h);
                     if hit {
                         while unwinds.len() > h.unwind_depth {
                             let u = unwinds.pop().unwrap();
@@ -674,16 +683,15 @@ fn step_op(
         }
         // pophandler: drop the innermost handler.
         48 => {
-            if let Some(h) = handlers.pop()
-                && matches!(h.kind, BcHandlerKind::Catch { .. })
-            {
-                i.catch_tags.pop();
+            if let Some(h) = handlers.pop() {
+                pop_handler_scope(i, &h);
             }
         }
         // pushconditioncase DEST: stack top = conditions list.
         49 => {
             let dest = fetch2!();
             let conditions = pop!();
+            i.case_handlers.push(conditions.clone());
             handlers.push(BcHandler {
                 dest,
                 sp: stack.len(),

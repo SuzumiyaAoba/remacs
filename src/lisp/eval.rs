@@ -583,11 +583,11 @@ pub struct Interp {
     pub mtwlb_phase: u8,
     /// Path of the dribble file opened by `open-dribble-file'.
     pub dribble_file: Option<String>,
-    /// `handler-bind' dynamic chain: (CONDITIONS . HANDLER) pairs,
-    /// innermost last. Consulted when a signal is raised uncaught.
-    pub handler_bindings: Vec<(Value, Value)>,
-    /// Condition lists of `condition-case' forms currently evaluating
-    /// their bodies — a signal matching any of them is "caught".
+    /// `handler-bind' dynamic chain: conditions, handler, and the active
+    /// condition-case count at registration. Innermost binding is last.
+    pub handler_bindings: Vec<(Value, Value, usize)>,
+    /// Condition lists of active interpreted or byte-code condition-case
+    /// bodies — a signal matching any of them is caught.
     pub case_handlers: Vec<Value>,
     /// `add-variable-watcher' registry: (SYM . FUNCTION) pairs.
     pub var_watchers: Vec<(SymId, Value)>,
@@ -6452,16 +6452,21 @@ command-line arguments.\" \
     /// in `Flow::Signal' marks it after the innermost eval frame sees it.
     /// Handler nonlocal exits supersede the original signal.
     fn offer_signal(&mut self, sig: &Value, data: &Value) -> Result<(), Flow> {
-        // GNU signal_or_quit runs `handler-bind' handlers for every
-        // raised signal, whether or not a condition-case will claim it
-        // — they observe at raise time; a normal return still lets
-        // signaling continue.  Handler nonlocal exits supersede the
-        // original signal.
+        // GNU searches handlers in dynamic nesting order: an inner
+        // matching condition-case stops propagation to outer handler-bind
+        // observers, while observers inside that case run at raise time.
         if !self.handler_bindings.is_empty() {
             let cond = Value::cons(sig.clone(), data.clone());
             for idx in (0..self.handler_bindings.len()).rev() {
-                let (conds, handler) = self.handler_bindings[idx].clone();
+                let (conds, handler, case_depth) = self.handler_bindings[idx].clone();
                 if self.signal_matches(sig, &conds) {
+                    let catching_case = self
+                        .case_handlers
+                        .iter()
+                        .rposition(|conditions| self.signal_matches(sig, conditions));
+                    if catching_case.is_some_and(|boundary| case_depth <= boundary) {
+                        continue;
+                    }
                     // While a handler runs only strictly-outer bindings
                     // are visible — a handler's own signal can't
                     // re-enter it.

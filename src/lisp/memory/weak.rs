@@ -204,14 +204,13 @@ impl Graph {
             self.root(a);
             self.root(b);
         }
-        for (a, b) in i
-            .pending_overlay_hooks
-            .iter()
-            .chain(i.handler_bindings.iter())
-            .chain(i.terminal_params.iter())
-        {
+        for (a, b) in i.pending_overlay_hooks.iter().chain(i.terminal_params.iter()) {
             self.root(a);
             self.root(b);
+        }
+        for (conditions, handler, _) in &i.handler_bindings {
+            self.root(conditions);
+            self.root(handler);
         }
         for value in [
             &i.minibuf_exit_fn,

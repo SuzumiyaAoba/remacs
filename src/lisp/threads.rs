@@ -136,7 +136,7 @@ thread_context! {
     compiled_macro_expansion: bool = false,
     expand_unadvised_depth: usize = 0,
     loading_compiled_library: bool = false,
-    handler_bindings: Vec<(Value, Value)> = Vec::new(),
+    handler_bindings: Vec<(Value, Value, usize)> = Vec::new(),
     case_handlers: Vec<Value> = Vec::new(),
     lisp_stack: Vec<(Value, Argv)> = Vec::new(),
     pending_frames: Vec<crate::lisp::backtrace::PendingFrame> = Vec::new(),
