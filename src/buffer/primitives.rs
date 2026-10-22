@@ -8004,17 +8004,24 @@ fn f_delete_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_erase_buffer(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    let tlen = cur(i).borrow().text.len();
+    // GNU widens before deletion preparation, even if write protection or
+    // a hook subsequently aborts. The deletion range must cover all text.
+    let tlen = {
+        let buffer = cur(i);
+        let mut buffer = buffer.borrow_mut();
+        let len = buffer.text.len();
+        buffer.narrow_labels.clear();
+        buffer.begv = 0;
+        buffer.zv = len;
+        len
+    };
     if tlen > 0 {
         check_writable(i)?;
         barf_if_file_locked(i)?;
     }
     chg_delete(i, 0, tlen)?;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    bb.begv = 0;
-    bb.zv = 0;
-    bb.set_point(0);
+    // After-change hooks may insert, narrow, or select another buffer.
+    // GNU leaves those effects intact instead of resetting point/ranges.
     Ok(Value::Nil)
 }
 
