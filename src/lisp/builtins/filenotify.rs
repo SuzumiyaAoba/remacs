@@ -499,17 +499,23 @@ fn emit(
     actions: &[&str],
     file: &str,
     file1: Option<&str>,
+    notifications: &mut Vec<Value>,
 ) -> EvalResult {
     if actions.is_empty() {
         return Ok(Value::Nil);
     }
     let acts: Vec<Value> = actions.iter().map(|n| flag_sym(i, n)).collect();
     let ev = make_event(i, w.desc, acts, file, file1, &w.callback);
-    dispatch_special_event(i, &ev)
+    notifications.push(ev);
+    Ok(Value::Nil)
 }
 
 /// Port of GNU `kqueue_compare_dir_list'.
-fn compare_dir_list(i: &mut crate::lisp::eval::Interp, idx: usize) -> EvalResult {
+fn compare_dir_list(
+    i: &mut crate::lisp::eval::Interp,
+    idx: usize,
+    notifications: &mut Vec<Value>,
+) -> EvalResult {
     let (dir, old) = {
         let w = &i.filenotify.watches[idx];
         (w.file.clone(), w.dir_list.clone().unwrap_or_default())
@@ -517,9 +523,10 @@ fn compare_dir_list(i: &mut crate::lisp::eval::Interp, idx: usize) -> EvalResult
 
     if !is_dir(&dir) {
         let w = i.filenotify.watches[idx].clone_watch();
-        return emit(i, &w, &["delete"], &dir, None);
+        return emit(i, &w, &["delete"], &dir, None, notifications);
     }
-    let mut new_dl = directory_listing(&dir);
+    let current = directory_listing(&dir);
+    let mut new_dl = current.clone();
     let mut pending: Vec<DirEnt> = Vec::new();
     let mut deleted: Vec<DirEnt> = Vec::new();
 
@@ -538,15 +545,22 @@ fn compare_dir_list(i: &mut crate::lisp::eval::Interp, idx: usize) -> EvalResult
             if ne.name == old_e.name {
                 if ne.mtime_ns != old_e.mtime_ns {
                     let w = i.filenotify.watches[idx].clone_watch();
-                    emit(i, &w, &["write"], &old_e.name, None)?;
+                    emit(i, &w, &["write"], &old_e.name, None, notifications)?;
                 }
                 if ne.ctime_ns != old_e.ctime_ns {
                     let w = i.filenotify.watches[idx].clone_watch();
-                    emit(i, &w, &["attrib"], &old_e.name, None)?;
+                    emit(i, &w, &["attrib"], &old_e.name, None, notifications)?;
                 }
             } else {
                 let w = i.filenotify.watches[idx].clone_watch();
-                emit(i, &w, &["rename"], &old_e.name, Some(&ne.name))?;
+                emit(
+                    i,
+                    &w,
+                    &["rename"],
+                    &old_e.name,
+                    Some(&ne.name),
+                    notifications,
+                )?;
                 deleted.push(ne.clone());
             }
             new_dl.remove(np);
@@ -563,7 +577,14 @@ fn compare_dir_list(i: &mut crate::lisp::eval::Interp, idx: usize) -> EvalResult
         if let Some(pp) = pending.iter().position(|n| n.ino == old_e.ino) {
             let ne = pending.remove(pp);
             let w = i.filenotify.watches[idx].clone_watch();
-            emit(i, &w, &["rename"], &old_e.name, Some(&ne.name))?;
+            emit(
+                i,
+                &w,
+                &["rename"],
+                &old_e.name,
+                Some(&ne.name),
+                notifications,
+            )?;
             continue;
         }
 
@@ -575,30 +596,35 @@ fn compare_dir_list(i: &mut crate::lisp::eval::Interp, idx: usize) -> EvalResult
 
         // Deleted.
         let w = i.filenotify.watches[idx].clone_watch();
-        emit(i, &w, &["delete"], &old_e.name, None)?;
+        emit(i, &w, &["delete"], &old_e.name, None, notifications)?;
     }
 
     // New files.
     for ne in &new_dl {
         let w = i.filenotify.watches[idx].clone_watch();
-        emit(i, &w, &["create"], &ne.name, None)?;
+        emit(i, &w, &["create"], &ne.name, None, notifications)?;
         if ne.size > 0 {
             let w = i.filenotify.watches[idx].clone_watch();
-            emit(i, &w, &["write"], &ne.name, None)?;
+            emit(i, &w, &["write"], &ne.name, None, notifications)?;
         }
     }
     // Still-pending files: assume write.
     for pe in &pending {
         let w = i.filenotify.watches[idx].clone_watch();
-        emit(i, &w, &["write"], &pe.name, None)?;
+        emit(i, &w, &["write"], &pe.name, None, notifications)?;
     }
 
-    i.filenotify.watches[idx].dir_list = Some(directory_listing(&dir));
+    i.filenotify.watches[idx].dir_list = Some(current);
     Ok(Value::Nil)
 }
 
 /// Port of GNU `kqueue_callback' for one kernel event.
-fn dispatch_kevent(i: &mut crate::lisp::eval::Interp, fd: i32, fflags: u32) -> EvalResult {
+fn dispatch_kevent(
+    i: &mut crate::lisp::eval::Interp,
+    fd: i32,
+    fflags: u32,
+    notifications: &mut Vec<Value>,
+) -> EvalResult {
     let Some(idx) = find_watch_pos(&i.filenotify, fd as i64) else {
         return Ok(Value::Nil);
     };
@@ -611,7 +637,7 @@ fn dispatch_kevent(i: &mut crate::lisp::eval::Interp, fd: i32, fflags: u32) -> E
         if i.filenotify.watches[idx].dir_list.is_none() {
             actions.push("write");
         } else {
-            compare_dir_list(i, idx)?;
+            compare_dir_list(i, idx, notifications)?;
         }
     }
     if fflags & NOTE_EXTEND != 0 {
@@ -636,7 +662,7 @@ fn dispatch_kevent(i: &mut crate::lisp::eval::Interp, fd: i32, fflags: u32) -> E
         actions.reverse();
         let file = i.filenotify.watches[idx].file.clone();
         let w = i.filenotify.watches[idx].clone_watch();
-        emit(i, &w, &actions, &file, None)?;
+        emit(i, &w, &actions, &file, None, notifications)?;
     }
 
     // GNU removes the watch on delete/rename/revoke.
@@ -665,8 +691,15 @@ pub fn drain(i: &mut crate::lisp::eval::Interp) -> EvalResult {
     if std::env::var_os("FN_DEBUG").is_some() && !raw.is_empty() {
         eprintln!("[fndbg] raw events: {:?}", raw);
     }
+    // GNU queues every translated notification before Lisp callbacks run.
+    // Finish directory comparisons and watch bookkeeping first: callbacks
+    // may remove or replace any watch, or create another directory entry.
+    let mut notifications = Vec::new();
     for (fd, fflags) in raw {
-        dispatch_kevent(i, fd, fflags)?;
+        dispatch_kevent(i, fd, fflags, &mut notifications)?;
+    }
+    for event in notifications {
+        dispatch_special_event(i, &event)?;
     }
     Ok(Value::Nil)
 }

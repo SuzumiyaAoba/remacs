@@ -1,0 +1,28 @@
+;;; -*- lexical-binding: t; -*-
+(require 'filenotify)
+(defun qa346-wait (predicate)
+  (let ((end (+ (float-time) 3)))
+    (while (and (not (funcall predicate)) (< (float-time) end))
+      (read-event nil nil 0.02))
+    (and (funcall predicate) t)))
+
+(qa (let ((root (make-temp-file "/private/tmp/qa346-" t)) earlier watch actions)
+  (unwind-protect
+      (progn
+        (write-region "guard" nil (expand-file-name "guard" root) nil 'silent)
+        (setq earlier (file-notify-add-watch (expand-file-name "guard" root)
+                                            '(change) #'ignore))
+        (setq watch (file-notify-add-watch root '(change)
+                     (lambda (event)
+                       (push (nth 1 event) actions)
+                       (when (eq (nth 1 event) 'created)
+                         (file-notify-rm-watch earlier)))))
+        (write-region "payload" nil (expand-file-name "child" root) nil 'silent)
+        (qa346-wait (lambda () (memq 'created actions)))
+        (list (and (memq 'created actions) t)
+              (and (file-notify-valid-p watch) t)
+              (and (file-notify-valid-p earlier) t)))
+    (dolist (descriptor (list watch earlier))
+      (when descriptor (ignore-errors (file-notify-rm-watch descriptor))))
+    (delete-directory root t))) '(t t nil))
+(princ (qa--done))
