@@ -12616,21 +12616,32 @@ fn f_make_temp_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     for _ in 0..64 {
         let name = format!("{}{}{}", prefix, temp_name_seed(), suffix);
         let r = if dir_flag {
-            std::fs::DirBuilder::new().mode(0o700).create(&name)
+            std::fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&name)
+                .map(|_| None)
         } else {
             std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .mode(0o600)
                 .open(&name)
-                .map(|_| ())
+                .map(Some)
         };
         match r {
-            Ok(()) => {
+            Ok(mut output) => {
                 if let Some(text) = a.get(3) {
                     if text.truthy() {
-                        let s = want_str(i, text)?;
-                        let _ = std::fs::write(&name, s);
+                        if !matches!(text, Value::Str(_)) {
+                            return Err(i.wrong_type_mut("stringp", text));
+                        }
+                        let bytes = temp_file_text_bytes(i, &name, text)?;
+                        if let Some(file) = &mut output {
+                            use std::io::Write;
+                            let _ = file.write_all(&bytes);
+                        } else {
+                            let _ = std::fs::write(&name, bytes);
+                        }
                     }
                 }
                 return Ok(Value::string(name));
@@ -14018,6 +14029,33 @@ fn set_visit_state(i: &mut Interp, path: &str) {
     bb.note_modified(false);
 }
 
+fn file_text_bytes(
+    i: &mut Interp,
+    path: &str,
+    text: &Value,
+    arguments: &[Value],
+) -> Result<Vec<u8>, Flow> {
+    let coding = choose_write_coding(i, path, arguments)?;
+    let encoded =
+        crate::lisp::builtins::misc::f_encode_coding_string(i, vec![text.clone(), coding].into())?;
+    Ok(file_bytes_of_str(&want_str(i, &encoded)?))
+}
+
+pub(crate) fn temp_file_text_bytes(
+    i: &mut Interp,
+    path: &str,
+    text: &Value,
+) -> Result<Vec<u8>, Flow> {
+    // GNU make-temp-file-internal calls write_region with the original
+    // string and default optional arguments, writing through its open fd.
+    file_text_bytes(
+        i,
+        path,
+        text,
+        &[text.clone(), Value::Nil, Value::string(path)],
+    )
+}
+
 fn write_file_string(i: &mut Interp, path: &str, text: &Value, a: &[Value]) -> EvalResult {
     let append = a.get(3).cloned().unwrap_or(Value::Nil);
     let excl = matches!(a.get(6), Some(Value::Sym(s)) if *s == i.intern("excl"));
@@ -14028,10 +14066,7 @@ fn write_file_string(i: &mut Interp, path: &str, text: &Value, a: &[Value]) -> E
             vec![Value::string("File already exists"), Value::string(path)],
         ));
     }
-    let coding = choose_write_coding(i, path, a)?;
-    let encoded =
-        crate::lisp::builtins::misc::f_encode_coding_string(i, vec![text.clone(), coding].into())?;
-    let bytes = file_bytes_of_str(&want_str(i, &encoded)?);
+    let bytes = file_text_bytes(i, path, text, a)?;
     let r = match &append {
         // GNU: an integer APPEND overwrites at that byte offset
         // (the file keeps its trailing bytes; no truncation).

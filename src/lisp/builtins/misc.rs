@@ -5500,10 +5500,7 @@ fn f_make_temp_file_internal(i: &mut Interp, args: crate::lisp::Argv) -> EvalRes
         Value::Str(s) => s.borrow().clone(),
         v => return Err(i.wrong_type_mut("stringp", &v)),
     };
-    let text = match arg(&args, 3) {
-        Value::Str(s) => s.borrow().clone(),
-        _ => String::new(),
-    };
+    let text = arg(&args, 3);
     enum Kind {
         File,
         NoCreate,
@@ -5546,9 +5543,10 @@ fn f_make_temp_file_internal(i: &mut Interp, args: crate::lisp::Argv) -> EvalRes
         match res {
             Ok(mut f) => {
                 if let (Kind::File, Some(fh)) = (&kind, &mut f) {
-                    if !text.is_empty() {
+                    if matches!(&text, Value::Str(string) if !string.borrow().is_empty()) {
                         use std::io::Write;
-                        if let Err(e) = fh.write_all(text.as_bytes()) {
+                        let bytes = crate::editor::temp_file_text_bytes(i, &cand, &text)?;
+                        if let Err(e) = fh.write_all(&bytes) {
                             let _ = std::fs::remove_file(&cand);
                             return Err(crate::editor::report_file_errno(
                                 i,
