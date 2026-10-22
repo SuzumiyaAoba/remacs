@@ -466,6 +466,7 @@ qa!(qa_window_dedication, "qa_window_dedication.el");
 
 qa!(qa_overlay_type, "qa_overlay_type.el");
 qa!(qa_overlay_lifetime, "qa_overlay_lifetime.el");
+qa!(qa_overlay_arguments, "qa_overlay_arguments.el");
 
 qa!(qa_gensym_counter, "qa_gensym_counter.el");
 

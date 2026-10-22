@@ -20472,6 +20472,9 @@ pub(crate) fn f_make_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
 }
 
 fn overlay_of(i: &mut Interp, v: &Value) -> Result<(usize, usize), Flow> {
+    if !i.is_overlay(v) {
+        return Err(i.wrong_type_mut("overlayp", v));
+    }
     if let Value::Vec(vec) = v {
         let vv = vec.borrow();
         if vv.len() == 3 || vv.len() == 7 {
