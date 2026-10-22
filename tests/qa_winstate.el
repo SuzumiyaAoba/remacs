@@ -966,4 +966,110 @@
 '(5 5)
 )
 
+;; Issue #289: old buffer changes only at notification or deletion boundaries.
+(defun qa289-fixture (function)
+ (save-window-excursion
+  (delete-other-windows)
+  (let ((a (generate-new-buffer " *qa289-a*"))
+        (b (generate-new-buffer " *qa289-b*")))
+   (unwind-protect (funcall function (selected-window) a b)
+    (kill-buffer a) (kill-buffer b)))))
+
+(qa
+(qa289-fixture (lambda (window a b)
+ (let ((old (window-old-buffer window)) (previous (window-buffer window)))
+  (set-window-buffer window a) (set-window-buffer window b)
+  (list (eq (window-old-buffer window) old) (eq (window-old-buffer window) previous)))))
+'(t nil)
+)
+
+(qa
+(qa289-fixture (lambda (window a b)
+ (let ((other (split-window window 20 'right)))
+  (set-window-buffer other a) (set-window-buffer other b) (window-old-buffer other))))
+'nil
+)
+
+(qa
+(qa289-fixture (lambda (window _a _b)
+ (let ((old (window-old-buffer window)))
+  (set-window-buffer window (window-buffer window))
+  (eq old (window-old-buffer window)))))
+'t
+)
+
+(qa
+(qa289-fixture (lambda (window a b)
+ (let* ((other (split-window window 20 'right)))
+  (set-window-buffer other a)
+  (let ((saved (current-window-configuration)))
+   (set-window-buffer other b) (set-window-configuration saved)
+   (list (window-old-buffer other) (eq (window-buffer other) a))))))
+'(nil t)
+)
+
+(qa
+(qa289-fixture (lambda (window a b)
+ (let ((other (split-window window 20 'right)))
+  (set-window-buffer other a) (set-window-buffer other b) (delete-window other)
+  (eq (window-old-buffer other) b))))
+'nil
+)
+
+(qa
+(qa289-fixture (lambda (window _a b)
+ (let ((other (split-window window 20 'right)))
+  (set-window-buffer other b) (delete-other-windows other) (window-old-buffer other))))
+'nil
+)
+
+(qa
+(qa289-fixture (lambda (window a _b)
+ (let* ((other (split-window window 20 'right)) (root (frame-root-window)))
+  (set-window-buffer other a)
+  (let ((before (window-old-buffer root)))
+   (delete-other-windows window) (list before (window-old-buffer root))))))
+'(nil nil)
+)
+
+(qa
+(qa289-fixture (lambda (window a _b)
+ (let ((other (split-window window 20 'right)))
+  (set-window-buffer other a) (kill-buffer a) (window-old-buffer other))))
+'nil
+)
+
+(qa
+(qa289-fixture (lambda (window a b)
+ (let ((other (split-window window 20 'right)))
+  (set-window-buffer other a)
+  (let ((state (window-state-get other t)))
+   (set-window-buffer other b) (window-state-put state other)
+   (list (window-old-buffer other) (eq (window-buffer other) a))))))
+'(nil t)
+)
+
+(qa
+(condition-case err (window-old-buffer 17) (error (list (car err) (cadr err))))
+'(wrong-type-argument windowp)
+)
+
+(qa
+(let ((old (frame-window-state-change)))
+ (unwind-protect
+  (list (set-frame-window-state-change nil t) (frame-window-state-change)
+        (set-frame-window-state-change nil nil) (frame-window-state-change))
+  (set-frame-window-state-change nil old)))
+'(t t nil nil)
+)
+
+(qa
+(qa289-fixture (lambda (window _a b)
+ (let ((other (split-window window 20 'right)))
+  (set-window-buffer other b) (delete-window other)
+  (let ((before (window-old-buffer other)))
+   (kill-buffer b) (list before (window-old-buffer other))))))
+'(t t)
+)
+
 (princ (qa--done))

@@ -1176,6 +1176,7 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
         if i.quit_editor {
             break;
         }
+        if let Err(flow) = crate::editor::changes::run(i) { report_flow(i, flow); }
         term.borrow_mut().render(i)?;
         // Replayed macro events take priority over real input;
         // `executing-kbd-macro` clears once the queue drains.
@@ -1963,6 +1964,7 @@ fn isearch_loop<T: KeyIo>(
             break;
         }
         {
+            if let Err(flow) = crate::editor::changes::run(i) { report_flow(i, flow); }
             let mut t = term.borrow_mut();
             let _ = t.render(i);
             let _ = t.draw_echo(&st.label());
@@ -2077,6 +2079,7 @@ fn minibuf_loop<T: KeyIo>(
     loop {
         crate::lisp::eval::threads::yield_now(i)?;
         crate::lisp::builtins::evalfn::thread_wait_events(i)?;
+        crate::editor::changes::run(i)?;
         {
             let mut t = term.borrow_mut();
             let shown = if single {

@@ -45,6 +45,7 @@ fn register_window_configuration(value: &Value) {
 }
 
 pub(crate) mod winxtra;
+pub(crate) mod changes;
 
 /// An editor window: a viewport into a buffer, or an internal
 /// combination window in the frame's window tree (GNU's vc/hc
@@ -113,10 +114,12 @@ pub struct Window {
     /// GNU `new_normal': pending normal size stored by
     /// `set-window-new-normal' — any Lisp value (float ok), init 0.
     pub new_normal: Value,
-    /// GNU `old_buffer': buffer shown before the last
-    /// `set-window-buffer'; nil until the first switch (always nil
-    /// on internal windows).
+    /// Buffer recorded by the previous window-change notification.
     pub old_buffer: Value,
+    pub(crate) change_stamp: u64,
+    pub(crate) change_frame: Option<usize>,
+    pub(crate) change_clock: Option<Rc<std::cell::Cell<u64>>>,
+    pub(crate) change_size: Option<[usize; 5]>,
     /// GNU `w->cursor_type': per-window cursor override, t = follow
     /// the buffer's `cursor-type' variable.  Set by
     /// `set-window-cursor-type'.
@@ -156,6 +159,12 @@ pub struct Frame {
     /// GNU `old_selected_window': window selected before the last
     /// frame switch; nil until the first `do_switch_frame'.
     pub old_selected: Option<WindowRef>,
+    pub(crate) change_stamp: Rc<std::cell::Cell<u64>>,
+    pub(crate) change_window_count: usize,
+    pub(crate) change_selected: Option<usize>,
+    pub(crate) change_frame_selected: bool,
+    pub(crate) change_size: Option<(usize, usize)>,
+    pub(crate) window_state_change: bool,
     /// Buffers selected on this frame, most recently selected first.
     pub buffer_list: Vec<usize>,
     /// Buffers buried on this frame, most recently buried first.
@@ -251,6 +260,10 @@ impl Window {
                 new_pixel: 0,
                 new_normal: Value::Int(0),
                 old_buffer: Value::Nil,
+                change_stamp: 0,
+                change_frame: None,
+                change_clock: None,
+                change_size: None,
                 cursor_type: Value::t(),
             },
             crate::lisp::Value::Window,
@@ -347,7 +360,7 @@ impl Frame {
             e.width = width;
             e.height = 1;
         }
-        crate::lisp::memory::allocate(
+        let frame = crate::lisp::memory::allocate(
             Frame {
                 id: next_frame_id(),
                 name: Value::string_ref("F1"),
@@ -361,13 +374,25 @@ impl Frame {
                 width,
                 height,
                 old_selected: None,
+                change_stamp: Rc::new(std::cell::Cell::new(1)),
+                change_window_count: 0,
+                change_selected: None,
+                change_frame_selected: false,
+                change_size: None,
+                window_state_change: false,
                 buffer_list: vec![buffer],
                 buried_buffer_list: Vec::new(),
                 params: Value::Nil,
                 dead: false,
             },
             crate::lisp::Value::Frame,
-        )
+        );
+        let id = frame.borrow().id;
+        for window in changes::frame_windows(&frame) {
+            window.borrow_mut().change_frame = Some(id);
+            window.borrow_mut().change_clock = Some(frame.borrow().change_stamp.clone());
+        }
+        frame
     }
 }
 
@@ -2747,7 +2772,6 @@ pub(crate) fn f_set_window_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
                     .collect(),
             );
         }
-        wb.old_buffer = i.buffer_value(old_bid).unwrap_or(Value::Nil);
         wb.buffer = bid;
         if old_bid != bid || arg(&a, 2).is_nil() {
             wb.point = target_point;
@@ -3113,10 +3137,10 @@ fn f_fontset_list(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 
 /// Window configuration specs retain live markers for point/start so
 /// edits between capture and restore move saved positions like GNU.
-/// Record: [tag frame SPECS SELECTED CURRENT-BUFFER TREE FRAME-SIZE]. Each spec is
+/// Record: [tag frame SPECS SELECTED CURRENT-BUFFER TREE FRAME-SIZE CHANGE-STAMP]. Each spec is
 /// [window buffer-id point start hscroll top height left width dedicated
 ///  minibuffer params prev-buffers next-buffers mark left-margin right-margin
-///  min-hscroll suspend-hscroll old-point]. Positions are 0-based internally.
+///  min-hscroll suspend-hscroll old-point normal-size old-buffer]. Positions are 0-based internally.
 fn window_config_marker(i: &Interp, buffer: usize, position: usize, insertion_type: bool) -> Value {
     let Some(buffer) = i.buffers.get(buffer) else {
         return Value::Nil;
@@ -3366,8 +3390,10 @@ fn window_configuration(i: &mut Interp) -> Value {
     let mut selected = Value::Nil;
     let mut tree = Value::Nil;
     let mut frame_size = Value::Nil;
+    let mut change_stamp = Value::Int(0);
     if let Some(f) = i.selected_frame.as_ref() {
         let fr = f.borrow();
+        change_stamp = Value::Int(fr.change_stamp.get() as i128);
         tree = fr.root.as_ref().map_or(Value::Nil, |root| {
             window_config_tree(root, &persistent_keys)
         });
@@ -3428,6 +3454,7 @@ fn window_configuration(i: &mut Interp) -> Value {
                 Value::from_bool(wb.suspend_hscroll),
                 window_config_marker(i, wb.buffer, wb.old_point_position(), insertion_type),
                 window_normal_size_value(&wb),
+                wb.old_buffer.clone(),
             ]));
         }
         // GNU configs record the minibuffer window's geometry too; it
@@ -3456,6 +3483,7 @@ fn window_configuration(i: &mut Interp) -> Value {
                 Value::from_bool(mb.suspend_hscroll),
                 window_config_marker(i, mb.buffer, mb.old_point_position(), false),
                 window_normal_size_value(&mb),
+                mb.old_buffer.clone(),
             ]));
         }
     }
@@ -3470,6 +3498,7 @@ fn window_configuration(i: &mut Interp) -> Value {
         i.buffer_value(i.current_buffer).unwrap_or(Value::Nil),
         tree,
         frame_size,
+        change_stamp,
     ]);
     register_window_configuration(&configuration);
     configuration
@@ -3607,6 +3636,11 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -
         None
     };
     let f = sel_frame(i).ok_or_else(|| i.error("No frame"))?;
+    let saved_change_stamp = match &a[0] {
+        Value::Record(record) => record.borrow().get(7).and_then(Value::int).unwrap_or(0) as u64,
+        _ => 0,
+    };
+    let restore_old_buffer = saved_change_stamp == f.borrow().change_stamp.get();
     // Preserve the saved current buffer's present point. If restoration
     // changes which window shows it as selected, preserve that final
     // window's own point rather than copying the old selected cursor.
@@ -3674,7 +3708,7 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -
     if let Some(root) = f.borrow().root.clone() {
         // The saved topology holds its own child lists and revives the
         // saved nodes. Unsaved internal windows must become dead too.
-        mark_tree_dead(&root);
+        mark_tree_dead(i, &root);
     }
     let mut new_windows: Vec<WindowRef> = Vec::new();
     let mut marks: Vec<(usize, usize)> = Vec::new();
@@ -3728,6 +3762,9 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -
             wb.left = spec_int(&v, 7).max(0) as usize;
             wb.width = spec_int(&v, 8).max(0) as usize;
             wb.dedicated = v.get(9).cloned().unwrap_or(Value::Nil);
+            if restore_old_buffer {
+                wb.old_buffer = v.get(21).cloned().unwrap_or(Value::Nil);
+            }
             if let Some(parameters) = v.get(11) {
                 restore_window_config_parameters(&mut wb.params, parameters);
             }
@@ -3795,6 +3832,9 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: crate::lisp::Argv) -
             wb.new_total = (nh - 1).max(0);
             wb.new_pixel = (nh - 1).max(0);
             wb.dedicated = v.get(9).cloned().unwrap_or(Value::Nil);
+            if restore_old_buffer {
+                wb.old_buffer = v.get(21).cloned().unwrap_or(Value::Nil);
+            }
             if let Some(parameters) = v.get(11) {
                 restore_window_config_parameters(&mut wb.params, parameters);
             }
@@ -4253,6 +4293,8 @@ pub(crate) fn f_split_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     let buf = w.borrow().buffer;
     let point = window_point(i, &w);
     let new = Window::new(buf);
+    new.borrow_mut().change_frame = Some(f.borrow().id);
+    new.borrow_mut().change_clock = Some(f.borrow().change_stamp.clone());
     record_buffer_display(i, buf);
     let (wl, wt, ww_, wh, normal_size) = {
         let wb = w.borrow();
@@ -4375,6 +4417,8 @@ pub(crate) fn f_split_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
         new.borrow_mut().parent = Some(Rc::downgrade(&p));
     } else {
         let p = Window::new_internal(hor, wl, wt, ww_, wh);
+        p.borrow_mut().change_frame = Some(f.borrow().id);
+        p.borrow_mut().change_clock = Some(f.borrow().change_stamp.clone());
         w.borrow_mut().normal_size = if hor {
             (1.0, keep_normal)
         } else {
@@ -4484,14 +4528,17 @@ pub(crate) fn relay_children(p: &WindowRef) {
 
 /// Recursively mark every window in W's subtree dead (for removing
 /// an internal node: its whole combination dies with it).
-pub(crate) fn mark_tree_dead(w: &WindowRef) {
+pub(crate) fn mark_tree_dead(i: &Interp, w: &WindowRef) {
     let kids = {
         let mut wb = w.borrow_mut();
+        if !wb.dead && wb.horiz.is_none() {
+            wb.old_buffer = i.buffer_value(wb.buffer).unwrap_or(Value::Nil);
+        }
         wb.dead = true;
         std::mem::take(&mut wb.children)
     };
     for k in kids {
-        mark_tree_dead(&k);
+        mark_tree_dead(i, &k);
     }
 }
 
@@ -4625,6 +4672,8 @@ fn f_delete_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
     }
     w.borrow_mut().parent = None;
+    let old_buffer = i.buffer_value(w.borrow().buffer).unwrap_or(Value::Nil);
+    w.borrow_mut().old_buffer = old_buffer;
     w.borrow_mut().dead = true;
     let sel_dead = ff.selected.borrow().id == wid;
     ff.windows.retain(|w2| w2.borrow().id != wid);
@@ -4640,6 +4689,7 @@ fn f_delete_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_delete_other_windows(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_err_valid(i, &arg(&a, 0))?;
     let wid = w.borrow().id;
+    let old_buffer = w.borrow().old_buffer.clone();
     let f = sel_frame(i).unwrap();
     let mut ff = f.borrow_mut();
     // GNU expands the kept window over the whole root area: the
@@ -4670,7 +4720,7 @@ fn f_delete_other_windows(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Vec::new()
     };
     for r in dead_internal {
-        mark_tree_dead(&r);
+        mark_tree_dead(i, &r);
     }
     ff.windows.retain(|w2| {
         let keep = w2.borrow().id == wid;
@@ -4687,6 +4737,7 @@ fn f_delete_other_windows(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         wb.height = rh;
         wb.parent = None;
         wb.dead = false;
+        wb.old_buffer = old_buffer;
         wb.normal_size = (1.0, 1.0);
     }
     ff.root = Some(w.clone());
@@ -5816,7 +5867,7 @@ fn f_delete_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     {
         let mut f = f.borrow_mut();
         if let Some(root) = &f.root {
-            mark_tree_dead(root);
+            mark_tree_dead(i, root);
         }
         for w in f.windows.iter().chain(f.minibuffer.iter()) {
             w.borrow_mut().dead = true;
@@ -17063,6 +17114,8 @@ fn win_state_materialize(
     let horiz = tag == "hc";
     if tag == "vc" || tag == "hc" {
         let node = Window::new_internal(horiz, l, t, wd, h);
+        node.borrow_mut().change_frame = Some(f.borrow().id);
+        node.borrow_mut().change_clock = Some(f.borrow().change_stamp.clone());
         // Children are the trailing elements that are `leaf'/`vc'/
         // `hc' lists; a `(last . t)' marker rides on the final child.
         let child_states: Vec<Vec<Value>> = items[1..]
@@ -17146,6 +17199,8 @@ fn win_state_materialize(
             })
             .unwrap_or(i.current_buffer);
         let w = Window::new(bufid);
+        w.borrow_mut().change_frame = Some(f.borrow().id);
+        w.borrow_mut().change_clock = Some(f.borrow().change_stamp.clone());
         let point = i.buffers.get(bufid).map_or(0, |buffer| buffer.borrow().point());
         w.borrow_mut().point = point;
         set_window_old_point(i, &mut w.borrow_mut(), point);
@@ -17313,7 +17368,7 @@ fn f_window_state_put(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
     }
     // Kill W's old subtree (W itself; internals take their children).
-    mark_tree_dead(&w);
+    mark_tree_dead(i, &w);
     // Refresh the frame's live-window list (preorder leaves).
     let mut leaves = Vec::new();
     if let Some(r) = f.borrow().root.clone() {

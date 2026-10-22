@@ -1825,6 +1825,20 @@ a new marker at the saved cache position. Split windows initialize point and
 old point from the canonical window point, including selected buffers whose
 buffer point has moved. `qa_winstate` and session tests pin these #288 rules.
 
+`window-old-buffer` holds the previous notification snapshot, not the buffer
+replaced by `set-window-buffer`. The pre-redisplay phase in `editor/changes.rs`
+runs local change functions in the old/new buffers with a window argument,
+then default functions once with the frame argument; local t sentinels are
+ignored. History is recorded for all live frames after callbacks (also on
+unwind). Ordinary, isearch and minibuffer loops enter this phase before drawing.
+Frame epochs start at 1, new windows at 0. A non-nil old buffer with a stale
+window epoch is exposed as t, including deleted windows. Shared epoch cells
+outlive removed frames. Configuration record slot 7 saves the frame epoch;
+leaf spec slot 21 saves old buffer, restored only within the same epoch.
+Session images persist snapshots and rebind shared epoch cells; orphan windows
+retain the owner's last epoch. GNU TTY golden fixtures and session tests pin
+these #289 notification, deletion, reentrancy and restoration rules.
+
 ## Live backtraces (`src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source

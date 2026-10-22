@@ -100,6 +100,37 @@ fn run_on_big_stack(f: impl FnOnce() + Send + 'static) {
 }
 
 #[test]
+fn tui_window_change_history_is_published_at_redisplay() {
+    run_on_big_stack(|| {
+        let mut i = Interp::new();
+        i.eval_str(r#"(progn
+          (setq qa289-ui-target (get-buffer-create "qa289-ui-target")
+                qa289-ui-seen nil)
+          (defun qa289-ui-switch ()
+            (interactive)
+            (setq qa289-ui-before (window-old-buffer))
+            (switch-to-buffer qa289-ui-target)
+            (setq qa289-ui-after-command (window-old-buffer)))
+          (setq window-buffer-change-functions
+                (list (lambda (frame)
+                        (let ((window (frame-selected-window frame)))
+                          (when (and (eq (window-buffer window) qa289-ui-target)
+                                     (eq (window-old-buffer window) qa289-ui-before))
+                            (setq qa289-ui-seen t)))))))"#).unwrap();
+        let mut script = vec![META | b'x' as i128];
+        keys(&mut script, "qa289-ui-switch");
+        script.extend([RET, C_X, 3]);
+        run(script, &mut i);
+        let value = i.eval_str(r#"(list
+          (eq qa289-ui-before (get-buffer "*scratch*"))
+          (eq qa289-ui-before qa289-ui-after-command)
+          qa289-ui-seen
+          (eq (window-old-buffer) qa289-ui-target))"#).unwrap();
+        assert_eq!(i.prin1_to_string(&value), "(t t t t)");
+    });
+}
+
+#[test]
 fn tui_schedules_workers_while_waiting_for_input() {
     struct IdleIo {
         script: ScriptIo,

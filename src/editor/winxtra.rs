@@ -466,10 +466,10 @@ pub(crate) static SUBRS: &[Subr] = &[
         "set-frame-window-state-change",
         0,
         2,
-        f_frame_live_arg_nil,
+        f_set_frame_window_state_change,
         ""
     ),
-    S!("frame-window-state-change", 0, 1, f_frame_live_arg_nil, ""),
+    S!("frame-window-state-change", 0, 1, f_frame_window_state_change, ""),
     S!("frame-after-make-frame", 2, 2, f_frame_after_make_frame, ""),
     S!(
         "frame--set-was-invisible",
@@ -1110,11 +1110,19 @@ fn f_window_old_point(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_window_buffer1(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // `window-old-buffer':
-    // the buffer stored by the last `set-window-buffer' — nil until the
-    // first switch (GNU `old_buffer').
     let w = win_any(i, &arg(&a, 0))?;
-    Ok(w.borrow().old_buffer.clone())
+    let data = w.borrow();
+    if data.horiz.is_some() || data.old_buffer.is_nil() {
+        return Ok(Value::Nil);
+    }
+    let frame = data.change_frame.and_then(|id| i.frames.iter().find(|f| f.borrow().id == id));
+    let stamp = data.change_clock.as_ref().map(|clock| clock.get())
+        .or_else(|| frame.map(|frame| frame.borrow().change_stamp.get()));
+    if stamp.is_some_and(|stamp| stamp != data.change_stamp) {
+        Ok(Value::t())
+    } else {
+        Ok(data.old_buffer.clone())
+    }
 }
 
 fn f_window_has_params(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -2196,15 +2204,19 @@ fn f_set_frame_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 }
 
-/// `set-frame-size-and-position-pixelwise' /
-/// `set-frame-window-state-change' / `frame-window-state-change' —
-/// frame-live-p on the first/optional FRAME argument, then nil.
-fn f_frame_live_arg_nil(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Frame(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("frame-live-p", &other)),
-    }
+/// Mark a frame for state-change notification at the next redisplay.
+fn f_set_frame_window_state_change(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = frame_live(i, &arg(&a, 0))?;
+    let changed = arg(&a, 1).truthy();
+    frame.borrow_mut().window_state_change = changed;
+    Ok(Value::from_bool(changed))
 }
+
+fn f_frame_window_state_change(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = frame_live(i, &arg(&a, 0))?;
+    Ok(Value::from_bool(frame.borrow().window_state_change))
+}
+
 
 /// `set-frame-size-and-position-pixelwise' — GNU Fset_frame_size_and_
 /// position_pixelwise on a tty: decode_live_frame, nil gravity → 1,

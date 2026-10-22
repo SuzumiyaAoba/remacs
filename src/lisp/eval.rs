@@ -12064,7 +12064,7 @@ command-line arguments.\" \
     /// `message_dolog' body: append `s\n' to *Messages*, folding a run
     /// of identical messages into `msg [N times]'.  All positions are
     /// 0-based char indices.
-    fn message_log(&mut self, s: &str) {
+    pub(crate) fn message_log(&mut self, s: &str) {
         let mb = match self.buffers.by_name("*Messages*") {
             Some(id) => id,
             None => {

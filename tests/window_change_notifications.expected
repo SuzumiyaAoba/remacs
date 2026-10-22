@@ -1,0 +1,5 @@
+((initial "*scratch*" "*scratch*") (after-display "*scratch*" "*scratch*") (set-a "*scratch*" "qa289-a") (set-b "*scratch*" "qa289-b") (after-b-display "qa289-b" "qa289-b") (restored-across-display "qa289-b" "*scratch*") (after-restored-display "*scratch*" "*scratch*") (restored-without-display "*scratch*" "*scratch*") (fresh-split nil "*scratch*") (split-after-display "*scratch*" "*scratch*") (deleted "qa289-b"))
+((recorded "*scratch*") (deleted t) (restored-after-deletion t) (restored-after-display "*scratch*"))
+((before nil "*scratch*" "qa289-hook-a" "qa289-hook-b") (local window "qa289-hook-a" "qa289-hook-a" "qa289-hook-b") (local window "qa289-hook-b" "qa289-hook-a" "qa289-hook-b") (global frame "*scratch*" "qa289-hook-a" "qa289-hook-b") (after nil "*scratch*" "qa289-hook-b" "qa289-hook-b"))
+((old window "qa289-mutate-a" "qa289-mutate-a" "qa289-mutate-b") (new window "qa289-mutate-b" "qa289-mutate-a" "qa289-mutate-c") (after nil "*scratch*" "qa289-mutate-c" "qa289-mutate-c"))
+(9 "qa289-throw" nil)

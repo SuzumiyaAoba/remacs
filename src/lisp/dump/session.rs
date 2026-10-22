@@ -93,6 +93,8 @@ struct OverlayData {
     handle: Ref,
 }
 
+fn initial_change_stamp() -> u64 { 1 }
+
 #[derive(Serialize, Deserialize)]
 struct FrameData {
     id: usize,
@@ -106,6 +108,18 @@ struct FrameData {
     width: usize,
     height: usize,
     old_selected: Option<Ref>,
+    #[serde(default = "initial_change_stamp")]
+    change_stamp: u64,
+    #[serde(default)]
+    change_window_count: usize,
+    #[serde(default)]
+    change_selected: Option<usize>,
+    #[serde(default)]
+    change_frame_selected: bool,
+    #[serde(default)]
+    change_size: Option<(usize, usize)>,
+    #[serde(default)]
+    window_state_change: bool,
     buffer_list: Vec<usize>,
     buried_buffer_list: Vec<usize>,
     params: Ref,
@@ -146,6 +160,14 @@ struct WindowData {
     new_pixel: String,
     new_normal: Ref,
     old_buffer: Ref,
+    #[serde(default)]
+    change_stamp: u64,
+    #[serde(default)]
+    change_frame: Option<usize>,
+    #[serde(default)]
+    change_clock: Option<u64>,
+    #[serde(default)]
+    change_size: Option<[usize; 5]>,
     cursor_type: Ref,
 }
 
@@ -251,6 +273,12 @@ impl Image {
                 width: frame.width,
                 height: frame.height,
                 old_selected: None,
+                change_stamp: Rc::new(std::cell::Cell::new(frame.change_stamp)),
+                change_window_count: frame.change_window_count,
+                change_selected: frame.change_selected,
+                change_frame_selected: frame.change_frame_selected,
+                change_size: frame.change_size,
+                window_state_change: frame.window_state_change,
                 buffer_list: frame.buffer_list.clone(),
                 buried_buffer_list: frame.buried_buffer_list.clone(),
                 params: Value::Nil,
@@ -472,6 +500,10 @@ impl Image {
             w.new_normal = new_normal;
             w.normal_size = data.normal_size.unwrap_or((1.0, 1.0));
             w.old_buffer = old_buffer;
+            w.change_stamp = data.change_stamp;
+            w.change_frame = data.change_frame;
+            w.change_clock = data.change_clock.map(|stamp| Rc::new(std::cell::Cell::new(stamp)));
+            w.change_size = data.change_size;
             w.cursor_type = cursor_type;
         }
         // Older images have only integer geometry; recover their
@@ -528,7 +560,23 @@ impl Image {
             f.minibuffer = minibuffer;
             f.root = root;
             f.old_selected = old_selected;
+            f.change_stamp.set(data.change_stamp);
+            f.change_window_count = data.change_window_count;
+            f.change_selected = data.change_selected;
+            f.change_frame_selected = data.change_frame_selected;
+            f.change_size = data.change_size;
+            f.window_state_change = data.window_state_change;
             f.params = params;
+        }
+        for data in &self.window_data {
+            if let Some(frame) = data.change_frame {
+                if let (Some(Value::Window(window)), Some(Value::Frame(frame))) = (
+                    externals.get(&format!("window:{}", data.id)),
+                    externals.get(&format!("frame:{}", frame)),
+                ) {
+                    window.borrow_mut().change_clock = Some(frame.borrow().change_stamp.clone());
+                }
+            }
         }
         self.runtime.restore(i, &mut decoder)?;
         decoder.finish(i)?;
@@ -566,6 +614,14 @@ impl Image {
                 _ => Err("Invalid selected frame".to_owned()),
             })
             .transpose()?;
+        // Old session images did not retain the owning frame of a window.
+        for frame in &i.frames {
+            let id = frame.borrow().id;
+            for window in crate::editor::changes::frame_windows(frame) {
+                window.borrow_mut().change_frame.get_or_insert(id);
+                window.borrow_mut().change_clock = Some(frame.borrow().change_stamp.clone());
+            }
+        }
         i.window_select_count = self.window_select_count.unwrap_or_else(|| {
             self.window_data
                 .iter()
@@ -870,6 +926,12 @@ impl Image {
             width: f.width,
             height: f.height,
             old_selected: f.old_selected.as_ref().map(|w| window(e, w)).transpose()?,
+            change_stamp: f.change_stamp.get(),
+            change_window_count: f.change_window_count,
+            change_selected: f.change_selected,
+            change_frame_selected: f.change_frame_selected,
+            change_size: f.change_size,
+            window_state_change: f.window_state_change,
             buffer_list: f.buffer_list.clone(),
             buried_buffer_list: f.buried_buffer_list.clone(),
             params: e.value(&f.params)?,
@@ -918,6 +980,10 @@ impl Image {
             new_pixel: w.new_pixel.to_string(),
             new_normal: e.value(&w.new_normal)?,
             old_buffer: e.value(&w.old_buffer)?,
+            change_stamp: w.change_stamp,
+            change_frame: w.change_frame,
+            change_clock: w.change_clock.as_ref().map(|clock| clock.get()),
+            change_size: w.change_size,
             cursor_type: e.value(&w.cursor_type)?,
         })
     }
@@ -926,6 +992,58 @@ impl Image {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn window_change_history_survives_pending_changes_and_removed_frames() {
+        std::thread::Builder::new().stack_size(128 << 20).spawn(|| {
+            let mut source = Interp::new();
+            source.eval_str(r#"(progn
+              (dolist (hook '(window-buffer-change-functions window-size-change-functions
+                             window-selection-change-functions window-state-change-functions
+                             window-configuration-change-hook window-state-change-hook))
+                (set-default hook nil))
+              (setq qa289-live (selected-window)
+                    qa289-dead (split-window nil 20 'right)
+                    qa289-next (get-buffer-create "qa289-session-next")))"#).unwrap();
+            crate::editor::changes::run(&mut source).unwrap();
+            source.eval_str("(set-window-buffer qa289-live qa289-next)").unwrap();
+            crate::editor::changes::run(&mut source).unwrap();
+            source.eval_str("(delete-window qa289-dead) (set-window-buffer qa289-live (get-buffer \"*scratch*\"))").unwrap();
+            let image = Image::capture(&source).unwrap();
+            let bytes = serde_json::to_vec(&image).unwrap();
+            let image: Image = serde_json::from_slice(&bytes).unwrap();
+            let mut restored = Interp::new();
+            image.restore(&mut restored).unwrap();
+            let before = restored.eval_str("(list (eq (window-old-buffer qa289-live) qa289-next) (eq (window-old-buffer qa289-dead) (get-buffer \"*scratch*\")))").unwrap();
+            assert_eq!(restored.prin1_to_string(&before), "(t t)");
+            crate::editor::changes::run(&mut restored).unwrap();
+            let after = restored.eval_str("(list (eq (window-old-buffer qa289-live) (get-buffer \"*scratch*\")) (window-old-buffer qa289-dead))").unwrap();
+            assert_eq!(restored.prin1_to_string(&after), "(t t)");
+            // Keeping a window must keep enough of its owning frame's epoch
+            // to interpret the history even after that frame leaves the UI.
+            restored.frames.clear();
+            restored.selected_frame = None;
+            let orphan = Image::capture(&restored).unwrap();
+            orphan.restore(&mut restored).unwrap();
+            let old = restored.eval_str("(window-old-buffer qa289-dead)").unwrap();
+            assert!(old.truthy());
+            assert!(matches!(old, Value::Sym(crate::lisp::sym::T)));
+            let mut legacy = serde_json::to_value(&image).unwrap();
+            for frame in legacy["frame_data"].as_array_mut().unwrap() {
+                let fields = frame.as_object_mut().unwrap();
+                for name in ["change_stamp", "change_window_count", "change_selected", "change_frame_selected", "change_size", "window_state_change"] { fields.remove(name); }
+            }
+            for window in legacy["window_data"].as_array_mut().unwrap() {
+                let fields = window.as_object_mut().unwrap();
+                for name in ["change_stamp", "change_frame", "change_clock", "change_size"] { fields.remove(name); }
+            }
+            let legacy: Image = serde_json::from_value(legacy).unwrap();
+            legacy.restore(&mut restored).unwrap();
+            crate::editor::changes::run(&mut restored).unwrap();
+            let old = restored.eval_str("(eq (window-old-buffer qa289-live) (get-buffer \"*scratch*\"))").unwrap();
+            assert!(old.truthy());
+        }).unwrap().join().unwrap();
+    }
 
     #[test]
     fn window_old_point_markers_survive_redisplay_and_session_restore() {
