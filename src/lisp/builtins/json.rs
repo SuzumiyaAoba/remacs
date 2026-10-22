@@ -765,7 +765,13 @@ fn json_value_err(i: &mut Interp, v: &Value) -> Flow {
     i.wrong_type_mut("json-value-p", v)
 }
 
-fn ser_value(i: &mut Interp, v: &Value, o: &Opts, out: &mut String) -> Result<(), Flow> {
+fn ser_value(
+    i: &mut Interp,
+    v: &Value,
+    o: &Opts,
+    out: &mut String,
+    remaining: usize,
+) -> Result<(), Flow> {
     // GNU compares arbitrary sentinel objects by identity before dispatching
     // on their type; null takes precedence if both options name the same value.
     if crate::lisp::builtins::eq_values(&o.null_obj, v) {
@@ -775,6 +781,11 @@ fn ser_value(i: &mut Interp, v: &Value, o: &Opts, out: &mut String) -> Result<()
     if crate::lisp::builtins::eq_values(&o.false_obj, v) {
         out.push_str("false");
         return Ok(());
+    }
+    // GNU json_out_nest counts arrays, hashes and nonempty objects. Nil's
+    // empty object and configured sentinels do not consume nesting depth.
+    if remaining == 0 && matches!(v, Value::Vec(_) | Value::Cons(_) | Value::Hash(_)) {
+        return Err(i.error("Maximum JSON serialization depth exceeded"));
     }
     match v {
         Value::Nil => out.push_str("{}"),
@@ -805,7 +816,7 @@ fn ser_value(i: &mut Interp, v: &Value, o: &Opts, out: &mut String) -> Result<()
                 if n > 0 {
                     out.push(',');
                 }
-                ser_value(i, e, o, out)?;
+                ser_value(i, e, o, out, remaining - 1)?;
             }
             out.push(']');
         }
@@ -825,6 +836,11 @@ fn ser_value(i: &mut Interp, v: &Value, o: &Opts, out: &mut String) -> Result<()
             let mut tail = v.clone();
             let mut first = true;
             let mut seen = std::collections::HashSet::new();
+            // Match GNU FOR_EACH_TAIL's Brent checkpoints, including the
+            // actual tail reported as the circular-list error datum.
+            let mut cycle_anchor = tail.clone();
+            let mut cycle_limit = 2usize;
+            let mut cycle_steps = 0usize;
             while let Value::Cons(c) = tail.clone() {
                 let (car, cdr) = {
                     let b = c.borrow();
@@ -874,13 +890,21 @@ fn ser_value(i: &mut Interp, v: &Value, o: &Opts, out: &mut String) -> Result<()
                     };
                     esc_into(&name, out);
                     out.push(':');
-                    ser_value(i, &value, o, out)?;
+                    ser_value(i, &value, o, out, remaining - 1)?;
                 }
                 // FOR_EACH_TAIL stepper: advance one cons.
                 tail = match &tail {
                     Value::Cons(c) => c.borrow().cdr.clone(),
                     _ => Value::Nil,
                 };
+                cycle_steps += 1;
+                if cycle_steps == cycle_limit {
+                    cycle_steps = 0;
+                    cycle_limit = cycle_limit.saturating_mul(2);
+                    cycle_anchor = tail.clone();
+                } else if crate::lisp::builtins::eq_values(&tail, &cycle_anchor) {
+                    return Err(i.signal_data(crate::lisp::obarray::sym::CIRCULAR_LIST, vec![tail]));
+                }
             }
             if !tail.is_nil() {
                 // CHECK_LIST_END carries the whole object as datum.
@@ -914,7 +938,7 @@ fn ser_value(i: &mut Interp, v: &Value, o: &Opts, out: &mut String) -> Result<()
                 }
                 esc_into(&name, out);
                 out.push(':');
-                ser_value(i, val, o, out)?;
+                ser_value(i, val, o, out, remaining - 1)?;
             }
             out.push('}');
         }
@@ -926,7 +950,7 @@ fn ser_value(i: &mut Interp, v: &Value, o: &Opts, out: &mut String) -> Result<()
 fn serialize(i: &mut Interp, v: &Value, rest: &[Value]) -> Result<String, Flow> {
     let o = parse_opts(i, rest, true)?;
     let mut out = String::new();
-    ser_value(i, v, &o, &mut out)?;
+    ser_value(i, v, &o, &mut out, 50)?;
     Ok(out)
 }
 
