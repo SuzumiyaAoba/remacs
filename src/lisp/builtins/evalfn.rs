@@ -590,19 +590,23 @@ fn f_macroexpand(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU: (macroexpand FORM &optional ENVIRONMENT) consults only the
     // explicit ENVIRONMENT alist; the dynamic variable
     // `macroexpand-all-environment' is `macroexpand-all''s business.
-    // ENVIRONMENT must be nil or a list — GNU's Fmacroexpand runs
-    // CHECK_LIST on it.
+    // GNU inspects ENVIRONMENT only for a list with a symbol head.
+    // Atoms and non-symbol-headed lists return unchanged (#293).
     let env = args.get(1).cloned().unwrap_or(Value::Nil);
-    match &env {
-        Value::Nil | Value::Cons(_) => {}
-        other => return Err(i.wrong_type_mut("listp", other)),
+    if matches!(&args[0], Value::Cons(c) if i.sym_id(&c.borrow().car).is_some()) {
+        match &env {
+            Value::Nil | Value::Cons(_) => {}
+            other => return Err(i.wrong_type_mut("listp", other)),
+        }
     }
     i.macroexpand_env(&args[0], &env)
 }
 
 fn f_macroexpand_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // single-step expansion.  GNU runs CHECK_LIST on ENVIRONMENT.
-    if let Some(env) = args.get(1) {
+    // GNU's single-step expander checks ENVIRONMENT only for conses.
+    if matches!(&args[0], Value::Cons(_))
+        && let Some(env) = args.get(1)
+    {
         match env {
             Value::Nil | Value::Cons(_) => {}
             other => return Err(i.wrong_type_mut("listp", other)),
@@ -712,11 +716,13 @@ fn macroexpand_all_entry(
 ) -> EvalResult {
     // GNU: ENVIRONMENT is passed through the dynamic variable
     // `macroexpand-all-environment'; macros such as `rx'/`rx-let'
-    // consult it for local definitions.  CHECK_LIST like the others.
+    // consult it for local definitions. Atoms do not inspect it (#293).
     let env = args.get(1).cloned().unwrap_or(Value::Nil);
-    match &env {
-        Value::Nil | Value::Cons(_) => {}
-        other => return Err(i.wrong_type_mut("listp", other)),
+    if matches!(&args[0], Value::Cons(_)) {
+        match &env {
+            Value::Nil | Value::Cons(_) => {}
+            other => return Err(i.wrong_type_mut("listp", other)),
+        }
     }
     let id = i.intern("macroexpand-all-environment");
     let mark = i.specbind_depth();

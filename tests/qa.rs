@@ -216,6 +216,7 @@ qa!(qa_frame_parameters, "qa_frame_parameters.el");
 qa!(qa_frame_buffer_changes, "qa_frame_buffer_changes.el");
 qa!(qa_feature_capabilities, "qa_feature_capabilities.el");
 qa!(qa_macro, "qa_macro.el");
+qa!(qa_macro_environment, "qa_macro_environment.el");
 qa!(qa_map, "qa_map.el");
 qa!(qa_map2, "qa_map2.el");
 qa!(qa_mapring, "qa_mapring.el");

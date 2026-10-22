@@ -383,6 +383,11 @@ completes; a feature's after-load hook is too late for expanded consumers.
 Regressions: `qa_load_macroexpand`, `qa_eieio`, and the existing macro,
 pcase, cl-loop, load and CLI suites.
 
+`macroexpand` validates ENVIRONMENT only for conses with a symbol head;
+`macroexpand-1` and `macroexpand-all` validate it only for conses. Atom
+inputs preserve their identity even with an invalid unused environment.
+Regression: `qa_macro_environment` (54 GNU-verified checks, #293).
+
 
 
 ## Known runtime gaps (not port defects)
