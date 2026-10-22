@@ -7700,7 +7700,7 @@ fn f_newline(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if n > 0x7FFF_FFFF {
         return Err(i.error("Maximum buffer size exceeded"));
     }
-    insert_str_at_point(i, &"\n".repeat(n as usize), false)?;
+    chg_insert_and_inherit_pt(i, &"\n".repeat(n as usize))?;
     Ok(Value::Nil)
 }
 fn f_open_line(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
