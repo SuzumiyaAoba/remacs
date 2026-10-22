@@ -7478,10 +7478,16 @@ fn f_insert_before_markers_and_inherit(i: &mut Interp, a: crate::lisp::Argv) -> 
 fn f_insert_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let unibyte = buffer_is_unibyte(i);
     let c = match &a[0] {
-        Value::Int(n) => {
-            let code = if unibyte { *n & 0xFF } else { *n };
-            crate::lisp::value::lisp_char(code as u32)
-                .ok_or_else(|| i.wrong_type_mut("characterp", &a[0]))?
+        // Validate the full GNU character range before narrowing to a byte
+        // or casting to u32; invalid integers must not wrap into characters.
+        Value::Int(n) if (0..=0x3F_FFFF).contains(n) => {
+            let code = if unibyte { *n & 0xFF } else { *n } as u32;
+            if (0x11_0000..=0x3F_FF7F).contains(&code) {
+                crate::lisp::value::mule_seq_char(code)
+            } else {
+                crate::lisp::value::lisp_char(code)
+                    .ok_or_else(|| i.wrong_type_mut("characterp", &a[0]))?
+            }
         }
         other => return Err(i.wrong_type_mut("characterp", other)),
     };
