@@ -499,6 +499,8 @@ qa!(qa_called_interactively_frames, "qa_called_interactively_frames.el");
 qa!(qa_map_live_sequence, "qa_map_live_sequence.el");
 qa!(qa_lisp_mode_init, "qa_lisp_mode_init.el");
 qa!(qa_lisp_mode_reload, "qa_lisp_mode_reload.el");
+qa!(qa_org_deferred, "qa_org_deferred.el");
+qa!(qa_org_mode_startup, "qa_org_mode_startup.el");
 
 qa!(qa_gensym_counter, "qa_gensym_counter.el");
 

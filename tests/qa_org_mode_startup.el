@@ -1,0 +1,35 @@
+;;; qa_org_mode_startup.el --- Start and fontify Org with its default parser -*- lexical-binding: t; -*-
+(defvar org-persist-directory)
+(defvar org-id-locations-file)
+(let* ((root (make-temp-file "qa339-profile-" t))
+       (user-emacs-directory (file-name-as-directory root))
+       (org-persist-directory (expand-file-name "org-persist" root))
+       (org-id-locations-file (expand-file-name "org-id" root))
+       (custom-file (expand-file-name "custom.el" root))
+       (kill-emacs-hook nil))
+  (unwind-protect
+      (progn
+        (qa (with-temp-buffer (org-mode) major-mode) 'org-mode)
+        (qa (featurep 'org-element) t)
+        (qa (with-temp-buffer
+              (insert "* Title\n\nText with *bold*.\n")
+              (org-mode) (font-lock-mode 1) (font-lock-ensure)
+              (list major-mode (get-text-property 3 'face)
+                    (progn (goto-char 1) (search-forward "bold")
+                           (get-text-property (- (point) 4) 'face))))
+            '(org-mode org-level-1 (bold)))
+        (qa (with-temp-buffer
+              (insert "* First\nBody\n** Second\n") (org-mode) (goto-char 1)
+              (let ((element (org-element-at-point)))
+                (list (org-element-type element)
+                      (org-element-property :raw-value element)
+                      (org-element-property :title element)
+                      (org-element-property :level element))))
+            '(headline "First" "First" 1))
+        (qa (with-temp-buffer
+              (insert "* Title\n") (org-mode) (goto-char 1)
+              (org-demote)
+              (buffer-substring-no-properties (point-min) (point-max)))
+            '"** Title\n"))
+    (delete-directory root t)))
+(princ (qa--done))

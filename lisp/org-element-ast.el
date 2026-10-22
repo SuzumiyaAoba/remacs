@@ -256,13 +256,10 @@ Return value is the containing property name, as a keyword, or nil."
 
 ;;;; Deferred values
 
-;; remacs: `cl-defstruct' constructor arglists do not support `&aux';
-;; the alias/list constructors are plain `defun's defined after the
-;; struct instead.
+;; Remacs: use ordinary constructors below.  An interpreted BOA constructor
+;; with an &rest slot produces an invalid compiler-macro expansion here.
 (cl-defstruct (org-element-deferred
                (:constructor nil)
-               (:constructor org-element-deferred-create
-                             (auto-undefer-p function &rest args))
                (:type vector) :named)
   "Dynamically computed value.
 
@@ -277,14 +274,19 @@ AUTO-UNDEFER slot flags if the property value should be replaced upon
 resolution.  Some functions may ignore this flag."
   function args auto-undefer-p)
 
-;; remacs: GNU defines these via `&aux' constructor arglists.
+;; Remacs: retain GNU's vector layout without the BOA inliner.  Keeping
+;; this constructor ordinary also makes calls from org-element.el safe.
+(defun org-element-deferred-create (auto-undefer-p function &rest args)
+  "Construct a deferred value using FUNCTION, ARGS and AUTO-UNDEFER-P."
+  (vector 'org-element-deferred function args auto-undefer-p))
+
 (defun org-element-deferred-create-alias (keyword &optional auto-undefer-p)
   (org-element-deferred-create auto-undefer-p #'org-element-property-2
                                keyword))
 
 (defun org-element-deferred-create-list (args &optional auto-undefer-p)
-  (apply #'org-element-deferred-create auto-undefer-p
-         #'org-element--deferred-resolve-list args))
+  (vector 'org-element-deferred #'org-element--deferred-resolve-list
+          args auto-undefer-p))
 
 (defsubst org-element--deferred-resolve-once (deferred-value &optional node)
   "Resolve DEFERRED-VALUE for NODE.
