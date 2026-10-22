@@ -556,10 +556,12 @@
 (let ((system-time-locale "C"))
   (qa (format-time-string "%Y" -62135499355 t)
       "0001")
+  ;; GNU Emacs 31.1 on macOS preserves four digits in the C-locale
+  ;; era-year expansion; its outer width adds two spaces.
   (qa (format-time-string "%EY" -62135499355 t)
-      "1")
+      "0001")
   (qa (format-time-string "%6EY" -62135499355 t)
-      "     1")
+      "  0001")
   (qa (format-time-string "%F" -62135499355 t)
       "0001-01-02")
   (qa (format-time-string "%0F" -62135499355 t)
