@@ -282,8 +282,12 @@ impl<'a> Parser<'a> {
     /// the consumed byte count, which already includes the char that
     /// failed the check — hence no +1 here, unlike `err').
     fn err_consumed(&mut self) -> PErr {
+        self.err_consumed_as("json-parse-error")
+    }
+
+    fn err_consumed_as(&mut self, name: &str) -> PErr {
         let pos = self.pos.saturating_sub(self.base) as i128;
-        let id = self.i.intern("json-parse-error");
+        let id = self.i.intern(name);
         json_cond_chain(self.i, id);
         self.i.signal_data(
             id,
@@ -323,16 +327,7 @@ impl<'a> Parser<'a> {
     }
 
     fn utf8_error(&mut self) -> PErr {
-        let id = self.i.intern("json-utf8-decode-error");
-        json_cond_chain(self.i, id);
-        self.i.signal_data(
-            id,
-            vec![
-                Value::Int(self.line as i128),
-                Value::Nil,
-                Value::Int(self.pos.saturating_sub(self.base) as i128),
-            ],
-        )
+        self.err_consumed_as("json-utf8-decode-error")
     }
 
     fn utf8_byte(&mut self) -> Result<u8, PErr> {
@@ -552,9 +547,11 @@ impl<'a> Parser<'a> {
                 return Ok(Value::from_bigint(n));
             }
         }
-        txt.parse::<f64>()
-            .map(Value::float)
-            .map_err(|_| self.err(false))
+        let value = txt.parse::<f64>().map_err(|_| self.err(false))?;
+        if !value.is_finite() {
+            return Err(self.err_consumed_as("json-number-out-of-range-error"));
+        }
+        Ok(Value::float(value))
     }
 
     fn array(&mut self) -> Result<Value, PErr> {
