@@ -11190,7 +11190,12 @@ command-line arguments.\" \
             ("x-use-underline-position-properties", Value::Nil),
             ("x-underline-at-descent-line", Value::Nil),
             ("x-mouse-clip-rectangular", Value::Sym(sym::T)),
-            ("shell-file-name", Value::string("/bin/sh")),
+            (
+                "shell-file-name",
+                // GNU init_callproc uses SHELL, including an empty value.
+                // ESHELL selects an interactive shell, not this default.
+                Value::string(std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())),
+            ),
             ("path-separator", Value::string(":")),
             ("null-device", Value::string("/dev/null")),
             (

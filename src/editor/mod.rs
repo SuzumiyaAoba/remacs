@@ -15734,13 +15734,28 @@ fn f_call_process_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Int(output.status.code().unwrap_or(1) as i128))
 }
 
-fn f_shell_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let cmdline = want_str(i, &a[0])?;
+/// Build a shell invocation from the current Lisp bindings, like the
+/// call-process-shell-command wrappers. Keep exec-path and child-directory
+/// lookup consistent with other synchronous processes (#295).
+fn shell_process_command(i: &mut Interp, cmdline: &str) -> Result<std::process::Command, Flow> {
+    let shell_symbol = i.intern("shell-file-name");
+    let shell_value = i.eval(&Value::Sym(shell_symbol))?;
+    let shell = want_str(i, &shell_value)?;
+    let switch_symbol = i.intern("shell-command-switch");
+    let switch_value = i.eval(&Value::Sym(switch_symbol))?;
+    let switch = want_str(i, &switch_value)?;
     let directory = process_directory(i)?;
-    let mut command = std::process::Command::new("/bin/sh");
+    let shell = dif_resolve_program(i, &shell, &directory, false)?;
+    let mut command = std::process::Command::new(shell);
     command.current_dir(directory);
     crate::lisp::process::environment::apply(i, &mut command);
-    command.arg("-c").arg(&cmdline);
+    command.arg(switch).arg(cmdline);
+    Ok(command)
+}
+
+fn f_shell_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let cmdline = want_str(i, &a[0])?;
+    let mut command = shell_process_command(i, &cmdline)?;
     let mut capture = if arg(&a, 2).is_nil() {
         sync_process_destination(i, &mut command, &Value::t())?.1
     } else {
@@ -15808,14 +15823,10 @@ fn f_shell_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_shell_command_to_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let cmdline = want_str(i, &a[0])?;
-    let directory = process_directory(i)?;
     // GNU callproc.c: with no error-buffer argument the child's stderr
     // is merged into stdout ("discard" would need an explicit
     // error-file spec, which shell-command-to-string doesn't pass).
-    let mut command = std::process::Command::new("/bin/sh");
-    command.current_dir(directory);
-    crate::lisp::process::environment::apply(i, &mut command);
-    command.arg("-c").arg(&cmdline);
+    let mut command = shell_process_command(i, &cmdline)?;
     let (_, mut capture) = sync_process_destination(i, &mut command, &Value::t())?;
     let result = command.output();
     drop(command);

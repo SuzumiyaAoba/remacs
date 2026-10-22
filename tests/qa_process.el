@@ -447,7 +447,7 @@
 (let ((process-environment (list "QA_ONLY=ins")))
   (qa (getenv "QA_ONLY") "ins"))
 ;; shell-file-name / shell-command-switch
-(qa shell-file-name "/bin/sh")
+(qa shell-file-name (or (getenv "SHELL") "/bin/sh"))
 (qa shell-command-switch "-c")
 ;; emacs-pid
 (qa (numberp (emacs-pid)) t)

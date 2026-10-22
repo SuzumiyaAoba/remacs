@@ -1042,6 +1042,15 @@ prefix of the list is consumed, and entries end at the first NUL.
 Unibyte values retain their bytes. Program lookup uses Lisp `exec-path`
 before applying the child's PATH. Regression: `qa_process_environment`.
 
+`shell-file-name` initially uses the startup `SHELL` value, including an
+empty string, and defaults to `/bin/sh` only when unset. `ESHELL` does not
+override this default; later `setenv` calls do not reset it. Explicit Lisp
+bindings still select the execution shell. The Rust `shell-command` and
+`shell-command-to-string` use those bindings and `shell-command-switch`,
+with the normal exec-path and process-directory resolution.
+Regression: `shell_environment`
+uses independent processes with GNU checks and both ELC modes (#295).
+
 `editor::process_directory` validates the launching buffer's
 `default-directory`, using `unhandled-file-name-directory` (nil means
 HOME), and sets each child's `Command::current_dir` without changing the
