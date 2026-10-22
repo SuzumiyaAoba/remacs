@@ -606,14 +606,16 @@ fn f_json_parse_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_json_parse_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let o = parse_opts(i, &a[..], false)?;
     let buf = i.current_buffer;
-    let (text, point) = {
+    let (text, point, end) = {
         let Some(b) = i.buffers.get(buf) else {
             return Ok(Value::Nil);
         };
         let bb = b.borrow();
-        (bb.text.text(), bb.point)
+        (bb.text.text(), bb.point, bb.zv)
     };
-    let chars: Vec<char> = text.chars().collect();
+    // Keep absolute character positions, but never give the parser text
+    // beyond the accessible end of a narrowed buffer.
+    let chars: Vec<char> = text.chars().take(end).collect();
     let start = point.min(chars.len());
     // GNU `buffer_byte_to_line' counts newlines inside the parsed
     // span only, so error LINE starts at 1 at point like POSITION
