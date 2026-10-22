@@ -646,6 +646,79 @@ fn quit_flow_via_throw() {
     let _ = e;
 }
 
+// Inspect printable terminal output, including names split by SGR changes.
+// CSI commands and OSC titles are control data, not rendered buffer names.
+fn terminal_text(output: &[u8]) -> String {
+    let mut text = Vec::new();
+    let mut bytes = output.iter().copied();
+    while let Some(byte) = bytes.next() {
+        if byte != 0x1b {
+            text.push(byte);
+            continue;
+        }
+        match bytes.next() {
+            Some(b'[') => {
+                for byte in bytes.by_ref() {
+                    if (0x40..=0x7e).contains(&byte) {
+                        break;
+                    }
+                }
+            }
+            Some(b']') => {
+                let mut escape = false;
+                for byte in bytes.by_ref() {
+                    if byte == 7 || (escape && byte == b'\\') {
+                        break;
+                    }
+                    escape = byte == 0x1b;
+                }
+            }
+            Some(0x20..=0x2f) => {
+                for byte in bytes.by_ref() {
+                    if (0x30..=0x7e).contains(&byte) {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    String::from_utf8_lossy(&text).into_owned()
+}
+
+#[test]
+fn pty_frame_detection_ignores_ansi_sequences() {
+    let split_name = b"----- *scr\x1b[0match*   L1 C0  [sel]";
+    assert!(!String::from_utf8_lossy(split_name).contains("scratch"));
+    assert!(terminal_text(split_name).contains("*scratch*"));
+    assert_eq!(
+        terminal_text(b"\x1b]0;*scratch*\x07\x1b[2Jloading\x1b[0m"),
+        "loading"
+    );
+    assert_eq!(terminal_text(b"\x1b]0;title\x1b\\\x1b(Btext"), "text");
+    assert!(!terminal_text(b"*scr\x1b[0").contains("*scratch*"));
+}
+
+struct PtyTranscript(std::path::PathBuf);
+impl PtyTranscript {
+    fn text(&self) -> String {
+        terminal_text(&std::fs::read(&self.0).expect("read PTY transcript"))
+    }
+}
+impl Drop for PtyTranscript {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+struct PtyChild(std::process::Child);
+impl Drop for PtyChild {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 /// Drive the real interactive loop through a pseudo-terminal (the
 /// `script` utility allocates one). Types text, runs M-x, searches
 /// with isearch, then quits with C-x C-c. Skipped when `script` is
@@ -663,6 +736,19 @@ fn pty_editor_smoke() {
         eprintln!("skipping: `script` unavailable");
         return;
     }
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let transcript = PtyTranscript(std::env::temp_dir().join(format!(
+        "remacs-pty-{}-{nonce}.log",
+        std::process::id()
+    )));
+    let output = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&transcript.0)
+        .unwrap();
     let mut cmd = Command::new("script");
     // Headless runners give script a 0x0 PTY. Set the geometry that
     // this split-window / mode-line test actually requires; otherwise
@@ -672,45 +758,32 @@ fn pty_editor_smoke() {
         "/dev/null",
         "/bin/sh",
         "-c",
-        "stty rows 24 cols 80; exec \"$1\" -nw",
+        "stty rows 24 cols 80 && exec \"$1\" -Q -nw",
         "remacs-pty",
         env!("CARGO_BIN_EXE_remacs"),
     ])
+    .env("TERM", "xterm-256color")
     .stdin(Stdio::piped())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::null());
-    let mut child = cmd.spawn().expect("spawn script");
-    let mut stdin = child.stdin.take().unwrap();
-    // Collect rendered output in the background so we can wait for the
-    // first frame before typing — otherwise input sent during startup
-    // is merely echoed and the editor may see C-x C-c before ever
-    // drawing, making the test racy under load.
-    let stdout = child.stdout.take().unwrap();
-    let buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
-    let buf_reader = buf.clone();
-    let reader = std::thread::spawn(move || {
-        use std::io::Read;
-        let mut so = stdout;
-        let mut tmp = [0u8; 8192];
-        loop {
-            match so.read(&mut tmp) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => buf_reader.lock().unwrap().extend_from_slice(&tmp[..n]),
-            }
-        }
-        buf_reader
-    });
+    .stdout(output.try_clone().unwrap())
+    .stderr(output);
+    let mut child = PtyChild(cmd.spawn().expect("spawn script"));
+    let mut stdin = child.0.stdin.take().unwrap();
+    // A regular file keeps inherited pipe writers from blocking collection.
     // Wait for the initial frame (the *scratch* mode line).  Under
     // parallel test load the ~30s prelude can stretch past 60s;
     // 120s still bounds a wedged first-render loop.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     loop {
-        if String::from_utf8_lossy(&buf.lock().unwrap()).contains("scratch") {
+        let text = transcript.text();
+        if text.contains("*scratch*") {
             break;
+        }
+        if let Some(status) = child.0.try_wait().unwrap() {
+            panic!("editor exited before its first frame: {status}\n{text}");
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "timed out waiting for the first rendered frame"
+            "timed out waiting for the first rendered frame\n{text}"
         );
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
@@ -752,13 +825,23 @@ fn pty_editor_smoke() {
         std::thread::sleep(std::time::Duration::from_millis(150));
     }
     drop(stdin);
-    let status = child.wait().unwrap();
-    let out = reader.join().unwrap();
-    let text = String::from_utf8_lossy(&out.lock().unwrap()).into_owned();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    let status = loop {
+        if let Some(status) = child.0.try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "editor did not exit after C-x C-c\n{}",
+            transcript.text()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    let text = transcript.text();
     assert!(
-        text.contains("scratch"),
+        text.contains("*scratch*"),
         "expected a rendered frame, got: {}",
-        &text[..text.len().min(400)]
+        text.chars().take(400).collect::<String>()
     );
     assert!(status.success());
 }
