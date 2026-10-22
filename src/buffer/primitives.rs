@@ -4454,57 +4454,88 @@ fn reset_mode_slots(i: &mut Interp, buffer: &mut crate::buffer::Buffer) {
 pub(crate) fn f_kill_all_local_variables(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU runs old-mode cleanup before touching any local state.
     call_hook(i, "change-major-mode-hook")?;
-    // GNU reset_buffer_local_variables also resets the buffer's
-    // syntax-table, case-table and category-table fields to the
-    // standard objects (buffer slots, not Lisp locals, so they
-    // survive `locals' cleanup otherwise).
-    // KILL-PERMANENT non-nil clears even `permanent-local' bindings.
-    if a.first().map(Value::truthy).unwrap_or(false) {
-        let b = cur(i);
-        let mut bb = b.borrow_mut();
-        // `buffer-file-name' is a C buffer slot, not a resettable
-        // local: GNU keeps it across even `kill-all-local-variables t'
-        // (verified on 31.1).  Re-mirror the slot after clearing.
-        let keep_bfn = bb.file_name.clone();
-        bb.locals.retain(|s, _| i.obarray.symbol(*s).always_local);
-        reset_mode_slots(i, &mut bb);
-        if i.bfn_sym != 0 {
-            if let Some(f) = keep_bfn {
-                bb.locals.insert(i.bfn_sym, Value::string(f));
-            }
+    let kill_permanent = a.first().is_some_and(Value::truthy);
+    let buffer = cur(i);
+    let permanent = i.intern("permanent-local");
+    let permanent_hook = i.intern("permanent-local-hook");
+    // These are C buffer slots in GNU, mirrored in locals here. They reset
+    // before variable watchers and are not ordinary local-alist entries.
+    let mode_slots = [
+        i.intern("major-mode"),
+        i.intern("mode-name"),
+        i.intern("buffer-invisibility-spec"),
+    ];
+    {
+        let mut buffer = buffer.borrow_mut();
+        reset_mode_slots(i, &mut buffer);
+        buffer.syntax_table = None;
+        buffer.case_table = None;
+        buffer.category_table = None;
+    }
+    // GNU's local-var-alist visits the most recently created binding first.
+    // Snapshot keys, never hold a buffer borrow while running a watcher.
+    let locals: Vec<(u32, Value)> = buffer
+        .borrow()
+        .locals
+        .iter()
+        .rev()
+        .map(|(symbol, value)| (*symbol, value.clone()))
+        .collect();
+    for (symbol, original) in locals {
+        if i.obarray.symbol(symbol).always_local
+            || mode_slots.contains(&symbol)
+            || (i.bfn_sym != 0 && symbol == i.bfn_sym)
+            || !buffer.borrow().locals.contains_key(&symbol)
+        {
+            continue;
         }
-        bb.syntax_table = None;
-        bb.case_table = None;
-        bb.category_table = None;
-        return Ok(Value::Nil);
+        let property = i.get_prop(symbol, permanent);
+        i.fire_var_watchers(symbol, &Value::Nil, "makunbound", Some(i.current_buffer))?;
+        if !kill_permanent && property.truthy() {
+            if i.sym_is(&property, permanent_hook) {
+                let value = buffer
+                    .borrow()
+                    .locals
+                    .get(&symbol)
+                    .cloned()
+                    .unwrap_or(original);
+                let filtered = if matches!(&value, Value::Cons(_)) {
+                    let original = value.clone();
+                    let mut tail = value;
+                    let mut kept = Vec::new();
+                    let mut seen = std::collections::HashSet::new();
+                    while let Value::Cons(cell) = tail {
+                        if !seen.insert(std::rc::Rc::as_ptr(&cell) as usize) {
+                            return Err(i.signal_data(sym::CIRCULAR_LIST, vec![original]));
+                        }
+                        let (element, next) = {
+                            let cell = cell.borrow();
+                            (cell.car.clone(), cell.cdr.clone())
+                        };
+                        if i.sym_is(&element, sym::T)
+                            || i.sym_id(&element).is_some_and(|function| {
+                                i.get_prop(function, permanent_hook).truthy()
+                            })
+                        {
+                            kept.push(element);
+                        }
+                        tail = next;
+                    }
+                    Value::list(kept)
+                } else {
+                    crate::lisp::builtins::seq::f_nreverse_seq(i, vec![value].into())?
+                };
+                i.fire_var_watchers(symbol, &filtered, "makunbound", Some(i.current_buffer))?;
+                // A watcher can kill its own local binding.
+                let mut buffer = buffer.borrow_mut();
+                if buffer.locals.contains_key(&symbol) {
+                    buffer.locals.insert(symbol, filtered);
+                }
+            }
+        } else {
+            buffer.borrow_mut().locals.shift_remove(&symbol);
+        }
     }
-    let keep: Vec<u32> = {
-        let b = cur(i);
-        let bb = b.borrow();
-        bb.locals
-            .keys()
-            .copied()
-            .filter(|s| {
-                i.get_prop(*s, i.intern_soft("permanent-local").unwrap_or(u32::MAX))
-                    .truthy()
-            })
-            .collect()
-    };
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let mut keep_set: std::collections::HashSet<u32> = keep.into_iter().collect();
-    // `buffer-file-name' is a C buffer slot (BVAR), not a real local:
-    // GNU preserves it across `kill-all-local-variables' (verified on
-    // 31.1 — value and `local-variable-p' both survive).
-    if bb.file_name.is_some() && i.bfn_sym != 0 {
-        keep_set.insert(i.bfn_sym);
-    }
-    bb.locals
-        .retain(|s, _| i.obarray.symbol(*s).always_local || keep_set.contains(s));
-    reset_mode_slots(i, &mut bb);
-    bb.syntax_table = None;
-    bb.case_table = None;
-    bb.category_table = None;
     Ok(Value::Nil)
 }
 
