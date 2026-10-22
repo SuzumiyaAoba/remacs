@@ -12694,7 +12694,14 @@ fn f_make_temp_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                         let bytes = temp_file_text_bytes(i, &name, text)?;
                         if let Some(file) = &mut output {
                             use std::io::Write;
-                            let _ = file.write_all(&bytes);
+                            if let Err(error) = file.write_all(&bytes) {
+                                return Err(report_file_errno(
+                                    i,
+                                    "Write error",
+                                    vec![Value::string(name)],
+                                    &error,
+                                ));
+                            }
                         } else {
                             let _ = std::fs::write(&name, bytes);
                         }

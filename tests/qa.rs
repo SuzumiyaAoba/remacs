@@ -490,6 +490,7 @@ qa!(qa_file_handler_metadata, "qa_file_handler_metadata.el");
 qa!(qa_set_file_times_flags, "qa_set_file_times_flags.el");
 qa!(qa_temp_directory, "qa_temp_directory.el");
 qa!(qa_temp_nonstring_text, "qa_temp_nonstring_text.el");
+qa!(qa_temp_write_modes, "qa_temp_write_modes.el");
 qa!(qa_change_major_mode_hook, "qa_change_major_mode_hook.el");
 qa!(qa_permanent_local_hooks, "qa_permanent_local_hooks.el");
 qa!(qa_erase_buffer_widen, "qa_erase_buffer_widen.el");
