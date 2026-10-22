@@ -170,6 +170,9 @@ fn json_cond_chain(i: &mut Interp, id: u32) {
 
 struct Parser<'a> {
     s: Vec<char>,
+    /// Unibyte sources retain one input character per byte so error and
+    /// buffer positions use their original units. Decode quoted UTF-8 only.
+    byte_input: bool,
     pos: usize,
     line: usize,
     /// Char index where parsing began — error POSITION is GNU's
@@ -319,6 +322,71 @@ impl<'a> Parser<'a> {
         Ok(v)
     }
 
+    fn utf8_error(&mut self) -> PErr {
+        let id = self.i.intern("json-utf8-decode-error");
+        json_cond_chain(self.i, id);
+        self.i.signal_data(
+            id,
+            vec![
+                Value::Int(self.line as i128),
+                Value::Nil,
+                Value::Int(self.pos.saturating_sub(self.base) as i128),
+            ],
+        )
+    }
+
+    fn utf8_byte(&mut self) -> Result<u8, PErr> {
+        let Some(c) = self.peek() else {
+            return Err(self.err(true));
+        };
+        self.pos += 1;
+        if c == '\n' {
+            self.line += 1;
+        }
+        Ok(c as u8)
+    }
+
+    fn utf8_char(&mut self, lead: u8) -> Result<char, PErr> {
+        // Match GNU's read order, including EOF while fetching continuation
+        // bytes and the consumed position of malformed sequences.
+        let second = self.utf8_byte()?;
+        if second & 0xc0 != 0x80 || lead <= 0xc1 {
+            return Err(self.utf8_error());
+        }
+        let code = if lead <= 0xdf {
+            ((lead & 0x1f) as u32) << 6 | (second & 0x3f) as u32
+        } else if lead <= 0xef {
+            let third = self.utf8_byte()?;
+            if third & 0xc0 != 0x80 {
+                return Err(self.utf8_error());
+            }
+            let code = ((lead & 0x0f) as u32) << 12
+                | ((second & 0x3f) as u32) << 6
+                | (third & 0x3f) as u32;
+            if code < 0x800 || (0xd800..=0xdfff).contains(&code) {
+                return Err(self.utf8_error());
+            }
+            code
+        } else if lead <= 0xf7 {
+            let third = self.utf8_byte()?;
+            let fourth = self.utf8_byte()?;
+            if third & 0xc0 != 0x80 || fourth & 0xc0 != 0x80 {
+                return Err(self.utf8_error());
+            }
+            let code = ((lead & 7) as u32) << 18
+                | ((second & 0x3f) as u32) << 12
+                | ((third & 0x3f) as u32) << 6
+                | (fourth & 0x3f) as u32;
+            if !(0x10000..=0x10ffff).contains(&code) {
+                return Err(self.utf8_error());
+            }
+            code
+        } else {
+            return Err(self.utf8_error());
+        };
+        char::from_u32(code).ok_or_else(|| self.utf8_error())
+    }
+
     fn string(&mut self) -> Result<String, PErr> {
         self.expect('"')?;
         let mut out = String::new();
@@ -387,8 +455,17 @@ impl<'a> Parser<'a> {
                     if (c as u32) < 0x20 {
                         return Err(self.err(false));
                     }
-                    out.push(c);
                     self.pos += 1;
+                    if self.byte_input && c as u32 >= 0x80 {
+                        out.push(self.utf8_char(c as u8)?);
+                    } else if crate::lisp::value::eight_bit_byte(c).is_some()
+                        || crate::lisp::value::surrogate_code(c).is_some()
+                        || crate::lisp::value::mule_seq_code(c).is_some()
+                    {
+                        return Err(self.utf8_error());
+                    } else {
+                        out.push(c);
+                    }
                 }
             }
         }
@@ -573,13 +650,17 @@ impl<'a> Parser<'a> {
 }
 
 fn f_json_parse_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let src = match &a[0] {
-        Value::Str(s) => s.borrow().clone(),
+    let (src, byte_input) = match &a[0] {
+        Value::Str(s) => (s.borrow().clone(), i.is_unibyte_str(s)),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
     let o = parse_opts(i, &a[1..], false)?;
     let mut p = Parser {
-        s: src.chars().collect(),
+        s: src
+            .chars()
+            .map(|c| if byte_input { (c as u8) as char } else { c })
+            .collect(),
+        byte_input,
         pos: 0,
         line: 1,
         base: 0,
@@ -606,6 +687,8 @@ fn f_json_parse_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_json_parse_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let o = parse_opts(i, &a[..], false)?;
     let buf = i.current_buffer;
+    let multibyte = i.intern("enable-multibyte-characters");
+    let byte_input = i.symbol_value(multibyte).is_nil();
     let (text, point, end) = {
         let Some(b) = i.buffers.get(buf) else {
             return Ok(Value::Nil);
@@ -615,13 +698,18 @@ fn f_json_parse_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     // Keep absolute character positions, but never give the parser text
     // beyond the accessible end of a narrowed buffer.
-    let chars: Vec<char> = text.chars().take(end).collect();
+    let chars: Vec<char> = text
+        .chars()
+        .take(end)
+        .map(|c| if byte_input { (c as u8) as char } else { c })
+        .collect();
     let start = point.min(chars.len());
     // GNU `buffer_byte_to_line' counts newlines inside the parsed
     // span only, so error LINE starts at 1 at point like POSITION
     // starts at 0.
     let mut p = Parser {
         s: chars,
+        byte_input,
         pos: start,
         line: 1,
         base: start,
