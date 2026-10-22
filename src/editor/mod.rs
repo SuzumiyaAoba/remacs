@@ -20427,18 +20427,35 @@ fn f_fundamental_mode(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 
 // ---------- overlays ----------
 
-pub(crate) fn f_make_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // BUFFER is a buffer object or nil (→ current buffer), like GNU.
-    let bid = match a.get(2) {
-        None | Some(Value::Nil) => i.current_buffer,
-        Some(Value::Buffer(b)) => b.borrow().id,
-        Some(v) => return Err(i.wrong_type_mut("bufferp", v)),
+fn overlay_target_buffer(
+    i: &mut Interp,
+    value: &Value,
+    default: usize,
+    message: &str,
+) -> Result<crate::lisp::value::BufferRef, Flow> {
+    let buffer = match value {
+        Value::Nil => i.buffers.get(default).ok_or_else(|| i.error(message))?,
+        Value::Buffer(buffer) => buffer.clone(),
+        other => return Err(i.wrong_type_mut("bufferp", other)),
     };
-    let len = i
-        .buffers
-        .get(bid)
-        .map(|b| b.borrow().text.len())
-        .unwrap_or(0);
+    if !buffer.borrow().live {
+        return Err(i.error(message));
+    }
+    Ok(buffer)
+}
+
+pub(crate) fn f_make_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let default = i.current_buffer;
+    let b = overlay_target_buffer(
+        i,
+        &arg(&a, 2),
+        default,
+        "Attempt to create overlay in a dead buffer",
+    )?;
+    let (bid, len) = {
+        let buffer = b.borrow();
+        (buffer.id, buffer.text.len())
+    };
     let mut s = want_int(i, &a[0])? - 1;
     let mut e = want_int(i, &a[1])? - 1;
     // GNU swaps BEG/END when reversed, then clamps into the buffer.
@@ -20447,7 +20464,6 @@ pub(crate) fn f_make_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     }
     let s = (s.max(0) as usize).min(len);
     let e = (e.max(0) as usize).min(len);
-    let b = i.buffers.get(bid).unwrap();
     let mut bb = b.borrow_mut();
     let idx = bb.overlays.len();
     // The Lisp handle is `[overlay BUFFER INDEX]' — kept on the
@@ -20517,17 +20533,22 @@ fn f_delete_all_overlays(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_move_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let (bid, idx) = overlay_of(i, &a[0])?;
-    // BUFFER is a buffer object or nil (→ current buffer), like GNU.
-    let nbid = match a.get(3) {
-        None | Some(Value::Nil) => i.current_buffer,
-        Some(Value::Buffer(b)) => b.borrow().id,
-        Some(v) => return Err(i.wrong_type_mut("bufferp", v)),
+    let state = overlay_slot(i, &a[0]);
+    // Nil retains an attached overlay's buffer; detached overlays use current.
+    let default = state
+        .as_ref()
+        .and_then(|overlay| overlay.buffer)
+        .unwrap_or(i.current_buffer);
+    let target = overlay_target_buffer(
+        i,
+        &arg(&a, 3),
+        default,
+        "Attempt to move overlay to a dead buffer",
+    )?;
+    let (nbid, len) = {
+        let buffer = target.borrow();
+        (buffer.id, buffer.text.len())
     };
-    let len = i
-        .buffers
-        .get(nbid)
-        .map(|b| b.borrow().text.len())
-        .unwrap_or(0);
     let mut s = want_int(i, &a[1])? - 1;
     let mut e = want_int(i, &a[2])? - 1;
     if s > e {
@@ -20535,7 +20556,7 @@ fn f_move_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     let s = (s.max(0) as usize).min(len);
     let e = (e.max(0) as usize).min(len);
-    let Some(ov) = overlay_slot(i, &a[0]) else {
+    let Some(ov) = state else {
         return Ok(a[0].clone());
     };
     let detached = crate::buffer::Overlay::detached_state(&a[0]).is_some();
@@ -20558,8 +20579,7 @@ fn f_move_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
         }
         let nidx = {
-            let nb = i.buffers.get(nbid).unwrap();
-            let mut nbb = nb.borrow_mut();
+            let mut nbb = target.borrow_mut();
             nbb.overlays.push(ov.clone());
             nbb.overlays.len() - 1
         };
@@ -20569,8 +20589,7 @@ fn f_move_overlay(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             vv[2] = Value::Int(nidx as i128);
             vv.truncate(3);
         }
-        let nb = i.buffers.get(nbid).unwrap();
-        let mut nbb = nb.borrow_mut();
+        let mut nbb = target.borrow_mut();
         let e2 = nbb.overlays.get_mut(nidx).unwrap();
         e2.handle = a[0].clone();
         e2.buffer = Some(nbid);
