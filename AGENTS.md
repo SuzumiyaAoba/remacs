@@ -388,6 +388,12 @@ pcase, cl-loop, load and CLI suites.
 inputs preserve their identity even with an invalid unused environment.
 Regression: `qa_macro_environment` (54 GNU-verified checks, #293).
 
+`key-parse` uses the GNU keymap.el definition folded into the prelude.
+Do not register a Rust `key-parse` subr: the post-subr boot restoration
+would overwrite that definition with the bootstrap token parser, losing
+repeat counts, menus, comments and whitespace handling. Regression:
+`qa_key_parse` (35 GNU-verified checks, #296).
+
 `display-buffer` falls back through the existing GNU
 `display-buffer-pop-up-window` action and then `display-buffer-use-some-window`.
 The split policy honors `pop-up-windows`, tries largest/LRU candidates, and

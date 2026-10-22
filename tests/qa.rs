@@ -195,6 +195,7 @@ qa!(qa_json, "qa_json.el");
 qa!(qa_kbd, "qa_kbd.el");
 qa!(qa_define_key_type, "qa_define_key_type.el");
 qa!(qa_keymap, "qa_keymap.el");
+qa!(qa_key_parse, "qa_key_parse.el");
 qa!(qa_keymap_cycles, "qa_keymap_cycles.el");
 qa!(qa_keymap2, "qa_keymap2.el");
 qa!(qa_keymap3, "qa_keymap3.el");

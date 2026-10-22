@@ -810,7 +810,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("event-convert-list", 1, 1, f_event_convert_list, ""),
     S!("listify-key-sequence", 1, 1, f_listify_key_sequence, ""),
     S!("key-valid-p", 1, 1, f_key_valid_p, ""),
-    S!("key-parse", 1, 1, f_key_parse, ""),
     // ---------- misc ----------
     S!(
         "days-between",
@@ -8555,7 +8554,7 @@ fn f_bool_vector_consec(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 use crate::editor::err_sym;
 use crate::editor::{
     CHAR_ALT, CHAR_CTL, CHAR_HYPER, CHAR_META, CHAR_SHIFT, CHAR_SUPER, WindowRef, is_keymap,
-    parse_key_token, sel_frame, sel_window, w_parent,
+    sel_frame, sel_window, w_parent,
 };
 
 fn f_eventp(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -9146,28 +9145,6 @@ fn f_key_valid_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
     }
     Ok(Value::t())
-}
-
-fn f_key_parse(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU keymap.el's key-parse runs `(length keys)' FIRST (non-sequence
-    // -> sequencep error) then `string-match' (non-string sequence ->
-    // stringp error).  nil has length 0 and returns [].
-    if a[0].is_nil() {
-        return Ok(Value::vector(vec![]));
-    }
-    if !matches!(
-        a[0],
-        Value::Str(_) | Value::Cons(_) | Value::Vec(_) | Value::Record(_)
-    ) && !is_bool_vector(i, &a[0])
-    {
-        return Err(i.wrong_type_mut("sequencep", &a[0]));
-    }
-    let s = want_string(i, &a[0])?;
-    let mut out = Vec::new();
-    for tok in s.split(' ').filter(|t| !t.is_empty()) {
-        out.extend(parse_key_token(i, tok)?);
-    }
-    Ok(Value::vector(out))
 }
 
 // ---------- misc ----------
