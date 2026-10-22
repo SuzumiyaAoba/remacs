@@ -5751,11 +5751,8 @@ fn f_set_file_times(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // lisp_time_argument (TIMESTAMP), then expand FILENAME — so a bogus
     // TIMESTAMP signals "Invalid time specification" before FILENAME is
     // checked.
-    let nofollow = match args.get(2) {
-        Some(Value::Sym(s)) => i.symbol_name(*s) == "nofollow",
-        Some(v) => v.truthy(),
-        None => false,
-    };
+    // GNU symlink_nofollow_flag treats every non-nil value as nofollow.
+    let nofollow = args.get(2).is_some_and(Value::truthy);
     let time = args.get(1).cloned().unwrap_or(Value::Nil);
     let ns = lisp_time_to_ns(i, &time)?;
     let name = {
