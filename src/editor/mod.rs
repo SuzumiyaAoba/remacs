@@ -17994,10 +17994,10 @@ fn completion_prefix_p(cand: &str, s: &str, ignore_case: bool) -> bool {
 
 /// GNU's `match_regexps': S must match every regexp in
 /// `completion-regexp-list' (search semantics, `completion-ignore-case'
-/// case-folding).  Bad regexps are ignored.
-fn completion_match_regexps(i: &Interp, s: &str, ignore_case: bool) -> bool {
+/// case-folding). Validate each reached element and propagate regexp errors.
+fn completion_match_regexps(i: &mut Interp, s: &str, ignore_case: bool) -> Result<bool, Flow> {
     let Some(id) = i.intern_soft("completion-regexp-list") else {
-        return true;
+        return Ok(true);
     };
     let mut cur = i.symbol_value(id);
     let syn = crate::editor::re_syntax(i);
@@ -18009,25 +18009,24 @@ fn completion_match_regexps(i: &Interp, s: &str, ignore_case: bool) -> bool {
                     let b = c.borrow();
                     (b.car.clone(), b.cdr.clone())
                 };
-                if let Value::Str(rs) = &re_v {
-                    if let Ok(re) = crate::lisp::regexp::compile_case(&rs.borrow(), ignore_case) {
-                        if crate::lisp::regexp::search(
-                            &re,
-                            &chars,
-                            0,
-                            &syn,
-                            &crate::editor::re_category(i),
-                            crate::lisp::regexp::NO_POINT,
-                        )
-                        .is_none()
-                        {
-                            return false;
-                        }
-                    }
+                let pattern = want_str(i, &re_v)?;
+                let re = crate::lisp::regexp::compile_case(&pattern, ignore_case)
+                    .map_err(|error| err_sym(i, "invalid-regexp", vec![Value::string(error.0)]))?;
+                if crate::lisp::regexp::search(
+                    &re,
+                    &chars,
+                    0,
+                    &syn,
+                    &crate::editor::re_category(i),
+                    crate::lisp::regexp::NO_POINT,
+                )
+                .is_none()
+                {
+                    return Ok(false);
                 }
                 cur = next;
             }
-            _ => return true,
+            _ => return Ok(true),
         }
     }
 }
@@ -18044,7 +18043,7 @@ fn completion_candidate_ok(
     pred: &Value,
     ignore_case: bool,
 ) -> Result<bool, Flow> {
-    if !completion_prefix_p(c, s, ignore_case) || !completion_match_regexps(i, c, ignore_case) {
+    if !completion_prefix_p(c, s, ignore_case) || !completion_match_regexps(i, c, ignore_case)? {
         return Ok(false);
     }
     if pred.truthy() {
@@ -18226,13 +18225,13 @@ fn all_completions_obarray(i: &mut Interp, s: &str, pred: &Value) -> EvalResult 
     let mut out: Vec<Value> = Vec::new();
     for id in ids {
         let name = i.obarray.name(id);
-        if name.chars().count() < s_len
-            || !completion_prefix_p(name, s, ignore_case)
-            || !completion_match_regexps(i, name, ignore_case)
-        {
+        if name.chars().count() < s_len || !completion_prefix_p(name, s, ignore_case) {
             continue;
         }
         let name = name.to_string();
+        if !completion_match_regexps(i, &name, ignore_case)? {
+            continue;
+        }
         if pred.truthy() {
             let elt = Value::Sym(id);
             if !i.apply(pred, vec![elt])?.truthy() {
@@ -18243,6 +18242,7 @@ fn all_completions_obarray(i: &mut Interp, s: &str, pred: &Value) -> EvalResult 
     }
     Ok(Value::list(out))
 }
+
 // Direct port of GNU minibuf.c Fcompletion__flex_cost_gotoh: modified
 // Gotoh algorithm scoring PAT as a subsequence of STR.
 fn f_completion_flex_cost_gotoh(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -18364,10 +18364,7 @@ fn f_test_completion(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let s = want_str(i, &a[0])?;
     if !completion_is_collection(i, &a[1]) {
         let lambda_kw = i.intern("lambda");
-        return i.apply(
-            &a[1],
-            vec![a[0].clone(), arg(&a, 2), Value::Sym(lambda_kw)],
-        );
+        return i.apply(&a[1], vec![a[0].clone(), arg(&a, 2), Value::Sym(lambda_kw)]);
     }
     // Default-obarray fast path: same gates, no candidate Vec<Value>.
     let pred = arg(&a, 2);
@@ -18382,7 +18379,11 @@ fn f_test_completion(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             } else {
                 name == s
             };
-            if !eq || !completion_match_regexps(i, name, ignore_case) {
+            if !eq {
+                continue;
+            }
+            let name = name.to_string();
+            if !completion_match_regexps(i, &name, ignore_case)? {
                 continue;
             }
             let ok = if pred.truthy() {
@@ -18413,7 +18414,7 @@ fn f_test_completion(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         } else {
             c == s
         };
-        if eq && completion_match_regexps(i, &c, ignore_case) && {
+        if eq && completion_match_regexps(i, &c, ignore_case)? && {
             let r = if pred.truthy() {
                 let mut pargs = vec![elt.clone()];
                 if let Some(x) = extra {

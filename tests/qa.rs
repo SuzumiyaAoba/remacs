@@ -479,6 +479,7 @@ qa!(qa_newline_inheritance, "qa_newline_inheritance.el");
 qa!(qa_insert_char_validation, "qa_insert_char_validation.el");
 qa!(qa_empty_readonly, "qa_empty_readonly.el");
 qa!(qa_completion_function_table, "qa_completion_function_table.el");
+qa!(qa_completion_regexp_errors, "qa_completion_regexp_errors.el");
 
 qa!(qa_gensym_counter, "qa_gensym_counter.el");
 
