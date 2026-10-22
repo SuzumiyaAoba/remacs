@@ -18105,13 +18105,14 @@ fn substring_str_value(i: &mut Interp, v: &Value, n: usize) -> Value {
 
 fn f_try_completion(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let s = want_str(i, &a[0])?;
+    if !completion_is_collection(i, &a[1]) {
+        return i.apply(&a[1], vec![a[0].clone(), arg(&a, 2), Value::Nil]);
+    }
     try_completions(i, &s, &a[1], &arg(&a, 2))
 }
 
+// Collection-only path, also used by internal-complete-buffer.
 fn try_completions(i: &mut Interp, s: &str, table: &Value, pred: &Value) -> EvalResult {
-    if !completion_is_collection(i, table) {
-        return i.apply(table, vec![Value::string(s), pred.clone(), Value::Nil]);
-    }
     let cands = completion_candidates(i, table)?;
     let ignore_case = completion_ignore_case(i);
     let s_chars = s.chars().count();
@@ -18185,7 +18186,7 @@ fn try_completions(i: &mut Interp, s: &str, table: &Value, pred: &Value) -> Eval
 fn f_all_completions(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let s = want_str(i, &a[0])?;
     if !completion_is_collection(i, &a[1]) {
-        return i.apply(&a[1], vec![Value::string(s), arg(&a, 2), Value::t()]);
+        return i.apply(&a[1], vec![a[0].clone(), arg(&a, 2), Value::t()]);
     }
     // Default-obarray fast path (e.g. `eldoc-add-command-completions'
     // scanning `commandp' over ~30k symbols ×34 prefixes at startup):
@@ -18363,11 +18364,10 @@ fn f_test_completion(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let s = want_str(i, &a[0])?;
     if !completion_is_collection(i, &a[1]) {
         let lambda_kw = i.intern("lambda");
-        let r = i.apply(
+        return i.apply(
             &a[1],
-            vec![Value::string(s), arg(&a, 2), Value::Sym(lambda_kw)],
-        )?;
-        return Ok(Value::from_bool(r.truthy()));
+            vec![a[0].clone(), arg(&a, 2), Value::Sym(lambda_kw)],
+        );
     }
     // Default-obarray fast path: same gates, no candidate Vec<Value>.
     let pred = arg(&a, 2);
