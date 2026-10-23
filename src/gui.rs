@@ -1242,7 +1242,7 @@ mod tests {
     }
 
     #[test]
-    fn os_text_input_reaches_logic_and_saved_utf8_file() {
+    fn registered_text_input_reaches_logic_and_saved_utf8_file() {
         struct Owned(std::path::PathBuf);
         impl Drop for Owned {
             fn drop(&mut self) {
@@ -1263,11 +1263,10 @@ mod tests {
         let (tx, grids) = start_logic(vec![file.0.to_string_lossy().into_owned()]).unwrap();
         let mut app = gpui::TestAppContext::single();
         let handle = app.add_window(|window, cx| build_editor_view(window, cx, tx, grids));
-        handle
-            .update(&mut app, |view, window, cx| {
-                view.replace_text_in_range(None, "日本語A日B😀e\u{301}", window, cx);
-            })
-            .unwrap();
+        // Exercise the registered input client, rather than calling the view's
+        // handler directly. This is a headless GPUI test; native macOS IME
+        // event delivery still needs a separate real-window check.
+        app.simulate_input(handle.into(), "日本語A日B😀e\u{301}");
         app.simulate_keystrokes(handle.into(), "ctrl-x ctrl-s ctrl-x ctrl-c");
         let deadline = std::time::Instant::now() + Duration::from_secs(120);
         loop {
