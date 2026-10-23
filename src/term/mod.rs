@@ -1088,7 +1088,12 @@ fn key_event_to_code(k: KeyEvent) -> Option<i128> {
             if mods & CHAR_CTL != 0 && (c as i128) < 128 {
                 // Emacs folds C-<ascii> to the control char (C-u → 21).
                 mods &= !CHAR_CTL;
-                if c == '?' { 127 } else { (c as i128) & 0x1f }
+                match c {
+                    // crossterm 0.29 represents raw 0x1c..0x1f as C-4..C-7.
+                    '4'..='7' => 0x1c + (c as i128 - '4' as i128),
+                    '?' => 127,
+                    _ => (c as i128) & 0x1f,
+                }
             } else {
                 c as i128
             }
@@ -2401,6 +2406,27 @@ mod tests {
     }
 
     // ---------- key translation ----------
+
+    #[test]
+    fn key_event_to_code_legacy_control_bytes() {
+        for (input, expected) in [('4', 28), ('5', 29), ('6', 30), ('7', 31)] {
+            assert_eq!(
+                key_event_to_code(ev(KeyCode::Char(input), KeyModifiers::CONTROL)),
+                Some(expected),
+            );
+            assert_eq!(
+                key_event_to_code(ev(
+                    KeyCode::Char(input),
+                    KeyModifiers::CONTROL | KeyModifiers::ALT,
+                )),
+                Some(expected | CHAR_META),
+            );
+            assert_eq!(
+                key_event_to_code(ev(KeyCode::Char(input), KeyModifiers::NONE)),
+                Some(input as i128),
+            );
+        }
+    }
 
     #[test]
     fn key_event_to_code_plain_and_modified_chars() {
