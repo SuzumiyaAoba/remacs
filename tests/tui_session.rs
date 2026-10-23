@@ -798,3 +798,29 @@ fn tui_window_overlay_faces_match_window_property_queries() {
         }
     })
 }
+
+/// Ending a definition is already its first execution; C-x e adds one more.
+#[test]
+fn tui_macro_end_keeps_the_recorded_iteration() {
+    run_on_big_stack(|| {
+        for repeat_after_end in [false, true] {
+            let mut interp = Interp::new_with_noninteractive(false);
+            interp
+                .eval_str("(switch-to-buffer (get-buffer-create \"macro-repeat\"))")
+                .unwrap();
+            let mut script = vec![C_X, b'(' as i128, b'x' as i128, C_X, b')' as i128];
+            if repeat_after_end {
+                script.extend([C_X, b'e' as i128]);
+            }
+            script.extend([C_X, 3]);
+            run(script, &mut interp);
+            let value = interp
+                .eval_str("(with-current-buffer \"macro-repeat\" (buffer-string))")
+                .unwrap();
+            assert_eq!(
+                interp.princ_to_string(&value),
+                if repeat_after_end { "xx" } else { "x" }
+            );
+        }
+    });
+}

@@ -19083,6 +19083,12 @@ fn f_end_kbd_macro(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !i.symbol_value(defining).truthy() {
         return Err(i.error("Not defining kbd macro"));
     }
+    let repeat = arg(&a, 0);
+    let repeat = if repeat.is_nil() {
+        1
+    } else {
+        crate::lisp::builtins::want_fixnum(i, &repeat)?
+    };
     let _ = i.set_symbol(defining, Value::Nil);
     // GNU's batch kboard yields [] regardless of stored events; keep
     // real events for interactive sessions.
@@ -19093,11 +19099,13 @@ fn f_end_kbd_macro(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     let last = macro_events_value(&events);
     let lk = i.intern("last-kbd-macro");
-    let _ = i.set_symbol(lk, last);
+    let _ = i.set_symbol(lk, last.clone());
     i.message("Keyboard macro defined");
-    // Optional REPEAT: run the macro that many times.
-    if arg(&a, 0).truthy() {
-        return f_call_last_kbd_macro(i, a);
+    // REPEAT counts the definition just completed as its first iteration.
+    // Zero retains GNU's repeat-until-error/LOOPFUNC behavior.
+    if repeat == 0 || repeat > 1 {
+        let remaining = if repeat == 0 { 0 } else { repeat - 1 };
+        f_execute_kbd_macro(i, vec![last, Value::Int(remaining), arg(&a, 1)].into())?;
     }
     Ok(Value::Nil)
 }

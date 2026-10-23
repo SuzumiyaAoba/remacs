@@ -208,6 +208,7 @@ qa!(qa_keymap_cycles, "qa_keymap_cycles.el");
 qa!(qa_keymap2, "qa_keymap2.el");
 qa!(qa_keymap3, "qa_keymap3.el");
 qa!(qa_kmacro, "qa_kmacro.el");
+qa!(qa_kbd_macro_repeat, "qa_kbd_macro_repeat.el");
 qa!(qa_list, "qa_list.el");
 qa!(qa_lists, "qa_lists.el");
 qa!(qa_lists2, "qa_lists2.el");
