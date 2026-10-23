@@ -551,9 +551,16 @@ fn step_op(
         }};
     }
     macro_rules! konst {
-        ($n:expr) => {
-            consts.borrow().get($n).cloned().unwrap_or(Value::Nil)
-        };
+        ($n:expr) => {{
+            // Malformed programs must not fabricate nil (or reproduce GNU's
+            // unchecked memory read). Check every access: code and constants
+            // can be changed by Lisp while this invocation is running.
+            let value = consts.borrow().get($n).cloned();
+            match value {
+                Some(value) => value,
+                None => return Step::Flow(i.error("Invalid byte-code")),
+            }
+        }};
     }
     macro_rules! csym {
         ($n:expr) => {
