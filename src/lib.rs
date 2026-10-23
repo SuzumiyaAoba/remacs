@@ -7,6 +7,7 @@
 
 pub mod buffer;
 pub mod cli;
+pub mod startup;
 pub mod editor;
 pub mod gui;
 pub mod lisp;

@@ -156,7 +156,7 @@ fn build_identity_is_reproducible_and_records_the_configured_target() {
 
 #[test]
 fn eval_runs_lisp() {
-    let (o, _e, code) = remacs(&["--eval", "(princ (+ 1 2))"], "");
+    let (o, _e, code) = remacs(&["--batch", "--eval", "(princ (+ 1 2))"], "");
     assert_eq!(o, "3");
     assert_eq!(code, 0);
 }
@@ -395,14 +395,14 @@ fn synchronous_process_stderr_stays_with_destination() {
 
 #[test]
 fn eval_error_exits_nonzero() {
-    let (_o, e, code) = remacs(&["--eval", "(car 1)"], "");
+    let (_o, e, code) = remacs(&["--batch", "--eval", "(car 1)"], "");
     assert_ne!(code, 0);
     assert!(e.contains("Error"), "stderr: {}", e);
 }
 
 #[test]
 fn eval_uncaught_throw_reports() {
-    let (_o, e, code) = remacs(&["--eval", "(throw 'x 1)"], "");
+    let (_o, e, code) = remacs(&["--batch", "--eval", "(throw 'x 1)"], "");
     assert_ne!(code, 0);
     assert!(
         e.contains("no-catch") || e.contains("throw"),
@@ -467,7 +467,7 @@ fn no_window_flag_is_accepted() {
 
 #[test]
 fn quit_flow_reports() {
-    let (_o, e, code) = remacs(&["--eval", "(signal 'quit nil)"], "");
+    let (_o, e, code) = remacs(&["--batch", "--eval", "(signal 'quit nil)"], "");
     assert_ne!(code, 0);
     let _ = e;
 }
@@ -628,7 +628,7 @@ fn batch_file_arguments_reach_exit_hooks_and_allow_new_files() {
 }
 #[test]
 fn execute_alias_works() {
-    let (o, _e, code) = remacs(&["--execute", "(princ 7)"], "");
+    let (o, _e, code) = remacs(&["--batch", "--execute", "(princ 7)"], "");
     assert_eq!(o, "7");
     assert_eq!(code, 0);
 }
@@ -641,7 +641,7 @@ fn load_missing_file_errors() {
 
 #[test]
 fn quit_flow_via_throw() {
-    let (_o, e, code) = remacs(&["--eval", "(catch 'zz (throw 'zz 5))"], "");
+    let (_o, e, code) = remacs(&["--batch", "--eval", "(catch 'zz (throw 'zz 5))"], "");
     assert_eq!(code, 0);
     let _ = e;
 }

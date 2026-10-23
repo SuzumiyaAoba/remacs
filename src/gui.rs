@@ -454,48 +454,17 @@ fn apply_startup_arguments(
     files: &[String],
     arguments: &[String],
 ) -> crate::lisp::EvalResult {
-    let base_symbol = i.intern("command-line-default-directory");
-    let base = i.symbol_value(base_symbol);
-    let visit = |i: &mut Interp, name: &str| {
-        let expand = crate::lisp::Value::Sym(i.intern("expand-file-name"));
-        let file = i.apply(
-            &expand,
-            vec![crate::lisp::Value::string(name), base.clone()],
-        )?;
-        let find = crate::lisp::Value::Sym(i.intern("find-file"));
-        i.apply(&find, vec![file])
-    };
-    if arguments.is_empty() {
-        for name in files {
-            visit(i, name)?;
+    let arguments = if arguments.is_empty() {
+        let mut arguments = Vec::new();
+        if !files.is_empty() {
+            arguments.push("--".to_owned());
+            arguments.extend_from_slice(files);
         }
+        arguments
     } else {
-        let mut paths = crate::lisp::load::CommandLineLoadPath::default();
-        for argument in crate::cli::arguments(arguments) {
-            match argument {
-                crate::cli::Argument::File(name) => {
-                    visit(i, name)?;
-                }
-                crate::cli::Argument::Option { index, name } => {
-                    let option = crate::cli::normalize_option(name).expect("recognized option");
-                    if matches!(option.name, "-L" | "--directory") {
-                        let value = option
-                            .value
-                            .or_else(|| arguments.get(index + 1).map(String::as_str));
-                        paths.add(
-                            i,
-                            value
-                                .map(crate::lisp::Value::string)
-                                .unwrap_or(crate::lisp::Value::Nil),
-                        )?;
-                    } else if matches!(option.name, "-Q" | "--quick" | "--no-x-resources") {
-                        let resources = i.intern("inhibit-x-resources");
-                        i.set_symbol_default(resources, crate::lisp::Value::t())?;
-                    }
-                }
-            }
-        }
-    }
+        arguments.to_vec()
+    };
+    crate::startup::run(i, &arguments);
     Ok(crate::lisp::Value::Nil)
 }
 
@@ -1023,6 +992,87 @@ mod tests {
                 "GUI logic thread did not quit"
             );
             std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn startup_actions_run_on_gui_logic_thread() {
+        struct Owned(std::path::PathBuf);
+        impl Drop for Owned {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = Owned(std::env::temp_dir().join(format!(
+            "remacs-gui-startup-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        )));
+        std::fs::create_dir(&root.0).unwrap();
+        for kind in ["eval", "load", "funcall"] {
+            let file = root.0.join(format!("{kind}.txt"));
+            std::fs::write(&file, "").unwrap();
+            let marker = format!("GUI-{kind}");
+            let form = format!(
+                "(progn (insert (if noninteractive \"BAD-BATCH\" \"{marker}\")) (set-buffer-modified-p nil))"
+            );
+            let mut arguments = vec![file.to_string_lossy().into_owned()];
+            match kind {
+                "eval" => arguments.extend(["--eval".into(), form]),
+                "load" => {
+                    let script = root.0.join("startup.el");
+                    std::fs::write(
+                        &script,
+                        format!(";;; -*- lexical-binding: t; -*-\n{form}\n"),
+                    )
+                    .unwrap();
+                    arguments.extend(["-l".into(), script.to_string_lossy().into_owned()]);
+                }
+                _ => {
+                    let script = root.0.join("command.el");
+                    std::fs::write(
+                        &script,
+                        format!(
+                            ";;; -*- lexical-binding: t; -*-\n(defun qa341-startup-command () {form})\n"
+                        ),
+                    )
+                    .unwrap();
+                    arguments.extend([
+                        "-l".into(),
+                        script.to_string_lossy().into_owned(),
+                        "-f".into(),
+                        "qa341-startup-command".into(),
+                    ]);
+                }
+            }
+            let (tx, rx) = super::start_logic_with_dump(Vec::new(), None, arguments).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+            loop {
+                if let Ok(grid) = rx.try_recv() {
+                    if grid.rows.iter().any(|row| row.contains(&marker)) {
+                        break;
+                    }
+                }
+                assert!(!rx.is_closed(), "GUI startup closed before {marker}");
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "no first frame with {marker}"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            tx.send(super::GuiEvent::Key(24)).unwrap();
+            tx.send(super::GuiEvent::Key(3)).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !rx.is_closed() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "GUI did not quit after {kind}"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
         }
     }
 

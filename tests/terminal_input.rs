@@ -45,3 +45,18 @@ fn legacy_control_bytes_reach_their_original_bindings() {
 fn control_underscore_undoes_the_last_insertion() {
     terminal_case("undo", "616263");
 }
+
+#[test]
+fn startup_eval_continues_into_the_editor() {
+    terminal_case("startup-eval", "73746172747570");
+}
+
+#[test]
+fn startup_load_continues_into_the_editor() {
+    terminal_case("startup-load", "73746172747570");
+}
+
+#[test]
+fn startup_funcall_continues_into_the_editor() {
+    terminal_case("startup-funcall", "0a");
+}

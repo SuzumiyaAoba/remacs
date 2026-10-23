@@ -37,8 +37,18 @@ def run(binary, case):
 
         environment = os.environ.copy()
         environment["TERM"] = "xterm-256color"
+        editor_arguments = [binary, "-Q", "-nw", str(target)]
+        startup_form = '(insert (if noninteractive "wrong-batch" "startup"))'
+        if case == "startup-eval":
+            editor_arguments += ["--eval", startup_form]
+        elif case == "startup-load":
+            startup_file = Path(root) / "startup.el"
+            startup_file.write_text(startup_form + "\n")
+            editor_arguments += ["-l", str(startup_file)]
+        elif case == "startup-funcall":
+            editor_arguments += ["-f", "newline"]
         child = subprocess.Popen(
-            [binary, "-Q", "-nw", str(target)],
+            editor_arguments,
             stdin=slave, stdout=slave, stderr=slave,
             preexec_fn=setup, close_fds=True, env=environment,
         )
@@ -76,7 +86,7 @@ def run(binary, case):
             wait_for(lambda: b"\x1b[" in transcript and "sample.dat" in plain(transcript), "first frame")
             marker = "TTY-READY"
             ready_form = "(message (string " + " ".join(str(ord(c)) for c in marker) + "))"
-            configuration = "(progn (setq-local require-final-newline nil) "
+            configuration = "(progn (when noninteractive (error \"Editor started as batch\")) (setq-local require-final-newline nil) "
             if case == "controls":
                 configuration += "(dolist (code '(20 21 22 23 28 29 30 31)) (global-set-key (vector code) (eval (list 'lambda nil '(interactive) (list 'insert (format \"<%d>\" code)))))) "
             configuration += ready_form + ")"
@@ -84,7 +94,7 @@ def run(binary, case):
             wait_for(lambda: marker in plain(transcript), "configuration result")
             if case == "controls":
                 send(bytes([28, 29, 30, 31]))
-            else:
+            elif case == "undo":
                 send(b"abc\x01\x05X\x1f")
             send(b"\x18\x13")
             wait_for(lambda: target.stat().st_size > 0, "saved file")
@@ -110,6 +120,8 @@ def run(binary, case):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", required=True)
-    parser.add_argument("--case", choices=["controls", "undo"], required=True)
+    parser.add_argument("--case", choices=[
+        "controls", "undo", "startup-eval", "startup-load", "startup-funcall",
+    ], required=True)
     arguments = parser.parse_args()
     print(json.dumps(run(arguments.binary, arguments.case)))
