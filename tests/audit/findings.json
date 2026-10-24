@@ -1,11 +1,11 @@
 {
   "status": "in_progress",
   "language": "ja",
-  "baseline": "cd0db15",
-  "evidence_file": "evidence.json",
-  "existing_issues_file": "existing-issues.json",
+  "baseline": "29e7c960edec18a99107741c351d95444f8f6b18",
+  "evidence_file": "current/evidence.json",
+  "existing_issues_file": "current/existing-issues-round7.json",
   "deduplication": {
-    "issue_count": 161,
+    "issue_count": 290,
     "includes_closed": true,
     "checked_twice": true,
     "notes": [
@@ -20,7 +20,15 @@
       "再開後の最新 Issue は 161 件。#75/#76/#78/#79/#80 の状態等に更新があったが、今回のネットワーク・ファイル操作とは重複しない。",
       "#54 は新規 process のデフォルト sentinel と marker。今回の accept 時のコールバック未実行・通知先誤りや listener の寿命とは別の再現条件。",
       "#105 の同一 inode は add-name-to-file の no-op 判定。今回の copy-file の成功扱い、および壊れた symlink の rename/copy は記載されていない。",
-      "#21 は file-remote-p のエラー。今回の独自 handler は find-file-name-handler で検索できるため、物理ファイルプリミティブ側の dispatch 不足として区別した。"
+      "#21 は file-remote-p のエラー。今回の独自 handler は find-file-name-handler で検索できるため、物理ファイルプリミティブ側の dispatch 不足として区別した。",
+      "現在の HEAD 29e7c96 を再ビルドし、既存候補を再検証。UDP・:service t・:nowait の 3 件を追加確認し、それぞれ独立した Issue として登録。",
+      "第2巡: open/closed 232 件のタイトルと本文を取得。削除 undo の属性消失は #131/#136 の境界・置換履歴とは別で、propertize のバイト値変化は #79 の vconcat 側修正とは別の生成元の不具合として確認。",
+      "replace-region-contents / transpose-regions は既存 232 件の本文・タイトルに該当なし。置換の座標保持、属性転送、SOURCE の可視範囲・ベクター・関数呼び出し、転置の座標・属性を別の修正箇所として整理。",
+      "第3巡: 既存 247 件を照合。文字列のバイト表現・表示、シーケンス変換、バイトコード変更、case table の比較を検証。幅の Unicode 上書きは既存 #57、標準の ß/S の比較は #259 に補足し、重複登録を避けた。",
+      "第4巡: 既存 260 件を照合。read の関数ストリームとエラー位置、出力設定、評価元の可視範囲・lexical-binding・出力・reader、空白整形と無効な出力先を検証。空白削除と行結合の narrowing 外変更は #270 に集約した。",
+      "第5巡: 既存 271 件を照合。後方検索の COUNT、narrowing 解除後の後方参照、置換時の属性・バイト値、match-data の再利用、syntax-table テキスト属性を検証。検索の case table 無視は #259、バッファ置換の属性消失は #274 に追記。行フィルタ・件数カウント・match-string の対照ケースは一致した。",
+      "第6巡: 既存276件を照合。ウィンドウ構成の復元・比較・型判定、primitive-undo の保護束縛と apply 履歴、scroll hook、永続パラメータの保存値共有、window-state の形式と永続化、分割比率、使用順序、過去の point/buffer、ゼロ・負数待機時のタイマー実行を検証。余白の復元漏れは #277 に追記し、別Issueを作らなかった。新規14件を登録後、全290Issueと累計129件の本文・URL・一意な識別子を照合した。",
+      "第7巡: 既存290Issueを照合し、全24ターゲット735テスト・全関数スイープ・17コーパス・補完検査を実行。日本語変換、macroexpand環境、display-buffer、初期シェル、キー反復、face-remap表示登録の6件をGNU差分から登録。実GUIのUnicode・特殊キー、およびprobe停止・PTY偽失敗の4件はfull-suiteの台帳へ登録。既存#77は未解消の幅指定を再確認して再オープン。マスク外11関数名は独立実行とシェルを揃えた対照で全件切り分けた。"
     ]
   },
   "findings": [
@@ -33,7 +41,10 @@
       "cases": [
         "sql:blob-read"
       ],
-      "source": "src/lisp/builtins/sqlite.rs:240"
+      "source": "src/lisp/builtins/sqlite.rs:240",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/162",
+      "issue_number": 162,
+      "issue_recorded_at": "2026-10-17T08:20:03.890365+00:00"
     },
     {
       "id": "AUD-002",
@@ -44,7 +55,10 @@
       "cases": [
         "native:error-aborts-sequence"
       ],
-      "source": "src/lisp/builtins/comp.rs:347"
+      "source": "src/lisp/builtins/comp.rs:347",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/180",
+      "issue_number": 180,
+      "issue_recorded_at": "2026-10-17T08:22:24.805590+00:00"
     },
     {
       "id": "AUD-003",
@@ -55,7 +69,10 @@
       "cases": [
         "equal:cycles"
       ],
-      "source": "src/lisp/builtins/mod.rs:547"
+      "source": "src/lisp/builtins/mod.rs:547",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/181",
+      "issue_number": 181,
+      "issue_recorded_at": "2026-10-17T08:22:25.688958+00:00"
     },
     {
       "id": "AUD-004",
@@ -66,7 +83,10 @@
       "cases": [
         "equal:deep-different-lists"
       ],
-      "source": "src/lisp/builtins/mod.rs:521"
+      "source": "src/lisp/builtins/mod.rs:521",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/182",
+      "issue_number": 182,
+      "issue_recorded_at": "2026-10-17T08:22:26.611923+00:00"
     },
     {
       "id": "AUD-005",
@@ -77,7 +97,10 @@
       "cases": [
         "native:global-value"
       ],
-      "source": "src/lisp/builtins/comp.rs:647"
+      "source": "src/lisp/builtins/comp.rs:647",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/183",
+      "issue_number": 183,
+      "issue_recorded_at": "2026-10-17T08:22:27.515975+00:00"
     },
     {
       "id": "AUD-006",
@@ -88,7 +111,10 @@
       "cases": [
         "native:closure-result"
       ],
-      "source": "src/lisp/builtins/comp.rs:791"
+      "source": "src/lisp/builtins/comp.rs:791",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/184",
+      "issue_number": 184,
+      "issue_recorded_at": "2026-10-17T08:22:28.440674+00:00"
     },
     {
       "id": "AUD-007",
@@ -99,7 +125,10 @@
       "cases": [
         "native:let-star-shadow"
       ],
-      "source": "src/lisp/builtins/comp.rs:910"
+      "source": "src/lisp/builtins/comp.rs:910",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/185",
+      "issue_number": 185,
+      "issue_recorded_at": "2026-10-17T08:22:29.375691+00:00"
     },
     {
       "id": "AUD-008",
@@ -110,7 +139,10 @@
       "cases": [
         "native:file-top-level-forms"
       ],
-      "source": "src/lisp/builtins/comp.rs:1386"
+      "source": "src/lisp/builtins/comp.rs:1386",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/186",
+      "issue_number": 186,
+      "issue_recorded_at": "2026-10-17T08:22:30.466592+00:00"
     },
     {
       "id": "AUD-009",
@@ -121,7 +153,10 @@
       "cases": [
         "native:file-parse-error"
       ],
-      "source": "src/lisp/builtins/comp.rs:1410"
+      "source": "src/lisp/builtins/comp.rs:1410",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/187",
+      "issue_number": 187,
+      "issue_recorded_at": "2026-10-17T08:22:31.608212+00:00"
     },
     {
       "id": "AUD-010",
@@ -132,7 +167,10 @@
       "cases": [
         "native:empty-and"
       ],
-      "source": "src/lisp/builtins/comp.rs:727"
+      "source": "src/lisp/builtins/comp.rs:727",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/188",
+      "issue_number": 188,
+      "issue_recorded_at": "2026-10-17T08:22:32.685047+00:00"
     },
     {
       "id": "AUD-011",
@@ -143,7 +181,10 @@
       "cases": [
         "native:quoted-constant-identity"
       ],
-      "source": "src/lisp/builtins/comp.rs:687"
+      "source": "src/lisp/builtins/comp.rs:687",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/189",
+      "issue_number": 189,
+      "issue_recorded_at": "2026-10-17T08:22:33.545970+00:00"
     },
     {
       "id": "AUD-012",
@@ -155,7 +196,10 @@
         "native:string-byte-kind",
         "native:string-byte-kind-baseline"
       ],
-      "source": "src/lisp/builtins/comp.rs:637"
+      "source": "src/lisp/builtins/comp.rs:637",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/190",
+      "issue_number": 190,
+      "issue_recorded_at": "2026-10-17T08:22:34.582922+00:00"
     },
     {
       "id": "AUD-013",
@@ -166,7 +210,10 @@
       "cases": [
         "hash:custom-test"
       ],
-      "source": "src/lisp/builtins/hashfn.rs:318"
+      "source": "src/lisp/builtins/hashfn.rs:318",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/191",
+      "issue_number": 191,
+      "issue_recorded_at": "2026-10-17T08:22:35.830677+00:00"
     },
     {
       "id": "AUD-014",
@@ -177,7 +224,10 @@
       "cases": [
         "hash:cycle-lookup"
       ],
-      "source": "src/lisp/builtins/hashfn.rs:179"
+      "source": "src/lisp/builtins/hashfn.rs:179",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/192",
+      "issue_number": 192,
+      "issue_recorded_at": "2026-10-17T08:22:36.845057+00:00"
     },
     {
       "id": "AUD-015",
@@ -188,7 +238,10 @@
       "cases": [
         "hash:equal-markers"
       ],
-      "source": "src/lisp/builtins/hashfn.rs:248"
+      "source": "src/lisp/builtins/hashfn.rs:248",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/193",
+      "issue_number": 193,
+      "issue_recorded_at": "2026-10-17T08:22:37.761443+00:00"
     },
     {
       "id": "AUD-016",
@@ -199,7 +252,10 @@
       "cases": [
         "hash:weak-key-gc"
       ],
-      "source": "src/lisp/builtins/evalfn.rs:4725"
+      "source": "src/lisp/builtins/evalfn.rs:4725",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/194",
+      "issue_number": 194,
+      "issue_recorded_at": "2026-10-17T08:22:38.594816+00:00"
     },
     {
       "id": "AUD-017",
@@ -210,7 +266,10 @@
       "cases": [
         "hash:size-growth"
       ],
-      "source": "src/lisp/builtins/hashfn.rs:491"
+      "source": "src/lisp/builtins/hashfn.rs:491",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/195",
+      "issue_number": 195,
+      "issue_recorded_at": "2026-10-17T08:22:39.428893+00:00"
     },
     {
       "id": "AUD-018",
@@ -222,7 +281,10 @@
         "sql:missing-all",
         "sql:missing-one"
       ],
-      "source": "src/lisp/builtins/sqlite.rs:344"
+      "source": "src/lisp/builtins/sqlite.rs:344",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/163",
+      "issue_number": 163,
+      "issue_recorded_at": "2026-10-17T08:20:04.793370+00:00"
     },
     {
       "id": "AUD-019",
@@ -233,7 +295,10 @@
       "cases": [
         "sql:lazy-insert"
       ],
-      "source": "src/lisp/builtins/sqlite.rs:364"
+      "source": "src/lisp/builtins/sqlite.rs:364",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/164",
+      "issue_number": 164,
+      "issue_recorded_at": "2026-10-17T08:20:05.879915+00:00"
     },
     {
       "id": "AUD-020",
@@ -247,7 +312,10 @@
         "sql:extra-one",
         "sql:empty"
       ],
-      "source": "src/lisp/builtins/sqlite.rs:68"
+      "source": "src/lisp/builtins/sqlite.rs:68",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/165",
+      "issue_number": 165,
+      "issue_recorded_at": "2026-10-17T08:20:07.050782+00:00"
     },
     {
       "id": "AUD-021",
@@ -258,7 +326,10 @@
       "cases": [
         "sql:forged"
       ],
-      "source": "src/lisp/builtins/sqlite.rs:122"
+      "source": "src/lisp/builtins/sqlite.rs:122",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/166",
+      "issue_number": 166,
+      "issue_recorded_at": "2026-10-17T08:20:07.939157+00:00"
     },
     {
       "id": "AUD-022",
@@ -269,7 +340,10 @@
       "cases": [
         "sql:empty-select"
       ],
-      "source": "src/lisp/builtins/sqlite.rs:349"
+      "source": "src/lisp/builtins/sqlite.rs:349",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/167",
+      "issue_number": 167,
+      "issue_recorded_at": "2026-10-17T08:20:08.862717+00:00"
     },
     {
       "id": "AUD-023",
@@ -281,7 +355,10 @@
         "xml:<a>one\r\ntwo\rthree</a>",
         "xml:<a x=\"one\ttwo\nthree\rfour\"/>"
       ],
-      "source": "src/lisp/builtins/xml.rs:315"
+      "source": "src/lisp/builtins/xml.rs:315",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/168",
+      "issue_number": 168,
+      "issue_recorded_at": "2026-10-17T08:20:09.833145+00:00"
     },
     {
       "id": "AUD-024",
@@ -292,7 +369,10 @@
       "cases": [
         "xml:<a xmlnsfoo=\"keep\"/>"
       ],
-      "source": "src/lisp/builtins/xml.rs:263"
+      "source": "src/lisp/builtins/xml.rs:263",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/169",
+      "issue_number": 169,
+      "issue_recorded_at": "2026-10-17T08:20:10.781076+00:00"
     },
     {
       "id": "AUD-025",
@@ -311,7 +391,10 @@
         "xml:<a x=\"<\"/>",
         "xml:<a>]]></a>"
       ],
-      "source": "src/lisp/builtins/xml.rs:246"
+      "source": "src/lisp/builtins/xml.rs:246",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/170",
+      "issue_number": 170,
+      "issue_recorded_at": "2026-10-17T08:20:11.907525+00:00"
     },
     {
       "id": "AUD-026",
@@ -322,7 +405,10 @@
       "cases": [
         "xml:<a x=\"&missing;\"/>"
       ],
-      "source": "src/lisp/builtins/xml.rs:266"
+      "source": "src/lisp/builtins/xml.rs:266",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/171",
+      "issue_number": 171,
+      "issue_recorded_at": "2026-10-17T08:20:12.862133+00:00"
     },
     {
       "id": "AUD-027",
@@ -334,7 +420,10 @@
         "xml:<!DOCTYPE a [<!ENTITY word 'hello'>]><a x=\"&word;\"/>",
         "xml:<!DOCTYPE a [<!ENTITY word 'hello'>]><a>&word;</a>"
       ],
-      "source": "src/lisp/builtins/xml.rs:341"
+      "source": "src/lisp/builtins/xml.rs:341",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/172",
+      "issue_number": 172,
+      "issue_recorded_at": "2026-10-17T08:20:13.871155+00:00"
     },
     {
       "id": "AUD-028",
@@ -345,7 +434,10 @@
       "cases": [
         "html-discard:<!--before--><p><!--inside-->text</p><!--after-->"
       ],
-      "source": "src/lisp/builtins/xml.rs:128"
+      "source": "src/lisp/builtins/xml.rs:128",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/173",
+      "issue_number": 173,
+      "issue_recorded_at": "2026-10-17T08:20:15.604705+00:00"
     },
     {
       "id": "AUD-029",
@@ -357,7 +449,10 @@
         "html:<head></head><body>x</body>",
         "html-discard:<head></head><body>x</body>"
       ],
-      "source": "src/lisp/builtins/xml.rs:103"
+      "source": "src/lisp/builtins/xml.rs:103",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/174",
+      "issue_number": 174,
+      "issue_recorded_at": "2026-10-17T08:20:16.571697+00:00"
     },
     {
       "id": "AUD-030",
@@ -369,7 +464,10 @@
         "html:<table><tr><td>a</td></tr></table><table><tbody><tr><td>b</td></tr></tbody></table>",
         "html-discard:<table><tr><td>a</td></tr></table><table><tbody><tr><td>b</td></tr></tbody></table>"
       ],
-      "source": "src/lisp/builtins/xml.rs:146"
+      "source": "src/lisp/builtins/xml.rs:146",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/175",
+      "issue_number": 175,
+      "issue_recorded_at": "2026-10-17T08:20:17.633377+00:00"
     },
     {
       "id": "AUD-031",
@@ -385,7 +483,10 @@
         "html-discard:<p><div>x</div>y</p>",
         "html-discard:<svg viewBox=\"0 0 1 1\"><circle/></svg>"
       ],
-      "source": "src/lisp/builtins/xml.rs:142"
+      "source": "src/lisp/builtins/xml.rs:142",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/176",
+      "issue_number": 176,
+      "issue_recorded_at": "2026-10-17T08:20:18.526738+00:00"
     },
     {
       "id": "AUD-032",
@@ -396,7 +497,10 @@
       "cases": [
         "thread:parent-worker-coordination"
       ],
-      "source": "src/lisp/builtins/misc.rs:8029"
+      "source": "src/lisp/builtins/misc.rs:8029",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/196",
+      "issue_number": 196,
+      "issue_recorded_at": "2026-10-17T08:22:40.466299+00:00"
     },
     {
       "id": "AUD-033",
@@ -408,7 +512,10 @@
         "thread:current-buffer-isolation",
         "thread:dynamic-bindings"
       ],
-      "source": "src/lisp/builtins/misc.rs:8050"
+      "source": "src/lisp/builtins/misc.rs:8050",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/197",
+      "issue_number": 197,
+      "issue_recorded_at": "2026-10-17T08:22:41.749682+00:00"
     },
     {
       "id": "AUD-034",
@@ -421,7 +528,10 @@
         "mutex:foreign-unlock",
         "mutex:recursive-depth"
       ],
-      "source": "src/lisp/builtins/misc.rs:8138"
+      "source": "src/lisp/builtins/misc.rs:8138",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/198",
+      "issue_number": 198,
+      "issue_recorded_at": "2026-10-17T08:22:42.778779+00:00"
     },
     {
       "id": "AUD-035",
@@ -432,7 +542,10 @@
       "cases": [
         "timer:accept-process-output-inhibit"
       ],
-      "source": "src/lisp/process.rs:1870"
+      "source": "src/lisp/process.rs:1870",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/199",
+      "issue_number": 199,
+      "issue_recorded_at": "2026-10-17T08:22:43.706160+00:00"
     },
     {
       "id": "AUD-036",
@@ -443,7 +556,10 @@
       "cases": [
         "process:pipe-connection"
       ],
-      "source": "src/lisp/process.rs:946"
+      "source": "src/lisp/process.rs:946",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/200",
+      "issue_number": 200,
+      "issue_recorded_at": "2026-10-17T08:22:44.616142+00:00"
     },
     {
       "id": "AUD-037",
@@ -457,7 +573,10 @@
         "process:invalid-coding",
         "network:accepted-coding-inheritance"
       ],
-      "source": "src/lisp/process.rs:228"
+      "source": "src/lisp/process.rs:228",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/201",
+      "issue_number": 201,
+      "issue_recorded_at": "2026-10-17T08:22:45.579619+00:00"
     },
     {
       "id": "AUD-038",
@@ -468,7 +587,10 @@
       "cases": [
         "process:split-utf8"
       ],
-      "source": "src/lisp/process.rs:228"
+      "source": "src/lisp/process.rs:228",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/202",
+      "issue_number": 202,
+      "issue_recorded_at": "2026-10-17T08:22:46.506974+00:00"
     },
     {
       "id": "AUD-039",
@@ -479,7 +601,10 @@
       "cases": [
         "process:environment"
       ],
-      "source": "src/lisp/process.rs:1000"
+      "source": "src/lisp/process.rs:1000",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/203",
+      "issue_number": 203,
+      "issue_recorded_at": "2026-10-17T08:22:47.435488+00:00"
     },
     {
       "id": "AUD-040",
@@ -490,7 +615,10 @@
       "cases": [
         "process:working-directory"
       ],
-      "source": "src/lisp/process.rs:1000"
+      "source": "src/lisp/process.rs:1000",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/204",
+      "issue_number": 204,
+      "issue_recorded_at": "2026-10-17T08:22:48.743935+00:00"
     },
     {
       "id": "AUD-041",
@@ -501,7 +629,10 @@
       "cases": [
         "process:exec-path"
       ],
-      "source": "src/lisp/process.rs:1000"
+      "source": "src/lisp/process.rs:1000",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/205",
+      "issue_number": 205,
+      "issue_recorded_at": "2026-10-17T08:22:49.983536+00:00"
     },
     {
       "id": "AUD-042",
@@ -512,7 +643,10 @@
       "cases": [
         "process:filter-t"
       ],
-      "source": "src/lisp/process.rs:271"
+      "source": "src/lisp/process.rs:271",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/206",
+      "issue_number": 206,
+      "issue_recorded_at": "2026-10-17T08:22:51.031121+00:00"
     },
     {
       "id": "AUD-043",
@@ -523,7 +657,10 @@
       "cases": [
         "process:wait-without-timeout"
       ],
-      "source": "src/lisp/process.rs:1878"
+      "source": "src/lisp/process.rs:1878",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/207",
+      "issue_number": 207,
+      "issue_recorded_at": "2026-10-17T08:22:51.894394+00:00"
     },
     {
       "id": "AUD-044",
@@ -536,7 +673,10 @@
         "process:send-region-low-bound",
         "process:send-region-narrowed"
       ],
-      "source": "src/lisp/process.rs:1978"
+      "source": "src/lisp/process.rs:1978",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/208",
+      "issue_number": 208,
+      "issue_recorded_at": "2026-10-17T08:22:52.950694+00:00"
     },
     {
       "id": "AUD-045",
@@ -547,7 +687,10 @@
       "cases": [
         "process:timeout-overflow"
       ],
-      "source": "src/lisp/process.rs:1898"
+      "source": "src/lisp/process.rs:1898",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/209",
+      "issue_number": 209,
+      "issue_recorded_at": "2026-10-17T08:22:53.981974+00:00"
     },
     {
       "id": "AUD-046",
@@ -558,7 +701,10 @@
       "cases": [
         "cli:eval-multiple-forms"
       ],
-      "source": "src/main.rs:367"
+      "source": "src/main.rs:367",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/225",
+      "issue_number": 225,
+      "issue_recorded_at": "2026-10-17T08:24:06.852800+00:00"
     },
     {
       "id": "AUD-047",
@@ -569,7 +715,10 @@
       "cases": [
         "cli:file-before-eval"
       ],
-      "source": "src/main.rs:278"
+      "source": "src/main.rs:278",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/226",
+      "issue_number": 226,
+      "issue_recorded_at": "2026-10-17T08:24:07.957968+00:00"
     },
     {
       "id": "AUD-048",
@@ -580,7 +729,10 @@
       "cases": [
         "cli:funcall-consumed-arguments"
       ],
-      "source": "src/main.rs:243"
+      "source": "src/main.rs:243",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/227",
+      "issue_number": 227,
+      "issue_recorded_at": "2026-10-17T08:24:08.850681+00:00"
     },
     {
       "id": "AUD-049",
@@ -591,7 +743,10 @@
       "cases": [
         "cli:end-of-options"
       ],
-      "source": "src/main.rs:126"
+      "source": "src/main.rs:126",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/228",
+      "issue_number": 228,
+      "issue_recorded_at": "2026-10-17T08:24:09.866500+00:00"
     },
     {
       "id": "AUD-050",
@@ -603,7 +758,10 @@
         "cli:load-path-short",
         "cli:load-path-long"
       ],
-      "source": "src/main.rs:126"
+      "source": "src/main.rs:126",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/229",
+      "issue_number": 229,
+      "issue_recorded_at": "2026-10-17T08:24:11.478021+00:00"
     },
     {
       "id": "AUD-051",
@@ -615,7 +773,10 @@
         "cli:single-hyphen-eval",
         "cli:equals-eval"
       ],
-      "source": "src/main.rs:206"
+      "source": "src/main.rs:206",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/230",
+      "issue_number": 230,
+      "issue_recorded_at": "2026-10-17T08:24:12.445202+00:00"
     },
     {
       "id": "AUD-052",
@@ -626,7 +787,10 @@
       "cases": [
         "cli:help"
       ],
-      "source": "src/main.rs:126"
+      "source": "src/main.rs:126",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/231",
+      "issue_number": 231,
+      "issue_recorded_at": "2026-10-17T08:24:13.923013+00:00"
     },
     {
       "id": "AUD-053",
@@ -638,7 +802,10 @@
         "treesit:edit-same-length",
         "treesit:edit-longer"
       ],
-      "source": "src/lisp/builtins/treesit.rs:606"
+      "source": "src/lisp/builtins/treesit.rs:606",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/210",
+      "issue_number": 210,
+      "issue_recorded_at": "2026-10-17T08:22:56.784334+00:00"
     },
     {
       "id": "AUD-054",
@@ -649,7 +816,10 @@
       "cases": [
         "treesit:old-node-after-repeated-reparse"
       ],
-      "source": "src/lisp/builtins/treesit.rs:248"
+      "source": "src/lisp/builtins/treesit.rs:248",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/211",
+      "issue_number": 211,
+      "issue_recorded_at": "2026-10-17T08:22:58.670324+00:00"
     },
     {
       "id": "AUD-055",
@@ -660,7 +830,10 @@
       "cases": [
         "treesit:indirect-buffer"
       ],
-      "source": "src/lisp/builtins/treesit.rs:813"
+      "source": "src/lisp/builtins/treesit.rs:813",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/212",
+      "issue_number": 212,
+      "issue_recorded_at": "2026-10-17T08:22:59.780264+00:00"
     },
     {
       "id": "AUD-056",
@@ -673,7 +846,10 @@
         "treesit:notifier-invalid",
         "treesit:notifier-lambda"
       ],
-      "source": "src/lisp/builtins/treesit.rs:1112"
+      "source": "src/lisp/builtins/treesit.rs:1112",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/213",
+      "issue_number": 213,
+      "issue_recorded_at": "2026-10-17T08:23:01.196748+00:00"
     },
     {
       "id": "AUD-057",
@@ -684,7 +860,10 @@
       "cases": [
         "treesit:query-match-case"
       ],
-      "source": "src/lisp/builtins/treesit.rs:1856"
+      "source": "src/lisp/builtins/treesit.rs:1856",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/214",
+      "issue_number": 214,
+      "issue_recorded_at": "2026-10-17T08:23:02.127561+00:00"
     },
     {
       "id": "AUD-058",
@@ -695,7 +874,10 @@
       "cases": [
         "treesit:query-repeat-capture"
       ],
-      "source": "src/lisp/builtins/treesit.rs:1767"
+      "source": "src/lisp/builtins/treesit.rs:1767",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/215",
+      "issue_number": 215,
+      "issue_recorded_at": "2026-10-17T08:23:03.275020+00:00"
     },
     {
       "id": "AUD-059",
@@ -706,7 +888,10 @@
       "cases": [
         "treesit:ranges-invalid"
       ],
-      "source": "src/lisp/builtins/treesit.rs:1053"
+      "source": "src/lisp/builtins/treesit.rs:1053",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/216",
+      "issue_number": 216,
+      "issue_recorded_at": "2026-10-17T08:23:04.322199+00:00"
     },
     {
       "id": "AUD-060",
@@ -717,7 +902,10 @@
       "cases": [
         "network:send-eof"
       ],
-      "source": "src/lisp/process.rs:2008"
+      "source": "src/lisp/process.rs:2008",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/217",
+      "issue_number": 217,
+      "issue_recorded_at": "2026-10-17T08:23:05.397226+00:00"
     },
     {
       "id": "AUD-061",
@@ -728,7 +916,10 @@
       "cases": [
         "network:deleted-listener-rebind"
       ],
-      "source": "src/lisp/process.rs:2477"
+      "source": "src/lisp/process.rs:2477",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/218",
+      "issue_number": 218,
+      "issue_recorded_at": "2026-10-17T08:23:06.677935+00:00"
     },
     {
       "id": "AUD-062",
@@ -740,7 +931,10 @@
         "network:accept-log-callback",
         "network:accept-sentinel-target"
       ],
-      "source": "src/lisp/process.rs:608"
+      "source": "src/lisp/process.rs:608",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/219",
+      "issue_number": 219,
+      "issue_recorded_at": "2026-10-17T08:23:07.812150+00:00"
     },
     {
       "id": "AUD-063",
@@ -752,7 +946,10 @@
         "network:accepted-contact",
         "network:resolved-remote-address"
       ],
-      "source": "src/lisp/process.rs:555"
+      "source": "src/lisp/process.rs:555",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/220",
+      "issue_number": 220,
+      "issue_recorded_at": "2026-10-17T08:23:08.824349+00:00"
     },
     {
       "id": "AUD-064",
@@ -763,7 +960,10 @@
       "cases": [
         "network:stop-reading"
       ],
-      "source": "src/lisp/process.rs:358"
+      "source": "src/lisp/process.rs:358",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/221",
+      "issue_number": 221,
+      "issue_recorded_at": "2026-10-17T08:23:09.944337+00:00"
     },
     {
       "id": "AUD-065",
@@ -774,7 +974,10 @@
       "cases": [
         "network:actual-loopback-binding"
       ],
-      "source": "src/lisp/process.rs:1264"
+      "source": "src/lisp/process.rs:1264",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/232",
+      "issue_number": 232,
+      "issue_recorded_at": "2026-10-17T08:24:43.290897+00:00"
     },
     {
       "id": "AUD-066",
@@ -786,7 +989,10 @@
         "files:copy-self-same-name",
         "files:copy-self-hardlink"
       ],
-      "source": "src/editor/mod.rs:12035"
+      "source": "src/editor/mod.rs:12035",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/222",
+      "issue_number": 222,
+      "issue_recorded_at": "2026-10-17T08:23:10.935585+00:00"
     },
     {
       "id": "AUD-067",
@@ -799,7 +1005,10 @@
         "files:rename-over-broken-destination",
         "files:copy-over-broken-destination"
       ],
-      "source": "src/editor/mod.rs:11863"
+      "source": "src/editor/mod.rs:11863",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/223",
+      "issue_number": 223,
+      "issue_recorded_at": "2026-10-17T08:23:11.877112+00:00"
     },
     {
       "id": "AUD-068",
@@ -820,7 +1029,1034 @@
         "files:handler-insert-file-contents",
         "files:handler-write-region"
       ],
-      "source": "src/editor/mod.rs:10230"
+      "source": "src/editor/mod.rs:10230",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/224",
+      "issue_number": 224,
+      "issue_recorded_at": "2026-10-17T08:23:12.833484+00:00"
+    },
+    {
+      "id": "AUD-069",
+      "priority": "P1",
+      "area": "network",
+      "title": "make-network-process の :type datagram が無視され TCP ソケットを作成する",
+      "description": "UDP を指定したサーバーの状態が GNU の open に対し remacs は listen になる。make-network-process は :type を読み取らず TcpListener/TcpStream を作成するため、datagram の通信を行えない。",
+      "cases": [
+        "network:datagram-socket"
+      ],
+      "source": "src/lisp/process.rs:1269",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/177",
+      "issue_number": 177,
+      "issue_recorded_at": "2026-10-17T08:21:53.693162+00:00"
+    },
+    {
+      "id": "AUD-070",
+      "priority": "P2",
+      "area": "network",
+      "title": "make-network-process の :service t による空きポート割り当てがエラーになる",
+      "description": "サーバーに :service t を指定すると GNU は空きポートを割り当て、process-contact で整数のポート番号を返す。remacs は wrong-type-argument stringp t を送出する。service_port が整数と文字列しか受け付けない。",
+      "cases": [
+        "network:random-service"
+      ],
+      "source": "src/lisp/process.rs:1129",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/178",
+      "issue_number": 178,
+      "issue_recorded_at": "2026-10-17T08:21:54.928376+00:00"
+    },
+    {
+      "id": "AUD-071",
+      "priority": "P1",
+      "area": "network",
+      "title": "make-network-process が :nowait t でも同期接続する",
+      "description": "ループバックへの :nowait t の接続直後、GNU は connect を返すが remacs は open を返す。TcpStream::connect を呼んでから nonblocking に切り替えるため接続待ちが呼び出し元をブロックする。",
+      "cases": [
+        "network:nowait-connect"
+      ],
+      "source": "src/lisp/process.rs:1297",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/179",
+      "issue_number": 179,
+      "issue_recorded_at": "2026-10-17T08:21:55.861653+00:00"
+    },
+    {
+      "id": "AUD-072",
+      "priority": "P1",
+      "area": "buffer/undo",
+      "title": "削除したテキストを undo するとテキスト属性が復元されない",
+      "description": "face=bold を持つ abc の b を delete-region で削除して primitive-undo すると、文字は復元されるが b の face が nil になる。GNU は三文字とも bold を保持する。削除履歴を属性のない String として保存し、undo 時にも文字列の属性を挿入していない。",
+      "cases": [
+        "buffer:undo-deleted-properties"
+      ],
+      "source": "src/buffer/mod.rs:849",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/233",
+      "issue_number": 233,
+      "issue_recorded_at": "2026-10-17T08:27:50.001728+00:00"
+    },
+    {
+      "id": "AUD-073",
+      "priority": "P1",
+      "area": "string",
+      "title": "propertize が unibyte 文字列の非 ASCII バイト値を別の文字コードに変える",
+      "description": "(unibyte-string 128 255) に face を付けるだけで、aref・string-to-list・vconcat が返す値が (128 255) から (4194176 4194303) に変わる。multibyte-string-p は nil のままなので表面のフラグだけでは検出できない。propertize が文字列を複製する際に元のバイト表現に関するメタデータを引き継いでいない。",
+      "cases": [
+        "string:propertize-unibyte"
+      ],
+      "source": "src/buffer/primitives.rs:13448",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/234",
+      "issue_number": 234,
+      "issue_recorded_at": "2026-10-17T08:27:50.941139+00:00"
+    },
+    {
+      "id": "AUD-074",
+      "priority": "P1",
+      "area": "buffer/edit",
+      "title": "replace-region-contents が未変更部分も削除し、point・marker・変更状態を壊す",
+      "description": "abcde の末尾だけを置換しても、変更していない文字にある marker が先頭へ移動し、point も末尾へ飛ぶ。完全に同じ文字列での置換でも、GNU が保持する未変更状態と空の undo 履歴が失われる。差分を反映せず指定領域を丸ごと delete/insert している。",
+      "cases": [
+        "replace-region:preserve-marker",
+        "replace-region:unchanged"
+      ],
+      "source": "src/buffer/extra.rs:653",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/235",
+      "issue_number": 235,
+      "issue_recorded_at": "2026-10-17T08:29:37.470209+00:00"
+    },
+    {
+      "id": "AUD-075",
+      "priority": "P1",
+      "area": "buffer/edit",
+      "title": "replace-region-contents が挿入元のテキスト属性を落とす",
+      "description": "abc の b を face=bold を持つ aXc で置換すると、GNU は新しい X に bold を持たせる。remacs は三文字とも属性なしになる。SOURCE を Rust のプレーンな String に変換して挿入している。",
+      "cases": [
+        "replace-region:properties"
+      ],
+      "source": "src/buffer/extra.rs:637",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/236",
+      "issue_number": 236,
+      "issue_recorded_at": "2026-10-17T08:29:38.454491+00:00"
+    },
+    {
+      "id": "AUD-076",
+      "priority": "P1",
+      "area": "buffer/edit",
+      "title": "replace-region-contents が SOURCE バッファの narrowing を無視する",
+      "description": "xxNEWyy を NEW の範囲へ narrow-to-region したバッファを渡すと、GNU は NEW を使うが、remacs は非公開の前後も含め xxNEWyy 全体を挿入する。SOURCE の BEGV/ZV を参照していない。",
+      "cases": [
+        "replace-region:narrowed-source"
+      ],
+      "source": "src/buffer/extra.rs:640",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/237",
+      "issue_number": 237,
+      "issue_recorded_at": "2026-10-17T08:29:39.799770+00:00"
+    },
+    {
+      "id": "AUD-077",
+      "priority": "P2",
+      "area": "buffer/edit",
+      "title": "replace-region-contents が [BUFFER BEG END] 形式の SOURCE を拒否する",
+      "description": "GNU Emacs 31.1 が受け入れる部分バッファ指定ベクター [BUFFER BEG END] を渡すと、remacs は wrong-type-argument stringp を送出する。SOURCE のパターン分岐に vector 形式がない。",
+      "cases": [
+        "replace-region:vector-source"
+      ],
+      "source": "src/buffer/extra.rs:636",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/238",
+      "issue_number": 238,
+      "issue_recorded_at": "2026-10-17T08:29:40.858997+00:00"
+    },
+    {
+      "id": "AUD-078",
+      "priority": "P2",
+      "area": "buffer/edit",
+      "title": "replace-region-contents が SOURCE 関数を対象領域へ narrow せず呼び出す",
+      "description": "関数形式の SOURCE は BEG..END に狭めたバッファで呼び出されるが、remacs は元の全領域を見せる。[abc] の 2..5 の置換で、関数が見る point-min/max は GNU の (2 5) に対し remacs は (1 6)。",
+      "cases": [
+        "replace-region:callback-narrowing"
+      ],
+      "source": "src/buffer/extra.rs:643",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/239",
+      "issue_number": 239,
+      "issue_recorded_at": "2026-10-17T08:29:41.900280+00:00"
+    },
+    {
+      "id": "AUD-079",
+      "priority": "P1",
+      "area": "buffer/edit",
+      "title": "transpose-regions が point と marker を正しく移動せず LEAVE-MARKERS も無視する",
+      "description": "ab--XYZ の二領域を転置すると、GNU は領域内の point と marker を対応する文字へ移動する。remacs は delete/insert の副作用で別の位置へ動かす。LEAVE-MARKERS=t で座標を固定する指定にも同じ誤った移動が起き、第五引数を参照していない。",
+      "cases": [
+        "transpose:markers-nil",
+        "transpose:markers-t"
+      ],
+      "source": "src/buffer/extra.rs:2391",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/240",
+      "issue_number": 240,
+      "issue_recorded_at": "2026-10-17T08:29:42.840119+00:00"
+    },
+    {
+      "id": "AUD-080",
+      "priority": "P1",
+      "area": "buffer/edit",
+      "title": "transpose-regions が転置するテキストの属性を消す",
+      "description": "face=bold の ab と face=italic の XYZ を転置すると、GNU は各文字の face を保持するが、remacs は転置した両領域の face をすべて nil にする。属性なしの substring を作り、文字だけを挿入している。",
+      "cases": [
+        "transpose:properties"
+      ],
+      "source": "src/buffer/extra.rs:2386",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/241",
+      "issue_number": 241,
+      "issue_recorded_at": "2026-10-17T08:29:43.813054+00:00"
+    },
+    {
+      "id": "AUD-081",
+      "priority": "P1",
+      "area": "buffer/edit",
+      "title": "append-to-buffer がコピーするテキストの属性を消す",
+      "description": "face=bold の abc を append-to-buffer で別バッファへ送ると、GNU は全ての文字の face を保持するが remacs は全て nil にする。同条件の copy-to-buffer / prepend-to-buffer は保持する。append-to-buffer の Rust 実装だけが属性なしの String を使っている。",
+      "cases": [
+        "buffer-transfer:properties-append-to-buffer"
+      ],
+      "source": "src/editor/mod.rs:10028",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/242",
+      "issue_number": 242,
+      "issue_recorded_at": "2026-10-17T08:31:53.686411+00:00"
+    },
+    {
+      "id": "AUD-082",
+      "priority": "P1",
+      "area": "buffer/edit",
+      "title": "append-to-buffer が narrowing 外の領域を拒否せずコピーする",
+      "description": "[abc] の abc に narrow した状態で全バッファの範囲 1..6 を指定すると、GNU は args-out-of-range を送出し宛先を変更しない。remacs は指定範囲を全テキスト長に clamp して [abc] をコピーする。#17 の insert-buffer-substring 側とは別に、append-to-buffer 自身の Rust 実装にも可視範囲の検査がない。",
+      "cases": [
+        "buffer-transfer:narrowing-append-to-buffer"
+      ],
+      "source": "src/editor/mod.rs:10033",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/243",
+      "issue_number": 243,
+      "issue_recorded_at": "2026-10-17T08:31:54.718154+00:00"
+    },
+    {
+      "id": "AUD-083",
+      "priority": "P2",
+      "area": "process",
+      "title": "process-buffer が kill 済みバッファへの参照を nil に置き換える",
+      "description": "make-pipe-process に渡したバッファを kill した後、GNU の process-buffer は同じ kill 済みオブジェクトを返すが remacs は nil を返す。元のバッファ参照との eq が GNU の t に対して nil になる。#54 の新規プロセスの sentinel / marker の既定値とは異なる寿命管理の問題。",
+      "cases": [
+        "process:killed-buffer-identity"
+      ],
+      "source": "src/lisp/process.rs:1573",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/244",
+      "issue_number": 244,
+      "issue_recorded_at": "2026-10-17T08:33:33.672195+00:00"
+    },
+    {
+      "id": "AUD-084",
+      "priority": "P1",
+      "area": "process",
+      "title": "process-send-string が PTY への部分書き込みを成功扱いし残りのデータを捨てる",
+      "description": "同じ PTY 子プロセスへ 128000 文字を送ると、GNU は全量を届ける。remacs の process-send-string も正常に戻るが、この検証で子プロセスが受け取ったのは 1022 文字だけだった。proc_write の Child 分岐は write の戻り値が負でなければ成功とし、短い書き込みの残りを送らない。受信量は OS のバッファ状態に依存する。",
+      "cases": [
+        "process:large-pty-write"
+      ],
+      "source": "src/lisp/process.rs:1960",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/245",
+      "issue_number": 245,
+      "issue_recorded_at": "2026-10-17T08:33:34.810502+00:00"
+    },
+    {
+      "id": "AUD-085",
+      "priority": "P2",
+      "area": "buffer/mark",
+      "title": "save-mark-and-excursion がマーク未設定状態と復元時の hook を保持しない",
+      "description": "元のマークが未設定のとき、内部で set-mark すると save-mark-and-excursion を抜けても新しいマークと mark-active=t が残る。GNU は元の未設定・非アクティブ状態へ戻す。また元から存在したマークを再アクティブ化する際、GNU が実行する activate-mark-hook の呼び出しが一回不足する。Rust の excursion 復元経路は保存したマークが Some のときしか状態を復元せず、復元時の hook も実行しない。",
+      "cases": [
+        "excursion:initially-unset-mark",
+        "excursion:mark-activation-hooks"
+      ],
+      "source": "src/lisp/eval.rs:11118",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/246",
+      "issue_number": 246,
+      "issue_recorded_at": "2026-10-17T08:36:31.237066+00:00"
+    },
+    {
+      "id": "AUD-086",
+      "priority": "P1",
+      "area": "process",
+      "title": "set-process-window-size が PTY のサイズを変更せず引数検査もしない",
+      "description": "PTY 子プロセスに 12 行・34 桁を設定してから端末サイズを読ませると、GNU は (34, 12)、remacs は未設定の (0, 0) を返す。関数は引数を参照せず nil を返すだけで、TIOCSWINSZ 相当の更新を行わない。不正なプロセス引数も GNU の processp エラーに対して成功扱いになる。",
+      "cases": [
+        "process:set-window-size",
+        "process:set-window-size-invalid"
+      ],
+      "source": "src/lisp/process.rs:1834",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/247",
+      "issue_number": 247,
+      "issue_recorded_at": "2026-10-17T08:37:13.277410+00:00"
+    },
+    {
+      "id": "AUD-087",
+      "priority": "P1",
+      "area": "string",
+      "title": "fillarray が文字列のバイト形式を内容から誤判定する",
+      "description": "unibyte の (128 255) を ASCII または 233 で埋める操作は GNU では成功するが remacs は error になる。反対に multibyte の ASCII 文字列を 233 で埋める操作は GNU のバイト長変更エラーにならず成功する。明示的な unibyte/multibyte 状態を参照せず all_ascii で保存形式を判定している。",
+      "cases": [
+        "string:fillarray-unibyte-ascii",
+        "string:fillarray-unibyte-high",
+        "string:fillarray-multibyte-ascii"
+      ],
+      "source": "src/lisp/builtins/seq.rs:1148",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/248",
+      "issue_number": 248,
+      "issue_recorded_at": "2026-10-17T08:42:08.967041+00:00"
+    },
+    {
+      "id": "AUD-088",
+      "priority": "P2",
+      "area": "string",
+      "title": "clear-string が unibyte の高位バイトを含む文字列の長さを増やす",
+      "description": "(unibyte-string 128 255) を clear-string すると、GNU は長さ 2 の NUL 文字列になるが remacs は長さ 8 になる。内部で一バイトを保持する代理文字の UTF-8 格納長を、そのまま Lisp のバイト長として使っている。通常の multibyte 文字列を消去する対照ケースは一致する。",
+      "cases": [
+        "string:clear-unibyte",
+        "string:clear-multibyte-control"
+      ],
+      "source": "src/lisp/builtins/strfn.rs:4181",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/249",
+      "issue_number": 249,
+      "issue_recorded_at": "2026-10-17T08:42:10.268168+00:00"
+    },
+    {
+      "id": "AUD-089",
+      "priority": "P1",
+      "area": "string",
+      "title": "reverse / nreverse が unibyte 文字列のバイト値を別の文字コードに変える",
+      "description": "unibyte の (128 255) を反転すると GNU は (255 128) を返すが、remacs は (4194303 4194176) を返す。multibyte-string-p は nil のまま。reverse と nreverse の文字列生成経路が元のバイト表現のメタデータを引き継いでおらず、#234 の propertize 側と同様の現象が別の実装箇所で起きる。",
+      "cases": [
+        "string:unibyte-reverse",
+        "string:unibyte-nreverse"
+      ],
+      "source": "src/lisp/builtins/listfn.rs:738",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/250",
+      "issue_number": 250,
+      "issue_recorded_at": "2026-10-17T08:42:11.399723+00:00"
+    },
+    {
+      "id": "AUD-090",
+      "priority": "P2",
+      "area": "string/display",
+      "title": "string-width がバッファの tab-width を無視して TAB を常に 8 桁と数える",
+      "description": "tab-width=4 では GNU の char-width と string-width は TAB を 4 桁と数える。remacs は char-width では 4 を返すが string-width では 8 を返す。string-width の補助関数 gnu_char_width が TAB の幅を 8 に固定している。#147 の current-indentation とは別の実装箇所。",
+      "cases": [
+        "string-width:tab-width"
+      ],
+      "source": "src/lisp/builtins/strfn.rs:1549",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/251",
+      "issue_number": 251,
+      "issue_recorded_at": "2026-10-17T08:44:35.290182+00:00"
+    },
+    {
+      "id": "AUD-091",
+      "priority": "P2",
+      "area": "string/display",
+      "title": "string-glyph-split が明示的に合成した文字列も一文字ずつ分割する",
+      "description": "ab に compose-string で一つの合成を設定すると、GNU の string-glyph-split は長さ 2 の文字列を一つ返す。remacs は長さ 1 の文字列を二つ返す。文字列の composition 属性を参照せず Rust の chars() をそのまま列挙している。",
+      "cases": [
+        "string:glyph-explicit-composition"
+      ],
+      "source": "src/lisp/builtins/strfn.rs:1980",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/252",
+      "issue_number": 252,
+      "issue_recorded_at": "2026-10-17T08:44:36.237504+00:00"
+    },
+    {
+      "id": "AUD-092",
+      "priority": "P2",
+      "area": "string",
+      "title": "nreverse が GNU では削除される文字列のテキスト属性を反転して残す",
+      "description": "最初の a だけに face=bold を持つ abc を nreverse すると、GNU は属性のない cba を返すが remacs は最後の a に bold を残す。reverse の同条件の対照ケースは両実装で属性なしになる。nreverse の文字列分岐だけが属性の区間を反転して新しい文字列へコピーしている。#250 の unibyte のバイト値変化とは異なる属性処理の問題。",
+      "cases": [
+        "string:properties-nreverse",
+        "string:properties-reverse"
+      ],
+      "source": "src/lisp/builtins/seq.rs:1290",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/253",
+      "issue_number": 253,
+      "issue_recorded_at": "2026-10-17T08:44:37.525728+00:00"
+    },
+    {
+      "id": "AUD-093",
+      "priority": "P1",
+      "area": "bytecode",
+      "title": "実行済みバイトコードの命令文字列を書き換えても古い命令を実行する",
+      "description": "定数 11 を返す make-byte-code の関数を一度呼び、命令文字列の constant0 を constant1 に aset すると、GNU は次回から 22 を返す。remacs は 11 のまま。復号済み命令のキャッシュを命令文字列の Rc アドレスだけで検証するため、同じ文字列の内容変更を検知できない。定数ベクターの要素変更は両実装で反映される。",
+      "cases": [
+        "bytecode:code-in-place",
+        "bytecode:constants-in-place-control"
+      ],
+      "source": "src/lisp/bytecode.rs:143",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/254",
+      "issue_number": 254,
+      "issue_recorded_at": "2026-10-17T08:46:16.933147+00:00"
+    },
+    {
+      "id": "AUD-094",
+      "priority": "P2",
+      "area": "bytecode",
+      "title": "aset が GNU では変更できないバイトコード関数のスロットを変更できる",
+      "description": "make-byte-code の戻り値に対する aset は GNU では wrong-type-argument arrayp になる。remacs は命令文字列スロットと定数ベクタースロットを直接書き換え、関数の戻り値も変わる。aref で読み取れることと、aset で変更できることの区別がない。#121 の不正な byte-code 命令・定数アクセスとは異なる API の型検査の問題。",
+      "cases": [
+        "bytecode:code-slot-control",
+        "bytecode:constants-slot-control"
+      ],
+      "source": "src/lisp/builtins/seq.rs:626",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/255",
+      "issue_number": 255,
+      "issue_recorded_at": "2026-10-17T08:46:18.010104+00:00"
+    },
+    {
+      "id": "AUD-095",
+      "priority": "P2",
+      "area": "sequence",
+      "title": "string-to-list が入力リストをコピーせず、不正な dotted list もそのまま返す",
+      "description": "リストを渡した場合、GNU は新しいリストを返すが remacs は元と eq のリストを返す。このため戻り値を setcar すると元のリストまで変わる。また (1 . 2) は GNU の listp エラーにならずそのまま返る。Cons 分岐が GNU の append 相当のコピー・検査を行わず入力を返している。",
+      "cases": [
+        "string-to-list:list-alias",
+        "string-to-list:improper-list"
+      ],
+      "source": "src/lisp/builtins/strfn.rs:4809",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/256",
+      "issue_number": 256,
+      "issue_recorded_at": "2026-10-17T08:48:18.041786+00:00"
+    },
+    {
+      "id": "AUD-096",
+      "priority": "P2",
+      "area": "sequence",
+      "title": "string-to-vector が文字列以外のシーケンスを受け付けない",
+      "description": "GNU の string-to-vector は vconcat 相当で、リスト、ベクター、bool-vector も新しいベクターへ変換する。remacs はいずれも wrong-type-argument stringp を送出する。入力を nil または文字列に限定している。",
+      "cases": [
+        "string-to-vector:list",
+        "string-to-vector:vector",
+        "string-to-vector:bool-vector"
+      ],
+      "source": "src/lisp/builtins/strfn.rs:4835",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/257",
+      "issue_number": 257,
+      "issue_recorded_at": "2026-10-17T08:48:19.437994+00:00"
+    },
+    {
+      "id": "AUD-097",
+      "priority": "P2",
+      "area": "string",
+      "title": "string-lessp が unibyte のバイト値を内部の代理文字コードで比較する",
+      "description": "unibyte の 233 と multibyte の 256 の比較は GNU では前者が小さいが、remacs は逆になる。同じ数値 233 の unibyte/multibyte の組では、GNU はどちらも小さいと判定しないが remacs は multibyte 側が小さいと判定する。string= と compare-strings の対照結果は一致しており、string-lessp が Rust の内部文字列の大小を直接比較している経路の問題。",
+      "cases": [
+        "string-compare:unibyte-order",
+        "string-compare:unibyte-unicode"
+      ],
+      "source": "src/lisp/builtins/strfn.rs:772",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/258",
+      "issue_number": 258,
+      "issue_recorded_at": "2026-10-17T08:48:20.419747+00:00"
+    },
+    {
+      "id": "AUD-098",
+      "priority": "P2",
+      "area": "case",
+      "title": "case-fold 比較と検索が現在の case table を使わない",
+      "description": "case table で X と y を大文字・小文字の組に設定すると、GNU の char-equal と IGNORE-CASE=t の compare-strings は等しいと判定する。remacs は upcase では設定を認識するが、char-equal は nil、compare-strings は -1 を返す。search-forward、re-search-forward、string-match でも同じ組を見つけられない。標準の対応でも compare-strings は ß と S を GNU と異なり等しいと判定する。比較・検索が現在の GNU case table ではなく Rust の Unicode 既定の変換を使い、compare-strings は複数文字への大文字化の先頭だけを取っている。",
+      "cases": [
+        "string-compare:custom-case-table",
+        "compare-strings:sharp-s",
+        "search:custom-case-table",
+        "search:default-case-table-control"
+      ],
+      "source": "src/lisp/builtins/strfn.rs:5024",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/259",
+      "issue_number": 259,
+      "issue_recorded_at": "2026-10-17T08:48:21.652819+00:00"
+    },
+    {
+      "id": "AUD-099",
+      "priority": "P2",
+      "area": "case",
+      "title": "char-equal が異なる非 Unicode 文字を case-fold-search=t で等しいと判定する",
+      "description": "GNU Emacs で有効な内部文字コード 0x110000 と 0x110001、surrogate の 0xD800 と 0xD801、八ビット文字 0x3FFF80 と 0x3FFFFF が、case-fold-search=t だと全て等しいと判定される。GNU は全て nil。case-fold-search=nil の対照ケースは一致する。Rust の char::from_u32 が失敗した二つの None 同士を等しいと比較している。",
+      "cases": [
+        "char-equal:nonunicode",
+        "char-equal:nonunicode-no-fold-control"
+      ],
+      "source": "src/lisp/builtins/strfn.rs:1832",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/260",
+      "issue_number": 260,
+      "issue_recorded_at": "2026-10-17T08:50:08.478832+00:00"
+    },
+    {
+      "id": "AUD-100",
+      "priority": "P1",
+      "area": "reader",
+      "title": "read が関数ストリームを一式で止めず EOF まで読み尽くす",
+      "description": "(a) (b) を供給する関数ストリームで read すると、GNU は (a) だけを読み、次の read で (b) を返す。remacs は最初の read で残りも全て消費し、次は end-of-file になる。数値の後の先読み文字を戻す一引数の呼び出しも行わない。関数から全入力を String へ集めた後で一式を解析する実装になっている。#92 の標準入力の未実装とは別のストリーム処理の問題。",
+      "cases": [
+        "read:function-stream-one-form",
+        "read:function-stream-unread"
+      ],
+      "source": "src/lisp/builtins/readfn.rs:81",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/261",
+      "issue_number": 261,
+      "issue_recorded_at": "2026-10-17T09:19:54.950743+00:00"
+    },
+    {
+      "id": "AUD-101",
+      "priority": "P2",
+      "area": "reader",
+      "title": "read が解析エラー時にバッファやマーカーの読み取り位置を進めない",
+      "description": "バッファに閉じていない (a を置いて位置 1 から read すると、GNU は end-of-file の後に位置 3 を残すが、remacs は位置 1 のままになる。マーカーを入力にした場合も同じ。正常な式を二回読む対照ケースは一致する。解析失敗を伝播する前に消費した位置を反映していない。",
+      "cases": [
+        "read:buffer-error-point",
+        "read:marker-error-point",
+        "read:buffer-success-control"
+      ],
+      "source": "src/lisp/builtins/readfn.rs:46",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/262",
+      "issue_number": 262,
+      "issue_recorded_at": "2026-10-17T09:19:55.955058+00:00"
+    },
+    {
+      "id": "AUD-102",
+      "priority": "P2",
+      "area": "printer",
+      "title": "prin1 / prin1-to-string が OVERRIDES の出力設定を適用しない",
+      "description": "第三引数に ((length . 1)) を渡してもリストを省略せず、t で既定値へ戻す指定も無視する。バッファ出力の prin1 でも同じ。未定義の設定名も GNU のエラーにならず受け入れる。OVERRIDES の外形だけを検査し、設定の検査や一時的な束縛を行っていない。",
+      "cases": [
+        "print:override-length",
+        "print:override-defaults",
+        "print:override-buffer-stream",
+        "print:override-invalid-setting"
+      ],
+      "source": "src/lisp/builtins/printfn.rs:95",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/263",
+      "issue_number": 263,
+      "issue_recorded_at": "2026-10-17T09:21:08.117878+00:00"
+    },
+    {
+      "id": "AUD-103",
+      "priority": "P1",
+      "area": "evaluator",
+      "title": "eval-buffer / eval-region が narrowing 外のコードも評価する",
+      "description": "先頭の式を narrowing で隠してから eval-buffer または eval-region nil nil を実行すると、GNU は可視領域の式だけを実行するが remacs は隠した式も実行する。eval-region に全バッファの明示的な範囲を渡した場合も、GNU は可視領域内だけを実行する一方、remacs は narrowing 外まで評価する。ソース取得時に BEGV を適用せず、eval-buffer は ZV も無視して全テキストを使っている。",
+      "cases": [
+        "eval-buffer:narrowing",
+        "eval-region:narrowing",
+        "eval-region:inaccessible-bounds"
+      ],
+      "source": "src/lisp/builtins/evalfn.rs:3902",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/264",
+      "issue_number": 264,
+      "issue_recorded_at": "2026-10-17T09:22:46.940816+00:00"
+    },
+    {
+      "id": "AUD-104",
+      "priority": "P2",
+      "area": "evaluator",
+      "title": "eval-buffer / eval-region が PRINTFLAG の出力抑止と出力先を無視する",
+      "description": "PRINTFLAG=nil のとき GNU は評価中の princ の出力を捨てるが、remacs は呼び出し元の standard-output へ出す。PRINTFLAG にバッファを指定しても remacs はその出力先を使わず、GNU が指定先に送る通常出力と評価結果の表示も再現しない。両評価関数が PRINTFLAG を処理せず eval_str_buf を呼んでいる。",
+      "cases": [
+        "eval-buffer:discard-output",
+        "eval-region:discard-output",
+        "eval-buffer:explicit-output",
+        "eval-region:explicit-output"
+      ],
+      "source": "src/lisp/builtins/evalfn.rs:3904",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/265",
+      "issue_number": 265,
+      "issue_recorded_at": "2026-10-17T09:22:48.088929+00:00"
+    },
+    {
+      "id": "AUD-105",
+      "priority": "P1",
+      "area": "evaluator",
+      "title": "eval-buffer がソース先頭の lexical-binding 指定を無視する",
+      "description": "先頭に lexical-binding: t を持つバッファを、呼び出し側の lexical-binding=nil の下で評価すると、GNU は内部の let で作ったクロージャの値 7 を保持する。remacs は動的束縛として評価し、後から関数を呼ぶと void-variable になる。eval_str_buf が呼び出し側の変数値だけで lexical environment を決め、ソースの指定を読んでいない。",
+      "cases": [
+        "eval-buffer:lexical-header"
+      ],
+      "source": "src/lisp/eval.rs:5756",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/266",
+      "issue_number": 266,
+      "issue_recorded_at": "2026-10-17T09:22:49.089741+00:00"
+    },
+    {
+      "id": "AUD-106",
+      "priority": "P2",
+      "area": "evaluator",
+      "title": "eval-region が READ-FUNCTION 引数を呼び出さない",
+      "description": "第四引数に read をラップした関数を渡すと、GNU は式の読み取りにその関数を使うが、remacs は一度も呼ばない。eval-region の実装が START/END だけを取り出して固定の内部 reader へ渡しているため、呼び出し側による読み取りの差し替えが機能しない。",
+      "cases": [
+        "eval-region:read-function"
+      ],
+      "source": "src/lisp/builtins/evalfn.rs:3932",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/267",
+      "issue_number": 267,
+      "issue_recorded_at": "2026-10-17T09:22:50.426277+00:00"
+    },
+    {
+      "id": "AUD-107",
+      "priority": "P2",
+      "area": "evaluator",
+      "title": "eval-buffer / eval-region が nil ではなく最後の式の値を返す",
+      "description": "内容が 42 だけのバッファを eval-buffer または eval-region で評価すると、GNU は nil を返すが remacs は 42 を返す。内部の eval_str_buf の結果をそのまま公開している。PRINTFLAG での表示とは別に、これらの評価関数自身の戻り値が異なる。",
+      "cases": [
+        "eval-buffer:return-value",
+        "eval-region:return-value"
+      ],
+      "source": "src/lisp/builtins/evalfn.rs:3929",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/268",
+      "issue_number": 268,
+      "issue_recorded_at": "2026-10-17T09:22:51.446295+00:00"
+    },
+    {
+      "id": "AUD-108",
+      "priority": "P1",
+      "area": "buffer/edit",
+      "title": "delete-blank-lines が NBSP や CR を含む非空行まで削除する",
+      "description": "NBSP または CR だけを含む行で delete-blank-lines を実行すると、GNU はその行を残すが remacs は文字ごと行を削除する。通常の空白と TAB の行では一致する。空行判定に Rust の trim().is_empty() を使い、GNU が空行とは扱わない文字まで空白として除去している。",
+      "cases": [
+        "delete-blank-lines:nbsp",
+        "delete-blank-lines:carriage-return",
+        "delete-blank-lines:ascii-control"
+      ],
+      "source": "src/buffer/primitives.rs:13791",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/269",
+      "issue_number": 269,
+      "issue_recorded_at": "2026-10-17T09:25:10.716421+00:00"
+    },
+    {
+      "id": "AUD-109",
+      "priority": "P1",
+      "area": "buffer/edit",
+      "title": "空白削除コマンドが narrowing 外のテキストを変更する",
+      "description": "delete-blank-lines は可視の空行ではなく隠れた次の空行を削除する。delete-horizontal-space は可視領域外の前後の空白まで削除し、delete-indentation は隠れた前の行まで結合する。いずれも GNU は narrowing を守る。走査に BEGV/ZV ではなく全テキストの範囲を使っている。just-one-space の同条件の対照ケースは一致する。",
+      "cases": [
+        "delete-blank-lines:narrowing",
+        "delete-horizontal-space:narrowing",
+        "delete-indentation:narrowing",
+        "just-one-space:narrowing"
+      ],
+      "source": "src/buffer/primitives.rs:13830",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/270",
+      "issue_number": 270,
+      "issue_recorded_at": "2026-10-17T09:25:12.584613+00:00"
+    },
+    {
+      "id": "AUD-110",
+      "priority": "P1",
+      "area": "printer",
+      "title": "princ が無効な出力先を拒否せず、kill 済みバッファの代わりに現在のバッファへ書く",
+      "description": "kill 済みバッファを princ の出力先にすると、GNU はエラーにして現在のバッファを保つが、remacs は成功扱いで現在のバッファへ payload を挿入する。未接続マーカーも GNU のエラーにならず何も出さず成功する。write_output_to が出力先の生存性を検査せず、無効なバッファへの切替失敗後も挿入処理を続けている。read-only な有効バッファ・マーカーと通常のマーカー出力の対照ケースは一致する。",
+      "cases": [
+        "print:killed-buffer",
+        "print:detached-marker",
+        "print:live-marker-control",
+        "print:readonly-buffer",
+        "print:readonly-marker"
+      ],
+      "source": "src/lisp/eval.rs:11336",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/271",
+      "issue_number": 271,
+      "issue_recorded_at": "2026-10-17T09:28:08.608220+00:00"
+    },
+    {
+      "id": "AUD-111",
+      "priority": "P2",
+      "area": "search",
+      "title": "後方検索が COUNT を満たす前に先頭へ到達すると成功扱いになる",
+      "description": "a が一つだけのバッファで末尾から COUNT=2 の後方検索をすると、GNU は失敗して元の point を保つが remacs は一回の一致で成功して先頭へ移動する。re-search-backward、posix-search-backward、負の COUNT の search-forward でも同じ。NOERROR=nil でも search-failed にならない。search_common が先頭の一致で残り回数を検査せず break している。",
+      "cases": [
+        "search:backward-count-all-or-nothing",
+        "search:count-re-search-backward",
+        "search:count-posix-search-backward",
+        "search:count-search-forward",
+        "search:backward-count-error",
+        "search:backward-one-control"
+      ],
+      "source": "src/buffer/primitives.rs:10017",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/272",
+      "issue_number": 272,
+      "issue_recorded_at": "2026-10-18T07:07:24.284785+00:00"
+    },
+    {
+      "id": "AUD-112",
+      "priority": "P1",
+      "area": "search/replace",
+      "title": "replace-match の後方参照が検索後の widen により誤った文字を置換に使う",
+      "description": "prefix ab suffix の ab だけに narrow し、a と b を捕捉してから widen して \\2\\1 に置換すると、GNU は prefix ba suffix、remacs は prefix rp suffix になる。narrowing を保ったままなら一致する。置換の参照元を現在の BEGV から取得し、検索時の match data の base とずれるため、prefix の別の文字を参照する。FIXEDCASE=t の再現なので既存 #7 の大文字・小文字変換とは別。",
+      "cases": [
+        "replace-match:backrefs-after-widen",
+        "replace-match:backrefs-narrowed-control"
+      ],
+      "source": "src/buffer/primitives.rs:10671",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/273",
+      "issue_number": 273,
+      "issue_recorded_at": "2026-10-18T07:07:25.487435+00:00"
+    },
+    {
+      "id": "AUD-113",
+      "priority": "P1",
+      "area": "search/replace",
+      "title": "replace-match が置換文字列の属性と文字列結果のバイト表現を保持しない",
+      "description": "STRING 引数付きの replace-match で、元の a/c と置換する X に別々の face を付けると、GNU は全て保持するが remacs は全て nil にする。バッファへの置換と replace-regexp-in-string 経由でも、置換する X の属性が失われる。match-string で属性を取り出す対照ケースは一致する。また unibyte の (128 97 255) を文字列として置換すると、replace-match は (4194176 88 4194303) を返し、GNU の (128 88 255) と異なる。置換文字列や結果を属性・バイト表現の情報なしの String として扱っている。",
+      "cases": [
+        "replace-match:string-properties",
+        "replace-regexp-in-string:properties",
+        "replace-match:unibyte-result",
+        "replace-regexp-in-string:unibyte-result",
+        "replace-match:buffer-properties",
+        "match-string:string-properties"
+      ],
+      "source": "src/buffer/primitives.rs:10625",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/274",
+      "issue_number": 274,
+      "issue_recorded_at": "2026-10-18T07:07:26.548459+00:00"
+    },
+    {
+      "id": "AUD-114",
+      "priority": "P2",
+      "area": "search",
+      "title": "match-data が REUSE と RESEAT を無視する",
+      "description": "REUSE に以前の match-data のリストを渡しても、remacs はそのリストを更新せず新しいリストを返す。GNU は同じリストを再利用し、余分な要素を nil にする。RESEAT=t を指定した場合も、GNU が切り離す以前のマーカーが remacs ではバッファに接続されたままになる。f_match_data は第二・第三引数を読み取っても処理していない。",
+      "cases": [
+        "match-data:reuse-integers",
+        "match-data:reuse-long-list",
+        "match-data:reseat-old-markers"
+      ],
+      "source": "src/buffer/primitives.rs:10289",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/275",
+      "issue_number": 275,
+      "issue_recorded_at": "2026-10-18T07:09:41.073238+00:00"
+    },
+    {
+      "id": "AUD-115",
+      "priority": "P2",
+      "area": "search/regexp",
+      "title": "正規表現の \\w / \\b が syntax-table テキスト属性を無視する",
+      "description": "parse-sexp-lookup-properties=t のバッファで一つの . だけに word 構文の属性を付けると、GNU の \\w+ はその位置を単語の一部として扱い、\\b もその境界に一致しない。remacs は属性を無視する。属性付き文字列を string-match する場合も同じ。通常の syntax table の変更と、属性を無効にしたバッファの対照ケースは一致する。re_syntax が文字単位の静的なテーブル参照だけを返し、位置ごとの syntax-table 属性を見ていない。既存 #8 の POSIX 文字クラスの定義差とは別に、通常の \\w / \\b で再現する。",
+      "cases": [
+        "regexp:syntax-property-word",
+        "regexp:syntax-property-boundary",
+        "regexp:syntax-property-string",
+        "regexp:syntax-property-disabled-control",
+        "regexp:syntax-table-control"
+      ],
+      "source": "src/editor/mod.rs:17990",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/276",
+      "issue_number": 276,
+      "issue_recorded_at": "2026-10-18T07:16:39.134999+00:00"
+    },
+    {
+      "id": "AUD-116",
+      "priority": "P1",
+      "area": "window",
+      "title": "set-window-configuration が point・スクロール・余白を正しく復元しない",
+      "description": "保存後に変えた表示開始位置・hscroll・非 current buffer の window-point が復元されない。例えば (12 2) の開始位置と横スクロールは変更後の (23 9) のままになる。一方、GNU が保存対象外として現在値 12 を保つ current buffer の point は、remacs では 1 に戻される。保存した point/start/hscroll のスロットを書き戻さず、選択ウィンドウの古い point をバッファへ設定している。 また、左右余白を (2 . 3) で保存して (4 . 5) に変えると、GNU は (2 . 3) に戻すが remacs は (4 . 5) のままで、余白も保存・復元されていない。",
+      "cases": [
+        "window-config:scroll-restoration",
+        "window-config:noncurrent-point",
+        "window-config:current-point",
+        "window-config:margin-restoration"
+      ],
+      "source": "src/editor/mod.rs:3203",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/277",
+      "issue_number": 277,
+      "issue_recorded_at": "2026-10-18T09:27:09.977791+00:00"
+    },
+    {
+      "id": "AUD-117",
+      "priority": "P1",
+      "area": "window",
+      "title": "ウィンドウ構成の復元で横結合・入れ子の木が一つの縦結合へ平坦化される",
+      "description": "横に二分割した構成を保存して直ちに復元するだけで、GNU は window-left-child を保つが remacs は window-top-child に置き換える。右側だけを縦分割した入れ子も、全ての leaf が同じ親を持つ構成になる。保存した矩形は残る一方で、それを表すウィンドウ木の向き・親子関係が崩れる。復元処理が複数 leaf を常に一つの縦の内部ノードへ接続している。",
+      "cases": [
+        "window-config:horizontal-tree",
+        "window-config:nested-tree"
+      ],
+      "source": "src/editor/mod.rs:3386",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/278",
+      "issue_number": 278,
+      "issue_recorded_at": "2026-10-18T09:27:11.691344+00:00"
+    },
+    {
+      "id": "AUD-118",
+      "priority": "P2",
+      "area": "window",
+      "title": "compare-window-configurations が無視すべきスクロール位置も比較する",
+      "description": "ウィンドウ構成の開始位置と hscroll だけを変えて比較すると、GNU は同じ layout として t を返すが remacs は nil を返す。この関数は point・スクロール位置の詳細を無視する API だが、実装はそれらの保存スロットも比較に含めている。",
+      "cases": [
+        "window-config:compare-ignores-scroll"
+      ],
+      "source": "src/editor/mod.rs:3446",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/279",
+      "issue_number": 279,
+      "issue_recorded_at": "2026-10-18T09:27:12.893370+00:00"
+    },
+    {
+      "id": "AUD-119",
+      "priority": "P2",
+      "area": "window",
+      "title": "window-configuration-p が同じタグの通常レコードを構成オブジェクトと認める",
+      "description": "record で作った window-configuration タグの偽レコードに対し、GNU の window-configuration-p は nil、window-configuration-frame は型エラーになる。remacs はそれぞれ t と格納した frame を返す。実際に current-window-configuration が作ったオブジェクトかを検査せず、先頭のタグだけで判定している。",
+      "cases": [
+        "window-config:forged-record"
+      ],
+      "source": "src/editor/mod.rs:3182",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/280",
+      "issue_number": 280,
+      "issue_recorded_at": "2026-10-18T09:27:13.961886+00:00"
+    },
+    {
+      "id": "AUD-120",
+      "priority": "P1",
+      "area": "buffer/undo",
+      "title": "primitive-undo が inhibit-read-only を束縛せず read-only な変更を戻せない",
+      "description": "GNU の primitive-undo は inhibit-read-only=t の下で履歴を適用するが、remacs はその束縛がない。read-only のテキストやバッファから挿入履歴を戻すと GNU は削除できる一方、remacs は text-read-only / buffer-read-only で止まる。通常の変更フックから観測した inhibit-read-only も GNU の t に対して nil になる。#233 の削除履歴の属性消失とは別の実行時の保護束縛の問題。",
+      "cases": [
+        "undo:read-only-text",
+        "undo:read-only-buffer",
+        "undo:inhibit-read-only-binding"
+      ],
+      "source": "src/buffer/primitives.rs:13729",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/281",
+      "issue_number": 281,
+      "issue_recorded_at": "2026-10-18T09:30:13.686837+00:00"
+    },
+    {
+      "id": "AUD-121",
+      "priority": "P2",
+      "area": "buffer/undo",
+      "title": "primitive-undo が point の移動だけでも不要な apply 履歴を生成する",
+      "description": "履歴が位置 2 への移動だけの場合、GNU は undo 履歴を増やさないが remacs は (apply cdr nil) を追加する。GNU がこの補完を行うのは apply エントリを実行して履歴が増えなかった場合だけだが、remacs は通常の位置エントリでも did_apply を true にする。apply エントリで補完が必要な対照ケースは一致する。",
+      "cases": [
+        "undo:position-only-history",
+        "undo:apply-disabled-history"
+      ],
+      "source": "src/buffer/primitives.rs:13762",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/282",
+      "issue_number": 282,
+      "issue_recorded_at": "2026-10-18T09:30:15.173963+00:00"
+    },
+    {
+      "id": "AUD-122",
+      "priority": "P2",
+      "area": "window/hooks",
+      "title": "run-window-scroll-functions がフックを呼び出さず分割後の通知も行われない",
+      "description": "選択ウィンドウに window-scroll-functions を設定して run-window-scroll-functions を明示的に呼ぶと、GNU は WINDOW・開始位置・対象バッファの文脈でフックを実行するが remacs は何もしない。split-window 後の新しいウィンドウへの通知もない。Rust の関数がウィンドウ引数の検査だけで nil を返している。",
+      "cases": [
+        "window-hooks:explicit-scroll-functions",
+        "window-hooks:split-notification"
+      ],
+      "source": "src/editor/winxtra.rs:2860",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/283",
+      "issue_number": 283,
+      "issue_recorded_at": "2026-10-18T09:31:48.562180+00:00"
+    },
+    {
+      "id": "AUD-123",
+      "priority": "P2",
+      "area": "window",
+      "title": "current-window-configuration が永続パラメータを参照共有し保存後の変更で書き換わる",
+      "description": "window-persistent-parameters で保存対象に指定したパラメータを 1 から 2 に変えて構成を復元すると、GNU は保存値 1 に戻すが remacs は 2 のままになる。構成保存がパラメータの可変 plist を clone して参照共有し、set-window-parameter の値セル更新が保存済みの構成にも反映される。保存対象外のパラメータをそのまま保つ二つの対照ケースは一致する。#277 の point・スクロール等のフィールド復元漏れとは異なり、パラメータは復元処理があっても保存値自体が変わっている。",
+      "cases": [
+        "window-config:persistent-parameter",
+        "window-config:nonpersistent-parameter",
+        "window-config:new-nonpersistent-parameter"
+      ],
+      "source": "src/editor/mod.rs:3110",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/284",
+      "issue_number": 284,
+      "issue_recorded_at": "2026-10-18T09:41:19.542246+00:00"
+    },
+    {
+      "id": "AUD-124",
+      "priority": "P2",
+      "area": "window",
+      "title": "window-state のパラメータ形式が GNU の alist と異なり永続化設定も無視される",
+      "description": "window-state-get の parameters は GNU ではパラメータ名と値の alist だが、remacs は内部の flat plist をそのまま出力する。このため assq による読み取りが失敗する。window-persistent-parameters も参照せず、保存対象が nil の状態でもパラメータを出力する。さらに GNU 形式の alist を window-state-put へ渡すと内部 plist へ変換されず、値 1 を戻すべき window-parameter が nil になる。保存対象 t と writable、および正しい alist の入力で再現。#115 は minibuffer の最小サイズ差、#152 は引数検査・window-parameters の順序差であり、本件の保存形式と永続化設定とは別件。",
+      "cases": [
+        "window-state:persistence-filter",
+        "window-state:writable-parameter",
+        "window-state:nonpersistent-raw",
+        "window-state:put-parameter-alist"
+      ],
+      "source": "src/editor/mod.rs:15466",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/285",
+      "issue_number": 285,
+      "issue_recorded_at": "2026-10-18T09:41:20.594847+00:00"
+    },
+    {
+      "id": "AUD-125",
+      "priority": "P2",
+      "area": "window",
+      "title": "window-normal-size が分割後も常に 1.0 を返す",
+      "description": "横分割した各ウィンドウの normal width、縦分割した各ウィンドウの normal height は、GNU では親に対する比率で 0 より大きく 1 より小さくなり、兄弟の合計は 1.0 になる。remacs は全て 1.0 なので合計も一致しない。分割と直交する方向の 1.0 は一致する。実装が木やサイズを参照せず定数を返しているため、サイズ復元等が使う比率を取得できない。",
+      "cases": [
+        "window-metrics:horizontal-normal-size",
+        "window-metrics:vertical-normal-size"
+      ],
+      "source": "src/editor/winxtra.rs:2838",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/286",
+      "issue_number": 286,
+      "issue_recorded_at": "2026-10-18T09:44:09.650633+00:00"
+    },
+    {
+      "id": "AUD-126",
+      "priority": "P2",
+      "area": "window",
+      "title": "window-bump-use-time が何もせず二番目の使用順序を設定できない",
+      "description": "三つのウィンドウを順に選択し、最新の選択ウィンドウとは別の古いウィンドウに window-bump-use-time を呼ぶと、GNU は対象を二番目に新しい使用順序へ更新し選択ウィンドウの使用時刻も増やす。remacs は nil を返して両方とも更新しない。selected window 自身への呼び出しが何もしない対照ケースは一致する。サブルーチン登録が引数検査と nil 返却だけの f_window_live_nil を参照している。",
+      "cases": [
+        "window-metrics:bump-use-order",
+        "window-metrics:bump-selected-control"
+      ],
+      "source": "src/editor/winxtra.rs:175",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/287",
+      "issue_number": 287,
+      "issue_recorded_at": "2026-10-18T09:44:10.541164+00:00"
+    },
+    {
+      "id": "AUD-127",
+      "priority": "P2",
+      "area": "window",
+      "title": "window-old-point が過去値ではなく現在の window-point を返す",
+      "description": "新しく分割した非選択ウィンドウの point を 1 から 10 に変えると、GNU の window-old-point は表示更新前の 1 を保つが remacs は 10 を返す。window-point 自体は両方 10 で一致する。実装は old_point を参照せず現在の Window.point を返している。",
+      "cases": [
+        "window-metrics:old-point-after-set"
+      ],
+      "source": "src/editor/winxtra.rs:1107",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/288",
+      "issue_number": 288,
+      "issue_recorded_at": "2026-10-18T09:44:11.569222+00:00"
+    },
+    {
+      "id": "AUD-128",
+      "priority": "P2",
+      "area": "window",
+      "title": "window-old-buffer が変更通知前でも set-window-buffer の直前値に更新される",
+      "description": "GNU の window-old-buffer は前回 window change functions が実行された時点のバッファを示すため、set-window-buffer だけでは値を変えない。remacs は set-window-buffer のたびに直前のバッファへ変更する。同じウィンドウで変更前の値を保持するかと直前のバッファを返すかを比較すると、GNU の (t nil) に対して remacs は (nil t) になる。表示変更通知を判定する履歴が早すぎる時点で更新される。",
+      "cases": [
+        "window-metrics:old-buffer-after-set"
+      ],
+      "source": "src/editor/mod.rs:2688",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/289",
+      "issue_number": 289,
+      "issue_recorded_at": "2026-10-18T09:44:12.564073+00:00"
+    },
+    {
+      "id": "AUD-129",
+      "priority": "P2",
+      "area": "timer",
+      "title": "sleep-for と sit-for が待ち時間ゼロ・負数でも期限済みタイマーを実行する",
+      "description": "run-at-time 0 で登録したタイマーは、GNU では sleep-for 0・sleep-for -1・sit-for 0 だけでは実行されない。remacs はいずれもタイマーを実行して hits を 0 から 1 に変える。正の待ち時間では両方とも実行する。sleep_firing_timers の secs <= 0 分岐が即座に返る代わりに timer_check を呼ぶため、待機しない呼び出しで予期しないコールバックと副作用が起きる。#199 は accept-process-output の JUST-THIS-ONE 引数による抑止であり、本件の待ち時間の境界とは異なる。",
+      "cases": [
+        "timer:zero-sleep",
+        "timer:negative-sleep",
+        "timer:zero-sit",
+        "timer:positive-sleep-control"
+      ],
+      "source": "src/lisp/builtins/evalfn.rs:4144",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/290",
+      "issue_number": 290,
+      "issue_recorded_at": "2026-10-18T09:46:10.724031+00:00"
+    },
+    {
+      "id": "AUD-130",
+      "priority": "P1",
+      "area": "language/Japanese",
+      "title": "日本語のかな・全半角変換が初期状態では何も変換しない",
+      "description": "japanese-hiragana・japanese-katakana・japanese-hankaku・japanese-zenkaku が初期状態で文字・文字列とも入力をそのまま返す。例えば japanese-hiragana の カ は か、japanese-zenkaku の a は ａ になるべきだが変化しない。変換用の hiragana・katakana・jisx0208・ascii 文字コード属性が nil のままで、japan-util を明示 load すると同じ呼び出しが正しく変換される。japan-util の機能登録と変換関数は存在する一方、必要な変換データの初期化が欠けている。",
+      "cases": [
+        "japanese:character-conversion",
+        "japanese:string-conversion",
+        "japanese:conversion-properties",
+        "japanese:explicit-reload"
+      ],
+      "source": "src/lisp/eval.rs:763",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/291",
+      "issue_number": 291,
+      "issue_recorded_at": "2026-10-18T10:19:50.357875+00:00"
+    },
+    {
+      "id": "AUD-131",
+      "priority": "P2",
+      "area": "eval/macroexpand",
+      "title": "macroexpand 系がアトムでも未使用の ENVIRONMENT に型エラーを出す",
+      "description": "macroexpand・macroexpand-1・macroexpand-all に文字列の FORM とリストではない ENVIRONMENT を渡すと、GNU は FORM をそのまま返すが remacs は listp の型エラーになる。例えば (macroexpand \"x\" \"bad\") は GNU の \"x\" に対して wrong-type-argument。マクロ探索のないアトムでも入口で ENVIRONMENT を無条件に検査している。実際にマクロを含む FORM で不正な環境を使う対照ケースは、両方とも wrong-type-argument になり一致する。#10 の load における再帰展開不足とは別の引数検査の問題。",
+      "cases": [
+        "macroexpand:atom-unused-environment",
+        "macroexpand:single-atom-unused-environment",
+        "macroexpand:all-atom-unused-environment",
+        "macroexpand:bad-environment-used-control"
+      ],
+      "source": "src/lisp/builtins/evalfn.rs:590",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/293",
+      "issue_number": 293,
+      "issue_recorded_at": "2026-10-18T10:36:14.108719+00:00"
+    },
+    {
+      "id": "AUD-132",
+      "priority": "P1",
+      "area": "window/display-buffer",
+      "title": "display-buffer が小さな選択ウィンドウの分割に失敗すると他の表示先へフォールバックしない",
+      "description": "選択ウィンドウを高さ4にして他に広いウィンドウを残しても、display-buffer は選択ウィンドウの split-window エラーを伝播し表示できない。GNU は他の表示先を選んで成功する。また list-buffers で作ったバッファを毎回 kill しながら4回呼ぶケースでも、remacs は分割を増やして途中で同じエラーになる。これが qa_buffmenu の失敗原因で、最新CLIでも再現した。明示的な display-buffer-use-some-window アクションでは成功する。prelude のフォールバックが split-window を無条件に呼び、分割不能時に次の候補へ進まない。#47 は split-window 自体の最小サイズ検査であり、本件は正しい分割拒否の後に表示先を探さない別の問題。",
+      "cases": [
+        "display-buffer:small-selected-window",
+        "display-buffer:repeated-buffer-menu",
+        "display-buffer:explicit-reuse-control"
+      ],
+      "source": "src/lisp/prelude.el:7298",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/294",
+      "issue_number": 294,
+      "issue_recorded_at": "2026-10-18T10:41:51.607431+00:00"
+    },
+    {
+      "id": "AUD-133",
+      "priority": "P2",
+      "area": "startup/process",
+      "title": "shell-file-name の初期値が SHELL を無視して /bin/sh に固定される",
+      "description": "起動環境の SHELL=/bin/zsh をGNUはshell-file-nameへ反映するが、remacsは /bin/sh に固定される。同じ環境の新規バッチプロセスで、環境変数と変数値の組はGNUが (/bin/zsh /bin/zsh)、remacsが (/bin/zsh /bin/sh) となる。shell-command-to-string 等の実行シェルと解釈規則が意図せず変わる。shell-file-nameを明示的に /bin/sh へ束縛する対照ケースの実行結果は一致する。初期値の登録が環境を参照せず固定文字列になっている。",
+      "cases": [
+        "shell:initial-shell-environment",
+        "shell:explicit-shell-control"
+      ],
+      "source": "src/lisp/eval.rs:10657",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/295",
+      "issue_number": 295,
+      "issue_recorded_at": "2026-10-18T10:42:48.205231+00:00"
+    },
+    {
+      "id": "AUD-134",
+      "priority": "P2",
+      "area": "keymap",
+      "title": "key-parse が 3*C-x などの反復指定をキーの文字列として扱う",
+      "description": "key-parse の反復指定が展開されない。GNUの 3*C-x は C-x を三つ、2*a は a を二つ返すが、remacsは 3、*、C、-、x および 2、*、a の各文字コードを返す。同じキーを空白で並べた対照ケースは一致する。キー設定・キーボードマクロで使う有効な記法が別のキー列として解釈される。単語ごとのパーサーに反復数と * を分離する処理がない。",
+      "cases": [
+        "keymap:key-parse-repeat",
+        "keymap:key-parse-repeat-control"
+      ],
+      "source": "src/editor/mod.rs:8580",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/296",
+      "issue_number": 296,
+      "issue_recorded_at": "2026-10-18T10:42:49.502860+00:00"
+    },
+    {
+      "id": "AUD-135",
+      "priority": "P2",
+      "area": "faces/minor-mode",
+      "title": "face-remap のロード後も text-scale-mode と buffer-face-mode の lighter が登録されない",
+      "description": "text-scale-increase を呼んで autoload を発生させても、明示的に (require 'face-remap) しても、minor-mode-alist に text-scale-mode と buffer-face-mode が登録されない。GNU はそれぞれ登録するため、モードラインの有効状態表示等に使う情報が失われる。prelude は起動状態を合わせるため両モードの登録を消すが、lisp/face-remap.el は provide だけのファイルなので、ロード時にもその初期化を戻さない。files-x の公開APIと明示 require の対照ケースは一致し、全体コーパスの別の内部関数の遅延ロード差とは分けて確認した。",
+      "cases": [
+        "library:text-scale-after-autoload",
+        "library:text-scale-after-require"
+      ],
+      "source": "lisp/face-remap.el:8",
+      "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/300",
+      "issue_number": 300,
+      "issue_recorded_at": "2026-10-18T11:19:50.020849+00:00"
     }
   ],
   "excluded_or_unresolved": [
@@ -839,17 +2075,55 @@
     {
       "case": "treesit:delete-twice",
       "reason": "GNU と remacs はともに treesit-parser-deleted を送出する。opaque parser の表示に deleted が付く差だけのため、新規不具合には数えない。"
+    },
+    {
+      "case": "buffer-transfer:narrowing-copy-to-buffer",
+      "reason": "既存 #17 の insert-buffer-substring の可視範囲検査不足を通る Lisp ラッパー。同じ原因のため新規 Issue は作成しない。"
+    },
+    {
+      "case": "buffer-transfer:narrowing-prepend-to-buffer",
+      "reason": "既存 #17 の insert-buffer-substring の可視範囲検査不足を通る Lisp ラッパー。同じ原因のため新規 Issue は作成しない。"
+    },
+    {
+      "case": "string:unibyte-string-reverse",
+      "reason": "GNU Emacs 31.1 には string-reverse が存在しないため、remacs 独自拡張の動作差は互換性の新規件数に含めない。"
+    },
+    {
+      "case": "string-width:nonascii-custom-table",
+      "reason": "既存 #57 の char-width-table を参照しない実装と同じ原因。Unicode 文字のカスタム幅にも再現する追加情報として既存 Issue を補足し、新規には数えない。"
+    },
+    {
+      "case": "time:width-modifiers",
+      "reason": "既存 Issue #77 と同一の幅・修飾子不具合を最新HEADで再確認。本文へ追記し再オープンしたため、新規件数には加えない。"
+    },
+    {
+      "case": "time:combined-padding-flags",
+      "reason": "既存 Issue #77 と同一の幅・修飾子不具合を最新HEADで再確認。本文へ追記し再オープンしたため、新規件数には加えない。"
+    },
+    {
+      "case": "time:invalid-alternative-modifiers",
+      "reason": "既存 Issue #77 と同一の幅・修飾子不具合を最新HEADで再確認。本文へ追記し再オープンしたため、新規件数には加えない。"
     }
   ],
   "remaining_scope": [
-    "既存 QA の qa_buffmenu と qa_time_zero_zone に残る実行条件差・失敗の切り分け",
+    "全既存スイートの結果・追試は current/full-suite/report.txt に集約。qa_buffmenu は #294、qa_time_zero_zone は再オープンした #77、probe_eval14 の停止は #298 で追跡。",
     "Lisp 評価器・バイトコード・reader/printer・数値・文字列・ハッシュの未検査ケース",
     "バッファ、マーカー、undo、overlay、テキスト属性、検索、キーマップの追加シナリオ",
     "ファイルと文字コード、ネットワークの IPv6/UDP/非同期接続・再入、プロセスの大容量 I/O・終了・再入、タイマー、スレッドの追加シナリオ",
     "CLI の残るオプション・初期化と TUI/GUI の表示・入力・ウィンドウ操作",
     "ネイティブコンパイラの残る制御フロー・フォールバック・再ロード・単位間参照",
-    "tree-sitter の JSON 以外の文法、座標追跡、複雑な query・included ranges・寿命と通知",
-    "TLS、D-Bus、file-notify、LCMS、NS GUI の実環境検査",
-    "全域の差分検査の既知マスク・自動 skip の再評価と、検査されていない関数の棚卸し"
-  ]
+    "tree-sitter は追加52文法のうち利用可能な51文法で解析・Unicode座標・queryが一致。janet は両側で利用不可。複雑な文法固有の経路までは保証しない。",
+    "TLS・D-Bus・file-notify・LCMS・NS・実GUI/TUIを全スイートと補完検査で実行。IME変換操作そのもの等、既存テストにない経路は別途評価が必要。",
+    "全域の差分検査の既知マスク・自動 skip の再評価と、検査されていない関数の棚卸し",
+    "filter / sentinel の例外処理: GNU --batch は filter エラーで終了コード 255 となった。対話セッションでの比較が済むまで新規不具合として数えない。"
+  ],
+  "original_baseline": "cd0db15",
+  "publication_verified_at": "2026-10-18T11:21:15.093891+00:00",
+  "publication_count": 135,
+  "publication_file": "current/published-issues.json",
+  "full_suite_evidence_directory": "current/full-suite",
+  "manual_issue_file": "current/full-suite/manual-issues.json",
+  "manual_issue_count": 4,
+  "test_execution_status": "complete",
+  "test_execution_report": "current/full-suite/report.txt"
 }

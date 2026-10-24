@@ -1,0 +1,404 @@
+{
+  "head": "b892d6a6663bb21ee1167ea752311117aa530061",
+  "tests": [
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-c06a3b34b5a00adc",
+        "coverage_tests::u_probe_buffer4",
+        "--exact",
+        "--nocapture"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 9.03,
+      "log": "remacs-c06a3b34b5a00adc-coverage_tests--u_probe_buffer4.log",
+      "results": [
+        {
+          "name": "coverage_tests::u_probe_buffer4",
+          "status": "ok"
+        }
+      ],
+      "test": "coverage_tests::u_probe_buffer4",
+      "binary": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-c06a3b34b5a00adc",
+      "binary_sha256": "02d002cd53116e65a9ce63634d099b0a91400eaf5615350fe7a136d4eecf5adb"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-c06a3b34b5a00adc",
+        "coverage_tests::u_probe_editor3",
+        "--exact",
+        "--nocapture"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 14.05,
+      "log": "remacs-c06a3b34b5a00adc-coverage_tests--u_probe_editor3.log",
+      "results": [
+        {
+          "name": "coverage_tests::u_probe_editor3",
+          "status": "ok"
+        }
+      ],
+      "test": "coverage_tests::u_probe_editor3",
+      "binary": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-c06a3b34b5a00adc",
+      "binary_sha256": "02d002cd53116e65a9ce63634d099b0a91400eaf5615350fe7a136d4eecf5adb"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-c06a3b34b5a00adc",
+        "coverage_tests::u_probe_eval14",
+        "--exact",
+        "--nocapture"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 52.24,
+      "log": "remacs-c06a3b34b5a00adc-coverage_tests--u_probe_eval14.log",
+      "results": [
+        {
+          "name": "coverage_tests::u_probe_eval14",
+          "status": "ok"
+        }
+      ],
+      "test": "coverage_tests::u_probe_eval14",
+      "binary": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-c06a3b34b5a00adc",
+      "binary_sha256": "02d002cd53116e65a9ce63634d099b0a91400eaf5615350fe7a136d4eecf5adb"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+        "probe_buffer_props",
+        "--exact",
+        "--nocapture"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 9.05,
+      "log": "probe_all-766eac9d580717b3-probe_buffer_props.log",
+      "results": [
+        {
+          "name": "probe_buffer_props",
+          "status": "ok"
+        }
+      ],
+      "test": "probe_buffer_props",
+      "binary": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+      "binary_sha256": "8b3f7b095f84783b51331e1025ef2d74e334bc7529b942886f53816e6dbb803a"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+        "probe_editor_deep",
+        "--exact",
+        "--nocapture"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 14.06,
+      "log": "probe_all-766eac9d580717b3-probe_editor_deep.log",
+      "results": [
+        {
+          "name": "probe_editor_deep",
+          "status": "ok"
+        }
+      ],
+      "test": "probe_editor_deep",
+      "binary": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+      "binary_sha256": "8b3f7b095f84783b51331e1025ef2d74e334bc7529b942886f53816e6dbb803a"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+        "probe_eval14_cov",
+        "--exact",
+        "--nocapture"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 52.23,
+      "log": "probe_all-766eac9d580717b3-probe_eval14_cov.log",
+      "results": [
+        {
+          "name": "probe_eval14_cov",
+          "status": "ok"
+        }
+      ],
+      "test": "probe_eval14_cov",
+      "binary": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+      "binary_sha256": "8b3f7b095f84783b51331e1025ef2d74e334bc7529b942886f53816e6dbb803a"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-c06a3b34b5a00adc",
+        "probe_support::tests::deadline_terminates_workers_and_releases_the_probe_slot",
+        "--exact",
+        "--nocapture"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 1.01,
+      "log": "remacs-c06a3b34b5a00adc-probe_support--tests--deadline_terminates_workers_and_releases_the_probe_slot.log",
+      "results": [
+        {
+          "name": "probe_support::tests::deadline_terminates_workers_and_releases_the_probe_slot",
+          "status": "ok"
+        }
+      ],
+      "test": "probe_support::tests::deadline_terminates_workers_and_releases_the_probe_slot",
+      "binary": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-c06a3b34b5a00adc",
+      "binary_sha256": "02d002cd53116e65a9ce63634d099b0a91400eaf5615350fe7a136d4eecf5adb"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-c06a3b34b5a00adc",
+        "probe_support::tests::child_failures_keep_their_status_and_diagnostics",
+        "--exact",
+        "--nocapture"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 1.01,
+      "log": "remacs-c06a3b34b5a00adc-probe_support--tests--child_failures_keep_their_status_and_diagnostics.log",
+      "results": [
+        {
+          "name": "probe_support::tests::child_failures_keep_their_status_and_diagnostics",
+          "status": "ok"
+        }
+      ],
+      "test": "probe_support::tests::child_failures_keep_their_status_and_diagnostics",
+      "binary": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-c06a3b34b5a00adc",
+      "binary_sha256": "02d002cd53116e65a9ce63634d099b0a91400eaf5615350fe7a136d4eecf5adb"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+        "probe_support::tests::deadline_terminates_workers_and_releases_the_probe_slot",
+        "--exact",
+        "--nocapture"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 1.0,
+      "log": "probe_all-766eac9d580717b3-probe_support--tests--deadline_terminates_workers_and_releases_the_probe_slot.log",
+      "results": [
+        {
+          "name": "probe_support::tests::deadline_terminates_workers_and_releases_the_probe_slot",
+          "status": "ok"
+        }
+      ],
+      "test": "probe_support::tests::deadline_terminates_workers_and_releases_the_probe_slot",
+      "binary": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+      "binary_sha256": "8b3f7b095f84783b51331e1025ef2d74e334bc7529b942886f53816e6dbb803a"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+        "probe_support::tests::child_failures_keep_their_status_and_diagnostics",
+        "--exact",
+        "--nocapture"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 1.01,
+      "log": "probe_all-766eac9d580717b3-probe_support--tests--child_failures_keep_their_status_and_diagnostics.log",
+      "results": [
+        {
+          "name": "probe_support::tests::child_failures_keep_their_status_and_diagnostics",
+          "status": "ok"
+        }
+      ],
+      "test": "probe_support::tests::child_failures_keep_their_status_and_diagnostics",
+      "binary": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+      "binary_sha256": "8b3f7b095f84783b51331e1025ef2d74e334bc7529b942886f53816e6dbb803a"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+        "probe_custom_api",
+        "--exact",
+        "--nocapture"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 13.05,
+      "log": "probe_all-766eac9d580717b3-probe_custom_api.log",
+      "results": [
+        {
+          "name": "probe_custom_api",
+          "status": "ok"
+        }
+      ],
+      "test": "probe_custom_api",
+      "binary": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+      "binary_sha256": "8b3f7b095f84783b51331e1025ef2d74e334bc7529b942886f53816e6dbb803a"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+        "probe_file_locking",
+        "--exact",
+        "--nocapture"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 23.09,
+      "log": "probe_all-766eac9d580717b3-probe_file_locking.log",
+      "results": [
+        {
+          "name": "probe_file_locking",
+          "status": "ok"
+        }
+      ],
+      "test": "probe_file_locking",
+      "binary": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+      "binary_sha256": "8b3f7b095f84783b51331e1025ef2d74e334bc7529b942886f53816e6dbb803a"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+        "probe_json",
+        "--exact",
+        "--nocapture"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 12.05,
+      "log": "probe_all-766eac9d580717b3-probe_json.log",
+      "results": [
+        {
+          "name": "probe_json",
+          "status": "ok"
+        }
+      ],
+      "test": "probe_json",
+      "binary": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+      "binary_sha256": "8b3f7b095f84783b51331e1025ef2d74e334bc7529b942886f53816e6dbb803a"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+        "probe_page",
+        "--exact",
+        "--nocapture"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 12.04,
+      "log": "probe_all-766eac9d580717b3-probe_page.log",
+      "results": [
+        {
+          "name": "probe_page",
+          "status": "ok"
+        }
+      ],
+      "test": "probe_page",
+      "binary": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+      "binary_sha256": "8b3f7b095f84783b51331e1025ef2d74e334bc7529b942886f53816e6dbb803a"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+        "probe_runtime_semantics",
+        "--exact",
+        "--nocapture"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 16.05,
+      "log": "probe_all-766eac9d580717b3-probe_runtime_semantics.log",
+      "results": [
+        {
+          "name": "probe_runtime_semantics",
+          "status": "ok"
+        }
+      ],
+      "test": "probe_runtime_semantics",
+      "binary": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+      "binary_sha256": "8b3f7b095f84783b51331e1025ef2d74e334bc7529b942886f53816e6dbb803a"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+        "probe_subrs",
+        "--exact",
+        "--nocapture"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 15.06,
+      "log": "probe_all-766eac9d580717b3-probe_subrs.log",
+      "results": [
+        {
+          "name": "probe_subrs",
+          "status": "ok"
+        }
+      ],
+      "test": "probe_subrs",
+      "binary": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+      "binary_sha256": "8b3f7b095f84783b51331e1025ef2d74e334bc7529b942886f53816e6dbb803a"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+        "probe_timer",
+        "--exact",
+        "--nocapture"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 13.05,
+      "log": "probe_all-766eac9d580717b3-probe_timer.log",
+      "results": [
+        {
+          "name": "probe_timer",
+          "status": "ok"
+        }
+      ],
+      "test": "probe_timer",
+      "binary": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+      "binary_sha256": "8b3f7b095f84783b51331e1025ef2d74e334bc7529b942886f53816e6dbb803a"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+        "probe_uniquify",
+        "--exact",
+        "--nocapture"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 13.06,
+      "log": "probe_all-766eac9d580717b3-probe_uniquify.log",
+      "results": [
+        {
+          "name": "probe_uniquify",
+          "status": "ok"
+        }
+      ],
+      "test": "probe_uniquify",
+      "binary": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+      "binary_sha256": "8b3f7b095f84783b51331e1025ef2d74e334bc7529b942886f53816e6dbb803a"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+        "probe_winner",
+        "--exact",
+        "--nocapture"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 13.05,
+      "log": "probe_all-766eac9d580717b3-probe_winner.log",
+      "results": [
+        {
+          "name": "probe_winner",
+          "status": "ok"
+        }
+      ],
+      "test": "probe_winner",
+      "binary": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-766eac9d580717b3",
+      "binary_sha256": "8b3f7b095f84783b51331e1025ef2d74e334bc7529b942886f53816e6dbb803a"
+    }
+  ]
+}

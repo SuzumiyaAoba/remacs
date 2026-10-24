@@ -1,0 +1,50 @@
+[
+  {
+    "name": "shell-command-on-region",
+    "status": {
+      "gnu": {
+        "status": "DONE",
+        "last": "",
+        "seconds": 0.24964618682861328
+      },
+      "remacs": {
+        "status": "DONE",
+        "last": "",
+        "seconds": 9.026953935623169
+      }
+    },
+    "differences": []
+  },
+  {
+    "name": "shell-command-to-string",
+    "status": {
+      "gnu": {
+        "status": "DONE",
+        "last": "",
+        "seconds": 0.20765113830566406
+      },
+      "remacs": {
+        "status": "DONE",
+        "last": "",
+        "seconds": 9.061779260635376
+      }
+    },
+    "differences": []
+  },
+  {
+    "name": "call-shell-region",
+    "status": {
+      "gnu": {
+        "status": "DONE",
+        "last": "",
+        "seconds": 0.26056480407714844
+      },
+      "remacs": {
+        "status": "DONE",
+        "last": "",
+        "seconds": 8.593671083450317
+      }
+    },
+    "differences": []
+  }
+]

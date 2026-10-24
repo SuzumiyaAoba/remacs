@@ -1,0 +1,83 @@
+{
+  "head": "926cbfc7fe1ddde28c53d0555be1f6b99563535b",
+  "worktree_head": "4fa55e5f05311b26e5af242c09397c7583cad14f",
+  "binary_sha256": "37aec7800115143d785086fa184114757237776c93c892e30696644b5c255017",
+  "runs": [
+    {
+      "id": "bq:splice-call-alist",
+      "group": "org_backquote",
+      "form": "(let ((x '(a b))) `((keyword ,@(remq 'a x)) (link a b)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_org_backquote.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.25,
+      "value": "(ok ((keyword b) (link a b)))",
+      "stdout": "bq-splice-call-alist.current.gnu.out",
+      "stderr": "bq-splice-call-alist.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "bq:splice-call-alist",
+      "group": "org_backquote",
+      "form": "(let ((x '(a b))) `((keyword ,@(remq 'a x)) (link a b)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_org_backquote.el"
+      ],
+      "returncode": 0,
+      "seconds": 11.34,
+      "value": "(ok ((keyword b) (link a b)))",
+      "stdout": "bq-splice-call-alist.current.remacs.out",
+      "stderr": "bq-splice-call-alist.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "bq:org-shape",
+      "group": "org_backquote",
+      "form": "(let* ((minimal-set '(bold code entity italic latex-fragment strike-through subscript superscript underline verbatim)) (standard-set '(a b c footnote-reference)) (standard-set-no-line-break standard-set) (standard-set-for-citations standard-set)) `((bold ,@standard-set) (citation citation-reference) (citation-reference ,@standard-set-for-citations) (footnote-reference ,@standard-set) (headline ,@standard-set-no-line-break) (inlinetask ,@standard-set-no-line-break) (italic ,@standard-set) (item ,@standard-set-no-line-break) (keyword ,@(remq 'footnote-reference standard-set)) (link export-snippet inline-babel-call inline-src-block macro statistics-cookie ,@minimal-set) (paragraph ,@standard-set) (radio-target ,@minimal-set) (strike-through ,@standard-set) (subscript ,@standard-set) (superscript ,@standard-set) (table-cell citation export-snippet footnote-reference link macro radio-target target timestamp ,@minimal-set) (table-row table-cell) (underline ,@standard-set) (verse-block ,@standard-set)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_org_backquote.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.25,
+      "value": "(ok ((bold . #1=(a b c footnote-reference)) (citation citation-reference) (citation-reference . #1#) (footnote-reference . #1#) (headline . #1#) (inlinetask . #1#) (italic . #1#) (item . #1#) (keyword a b c) (link export-snippet inline-babel-call inline-src-block macro statistics-cookie . #2=(bold code entity italic latex-fragment strike-through subscript superscript underline verbatim)) (paragraph . #1#) (radio-target . #2#) (strike-through . #1#) (subscript . #1#) (superscript . #1#) (table-cell citation export-snippet footnote-reference link macro radio-target target timestamp . #2#) (table-row table-cell) (underline . #1#) (verse-block . #1#)))",
+      "stdout": "bq-org-shape.current.gnu.out",
+      "stderr": "bq-org-shape.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "bq:org-shape",
+      "group": "org_backquote",
+      "form": "(let* ((minimal-set '(bold code entity italic latex-fragment strike-through subscript superscript underline verbatim)) (standard-set '(a b c footnote-reference)) (standard-set-no-line-break standard-set) (standard-set-for-citations standard-set)) `((bold ,@standard-set) (citation citation-reference) (citation-reference ,@standard-set-for-citations) (footnote-reference ,@standard-set) (headline ,@standard-set-no-line-break) (inlinetask ,@standard-set-no-line-break) (italic ,@standard-set) (item ,@standard-set-no-line-break) (keyword ,@(remq 'footnote-reference standard-set)) (link export-snippet inline-babel-call inline-src-block macro statistics-cookie ,@minimal-set) (paragraph ,@standard-set) (radio-target ,@minimal-set) (strike-through ,@standard-set) (subscript ,@standard-set) (superscript ,@standard-set) (table-cell citation export-snippet footnote-reference link macro radio-target target timestamp ,@minimal-set) (table-row table-cell) (underline ,@standard-set) (verse-block ,@standard-set)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_org_backquote.el"
+      ],
+      "returncode": 0,
+      "seconds": 11.43,
+      "value": "(ok ((bold . #1=(a b c footnote-reference)) (citation citation-reference) (citation-reference . #1#) (footnote-reference . #1#) (headline . #1#) (inlinetask . #1#) (italic . #1#) (item . #1#) (keyword a b c) (link export-snippet inline-babel-call inline-src-block macro statistics-cookie . #2=(bold code entity italic latex-fragment strike-through subscript superscript underline verbatim)) (paragraph . #1#) (radio-target . #2#) (strike-through . #1#) (subscript . #1#) (superscript . #1#) (table-cell citation export-snippet footnote-reference link macro radio-target target timestamp . #2#) (table-row table-cell) (underline . #1#) (verse-block . #1#)))",
+      "stdout": "bq-org-shape.current.remacs.out",
+      "stderr": "bq-org-shape.current.remacs.err",
+      "complete": true
+    }
+  ]
+}

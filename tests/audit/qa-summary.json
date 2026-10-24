@@ -96,5 +96,20 @@
     "log": "pty-smoke.log",
     "followup": "pty/comparison.json",
     "explanation": "80x24 と 0x0 の制御端末で GNU/remacs の描画と C-x C-c 終了を比較。0x0 の remacs 出力では ANSI が *scratch* の途中に入るため raw substring 検査が失敗するが、ANSI を除くと初期フレームが存在し、終了コードは 0。"
+  },
+  "full_suite_followup": {
+    "directory": "current/full-suite",
+    "qa_result": "192 passed; 5 failed out of 197; qa_buffer2 and qa_mark pass after batch initialization before Interp::new",
+    "buffmenu": "Current CLI and all output/bootstrap variants fail with a selected-window split error. Reproduced separately and registered as #294.",
+    "time_zero_zone": "Current CLI also reproduces flag/width errors. #77 updated and reopened; #160 uppercase control succeeds.",
+    "dbus": "Dedicated session bus: all 7 tests pass; no-session error path also passes.",
+    "tls": "Local TLS transport with an explicitly trusted temporary CA and verification enabled passes under GNU and remacs.",
+    "all_targets_complete": true,
+    "rust_results": {
+      "ignored": 1,
+      "ok": 720,
+      "FAILED": 12,
+      "TIMEOUT": 2
+    }
   }
 }

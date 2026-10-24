@@ -1,0 +1,226 @@
+[
+  {
+    "side": "gnu",
+    "id": "AUD-116",
+    "returncode": 0,
+    "stdout": "(ok (12 2))\n(ok 4)\n(ok 12)\n(ok ((2 . 3) (4 . 5) (2 . 3)))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-116",
+    "returncode": 0,
+    "stdout": "(ok (23 9))\n(ok 12)\n(ok 1)\n(ok ((2 . 3) (4 . 5) (4 . 5)))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-117",
+    "returncode": 0,
+    "stdout": "(ok (t nil 2))\n(ok (nil t))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-117",
+    "returncode": 0,
+    "stdout": "(ok (nil t 2))\n(ok (t t))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-118",
+    "returncode": 0,
+    "stdout": "(ok t)\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-118",
+    "returncode": 0,
+    "stdout": "(ok nil)\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-119",
+    "returncode": 0,
+    "stdout": "(ok (nil wrong-type-argument))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-119",
+    "returncode": 0,
+    "stdout": "(ok (t t))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-120",
+    "returncode": 0,
+    "stdout": "(ok (undone \"\"))\n(ok (undone \"\"))\n(ok (t \"\"))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-120",
+    "returncode": 0,
+    "stdout": "(ok (text-read-only \"abc\"))\n(ok (buffer-read-only \"abc\"))\n(ok (nil \"\"))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-121",
+    "returncode": 0,
+    "stdout": "(ok (2 nil))\n(ok ((apply cdr nil) . t))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-121",
+    "returncode": 0,
+    "stdout": "(ok (2 ((apply cdr nil))))\n(ok ((apply cdr nil) . t))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-122",
+    "returncode": 0,
+    "stdout": "(ok ((t 1 t)))\n(ok (t t))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-122",
+    "returncode": 0,
+    "stdout": "(ok nil)\n(ok (nil nil))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-123",
+    "returncode": 0,
+    "stdout": "(ok 1)\n(ok 2)\n(ok 9)\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-123",
+    "returncode": 0,
+    "stdout": "(ok 2)\n(ok 2)\n(ok 9)\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-124",
+    "returncode": 0,
+    "stdout": "(ok (1 nil))\n(ok 1)\n(ok nil)\n(ok 1)\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-124",
+    "returncode": 0,
+    "stdout": "(ok (nil nil))\n(ok nil)\n(ok (audit-persistent 1))\n(ok nil)\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-125",
+    "returncode": 0,
+    "stdout": "(ok (t t t 1.0 1.0))\n(ok (t t t 1.0 1.0))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-125",
+    "returncode": 0,
+    "stdout": "(ok (nil nil nil 1.0 1.0))\n(ok (nil nil nil 1.0 1.0))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-126",
+    "returncode": 0,
+    "stdout": "(ok (t t t t t))\n(ok (nil t))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-126",
+    "returncode": 0,
+    "stdout": "(ok (nil nil nil nil t))\n(ok (nil t))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-127",
+    "returncode": 0,
+    "stdout": "(ok (10 1 1))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-127",
+    "returncode": 0,
+    "stdout": "(ok (10 1 10))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-128",
+    "returncode": 0,
+    "stdout": "(ok (t nil))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-128",
+    "returncode": 0,
+    "stdout": "(ok (nil t))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-129",
+    "returncode": 0,
+    "stdout": "(ok 0)\n(ok 0)\n(ok 0)\n(ok 1)\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-129",
+    "returncode": 0,
+    "stdout": "(ok 1)\n(ok 1)\n(ok 1)\n(ok 1)\n",
+    "stderr": "",
+    "matches_evidence": true
+  }
+]

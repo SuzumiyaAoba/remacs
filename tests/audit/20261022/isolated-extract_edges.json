@@ -1,0 +1,310 @@
+{
+  "head": "38af4d1d720760348e725dac51f8c4252c2b03d5",
+  "binary_sha256": "b06709033aef86cc8c57b027584a0ce2c7ac4534c537f76e956edac2569d5c05",
+  "runs": [
+    {
+      "id": "extract:multibyte-ascii",
+      "group": "extract_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((s (delete-and-extract-region 1 3))) (list (multibyte-string-p s) (string-to-list s))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_extract_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok (t (97 98)))",
+      "stdout": "extract-multibyte-ascii.gnu.out",
+      "stderr": "extract-multibyte-ascii.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "extract:multibyte-ascii",
+      "group": "extract_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((s (delete-and-extract-region 1 3))) (list (multibyte-string-p s) (string-to-list s))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_extract_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.62,
+      "value": "(ok (nil (97 98)))",
+      "stdout": "extract-multibyte-ascii.remacs.out",
+      "stderr": "extract-multibyte-ascii.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "extract:unibyte-high",
+      "group": "extract_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (insert (unibyte-string 255 65)) (let ((s (delete-and-extract-region 1 3))) (list (multibyte-string-p s) (string-to-list s))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_extract_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok (nil (255 65)))",
+      "stdout": "extract-unibyte-high.gnu.out",
+      "stderr": "extract-unibyte-high.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "extract:unibyte-high",
+      "group": "extract_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (insert (unibyte-string 255 65)) (let ((s (delete-and-extract-region 1 3))) (list (multibyte-string-p s) (string-to-list s))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_extract_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.61,
+      "value": "(ok (t (255 65)))",
+      "stdout": "extract-unibyte-high.remacs.out",
+      "stderr": "extract-unibyte-high.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "extract:properties-after-before-hook",
+      "group": "extract_edges",
+      "form": "(with-temp-buffer (insert (propertize \"abc\" 'face 'bold)) (let ((before-change-functions (list (lambda (beg end) (put-text-property beg end 'face 'italic))))) (get-text-property 0 'face (delete-and-extract-region 1 3))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_extract_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok italic)",
+      "stdout": "extract-properties-after-before-hook.gnu.out",
+      "stderr": "extract-properties-after-before-hook.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "extract:properties-after-before-hook",
+      "group": "extract_edges",
+      "form": "(with-temp-buffer (insert (propertize \"abc\" 'face 'bold)) (let ((before-change-functions (list (lambda (beg end) (put-text-property beg end 'face 'italic))))) (get-text-property 0 'face (delete-and-extract-region 1 3))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_extract_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.56,
+      "value": "(ok bold)",
+      "stdout": "extract-properties-after-before-hook.remacs.out",
+      "stderr": "extract-properties-after-before-hook.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "extract:markers",
+      "group": "extract_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (delete-and-extract-region (copy-marker 1) (copy-marker 3)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_extract_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok \"ab\")",
+      "stdout": "extract-markers.gnu.out",
+      "stderr": "extract-markers.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "extract:markers",
+      "group": "extract_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (delete-and-extract-region (copy-marker 1) (copy-marker 3)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_extract_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 9.59,
+      "value": "(ok \"ab\")",
+      "stdout": "extract-markers.remacs.out",
+      "stderr": "extract-markers.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "extract:empty-readonly-delete-region",
+      "group": "extract_edges",
+      "form": "(with-temp-buffer (setq buffer-read-only t) (condition-case e (delete-region 1 1) (error (car e))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_extract_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok nil)",
+      "stdout": "extract-empty-readonly-delete-region.gnu.out",
+      "stderr": "extract-empty-readonly-delete-region.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "extract:empty-readonly-delete-region",
+      "group": "extract_edges",
+      "form": "(with-temp-buffer (setq buffer-read-only t) (condition-case e (delete-region 1 1) (error (car e))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_extract_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 9.56,
+      "value": "(ok buffer-read-only)",
+      "stdout": "extract-empty-readonly-delete-region.remacs.out",
+      "stderr": "extract-empty-readonly-delete-region.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "extract:empty-readonly-extract",
+      "group": "extract_edges",
+      "form": "(with-temp-buffer (setq buffer-read-only t) (condition-case e (delete-and-extract-region 1 1) (error (car e))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_extract_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok \"\")",
+      "stdout": "extract-empty-readonly-extract.gnu.out",
+      "stderr": "extract-empty-readonly-extract.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "extract:empty-readonly-extract",
+      "group": "extract_edges",
+      "form": "(with-temp-buffer (setq buffer-read-only t) (condition-case e (delete-and-extract-region 1 1) (error (car e))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_extract_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 9.53,
+      "value": "(ok buffer-read-only)",
+      "stdout": "extract-empty-readonly-extract.remacs.out",
+      "stderr": "extract-empty-readonly-extract.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "extract:empty-readonly-delete-char",
+      "group": "extract_edges",
+      "form": "(with-temp-buffer (setq buffer-read-only t) (condition-case e (delete-char 0) (error (car e))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_extract_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok nil)",
+      "stdout": "extract-empty-readonly-delete-char.gnu.out",
+      "stderr": "extract-empty-readonly-delete-char.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "extract:empty-readonly-delete-char",
+      "group": "extract_edges",
+      "form": "(with-temp-buffer (setq buffer-read-only t) (condition-case e (delete-char 0) (error (car e))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_extract_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.11,
+      "value": "(ok nil)",
+      "stdout": "extract-empty-readonly-delete-char.remacs.out",
+      "stderr": "extract-empty-readonly-delete-char.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "extract:empty-readonly-erase-empty",
+      "group": "extract_edges",
+      "form": "(with-temp-buffer (setq buffer-read-only t) (condition-case e (erase-buffer) (error (car e))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_extract_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok nil)",
+      "stdout": "extract-empty-readonly-erase-empty.gnu.out",
+      "stderr": "extract-empty-readonly-erase-empty.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "extract:empty-readonly-erase-empty",
+      "group": "extract_edges",
+      "form": "(with-temp-buffer (setq buffer-read-only t) (condition-case e (erase-buffer) (error (car e))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_extract_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.05,
+      "value": "(ok buffer-read-only)",
+      "stdout": "extract-empty-readonly-erase-empty.remacs.out",
+      "stderr": "extract-empty-readonly-erase-empty.remacs.err",
+      "complete": true
+    }
+  ]
+}

@@ -1,0 +1,98 @@
+[
+  {
+    "side": "gnu",
+    "id": "AUD-130",
+    "returncode": 0,
+    "stdout": "(ok (12363 12459 12460 12364 65345 65393 97))\n(ok (\"カナ\" \"かな\" \"ａｂ１２\" \"AB12\"))\n(ok (12363 12459 65345 97))\n(ok (12363 12459 65345 97))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-130",
+    "returncode": 0,
+    "stdout": "(ok (12459 12363 12364 12460 97 12354 65345))\n(ok (\"かな\" \"カナ\" \"ab12\" \"ＡＢ１２\"))\n(ok (nil nil nil nil))\n(ok (12363 12459 65345 97))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-131",
+    "returncode": 0,
+    "stdout": "(ok \"x\")\n(ok \"x\")\n(ok \"x\")\n(ok wrong-type-argument)\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-131",
+    "returncode": 0,
+    "stdout": "(error (wrong-type-argument listp \"bad\"))\n(error (wrong-type-argument listp \"bad\"))\n(error (wrong-type-argument listp \"bad\"))\n(ok wrong-type-argument)\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-132",
+    "returncode": 0,
+    "stdout": "(ok (t t))\n(ok (4 nil))\n(ok (t t))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-132",
+    "returncode": 0,
+    "stdout": "(error (error \"Window #<window 1 on *scratch*> too small for splitting\"))\n(ok (2 error))\n(ok (t t))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-133",
+    "returncode": 0,
+    "stdout": "(ok (\"/bin/zsh\" \"/bin/zsh\"))\n(ok \"audit-shell-ok\")\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-133",
+    "returncode": 0,
+    "stdout": "(ok (\"/bin/zsh\" \"/bin/sh\"))\n(ok \"audit-shell-ok\")\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-134",
+    "returncode": 0,
+    "stdout": "(ok ((24 24 24) (97 97)))\n(ok ((24 24 24) (97 97)))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-134",
+    "returncode": 0,
+    "stdout": "(ok ((51 42 67 45 120) (50 42 97)))\n(ok ((24 24 24) (97 97)))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-135",
+    "returncode": 0,
+    "stdout": "(ok t)\n(ok (t t))\n",
+    "stderr": "",
+    "matches_evidence": true
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-135",
+    "returncode": 0,
+    "stdout": "(ok nil)\n(ok (nil nil))\n",
+    "stderr": "",
+    "matches_evidence": true
+  }
+]

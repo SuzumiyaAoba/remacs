@@ -1,0 +1,87 @@
+{
+  "recorded_at": "2026-10-22T15:05:20.717660+00:00",
+  "head": "aeaff5597e60834c21d464b7ad2a4caf167726dc",
+  "exhaustive": false,
+  "runs": [
+    {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_compile_wait.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.591139,
+      "completed": true,
+      "stdout_file": "compile_wait.gnu.out",
+      "stderr_file": "compile_wait.gnu.err",
+      "group": "compile_wait",
+      "side": "gnu"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_compile_wait.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 11.209254,
+      "completed": true,
+      "stdout_file": "compile_wait.remacs.out",
+      "stderr_file": "compile_wait.remacs.err",
+      "group": "compile_wait",
+      "side": "remacs"
+    }
+  ],
+  "cases": [
+    {
+      "id": "compile-wait:delayed-exit",
+      "group": "compile_wait",
+      "form": "(audit-compile-wait \"printf hello-out; sleep 0.25\" nil t)",
+      "gnu": "(ok (run signal t nil))",
+      "remacs": "(ok (run signal t nil))",
+      "differs": false
+    },
+    {
+      "id": "compile-wait:exit-loop-control",
+      "group": "compile_wait",
+      "form": "(audit-compile-wait \"printf hello-out; sleep 0.25\" t t)",
+      "gnu": "(ok (exit exit t t))",
+      "remacs": "(ok (exit exit t t))",
+      "differs": false
+    },
+    {
+      "id": "compile-wait:original-default-shell",
+      "group": "compile_wait",
+      "form": "(audit-compile-wait \"echo hello-out\" nil nil)",
+      "gnu": "(ok (exit exit t t))",
+      "remacs": "(ok (run signal t nil))",
+      "differs": true
+    },
+    {
+      "id": "compile-wait:original-sh-control",
+      "group": "compile_wait",
+      "form": "(audit-compile-wait \"echo hello-out\" nil t)",
+      "gnu": "(ok (run signal t nil))",
+      "remacs": "(ok (run signal t nil))",
+      "differs": false
+    }
+  ],
+  "probe_sha256": {
+    "tests/audit_compile_wait.el": "df19c6dc7748e2eab3c2d065b3e6491c004cff9e0877bd43e266e6c69bb73101"
+  },
+  "scope": [
+    "compile_wait"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "started_at": "2026-10-22T13:25:50.699283+00:00",
+  "head": "aeaff5597e60834c21d464b7ad2a4caf167726dc",
+  "output_dir": "tests/audit/20261022-round2/full-suite",
+  "script": "tools/run_full_suite.py",
+  "status": "finished",
+  "exec_session": 26312,
+  "notes": "This is the exec tool session handle, not an OS PID. Poll the live handle before classifying the job as stopped.",
+  "note": "OS上で継続していた元ジョブが全46ターゲットの試行を終え、rust-results.json complete=trueを確認。成功は個別結果で判定する。"
+}

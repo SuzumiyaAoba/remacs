@@ -1,0 +1,66 @@
+[
+  {
+    "side": "gnu",
+    "size": [
+      24,
+      80
+    ],
+    "frame_seen": true,
+    "exit_before_quit": null,
+    "exit": 0,
+    "seconds": 0.46,
+    "bytes": 796,
+    "stdout_file": "sized.gnu.out",
+    "scratch_in_raw_bytes": true,
+    "scratch_after_ansi_removal": true,
+    "preview": "\u001b[?1049h\u001b[?12;25h\u001b[?1h\u001b=\u001b[H\u001b[2J\u001b[24d\u001b[K\u001b[?1l\u001b>\u001b[?12l\u001b[?25h\u001b[?1049l\u001b[39;49m\r\u001b[?1049h\u001b[?12;25h\u001b[?1h\u001b=\u001b[>0c\u001b[H\u001b[2J\u001b[24d\u001b[K\u001b[H\u001b[?25l\u001b[7mFile Edit Options Buffers Tools Lisp-Interaction Help                           \u001b[0m\u001b[39;49m\u001b[27m\r\n\u001b[A\n\u001b[K\n\u001b[K\n\u001b[K\n\u001b[K"
+  },
+  {
+    "side": "gnu",
+    "size": [
+      0,
+      0
+    ],
+    "frame_seen": true,
+    "exit_before_quit": null,
+    "exit": 0,
+    "seconds": 0.43,
+    "bytes": 796,
+    "stdout_file": "zero.gnu.out",
+    "scratch_in_raw_bytes": true,
+    "scratch_after_ansi_removal": true,
+    "preview": "\u001b[?1049h\u001b[?12;25h\u001b[?1h\u001b=\u001b[H\u001b[2J\u001b[24d\u001b[K\u001b[?1l\u001b>\u001b[?12l\u001b[?25h\u001b[?1049l\u001b[39;49m\r\u001b[?1049h\u001b[?12;25h\u001b[?1h\u001b=\u001b[>0c\u001b[H\u001b[2J\u001b[24d\u001b[K\u001b[H\u001b[?25l\u001b[7mFile Edit Options Buffers Tools Lisp-Interaction Help                           \u001b[0m\u001b[39;49m\u001b[27m\r\n\u001b[A\n\u001b[K\n\u001b[K\n\u001b[K\n\u001b[K"
+  },
+  {
+    "side": "remacs",
+    "size": [
+      24,
+      80
+    ],
+    "frame_seen": true,
+    "exit_before_quit": null,
+    "exit": 0,
+    "seconds": 8.6,
+    "bytes": 4618,
+    "stdout_file": "sized.remacs.out",
+    "scratch_in_raw_bytes": true,
+    "scratch_after_ansi_removal": true,
+    "preview": "\u001b[?1049h\u001b[?25l\u001b[1;1H\u001b[1;1H\u001b[0m                                                                                \u001b[0m\u001b[2;1H\u001b[0m                                                                                \u001b[0m\u001b[3;1H\u001b[0m                                "
+  },
+  {
+    "side": "remacs",
+    "size": [
+      0,
+      0
+    ],
+    "frame_seen": true,
+    "exit_before_quit": null,
+    "exit": 0,
+    "seconds": 9.17,
+    "bytes": 268,
+    "stdout_file": "zero.remacs.out",
+    "scratch_in_raw_bytes": false,
+    "scratch_after_ansi_removal": true,
+    "preview": "\u001b[?1049h\u001b[?25l\u001b[1;1H\u001b[1;1H\u001b[0m          \u001b[0m\u001b[2;1H\u001b[0m\u001b[7m----- *scr\u001b[0match*   L1 C0  [sel]\u001b[0m\u001b[3;1H\u001b[0m          \u001b[0m\u001b[1;1H\u001b[?25h\u001b[1;1H\u001b[1;1H\u001b[0m          \u001b[0m\u001b[2;1H\u001b[0m\u001b[7m----- *scr\u001b[0match*   L1 C0  [sel]\u001b[0m\u001b[3;1H\u001b[0m          \u001b[0m\u001b[1;1H\u001b[?25h"
+  }
+]

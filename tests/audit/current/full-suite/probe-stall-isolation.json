@@ -1,0 +1,7 @@
+{
+  "completed_tests": 46,
+  "pending_tests": [
+    "probe_eval14_cov"
+  ],
+  "reason": "Only previously confirmed stateful probe remains; it has exceeded the 120-second isolated-test limit. Stop this owned target and let the runner isolate the pending test."
+}

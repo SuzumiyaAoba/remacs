@@ -1,0 +1,1596 @@
+[
+  {
+    "file": "corpus/abbrevs.txt",
+    "count": 51,
+    "sides": {
+      "gnu": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 51,
+        "expected": 51,
+        "seconds": 0.2
+      },
+      "remacs": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 51,
+        "expected": 51,
+        "seconds": 8.03
+      }
+    },
+    "differences": []
+  },
+  {
+    "file": "corpus/arith.txt",
+    "count": 129,
+    "sides": {
+      "gnu": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 129,
+        "expected": 129,
+        "seconds": 0.21
+      },
+      "remacs": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 129,
+        "expected": 129,
+        "seconds": 8.15
+      }
+    },
+    "differences": [
+      {
+        "index": 98,
+        "form": "(random 10)",
+        "gnu": "2",
+        "remacs": "8"
+      }
+    ]
+  },
+  {
+    "file": "corpus/buffers.txt",
+    "count": 215,
+    "sides": {
+      "gnu": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 215,
+        "expected": 215,
+        "seconds": 0.23
+      },
+      "remacs": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 215,
+        "expected": 215,
+        "seconds": 8.11
+      }
+    },
+    "differences": []
+  },
+  {
+    "file": "corpus/cl.txt",
+    "count": 53,
+    "sides": {
+      "gnu": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 53,
+        "expected": 53,
+        "seconds": 0.22
+      },
+      "remacs": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 53,
+        "expected": 53,
+        "seconds": 8.26
+      }
+    },
+    "differences": []
+  },
+  {
+    "file": "corpus/completion.txt",
+    "count": 46,
+    "sides": {
+      "gnu": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 46,
+        "expected": 46,
+        "seconds": 0.21
+      },
+      "remacs": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 46,
+        "expected": 46,
+        "seconds": 8.24
+      }
+    },
+    "differences": [
+      {
+        "index": 39,
+        "form": "(let ((default-directory \"/tmp/\")) (list (all-completions \"/tmp/remacs\" 'completion-file-name-table nil) (try-completion \"nonexistent-xyz\" 'completion-file-name-table nil)))",
+        "gnu": "((\"remacs-merge-qa-buffer2.log\" \"remacs-audit-qa-buffmenu.gnu.log\" \"remacs-search-syntax-finding.json\" \"remacs-audit-qa.log\" \"remacs-audit-cli.log\" \"remacs-match-data-finding.json\" \"remacs-audit-qamark.out\" \"remacs-audit-qa-process-escalated.log\" \"remacs-inherit-tui.log\" \"remacs-print-overrides-finding.json\" \"remacs-inherit-qa.log\" \"remacs-undo-behavior-findings.json\" \"remacs-issues-round6.json\" \"remacs-window-finding.json\" \"remacs-probe-visit2\" \"remacs-process-findings.json\" \"remacs-audit-native.remacs.out\" \"remacs-merge-buffmenu.log\" \"remacs-search-case-update.json\" \"remacs-audit-qa_buffmenu-batch.log\" \"remacs-print-stream-finding.json\" \"remacs-editing-narrowing-description.txt\" \"remacs-audit-issues-final.json\" \"remacs-search-replace-findings.json\" \"remacs-audit-qa-system-escalated.log\" \"remacs-replacement-metadata-update.json\" \"remacs-mkdir-probe/\" \"remacs-audit-native.remacs.err\" \"remacs-bytecode-mutation-findings.json\" \"remacs-excursion-finding.json\" \"remacs-audit-issues-current.json\" \"remacs_dbg\" \"remacs-audit-qa-system.gnu.log\" \"remacs-merge-focused.log\" \"remacs-audit-issues-final2.json\" \"remacs-audit-issues.json\" \"remacs-string-display-findings.json\" \"remacs-audit-qa-process_names.gnu.log\" \"remacs-audit-qa-charset.gnu.log\" \"remacs-inherit-probe.el\" \"remacs-audit-qamark.err\" \"remacs-issue57-updated.md\" \"remacs-merge-buffer2.log\" \"remacs-audit-issues-phase3-final.json\" \"remacs-inherit-direct-edge.log\" \"remacs-merge-current-buffer.log\" \"remacs-inherit-edge.log\" \"remacs-audit-hash.gnu.out\" \"remacs-issues-round3.json\" \"remacs-window-config-findings.json\" \"remacs-audit-hash.remacs.err\" \"remacs-audit-qa-bufferfile.gnu.log\" \"remacs-audit-external.remacs.err\" \"remacs-audit-qacharset.err\" \"remacs-string-mutation-findings.json\" \"remacs-wr.txt\" \"remacs-audit-qa-batch-buffer.log\" \"remacs-editing-whitespace-findings.json\" \"remacs-inherit-related.log\" \"remacs-audit-qa-time_zero_zone.gnu.log\" \"remacs-audit-qa_time_zero_zone-batch.log\" \"remacs-audit-qabuffer2.err\" \"remacs-window-hooks-finding.json\" \"remacs-merge-batch.log\" \"remacs-audit-native.gnu.out\" \"remacs-mkd/\" \"remacs-merge-check.log\" \"remacs-ic.el\" \"remacs-current-issues.json\" \"remacs-audit-external.gnu.out\" \"remacs-dribble\" \"remacs-issues-round2.json\" \"remacs-audit-pty-smoke.log\" \"remacs-audit-external.gnu.err\" \"remacs-inherit-build.log\" \"remacs-read-stream-findings.json\" \"remacs-eval-source-findings.json\" \"remacs-issues-round5.json\" \"remacs-transfer-findings.json\" \"remacs-audit-native.gnu.err\" \"remacs_dribble\" \"remacs-issue57-current.json\" \"remacs-audit-equal-timeout.txt\" \"remacs-audit-qa-bufferfile-escalated.log\" \"remacs-audit-qa-process_defaults.gnu.log\" \"remacs-case-compare-updates.json\" \"remacs-merge-failures.log\" \"remacs-audit-qa-mark.gnu.log\" \"remacs-merge-tests.log\" \"remacs-audit-qabuffer2.out\" \"remacs-merge-origin-prelude.el\" \"remacs-issues-round4.json\" \"remacs-audit-issues-phase3.json\" \"remacs-string-sequence-findings.json\" \"remacs-audit-external.remacs.out\" \"remacs-audit-hash.gnu.err\" \"remacs-audit-qa-batch-mark.log\" \"remacs-audit-hash.remacs.out\" \"remacs-merge-tui.log\" \"remacs-audit-qa-buffer2.gnu.log\" \"remacs-p1.txt\" \"remacs-audit-qacharset.out\") nil)",
+        "remacs": "((\"remacs-audit-cli.log\" \"remacs-audit-equal-timeout.txt\" \"remacs-audit-external.gnu.err\" \"remacs-audit-external.gnu.out\" \"remacs-audit-external.remacs.err\" \"remacs-audit-external.remacs.out\" \"remacs-audit-hash.gnu.err\" \"remacs-audit-hash.gnu.out\" \"remacs-audit-hash.remacs.err\" \"remacs-audit-hash.remacs.out\" \"remacs-audit-issues-current.json\" \"remacs-audit-issues-final.json\" \"remacs-audit-issues-final2.json\" \"remacs-audit-issues-phase3-final.json\" \"remacs-audit-issues-phase3.json\" \"remacs-audit-issues.json\" \"remacs-audit-native.gnu.err\" \"remacs-audit-native.gnu.out\" \"remacs-audit-native.remacs.err\" \"remacs-audit-native.remacs.out\" \"remacs-audit-pty-smoke.log\" \"remacs-audit-qa-batch-buffer.log\" \"remacs-audit-qa-batch-mark.log\" \"remacs-audit-qa-buffer2.gnu.log\" \"remacs-audit-qa-bufferfile-escalated.log\" \"remacs-audit-qa-bufferfile.gnu.log\" \"remacs-audit-qa-buffmenu.gnu.log\" \"remacs-audit-qa-charset.gnu.log\" \"remacs-audit-qa-mark.gnu.log\" \"remacs-audit-qa-process-escalated.log\" \"remacs-audit-qa-process_defaults.gnu.log\" \"remacs-audit-qa-process_names.gnu.log\" \"remacs-audit-qa-system-escalated.log\" \"remacs-audit-qa-system.gnu.log\" \"remacs-audit-qa-time_zero_zone.gnu.log\" \"remacs-audit-qa.log\" \"remacs-audit-qa_buffmenu-batch.log\" \"remacs-audit-qa_time_zero_zone-batch.log\" \"remacs-audit-qabuffer2.err\" \"remacs-audit-qabuffer2.out\" \"remacs-audit-qacharset.err\" \"remacs-audit-qacharset.out\" \"remacs-audit-qamark.err\" \"remacs-audit-qamark.out\" \"remacs-bytecode-mutation-findings.json\" \"remacs-case-compare-updates.json\" \"remacs-current-issues.json\" \"remacs-dribble\" \"remacs-editing-narrowing-description.txt\" \"remacs-editing-whitespace-findings.json\" \"remacs-eval-source-findings.json\" \"remacs-excursion-finding.json\" \"remacs-ic.el\" \"remacs-inherit-build.log\" \"remacs-inherit-direct-edge.log\" \"remacs-inherit-edge.log\" \"remacs-inherit-probe.el\" \"remacs-inherit-qa.log\" \"remacs-inherit-related.log\" \"remacs-inherit-tui.log\" \"remacs-issue57-current.json\" \"remacs-issue57-updated.md\" \"remacs-issues-round2.json\" \"remacs-issues-round3.json\" \"remacs-issues-round4.json\" \"remacs-issues-round5.json\" \"remacs-issues-round6.json\" \"remacs-match-data-finding.json\" \"remacs-merge-batch.log\" \"remacs-merge-buffer2.log\" \"remacs-merge-buffmenu.log\" \"remacs-merge-check.log\" \"remacs-merge-current-buffer.log\" \"remacs-merge-failures.log\" \"remacs-merge-focused.log\" \"remacs-merge-origin-prelude.el\" \"remacs-merge-qa-buffer2.log\" \"remacs-merge-tests.log\" \"remacs-merge-tui.log\" \"remacs-mkd/\" \"remacs-mkdir-probe/\" \"remacs-p1.txt\" \"remacs-print-overrides-finding.json\" \"remacs-print-stream-finding.json\" \"remacs-probe-visit2\" \"remacs-process-findings.json\" \"remacs-read-stream-findings.json\" \"remacs-replacement-metadata-update.json\" \"remacs-search-case-update.json\" \"remacs-search-replace-findings.json\" \"remacs-search-syntax-finding.json\" \"remacs-string-display-findings.json\" \"remacs-string-mutation-findings.json\" \"remacs-string-sequence-findings.json\" \"remacs-transfer-findings.json\" \"remacs-undo-behavior-findings.json\" \"remacs-window-config-findings.json\" \"remacs-window-finding.json\" \"remacs-window-hooks-finding.json\" \"remacs-wr.txt\" \"remacs_dbg\" \"remacs_dribble\") nil)"
+      }
+    ]
+  },
+  {
+    "file": "corpus/evalforms.txt",
+    "count": 219,
+    "sides": {
+      "gnu": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 219,
+        "expected": 219,
+        "seconds": 0.24
+      },
+      "remacs": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 219,
+        "expected": 219,
+        "seconds": 8.21
+      }
+    },
+    "differences": []
+  },
+  {
+    "file": "corpus/lists.txt",
+    "count": 265,
+    "sides": {
+      "gnu": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 265,
+        "expected": 265,
+        "seconds": 0.25
+      },
+      "remacs": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 265,
+        "expected": 265,
+        "seconds": 8.49
+      }
+    },
+    "differences": []
+  },
+  {
+    "file": "corpus/misc.txt",
+    "count": 681,
+    "sides": {
+      "gnu": {
+        "returncode": -6,
+        "timed_out": false,
+        "records": 513,
+        "expected": 681,
+        "seconds": 0.36
+      },
+      "remacs": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 681,
+        "expected": 681,
+        "seconds": 9.21
+      }
+    },
+    "differences": [
+      {
+        "index": 6,
+        "form": "(member 'probe-feat features)",
+        "gnu": "(probe-feat warnings icons cl-loaddefs cl-lib rmc iso-transl tooltip cconv eldoc paren electric uniquify ediff-hook vc-hooks lisp-float-type elisp-mode mwheel term/ns-win ns-win ucs-normalize mule-util term/common-win tool-bar dnd fontset image regexp-opt fringe tabulated-list replace newcomment text-mode lisp-mode prog-mode register page tab-bar menu-bar rfn-eshadow isearch easymenu timer select scroll-bar mouse jit-lock font-lock syntax font-core term/tty-colors frame minibuffer nadvice seq simple cl-generic indonesian philippine cham georgian utf-8-lang misc-lang vietnamese tibetan thai tai-viet lao korean japanese eucjp-ms cp51932 hebrew greek romanian slovak czech european ethiopic indian cyrillic chinese composite emoji-zwj charscript charprop case-table epa-hook jka-cmpr-hook help abbrev obarray oclosure cl-preloaded button loaddefs theme-loaddefs faces cus-face macroexp files window text-properties overlay sha1 md5 base64 format env code-pages mule custom widget keymap hashtable-print-readable backquote threads kqueue cocoa ns multi-tty make-network-process tty-child-frames native-compile emacs)",
+        "remacs": "(probe-feat warnings icons remacs-compat easy-mmode cl-macs cl-seq inline pcase cl-loaddefs cl-lib gv japan-util rmc iso-transl tooltip cconv eldoc paren electric uniquify ediff-hook vc-hooks lisp-float-type elisp-mode mwheel term/ns-win ns-win ucs-normalize mule-util term/common-win tool-bar dnd fontset image regexp-opt fringe tabulated-list replace newcomment text-mode lisp-mode prog-mode register page tab-bar menu-bar rfn-eshadow isearch easymenu timer select scroll-bar mouse jit-lock font-lock syntax font-core term/tty-colors frame minibuffer nadvice seq simple cl-generic indonesian philippine cham georgian utf-8-lang misc-lang vietnamese tibetan thai tai-viet lao korean japanese eucjp-ms cp51932 hebrew greek romanian slovak czech european ethiopic indian cyrillic chinese composite emoji-zwj charscript charprop case-table epa-hook jka-cmpr-hook help abbrev obarray oclosure cl-preloaded button loaddefs theme-loaddefs faces cus-face macroexp files window text-properties overlay sha1 md5 base64 format env code-pages mule custom widget keymap hashtable-print-readable backquote threads kqueue cocoa ns multi-tty make-network-process tty-child-frames native-compile emacs lcms2 dbusbind native-comp)"
+      },
+      {
+        "index": 11,
+        "form": "(emacs-version)",
+        "gnu": "\"GNU Emacs 31.1 (build 1, aarch64-apple-darwin25.5.0, NS appkit-2685.60 Version 26.5.2 (Build 25F84))\"",
+        "remacs": "\"GNU Emacs 31.1 (build 1, aarch64-apple-darwin, NS appkit-2685.60 Version 26.5.2 (Build 25F84))\n of 2026-10-18\""
+      },
+      {
+        "index": 21,
+        "form": "(invocation-name)",
+        "gnu": "\"emacs-31.1\"",
+        "remacs": "\"remacs\""
+      },
+      {
+        "index": 30,
+        "form": "(system-groups)",
+        "gnu": "(\"_oahd\" \"com.apple.access_remote_ae\" \"com.apple.access_ssh\" \"com.apple.access_screensharing\" \"com.apple.access_sessionkey\" \"com.apple.access_disabled\" \"com.apple.access_ftp\" \"_mds_stores\" \"_diagnosticservicesd\" \"_corespeechd\" \"_spinandd\" \"_naturallanguaged\" \"_swtransparencyd\" \"_reportsystemmemory\" \"_modelmanagerd\" \"_aonsensed\" \"_systemstatusd\" \"_eligibilityd\" \"_neuralengine\" \"_terminusd\" \"_audiomxd\" \"_mobilegestalthelper\" \"_backgroundassets\" \"_biome\" \"_avphidbridge\" \"_notification_proxy\" \"_darwindaemon\" \"_mmaintenanced\" \"_trustd\" \"_sntpd\" \"_coreml\" \"_knowledgegraphd\" \"_accessoryupdater\" \"_rmd\" \"_demod\" \"_installcoordinationd\" \"_appinstalld\" \"_logd\" \"_diskimagesiod\" \"_driverkit\" \"_reportmemoryexception\" \"_nearbyd\" \"_timed\" \"_fpsd\" \"_webdeveloper\" \"_analyticsd\" \"_cmiodalassistants\" \"_hidd\" \"_applepay\" \"_ctkd\" \"_captiveagent\" \"_datadetectors\" \"_findmydevice\" \"_mobileasset\" \"_wwwproxy\" \"_xserverdocs\" \"_analyticsusers\" \"_ondemand\" \"_mbsetupuser\" \"_gamecontrollerd\" \"_astris\" \"_displaypolicyd\" \"_nsurlsessiond\" \"_distnote\" \"_iconservices\" \"_launchservicesd\" \"_coremediaiod\" \"_assetcache\" \"_netstatistics\" \"_dovenull\" \"_warmd\" \"_netbios\" \"_webauthserver\" \"_devicemgr\" \"_postgres\" \"_dpaudio\" \"_usbmuxd\" \"_cvms\" \"_lda\" \"_timezone\" \"_odchpass\" \"_trustevaluationagent\" \"_detachedsig\" \"_locationd\" \"_developer\" \"_screensaver\" \"_coreaudiod\" \"_guest\" \"_softwareupdate\" \"_lpoperator\" \"_unknown\" \"_lpadmin\" \"_atsserver\" \"_installer\" \"_update_sharing\" \"_teamsserver\" \"_calendar\" \"_securityagent\" \"_tokend\" \"accessibility\" \"_spotlight\" \"_windowserver\" \"_appowner\" \"_jabber\" \"_amavisd\" \"_clamav\" \"_appserveradm\" \"admin\" \"_appserverusr\" \"_mailman\" \"_qtss\" \"_sshd\" \"_mysql\" \"_svn\" \"_cvs\" \"_eppc\" \"_www\" \"network\" \"dialer\" \"_ard\" \"_uucp\" \"_mdnsresponder\" \"netaccounts\" \"localaccounts\" \"_sandbox\" \"_devdocs\" \"_geod\" \"_appleevents\" \"_mcxalr\" \"consoleusers\" \"netusers\" \"interactusers\" \"authedusers\" \"utmp\" \"_appstore\" \"_ces\" \"_scsd\" \"_keytabusers\" \"certusers\" \"_postdrop\" \"_postfix\" \"_lp\" \"_installassistant\" \"_networkd\" \"staff\" \"group\" \"_taskgated\" \"everyone\" \"owner\" \"procmod\" \"procview\" \"bin\" \"mail\" \"operator\" \"tty\" \"sys\" \"kmem\" \"daemon\" \"wheel\" \"nogroup\" \"nobody\" \"_appserveradm\" \"_locationd\" \"_qtss\" \"_spinandd\" \"_distnote\" \"_cvs\" \"dialer\" \"certusers\" \"_screensaver\" \"_naturallanguaged\" \"com.apple.access_remote_ae\" \"_findmydevice\" \"operator\" \"_reportmemoryexception\" \"_gamecontrollerd\" \"_taskgated\" \"_diskimagesiod\" \"com.apple.access_sessionkey\" \"_hidd\" \"com.apple.access_screensharing\" \"_postfix\" \"_mds_stores\" \"_nearbyd\" \"_scsd\" \"bin\" \"staff\" \"_timezone\" \"_wwwproxy\" \"accessibility\" \"_backgroundassets\" \"_biome\" \"admin\" \"daemon\" \"_teamsserver\" \"_nsurlsessiond\" \"_appleevents\" \"network\" \"_sandbox\" \"_devdocs\" \"_trustd\" \"kmem\" \"netusers\" \"_webdeveloper\" \"consoleusers\" \"_darwindaemon\" \"_odchpass\" \"_iconservices\" \"_devicemgr\" \"_coreml\" \"_webauthserver\" \"com.apple.access_ssh\" \"_mobileasset\" \"_networkd\" \"_update_sharing\" \"_detachedsig\" \"_oahd\" \"_neuralengine\" \"nogroup\" \"_mailman\" \"_jabber\" \"_modelmanagerd\" \"_netbios\" \"_demod\" \"_lp\" \"_driverkit\" \"_postdrop\" \"_displaypolicyd\" \"authedusers\" \"_sshd\" \"_swtransparencyd\" \"_lda\" \"_cvms\" \"_aonsensed\" \"tty\" \"_developer\" \"_spotlight\" \"_mobilegestalthelper\" \"_eligibilityd\" \"procview\" \"owner\" \"com.apple.sharepoint.group.1\" \"_usbmuxd\" \"_mmaintenanced\" \"_analyticsusers\" \"_corespeechd\" \"_mbsetupuser\" \"_guest\" \"_www\" \"mail\" \"netaccounts\" \"everyone\" \"_appstore\" \"_rmd\" \"sys\" \"_unknown\" \"_lpoperator\" \"_dpaudio\" \"_clamav\" \"_installassistant\" \"_terminusd\" \"localaccounts\" \"_appserverusr\" \"_timed\" \"_fpsd\" \"_amavisd\" \"_mysql\" \"_installcoordinationd\" \"_datadetectors\" \"_lpadmin\" \"_atsserver\" \"_ctkd\" \"_accessoryupdater\" \"wheel\" \"_installer\" \"com.apple.access_disabled\" \"_calendar\" \"nobody\" \"interactusers\" \"_eppc\" \"_systemstatusd\" \"_ces\" \"_cmiodalassistants\" \"_coremediaiod\" \"_geod\" \"_uucp\" \"_reportsystemmemory\" \"_keytabusers\" \"_mcxalr\" \"_postgres\" \"procmod\" \"com.apple.access_ftp\" \"_windowserver\" \"_svn\" \"_mdnsresponder\" \"utmp\" \"_audiomxd\" \"_sntpd\" \"_ondemand\" \"_trustevaluationagent\" \"_assetcache\" \"_analyticsd\" \"_avphidbridge\" \"_diagnosticservicesd\" \"group\" \"_applepay\" \"_coreaudiod\" \"_warmd\" \"_securityagent\" \"_tokend\" \"_appinstalld\" \"nixbld\" \"_astris\" \"_notification_proxy\" \"_xserverdocs\" \"_launchservicesd\" \"_logd\" \"_captiveagent\" \"_ard\" \"_softwareupdate\" \"_netstatistics\" \"_dovenull\" \"_knowledgegraphd\" \"_appowner\")",
+        "remacs": "(\"_appowner\" \"_knowledgegraphd\" \"_dovenull\" \"_netstatistics\" \"_softwareupdate\" \"_ard\" \"_captiveagent\" \"_logd\" \"_launchservicesd\" \"_xserverdocs\" \"_notification_proxy\" \"_astris\" \"nixbld\" \"_appinstalld\" \"_tokend\" \"_securityagent\" \"_warmd\" \"_coreaudiod\" \"_applepay\" \"group\" \"_diagnosticservicesd\" \"_avphidbridge\" \"_analyticsd\" \"_assetcache\" \"_trustevaluationagent\" \"_ondemand\" \"_sntpd\" \"_audiomxd\" \"utmp\" \"_mdnsresponder\" \"_svn\" \"_windowserver\" \"com.apple.access_ftp\" \"procmod\" \"_postgres\" \"_mcxalr\" \"_keytabusers\" \"_reportsystemmemory\" \"_uucp\" \"_geod\" \"_coremediaiod\" \"_cmiodalassistants\" \"_ces\" \"_systemstatusd\" \"_eppc\" \"interactusers\" \"nobody\" \"_calendar\" \"com.apple.access_disabled\" \"_installer\" \"wheel\" \"_accessoryupdater\" \"_ctkd\" \"_atsserver\" \"_lpadmin\" \"_datadetectors\" \"_installcoordinationd\" \"_mysql\" \"_amavisd\" \"_fpsd\" \"_timed\" \"_appserverusr\" \"localaccounts\" \"_terminusd\" \"_installassistant\" \"_clamav\" \"_dpaudio\" \"_lpoperator\" \"_unknown\" \"sys\" \"_rmd\" \"_appstore\" \"everyone\" \"netaccounts\" \"mail\" \"_www\" \"_guest\" \"_mbsetupuser\" \"_corespeechd\" \"_analyticsusers\" \"_mmaintenanced\" \"_usbmuxd\" \"com.apple.sharepoint.group.1\" \"owner\" \"procview\" \"_eligibilityd\" \"_mobilegestalthelper\" \"_spotlight\" \"_developer\" \"tty\" \"_aonsensed\" \"_cvms\" \"_lda\" \"_swtransparencyd\" \"_sshd\" \"authedusers\" \"_displaypolicyd\" \"_postdrop\" \"_driverkit\" \"_lp\" \"_demod\" \"_netbios\" \"_modelmanagerd\" \"_jabber\" \"_mailman\" \"nogroup\" \"_neuralengine\" \"_oahd\" \"_detachedsig\" \"_update_sharing\" \"_networkd\" \"_mobileasset\" \"com.apple.access_ssh\" \"_webauthserver\" \"_coreml\" \"_devicemgr\" \"_iconservices\" \"_odchpass\" \"_darwindaemon\" \"consoleusers\" \"_webdeveloper\" \"netusers\" \"kmem\" \"_trustd\" \"_devdocs\" \"_sandbox\" \"network\" \"_appleevents\" \"_nsurlsessiond\" \"_teamsserver\" \"daemon\" \"admin\" \"_biome\" \"_backgroundassets\" \"accessibility\" \"_wwwproxy\" \"_timezone\" \"staff\" \"bin\" \"_scsd\" \"_nearbyd\" \"_mds_stores\" \"_postfix\" \"com.apple.access_screensharing\" \"_hidd\" \"com.apple.access_sessionkey\" \"_diskimagesiod\" \"_taskgated\" \"_gamecontrollerd\" \"_reportmemoryexception\" \"operator\" \"_findmydevice\" \"com.apple.access_remote_ae\" \"_naturallanguaged\" \"_screensaver\" \"certusers\" \"dialer\" \"_cvs\" \"_distnote\" \"_spinandd\" \"_qtss\" \"_locationd\" \"_appserveradm\" \"nobody\" \"nogroup\" \"wheel\" \"daemon\" \"kmem\" \"sys\" \"tty\" \"operator\" \"mail\" \"bin\" \"procview\" \"procmod\" \"owner\" \"everyone\" \"_taskgated\" \"group\" \"staff\" \"_networkd\" \"_installassistant\" \"_lp\" \"_postfix\" \"_postdrop\" \"certusers\" \"_keytabusers\" \"_scsd\" \"_ces\" \"_appstore\" \"utmp\" \"authedusers\" \"interactusers\" \"netusers\" \"consoleusers\" \"_mcxalr\" \"_appleevents\" \"_geod\" \"_devdocs\" \"_sandbox\" \"localaccounts\" \"netaccounts\" \"_mdnsresponder\" \"_uucp\" \"_ard\" \"dialer\" \"network\" \"_www\" \"_eppc\" \"_cvs\" \"_svn\" \"_mysql\" \"_sshd\" \"_qtss\" \"_mailman\" \"_appserverusr\" \"admin\" \"_appserveradm\" \"_clamav\" \"_amavisd\" \"_jabber\" \"_appowner\" \"_windowserver\" \"_spotlight\" \"accessibility\" \"_tokend\" \"_securityagent\" \"_calendar\" \"_teamsserver\" \"_update_sharing\" \"_installer\" \"_atsserver\" \"_lpadmin\" \"_unknown\" \"_lpoperator\" \"_softwareupdate\" \"_guest\" \"_coreaudiod\" \"_screensaver\" \"_developer\" \"_locationd\" \"_detachedsig\" \"_trustevaluationagent\" \"_odchpass\" \"_timezone\" \"_lda\" \"_cvms\" \"_usbmuxd\" \"_dpaudio\" \"_postgres\" \"_devicemgr\" \"_webauthserver\" \"_netbios\" \"_warmd\" \"_dovenull\" \"_netstatistics\" \"_assetcache\" \"_coremediaiod\" \"_launchservicesd\" \"_iconservices\" \"_distnote\" \"_nsurlsessiond\" \"_displaypolicyd\" \"_astris\" \"_gamecontrollerd\" \"_mbsetupuser\" \"_ondemand\" \"_analyticsusers\" \"_xserverdocs\" \"_wwwproxy\" \"_mobileasset\" \"_findmydevice\" \"_datadetectors\" \"_captiveagent\" \"_ctkd\" \"_applepay\" \"_hidd\" \"_cmiodalassistants\" \"_analyticsd\" \"_webdeveloper\" \"_fpsd\" \"_timed\" \"_nearbyd\" \"_reportmemoryexception\" \"_driverkit\" \"_diskimagesiod\" \"_logd\" \"_appinstalld\" \"_installcoordinationd\" \"_demod\" \"_rmd\" \"_accessoryupdater\" \"_knowledgegraphd\" \"_coreml\" \"_sntpd\" \"_trustd\" \"_mmaintenanced\" \"_darwindaemon\" \"_notification_proxy\" \"_avphidbridge\" \"_biome\" \"_backgroundassets\" \"_mobilegestalthelper\" \"_audiomxd\" \"_terminusd\" \"_neuralengine\" \"_eligibilityd\" \"_systemstatusd\" \"_aonsensed\" \"_modelmanagerd\" \"_reportsystemmemory\" \"_swtransparencyd\" \"_naturallanguaged\" \"_spinandd\" \"_corespeechd\" \"_diagnosticservicesd\" \"_mds_stores\" \"com.apple.access_ftp\" \"com.apple.access_disabled\" \"com.apple.access_sessionkey\" \"com.apple.access_screensharing\" \"com.apple.access_ssh\" \"com.apple.access_remote_ae\" \"_oahd\")"
+      },
+      {
+        "index": 31,
+        "form": "(emacs-pid)",
+        "gnu": "37207",
+        "remacs": "37214"
+      },
+      {
+        "index": 167,
+        "form": "(frame-list)",
+        "gnu": "(#<frame F1 0xab8c0ebf8>)",
+        "remacs": "(#<frame F1 0x10abfa910>)"
+      },
+      {
+        "index": 171,
+        "form": "(selected-frame)",
+        "gnu": "#<frame F1 0xab8c0ebf8>",
+        "remacs": "#<frame F1 0x10abfa910>"
+      },
+      {
+        "index": 182,
+        "form": "(window-frame (selected-window))",
+        "gnu": "#<frame F1 0xab8c0ebf8>",
+        "remacs": "#<frame F1 0x10abfa910>"
+      },
+      {
+        "index": 208,
+        "form": "(float-time)",
+        "gnu": "1792318521.190397",
+        "remacs": "1792318530.17374"
+      },
+      {
+        "index": 209,
+        "form": "(current-time)",
+        "gnu": "(27348 39993 190542 0)",
+        "remacs": "(27348 40002 173775 0)"
+      },
+      {
+        "index": 210,
+        "form": "(current-time-string)",
+        "gnu": "\"Sun Oct 18 19:15:21 2026\"",
+        "remacs": "\"Sun Oct 18 19:15:30 2026\""
+      },
+      {
+        "index": 224,
+        "form": "(garbage-collect)",
+        "gnu": "((conses 16 8476 10490) (symbols 48 2256 0) (strings 32 2198 1336) (string-bytes 1 150812) (vectors 16 1124) (vector-slots 8 15237 3142) (floats 8 15 9) (intervals 56 12 21) (buffers 1064 5))",
+        "remacs": "((conses 16 30651 0) (symbols 48 30651 0) (strings 32 0 0) (string-bytes 1 0) (vectors 16 0) (vector-slots 8 0 0) (floats 8 0 0) (intervals 56 0 0) (buffers 1064 0))"
+      },
+      {
+        "index": 226,
+        "form": "(memory-limit)",
+        "gnu": "435436992",
+        "remacs": "436041856"
+      },
+      {
+        "index": 305,
+        "form": "(visible-frame-list)",
+        "gnu": "(#<frame F1 0xab8c0ebf8>)",
+        "remacs": "(#<frame F1 0x10abfa910>)"
+      },
+      {
+        "index": 307,
+        "form": "(current-frame-configuration)",
+        "gnu": "(frame-configuration (#<frame F1 0xab8c0ebf8> ((no-accept-focus) (visibility . t) (tab-bar-lines . 0) (menu-bar-lines . 1) (buried-buffer-list) (buffer-list #<buffer *scratch*>) (unsplittable) (modeline . t) (width . 80) (height . 25) (name . \"F1\") (font . \"tty\") (background-color . \"unspecified-bg\") (foreground-color . \"unspecified-fg\") (probe-p2 . 9) (probe-p . 5) (cursor-color . \"white\") (background-mode . dark) (display-type . mono) (minibuffer . t)) #<window-configuration>))",
+        "remacs": "(frame-configuration (#<frame F1 0x10abfa910> ((no-accept-focus) (visibility . t) (tab-bar-lines . 0) (menu-bar-lines . 1) (buried-buffer-list) (buffer-list #<buffer *scratch*>) (unsplittable) (modeline . t) (width . 80) (height . 25) (name . \"F1\") (font . \"tty\") (background-color . \"unspecified-bg\") (foreground-color . \"unspecified-fg\") (cursor-color . \"white\") (background-mode . dark) (display-type . mono) (minibuffer . t) (probe-p . 5) (probe-p2 . 9)) #<window-configuration>))"
+      },
+      {
+        "index": 308,
+        "form": "(make-frame-visible)",
+        "gnu": "#<frame F1 0xab8c0ebf8>",
+        "remacs": "#<frame F1 0x10abfa910>"
+      },
+      {
+        "index": 314,
+        "form": "(mouse-position)",
+        "gnu": "(#<frame F1 0xab8c0ebf8> nil)",
+        "remacs": "(#<frame F1 0x10abfa910> nil)"
+      },
+      {
+        "index": 315,
+        "form": "(mouse-pixel-position)",
+        "gnu": "(#<frame F1 0xab8c0ebf8> nil)",
+        "remacs": "(#<frame F1 0x10abfa910> nil)"
+      },
+      {
+        "index": 513,
+        "form": "(command-error-default-function 'a 'b 'c)",
+        "gnu": null,
+        "remacs": "ERR:wrong-type-argument"
+      },
+      {
+        "index": 514,
+        "form": "(replace-regexp-in-string \"\\\\$\" (lambda (d) (concat d d)) \"a$b\")",
+        "gnu": null,
+        "remacs": "\"a$$b\""
+      },
+      {
+        "index": 515,
+        "form": "(replace-regexp-in-string \"\\\\(a\\\\)\\\\(b\\\\)\" (lambda (m) (concat \"[\" m \"]\" (match-string 1 m))) \"xaby\")",
+        "gnu": null,
+        "remacs": "\"x[ab]ay\""
+      },
+      {
+        "index": 516,
+        "form": "(minibuffer--double-dollars \"a$b\")",
+        "gnu": null,
+        "remacs": "\"a$$b\""
+      },
+      {
+        "index": 517,
+        "form": "(minibuffer-maybe-quote-filename \"/a/b\")",
+        "gnu": null,
+        "remacs": "\"/a/b\""
+      },
+      {
+        "index": 518,
+        "form": "(with-temp-buffer (insert \"aXbXc\") (goto-char 1) (zap-up-to-char 1 ?X) (buffer-string))",
+        "gnu": null,
+        "remacs": "\"XbXc\""
+      },
+      {
+        "index": 519,
+        "form": "(date-leap-year-p 2024)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 520,
+        "form": "(eval-expression-print-format 65)",
+        "gnu": null,
+        "remacs": "\" (#o101, #x41, ?A)\""
+      },
+      {
+        "index": 521,
+        "form": "(prin1-char 65)",
+        "gnu": null,
+        "remacs": "\"?A\""
+      },
+      {
+        "index": 522,
+        "form": "(char-displayable-p 65)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 523,
+        "form": "(event-basic-type 65)",
+        "gnu": null,
+        "remacs": "97"
+      },
+      {
+        "index": 524,
+        "form": "(event-modifiers 65)",
+        "gnu": null,
+        "remacs": "(shift)"
+      },
+      {
+        "index": 525,
+        "form": "(with-temp-buffer (insert \"a b c\") (shell-command-on-region (point-min) (point-max) \"wc -w\" nil t) (buffer-string))",
+        "gnu": null,
+        "remacs": "\"3\n\""
+      },
+      {
+        "index": 526,
+        "form": "(with-temp-buffer (insert \"x\\ny\\n\") (call-shell-region (point-min) (point-max) \"wc -l\" nil t) (buffer-string))",
+        "gnu": null,
+        "remacs": "\"x\ny\n2\n\""
+      },
+      {
+        "index": 527,
+        "form": "(with-temp-buffer (process-file \"cat\" nil t nil) (buffer-string))",
+        "gnu": null,
+        "remacs": "\"\""
+      },
+      {
+        "index": 528,
+        "form": "(buffer-match-p \"\\\\*scratch\\\\*\" \"*scratch*\")",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 529,
+        "form": "(buffer-match-p '(not \"hidden\") \"*scratch*\")",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 530,
+        "form": "(buffer-match-p '(or \"nomatch\" \"\\\\*scratch\\\\*\") \"*scratch*\")",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 531,
+        "form": "(buffer-match-p '(and t \"\\\\*\") \"*scratch*\")",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 532,
+        "form": "(mapcar 'buffer-name (match-buffers \"scratch\"))",
+        "gnu": null,
+        "remacs": "(\"*scratch*\")"
+      },
+      {
+        "index": 533,
+        "form": "(with-temp-buffer (hl-line-mode 1) (insert \"a\\nb\") (goto-char 3) (hl-line-highlight) (list (overlayp hl-line-overlay) (overlay-start hl-line-overlay) (overlay-end hl-line-overlay)) (hl-line-mode -1))",
+        "gnu": null,
+        "remacs": "nil"
+      },
+      {
+        "index": 534,
+        "form": "(string-replace \"b\" \"XY\" #(\"abc\" 0 3 (p t)))",
+        "gnu": null,
+        "remacs": "#(\"aXYc\" 0 1 (p t) 3 4 (p t))"
+      },
+      {
+        "index": 535,
+        "form": "(eq #(\"abc\" 0 1 (p t)) (let ((s (propertize \"abc\" 'p t))) (string-replace \"z\" \"y\" s)))",
+        "gnu": null,
+        "remacs": "nil"
+      },
+      {
+        "index": 536,
+        "form": "(condition-case e (string-replace \"\" \"X\" \"abc\") (error (car e)))",
+        "gnu": null,
+        "remacs": "wrong-length-argument"
+      },
+      {
+        "index": 537,
+        "form": "(with-temp-buffer (insert \"foo a\\nbar b\\nfoo c\\n\") (occur \"foo\" 0) (with-current-buffer \"*Occur*\" (buffer-substring-no-properties (point-min) (point-max))))",
+        "gnu": null,
+        "remacs": "\"2 matches for \\\"foo\\\" in buffer:  *temp*\n      1:foo a\n      3:foo c\n\""
+      },
+      {
+        "index": 538,
+        "form": "(let ((b1 (get-buffer-create \"mo1\")) (b2 (get-buffer-create \"mo2\"))) (unwind-protect (progn (with-current-buffer b1 (insert \"hit\\n\")) (with-current-buffer b2 (insert \"x\\nhit\\n\")) (multi-occur (list b1 b2) \"hit\") (with-current-buffer \"*Occur*\" (buffer-substring-no-properties (point-min) (point-max)))) (kill-buffer \"*Occur*\") (kill-buffer b1) (kill-buffer b2)))",
+        "gnu": null,
+        "remacs": "\"2 matches total for \\\"hit\\\":\n1 match in buffer: mo2\n      2:hit\n1 match in buffer: mo1\n      1:hit\n\""
+      },
+      {
+        "index": 539,
+        "form": "(electric-layout-mode 1)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 540,
+        "form": "(prog1 electric-layout-mode (electric-layout-mode -1))",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 541,
+        "form": "(with-temp-buffer (insert \"x\") (let ((last-command-event ?y)) (electric--after-char-pos)))",
+        "gnu": null,
+        "remacs": "nil"
+      },
+      {
+        "index": 542,
+        "form": "(condition-case e (with-temp-buffer (insert \";; c\\n(defun f () 1)\\n\") (goto-char (point-min)) (reposition-window) 'ok) (error (car e)))",
+        "gnu": null,
+        "remacs": "error"
+      },
+      {
+        "index": 543,
+        "form": "(let ((d (expand-file-name \"rmfx\" temporary-file-directory))) (make-directory d t) (write-region \"(defun rmfx-fn (x) x)\\n(defvar rmfx-var 1)\\n(defface rmfx-face '((t)) \\\"d\\\")\\n(provide 'rmfx)\\n\" nil (expand-file-name \"rmfx.el\" d)) (let ((load-path (cons d load-path))) (load \"rmfx\") (list (symbol-file 'rmfx-fn 'defun) (symbol-file 'rmfx-var 'defvar) (symbol-file 'rmfx-face 'defface) (symbol-file 'rmfx-nosuch))))",
+        "gnu": null,
+        "remacs": "(\"/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/rmfx/rmfx.el\" \"/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/rmfx/rmfx.el\" \"/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/rmfx/rmfx.el\" nil)"
+      },
+      {
+        "index": 544,
+        "form": "(let ((d (expand-file-name \"rmfx\" temporary-file-directory))) (let ((load-path (cons d load-path))) (let ((loc (find-function-noselect 'rmfx-fn))) (list (buffer-name (car loc)) (cdr loc)))))",
+        "gnu": null,
+        "remacs": "(\"rmfx.el\" 1)"
+      },
+      {
+        "index": 545,
+        "form": "(let ((d (expand-file-name \"rmfx\" temporary-file-directory))) (let ((load-path (cons d load-path))) (let ((loc (find-variable-noselect 'rmfx-var))) (list (buffer-name (car loc)) (cdr loc)))))",
+        "gnu": null,
+        "remacs": "(\"rmfx.el\" 23)"
+      },
+      {
+        "index": 546,
+        "form": "(let ((d (expand-file-name \"rmfx\" temporary-file-directory))) (let ((load-path (cons d load-path))) (let ((loc (find-definition-noselect 'rmfx-face 'defface))) (list (buffer-name (car loc)) (cdr loc)))))",
+        "gnu": null,
+        "remacs": "(\"rmfx.el\" 43)"
+      },
+      {
+        "index": 547,
+        "form": "(let ((d (expand-file-name \"rmfx\" temporary-file-directory))) (let ((load-path (cons d load-path))) (find-library-name \"rmfx\")))",
+        "gnu": null,
+        "remacs": "\"/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/rmfx/rmfx.el\""
+      },
+      {
+        "index": 548,
+        "form": "(condition-case e (find-library-name \"rmfx-nosuch\") (error e))",
+        "gnu": null,
+        "remacs": "(file-error \"Can't find library\" \"rmfx-nosuch\")"
+      },
+      {
+        "index": 549,
+        "form": "(let ((d (expand-file-name \"rmfx\" temporary-file-directory))) (let ((load-path (cons d load-path))) (list (find-function-library 'rmfx-fn) (find-lisp-object-file-name 'rmfx-fn 'defun) (find-lisp-object-file-name 'rmfx-var 'defvar))))",
+        "gnu": null,
+        "remacs": "((rmfx-fn . \"/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/rmfx/rmfx.el\") \"/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/rmfx/rmfx.el\" \"/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/rmfx/rmfx.el\")"
+      },
+      {
+        "index": 550,
+        "form": "(find-lisp-object-file-name 'car (symbol-function 'car))",
+        "gnu": null,
+        "remacs": "C-source"
+      },
+      {
+        "index": 551,
+        "form": "(autoload 'rmfx-auto \"rmfx\") (find-function-library 'rmfx-auto)",
+        "gnu": null,
+        "remacs": "rmfx-auto"
+      },
+      {
+        "index": 552,
+        "form": "(with-temp-buffer (insert \"(require 'cl-lib)\\n(defun somefn nil)\") (goto-char (point-max)) (list (function-called-at-point) (variable-at-point) (find-tag-default)))",
+        "gnu": null,
+        "remacs": "(nil 0 nil)"
+      },
+      {
+        "index": 553,
+        "form": "(with-temp-buffer (insert \"(require 'cl-lib)\") (goto-char 11) (list (function-called-at-point) (variable-at-point) (find-tag-default)))",
+        "gnu": null,
+        "remacs": "(require 0 \"cl-lib\")"
+      },
+      {
+        "index": 554,
+        "form": "(condition-case e (find-function-noselect 'rmfx-void-sym) (error (car e)))",
+        "gnu": null,
+        "remacs": "void-function"
+      },
+      {
+        "index": 555,
+        "form": "(condition-case e (find-function-noselect 'car t) (error e))",
+        "gnu": null,
+        "remacs": "(error \"car is a built-in function\")"
+      },
+      {
+        "index": 556,
+        "form": "(cdr (assoc \"rmfx.el\" load-history))",
+        "gnu": null,
+        "remacs": "nil"
+      },
+      {
+        "index": 557,
+        "form": "(wildcard-to-regexp \"*.el\")",
+        "gnu": null,
+        "remacs": "\"\\\\`[^\u0000]*\\\\.el\\\\'\""
+      },
+      {
+        "index": 558,
+        "form": "(wildcard-to-regexp \"a[!bc]d\")",
+        "gnu": null,
+        "remacs": "\"\\\\`a[^bc]d\\\\'\""
+      },
+      {
+        "index": 559,
+        "form": "(wildcard-to-regexp \"x[^y]z\")",
+        "gnu": null,
+        "remacs": "\"\\\\`x[\u0000^y]z\\\\'\""
+      },
+      {
+        "index": 560,
+        "form": "(wildcard-to-regexp \"plain\")",
+        "gnu": null,
+        "remacs": "\"\\\\`plain\\\\'\""
+      },
+      {
+        "index": 561,
+        "form": "(let ((d (expand-file-name \"wcc\" temporary-file-directory))) (make-directory d t) (write-region \"x\" nil (expand-file-name \"aa.el\" d)) (write-region \"x\" nil (expand-file-name \"bb.txt\" d)) (file-expand-wildcards (expand-file-name \"*.el\" d)))",
+        "gnu": null,
+        "remacs": "(\"/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/wcc/aa.el\")"
+      },
+      {
+        "index": 562,
+        "form": "(let ((d (expand-file-name \"wcc\" temporary-file-directory))) (file-expand-wildcards (expand-file-name \"*.el\" d) t))",
+        "gnu": null,
+        "remacs": "(\"/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/wcc/aa.el\")"
+      },
+      {
+        "index": 563,
+        "form": "(let ((d (expand-file-name \"wcc\" temporary-file-directory))) (file-extended-attributes (expand-file-name \"aa.el\" d)))",
+        "gnu": null,
+        "remacs": "((acl) (selinux-context nil nil nil nil))"
+      },
+      {
+        "index": 564,
+        "form": "(with-temp-buffer (let ((c (face-remap-add-relative 'default :height 1.2))) (list (prog1 face-remapping-alist (face-remap-remove-relative c)) face-remapping-alist)))",
+        "gnu": null,
+        "remacs": "(((default default)) nil)"
+      },
+      {
+        "index": 565,
+        "form": "(with-temp-buffer (text-scale-mode 1) (list text-scale-mode text-scale-mode-lighter text-scale-mode-amount))",
+        "gnu": null,
+        "remacs": "(t \"+0\" 0)"
+      },
+      {
+        "index": 566,
+        "form": "(with-temp-buffer (text-scale-increase 2) (prog1 (list text-scale-mode-amount text-scale-mode-lighter) (text-scale-decrease 1)))",
+        "gnu": null,
+        "remacs": "(2 \"+2\")"
+      },
+      {
+        "index": 567,
+        "form": "(with-temp-buffer (text-scale-set 0) (list text-scale-mode text-scale-mode-amount))",
+        "gnu": null,
+        "remacs": "(nil 0)"
+      },
+      {
+        "index": 568,
+        "form": "(with-temp-buffer (buffer-face-mode 1) (prog1 (list buffer-face-mode buffer-face-mode-remapping) (buffer-face-mode -1)))",
+        "gnu": null,
+        "remacs": "(t (default . variable-pitch))"
+      },
+      {
+        "index": 569,
+        "form": "(with-temp-buffer (buffer-face-set 'bold) (prog1 (list buffer-face-mode buffer-face-mode-face) (buffer-face-toggle 'bold)))",
+        "gnu": null,
+        "remacs": "(t bold)"
+      },
+      {
+        "index": 570,
+        "form": "(with-temp-buffer (let ((c (face-remap-add-relative 'default 'bold))) (face-remap-set-base 'default 'italic) (prog1 face-remapping-alist (face-remap-reset-base 'default))))",
+        "gnu": null,
+        "remacs": "((default bold default))"
+      },
+      {
+        "index": 571,
+        "form": "(with-temp-buffer (assq 'text-scale-mode minor-mode-alist))",
+        "gnu": null,
+        "remacs": "nil"
+      },
+      {
+        "index": 572,
+        "form": "(let ((m (make-sparse-keymap))) (define-key m [?\\C-a] 'cmdA) (define-key m [?\\M-b] 'cmdA) (define-key m [(control meta ?c)] 'cmdA) (define-key m [(shift ?d)] 'cmdA) (define-key m [(meta hyper ?e)] 'cmdA) (list (lookup-key m [?\\C-a]) (lookup-key m [?\\M-b]) (lookup-key m [(control meta ?c)]) (lookup-key m [(shift ?d)]) (lookup-key m [(meta hyper ?e)]) (lookup-key m \"\\ec\")))",
+        "gnu": null,
+        "remacs": "(cmdA cmdA cmdA cmdA cmdA nil)"
+      },
+      {
+        "index": 573,
+        "form": "(let ((m (make-sparse-keymap))) (define-key m [?\\C-a] 'cmdA) (define-key m [?\\M-b] 'cmdA) (define-key m [(control meta ?c)] 'cmdA) (define-key m [(shift ?d)] 'cmdA) (define-key m [(meta hyper ?e)] 'cmdA) (list (where-is-internal 'cmdA (list m)) (where-is-internal 'cmdA (list m) t) (where-is-internal 'cmdA (list m) 'non-ascii)))",
+        "gnu": null,
+        "remacs": "(([68] [1] [150995045] [134217731] [134217826]) [68] [68])"
+      },
+      {
+        "index": 574,
+        "form": "(let ((m (make-sparse-keymap))) (define-key m [?e] 'cmdE) (define-key m [remap cmdE] 'remappedE) (list (command-remapping 'cmdE) (command-remapping 'cmdE nil (list m)) (where-is-internal 'remappedE (list m)) (where-is-internal 'remappedE (list m) nil nil t)))",
+        "gnu": null,
+        "remacs": "(nil remappedE ([101]) ([remap cmdE]))"
+      },
+      {
+        "index": 575,
+        "form": "(list (event-modifiers 134217728) (event-modifiers 3) (event-modifiers (logior (lsh 1 27) ?a)) (event-modifiers 127) (event-modifiers ?A) (event-modifiers (logior (lsh 1 25) ?a)))",
+        "gnu": null,
+        "remacs": "((control meta) (control) (meta) nil (shift) (shift))"
+      },
+      {
+        "index": 576,
+        "form": "(list (event-basic-type 134217728) (event-basic-type ?A) (event-convert-list '(control meta ?c)) (event-convert-list '(shift ?d)) (event-convert-list '(meta hyper ?e)) (event-convert-list '(meta next)))",
+        "gnu": null,
+        "remacs": "(64 97 134217731 68 150995045 M-next)"
+      },
+      {
+        "index": 577,
+        "form": "(substitute-command-keys \"\\\\[scroll-other-window]|\\\\[execute-extended-command]\")",
+        "gnu": null,
+        "remacs": "#(\"M-x scroll-other-window|M-x execute-extended-command\" 0 23 (font-lock-face help-key-binding face help-key-binding) 24 28 (font-lock-face help-key-binding face help-key-binding) 28 52 (font-lock-face help-key-binding face help-key-binding))"
+      },
+      {
+        "index": 578,
+        "form": "(let ((m (make-sparse-keymap))) (define-key m [?\\M-\\C-f] 'cmdF) (list (lookup-key m \"\\e\\C-f\") (where-is-internal 'cmdF (list m))))",
+        "gnu": null,
+        "remacs": "(cmdF ([134217734]))"
+      },
+      {
+        "index": 579,
+        "form": "(let ((m (make-sparse-keymap))) (define-key m [(meta hyper ?e)] 'cmdA) m)",
+        "gnu": null,
+        "remacs": "(keymap (27 keymap (16777317 . cmdA)))"
+      },
+      {
+        "index": 580,
+        "form": "(where-is-internal 'self-insert-command)",
+        "gnu": null,
+        "remacs": "nil"
+      },
+      {
+        "index": 581,
+        "form": "(key-description (where-is-internal 'self-insert-command nil t))",
+        "gnu": null,
+        "remacs": "\"\""
+      },
+      {
+        "index": 582,
+        "form": "(list (key-description [M-next]) (key-description [next]) (key-description [f1]) (key-description [tab]) (key-description [C-M-next]) (key-description [mouse-1]) (key-description [C-down-mouse-1]))",
+        "gnu": null,
+        "remacs": "(\"M-<next>\" \"<next>\" \"<f1>\" \"<tab>\" \"C-M-<next>\" \"<mouse-1>\" \"C-<down-mouse-1>\")"
+      },
+      {
+        "index": 583,
+        "form": "(key-description [(32 . 126)])",
+        "gnu": null,
+        "remacs": "\"SPC..~\""
+      },
+      {
+        "index": 584,
+        "form": "(list (key-valid-p \"C-x\") (key-valid-p \"M-<next>\") (key-valid-p \"A-C-H-M-S-s-a\") (key-valid-p \"M-C-x\") (key-valid-p \"bad\") (key-valid-p \"\"))",
+        "gnu": null,
+        "remacs": "(t t t nil nil nil)"
+      },
+      {
+        "index": 585,
+        "form": "(list (key-parse \"3*C-x\") (key-parse \"C-M-x\") (key-parse \"M-<next>\") (key-parse \"SPC\"))",
+        "gnu": null,
+        "remacs": "([51 42 67 45 120] [134217752] [M-next] [32])"
+      },
+      {
+        "index": 586,
+        "form": "(let ((m (make-sparse-keymap))) (keymap-set m \"C-c a\" 'cmdA) (list (keymap-lookup m \"C-c a\") (keymap-lookup m \"M-x\")))",
+        "gnu": null,
+        "remacs": "(cmdA nil)"
+      },
+      {
+        "index": 587,
+        "form": "(let ((m (make-sparse-keymap)) (p (make-sparse-keymap))) (set-keymap-parent m p) (keymap-set p \"d\" 'cmdP) (keymap-set m \"d\" 'cmdC) (keymap-unset m \"d\") (list (keymap-lookup m \"d\") (progn (keymap-unset m \"d\" t) (keymap-lookup m \"d\"))))",
+        "gnu": null,
+        "remacs": "(nil cmdP)"
+      },
+      {
+        "index": 588,
+        "form": "(list (keymapp function-key-map) (keymapp key-translation-map) (keymapp input-decode-map) (keymapp local-function-key-map))",
+        "gnu": null,
+        "remacs": "(t t t t)"
+      },
+      {
+        "index": 589,
+        "form": "(key-translate \"a\" \"x\")",
+        "gnu": null,
+        "remacs": "120"
+      },
+      {
+        "index": 590,
+        "form": "(prog1 (aref keyboard-translate-table ?a) (key-translate-remove \"a\"))",
+        "gnu": null,
+        "remacs": "120"
+      },
+      {
+        "index": 591,
+        "form": "(keyboard-translate ?a ?x)",
+        "gnu": null,
+        "remacs": "120"
+      },
+      {
+        "index": 592,
+        "form": "(list (boundp 'char-width-table) (char-table-p char-width-table) (aref char-width-table 65) (aref char-width-table 128) (aref char-width-table 12288) (aref char-width-table 917505) (char-table-subtype char-width-table))",
+        "gnu": null,
+        "remacs": "(t t 1 4 2 0 nil)"
+      },
+      {
+        "index": 593,
+        "form": "(list text-quoting-style (text-quoting-style))",
+        "gnu": null,
+        "remacs": "(nil curve)"
+      },
+      {
+        "index": 594,
+        "form": "(let ((text-quoting-style 'grave)) (list (text-quoting-style) (substitute-command-keys \"`foo'\")))",
+        "gnu": null,
+        "remacs": "(grave \"`foo'\")"
+      },
+      {
+        "index": 595,
+        "form": "(let ((text-quoting-style 'straight)) (list (text-quoting-style) (substitute-command-keys \"`foo'\")))",
+        "gnu": null,
+        "remacs": "(straight \"'foo'\")"
+      },
+      {
+        "index": 596,
+        "form": "(let ((text-quoting-style 'quote)) (list (text-quoting-style) (substitute-command-keys \"`foo'\")))",
+        "gnu": null,
+        "remacs": "(curve \"‘foo’\")"
+      },
+      {
+        "index": 597,
+        "form": "(with-temp-buffer (dolist (c '(65 128 159 160 161 172 2460 9484 12288 65284 127 1)) (erase-buffer) (insert c) (insert (format \"%d:%d \" c (current-column)))) (buffer-string))",
+        "gnu": null,
+        "remacs": "\"\u00011:2 \""
+      },
+      {
+        "index": 598,
+        "form": "(with-temp-buffer (insert 12354 12288 65) (indent-to 20) (list (current-column) (point)))",
+        "gnu": null,
+        "remacs": "(20 10)"
+      },
+      {
+        "index": 599,
+        "form": "(with-temp-buffer (insert 12288 12296 65 9 66) (goto-char (point-min)) (list (progn (move-to-column 3) (list (point) (current-column))) (progn (move-to-column 5) (list (point) (current-column))) (progn (move-to-column 7) (list (point) (current-column)))))",
+        "gnu": null,
+        "remacs": "((3 4) (4 5) (5 8))"
+      },
+      {
+        "index": 600,
+        "form": "(with-temp-buffer (describe-vector [nil a nil b nil] 'princ) (buffer-string))",
+        "gnu": null,
+        "remacs": "\"\nC-a\t\ta\nC-c\t\tb\n\""
+      },
+      {
+        "index": 601,
+        "form": "(with-temp-buffer (let ((ct (make-char-table nil nil))) (set-char-table-range ct '(65 . 90) 'word) (aset ct 97 'letter) (describe-vector ct 'princ) (buffer-string)))",
+        "gnu": null,
+        "remacs": "\"\nA .. Z\t\tword\na\t\tletter\n\""
+      },
+      {
+        "index": 602,
+        "form": "(with-temp-buffer (mapc #'internal-describe-syntax-value (list nil '(4 . 41) '(5 . 40) 3 '(0) '(2) '(1) '(7) '(11) '(15))) (buffer-string))",
+        "gnu": null,
+        "remacs": "\"default()\twhich means: open, matches ))(\twhich means: close, matches (invalid  \twhich means: whitespacew \twhich means: word. \twhich means: punctuation\\\" \twhich means: string< \twhich means: comment| \twhich means: string fence\""
+      },
+      {
+        "index": 603,
+        "form": "(with-temp-buffer (internal-describe-syntax-value (logior 4 (lsh 1 20))) (buffer-string))",
+        "gnu": null,
+        "remacs": "\"invalid\""
+      },
+      {
+        "index": 604,
+        "form": "(with-temp-buffer (internal-describe-syntax-value (logior 4 (lsh 1 16) (lsh 1 17))) (buffer-string))",
+        "gnu": null,
+        "remacs": "\"invalid\""
+      },
+      {
+        "index": 605,
+        "form": "(with-temp-buffer (internal-describe-syntax-value (logior 11 (lsh 1 21) (lsh 1 22))) (buffer-string))",
+        "gnu": null,
+        "remacs": "\"invalid\""
+      },
+      {
+        "index": 606,
+        "form": "(list (char-table-parent (with-current-buffer \"*scratch*\" (syntax-table))) (eq (with-current-buffer \"*scratch*\" (syntax-table)) lisp-interaction-mode-syntax-table) (eq (char-table-parent (with-current-buffer \"*scratch*\" (syntax-table))) emacs-lisp-mode-syntax-table))",
+        "gnu": null,
+        "remacs": "(#^[nil #^[nil #^[nil #^[(0) nil syntax-table #^^[3 0 (1) (1) (1) (1) (1) (1) (1) (1) (1) (0) (0) (1) (0) (0) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (0) (1) (7) (1) (2) (2) (3) (1) (4 . 41) (5 . 40) (3) (3) (1) (3) (1) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (1) (1) (3) (3) (3) (1) (1) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (4 . 93) (9) (5 . 91) (1) (3) (1) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (4 . 125) (3) (5 . 123) (1) (1)] #^^[1 0 #^^[2 0 #^^[3 0 (1) (1) (1) (1) (1) (1) (1) (1) (1) (0) (0) (1) (0) (0) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (0) (1) (7) (1) (2) (2) (3) (1) (4 . 41) (5 . 40) (3) (3) (1) (3) (1) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (1) (1) (3) (3) (3) (1) (1) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (4 . 93) (9) (5 . 91) (1) (3) (1) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (4 . 125) (3) (5 . 123) (1) (1)] #^^[3 128 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (0) (1) (3) (3) (3) (2) (3) (1) (3) (3) (3) (1) (3) (3) (3) (3) (3) (3) (2) (2) (3) (2) (3) (3) (3) (2) (3) (1) (3) (3) (3) (1) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) #^^[3 640 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (2) (3) (2) (2) (2) (2) (2) (2) (3) (2) (2) (2) (2) (2) (2) (2) (3) (3) (3) (3) (2) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) #^^[3 896 (2) (2) (2) (2) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) #^^[3 1408 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (1) (2) (1) (2) (2) (1) (2) (2) (1) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (1) (1) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) #^^[3 3584 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (2) (2) (2) (2) (2) (2) (3) (2) (2) (2) (2) (2) (2) (2) (2) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] #^^[3 3712 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] #^^[3 3840 (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (2) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (2) (1) (1) (1) (1) (1) (1) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (1) (2) (1) (2) (1) (1) (1) (1) (1) (1) (1) (1) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (1)] #^^[3 3968 (2) (2) (2) (2) (2) (1) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)]] #^^[2 4096 (2) (2) (2) (2) (2) (2) #^^[3 4864 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (1) (1) (1) (1) (1) (1) (1) (1) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) (2) (2) (2) (2) (2) (2) #^^[3 6144 (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] #^^[2 8192 #^^[3 8192 (0) (0) (0) (0) (0) (0) (0) (0) (0) (0) (0) (0) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (2) (2) (2) (2) (2) (2) (2) (0) (1) (1) (1) (1) (1) (1) (1) (1) (1) (3) (3) (1) (1) (1) (1) (1) (1) (1) (1) (1) (3) (4 . 8262) (5 . 8261) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (3) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (0) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (4 . 8318) (5 . 8317) (2)] #^^[3 8320 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (4 . 8334) (5 . 8333) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] #^^[3 8448 (2) (2) (2) (3) (2) (2) (2) (2) (2) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (1) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (3) (2) (2) (2) (2) (2) (2) (3) (3) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] #^^[3 8576 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3)] (3) (3) #^^[3 8960 (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (4 . 9002) (5 . 9001) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3)] #^^[3 9088 (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (4 . 9141) (5 . 9140) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3)] #^^[3 9216 (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (2) (2) (2) (2) (2) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3)] #^^[3 9344 (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] #^^[3 9472 (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] #^^[3 9600 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (3) (2) (3) (3) (3) (3) (3) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (3) (3) (2) (2) (3) (3) (2) (2) (2) (2) (3) (3) (2) (2) (3) (3) (2) (2) (2) (2) (3) (3) (3) (2) (2) (3) (2) (2) (3) (3) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] #^^[3 9728 (2) (2) (2) (2) (2) (3) (3) (2) (2) (2) (2) (2) (2) (2) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (2) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (2) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (3) (2) (3) (3) (3) (2) (3) (3) (3) (3) (2) (3) (3) (2) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) #^^[3 9984 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (4 . 10089) (5 . 10088) (4 . 10091) (5 . 10090) (4 . 10093) (5 . 10092) (2) (2) (4 . 10097) (5 . 10096) (4 . 10099) (5 . 10098) (4 . 10101) (5 . 10100) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] #^^[3 10112 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (4 . 10215) (5 . 10214) (4 . 10217) (5 . 10216) (4 . 10219) (5 . 10218) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) #^^[3 10624 (2) (2) (2) (4 . 10628) (5 . 10627) (4 . 10630) (5 . 10629) (4 . 10632) (5 . 10631) (4 . 10634) (5 . 10633) (4 . 10636) (5 . 10635) (4 . 10638) (5 . 10637) (4 . 10640) (5 . 10639) (4 . 10642) (5 . 10641) (4 . 10644) (5 . 10643) (4 . 10646) (5 . 10645) (4 . 10648) (5 . 10647) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (4 . 10749) (5 . 10748) (2) (2)] (3) (3) (3) (3) (2) (2) (2) (2) (1) (2) (2) (2)] #^^[2 12288 #^^[3 12288 (0) (1) (1) (1) (2) (2) (2) (2) (4 . 12297) (5 . 12296) (4 . 12299) (5 . 12298) (4 . 12301) (5 . 12300) (4 . 12303) (5 . 12302) (4 . 12305) (5 . 12304) (3) (3) (4 . 12309) (5 . 12308) (4 . 12311) (5 . 12310) (4 . 12313) (5 . 12312) (4 . 12315) (5 . 12314) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] #^^[3 12416 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (1) (2) (2) (2) (2)] (2) (2) #^^[3 12800 (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (2) (2) (2) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (2) (2) (3) (3)] (2) (2) #^^[3 13184 (3) (3) (3) (3) (3) (2) (2) (2) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (2) (2) (2) (2) (3) (3) (2) (2) (3) (2) (2) (3) (2) (3) (2) (2) (3) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) (2) (2) (2) #^^[2 40960 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) #^^[3 43648 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (3) (3) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) (2) #^^[2 61440 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) #^^[3 64768 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (4 . 64831) (5 . 64830) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) #^^[3 65024 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (4 . 65078) (5 . 65077) (4 . 65080) (5 . 65079) (4 . 65082) (5 . 65081) (4 . 65084) (5 . 65083) (4 . 65086) (5 . 65085) (4 . 65088) (5 . 65087) (4 . 65090) (5 . 65089) (4 . 65092) (5 . 65091) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (4 . 65114) (5 . 65113) (4 . 65116) (5 . 65115) (4 . 65118) (5 . 65117) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) #^^[3 65280 (2) (1) (1) (1) (3) (1) (1) (1) (4 . 65289) (5 . 65288) (1) (3) (1) (1) (1) (1) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (1) (1) (3) (3) (3) (1) (1) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (4 . 65341) (3) (5 . 65339) (3) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (4 . 65373) (3) (5 . 65371) (3) (4 . 65376) (5 . 65375) (1) (4 . 65379) (5 . 65378) (1) (1) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] #^^[3 65408 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (3) (3) (3) (2) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)]]] #^^[1 65536 (2) #^^[2 69632 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) #^^[3 71168 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) #^^[2 126976 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) #^^[3 129920 (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1)] (2) (2) (2) (2) (2) (2) (2) (2)]] (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) #^^[1 1114112 #^^[2 1114112 (3) #^^[3 1114240 (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) #^^[3 1114752 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3)] #^^[3 1114880 (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) #^^[1 1310720 #^^[2 1310720 (3) #^^[3 1310848 (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) #^^[3 1311360 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) (2) (2) (2) (2) #^^[2 1343488 (3) (3) #^^[3 1343744 (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) #^^[1 2555904 (2) (2) (2) (2) (2) (2) (2) (2) (2) #^^[2 2592768 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) #^^[3 2596736 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3)]] #^^[2 2596864 #^^[3 2596864 (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) #^^[3 2597120 (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3)] (3) #^^[3 2597376 (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3)] #^^[3 2597504 (3) (3) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] (2) (2) (2) (2) (2)] (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2) (2)] syntax-table nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil] syntax-table #^^[3 0 (3) (3) (3) (3) (3) (3) (3) (3) (3) (0) (12) (3) (0) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (0) (3) (7) (6) (3) (3) (3) (6) (4 . 41) (5 . 40) (3) (3) (6) (3) (3) (3) nil nil nil nil nil nil nil nil nil nil (3) (11) (3) (3) (3) (3) (1048579) nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil (4 . 93) (9) (5 . 91) (3) (3) (6) nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil (3) (3) (3) (3) (3)] #^^[1 0 #^^[2 0 #^^[3 0 (3) (3) (3) (3) (3) (3) (3) (3) (3) (0) (12) (3) (0) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (3) (0) (3) (7) (6) (3) (3) (3) (6) (4 . 41) (5 . 40) (3) (3) (6) (3) (3) (3) nil nil nil nil nil nil nil nil nil nil (3) (11) (3) (3) (3) (3) (1048579) nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil (4 . 93) (9) (5 . 91) (3) (3) (6) nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil (3) (3) (3) (3) (3)] #^^[3 128 nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil (0) nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil] nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil] nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil] nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil] syntax-table #^^[3 0 nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil (3) nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil] #^^[1 0 #^^[2 0 #^^[3 0 nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil (3) nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil] nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil] nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil] nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil] t t)"
+      },
+      {
+        "index": 607,
+        "form": "(fboundp 'describe-syntax) (fboundp 'describe-vector) (fboundp 'internal-describe-syntax-value) (fboundp 'describe-categories)",
+        "gnu": null,
+        "remacs": "ERR:wrong-number-of-arguments"
+      },
+      {
+        "index": 608,
+        "form": "(with-temp-buffer (insert \"a\\t\" (string 128) \"XY\" (string 34920) (string 34922) \"é…α§\" (string 917505) \"tail\\n\") (goto-char (point-min)) (list (progn (move-to-column 4) (list (point) (current-column))) (progn (move-to-column 99 t) (list (point) (current-column))) (buffer-string)))",
+        "gnu": null,
+        "remacs": "((3 8) (29 99) \"a\tXY表衪é…α§󠀁tail\t\t\t\t\t\t\t\t\t   \n\")"
+      },
+      {
+        "index": 609,
+        "form": "(with-temp-buffer (setq indent-tabs-mode nil) (insert \"abc\\n\") (goto-char 1) (move-to-column 20 t) (list (point) (current-column)))",
+        "gnu": null,
+        "remacs": "(21 20)"
+      },
+      {
+        "index": 610,
+        "form": "(with-temp-buffer (setq tab-width 4 indent-tabs-mode t) (insert \"ab\\n\") (goto-char 1) (move-to-column 9 t) (list (point) (current-column)))",
+        "gnu": null,
+        "remacs": "(6 9)"
+      },
+      {
+        "index": 611,
+        "form": "(list (string-width \"\\t\") (string-width \"\\n\") (string-width \"a\\tb\") (string-width (string 128)) (string-width (string 917505)) (string-width \"é…α§\") (string-width (string 34920)))",
+        "gnu": null,
+        "remacs": "(8 0 10 4 0 8 2)"
+      },
+      {
+        "index": 612,
+        "form": "(save-window-excursion (let ((w1 (selected-window))) (split-window) (split-window-horizontally) (let ((ws (window-list))) (list (window-edges (frame-root-window)) (mapcar (lambda (w) (window-edges w)) ws) (window-edges (minibuffer-window)) (mapcar (lambda (d) (let ((r (window-in-direction d w1))) (and r (seq-position r ws)))) '(left right above below up down))))))",
+        "gnu": null,
+        "remacs": "ERR:error"
+      },
+      {
+        "index": 613,
+        "form": "(save-window-excursion (let ((w1 (selected-window))) (split-window-horizontally) (let ((ws (window-list))) (list (mapcar (lambda (w) (list (window-pixel-left w) (window-pixel-top w) (window-pixel-width w) (window-pixel-height w))) ws) (mapcar (lambda (s) (window-at-side-p w1 s)) '(left top right bottom)) (window-at-side-p (nth 1 ws) 'right) (window-at-side-p (nth 1 ws) 'left)))))",
+        "gnu": null,
+        "remacs": "(((0 1 40 6) (40 1 40 6) (0 7 80 6) (0 13 80 12)) (t t nil nil) t nil)"
+      },
+      {
+        "index": 614,
+        "form": "(save-window-excursion (let ((w1 (selected-window))) (split-window) (let ((ws (window-list))) (list (eq (get-lru-window) w1) (eq (get-mru-window) w1) (eq (get-largest-window) w1) (length (window-list-1 nil 'nomini)) (length (window-list-1 nil t)) (window-full-width-p w1) (window-full-height-p w1)))))",
+        "gnu": null,
+        "remacs": "ERR:error"
+      },
+      {
+        "index": 615,
+        "form": "(save-window-excursion (let ((w1 (selected-window))) (split-window) (split-window-horizontally) (let ((ws (window-list))) (list (seq-position (window-in-direction 'right (nth 1 ws) nil nil t) ws) (seq-position (window-in-direction 'above w1 nil nil t) ws) (window-minibuffer-p (window-in-direction 'below (nth 2 ws) nil nil nil t)) (progn (set-window-parameter (nth 1 ws) 'no-other-window t) (list (window-in-direction 'left (nth 2 ws)) (seq-position (window-in-direction 'left (nth 1 ws) t) ws)))))))",
+        "gnu": null,
+        "remacs": "ERR:error"
+      },
+      {
+        "index": 616,
+        "form": "(save-window-excursion (let ((w1 (selected-window))) (split-window) (select-window (nth 1 (window-list))) (list (eq (get-lru-window) w1) (eq (get-mru-window) (nth 1 (window-list))) (> (window-use-time (nth 1 (window-list))) (window-use-time w1)))))",
+        "gnu": null,
+        "remacs": "ERR:error"
+      },
+      {
+        "index": 617,
+        "form": "(with-temp-buffer (insert \"65\") (eval-last-sexp nil))",
+        "gnu": null,
+        "remacs": "65"
+      },
+      {
+        "index": 618,
+        "form": "(with-temp-buffer (insert \"65\") (eval-last-sexp t) (buffer-string))",
+        "gnu": null,
+        "remacs": "\"6565\""
+      },
+      {
+        "index": 619,
+        "form": "(with-temp-buffer (insert \"65\") (eval-last-sexp 0) (buffer-string))",
+        "gnu": null,
+        "remacs": "\"6565 (#o101, #x41, ?A)\""
+      },
+      {
+        "index": 620,
+        "form": "(with-temp-buffer (insert \"(+ 20 22)\") (eval-print-last-sexp) (buffer-string))",
+        "gnu": null,
+        "remacs": "\"(+ 20 22)\n42\n\""
+      },
+      {
+        "index": 621,
+        "form": "(with-temp-buffer (insert \"(list 1 2)\") (elisp--preceding-sexp))",
+        "gnu": null,
+        "remacs": "(list 1 2)"
+      },
+      {
+        "index": 622,
+        "form": "(with-temp-buffer (insert \"?\\\\e\") (elisp--preceding-sexp))",
+        "gnu": null,
+        "remacs": "27"
+      },
+      {
+        "index": 623,
+        "form": "(with-temp-buffer (insert \"(interactive \\\"P\\\")\") (elisp--preceding-sexp))",
+        "gnu": null,
+        "remacs": "(call-interactively (lambda (&rest args) (interactive \"P\") args))"
+      },
+      {
+        "index": 624,
+        "form": "(eval-expression-get-print-arguments nil)",
+        "gnu": null,
+        "remacs": "(nil nil 127)"
+      },
+      {
+        "index": 625,
+        "form": "(eval-expression-get-print-arguments '-)",
+        "gnu": null,
+        "remacs": "(nil nil 2305843009213693951)"
+      },
+      {
+        "index": 626,
+        "form": "(eval-expression-get-print-arguments 0)",
+        "gnu": null,
+        "remacs": "(t t 127)"
+      },
+      {
+        "index": 627,
+        "form": "(eval-expression-get-print-arguments '(4))",
+        "gnu": null,
+        "remacs": "(t nil nil)"
+      },
+      {
+        "index": 628,
+        "form": "(eval-expression-print-format 65)",
+        "gnu": null,
+        "remacs": "\" (#o101, #x41, ?A)\""
+      },
+      {
+        "index": 629,
+        "form": "(with-temp-buffer (insert \"line one\\nline two\") (goto-char 2) (kill-visual-line) (buffer-string))",
+        "gnu": null,
+        "remacs": "\"ine one\nline two\""
+      },
+      {
+        "index": 630,
+        "form": "(condition-case e (scroll-up 100) (error (car e)))",
+        "gnu": null,
+        "remacs": "end-of-buffer"
+      },
+      {
+        "index": 631,
+        "form": "(condition-case e (scroll-down 100) (error (car e)))",
+        "gnu": null,
+        "remacs": "beginning-of-buffer"
+      },
+      {
+        "index": 632,
+        "form": "(condition-case e (with-temp-buffer (recenter)) (error (car e)))",
+        "gnu": null,
+        "remacs": "error"
+      },
+      {
+        "index": 633,
+        "form": "(window-line-height)",
+        "gnu": null,
+        "remacs": "nil"
+      },
+      {
+        "index": 634,
+        "form": "(condition-case e (with-temp-buffer (window-line-height)) (error (car e)))",
+        "gnu": null,
+        "remacs": "nil"
+      },
+      {
+        "index": 635,
+        "form": "(require 'view)",
+        "gnu": null,
+        "remacs": "view"
+      },
+      {
+        "index": 636,
+        "form": "(list (fboundp 'view-mode) (fboundp 'view-file) (boundp 'view-mode))",
+        "gnu": null,
+        "remacs": "(t t t)"
+      },
+      {
+        "index": 637,
+        "form": "(boundp 'kill-emacs-hook)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 638,
+        "form": "(boundp 'warning-inhibit-types)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 639,
+        "form": "(boundp 'dump-mode)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 640,
+        "form": "(fboundp 'convert-standard-filename)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 641,
+        "form": "(fboundp 'locate-user-emacs-file)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 642,
+        "form": "(listp (locate-user-emacs-file '(\"a\" \"b\")))",
+        "gnu": null,
+        "remacs": "nil"
+      },
+      {
+        "index": 643,
+        "form": "(require 'savehist)",
+        "gnu": null,
+        "remacs": "savehist"
+      },
+      {
+        "index": 644,
+        "form": "(list (fboundp 'savehist-save) (boundp 'savehist-file) (boundp 'savehist-additional-variables))",
+        "gnu": null,
+        "remacs": "(t t t)"
+      },
+      {
+        "index": 645,
+        "form": "(require 'savehist)",
+        "gnu": null,
+        "remacs": "savehist"
+      },
+      {
+        "index": 646,
+        "form": "(savehist-printable (list 1 \"x\" 's))",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 647,
+        "form": "(require 'savehist)",
+        "gnu": null,
+        "remacs": "savehist"
+      },
+      {
+        "index": 648,
+        "form": "(savehist-printable (make-marker))",
+        "gnu": null,
+        "remacs": "nil"
+      },
+      {
+        "index": 649,
+        "form": "(require 'savehist)",
+        "gnu": null,
+        "remacs": "savehist"
+      },
+      {
+        "index": 650,
+        "form": "(savehist--merge '(a b c) '(d e))",
+        "gnu": null,
+        "remacs": "(a d b e c)"
+      },
+      {
+        "index": 651,
+        "form": "(require 'savehist)",
+        "gnu": null,
+        "remacs": "savehist"
+      },
+      {
+        "index": 652,
+        "form": "(savehist--merge (savehist--merge '(a b) '(c d)) '(c d))",
+        "gnu": null,
+        "remacs": "(a c d b)"
+      },
+      {
+        "index": 653,
+        "form": "(and (fboundp 'imenu) t)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 654,
+        "form": "(autoloadp (symbol-function 'imenu))",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 655,
+        "form": "(fboundp 'imenu-add-menubar-index)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 656,
+        "form": "(fboundp 'imenu-add-to-menubar)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 657,
+        "form": "(boundp 'imenu-generic-expression)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 658,
+        "form": "(boundp 'imenu-case-fold-search)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 659,
+        "form": "(boundp 'imenu-create-index-function)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 660,
+        "form": "(boundp 'imenu--index-alist)",
+        "gnu": null,
+        "remacs": "nil"
+      },
+      {
+        "index": 661,
+        "form": "(with-temp-buffer (emacs-lisp-mode) (consp imenu-generic-expression))",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 662,
+        "form": "(with-temp-buffer (emacs-lisp-mode) imenu-case-fold-search)",
+        "gnu": null,
+        "remacs": "nil"
+      },
+      {
+        "index": 663,
+        "form": "(with-temp-buffer (lisp-mode) imenu-case-fold-search)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 664,
+        "form": "(functionp 'imenu)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 665,
+        "form": "(functionp 'if)",
+        "gnu": null,
+        "remacs": "nil"
+      },
+      {
+        "index": 666,
+        "form": "(functionp (symbol-function 'if))",
+        "gnu": null,
+        "remacs": "nil"
+      },
+      {
+        "index": 667,
+        "form": "(functionp (symbol-function 'when))",
+        "gnu": null,
+        "remacs": "nil"
+      },
+      {
+        "index": 668,
+        "form": "(with-temp-buffer (marker-insertion-type (copy-marker (point-min) t)))",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 669,
+        "form": "(with-temp-buffer (format \"%s\" (copy-marker (point-min) t)))",
+        "gnu": null,
+        "remacs": "\"#<marker (moves after insertion) at 1 in  *temp*>\""
+      },
+      {
+        "index": 670,
+        "form": "(with-temp-buffer (format \"%s\" (point-marker)))",
+        "gnu": null,
+        "remacs": "\"#<marker at 1 in  *temp*>\""
+      },
+      {
+        "index": 671,
+        "form": "(boundp 'read-hide-char)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 672,
+        "form": "(boundp 'yes-or-no-prompt)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 673,
+        "form": "(boundp 'use-short-answers)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 674,
+        "form": "yes-or-no-prompt",
+        "gnu": null,
+        "remacs": "\"(yes or no) \""
+      },
+      {
+        "index": 675,
+        "form": "use-short-answers",
+        "gnu": null,
+        "remacs": "nil"
+      },
+      {
+        "index": 676,
+        "form": "read-hide-char",
+        "gnu": null,
+        "remacs": "nil"
+      },
+      {
+        "index": 677,
+        "form": "(boundp 'read-expression-history)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 678,
+        "form": "(fboundp 'read-minibuffer)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 679,
+        "form": "(fboundp 'eval-minibuffer)",
+        "gnu": null,
+        "remacs": "t"
+      },
+      {
+        "index": 680,
+        "form": "(fboundp 'read--expression)",
+        "gnu": null,
+        "remacs": "t"
+      }
+    ]
+  },
+  {
+    "file": "corpus/overlays.txt",
+    "count": 40,
+    "sides": {
+      "gnu": {
+        "returncode": 255,
+        "timed_out": false,
+        "records": 39,
+        "expected": 40,
+        "seconds": 0.23
+      },
+      "remacs": {
+        "returncode": 255,
+        "timed_out": false,
+        "records": 39,
+        "expected": 40,
+        "seconds": 8.54
+      }
+    },
+    "differences": [
+      {
+        "index": 39,
+        "form": "(with-temp-buffer (insert \"abc\") (let ((o (make-overlay 1 3))) (list (overlays-at-point) (length (overlays-at-point))))",
+        "gnu": null,
+        "remacs": null
+      }
+    ]
+  },
+  {
+    "file": "corpus/printread.txt",
+    "count": 190,
+    "sides": {
+      "gnu": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 190,
+        "expected": 190,
+        "seconds": 0.24
+      },
+      "remacs": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 190,
+        "expected": 190,
+        "seconds": 8.48
+      }
+    },
+    "differences": [
+      {
+        "index": 75,
+        "form": "(prin1-to-string (selected-frame))",
+        "gnu": "\"#<frame F1 0x79ac0ebf8>\"",
+        "remacs": "\"#<frame F1 0x10ae32800>\""
+      },
+      {
+        "index": 144,
+        "form": "(car (read-from-string \"#$\"))",
+        "gnu": "\"/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/corpus/printread.gnu.el\"",
+        "remacs": "\"/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/corpus/printread.remacs.el\""
+      }
+    ]
+  },
+  {
+    "file": "corpus/processes.txt",
+    "count": 5,
+    "sides": {
+      "gnu": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 5,
+        "expected": 5,
+        "seconds": 0.22
+      },
+      "remacs": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 5,
+        "expected": 5,
+        "seconds": 8.79
+      }
+    },
+    "differences": []
+  },
+  {
+    "file": "corpus/regexps.txt",
+    "count": 134,
+    "sides": {
+      "gnu": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 134,
+        "expected": 134,
+        "seconds": 0.24
+      },
+      "remacs": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 134,
+        "expected": 134,
+        "seconds": 8.83
+      }
+    },
+    "differences": []
+  },
+  {
+    "file": "corpus/strings.txt",
+    "count": 387,
+    "sides": {
+      "gnu": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 387,
+        "expected": 387,
+        "seconds": 0.29
+      },
+      "remacs": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 387,
+        "expected": 387,
+        "seconds": 8.71
+      }
+    },
+    "differences": [
+      {
+        "index": 230,
+        "form": "(symbol-plist 'car)",
+        "gnu": "(slot-name t gv-expander #[385 \"\\300\\301\\302\u0004\u0004$\\207\" [gv--defsetter car #[385 \"\\300\\301\u0002\u0004C\\\"B\\207\" [setcar append] 6 \"\n\n(fn VAL &rest ARGS)\"]] 7 \"\n\n(fn DO &rest ARGS)\"])",
+        "remacs": "(slot-name t gv-expander #[(do &rest args) ((declare-function gv--defsetter \"gv\" (name setter do args &optional vars)) (gv--defsetter 'car (lambda (val &rest args) `(,'setcar ,@args ,val)) do args)) (t)])"
+      },
+      {
+        "index": 322,
+        "form": "(read-from-string \"#$\")",
+        "gnu": "(\"/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/corpus/strings.gnu.el\" . 2)",
+        "remacs": "(\"/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/corpus/strings.remacs.el\" . 2)"
+      }
+    ]
+  },
+  {
+    "file": "corpus/subrx.txt",
+    "count": 1555,
+    "sides": {
+      "gnu": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 1555,
+        "expected": 1555,
+        "seconds": 1.49
+      },
+      "remacs": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 1555,
+        "expected": 1555,
+        "seconds": 11.21
+      }
+    },
+    "differences": [
+      {
+        "index": 578,
+        "form": "(directory-files \"/tmp\" nil nil nil 2)",
+        "gnu": "(\".\" \"..\")",
+        "remacs": "(\"g41b.txt\" \"r57.txt\")"
+      },
+      {
+        "index": 885,
+        "form": "(prin1 (car (memq 'connection-local-variables-alist ignored-local-variables)))",
+        "gnu": "connection-local-variables-alist",
+        "remacs": "nil"
+      },
+      {
+        "index": 890,
+        "form": "(prin1 (fboundp 'modify-file-local-variable-prop-line))",
+        "gnu": "t",
+        "remacs": "nil"
+      },
+      {
+        "index": 1539,
+        "form": "(prin1 (japanese-hiragana ?カ))",
+        "gnu": "12363",
+        "remacs": "12459"
+      },
+      {
+        "index": 1540,
+        "form": "(prin1 (japanese-katakana ?か))",
+        "gnu": "12459",
+        "remacs": "12363"
+      },
+      {
+        "index": 1541,
+        "form": "(prin1 (japanese-katakana \"かな\"))",
+        "gnu": "\"カナ\"",
+        "remacs": "\"かな\""
+      },
+      {
+        "index": 1542,
+        "form": "(prin1 (japanese-hiragana \"カナ\"))",
+        "gnu": "\"かな\"",
+        "remacs": "\"カナ\""
+      },
+      {
+        "index": 1543,
+        "form": "(prin1 (japanese-zenkaku ?a))",
+        "gnu": "65345",
+        "remacs": "97"
+      },
+      {
+        "index": 1544,
+        "form": "(prin1 (japanese-hankaku ?あ))",
+        "gnu": "65393",
+        "remacs": "12354"
+      },
+      {
+        "index": 1545,
+        "form": "(prin1 (japanese-hankaku ?ａ t))",
+        "gnu": "97",
+        "remacs": "65345"
+      },
+      {
+        "index": 1546,
+        "form": "(prin1 (japanese-katakana ?が))",
+        "gnu": "12460",
+        "remacs": "12364"
+      },
+      {
+        "index": 1547,
+        "form": "(prin1 (japanese-hiragana ?ガ))",
+        "gnu": "12364",
+        "remacs": "12460"
+      }
+    ]
+  },
+  {
+    "file": "corpus/symbols.txt",
+    "count": 88,
+    "sides": {
+      "gnu": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 88,
+        "expected": 88,
+        "seconds": 0.23
+      },
+      "remacs": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 88,
+        "expected": 88,
+        "seconds": 8.66
+      }
+    },
+    "differences": []
+  },
+  {
+    "file": "corpus/textprops.txt",
+    "count": 30,
+    "sides": {
+      "gnu": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 30,
+        "expected": 30,
+        "seconds": 0.89
+      },
+      "remacs": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 30,
+        "expected": 30,
+        "seconds": 8.91
+      }
+    },
+    "differences": []
+  },
+  {
+    "file": "corpus/undo.txt",
+    "count": 71,
+    "sides": {
+      "gnu": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 71,
+        "expected": 71,
+        "seconds": 0.24
+      },
+      "remacs": {
+        "returncode": 0,
+        "timed_out": false,
+        "records": 71,
+        "expected": 71,
+        "seconds": 8.89
+      }
+    },
+    "differences": []
+  }
+]

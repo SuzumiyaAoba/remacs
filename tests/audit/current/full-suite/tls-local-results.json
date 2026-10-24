@@ -1,0 +1,27 @@
+{
+  "results": [
+    {
+      "side": "gnu",
+      "returncode": 0,
+      "stdout": "(t network)",
+      "passed": true
+    },
+    {
+      "side": "remacs",
+      "returncode": 0,
+      "stdout": "(t network)",
+      "passed": true
+    }
+  ],
+  "server": [
+    {
+      "tls": "TLSv1.2",
+      "requested_get": true
+    },
+    {
+      "tls": "TLSv1.2",
+      "requested_get": true
+    }
+  ],
+  "trust": "Temporary test CA explicitly trusted; verification enabled; private key removed."
+}

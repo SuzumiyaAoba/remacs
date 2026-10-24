@@ -1,0 +1,77 @@
+[
+  {
+    "name": "qa_buffer2",
+    "side": "gnu",
+    "returncode": 0,
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "--batch",
+      "-l",
+      "tests/qa_framework.el",
+      "-l",
+      "tests/qa_buffer2.el"
+    ]
+  },
+  {
+    "name": "qa_buffer2",
+    "side": "unit-noninteractive",
+    "returncode": 0,
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/qa-3bcd45541de437b0",
+      "qa_buffer2",
+      "--exact",
+      "--nocapture"
+    ]
+  },
+  {
+    "name": "qa_mark",
+    "side": "gnu",
+    "returncode": 0,
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "--batch",
+      "-l",
+      "tests/qa_framework.el",
+      "-l",
+      "tests/qa_mark.el"
+    ]
+  },
+  {
+    "name": "qa_mark",
+    "side": "unit-noninteractive",
+    "returncode": 0,
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/qa-3bcd45541de437b0",
+      "qa_mark",
+      "--exact",
+      "--nocapture"
+    ]
+  },
+  {
+    "name": "qa_time_modifiers",
+    "side": "gnu",
+    "returncode": 255,
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "--batch",
+      "-l",
+      "tests/qa_framework.el",
+      "-l",
+      "tests/qa_time_modifiers.el"
+    ]
+  },
+  {
+    "name": "qa_time_modifiers",
+    "side": "unit-noninteractive",
+    "returncode": 101,
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/qa-3bcd45541de437b0",
+      "qa_time_modifiers",
+      "--exact",
+      "--nocapture"
+    ]
+  }
+]

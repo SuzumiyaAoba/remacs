@@ -1,0 +1,577 @@
+{
+  "head": "926cbfc7fe1ddde28c53d0555be1f6b99563535b",
+  "worktree_head": "4fa55e5f05311b26e5af242c09397c7583cad14f",
+  "binary_sha256": "37aec7800115143d785086fa184114757237776c93c892e30696644b5c255017",
+  "runs": [
+    {
+      "id": "mode:emacs-lisp-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"(defun foo (x)\\n(if x\\n(+ x 1)\\n0))\\n\") (emacs-lisp-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok (emacs-lisp-mode \"(defun foo (x)\\n  (if x\\n      (+ x 1)\\n    0))\\n\" (nil font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face nil font-lock-function-name-face font-lock-function-name-face font-lock-function-name-face nil nil)))",
+      "stdout": "mode-emacs-lisp-mode.current.gnu.out",
+      "stderr": "mode-emacs-lisp-mode.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode:emacs-lisp-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"(defun foo (x)\\n(if x\\n(+ x 1)\\n0))\\n\") (emacs-lisp-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.81,
+      "value": "(ok (emacs-lisp-mode \"(defun foo (x)\\n  (if x\\n      (+ x 1)\\n    0))\\n\" (nil font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face nil font-lock-function-name-face font-lock-function-name-face font-lock-function-name-face nil nil)))",
+      "stdout": "mode-emacs-lisp-mode.current.remacs.out",
+      "stderr": "mode-emacs-lisp-mode.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "mode:lisp-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"(defun foo (x)\\n(if x\\n(+ x 1)\\n0))\\n\") (lisp-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok (lisp-mode \"(defun foo (x)\\n  (if x\\n      (+ x 1)\\n      0))\\n\" (nil font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face nil font-lock-function-name-face font-lock-function-name-face font-lock-function-name-face nil nil)))",
+      "stdout": "mode-lisp-mode.current.gnu.out",
+      "stderr": "mode-lisp-mode.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode:lisp-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"(defun foo (x)\\n(if x\\n(+ x 1)\\n0))\\n\") (lisp-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.74,
+      "value": "(ok (lisp-mode \"(defun foo (x)\\n  (if x\\n      (+ x 1)\\n    0))\\n\" (nil nil nil nil nil nil nil nil nil nil nil nil)))",
+      "stdout": "mode-lisp-mode.current.remacs.out",
+      "stderr": "mode-lisp-mode.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "mode:c-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"int main(void) {\\nif (1) {\\nreturn 0;\\n}\\n}\\n\") (c-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.26,
+      "value": "(ok (c-mode \"int main(void) {\\n  if (1) {\\n    return 0;\\n  }\\n}\\n\" (font-lock-type-face font-lock-type-face font-lock-type-face nil font-lock-function-name-face font-lock-function-name-face font-lock-function-name-face font-lock-function-name-face nil font-lock-type-face font-lock-type-face font-lock-type-face)))",
+      "stdout": "mode-c-mode.current.gnu.out",
+      "stderr": "mode-c-mode.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode:c-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"int main(void) {\\nif (1) {\\nreturn 0;\\n}\\n}\\n\") (c-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 16.68,
+      "value": "(ok (c-mode \"int main(void) {\\n  if (1) {\\n    return 0;\\n  }\\n}\\n\" (font-lock-type-face font-lock-type-face font-lock-type-face nil font-lock-function-name-face font-lock-function-name-face font-lock-function-name-face font-lock-function-name-face nil font-lock-type-face font-lock-type-face font-lock-type-face)))",
+      "stdout": "mode-c-mode.current.remacs.out",
+      "stderr": "mode-c-mode.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "mode:c++-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"class Foo {\\npublic:\\nint x() {\\nreturn 1;\\n}\\n};\\n\") (c++-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.26,
+      "value": "(ok (c++-mode \"class Foo {\\npublic:\\n  int x() {\\n    return 1;\\n  }\\n};\\n\" (font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face nil font-lock-type-face font-lock-type-face font-lock-type-face nil nil nil)))",
+      "stdout": "mode-c++-mode.current.gnu.out",
+      "stderr": "mode-c++-mode.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode:c++-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"class Foo {\\npublic:\\nint x() {\\nreturn 1;\\n}\\n};\\n\") (c++-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 17.69,
+      "value": "(ok (c++-mode \"class Foo {\\npublic:\\n  int x() {\\n    return 1;\\n  }\\n};\\n\" (font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face nil font-lock-type-face font-lock-type-face font-lock-type-face nil nil nil)))",
+      "stdout": "mode-c++-mode.current.remacs.out",
+      "stderr": "mode-c++-mode.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "mode:java-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"class Foo {\\nint x() {\\nreturn 1;\\n}\\n}\\n\") (java-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.28,
+      "value": "(ok (java-mode \"class Foo {\\n    int x() {\\n\\11return 1;\\n    }\\n}\\n\" (font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face nil font-lock-type-face font-lock-type-face font-lock-type-face nil nil nil)))",
+      "stdout": "mode-java-mode.current.gnu.out",
+      "stderr": "mode-java-mode.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode:java-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"class Foo {\\nint x() {\\nreturn 1;\\n}\\n}\\n\") (java-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 17.54,
+      "value": "(ok (java-mode \"class Foo {\\n    int x() {\\n\\11return 1;\\n    }\\n}\\n\" (font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face nil font-lock-type-face font-lock-type-face font-lock-type-face nil nil nil)))",
+      "stdout": "mode-java-mode.current.remacs.out",
+      "stderr": "mode-java-mode.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "mode:python-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"def foo(x):\\nif x:\\nreturn 1\\nreturn 0\\n\") (python-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.32,
+      "value": "(ok (python-mode \"def foo(x):\\nif x:\\nreturn 1\\nreturn 0\\n\" (font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face nil font-lock-function-name-face font-lock-function-name-face font-lock-function-name-face nil nil nil nil nil)))",
+      "stdout": "mode-python-mode.current.gnu.out",
+      "stderr": "mode-python-mode.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode:python-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"def foo(x):\\nif x:\\nreturn 1\\nreturn 0\\n\") (python-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 13.88,
+      "value": "(ok (python-mode \"def foo(x):\\nif x:\\nreturn 1\\nreturn 0\\n\" (font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face nil font-lock-function-name-face font-lock-function-name-face font-lock-function-name-face nil nil nil nil nil)))",
+      "stdout": "mode-python-mode.current.remacs.out",
+      "stderr": "mode-python-mode.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "mode:ruby-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"def foo(x)\\nif x\\n1\\nelse\\n0\\nend\\nend\\n\") (ruby-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.23,
+      "value": "(ok (ruby-mode \"def foo(x)\\n  if x\\n    1\\n  else\\n    0\\n  end\\nend\\n\" (font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face nil font-lock-function-name-face font-lock-function-name-face font-lock-function-name-face nil nil nil nil nil)))",
+      "stdout": "mode-ruby-mode.current.gnu.out",
+      "stderr": "mode-ruby-mode.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode:ruby-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"def foo(x)\\nif x\\n1\\nelse\\n0\\nend\\nend\\n\") (ruby-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 11.91,
+      "value": "(ok (ruby-mode \"def foo(x)\\n  if x\\n    1\\n  else\\n    0\\n  end\\nend\\n\" (font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face nil font-lock-function-name-face font-lock-function-name-face font-lock-function-name-face nil nil nil nil nil)))",
+      "stdout": "mode-ruby-mode.current.remacs.out",
+      "stderr": "mode-ruby-mode.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "mode:js-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"function foo(x) {\\nif (x) {\\nreturn 1;\\n}\\n}\\n\") (js-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.3,
+      "value": "(ok (js-mode \"function foo(x) {\\n    if (x) {\\n\\11return 1;\\n    }\\n}\\n\" (font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face nil font-lock-function-name-face font-lock-function-name-face font-lock-function-name-face)))",
+      "stdout": "mode-js-mode.current.gnu.out",
+      "stderr": "mode-js-mode.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode:js-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"function foo(x) {\\nif (x) {\\nreturn 1;\\n}\\n}\\n\") (js-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 21.78,
+      "value": "(ok (js-mode \"function foo(x) {\\n    if (x) {\\n\\11return 1;\\n    }\\n}\\n\" (font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face nil font-lock-function-name-face font-lock-function-name-face font-lock-function-name-face)))",
+      "stdout": "mode-js-mode.current.remacs.out",
+      "stderr": "mode-js-mode.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "mode:css-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"body {\\ncolor: red;\\nbackground: white;\\n}\\n\") (css-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.45,
+      "value": "(ok (css-mode \"body {\\n    color: red;\\n    background: white;\\n}\\n\" (css-selector css-selector css-selector css-selector nil nil nil nil nil nil nil css-property)))",
+      "stdout": "mode-css-mode.current.gnu.out",
+      "stderr": "mode-css-mode.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode:css-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"body {\\ncolor: red;\\nbackground: white;\\n}\\n\") (css-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 29.32,
+      "value": "(ok (css-mode \"body {\\n    color: red;\\n    background: white;\\n}\\n\" (css-selector css-selector css-selector css-selector nil nil nil nil nil nil nil css-property)))",
+      "stdout": "mode-css-mode.current.remacs.out",
+      "stderr": "mode-css-mode.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "mode:sh-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"if true; then\\necho hello\\nfi\\n\") (sh-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.23,
+      "value": "(ok (sh-mode \"if true; then\\n    echo hello\\nfi\\n\" (font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-builtin-face font-lock-builtin-face font-lock-builtin-face font-lock-builtin-face nil nil font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face)))",
+      "stdout": "mode-sh-mode.current.gnu.out",
+      "stderr": "mode-sh-mode.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode:sh-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"if true; then\\necho hello\\nfi\\n\") (sh-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 14.11,
+      "value": "(ok (sh-mode \"if true; then\\n    echo hello\\nfi\\n\" (font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face font-lock-builtin-face font-lock-builtin-face font-lock-builtin-face font-lock-builtin-face nil nil font-lock-keyword-face font-lock-keyword-face font-lock-keyword-face)))",
+      "stdout": "mode-sh-mode.current.remacs.out",
+      "stderr": "mode-sh-mode.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "mode:html-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"<html>\\n<body>\\n<div>hello</div>\\n</body>\\n</html>\\n\") (html-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.27,
+      "value": "(ok (html-mode \"<html>\\n  <body>\\n    <div>hello</div>\\n  </body>\\n</html>\\n\" (nil font-lock-function-name-face font-lock-function-name-face font-lock-function-name-face font-lock-function-name-face nil nil nil nil nil font-lock-function-name-face font-lock-function-name-face)))",
+      "stdout": "mode-html-mode.current.gnu.out",
+      "stderr": "mode-html-mode.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode:html-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"<html>\\n<body>\\n<div>hello</div>\\n</body>\\n</html>\\n\") (html-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 10.84,
+      "value": "(ok (html-mode \"<html>\\n  <body>\\n    <div>hello</div>\\n  </body>\\n</html>\\n\" (nil font-lock-function-name-face font-lock-function-name-face font-lock-function-name-face font-lock-function-name-face nil nil nil nil nil font-lock-function-name-face font-lock-function-name-face)))",
+      "stdout": "mode-html-mode.current.remacs.out",
+      "stderr": "mode-html-mode.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "mode:nxml-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"<root>\\n<item id=\\\"1\\\">x</item>\\n</root>\\n\") (nxml-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.3,
+      "value": "(ok (nxml-mode \"<root>\\n  <item id=\\\"1\\\">x</item>\\n</root>\\n\" ((nxml-tag-delimiter) #1=(nxml-element-local-name) #1# #1# #1# (nxml-tag-delimiter) nil nil nil (nxml-tag-delimiter) #2=(nxml-element-local-name) #2#)))",
+      "stdout": "mode-nxml-mode.current.gnu.out",
+      "stderr": "mode-nxml-mode.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode:nxml-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"<root>\\n<item id=\\\"1\\\">x</item>\\n</root>\\n\") (nxml-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 13.61,
+      "value": "(ok (nxml-mode \"<root>\\n  <item id=\\\"1\\\">x</item>\\n</root>\\n\" ((nxml-tag-delimiter) #1=(nxml-element-local-name) #1# #1# #1# (nxml-tag-delimiter) nil nil nil (nxml-tag-delimiter) #2=(nxml-element-local-name) #2#)))",
+      "stdout": "mode-nxml-mode.current.remacs.out",
+      "stderr": "mode-nxml-mode.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "mode:js-json-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"{\\n\\\"a\\\": [1, 2],\\n\\\"b\\\": true\\n}\\n\") (js-json-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.29,
+      "value": "(ok (js-json-mode \"{\\n    \\\"a\\\": [1, 2],\\n    \\\"b\\\": true\\n}\\n\" (nil nil nil nil nil nil font-lock-string-face font-lock-string-face font-lock-string-face nil nil nil)))",
+      "stdout": "mode-js-json-mode.current.gnu.out",
+      "stderr": "mode-js-json-mode.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode:js-json-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"{\\n\\\"a\\\": [1, 2],\\n\\\"b\\\": true\\n}\\n\") (js-json-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 23.31,
+      "value": "(ok (js-json-mode \"{\\n    \\\"a\\\": [1, 2],\\n    \\\"b\\\": true\\n}\\n\" (nil nil nil nil nil nil font-lock-string-face font-lock-string-face font-lock-string-face nil nil nil)))",
+      "stdout": "mode-js-json-mode.current.remacs.out",
+      "stderr": "mode-js-json-mode.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "mode:org-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"* Heading\\n** Child\\n- item\\n- item2\\n\\n| a | b |\\n| 1 | 2 |\\n\") (org-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 1.25,
+      "value": "(ok (org-mode \"* Heading\\n** Child\\n- item\\n- item2\\n\\n| a | b |\\n| 1 | 2 |\\n\" (org-level-1 org-level-1 org-level-1 org-level-1 org-level-1 org-level-1 org-level-1 org-level-1 org-level-1 nil org-level-2 org-level-2)))",
+      "stdout": "mode-org-mode.current.gnu.out",
+      "stderr": "mode-org-mode.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode:org-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"* Heading\\n** Child\\n- item\\n- item2\\n\\n| a | b |\\n| 1 | 2 |\\n\") (org-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 65.84,
+      "value": "(error (void-function keyword))",
+      "stdout": "mode-org-mode.current.remacs.out",
+      "stderr": "mode-org-mode.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "mode:conf-unix-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"foo = bar\\n# comment\\nhello=yes\\n\") (conf-unix-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.24,
+      "value": "(ok (conf-unix-mode \"foo = bar\\n# comment\\nhello=yes\\n\" (font-lock-variable-name-face font-lock-variable-name-face font-lock-variable-name-face nil nil nil nil nil nil nil font-lock-comment-delimiter-face font-lock-comment-delimiter-face)))",
+      "stdout": "mode-conf-unix-mode.current.gnu.out",
+      "stderr": "mode-conf-unix-mode.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode:conf-unix-mode",
+      "group": "major_mode_workflows",
+      "form": "(with-temp-buffer (insert \"foo = bar\\n# comment\\nhello=yes\\n\") (conf-unix-mode) (indent-region (point-min) (point-max)) (font-lock-mode 1) (font-lock-ensure) (list major-mode (buffer-substring-no-properties (point-min) (point-max)) (mapcar (lambda (p) (get-text-property p 'face)) (number-sequence 1 (min 12 (1- (point-max)))))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_major_mode_workflows.el"
+      ],
+      "returncode": 0,
+      "seconds": 10.82,
+      "value": "(ok (conf-unix-mode \"foo = bar\\n# comment\\nhello=yes\\n\" (font-lock-variable-name-face font-lock-variable-name-face font-lock-variable-name-face nil nil nil nil nil nil nil font-lock-comment-delimiter-face font-lock-comment-delimiter-face)))",
+      "stdout": "mode-conf-unix-mode.current.remacs.out",
+      "stderr": "mode-conf-unix-mode.current.remacs.err",
+      "complete": true
+    }
+  ]
+}

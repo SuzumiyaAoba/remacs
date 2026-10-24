@@ -1,0 +1,156 @@
+[
+  {
+    "side": "gnu",
+    "id": "AUD-100",
+    "returncode": 0,
+    "stdout": "(ok ((a) (32 40 98 41) (b)))\n(ok (123 t 456))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-100",
+    "returncode": 0,
+    "stdout": "(ok ((a) nil end-of-file))\n(ok (123 nil end-of-file))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-101",
+    "returncode": 0,
+    "stdout": "(ok (end-of-file 3))\n(ok (end-of-file 3))\n(ok ((a) 4 (b) 8))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-101",
+    "returncode": 0,
+    "stdout": "(ok (end-of-file 1))\n(ok (end-of-file 1))\n(ok ((a) 4 (b) 8))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-102",
+    "returncode": 0,
+    "stdout": "(ok \"(1 ...)\")\n(ok \"(1 2 3)\")\n(ok \"(1 ...)\")\n(error (wrong-type-argument symbolp nil))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-102",
+    "returncode": 0,
+    "stdout": "(ok \"(1 2 3)\")\n(ok \"(1 ...)\")\n(ok \"(1 2 3)\")\n(ok \"(1 2 3)\")\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-103",
+    "returncode": 0,
+    "stdout": "(ok (inside))\n(ok (inside))\n(ok (evaluated (inside)))\n",
+    "stderr": "Warning (files): Missing ‘lexical-binding’ cookie in #<buffer  *temp*>.\nYou can add one with ‘M-x elisp-enable-lexical-binding RET’.\nSee ‘(elisp)Selecting Lisp Dialect’ and ‘(elisp)Converting to Lexical Binding’\nfor more information.\n"
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-103",
+    "returncode": 0,
+    "stdout": "(ok (outside inside))\n(ok (outside inside))\n(ok (evaluated (outside inside)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-104",
+    "returncode": 0,
+    "stdout": "(ok \"\")\n(ok \"\")\n(ok (\"\" \"payload\\n\\\"payload\\\"\\n\"))\n(ok (\"\" \"payload\\n\\\"payload\\\"\\n\"))\n",
+    "stderr": "Warning (files): Missing ‘lexical-binding’ cookie in #<buffer  *temp*>.\nYou can add one with ‘M-x elisp-enable-lexical-binding RET’.\nSee ‘(elisp)Selecting Lisp Dialect’ and ‘(elisp)Converting to Lexical Binding’\nfor more information.\n\nWarning (files): Missing ‘lexical-binding’ cookie in #<buffer  *temp*>.\nYou can add one with ‘M-x elisp-enable-lexical-binding RET’.\nSee ‘(elisp)Selecting Lisp Dialect’ and ‘(elisp)Converting to Lexical Binding’\nfor more information.\n"
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-104",
+    "returncode": 0,
+    "stdout": "(ok \"payload\")\n(ok \"payload\")\n(ok (\"payload\" \"\"))\n(ok (\"payload\" \"\"))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-105",
+    "returncode": 0,
+    "stdout": "(ok 7)\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-105",
+    "returncode": 0,
+    "stdout": "(ok void-variable)\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-106",
+    "returncode": 0,
+    "stdout": "(ok t)\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-106",
+    "returncode": 0,
+    "stdout": "(ok nil)\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-107",
+    "returncode": 0,
+    "stdout": "(ok nil)\n(ok nil)\n",
+    "stderr": "Warning (files): Missing ‘lexical-binding’ cookie in #<buffer  *temp*>.\nYou can add one with ‘M-x elisp-enable-lexical-binding RET’.\nSee ‘(elisp)Selecting Lisp Dialect’ and ‘(elisp)Converting to Lexical Binding’\nfor more information.\n"
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-107",
+    "returncode": 0,
+    "stdout": "(ok 42)\n(ok 42)\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-108",
+    "returncode": 0,
+    "stdout": "(ok (104 101 97 100 10 160 10 98 111 100 121 10))\n(ok (104 101 97 100 10 13 10 98 111 100 121 10))\n(ok (104 101 97 100 10 98 111 100 121 10))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-108",
+    "returncode": 0,
+    "stdout": "(ok (104 101 97 100 10 98 111 100 121 10))\n(ok (104 101 97 100 10 98 111 100 121 10))\n(ok (104 101 97 100 10 98 111 100 121 10))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-109",
+    "returncode": 0,
+    "stdout": "(ok ((6 6) nil \"head\\n\\nbody\\n\" italic))\n(ok \"A  B\")\n(ok \"head\\n  body\")\n(ok \"A   B\")\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-109",
+    "returncode": 0,
+    "stdout": "(ok ((6 7) (10) \"head\\n\\nbody\\n\" bold))\n(ok \"AB\")\n(ok \"head body\")\n(ok \"A   B\")\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-110",
+    "returncode": 0,
+    "stdout": "(ok (error \"original\"))\n(ok error)\n(ok (\"aXb\" 1 3))\n(ok (buffer-read-only \"\"))\n(ok (buffer-read-only \"\" 1))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-110",
+    "returncode": 0,
+    "stdout": "(ok (printed \"originalpayload\"))\n(ok printed)\n(ok (\"aXb\" 1 3))\n(ok (buffer-read-only \"\"))\n(ok (buffer-read-only \"\" 1))\n",
+    "stderr": ""
+  }
+]

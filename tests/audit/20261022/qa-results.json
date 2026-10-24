@@ -1,0 +1,326 @@
+[
+  {
+    "suite": "json",
+    "side": "gnu",
+    "returncode": 0,
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_json.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "166 checks passed166 checks passed",
+    "stderr_file": "qa-json.gnu.err"
+  },
+  {
+    "suite": "json",
+    "side": "remacs",
+    "returncode": 0,
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_json.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "166 checks passed166 checks passed",
+    "stderr_file": "qa-json.remacs.err"
+  },
+  {
+    "suite": "overlay",
+    "side": "gnu",
+    "returncode": 0,
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_overlay.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "34 checks passed34 checks passed",
+    "stderr_file": "qa-overlay.gnu.err"
+  },
+  {
+    "suite": "overlay",
+    "side": "remacs",
+    "returncode": 0,
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_overlay.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "34 checks passed34 checks passed",
+    "stderr_file": "qa-overlay.remacs.err"
+  },
+  {
+    "suite": "overlays",
+    "side": "gnu",
+    "returncode": 0,
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_overlays.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "58 checks passed58 checks passed",
+    "stderr_file": "qa-overlays.gnu.err"
+  },
+  {
+    "suite": "overlays",
+    "side": "remacs",
+    "returncode": 0,
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_overlays.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "58 checks passed58 checks passed",
+    "stderr_file": "qa-overlays.remacs.err"
+  },
+  {
+    "suite": "overlay_type",
+    "side": "gnu",
+    "returncode": 0,
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_overlay_type.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "937 checks passed937 checks passed",
+    "stderr_file": "qa-overlay_type.gnu.err"
+  },
+  {
+    "suite": "overlay_type",
+    "side": "remacs",
+    "returncode": 0,
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_overlay_type.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "937 checks passed937 checks passed",
+    "stderr_file": "qa-overlay_type.remacs.err"
+  },
+  {
+    "suite": "modhooks",
+    "side": "gnu",
+    "returncode": 0,
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_modhooks.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "25 checks passed25 checks passed",
+    "stderr_file": "qa-modhooks.gnu.err"
+  },
+  {
+    "suite": "modhooks",
+    "side": "remacs",
+    "returncode": 0,
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_modhooks.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "25 checks passed25 checks passed",
+    "stderr_file": "qa-modhooks.remacs.err"
+  },
+  {
+    "suite": "completion",
+    "side": "gnu",
+    "returncode": 0,
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_completion.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "126 checks passed126 checks passed",
+    "stderr_file": "qa-completion.gnu.err"
+  },
+  {
+    "suite": "completion",
+    "side": "remacs",
+    "returncode": 0,
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_completion.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "126 checks passed126 checks passed",
+    "stderr_file": "qa-completion.remacs.err"
+  },
+  {
+    "suite": "textprops",
+    "side": "gnu",
+    "returncode": 0,
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_textprops.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "265 checks passed265 checks passed",
+    "stderr_file": "qa-textprops.gnu.err"
+  },
+  {
+    "suite": "textprops",
+    "side": "remacs",
+    "returncode": 0,
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_textprops.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "265 checks passed265 checks passed",
+    "stderr_file": "qa-textprops.remacs.err"
+  },
+  {
+    "suite": "indent",
+    "side": "gnu",
+    "returncode": 0,
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_indent.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "35 checks passed35 checks passed",
+    "stderr_file": "qa-indent.gnu.err"
+  },
+  {
+    "suite": "indent",
+    "side": "remacs",
+    "returncode": 0,
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_indent.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "35 checks passed35 checks passed",
+    "stderr_file": "qa-indent.remacs.err"
+  },
+  {
+    "suite": "indentcmds",
+    "side": "gnu",
+    "returncode": 0,
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_indentcmds.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "59 checks passed59 checks passed",
+    "stderr_file": "qa-indentcmds.gnu.err"
+  },
+  {
+    "suite": "indentcmds",
+    "side": "remacs",
+    "returncode": 0,
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_indentcmds.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "59 checks passed59 checks passed",
+    "stderr_file": "qa-indentcmds.remacs.err"
+  }
+]

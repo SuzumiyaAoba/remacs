@@ -34,20 +34,24 @@ def main():
 
     counts = Counter(f["area"] for f in findings)
     priorities = Counter(f["priority"] for f in findings)
+    output_dir = str((DIRECTORY / ledger["evidence_file"]).parent.relative_to(ROOT))
+    runtime_groups = " ".join(sorted({c["group"] for c in cases.values()} - {"cli", "network_system"}))
     lines = [
         f"Remacs バグ調査 — 新規 {len(findings)} 件（調査継続中）",
+        f"Issue 登録: {sum(bool(f.get('issue_url')) for f in findings)} / {len(findings)} 件。",
+        f"別途、実GUI・テスト実行の問題 {ledger.get('manual_issue_count', 0)} 件は current/full-suite/report.txt と manual-issues.json に記録。",
         f"対象 HEAD: {evidence['head']}",
         f"最終測定日時 UTC: {evidence.get('updated_at', evidence['recorded_at'])}",
-        f"既存 Issue: open/closed 合計 {len(issues)} 件を二度取得して照合。",
+        f"重複照合の基準一覧: open/closed 合計 {len(issues)} 件。追加の照合結果は下記参照。",
         f"差分検査: {len(cases)} ケース / 差分 {sum(c['differs'] for c in cases.values())} 行。",
         "差分行を原因・修正箇所でまとめ、GNU 側の挙動が曖昧なケース等を除外した件数。",
         f"領域別: {dict(counts)} / 暫定優先度: {dict(priorities)}",
         "全領域の調査完了を示す結果ではない。未検査領域は末尾を参照。",
         "",
         "再実行（GNU Emacs 31.1 の生バイナリを指定）:",
-        "  rtk proxy python3 tools/audit_runtime.py --gnu /path/to/emacs-31.1 --issues-json /path/to/issues.json",
-        "  rtk proxy python3 -B tools/audit_cli.py --gnu /path/to/emacs-31.1",
-        "  rtk proxy python3 -B tools/audit_network_binding.py --gnu /path/to/emacs-31.1",
+        f"  rtk proxy python3 tools/audit_runtime.py --gnu /path/to/emacs-31.1 --output-dir {output_dir} --groups {runtime_groups} --issues-json /path/to/issues.json",
+        f"  rtk proxy python3 -B tools/audit_cli.py --gnu /path/to/emacs-31.1 --output-dir {output_dir}",
+        f"  rtk proxy python3 -B tools/audit_network_binding.py --gnu /path/to/emacs-31.1 --output-dir {output_dir}",
         "  rtk proxy python3 tools/render_audit_report.py",
         "tree-sitter 検査には ~/.emacs.d/tree-sitter の JSON 文法ライブラリが必要。実行時のファイル情報は evidence.json に保存。",
         "network 検査にはローカルの bind/connect が可能な実行環境、実際の bind 先検査には /usr/sbin/lsof が必要。",
@@ -70,6 +74,7 @@ def main():
         case = cases[finding["cases"][0]]
         lines.extend([
             f"{finding['id']} [{finding['priority']}] {finding['title']}",
+            "  Issue: " + finding.get("issue_url", "未登録"),
             "  " + finding["description"],
             "  原因候補: " + finding["source"],
             "  再現式: " + case["form"],

@@ -1,0 +1,80 @@
+{
+  "objective": "全体の洗い出し",
+  "status": "active",
+  "exhaustive": false,
+  "previous_goal_turn": "progress",
+  "completion_criteria": [
+    "各領域の既存根拠を現在のコードと照合する",
+    "未知の経路を再現可能なGNU比較またはUI観測で検査する",
+    "確定不具合は重複確認してIssue化する",
+    "未検査・不確実・タイムアウトを成功扱いにしない"
+  ],
+  "areas": [
+    {
+      "area": "reader/printer",
+      "status": "incomplete",
+      "evidence_and_remaining": "既存監査あり。追加の入出力ストリーム・循環・文字表現を継続"
+    },
+    {
+      "area": "numbers/strings/sequences",
+      "status": "incomplete",
+      "evidence_and_remaining": "文字列置換24例は一致。mapping callback の変更反映不具合を確認。数値境界・巨大入力の未検査が残る"
+    },
+    {
+      "area": "evaluator/closures/macros",
+      "status": "incomplete",
+      "evidence_and_remaining": "対話呼出しの文脈判定・handler-bind順序・ローカル束縛消去を追加検証。汎用マクロ/bytecodeの境界が残る"
+    },
+    {
+      "area": "buffers/text-properties/undo",
+      "status": "incomplete",
+      "evidence_and_remaining": "前回141例のうち多数が該当。編集・フック再入・undoの追加組合せが残る"
+    },
+    {
+      "area": "overlays/windows/frames",
+      "status": "incomplete",
+      "evidence_and_remaining": "前回overlay群、過去window群の検証あり。実描画・複数フレーム操作の未検査あり"
+    },
+    {
+      "area": "files/coding",
+      "status": "incomplete",
+      "evidence_and_remaining": "一時ファイル、追加9APIのhandler、symlink時刻を追加確認。file notify/ACL/大容量I/O/文字コード境界が残る"
+    },
+    {
+      "area": "process/network/thread/timer",
+      "status": "incomplete",
+      "evidence_and_remaining": "過去監査あり。大容量I/O・再入・IPv6/UDP・相互待機・終了競合の追加検証が必要"
+    },
+    {
+      "area": "json/xml/sqlite/treesit",
+      "status": "incomplete",
+      "evidence_and_remaining": "JSONは前回追加。ほかは過去監査あり。複雑query/再解析/SQL lifecycleの未検査あり"
+    },
+    {
+      "area": "nativecomp/bytecode",
+      "status": "incomplete",
+      "evidence_and_remaining": "過去監査あり。nativeとbytecodeの組合せ・非局所脱出・再ロード・GCの追加検証が必要"
+    },
+    {
+      "area": "major-modes/libraries",
+      "status": "incomplete",
+      "evidence_and_remaining": "15モードの初期化/indent/font-lockを追加。Common LispとOrgに障害。その他同梱Lispの実用経路は未網羅"
+    },
+    {
+      "area": "CLI/TUI/GUI",
+      "status": "incomplete",
+      "evidence_and_remaining": "過去の実操作監査あり。修正後再確認、IME・端末制御・イベント組合せは未網羅"
+    },
+    {
+      "area": "test infrastructure",
+      "status": "incomplete",
+      "evidence_and_remaining": "古い全Rust735テスト・4159式・全関数スイープの記録あり。現行HEADの全再走と既知マスク再評価が必要"
+    }
+  ],
+  "next_priorities": [
+    "Orgの初期化障害を単独再現と修正対照で確定",
+    "現行CLI/TUI/GUIの操作検証",
+    "差分スイープの広い既知マスクと未検査APIの再評価",
+    "プロセス・ネットワーク・bytecode/nativeの相互作用"
+  ]
+}

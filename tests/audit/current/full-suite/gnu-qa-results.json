@@ -1,0 +1,3533 @@
+{
+  "recorded_at": "2026-10-18T10:12:11.168876+00:00",
+  "results": [
+    {
+      "file": "qa_abbrev.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_abbrev.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 1.9,
+      "stdout_file": "qa_abbrev.el.gnu.out",
+      "stderr_file": "qa_abbrev.el.gnu.err"
+    },
+    {
+      "file": "qa_abbrev2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_abbrev2.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 1.89,
+      "stdout_file": "qa_abbrev2.el.gnu.out",
+      "stderr_file": "qa_abbrev2.el.gnu.err"
+    },
+    {
+      "file": "qa_absolute_name.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_absolute_name.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.63,
+      "stdout_file": "qa_absolute_name.el.gnu.out",
+      "stderr_file": "qa_absolute_name.el.gnu.err"
+    },
+    {
+      "file": "qa_advice.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_advice.el"
+      ],
+      "returncode": 255,
+      "timed_out": false,
+      "passed": false,
+      "seconds": 4.14,
+      "stdout_file": "qa_advice.el.gnu.out",
+      "stderr_file": "qa_advice.el.gnu.err"
+    },
+    {
+      "file": "qa_apply.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_apply.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.66,
+      "stdout_file": "qa_apply.el.gnu.out",
+      "stderr_file": "qa_apply.el.gnu.err"
+    },
+    {
+      "file": "qa_apply2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_apply2.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.27,
+      "stdout_file": "qa_apply2.el.gnu.out",
+      "stderr_file": "qa_apply2.el.gnu.err"
+    },
+    {
+      "file": "qa_arith.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_arith.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.26,
+      "stdout_file": "qa_arith.el.gnu.out",
+      "stderr_file": "qa_arith.el.gnu.err"
+    },
+    {
+      "file": "qa_array.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_array.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.43,
+      "stdout_file": "qa_array.el.gnu.out",
+      "stderr_file": "qa_array.el.gnu.err"
+    },
+    {
+      "file": "qa_backquote.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_backquote.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.51,
+      "stdout_file": "qa_backquote.el.gnu.out",
+      "stderr_file": "qa_backquote.el.gnu.err"
+    },
+    {
+      "file": "qa_backup.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_backup.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.34,
+      "stdout_file": "qa_backup.el.gnu.out",
+      "stderr_file": "qa_backup.el.gnu.err"
+    },
+    {
+      "file": "qa_basic_faces.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_basic_faces.el"
+      ],
+      "returncode": 255,
+      "timed_out": false,
+      "passed": false,
+      "seconds": 0.23,
+      "stdout_file": "qa_basic_faces.el.gnu.out",
+      "stderr_file": "qa_basic_faces.el.gnu.err"
+    },
+    {
+      "file": "qa_before_markers.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_before_markers.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.23,
+      "stdout_file": "qa_before_markers.el.gnu.out",
+      "stderr_file": "qa_before_markers.el.gnu.err"
+    },
+    {
+      "file": "qa_buffer.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_buffer.el"
+      ],
+      "returncode": 255,
+      "timed_out": false,
+      "passed": false,
+      "seconds": 0.24,
+      "stdout_file": "qa_buffer.el.gnu.out",
+      "stderr_file": "qa_buffer.el.gnu.err"
+    },
+    {
+      "file": "qa_buffer2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_buffer2.el"
+      ],
+      "returncode": 255,
+      "timed_out": false,
+      "passed": false,
+      "seconds": 0.21,
+      "stdout_file": "qa_buffer2.el.gnu.out",
+      "stderr_file": "qa_buffer2.el.gnu.err"
+    },
+    {
+      "file": "qa_buffer_history.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_buffer_history.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.8,
+      "stdout_file": "qa_buffer_history.el.gnu.out",
+      "stderr_file": "qa_buffer_history.el.gnu.err"
+    },
+    {
+      "file": "qa_buffer_local_value_type.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_buffer_local_value_type.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_buffer_local_value_type.el.gnu.out",
+      "stderr_file": "qa_buffer_local_value_type.el.gnu.err"
+    },
+    {
+      "file": "qa_buffer_name_validation.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_buffer_name_validation.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_buffer_name_validation.el.gnu.out",
+      "stderr_file": "qa_buffer_name_validation.el.gnu.err"
+    },
+    {
+      "file": "qa_buffer_string_flags.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_buffer_string_flags.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_buffer_string_flags.el.gnu.out",
+      "stderr_file": "qa_buffer_string_flags.el.gnu.err"
+    },
+    {
+      "file": "qa_bufferfile.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_bufferfile.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 1.33,
+      "stdout_file": "qa_bufferfile.el.gnu.out",
+      "stderr_file": "qa_bufferfile.el.gnu.err"
+    },
+    {
+      "file": "qa_buffmenu.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_buffmenu.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.66,
+      "stdout_file": "qa_buffmenu.el.gnu.out",
+      "stderr_file": "qa_buffmenu.el.gnu.err"
+    },
+    {
+      "file": "qa_case.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_case.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_case.el.gnu.out",
+      "stderr_file": "qa_case.el.gnu.err"
+    },
+    {
+      "file": "qa_category_defaults.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_category_defaults.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.21,
+      "stdout_file": "qa_category_defaults.el.gnu.out",
+      "stderr_file": "qa_category_defaults.el.gnu.err"
+    },
+    {
+      "file": "qa_char.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_char.el"
+      ],
+      "returncode": 255,
+      "timed_out": false,
+      "passed": false,
+      "seconds": 0.23,
+      "stdout_file": "qa_char.el.gnu.out",
+      "stderr_file": "qa_char.el.gnu.err"
+    },
+    {
+      "file": "qa_charset.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_charset.el"
+      ],
+      "returncode": 255,
+      "timed_out": false,
+      "passed": false,
+      "seconds": 0.23,
+      "stdout_file": "qa_charset.el.gnu.out",
+      "stderr_file": "qa_charset.el.gnu.err"
+    },
+    {
+      "file": "qa_chartables.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_chartables.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.49,
+      "stdout_file": "qa_chartables.el.gnu.out",
+      "stderr_file": "qa_chartables.el.gnu.err"
+    },
+    {
+      "file": "qa_clloop.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_clloop.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.21,
+      "stdout_file": "qa_clloop.el.gnu.out",
+      "stderr_file": "qa_clloop.el.gnu.err"
+    },
+    {
+      "file": "qa_clloop2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_clloop2.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.21,
+      "stdout_file": "qa_clloop2.el.gnu.out",
+      "stderr_file": "qa_clloop2.el.gnu.err"
+    },
+    {
+      "file": "qa_clloop3.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_clloop3.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.21,
+      "stdout_file": "qa_clloop3.el.gnu.out",
+      "stderr_file": "qa_clloop3.el.gnu.err"
+    },
+    {
+      "file": "qa_clloop4.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_clloop4.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.24,
+      "stdout_file": "qa_clloop4.el.gnu.out",
+      "stderr_file": "qa_clloop4.el.gnu.err"
+    },
+    {
+      "file": "qa_clloop5.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_clloop5.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.57,
+      "stdout_file": "qa_clloop5.el.gnu.out",
+      "stderr_file": "qa_clloop5.el.gnu.err"
+    },
+    {
+      "file": "qa_clloop6.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_clloop6.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.21,
+      "stdout_file": "qa_clloop6.el.gnu.out",
+      "stderr_file": "qa_clloop6.el.gnu.err"
+    },
+    {
+      "file": "qa_clloop7.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_clloop7.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.21,
+      "stdout_file": "qa_clloop7.el.gnu.out",
+      "stderr_file": "qa_clloop7.el.gnu.err"
+    },
+    {
+      "file": "qa_clmisc.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_clmisc.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.82,
+      "stdout_file": "qa_clmisc.el.gnu.out",
+      "stderr_file": "qa_clmisc.el.gnu.err"
+    },
+    {
+      "file": "qa_clprint.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_clprint.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.51,
+      "stdout_file": "qa_clprint.el.gnu.out",
+      "stderr_file": "qa_clprint.el.gnu.err"
+    },
+    {
+      "file": "qa_clseq.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_clseq.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.22,
+      "stdout_file": "qa_clseq.el.gnu.out",
+      "stderr_file": "qa_clseq.el.gnu.err"
+    },
+    {
+      "file": "qa_clseq2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_clseq2.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.22,
+      "stdout_file": "qa_clseq2.el.gnu.out",
+      "stderr_file": "qa_clseq2.el.gnu.err"
+    },
+    {
+      "file": "qa_cmds.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_cmds.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.8,
+      "stdout_file": "qa_cmds.el.gnu.out",
+      "stderr_file": "qa_cmds.el.gnu.err"
+    },
+    {
+      "file": "qa_coding.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_coding.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.21,
+      "stdout_file": "qa_coding.el.gnu.out",
+      "stderr_file": "qa_coding.el.gnu.err"
+    },
+    {
+      "file": "qa_coding2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_coding2.el"
+      ],
+      "returncode": 255,
+      "timed_out": false,
+      "passed": false,
+      "seconds": 0.22,
+      "stdout_file": "qa_coding2.el.gnu.out",
+      "stderr_file": "qa_coding2.el.gnu.err"
+    },
+    {
+      "file": "qa_coding_detection.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_coding_detection.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.47,
+      "stdout_file": "qa_coding_detection.el.gnu.out",
+      "stderr_file": "qa_coding_detection.el.gnu.err"
+    },
+    {
+      "file": "qa_completion.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_completion.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.55,
+      "stdout_file": "qa_completion.el.gnu.out",
+      "stderr_file": "qa_completion.el.gnu.err"
+    },
+    {
+      "file": "qa_ctl.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_ctl.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.21,
+      "stdout_file": "qa_ctl.el.gnu.out",
+      "stderr_file": "qa_ctl.el.gnu.err"
+    },
+    {
+      "file": "qa_custom.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_custom.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 1.06,
+      "stdout_file": "qa_custom.el.gnu.out",
+      "stderr_file": "qa_custom.el.gnu.err"
+    },
+    {
+      "file": "qa_custom2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_custom2.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 1.0,
+      "stdout_file": "qa_custom2.el.gnu.out",
+      "stderr_file": "qa_custom2.el.gnu.err"
+    },
+    {
+      "file": "qa_decomposition_description.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_decomposition_description.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_decomposition_description.el.gnu.out",
+      "stderr_file": "qa_decomposition_description.el.gnu.err"
+    },
+    {
+      "file": "qa_define_key_type.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_define_key_type.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_define_key_type.el.gnu.out",
+      "stderr_file": "qa_define_key_type.el.gnu.err"
+    },
+    {
+      "file": "qa_delete_char_bounds.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_delete_char_bounds.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_delete_char_bounds.el.gnu.out",
+      "stderr_file": "qa_delete_char_bounds.el.gnu.err"
+    },
+    {
+      "file": "qa_descr.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_descr.el"
+      ],
+      "returncode": 255,
+      "timed_out": false,
+      "passed": false,
+      "seconds": 0.26,
+      "stdout_file": "qa_descr.el.gnu.out",
+      "stderr_file": "qa_descr.el.gnu.err"
+    },
+    {
+      "file": "qa_diffface.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_diffface.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_diffface.el.gnu.out",
+      "stderr_file": "qa_diffface.el.gnu.err"
+    },
+    {
+      "file": "qa_doc.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_doc.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.52,
+      "stdout_file": "qa_doc.el.gnu.out",
+      "stderr_file": "qa_doc.el.gnu.err"
+    },
+    {
+      "file": "qa_docstring_escape.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_docstring_escape.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_docstring_escape.el.gnu.out",
+      "stderr_file": "qa_docstring_escape.el.gnu.err"
+    },
+    {
+      "file": "qa_edge_semantics.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_edge_semantics.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_edge_semantics.el.gnu.out",
+      "stderr_file": "qa_edge_semantics.el.gnu.err"
+    },
+    {
+      "file": "qa_eieio.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_eieio.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 1.67,
+      "stdout_file": "qa_eieio.el.gnu.out",
+      "stderr_file": "qa_eieio.el.gnu.err"
+    },
+    {
+      "file": "qa_eieio2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_eieio2.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.86,
+      "stdout_file": "qa_eieio2.el.gnu.out",
+      "stderr_file": "qa_eieio2.el.gnu.err"
+    },
+    {
+      "file": "qa_elisp_mode_name.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_elisp_mode_name.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.49,
+      "stdout_file": "qa_elisp_mode_name.el.gnu.out",
+      "stderr_file": "qa_elisp_mode_name.el.gnu.err"
+    },
+    {
+      "file": "qa_err2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_err2.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_err2.el.gnu.out",
+      "stderr_file": "qa_err2.el.gnu.err"
+    },
+    {
+      "file": "qa_errors.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_errors.el"
+      ],
+      "returncode": 255,
+      "timed_out": false,
+      "passed": false,
+      "seconds": 0.2,
+      "stdout_file": "qa_errors.el.gnu.out",
+      "stderr_file": "qa_errors.el.gnu.err"
+    },
+    {
+      "file": "qa_eval.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_eval.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_eval.el.gnu.out",
+      "stderr_file": "qa_eval.el.gnu.err"
+    },
+    {
+      "file": "qa_extension_period.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_extension_period.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.18,
+      "stdout_file": "qa_extension_period.el.gnu.out",
+      "stderr_file": "qa_extension_period.el.gnu.err"
+    },
+    {
+      "file": "qa_face.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_face.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_face.el.gnu.out",
+      "stderr_file": "qa_face.el.gnu.err"
+    },
+    {
+      "file": "qa_face3.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_face3.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_face3.el.gnu.out",
+      "stderr_file": "qa_face3.el.gnu.err"
+    },
+    {
+      "file": "qa_faces2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_faces2.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.49,
+      "stdout_file": "qa_faces2.el.gnu.out",
+      "stderr_file": "qa_faces2.el.gnu.err"
+    },
+    {
+      "file": "qa_file_completion_prefix.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_file_completion_prefix.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.18,
+      "stdout_file": "qa_file_completion_prefix.el.gnu.out",
+      "stderr_file": "qa_file_completion_prefix.el.gnu.err"
+    },
+    {
+      "file": "qa_file_modes.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_file_modes.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.18,
+      "stdout_file": "qa_file_modes.el.gnu.out",
+      "stderr_file": "qa_file_modes.el.gnu.err"
+    },
+    {
+      "file": "qa_file_replace.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_file_replace.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_file_replace.el.gnu.out",
+      "stderr_file": "qa_file_replace.el.gnu.err"
+    },
+    {
+      "file": "qa_fileattr.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_fileattr.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.25,
+      "stdout_file": "qa_fileattr.el.gnu.out",
+      "stderr_file": "qa_fileattr.el.gnu.err"
+    },
+    {
+      "file": "qa_filelocal.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_filelocal.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 10.03,
+      "stdout_file": "qa_filelocal.el.gnu.out",
+      "stderr_file": "qa_filelocal.el.gnu.err"
+    },
+    {
+      "file": "qa_filesys.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_filesys.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.23,
+      "stdout_file": "qa_filesys.el.gnu.out",
+      "stderr_file": "qa_filesys.el.gnu.err"
+    },
+    {
+      "file": "qa_fill.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_fill.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_fill.el.gnu.out",
+      "stderr_file": "qa_fill.el.gnu.err"
+    },
+    {
+      "file": "qa_float_output.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_float_output.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_float_output.el.gnu.out",
+      "stderr_file": "qa_float_output.el.gnu.err"
+    },
+    {
+      "file": "qa_fontlock.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_fontlock.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_fontlock.el.gnu.out",
+      "stderr_file": "qa_fontlock.el.gnu.err"
+    },
+    {
+      "file": "qa_format.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_format.el"
+      ],
+      "returncode": 255,
+      "timed_out": false,
+      "passed": false,
+      "seconds": 0.2,
+      "stdout_file": "qa_format.el.gnu.out",
+      "stderr_file": "qa_format.el.gnu.err"
+    },
+    {
+      "file": "qa_fresh_buffer_locals.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_fresh_buffer_locals.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.18,
+      "stdout_file": "qa_fresh_buffer_locals.el.gnu.out",
+      "stderr_file": "qa_fresh_buffer_locals.el.gnu.err"
+    },
+    {
+      "file": "qa_gensym_counter.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_gensym_counter.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.18,
+      "stdout_file": "qa_gensym_counter.el.gnu.out",
+      "stderr_file": "qa_gensym_counter.el.gnu.err"
+    },
+    {
+      "file": "qa_globdir.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_globdir.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.21,
+      "stdout_file": "qa_globdir.el.gnu.out",
+      "stderr_file": "qa_globdir.el.gnu.err"
+    },
+    {
+      "file": "qa_gv.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_gv.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_gv.el.gnu.out",
+      "stderr_file": "qa_gv.el.gnu.err"
+    },
+    {
+      "file": "qa_hash.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_hash.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_hash.el.gnu.out",
+      "stderr_file": "qa_hash.el.gnu.err"
+    },
+    {
+      "file": "qa_hash2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_hash2.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_hash2.el.gnu.out",
+      "stderr_file": "qa_hash2.el.gnu.err"
+    },
+    {
+      "file": "qa_help.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_help.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_help.el.gnu.out",
+      "stderr_file": "qa_help.el.gnu.err"
+    },
+    {
+      "file": "qa_hook.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_hook.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_hook.el.gnu.out",
+      "stderr_file": "qa_hook.el.gnu.err"
+    },
+    {
+      "file": "qa_hooks2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_hooks2.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_hooks2.el.gnu.out",
+      "stderr_file": "qa_hooks2.el.gnu.err"
+    },
+    {
+      "file": "qa_indent.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_indent.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_indent.el.gnu.out",
+      "stderr_file": "qa_indent.el.gnu.err"
+    },
+    {
+      "file": "qa_indentcmds.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_indentcmds.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_indentcmds.el.gnu.out",
+      "stderr_file": "qa_indentcmds.el.gnu.err"
+    },
+    {
+      "file": "qa_indentfill.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_indentfill.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_indentfill.el.gnu.out",
+      "stderr_file": "qa_indentfill.el.gnu.err"
+    },
+    {
+      "file": "qa_input.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_input.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_input.el.gnu.out",
+      "stderr_file": "qa_input.el.gnu.err"
+    },
+    {
+      "file": "qa_interactive_ignore.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_interactive_ignore.el"
+      ],
+      "returncode": 255,
+      "timed_out": false,
+      "passed": false,
+      "seconds": 0.19,
+      "stdout_file": "qa_interactive_ignore.el.gnu.out",
+      "stderr_file": "qa_interactive_ignore.el.gnu.err"
+    },
+    {
+      "file": "qa_json.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_json.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 1.69,
+      "stdout_file": "qa_json.el.gnu.out",
+      "stderr_file": "qa_json.el.gnu.err"
+    },
+    {
+      "file": "qa_kbd.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_kbd.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 1.14,
+      "stdout_file": "qa_kbd.el.gnu.out",
+      "stderr_file": "qa_kbd.el.gnu.err"
+    },
+    {
+      "file": "qa_keymap.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_keymap.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_keymap.el.gnu.out",
+      "stderr_file": "qa_keymap.el.gnu.err"
+    },
+    {
+      "file": "qa_keymap2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_keymap2.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_keymap2.el.gnu.out",
+      "stderr_file": "qa_keymap2.el.gnu.err"
+    },
+    {
+      "file": "qa_keymap3.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_keymap3.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_keymap3.el.gnu.out",
+      "stderr_file": "qa_keymap3.el.gnu.err"
+    },
+    {
+      "file": "qa_keymap_cycles.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_keymap_cycles.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.18,
+      "stdout_file": "qa_keymap_cycles.el.gnu.out",
+      "stderr_file": "qa_keymap_cycles.el.gnu.err"
+    },
+    {
+      "file": "qa_killed_match_markers.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_killed_match_markers.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.18,
+      "stdout_file": "qa_killed_match_markers.el.gnu.out",
+      "stderr_file": "qa_killed_match_markers.el.gnu.err"
+    },
+    {
+      "file": "qa_kmacro.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_kmacro.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_kmacro.el.gnu.out",
+      "stderr_file": "qa_kmacro.el.gnu.err"
+    },
+    {
+      "file": "qa_legacy_codecs.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_legacy_codecs.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 1.35,
+      "stdout_file": "qa_legacy_codecs.el.gnu.out",
+      "stderr_file": "qa_legacy_codecs.el.gnu.err"
+    },
+    {
+      "file": "qa_list.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_list.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_list.el.gnu.out",
+      "stderr_file": "qa_list.el.gnu.err"
+    },
+    {
+      "file": "qa_lists.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_lists.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.21,
+      "stdout_file": "qa_lists.el.gnu.out",
+      "stderr_file": "qa_lists.el.gnu.err"
+    },
+    {
+      "file": "qa_lists2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_lists2.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_lists2.el.gnu.out",
+      "stderr_file": "qa_lists2.el.gnu.err"
+    },
+    {
+      "file": "qa_load.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_load.el"
+      ],
+      "returncode": 255,
+      "timed_out": false,
+      "passed": false,
+      "seconds": 1.14,
+      "stdout_file": "qa_load.el.gnu.out",
+      "stderr_file": "qa_load.el.gnu.err"
+    },
+    {
+      "file": "qa_load_buffer.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_load_buffer.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_load_buffer.el.gnu.out",
+      "stderr_file": "qa_load_buffer.el.gnu.err"
+    },
+    {
+      "file": "qa_locvar.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_locvar.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_locvar.el.gnu.out",
+      "stderr_file": "qa_locvar.el.gnu.err"
+    },
+    {
+      "file": "qa_logb.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_logb.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_logb.el.gnu.out",
+      "stderr_file": "qa_logb.el.gnu.err"
+    },
+    {
+      "file": "qa_macro.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_macro.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_macro.el.gnu.out",
+      "stderr_file": "qa_macro.el.gnu.err"
+    },
+    {
+      "file": "qa_map.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_map.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.22,
+      "stdout_file": "qa_map.el.gnu.out",
+      "stderr_file": "qa_map.el.gnu.err"
+    },
+    {
+      "file": "qa_map2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_map2.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.21,
+      "stdout_file": "qa_map2.el.gnu.out",
+      "stderr_file": "qa_map2.el.gnu.err"
+    },
+    {
+      "file": "qa_mapring.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_mapring.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.52,
+      "stdout_file": "qa_mapring.el.gnu.out",
+      "stderr_file": "qa_mapring.el.gnu.err"
+    },
+    {
+      "file": "qa_mark.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_mark.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_mark.el.gnu.out",
+      "stderr_file": "qa_mark.el.gnu.err"
+    },
+    {
+      "file": "qa_marker.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_marker.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_marker.el.gnu.out",
+      "stderr_file": "qa_marker.el.gnu.err"
+    },
+    {
+      "file": "qa_markers.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_markers.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_markers.el.gnu.out",
+      "stderr_file": "qa_markers.el.gnu.err"
+    },
+    {
+      "file": "qa_match.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_match.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_match.el.gnu.out",
+      "stderr_file": "qa_match.el.gnu.err"
+    },
+    {
+      "file": "qa_math.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_math.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_math.el.gnu.out",
+      "stderr_file": "qa_math.el.gnu.err"
+    },
+    {
+      "file": "qa_minibuf.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_minibuf.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_minibuf.el.gnu.out",
+      "stderr_file": "qa_minibuf.el.gnu.err"
+    },
+    {
+      "file": "qa_minibuffer.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_minibuffer.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_minibuffer.el.gnu.out",
+      "stderr_file": "qa_minibuffer.el.gnu.err"
+    },
+    {
+      "file": "qa_misc2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_misc2.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.54,
+      "stdout_file": "qa_misc2.el.gnu.out",
+      "stderr_file": "qa_misc2.el.gnu.err"
+    },
+    {
+      "file": "qa_misc3.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_misc3.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 1.16,
+      "stdout_file": "qa_misc3.el.gnu.out",
+      "stderr_file": "qa_misc3.el.gnu.err"
+    },
+    {
+      "file": "qa_miscfn.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_miscfn.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.56,
+      "stdout_file": "qa_miscfn.el.gnu.out",
+      "stderr_file": "qa_miscfn.el.gnu.err"
+    },
+    {
+      "file": "qa_modes.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_modes.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 6.18,
+      "stdout_file": "qa_modes.el.gnu.out",
+      "stderr_file": "qa_modes.el.gnu.err"
+    },
+    {
+      "file": "qa_modhooks.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_modhooks.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_modhooks.el.gnu.out",
+      "stderr_file": "qa_modhooks.el.gnu.err"
+    },
+    {
+      "file": "qa_narrow.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_narrow.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_narrow.el.gnu.out",
+      "stderr_file": "qa_narrow.el.gnu.err"
+    },
+    {
+      "file": "qa_numbers.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_numbers.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_numbers.el.gnu.out",
+      "stderr_file": "qa_numbers.el.gnu.err"
+    },
+    {
+      "file": "qa_obarray.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_obarray.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_obarray.el.gnu.out",
+      "stderr_file": "qa_obarray.el.gnu.err"
+    },
+    {
+      "file": "qa_object_intervals.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_object_intervals.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.18,
+      "stdout_file": "qa_object_intervals.el.gnu.out",
+      "stderr_file": "qa_object_intervals.el.gnu.err"
+    },
+    {
+      "file": "qa_overlay.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_overlay.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_overlay.el.gnu.out",
+      "stderr_file": "qa_overlay.el.gnu.err"
+    },
+    {
+      "file": "qa_overlay_type.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_overlay_type.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_overlay_type.el.gnu.out",
+      "stderr_file": "qa_overlay_type.el.gnu.err"
+    },
+    {
+      "file": "qa_overlays.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_overlays.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_overlays.el.gnu.out",
+      "stderr_file": "qa_overlays.el.gnu.err"
+    },
+    {
+      "file": "qa_pcase.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_pcase.el"
+      ],
+      "returncode": 255,
+      "timed_out": false,
+      "passed": false,
+      "seconds": 0.23,
+      "stdout_file": "qa_pcase.el.gnu.out",
+      "stderr_file": "qa_pcase.el.gnu.err"
+    },
+    {
+      "file": "qa_plists.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_plists.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.21,
+      "stdout_file": "qa_plists.el.gnu.out",
+      "stderr_file": "qa_plists.el.gnu.err"
+    },
+    {
+      "file": "qa_point.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_point.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_point.el.gnu.out",
+      "stderr_file": "qa_point.el.gnu.err"
+    },
+    {
+      "file": "qa_pp.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_pp.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_pp.el.gnu.out",
+      "stderr_file": "qa_pp.el.gnu.err"
+    },
+    {
+      "file": "qa_print_variables.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_print_variables.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_print_variables.el.gnu.out",
+      "stderr_file": "qa_print_variables.el.gnu.err"
+    },
+    {
+      "file": "qa_printvars.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_printvars.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_printvars.el.gnu.out",
+      "stderr_file": "qa_printvars.el.gnu.err"
+    },
+    {
+      "file": "qa_process.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_process.el"
+      ],
+      "returncode": 255,
+      "timed_out": false,
+      "passed": false,
+      "seconds": 3.89,
+      "stdout_file": "qa_process.el.gnu.out",
+      "stderr_file": "qa_process.el.gnu.err"
+    },
+    {
+      "file": "qa_process_defaults.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_process_defaults.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.23,
+      "stdout_file": "qa_process_defaults.el.gnu.out",
+      "stderr_file": "qa_process_defaults.el.gnu.err"
+    },
+    {
+      "file": "qa_process_names.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_process_names.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.24,
+      "stdout_file": "qa_process_names.el.gnu.out",
+      "stderr_file": "qa_process_names.el.gnu.err"
+    },
+    {
+      "file": "qa_property_argument_checks.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_property_argument_checks.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_property_argument_checks.el.gnu.out",
+      "stderr_file": "qa_property_argument_checks.el.gnu.err"
+    },
+    {
+      "file": "qa_quoting_scope.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_quoting_scope.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.18,
+      "stdout_file": "qa_quoting_scope.el.gnu.out",
+      "stderr_file": "qa_quoting_scope.el.gnu.err"
+    },
+    {
+      "file": "qa_radix.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_radix.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_radix.el.gnu.out",
+      "stderr_file": "qa_radix.el.gnu.err"
+    },
+    {
+      "file": "qa_read.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_read.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_read.el.gnu.out",
+      "stderr_file": "qa_read.el.gnu.err"
+    },
+    {
+      "file": "qa_readonly.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_readonly.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_readonly.el.gnu.out",
+      "stderr_file": "qa_readonly.el.gnu.err"
+    },
+    {
+      "file": "qa_readprint.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_readprint.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.24,
+      "stdout_file": "qa_readprint.el.gnu.out",
+      "stderr_file": "qa_readprint.el.gnu.err"
+    },
+    {
+      "file": "qa_rect.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_rect.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.49,
+      "stdout_file": "qa_rect.el.gnu.out",
+      "stderr_file": "qa_rect.el.gnu.err"
+    },
+    {
+      "file": "qa_regex.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_regex.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_regex.el.gnu.out",
+      "stderr_file": "qa_regex.el.gnu.err"
+    },
+    {
+      "file": "qa_regexpopt.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_regexpopt.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_regexpopt.el.gnu.out",
+      "stderr_file": "qa_regexpopt.el.gnu.err"
+    },
+    {
+      "file": "qa_replace.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_replace.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_replace.el.gnu.out",
+      "stderr_file": "qa_replace.el.gnu.err"
+    },
+    {
+      "file": "qa_ring.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_ring.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_ring.el.gnu.out",
+      "stderr_file": "qa_ring.el.gnu.err"
+    },
+    {
+      "file": "qa_rx.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_rx.el"
+      ],
+      "returncode": 255,
+      "timed_out": false,
+      "passed": false,
+      "seconds": 0.21,
+      "stdout_file": "qa_rx.el.gnu.out",
+      "stderr_file": "qa_rx.el.gnu.err"
+    },
+    {
+      "file": "qa_search.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_search.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_search.el.gnu.out",
+      "stderr_file": "qa_search.el.gnu.err"
+    },
+    {
+      "file": "qa_secure_hash_binary.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_secure_hash_binary.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_secure_hash_binary.el.gnu.out",
+      "stderr_file": "qa_secure_hash_binary.el.gnu.err"
+    },
+    {
+      "file": "qa_seq.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_seq.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_seq.el.gnu.out",
+      "stderr_file": "qa_seq.el.gnu.err"
+    },
+    {
+      "file": "qa_seq2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_seq2.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_seq2.el.gnu.out",
+      "stderr_file": "qa_seq2.el.gnu.err"
+    },
+    {
+      "file": "qa_set_minibuffer_window.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_set_minibuffer_window.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_set_minibuffer_window.el.gnu.out",
+      "stderr_file": "qa_set_minibuffer_window.el.gnu.err"
+    },
+    {
+      "file": "qa_skip_classes.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_skip_classes.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.22,
+      "stdout_file": "qa_skip_classes.el.gnu.out",
+      "stderr_file": "qa_skip_classes.el.gnu.err"
+    },
+    {
+      "file": "qa_sort.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_sort.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.22,
+      "stdout_file": "qa_sort.el.gnu.out",
+      "stderr_file": "qa_sort.el.gnu.err"
+    },
+    {
+      "file": "qa_special.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_special.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_special.el.gnu.out",
+      "stderr_file": "qa_special.el.gnu.err"
+    },
+    {
+      "file": "qa_special2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_special2.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_special2.el.gnu.out",
+      "stderr_file": "qa_special2.el.gnu.err"
+    },
+    {
+      "file": "qa_split_window_limits.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_split_window_limits.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_split_window_limits.el.gnu.out",
+      "stderr_file": "qa_split_window_limits.el.gnu.err"
+    },
+    {
+      "file": "qa_string.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_string.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_string.el.gnu.out",
+      "stderr_file": "qa_string.el.gnu.err"
+    },
+    {
+      "file": "qa_string_search.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_string_search.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.18,
+      "stdout_file": "qa_string_search.el.gnu.out",
+      "stderr_file": "qa_string_search.el.gnu.err"
+    },
+    {
+      "file": "qa_strings.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_strings.el"
+      ],
+      "returncode": 255,
+      "timed_out": false,
+      "passed": false,
+      "seconds": 0.21,
+      "stdout_file": "qa_strings.el.gnu.out",
+      "stderr_file": "qa_strings.el.gnu.err"
+    },
+    {
+      "file": "qa_strings2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_strings2.el"
+      ],
+      "returncode": 255,
+      "timed_out": false,
+      "passed": false,
+      "seconds": 0.21,
+      "stdout_file": "qa_strings2.el.gnu.out",
+      "stderr_file": "qa_strings2.el.gnu.err"
+    },
+    {
+      "file": "qa_subrinfo.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_subrinfo.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_subrinfo.el.gnu.out",
+      "stderr_file": "qa_subrinfo.el.gnu.err"
+    },
+    {
+      "file": "qa_subrx.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_subrx.el"
+      ],
+      "returncode": 255,
+      "timed_out": false,
+      "passed": false,
+      "seconds": 0.21,
+      "stdout_file": "qa_subrx.el.gnu.out",
+      "stderr_file": "qa_subrx.el.gnu.err"
+    },
+    {
+      "file": "qa_subrx2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_subrx2.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_subrx2.el.gnu.out",
+      "stderr_file": "qa_subrx2.el.gnu.err"
+    },
+    {
+      "file": "qa_subrx3.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_subrx3.el"
+      ],
+      "returncode": null,
+      "timed_out": true,
+      "passed": false,
+      "seconds": 60.0,
+      "stdout_file": "qa_subrx3.el.gnu.out",
+      "stderr_file": "qa_subrx3.el.gnu.err"
+    },
+    {
+      "file": "qa_symbol.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_symbol.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.22,
+      "stdout_file": "qa_symbol.el.gnu.out",
+      "stderr_file": "qa_symbol.el.gnu.err"
+    },
+    {
+      "file": "qa_symbol_print_escape.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_symbol_print_escape.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.18,
+      "stdout_file": "qa_symbol_print_escape.el.gnu.out",
+      "stderr_file": "qa_symbol_print_escape.el.gnu.err"
+    },
+    {
+      "file": "qa_syntax.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_syntax.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_syntax.el.gnu.out",
+      "stderr_file": "qa_syntax.el.gnu.err"
+    },
+    {
+      "file": "qa_syntax2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_syntax2.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_syntax2.el.gnu.out",
+      "stderr_file": "qa_syntax2.el.gnu.err"
+    },
+    {
+      "file": "qa_syntax_class_bounds.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_syntax_class_bounds.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.18,
+      "stdout_file": "qa_syntax_class_bounds.el.gnu.out",
+      "stderr_file": "qa_syntax_class_bounds.el.gnu.err"
+    },
+    {
+      "file": "qa_syntax_lookup.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_syntax_lookup.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_syntax_lookup.el.gnu.out",
+      "stderr_file": "qa_syntax_lookup.el.gnu.err"
+    },
+    {
+      "file": "qa_syntaxtable.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_syntaxtable.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.21,
+      "stdout_file": "qa_syntaxtable.el.gnu.out",
+      "stderr_file": "qa_syntaxtable.el.gnu.err"
+    },
+    {
+      "file": "qa_system.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_system.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.27,
+      "stdout_file": "qa_system.el.gnu.out",
+      "stderr_file": "qa_system.el.gnu.err"
+    },
+    {
+      "file": "qa_tab_indent.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_tab_indent.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_tab_indent.el.gnu.out",
+      "stderr_file": "qa_tab_indent.el.gnu.err"
+    },
+    {
+      "file": "qa_tablist.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_tablist.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_tablist.el.gnu.out",
+      "stderr_file": "qa_tablist.el.gnu.err"
+    },
+    {
+      "file": "qa_textprops.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_textprops.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.21,
+      "stdout_file": "qa_textprops.el.gnu.out",
+      "stderr_file": "qa_textprops.el.gnu.err"
+    },
+    {
+      "file": "qa_thing.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_thing.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_thing.el.gnu.out",
+      "stderr_file": "qa_thing.el.gnu.err"
+    },
+    {
+      "file": "qa_thing2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_thing2.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_thing2.el.gnu.out",
+      "stderr_file": "qa_thing2.el.gnu.err"
+    },
+    {
+      "file": "qa_thread_bookkeeping.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_thread_bookkeeping.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.18,
+      "stdout_file": "qa_thread_bookkeeping.el.gnu.out",
+      "stderr_file": "qa_thread_bookkeeping.el.gnu.err"
+    },
+    {
+      "file": "qa_time.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_time.el"
+      ],
+      "returncode": 255,
+      "timed_out": false,
+      "passed": false,
+      "seconds": 0.8,
+      "stdout_file": "qa_time.el.gnu.out",
+      "stderr_file": "qa_time.el.gnu.err"
+    },
+    {
+      "file": "qa_time_spec_validation.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_time_spec_validation.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.2,
+      "stdout_file": "qa_time_spec_validation.el.gnu.out",
+      "stderr_file": "qa_time_spec_validation.el.gnu.err"
+    },
+    {
+      "file": "qa_time_zero_zone.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_time_zero_zone.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.18,
+      "stdout_file": "qa_time_zero_zone.el.gnu.out",
+      "stderr_file": "qa_time_zero_zone.el.gnu.err"
+    },
+    {
+      "file": "qa_timefmt.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_timefmt.el"
+      ],
+      "returncode": 255,
+      "timed_out": false,
+      "passed": false,
+      "seconds": 0.22,
+      "stdout_file": "qa_timefmt.el.gnu.out",
+      "stderr_file": "qa_timefmt.el.gnu.err"
+    },
+    {
+      "file": "qa_timer.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_timer.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_timer.el.gnu.out",
+      "stderr_file": "qa_timer.el.gnu.err"
+    },
+    {
+      "file": "qa_types2.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_types2.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_types2.el.gnu.out",
+      "stderr_file": "qa_types2.el.gnu.err"
+    },
+    {
+      "file": "qa_ucs.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_ucs.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.23,
+      "stdout_file": "qa_ucs.el.gnu.out",
+      "stderr_file": "qa_ucs.el.gnu.err"
+    },
+    {
+      "file": "qa_undo.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_undo.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_undo.el.gnu.out",
+      "stderr_file": "qa_undo.el.gnu.err"
+    },
+    {
+      "file": "qa_unibyte_bounds.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_unibyte_bounds.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.18,
+      "stdout_file": "qa_unibyte_bounds.el.gnu.out",
+      "stderr_file": "qa_unibyte_bounds.el.gnu.err"
+    },
+    {
+      "file": "qa_unintern_identity.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_unintern_identity.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.18,
+      "stdout_file": "qa_unintern_identity.el.gnu.out",
+      "stderr_file": "qa_unintern_identity.el.gnu.err"
+    },
+    {
+      "file": "qa_unreadable_callable.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_unreadable_callable.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.18,
+      "stdout_file": "qa_unreadable_callable.el.gnu.out",
+      "stderr_file": "qa_unreadable_callable.el.gnu.err"
+    },
+    {
+      "file": "qa_variable_documentation.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_variable_documentation.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.86,
+      "stdout_file": "qa_variable_documentation.el.gnu.out",
+      "stderr_file": "qa_variable_documentation.el.gnu.err"
+    },
+    {
+      "file": "qa_vconcat_unibyte.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_vconcat_unibyte.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.18,
+      "stdout_file": "qa_vconcat_unibyte.el.gnu.out",
+      "stderr_file": "qa_vconcat_unibyte.el.gnu.err"
+    },
+    {
+      "file": "qa_vector.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_vector.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_vector.el.gnu.out",
+      "stderr_file": "qa_vector.el.gnu.err"
+    },
+    {
+      "file": "qa_window.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_window.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.19,
+      "stdout_file": "qa_window.el.gnu.out",
+      "stderr_file": "qa_window.el.gnu.err"
+    },
+    {
+      "file": "qa_window_dedication.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_window_dedication.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.18,
+      "stdout_file": "qa_window_dedication.el.gnu.out",
+      "stderr_file": "qa_window_dedication.el.gnu.err"
+    },
+    {
+      "file": "qa_winstate.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_winstate.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.5,
+      "stdout_file": "qa_winstate.el.gnu.out",
+      "stderr_file": "qa_winstate.el.gnu.err"
+    },
+    {
+      "file": "qa_xref.el",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_xref.el"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "passed": true,
+      "seconds": 0.51,
+      "stdout_file": "qa_xref.el.gnu.out",
+      "stderr_file": "qa_xref.el.gnu.err"
+    }
+  ]
+}

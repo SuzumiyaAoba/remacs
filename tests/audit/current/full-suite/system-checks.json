@@ -1,0 +1,30 @@
+[
+  {
+    "name": "audit_cli",
+    "command": [
+      "rtk",
+      "proxy",
+      "python3",
+      "tools/audit_cli.py",
+      "--gnu",
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "--output-dir",
+      "tests/audit/current/full-suite/runtime"
+    ],
+    "returncode": 0
+  },
+  {
+    "name": "audit_network_binding",
+    "command": [
+      "rtk",
+      "proxy",
+      "python3",
+      "tools/audit_network_binding.py",
+      "--gnu",
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "--output-dir",
+      "tests/audit/current/full-suite/runtime"
+    ],
+    "returncode": 0
+  }
+]

@@ -1,0 +1,34 @@
+{
+  "head": "29e7c960edec18a99107741c351d95444f8f6b18",
+  "recorded_at": "2026-10-17T08:21:47.750458+00:00",
+  "exhaustive": false,
+  "scope": [
+    "network_extra"
+  ],
+  "cases": [
+    {
+      "id": "network:datagram-socket",
+      "group": "network_extra",
+      "form": "(let ((p (make-network-process :name \"audit-udp\" :host \"127.0.0.1\" :family 'ipv4 :type 'datagram :server t :service 0 :noquery t :sentinel #'ignore))) (unwind-protect (list (process-type p) (process-status p)) (delete-process p)))",
+      "gnu": "(ok (network open))",
+      "remacs": "(ok (network listen))",
+      "differs": true
+    },
+    {
+      "id": "network:random-service",
+      "group": "network_extra",
+      "form": "(let ((p (make-network-process :name \"audit-random\" :host \"127.0.0.1\" :family 'ipv4 :server t :service t :noquery t :sentinel #'ignore))) (unwind-protect (integerp (process-contact p :service)) (delete-process p)))",
+      "gnu": "(ok t)",
+      "remacs": "(error (wrong-type-argument stringp t))",
+      "differs": true
+    },
+    {
+      "id": "network:nowait-connect",
+      "group": "network_extra",
+      "form": "(let ((server (make-network-process :name \"audit-async-server\" :host \"127.0.0.1\" :server t :service 0 :noquery t :sentinel #'ignore)) client) (unwind-protect (progn (setq client (make-network-process :name \"audit-async-client\" :host \"127.0.0.1\" :service (process-contact server :service) :nowait t :noquery t :sentinel #'ignore)) (process-status client)) (when client (delete-process client)) (delete-process server)))",
+      "gnu": "(ok connect)",
+      "remacs": "(ok open)",
+      "differs": true
+    }
+  ]
+}

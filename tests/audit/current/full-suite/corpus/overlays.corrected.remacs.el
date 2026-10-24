@@ -1,0 +1,2 @@
+(setq __outfile "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/corpus/overlays.corrected.remacs.records")
+(write-region (concat (base64-encode-string (encode-coding-string (condition-case __e (prin1-to-string (with-temp-buffer (insert "abc") (let ((o (make-overlay 1 3))) (list (overlays-at-point) (length (overlays-at-point)))))) (error (format "ERR:%s" (car __e)))) (quote utf-8) t) t) "\n") nil __outfile t (quote quiet))

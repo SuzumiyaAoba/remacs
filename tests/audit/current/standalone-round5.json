@@ -1,0 +1,86 @@
+[
+  {
+    "side": "gnu",
+    "id": "AUD-098",
+    "returncode": 0,
+    "stdout": "(ok (88 t t))\n(ok 1)\n(ok (88 2 2 0))\n(ok (2 2 0))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-098",
+    "returncode": 0,
+    "stdout": "(ok (88 nil -1))\n(ok t)\n(ok (88 nil nil nil))\n(ok (2 2 0))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-111",
+    "returncode": 0,
+    "stdout": "(ok (nil 2))\n(ok (nil 2))\n(ok (nil 2))\n(ok (nil 2))\n(ok (search-failed 2))\n(ok (1 1))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-111",
+    "returncode": 0,
+    "stdout": "(ok (1 1))\n(ok (1 1))\n(ok (1 1))\n(ok (1 1))\n(ok (1 1))\n(ok (1 1))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-112",
+    "returncode": 0,
+    "stdout": "(ok \"prefix ba suffix\")\n(ok \"prefix ba suffix\")\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-112",
+    "returncode": 0,
+    "stdout": "(ok \"prefix rp suffix\")\n(ok \"prefix ba suffix\")\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-113",
+    "returncode": 0,
+    "stdout": "(ok (\"aXc\" (bold underline italic)))\n(ok (\"aXc\" (bold underline italic)))\n(ok (nil (128 88 255)))\n(ok (nil (128 88 255)))\n(ok (\"aXc\" (bold underline italic)))\n(ok (\"b\" bold))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-113",
+    "returncode": 0,
+    "stdout": "(ok (\"aXc\" (nil nil nil)))\n(ok (\"aXc\" (bold nil italic)))\n(ok (nil (4194176 88 4194303)))\n(ok (nil (128 88 255)))\n(ok (\"aXc\" (bold nil italic)))\n(ok (\"b\" bold))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-114",
+    "returncode": 0,
+    "stdout": "(ok (t #1=(1 2) #1#))\n(ok (t #1=(0 1 nil nil nil nil) #1#))\n(ok (t t t (0 1) (0 1)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-114",
+    "returncode": 0,
+    "stdout": "(ok (nil (1 2) (0 2)))\n(ok (nil (0 1) (old old old old old old)))\n(ok (nil nil nil (marker marker) (0 1)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-115",
+    "returncode": 0,
+    "stdout": "(ok (1 4))\n(ok nil)\n(ok (0 3))\n(ok (1 2))\n(ok (1 4))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-115",
+    "returncode": 0,
+    "stdout": "(ok (1 2))\n(ok t)\n(ok (0 1))\n(ok (1 2))\n(ok (1 4))\n",
+    "stderr": ""
+  }
+]

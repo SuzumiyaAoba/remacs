@@ -1,0 +1,208 @@
+{
+  "binary": {
+    "path": "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+    "sha256": "b06709033aef86cc8c57b027584a0ce2c7ac4534c537f76e956edac2569d5c05"
+  },
+  "runs": [
+    {
+      "id": "EXTRA-20261022-001",
+      "case": "json:null-nil",
+      "returncode": 0,
+      "value": "(ok \"[{}]\")",
+      "matches_prior": true,
+      "seconds": 9.39
+    },
+    {
+      "id": "EXTRA-20261022-002",
+      "case": "json:parse-narrow",
+      "returncode": 0,
+      "value": "(ok ([1 2] 4))",
+      "matches_prior": true,
+      "seconds": 9.39
+    },
+    {
+      "id": "EXTRA-20261022-003",
+      "case": "json:utf8-input",
+      "returncode": 0,
+      "value": "(ok (4194243 4194217))",
+      "matches_prior": true,
+      "seconds": 9.42
+    },
+    {
+      "id": "EXTRA-20261022-004",
+      "case": "json:utf8-serialize",
+      "returncode": 0,
+      "value": "(ok (34 243 176 131 131 243 176 130 169 34))",
+      "matches_prior": true,
+      "seconds": 8.1
+    },
+    {
+      "id": "EXTRA-20261022-005",
+      "case": "json:insert-unibyte",
+      "returncode": 0,
+      "value": "(ok (34 233 34))",
+      "matches_prior": true,
+      "seconds": 8.13
+    },
+    {
+      "id": "EXTRA-20261022-006",
+      "case": "json:float-overflow",
+      "returncode": 0,
+      "value": "(ok 1.0e+INF)",
+      "matches_prior": true,
+      "seconds": 8.06
+    },
+    {
+      "id": "EXTRA-20261022-007",
+      "case": "overlay:dead-buffer-properties",
+      "returncode": 0,
+      "value": "(ok (nil nil nil nil))",
+      "matches_prior": true,
+      "seconds": 8.18
+    },
+    {
+      "id": "EXTRA-20261022-008",
+      "case": "overlay:fake",
+      "returncode": 0,
+      "value": "(ok (nil nil 1))",
+      "matches_prior": true,
+      "seconds": 8.17
+    },
+    {
+      "id": "EXTRA-20261022-009",
+      "case": "overlay:sorted-priority-cons",
+      "returncode": 0,
+      "value": "(ok (nil italic))",
+      "matches_prior": true,
+      "seconds": 8.19
+    },
+    {
+      "id": "EXTRA-20261022-010",
+      "case": "overlay:category-evaporate",
+      "returncode": 0,
+      "value": "(ok (1 t))",
+      "matches_prior": true,
+      "seconds": 8.4
+    },
+    {
+      "id": "EXTRA-20261022-011",
+      "case": "overlay:make-dead-buffer",
+      "returncode": 101,
+      "value": "",
+      "matches_prior": true,
+      "seconds": 8.53
+    },
+    {
+      "id": "EXTRA-20261022-012",
+      "case": "overlay:category-visible",
+      "returncode": 0,
+      "value": "(ok (bold nil))",
+      "matches_prior": true,
+      "seconds": 8.37
+    },
+    {
+      "id": "EXTRA-20261022-013",
+      "case": "overlay:window-restricted",
+      "returncode": 0,
+      "value": "(ok (bold bold bold))",
+      "matches_prior": true,
+      "seconds": 8.23
+    },
+    {
+      "id": "EXTRA-20261022-014",
+      "case": "json:cyclic-vector",
+      "returncode": -6,
+      "value": "",
+      "matches_prior": true,
+      "seconds": 8.22
+    },
+    {
+      "id": "EXTRA-20261022-015",
+      "case": "insert:indent-to-inherit",
+      "returncode": 0,
+      "value": "(ok (#(\"a   \" 0 1 (face bold)) nil))",
+      "matches_prior": true,
+      "seconds": 8.17
+    },
+    {
+      "id": "EXTRA-20261022-016",
+      "case": "insert:insert-char-inherit-t",
+      "returncode": 0,
+      "value": "(ok (#(\"a  \" 0 1 (face bold)) nil))",
+      "matches_prior": true,
+      "seconds": 8.19
+    },
+    {
+      "id": "EXTRA-20261022-017",
+      "case": "insert:newline-inherit",
+      "returncode": 0,
+      "value": "(ok (#(\"a\\n\" 0 1 (face bold)) nil))",
+      "matches_prior": true,
+      "seconds": 8.22
+    },
+    {
+      "id": "EXTRA-20261022-018",
+      "case": "insert:insert-char-character--1",
+      "returncode": 0,
+      "value": "(ok (inserted (255)))",
+      "matches_prior": true,
+      "seconds": 8.17
+    },
+    {
+      "id": "EXTRA-20261022-019",
+      "case": "insert:insert-char-zero-readonly",
+      "returncode": 0,
+      "value": "(error (buffer-read-only #<killed buffer>))",
+      "matches_prior": true,
+      "seconds": 8.13
+    },
+    {
+      "id": "EXTRA-20261022-020",
+      "case": "completion:try-completion-input-identity",
+      "returncode": 0,
+      "value": "(ok (nil nil))",
+      "matches_prior": true,
+      "seconds": 8.18
+    },
+    {
+      "id": "EXTRA-20261022-021",
+      "case": "completion:try-completion-invalid",
+      "returncode": 0,
+      "value": "(ok \"foo\")",
+      "matches_prior": true,
+      "seconds": 8.18
+    },
+    {
+      "id": "EXTRA-20261022-022",
+      "case": "completion:unibyte-result",
+      "returncode": 0,
+      "value": "(ok (nil (4194303 65)))",
+      "matches_prior": true,
+      "seconds": 8.01
+    },
+    {
+      "id": "EXTRA-20261022-023",
+      "case": "relocation:delete-region",
+      "returncode": 0,
+      "value": "(ok (nil \"Pbcd\" 2))",
+      "matches_prior": true,
+      "seconds": 8.13
+    },
+    {
+      "id": "EXTRA-20261022-024",
+      "case": "relocation:kill-delete",
+      "returncode": 0,
+      "value": "(ok (nil \"SFE\"))",
+      "matches_prior": true,
+      "seconds": 8.16
+    },
+    {
+      "id": "EXTRA-20261022-025",
+      "case": "extract:multibyte-ascii",
+      "returncode": 0,
+      "value": "(ok (nil (97 98)))",
+      "matches_prior": true,
+      "seconds": 7.79
+    }
+  ]
+}

@@ -1,0 +1,234 @@
+{
+  "head": "38af4d1d720760348e725dac51f8c4252c2b03d5",
+  "binary_sha256": "b06709033aef86cc8c57b027584a0ce2c7ac4534c537f76e956edac2569d5c05",
+  "runs": [
+    {
+      "id": "relocation:delete-region",
+      "group": "change_relocation",
+      "form": "(with-temp-buffer (insert \"abcd\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (save-excursion (goto-char 1) (insert \"P\")))))) (let ((result (delete-region 2 3))) (list result (buffer-string) (point)))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_relocation.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (nil \"Pacd\" 3))",
+      "stdout": "relocation-delete-region.gnu.out",
+      "stderr": "relocation-delete-region.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "relocation:delete-region",
+      "group": "change_relocation",
+      "form": "(with-temp-buffer (insert \"abcd\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (save-excursion (goto-char 1) (insert \"P\")))))) (let ((result (delete-region 2 3))) (list result (buffer-string) (point)))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_relocation.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.74,
+      "value": "(ok (nil \"Pbcd\" 2))",
+      "stdout": "relocation-delete-region.remacs.out",
+      "stderr": "relocation-delete-region.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "relocation:delete-char",
+      "group": "change_relocation",
+      "form": "(with-temp-buffer (insert \"abcd\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (save-excursion (goto-char 1) (insert \"P\")))))) (let ((result (delete-char 1))) (list result (buffer-string) (point)))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_relocation.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (nil \"Pacd\" 3))",
+      "stdout": "relocation-delete-char.gnu.out",
+      "stderr": "relocation-delete-char.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "relocation:delete-char",
+      "group": "change_relocation",
+      "form": "(with-temp-buffer (insert \"abcd\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (save-excursion (goto-char 1) (insert \"P\")))))) (let ((result (delete-char 1))) (list result (buffer-string) (point)))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_relocation.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.73,
+      "value": "(ok (nil \"Pbcd\" 2))",
+      "stdout": "relocation-delete-char.remacs.out",
+      "stderr": "relocation-delete-char.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "relocation:delete-and-extract-region",
+      "group": "change_relocation",
+      "form": "(with-temp-buffer (insert \"abcd\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (save-excursion (goto-char 1) (insert \"P\")))))) (let ((result (delete-and-extract-region 2 3))) (list result (buffer-string) (point)))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_relocation.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (\"b\" \"Pacd\" 3))",
+      "stdout": "relocation-delete-and-extract-region.gnu.out",
+      "stderr": "relocation-delete-and-extract-region.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "relocation:delete-and-extract-region",
+      "group": "change_relocation",
+      "form": "(with-temp-buffer (insert \"abcd\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (save-excursion (goto-char 1) (insert \"P\")))))) (let ((result (delete-and-extract-region 2 3))) (list result (buffer-string) (point)))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_relocation.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.71,
+      "value": "(ok (\"a\" \"Pbcd\" 2))",
+      "stdout": "relocation-delete-and-extract-region.remacs.out",
+      "stderr": "relocation-delete-and-extract-region.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "relocation:replace-region-contents",
+      "group": "change_relocation",
+      "form": "(with-temp-buffer (insert \"abcd\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (save-excursion (goto-char 1) (insert \"P\")))))) (let ((result (replace-region-contents 2 3 \"X\"))) (list result (buffer-string) (point)))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_relocation.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (t \"PXbcd\" 3))",
+      "stdout": "relocation-replace-region-contents.gnu.out",
+      "stderr": "relocation-replace-region-contents.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "relocation:replace-region-contents",
+      "group": "change_relocation",
+      "form": "(with-temp-buffer (insert \"abcd\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (save-excursion (goto-char 1) (insert \"P\")))))) (let ((result (replace-region-contents 2 3 \"X\"))) (list result (buffer-string) (point)))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_relocation.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.7,
+      "value": "(ok (t \"PXbcd\" 3))",
+      "stdout": "relocation-replace-region-contents.remacs.out",
+      "stderr": "relocation-replace-region-contents.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "relocation:kill-insert",
+      "group": "change_relocation",
+      "form": "(with-temp-buffer (insert \"SAFE\") (let* ((outer (current-buffer)) (b (generate-new-buffer \" *audit-killed-target*\")) (result (with-current-buffer b (insert \"abcd\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (kill-buffer (current-buffer)) (set-buffer outer))))) (condition-case e (insert \"X\") (error (car e))))))) (list result (buffer-string))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_relocation.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (nil \"SAFEX\"))",
+      "stdout": "relocation-kill-insert.gnu.out",
+      "stderr": "relocation-kill-insert.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "relocation:kill-insert",
+      "group": "change_relocation",
+      "form": "(with-temp-buffer (insert \"SAFE\") (let* ((outer (current-buffer)) (b (generate-new-buffer \" *audit-killed-target*\")) (result (with-current-buffer b (insert \"abcd\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (kill-buffer (current-buffer)) (set-buffer outer))))) (condition-case e (insert \"X\") (error (car e))))))) (list result (buffer-string))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_relocation.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.71,
+      "value": "(ok (nil \"SAFEX\"))",
+      "stdout": "relocation-kill-insert.remacs.out",
+      "stderr": "relocation-kill-insert.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "relocation:kill-delete",
+      "group": "change_relocation",
+      "form": "(with-temp-buffer (insert \"SAFE\") (let* ((outer (current-buffer)) (b (generate-new-buffer \" *audit-killed-target*\")) (result (with-current-buffer b (insert \"abcd\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (kill-buffer (current-buffer)) (set-buffer outer))))) (condition-case e (delete-region 2 3) (error (car e))))))) (list result (buffer-string))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_relocation.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (error \"SAFE\"))",
+      "stdout": "relocation-kill-delete.gnu.out",
+      "stderr": "relocation-kill-delete.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "relocation:kill-delete",
+      "group": "change_relocation",
+      "form": "(with-temp-buffer (insert \"SAFE\") (let* ((outer (current-buffer)) (b (generate-new-buffer \" *audit-killed-target*\")) (result (with-current-buffer b (insert \"abcd\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (kill-buffer (current-buffer)) (set-buffer outer))))) (condition-case e (delete-region 2 3) (error (car e))))))) (list result (buffer-string))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_relocation.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.71,
+      "value": "(ok (nil \"SFE\"))",
+      "stdout": "relocation-kill-delete.remacs.out",
+      "stderr": "relocation-kill-delete.remacs.err",
+      "complete": true
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "exec_session_id": 39594,
+  "status_file": "rust-results.json",
+  "inventory_file": "inventory.json",
+  "resume_command": "rtk proxy python3 tools/run_full_suite.py --gnu /nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1 --dbus-daemon /nix/store/kd78dnrfhig390i2r1py1vsgqjlhk7da-dbus-1.14.10/bin/dbus-daemon --test-threads 4 --isolated-timeout 120 --resume",
+  "final_report_command": "rtk proxy python3 tools/render_full_suite_report.py --require-complete",
+  "new_issue_numbers": [
+    291,
+    292,
+    293,
+    294,
+    295,
+    296,
+    297,
+    298,
+    299,
+    300
+  ],
+  "reopened_issue_numbers": [
+    77
+  ],
+  "status": "complete",
+  "finished_at": "2026-10-18T11:23:43.190801+00:00"
+}

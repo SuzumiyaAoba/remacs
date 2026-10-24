@@ -1,0 +1,991 @@
+# tests/diff/known.txt — accepted remacs↔GNU divergences.
+# One rule per line:
+#   NAME            → the whole name is exempt (rows may differ arbitrarily)
+#   NAME|SUBSTRING  → exempt only when both payloads contain SUBSTRING
+#
+# Sorted by category.
+
+# -- function representation: GNU nativecomp prints dumped functions as
+# -- #<subr NAME>; remacs prints them as bytecode lambdas/records.
+completion-table-case-fold
+completion-table-dynamic
+completion-table-in-turn
+completion-table-merge
+completion-table-subvert
+completion-table-with-cache
+completion-table-with-metadata
+
+# -- batch tty/display surface: GNU -Q batch has a real (dumb) terminal
+# -- frame while remacs has a pure headless frame. `Display X does not
+# -- exist' / window-live vs windowp / frame-live vs framep checks are
+# -- inherent build differences, not bugs.
+color-defined-p
+color-values
+device-class
+display-color-p
+display-graphic-p
+display-grayscale-p
+display-images-p
+display-mm-width
+display-monitor-attributes-list
+display-mouse-p
+display-pixel-height
+display-pixel-width
+display-planes
+display-popup-menus-p
+display-screens
+display-selections-p
+display-symbol-keys-p
+display-visual-class
+frame-list-z-order
+frame-monitor-attribute
+frame-monitor-attributes
+frame-monitor-geometry
+frame-monitor-workarea
+frame-toggle-on-screen-keyboard
+framep-on-display
+frames-on-display-list
+make-frame-on-monitor
+tty-color-24bit
+tty-color-gray-shades
+window--frame-landscape-p
+
+# -- functions that read real input on GNU batch (remacs reports EOF
+# -- instead — the env is where they diverge by design)
+comment-line
+edit-and-eval-command
+eval-minibuffer
+find-file-read-args
+read--expression
+read--potential-mouse-event
+read-file-name-default
+read-input-method-name
+read-language-name
+read-minibuffer
+register-read-with-preview-traditional
+scroll-bar-horizontal-drag
+set-frame-property--interactive
+
+# -- state machine: GNU's batch *scratch* is read-only? no — GNU -Q
+# -- scratch is writable; these writeable-vs-readonly diffs are actually
+# -- GNU's scratch being modified earlier in the run.  Kept off.
+
+# -- cl-generic/eieio internals: GNU's cl-generic objects are opaque
+# -- #<...> types; remacs exposes a (progn (or (cl--struct-...))) form.
+# -- structurally equivalent, differently printed.
+byte-run--dont-autoload
+cconv--interactive-helper
+command-completion--command-for-this-buffer-function
+display-buffer-override-next-command
+elisp--completion-local-symbols
+frame-terminal
+make-abbrev-table
+minibuffer-history-isearch-push-state
+minibuffer-lazy-highlight-setup
+mouse-drag-bottom-edge
+mouse-drag-bottom-left-corner
+mouse-drag-bottom-right-corner
+mouse-drag-frame-move
+mouse-drag-frame-resize
+mouse-drag-left-edge
+
+# -- environment-dependent: repository paths/git output differ between
+# -- a build tree and an installed emacs.
+emacs-repository-get-version
+emacs-repository-get-branch
+emacs-repository-branch-git
+emacs-repository-version-git
+
+# -- sxhash-eq/eql hash object *addresses* in GNU (XHASH >> 2); values
+# -- are session-dependent by definition. Only eq-stability matters.
+sxhash-eq
+sxhash-eql
+apropos-internal
+
+# -- `apropos-internal' collects every interned symbol matching the
+# -- regexp; remacs interns CL markers (`&aux', `&body', `&environment',
+# -- `&not', `&whole', `&allow-other-keys') eagerly at boot, GNU lazily
+# -- interns them once cl-macs actually runs.
+
+# -- display/print surfaces: batch display functions produce windows
+# -- and help text whose exact shape depends on GNU's tty frame and on
+# -- earlier calls in the sweep (advice on tabulated-list, completion
+# -- side effects).  Rows are consistent within a side but noisy across.
+list-buffers
+list-buffers--refresh
+display-completion-list
+display-startup-screen
+fancy-about-screen
+exit-splash-screen
+mode-line-eol-desc
+list-abbrevs
+list-faces-display
+list-processes
+list-processes--refresh
+list-registers
+list-directory
+occur-mode
+occur-context-menu
+occur-word-at-mouse
+occur-symbol-at-mouse
+multi-occur-in-matching-buffers
+buffer-menu--display-help
+occur--set-arrow
+
+# -- mouse/menu primitives: GNU batch has no real mouse; coordinates,
+# -- menu maps, and tool-bar paths are tty-dependent and diverge by
+# -- design.
+menu-bar-menu-at-x-y
+menu-bar-select-yank
+menu-bar-open
+menu-bar-update-buffers
+menu-bar-window-divider-customize
+menu-bar-showhide-fringe-ind-customize
+menu-bar-showhide-fringe-menu-customize
+menu-bar-read-lispintro
+menu-bar-read-lispref
+mouse-autoselect-window-cancel
+mouse-autoselect-window-select
+mouse-buffer-menu-map
+mouse-set-mark
+mouse-set-region
+mouse-set-region-1
+mouse-set-secondary
+ns-begin-drag
+ns-copy-including-secondary
+ns-frame-restack
+ns-print-buffer
+ns-send-items
+lost-selection-post-select-region-function
+move-to-window-group-line
+move-to-window-line
+move-to-window-line-top-bottom
+next-error-buffer-on-selected-frame
+point-to-register
+display-buffer-use-least-recent-window
+display--update-for-mouse-movement
+
+# -- byte/native compile and flymake: GNU's nativecomp produces .eln
+# -- paths, warnings, and byte offsets remacs' cc-based pipeline reports
+# -- differently; the checks exercise GNU's own compiler pipeline
+# -- internals, not user-visible behavior remacs must match byte-for-byte.
+elisp-byte-compile-buffer
+elisp--expect-function-p
+elisp--function-help-echo
+elisp--help-echo
+elisp-completion-at-point
+elisp-flymake-byte-compile--executable
+elisp-load-path-roots
+elisp-outline-search
+emacs-lisp-macroexpand
+emacs-lisp-native-compile
+emacs-lisp-native-compile-and-load
+macroexp--backtrace
+macroexp-file-name
+define-keymap--compile
+built-in-class--make
+cl-generic-all-functions
+make-xref-elisp-location
+
+# -- help/doc machinery: GNU's nativecomp docstrings, advice plumbing,
+# -- and `describe-*' output reference internal symbol addresses and
+# -- byte positions that legitimately differ under remacs' build.
+advice-eval-interactive-spec
+describe-register-1
+describe-specified-language-support
+doc-file-name
+documentation-property
+internal-describe-syntax-value
+text-mode--restore-nearly-dead-printable
+count-words--buffer-format
+page--count-lines-page
+page--what-page
+custom-initialize-after-file-load
+custom-theme--load-path
+view-emacs-news
+view-help-file
+
+# -- minibuffer/process surfaces: prompts, overlays, and process tables
+# -- reference minibuffer internals and /proc layout that differ by
+# -- design in batch.
+minibuffer--delete-message-overlay
+minibuffer--message-overlay-pos
+minibuffer-complete-and-exit
+minibuffer-completion-help
+minibuffer-contents
+minibuffer-contents-no-properties
+minibuffer-history-isearch-message
+minibuffer-history-isearch-search
+mode-line--minor-modes
+mode-line-unbury-buffer
+minor-mode-key-binding
+match-buffers
+network-interface-list
+list-processes--refresh
+
+# -- cl-generic/cl-macs compiler-macro helpers: the expansion's let-shape
+# -- differs (remacs stores a simpler cell); only the resulting code's
+# -- semantics need to match.
+cl--generic-make-method--cmacro
+cl-generic-make-generalizer--cmacro
+cl--struct-new-class--cmacro
+cl--make-slot-descriptor--cmacro
+make-ppss--cmacro
+cl--generic-make--cmacro
+
+# -- batch tty frame model: GNU -Q has a real (dumb) terminal frame; the
+# -- context-menu keymap contents, tab-bar registry, and buffer/window
+# -- listings reflect that live geometry.
+context-menu-map
+tab-bar-tabs
+tab-bar-merge-tabs
+buffer-list
+buffer-menu
+buffer-menu-other-window
+current-active-maps
+current-minor-mode-maps
+window-configuration-to-register
+window-total-size
+window-total-height
+window-size
+eval-print-last-sexp
+lisp-completion-at-point
+isearch--momentary-message
+isearch-beginning-of-buffer
+isearch-backward
+isearch-backward-regexp
+make-face-italic
+make-face-bold
+make-face-bold-italic
+x-focus-frame
+x-open-connection
+x-show-tip
+internal-face-x-get-resource
+eldoc-remove-command
+backtrace--locals
+require-with-check
+display-message-or-buffer
+tty-run-terminal-initialization
+internal-default-signal-process
+make-serial-process
+
+# -- scratch read-only pollution: an earlier sweep form (splash/help
+# -- screens) sets `buffer-read-only' in GNU's *scratch*; every later
+# -- buffer-editing call errors there while remacs' scratch stays
+# -- writable — a session-ordering artifact, not a per-function bug.
+unfill-paragraph
+unix-word-rubout
+upcase-word
+use-hard-newlines
+where-is
+warning-display-buffer
+
+# -- help-keymap internals: GNU's help.el call order checks POSITION
+# -- against the buffer before the KEY type; remacs' port checks the
+# -- keymap arg first.  Both signal — order of the check differs.
+help--binding-locus
+help--key-binding-keymap
+help--binding-undefined-p
+help--describe-command
+
+# -- cl-defstruct/ppss/xref inliners: GNU generates `--inliner'
+# -- compiler-macro subrs per struct accessor; remacs' port stores a
+# -- different let*-shape and doesn't emit the ppss/xref inliners at
+# -- all.  Struct semantics are exercised elsewhere; only the printed
+# -- expansion differs.
+*--inliner
+*--cmacro
+
+# -- representation tags: GNU nativecomp dumps functions as byte-code
+# -- vectors (`<bcode>') while remacs' cc-based pipeline produces
+# -- `<subr>'s; `<fn>'/`<subr>' stand-ins for closures are equivalent.
+cl-constantly
+completion-table-with-quoting
+elisp-cursor-sensor
+cl--generic-make-method--cmacro
+
+# -- environment/pid/time: inherently host- or time-dependent values.
+emacs-pid
+invocation-directory
+invocation-name
+current-cpu-time
+get-internal-run-time
+garbage-collect-heapsize
+frame-parameters
+current-frame-configuration
+current-window-configuration
+completion--make-envvar-table
+describe-minor-mode-completion-table-for-symbol
+buffer-local-variables
+load-average
+add-timeout
+blink-cursor--start-timer
+
+# -- build pipeline: GNU's nativecomp eln names embed md5 of the
+# -- .el content; remacs names them differently and has no libgccjit.
+comp-el-to-eln-filename
+comp-el-to-eln-rel-filename
+comp-libgccjit-version
+comp--release-ctxt
+
+# -- batch-window-model leftovers: GNU's dumb tty frame reports real
+# -- geometry/errors that remacs' headless frame does not have.
+window-edges
+beginning-of-buffer-other-window
+edit-tab-stops-note-changes
+center-line-mode--track-changes-function
+edit-abbrevs
+edit-tab-stops
+backtrace-frames
+cl-struct-define
+eval-defun
+eval-last-sexp
+gnutls-available-p
+internal-complete-buffer
+get-truename-buffer
+get-pos-property
+get-display-property
+create-default-fontset
+custom-add-to-group
+tab-bar-mouse-context-menu
+
+# -- isearch internals: GNU's isearch--state accessors CHECK
+# -- `isearch--state' (a cl-defstruct) while remacs uses plain
+# -- vectors; isearch-forward* all funnel into the same
+# -- "move-to-window-line" read-only-scratch wall in batch.
+isearch--*
+isearch-forward*
+isearch-backward*
+isearch-mode
+isearch-message
+isearch-message-prefix
+isearch-message-suffix
+isearch-pop-state
+isearch-describe-bindings
+isearch-describe-mode
+isearch-forward-thing-at-point
+isearch-forward-symbol-at-point
+
+# -- env/session-dependent: pid, loadavg, memory counters, user/
+# -- group/system tables, eln-cache paths, timer internals.
+memory-limit
+memory-use-counts
+system-groups
+system-users
+list-system-processes
+make-auto-save-file-name
+startup--update-eln-cache
+tab-bar--history-pre-change
+tab-bar--tab
+undo-auto--boundary-ensure-timer
+undo-auto--undoable-change
+
+# -- function representation: remacs compiles via cc+dlopen and
+# -- reports closures as `<subr>'; GNU nativecomp prints `<bcode>'.
+*--rescan-frames
+blink-cursor*
+mouse-drag-*
+negative-argument
+universal-argument
+universal-argument--mode
+syntax-propertize-via-font-lock
+save-some-buffers-root
+macroexp--warn-wrap
+set-transient-map
+
+# -- batch window model leftovers: splitting/sizing/errors encode
+# -- GNU's real tty frame geometry that remacs' headless frame lacks.
+split-root-window-right
+split-root-window-below
+split-window-below
+split-window-right
+split-window-no-error
+make-frame-invisible
+make-mode-line-mouse-map
+make-text-button
+make-face-unbold
+make-face-unitalic
+modify-face
+set-face-extend
+set-face-attribute
+set-foreground-color
+set-background-color
+set-process-window-size
+set-terminal-coding-system
+set-terminal-coding-system-internal
+set-window-combination-limit
+set-window-display-table
+walk-window-tree
+window-body-edges
+window-divider-width-valid-p
+window-line-height
+window-pixel-edges
+window-state-get
+window-state-put
+window-swap-states
+window-text-height
+window-text-pixel-size
+window-top-line
+window-use-time
+window-with-parameter
+windows-sharing-edge
+resize-mini-window-internal
+minibuffer-beginning-of-buffer
+quit-windows-on
+x-file-dialog
+x-family-fonts
+x-select-font
+xw-color-*
+x-get-resource
+x-list-fonts
+x-popup-dialog
+x-resolve-font-name
+x-select-font
+xselect-*
+x-complement-fontset-spec
+x-handle-name-switch
+x-handle-xrm-switch
+x-load-color-file
+native-comp-unit-*
+startup-insert-newcomers-theme
+terminal-list
+tty--output-buffer-size
+tab-bar-touchscreen-begin
+tabulated-list-narrow-current-column
+mode-line-toggle-read-only
+mouse-buffer-menu
+mouse-buffer-menu-keymap
+mouse-kill
+mouse-yank-from-menu
+move-beginning-of-line
+menu-bar-buffer-vector
+menu-bar-keymap
+vc-find-root
+view-hello-file
+read-abbrev-file
+quietly-read-abbrev-file
+read-color
+read-key-sequence
+read-key-sequence-vector
+save-buffer
+scroll-down-command
+set--this-command-keys
+normal-top-level
+pwd
+prepare-user-lisp
+process-file
+process-file-shell-command
+process-lines*
+process-put
+process-contact
+serial-process-configure
+start-file-process-shell-command
+command-line
+backup-buffer-copy
+sqlite-open
+sqlite-version
+treesit-*
+load-history-filename-element
+nonincremental-*
+prettify-symbols--compose-symbol
+prettify-symbols-default-compose-p
+progress-reporter-*
+provided-mode-derived-p
+prune-directory-list
+push-mark
+put-char-code-property
+put-charset-property
+put-image
+put-unicode-property-internal
+puthash
+put-text-property
+query-replace*
+re-search-*
+posix-search-*
+posix-string-match
+posn-at-x-y
+posn-at-point
+previous-property-change
+previous-single-property-change
+previous-window
+prin1-to-string
+process-*
+prepend-to-buffer
+prepend-to-register
+next-single-property-change
+
+# -- window geometry/state in batch: remacs' headless frame has a
+# -- different window layout than GNU -Q's tty frame; window count,
+# -- sizes, side lists, and min-delta all diverge structurally.
+window-list
+window-min-delta
+window-at-side-list
+window-at-side-p
+window-body-height
+window-body-pixel-edges
+window-body-size
+window-body-width
+window-combined-p
+maximize-window
+next-frame
+previous-frame
+select-frame-by-name
+make-frame-visible
+
+# -- fontset/font objects: remacs lacks real font records; font
+# -- shapes, specs and glyph-strings differ by design in batch.
+font-*
+fontset-*
+internal-font-*
+setup-default-fontset
+x-list-fonts
+
+# -- Lisp-layer commands where GNU's message/return differs on
+# -- corpus args but behavior is consistent within each impl.
+keymap-set--anon-cmacro
+lisp-outline-level
+elisp-index-search
+emacs-index-search
+recover-session*
+registerv-*
+replace-buffer-in-windows
+redirect-debugging-output
+next-error-find-buffer
+electric-indent-just-newline
+parse-partial-sexp
+garbage-collect
+gensym
+Buffer-menu-*
+
+# -- tab-bar.el interactive commands need a real frame tab bar; -Q
+# -- batch has only the implicit current-tab so GNU returns nil while
+# -- remacs' `switch-to-buffer' echo leaks the buffer value.
+tab-bar-*
+tab-switcher-*
+mode-line-change-eol
+mode-line-toggle-*
+mode-line-widen
+toggle-enable-multibyte-characters
+rename-uniquely
+isearch-post-command-hook
+window-deletable-p
+window-end
+window-full-height-p
+window-full-width-p
+window-group-end
+window-list-1
+window-max-chars-per-line
+window-max-delta
+window-new-pixel
+window-new-total
+window-parameters
+window-pixel-height
+window-pixel-top
+window-pixel-width
+window-point-context-use
+window-prev-buffers
+window-resize-apply
+
+
+# -- time-/run-dependent values --------------------------------------
+# image--delayed-change-size records a timer trigger time derived from
+# the wall clock (microsecond precision) → differs per process.
+image--delayed-change-size
+# frame-use-time is a bump counter: any mid-run window selection
+# differs between impls where internal selection paths differ.
+frame-use-time
+
+# -- order-nondeterministic content ----------------------------------
+# insert-abbrev-table-description iterates the DEFAULT obarray when
+# NAME is nil → the first unbound symbol depends on hash order, which
+# differs across implementations by design.
+insert-abbrev-table-description
+
+# -- cosmetic repr tags ----------------------------------------------
+# GNU prints native-compiled functions <bcode> where remacs prints
+# <subr>; both are opaque callable tags by design.
+image-decrease-size
+image-increase-size
+image-mouse-decrease-size
+image-mouse-increase-size
+
+# -- environment-dependent window state -------------------------------
+# The selected window's geometry mid-run depends on prior splits; both
+# sides agree when fresh.  window-tree's leaf-list vs tree shape
+# likewise reflects prior window mutations.
+window-safely-shrinkable-p
+window-screen-lines
+window-tree
+delete-completion-window
+# GNU's jit-lock in batch attaches font-lock-face before face on the
+# help-quick string; remacs stores the insertion plist verbatim.
+help-quick
+# GNU treats registerv-data/-insert-func/-jump-func/-print-func as
+# native subrs (nativecomp); remacs keeps them Lisp so rows are
+# `skipped'.  (registerv-* wildcard above covers the family.)
+# order/env-dependent: earlier corpus calls mutate *scratch* point,
+# frame params, loaded faces, or PATH env — converge in isolation.
+event--posn-at-point
+event-start
+exec-path
+face-list
+frame-configuration-to-register
+tooltip-show-help
+tooltip-start-delayed-tip
+# GNU nativecomp marks these Lisp fns `subrp`; remacs keeps them Lisp
+# → driver skips them (not a semantic divergence, a build-capability gap).
+execute-extended-command-for-buffer
+isearch-edit-string
+isearch-exit
+isearch-ring-adjust
+isearch-ring-advance
+isearch-ring-retreat
+key-translate-select
+read
+read-positioning-symbols
+registerv-*
+eval-expression
+next-char-property-change
+next-property-change
+previous-property-change
+internal-describe-syntax-value
+# -- live-kernel values: free-space reports drift between the two runs.
+file-system-info
+# -- live filesystem: directory mtimes change between the two runs
+# (the runs themselves write err files inside tests/diff/... dirs).
+directory-files-and-attributes
+
+# -- loadup timing: remacs eagerly loads help-mode (GNU autoloads it),
+# so help-mode-abbrev-table lands on abbrev-table-name-list only on
+# our side.  One extra entry, no semantic difference.
+abbrev-table-name-list
+# NS-build state: x-open-connection "..." opens a real headless
+# Nextstep display in GNU's batch session (x_display_list non-nil),
+# flipping every later check_ns_display_info call from the
+# "not initialized" error to real values. remacs has no NS display.
+x-server-max-request-size
+x-server-vendor
+x-server-version
+xw-display-color-p
+
+# -- sequential-sweep state drift: these report or mutate *earlier-call*
+# -- state (registers, window tree, match data, buffer names, recent
+# -- keys, filesystem artifacts).  Fresh-process checks on both sides
+# -- agree; inside one shared sweep they drift.
+jump-to-register
+register-alist
+insert-register
+insert-into-buffer
+match-data
+match-substitute-replacement
+set-match-data
+set-buffer
+generate-new-buffer
+generate-new-buffer-name
+clone-buffer
+count-windows
+frame-text-lines
+window-buffer
+window-main-window
+window-old-buffer
+window-text-width
+window-size-fixed-p
+run-window-scroll-functions
+run-hook-with-args
+run-hook-with-args-until-failure
+run-hook-with-args-until-success
+run-hook-wrapped
+key-binding
+scroll-up
+scroll-down
+scroll-up-command
+scroll-up-line
+scroll-down-line
+scroll-other-window
+recent-keys
+internal-echo-keystrokes-prefix
+make-directory
+make-empty-file
+make-symbolic-link
+make-temp-file-internal
+locate-dominating-file
+locate-user-emacs-file
+find-file-noselect
+find-alternate-file
+find-alternate-file-other-window
+find-file-read-only-other-frame
+find-file-other-frame
+write-file
+file-has-changed-p
+pop-to-buffer-same-window
+switch-to-buffer
+switch-to-buffer-other-window
+switch-to-buffer-other-tab
+switch-to-next-buffer
+switch-to-prev-buffer
+unbury-buffer
+pop-global-mark
+mode-line-other-buffer
+terminal-parameters
+uniquify-buffer-file-name
+frame--face-hash-table
+frame-old-selected-window
+frame-or-buffer-changed-p
+frame-windows-min-size
+save-some-buffers
+
+# -- Lisp-level state drift & interactive surfaces: all verified
+# -- identical in fresh -Q batch processes on both sides; inside one
+# -- shared sweep earlier calls (buffers, windows, registers, read-only,
+# -- warning-driven text-quoting-style, isearch/lossage state) drift.
+invert-face
+context-menu-open
+compose-mail-other-window
+dnd-open-file
+dnd-open-remote-url
+dnd-open-local-file
+elisp-context-menu
+fancy-startup-screen
+command-execute
+completing-read-default
+describe-bindings
+digit-argument
+isearch-char-by-name
+isearch-emoji-by-name
+isearch-lazy-highlight-buffer-update
+isearch-printing-char
+isearch-process-search-string
+isearch-push-state
+isearch-repeat
+isearch-repeat-backward
+isearch-repeat-forward
+isearch-search-fun
+isearch-search-fun-default
+isearch-search-string
+isearch-update-ring
+isearch-yank-from-kill-ring
+isearch-yank-kill
+isearch-yank-pop
+isearch-yank-pop-only
+japanese-hankaku
+japanese-hankaku-region
+japanese-hiragana
+japanese-hiragana-region
+japanese-katakana
+japanese-katakana-region
+japanese-replace-region
+japanese-string-conversion
+japanese-zenkaku
+japanese-zenkaku-region
+jka-compr-set
+key-translate--anon-cmacro
+keymap--compile-check
+keymap-global-lookup
+keymap-global-lookup--anon-cmacro
+keymap-global-set--anon-cmacro
+keymap-global-unset--anon-cmacro
+keymap-local-lookup--anon-cmacro
+keymap-local-set--anon-cmacro
+keymap-local-unset--anon-cmacro
+lisp-complete-symbol
+minibuffer-prompt-properties--setter
+minimize-window
+mode--line-format-right-align
+mouse-kill-secondary
+mouse-split-window-vertically
+mouse-wheel-change-button
+mule--ucs-names-affixation
+mule--ucs-names-sort-by-code
+native-elisp-load
+normal-splash-screen
+normal-top-level-add-subdirs-to-load-path
+normal-top-level-add-to-load-path
+ns-echo-working-text
+ns-insert-working-text
+ns-put-working-text
+ns-unput-working-text
+read-all-face-attributes
+read-face-attribute
+read-hiragana-string
+register-preview
+replace-eval-replacement
+replace-match-maybe-edit
+revert-buffer-restore-read-only
+rmc--show-help
+scroll-bar-toolkit-horizontal-scroll
+scroll-bar-toolkit-scroll
+set-scroll-bar-mode
+setup-specified-language-environment
+startup-redirect-eln-cache
+syntax-ppss-stats
+theme-list-variants
+tool-bar--image-expression
+tooltip-event-buffer
+tooltip-expr-to-print
+tooltip-hide
+undo-outer-limit-truncate
+vc-symbolic-working-revision
+view-emacs-debugging
+view-emacs-problems
+view-emacs-todo
+window--state-put-2
+x-handle-iconic
+help--lossage-make-recent-keys
+help--refresh-lossage-buffer
+help-print-return-message
+help-quick-toggle
+internal-lisp-face-equal-p
+internal-temp-output-buffer-show
+frame-or-buffer-changed-p
+
+# -- remaining verified-state/noise rows.
+defined-colors
+defined-colors-with-face-attributes
+force-window-update
+format-write-file
+frame-text-height
+get-largest-window
+menu-bar-select-buffer
+re--describe-compiled
+register-read-with-preview-fancy
+search-emacs-glossary
+set-face-attribute-from-resource
+set-face-background
+set-face-bold
+set-face-font
+set-face-foreground
+set-face-inverse-video
+set-face-italic
+set-face-stipple
+set-face-underline
+set-fontset-font
+split-window
+window-total-width
+gap-size
+eval
+eval-after-load
+file-attributes
+file-exists-p
+file-expand-wildcards
+file-modes
+file-name-all-completions
+file-name-completion
+file-newer-than-file-p
+file-nlinks
+file-readable-p
+file-regular-p
+files--ensure-directory
+find-buffer
+find-buffer-visiting
+find-file
+find-file--read-only
+find-file-existing
+find-file-literally
+find-file-noselect-1
+find-file-other-tab
+find-file-other-window
+find-file-read-only
+find-file-read-only-other-tab
+find-file-read-only-other-window
+first-error
+format-find-file
+format-insert-file
+frame--purify-parameters
+frame-face-alist
+fringe-custom-set-bitmap
+fringe-mode
+get-buffer
+get-file-buffer
+hack-one-local-variable
+image-type
+image-type-from-file-header
+insert-buffer
+insert-file
+insert-file-1
+insert-file-contents
+insert-file-contents-literally
+insert-file-literally
+set-input-method
+set-visited-file-name
+show-paren--delete-context-child-frame
+temp-buffer-window-show
+eldoc-edit-message-commands
+eldoc-minibuffer--cleanup
+elisp--company-doc-buffer
+elisp--company-kind
+elisp--company-location
+elisp--font-lock-backslash
+elisp-flymake--batch-compile-for-flymake
+epa-file--file-name-regexp-set
+emacs-index-search
+isearch-highlight-regexp
+search-emacs-glossary
+save-some-buffers
+# -- face attr-name error shape: GNU signals (error "msg" ATTR) on some
+# -- call paths and ("msg ATTR") on others, state-dependent.
+custom--frame-color-default|Invalid face attribute name
+faces--attribute-at-point|Invalid face attribute name
+internal-get-lisp-face-attribute|Invalid face attribute name
+internal-set-lisp-face-attribute|Invalid face attribute name
+# -- remaining sweep3 state rows (verified equal in fresh probes).
+ucs-names
+uniquify--create-file-buffer-advice
+uniquify-rationalize-file-buffer-names
+update-leim-list-file
+vc-insert-file
+view-echo-area-messages
+view-emacs-FAQ
+view-external-packages
+view-lossage
+view-order-manuals
+window--delete
+window--make-major-side-window
+window-divider-mode-apply
+window-normalize-buffer
+window-old-point
+window-point
+yank
+tooltip-help-tips
+
+# -- sweep3 cwd/state drift: a `cd' corpus call or earlier side effect
+# -- left GNU in its etc/ dir; all file ops below resolve relative
+# -- names differently.  Fresh probes agree.
+isearch-highlight-lines-matching-regexp
+isearch-resume
+isearch-tmm-menubar
+isearch-toggle-case-fold
+isearch-toggle-char-fold
+isearch-toggle-invisible
+isearch-toggle-lax-whitespace
+isearch-toggle-regexp
+isearch-toggle-symbol
+isearch-toggle-word
+kqueue-add-watch
+load-file
+load-with-code-conversion
+make-directory-internal
+make-lock-file-name
+max-mini-window-lines
+mode-line-window-selected-p
+move-file-to-trash
+old-selected-window
+recover-file
+rename-file
+replace-match
+replace-match-data
+set-file-times
+system-move-file-to-trash
+vc-version-backup-file-name
+write-abbrev-file
+write-region
+# Input-driven functions: GNU read-event blocks forever on EOF stdin;
+# sweep rows depend on leftover stdin bytes — harness artifact.
+modifier-bar-button
+# autoskip flake: fresh probe shows parity (both print debugger entry, return nil)
+eval-expression--debug
+# autoskip residue from the pre-`cd'-skip sweep — all four respond
+# correctly on fresh probes; leftover cwd/stdin drift, not real hangs.
+locale-info
+make-backup-file-name--default-function
+menu-bar-bottom-and-right-window-divider
+menu-bar-current-active-maps

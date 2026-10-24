@@ -1,16 +1,18 @@
-Remacs バグ調査 — 新規 68 件（調査継続中）
-対象 HEAD: cd0db158c64c3941cf2a1d96fdb0cfe789c2cce6
-最終測定日時 UTC: 2026-10-17T08:07:16.953585+00:00
-既存 Issue: open/closed 合計 161 件を二度取得して照合。
-差分検査: 169 ケース / 差分 121 行。
+Remacs バグ調査 — 新規 135 件（調査継続中）
+Issue 登録: 135 / 135 件。
+別途、実GUI・テスト実行の問題 4 件は current/full-suite/report.txt と manual-issues.json に記録。
+対象 HEAD: 29e7c960edec18a99107741c351d95444f8f6b18
+最終測定日時 UTC: 2026-10-18T11:19:05.750444+00:00
+重複照合の基準一覧: open/closed 合計 290 件。追加の照合結果は下記参照。
+差分検査: 428 ケース / 差分 254 行。
 差分行を原因・修正箇所でまとめ、GNU 側の挙動が曖昧なケース等を除外した件数。
-領域別: {'SQLite': 6, 'native': 9, 'equal/hash': 7, 'XML': 5, 'HTML': 4, 'thread/mutex': 3, 'process/timer': 1, 'process': 10, 'CLI': 7, 'tree-sitter': 7, 'network': 6, 'files': 3} / 暫定優先度: {'P1': 27, 'P2': 38, 'P3': 3}
+領域別: {'SQLite': 6, 'native': 9, 'equal/hash': 7, 'XML': 5, 'HTML': 4, 'thread/mutex': 3, 'process/timer': 1, 'process': 13, 'CLI': 7, 'tree-sitter': 7, 'network': 9, 'files': 3, 'buffer/undo': 3, 'string': 6, 'buffer/edit': 11, 'buffer/mark': 1, 'string/display': 2, 'bytecode': 2, 'sequence': 2, 'case': 2, 'reader': 2, 'printer': 2, 'evaluator': 5, 'search': 2, 'search/replace': 2, 'search/regexp': 1, 'window': 10, 'window/hooks': 1, 'timer': 1, 'language/Japanese': 1, 'eval/macroexpand': 1, 'window/display-buffer': 1, 'startup/process': 1, 'keymap': 1, 'faces/minor-mode': 1} / 暫定優先度: {'P1': 56, 'P2': 76, 'P3': 3}
 全領域の調査完了を示す結果ではない。未検査領域は末尾を参照。
 
 再実行（GNU Emacs 31.1 の生バイナリを指定）:
-  rtk proxy python3 tools/audit_runtime.py --gnu /path/to/emacs-31.1 --issues-json /path/to/issues.json
-  rtk proxy python3 -B tools/audit_cli.py --gnu /path/to/emacs-31.1
-  rtk proxy python3 -B tools/audit_network_binding.py --gnu /path/to/emacs-31.1
+  rtk proxy python3 tools/audit_runtime.py --gnu /path/to/emacs-31.1 --output-dir tests/audit/current --groups buffer buffer_more buffer_transfer bytecode_mutation case_compare concurrency display_buffer editing_narrowing editing_whitespace eval_sources excursion external files hash japanese_conversion library_initialization line_filter match_data match_properties native network network_extra print_overrides print_stream process process_more process_window read_stream search_case search_replace_edges search_syntax startup_environment string_display string_mutation string_sequences sweep_followup time_modifiers timer_runtime treesit treesit_languages undo_behavior window_config window_hooks window_metrics window_parameters --issues-json /path/to/issues.json
+  rtk proxy python3 -B tools/audit_cli.py --gnu /path/to/emacs-31.1 --output-dir tests/audit/current
+  rtk proxy python3 -B tools/audit_network_binding.py --gnu /path/to/emacs-31.1 --output-dir tests/audit/current
   rtk proxy python3 tools/render_audit_report.py
 tree-sitter 検査には ~/.emacs.d/tree-sitter の JSON 文法ライブラリが必要。実行時のファイル情報は evidence.json に保存。
 network 検査にはローカルの bind/connect が可能な実行環境、実際の bind 先検査には /usr/sbin/lsof が必要。
@@ -30,11 +32,20 @@ network 検査にはローカルの bind/connect が可能な実行環境、実�
   #54 は新規 process のデフォルト sentinel と marker。今回の accept 時のコールバック未実行・通知先誤りや listener の寿命とは別の再現条件。
   #105 の同一 inode は add-name-to-file の no-op 判定。今回の copy-file の成功扱い、および壊れた symlink の rename/copy は記載されていない。
   #21 は file-remote-p のエラー。今回の独自 handler は find-file-name-handler で検索できるため、物理ファイルプリミティブ側の dispatch 不足として区別した。
+  現在の HEAD 29e7c96 を再ビルドし、既存候補を再検証。UDP・:service t・:nowait の 3 件を追加確認し、それぞれ独立した Issue として登録。
+  第2巡: open/closed 232 件のタイトルと本文を取得。削除 undo の属性消失は #131/#136 の境界・置換履歴とは別で、propertize のバイト値変化は #79 の vconcat 側修正とは別の生成元の不具合として確認。
+  replace-region-contents / transpose-regions は既存 232 件の本文・タイトルに該当なし。置換の座標保持、属性転送、SOURCE の可視範囲・ベクター・関数呼び出し、転置の座標・属性を別の修正箇所として整理。
+  第3巡: 既存 247 件を照合。文字列のバイト表現・表示、シーケンス変換、バイトコード変更、case table の比較を検証。幅の Unicode 上書きは既存 #57、標準の ß/S の比較は #259 に補足し、重複登録を避けた。
+  第4巡: 既存 260 件を照合。read の関数ストリームとエラー位置、出力設定、評価元の可視範囲・lexical-binding・出力・reader、空白整形と無効な出力先を検証。空白削除と行結合の narrowing 外変更は #270 に集約した。
+  第5巡: 既存 271 件を照合。後方検索の COUNT、narrowing 解除後の後方参照、置換時の属性・バイト値、match-data の再利用、syntax-table テキスト属性を検証。検索の case table 無視は #259、バッファ置換の属性消失は #274 に追記。行フィルタ・件数カウント・match-string の対照ケースは一致した。
+  第6巡: 既存276件を照合。ウィンドウ構成の復元・比較・型判定、primitive-undo の保護束縛と apply 履歴、scroll hook、永続パラメータの保存値共有、window-state の形式と永続化、分割比率、使用順序、過去の point/buffer、ゼロ・負数待機時のタイマー実行を検証。余白の復元漏れは #277 に追記し、別Issueを作らなかった。新規14件を登録後、全290Issueと累計129件の本文・URL・一意な識別子を照合した。
+  第7巡: 既存290Issueを照合し、全24ターゲット735テスト・全関数スイープ・17コーパス・補完検査を実行。日本語変換、macroexpand環境、display-buffer、初期シェル、キー反復、face-remap表示登録の6件をGNU差分から登録。実GUIのUnicode・特殊キー、およびprobe停止・PTY偽失敗の4件はfull-suiteの台帳へ登録。既存#77は未解消の幅指定を再確認して再オープン。マスク外11関数名は独立実行とシェルを揃えた対照で全件切り分けた。
 
 起動時の関数名棚卸し: GNU 9087、remacs 9151、共通 9087。
 これは fboundp の名前一覧であり、呼び出しの動作検証・網羅率ではない。詳細は inventory.*.json を参照。
 
 AUD-001 [P1] SQLite の BLOB 読み出しが任意バイトを U+FFFD に置換する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/162
   x'0080ff' を読むと unibyte の (0 128 255) が multibyte の (0 65533 65533) になる。データを復元できない。
   原因候補: src/lisp/builtins/sqlite.rs:240
   再現式: (let ((db (sqlite-open))) (unwind-protect (let ((s (caar (sqlite-select db "select x'0080ff'")))) (list (multibyte-string-p s) (string-to-list s))) (sqlite-close db)))
@@ -43,6 +54,7 @@ AUD-001 [P1] SQLite の BLOB 読み出しが任意バイトを U+FFFD に置換�
   関連ケース: 'sql:blob-read'
 
 AUD-002 [P1] ネイティブ関数がエラー後も実行し、後続の正常値でエラーを失う
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/180
   error の後の setq が実行され、呼び出しもエラーにならず t を返す。tramp は戻り値が EM_INVALID の場合だけ PENDING を確認する。
   原因候補: src/lisp/builtins/comp.rs:347
   再現式: (progn (setq audit-native-side-effect nil) (let ((f (audit-native-compile (lambda nil (error "audit-stop") (setq audit-native-side-effect t))))) (list (condition-case e (funcall f) (error (car e))) audit-native-side-effect)))
@@ -51,6 +63,7 @@ AUD-002 [P1] ネイティブ関数がエラー後も実行し、後続の正常�
   関連ケース: 'native:error-aborts-sequence'
 
 AUD-003 [P1] equal が別々の循環リストの比較で停止しない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/181
   同じ内容の一要素循環リスト同士で GNU は t。remacs は比較開始を出力した後も終了せず、プロセスの 20 秒上限で強制終了。cdr 走査で depth が増えず、循環検出が有効にならない。
   原因候補: src/lisp/builtins/mod.rs:547
   再現式: (let ((a (list 1)) (b (list 1))) (setcdr a a) (setcdr b b) (equal a b))
@@ -59,6 +72,7 @@ AUD-003 [P1] equal が別々の循環リストの比較で停止しない
   関連ケース: 'equal:cycles'
 
 AUD-004 [P1] equal が深い異なるリストを t と判定する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/182
   葉が 1 と 2 の 205 段のリストで、GNU は Stack overflow in equal、remacs は t。深さ制限以降に同じ比較ペアを入口と cons 分岐で二重登録する。
   原因候補: src/lisp/builtins/mod.rs:521
   再現式: (let ((a 1) (b 2)) (dotimes (_ 205) (setq a (list a) b (list b))) (equal a b))
@@ -67,6 +81,7 @@ AUD-004 [P1] equal が深い異なるリストを t と判定する
   関連ケース: 'equal:deep-different-lists'
 
 AUD-005 [P1] ネイティブ関数のグローバル変数参照が値ではなくシンボルを返す
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/183
   値が 1 の audit-native-special を返す関数の native-compile 後、戻り値が audit-native-special になる。未解決の変数参照を SDC で出力している。
   原因候補: src/lisp/builtins/comp.rs:647
   再現式: (funcall (audit-native-compile (lambda nil audit-native-special)))
@@ -75,6 +90,7 @@ AUD-005 [P1] ネイティブ関数のグローバル変数参照が値ではな�
   関連ケース: 'native:global-value'
 
 AUD-006 [P1] ネイティブ関数内で作るクロージャが引数を捕捉しない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/184
   (lambda (x) (lambda () x)) を native-compile して 7 を渡すと、返された関数の呼び出しが void-variable x になる。GNU は 7。
   原因候補: src/lisp/builtins/comp.rs:791
   再現式: (let ((f (funcall (audit-native-compile (lambda (x) (lambda nil x))) 7))) (funcall f))
@@ -83,6 +99,7 @@ AUD-006 [P1] ネイティブ関数内で作るクロージャが引数を捕捉�
   関連ケース: 'native:closure-result'
 
 AUD-007 [P1] ネイティブ let* のシャドーイングで初期化前の変数を読む
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/185
   (let* ((x (1+ x))) x) の初期化式が外側の引数 x を見ない。GNU は 8、remacs は number-or-marker-p nil。新変数を初期化式生成前に scope に追加している。
   原因候補: src/lisp/builtins/comp.rs:910
   再現式: (funcall (audit-native-compile (lambda (x) (let* ((x (1+ x))) x))) 7)
@@ -91,6 +108,7 @@ AUD-007 [P1] ネイティブ let* のシャドーイングで初期化前の変�
   関連ケース: 'native:let-star-shadow'
 
 AUD-008 [P1] .eln に setq や provide などのトップレベルフォームが保存されない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/186
   ソースを native-compile して native-elisp-load すると defun だけが登録される。初期化と provide が消え、GNU の (42 t 7) が (nil nil 7) になる。
   原因候補: src/lisp/builtins/comp.rs:1386
   再現式: (let ((source (expand-file-name "top-level.el" audit-native-dir)) (output (expand-file-name "top-level.eln" audit-native-dir))) (with-temp-file source (insert ";;; -*- lexical-binding: t -*-\n" "(setq audit-native-loaded 42)\n" "(defun audit-native-file-function () 7)\n" "(provide 'audit-native-file-feature)\n")) (native-compile source output) (setq audit-native-loaded nil) (native-elisp-load output) (list audit-native-loaded (featurep 'audit-native-file-feature) (audit-native-file-function)))
@@ -99,6 +117,7 @@ AUD-008 [P1] .eln に setq や provide などのトップレベルフォーム�
   関連ケース: 'native:file-top-level-forms'
 
 AUD-009 [P2] ネイティブコンパイラがソース後半の構文エラーを無視して成功する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/187
   有効な defun の後に閉じていない括弧を置くと、GNU は end-of-file、remacs は .eln 生成に成功する。file_defuns の read エラーを break で破棄している。
   原因候補: src/lisp/builtins/comp.rs:1410
   再現式: (let ((source (expand-file-name "broken.el" audit-native-dir)) (output (expand-file-name "broken.eln" audit-native-dir))) (with-temp-file source (insert ";;; -*- lexical-binding: t -*-\n" "(defun audit-native-valid-prefix () 7)\n(\n")) (condition-case e (progn (native-compile source output) 'compiled) (error (car e))))
@@ -107,6 +126,7 @@ AUD-009 [P2] ネイティブコンパイラがソース後半の構文エラー�
   関連ケース: 'native:file-parse-error'
 
 AUD-010 [P2] ネイティブコンパイルした引数なし and が nil を返す
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/188
   (lambda () (and)) は GNU では t、remacs の生成コードでは nil。and の累積結果を常に NIL で初期化している。
   原因候補: src/lisp/builtins/comp.rs:727
   再現式: (funcall (audit-native-compile (lambda nil (and))))
@@ -115,6 +135,7 @@ AUD-010 [P2] ネイティブコンパイルした引数なし and が nil を返
   関連ケース: 'native:empty-and'
 
 AUD-011 [P2] ネイティブ関数の quote 定数を呼び出しごとに作り直す
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/189
   同じ関数から二度取得した '(1 2) の eq が GNU では t、remacs では nil。定数参照を毎回 RDC/read で再構築している。
   原因候補: src/lisp/builtins/comp.rs:687
   再現式: (let ((f (audit-native-compile (lambda nil '(1 2))))) (eq (funcall f) (funcall f)))
@@ -123,6 +144,7 @@ AUD-011 [P2] ネイティブ関数の quote 定数を呼び出しごとに作り
   関連ケース: 'native:quoted-constant-identity'
 
 AUD-012 [P2] ネイティブコンパイルした unibyte 文字列定数の文字コードが変わる
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/190
   未コンパイルでは (128 255) の文字列がコンパイル後は (4194176 4194303) になる。GNU のコンパイル結果と未コンパイルの対照ケースは (128 255)。
   原因候補: src/lisp/builtins/comp.rs:637
   再現式: (let ((f (audit-native-compile (lambda nil "����")))) (list (multibyte-string-p (funcall f)) (string-to-list (funcall f))))
@@ -131,6 +153,7 @@ AUD-012 [P2] ネイティブコンパイルした unibyte 文字列定数の文�
   関連ケース: 'native:string-byte-kind', 'native:string-byte-kind-baseline'
 
 AUD-013 [P1] define-hash-table-test の独自比較関数・ハッシュ関数が使われない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/191
   大文字小文字を無視する比較を登録しても equal に置き換えられ、HELLO の登録値を hello で取得できない。hash-table-test は登録名を返すため問題が見えにくい。
   原因候補: src/lisp/builtins/hashfn.rs:318
   再現式: (progn (define-hash-table-test 'audit-case-fold (lambda (a b) (string= (downcase a) (downcase b))) (lambda (a) (sxhash-equal (downcase a)))) (let ((h (make-hash-table :test 'audit-case-fold))) (puthash "HELLO" 42 h) (list (gethash "hello" h) (hash-table-test h))))
@@ -139,6 +162,7 @@ AUD-013 [P1] define-hash-table-test の独自比較関数・ハッシュ関数�
   関連ケース: 'hash:custom-test'
 
 AUD-014 [P2] equal ハッシュテーブルで構造が等しい循環キーを検索できない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/192
   一要素循環リストをキーにした登録値を、別の同内容の循環リストで取得すると nil。GNU は 42。循環の後方参照をポインタ依存のキーにしている。
   原因候補: src/lisp/builtins/hashfn.rs:179
   再現式: (let* ((a (list 1)) (b (list 1)) (h (make-hash-table :test 'equal))) (setcdr a a) (setcdr b b) (puthash a 42 h) (gethash b h))
@@ -147,6 +171,7 @@ AUD-014 [P2] equal ハッシュテーブルで構造が等しい循環キーを�
   関連ケース: 'hash:cycle-lookup'
 
 AUD-015 [P2] equal ハッシュテーブルで同じバッファ・位置の marker を検索できない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/193
   同位置の新しい point-marker で登録値を取得できない。equal は marker を位置とバッファで比較するが、ハッシュキーは marker のアドレスになる。
   原因候補: src/lisp/builtins/hashfn.rs:248
   再現式: (with-temp-buffer (let ((h (make-hash-table :test 'equal))) (puthash (point-marker) 42 h) (gethash (point-marker) h)))
@@ -155,6 +180,7 @@ AUD-015 [P2] equal ハッシュテーブルで同じバッファ・位置の mar
   関連ケース: 'hash:equal-markers'
 
 AUD-016 [P2] weak hash の到達不能なキーが garbage-collect 後も保持される
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/194
   weakness=key のテーブルに一時 vector を 1000 個登録して参照を捨て、GC を二度呼ぶ。GNU では 10 個未満に減るが、remacs では 10 個未満にならず、弱参照として機能しない。
   原因候補: src/lisp/builtins/evalfn.rs:4725
   再現式: (let ((h (make-hash-table :test 'eq :weakness 'key))) (dotimes (n 1000) (puthash (vector n) 42 h)) (garbage-collect) (garbage-collect) (< (hash-table-count h) 10))
@@ -163,6 +189,7 @@ AUD-016 [P2] weak hash の到達不能なキーが garbage-collect 後も保持�
   関連ケース: 'hash:weak-key-gc'
 
 AUD-017 [P3] hash-table-size が拡張後も指定した初期値のままになる
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/195
   :size 1 のテーブルに 10 件登録しても hash-table-size は 1。現在の容量を公開せず、保存した初期引数を返している。
   原因候補: src/lisp/builtins/hashfn.rs:491
   再現式: (let ((h (make-hash-table :size 1))) (dotimes (n 10) (puthash n n h)) (list (hash-table-count h) (> (hash-table-size h) 1)))
@@ -171,6 +198,7 @@ AUD-017 [P3] hash-table-size が拡張後も指定した初期値のままにな
   関連ケース: 'hash:size-growth'
 
 AUD-018 [P2] SQLite で省略したパラメータが NULL にならずエラーになる
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/163
   select ?, ? に値を渡さない場合や一つだけ渡す場合、GNU は不足分を nil として実行するが remacs はパラメータ数エラーにする。
   原因候補: src/lisp/builtins/sqlite.rs:344
   再現式: (let ((db (sqlite-open))) (unwind-protect (sqlite-select db "select ?, ?") (sqlite-close db)))
@@ -179,6 +207,7 @@ AUD-018 [P2] SQLite で省略したパラメータが NULL にならずエラー
   関連ケース: 'sql:missing-all', 'sql:missing-one'
 
 AUD-019 [P1] sqlite-select の set が sqlite-next より前に SQL を実行する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/164
   INSERT ... RETURNING を set として作るだけで挿入が完了する。GNU は sqlite-next まで実行しない。遅延実行 API の副作用のタイミングが変わる。
   原因候補: src/lisp/builtins/sqlite.rs:364
   再現式: (let ((db (sqlite-open))) (unwind-protect (progn (sqlite-execute db "create table t(a)") (sqlite-select db "insert into t values(7) returning a" nil 'set) (sqlite-select db "select * from t")) (sqlite-close db)))
@@ -187,6 +216,7 @@ AUD-019 [P1] sqlite-select の set が sqlite-next より前に SQL を実行す
   関連ケース: 'sql:lazy-insert'
 
 AUD-020 [P2] SQLite のエラーコードとエラーデータ構造が誤っている
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/165
   SQLITE_ERROR=1 の箇所で rusqlite の enum 判別値 23 を公開する。UNIQUE 違反などで GNU が文字列を渡すケースも常に四要素リストになり、エラー処理が一致しない。
   原因候補: src/lisp/builtins/sqlite.rs:68
   再現式: (let ((db (sqlite-open))) (unwind-protect (sqlite-select db "select * from nonexistent") (sqlite-close db)))
@@ -195,6 +225,7 @@ AUD-020 [P2] SQLite のエラーコードとエラーデータ構造が誤って
   関連ケース: 'sql:select-error', 'sql:constraint-error', 'sql:extra-one', 'sql:empty'
 
 AUD-021 [P2] sqlitep が nil の偽レコードを sqlite-close が受け入れる
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/166
   (record 'sqlite 'db 999999) は sqlitep で nil なのに sqlite-close が t を返す。GNU は wrong-type-argument sqlitep。ハンドル登録確認をしていない。
   原因候補: src/lisp/builtins/sqlite.rs:122
   再現式: (let ((db (sqlite-open))) (unwind-protect (let ((fake (record 'sqlite 'db 999999))) (list (sqlitep fake) (sqlite-close fake))) (sqlite-close db)))
@@ -203,6 +234,7 @@ AUD-021 [P2] sqlitep が nil の偽レコードを sqlite-close が受け入れ�
   関連ケース: 'sql:forged'
 
 AUD-022 [P2] sqlite-select の空クエリが nil ではなくエラーになる
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/167
   (sqlite-select db "") は GNU では nil。remacs では SQLite API misuse を送出する。
   原因候補: src/lisp/builtins/sqlite.rs:349
   再現式: (let ((db (sqlite-open))) (unwind-protect (sqlite-select db "") (sqlite-close db)))
@@ -211,6 +243,7 @@ AUD-022 [P2] sqlite-select の空クエリが nil ではなくエラーになる
   関連ケース: 'sql:empty-select'
 
 AUD-023 [P2] XML の改行・属性内空白が正規化されない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/168
   テキストの CRLF/CR が LF にならず、属性内の TAB/LF/CR も空白にならない。パースした値が GNU と異なる。
   原因候補: src/lisp/builtins/xml.rs:315
   再現式: (with-temp-buffer (insert "<a>one\15\ntwo\15three</a>") (libxml-parse-xml-region))
@@ -219,6 +252,7 @@ AUD-023 [P2] XML の改行・属性内空白が正規化されない
   関連ケース: 'xml:<a>one\r\ntwo\rthree</a>', 'xml:<a x="one\ttwo\nthree\rfour"/>'
 
 AUD-024 [P2] xmlns で始まる通常の XML 属性まで削除される
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/169
   xmlnsfoo="keep" が名前空間宣言として扱われ消える。xmlns と xmlns:prefix 以外の属性は保持する必要がある。
   原因候補: src/lisp/builtins/xml.rs:263
   再現式: (with-temp-buffer (insert "<a xmlnsfoo=\"keep\"/>") (libxml-parse-xml-region))
@@ -227,6 +261,7 @@ AUD-024 [P2] xmlns で始まる通常の XML 属性まで削除される
   関連ケース: 'xml:<a xmlnsfoo="keep"/>'
 
 AUD-025 [P2] XML パーサが重複属性・禁止文字などの不正な文書を受け入れる
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/170
   重複属性、数字で始まる要素名、NUL/制御文字、コメント内 --、属性中の生の <、テキスト中の ]]> が GNU では nil、remacs では DOM になる。
   原因候補: src/lisp/builtins/xml.rs:246
   再現式: (with-temp-buffer (insert "<a x=\"1\" x=\"2\"/>") (libxml-parse-xml-region))
@@ -235,6 +270,7 @@ AUD-025 [P2] XML パーサが重複属性・禁止文字などの不正な文書
   関連ケース: 'xml:<a x="1" x="2"/>', 'xml:<1bad/>', 'xml:<a>&#0;</a>', 'xml:<a>&#1;</a>', 'xml:<a>\x01</a>', 'xml:<a><![CDATA[\x01]]></a>', 'xml:<a><!--bad--comment--></a>', 'xml:<a x="<"/>', 'xml:<a>]]></a>'
 
 AUD-026 [P2] XML 属性の未定義エンティティをエラーにせず空文字にする
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/171
   x="&missing;" が GNU の nil ではなく x="" の DOM になる。属性デコードのエラーを unwrap_or_default で捨てている。
   原因候補: src/lisp/builtins/xml.rs:266
   再現式: (with-temp-buffer (insert "<a x=\"&missing;\"/>") (libxml-parse-xml-region))
@@ -243,6 +279,7 @@ AUD-026 [P2] XML 属性の未定義エンティティをエラーにせず空文
   関連ケース: 'xml:<a x="&missing;"/>'
 
 AUD-027 [P2] XML の内部 DTD エンティティ宣言が無視される
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/172
   内部で宣言した word='hello' を属性で参照すると空文字になり、要素内容で参照するとパース全体が nil になる。GNU は属性を hello として読み、要素内の参照も DOM に残す。
   原因候補: src/lisp/builtins/xml.rs:341
   再現式: (with-temp-buffer (insert "<!DOCTYPE a [<!ENTITY word 'hello'>]><a x=\"&word;\"/>") (libxml-parse-xml-region))
@@ -251,6 +288,7 @@ AUD-027 [P2] XML の内部 DTD エンティティ宣言が無視される
   関連ケース: 'xml:<!DOCTYPE a [<!ENTITY word \'hello\'>]><a x="&word;"/>', "xml:<!DOCTYPE a [<!ENTITY word 'hello'>]><a>&word;</a>"
 
 AUD-028 [P2] HTML の DISCARD-COMMENTS がネストしたコメントまで削除する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/173
   GNU が削除するのはトップレベルのコメントのみ。remacs は要素内のコメントもすべて消す。
   原因候補: src/lisp/builtins/xml.rs:128
   再現式: (with-temp-buffer (insert "<!--before--><p><!--inside-->text</p><!--after-->") (libxml-parse-html-region nil nil nil t))
@@ -259,6 +297,7 @@ AUD-028 [P2] HTML の DISCARD-COMMENTS がネストしたコメントまで削�
   関連ケース: 'html-discard:<!--before--><p><!--inside-->text</p><!--after-->'
 
 AUD-029 [P2] 明示的に記述した空の head 要素も削除される
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/174
   <head></head><body>x</body> の DOM から head がなくなる。暗黙に補われた head と明示的な head を区別していない。
   原因候補: src/lisp/builtins/xml.rs:103
   再現式: (with-temp-buffer (insert "<head></head><body>x</body>") (libxml-parse-html-region))
@@ -267,6 +306,7 @@ AUD-029 [P2] 明示的に記述した空の head 要素も削除される
   関連ケース: 'html:<head></head><body>x</body>', 'html-discard:<head></head><body>x</body>'
 
 AUD-030 [P2] 別の table にある tbody がすべての table の DOM を変える
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/175
   一つでも明示的な tbody があれば、tbody を書いていない別の table にも暗黙の tbody が残る。文書全体の contains 判定を全ノードに使っている。
   原因候補: src/lisp/builtins/xml.rs:146
   再現式: (with-temp-buffer (insert "<table><tr><td>a</td></tr></table><table><tbody><tr><td>b</td></tr></tbody></table>") (libxml-parse-html-region))
@@ -275,6 +315,7 @@ AUD-030 [P2] 別の table にある tbody がすべての table の DOM を変�
   関連ケース: 'html:<table><tr><td>a</td></tr></table><table><tbody><tr><td>b</td></tr></tbody></table>', 'html-discard:<table><tr><td>a</td></tr></table><table><tbody><tr><td>b</td></tr></tbody></table>'
 
 AUD-031 [P2] HTML5 の DOM 修復・属性名処理が GNU libxml の結果と一致しない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/176
   table 内のテキストが table 外へ移動し、p/div の組み合わせで空の p が追加され、SVG の viewBox の属性名も GNU の viewbox と異なる。libxml API の互換動作に差がある。
   原因候補: src/lisp/builtins/xml.rs:142
   再現式: (with-temp-buffer (insert "<table>text<tr><td>a</td></tr></table>") (libxml-parse-html-region))
@@ -283,6 +324,7 @@ AUD-031 [P2] HTML5 の DOM 修復・属性名処理が GNU libxml の結果と�
   関連ケース: 'html:<table>text<tr><td>a</td></tr></table>', 'html:<p><div>x</div>y</p>', 'html:<svg viewBox="0 0 1 1"><circle/></svg>', 'html-discard:<table>text<tr><td>a</td></tr></table>', 'html-discard:<p><div>x</div>y</p>', 'html-discard:<svg viewBox="0 0 1 1"><circle/></svg>'
 
 AUD-032 [P1] make-thread が同期実行され、親子間の待ち合わせが成立しない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/196
   親が make-thread の戻り後に設定するフラグを子が待つと、GNU は ready、remacs は子の待ち時間が尽きるまで親へ戻らず timed-out。thread-yield も実際のスケジューリングをしない。
   原因候補: src/lisp/builtins/misc.rs:8029
   再現式: (progn (setq audit-thread-ready nil) (let ((worker (make-thread (lambda nil (let ((n 0)) (while (and (not audit-thread-ready) (< n 200)) (setq n (1+ n)) (sleep-for 0.005)) (if audit-thread-ready 'ready 'timed-out)))))) (setq audit-thread-ready t) (thread-join worker)))
@@ -291,6 +333,7 @@ AUD-032 [P1] make-thread が同期実行され、親子間の待ち合わせが�
   関連ケース: 'thread:parent-worker-coordination'
 
 AUD-033 [P1] スレッドの current-buffer と動的束縛が親から分離されない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/197
   子で set-buffer すると親の current-buffer も変わる。親の一時的な special 変数束縛も子に漏れ、GNU の global が parent になる。実行文脈を保存・切替せず i.apply している。
   原因候補: src/lisp/builtins/misc.rs:8050
   再現式: (let ((a (generate-new-buffer " *audit-thread-a*")) (b (generate-new-buffer " *audit-thread-b*"))) (unwind-protect (save-current-buffer (set-buffer a) (let ((worker (make-thread (lambda nil (set-buffer b))))) (thread-join worker) (eq (current-buffer) a))) (kill-buffer a) (kill-buffer b)))
@@ -299,6 +342,7 @@ AUD-033 [P1] スレッドの current-buffer と動的束縛が親から分離さ
   関連ケース: 'thread:current-buffer-isolation', 'thread:dynamic-bindings'
 
 AUD-034 [P1] mutex が他スレッドのロックを奪え、再帰ロックの深さも保持しない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/198
   ロック中に別スレッドが mutex-lock / mutex-unlock できる。二度ロックした同一スレッドが二度 unlock すると二度目はエラー。owner を無条件で上書きし、所有者比較と再帰回数がない。
   原因候補: src/lisp/builtins/misc.rs:8138
   再現式: (let ((m (make-mutex)) (entered nil) worker) (mutex-lock m) (unwind-protect (progn (setq worker (make-thread (lambda nil (mutex-lock m) (unwind-protect (setq entered t) (mutex-unlock m))))) (sleep-for 0.03) (let ((before-unlock entered)) (ignore-errors (mutex-unlock m)) (thread-join worker) (list before-unlock entered))) (ignore-errors (mutex-unlock m))))
@@ -307,6 +351,7 @@ AUD-034 [P1] mutex が他スレッドのロックを奪え、再帰ロックの�
   関連ケース: 'mutex:busy-lock', 'mutex:foreign-unlock', 'mutex:recursive-depth'
 
 AUD-035 [P2] accept-process-output の整数 JUST-THIS-ONE によるタイマー抑止が無視される
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/199
   第4引数を 1 にしても待機中にタイマーが実行される。GNU は hits=0、remacs は hits=1。この引数を実装が参照していない。
   原因候補: src/lisp/process.rs:1870
   再現式: (let ((timer-list nil) (hits 0) (p (make-pipe-process :name "audit-timer-inhibit" :noquery t))) (unwind-protect (progn (run-at-time 0 nil (lambda nil (setq hits (1+ hits)))) (accept-process-output p 0.04 nil 1) hits) (mapc #'cancel-timer timer-list) (delete-process p)))
@@ -315,6 +360,7 @@ AUD-035 [P2] accept-process-output の整数 JUST-THIS-ONE によるタイマー
   関連ケース: 'timer:accept-process-output-inhibit'
 
 AUD-036 [P2] make-process の connection-type=pipe が無視される
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/200
   pipe を明示しても openpty で子プロセスを起動する。process-tty-name が GNU では nil、remacs では文字列。pipe と異なる端末の入力規律が適用される。
   原因候補: src/lisp/process.rs:946
   再現式: (audit-process-with '("/bin/cat") '(:connection-type pipe) (lambda (p _b) (null (process-tty-name p))))
@@ -323,6 +369,7 @@ AUD-036 [P2] make-process の connection-type=pipe が無視される
   関連ケース: 'process:pipe-connection'
 
 AUD-037 [P1] プロセスの I/O が coding system を無視し、存在しない coding も受け入れる
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/201
   iso-latin-1 指定でも入力バイト E9 は U+FFFD になり、送信する é は E9 ではなく UTF-8 の C3 A9 になる。set-process-coding-system は未定義名にも成功する。ファイル I/O の #14 とは別の入出力経路。 listener の coding 設定も accepted 接続へ継承されず、初期の UTF-8 設定になる。
   原因候補: src/lisp/process.rs:228
   再現式: (audit-process-with '("/bin/sh" "-c" "printf '\\351'") '(:connection-type pipe :coding iso-latin-1) (lambda (p b) (audit-process-drain p) (with-current-buffer b (string-to-list (buffer-string)))))
@@ -331,6 +378,7 @@ AUD-037 [P1] プロセスの I/O が coding system を無視し、存在しな�
   関連ケース: 'process:decode-latin1', 'process:encode-latin1', 'process:invalid-coding', 'network:accepted-coding-inheritance'
 
 AUD-038 [P1] チャンク境界で分割された UTF-8 を復号できない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/202
   正しい UTF-8 の「あ」を E3 と 81 82 に分けて子から送ると、GNU は「あ」、remacs は三つの U+FFFD。read ごとに独立した from_utf8_lossy を使い、未完了の文字を保持しない。
   原因候補: src/lisp/process.rs:228
   再現式: (audit-process-with '("/bin/sh" "-c" "printf '\\343'; sleep 0.1; printf '\\201\\202'") '(:connection-type pipe :coding utf-8) (lambda (p b) (audit-process-drain p) (with-current-buffer b (buffer-string))))
@@ -339,6 +387,7 @@ AUD-038 [P1] チャンク境界で分割された UTF-8 を復号できない
   関連ケース: 'process:split-utf8'
 
 AUD-039 [P1] 子プロセスに Lisp の process-environment が渡されない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/203
   process-environment に追加した REMACS_AUDIT_CHILD=from-lisp を子の sh で読めない。GNU は from-lisp、remacs は空文字。Rust プロセスの環境をそのまま継承している。
   原因候補: src/lisp/process.rs:1000
   再現式: (let ((process-environment (cons "REMACS_AUDIT_CHILD=from-lisp" process-environment))) (audit-process-with '("/bin/sh" "-c" "printf '%s' \"$REMACS_AUDIT_CHILD\"") '(:connection-type pipe) (lambda (p b) (audit-process-drain p) (with-current-buffer b (buffer-string)))))
@@ -347,6 +396,7 @@ AUD-039 [P1] 子プロセスに Lisp の process-environment が渡されない
   関連ケース: 'process:environment'
 
 AUD-040 [P1] 子プロセスの作業ディレクトリに default-directory が使われない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/204
   一時ディレクトリを default-directory に束縛しても /bin/pwd はその場所を返さない。Command に current_dir を設定していない。
   原因候補: src/lisp/process.rs:1000
   再現式: (let* ((dir (make-temp-file "remacs-audit-cwd-" t)) (default-directory dir)) (unwind-protect (audit-process-with '("/bin/pwd") '(:connection-type pipe) (lambda (p b) (audit-process-drain p) (equal (file-truename (with-current-buffer b (string-trim (buffer-string)))) (directory-file-name (file-truename dir))))) (delete-directory dir)))
@@ -355,6 +405,7 @@ AUD-040 [P1] 子プロセスの作業ディレクトリに default-directory が
   関連ケース: 'process:working-directory'
 
 AUD-041 [P2] make-process が Lisp の exec-path で実行ファイルを探索しない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/205
   exec-path にだけ追加したディレクトリの実行ファイルを GNU は起動できるが、remacs は file-missing。Command::new に未解決のコマンド名を渡している。
   原因候補: src/lisp/process.rs:1000
   再現式: (let* ((dir (make-temp-file "remacs-audit-path-" t)) (program (expand-file-name "audit-child-command" dir)) (exec-path (list dir))) (unwind-protect (progn (with-temp-file program (insert "#!/bin/sh\nprintf found")) (set-file-modes program 448) (audit-process-with '("audit-child-command") '(:connection-type pipe) (lambda (p b) (audit-process-drain p) (with-current-buffer b (buffer-string))))) (delete-directory dir t)))
@@ -363,6 +414,7 @@ AUD-041 [P2] make-process が Lisp の exec-path で実行ファイルを探索�
   関連ケース: 'process:exec-path'
 
 AUD-042 [P2] プロセスの filter=t を入力停止ではなく関数呼び出しとして扱う
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/206
   GNU が受け入れる filter=t のプロセスを accept-process-output すると、remacs は t を呼んで void-function を送出する。
   原因候補: src/lisp/process.rs:271
   再現式: (audit-process-with '("/bin/sh" "-c" "printf ok") '(:connection-type pipe :filter t) (lambda (p b) (let ((first (condition-case e (progn (accept-process-output p 0.1) 'ok) (error (car e))))) (set-process-filter p nil) (audit-process-drain p) (list first (with-current-buffer b (buffer-string))))))
@@ -371,6 +423,7 @@ AUD-042 [P2] プロセスの filter=t を入力停止ではなく関数呼び出
   関連ケース: 'process:filter-t'
 
 AUD-043 [P2] accept-process-output がタイムアウト省略時にも待たずに返る
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/207
   cat にタイマーからデータを送るケースで、GNU は出力まで待って t と文字列を返すが、remacs はタイマーを実行する前に nil と空文字を返す。省略された待ち時間を 0 秒としている。
   原因候補: src/lisp/process.rs:1878
   再現式: (audit-process-with '("/bin/cat") '(:connection-type pipe) (lambda (p b) (let* ((timer-list nil) (timer (run-at-time 0.02 nil (lambda nil (process-send-string p "ok\n"))))) (unwind-protect (list (accept-process-output p) (with-current-buffer b (buffer-string))) (cancel-timer timer)))))
@@ -379,6 +432,7 @@ AUD-043 [P2] accept-process-output がタイムアウト省略時にも待たず
   関連ケース: 'process:wait-without-timeout'
 
 AUD-044 [P2] process-send-region が marker を拒否し、範囲外や narrowing 外を黙って送る
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/208
   有効な marker は integer-or-marker-p エラーになり、位置 0 や狭められた領域外の整数は clamp され送信される。GNU は marker を受け入れ、範囲外は args-out-of-range。
   原因候補: src/lisp/process.rs:1978
   再現式: (with-temp-buffer (insert "abc") (let ((p (make-pipe-process :name "audit-region" :noquery t))) (unwind-protect (process-send-region p (copy-marker 1) (copy-marker 3)) (delete-process p))))
@@ -387,6 +441,7 @@ AUD-044 [P2] process-send-region が marker を拒否し、範囲外や narrowin
   関連ケース: 'process:send-region-marker', 'process:send-region-low-bound', 'process:send-region-narrowed'
 
 AUD-045 [P1] accept-process-output の巨大な有限待ち時間で Rust panic し、終了コードも 0 になる
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/209
   1e30 秒を指定すると GNU は catch 可能な file-error。remacs は Duration::from_secs_f64 が panic して AUDIT-DONE に到達せず、main が join のエラーを無視するためプロセスは 0 で終了する。
   原因候補: src/lisp/process.rs:1898
   再現式: (accept-process-output nil 1e+30)
@@ -395,6 +450,7 @@ AUD-045 [P1] accept-process-output の巨大な有限待ち時間で Rust panic 
   関連ケース: 'process:timeout-overflow'
 
 AUD-046 [P2] --eval が一つの式ではなく後続する全フォームを実行する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/225
   引数が (princ 1) (princ 2) のとき GNU の出力は 1、remacs は 12。run_batch が eval_forms で全体を評価する。
   原因候補: src/main.rs:367
   再現式: argv=["-Q", "--batch", "--eval", "(princ 1) (princ 2)"]
@@ -403,6 +459,7 @@ AUD-046 [P2] --eval が一つの式ではなく後続する全フォームを実
   関連ケース: 'cli:eval-multiple-forms'
 
 AUD-047 [P1] バッチ起動時にファイル引数が開かれず、後続の eval に反映されない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/226
   ファイルの後に --eval で buffer-string を読むと GNU はファイルの内容、remacs は空文字。ファイル引数を files にためた後、batch_exit により訪問処理を飛ばす。
   原因候補: src/main.rs:278
   再現式: argv=["-Q", "--batch", "<audit-dir>/fixture.txt", "--eval", "(princ (buffer-string))"]; fixture.txt="fixture-text\n"
@@ -411,6 +468,7 @@ AUD-047 [P1] バッチ起動時にファイル引数が開かれず、後続の 
   関連ケース: 'cli:file-before-eval'
 
 AUD-048 [P2] -f の関数が消費した command-line-args-left を再処理する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/227
   関数が command-line-args-left を nil にしても、その後の --eval が実行される。GNU は実行しない。固定の args ベクタの idx を進めるため、Lisp 側の引数消費を反映できない。
   原因候補: src/main.rs:243
   再現式: argv=["-Q", "--batch", "--eval", "(defun audit-cli-consume () (setq command-line-args-left nil))", "-f", "audit-cli-consume", "--eval", "(princ 123)"]
@@ -419,6 +477,7 @@ AUD-048 [P2] -f の関数が消費した command-line-args-left を再処理す�
   関連ケース: 'cli:funcall-consumed-arguments'
 
 AUD-049 [P1] -- の後の引数がファイル名にならず、--eval として実行される
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/228
   -Q --batch -- --eval (princ 123) は GNU ではファイル名の並びとして処理される。remacs は 123 を出力する。オプション終了記号の処理がない。
   原因候補: src/main.rs:126
   再現式: argv=["-Q", "--batch", "--", "--eval", "(princ 123)"]
@@ -427,6 +486,7 @@ AUD-049 [P1] -- の後の引数がファイル名にならず、--eval として
   関連ケース: 'cli:end-of-options'
 
 AUD-050 [P2] -L / --directory で load-path を追加できない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/229
   一時ディレクトリにだけ置いたライブラリを GNU は require できるが、remacs は file-missing。両オプションをファイル名として蓄積する。#108 の初期 load-path とは別の CLI 処理不足。
   原因候補: src/main.rs:126
   再現式: argv=["-Q", "--batch", "-L", "<audit-dir>/lib", "--eval", "(condition-case e (progn (require 'audit-cli-library) (princ audit-cli-library-value)) (error (prin1 (car e))))"]
@@ -435,6 +495,7 @@ AUD-050 [P2] -L / --directory で load-path を追加できない
   関連ケース: 'cli:load-path-short', 'cli:load-path-long'
 
 AUD-051 [P2] GNU のオプション表記 -eval と --eval=EXPR が無視される
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/230
   いずれも GNU は 7 を出力し、remacs は何もせず成功終了する。単一ハイフンの長い別名や = による値指定を正規化せず、完全一致の文字列だけを判定する。
   原因候補: src/main.rs:206
   再現式: argv=["-Q", "--batch", "-eval", "(princ 7)"]
@@ -443,6 +504,7 @@ AUD-051 [P2] GNU のオプション表記 -eval と --eval=EXPR が無視され�
   関連ケース: 'cli:single-hyphen-eval', 'cli:equals-eval'
 
 AUD-052 [P3] --help が使い方を表示しない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/231
   GNU は Usage を表示するが、remacs -Q --batch --help は出力なしで成功終了する。ヘルプ用の分岐がない。
   原因候補: src/main.rs:126
   再現式: argv=["-Q", "--batch", "--help"]
@@ -451,6 +513,7 @@ AUD-052 [P3] --help が使い方を表示しない
   関連ケース: 'cli:help'
 
 AUD-053 [P1] バッファ編集後も tree-sitter が編集前の構文木を返す
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/210
   [1,2] の 1 を x や null に置き換えても number ノードが残る。x の構文エラーも検出されない。古い Tree に InputEdit を適用せず、そのまま再解析の基底として渡している。
   原因候補: src/lisp/builtins/treesit.rs:606
   再現式: (with-temp-buffer (insert "[1,2]") (let ((p (treesit-parser-create 'json))) (treesit-parser-root-node p) (goto-char 2) (delete-char 1) (insert "x") (let ((root (treesit-parser-root-node p))) (list (treesit-node-check root 'has-error) (treesit-node-string root)))))
@@ -459,6 +522,7 @@ AUD-053 [P1] バッファ編集後も tree-sitter が編集前の構文木を返
   関連ケース: 'treesit:edit-same-length', 'treesit:edit-longer'
 
 AUD-054 [P1] 再解析を繰り返すと古い node の outdated 状態が解除される
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/211
   最初のノードを保持したまま八回編集・再解析すると、GNU は outdated が常に t。remacs は t/nil を交互に返す。ノード ID が再利用されると、同じキャッシュ項目を新世代で上書きする。
   原因候補: src/lisp/builtins/treesit.rs:248
   再現式: (with-temp-buffer (insert "[1,2]") (let* ((p (treesit-parser-create 'json)) (old (treesit-parser-root-node p)) hits) (dotimes (_ 8) (goto-char (point-max)) (insert " ") (treesit-parser-root-node p) (push (treesit-node-check old 'outdated) hits)) (nreverse hits)))
@@ -467,6 +531,7 @@ AUD-054 [P1] 再解析を繰り返すと古い node の outdated 状態が解除
   関連ケース: 'treesit:old-node-after-repeated-reparse'
 
 AUD-055 [P2] indirect buffer の parser-create が base buffer の parser を再利用する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/212
   GNU は間接バッファに別の parser を作るが、remacs は base の既存 parser と eq になる。引数バッファを無条件で base に置き換えるため、解析文脈を分離できない。
   原因候補: src/lisp/builtins/treesit.rs:813
   再現式: (with-temp-buffer (insert "[1,2]") (let* ((base (current-buffer)) (p (treesit-parser-create 'json)) (indirect (make-indirect-buffer base " *audit-treesit-indirect*"))) (unwind-protect (list (eq p (treesit-parser-create 'json indirect)) (length (treesit-parser-list indirect))) (kill-buffer indirect))))
@@ -475,6 +540,7 @@ AUD-055 [P2] indirect buffer の parser-create が base buffer の parser を再
   関連ケース: 'treesit:indirect-buffer'
 
 AUD-056 [P2] parser の notifier 登録に重複排除と symbolp 検査がない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/213
   同じ通知関数を二度追加すると GNU の一件に対し remacs は二件になる。数値や lambda も受け入れるが、GNU は関数シンボル以外を symbolp エラーにする。
   原因候補: src/lisp/builtins/treesit.rs:1112
   再現式: (with-temp-buffer (let ((p (treesit-parser-create 'json))) (treesit-parser-add-notifier p 'audit-treesit-notifier) (treesit-parser-add-notifier p 'audit-treesit-notifier) (length (treesit-parser-notifiers p))))
@@ -483,6 +549,7 @@ AUD-056 [P2] parser の notifier 登録に重複排除と symbolp 検査がな�
   関連ケース: 'treesit:notifier-dedup', 'treesit:notifier-invalid', 'treesit:notifier-lambda'
 
 AUD-057 [P2] query の #match? が case-fold-search に影響される
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/214
   ["A","a"] に A を探す述語で GNU の capture は一件、remacs は二件。通常の buffer 検索用の case-fold-search を query の述語に適用している。
   原因候補: src/lisp/builtins/treesit.rs:1856
   再現式: (with-temp-buffer (insert "[\"A\",\"a\"]") (let ((p (treesit-parser-create 'json)) (case-fold-search t)) (length (treesit-query-capture p "((string) @s (#match? @s \"A\"))"))))
@@ -491,6 +558,7 @@ AUD-057 [P2] query の #match? が case-fold-search に影響される
   関連ケース: 'treesit:query-match-case'
 
 AUD-058 [P2] query の #eq? が同名の複数 capture のうち最初だけを検査する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/215
   [1,2] の両 number を @n に捕捉して @n = "1" を要求すると GNU はマッチなし、remacs は両方を返す。capture 名の解決が単一ノードに縮退する。
   原因候補: src/lisp/builtins/treesit.rs:1767
   再現式: (with-temp-buffer (insert "[1,2]") (let ((p (treesit-parser-create 'json))) (mapcar #'car (treesit-query-capture p "((array (number) @n (number) @n) (#eq? @n \"1\"))"))))
@@ -499,6 +567,7 @@ AUD-058 [P2] query の #eq? が同名の複数 capture のうち最初だけを�
   関連ケース: 'treesit:query-repeat-capture'
 
 AUD-059 [P3] included-ranges のエラーデータから説明と範囲リストが欠落する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/216
   範囲 (0 . 99) の設定でエラーの種類は合うが、GNU の説明文字列と範囲リストの代わりに不正なペアだけをデータとして送出する。
   原因候補: src/lisp/builtins/treesit.rs:1053
   再現式: (with-temp-buffer (insert "[1,2]") (treesit-parser-set-included-ranges (treesit-parser-create 'json) '((0 . 99))))
@@ -507,6 +576,7 @@ AUD-059 [P3] included-ranges のエラーデータから説明と範囲リスト
   関連ケース: 'treesit:ranges-invalid'
 
 AUD-060 [P1] process-send-eof がネットワーク接続の送信側を閉じない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/217
   TCP 接続の client に EOF を送っても peer は open のまま。GNU の peer は closed になる。Net/LocalNet の分岐で shutdown(Write) を呼ばず、何もせず process オブジェクトを返している。
   原因候補: src/lisp/process.rs:2008
   再現式: (audit-net-with-pair nil (lambda (_server client peer) (process-send-eof client) (let ((n 0)) (while (and (process-live-p peer) (< n 30)) (setq n (1+ n)) (accept-process-output nil 0.01))) (process-status peer)))
@@ -515,6 +585,7 @@ AUD-060 [P1] process-send-eof がネットワーク接続の送信側を閉じ�
   関連ケース: 'network:send-eof'
 
 AUD-061 [P1] delete-process 後も TCP リスナーが同じポートを占有する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/218
   削除したサーバーオブジェクトを参照したまま同じポートへ再 bind すると、GNU は成功、remacs は Address already in use。Listen のソケットを閉じず status だけ closed にしている。
   原因候補: src/lisp/process.rs:2477
   再現式: (let* ((server (audit-net-server)) (port (process-contact server :service)) second) (unwind-protect (progn (delete-process server) (setq second (audit-net-server (list :service port))) 'bound) (when second (ignore-errors (delete-process second))) (ignore-errors (delete-process server))))
@@ -523,6 +594,7 @@ AUD-061 [P1] delete-process 後も TCP リスナーが同じポートを占有�
   関連ケース: 'network:deleted-listener-rebind'
 
 AUD-062 [P2] 接続受理時に log が呼ばれず、sentinel はリスナー側で呼ばれる
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/219
   server の :log コールバックは GNU では実行されるが remacs では実行されない。sentinel が受け取るプロセスの状態は GNU で open、remacs で listen。accepted 接続ではなく listener に通知している。
   原因候補: src/lisp/process.rs:608
   再現式: (let ((called nil)) (audit-net-with-pair (list :log (lambda (_server _client _message) (setq called t))) (lambda (_server _client _peer) called)))
@@ -531,6 +603,7 @@ AUD-062 [P2] 接続受理時に log が呼ばれず、sentinel はリスナー�
   関連ケース: 'network:accept-log-callback', 'network:accept-sentinel-target'
 
 AUD-063 [P2] process-contact が受理した接続の情報と DNS 解決後のアドレスを返せない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/220
   accepted 接続の host/service と :local/:remote はすべて nil。localhost で接続した client の :remote は 127.0.0.1 ではなく 0.0.0.0。内部の contact データ形式の不一致と、元のホスト文字列からのアドレス捏造がある。
   原因候補: src/lisp/process.rs:555
   再現式: (audit-net-with-pair nil (lambda (_server _client peer) (let ((contact (process-contact peer))) (list (stringp (car contact)) (integerp (cadr contact)) (vectorp (process-contact peer :remote)) (vectorp (process-contact peer :local))))))
@@ -539,6 +612,7 @@ AUD-063 [P2] process-contact が受理した接続の情報と DNS 解決後の�
   関連ケース: 'network:accepted-contact', 'network:resolved-remote-address'
 
 AUD-064 [P2] stop-process で停止したネットワーク接続からも入力を読む
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/221
   peer を停止してから送信すると、GNU は continue-process まで filter を実行せず、remacs は停止中にも payload を渡す。poll_proc が stop 状態を確認せず read している。
   原因候補: src/lisp/process.rs:358
   再現式: (audit-net-with-pair nil (lambda (_server client peer) (let ((text "")) (set-process-filter peer (lambda (_p chunk) (setq text (concat text chunk)))) (stop-process peer) (process-send-string client "payload") (accept-process-output nil 0.05) (let ((before text)) (continue-process peer) (accept-process-output nil 0.05) (list before text)))))
@@ -547,6 +621,7 @@ AUD-064 [P2] stop-process で停止したネットワーク接続からも入力
   関連ケース: 'network:stop-reading'
 
 AUD-065 [P1] family=ipv4 を指定すると明示的なループバック bind がワイルドカードになる
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/232
   :host 127.0.0.1 と :family ipv4 を指定したサーバーの実際のソケットを lsof で確認。GNU は 127.0.0.1、remacs は *。family が非 nil の場合に bind_host を無条件で 0.0.0.0 に置き換えている。
   原因候補: src/lisp/process.rs:1264
   再現式: (let ((s (make-network-process :name "audit-binding" :host "127.0.0.1"
@@ -559,6 +634,7 @@ Inspect the child PID with lsof -a -p PID -iTCP -sTCP:LISTEN -nP -Fn; terminate 
   関連ケース: 'network:actual-loopback-binding'
 
 AUD-066 [P2] copy-file が同一実体へのコピーを成功扱いする
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/222
   同じ名前と hardlink の両方で GNU は file-error、remacs は nil を返す。この検査では両実装とも元の内容が空になっており、GNU が内容を保持するという意味ではない。remacs が失敗を通知しない差分として記録する。
   原因候補: src/editor/mod.rs:12035
   再現式: (audit-file-with-directory (lambda (dir) (let* ((source (expand-file-name "source" dir)) (dest (if (eq 'same-name 'same-name) source (expand-file-name "alias" dir)))) (with-temp-file source (insert "original")) (unless (eq 'same-name 'same-name) (add-name-to-file source dest)) (list (condition-case e (copy-file source dest t) (error (car e))) (audit-file-read source)))))
@@ -567,6 +643,7 @@ AUD-066 [P2] copy-file が同一実体へのコピーを成功扱いする
   関連ケース: 'files:copy-self-same-name', 'files:copy-self-hardlink'
 
 AUD-067 [P1] 壊れた symlink を存在しないものとして扱い、rename や上書き保護を誤る
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/223
   rename-file は有効な symlink オブジェクトを missing として拒否する。一方、壊れた symlink が宛先の場合は nil の上書き許可でも rename/copy が実行される。GNU は宛先の既存エントリーを保護する。exists() がリンク先をたどることを区別していない。
   原因候補: src/editor/mod.rs:11863
   再現式: (audit-file-with-directory (lambda (dir) (let ((source (expand-file-name "source" dir)) (dest (expand-file-name "dest" dir))) (make-symbolic-link "missing-target" source) (list (condition-case e (rename-file source dest) (error (car e))) (stringp (file-symlink-p source)) (stringp (file-symlink-p dest))))))
@@ -575,6 +652,7 @@ AUD-067 [P1] 壊れた symlink を存在しないものとして扱い、rename 
   関連ケース: 'files:rename-broken-symlink', 'files:rename-over-broken-destination', 'files:copy-over-broken-destination'
 
 AUD-068 [P1] 複数のファイルプリミティブが file-name-handler-alist を経由しない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/224
   handler の検索自体は両実装で成功するが、file-exists-p/readable-p/writable-p/modes、copy、rename、delete、属性変更、insert-file-contents、write-region では remacs が handler を呼ばない。仮想ファイルを物理パスとして扱う。
   原因候補: src/editor/mod.rs:10230
   再現式: (let ((file-name-handler-alist '(("\\`/audit-magic:" . audit-magic-file-handler))) (audit-file-handler-log nil)) (with-temp-buffer (list (condition-case e (file-exists-p "/audit-magic:/entry") (error (car e))) (nreverse audit-file-handler-log))))
@@ -582,11 +660,621 @@ AUD-068 [P1] 複数のファイルプリミティブが file-name-handler-alist 
   remacs: (ok (nil nil))
   関連ケース: 'files:handler-file-exists-p', 'files:handler-file-readable-p', 'files:handler-file-writable-p', 'files:handler-file-modes', 'files:handler-copy-file', 'files:handler-rename-file', 'files:handler-delete-file', 'files:handler-set-file-modes', 'files:handler-set-file-times', 'files:handler-insert-file-contents', 'files:handler-write-region'
 
+AUD-069 [P1] make-network-process の :type datagram が無視され TCP ソケットを作成する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/177
+  UDP を指定したサーバーの状態が GNU の open に対し remacs は listen になる。make-network-process は :type を読み取らず TcpListener/TcpStream を作成するため、datagram の通信を行えない。
+  原因候補: src/lisp/process.rs:1269
+  再現式: (let ((p (make-network-process :name "audit-udp" :host "127.0.0.1" :family 'ipv4 :type 'datagram :server t :service 0 :noquery t :sentinel #'ignore))) (unwind-protect (list (process-type p) (process-status p)) (delete-process p)))
+  GNU: (ok (network open))
+  remacs: (ok (network listen))
+  関連ケース: 'network:datagram-socket'
+
+AUD-070 [P2] make-network-process の :service t による空きポート割り当てがエラーになる
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/178
+  サーバーに :service t を指定すると GNU は空きポートを割り当て、process-contact で整数のポート番号を返す。remacs は wrong-type-argument stringp t を送出する。service_port が整数と文字列しか受け付けない。
+  原因候補: src/lisp/process.rs:1129
+  再現式: (let ((p (make-network-process :name "audit-random" :host "127.0.0.1" :family 'ipv4 :server t :service t :noquery t :sentinel #'ignore))) (unwind-protect (integerp (process-contact p :service)) (delete-process p)))
+  GNU: (ok t)
+  remacs: (error (wrong-type-argument stringp t))
+  関連ケース: 'network:random-service'
+
+AUD-071 [P1] make-network-process が :nowait t でも同期接続する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/179
+  ループバックへの :nowait t の接続直後、GNU は connect を返すが remacs は open を返す。TcpStream::connect を呼んでから nonblocking に切り替えるため接続待ちが呼び出し元をブロックする。
+  原因候補: src/lisp/process.rs:1297
+  再現式: (let ((server (make-network-process :name "audit-async-server" :host "127.0.0.1" :server t :service 0 :noquery t :sentinel #'ignore)) client) (unwind-protect (progn (setq client (make-network-process :name "audit-async-client" :host "127.0.0.1" :service (process-contact server :service) :nowait t :noquery t :sentinel #'ignore)) (process-status client)) (when client (delete-process client)) (delete-process server)))
+  GNU: (ok connect)
+  remacs: (ok open)
+  関連ケース: 'network:nowait-connect'
+
+AUD-072 [P1] 削除したテキストを undo するとテキスト属性が復元されない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/233
+  face=bold を持つ abc の b を delete-region で削除して primitive-undo すると、文字は復元されるが b の face が nil になる。GNU は三文字とも bold を保持する。削除履歴を属性のない String として保存し、undo 時にも文字列の属性を挿入していない。
+  原因候補: src/buffer/mod.rs:849
+  再現式: (with-temp-buffer (buffer-enable-undo) (insert (propertize "abc" 'face 'bold)) (setq buffer-undo-list nil) (delete-region 2 3) (setq buffer-undo-list (primitive-undo 1 buffer-undo-list)) (list (buffer-substring-no-properties 1 4) (mapcar (lambda (p) (get-text-property p 'face)) '(1 2 3))))
+  GNU: (ok ("abc" (bold bold bold)))
+  remacs: (ok ("abc" (bold nil bold)))
+  関連ケース: 'buffer:undo-deleted-properties'
+
+AUD-073 [P1] propertize が unibyte 文字列の非 ASCII バイト値を別の文字コードに変える
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/234
+  (unibyte-string 128 255) に face を付けるだけで、aref・string-to-list・vconcat が返す値が (128 255) から (4194176 4194303) に変わる。multibyte-string-p は nil のままなので表面のフラグだけでは検出できない。propertize が文字列を複製する際に元のバイト表現に関するメタデータを引き継いでいない。
+  原因候補: src/buffer/primitives.rs:13448
+  再現式: (let* ((s (unibyte-string 128 255)) (result (propertize s 'face 'bold))) (list (multibyte-string-p result) (string-to-list result) (aref result 0) (vconcat result) (get-text-property 0 'face result)))
+  GNU: (ok (nil (128 255) 128 [128 255] bold))
+  remacs: (ok (nil (4194176 4194303) 4194176 [4194176 4194303] bold))
+  関連ケース: 'string:propertize-unibyte'
+
+AUD-074 [P1] replace-region-contents が未変更部分も削除し、point・marker・変更状態を壊す
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/235
+  abcde の末尾だけを置換しても、変更していない文字にある marker が先頭へ移動し、point も末尾へ飛ぶ。完全に同じ文字列での置換でも、GNU が保持する未変更状態と空の undo 履歴が失われる。差分を反映せず指定領域を丸ごと delete/insert している。
+  原因候補: src/buffer/extra.rs:653
+  再現式: (with-temp-buffer (insert "abcdef") (goto-char 4) (let ((m (copy-marker 3))) (replace-region-contents 1 7 "abcdeX") (list (buffer-string) (point) (marker-position m))))
+  GNU: (ok ("abcdeX" 4 3))
+  remacs: (ok ("abcdeX" 7 1))
+  関連ケース: 'replace-region:preserve-marker', 'replace-region:unchanged'
+
+AUD-075 [P1] replace-region-contents が挿入元のテキスト属性を落とす
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/236
+  abc の b を face=bold を持つ aXc で置換すると、GNU は新しい X に bold を持たせる。remacs は三文字とも属性なしになる。SOURCE を Rust のプレーンな String に変換して挿入している。
+  原因候補: src/buffer/extra.rs:637
+  再現式: (with-temp-buffer (insert "abc") (replace-region-contents 1 4 (propertize "aXc" 'face 'bold)) (list (buffer-substring-no-properties 1 4) (mapcar (lambda (p) (get-text-property p 'face)) '(1 2 3))))
+  GNU: (ok ("aXc" (nil bold nil)))
+  remacs: (ok ("aXc" (nil nil nil)))
+  関連ケース: 'replace-region:properties'
+
+AUD-076 [P1] replace-region-contents が SOURCE バッファの narrowing を無視する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/237
+  xxNEWyy を NEW の範囲へ narrow-to-region したバッファを渡すと、GNU は NEW を使うが、remacs は非公開の前後も含め xxNEWyy 全体を挿入する。SOURCE の BEGV/ZV を参照していない。
+  原因候補: src/buffer/extra.rs:640
+  再現式: (let ((source (generate-new-buffer " *audit-replace-source*"))) (unwind-protect (progn (with-current-buffer source (insert "xxNEWyy") (narrow-to-region 3 6)) (with-temp-buffer (insert "old") (replace-region-contents 1 4 source) (buffer-string))) (kill-buffer source)))
+  GNU: (ok "NEW")
+  remacs: (ok "xxNEWyy")
+  関連ケース: 'replace-region:narrowed-source'
+
+AUD-077 [P2] replace-region-contents が [BUFFER BEG END] 形式の SOURCE を拒否する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/238
+  GNU Emacs 31.1 が受け入れる部分バッファ指定ベクター [BUFFER BEG END] を渡すと、remacs は wrong-type-argument stringp を送出する。SOURCE のパターン分岐に vector 形式がない。
+  原因候補: src/buffer/extra.rs:636
+  再現式: (let ((source (generate-new-buffer " *audit-replace-source*"))) (unwind-protect (progn (with-current-buffer source (insert "xxNEWyy")) (with-temp-buffer (insert "old") (replace-region-contents 1 4 (vector source 3 6)) (buffer-string))) (kill-buffer source)))
+  GNU: (ok "NEW")
+  remacs: (error (wrong-type-argument stringp [#<killed buffer> 3 6]))
+  関連ケース: 'replace-region:vector-source'
+
+AUD-078 [P2] replace-region-contents が SOURCE 関数を対象領域へ narrow せず呼び出す
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/239
+  関数形式の SOURCE は BEG..END に狭めたバッファで呼び出されるが、remacs は元の全領域を見せる。[abc] の 2..5 の置換で、関数が見る point-min/max は GNU の (2 5) に対し remacs は (1 6)。
+  原因候補: src/buffer/extra.rs:643
+  再現式: (with-temp-buffer (insert "[abc]") (let (seen) (replace-region-contents 2 5 (lambda nil (setq seen (list (point-min) (point-max) (buffer-string))) "X")) (list seen (buffer-string) (point-min) (point-max))))
+  GNU: (ok ((2 5 "abc") "[X]" 1 4))
+  remacs: (ok ((1 6 "[abc]") "[X]" 1 4))
+  関連ケース: 'replace-region:callback-narrowing'
+
+AUD-079 [P1] transpose-regions が point と marker を正しく移動せず LEAVE-MARKERS も無視する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/240
+  ab--XYZ の二領域を転置すると、GNU は領域内の point と marker を対応する文字へ移動する。remacs は delete/insert の副作用で別の位置へ動かす。LEAVE-MARKERS=t で座標を固定する指定にも同じ誤った移動が起き、第五引数を参照していない。
+  原因候補: src/buffer/extra.rs:2391
+  再現式: (with-temp-buffer (insert "ab--XYZ") (goto-char 2) (let ((first (copy-marker 2)) (second (copy-marker 6)) (middle (copy-marker 4))) (transpose-regions 1 3 5 8 nil) (list (buffer-string) (point) (mapcar #'marker-position (list first second middle)))))
+  GNU: (ok ("XYZ--ab" 7 (7 2 5)))
+  remacs: (ok ("XYZ--ab" 4 (1 6 5)))
+  関連ケース: 'transpose:markers-nil', 'transpose:markers-t'
+
+AUD-080 [P1] transpose-regions が転置するテキストの属性を消す
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/241
+  face=bold の ab と face=italic の XYZ を転置すると、GNU は各文字の face を保持するが、remacs は転置した両領域の face をすべて nil にする。属性なしの substring を作り、文字だけを挿入している。
+  原因候補: src/buffer/extra.rs:2386
+  再現式: (with-temp-buffer (insert (propertize "ab" 'face 'bold) "--" (propertize "XYZ" 'face 'italic)) (transpose-regions 1 3 5 8) (list (buffer-substring-no-properties 1 8) (mapcar (lambda (p) (get-text-property p 'face)) '(1 2 3 4 5 6 7))))
+  GNU: (ok ("XYZ--ab" (italic italic italic nil nil bold bold)))
+  remacs: (ok ("XYZ--ab" (nil nil nil nil nil nil nil)))
+  関連ケース: 'transpose:properties'
+
+AUD-081 [P1] append-to-buffer がコピーするテキストの属性を消す
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/242
+  face=bold の abc を append-to-buffer で別バッファへ送ると、GNU は全ての文字の face を保持するが remacs は全て nil にする。同条件の copy-to-buffer / prepend-to-buffer は保持する。append-to-buffer の Rust 実装だけが属性なしの String を使っている。
+  原因候補: src/editor/mod.rs:10028
+  再現式: (let ((target (generate-new-buffer " *audit-transfer*"))) (unwind-protect (with-temp-buffer (insert (propertize "abc" 'face 'bold)) (append-to-buffer target 1 4) (with-current-buffer target (list (buffer-substring-no-properties 1 4) (mapcar (lambda (p) (get-text-property p 'face)) '(1 2 3))))) (kill-buffer target)))
+  GNU: (ok ("abc" (bold bold bold)))
+  remacs: (ok ("abc" (nil nil nil)))
+  関連ケース: 'buffer-transfer:properties-append-to-buffer'
+
+AUD-082 [P1] append-to-buffer が narrowing 外の領域を拒否せずコピーする
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/243
+  [abc] の abc に narrow した状態で全バッファの範囲 1..6 を指定すると、GNU は args-out-of-range を送出し宛先を変更しない。remacs は指定範囲を全テキスト長に clamp して [abc] をコピーする。#17 の insert-buffer-substring 側とは別に、append-to-buffer 自身の Rust 実装にも可視範囲の検査がない。
+  原因候補: src/editor/mod.rs:10033
+  再現式: (let ((target (generate-new-buffer " *audit-transfer*"))) (unwind-protect (with-temp-buffer (insert "[abc]") (narrow-to-region 2 5) (list (condition-case err (progn (append-to-buffer target 1 6) 'copied) (error (car err))) (with-current-buffer target (buffer-string)))) (kill-buffer target)))
+  GNU: (ok (args-out-of-range ""))
+  remacs: (ok (copied "[abc]"))
+  関連ケース: 'buffer-transfer:narrowing-append-to-buffer'
+
+AUD-083 [P2] process-buffer が kill 済みバッファへの参照を nil に置き換える
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/244
+  make-pipe-process に渡したバッファを kill した後、GNU の process-buffer は同じ kill 済みオブジェクトを返すが remacs は nil を返す。元のバッファ参照との eq が GNU の t に対して nil になる。#54 の新規プロセスの sentinel / marker の既定値とは異なる寿命管理の問題。
+  原因候補: src/lisp/process.rs:1573
+  再現式: (let* ((b (generate-new-buffer " *audit-process-dead-buffer*")) (p (make-pipe-process :name "audit-process-dead-buffer" :buffer b :noquery t))) (unwind-protect (progn (kill-buffer b) (list (buffer-live-p b) (eq (process-buffer p) b))) (ignore-errors (delete-process p)) (when (buffer-live-p b) (kill-buffer b))))
+  GNU: (ok (nil t))
+  remacs: (ok (nil nil))
+  関連ケース: 'process:killed-buffer-identity'
+
+AUD-084 [P1] process-send-string が PTY への部分書き込みを成功扱いし残りのデータを捨てる
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/245
+  同じ PTY 子プロセスへ 128000 文字を送ると、GNU は全量を届ける。remacs の process-send-string も正常に戻るが、この検証で子プロセスが受け取ったのは 1022 文字だけだった。proc_write の Child 分岐は write の戻り値が負でなければ成功とし、短い書き込みの残りを送らない。受信量は OS のバッファ状態に依存する。
+  原因候補: src/lisp/process.rs:1960
+  再現式: (let ((b (generate-new-buffer " *audit-process-count*")) p) (unwind-protect (let ((payload (apply #'concat (make-list 2000 (concat (make-string 63 120) "\n"))))) (setq p (make-process :name "audit-process-count" :buffer b :noquery t :sentinel #'ignore :connection-type 'pty :coding 'utf-8-unix :command (list "/usr/bin/python3" "-u" "-c" "import sys\nn = 0\nfor line in sys.stdin.buffer:\n p = line.find(b'#END#')\n if p >= 0:\n  print(n + p, flush=True)\n  break\n n += len(line)\n"))) (let ((send-result (condition-case err (progn (process-send-string p payload) 'sent) (error (car err))))) (sleep-for 0.2) (process-send-string p "#END#\n") (let ((attempt 0)) (while (and (process-live-p p) (< attempt 200)) (setq attempt (1+ attempt)) (accept-process-output p 0.01))) (accept-process-output p 0.01) (with-current-buffer b (list send-result (length payload) (string-to-number (buffer-string)))))) (when p (ignore-errors (delete-process p))) (kill-buffer b)))
+  GNU: (ok (sent 128000 128000))
+  remacs: (ok (sent 128000 1022))
+  関連ケース: 'process:large-pty-write'
+
+AUD-085 [P2] save-mark-and-excursion がマーク未設定状態と復元時の hook を保持しない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/246
+  元のマークが未設定のとき、内部で set-mark すると save-mark-and-excursion を抜けても新しいマークと mark-active=t が残る。GNU は元の未設定・非アクティブ状態へ戻す。また元から存在したマークを再アクティブ化する際、GNU が実行する activate-mark-hook の呼び出しが一回不足する。Rust の excursion 復元経路は保存したマークが Some のときしか状態を復元せず、復元時の hook も実行しない。
+  原因候補: src/lisp/eval.rs:11118
+  再現式: (with-temp-buffer (insert "abc") (goto-char 1) (set-marker (mark-marker) nil) (save-mark-and-excursion (set-mark 2) (setq mark-active t) (goto-char 3)) (list (point) (mark t) mark-active))
+  GNU: (ok (1 nil nil))
+  remacs: (ok (1 2 t))
+  関連ケース: 'excursion:initially-unset-mark', 'excursion:mark-activation-hooks'
+
+AUD-086 [P1] set-process-window-size が PTY のサイズを変更せず引数検査もしない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/247
+  PTY 子プロセスに 12 行・34 桁を設定してから端末サイズを読ませると、GNU は (34, 12)、remacs は未設定の (0, 0) を返す。関数は引数を参照せず nil を返すだけで、TIOCSWINSZ 相当の更新を行わない。不正なプロセス引数も GNU の processp エラーに対して成功扱いになる。
+  原因候補: src/lisp/process.rs:1834
+  再現式: (let ((b (generate-new-buffer " *audit-process-size*")) p) (unwind-protect (progn (setq p (make-process :name "audit-process-size" :buffer b :noquery t :sentinel #'ignore :connection-type 'pty :command '("/usr/bin/python3" "-u" "-c" "import os, sys; sys.stdin.readline(); print(tuple(os.get_terminal_size(0)), flush=True)"))) (set-process-window-size p 12 34) (process-send-string p "\n") (let ((attempt 0)) (while (and (process-live-p p) (< attempt 200)) (setq attempt (1+ attempt)) (accept-process-output p 0.01))) (accept-process-output p 0.01) (with-current-buffer b (string-trim (buffer-string)))) (when p (ignore-errors (delete-process p))) (kill-buffer b)))
+  GNU: (ok "(34, 12)")
+  remacs: (ok "(0, 0)")
+  関連ケース: 'process:set-window-size', 'process:set-window-size-invalid'
+
+AUD-087 [P1] fillarray が文字列のバイト形式を内容から誤判定する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/248
+  unibyte の (128 255) を ASCII または 233 で埋める操作は GNU では成功するが remacs は error になる。反対に multibyte の ASCII 文字列を 233 で埋める操作は GNU のバイト長変更エラーにならず成功する。明示的な unibyte/multibyte 状態を参照せず all_ascii で保存形式を判定している。
+  原因候補: src/lisp/builtins/seq.rs:1148
+  再現式: (let ((s (unibyte-string 128 255))) (list (condition-case err (progn (fillarray s 97) 'filled) (error (car err))) (multibyte-string-p s) (string-to-list s)))
+  GNU: (ok (filled nil (97 97)))
+  remacs: (ok (error nil (128 255)))
+  関連ケース: 'string:fillarray-unibyte-ascii', 'string:fillarray-unibyte-high', 'string:fillarray-multibyte-ascii'
+
+AUD-088 [P2] clear-string が unibyte の高位バイトを含む文字列の長さを増やす
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/249
+  (unibyte-string 128 255) を clear-string すると、GNU は長さ 2 の NUL 文字列になるが remacs は長さ 8 になる。内部で一バイトを保持する代理文字の UTF-8 格納長を、そのまま Lisp のバイト長として使っている。通常の multibyte 文字列を消去する対照ケースは一致する。
+  原因候補: src/lisp/builtins/strfn.rs:4181
+  再現式: (let ((s (unibyte-string 128 255))) (clear-string s) (list (length s) (string-bytes s) (string-to-list s)))
+  GNU: (ok (2 2 (0 0)))
+  remacs: (ok (8 8 (0 0 0 0 0 0 0 0)))
+  関連ケース: 'string:clear-unibyte', 'string:clear-multibyte-control'
+
+AUD-089 [P1] reverse / nreverse が unibyte 文字列のバイト値を別の文字コードに変える
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/250
+  unibyte の (128 255) を反転すると GNU は (255 128) を返すが、remacs は (4194303 4194176) を返す。multibyte-string-p は nil のまま。reverse と nreverse の文字列生成経路が元のバイト表現のメタデータを引き継いでおらず、#234 の propertize 側と同様の現象が別の実装箇所で起きる。
+  原因候補: src/lisp/builtins/listfn.rs:738
+  再現式: (let* ((s (unibyte-string 128 255)) (out (reverse s))) (list (multibyte-string-p out) (string-to-list out) (multibyte-string-p s) (string-to-list s)))
+  GNU: (ok (nil (255 128) nil (128 255)))
+  remacs: (ok (nil (4194303 4194176) nil (128 255)))
+  関連ケース: 'string:unibyte-reverse', 'string:unibyte-nreverse'
+
+AUD-090 [P2] string-width がバッファの tab-width を無視して TAB を常に 8 桁と数える
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/251
+  tab-width=4 では GNU の char-width と string-width は TAB を 4 桁と数える。remacs は char-width では 4 を返すが string-width では 8 を返す。string-width の補助関数 gnu_char_width が TAB の幅を 8 に固定している。#147 の current-indentation とは別の実装箇所。
+  原因候補: src/lisp/builtins/strfn.rs:1549
+  再現式: (let ((tab-width 4)) (list (char-width 9) (string-width "\11") (truncate-string-to-width "\11X" 4)))
+  GNU: (ok (4 4 "\11"))
+  remacs: (ok (4 8 "\11"))
+  関連ケース: 'string-width:tab-width'
+
+AUD-091 [P2] string-glyph-split が明示的に合成した文字列も一文字ずつ分割する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/252
+  ab に compose-string で一つの合成を設定すると、GNU の string-glyph-split は長さ 2 の文字列を一つ返す。remacs は長さ 1 の文字列を二つ返す。文字列の composition 属性を参照せず Rust の chars() をそのまま列挙している。
+  原因候補: src/lisp/builtins/strfn.rs:1980
+  再現式: (let ((s (copy-sequence "ab"))) (compose-string s 0 2) (mapcar #'length (string-glyph-split s)))
+  GNU: (ok (2))
+  remacs: (ok (1 1))
+  関連ケース: 'string:glyph-explicit-composition'
+
+AUD-092 [P2] nreverse が GNU では削除される文字列のテキスト属性を反転して残す
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/253
+  最初の a だけに face=bold を持つ abc を nreverse すると、GNU は属性のない cba を返すが remacs は最後の a に bold を残す。reverse の同条件の対照ケースは両実装で属性なしになる。nreverse の文字列分岐だけが属性の区間を反転して新しい文字列へコピーしている。#250 の unibyte のバイト値変化とは異なる属性処理の問題。
+  原因候補: src/lisp/builtins/seq.rs:1290
+  再現式: (let* ((s (concat (propertize "a" 'face 'bold) "bc")) (out (nreverse s))) (list (substring-no-properties out) (mapcar (lambda (p) (get-text-property p 'face out)) '(0 1 2))))
+  GNU: (ok ("cba" (nil nil nil)))
+  remacs: (ok ("cba" (nil nil bold)))
+  関連ケース: 'string:properties-nreverse', 'string:properties-reverse'
+
+AUD-093 [P1] 実行済みバイトコードの命令文字列を書き換えても古い命令を実行する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/254
+  定数 11 を返す make-byte-code の関数を一度呼び、命令文字列の constant0 を constant1 に aset すると、GNU は次回から 22 を返す。remacs は 11 のまま。復号済み命令のキャッシュを命令文字列の Rc アドレスだけで検証するため、同じ文字列の内容変更を検知できない。定数ベクターの要素変更は両実装で反映される。
+  原因候補: src/lisp/bytecode.rs:143
+  再現式: (let* ((f (make-byte-code 0 (unibyte-string 192 135) (vector 11 22) 1)) (before (funcall f))) (aset (aref f 1) 0 193) (list before (funcall f)))
+  GNU: (ok (11 22))
+  remacs: (ok (11 11))
+  関連ケース: 'bytecode:code-in-place', 'bytecode:constants-in-place-control'
+
+AUD-094 [P2] aset が GNU では変更できないバイトコード関数のスロットを変更できる
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/255
+  make-byte-code の戻り値に対する aset は GNU では wrong-type-argument arrayp になる。remacs は命令文字列スロットと定数ベクタースロットを直接書き換え、関数の戻り値も変わる。aref で読み取れることと、aset で変更できることの区別がない。#121 の不正な byte-code 命令・定数アクセスとは異なる API の型検査の問題。
+  原因候補: src/lisp/builtins/seq.rs:626
+  再現式: (let* ((f (make-byte-code 0 (unibyte-string 192 135) (vector 11 22) 1)) (before (funcall f))) (let ((result (condition-case err (progn (aset f 1 (unibyte-string 193 135)) 'stored) (error (list (car err) (cadr err)))))) (list before result (funcall f))))
+  GNU: (ok (11 (wrong-type-argument arrayp) 11))
+  remacs: (ok (11 stored 22))
+  関連ケース: 'bytecode:code-slot-control', 'bytecode:constants-slot-control'
+
+AUD-095 [P2] string-to-list が入力リストをコピーせず、不正な dotted list もそのまま返す
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/256
+  リストを渡した場合、GNU は新しいリストを返すが remacs は元と eq のリストを返す。このため戻り値を setcar すると元のリストまで変わる。また (1 . 2) は GNU の listp エラーにならずそのまま返る。Cons 分岐が GNU の append 相当のコピー・検査を行わず入力を返している。
+  原因候補: src/lisp/builtins/strfn.rs:4809
+  再現式: (let* ((source (list 1 2)) (out (string-to-list source))) (let ((shared (eq source out))) (setcar out 9) (list shared source out)))
+  GNU: (ok (nil (1 2) (9 2)))
+  remacs: (ok (t #1=(9 2) #1#))
+  関連ケース: 'string-to-list:list-alias', 'string-to-list:improper-list'
+
+AUD-096 [P2] string-to-vector が文字列以外のシーケンスを受け付けない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/257
+  GNU の string-to-vector は vconcat 相当で、リスト、ベクター、bool-vector も新しいベクターへ変換する。remacs はいずれも wrong-type-argument stringp を送出する。入力を nil または文字列に限定している。
+  原因候補: src/lisp/builtins/strfn.rs:4835
+  再現式: (string-to-vector '(1 2))
+  GNU: (ok [1 2])
+  remacs: (error (wrong-type-argument stringp (1 2)))
+  関連ケース: 'string-to-vector:list', 'string-to-vector:vector', 'string-to-vector:bool-vector'
+
+AUD-097 [P2] string-lessp が unibyte のバイト値を内部の代理文字コードで比較する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/258
+  unibyte の 233 と multibyte の 256 の比較は GNU では前者が小さいが、remacs は逆になる。同じ数値 233 の unibyte/multibyte の組では、GNU はどちらも小さいと判定しないが remacs は multibyte 側が小さいと判定する。string= と compare-strings の対照結果は一致しており、string-lessp が Rust の内部文字列の大小を直接比較している経路の問題。
+  原因候補: src/lisp/builtins/strfn.rs:772
+  再現式: (let ((byte (unibyte-string 233)) (unicode (string 256))) (list (string-lessp byte unicode) (string-lessp unicode byte) (compare-strings byte nil nil unicode nil nil)))
+  GNU: (ok (t nil 1))
+  remacs: (ok (nil t 1))
+  関連ケース: 'string-compare:unibyte-order', 'string-compare:unibyte-unicode'
+
+AUD-098 [P2] case-fold 比較と検索が現在の case table を使わない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/259
+  case table で X と y を大文字・小文字の組に設定すると、GNU の char-equal と IGNORE-CASE=t の compare-strings は等しいと判定する。remacs は upcase では設定を認識するが、char-equal は nil、compare-strings は -1 を返す。search-forward、re-search-forward、string-match でも同じ組を見つけられない。標準の対応でも compare-strings は ß と S を GNU と異なり等しいと判定する。比較・検索が現在の GNU case table ではなく Rust の Unicode 既定の変換を使い、compare-strings は複数文字への大文字化の先頭だけを取っている。
+  原因候補: src/lisp/builtins/strfn.rs:5024
+  再現式: (with-temp-buffer (let ((ct (copy-case-table (standard-case-table))) (case-fold-search t)) (set-case-syntax-pair 88 121 ct) (set-case-table ct) (list (upcase 121) (char-equal 88 121) (compare-strings "X" nil nil "y" nil nil t))))
+  GNU: (ok (88 t t))
+  remacs: (ok (88 nil -1))
+  関連ケース: 'string-compare:custom-case-table', 'compare-strings:sharp-s', 'search:custom-case-table', 'search:default-case-table-control'
+
+AUD-099 [P2] char-equal が異なる非 Unicode 文字を case-fold-search=t で等しいと判定する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/260
+  GNU Emacs で有効な内部文字コード 0x110000 と 0x110001、surrogate の 0xD800 と 0xD801、八ビット文字 0x3FFF80 と 0x3FFFFF が、case-fold-search=t だと全て等しいと判定される。GNU は全て nil。case-fold-search=nil の対照ケースは一致する。Rust の char::from_u32 が失敗した二つの None 同士を等しいと比較している。
+  原因候補: src/lisp/builtins/strfn.rs:1832
+  再現式: (let ((case-fold-search t)) (list (char-equal 1114112 1114113) (char-equal 55296 55297) (char-equal 4194176 4194303)))
+  GNU: (ok (nil nil nil))
+  remacs: (ok (t t t))
+  関連ケース: 'char-equal:nonunicode', 'char-equal:nonunicode-no-fold-control'
+
+AUD-100 [P1] read が関数ストリームを一式で止めず EOF まで読み尽くす
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/261
+  (a) (b) を供給する関数ストリームで read すると、GNU は (a) だけを読み、次の read で (b) を返す。remacs は最初の read で残りも全て消費し、次は end-of-file になる。数値の後の先読み文字を戻す一引数の呼び出しも行わない。関数から全入力を String へ集めた後で一式を解析する実装になっている。#92 の標準入力の未実装とは別のストリーム処理の問題。
+  原因候補: src/lisp/builtins/readfn.rs:81
+  再現式: (let ((input (string-to-list "(a) (b)"))) (let ((stream (lambda (&optional unread) (if unread (push unread input) (pop input))))) (let ((first (read stream))) (list first input (condition-case err (read stream) (error (car err)))))))
+  GNU: (ok ((a) (32 40 98 41) (b)))
+  remacs: (ok ((a) nil end-of-file))
+  関連ケース: 'read:function-stream-one-form', 'read:function-stream-unread'
+
+AUD-101 [P2] read が解析エラー時にバッファやマーカーの読み取り位置を進めない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/262
+  バッファに閉じていない (a を置いて位置 1 から read すると、GNU は end-of-file の後に位置 3 を残すが、remacs は位置 1 のままになる。マーカーを入力にした場合も同じ。正常な式を二回読む対照ケースは一致する。解析失敗を伝播する前に消費した位置を反映していない。
+  原因候補: src/lisp/builtins/readfn.rs:46
+  再現式: (with-temp-buffer (insert "(a") (goto-char 1) (list (condition-case err (read (current-buffer)) (error (car err))) (point)))
+  GNU: (ok (end-of-file 3))
+  remacs: (ok (end-of-file 1))
+  関連ケース: 'read:buffer-error-point', 'read:marker-error-point', 'read:buffer-success-control'
+
+AUD-102 [P2] prin1 / prin1-to-string が OVERRIDES の出力設定を適用しない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/263
+  第三引数に ((length . 1)) を渡してもリストを省略せず、t で既定値へ戻す指定も無視する。バッファ出力の prin1 でも同じ。未定義の設定名も GNU のエラーにならず受け入れる。OVERRIDES の外形だけを検査し、設定の検査や一時的な束縛を行っていない。
+  原因候補: src/lisp/builtins/printfn.rs:95
+  再現式: (prin1-to-string '(1 2 3) nil '((length . 1)))
+  GNU: (ok "(1 ...)")
+  remacs: (ok "(1 2 3)")
+  関連ケース: 'print:override-length', 'print:override-defaults', 'print:override-buffer-stream', 'print:override-invalid-setting'
+
+AUD-103 [P1] eval-buffer / eval-region が narrowing 外のコードも評価する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/264
+  先頭の式を narrowing で隠してから eval-buffer または eval-region nil nil を実行すると、GNU は可視領域の式だけを実行するが remacs は隠した式も実行する。eval-region に全バッファの明示的な範囲を渡した場合も、GNU は可視領域内だけを実行する一方、remacs は narrowing 外まで評価する。ソース取得時に BEGV を適用せず、eval-buffer は ZV も無視して全テキストを使っている。
+  原因候補: src/lisp/builtins/evalfn.rs:3902
+  再現式: (let ((audit-eval-events nil)) (with-temp-buffer (insert "(push 'outside audit-eval-events)\n(push 'inside audit-eval-events)") (goto-char 1) (forward-line 1) (narrow-to-region (point) (point-max)) (eval-buffer) (nreverse audit-eval-events)))
+  GNU: (ok (inside))
+  remacs: (ok (outside inside))
+  関連ケース: 'eval-buffer:narrowing', 'eval-region:narrowing', 'eval-region:inaccessible-bounds'
+
+AUD-104 [P2] eval-buffer / eval-region が PRINTFLAG の出力抑止と出力先を無視する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/265
+  PRINTFLAG=nil のとき GNU は評価中の princ の出力を捨てるが、remacs は呼び出し元の standard-output へ出す。PRINTFLAG にバッファを指定しても remacs はその出力先を使わず、GNU が指定先に送る通常出力と評価結果の表示も再現しない。両評価関数が PRINTFLAG を処理せず eval_str_buf を呼んでいる。
+  原因候補: src/lisp/builtins/evalfn.rs:3904
+  再現式: (let ((out (generate-new-buffer " *audit-eval-output*"))) (unwind-protect (let ((standard-output out)) (with-temp-buffer (insert "(princ \"payload\")") (eval-buffer nil nil)) (with-current-buffer out (buffer-string))) (kill-buffer out)))
+  GNU: (ok "")
+  remacs: (ok "payload")
+  関連ケース: 'eval-buffer:discard-output', 'eval-region:discard-output', 'eval-buffer:explicit-output', 'eval-region:explicit-output'
+
+AUD-105 [P1] eval-buffer がソース先頭の lexical-binding 指定を無視する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/266
+  先頭に lexical-binding: t を持つバッファを、呼び出し側の lexical-binding=nil の下で評価すると、GNU は内部の let で作ったクロージャの値 7 を保持する。remacs は動的束縛として評価し、後から関数を呼ぶと void-variable になる。eval_str_buf が呼び出し側の変数値だけで lexical environment を決め、ソースの指定を読んでいない。
+  原因候補: src/lisp/eval.rs:5756
+  再現式: (let ((audit-eval-result nil)) (with-temp-buffer (insert ";;; -*- lexical-binding: t -*-\n" "(setq audit-eval-result (let ((x 7)) (lambda () x)))") (let ((lexical-binding nil)) (eval-buffer)) (condition-case err (funcall audit-eval-result) (error (car err)))))
+  GNU: (ok 7)
+  remacs: (ok void-variable)
+  関連ケース: 'eval-buffer:lexical-header'
+
+AUD-106 [P2] eval-region が READ-FUNCTION 引数を呼び出さない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/267
+  第四引数に read をラップした関数を渡すと、GNU は式の読み取りにその関数を使うが、remacs は一度も呼ばない。eval-region の実装が START/END だけを取り出して固定の内部 reader へ渡しているため、呼び出し側による読み取りの差し替えが機能しない。
+  原因候補: src/lisp/builtins/evalfn.rs:3932
+  再現式: (let ((reads 0)) (with-temp-buffer (insert "(+ 1 2)") (eval-region (point-min) (point-max) nil (lambda (stream) (setq reads (1+ reads)) (read stream))) (> reads 0)))
+  GNU: (ok t)
+  remacs: (ok nil)
+  関連ケース: 'eval-region:read-function'
+
+AUD-107 [P2] eval-buffer / eval-region が nil ではなく最後の式の値を返す
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/268
+  内容が 42 だけのバッファを eval-buffer または eval-region で評価すると、GNU は nil を返すが remacs は 42 を返す。内部の eval_str_buf の結果をそのまま公開している。PRINTFLAG での表示とは別に、これらの評価関数自身の戻り値が異なる。
+  原因候補: src/lisp/builtins/evalfn.rs:3929
+  再現式: (with-temp-buffer (insert "42") (eval-buffer))
+  GNU: (ok nil)
+  remacs: (ok 42)
+  関連ケース: 'eval-buffer:return-value', 'eval-region:return-value'
+
+AUD-108 [P1] delete-blank-lines が NBSP や CR を含む非空行まで削除する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/269
+  NBSP または CR だけを含む行で delete-blank-lines を実行すると、GNU はその行を残すが remacs は文字ごと行を削除する。通常の空白と TAB の行では一致する。空行判定に Rust の trim().is_empty() を使い、GNU が空行とは扱わない文字まで空白として除去している。
+  原因候補: src/buffer/primitives.rs:13791
+  再現式: (with-temp-buffer (insert "head\n \nbody\n") (goto-char 6) (delete-blank-lines) (string-to-list (buffer-string)))
+  GNU: (ok (104 101 97 100 10 160 10 98 111 100 121 10))
+  remacs: (ok (104 101 97 100 10 98 111 100 121 10))
+  関連ケース: 'delete-blank-lines:nbsp', 'delete-blank-lines:carriage-return', 'delete-blank-lines:ascii-control'
+
+AUD-109 [P1] 空白削除コマンドが narrowing 外のテキストを変更する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/270
+  delete-blank-lines は可視の空行ではなく隠れた次の空行を削除する。delete-horizontal-space は可視領域外の前後の空白まで削除し、delete-indentation は隠れた前の行まで結合する。いずれも GNU は narrowing を守る。走査に BEGV/ZV ではなく全テキストの範囲を使っている。just-one-space の同条件の対照ケースは一致する。
+  原因候補: src/buffer/primitives.rs:13830
+  再現式: (with-temp-buffer (insert "head\n\n\nbody\n") (put-text-property 6 7 'face 'bold) (put-text-property 7 8 'face 'italic) (narrow-to-region 6 7) (goto-char 6) (delete-blank-lines) (let ((bounds (list (point-min) (point-max))) (visible (string-to-list (buffer-string)))) (widen) (list bounds visible (buffer-substring-no-properties (point-min) (point-max)) (get-text-property 6 'face))))
+  GNU: (ok ((6 6) nil "head\n\nbody\n" italic))
+  remacs: (ok ((6 7) (10) "head\n\nbody\n" bold))
+  関連ケース: 'delete-blank-lines:narrowing', 'delete-horizontal-space:narrowing', 'delete-indentation:narrowing', 'just-one-space:narrowing'
+
+AUD-110 [P1] princ が無効な出力先を拒否せず、kill 済みバッファの代わりに現在のバッファへ書く
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/271
+  kill 済みバッファを princ の出力先にすると、GNU はエラーにして現在のバッファを保つが、remacs は成功扱いで現在のバッファへ payload を挿入する。未接続マーカーも GNU のエラーにならず何も出さず成功する。write_output_to が出力先の生存性を検査せず、無効なバッファへの切替失敗後も挿入処理を続けている。read-only な有効バッファ・マーカーと通常のマーカー出力の対照ケースは一致する。
+  原因候補: src/lisp/eval.rs:11336
+  再現式: (let ((dead (generate-new-buffer " *audit-print-dead*"))) (kill-buffer dead) (with-temp-buffer (insert "original") (let ((result (condition-case err (progn (princ "payload" dead) 'printed) (error (car err))))) (list result (buffer-string)))))
+  GNU: (ok (error "original"))
+  remacs: (ok (printed "originalpayload"))
+  関連ケース: 'print:killed-buffer', 'print:detached-marker', 'print:live-marker-control', 'print:readonly-buffer', 'print:readonly-marker'
+
+AUD-111 [P2] 後方検索が COUNT を満たす前に先頭へ到達すると成功扱いになる
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/272
+  a が一つだけのバッファで末尾から COUNT=2 の後方検索をすると、GNU は失敗して元の point を保つが remacs は一回の一致で成功して先頭へ移動する。re-search-backward、posix-search-backward、負の COUNT の search-forward でも同じ。NOERROR=nil でも search-failed にならない。search_common が先頭の一致で残り回数を検査せず break している。
+  原因候補: src/buffer/primitives.rs:10017
+  再現式: (with-temp-buffer (insert "a") (goto-char (point-max)) (list (search-backward "a" nil t 2) (point)))
+  GNU: (ok (nil 2))
+  remacs: (ok (1 1))
+  関連ケース: 'search:backward-count-all-or-nothing', 'search:count-re-search-backward', 'search:count-posix-search-backward', 'search:count-search-forward', 'search:backward-count-error', 'search:backward-one-control'
+
+AUD-112 [P1] replace-match の後方参照が検索後の widen により誤った文字を置換に使う
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/273
+  prefix ab suffix の ab だけに narrow し、a と b を捕捉してから widen して \2\1 に置換すると、GNU は prefix ba suffix、remacs は prefix rp suffix になる。narrowing を保ったままなら一致する。置換の参照元を現在の BEGV から取得し、検索時の match data の base とずれるため、prefix の別の文字を参照する。FIXEDCASE=t の再現なので既存 #7 の大文字・小文字変換とは別。
+  原因候補: src/buffer/primitives.rs:10671
+  再現式: (with-temp-buffer (insert "prefix ab suffix") (narrow-to-region 8 10) (goto-char (point-min)) (re-search-forward "\\(a\\)\\(b\\)") (widen) (replace-match "\\2\\1" t) (buffer-string))
+  GNU: (ok "prefix ba suffix")
+  remacs: (ok "prefix rp suffix")
+  関連ケース: 'replace-match:backrefs-after-widen', 'replace-match:backrefs-narrowed-control'
+
+AUD-113 [P1] replace-match が置換文字列の属性と文字列結果のバイト表現を保持しない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/274
+  STRING 引数付きの replace-match で、元の a/c と置換する X に別々の face を付けると、GNU は全て保持するが remacs は全て nil にする。バッファへの置換と replace-regexp-in-string 経由でも、置換する X の属性が失われる。match-string で属性を取り出す対照ケースは一致する。また unibyte の (128 97 255) を文字列として置換すると、replace-match は (4194176 88 4194303) を返し、GNU の (128 88 255) と異なる。置換文字列や結果を属性・バイト表現の情報なしの String として扱っている。
+  原因候補: src/buffer/primitives.rs:10625
+  再現式: (let* ((source (concat (propertize "a" 'face 'bold) "b" (propertize "c" 'face 'italic))) (replacement (propertize "X" 'face 'underline))) (string-match "b" source) (let ((out (replace-match replacement t nil source))) (list (substring-no-properties out) (mapcar (lambda (p) (get-text-property p 'face out)) '(0 1 2)))))
+  GNU: (ok ("aXc" (bold underline italic)))
+  remacs: (ok ("aXc" (nil nil nil)))
+  関連ケース: 'replace-match:string-properties', 'replace-regexp-in-string:properties', 'replace-match:unibyte-result', 'replace-regexp-in-string:unibyte-result', 'replace-match:buffer-properties', 'match-string:string-properties'
+
+AUD-114 [P2] match-data が REUSE と RESEAT を無視する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/275
+  REUSE に以前の match-data のリストを渡しても、remacs はそのリストを更新せず新しいリストを返す。GNU は同じリストを再利用し、余分な要素を nil にする。RESEAT=t を指定した場合も、GNU が切り離す以前のマーカーが remacs ではバッファに接続されたままになる。f_match_data は第二・第三引数を読み取っても処理していない。
+  原因候補: src/buffer/primitives.rs:10289
+  再現式: (progn (string-match ".." "abc") (let ((reuse (match-data t))) (string-match "b" "abc") (let ((out (match-data t reuse))) (list (eq out reuse) out reuse))))
+  GNU: (ok (t #1=(1 2) #1#))
+  remacs: (ok (nil (1 2) (0 2)))
+  関連ケース: 'match-data:reuse-integers', 'match-data:reuse-long-list', 'match-data:reseat-old-markers'
+
+AUD-115 [P2] 正規表現の \w / \b が syntax-table テキスト属性を無視する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/276
+  parse-sexp-lookup-properties=t のバッファで一つの . だけに word 構文の属性を付けると、GNU の \w+ はその位置を単語の一部として扱い、\b もその境界に一致しない。remacs は属性を無視する。属性付き文字列を string-match する場合も同じ。通常の syntax table の変更と、属性を無効にしたバッファの対照ケースは一致する。re_syntax が文字単位の静的なテーブル参照だけを返し、位置ごとの syntax-table 属性を見ていない。既存 #8 の POSIX 文字クラスの定義差とは別に、通常の \w / \b で再現する。
+  原因候補: src/editor/mod.rs:17990
+  再現式: (with-temp-buffer (insert "a.a.a") (put-text-property 2 3 'syntax-table (string-to-syntax "w")) (let ((parse-sexp-lookup-properties t)) (goto-char 1) (re-search-forward "\\w+") (list (match-beginning 0) (match-end 0))))
+  GNU: (ok (1 4))
+  remacs: (ok (1 2))
+  関連ケース: 'regexp:syntax-property-word', 'regexp:syntax-property-boundary', 'regexp:syntax-property-string', 'regexp:syntax-property-disabled-control', 'regexp:syntax-table-control'
+
+AUD-116 [P1] set-window-configuration が point・スクロール・余白を正しく復元しない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/277
+  保存後に変えた表示開始位置・hscroll・非 current buffer の window-point が復元されない。例えば (12 2) の開始位置と横スクロールは変更後の (23 9) のままになる。一方、GNU が保存対象外として現在値 12 を保つ current buffer の point は、remacs では 1 に戻される。保存した point/start/hscroll のスロットを書き戻さず、選択ウィンドウの古い point をバッファへ設定している。 また、左右余白を (2 . 3) で保存して (4 . 5) に変えると、GNU は (2 . 3) に戻すが remacs は (4 . 5) のままで、余白も保存・復元されていない。
+  原因候補: src/editor/mod.rs:3203
+  再現式: (audit-window-fixture (lambda (_buffer window) (set-window-start window 12 t) (set-window-hscroll window 2) (let ((saved (current-window-configuration))) (set-window-start window 23 t) (set-window-hscroll window 9) (set-window-configuration saved) (list (window-start window) (window-hscroll window)))))
+  GNU: (ok (12 2))
+  remacs: (ok (23 9))
+  関連ケース: 'window-config:scroll-restoration', 'window-config:noncurrent-point', 'window-config:current-point', 'window-config:margin-restoration'
+
+AUD-117 [P1] ウィンドウ構成の復元で横結合・入れ子の木が一つの縦結合へ平坦化される
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/278
+  横に二分割した構成を保存して直ちに復元するだけで、GNU は window-left-child を保つが remacs は window-top-child に置き換える。右側だけを縦分割した入れ子も、全ての leaf が同じ親を持つ構成になる。保存した矩形は残る一方で、それを表すウィンドウ木の向き・親子関係が崩れる。復元処理が複数 leaf を常に一つの縦の内部ノードへ接続している。
+  原因候補: src/editor/mod.rs:3386
+  再現式: (audit-window-fixture (lambda (_buffer window) (split-window window nil 'right) (let ((saved (current-window-configuration))) (set-window-configuration saved) (let ((root (frame-root-window))) (list (eq (window-left-child root) window) (eq (window-top-child root) window) (length (window-list)))))))
+  GNU: (ok (t nil 2))
+  remacs: (ok (nil t 2))
+  関連ケース: 'window-config:horizontal-tree', 'window-config:nested-tree'
+
+AUD-118 [P2] compare-window-configurations が無視すべきスクロール位置も比較する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/279
+  ウィンドウ構成の開始位置と hscroll だけを変えて比較すると、GNU は同じ layout として t を返すが remacs は nil を返す。この関数は point・スクロール位置の詳細を無視する API だが、実装はそれらの保存スロットも比較に含めている。
+  原因候補: src/editor/mod.rs:3446
+  再現式: (audit-window-fixture (lambda (_buffer window) (let ((before (current-window-configuration))) (set-window-start window 12 t) (set-window-hscroll window 7) (compare-window-configurations before (current-window-configuration)))))
+  GNU: (ok t)
+  remacs: (ok nil)
+  関連ケース: 'window-config:compare-ignores-scroll'
+
+AUD-119 [P2] window-configuration-p が同じタグの通常レコードを構成オブジェクトと認める
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/280
+  record で作った window-configuration タグの偽レコードに対し、GNU の window-configuration-p は nil、window-configuration-frame は型エラーになる。remacs はそれぞれ t と格納した frame を返す。実際に current-window-configuration が作ったオブジェクトかを検査せず、先頭のタグだけで判定している。
+  原因候補: src/editor/mod.rs:3182
+  再現式: (let ((fake (record 'window-configuration (selected-frame) nil nil))) (list (window-configuration-p fake) (condition-case err (framep (window-configuration-frame fake)) (error (car err)))))
+  GNU: (ok (nil wrong-type-argument))
+  remacs: (ok (t t))
+  関連ケース: 'window-config:forged-record'
+
+AUD-120 [P1] primitive-undo が inhibit-read-only を束縛せず read-only な変更を戻せない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/281
+  GNU の primitive-undo は inhibit-read-only=t の下で履歴を適用するが、remacs はその束縛がない。read-only のテキストやバッファから挿入履歴を戻すと GNU は削除できる一方、remacs は text-read-only / buffer-read-only で止まる。通常の変更フックから観測した inhibit-read-only も GNU の t に対して nil になる。#233 の削除履歴の属性消失とは別の実行時の保護束縛の問題。
+  原因候補: src/buffer/primitives.rs:13729
+  再現式: (with-temp-buffer (insert "abc") (put-text-property 1 4 'read-only t) (setq buffer-undo-list nil) (list (condition-case err (progn (primitive-undo 1 '((1 . 4))) 'undone) (error (car err))) (buffer-substring-no-properties (point-min) (point-max))))
+  GNU: (ok (undone ""))
+  remacs: (ok (text-read-only "abc"))
+  関連ケース: 'undo:read-only-text', 'undo:read-only-buffer', 'undo:inhibit-read-only-binding'
+
+AUD-121 [P2] primitive-undo が point の移動だけでも不要な apply 履歴を生成する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/282
+  履歴が位置 2 への移動だけの場合、GNU は undo 履歴を増やさないが remacs は (apply cdr nil) を追加する。GNU がこの補完を行うのは apply エントリを実行して履歴が増えなかった場合だけだが、remacs は通常の位置エントリでも did_apply を true にする。apply エントリで補完が必要な対照ケースは一致する。
+  原因候補: src/buffer/primitives.rs:13762
+  再現式: (with-temp-buffer (insert "abc") (goto-char 1) (setq buffer-undo-list nil) (primitive-undo 1 '(2)) (list (point) buffer-undo-list))
+  GNU: (ok (2 nil))
+  remacs: (ok (2 ((apply cdr nil))))
+  関連ケース: 'undo:position-only-history', 'undo:apply-disabled-history'
+
+AUD-122 [P2] run-window-scroll-functions がフックを呼び出さず分割後の通知も行われない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/283
+  選択ウィンドウに window-scroll-functions を設定して run-window-scroll-functions を明示的に呼ぶと、GNU は WINDOW・開始位置・対象バッファの文脈でフックを実行するが remacs は何もしない。split-window 後の新しいウィンドウへの通知もない。Rust の関数がウィンドウ引数の検査だけで nil を返している。
+  原因候補: src/editor/winxtra.rs:2860
+  再現式: (save-window-excursion (let ((buffer (generate-new-buffer " *audit-scroll-hook*"))) (unwind-protect (progn (delete-other-windows) (switch-to-buffer buffer) (insert "one\ntwo\n") (goto-char 1) (set-window-start nil 1 t) (let ((window (selected-window)) hits) (let ((window-scroll-functions (list (lambda (w start) (push (list (eq w window) start (eq (current-buffer) buffer)) hits))))) (run-window-scroll-functions window)) (nreverse hits))) (kill-buffer buffer))))
+  GNU: (ok ((t 1 t)))
+  remacs: (ok nil)
+  関連ケース: 'window-hooks:explicit-scroll-functions', 'window-hooks:split-notification'
+
+AUD-123 [P2] current-window-configuration が永続パラメータを参照共有し保存後の変更で書き換わる
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/284
+  window-persistent-parameters で保存対象に指定したパラメータを 1 から 2 に変えて構成を復元すると、GNU は保存値 1 に戻すが remacs は 2 のままになる。構成保存がパラメータの可変 plist を clone して参照共有し、set-window-parameter の値セル更新が保存済みの構成にも反映される。保存対象外のパラメータをそのまま保つ二つの対照ケースは一致する。#277 の point・スクロール等のフィールド復元漏れとは異なり、パラメータは復元処理があっても保存値自体が変わっている。
+  原因候補: src/editor/mod.rs:3110
+  再現式: (audit-window-parameter-fixture (lambda (window) (let ((window-persistent-parameters '((audit-persistent . t)))) (set-window-parameter window 'audit-persistent 1) (let ((saved (current-window-configuration))) (set-window-parameter window 'audit-persistent 2) (set-window-configuration saved) (window-parameter window 'audit-persistent)))))
+  GNU: (ok 1)
+  remacs: (ok 2)
+  関連ケース: 'window-config:persistent-parameter', 'window-config:nonpersistent-parameter', 'window-config:new-nonpersistent-parameter'
+
+AUD-124 [P2] window-state のパラメータ形式が GNU の alist と異なり永続化設定も無視される
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/285
+  window-state-get の parameters は GNU ではパラメータ名と値の alist だが、remacs は内部の flat plist をそのまま出力する。このため assq による読み取りが失敗する。window-persistent-parameters も参照せず、保存対象が nil の状態でもパラメータを出力する。さらに GNU 形式の alist を window-state-put へ渡すと内部 plist へ変換されず、値 1 を戻すべき window-parameter が nil になる。保存対象 t と writable、および正しい alist の入力で再現。#115 は minibuffer の最小サイズ差、#152 は引数検査・window-parameters の順序差であり、本件の保存形式と永続化設定とは別件。
+  原因候補: src/editor/mod.rs:15466
+  再現式: (audit-window-parameter-fixture (lambda (window) (let ((window-persistent-parameters '((audit-persistent . t)))) (set-window-parameter window 'audit-persistent 1) (list (cdr (assq 'audit-persistent (cdr (assq 'parameters (window-state-get window))))) (cdr (assq 'audit-persistent (cdr (assq 'parameters (window-state-get window t)))))))))
+  GNU: (ok (1 nil))
+  remacs: (ok (nil nil))
+  関連ケース: 'window-state:persistence-filter', 'window-state:writable-parameter', 'window-state:nonpersistent-raw', 'window-state:put-parameter-alist'
+
+AUD-125 [P2] window-normal-size が分割後も常に 1.0 を返す
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/286
+  横分割した各ウィンドウの normal width、縦分割した各ウィンドウの normal height は、GNU では親に対する比率で 0 より大きく 1 より小さくなり、兄弟の合計は 1.0 になる。remacs は全て 1.0 なので合計も一致しない。分割と直交する方向の 1.0 は一致する。実装が木やサイズを参照せず定数を返しているため、サイズ復元等が使う比率を取得できない。
+  原因候補: src/editor/winxtra.rs:2838
+  再現式: (audit-window-metrics-fixture (lambda (left) (let ((right (split-window left 20 'right))) (list (< 0.0 (window-normal-size left t) 1.0) (< 0.0 (window-normal-size right t) 1.0) (= 1.0 (+ (window-normal-size left t) (window-normal-size right t))) (window-normal-size left) (window-normal-size right)))))
+  GNU: (ok (t t t 1.0 1.0))
+  remacs: (ok (nil nil nil 1.0 1.0))
+  関連ケース: 'window-metrics:horizontal-normal-size', 'window-metrics:vertical-normal-size'
+
+AUD-126 [P2] window-bump-use-time が何もせず二番目の使用順序を設定できない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/287
+  三つのウィンドウを順に選択し、最新の選択ウィンドウとは別の古いウィンドウに window-bump-use-time を呼ぶと、GNU は対象を二番目に新しい使用順序へ更新し選択ウィンドウの使用時刻も増やす。remacs は nil を返して両方とも更新しない。selected window 自身への呼び出しが何もしない対照ケースは一致する。サブルーチン登録が引数検査と nil 返却だけの f_window_live_nil を参照している。
+  原因候補: src/editor/winxtra.rs:175
+  再現式: (audit-window-metrics-fixture (lambda (first) (let* ((second (split-window first 20 'right)) (third (split-window second 20 'right))) (select-window first) (select-window second) (select-window third) (let ((before (window-use-time third)) (result (window-bump-use-time first))) (list (integerp result) (= (window-use-time first) before) (> (window-use-time third) before) (> (window-use-time first) (window-use-time second)) (eq (selected-window) third))))))
+  GNU: (ok (t t t t t))
+  remacs: (ok (nil nil nil nil t))
+  関連ケース: 'window-metrics:bump-use-order', 'window-metrics:bump-selected-control'
+
+AUD-127 [P2] window-old-point が過去値ではなく現在の window-point を返す
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/288
+  新しく分割した非選択ウィンドウの point を 1 から 10 に変えると、GNU の window-old-point は表示更新前の 1 を保つが remacs は 10 を返す。window-point 自体は両方 10 で一致する。実装は old_point を参照せず現在の Window.point を返している。
+  原因候補: src/editor/winxtra.rs:1107
+  再現式: (audit-window-metrics-fixture (lambda (first) (let* ((other (split-window first 20 'right)) (before (window-old-point other))) (set-window-point other 10) (list (window-point other) before (window-old-point other)))))
+  GNU: (ok (10 1 1))
+  remacs: (ok (10 1 10))
+  関連ケース: 'window-metrics:old-point-after-set'
+
+AUD-128 [P2] window-old-buffer が変更通知前でも set-window-buffer の直前値に更新される
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/289
+  GNU の window-old-buffer は前回 window change functions が実行された時点のバッファを示すため、set-window-buffer だけでは値を変えない。remacs は set-window-buffer のたびに直前のバッファへ変更する。同じウィンドウで変更前の値を保持するかと直前のバッファを返すかを比較すると、GNU の (t nil) に対して remacs は (nil t) になる。表示変更通知を判定する履歴が早すぎる時点で更新される。
+  原因候補: src/editor/mod.rs:2688
+  再現式: (audit-window-metrics-fixture (lambda (window) (let ((other (generate-new-buffer " *audit-window-old-buffer*")) (old (window-old-buffer window)) (previous (window-buffer window))) (unwind-protect (progn (set-window-buffer window other) (list (eq (window-old-buffer window) old) (eq (window-old-buffer window) previous))) (set-window-buffer window previous) (kill-buffer other)))))
+  GNU: (ok (t nil))
+  remacs: (ok (nil t))
+  関連ケース: 'window-metrics:old-buffer-after-set'
+
+AUD-129 [P2] sleep-for と sit-for が待ち時間ゼロ・負数でも期限済みタイマーを実行する
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/290
+  run-at-time 0 で登録したタイマーは、GNU では sleep-for 0・sleep-for -1・sit-for 0 だけでは実行されない。remacs はいずれもタイマーを実行して hits を 0 から 1 に変える。正の待ち時間では両方とも実行する。sleep_firing_timers の secs <= 0 分岐が即座に返る代わりに timer_check を呼ぶため、待機しない呼び出しで予期しないコールバックと副作用が起きる。#199 は accept-process-output の JUST-THIS-ONE 引数による抑止であり、本件の待ち時間の境界とは異なる。
+  原因候補: src/lisp/builtins/evalfn.rs:4144
+  再現式: (audit-with-timers (lambda nil (let ((hits 0)) (run-at-time 0 nil (lambda nil (setq hits (1+ hits)))) (sleep-for 0) hits)))
+  GNU: (ok 0)
+  remacs: (ok 1)
+  関連ケース: 'timer:zero-sleep', 'timer:negative-sleep', 'timer:zero-sit', 'timer:positive-sleep-control'
+
+AUD-130 [P1] 日本語のかな・全半角変換が初期状態では何も変換しない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/291
+  japanese-hiragana・japanese-katakana・japanese-hankaku・japanese-zenkaku が初期状態で文字・文字列とも入力をそのまま返す。例えば japanese-hiragana の カ は か、japanese-zenkaku の a は ａ になるべきだが変化しない。変換用の hiragana・katakana・jisx0208・ascii 文字コード属性が nil のままで、japan-util を明示 load すると同じ呼び出しが正しく変換される。japan-util の機能登録と変換関数は存在する一方、必要な変換データの初期化が欠けている。
+  原因候補: src/lisp/eval.rs:763
+  再現式: (list (japanese-hiragana 12459) (japanese-katakana 12363) (japanese-katakana 12364) (japanese-hiragana 12460) (japanese-zenkaku 97) (japanese-hankaku 12354) (japanese-hankaku 65345 t))
+  GNU: (ok (12363 12459 12460 12364 65345 65393 97))
+  remacs: (ok (12459 12363 12364 12460 97 12354 65345))
+  関連ケース: 'japanese:character-conversion', 'japanese:string-conversion', 'japanese:conversion-properties', 'japanese:explicit-reload'
+
+AUD-131 [P2] macroexpand 系がアトムでも未使用の ENVIRONMENT に型エラーを出す
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/293
+  macroexpand・macroexpand-1・macroexpand-all に文字列の FORM とリストではない ENVIRONMENT を渡すと、GNU は FORM をそのまま返すが remacs は listp の型エラーになる。例えば (macroexpand "x" "bad") は GNU の "x" に対して wrong-type-argument。マクロ探索のないアトムでも入口で ENVIRONMENT を無条件に検査している。実際にマクロを含む FORM で不正な環境を使う対照ケースは、両方とも wrong-type-argument になり一致する。#10 の load における再帰展開不足とは別の引数検査の問題。
+  原因候補: src/lisp/builtins/evalfn.rs:590
+  再現式: (macroexpand "x" "bad")
+  GNU: (ok "x")
+  remacs: (error (wrong-type-argument listp "bad"))
+  関連ケース: 'macroexpand:atom-unused-environment', 'macroexpand:single-atom-unused-environment', 'macroexpand:all-atom-unused-environment', 'macroexpand:bad-environment-used-control'
+
+AUD-132 [P1] display-buffer が小さな選択ウィンドウの分割に失敗すると他の表示先へフォールバックしない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/294
+  選択ウィンドウを高さ4にして他に広いウィンドウを残しても、display-buffer は選択ウィンドウの split-window エラーを伝播し表示できない。GNU は他の表示先を選んで成功する。また list-buffers で作ったバッファを毎回 kill しながら4回呼ぶケースでも、remacs は分割を増やして途中で同じエラーになる。これが qa_buffmenu の失敗原因で、最新CLIでも再現した。明示的な display-buffer-use-some-window アクションでは成功する。prelude のフォールバックが split-window を無条件に呼び、分割不能時に次の候補へ進まない。#47 は split-window 自体の最小サイズ検査であり、本件は正しい分割拒否の後に表示先を探さない別の問題。
+  原因候補: src/lisp/prelude.el:7298
+  再現式: (save-window-excursion (delete-other-windows) (let ((buffer (generate-new-buffer " *audit-display*"))) (unwind-protect (progn (split-window (selected-window) 4 'below) (let ((window (display-buffer buffer))) (list (window-live-p window) (eq (window-buffer window) buffer)))) (kill-buffer buffer))))
+  GNU: (ok (t t))
+  remacs: (error (error "Window #<window 1 on *scratch*> too small for splitting"))
+  関連ケース: 'display-buffer:small-selected-window', 'display-buffer:repeated-buffer-menu', 'display-buffer:explicit-reuse-control'
+
+AUD-133 [P2] shell-file-name の初期値が SHELL を無視して /bin/sh に固定される
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/295
+  起動環境の SHELL=/bin/zsh をGNUはshell-file-nameへ反映するが、remacsは /bin/sh に固定される。同じ環境の新規バッチプロセスで、環境変数と変数値の組はGNUが (/bin/zsh /bin/zsh)、remacsが (/bin/zsh /bin/sh) となる。shell-command-to-string 等の実行シェルと解釈規則が意図せず変わる。shell-file-nameを明示的に /bin/sh へ束縛する対照ケースの実行結果は一致する。初期値の登録が環境を参照せず固定文字列になっている。
+  原因候補: src/lisp/eval.rs:10657
+  再現式: (list (or (getenv "ESHELL") (getenv "SHELL") "/bin/sh") shell-file-name)
+  GNU: (ok ("/bin/zsh" "/bin/zsh"))
+  remacs: (ok ("/bin/zsh" "/bin/sh"))
+  関連ケース: 'shell:initial-shell-environment', 'shell:explicit-shell-control'
+
+AUD-134 [P2] key-parse が 3*C-x などの反復指定をキーの文字列として扱う
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/296
+  key-parse の反復指定が展開されない。GNUの 3*C-x は C-x を三つ、2*a は a を二つ返すが、remacsは 3、*、C、-、x および 2、*、a の各文字コードを返す。同じキーを空白で並べた対照ケースは一致する。キー設定・キーボードマクロで使う有効な記法が別のキー列として解釈される。単語ごとのパーサーに反復数と * を分離する処理がない。
+  原因候補: src/editor/mod.rs:8580
+  再現式: (list (append (key-parse "3*C-x") nil) (append (key-parse "2*a") nil))
+  GNU: (ok ((24 24 24) (97 97)))
+  remacs: (ok ((51 42 67 45 120) (50 42 97)))
+  関連ケース: 'keymap:key-parse-repeat', 'keymap:key-parse-repeat-control'
+
+AUD-135 [P2] face-remap のロード後も text-scale-mode と buffer-face-mode の lighter が登録されない
+  Issue: https://github.com/SuzumiyaAoba/remacs/issues/300
+  text-scale-increase を呼んで autoload を発生させても、明示的に (require 'face-remap) しても、minor-mode-alist に text-scale-mode と buffer-face-mode が登録されない。GNU はそれぞれ登録するため、モードラインの有効状態表示等に使う情報が失われる。prelude は起動状態を合わせるため両モードの登録を消すが、lisp/face-remap.el は provide だけのファイルなので、ロード時にもその初期化を戻さない。files-x の公開APIと明示 require の対照ケースは一致し、全体コーパスの別の内部関数の遅延ロード差とは分けて確認した。
+  原因候補: lisp/face-remap.el:8
+  再現式: (progn (with-temp-buffer (text-scale-increase 1)) (and (assq 'text-scale-mode minor-mode-alist) t))
+  GNU: (ok t)
+  remacs: (ok nil)
+  関連ケース: 'library:text-scale-after-autoload', 'library:text-scale-after-require'
+
 確定一覧から除外した差分:
   sql:bigint-bind: GNU は i64 範囲外の整数を 0 にしている。remacs の範囲エラーを新規バグとは数えない。
   sql:blob-bind: unibyte 入力を TEXT としてバインドした際のフラグ差分。BLOB 読み出しと分けた新規件数には数えず、追加の型・往復検査待ち。
   native:captured-variable: GNU でも捕捉値 7 ではなく 0。参照側の制約・動作を追加確認するまで確定件数には数えない。
   treesit:delete-twice: GNU と remacs はともに treesit-parser-deleted を送出する。opaque parser の表示に deleted が付く差だけのため、新規不具合には数えない。
+  buffer-transfer:narrowing-copy-to-buffer: 既存 #17 の insert-buffer-substring の可視範囲検査不足を通る Lisp ラッパー。同じ原因のため新規 Issue は作成しない。
+  buffer-transfer:narrowing-prepend-to-buffer: 既存 #17 の insert-buffer-substring の可視範囲検査不足を通る Lisp ラッパー。同じ原因のため新規 Issue は作成しない。
+  string:unibyte-string-reverse: GNU Emacs 31.1 には string-reverse が存在しないため、remacs 独自拡張の動作差は互換性の新規件数に含めない。
+  string-width:nonascii-custom-table: 既存 #57 の char-width-table を参照しない実装と同じ原因。Unicode 文字のカスタム幅にも再現する追加情報として既存 Issue を補足し、新規には数えない。
+  time:width-modifiers: 既存 Issue #77 と同一の幅・修飾子不具合を最新HEADで再確認。本文へ追記し再オープンしたため、新規件数には加えない。
+  time:combined-padding-flags: 既存 Issue #77 と同一の幅・修飾子不具合を最新HEADで再確認。本文へ追記し再オープンしたため、新規件数には加えない。
+  time:invalid-alternative-modifiers: 既存 Issue #77 と同一の幅・修飾子不具合を最新HEADで再確認。本文へ追記し再オープンしたため、新規件数には加えない。
 
 既存 QA の確認:
   初回の既存 QA 191 本は 182 成功、9 失敗（434.79 秒）。
@@ -600,12 +1288,13 @@ AUD-068 [P1] 複数のファイルプリミティブが file-name-handler-alist 
   既存 pty_editor_smoke は初期フレーム待ちで 120 秒後に失敗。追試では制御 PTY のサイズ 0x0 で ANSI 列が scratch の途中に入り、raw substring 判定が見落とすことを確認。80x24 では両実装とも描画・終了に成功。実装の停止とは区別し、runtime の新規件数に加えていない。
 
 残る調査範囲:
-  既存 QA の qa_buffmenu と qa_time_zero_zone に残る実行条件差・失敗の切り分け
+  全既存スイートの結果・追試は current/full-suite/report.txt に集約。qa_buffmenu は #294、qa_time_zero_zone は再オープンした #77、probe_eval14 の停止は #298 で追跡。
   Lisp 評価器・バイトコード・reader/printer・数値・文字列・ハッシュの未検査ケース
   バッファ、マーカー、undo、overlay、テキスト属性、検索、キーマップの追加シナリオ
   ファイルと文字コード、ネットワークの IPv6/UDP/非同期接続・再入、プロセスの大容量 I/O・終了・再入、タイマー、スレッドの追加シナリオ
   CLI の残るオプション・初期化と TUI/GUI の表示・入力・ウィンドウ操作
   ネイティブコンパイラの残る制御フロー・フォールバック・再ロード・単位間参照
-  tree-sitter の JSON 以外の文法、座標追跡、複雑な query・included ranges・寿命と通知
-  TLS、D-Bus、file-notify、LCMS、NS GUI の実環境検査
+  tree-sitter は追加52文法のうち利用可能な51文法で解析・Unicode座標・queryが一致。janet は両側で利用不可。複雑な文法固有の経路までは保証しない。
+  TLS・D-Bus・file-notify・LCMS・NS・実GUI/TUIを全スイートと補完検査で実行。IME変換操作そのもの等、既存テストにない経路は別途評価が必要。
   全域の差分検査の既知マスク・自動 skip の再評価と、検査されていない関数の棚卸し
+  filter / sentinel の例外処理: GNU --batch は filter エラーで終了コード 255 となった。対話セッションでの比較が済むまで新規不具合として数えない。

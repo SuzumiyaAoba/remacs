@@ -1,0 +1,428 @@
+[
+  {
+    "case": "unicode",
+    "side": "gnu",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 6.28,
+    "saved_hex": "41e697a5f09f9880420a",
+    "saved_text": "A日😀B\n",
+    "input_hex": [
+      "41e697a5f09f988042",
+      "0d"
+    ],
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "-nw",
+      "--eval",
+      "(setq make-backup-files nil create-lockfiles nil auto-save-default nil interprogram-cut-function nil interprogram-paste-function nil)",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing/unicode.gnu.txt"
+    ],
+    "tail": "\u001b=\u001b>\r\u001b=File Edit Options Buffers Tools Lisp-Interaction Help                           \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  *scratch*      All L1     (Lisp Interaction ElDoc) ----------------\r\nFor information about GNU Emacs and the GNU system, type C-h C-a.\nFor information about GNU Emacs and the GNU system, type C-h C-a.File Edit Options Buffers Tools Text Help                                       \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  unicode.gnu.txt   All L1     (Text) -------------------------------\r\nA日😀B**2\n\n20261022-round2/pty-editing/unicode.gnu.txt...\rSaving file /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/\\\r\n2-round2/pty-editing/unicode.gnu.txt\rWrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/202610\n\n--\n\n\u001b>\r"
+  },
+  {
+    "case": "unicode",
+    "side": "remacs",
+    "ready": false,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 19.08,
+    "saved_hex": "",
+    "saved_text": "",
+    "input_hex": [
+      "41e697a5f09f988042",
+      "0d"
+    ],
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "-nw",
+      "--eval",
+      "(setq make-backup-files nil create-lockfiles nil auto-save-default nil interprogram-cut-function nil interprogram-paste-function nil)",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing/unicode.remacs.txt"
+    ],
+    "tail": ""
+  },
+  {
+    "case": "ctrl-edit",
+    "side": "gnu",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 5.88,
+    "saved_hex": "610a",
+    "saved_text": "a\n",
+    "input_hex": [
+      "05027f04"
+    ],
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "-nw",
+      "--eval",
+      "(setq make-backup-files nil create-lockfiles nil auto-save-default nil interprogram-cut-function nil interprogram-paste-function nil)",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing/ctrl-edit.gnu.txt"
+    ],
+    "tail": "\u001b=\u001b>\r\u001b=File Edit Options Buffers Tools Lisp-Interaction Help                           \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  *scratch*      All L1     (Lisp Interaction ElDoc) ----------------\r\nFor information about GNU Emacs and the GNU system, type C-h C-a.\nFor information about GNU Emacs and the GNU system, type C-h C-a.File Edit Options Buffers Tools Text Help                                       \r\n\nabc\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UU-:--- F1  ctrl-edit.gnu.txt   All L1     (Text) -----------------------------\r\n**20261022-round2/pty-editing/ctrl-edit.gnu.txt...\rSaving file /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/\\\r\n2-round2/pty-editing/ctrl-edit.gnu.txt\rWrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/202610--\u001b>\r"
+  },
+  {
+    "case": "ctrl-edit",
+    "side": "remacs",
+    "ready": false,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 19.28,
+    "saved_hex": "6162630a",
+    "saved_text": "abc\n",
+    "input_hex": [
+      "05027f04"
+    ],
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "-nw",
+      "--eval",
+      "(setq make-backup-files nil create-lockfiles nil auto-save-default nil interprogram-cut-function nil interprogram-paste-function nil)",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing/ctrl-edit.remacs.txt"
+    ],
+    "tail": ""
+  },
+  {
+    "case": "undo",
+    "side": "gnu",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 6.89,
+    "saved_hex": "6162630a",
+    "saved_text": "abc\n",
+    "input_hex": [
+      "616263",
+      "0105",
+      "58",
+      "1f"
+    ],
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "-nw",
+      "--eval",
+      "(setq make-backup-files nil create-lockfiles nil auto-save-default nil interprogram-cut-function nil interprogram-paste-function nil)",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing/undo.gnu.txt"
+    ],
+    "tail": "\u001b=\u001b>\r\u001b=File Edit Options Buffers Tools Lisp-Interaction Help                           \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  *scratch*      All L1     (Lisp Interaction ElDoc) ----------------\r\nFor information about GNU Emacs and the GNU system, type C-h C-a.\nFor information about GNU Emacs and the GNU system, type C-h C-a.File Edit Options Buffers Tools Text Help                                       \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  undo.gnu.txt   All L1     (Text) ----------------------------------\r\nabc**XUndo\b20261022-round2/pty-editing/undo.gnu.txt...\rSaving file /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/\\\r\n2-round2/pty-editing/undo.gnu.txt\rWrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/202610--\u001b>\r"
+  },
+  {
+    "case": "undo",
+    "side": "remacs",
+    "ready": false,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 17.51,
+    "saved_hex": "",
+    "saved_text": "",
+    "input_hex": [
+      "616263",
+      "0105",
+      "58",
+      "1f"
+    ],
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "-nw",
+      "--eval",
+      "(setq make-backup-files nil create-lockfiles nil auto-save-default nil interprogram-cut-function nil interprogram-paste-function nil)",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing/undo.remacs.txt"
+    ],
+    "tail": ""
+  },
+  {
+    "case": "isearch",
+    "side": "gnu",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 6.17,
+    "saved_hex": "6f6e652074776f58206f6e650a",
+    "saved_text": "one twoX one\n",
+    "input_hex": [
+      "1374776f0d",
+      "58"
+    ],
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "-nw",
+      "--eval",
+      "(setq make-backup-files nil create-lockfiles nil auto-save-default nil interprogram-cut-function nil interprogram-paste-function nil)",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing/isearch.gnu.txt"
+    ],
+    "tail": "\u001b=\u001b>\r\u001b=File Edit Options Buffers Tools Lisp-Interaction Help                           \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  *scratch*      All L1     (Lisp Interaction ElDoc) ----------------\r\nFor information about GNU Emacs and the GNU system, type C-h C-a.\nFor information about GNU Emacs and the GNU system, type C-h C-a.File Edit Options Buffers Tools Text Help                                       \r\n\none two one\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UU-:--- F1  isearch.gnu.txt   All L1     (Text) -------------------------------\r\nIsearch Help Isearch) \nI-search: ttI-search: twwI-search: twooMark saved where search startedHelp        two) --------X one**\n\t20261022-round2/pty-editing/isearch.gnu.txt...\rSaving file /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/\\\r\n\n\t2-round2/pty-editing/isearch.gnu.txt\rWrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/202610\n\t--\n\t\n\t\u001b>\r"
+  },
+  {
+    "case": "isearch",
+    "side": "remacs",
+    "ready": false,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 29.06,
+    "saved_hex": "6f6e652074776f206f6e650a",
+    "saved_text": "one two one\n",
+    "input_hex": [
+      "1374776f0d",
+      "58"
+    ],
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "-nw",
+      "--eval",
+      "(setq make-backup-files nil create-lockfiles nil auto-save-default nil interprogram-cut-function nil interprogram-paste-function nil)",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing/isearch.remacs.txt"
+    ],
+    "tail": ""
+  },
+  {
+    "case": "split",
+    "side": "gnu",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 7.04,
+    "saved_hex": "616263580a",
+    "saved_text": "abcX\n",
+    "input_hex": [
+      "1832",
+      "186f",
+      "0558",
+      "1831"
+    ],
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "-nw",
+      "--eval",
+      "(setq make-backup-files nil create-lockfiles nil auto-save-default nil interprogram-cut-function nil interprogram-paste-function nil)",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing/split.gnu.txt"
+    ],
+    "tail": "\u001b=\u001b>\r\u001b=File Edit Options Buffers Tools Lisp-Interaction Help                           \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  *scratch*      All L1     (Lisp Interaction ElDoc) ----------------\r\nFor information about GNU Emacs and the GNU system, type C-h C-a.\nFor information about GNU Emacs and the GNU system, type C-h C-a.File Edit Options Buffers Tools Text Help                                       \r\n\nabc\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UU-:--- F1  split.gnu.txt   All L1     (Text) ---------------------------------\r\n-UU-:--- F1  split.gnu.txt   All L1     (Text) ---------------------------------\r\nabc-UU-:--- F1  split.gnu.txt   All L1     (Text) ---------------------------------\r\n-UU-:--- F1  split.gnu.txt   All L1     (Text) ---------------------------------\r\n-UU-:--- F1  split.gnu.txt   All L1     (Text) ---------------------------------\r\nX**\n\b\b\b\bX**\r\n20261022-round2/pty-editing/split.gnu.txt...\rSaving file /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/\\\r\n2-round2/pty-editing/split.gnu.txt\rWrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/202610--\u001b>\r"
+  },
+  {
+    "case": "split",
+    "side": "remacs",
+    "ready": false,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 27.12,
+    "saved_hex": "6162630a",
+    "saved_text": "abc\n",
+    "input_hex": [
+      "1832",
+      "186f",
+      "0558",
+      "1831"
+    ],
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "-nw",
+      "--eval",
+      "(setq make-backup-files nil create-lockfiles nil auto-save-default nil interprogram-cut-function nil interprogram-paste-function nil)",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing/split.remacs.txt"
+    ],
+    "tail": ""
+  },
+  {
+    "case": "ctrl-home",
+    "side": "gnu",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 6.47,
+    "saved_hex": "586162630a6465660a",
+    "saved_text": "Xabc\ndef\n",
+    "input_hex": [
+      "1b3e",
+      "1b5b313b3548",
+      "58"
+    ],
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "-nw",
+      "--eval",
+      "(setq make-backup-files nil create-lockfiles nil auto-save-default nil interprogram-cut-function nil interprogram-paste-function nil)",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing/ctrl-home.gnu.txt"
+    ],
+    "tail": "\u001b=\u001b>\r\u001b=File Edit Options Buffers Tools Lisp-Interaction Help                           \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  *scratch*      All L1     (Lisp Interaction ElDoc) ----------------\r\nFor information about GNU Emacs and the GNU system, type C-h C-a.\nFor information about GNU Emacs and the GNU system, type C-h C-a.File Edit Options Buffers Tools Text Help                                       \r\n\nabc\r\ndef\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UU-:--- F1  ctrl-home.gnu.txt   All L1     (Text) -----------------------------\r\nMark set\n3Mark set1\nXabc**20261022-round2/pty-editing/ctrl-home.gnu.txt...\rSaving file /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/\\\r\n2-round2/pty-editing/ctrl-home.gnu.txt\rWrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/202610--\u001b>\r"
+  },
+  {
+    "case": "ctrl-home",
+    "side": "remacs",
+    "ready": false,
+    "forced": true,
+    "returncode": -15,
+    "seconds": 30.07,
+    "saved_hex": "6162630a6465660a",
+    "saved_text": "abc\ndef\n",
+    "input_hex": [
+      "1b3e",
+      "1b5b313b3548",
+      "58"
+    ],
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "-nw",
+      "--eval",
+      "(setq make-backup-files nil create-lockfiles nil auto-save-default nil interprogram-cut-function nil interprogram-paste-function nil)",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing/ctrl-home.remacs.txt"
+    ],
+    "tail": ""
+  },
+  {
+    "case": "kbd-macro",
+    "side": "gnu",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 6.87,
+    "saved_hex": "78780a",
+    "saved_text": "xx\n",
+    "input_hex": [
+      "1828",
+      "78",
+      "1829",
+      "1865"
+    ],
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "-nw",
+      "--eval",
+      "(setq make-backup-files nil create-lockfiles nil auto-save-default nil interprogram-cut-function nil interprogram-paste-function nil)",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing/kbd-macro.gnu.txt"
+    ],
+    "tail": "\u001b=\u001b>\r\u001b=File Edit Options Buffers Tools Lisp-Interaction Help                           \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  *scratch*      All L1     (Lisp Interaction ElDoc) ----------------\r\nFor information about GNU Emacs and the GNU system, type C-h C-a.\nFor information about GNU Emacs and the GNU system, type C-h C-a.File Edit Options Buffers Tools Text Help                                       \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  kbd-macro.gnu.txt   All L1     (Text) -----------------------------\r\nDefining kbd macro...\nDefining kbd macro...File Edit Options Buffers Tools Text Help                                       \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  kbd-macro.gnu.txt   All L1     (Text Def) -------------------------\r\nx**Keyboard macro defined) ----(Type e to repeat macro)(Type e to repeat macro)File Edit Options Buffers Tools Text Help                                       \r\n\nxx\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:**- F1  kbd-macro.gnu.txt   All L1     (Text) -----------------------------\r\n20261022-round2/pty-editing/kbd-macro.gnu.txt...\rSaving file /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/\\\r\n2-round2/pty-editing/kbd-macro.gnu.txt\rWrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/202610--\u001b>\r"
+  },
+  {
+    "case": "kbd-macro",
+    "side": "remacs",
+    "ready": false,
+    "forced": true,
+    "returncode": -15,
+    "seconds": 30.03,
+    "saved_hex": "",
+    "saved_text": "",
+    "input_hex": [
+      "1828",
+      "78",
+      "1829",
+      "1865"
+    ],
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "-nw",
+      "--eval",
+      "(setq make-backup-files nil create-lockfiles nil auto-save-default nil interprogram-cut-function nil interprogram-paste-function nil)",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing/kbd-macro.remacs.txt"
+    ],
+    "tail": ""
+  },
+  {
+    "case": "prefix-repeat",
+    "side": "gnu",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 5.98,
+    "saved_hex": "7878780a",
+    "saved_text": "xxx\n",
+    "input_hex": [
+      "153378"
+    ],
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "-nw",
+      "--eval",
+      "(setq make-backup-files nil create-lockfiles nil auto-save-default nil interprogram-cut-function nil interprogram-paste-function nil)",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing/prefix-repeat.gnu.txt"
+    ],
+    "tail": "\u001b=\u001b>\r\u001b=File Edit Options Buffers Tools Lisp-Interaction Help                           \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  *scratch*      All L1     (Lisp Interaction ElDoc) ----------------\r\nFor information about GNU Emacs and the GNU system, type C-h C-a.\nFor information about GNU Emacs and the GNU system, type C-h C-a.File Edit Options Buffers Tools Text Help                                       \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  prefix-repeat.gnu.txt   All L1     (Text) -------------------------\r\nxxx**20261022-round2/pty-editing/prefix-repeat.gnu.txt...\rSaving file /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/\\\r\n2-round2/pty-editing/prefix-repeat.gnu.txt\rWrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/202610--\u001b>\r"
+  },
+  {
+    "case": "prefix-repeat",
+    "side": "remacs",
+    "ready": false,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 23.48,
+    "saved_hex": "",
+    "saved_text": "",
+    "input_hex": [
+      "153378"
+    ],
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "-nw",
+      "--eval",
+      "(setq make-backup-files nil create-lockfiles nil auto-save-default nil interprogram-cut-function nil interprogram-paste-function nil)",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing/prefix-repeat.remacs.txt"
+    ],
+    "tail": ""
+  },
+  {
+    "case": "mark-kill-yank",
+    "side": "gnu",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 6.47,
+    "saved_hex": "616462630a",
+    "saved_text": "adbc\n",
+    "input_hex": [
+      "06000606",
+      "17",
+      "0519"
+    ],
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "-nw",
+      "--eval",
+      "(setq make-backup-files nil create-lockfiles nil auto-save-default nil interprogram-cut-function nil interprogram-paste-function nil)",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing/mark-kill-yank.gnu.txt"
+    ],
+    "tail": "\u001b=\u001b>\r\u001b=File Edit Options Buffers Tools Lisp-Interaction Help                           \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  *scratch*      All L1     (Lisp Interaction ElDoc) ----------------\r\nFor information about GNU Emacs and the GNU system, type C-h C-a.\nFor information about GNU Emacs and the GNU system, type C-h C-a.File Edit Options Buffers Tools Text Help                                       \r\n\nabcd\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UU-:--- F1  mark-kill-yank.gnu.txt   All L1     (Text) ------------------------\r\nMark set\nbc\b\bd**Mark setbc20261022-round2/pty-editing/mark-kill-yank.gnu.txt...\rSaving file /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/\\\r\n2-round2/pty-editing/mark-kill-yank.gnu.txt\rWrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/202610--\u001b>\r"
+  },
+  {
+    "case": "mark-kill-yank",
+    "side": "remacs",
+    "ready": false,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 19.28,
+    "saved_hex": "616263640a",
+    "saved_text": "abcd\n",
+    "input_hex": [
+      "06000606",
+      "17",
+      "0519"
+    ],
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "-nw",
+      "--eval",
+      "(setq make-backup-files nil create-lockfiles nil auto-save-default nil interprogram-cut-function nil interprogram-paste-function nil)",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing/mark-kill-yank.remacs.txt"
+    ],
+    "tail": ""
+  }
+]

@@ -1,0 +1,653 @@
+{
+  "head": "38af4d1d720760348e725dac51f8c4252c2b03d5",
+  "worktree_head": "926cbfc7fe1ddde28c53d0555be1f6b99563535b",
+  "binary_sha256": "b06709033aef86cc8c57b027584a0ce2c7ac4534c537f76e956edac2569d5c05",
+  "runs": [
+    {
+      "id": "interactive:direct-'any",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (called-interactively-p 'any)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok t)",
+      "stdout": "interactive-direct-'any.gnu.out",
+      "stderr": "interactive-direct-'any.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:direct-'any",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (called-interactively-p 'any)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.43,
+      "value": "(ok t)",
+      "stdout": "interactive-direct-'any.remacs.out",
+      "stderr": "interactive-direct-'any.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:helper-'any",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (funcall (lambda nil (called-interactively-p 'any)))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok nil)",
+      "stdout": "interactive-helper-'any.gnu.out",
+      "stderr": "interactive-helper-'any.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:helper-'any",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (funcall (lambda nil (called-interactively-p 'any)))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.23,
+      "value": "(ok t)",
+      "stdout": "interactive-helper-'any.remacs.out",
+      "stderr": "interactive-helper-'any.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:direct-'interactive",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (called-interactively-p 'interactive)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok nil)",
+      "stdout": "interactive-direct-'interactive.gnu.out",
+      "stderr": "interactive-direct-'interactive.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:direct-'interactive",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (called-interactively-p 'interactive)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.18,
+      "value": "(ok t)",
+      "stdout": "interactive-direct-'interactive.remacs.out",
+      "stderr": "interactive-direct-'interactive.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:helper-'interactive",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (funcall (lambda nil (called-interactively-p 'interactive)))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok nil)",
+      "stdout": "interactive-helper-'interactive.gnu.out",
+      "stderr": "interactive-helper-'interactive.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:helper-'interactive",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (funcall (lambda nil (called-interactively-p 'interactive)))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.35,
+      "value": "(ok t)",
+      "stdout": "interactive-helper-'interactive.remacs.out",
+      "stderr": "interactive-helper-'interactive.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:direct-'bogus",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (called-interactively-p 'bogus)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok t)",
+      "stdout": "interactive-direct-'bogus.gnu.out",
+      "stderr": "interactive-direct-'bogus.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:direct-'bogus",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (called-interactively-p 'bogus)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.35,
+      "value": "(ok t)",
+      "stdout": "interactive-direct-'bogus.remacs.out",
+      "stderr": "interactive-direct-'bogus.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:helper-'bogus",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (funcall (lambda nil (called-interactively-p 'bogus)))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok nil)",
+      "stdout": "interactive-helper-'bogus.gnu.out",
+      "stderr": "interactive-helper-'bogus.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:helper-'bogus",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (funcall (lambda nil (called-interactively-p 'bogus)))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.37,
+      "value": "(ok t)",
+      "stdout": "interactive-helper-'bogus.remacs.out",
+      "stderr": "interactive-helper-'bogus.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:direct-nil",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (called-interactively-p nil)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok t)",
+      "stdout": "interactive-direct-nil.gnu.out",
+      "stderr": "interactive-direct-nil.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:direct-nil",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (called-interactively-p nil)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.97,
+      "value": "(ok t)",
+      "stdout": "interactive-direct-nil.remacs.out",
+      "stderr": "interactive-direct-nil.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:helper-nil",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (funcall (lambda nil (called-interactively-p nil)))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok nil)",
+      "stdout": "interactive-helper-nil.gnu.out",
+      "stderr": "interactive-helper-nil.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:helper-nil",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (funcall (lambda nil (called-interactively-p nil)))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.95,
+      "value": "(ok t)",
+      "stdout": "interactive-helper-nil.remacs.out",
+      "stderr": "interactive-helper-nil.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:call-interactively-batch",
+      "group": "interactive_context",
+      "form": "(call-interactively (lambda nil (interactive) (list (called-interactively-p 'any) (called-interactively-p 'interactive))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok (t nil))",
+      "stdout": "interactive-call-interactively-batch.gnu.out",
+      "stderr": "interactive-call-interactively-batch.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:call-interactively-batch",
+      "group": "interactive_context",
+      "form": "(call-interactively (lambda nil (interactive) (list (called-interactively-p 'any) (called-interactively-p 'interactive))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.95,
+      "value": "(ok (t t))",
+      "stdout": "interactive-call-interactively-batch.remacs.out",
+      "stderr": "interactive-call-interactively-batch.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:apply-helper",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (apply (lambda (&rest _) (called-interactively-p 'any)) '(1))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok nil)",
+      "stdout": "interactive-apply-helper.gnu.out",
+      "stderr": "interactive-apply-helper.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:apply-helper",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (apply (lambda (&rest _) (called-interactively-p 'any)) '(1))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.03,
+      "value": "(ok t)",
+      "stdout": "interactive-apply-helper.remacs.out",
+      "stderr": "interactive-apply-helper.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:error-restores",
+      "group": "interactive_context",
+      "form": "(progn (condition-case nil (funcall-interactively (lambda nil (error \"stop\"))) (error nil)) (called-interactively-p 'any))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok nil)",
+      "stdout": "interactive-error-restores.gnu.out",
+      "stderr": "interactive-error-restores.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:error-restores",
+      "group": "interactive_context",
+      "form": "(progn (condition-case nil (funcall-interactively (lambda nil (error \"stop\"))) (error nil)) (called-interactively-p 'any))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.05,
+      "value": "(ok nil)",
+      "stdout": "interactive-error-restores.remacs.out",
+      "stderr": "interactive-error-restores.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:bytecompiled-helper",
+      "group": "interactive_context",
+      "form": "(let ((f (byte-compile (lambda nil (called-interactively-p 'any))))) (funcall-interactively (lambda nil (funcall f))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok nil)",
+      "stdout": "interactive-bytecompiled-helper.gnu.out",
+      "stderr": "interactive-bytecompiled-helper.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:bytecompiled-helper",
+      "group": "interactive_context",
+      "form": "(let ((f (byte-compile (lambda nil (called-interactively-p 'any))))) (funcall-interactively (lambda nil (funcall f))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 12.31,
+      "value": "(ok t)",
+      "stdout": "interactive-bytecompiled-helper.remacs.out",
+      "stderr": "interactive-bytecompiled-helper.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "handler:all-observers",
+      "group": "interactive_context",
+      "form": "(let ((seen nil)) (condition-case nil (handler-bind ((error (lambda (_) (push 1 seen))) (error (lambda (_) (push 2 seen)))) (error \"x\")) (error nil)) (nreverse seen))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok (1 2))",
+      "stdout": "handler-all-observers.gnu.out",
+      "stderr": "handler-all-observers.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "handler:all-observers",
+      "group": "interactive_context",
+      "form": "(let ((seen nil)) (condition-case nil (handler-bind ((error (lambda (_) (push 1 seen))) (error (lambda (_) (push 2 seen)))) (error \"x\")) (error nil)) (nreverse seen))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.04,
+      "value": "(ok (1 2))",
+      "stdout": "handler-all-observers.remacs.out",
+      "stderr": "handler-all-observers.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "handler:nested-observers",
+      "group": "interactive_context",
+      "form": "(let ((seen nil)) (condition-case nil (handler-bind ((error (lambda (_) (push 'outer seen)))) (handler-bind ((error (lambda (_) (push 'inner seen)))) (error \"x\"))) (error nil)) (nreverse seen))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (inner outer))",
+      "stdout": "handler-nested-observers.gnu.out",
+      "stderr": "handler-nested-observers.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "handler:nested-observers",
+      "group": "interactive_context",
+      "form": "(let ((seen nil)) (condition-case nil (handler-bind ((error (lambda (_) (push 'outer seen)))) (handler-bind ((error (lambda (_) (push 'inner seen)))) (error \"x\"))) (error nil)) (nreverse seen))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.09,
+      "value": "(ok (inner outer))",
+      "stdout": "handler-nested-observers.remacs.out",
+      "stderr": "handler-nested-observers.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "handler:nonlocal-exit",
+      "group": "interactive_context",
+      "form": "(let ((seen nil)) (list (catch 'exit (handler-bind ((error (lambda (_) (push 'handler seen) (throw 'exit 7)))) (unwind-protect (error \"x\") (push 'cleanup seen)))) (nreverse seen)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok (7 (handler cleanup)))",
+      "stdout": "handler-nonlocal-exit.gnu.out",
+      "stderr": "handler-nonlocal-exit.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "handler:nonlocal-exit",
+      "group": "interactive_context",
+      "form": "(let ((seen nil)) (list (catch 'exit (handler-bind ((error (lambda (_) (push 'handler seen) (throw 'exit 7)))) (unwind-protect (error \"x\") (push 'cleanup seen)))) (nreverse seen)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.03,
+      "value": "(ok (7 (handler cleanup)))",
+      "stdout": "handler-nonlocal-exit.remacs.out",
+      "stderr": "handler-nonlocal-exit.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "handler:inside-protected-success",
+      "group": "interactive_context",
+      "form": "(let ((seen nil)) (handler-bind ((error (lambda (_) (push 'observed seen)))) (condition-case nil (error \"x\") (error 'caught))) seen)",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok nil)",
+      "stdout": "handler-inside-protected-success.gnu.out",
+      "stderr": "handler-inside-protected-success.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "handler:inside-protected-success",
+      "group": "interactive_context",
+      "form": "(let ((seen nil)) (handler-bind ((error (lambda (_) (push 'observed seen)))) (condition-case nil (error \"x\") (error 'caught))) seen)",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.88,
+      "value": "(ok (observed))",
+      "stdout": "handler-inside-protected-success.remacs.out",
+      "stderr": "handler-inside-protected-success.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "handler:dynamic-context",
+      "group": "interactive_context",
+      "form": "(progn (defvar audit-r2-special 1) (let ((seen nil)) (condition-case nil (handler-bind ((error (lambda (_) (setq seen audit-r2-special)))) (let ((audit-r2-special 2)) (error \"x\"))) (error nil)) seen))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok 2)",
+      "stdout": "handler-dynamic-context.gnu.out",
+      "stderr": "handler-dynamic-context.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "handler:dynamic-context",
+      "group": "interactive_context",
+      "form": "(progn (defvar audit-r2-special 1) (let ((seen nil)) (condition-case nil (handler-bind ((error (lambda (_) (setq seen audit-r2-special)))) (let ((audit-r2-special 2)) (error \"x\"))) (error nil)) seen))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.77,
+      "value": "(ok 2)",
+      "stdout": "handler-dynamic-context.remacs.out",
+      "stderr": "handler-dynamic-context.remacs.err",
+      "complete": true
+    }
+  ]
+}

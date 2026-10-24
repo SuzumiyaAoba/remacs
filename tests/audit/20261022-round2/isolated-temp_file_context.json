@@ -1,0 +1,197 @@
+{
+  "head": "38af4d1d720760348e725dac51f8c4252c2b03d5",
+  "binary_sha256": "b06709033aef86cc8c57b027584a0ce2c7ac4534c537f76e956edac2569d5c05",
+  "runs": [
+    {
+      "id": "temp-context:directory-variable",
+      "group": "temp_file_context",
+      "form": "(let* ((dir (make-temp-file \"remacs-audit-context-\" t)) (temporary-file-directory (file-name-as-directory dir)) file) (unwind-protect (progn (setq file (make-temp-file \"child-\")) (equal (file-name-directory file) temporary-file-directory)) (when file (delete-file file)) (delete-directory dir t)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok t)",
+      "stdout": "temp-context-directory-variable.gnu.out",
+      "stderr": "temp-context-directory-variable.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "temp-context:directory-variable",
+      "group": "temp_file_context",
+      "form": "(let* ((dir (make-temp-file \"remacs-audit-context-\" t)) (temporary-file-directory (file-name-as-directory dir)) file) (unwind-protect (progn (setq file (make-temp-file \"child-\")) (equal (file-name-directory file) temporary-file-directory)) (when file (delete-file file)) (delete-directory dir t)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.08,
+      "value": "(ok nil)",
+      "stdout": "temp-context-directory-variable.remacs.out",
+      "stderr": "temp-context-directory-variable.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "temp-context:write-coding",
+      "group": "temp_file_context",
+      "form": "(let ((coding-system-for-write 'iso-latin-1) file) (unwind-protect (progn (setq file (make-temp-file \"remacs-audit-text-\" nil nil \"é\")) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (when file (delete-file file))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (233))",
+      "stdout": "temp-context-write-coding.gnu.out",
+      "stderr": "temp-context-write-coding.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "temp-context:write-coding",
+      "group": "temp_file_context",
+      "form": "(let ((coding-system-for-write 'iso-latin-1) file) (unwind-protect (progn (setq file (make-temp-file \"remacs-audit-text-\" nil nil \"é\")) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (when file (delete-file file))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.1,
+      "value": "(ok (195 169))",
+      "stdout": "temp-context-write-coding.remacs.out",
+      "stderr": "temp-context-write-coding.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "temp-context:internal-bytes",
+      "group": "temp_file_context",
+      "form": "(let (file) (unwind-protect (progn (setq file (make-temp-file-internal (expand-file-name \"remacs-audit-internal-\" temporary-file-directory) nil \"\" (unibyte-string 128 255))) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (when file (delete-file file))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (128 255))",
+      "stdout": "temp-context-internal-bytes.gnu.out",
+      "stderr": "temp-context-internal-bytes.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "temp-context:internal-bytes",
+      "group": "temp_file_context",
+      "form": "(let (file) (unwind-protect (progn (setq file (make-temp-file-internal (expand-file-name \"remacs-audit-internal-\" temporary-file-directory) nil \"\" (unibyte-string 128 255))) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (when file (delete-file file))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.11,
+      "value": "(ok (243 176 130 128 243 176 131 191))",
+      "stdout": "temp-context-internal-bytes.remacs.out",
+      "stderr": "temp-context-internal-bytes.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "temp-context:internal-file-mode",
+      "group": "temp_file_context",
+      "form": "(let (file) (unwind-protect (progn (setq file (make-temp-file-internal (expand-file-name \"remacs-audit-internal-\" temporary-file-directory) nil \"\" nil)) (logand (file-modes file) 511)) (when file (delete-file file))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok 384)",
+      "stdout": "temp-context-internal-file-mode.gnu.out",
+      "stderr": "temp-context-internal-file-mode.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "temp-context:internal-file-mode",
+      "group": "temp_file_context",
+      "form": "(let (file) (unwind-protect (progn (setq file (make-temp-file-internal (expand-file-name \"remacs-audit-internal-\" temporary-file-directory) nil \"\" nil)) (logand (file-modes file) 511)) (when file (delete-file file))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.98,
+      "value": "(ok 384)",
+      "stdout": "temp-context-internal-file-mode.remacs.out",
+      "stderr": "temp-context-internal-file-mode.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "temp-context:internal-dir-mode",
+      "group": "temp_file_context",
+      "form": "(let (file) (unwind-protect (progn (setq file (make-temp-file-internal (expand-file-name \"remacs-audit-internal-\" temporary-file-directory) t \"\" nil)) (logand (file-modes file) 511)) (when file (delete-directory file))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok 448)",
+      "stdout": "temp-context-internal-dir-mode.gnu.out",
+      "stderr": "temp-context-internal-dir-mode.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "temp-context:internal-dir-mode",
+      "group": "temp_file_context",
+      "form": "(let (file) (unwind-protect (progn (setq file (make-temp-file-internal (expand-file-name \"remacs-audit-internal-\" temporary-file-directory) t \"\" nil)) (logand (file-modes file) 511)) (when file (delete-directory file))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.98,
+      "value": "(ok 493)",
+      "stdout": "temp-context-internal-dir-mode.remacs.out",
+      "stderr": "temp-context-internal-dir-mode.remacs.err",
+      "complete": true
+    }
+  ],
+  "worktree_head": "926cbfc7fe1ddde28c53d0555be1f6b99563535b"
+}

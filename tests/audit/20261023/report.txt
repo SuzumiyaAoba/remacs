@@ -1,0 +1,56 @@
+Remacs バグ監査 第3巡 — 調査継続中
+
+基準HEAD: aeaff5597e60834c21d464b7ad2a4caf167726dc
+最終観測HEAD: ddb739830ec89144612d2cf7755b1115ef5b1058
+新規Issue: 9件（ランタイム7件、テスト2件）。全件GitHubから再取得し、open状態と識別子を確認。
+全体の無欠陥・調査完了は未証明。goalはactiveのまま。
+
+登録済み:
+  #346 ディレクトリの file-notify コールバックで自身の監視を解除すると Rust panic で終了する
+  https://github.com/SuzumiyaAoba/remacs/issues/346
+  #347 shortdoc-doc を初期状態で require すると eager macro expansion の循環エラーでロードできない
+  https://github.com/SuzumiyaAoba/remacs/issues/347
+  #348 最後の file-notify 監視を解除すると、再登録後は valid な監視にも通知が届かない
+  https://github.com/SuzumiyaAoba/remacs/issues/348
+  #349 make-interpreted-closure が dotted な ARGS を構築時に拒否し、呼び出し時の invalid-function にならない
+  https://github.com/SuzumiyaAoba/remacs/issues/349
+  #350 sqlite-open が default-directory を無視し、相対パスの DB を別のディレクトリに作成する
+  https://github.com/SuzumiyaAoba/remacs/issues/350
+  #351 lisp_libs2 の CL 関連5テストが cl-lib を require せず、GNUでも void-function になる式を期待値と比較している
+  https://github.com/SuzumiyaAoba/remacs/issues/351
+  #352 SQLite TEXT の復号が不正な UTF-8 を U+FFFD に置換し、ASCII の multibyte 状態も失う
+  https://github.com/SuzumiyaAoba/remacs/issues/352
+  #353 compile_runs_subprocess_to_exit が出力受信を終了待ちと扱い、実行中プロセスを kill して偽失敗する
+  https://github.com/SuzumiyaAoba/remacs/issues/353
+  #354 file-notify のコールバックがエラーになると、待機中の別ファイルの通知まで失われる
+  https://github.com/SuzumiyaAoba/remacs/issues/354
+
+検証:
+  GNU Emacs 31.1 と同一コードを実行し、生出力・エラー・終了コードを保存。
+  ファイル監視3件、shortdoc-doc、dotted closure、SQLite相対パス・TEXT、CLテスト前提、compile待機を検査。
+  callback error後の通知欠落は追試でも再現し、PENDINGに2FDのイベントがあることも確認。
+  SQLite GC後のlock保持はGNUも同じで、別Issueにはしていない。
+
+全Rustテスト（旧aeaff55ビルド）:
+  全46ターゲット・1074テストを試行。1046成功、25失敗、2timeout、1ignored。
+  失敗/停止probe16件はddb7398の新しいバイナリで個別に再確認して全成功。
+  追加ハーネス4件も成功。残る11失敗は#344/#345/#347/#349/#351/#353へ対応付けた。
+  旧ビルド全体が成功したという意味ではなく、現行HEAD全体の再走でもない。
+
+差分スイープ:
+  GNU 23015行 / Remacs 23023行、両側DIFDONE。404関数名で差分。
+  GNUのbatch対話入力待ち2関数を明示記録して除外。
+  既知マスク外10名のうち9名は新規プロセスで両側一致。
+  dump-emacs-portableの差は不正な共有状態での拒否理由の違いであり、新しい機能不全の根拠としていない。
+  残る既知マスク付き394関数名は、この実行だけで妥当性を証明していない。
+  最初のGNU試行でabbrev_defsへのsandbox外書き込みが拒否されたため、後続はコピーしたdriverのLisp出力先を監査用ディレクトリへ限定。
+  当該差分も個別プロセスで照合し一致した。失敗や除外を成功として数えていない。
+
+主な根拠:
+  manifest.json / findings.json / github-verified-issues.json / coverage.json
+  filenotify-results.json / filenotify-rearm-controls.json / filenotify-error-queue-results.json
+  library-results.json / sqlite-and-constructor-results.json / sqlite-text/evidence.json
+  cl-test-setup-results.json / compile-wait/evidence.json
+  full-suite-summary.json / probe-rechecks/ / differential/ / differential-isolated/
+
+未検査領域・次の調査はcoverage.jsonを参照。

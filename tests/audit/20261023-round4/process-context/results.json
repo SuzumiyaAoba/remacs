@@ -1,0 +1,226 @@
+[
+  {
+    "id": "process-context:filter",
+    "side": "gnu",
+    "metadata": {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_process_context.el"
+      ],
+      "only": "process-context:filter",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.179648,
+      "completed": true,
+      "stdout_file": "process_context.gnu-filter.out",
+      "stderr_file": "process_context.gnu-filter.err"
+    },
+    "values": {
+      "process-context:filter": "(ok (t t t t \"a\"))"
+    },
+    "forms": {
+      "process-context:filter": "(audit-process-context 'filter)"
+    }
+  },
+  {
+    "id": "process-context:filter",
+    "side": "remacs",
+    "metadata": {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_process_context.el"
+      ],
+      "only": "process-context:filter",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 7.553888,
+      "completed": true,
+      "stdout_file": "process_context.remacs-filter.out",
+      "stderr_file": "process_context.remacs-filter.err"
+    },
+    "values": {
+      "process-context:filter": "(ok (t t nil nil nil))"
+    },
+    "forms": {
+      "process-context:filter": "(audit-process-context 'filter)"
+    }
+  },
+  {
+    "id": "process-context:sentinel",
+    "side": "gnu",
+    "metadata": {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_process_context.el"
+      ],
+      "only": "process-context:sentinel",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.183132,
+      "completed": true,
+      "stdout_file": "process_context.gnu-sentinel.out",
+      "stderr_file": "process_context.gnu-sentinel.err"
+    },
+    "values": {
+      "process-context:sentinel": "(ok (t t t t \"a\"))"
+    },
+    "forms": {
+      "process-context:sentinel": "(audit-process-context 'sentinel)"
+    }
+  },
+  {
+    "id": "process-context:sentinel",
+    "side": "remacs",
+    "metadata": {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_process_context.el"
+      ],
+      "only": "process-context:sentinel",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 7.542491,
+      "completed": true,
+      "stdout_file": "process_context.remacs-sentinel.out",
+      "stderr_file": "process_context.remacs-sentinel.err"
+    },
+    "values": {
+      "process-context:sentinel": "(ok (t t nil nil nil))"
+    },
+    "forms": {
+      "process-context:sentinel": "(audit-process-context 'sentinel)"
+    }
+  },
+  {
+    "id": "process-context:filter-error",
+    "side": "gnu",
+    "metadata": {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_process_context.el"
+      ],
+      "only": "process-context:filter-error",
+      "skip": null,
+      "returncode": 255,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.182573,
+      "completed": false,
+      "stdout_file": "process_context.gnu-filter-error.out",
+      "stderr_file": "process_context.gnu-filter-error.err"
+    },
+    "values": {
+      "process-context:filter-error": ""
+    },
+    "forms": {
+      "process-context:filter-error": "(audit-process-callback-error 'filter)"
+    }
+  },
+  {
+    "id": "process-context:filter-error",
+    "side": "remacs",
+    "metadata": {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_process_context.el"
+      ],
+      "only": "process-context:filter-error",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 7.599423,
+      "completed": true,
+      "stdout_file": "process_context.remacs-filter-error.out",
+      "stderr_file": "process_context.remacs-filter-error.err"
+    },
+    "values": {
+      "process-context:filter-error": "(ok (t error))"
+    },
+    "forms": {
+      "process-context:filter-error": "(audit-process-callback-error 'filter)"
+    }
+  },
+  {
+    "id": "process-context:sentinel-error",
+    "side": "gnu",
+    "metadata": {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_process_context.el"
+      ],
+      "only": "process-context:sentinel-error",
+      "skip": null,
+      "returncode": 255,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.180516,
+      "completed": false,
+      "stdout_file": "process_context.gnu-sentinel-error.out",
+      "stderr_file": "process_context.gnu-sentinel-error.err"
+    },
+    "values": {
+      "process-context:sentinel-error": ""
+    },
+    "forms": {
+      "process-context:sentinel-error": "(audit-process-callback-error 'sentinel)"
+    }
+  },
+  {
+    "id": "process-context:sentinel-error",
+    "side": "remacs",
+    "metadata": {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_process_context.el"
+      ],
+      "only": "process-context:sentinel-error",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 7.573754,
+      "completed": true,
+      "stdout_file": "process_context.remacs-sentinel-error.out",
+      "stderr_file": "process_context.remacs-sentinel-error.err"
+    },
+    "values": {
+      "process-context:sentinel-error": "(ok (t error))"
+    },
+    "forms": {
+      "process-context:sentinel-error": "(audit-process-callback-error 'sentinel)"
+    }
+  }
+]

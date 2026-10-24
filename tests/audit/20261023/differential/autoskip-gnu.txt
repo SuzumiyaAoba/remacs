@@ -1,0 +1,2 @@
+isearch-forward
+isearch-forward-regexp

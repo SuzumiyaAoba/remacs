@@ -1,0 +1,182 @@
+[
+  {
+    "suite": "apply",
+    "side": "gnu",
+    "returncode": 0,
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_apply.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "239 checks passed239 checks passed",
+    "stderr_file": "qa-apply.gnu.err"
+  },
+  {
+    "suite": "apply",
+    "side": "remacs",
+    "returncode": 0,
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_apply.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "239 checks passed239 checks passed",
+    "stderr_file": "qa-apply.remacs.err"
+  },
+  {
+    "suite": "errors",
+    "side": "gnu",
+    "returncode": 0,
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_errors.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "163 checks passed163 checks passed",
+    "stderr_file": "qa-errors.gnu.err"
+  },
+  {
+    "suite": "errors",
+    "side": "remacs",
+    "returncode": 0,
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_errors.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "163 checks passed163 checks passed",
+    "stderr_file": "qa-errors.remacs.err"
+  },
+  {
+    "suite": "locvar",
+    "side": "gnu",
+    "returncode": 0,
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_locvar.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "30 checks passed30 checks passed",
+    "stderr_file": "qa-locvar.gnu.err"
+  },
+  {
+    "suite": "locvar",
+    "side": "remacs",
+    "returncode": 0,
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_locvar.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "30 checks passed30 checks passed",
+    "stderr_file": "qa-locvar.remacs.err"
+  },
+  {
+    "suite": "seq",
+    "side": "gnu",
+    "returncode": 0,
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_seq.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "81 checks passed81 checks passed",
+    "stderr_file": "qa-seq.gnu.err"
+  },
+  {
+    "suite": "seq",
+    "side": "remacs",
+    "returncode": 0,
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_seq.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "81 checks passed81 checks passed",
+    "stderr_file": "qa-seq.remacs.err"
+  },
+  {
+    "suite": "file_primitive_handlers",
+    "side": "gnu",
+    "returncode": 0,
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_file_primitive_handlers.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "144 checks passed\n144 checks passed",
+    "stderr_file": "qa-file_primitive_handlers.gnu.err"
+  },
+  {
+    "suite": "file_primitive_handlers",
+    "side": "remacs",
+    "returncode": 0,
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_framework.el",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/qa_file_primitive_handlers.el",
+      "--eval",
+      "(princ (qa--done))"
+    ],
+    "stdout": "144 checks passed\n144 checks passed",
+    "stderr_file": "qa-file_primitive_handlers.remacs.err"
+  }
+]

@@ -1,0 +1,5 @@
+{
+  "matched_test_script_processes": [],
+  "terminated_owned_processes": [],
+  "scope": "Only the exact script -q /dev/null REPO/target/debug/remacs -nw fixture and its direct remacs children."
+}

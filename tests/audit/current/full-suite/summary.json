@@ -1,0 +1,305 @@
+{
+  "complete": true,
+  "head": "29e7c960edec18a99107741c351d95444f8f6b18",
+  "rust_test_count": 735,
+  "rust_counts": {
+    "ignored": 1,
+    "ok": 720,
+    "FAILED": 12,
+    "TIMEOUT": 2
+  },
+  "targets": [
+    {
+      "target": "test-difftest",
+      "tests": 1,
+      "counts": {
+        "ignored": 1
+      }
+    },
+    {
+      "target": "bin-remacs",
+      "tests": 0,
+      "counts": {}
+    },
+    {
+      "target": "test-main_cli",
+      "tests": 16,
+      "counts": {
+        "ok": 15,
+        "FAILED": 1
+      }
+    },
+    {
+      "target": "test-qa",
+      "tests": 197,
+      "counts": {
+        "ok": 192,
+        "FAILED": 5
+      }
+    },
+    {
+      "target": "test-compat",
+      "tests": 8,
+      "counts": {
+        "ok": 8
+      }
+    },
+    {
+      "target": "test-builtins_extlib",
+      "tests": 11,
+      "counts": {
+        "ok": 11
+      }
+    },
+    {
+      "target": "test-nsgui",
+      "tests": 4,
+      "counts": {
+        "ok": 4
+      }
+    },
+    {
+      "target": "test-builtins_misc",
+      "tests": 16,
+      "counts": {
+        "ok": 16
+      }
+    },
+    {
+      "target": "test-file_coding",
+      "tests": 1,
+      "counts": {
+        "ok": 1
+      }
+    },
+    {
+      "target": "test-dbus",
+      "tests": 7,
+      "counts": {
+        "ok": 7
+      }
+    },
+    {
+      "target": "test-lisp_core",
+      "tests": 26,
+      "counts": {
+        "ok": 26
+      }
+    },
+    {
+      "target": "test-compat_cmds",
+      "tests": 16,
+      "counts": {
+        "ok": 16
+      }
+    },
+    {
+      "target": "test-tui_session",
+      "tests": 9,
+      "counts": {
+        "ok": 9
+      }
+    },
+    {
+      "target": "test-window_frame",
+      "tests": 13,
+      "counts": {
+        "ok": 13
+      }
+    },
+    {
+      "target": "test-probe_all",
+      "tests": 47,
+      "counts": {
+        "ok": 43,
+        "FAILED": 3,
+        "TIMEOUT": 1
+      }
+    },
+    {
+      "target": "test-extlib",
+      "tests": 9,
+      "counts": {
+        "ok": 9
+      }
+    },
+    {
+      "target": "test-buffer_extra",
+      "tests": 11,
+      "counts": {
+        "ok": 11
+      }
+    },
+    {
+      "target": "test-nativecomp",
+      "tests": 8,
+      "counts": {
+        "ok": 8
+      }
+    },
+    {
+      "target": "test-legacy_file_coding",
+      "tests": 1,
+      "counts": {
+        "ok": 1
+      }
+    },
+    {
+      "target": "test-lisp_libs",
+      "tests": 55,
+      "counts": {
+        "ok": 55
+      }
+    },
+    {
+      "target": "test-lisp_libs2",
+      "tests": 118,
+      "counts": {
+        "ok": 118
+      }
+    },
+    {
+      "target": "test-tui_dired",
+      "tests": 1,
+      "counts": {
+        "ok": 1
+      }
+    },
+    {
+      "target": "test-interactive",
+      "tests": 44,
+      "counts": {
+        "ok": 44
+      }
+    },
+    {
+      "target": "lib-remacs",
+      "tests": 116,
+      "counts": {
+        "ok": 112,
+        "FAILED": 3,
+        "TIMEOUT": 1
+      }
+    }
+  ],
+  "failures": [
+    {
+      "target": "test-main_cli",
+      "name": "pty_editor_smoke",
+      "status": "FAILED",
+      "log": "test-main_cli.log"
+    },
+    {
+      "target": "test-qa",
+      "name": "qa_buffer2",
+      "status": "FAILED",
+      "log": "test-qa.log"
+    },
+    {
+      "target": "test-qa",
+      "name": "qa_buffmenu",
+      "status": "FAILED",
+      "log": "test-qa.log"
+    },
+    {
+      "target": "test-qa",
+      "name": "qa_charset",
+      "status": "FAILED",
+      "log": "test-qa.log"
+    },
+    {
+      "target": "test-qa",
+      "name": "qa_mark",
+      "status": "FAILED",
+      "log": "test-qa.log"
+    },
+    {
+      "target": "test-qa",
+      "name": "qa_time_zero_zone",
+      "status": "FAILED",
+      "log": "test-qa.log"
+    },
+    {
+      "target": "test-probe_all",
+      "name": "probe_buffer_props",
+      "status": "FAILED",
+      "log": "test-probe_all.log"
+    },
+    {
+      "target": "test-probe_all",
+      "name": "probe_editor_deep",
+      "status": "FAILED",
+      "log": "test-probe_all.log"
+    },
+    {
+      "target": "test-probe_all",
+      "name": "probe_eval14_cov",
+      "status": "TIMEOUT",
+      "log": "test-probe_all-remaining-0.log"
+    },
+    {
+      "target": "test-probe_all",
+      "name": "probe_runtime_semantics",
+      "status": "FAILED",
+      "log": "test-probe_all.log"
+    },
+    {
+      "target": "lib-remacs",
+      "name": "coverage_tests::u_probe_buffer4",
+      "status": "FAILED",
+      "log": "lib-remacs.log"
+    },
+    {
+      "target": "lib-remacs",
+      "name": "coverage_tests::u_probe_editor3",
+      "status": "FAILED",
+      "log": "lib-remacs.log"
+    },
+    {
+      "target": "lib-remacs",
+      "name": "coverage_tests::u_probe_eval14",
+      "status": "TIMEOUT",
+      "log": "lib-remacs-remaining-0.log"
+    },
+    {
+      "target": "lib-remacs",
+      "name": "coverage_tests::u_probe_runtime",
+      "status": "FAILED",
+      "log": "lib-remacs-remaining-21.log"
+    }
+  ],
+  "missing": [],
+  "gnu_qa_files": 196,
+  "gnu_qa_passed": 189,
+  "gnu_qa_failures": [
+    "qa_basic_faces.el",
+    "qa_char.el",
+    "qa_charset.el",
+    "qa_process.el",
+    "qa_strings.el",
+    "qa_strings2.el",
+    "qa_subrx.el"
+  ],
+  "corpus_files": 17,
+  "corpus_forms": 4159,
+  "grammar_count": 52,
+  "grammar_unavailable": [
+    "treesit-grammar:janet"
+  ],
+  "differential_cases": 428,
+  "new_issues": [
+    291,
+    292,
+    293,
+    294,
+    295,
+    296,
+    297,
+    298,
+    299,
+    300
+  ],
+  "reopened_issues": [
+    77
+  ]
+}

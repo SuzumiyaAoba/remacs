@@ -1,0 +1,44 @@
+[
+  {
+    "file": "qa_buffmenu.el",
+    "batch_at_boot": false,
+    "capture": true,
+    "returncode": 0,
+    "log": "qa_buffmenu.el.interactive.capture.log"
+  },
+  {
+    "file": "qa_buffmenu.el",
+    "batch_at_boot": true,
+    "capture": true,
+    "returncode": 0,
+    "log": "qa_buffmenu.el.batch.capture.log"
+  },
+  {
+    "file": "qa_buffmenu.el",
+    "batch_at_boot": true,
+    "capture": false,
+    "returncode": 0,
+    "log": "qa_buffmenu.el.batch.stdout.log"
+  },
+  {
+    "file": "qa_time_zero_zone.el",
+    "batch_at_boot": false,
+    "capture": true,
+    "returncode": 0,
+    "log": "qa_time_zero_zone.el.interactive.capture.log"
+  },
+  {
+    "file": "qa_time_zero_zone.el",
+    "batch_at_boot": true,
+    "capture": true,
+    "returncode": 0,
+    "log": "qa_time_zero_zone.el.batch.capture.log"
+  },
+  {
+    "file": "qa_time_zero_zone.el",
+    "batch_at_boot": true,
+    "capture": false,
+    "returncode": 0,
+    "log": "qa_time_zero_zone.el.batch.stdout.log"
+  }
+]

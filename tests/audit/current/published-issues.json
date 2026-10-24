@@ -1,0 +1,812 @@
+[
+  {
+    "id": "AUD-001",
+    "number": 162,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/162",
+    "title": "SQLite の BLOB 読み出しが任意バイトを U+FFFD に置換する"
+  },
+  {
+    "id": "AUD-002",
+    "number": 180,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/180",
+    "title": "ネイティブ関数がエラー後も実行し、後続の正常値でエラーを失う"
+  },
+  {
+    "id": "AUD-003",
+    "number": 181,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/181",
+    "title": "equal が別々の循環リストの比較で停止しない"
+  },
+  {
+    "id": "AUD-004",
+    "number": 182,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/182",
+    "title": "equal が深い異なるリストを t と判定する"
+  },
+  {
+    "id": "AUD-005",
+    "number": 183,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/183",
+    "title": "ネイティブ関数のグローバル変数参照が値ではなくシンボルを返す"
+  },
+  {
+    "id": "AUD-006",
+    "number": 184,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/184",
+    "title": "ネイティブ関数内で作るクロージャが引数を捕捉しない"
+  },
+  {
+    "id": "AUD-007",
+    "number": 185,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/185",
+    "title": "ネイティブ let* のシャドーイングで初期化前の変数を読む"
+  },
+  {
+    "id": "AUD-008",
+    "number": 186,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/186",
+    "title": ".eln に setq や provide などのトップレベルフォームが保存されない"
+  },
+  {
+    "id": "AUD-009",
+    "number": 187,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/187",
+    "title": "ネイティブコンパイラがソース後半の構文エラーを無視して成功する"
+  },
+  {
+    "id": "AUD-010",
+    "number": 188,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/188",
+    "title": "ネイティブコンパイルした引数なし and が nil を返す"
+  },
+  {
+    "id": "AUD-011",
+    "number": 189,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/189",
+    "title": "ネイティブ関数の quote 定数を呼び出しごとに作り直す"
+  },
+  {
+    "id": "AUD-012",
+    "number": 190,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/190",
+    "title": "ネイティブコンパイルした unibyte 文字列定数の文字コードが変わる"
+  },
+  {
+    "id": "AUD-013",
+    "number": 191,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/191",
+    "title": "define-hash-table-test の独自比較関数・ハッシュ関数が使われない"
+  },
+  {
+    "id": "AUD-014",
+    "number": 192,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/192",
+    "title": "equal ハッシュテーブルで構造が等しい循環キーを検索できない"
+  },
+  {
+    "id": "AUD-015",
+    "number": 193,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/193",
+    "title": "equal ハッシュテーブルで同じバッファ・位置の marker を検索できない"
+  },
+  {
+    "id": "AUD-016",
+    "number": 194,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/194",
+    "title": "weak hash の到達不能なキーが garbage-collect 後も保持される"
+  },
+  {
+    "id": "AUD-017",
+    "number": 195,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/195",
+    "title": "hash-table-size が拡張後も指定した初期値のままになる"
+  },
+  {
+    "id": "AUD-018",
+    "number": 163,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/163",
+    "title": "SQLite で省略したパラメータが NULL にならずエラーになる"
+  },
+  {
+    "id": "AUD-019",
+    "number": 164,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/164",
+    "title": "sqlite-select の set が sqlite-next より前に SQL を実行する"
+  },
+  {
+    "id": "AUD-020",
+    "number": 165,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/165",
+    "title": "SQLite のエラーコードとエラーデータ構造が誤っている"
+  },
+  {
+    "id": "AUD-021",
+    "number": 166,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/166",
+    "title": "sqlitep が nil の偽レコードを sqlite-close が受け入れる"
+  },
+  {
+    "id": "AUD-022",
+    "number": 167,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/167",
+    "title": "sqlite-select の空クエリが nil ではなくエラーになる"
+  },
+  {
+    "id": "AUD-023",
+    "number": 168,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/168",
+    "title": "XML の改行・属性内空白が正規化されない"
+  },
+  {
+    "id": "AUD-024",
+    "number": 169,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/169",
+    "title": "xmlns で始まる通常の XML 属性まで削除される"
+  },
+  {
+    "id": "AUD-025",
+    "number": 170,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/170",
+    "title": "XML パーサが重複属性・禁止文字などの不正な文書を受け入れる"
+  },
+  {
+    "id": "AUD-026",
+    "number": 171,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/171",
+    "title": "XML 属性の未定義エンティティをエラーにせず空文字にする"
+  },
+  {
+    "id": "AUD-027",
+    "number": 172,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/172",
+    "title": "XML の内部 DTD エンティティ宣言が無視される"
+  },
+  {
+    "id": "AUD-028",
+    "number": 173,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/173",
+    "title": "HTML の DISCARD-COMMENTS がネストしたコメントまで削除する"
+  },
+  {
+    "id": "AUD-029",
+    "number": 174,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/174",
+    "title": "明示的に記述した空の head 要素も削除される"
+  },
+  {
+    "id": "AUD-030",
+    "number": 175,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/175",
+    "title": "別の table にある tbody がすべての table の DOM を変える"
+  },
+  {
+    "id": "AUD-031",
+    "number": 176,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/176",
+    "title": "HTML5 の DOM 修復・属性名処理が GNU libxml の結果と一致しない"
+  },
+  {
+    "id": "AUD-032",
+    "number": 196,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/196",
+    "title": "make-thread が同期実行され、親子間の待ち合わせが成立しない"
+  },
+  {
+    "id": "AUD-033",
+    "number": 197,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/197",
+    "title": "スレッドの current-buffer と動的束縛が親から分離されない"
+  },
+  {
+    "id": "AUD-034",
+    "number": 198,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/198",
+    "title": "mutex が他スレッドのロックを奪え、再帰ロックの深さも保持しない"
+  },
+  {
+    "id": "AUD-035",
+    "number": 199,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/199",
+    "title": "accept-process-output の整数 JUST-THIS-ONE によるタイマー抑止が無視される"
+  },
+  {
+    "id": "AUD-036",
+    "number": 200,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/200",
+    "title": "make-process の connection-type=pipe が無視される"
+  },
+  {
+    "id": "AUD-037",
+    "number": 201,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/201",
+    "title": "プロセスの I/O が coding system を無視し、存在しない coding も受け入れる"
+  },
+  {
+    "id": "AUD-038",
+    "number": 202,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/202",
+    "title": "チャンク境界で分割された UTF-8 を復号できない"
+  },
+  {
+    "id": "AUD-039",
+    "number": 203,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/203",
+    "title": "子プロセスに Lisp の process-environment が渡されない"
+  },
+  {
+    "id": "AUD-040",
+    "number": 204,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/204",
+    "title": "子プロセスの作業ディレクトリに default-directory が使われない"
+  },
+  {
+    "id": "AUD-041",
+    "number": 205,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/205",
+    "title": "make-process が Lisp の exec-path で実行ファイルを探索しない"
+  },
+  {
+    "id": "AUD-042",
+    "number": 206,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/206",
+    "title": "プロセスの filter=t を入力停止ではなく関数呼び出しとして扱う"
+  },
+  {
+    "id": "AUD-043",
+    "number": 207,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/207",
+    "title": "accept-process-output がタイムアウト省略時にも待たずに返る"
+  },
+  {
+    "id": "AUD-044",
+    "number": 208,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/208",
+    "title": "process-send-region が marker を拒否し、範囲外や narrowing 外を黙って送る"
+  },
+  {
+    "id": "AUD-045",
+    "number": 209,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/209",
+    "title": "accept-process-output の巨大な有限待ち時間で Rust panic し、終了コードも 0 になる"
+  },
+  {
+    "id": "AUD-046",
+    "number": 225,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/225",
+    "title": "--eval が一つの式ではなく後続する全フォームを実行する"
+  },
+  {
+    "id": "AUD-047",
+    "number": 226,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/226",
+    "title": "バッチ起動時にファイル引数が開かれず、後続の eval に反映されない"
+  },
+  {
+    "id": "AUD-048",
+    "number": 227,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/227",
+    "title": "-f の関数が消費した command-line-args-left を再処理する"
+  },
+  {
+    "id": "AUD-049",
+    "number": 228,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/228",
+    "title": "-- の後の引数がファイル名にならず、--eval として実行される"
+  },
+  {
+    "id": "AUD-050",
+    "number": 229,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/229",
+    "title": "-L / --directory で load-path を追加できない"
+  },
+  {
+    "id": "AUD-051",
+    "number": 230,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/230",
+    "title": "GNU のオプション表記 -eval と --eval=EXPR が無視される"
+  },
+  {
+    "id": "AUD-052",
+    "number": 231,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/231",
+    "title": "--help が使い方を表示しない"
+  },
+  {
+    "id": "AUD-053",
+    "number": 210,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/210",
+    "title": "バッファ編集後も tree-sitter が編集前の構文木を返す"
+  },
+  {
+    "id": "AUD-054",
+    "number": 211,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/211",
+    "title": "再解析を繰り返すと古い node の outdated 状態が解除される"
+  },
+  {
+    "id": "AUD-055",
+    "number": 212,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/212",
+    "title": "indirect buffer の parser-create が base buffer の parser を再利用する"
+  },
+  {
+    "id": "AUD-056",
+    "number": 213,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/213",
+    "title": "parser の notifier 登録に重複排除と symbolp 検査がない"
+  },
+  {
+    "id": "AUD-057",
+    "number": 214,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/214",
+    "title": "query の #match? が case-fold-search に影響される"
+  },
+  {
+    "id": "AUD-058",
+    "number": 215,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/215",
+    "title": "query の #eq? が同名の複数 capture のうち最初だけを検査する"
+  },
+  {
+    "id": "AUD-059",
+    "number": 216,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/216",
+    "title": "included-ranges のエラーデータから説明と範囲リストが欠落する"
+  },
+  {
+    "id": "AUD-060",
+    "number": 217,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/217",
+    "title": "process-send-eof がネットワーク接続の送信側を閉じない"
+  },
+  {
+    "id": "AUD-061",
+    "number": 218,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/218",
+    "title": "delete-process 後も TCP リスナーが同じポートを占有する"
+  },
+  {
+    "id": "AUD-062",
+    "number": 219,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/219",
+    "title": "接続受理時に log が呼ばれず、sentinel はリスナー側で呼ばれる"
+  },
+  {
+    "id": "AUD-063",
+    "number": 220,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/220",
+    "title": "process-contact が受理した接続の情報と DNS 解決後のアドレスを返せない"
+  },
+  {
+    "id": "AUD-064",
+    "number": 221,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/221",
+    "title": "stop-process で停止したネットワーク接続からも入力を読む"
+  },
+  {
+    "id": "AUD-065",
+    "number": 232,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/232",
+    "title": "family=ipv4 を指定すると明示的なループバック bind がワイルドカードになる"
+  },
+  {
+    "id": "AUD-066",
+    "number": 222,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/222",
+    "title": "copy-file が同一実体へのコピーを成功扱いする"
+  },
+  {
+    "id": "AUD-067",
+    "number": 223,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/223",
+    "title": "壊れた symlink を存在しないものとして扱い、rename や上書き保護を誤る"
+  },
+  {
+    "id": "AUD-068",
+    "number": 224,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/224",
+    "title": "複数のファイルプリミティブが file-name-handler-alist を経由しない"
+  },
+  {
+    "id": "AUD-069",
+    "number": 177,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/177",
+    "title": "make-network-process の :type datagram が無視され TCP ソケットを作成する"
+  },
+  {
+    "id": "AUD-070",
+    "number": 178,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/178",
+    "title": "make-network-process の :service t による空きポート割り当てがエラーになる"
+  },
+  {
+    "id": "AUD-071",
+    "number": 179,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/179",
+    "title": "make-network-process が :nowait t でも同期接続する"
+  },
+  {
+    "id": "AUD-072",
+    "number": 233,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/233",
+    "title": "削除したテキストを undo するとテキスト属性が復元されない"
+  },
+  {
+    "id": "AUD-073",
+    "number": 234,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/234",
+    "title": "propertize が unibyte 文字列の非 ASCII バイト値を別の文字コードに変える"
+  },
+  {
+    "id": "AUD-074",
+    "number": 235,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/235",
+    "title": "replace-region-contents が未変更部分も削除し、point・marker・変更状態を壊す"
+  },
+  {
+    "id": "AUD-075",
+    "number": 236,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/236",
+    "title": "replace-region-contents が挿入元のテキスト属性を落とす"
+  },
+  {
+    "id": "AUD-076",
+    "number": 237,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/237",
+    "title": "replace-region-contents が SOURCE バッファの narrowing を無視する"
+  },
+  {
+    "id": "AUD-077",
+    "number": 238,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/238",
+    "title": "replace-region-contents が [BUFFER BEG END] 形式の SOURCE を拒否する"
+  },
+  {
+    "id": "AUD-078",
+    "number": 239,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/239",
+    "title": "replace-region-contents が SOURCE 関数を対象領域へ narrow せず呼び出す"
+  },
+  {
+    "id": "AUD-079",
+    "number": 240,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/240",
+    "title": "transpose-regions が point と marker を正しく移動せず LEAVE-MARKERS も無視する"
+  },
+  {
+    "id": "AUD-080",
+    "number": 241,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/241",
+    "title": "transpose-regions が転置するテキストの属性を消す"
+  },
+  {
+    "id": "AUD-081",
+    "number": 242,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/242",
+    "title": "append-to-buffer がコピーするテキストの属性を消す"
+  },
+  {
+    "id": "AUD-082",
+    "number": 243,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/243",
+    "title": "append-to-buffer が narrowing 外の領域を拒否せずコピーする"
+  },
+  {
+    "id": "AUD-083",
+    "number": 244,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/244",
+    "title": "process-buffer が kill 済みバッファへの参照を nil に置き換える"
+  },
+  {
+    "id": "AUD-084",
+    "number": 245,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/245",
+    "title": "process-send-string が PTY への部分書き込みを成功扱いし残りのデータを捨てる"
+  },
+  {
+    "id": "AUD-085",
+    "number": 246,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/246",
+    "title": "save-mark-and-excursion がマーク未設定状態と復元時の hook を保持しない"
+  },
+  {
+    "id": "AUD-086",
+    "number": 247,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/247",
+    "title": "set-process-window-size が PTY のサイズを変更せず引数検査もしない"
+  },
+  {
+    "id": "AUD-087",
+    "number": 248,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/248",
+    "title": "fillarray が文字列のバイト形式を内容から誤判定する"
+  },
+  {
+    "id": "AUD-088",
+    "number": 249,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/249",
+    "title": "clear-string が unibyte の高位バイトを含む文字列の長さを増やす"
+  },
+  {
+    "id": "AUD-089",
+    "number": 250,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/250",
+    "title": "reverse / nreverse が unibyte 文字列のバイト値を別の文字コードに変える"
+  },
+  {
+    "id": "AUD-090",
+    "number": 251,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/251",
+    "title": "string-width がバッファの tab-width を無視して TAB を常に 8 桁と数える"
+  },
+  {
+    "id": "AUD-091",
+    "number": 252,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/252",
+    "title": "string-glyph-split が明示的に合成した文字列も一文字ずつ分割する"
+  },
+  {
+    "id": "AUD-092",
+    "number": 253,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/253",
+    "title": "nreverse が GNU では削除される文字列のテキスト属性を反転して残す"
+  },
+  {
+    "id": "AUD-093",
+    "number": 254,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/254",
+    "title": "実行済みバイトコードの命令文字列を書き換えても古い命令を実行する"
+  },
+  {
+    "id": "AUD-094",
+    "number": 255,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/255",
+    "title": "aset が GNU では変更できないバイトコード関数のスロットを変更できる"
+  },
+  {
+    "id": "AUD-095",
+    "number": 256,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/256",
+    "title": "string-to-list が入力リストをコピーせず、不正な dotted list もそのまま返す"
+  },
+  {
+    "id": "AUD-096",
+    "number": 257,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/257",
+    "title": "string-to-vector が文字列以外のシーケンスを受け付けない"
+  },
+  {
+    "id": "AUD-097",
+    "number": 258,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/258",
+    "title": "string-lessp が unibyte のバイト値を内部の代理文字コードで比較する"
+  },
+  {
+    "id": "AUD-098",
+    "number": 259,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/259",
+    "title": "case-fold 比較と検索が現在の case table を使わない"
+  },
+  {
+    "id": "AUD-099",
+    "number": 260,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/260",
+    "title": "char-equal が異なる非 Unicode 文字を case-fold-search=t で等しいと判定する"
+  },
+  {
+    "id": "AUD-100",
+    "number": 261,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/261",
+    "title": "read が関数ストリームを一式で止めず EOF まで読み尽くす"
+  },
+  {
+    "id": "AUD-101",
+    "number": 262,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/262",
+    "title": "read が解析エラー時にバッファやマーカーの読み取り位置を進めない"
+  },
+  {
+    "id": "AUD-102",
+    "number": 263,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/263",
+    "title": "prin1 / prin1-to-string が OVERRIDES の出力設定を適用しない"
+  },
+  {
+    "id": "AUD-103",
+    "number": 264,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/264",
+    "title": "eval-buffer / eval-region が narrowing 外のコードも評価する"
+  },
+  {
+    "id": "AUD-104",
+    "number": 265,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/265",
+    "title": "eval-buffer / eval-region が PRINTFLAG の出力抑止と出力先を無視する"
+  },
+  {
+    "id": "AUD-105",
+    "number": 266,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/266",
+    "title": "eval-buffer がソース先頭の lexical-binding 指定を無視する"
+  },
+  {
+    "id": "AUD-106",
+    "number": 267,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/267",
+    "title": "eval-region が READ-FUNCTION 引数を呼び出さない"
+  },
+  {
+    "id": "AUD-107",
+    "number": 268,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/268",
+    "title": "eval-buffer / eval-region が nil ではなく最後の式の値を返す"
+  },
+  {
+    "id": "AUD-108",
+    "number": 269,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/269",
+    "title": "delete-blank-lines が NBSP や CR を含む非空行まで削除する"
+  },
+  {
+    "id": "AUD-109",
+    "number": 270,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/270",
+    "title": "空白削除コマンドが narrowing 外のテキストを変更する"
+  },
+  {
+    "id": "AUD-110",
+    "number": 271,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/271",
+    "title": "princ が無効な出力先を拒否せず、kill 済みバッファの代わりに現在のバッファへ書く"
+  },
+  {
+    "id": "AUD-111",
+    "number": 272,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/272",
+    "title": "後方検索が COUNT を満たす前に先頭へ到達すると成功扱いになる"
+  },
+  {
+    "id": "AUD-112",
+    "number": 273,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/273",
+    "title": "replace-match の後方参照が検索後の widen により誤った文字を置換に使う"
+  },
+  {
+    "id": "AUD-113",
+    "number": 274,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/274",
+    "title": "replace-match が置換文字列の属性と文字列結果のバイト表現を保持しない"
+  },
+  {
+    "id": "AUD-114",
+    "number": 275,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/275",
+    "title": "match-data が REUSE と RESEAT を無視する"
+  },
+  {
+    "id": "AUD-115",
+    "number": 276,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/276",
+    "title": "正規表現の \\w / \\b が syntax-table テキスト属性を無視する"
+  },
+  {
+    "id": "AUD-116",
+    "number": 277,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/277",
+    "title": "set-window-configuration が point・スクロール・余白を正しく復元しない"
+  },
+  {
+    "id": "AUD-117",
+    "number": 278,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/278",
+    "title": "ウィンドウ構成の復元で横結合・入れ子の木が一つの縦結合へ平坦化される"
+  },
+  {
+    "id": "AUD-118",
+    "number": 279,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/279",
+    "title": "compare-window-configurations が無視すべきスクロール位置も比較する"
+  },
+  {
+    "id": "AUD-119",
+    "number": 280,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/280",
+    "title": "window-configuration-p が同じタグの通常レコードを構成オブジェクトと認める"
+  },
+  {
+    "id": "AUD-120",
+    "number": 281,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/281",
+    "title": "primitive-undo が inhibit-read-only を束縛せず read-only な変更を戻せない"
+  },
+  {
+    "id": "AUD-121",
+    "number": 282,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/282",
+    "title": "primitive-undo が point の移動だけでも不要な apply 履歴を生成する"
+  },
+  {
+    "id": "AUD-122",
+    "number": 283,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/283",
+    "title": "run-window-scroll-functions がフックを呼び出さず分割後の通知も行われない"
+  },
+  {
+    "id": "AUD-123",
+    "number": 284,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/284",
+    "title": "current-window-configuration が永続パラメータを参照共有し保存後の変更で書き換わる"
+  },
+  {
+    "id": "AUD-124",
+    "number": 285,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/285",
+    "title": "window-state のパラメータ形式が GNU の alist と異なり永続化設定も無視される"
+  },
+  {
+    "id": "AUD-125",
+    "number": 286,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/286",
+    "title": "window-normal-size が分割後も常に 1.0 を返す"
+  },
+  {
+    "id": "AUD-126",
+    "number": 287,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/287",
+    "title": "window-bump-use-time が何もせず二番目の使用順序を設定できない"
+  },
+  {
+    "id": "AUD-127",
+    "number": 288,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/288",
+    "title": "window-old-point が過去値ではなく現在の window-point を返す"
+  },
+  {
+    "id": "AUD-128",
+    "number": 289,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/289",
+    "title": "window-old-buffer が変更通知前でも set-window-buffer の直前値に更新される"
+  },
+  {
+    "id": "AUD-129",
+    "number": 290,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/290",
+    "title": "sleep-for と sit-for が待ち時間ゼロ・負数でも期限済みタイマーを実行する"
+  },
+  {
+    "id": "AUD-130",
+    "number": 291,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/291",
+    "title": "日本語のかな・全半角変換が初期状態では何も変換しない"
+  },
+  {
+    "id": "AUD-131",
+    "number": 293,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/293",
+    "title": "macroexpand 系がアトムでも未使用の ENVIRONMENT に型エラーを出す"
+  },
+  {
+    "id": "AUD-132",
+    "number": 294,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/294",
+    "title": "display-buffer が小さな選択ウィンドウの分割に失敗すると他の表示先へフォールバックしない"
+  },
+  {
+    "id": "AUD-133",
+    "number": 295,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/295",
+    "title": "shell-file-name の初期値が SHELL を無視して /bin/sh に固定される"
+  },
+  {
+    "id": "AUD-134",
+    "number": 296,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/296",
+    "title": "key-parse が 3*C-x などの反復指定をキーの文字列として扱う"
+  },
+  {
+    "id": "AUD-135",
+    "number": 300,
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/300",
+    "title": "face-remap のロード後も text-scale-mode と buffer-face-mode の lighter が登録されない"
+  }
+]

@@ -1,0 +1,314 @@
+[
+  {
+    "n": 1,
+    "title": "make-temp-file が一時ファイル・ディレクトリを所有者限定の権限で作成しない",
+    "cases": [
+      "temp-file:ordinary-mode",
+      "temp-file:directory-mode",
+      "temp-context:internal-file-mode",
+      "temp-context:internal-dir-mode"
+    ],
+    "description": "この環境の既定 umask では、GNU は一時ファイルを0600、ディレクトリを0700で作成しますが、Remacsは0644/0755になります。make-temp-file の「所有者に限定する」という保証が満たされず、一時内容を他ユーザーが読める権限になります。f_make_temp_file が mode を指定せず OpenOptions/create_dir を使っています。",
+    "source": "src/editor/mod.rs",
+    "line": 12560,
+    "id": "R2-20261022-001",
+    "body": "この環境の既定 umask では、GNU は一時ファイルを0600、ディレクトリを0700で作成しますが、Remacsは0644/0755になります。make-temp-file の「所有者に限定する」という保証が満たされず、一時内容を他ユーザーが読める権限になります。f_make_temp_file が mode を指定せず OpenOptions/create_dir を使っています。\n\n対象: `38af4d1d720760348e725dac51f8c4252c2b03d5`、macOS/aarch64、GNU Emacs 31.1。固定バイナリ SHA-256: `b06709033aef86cc8c57b027584a0ce2c7ac4534c537f76e956edac2569d5c05`。各ケースは独立した新規プロセスで再現確認。\n\n## 再現\n\n以下を repro.el に保存します。\n\n```elisp\n;;; -*- lexical-binding: t; -*-\n\n;; temp-file:ordinary-mode\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (let ((f (make-temp-file (expand-file-name \"data-\" dir)))) (logand (file-modes f) 511)) (delete-directory dir t)))) (error (list 'error e))))\n  (terpri))\n\n;; temp-file:directory-mode\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (logand (file-modes dir) 511) (delete-directory dir t)))) (error (list 'error e))))\n  (terpri))\n```\n\n```sh\n./target/debug/remacs -Q --batch -l repro.el\n/path/to/emacs-31.1 -Q --batch -l repro.el\n```\n\n## 結果\n\n`temp-file:ordinary-mode`\n\n```text\nGNU: (ok 384)\nRemacs: (ok 420)\n```\n\n`temp-file:directory-mode`\n\n```text\nGNU: (ok 448)\nRemacs: (ok 493)\n```\n\n原因候補: [src/editor/mod.rs:12560](https://github.com/SuzumiyaAoba/remacs/blob/38af4d1d720760348e725dac51f8c4252c2b03d5/src/editor/mod.rs#L12560)。修正は未実施。\n\n<!-- remacs-audit-id: R2-20261022-001 -->\n\n## 追加検証\n\n`temp-context:internal-file-mode`\n\n```elisp\n(let (file) (unwind-protect (progn (setq file (make-temp-file-internal (expand-file-name \"remacs-audit-internal-\" temporary-file-directory) nil \"\" nil)) (logand (file-modes file) 511)) (when file (delete-file file))))\n```\n\nGNU: `(ok 384)`\nRemacs: `(ok 384)`\n\n`temp-context:internal-dir-mode`\n\n```elisp\n(let (file) (unwind-protect (progn (setq file (make-temp-file-internal (expand-file-name \"remacs-audit-internal-\" temporary-file-directory) t \"\" nil)) (logand (file-modes file) 511)) (when file (delete-directory file))))\n```\n\nGNU: `(ok 448)`\nRemacs: `(ok 493)`\n\n内部プリミティブはファイルの0600を設定しますが、ディレクトリの0700は未設定でした。公開APIと内部APIの両経路を確認する必要があります。\n",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/326",
+    "issue_number": 326
+  },
+  {
+    "n": 2,
+    "title": "make-temp-file の初期 TEXT にある unibyte バイトが内部代理文字の UTF-8 に変わる",
+    "cases": [
+      "temp-file:text-unibyte",
+      "temp-file:text-ascii",
+      "temp-file:text-unicode",
+      "temp-context:write-coding",
+      "temp-context:internal-bytes"
+    ],
+    "description": "初期TEXTとして渡した (0 128 255) の3バイトが、実ファイルでは (0 243 176 130 128 243 176 131 191) の9バイトになります。ASCII/通常のUnicodeをUTF-8で書く対照ケースは一致。f_make_temp_file が Lisp 文字列のバイト表現を失い、内部 Rust 文字列を fs::write に渡しています。",
+    "source": "src/editor/mod.rs",
+    "line": 12596,
+    "id": "R2-20261022-002",
+    "body": "初期TEXTとして渡した (0 128 255) の3バイトが、実ファイルでは (0 243 176 130 128 243 176 131 191) の9バイトになります。ASCII/通常のUnicodeをUTF-8で書く対照ケースは一致。f_make_temp_file が Lisp 文字列のバイト表現を失い、内部 Rust 文字列を fs::write に渡しています。\n\n対象: `38af4d1d720760348e725dac51f8c4252c2b03d5`、macOS/aarch64、GNU Emacs 31.1。固定バイナリ SHA-256: `b06709033aef86cc8c57b027584a0ce2c7ac4534c537f76e956edac2569d5c05`。各ケースは独立した新規プロセスで再現確認。\n\n## 再現\n\n以下を repro.el に保存します。\n\n```elisp\n;;; -*- lexical-binding: t; -*-\n\n;; temp-file:text-unibyte\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (let ((file (make-temp-file (expand-file-name \"text-\" dir) nil nil (unibyte-string 0 128 255)))) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (delete-directory dir t)))) (error (list 'error e))))\n  (terpri))\n\n;; temp-file:text-ascii\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (let ((file (make-temp-file (expand-file-name \"text-\" dir) nil nil \"abc\"))) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (delete-directory dir t)))) (error (list 'error e))))\n  (terpri))\n\n;; temp-file:text-unicode\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (let ((file (make-temp-file (expand-file-name \"text-\" dir) nil nil \"é日\"))) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (delete-directory dir t)))) (error (list 'error e))))\n  (terpri))\n```\n\n```sh\n./target/debug/remacs -Q --batch -l repro.el\n/path/to/emacs-31.1 -Q --batch -l repro.el\n```\n\n## 結果\n\n`temp-file:text-unibyte`\n\n```text\nGNU: (ok (0 128 255))\nRemacs: (ok (0 243 176 130 128 243 176 131 191))\n```\n\n`temp-file:text-ascii`\n\n```text\nGNU: (ok (97 98 99))\nRemacs: (ok (97 98 99))\n```\n\n`temp-file:text-unicode`\n\n```text\nGNU: (ok (195 169 230 151 165))\nRemacs: (ok (195 169 230 151 165))\n```\n\n原因候補: [src/editor/mod.rs:12596](https://github.com/SuzumiyaAoba/remacs/blob/38af4d1d720760348e725dac51f8c4252c2b03d5/src/editor/mod.rs#L12596)。修正は未実施。\n\n<!-- remacs-audit-id: R2-20261022-002 -->\n\n## 追加検証\n\n`temp-context:write-coding`\n\n```elisp\n(let ((coding-system-for-write 'iso-latin-1) file) (unwind-protect (progn (setq file (make-temp-file \"remacs-audit-text-\" nil nil \"é\")) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (when file (delete-file file))))\n```\n\nGNU: `(ok (233))`\nRemacs: `(ok (195 169))`\n\n`temp-context:internal-bytes`\n\n```elisp\n(let (file) (unwind-protect (progn (setq file (make-temp-file-internal (expand-file-name \"remacs-audit-internal-\" temporary-file-directory) nil \"\" (unibyte-string 128 255))) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (when file (delete-file file))))\n```\n\nGNU: `(ok (128 255))`\nRemacs: `(ok (243 176 130 128 243 176 131 191))`\n\n公開APIは coding-system-for-write='iso-latin-1 も無視し、é をe9ではなくc3 a9で書きます。内部APIにもunibyte代理文字の漏出が再現します。\n",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/327",
+    "issue_number": 327
+  },
+  {
+    "n": 3,
+    "title": "access-file / file-attributes / file-directory-p などが仮想ファイルの handler を呼ばない",
+    "cases": [
+      "file-handler:access-file",
+      "file-handler:file-equal-p",
+      "file-handler:file-newer-than-file-p",
+      "file-handler:file-directory-p",
+      "file-handler:file-regular-p",
+      "file-handler:file-executable-p",
+      "file-handler:file-attributes",
+      "file-handler:file-symlink-p",
+      "file-handler:file-local-copy",
+      "file-handler:file-exists-p",
+      "file-handler:file-modes"
+    ],
+    "description": "file-name-handler-alist に正しく登録した仮想パスを、追加の9APIが物理パスとして扱います。access-fileはfile-missing、他はnilとなり、handlerのログは空です。file-exists-p/file-modesは正常にhandlerへ委譲する対照。既存#224が列挙した exists/readable/writable/modes/copy/rename/delete/属性変更/insert/write の修正対象とは別のAPI群です。各関数にoperation-awareなhandler分岐がありません。",
+    "source": "src/editor/mod.rs",
+    "line": 11178,
+    "id": "R2-20261022-003",
+    "body": "file-name-handler-alist に正しく登録した仮想パスを、追加の9APIが物理パスとして扱います。access-fileはfile-missing、他はnilとなり、handlerのログは空です。file-exists-p/file-modesは正常にhandlerへ委譲する対照。既存#224が列挙した exists/readable/writable/modes/copy/rename/delete/属性変更/insert/write の修正対象とは別のAPI群です。各関数にoperation-awareなhandler分岐がありません。\n\n対象: `38af4d1d720760348e725dac51f8c4252c2b03d5`、macOS/aarch64、GNU Emacs 31.1。固定バイナリ SHA-256: `b06709033aef86cc8c57b027584a0ce2c7ac4534c537f76e956edac2569d5c05`。各ケースは独立した新規プロセスで再現確認。\n\n## 再現\n\n以下を repro.el に保存します。\n\n```elisp\n;;; -*- lexical-binding: t; -*-\n(defvar audit-r2-file-log nil)\n(defun audit-r2-file-handler (op &rest args)\n  (if (eq op 'expand-file-name) (car args)\n    (push (list op args) audit-r2-file-log)\n    'handled))\n\n;; file-handler:access-file\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (access-file name \"audit access\") (error (car e))) (nreverse audit-r2-file-log)))) (error (list 'error e))))\n  (terpri))\n\n;; file-handler:file-equal-p\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-equal-p name name) (error (car e))) (nreverse audit-r2-file-log)))) (error (list 'error e))))\n  (terpri))\n\n;; file-handler:file-newer-than-file-p\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-newer-than-file-p name name) (error (car e))) (nreverse audit-r2-file-log)))) (error (list 'error e))))\n  (terpri))\n\n;; file-handler:file-directory-p\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-directory-p name) (error (car e))) (nreverse audit-r2-file-log)))) (error (list 'error e))))\n  (terpri))\n\n;; file-handler:file-regular-p\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-regular-p name) (error (car e))) (nreverse audit-r2-file-log)))) (error (list 'error e))))\n  (terpri))\n\n;; file-handler:file-executable-p\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-executable-p name) (error (car e))) (nreverse audit-r2-file-log)))) (error (list 'error e))))\n  (terpri))\n\n;; file-handler:file-attributes\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-attributes name) (error (car e))) (nreverse audit-r2-file-log)))) (error (list 'error e))))\n  (terpri))\n\n;; file-handler:file-symlink-p\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-symlink-p name) (error (car e))) (nreverse audit-r2-file-log)))) (error (list 'error e))))\n  (terpri))\n\n;; file-handler:file-local-copy\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-local-copy name) (error (car e))) (nreverse audit-r2-file-log)))) (error (list 'error e))))\n  (terpri))\n\n;; file-handler:file-exists-p\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-exists-p name) (error (car e))) (nreverse audit-r2-file-log)))) (error (list 'error e))))\n  (terpri))\n\n;; file-handler:file-modes\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-modes name) (error (car e))) (nreverse audit-r2-file-log)))) (error (list 'error e))))\n  (terpri))\n```\n\n```sh\n./target/debug/remacs -Q --batch -l repro.el\n/path/to/emacs-31.1 -Q --batch -l repro.el\n```\n\n## 結果\n\n`file-handler:access-file`\n\n```text\nGNU: (ok (handled ((access-file (\"/audit-virtual/file\" \"audit access\")))))\nRemacs: (ok (file-missing nil))\n```\n\n`file-handler:file-equal-p`\n\n```text\nGNU: (ok (handled ((file-equal-p (#1=\"/audit-virtual/file\" #1#)))))\nRemacs: (ok (nil nil))\n```\n\n`file-handler:file-newer-than-file-p`\n\n```text\nGNU: (ok (handled ((file-newer-than-file-p (#1=\"/audit-virtual/file\" #1#)))))\nRemacs: (ok (nil nil))\n```\n\n`file-handler:file-directory-p`\n\n```text\nGNU: (ok (handled ((file-directory-p (\"/audit-virtual/file\")))))\nRemacs: (ok (nil nil))\n```\n\n`file-handler:file-regular-p`\n\n```text\nGNU: (ok (handled ((file-regular-p (\"/audit-virtual/file\")))))\nRemacs: (ok (nil nil))\n```\n\n`file-handler:file-executable-p`\n\n```text\nGNU: (ok (handled ((file-executable-p (\"/audit-virtual/file\")))))\nRemacs: (ok (nil nil))\n```\n\n`file-handler:file-attributes`\n\n```text\nGNU: (ok (handled ((file-attributes (\"/audit-virtual/file\")))))\nRemacs: (ok (nil nil))\n```\n\n`file-handler:file-symlink-p`\n\n```text\nGNU: (ok (handled ((file-symlink-p (\"/audit-virtual/file\")))))\nRemacs: (ok (nil nil))\n```\n\n`file-handler:file-local-copy`\n\n```text\nGNU: (ok (handled ((file-local-copy (\"/audit-virtual/file\")))))\nRemacs: (ok (nil nil))\n```\n\n`file-handler:file-exists-p`\n\n```text\nGNU: (ok (handled ((file-exists-p (\"/audit-virtual/file\")))))\nRemacs: (ok (handled ((file-exists-p (\"/audit-virtual/file\")))))\n```\n\n`file-handler:file-modes`\n\n```text\nGNU: (ok (handled ((file-modes (\"/audit-virtual/file\" nil)))))\nRemacs: (ok (handled ((file-modes (\"/audit-virtual/file\" nil)))))\n```\n\n原因候補: [src/editor/mod.rs:11178](https://github.com/SuzumiyaAoba/remacs/blob/38af4d1d720760348e725dac51f8c4252c2b03d5/src/editor/mod.rs#L11178)。修正は未実施。\n\n<!-- remacs-audit-id: R2-20261022-003 -->\n",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/328",
+    "issue_number": 328
+  },
+  {
+    "n": 4,
+    "title": "set-file-times の FLAG=t がシンボリックリンクを辿り、リンク先の時刻を変更する",
+    "cases": [
+      "set-file-times:flag-t",
+      "set-file-times:flag-'nofollow",
+      "set-file-times:flag-nil"
+    ],
+    "description": "第三引数 FLAG を t にすると、GNU はリンク自身の時刻を更新してターゲットを保持しますが、Remacs はターゲットの時刻を変えます。'nofollow を指定する対照は一致。シンボル引数を文字列 \"nofollow\" とだけ比較するため、t を偽扱いしています。",
+    "source": "src/lisp/builtins/misc.rs",
+    "line": 5749,
+    "id": "R2-20261022-004",
+    "body": "第三引数 FLAG を t にすると、GNU はリンク自身の時刻を更新してターゲットを保持しますが、Remacs はターゲットの時刻を変えます。'nofollow を指定する対照は一致。シンボル引数を文字列 \"nofollow\" とだけ比較するため、t を偽扱いしています。\n\n対象: `38af4d1d720760348e725dac51f8c4252c2b03d5`、macOS/aarch64、GNU Emacs 31.1。固定バイナリ SHA-256: `b06709033aef86cc8c57b027584a0ce2c7ac4534c537f76e956edac2569d5c05`。各ケースは独立した新規プロセスで再現確認。\n\n## 再現\n\n以下を repro.el に保存します。\n\n```elisp\n;;; -*- lexical-binding: t; -*-\n\n;; set-file-times:flag-t\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let* ((dir (make-temp-file \"remacs-audit-files-\" t)) (file (expand-file-name \"file\" dir)) (link (expand-file-name \"link\" dir))) (unwind-protect (progn (write-region \"x\" nil file nil 'silent) (make-symbolic-link file link) (set-file-times file 1000000000) (list (condition-case e (set-file-times link 1100000000 t) (error (car e))) (time-convert (file-attribute-modification-time (file-attributes file)) 'integer))) (delete-directory dir t)))) (error (list 'error e))))\n  (terpri))\n\n;; set-file-times:flag-'nofollow\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let* ((dir (make-temp-file \"remacs-audit-files-\" t)) (file (expand-file-name \"file\" dir)) (link (expand-file-name \"link\" dir))) (unwind-protect (progn (write-region \"x\" nil file nil 'silent) (make-symbolic-link file link) (set-file-times file 1000000000) (list (condition-case e (set-file-times link 1100000000 'nofollow) (error (car e))) (time-convert (file-attribute-modification-time (file-attributes file)) 'integer))) (delete-directory dir t)))) (error (list 'error e))))\n  (terpri))\n\n;; set-file-times:flag-nil\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let* ((dir (make-temp-file \"remacs-audit-files-\" t)) (file (expand-file-name \"file\" dir)) (link (expand-file-name \"link\" dir))) (unwind-protect (progn (write-region \"x\" nil file nil 'silent) (make-symbolic-link file link) (set-file-times file 1000000000) (list (condition-case e (set-file-times link 1100000000 nil) (error (car e))) (time-convert (file-attribute-modification-time (file-attributes file)) 'integer))) (delete-directory dir t)))) (error (list 'error e))))\n  (terpri))\n```\n\n```sh\n./target/debug/remacs -Q --batch -l repro.el\n/path/to/emacs-31.1 -Q --batch -l repro.el\n```\n\n## 結果\n\n`set-file-times:flag-t`\n\n```text\nGNU: (ok (t 1000000000))\nRemacs: (ok (t 1100000000))\n```\n\n`set-file-times:flag-'nofollow`\n\n```text\nGNU: (ok (t 1000000000))\nRemacs: (ok (t 1000000000))\n```\n\n`set-file-times:flag-nil`\n\n```text\nGNU: (ok (t 1100000000))\nRemacs: (ok (t 1100000000))\n```\n\n原因候補: [src/lisp/builtins/misc.rs:5749](https://github.com/SuzumiyaAoba/remacs/blob/38af4d1d720760348e725dac51f8c4252c2b03d5/src/lisp/builtins/misc.rs#L5749)。修正は未実施。\n\n<!-- remacs-audit-id: R2-20261022-004 -->\n",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/329",
+    "issue_number": 329
+  },
+  {
+    "n": 5,
+    "title": "make-temp-file が Lisp の temporary-file-directory を無視する",
+    "cases": [
+      "temp-context:directory-variable"
+    ],
+    "group": "temp_file_context",
+    "description": "temporary-file-directory を専用ディレクトリに束縛して相対 PREFIX を渡しても、Remacs は OS の一時ディレクトリへファイルを作ります。GNU は指定したディレクトリを使用します。f_make_temp_file が Lisp 変数を参照せず std::env::temp_dir() で連結しています。",
+    "source": "src/editor/mod.rs",
+    "line": 12560,
+    "id": "R2-20261022-005",
+    "body": "temporary-file-directory を専用ディレクトリに束縛して相対 PREFIX を渡しても、Remacs は OS の一時ディレクトリへファイルを作ります。GNU は指定したディレクトリを使用します。f_make_temp_file が Lisp 変数を参照せず std::env::temp_dir() で連結しています。\n\n対象: `38af4d1d720760348e725dac51f8c4252c2b03d5`、macOS/aarch64、GNU Emacs 31.1。固定バイナリ `b06709033aef86cc8c57b027584a0ce2c7ac4534c537f76e956edac2569d5c05` で各ケースを独立実行して確認。調査中の別変更と切り分けるため、実行バイナリのリビジョンを明記しています。\n\n## 再現\n\n以下を repro.el に保存します。\n\n```elisp\n;;; -*- lexical-binding: t; -*-\n\n;; temp-context:directory-variable\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let* ((dir (make-temp-file \"remacs-audit-context-\" t)) (temporary-file-directory (file-name-as-directory dir)) file) (unwind-protect (progn (setq file (make-temp-file \"child-\")) (equal (file-name-directory file) temporary-file-directory)) (when file (delete-file file)) (delete-directory dir t)))) (error (list 'error e))))\n  (terpri))\n```\n\n```sh\n./target/debug/remacs -Q --batch -l repro.el\n/path/to/emacs-31.1 -Q --batch -l repro.el\n```\n\n## 結果\n\n`temp-context:directory-variable`\n\n```text\nGNU: (ok t)\nRemacs: (ok nil)\n```\n\n調査箇所: [src/editor/mod.rs](https://github.com/SuzumiyaAoba/remacs/blob/38af4d1d720760348e725dac51f8c4252c2b03d5/src/editor/mod.rs#L12560)。修正は未実施。\n\n<!-- remacs-audit-id: R2-20261022-005 -->\n",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/330",
+    "issue_number": 330
+  },
+  {
+    "n": 6,
+    "title": "make-temp-file が非文字列の TEXT を空ファイルとして扱わず stringp エラーにする",
+    "cases": [
+      "temp-file:text-invalid"
+    ],
+    "group": "files",
+    "description": "make-temp-file の TEXT が文字列でなければ空ファイルを作るという仕様に対し、TEXT=42 が stringp エラーになります。GNU は正常に空ファイルを返します。Remacs はファイル作成後に want_str を呼ぶため、失敗時に作成済みファイルも残ります。",
+    "source": "src/editor/mod.rs",
+    "line": 12596,
+    "id": "R2-20261022-006",
+    "body": "make-temp-file の TEXT が文字列でなければ空ファイルを作るという仕様に対し、TEXT=42 が stringp エラーになります。GNU は正常に空ファイルを返します。Remacs はファイル作成後に want_str を呼ぶため、失敗時に作成済みファイルも残ります。\n\n対象: `38af4d1d720760348e725dac51f8c4252c2b03d5`、macOS/aarch64、GNU Emacs 31.1。固定バイナリ `b06709033aef86cc8c57b027584a0ce2c7ac4534c537f76e956edac2569d5c05` で各ケースを独立実行して確認。調査中の別変更と切り分けるため、実行バイナリのリビジョンを明記しています。\n\n## 再現\n\n以下を repro.el に保存します。\n\n```elisp\n;;; -*- lexical-binding: t; -*-\n\n;; temp-file:text-invalid\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (let ((file (make-temp-file (expand-file-name \"text-\" dir) nil nil 42))) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (delete-directory dir t)))) (error (list 'error e))))\n  (terpri))\n```\n\n```sh\n./target/debug/remacs -Q --batch -l repro.el\n/path/to/emacs-31.1 -Q --batch -l repro.el\n```\n\n## 結果\n\n`temp-file:text-invalid`\n\n```text\nGNU: (ok nil)\nRemacs: (error (wrong-type-argument stringp 42))\n```\n\n調査箇所: [src/editor/mod.rs](https://github.com/SuzumiyaAoba/remacs/blob/38af4d1d720760348e725dac51f8c4252c2b03d5/src/editor/mod.rs#L12596)。修正は未実施。\n\n<!-- remacs-audit-id: R2-20261022-006 -->\n",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/331",
+    "issue_number": 331
+  },
+  {
+    "n": 7,
+    "title": "kill-all-local-variables が change-major-mode-hook を呼び出さない",
+    "cases": [
+      "locals:change-major-hook",
+      "locals:major-hook-error"
+    ],
+    "group": "local_lifecycle",
+    "description": "メジャーモード変更前の後片付けフックが実行されません。GNU は古いローカル値を保持した状態でフックを実行し、フックがエラーならローカル状態の削除を中止します。Remacs はフックをスキップしてローカル変数を消します。",
+    "source": "src/buffer/primitives.rs",
+    "line": 4325,
+    "id": "R2-20261022-007",
+    "body": "メジャーモード変更前の後片付けフックが実行されません。GNU は古いローカル値を保持した状態でフックを実行し、フックがエラーならローカル状態の削除を中止します。Remacs はフックをスキップしてローカル変数を消します。\n\n対象: `38af4d1d720760348e725dac51f8c4252c2b03d5`、macOS/aarch64、GNU Emacs 31.1。固定バイナリ `b06709033aef86cc8c57b027584a0ce2c7ac4534c537f76e956edac2569d5c05` で各ケースを独立実行して確認。調査中の別変更と切り分けるため、実行バイナリのリビジョンを明記しています。\n\n## 再現\n\n以下を repro.el に保存します。\n\n```elisp\n;;; -*- lexical-binding: t; -*-\n\n;; locals:change-major-hook\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (with-temp-buffer (let ((seen nil)) (setq-local audit-r2-local 7) (add-hook 'change-major-mode-hook (lambda nil (push (list audit-r2-local major-mode) seen)) nil t) (kill-all-local-variables) seen))) (error (list 'error e))))\n  (terpri))\n\n;; locals:major-hook-error\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (with-temp-buffer (setq-local audit-r2-local 7) (add-hook 'change-major-mode-hook (lambda nil (error \"audit-stop\")) nil t) (list (condition-case e (kill-all-local-variables) (error (car e))) (local-variable-p 'audit-r2-local)))) (error (list 'error e))))\n  (terpri))\n```\n\n```sh\n./target/debug/remacs -Q --batch -l repro.el\n/path/to/emacs-31.1 -Q --batch -l repro.el\n```\n\n## 結果\n\n`locals:change-major-hook`\n\n```text\nGNU: (ok ((7 fundamental-mode)))\nRemacs: (ok nil)\n```\n\n`locals:major-hook-error`\n\n```text\nGNU: (ok (error t))\nRemacs: (ok (nil nil))\n```\n\n調査箇所: [src/buffer/primitives.rs](https://github.com/SuzumiyaAoba/remacs/blob/38af4d1d720760348e725dac51f8c4252c2b03d5/src/buffer/primitives.rs#L4325)。修正は未実施。\n\n<!-- remacs-audit-id: R2-20261022-007 -->\n",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/332",
+    "issue_number": 332
+  },
+  {
+    "n": 8,
+    "title": "kill-all-local-variables が permanent-local-hook でないフック関数も残す",
+    "cases": [
+      "locals:permanent-hook-filter"
+    ],
+    "group": "local_lifecycle",
+    "description": "after-save-hook のローカル値に永続指定の関数と通常関数を追加してからローカル変数を消すと、GNU は永続関数だけを残しますが Remacs は両方を残します。permanent-local な hook 変数のリスト全体を保存し、関数ごとの permanent-local-hook 属性による選別がありません。モード変更後に旧モードの処理が実行され続けます。",
+    "source": "src/buffer/primitives.rs",
+    "line": 4350,
+    "id": "R2-20261022-008",
+    "body": "after-save-hook のローカル値に永続指定の関数と通常関数を追加してからローカル変数を消すと、GNU は永続関数だけを残しますが Remacs は両方を残します。permanent-local な hook 変数のリスト全体を保存し、関数ごとの permanent-local-hook 属性による選別がありません。モード変更後に旧モードの処理が実行され続けます。\n\n対象: `38af4d1d720760348e725dac51f8c4252c2b03d5`、macOS/aarch64、GNU Emacs 31.1。固定バイナリ `b06709033aef86cc8c57b027584a0ce2c7ac4534c537f76e956edac2569d5c05` で各ケースを独立実行して確認。調査中の別変更と切り分けるため、実行バイナリのリビジョンを明記しています。\n\n## 再現\n\n以下を repro.el に保存します。\n\n```elisp\n;;; -*- lexical-binding: t; -*-\n\n;; locals:permanent-hook-filter\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((a (make-symbol \"audit-r2-permanent\")) (b (make-symbol \"audit-r2-ordinary\"))) (fset a (lambda nil nil)) (fset b (lambda nil nil)) (put a 'permanent-local-hook t) (with-temp-buffer (add-hook 'after-save-hook a nil t) (add-hook 'after-save-hook b nil t) (kill-all-local-variables) (list (and (memq a after-save-hook) t) (and (memq b after-save-hook) t))))) (error (list 'error e))))\n  (terpri))\n```\n\n```sh\n./target/debug/remacs -Q --batch -l repro.el\n/path/to/emacs-31.1 -Q --batch -l repro.el\n```\n\n## 結果\n\n`locals:permanent-hook-filter`\n\n```text\nGNU: (ok (t nil))\nRemacs: (ok (t t))\n```\n\n調査箇所: [src/buffer/primitives.rs](https://github.com/SuzumiyaAoba/remacs/blob/38af4d1d720760348e725dac51f8c4252c2b03d5/src/buffer/primitives.rs#L4350)。修正は未実施。\n\n<!-- remacs-audit-id: R2-20261022-008 -->\n",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/333",
+    "issue_number": 333
+  },
+  {
+    "n": 9,
+    "title": "let 内で kill したバッファローカル変数が let 終了後に復活する",
+    "cases": [
+      "locals:kill-local-dynamic",
+      "locals-more:kill-all",
+      "locals-more:default-change",
+      "locals-more:recreate"
+    ],
+    "group": "mixed",
+    "description": "動的 let の中で kill-local-variable / kill-all-local-variables によりローカル束縛を消しても、let の巻き戻しで古いローカル値が復活します。GNU は削除状態と最新のデフォルト値を保ちます。途中で新しいローカル束縛を明示的に作る対照は一致するため、単純に let の巻き戻しを省略すればよい問題ではありません。",
+    "source": "src/lisp/eval.rs",
+    "line": 0,
+    "id": "R2-20261022-009",
+    "body": "動的 let の中で kill-local-variable / kill-all-local-variables によりローカル束縛を消しても、let の巻き戻しで古いローカル値が復活します。GNU は削除状態と最新のデフォルト値を保ちます。途中で新しいローカル束縛を明示的に作る対照は一致するため、単純に let の巻き戻しを省略すればよい問題ではありません。\n\n対象: `38af4d1d720760348e725dac51f8c4252c2b03d5`、macOS/aarch64、GNU Emacs 31.1。固定バイナリ `b06709033aef86cc8c57b027584a0ce2c7ac4534c537f76e956edac2569d5c05` で各ケースを独立実行して確認。調査中の別変更と切り分けるため、実行バイナリのリビジョンを明記しています。\n\n## 再現\n\n以下を repro.el に保存します。\n\n```elisp\n;;; -*- lexical-binding: t; -*-\n\n;; locals:kill-local-dynamic\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (progn (defvar audit-r2-var 1) (with-temp-buffer (setq-local audit-r2-var 10) (list (let ((audit-r2-var 20)) (kill-local-variable 'audit-r2-var) (list audit-r2-var (local-variable-p 'audit-r2-var))) audit-r2-var (local-variable-p 'audit-r2-var))))) (error (list 'error e))))\n  (terpri))\n\n;; locals-more:kill-all\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (progn (defvar audit-r2-var 1) (with-temp-buffer (setq-local audit-r2-var 10) (list (let ((audit-r2-var 20)) (kill-all-local-variables) (list audit-r2-var (local-variable-p 'audit-r2-var))) audit-r2-var (local-variable-p 'audit-r2-var))))) (error (list 'error e))))\n  (terpri))\n\n;; locals-more:default-change\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (progn (defvar audit-r2-var 1) (with-temp-buffer (setq-local audit-r2-var 10) (list (let ((audit-r2-var 20)) (kill-local-variable 'audit-r2-var) (set-default 'audit-r2-var 3) (list audit-r2-var (local-variable-p 'audit-r2-var))) audit-r2-var (local-variable-p 'audit-r2-var))))) (error (list 'error e))))\n  (terpri))\n\n;; locals-more:recreate\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (progn (defvar audit-r2-var 1) (with-temp-buffer (setq-local audit-r2-var 10) (list (let ((audit-r2-var 20)) (kill-local-variable 'audit-r2-var) (setq-local audit-r2-var 30) (list audit-r2-var (local-variable-p 'audit-r2-var))) audit-r2-var (local-variable-p 'audit-r2-var))))) (error (list 'error e))))\n  (terpri))\n```\n\n```sh\n./target/debug/remacs -Q --batch -l repro.el\n/path/to/emacs-31.1 -Q --batch -l repro.el\n```\n\n## 結果\n\n`locals:kill-local-dynamic`\n\n```text\nGNU: (ok ((1 nil) 1 nil))\nRemacs: (ok ((1 nil) 10 t))\n```\n\n`locals-more:kill-all`\n\n```text\nGNU: (ok ((1 nil) 1 nil))\nRemacs: (ok ((1 nil) 10 t))\n```\n\n`locals-more:default-change`\n\n```text\nGNU: (ok ((3 nil) 3 nil))\nRemacs: (ok ((3 nil) 10 t))\n```\n\n`locals-more:recreate`\n\n```text\nGNU: (ok ((30 t) 10 t))\nRemacs: (ok ((30 t) 10 t))\n```\n\n調査箇所: [src/lisp/eval.rs](https://github.com/SuzumiyaAoba/remacs/blob/38af4d1d720760348e725dac51f8c4252c2b03d5/src/lisp/eval.rs)。修正は未実施。\n\n<!-- remacs-audit-id: R2-20261022-009 -->\n",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/334",
+    "issue_number": 334
+  },
+  {
+    "n": 10,
+    "id": "R2-20261022-010",
+    "title": "外側の handler-bind が内側の condition-case より先にエラーを奪う",
+    "cases": [
+      "handler-order:outer-steals-caught-error",
+      "handler-order:inner-observer",
+      "handler-order:resignal"
+    ],
+    "body": "内側の condition-case で処理されるはずのエラーに、外側の handler-bind が呼ばれます。そこで throw すると condition-case のハンドラが実行されず、正常なエラー処理が横取りされます。再 signal のケースでは外側の通知が二重に実行されます。\n\n対象: `926cbfc7fe1ddde28c53d0555be1f6b99563535b` + 調査時の shell/display に関する既存作業ツリー変更、macOS/aarch64、GNU Emacs 31.1。現在のソースをビルドして固定したバイナリ SHA-256 `37aec7800115143d785086fa184114757237776c93c892e30696644b5c255017` で個別プロセス検証。\n\n## 再現\n\n以下を repro.el に保存します。\n\n```elisp\n;;; -*- lexical-binding: t; -*-\n\n;; handler-order:outer-steals-caught-error\n(prin1 (catch 'out (handler-bind ((error (lambda (_) (throw 'out 'stolen)))) (condition-case nil (error \"audit\") (error 'caught)))))\n(terpri)\n\n;; handler-order:inner-observer\n(prin1 (let ((seen nil)) (list (condition-case nil (handler-bind ((error (lambda (_) (push 'observed seen)))) (error \"audit\")) (error 'caught)) seen)))\n(terpri)\n\n;; handler-order:resignal\n(prin1 (let ((seen nil)) (list (condition-case nil (handler-bind ((error (lambda (_) (push 'observed seen)))) (condition-case err (error \"audit\") (error (signal (car err) (cdr err))))) (error 'caught)) seen)))\n(terpri)\n```\n\n```sh\n./target/debug/remacs -Q --batch -l repro.el\n/path/to/emacs-31.1 -Q --batch -l repro.el\n```\n\n検証結果（ok は式の正常な戻り値）:\n\n`handler-order:outer-steals-caught-error`\n\n```text\nGNU: (ok caught)\nRemacs: (ok stolen)\n```\n\n`handler-order:inner-observer`\n\n```text\nGNU: (ok (caught (observed)))\nRemacs: (ok (caught (observed)))\n```\n\n`handler-order:resignal`\n\n```text\nGNU: (ok (caught (observed)))\nRemacs: (ok (caught (observed observed)))\n```\n\n原因候補: [src/lisp/eval.rs の offer_signal](https://github.com/SuzumiyaAoba/remacs/blob/926cbfc7fe1ddde28c53d0555be1f6b99563535b/src/lisp/eval.rs#L6436) が handler_bindings をすべて走査してから case_handlers を調べます。両者の動的な入れ子順序が表現されず、内側の捕捉で外側への通知を止められません。単純に condition-case が存在すると全 handler-bind を止める修正では、内側の observer が必要な対照ケースを壊します。\n\n<!-- remacs-audit-id: R2-20261022-010 -->\n",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/335",
+    "issue_number": 335
+  },
+  {
+    "n": 11,
+    "title": "called-interactively-p が通常のヘルパー呼び出しまで対話実行と判定し KIND も無視する",
+    "cases": [
+      "interactive:helper-'any",
+      "interactive:apply-helper",
+      "interactive:bytecompiled-helper",
+      "interactive:direct-'interactive",
+      "interactive:call-interactively-batch",
+      "interactive:error-restores"
+    ],
+    "description": "対話的に呼んだ関数が通常の funcall/apply でヘルパーを呼ぶと、そのヘルパー内でも called-interactively-p='any が t になります。GNU は直接の呼び出し元を検査して nil を返します。また非対話バッチで KIND='interactive も t になります。interactive_call_depth > 0 だけで判定しており、呼び出しフレームと KIND を区別していません。",
+    "source": "src/lisp/builtins/evalfn.rs",
+    "id": "R2-20261022-011",
+    "body": "対話的に呼んだ関数が通常の funcall/apply でヘルパーを呼ぶと、そのヘルパー内でも called-interactively-p='any が t になります。GNU は直接の呼び出し元を検査して nil を返します。また非対話バッチで KIND='interactive も t になります。interactive_call_depth > 0 だけで判定しており、呼び出しフレームと KIND を区別していません。\n\n対象: `926cbfc7fe1ddde28c53d0555be1f6b99563535b` + 調査時の shell/display に関する既存作業ツリー変更、macOS/aarch64、GNU Emacs 31.1。新しくビルドした固定バイナリ SHA-256 `37aec7800115143d785086fa184114757237776c93c892e30696644b5c255017` で個別検証。旧38af4d1でも同じ結果でした。\n\n## 再現\n\n以下を repro.el に保存します。\n\n```elisp\n;;; -*- lexical-binding: t; -*-\n\n;; interactive:helper-'any\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (funcall-interactively (lambda nil (funcall (lambda nil (called-interactively-p 'any)))))) (error (list 'error e))))\n  (terpri))\n\n;; interactive:apply-helper\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (funcall-interactively (lambda nil (apply (lambda (&rest _) (called-interactively-p 'any)) '(1))))) (error (list 'error e))))\n  (terpri))\n\n;; interactive:bytecompiled-helper\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((f (byte-compile (lambda nil (called-interactively-p 'any))))) (funcall-interactively (lambda nil (funcall f))))) (error (list 'error e))))\n  (terpri))\n\n;; interactive:direct-'interactive\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (funcall-interactively (lambda nil (called-interactively-p 'interactive)))) (error (list 'error e))))\n  (terpri))\n\n;; interactive:call-interactively-batch\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (call-interactively (lambda nil (interactive) (list (called-interactively-p 'any) (called-interactively-p 'interactive))))) (error (list 'error e))))\n  (terpri))\n\n;; interactive:error-restores\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (progn (condition-case nil (funcall-interactively (lambda nil (error \"stop\"))) (error nil)) (called-interactively-p 'any))) (error (list 'error e))))\n  (terpri))\n```\n\n```sh\n./target/debug/remacs -Q --batch -l repro.el\n/path/to/emacs-31.1 -Q --batch -l repro.el\n```\n\n## 結果\n\n`interactive:helper-'any`\n\n```text\nGNU: (ok nil)\nRemacs: (ok t)\n```\n\n`interactive:apply-helper`\n\n```text\nGNU: (ok nil)\nRemacs: (ok t)\n```\n\n`interactive:bytecompiled-helper`\n\n```text\nGNU: (ok nil)\nRemacs: (ok t)\n```\n\n`interactive:direct-'interactive`\n\n```text\nGNU: (ok nil)\nRemacs: (ok t)\n```\n\n`interactive:call-interactively-batch`\n\n```text\nGNU: (ok (t nil))\nRemacs: (ok (t t))\n```\n\n`interactive:error-restores`\n\n```text\nGNU: (ok nil)\nRemacs: (ok nil)\n```\n\n調査箇所: [src/lisp/builtins/evalfn.rs](https://github.com/SuzumiyaAoba/remacs/blob/926cbfc7fe1ddde28c53d0555be1f6b99563535b/src/lisp/builtins/evalfn.rs)。修正は未実施。\n\n<!-- remacs-audit-id: R2-20261022-011 -->\n",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/336",
+    "issue_number": 336
+  },
+  {
+    "n": 12,
+    "title": "mapcar / mapc / mapconcat / mapcan がコールバック中の入力変更を無視する",
+    "cases": [
+      "map:mapcar-vector",
+      "map:mapcar-list",
+      "map:mapcar-string",
+      "map:mapc-vector",
+      "map:mapconcat-vector",
+      "map:mapcan-vector",
+      "map:list-tail-delete"
+    ],
+    "description": "コールバックがまだ処理していない要素を書き換えても、Remacs は変更前の要素を次のコールバックへ渡します。GNU は現在の要素を順に読みます。リストの後続を切り離した場合も、Remacs は削除した要素を処理し続けます。map_seq などが開始時にシーケンス全体を Vec へコピーしているのが原因候補です。",
+    "source": "src/lisp/builtins/seq.rs",
+    "id": "R2-20261022-012",
+    "body": "コールバックがまだ処理していない要素を書き換えても、Remacs は変更前の要素を次のコールバックへ渡します。GNU は現在の要素を順に読みます。リストの後続を切り離した場合も、Remacs は削除した要素を処理し続けます。map_seq などが開始時にシーケンス全体を Vec へコピーしているのが原因候補です。\n\n対象: `926cbfc7fe1ddde28c53d0555be1f6b99563535b` + 調査時の shell/display に関する既存作業ツリー変更、macOS/aarch64、GNU Emacs 31.1。新しくビルドした固定バイナリ SHA-256 `37aec7800115143d785086fa184114757237776c93c892e30696644b5c255017` で個別検証。旧38af4d1でも同じ結果でした。\n\n## 再現\n\n以下を repro.el に保存します。\n\n```elisp\n;;; -*- lexical-binding: t; -*-\n\n;; map:mapcar-vector\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((sequence (vector 1 2 3)) (seen nil)) (let ((value (mapcar (lambda (x) (push x seen) (aset sequence 1 9) x) sequence))) (list value (nreverse seen) sequence)))) (error (list 'error e))))\n  (terpri))\n\n;; map:mapcar-list\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((sequence (list 1 2 3)) (seen nil)) (let ((value (mapcar (lambda (x) (push x seen) (setcar (cdr sequence) 9) x) sequence))) (list value (nreverse seen) sequence)))) (error (list 'error e))))\n  (terpri))\n\n;; map:mapcar-string\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((sequence (copy-sequence \"abc\")) (seen nil)) (let ((value (mapcar (lambda (x) (push x seen) (aset sequence 1 88) x) sequence))) (list value (nreverse seen) sequence)))) (error (list 'error e))))\n  (terpri))\n\n;; map:mapc-vector\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((sequence (vector 1 2 3)) (seen nil)) (let ((value (mapc (lambda (x) (push x seen) (aset sequence 1 9) x) sequence))) (list (eq value sequence) (nreverse seen) sequence)))) (error (list 'error e))))\n  (terpri))\n\n;; map:mapconcat-vector\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((sequence (vector 1 2 3)) (seen nil)) (let ((value (mapconcat (lambda (x) (push x seen) (aset sequence 1 9) (number-to-string x)) sequence \",\"))) (list value (nreverse seen) sequence)))) (error (list 'error e))))\n  (terpri))\n\n;; map:mapcan-vector\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((sequence (vector 1 2 3))) (mapcan (lambda (x) (aset sequence 1 9) (list x)) sequence))) (error (list 'error e))))\n  (terpri))\n\n;; map:list-tail-delete\n(let ((print-circle t))\n  (prin1 (condition-case e (list 'ok (let ((sequence (list 1 2 3))) (mapcar (lambda (x) (setcdr sequence nil) x) sequence))) (error (list 'error e))))\n  (terpri))\n```\n\n```sh\n./target/debug/remacs -Q --batch -l repro.el\n/path/to/emacs-31.1 -Q --batch -l repro.el\n```\n\n## 結果\n\n`map:mapcar-vector`\n\n```text\nGNU: (ok ((1 9 3) (1 9 3) [1 9 3]))\nRemacs: (ok ((1 2 3) (1 2 3) [1 9 3]))\n```\n\n`map:mapcar-list`\n\n```text\nGNU: (ok ((1 9 3) (1 9 3) (1 9 3)))\nRemacs: (ok ((1 2 3) (1 2 3) (1 9 3)))\n```\n\n`map:mapcar-string`\n\n```text\nGNU: (ok ((97 88 99) (97 88 99) \"aXc\"))\nRemacs: (ok ((97 98 99) (97 98 99) \"aXc\"))\n```\n\n`map:mapc-vector`\n\n```text\nGNU: (ok (t (1 9 3) [1 9 3]))\nRemacs: (ok (t (1 2 3) [1 9 3]))\n```\n\n`map:mapconcat-vector`\n\n```text\nGNU: (ok (\"1,9,3\" (1 9 3) [1 9 3]))\nRemacs: (ok (\"1,2,3\" (1 2 3) [1 9 3]))\n```\n\n`map:mapcan-vector`\n\n```text\nGNU: (ok (1 9 3))\nRemacs: (ok (1 2 3))\n```\n\n`map:list-tail-delete`\n\n```text\nGNU: (ok (1))\nRemacs: (ok (1 2 3))\n```\n\n調査箇所: [src/lisp/builtins/seq.rs](https://github.com/SuzumiyaAoba/remacs/blob/926cbfc7fe1ddde28c53d0555be1f6b99563535b/src/lisp/builtins/seq.rs)。修正は未実施。\n\n<!-- remacs-audit-id: R2-20261022-012 -->\n",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/337",
+    "issue_number": 337
+  },
+  {
+    "n": 13,
+    "id": "R2-20261022-013",
+    "title": "lisp-mode / lisp-data-mode の初期化が欠け、構文強調と Common Lisp の字下げが設定されない",
+    "cases": [
+      "mode-init:lisp-locals",
+      "mode-init:lisp-font-lock",
+      "mode-init:lisp-require",
+      "mode-init:lisp-reload",
+      "mode-init:lisp-data"
+    ],
+    "body": "起動直後の Common Lisp モードは font-lock-defaults=nil になり、defun や関数名が構文強調されません。lisp-indent-function も common-lisp-indent-function ではなく Emacs Lisp 用のままで、字下げ結果が異なります。find-tag-default-function、Common Lisp コメント設定も欠けています。親の lisp-data-mode 自体にも font-lock の初期化がありません。\n\n(require 'lisp-mode) では直らず、明示的に (load \"lisp-mode\") するとGNUと同じ設定になります。prelude の折り畳んだ定義が GNU lisp-mode.el の初期化を省いています。\n\n対象: `926cbfc7fe1ddde28c53d0555be1f6b99563535b` + 調査時の既存作業ツリー変更、macOS/aarch64。GNU Emacs 31.1 と固定バイナリ `37aec7800115143d785086fa184114757237776c93c892e30696644b5c255017` で各ケースを独立実行。\n\n## 再現\n\nそれぞれの式を新規 -Q --batch プロセスで実行してください。最後の load 対照は定義を書き換えるため、必ず別プロセスにします。\n\n`mode-init:lisp-locals`\n\n```elisp\n(with-temp-buffer (lisp-mode) (list lisp-indent-function (and font-lock-defaults t) find-tag-default-function comment-start-skip))\n```\n\n```text\nGNU: (ok (common-lisp-indent-function t lisp-find-tag-default \"\\\\(\\\\(^\\\\|[^\\\\\\n]\\\\)\\\\(\\\\\\\\\\\\\\\\\\\\)*\\\\)\\\\(;+\\\\|#|\\\\) *\"))\nRemacs: (ok (lisp-indent-function nil nil \";+ *\"))\n```\n\n`mode-init:lisp-font-lock`\n\n```elisp\n(with-temp-buffer (insert \"(defun foo (x) x)\") (lisp-mode) (font-lock-mode 1) (font-lock-ensure) (list (get-text-property 2 'face) (get-text-property 8 'face)))\n```\n\n```text\nGNU: (ok (font-lock-keyword-face font-lock-function-name-face))\nRemacs: (ok (nil nil))\n```\n\n`mode-init:lisp-require`\n\n```elisp\n(progn (require 'lisp-mode) (with-temp-buffer (lisp-mode) (list lisp-indent-function (and font-lock-defaults t))))\n```\n\n```text\nGNU: (ok (common-lisp-indent-function t))\nRemacs: (ok (lisp-indent-function nil))\n```\n\n`mode-init:lisp-reload`\n\n```elisp\n(progn (load \"lisp-mode\" nil t) (with-temp-buffer (lisp-mode) (list lisp-indent-function (and font-lock-defaults t))))\n```\n\n```text\nGNU: (ok (common-lisp-indent-function t))\nRemacs: (ok (common-lisp-indent-function t))\n```\n\n`mode-init:lisp-data`\n\n```elisp\n(with-temp-buffer (lisp-data-mode) (list (and font-lock-defaults t) (char-syntax 124) (char-syntax 35)))\n```\n\n```text\nGNU: (ok (t 95 39))\nRemacs: (ok (nil 95 39))\n```\n\n```sh\n./target/debug/remacs -Q --batch --eval '(prin1 (with-temp-buffer (lisp-mode) (list lisp-indent-function font-lock-defaults)))'\n/path/to/emacs-31.1 -Q --batch --eval '(prin1 (with-temp-buffer (lisp-mode) (list lisp-indent-function font-lock-defaults)))'\n```\n\n実際の編集シナリオでも `(defun foo (x)\\n(if x\\n(+ x 1)\\n0))` の else 行の字下げが GNU 6桁に対し Remacs 4桁となり、同時に face がすべて nil になりました。\n\n原因候補: src/lisp/prelude.el の lisp-data-mode / lisp-mode 定義（28225行付近）。GNU lisp-mode-variables と lisp-mode 本体の設定を揃える必要があります。\n\n<!-- remacs-audit-id: R2-20261022-013 -->\n",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/338",
+    "issue_number": 338
+  },
+  {
+    "n": 14,
+    "id": "R2-20261022-014",
+    "title": "org-mode が deferred value の初期化中に void-function keyword で起動できない",
+    "cases": [
+      "org-ast:alias",
+      "org-ast:direct-control",
+      "org-ast:runtime-alias-control",
+      "org-ast:mode-after-alias-control",
+      "mode:org-mode",
+      "mode-init:org-empty",
+      "mode-init:org-fontlock"
+    ],
+    "body": "空のバッファで org-mode を有効にするだけで `(void-function keyword)` になり、Org の編集を開始できません。GNU Emacs 31.1 では成功します。長めの起動時間によるタイムアウトと区別するため、180秒上限で単独再試行し、約69秒後に同じLispエラーを確認しました。font-lock のケースも約82秒で同じエラーです。\n\n対象: `926cbfc7fe1ddde28c53d0555be1f6b99563535b` + 調査時の既存 shell/display 作業ツリー変更、macOS/aarch64。固定バイナリ SHA-256 `37aec7800115143d785086fa184114757237776c93c892e30696644b5c255017`。\n\n## 利用者向けの再現\n\n```sh\n./target/debug/remacs -Q --batch --eval '(with-temp-buffer (org-mode) (princ major-mode))'\n/path/to/emacs-31.1 -Q --batch --eval '(with-temp-buffer (org-mode) (princ major-mode))'\n```\n\nGNU は `org-mode`。Remacs は `void-function keyword`。\n\n## 絞り込んだ再現\n\n```elisp\n(require 'org-element-ast)\n(org-element-deferred-create-alias :raw-value)\n```\n\nGNU: `[org-element-deferred org-element-property-2 (:raw-value) nil]`\nRemacs: `(void-function keyword)`\n\n同じ値を直接構築する次の対照は両側で成功します。\n\n```elisp\n(require 'org-element-ast)\n(org-element-deferred-create nil #'org-element-property-2 :raw-value)\n```\n\n## 失敗時のスタック\n\n```text\norg-element-deferred-create-alias(:raw-value)\n(defconst org-element--headline-raw-value\n  (org-element-deferred-create-alias :raw-value) ...)\nload-with-code-conversion(.../lisp/org-element.el ...)\norg-mode()\n```\n\n`require 'org` 自体は成功し、その後の org-mode が org-element をロードする段階で失敗します。\n\n調査箇所: [lisp/org-element-ast.el:281](https://github.com/SuzumiyaAoba/remacs/blob/926cbfc7fe1ddde28c53d0555be1f6b99563535b/lisp/org-element-ast.el#L281)。GNU の &aux 付きコンストラクタを通常の defun に置き換えた移植用定義があります。この補助関数を funcall 経由にする実行時だけの対照では alias 自体は成功しましたが、続く org-mode は別の `void-function t` で失敗しました。コンストラクタ／ソース展開経路を含めて起動まで確認する必要があり、この差し替えを完成した修正とはしていません。\n\n同じ BOA &rest 構造を使った縮小例は GNU のソースロードでも失敗するため、その縮小例だけを別の Rust 評価器バグとして数えていません。本件は配布されている Org が GNU では起動し、Remacs では起動しない問題です。\n\n<!-- remacs-audit-id: R2-20261022-014 -->\n",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/339",
+    "issue_number": 339
+  },
+  {
+    "n": 15,
+    "id": "R2-20261022-015",
+    "title": "make-temp-file が初期 TEXT の書き込み失敗を無視し、空ファイルを成功として返す",
+    "cases": [
+      "temp-write:public",
+      "temp-write:internal"
+    ],
+    "body": "default-file-modes を0400にした状態で TEXT=\"abc\" を指定すると、GNU は作成時のファイル記述子で内容を書き込みますが、Remacs は内容が空のファイルを成功として返します。文字コード問題ではなく、ASCII の3文字でも発生するデータ消失です。\n\n対象: `926cbfc7fe1ddde28c53d0555be1f6b99563535b` + 調査時の既存 shell/display 作業ツリー変更、macOS/aarch64。GNU Emacs 31.1 と固定バイナリ `37aec7800115143d785086fa184114757237776c93c892e30696644b5c255017` で個別実行。設定・一時ファイルは各ケースの unwind-protect で復元・削除しています。\n\n## 再現\n\n以下を repro.el に保存します。\n\n```elisp\n;;; -*- lexical-binding: t; -*-\n\n;; temp-write:public\n(prin1 (let ((dir (make-temp-file \"remacs-audit-write-\" t)) file (old-modes (default-file-modes))) (unwind-protect (progn (unwind-protect (progn (set-default-file-modes 256) (setq file (make-temp-file (expand-file-name \"data-\" dir) nil nil \"abc\"))) (set-default-file-modes old-modes)) (list (logand (file-modes file) 511) (with-temp-buffer (insert-file-contents-literally file) (buffer-string)))) (when file (delete-file file)) (delete-directory dir t))))\n(terpri)\n\n;; temp-write:internal\n(prin1 (let ((dir (make-temp-file \"remacs-audit-write-\" t)) file (old-modes (default-file-modes))) (unwind-protect (progn (unwind-protect (progn (set-default-file-modes 256) (setq file (make-temp-file-internal (expand-file-name \"data-\" dir) nil \"\" \"abc\"))) (set-default-file-modes old-modes)) (list (logand (file-modes file) 511) (with-temp-buffer (insert-file-contents-literally file) (buffer-string)))) (when file (delete-file file)) (delete-directory dir t))))\n(terpri)\n```\n\n```sh\n./target/debug/remacs -Q --batch -l repro.el\n/path/to/emacs-31.1 -Q --batch -l repro.el\n```\n\n結果の256は0400の十進表記です。\n\n```text\n公開 make-temp-file:\nGNU:    (256 \"abc\")\nRemacs: (256 \"\")\n\n内部 make-temp-file-internal の対照:\nGNU:    (256 \"abc\")\nRemacs: (256 \"abc\")\n```\n\n原因候補: src/editor/mod.rs の f_make_temp_file は create_new で作った記述子を閉じ、TEXT を fs::write で再オープンして書きます。0400では再オープンが失敗しますが、その Result を捨ててファイル名を返しています。内部 make-temp-file-internal は作成済み記述子へ write_all するため成功します。\n\n#326 の過剰に広い既定権限、#327 のバイト表現変換とは別の問題です。所有者限定の0600を指定するだけでは、呼び出し元が書き込みを制限する umask を設定した場合の再オープン失敗とエラー破棄は解決しません。\n\n<!-- remacs-audit-id: R2-20261022-015 -->\n",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/340",
+    "issue_number": 340
+  },
+  {
+    "n": 16,
+    "title": "非バッチ起動の --eval / -l / -f が編集画面を開かず終了する",
+    "cases": [
+      "pty:startup-eval",
+      "pty:startup-load",
+      "pty:startup-funcall"
+    ],
+    "body": "`--batch` を指定していない起動でも、`--eval` / `-l` / `-f` があると Remacs は編集ループに入らず終了コード0で終了します。GNU は指定した初期処理を行って編集画面を開き、そのまま動作し続けます。\n\n## 再現\n\n実端末でそれぞれ実行します。\n\n```sh\n./target/debug/remacs -Q -nw --eval '(setq audit-cli-startup t)'\n./target/debug/remacs -Q -nw -f ignore\n```\n\n`(setq audit-cli-startup t)` だけの startup.el を作り、`-Q -nw -l startup.el` でも同じです。\n\n80×24 の独立したPTYで比較した結果、GNUは3条件すべてscratchのフレームを表示し、C-x C-cを送るまで生存しました。Remacsは3条件すべてフレームなしで自然終了しました（exit_before_quit=0、約8〜10秒）。初期化オプションなしの `-Q -nw` は両方とも画面表示・終了に成功しています。\n\n実際のファイル編集検査でも、同じファイル指定に --eval を付けるとRemacsだけ編集画面が開かず、オプションを外すと編集・保存できました。\n\n原因候補: src/main.rs の batch_arg が --eval/--load/-l/-f/--funcall をGUI起動から除外し、その後のオプション処理でも batch=true にしています。これらは --batch を暗黙に指定するオプションではありません。\n\n対象: `926cbfc7fe1ddde28c53d0555be1f6b99563535b` + 調査時の既存 shell/display 作業ツリー変更、macOS/aarch64、GNU Emacs 31.1。固定バイナリ SHA-256: `37aec7800115143d785086fa184114757237776c93c892e30696644b5c255017`。実PTYへのアクセスが必要なため、/dev/tty制限のない環境で比較しました。\n\n<!-- remacs-audit-id: R2-20261022-016 -->\n",
+    "id": "R2-20261022-016",
+    "kind": "pty",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/341",
+    "issue_number": 341
+  },
+  {
+    "n": 17,
+    "title": "TTY入力の C-_ が C-w に化け、Undo の代わりに領域削除を実行する",
+    "cases": [
+      "pty:control-codes",
+      "pty:undo"
+    ],
+    "body": "端末からの ASCII 制御バイト 0x1c〜0x1f が 0x14〜0x17 に変換されます。特に C-_ (0x1f、Undo) が C-w (0x17、kill-region) になり、markがなければ「The mark is not set now」となってUndoされません。\n\n## 実端末での再現\n\n1. 空のファイルを `-Q -nw` で開く。\n2. `abc` を入力し、C-a、C-e を押す。\n3. `X` を入力し、C-_ を押す。\n4. C-x C-s で保存する。\n\nGNUは `abc\\n`、Remacsは `abcX\\n`。Remacsの端末ログには `user-error: The mark is not set now, so there is no region` が残りました。両側とも描画と正常終了を確認した独立PTYでの結果です。\n\n## 変換そのものの対照\n\nM-: で次の設定を評価してから、PTYへ生バイト `1c 1d 1e 1f` を送信しました。\n\n```elisp\n(dolist (code '(20 21 22 23 28 29 30 31))\n  (global-set-key (vector code)\n    (eval (list 'lambda nil '(interactive)\n                (list 'insert (format \"<%d>\" code))))))\n```\n\nGNUの挿入結果は `<28><29><30><31>`、Remacsは `<20><21><22><23>` です。\n\n原因候補: crossterm 0.29.0 のUnixパーサは0x1c〜0x1fを CONTROL + '4'〜'7' として返します。src/term/mod.rs の key_event_to_code がこれをASCII文字の `& 0x1f` で変換するため、20〜23になっています。crosstermの制御文字表現を元のコードへ戻す処理が必要です。既存#297の修飾付きHome等の名前変換とは別の経路です。\n\n対象: `926cbfc7fe1ddde28c53d0555be1f6b99563535b` + 調査時の既存 shell/display 作業ツリー変更、macOS/aarch64、GNU Emacs 31.1。固定バイナリ SHA-256: `37aec7800115143d785086fa184114757237776c93c892e30696644b5c255017`。実PTYへのアクセスが必要なため、/dev/tty制限のない環境で比較しました。\n\n<!-- remacs-audit-id: R2-20261022-017 -->\n",
+    "id": "R2-20261022-017",
+    "kind": "pty",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/342",
+    "issue_number": 342
+  },
+  {
+    "n": 18,
+    "title": "キーボードマクロを C-x ) で終了すると記録内容を余分に一回実行する",
+    "cases": [
+      "pty:kbd-end",
+      "pty:kbd-macro"
+    ],
+    "body": "キーボードマクロの記録終了だけで、入力した内容がもう一度実行されます。終了時の繰り返し数は記録操作自体を最初の一回として数える必要があります。\n\n## 実端末での再現\n\n空のファイルを `-Q -nw` で開き、次を順に入力します。\n\n```text\nC-x (    記録開始\nx        文字を一つ入力\nC-x )    記録終了\nC-x C-s  保存\n```\n\nGNU: `x\\n`\nRemacs: `xx\\n`\n\n記録終了後にさらに C-x e を一度実行した別の対照では、GNUは `xx\\n`、Remacsは `xxx\\n` でした。80×24の独立PTYで両側とも画面表示・保存・正常終了を確認しています。\n\n原因候補: lisp/kmacro.el の kmacro-end-macro は `(interactive \"p\")` により通常呼び出しでも1を end-kbd-macro に渡します。src/editor/mod.rs の f_end_kbd_macro は非nilのREPEATをそのまま f_call_last_kbd_macro に渡し、さらに1回実行しています。GNUの仕様は「記録を最初の一回に含めた合計回数」で、通常の1では追加実行しません。\n\n対象: `926cbfc7fe1ddde28c53d0555be1f6b99563535b` + 調査時の既存 shell/display 作業ツリー変更、macOS/aarch64、GNU Emacs 31.1。固定バイナリ SHA-256: `37aec7800115143d785086fa184114757237776c93c892e30696644b5c255017`。実PTYへのアクセスが必要なため、/dev/tty制限のない環境で比較しました。\n\n<!-- remacs-audit-id: R2-20261022-018 -->\n",
+    "id": "R2-20261022-018",
+    "kind": "pty",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/343",
+    "issue_number": 343
+  },
+  {
+    "n": 19,
+    "title": "qa_time_modifiers の %EY 小年数の期待値が GNU Emacs 31.1 でも失敗する",
+    "cases": [
+      "qa:time-modifiers-oracle"
+    ],
+    "kind": "test",
+    "body": "全QA実行で qa_time_modifiers が失敗しますが、同じファイルをGNU Emacs 31.1で実行しても、同じ2アサーションが失敗しました。Remacs固有の format-time-string 不具合として扱うべき差ではありません。\n\n## 再現\n\n```sh\n/path/to/emacs-31.1 -Q --batch -l tests/qa_framework.el -l tests/qa_time_modifiers.el\ncargo test --offline --test qa qa_time_modifiers -- --exact --nocapture\n```\n\n両方とも以下で失敗します。\n\n```text\n(form, expected, actual)\n((format-time-string \"%EY\" -62135499355 t) \"1\" \"0001\")\n((format-time-string \"%6EY\" -62135499355 t) \"     1\" \"  0001\")\n```\n\n該当ブロックは system-time-locale=\"C\" を明示しており、単なる実行シェルのロケール差ではありません。GNUは終了コード255、Rust QAは101。REMACS_NONINTERACTIVE=1 を設定した個別再試行でも同じです。\n\n環境: macOS/aarch64、GNU Emacs 31.1（Nixの emacs-unstable-31.1）、調査時HEAD `aeaff5597e60834c21d464b7ad2a4caf167726dc`。tests/qa_time_modifiers.el の559〜562行付近。\n\n期待値の参照元・プラットフォーム条件を確認し、現在のGNU参照でも通るように検査を調整する必要があります。既存#77の実装をこの2件だけを根拠に再オープンしていません。\n\n<!-- remacs-audit-id: R2-20261022-019 -->\n",
+    "id": "R2-20261022-019",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/344",
+    "issue_number": 344
+  },
+  {
+    "n": 20,
+    "title": "QAハーネスの noninteractive 設定が初期化後になり qa_buffer2 / qa_mark が偽失敗する",
+    "cases": [
+      "qa:batch-initialization"
+    ],
+    "kind": "test",
+    "body": "tests/qa.rs は emacs -Q --batch と同じ環境を作ると説明していますが、interp() による起動処理の後で i.noninteractive=true / (setq noninteractive t) を設定します。起動時に決まる transient-mark-mode 等の状態は既に対話用になっているため、qa_buffer2 と qa_mark が失敗します。\n\n## 再現と切り分け\n\n```sh\ncargo test --offline --test qa qa_buffer2 -- --exact --nocapture\ncargo test --offline --test qa qa_mark -- --exact --nocapture\n```\n\n通常の実行での例:\n\n```text\nFAIL (transient-mark-mode nil t)\nFAIL ((region-active-p) nil t)\nFAIL ((use-region-p) nil t)\n```\n\n同じコンパイル済みテストを、プロセス開始前に REMACS_NONINTERACTIVE=1 を設定して個別実行すると両方成功します。GNU Emacs 31.1 の -Q --batch -l qa_framework.el -l qa_buffer2.el / qa_mark.el も成功します。\n\n```sh\nREMACS_NONINTERACTIVE=1 cargo test --offline --test qa qa_buffer2 -- --exact --nocapture\nREMACS_NONINTERACTIVE=1 cargo test --offline --test qa qa_mark -- --exact --nocapture\n```\n\n起動後にフラグを切り替えるのではなく、バッチ条件を指定して Interp を構築するハーネスが必要です。テスト内からプロセス全体の環境変数を書き換えると並列実行へ影響するため、構築時の条件指定として扱うのが妥当です。\n\n環境: macOS/aarch64、調査時HEAD `aeaff5597e60834c21d464b7ad2a4caf167726dc`。全1,074テストの実行中に、QA369件のうち2件がこの条件で失敗しました。古い監査記録にも起動条件差として記録されていましたが、同じ問題の既存Issueは見つかりませんでした。\n\n調査箇所: tests/qa.rs の run（16〜38行付近）、tests/common/mod.rs の interp、Interp の初期化時の noninteractive 判定。\n\n<!-- remacs-audit-id: R2-20261022-020 -->\n",
+    "id": "R2-20261022-020",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/345",
+    "issue_number": 345
+  }
+]

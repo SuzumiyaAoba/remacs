@@ -1,0 +1,6 @@
+(setq __outfile "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/corpus/processes.gnu.records")
+(write-region (concat (base64-encode-string (encode-coding-string (condition-case __e (prin1-to-string (fboundp 'send-string)) (error (format "ERR:%s" (car __e)))) (quote utf-8) t) t) "\n") nil __outfile t (quote quiet))
+(write-region (concat (base64-encode-string (encode-coding-string (condition-case __e (prin1-to-string (fboundp 'send-region)) (error (format "ERR:%s" (car __e)))) (quote utf-8) t) t) "\n") nil __outfile t (quote quiet))
+(write-region (concat (base64-encode-string (encode-coding-string (condition-case __e (prin1-to-string (fboundp 'process-send-string)) (error (format "ERR:%s" (car __e)))) (quote utf-8) t) t) "\n") nil __outfile t (quote quiet))
+(write-region (concat (base64-encode-string (encode-coding-string (condition-case __e (prin1-to-string (condition-case e (send-string nil "x") (error e))) (error (format "ERR:%s" (car __e)))) (quote utf-8) t) t) "\n") nil __outfile t (quote quiet))
+(write-region (concat (base64-encode-string (encode-coding-string (condition-case __e (prin1-to-string (condition-case e (send-region nil 1 2) (error e))) (error (format "ERR:%s" (car __e)))) (quote utf-8) t) t) "\n") nil __outfile t (quote quiet))

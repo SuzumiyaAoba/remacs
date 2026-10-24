@@ -1,0 +1,197 @@
+{
+  "head": "926cbfc7fe1ddde28c53d0555be1f6b99563535b",
+  "worktree_head": "8e148b418e7175dfe66292f395c93bff6d336b9e",
+  "binary_sha256": "37aec7800115143d785086fa184114757237776c93c892e30696644b5c255017",
+  "runs": [
+    {
+      "id": "org-ast:alias",
+      "group": "org_alias",
+      "form": "(progn (require 'org-element-ast) (org-element-deferred-create-alias :raw-value))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_org_alias.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.27,
+      "value": "(ok [org-element-deferred org-element-property-2 (:raw-value) nil])",
+      "stdout": "org-ast-alias.current.gnu.out",
+      "stderr": "org-ast-alias.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "org-ast:alias",
+      "group": "org_alias",
+      "form": "(progn (require 'org-element-ast) (org-element-deferred-create-alias :raw-value))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_org_alias.el"
+      ],
+      "returncode": 0,
+      "seconds": 18.28,
+      "value": "(error (void-function keyword))",
+      "stdout": "org-ast-alias.current.remacs.out",
+      "stderr": "org-ast-alias.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "org-ast:direct-control",
+      "group": "org_alias",
+      "form": "(progn (require 'org-element-ast) (org-element-deferred-create nil #'org-element-property-2 :raw-value))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_org_alias.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.27,
+      "value": "(ok [org-element-deferred org-element-property-2 (:raw-value) nil])",
+      "stdout": "org-ast-direct-control.current.gnu.out",
+      "stderr": "org-ast-direct-control.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "org-ast:direct-control",
+      "group": "org_alias",
+      "form": "(progn (require 'org-element-ast) (org-element-deferred-create nil #'org-element-property-2 :raw-value))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_org_alias.el"
+      ],
+      "returncode": 0,
+      "seconds": 18.38,
+      "value": "(ok [org-element-deferred org-element-property-2 (:raw-value) nil])",
+      "stdout": "org-ast-direct-control.current.remacs.out",
+      "stderr": "org-ast-direct-control.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "org-ast:funcall-control",
+      "group": "org_alias",
+      "form": "(progn (require 'org-element-ast) (funcall #'org-element-deferred-create nil #'org-element-property-2 :raw-value))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_org_alias.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.28,
+      "value": "(ok [org-element-deferred org-element-property-2 (:raw-value) nil])",
+      "stdout": "org-ast-funcall-control.current.gnu.out",
+      "stderr": "org-ast-funcall-control.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "org-ast:funcall-control",
+      "group": "org_alias",
+      "form": "(progn (require 'org-element-ast) (funcall #'org-element-deferred-create nil #'org-element-property-2 :raw-value))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_org_alias.el"
+      ],
+      "returncode": 0,
+      "seconds": 18.68,
+      "value": "(ok [org-element-deferred org-element-property-2 (:raw-value) nil])",
+      "stdout": "org-ast-funcall-control.current.remacs.out",
+      "stderr": "org-ast-funcall-control.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "org-ast:runtime-alias-control",
+      "group": "org_alias",
+      "form": "(progn (require 'org-element-ast) (fset 'org-element-deferred-create-alias (lambda (keyword &optional auto-undefer-p) (funcall #'org-element-deferred-create auto-undefer-p #'org-element-property-2 keyword))) (org-element-deferred-create-alias :raw-value))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_org_alias.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.43,
+      "value": "(ok [org-element-deferred org-element-property-2 (:raw-value) nil])",
+      "stdout": "org-ast-runtime-alias-control.current.gnu.out",
+      "stderr": "org-ast-runtime-alias-control.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "org-ast:runtime-alias-control",
+      "group": "org_alias",
+      "form": "(progn (require 'org-element-ast) (fset 'org-element-deferred-create-alias (lambda (keyword &optional auto-undefer-p) (funcall #'org-element-deferred-create auto-undefer-p #'org-element-property-2 keyword))) (org-element-deferred-create-alias :raw-value))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_org_alias.el"
+      ],
+      "returncode": 0,
+      "seconds": 14.58,
+      "value": "(ok [org-element-deferred org-element-property-2 (:raw-value) nil])",
+      "stdout": "org-ast-runtime-alias-control.current.remacs.out",
+      "stderr": "org-ast-runtime-alias-control.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "org-ast:mode-after-alias-control",
+      "group": "org_alias",
+      "form": "(progn (require 'org-element-ast) (fset 'org-element-deferred-create-alias (lambda (keyword &optional auto-undefer-p) (funcall #'org-element-deferred-create auto-undefer-p #'org-element-property-2 keyword))) (with-temp-buffer (org-mode) major-mode))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_org_alias.el"
+      ],
+      "returncode": 0,
+      "seconds": 1.75,
+      "value": "(ok org-mode)",
+      "stdout": "org-ast-mode-after-alias-control.current.gnu.out",
+      "stderr": "org-ast-mode-after-alias-control.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "org-ast:mode-after-alias-control",
+      "group": "org_alias",
+      "form": "(progn (require 'org-element-ast) (fset 'org-element-deferred-create-alias (lambda (keyword &optional auto-undefer-p) (funcall #'org-element-deferred-create auto-undefer-p #'org-element-property-2 keyword))) (with-temp-buffer (org-mode) major-mode))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_org_alias.el"
+      ],
+      "returncode": 0,
+      "seconds": 65.01,
+      "value": "(error (void-function t))",
+      "stdout": "org-ast-mode-after-alias-control.current.remacs.out",
+      "stderr": "org-ast-mode-after-alias-control.current.remacs.err",
+      "complete": true
+    }
+  ]
+}

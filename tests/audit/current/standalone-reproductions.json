@@ -1,0 +1,100 @@
+[
+  {
+    "side": "gnu",
+    "id": "AUD-012",
+    "returncode": 0,
+    "stdout": "(ok (nil (128 255)))\n(ok (nil (128 255)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-012",
+    "returncode": 0,
+    "stdout": "(ok (nil (4194176 4194303)))\n(ok (nil (128 255)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-023",
+    "returncode": 0,
+    "stdout": "(ok (a nil \"one\\ntwo\\nthree\"))\n(ok (a ((x . \"one two three four\"))))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-023",
+    "returncode": 0,
+    "stdout": "(ok (a nil \"one\\15\\ntwo\\15three\"))\n(ok (a ((x . \"one\\11two\\nthree\\15four\"))))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-034",
+    "returncode": 0,
+    "stdout": "(ok (nil t))\n(ok error)\n(ok (nil nil))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-034",
+    "returncode": 0,
+    "stdout": "(ok (t t))\n(ok unlocked)\n(error (error \"Cannot unlock mutex owned by another thread\"))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-037",
+    "returncode": 0,
+    "stdout": "(ok (233))\n(ok \"e9  0a\")\n(error (coding-system-error audit-no-such-coding))\n(error (void-function audit-net-with-pair))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-037",
+    "returncode": 0,
+    "stdout": "(ok (65533))\n(ok \"c3  a9  0a\")\n(ok accepted)\n(error (void-function audit-net-with-pair))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-053",
+    "returncode": 0,
+    "stdout": "(ok (t \"(document (array (ERROR (UNEXPECTED 'x')) (number)))\"))\n(ok \"(document (array (null) (number)))\")\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-053",
+    "returncode": 0,
+    "stdout": "(ok (nil \"(document (array (number) (number)))\"))\n(ok \"(document (array (number) (number)))\")\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-060",
+    "returncode": 0,
+    "stdout": "(ok closed)\n",
+    "stderr": "NETWORK server port 53816\n"
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-060",
+    "returncode": 0,
+    "stdout": "(ok open)\n",
+    "stderr": "NETWORK server port 53820\n"
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-068",
+    "returncode": 0,
+    "stdout": "(ok (t (file-exists-p)))\n(ok (t (file-readable-p)))\n(ok (t (file-writable-p)))\n(ok (416 (file-modes)))\n(ok (nil (copy-file)))\n(ok (nil (rename-file)))\n(ok (nil (delete-file)))\n(ok (nil (set-file-modes)))\n(ok (t (set-file-times)))\n(ok ((\"/audit-magic:/entry\" 7) (insert-file-contents)))\n(ok (nil (write-region)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-068",
+    "returncode": 0,
+    "stdout": "(ok (nil nil))\n(ok (nil nil))\n(ok (nil nil))\n(ok (nil nil))\n(ok (file-missing nil))\n(ok (file-missing nil))\n(ok (nil nil))\n(ok (file-missing nil))\n(ok (file-missing nil))\n(ok (file-missing nil))\n(ok (file-missing nil))\n",
+    "stderr": ""
+  }
+]

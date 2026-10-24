@@ -1,0 +1,6 @@
+{
+  "path": "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+  "sha256": "37aec7800115143d785086fa184114757237776c93c892e30696644b5c255017",
+  "head": "926cbfc7fe1ddde28c53d0555be1f6b99563535b",
+  "worktree_diff_stat": " src/editor/mod.rs | 29 ++++++++++++++++++++---------\n src/lisp/eval.rs  |  7 ++++++-\n 2 files changed, 26 insertions(+), 10 deletions(-)\n"
+}

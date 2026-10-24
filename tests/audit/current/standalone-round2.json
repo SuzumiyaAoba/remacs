@@ -1,0 +1,212 @@
+[
+  {
+    "side": "gnu",
+    "id": "AUD-072",
+    "returncode": 0,
+    "stdout": "(ok (\"abc\" (bold bold bold)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-072",
+    "returncode": 0,
+    "stdout": "(ok (\"abc\" (bold nil bold)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-073",
+    "returncode": 0,
+    "stdout": "(ok (nil (128 255) 128 [128 255] bold))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-073",
+    "returncode": 0,
+    "stdout": "(ok (nil (4194176 4194303) 4194176 [4194176 4194303] bold))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-074",
+    "returncode": 0,
+    "stdout": "(ok (\"abcdeX\" 4 3))\n(ok (t 4 3 nil nil ((1 7 6))))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-074",
+    "returncode": 0,
+    "stdout": "(ok (\"abcdeX\" 7 1))\n(ok (t 7 1 t ((1 . 7) (\"abcdef\" . 1) (#<marker in no buffer> . -2) (t . 0)) ((1 7 0) (1 1 6))))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-075",
+    "returncode": 0,
+    "stdout": "(ok (\"aXc\" (nil bold nil)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-075",
+    "returncode": 0,
+    "stdout": "(ok (\"aXc\" (nil nil nil)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-076",
+    "returncode": 0,
+    "stdout": "(ok \"NEW\")\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-076",
+    "returncode": 0,
+    "stdout": "(ok \"xxNEWyy\")\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-077",
+    "returncode": 0,
+    "stdout": "(ok \"NEW\")\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-077",
+    "returncode": 0,
+    "stdout": "(error (wrong-type-argument stringp [#<killed buffer> 3 6]))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-078",
+    "returncode": 0,
+    "stdout": "(ok ((2 5 \"abc\") \"[X]\" 1 4))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-078",
+    "returncode": 0,
+    "stdout": "(ok ((1 6 \"[abc]\") \"[X]\" 1 4))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-079",
+    "returncode": 0,
+    "stdout": "(ok (\"XYZ--ab\" 7 (7 2 5)))\n(ok (\"XYZ--ab\" 2 (2 6 4)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-079",
+    "returncode": 0,
+    "stdout": "(ok (\"XYZ--ab\" 4 (1 6 5)))\n(ok (\"XYZ--ab\" 4 (1 6 5)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-080",
+    "returncode": 0,
+    "stdout": "(ok (\"XYZ--ab\" (italic italic italic nil nil bold bold)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-080",
+    "returncode": 0,
+    "stdout": "(ok (\"XYZ--ab\" (nil nil nil nil nil nil nil)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-081",
+    "returncode": 0,
+    "stdout": "(ok (\"abc\" (bold bold bold)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-081",
+    "returncode": 0,
+    "stdout": "(ok (\"abc\" (nil nil nil)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-082",
+    "returncode": 0,
+    "stdout": "(ok (args-out-of-range \"\"))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-082",
+    "returncode": 0,
+    "stdout": "(ok (copied \"[abc]\"))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-083",
+    "returncode": 0,
+    "stdout": "(ok (nil t))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-083",
+    "returncode": 0,
+    "stdout": "(ok (nil nil))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-084",
+    "returncode": 0,
+    "stdout": "(ok (sent 128000 128000))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-084",
+    "returncode": 0,
+    "stdout": "(ok (sent 128000 1022))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-085",
+    "returncode": 0,
+    "stdout": "(ok (1 nil nil))\n(ok 2)\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-085",
+    "returncode": 0,
+    "stdout": "(ok (1 2 t))\n(ok 1)\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-086",
+    "returncode": 0,
+    "stdout": "(ok \"(34, 12)\")\n(error (wrong-type-argument processp not-a-process))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-086",
+    "returncode": 0,
+    "stdout": "(ok \"(0, 0)\")\n(ok nil)\n",
+    "stderr": ""
+  }
+]

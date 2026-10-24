@@ -1,0 +1,170 @@
+[
+  {
+    "id": "library:shortdoc-doc-direct",
+    "side": "gnu",
+    "metadata": {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_library_lifecycle_more.el"
+      ],
+      "only": "library:shortdoc-doc-direct",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.232748,
+      "completed": true,
+      "stdout_file": "library_lifecycle_more.gnu-library-shortdoc-doc-direct.out",
+      "stderr_file": "library_lifecycle_more.gnu-library-shortdoc-doc-direct.err"
+    },
+    "values": {
+      "library:shortdoc-doc-direct": "(ok (shortdoc-doc nil))"
+    },
+    "forms": {
+      "library:shortdoc-doc-direct": "(list (require 'shortdoc-doc) (featurep 'shortdoc))"
+    }
+  },
+  {
+    "id": "library:shortdoc-doc-direct",
+    "side": "remacs",
+    "metadata": {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_library_lifecycle_more.el"
+      ],
+      "only": "library:shortdoc-doc-direct",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 11.025475,
+      "completed": true,
+      "stdout_file": "library_lifecycle_more.remacs-library-shortdoc-doc-direct.out",
+      "stderr_file": "library_lifecycle_more.remacs-library-shortdoc-doc-direct.err"
+    },
+    "values": {
+      "library:shortdoc-doc-direct": "(error (error \"Eager macro-expansion failure: (error \\\"Eager macro-expansion skipped due to cycle:\\\\n  … => (load \\\\\\\"shortdoc-doc.el\\\\\\\") => (macroexpand-all (define-short-documentation-group alist …)) => (macroexpand (define-short-documentation-group …)) => (load \\\\\\\"shortdoc.el\\\\\\\") => (load \\\\\\\"shortdoc-doc.el\\\\\\\")\\\")\"))"
+    },
+    "forms": {
+      "library:shortdoc-doc-direct": "(list (require 'shortdoc-doc) (featurep 'shortdoc))"
+    }
+  },
+  {
+    "id": "library:shortdoc-first-control",
+    "side": "gnu",
+    "metadata": {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_library_lifecycle_more.el"
+      ],
+      "only": "library:shortdoc-first-control",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.306365,
+      "completed": true,
+      "stdout_file": "library_lifecycle_more.gnu-library-shortdoc-first-control.out",
+      "stderr_file": "library_lifecycle_more.gnu-library-shortdoc-first-control.err"
+    },
+    "values": {
+      "library:shortdoc-first-control": "(ok (shortdoc-doc t))"
+    },
+    "forms": {
+      "library:shortdoc-first-control": "(progn (require 'shortdoc) (list (require 'shortdoc-doc) (featurep 'shortdoc)))"
+    }
+  },
+  {
+    "id": "library:shortdoc-first-control",
+    "side": "remacs",
+    "metadata": {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_library_lifecycle_more.el"
+      ],
+      "only": "library:shortdoc-first-control",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 10.825197,
+      "completed": true,
+      "stdout_file": "library_lifecycle_more.remacs-library-shortdoc-first-control.out",
+      "stderr_file": "library_lifecycle_more.remacs-library-shortdoc-first-control.err"
+    },
+    "values": {
+      "library:shortdoc-first-control": "(ok (shortdoc-doc t))"
+    },
+    "forms": {
+      "library:shortdoc-first-control": "(progn (require 'shortdoc) (list (require 'shortdoc-doc) (featurep 'shortdoc)))"
+    }
+  },
+  {
+    "id": "closure:dotted-arglist",
+    "side": "gnu",
+    "metadata": {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_library_lifecycle_more.el"
+      ],
+      "only": "closure:dotted-arglist",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.201592,
+      "completed": true,
+      "stdout_file": "library_lifecycle_more.gnu-closure-dotted-arglist.out",
+      "stderr_file": "library_lifecycle_more.gnu-closure-dotted-arglist.err"
+    },
+    "values": {
+      "closure:dotted-arglist": "(ok ((invalid-function #[(a . b) ((list a b)) #1=(t)]) (invalid-function #[(a b . c) ((list a b c)) #1#])))"
+    },
+    "forms": {
+      "closure:dotted-arglist": "(list (condition-case e (eval '(funcall (lambda (a . b) (list a b)) 1 2 3) t) (error e)) (condition-case e (eval '(funcall (lambda (a b . c) (list a b c)) 1 2 3 4) t) (error e)))"
+    }
+  },
+  {
+    "id": "closure:dotted-arglist",
+    "side": "remacs",
+    "metadata": {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_library_lifecycle_more.el"
+      ],
+      "only": "closure:dotted-arglist",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 8.353298,
+      "completed": true,
+      "stdout_file": "library_lifecycle_more.remacs-closure-dotted-arglist.out",
+      "stderr_file": "library_lifecycle_more.remacs-closure-dotted-arglist.err"
+    },
+    "values": {
+      "closure:dotted-arglist": "(ok ((wrong-type-argument listp b) (wrong-type-argument listp c)))"
+    },
+    "forms": {
+      "closure:dotted-arglist": "(list (condition-case e (eval '(funcall (lambda (a . b) (list a b)) 1 2 3) t) (error e)) (condition-case e (eval '(funcall (lambda (a b . c) (list a b c)) 1 2 3 4) t) (error e)))"
+    }
+  }
+]

@@ -1,0 +1,2583 @@
+KNOWN isearch-forward (autoskipped: GNU-side hang only)
+KNOWN  advice-eval-interactive-spec (1 rows)
+    row#4
+      gnu:    err (error "Invalid control letter `~' (#o176, #x007e) in interactive calling string")
+      remacs: err (error "Invalid control letter ‘~’ (#o176, #x007e) in interactive calling string")
+KNOWN  apropos-internal (1 rows)
+    row#2
+      gnu:    ok (&name &optional \(setf\ built-in-class--docstring\) \(setf\ built-in-class--index-table\) \(setf\ built-in-class--name\) \(setf\ built-in-class--parents\) \(setf\ built-in-class--slots\) \(setf\ cl-derived-type-class-do
+      remacs: ok (&allow-other-keys &aux &name &optional \(setf\ built-in-class--docstring\) \(setf\ built-in-class--index-table\) \(setf\ built-in-class--name\) \(setf\ built-in-class--non-abstract-supertype\) \(setf\ built-in-class--pa
+DIVERG async-shell-command (2 rows)
+    row#2
+      gnu:    ok (window t)
+      remacs: err (error "Window #<X> too small for splitting")
+    row#3
+      gnu:    ok (window t)
+      remacs: err (error "Window #<X> too small for splitting")
+KNOWN  backtrace-frames (2 rows)
+    row#1
+      gnu:    ok ((t #<X> nil nil) (t apply (#<X> nil) nil) (nil dif--norm #1=((apply f args)) nil) (nil if #2=((member name dif--norm-type) (list 'type (type-of (apply f args))) (dif--norm . #1#)) nil) (nil dif--emit #3=(name seq 'ok (i
+      remacs: ok ((t #1=#<X> nil nil) (t apply (#1# nil) nil) (t dif--run (#2="backtrace-frames" 1 #1# nil) nil) (t dif--call (#2# 1 #1# nil) nil))
+    row#4
+      gnu:    ok ((t #<X> nil nil) (t apply (#<X> nil) nil) (nil dif--norm #1=((apply f args)) nil) (nil if #2=((member name dif--norm-type) (list 'type (type-of (apply f args))) (dif--norm . #1#)) nil) (nil dif--emit #3=(name seq 'ok (i
+      remacs: ok ((t #1=#<X> nil nil) (t apply (#1# nil) nil) (t dif--run (#2="backtrace-frames" 4 #1# nil) nil) (t dif--call-buf (#2# 4 #1# nil) nil))
+KNOWN  blink-cursor--start-timer (2 rows)
+    row#1
+      gnu:    ok [nil 27348 39842 257623 0.5 blink-cursor-timer-function nil nil 0 nil]
+      remacs: ok [nil 27348 40036 868418 0.5 blink-cursor-timer-function nil nil 0 nil]
+    row#3
+      gnu:    ok [nil 27348 39842 257706 0.5 blink-cursor-timer-function nil nil 0 nil]
+      remacs: ok [nil 27348 40036 869326 0.5 blink-cursor-timer-function nil nil 0 nil]
+KNOWN  buffer-menu (3 rows)
+    row#1
+      gnu:    ok #("Commands: d, s, x, u; f, o, 1, 2, m, v; ~, %; q to quit; h for help" 10 11 (font-lock-face help-key-binding face help-key-binding) 13 14 (font-lock-face help-key-binding face help-key-binding) 16 17 (font-lock-face he
+      remacs: ok #("Commands: C-k, s, x, u; RET, o, 1, 2, m, v; ~, %; C-x w q to quit; C-h m for help" 10 13 (face help-key-binding font-lock-face help-key-binding) 15 16 (face help-key-binding font-lock-face help-key-binding) 18 19 (fac
+    row#2
+      gnu:    ok #("Commands: d, s, x, u; f, o, 1, 2, m, v; ~, %; q to quit; h for help" 10 11 (font-lock-face help-key-binding face help-key-binding) 13 14 (font-lock-face help-key-binding face help-key-binding) 16 17 (font-lock-face he
+      remacs: ok #("Commands: C-k, s, x, u; RET, o, 1, 2, m, v; ~, %; C-x w q to quit; C-h m for help" 10 13 (face help-key-binding font-lock-face help-key-binding) 15 16 (face help-key-binding font-lock-face help-key-binding) 18 19 (fac
+    row#4
+      gnu:    ok #("Commands: d, s, x, u; f, o, 1, 2, m, v; ~, %; q to quit; h for help" 10 11 (font-lock-face help-key-binding face help-key-binding) 13 14 (font-lock-face help-key-binding face help-key-binding) 16 17 (font-lock-face he
+      remacs: ok #("Commands: C-k, s, x, u; RET, o, 1, 2, m, v; ~, %; C-x w q to quit; C-h m for help" 10 13 (face help-key-binding font-lock-face help-key-binding) 15 16 (face help-key-binding font-lock-face help-key-binding) 18 19 (fac
+KNOWN  buffer-menu--display-help (2 rows)
+    row#1
+      gnu:    ok #("Commands: d, s, x, u; f, o, 1, 2, m, v; ~, %; q to quit; h for help" 10 11 (font-lock-face help-key-binding face help-key-binding) 13 14 (font-lock-face help-key-binding face help-key-binding) 16 17 (font-lock-face he
+      remacs: ok #("Commands: C-k, s, x, u; RET, o, 1, 2, m, v; ~, %; C-x w q to quit; C-h m for help" 10 13 (face help-key-binding font-lock-face help-key-binding) 15 16 (face help-key-binding font-lock-face help-key-binding) 18 19 (fac
+    row#3
+      gnu:    ok #("Commands: d, s, x, u; f, o, 1, 2, m, v; ~, %; q to quit; h for help" 10 11 (font-lock-face help-key-binding face help-key-binding) 13 14 (font-lock-face help-key-binding face help-key-binding) 16 17 (font-lock-face he
+      remacs: ok #("Commands: C-k, s, x, u; RET, o, 1, 2, m, v; ~, %; C-x w q to quit; C-h m for help" 10 13 (face help-key-binding font-lock-face help-key-binding) 15 16 (face help-key-binding font-lock-face help-key-binding) 18 19 (fac
+KNOWN  buffer-menu-other-window (3 rows)
+    row#1
+      gnu:    ok #("Commands: d, s, x, u; f, o, 1, 2, m, v; ~, %; q to quit; h for help" 10 11 (font-lock-face help-key-binding face help-key-binding) 13 14 (font-lock-face help-key-binding face help-key-binding) 16 17 (font-lock-face he
+      remacs: ok #("Commands: C-k, s, x, u; RET, o, 1, 2, m, v; ~, %; C-x w q to quit; C-h m for help" 10 13 (face help-key-binding font-lock-face help-key-binding) 15 16 (face help-key-binding font-lock-face help-key-binding) 18 19 (fac
+    row#2
+      gnu:    ok #("Commands: d, s, x, u; f, o, 1, 2, m, v; ~, %; q to quit; h for help" 10 11 (font-lock-face help-key-binding face help-key-binding) 13 14 (font-lock-face help-key-binding face help-key-binding) 16 17 (font-lock-face he
+      remacs: ok #("Commands: C-k, s, x, u; RET, o, 1, 2, m, v; ~, %; C-x w q to quit; C-h m for help" 10 13 (face help-key-binding font-lock-face help-key-binding) 15 16 (face help-key-binding font-lock-face help-key-binding) 18 19 (fac
+    row#4
+      gnu:    ok #("Commands: d, s, x, u; f, o, 1, 2, m, v; ~, %; q to quit; h for help" 10 11 (font-lock-face help-key-binding face help-key-binding) 13 14 (font-lock-face help-key-binding face help-key-binding) 16 17 (font-lock-face he
+      remacs: ok #("Commands: C-k, s, x, u; RET, o, 1, 2, m, v; ~, %; C-x w q to quit; C-h m for help" 10 13 (face help-key-binding font-lock-face help-key-binding) 15 16 (face help-key-binding font-lock-face help-key-binding) 18 19 (fac
+KNOWN  byte-run--dont-autoload (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+DIVERG call-shell-region (1 rows)
+    row#2
+      gnu:    ok 1
+      remacs: ok 2
+KNOWN  cconv--interactive-helper (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#5
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  cl-generic-all-functions (2 rows)
+    row#1
+      gnu:    ok (seq-position handle-args-function gui-backend-get-selection seq-find window-system-initialization seq-mapn seq-length register-val-describe xref-backend-definitions seq-do seq-concatenate seq-sort seq-contains seq-into-
+      remacs: ok (xref-backend-references cl-generic-combine-methods cl-no-primary-method \(setf\ seq-elt\) window-system-initialization handle-args-function xref-location-group xref-location-marker xref-backend-identifier-completion-tab
+    row#4
+      gnu:    ok (seq-position handle-args-function gui-backend-get-selection seq-find window-system-initialization seq-mapn seq-length register-val-describe xref-backend-definitions seq-do seq-concatenate seq-sort seq-contains seq-into-
+      remacs: ok (xref-backend-references cl-generic-combine-methods cl-no-primary-method \(setf\ seq-elt\) window-system-initialization handle-args-function xref-location-group xref-location-marker xref-backend-identifier-completion-tab
+KNOWN  clone-buffer (2 rows)
+    row#1
+      gnu:    ok (buf  dfx-scratch-260487)
+      remacs: ok (buf  dfx-scratch-663309)
+    row#4
+      gnu:    ok (buf  dfx-472079)
+      remacs: ok (buf  dfx-102683)
+KNOWN  command-completion--command-for-this-buffer-function (2 rows)
+    row#1
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#3
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  command-execute (2 rows)
+    row#2
+      gnu:    ok nil
+      remacs: err (buffer-read-only #<X>)
+    row#3
+      gnu:    ok nil
+      remacs: err (wrong-type-argument listp [nil (Buffer-menu-mode)])
+KNOWN  completing-read-default (1 rows)
+    row#4
+      gnu:    err (wrong-type-argument stringp l)
+      remacs: err (end-of-file "Error reading from stdin")
+KNOWN  completion--make-envvar-table (2 rows)
+    row#1
+      gnu:    ok ("DIFF_ONLY" "EMACSPATH" "EMACSLOADPATH" "DIFF_DIR" "TZ" "MANPATH" "LIBRARY_PATH" "CPATH" "SDKROOT" "_" "__NIX_DARWIN_SET_ENVIRONMENT_DONE" "__MISE_ZSH_PRECMD_RUN" "__MISE_ZSH_CHPWD_RAN" "__MISE_SESSION" "__MISE_ORIG_PAT
+      remacs: ok ("ATUIN_HISTORY_ID" "ATUIN_SESSION" "CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS" "CODEX_CI" "CODEX_SANDBOX_NETWORK_DISABLED" "CODEX_SESSION_ID" "CODEX_THREAD_ID" "CODEX_TOOL_CALL_ID" "CODEX_VERSION" "COLORTERM" "COMMAND_MOD
+    row#3
+      gnu:    ok ("DIFF_ONLY" "EMACSPATH" "EMACSLOADPATH" "DIFF_DIR" "TZ" "MANPATH" "LIBRARY_PATH" "CPATH" "SDKROOT" "_" "__NIX_DARWIN_SET_ENVIRONMENT_DONE" "__MISE_ZSH_PRECMD_RUN" "__MISE_ZSH_CHPWD_RAN" "__MISE_SESSION" "__MISE_ORIG_PAT
+      remacs: ok ("ATUIN_HISTORY_ID" "ATUIN_SESSION" "CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS" "CODEX_CI" "CODEX_SANDBOX_NETWORK_DISABLED" "CODEX_SESSION_ID" "CODEX_THREAD_ID" "CODEX_TOOL_CALL_ID" "CODEX_VERSION" "COLORTERM" "COMMAND_MOD
+KNOWN  completion-table-case-fold (3 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#3
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#5
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  completion-table-dynamic (3 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#3
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#5
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  completion-table-in-turn (4 rows)
+    row#1
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#3
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  completion-table-merge (4 rows)
+    row#1
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#3
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  completion-table-subvert (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#5
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  completion-table-with-cache (3 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#3
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#5
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  completion-table-with-metadata (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#5
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  completion-table-with-quoting (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#5
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  compose-mail-other-window (1 rows)
+    row#2
+      gnu:    ok (buf *unsent mail*<5>)
+      remacs: ok (buf *unsent mail*<3>)
+KNOWN  create-default-fontset (2 rows)
+    row#1
+      gnu:    ok nil
+      remacs: ok "Error (initialization): Creation of the default fontsets failed: (error Invalid script or charset name: armenian)"
+    row#3
+      gnu:    ok nil
+      remacs: ok "Error (initialization): Creation of the default fontsets failed: (error Invalid script or charset name: armenian)"
+KNOWN  current-active-maps (3 rows)
+    row#1
+      gnu:    ok ((keymap (C-down-mouse-1 menu-item . #1=("Context Menu" (keymap) :filter #<X> 2 "\n\n(fn _)"])) (C-mouse-1) (menu . context-menu-open) (down-mouse-3 menu-item . #1#) (mouse-3 . ignore)) (keymap #^[nil nil keymap #2=#^^[3
+      remacs: ok ((keymap (C-down-mouse-1 . #1=(menu-item "Context Menu" (keymap) :filter #<X>)) (C-mouse-1) (menu . context-menu-open) (down-mouse-3 . #1#) (mouse-3 . ignore)) (keymap #^[nil nil keymap #2=#^^[3 0 set-mark-command move-b
+    row#2
+      gnu:    ok ((keymap (C-down-mouse-1 menu-item . #1=("Context Menu" (keymap) :filter #<X> 2 "\n\n(fn _)"])) (C-mouse-1) (menu . context-menu-open) (down-mouse-3 menu-item . #1#) (mouse-3 . ignore)) (keymap #^[nil nil keymap #2=#^^[3
+      remacs: ok ((keymap (C-down-mouse-1 . #1=(menu-item "Context Menu" (keymap) :filter #<X>)) (C-mouse-1) (menu . context-menu-open) (down-mouse-3 . #1#) (mouse-3 . ignore)) (keymap #^[nil nil keymap #2=#^^[3 0 set-mark-command move-b
+    row#4
+      gnu:    ok ((keymap (C-down-mouse-1 menu-item . #1=("Context Menu" (keymap) :filter #<X> 2 "\n\n(fn _)"])) (C-mouse-1) (menu . context-menu-open) (down-mouse-3 menu-item . #1#) (mouse-3 . ignore)) (keymap #^[nil nil keymap #2=#^^[3
+      remacs: ok ((keymap (C-down-mouse-1 . #1=(menu-item "Context Menu" (keymap) :filter #<X>)) (C-mouse-1) (menu . context-menu-open) (down-mouse-3 . #1#) (mouse-3 . ignore)) (keymap #^[nil nil keymap #2=#^^[3 0 set-mark-command move-b
+KNOWN  current-cpu-time (2 rows)
+    row#1
+      gnu:    ok (706009 . 1000000)
+      remacs: ok (18606128 . 1000000)
+    row#3
+      gnu:    ok (706081 . 1000000)
+      remacs: ok (18606921 . 1000000)
+KNOWN  current-minor-mode-maps (2 rows)
+    row#1
+      gnu:    ok ((keymap (C-down-mouse-1 menu-item . #1=("Context Menu" (keymap) :filter #<X> 2 "\n\n(fn _)"])) (C-mouse-1) (menu . context-menu-open) (down-mouse-3 menu-item . #1#) (mouse-3 . ignore)))
+      remacs: ok ((keymap (C-down-mouse-1 . #1=(menu-item "Context Menu" (keymap) :filter #<X>)) (C-mouse-1) (menu . context-menu-open) (down-mouse-3 . #1#) (mouse-3 . ignore)))
+    row#3
+      gnu:    ok ((keymap (C-down-mouse-1 menu-item . #1=("Context Menu" (keymap) :filter #<X> 2 "\n\n(fn _)"])) (C-mouse-1) (menu . context-menu-open) (down-mouse-3 menu-item . #1#) (mouse-3 . ignore)))
+      remacs: ok ((keymap (C-down-mouse-1 . #1=(menu-item "Context Menu" (keymap) :filter #<X>)) (C-mouse-1) (menu . context-menu-open) (down-mouse-3 . #1#) (mouse-3 . ignore)))
+KNOWN  current-window-configuration (2 rows)
+    row#1
+      gnu:    ok (winconf)
+      remacs: ok (record)
+    row#4
+      gnu:    ok (winconf)
+      remacs: ok (record)
+KNOWN  custom-initialize-after-file-load (2 rows)
+    row#2
+      gnu:    ok (#1=#<X> 4 "\n\n(fn FILE)"] elisp--font-lock-flush-elisp-buffers)
+      remacs: ok (#<X>) (symbol . "a") (thisfile . "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/diff/driver.el") (value . "a\\b"))] elisp--font-lock-flush-elisp-buffers)
+    row#5
+      gnu:    ok (#1=#<X> 4 #5="\n\n(fn FILE)"] #3=#<X> 4 #5#] elisp--font-lock-flush-elisp-buffers)
+      remacs: ok (#<X>) (symbol . "a") (thisfile . "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/diff/driver.el") (value . "a\\b"))] elisp--font-lock-flush-elisp-buffers)
+KNOWN  define-keymap--compile (1 rows)
+    row#3
+      gnu:    err (void-function byte-compile-warn-x)
+      remacs: ok "%-10s|%05.2f"
+KNOWN  defined-colors (1 rows)
+    row#1
+      gnu:    err (error "Invalid argument -0.0 in `get-device-terminal'")
+      remacs: err (error "Invalid argument -0.0 in ‘get-device-terminal’")
+KNOWN  defined-colors-with-face-attributes (2 rows)
+    row#1
+      gnu:    ok (#("black" 0 5 (face ((:foreground #1="#ffffff" :background "black")))) #("red" 0 3 (face ((:foreground #1# :background "red")))) #("green" 0 5 (face ((:foreground #2="black" :background "green")))) #("yellow" 0 6 (face 
+      remacs: ok (#("black" 0 5 (face ((:foreground "#ffffff" :background "black")))) #("red" 0 3 (face ((:foreground "#ffffff" :background "red")))) #("green" 0 5 (face ((:foreground "black" :background "green")))) #("yellow" 0 6 (face 
+    row#4
+      gnu:    ok (#("black" 0 5 (face ((:foreground #1="#ffffff" :background "black")))) #("red" 0 3 (face ((:foreground #1# :background "red")))) #("green" 0 5 (face ((:foreground #2="black" :background "green")))) #("yellow" 0 6 (face 
+      remacs: ok (#("black" 0 5 (face ((:foreground "#ffffff" :background "black")))) #("red" 0 3 (face ((:foreground "#ffffff" :background "red")))) #("green" 0 5 (face ((:foreground "black" :background "green")))) #("yellow" 0 6 (face 
+KNOWN  delete-completion-window (1 rows)
+    row#1
+      gnu:    ok (window t)
+      remacs: ok nil
+KNOWN  describe-bindings (1 rows)
+    row#1
+      gnu:    ok nil
+      remacs: err (void-function test.foo)
+KNOWN  digit-argument (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  display--update-for-mouse-movement (2 rows)
+    row#2
+      gnu:    err (wrong-type-argument framep "a")
+      remacs: ok nil
+    row#5
+      gnu:    err (wrong-type-argument framep function)
+      remacs: ok nil
+KNOWN  display-buffer-override-next-command (3 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#3
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#5
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  display-completion-list (1 rows)
+    row#2
+      gnu:    err (wrong-type-argument stringp nil)
+      remacs: err (wrong-type-argument stringp t)
+KNOWN  display-monitor-attributes-list (2 rows)
+    row#1
+      gnu:    ok (((geometry . #1=(0 0 80 25)) (workarea . #1#) (mm-size nil nil) (frames #<X>)))
+      remacs: ok (((geometry 0 0 80 25) (workarea 0 0 80 25) (mm-size nil nil) (frames #<X>)))
+    row#4
+      gnu:    ok (((geometry . #1=(0 0 80 25)) (workarea . #1#) (mm-size nil nil) (frames #<X>)))
+      remacs: ok (((geometry 0 0 80 25) (workarea 0 0 80 25) (mm-size nil nil) (frames #<X>)))
+KNOWN  display-startup-screen (1 rows)
+    row#1
+      gnu:    err (invalid-function #<X>)
+      remacs: ok (buf *GNU Emacs*)
+KNOWN  dnd-open-file (1 rows)
+    row#2
+      gnu:    err (invalid-function #<X>)
+      remacs: ok private
+KNOWN  dnd-open-remote-url (1 rows)
+    row#2
+      gnu:    err (invalid-function #<X>)
+      remacs: ok private
+KNOWN  edit-abbrevs (2 rows)
+    row#1
+      gnu:    err (invalid-function #<X>)
+      remacs: ok 34
+    row#3
+      gnu:    err (invalid-function #<X>)
+      remacs: ok 34
+KNOWN  edit-tab-stops (2 rows)
+    row#1
+      gnu:    err (invalid-function #<X>)
+      remacs: ok 1
+    row#3
+      gnu:    err (invalid-function #<X>)
+      remacs: ok 1
+KNOWN  edit-tab-stops-note-changes (2 rows)
+    row#1
+      gnu:    err (invalid-function #<X>)
+      remacs: ok "Tab stops installed"
+    row#3
+      gnu:    err (error "Invalid buffer")
+      remacs: err (error "Attempt to display deleted buffer")
+KNOWN  elisp--expect-function-p (2 rows)
+    row#2
+      gnu:    err (wrong-type-argument number-or-marker-p "a")
+      remacs: err (wrong-type-argument integer-or-marker-p "a")
+    row#4
+      gnu:    err (wrong-type-argument number-or-marker-p "~")
+      remacs: err (wrong-type-argument integer-or-marker-p "~")
+KNOWN  elisp--help-echo (1 rows)
+    row#4
+      gnu:    ok (fn)
+      remacs: err (wrong-type-argument symbolp "~")
+KNOWN  elisp-completion-at-point (2 rows)
+    row#1
+      gnu:    ok (1 1 #<X> 6 "\n\n(fn STRING)"] boundaries metadata minibuffer-selected-window window-live-p window-buffer complete-with-action] 8 "\n\n(fn STRING PRED ACTION)"] #<X> 6 "\n\n(fn &rest ARGS2)"]) #s(hash-table test eq data 
+      remacs: ok (1 1 #<X> 6 "\n\n(fn &rest ARGS2)"]))] :company-kind #<X> #^^[1 0 #^^[2 0 #^^[3 0 ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ..
+    row#3
+      gnu:    ok (7 11 #<X> 6 "\n\n(fn STRING)"] boundaries metadata minibuffer-selected-window window-live-p window-buffer complete-with-action] 8 "\n\n(fn STRING PRED ACTION)"] #<X> 6 "\n\n(fn &rest ARGS2)"]) #s(hash-table test eq data
+      remacs: ok (7 11 #<X> 6 "\n\n(fn &rest ARGS2)"]))] :company-kind #<X> #^^[1 0 #^^[2 0 #^^[3 0 ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... .
+KNOWN  elisp-context-menu (2 rows)
+    row#2
+      gnu:    err (wrong-type-argument keymapp "a")
+      remacs: ok "a"
+    row#5
+      gnu:    err (wrong-type-argument keymapp function)
+      remacs: ok function
+KNOWN  elisp-cursor-sensor (2 rows)
+    row#2
+      gnu:    ok (#<X> 5 "\n\n(fn WIN OLD DIR)"])
+      remacs: ok (#<X>)
+    row#4
+      gnu:    ok (#<X> 5 "\n\n(fn WIN OLD DIR)"])
+      remacs: ok (#<X>)
+KNOWN  elisp-flymake-byte-compile--executable (2 rows)
+    row#1
+      gnu:    ok "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1"
+      remacs: ok "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs"
+    row#3
+      gnu:    ok "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1"
+      remacs: ok "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs"
+KNOWN  elisp-load-path-roots (2 rows)
+    row#1
+      gnu:    ok ("~/.emacs.d/elpa" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/lisp" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/lisp/vc" "/nix/store/xbihkz9wlc
+      remacs: ok ("~/.local/share/emacs/SuzumiyaAoba/elpa")
+    row#3
+      gnu:    ok ("~/.emacs.d/elpa" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/lisp" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/lisp/vc" "/nix/store/xbihkz9wlc
+      remacs: ok ("~/.local/share/emacs/SuzumiyaAoba/elpa")
+KNOWN  emacs-lisp-native-compile (2 rows)
+    row#1
+      gnu:    err (error "The buffer must be saved in a file first")
+      remacs: err (native-compiler-error "Not a function symbol or file" nil)
+    row#3
+      gnu:    err (error "The buffer must be saved in a file first")
+      remacs: err (native-compiler-error "Not a function symbol or file" nil)
+KNOWN  emacs-lisp-native-compile-and-load (2 rows)
+    row#1
+      gnu:    err (error "The buffer must be saved in a file first")
+      remacs: err (native-compiler-error "Not a function symbol or file" nil)
+    row#3
+      gnu:    err (error "The buffer must be saved in a file first")
+      remacs: err (native-compiler-error "Not a function symbol or file" nil)
+KNOWN  fancy-startup-screen (1 rows)
+    row#2
+      gnu:    ok nil
+      remacs: err (invalid-function #<X>)
+KNOWN  file-has-changed-p (1 rows)
+    row#2
+      gnu:    ok (0 27348 39853 922206 543000)
+      remacs: ok (0 27348 40049 709708 523000)
+KNOWN  find-alternate-file (2 rows)
+    row#3
+      gnu:    ok t
+      remacs: err (error "Buffer name ` **lose**' is in use")
+    row#5
+      gnu:    err (wrong-type-argument stringp function)
+      remacs: err (error "Buffer name ` **lose**' is in use")
+KNOWN  find-alternate-file-other-window (2 rows)
+    row#3
+      gnu:    ok t
+      remacs: ok (buf %-10s|%05.2f)
+    row#5
+      gnu:    err (wrong-type-argument stringp function)
+      remacs: err (error "Buffer name ` **lose**' is in use")
+KNOWN  find-file-noselect (1 rows)
+    row#3
+      gnu:    err (end-of-file "Error reading from stdin")
+      remacs: ok (buf %-10s|%05.2f)
+KNOWN  find-file-other-frame (1 rows)
+    row#3
+      gnu:    ok (buf %-10s|%05.2f)
+      remacs: err (error "Unknown terminal type")
+KNOWN  find-file-read-only-other-frame (1 rows)
+    row#3
+      gnu:    ok (buf %-10s|%05.2f)
+      remacs: err (error "Unknown terminal type")
+KNOWN  force-window-update (1 rows)
+    row#2
+      gnu:    ok nil
+      remacs: ok t
+KNOWN  format-write-file (1 rows)
+    row#2
+      gnu:    ok nil
+      remacs: err (end-of-file "Error reading from stdin")
+KNOWN  frame--face-hash-table (2 rows)
+    row#1
+      gnu:    ok (hash eq 329)
+      remacs: ok (hash eq 343)
+    row#4
+      gnu:    ok (hash eq 329)
+      remacs: ok (hash eq 343)
+KNOWN  frame-configuration-to-register (3 rows)
+    row#2
+      gnu:    ok ((frame-configuration (#<X> ((no-accept-focus) (visibility . t) (menu-bar-lines . 1) (buried-buffer-list #<X>) (buffer-list #<X> #<X> #<X> #<X> #<X>> #<X>> #<X>> #<X> #<X>> #<X> #<X> #<X>) (unsplittable) (modeline . t) (
+      remacs: ok ((frame-configuration (#<X> ((no-accept-focus) (visibility . t) (tab-bar-lines . 1) (menu-bar-lines . 1) (buried-buffer-list #<X>) (buffer-list #<X> #<X> #<X> #<X> #<X> #<X> #<X> #<X>> #<X>> #<X>> #<X> #<X> #<X> #<X>) (u
+    row#3
+      gnu:    ok ((frame-configuration (#<X> ((no-accept-focus) (visibility . t) (menu-bar-lines . 1) (buried-buffer-list #<X>) (buffer-list #<X> #<X> #<X> #<X> #<X>> #<X>> #<X>> #<X> #<X>> #<X> #<X> #<X>) (unsplittable) (modeline . t) (
+      remacs: ok ((frame-configuration (#<X> ((no-accept-focus) (visibility . t) (tab-bar-lines . 1) (menu-bar-lines . 1) (buried-buffer-list #<X>) (buffer-list #<X> #<X> #<X> #<X> #<X> #<X> #<X> #<X>> #<X>> #<X>> #<X> #<X> #<X> #<X>) (u
+    row#5
+      gnu:    ok ((frame-configuration (#<X> ((no-accept-focus) (visibility . t) (menu-bar-lines . 1) (buried-buffer-list #<X>) (buffer-list #<X> #<X> #<X> #<X> #<X>> #<X>> #<X>> #<X> #<X>> #<X> #<X> #<X>) (unsplittable) (modeline . t) (
+      remacs: ok ((frame-configuration (#<X> ((no-accept-focus) (visibility . t) (tab-bar-lines . 1) (menu-bar-lines . 1) (buried-buffer-list #<X>) (buffer-list #<X> #<X> #<X> #<X> #<X> #<X> #<X> #<X>> #<X>> #<X>> #<X> #<X> #<X> #<X>) (u
+KNOWN  frame-monitor-attributes (2 rows)
+    row#1
+      gnu:    ok ((geometry . #1=(0 0 80 25)) (workarea . #1#) (mm-size nil nil) (frames #<X>))
+      remacs: ok ((geometry 0 0 80 25) (workarea 0 0 80 25) (mm-size nil nil) (frames #<X>))
+    row#4
+      gnu:    ok ((geometry . #1=(0 0 80 25)) (workarea . #1#) (mm-size nil nil) (frames #<X>))
+      remacs: ok ((geometry 0 0 80 25) (workarea 0 0 80 25) (mm-size nil nil) (frames #<X>))
+KNOWN  frame-or-buffer-changed-p (1 rows)
+    row#4
+      gnu:    ok nil
+      remacs: ok t
+KNOWN  frame-parameters (2 rows)
+    row#1
+      gnu:    ok ((buried-buffer-list #<X>) (buffer-list #<X> #<X> #<X> #<X> #<X>> #<X>> #<X>> #<X> #<X>> #<X> #<X> #<X>) (name . "F1") (no-accept-focus) (visibility . t) (menu-bar-lines . 1) (unsplittable) (modeline . t) (width . 80) (h
+      remacs: ok ((no-accept-focus) (visibility . t) (tab-bar-lines . 1) (menu-bar-lines . 1) (buried-buffer-list #<X>) (buffer-list #<X> #<X> #<X> #<X> #<X> #<X> #<X> #<X>> #<X>> #<X>> #<X> #<X> #<X> #<X>) (unsplittable) (modeline . t) 
+    row#4
+      gnu:    ok ((buried-buffer-list #<X>) (buffer-list #<X> #<X> #<X> #<X> #<X>> #<X>> #<X>> #<X> #<X>> #<X> #<X> #<X>) (name . "F1") (no-accept-focus) (visibility . t) (menu-bar-lines . 1) (unsplittable) (modeline . t) (width . 80) (h
+      remacs: ok ((no-accept-focus) (visibility . t) (tab-bar-lines . 1) (menu-bar-lines . 1) (buried-buffer-list #<X>) (buffer-list #<X> #<X> #<X> #<X> #<X> #<X> #<X> #<X>> #<X>> #<X>> #<X> #<X> #<X> #<X>) (unsplittable) (modeline . t) 
+KNOWN  frame-terminal (2 rows)
+    row#1
+      gnu:    ok #<X>
+      remacs: ok (record)
+    row#4
+      gnu:    ok #<X>
+      remacs: ok (record)
+KNOWN  frame-text-height (2 rows)
+    row#1
+      gnu:    ok 23
+      remacs: ok 25
+    row#4
+      gnu:    ok 23
+      remacs: ok 25
+KNOWN  frame-text-lines (2 rows)
+    row#1
+      gnu:    ok 23
+      remacs: ok 25
+    row#4
+      gnu:    ok 23
+      remacs: ok 25
+KNOWN  frame-use-time (2 rows)
+    row#1
+      gnu:    ok 64
+      remacs: ok 58
+    row#4
+      gnu:    ok 64
+      remacs: ok 58
+KNOWN  frame-windows-min-size (2 rows)
+    row#1
+      gnu:    ok 12
+      remacs: ok 8
+    row#4
+      gnu:    ok 12
+      remacs: ok 8
+KNOWN  gap-size (1 rows)
+    row#3
+      gnu:    ok 2000
+      remacs: ok 1971
+KNOWN  garbage-collect-heapsize (2 rows)
+    row#1
+      gnu:    ok ((conses 16 164523 355629) (symbols 48 29163 84) (strings 32 109405 25476) (string-bytes 1 2702043) (vectors 16 19011) (vector-slots 8 330350 419193) (floats 8 138 383) (intervals 56 233 298) (buffers 1064 34))
+      remacs: ok ((conses 16 0 0) (symbols 48 54234 0) (strings 32 0 0) (string-bytes 1 0) (vectors 16 0 0) (vector-slots 8 0 0) (floats 8 0 0) (intervals 56 0 0) (buffers 1064 42))
+    row#3
+      gnu:    ok ((conses 16 164523 355629) (symbols 48 29163 84) (strings 32 109405 25476) (string-bytes 1 2702043) (vectors 16 19011) (vector-slots 8 330350 419193) (floats 8 138 383) (intervals 56 233 298) (buffers 1064 34))
+      remacs: ok ((conses 16 0 0) (symbols 48 54237 0) (strings 32 0 0) (string-bytes 1 0) (vectors 16 0 0) (vector-slots 8 0 0) (floats 8 0 0) (intervals 56 0 0) (buffers 1064 42))
+KNOWN  generate-new-buffer (1 rows)
+    row#2
+      gnu:    ok (buf a<4>)
+      remacs: ok (buf a<3>)
+KNOWN  generate-new-buffer-name (1 rows)
+    row#2
+      gnu:    ok "a<5>"
+      remacs: ok "a<4>"
+KNOWN  get-display-property (1 rows)
+    row#4
+      gnu:    err (wrong-type-argument listp variable-pitch)
+      remacs: err (wrong-type-argument integer-or-marker-p "~")
+KNOWN  get-internal-run-time (2 rows)
+    row#1
+      gnu:    ok (0 1 500390 0)
+      remacs: ok (27348 40059 705272 0)
+    row#3
+      gnu:    ok (0 1 500463 0)
+      remacs: ok (27348 40059 706002 0)
+KNOWN  get-largest-window (1 rows)
+    row#2
+      gnu:    ok nil
+      remacs: ok (window t)
+KNOWN  gnutls-available-p (2 rows)
+    row#1
+      gnu:    ok (Key\ Share Post\ Handshake\ Auth PSK\ Key\ Exchange\ Modes Cookie Supported\ Versions Early\ Data Pre\ Shared\ Key Session\ Ticket Record\ Size\ Limit Compress\ Certificate Extended\ Master\ Secret Encrypt-then-MAC Serv
+      remacs: ok (Key\ Share Post\ Handshake\ Auth PSK\ Key\ Exchange\ Modes Cookie Supported\ Versions Early\ Data Pre\ Shared\ Key Session\ Ticket Record\ Size\ Limit Compress\ Certificate Extended\ Master\ Secret Encrypt-then-MAC Clie
+    row#3
+      gnu:    ok (Key\ Share Post\ Handshake\ Auth PSK\ Key\ Exchange\ Modes Cookie Supported\ Versions Early\ Data Pre\ Shared\ Key Session\ Ticket Record\ Size\ Limit Compress\ Certificate Extended\ Master\ Secret Encrypt-then-MAC Serv
+      remacs: ok (Key\ Share Post\ Handshake\ Auth PSK\ Key\ Exchange\ Modes Cookie Supported\ Versions Early\ Data Pre\ Shared\ Key Session\ Ticket Record\ Size\ Limit Compress\ Certificate Extended\ Master\ Secret Encrypt-then-MAC Clie
+KNOWN  help--lossage-make-recent-keys (2 rows)
+    row#1
+      gnu:    ok #(";; self-insert-command\n ;; self-insert-command\n ;; self-insert-command\n ;; self-insert-command\n ;; self-insert-command\n ;; self-insert-command\n ;; self-insert-command\n ;; self-insert-command\n ;; self-insert-co
+      remacs: ok ""
+    row#4
+      gnu:    ok #(";; self-insert-command\n ;; self-insert-command\n ;; self-insert-command\n ;; self-insert-command\n ;; self-insert-command\n ;; self-insert-command\n ;; self-insert-command\n ;; self-insert-command\n ;; self-insert-co
+      remacs: ok ""
+KNOWN  help--refresh-lossage-buffer (2 rows)
+    row#1
+      gnu:    ok nil
+      remacs: ok (post-display-buffer-override-next-command post-display-buffer-override-next-command post-display-buffer-override-next-command)
+    row#3
+      gnu:    ok nil
+      remacs: ok (post-display-buffer-override-next-command post-display-buffer-override-next-command post-display-buffer-override-next-command)
+KNOWN  help-print-return-message (3 rows)
+    row#1
+      gnu:    ok #("Type C-x 4 C-o RET to restore the other window.  " 5 14 (face help-key-binding font-lock-face help-key-binding))
+      remacs: err (wrong-type-argument stringp t)
+    row#2
+      gnu:    err (invalid-function "a")
+      remacs: err (wrong-type-argument stringp t)
+    row#4
+      gnu:    ok #("Type C-x 4 C-o RET to restore the other window.  " 5 14 (face help-key-binding font-lock-face help-key-binding))
+      remacs: err (wrong-type-argument stringp t)
+KNOWN  help-quick (2 rows)
+    row#1
+      gnu:    ok #("Toggle display of quick-help buffer using C-h C-q." 42 49 (font-lock-face help-key-binding face help-key-binding))
+      remacs: ok #("Toggle display of quick-help buffer using C-h C-q." 42 49 (face help-key-binding font-lock-face help-key-binding))
+    row#3
+      gnu:    ok #("Toggle display of quick-help buffer using C-h C-q." 42 49 (font-lock-face help-key-binding face help-key-binding))
+      remacs: ok #("Toggle display of quick-help buffer using C-h C-q." 42 49 (face help-key-binding font-lock-face help-key-binding))
+KNOWN  help-quick-toggle (1 rows)
+    row#3
+      gnu:    ok #("Toggle display of quick-help buffer using C-h C-q." 42 49 (font-lock-face help-key-binding face help-key-binding))
+      remacs: ok #("Toggle display of quick-help buffer using C-h C-q." 42 49 (face help-key-binding font-lock-face help-key-binding))
+KNOWN  image--delayed-change-size (2 rows)
+    row#2
+      gnu:    ok [nil 0 0 299999 nil image--change-size ("a" "a\\b") idle 999999 nil]
+      remacs: ok [nil 0 0 300000 nil image--change-size ("a" "a\\b") idle 0 nil]
+    row#5
+      gnu:    ok [nil 0 0 299999 nil image--change-size #'test.foo idle 999999 nil]
+      remacs: ok [nil 0 0 300000 nil image--change-size #'test.foo idle 0 nil]
+KNOWN  image-decrease-size (3 rows)
+    row#1
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  image-increase-size (3 rows)
+    row#1
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  image-mouse-decrease-size (2 rows)
+    row#1
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  image-mouse-increase-size (2 rows)
+    row#1
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  insert-into-buffer (1 rows)
+    row#2
+      gnu:    ok nil
+      remacs: err (buffer-read-only #<X>)
+KNOWN  insert-register (1 rows)
+    row#5
+      gnu:    err (wrong-type-argument buffer-or-string-p (frame-configuration (#<X> ((no-accept-focus) (visibility . t) (menu-bar-lines . 1) (buried-buffer-list #<X>) (buffer-list #<X> #<X> #<X> #<X> #<X>> #<X>> #<X>> #<X> #<X>> #<X> #<X
+      remacs: err (wrong-type-argument buffer-or-string-p (frame-configuration (#<X> ((no-accept-focus) (visibility . t) (tab-bar-lines . 1) (menu-bar-lines . 1) (buried-buffer-list #<X>) (buffer-list #<X> #<X> #<X> #<X> #<X> #<X> #<X> #<
+KNOWN  internal-echo-keystrokes-prefix (2 rows)
+    row#1
+      gnu:    ok nil
+      remacs: err (wrong-type-argument sequencep cons)
+    row#3
+      gnu:    ok nil
+      remacs: err (wrong-type-argument sequencep cons)
+KNOWN  internal-lisp-face-equal-p (1 rows)
+    row#6
+      gnu:    ok t
+      remacs: err (error "Invalid face" in)
+KNOWN  internal-temp-output-buffer-show (2 rows)
+    row#2
+      gnu:    ok nil
+      remacs: err (invalid-function #<X>)
+    row#4
+      gnu:    ok nil
+      remacs: err (invalid-function #<X>)
+KNOWN  invert-face (1 rows)
+    row#5
+      gnu:    err (error "Invalid face" function)
+      remacs: ok function
+KNOWN  isearch-char-by-name (3 rows)
+    row#1
+      gnu:    err (end-of-file "Error reading from stdin")
+      remacs: err (error "move-to-window-line called from unrelated buffer")
+    row#2
+      gnu:    err (end-of-file "Error reading from stdin")
+      remacs: err (error "move-to-window-line called from unrelated buffer")
+    row#4
+      gnu:    err (end-of-file "Error reading from stdin")
+      remacs: err (error "move-to-window-line called from unrelated buffer")
+KNOWN  isearch-describe-bindings (2 rows)
+    row#1
+      gnu:    ok #("\nKey             Binding\n-------------------------------------------------------------------------------\nSPC .. ~\11isearch-printing-char\n .. �����\11isearch-printing-char\n\200 .. \377\11isearch-printing-char\n\
+      remacs: ok #("\nKey             Binding\n--------------------------------------\ns-F\11\11isearch-repeat-backward\ns-f\11\11isearch-repeat-forward\n\nM-s SPC\11\11isearch-toggle-lax-whitespace\nM-s '\11\11isearch-toggle-char-fold\n
+    row#3
+      gnu:    ok #("\nKey             Binding\n-------------------------------------------------------------------------------\nSPC .. ~\11isearch-printing-char\n .. �����\11isearch-printing-char\n\200 .. \377\11isearch-printing-char\n\
+      remacs: ok #("\nKey             Binding\n--------------------------------------\ns-F\11\11isearch-repeat-backward\ns-f\11\11isearch-repeat-forward\n\nM-s SPC\11\11isearch-toggle-lax-whitespace\nM-s '\11\11isearch-toggle-char-fold\n
+KNOWN  isearch-edit-string (2 rows)
+    row#1
+      gnu:    err (end-of-file "Error reading from stdin")
+      remacs: err (error "move-to-window-line called from unrelated buffer")
+    row#3
+      gnu:    err (end-of-file "Error reading from stdin")
+      remacs: err (error "move-to-window-line called from unrelated buffer")
+KNOWN  isearch-emoji-by-name (3 rows)
+    row#1
+      gnu:    err (end-of-file "Error reading from stdin")
+      remacs: err (error "move-to-window-line called from unrelated buffer")
+    row#2
+      gnu:    err (end-of-file "Error reading from stdin")
+      remacs: err (error "move-to-window-line called from unrelated buffer")
+    row#4
+      gnu:    err (end-of-file "Error reading from stdin")
+      remacs: err (error "move-to-window-line called from unrelated buffer")
+KNOWN  isearch-exit (2 rows)
+    row#1
+      gnu:    err (end-of-file "Error reading from stdin")
+      remacs: err (error "move-to-window-line called from unrelated buffer")
+    row#3
+      gnu:    err (end-of-file "Error reading from stdin")
+      remacs: err (error "move-to-window-line called from unrelated buffer")
+KNOWN  isearch-forward-regexp (1 rows)
+    row#2
+      gnu:    err (error "move-to-window-line called from unrelated buffer")
+      remacs: ok "a"
+KNOWN  isearch-lazy-highlight-buffer-update (2 rows)
+    row#1
+      gnu:    err (wrong-type-argument integer-or-marker-p nil)
+      remacs: ok nil
+    row#3
+      gnu:    err (wrong-type-argument integer-or-marker-p nil)
+      remacs: ok nil
+KNOWN  isearch-message (2 rows)
+    row#1
+      gnu:    ok #("Word I-search: " 0 15 (face minibuffer-prompt read-only t))
+      remacs: ok #("Word I-search: " 0 15 (read-only t face minibuffer-prompt))
+    row#4
+      gnu:    ok #("Word I-search: " 0 15 (face minibuffer-prompt read-only t))
+      remacs: ok #("Word I-search: " 0 15 (read-only t face minibuffer-prompt))
+KNOWN  isearch-printing-char (2 rows)
+    row#1
+      gnu:    err (wrong-type-argument number-or-marker-p nil)
+      remacs: err (wrong-type-argument isearch--state nil)
+    row#4
+      gnu:    err (wrong-type-argument number-or-marker-p nil)
+      remacs: ok nil
+KNOWN  isearch-process-search-string (1 rows)
+    row#2
+      gnu:    err (wrong-type-argument isearch--state nil)
+      remacs: ok nil
+KNOWN  isearch-push-state (2 rows)
+    row#1
+      gnu:    ok (#s(isearch--state "a" "a\\b" 1 nil function nil nil nil nil 9 t nil nil))
+      remacs: ok (#s(isearch--state #1="aaa" #2="aaa\\b" 1 nil function nil nil #3="end of multi" nil 9 t #<X> nil) #s(isearch--state #1# #2# 1 nil function nil nil #3# nil 9 t #<X> nil) #s(isearch--state "aa" "aa" 9 nil function nil nil
+    row#3
+      gnu:    ok (#s(isearch--state #1="a" #2="a\\b" 9 nil function nil nil nil nil 9 t nil nil) #s(isearch--state #1# #2# 1 nil function nil nil nil nil 9 t nil nil))
+      remacs: ok (#s(isearch--state #1="aaa" #2="aaa\\b" 9 nil function nil nil #3="end of multi" nil 9 t #<X> nil) #s(isearch--state #1# #2# 1 nil function nil nil #3# nil 9 t #<X> nil) #s(isearch--state #1# #2# 1 nil function nil nil #
+KNOWN  isearch-repeat (2 rows)
+    row#3
+      gnu:    err (wrong-type-argument number-or-marker-p "file-a.txt")
+      remacs: err (void-function nil)
+    row#5
+      gnu:    ok nil
+      remacs: err (void-function nil)
+KNOWN  isearch-repeat-backward (3 rows)
+    row#1
+      gnu:    ok nil
+      remacs: err (void-function nil)
+    row#2
+      gnu:    ok nil
+      remacs: err (void-function nil)
+    row#4
+      gnu:    ok nil
+      remacs: err (void-function nil)
+KNOWN  isearch-repeat-forward (2 rows)
+    row#2
+      gnu:    ok nil
+      remacs: err (void-function nil)
+    row#4
+      gnu:    ok nil
+      remacs: err (void-function nil)
+KNOWN  isearch-search-fun (2 rows)
+    row#1
+      gnu:    ok (subr F616e6f6e796d6f75732d6c616d626461_anonymous_lambda_81)
+      remacs: ok (subr nil)
+    row#3
+      gnu:    ok (subr F616e6f6e796d6f75732d6c616d626461_anonymous_lambda_81)
+      remacs: ok (subr nil)
+KNOWN  isearch-search-fun-default (2 rows)
+    row#1
+      gnu:    ok (subr F616e6f6e796d6f75732d6c616d626461_anonymous_lambda_81)
+      remacs: ok (subr nil)
+    row#3
+      gnu:    ok (subr F616e6f6e796d6f75732d6c616d626461_anonymous_lambda_81)
+      remacs: ok (subr nil)
+KNOWN  isearch-search-string (1 rows)
+    row#2
+      gnu:    err (wrong-type-argument stringp nil)
+      remacs: err (end-of-file "Error reading from stdin")
+KNOWN  isearch-update-ring (2 rows)
+    row#2
+      gnu:    ok (#("a" 0 1 (isearch-case-fold-search t isearch-regexp-function nil)))
+      remacs: ok (#("a" 0 1 (isearch-case-fold-search t isearch-regexp-function nil)) #("aaa" 0 3 (isearch-case-fold-search t isearch-regexp-function nil)))
+    row#3
+      gnu:    ok (#("%-10s|%05.2f" 0 12 (isearch-case-fold-search t isearch-regexp-function nil)) #("a" 0 1 (isearch-case-fold-search t)))
+      remacs: ok (#("%-10s|%05.2f" 0 12 (isearch-case-fold-search t isearch-regexp-function nil)) #("aaa" 0 3 (isearch-case-fold-search t)))
+KNOWN  isearch-yank-from-kill-ring (2 rows)
+    row#1
+      gnu:    err (error "Kill ring is empty")
+      remacs: err (end-of-file "Error reading from stdin")
+    row#3
+      gnu:    err (error "Kill ring is empty")
+      remacs: err (end-of-file "Error reading from stdin")
+KNOWN  isearch-yank-kill (2 rows)
+    row#1
+      gnu:    err (error "Kill ring is empty")
+      remacs: ok nil
+    row#3
+      gnu:    err (error "Kill ring is empty")
+      remacs: ok nil
+KNOWN  isearch-yank-pop (2 rows)
+    row#1
+      gnu:    err (error "Kill ring is empty")
+      remacs: err (end-of-file "Error reading from stdin")
+    row#3
+      gnu:    err (error "Kill ring is empty")
+      remacs: err (end-of-file "Error reading from stdin")
+KNOWN  isearch-yank-pop-only (3 rows)
+    row#1
+      gnu:    err (error "Kill ring is empty")
+      remacs: ok nil
+    row#2
+      gnu:    err (error "Kill ring is empty")
+      remacs: ok nil
+    row#4
+      gnu:    err (error "Kill ring is empty")
+      remacs: ok nil
+KNOWN  jka-compr-set (1 rows)
+    row#5
+      gnu:    ok ("" ".gz")
+      remacs: err (void-function test.foo)
+KNOWN  jump-to-register (1 rows)
+    row#5
+      gnu:    err (user-error "Register doesn't contain a buffer position or configuration")
+      remacs: err (error "Marker does not point anywhere")
+KNOWN  key-binding (1 rows)
+    row#2
+      gnu:    ok (fn)
+      remacs: ok nil
+KNOWN  key-translate--anon-cmacro (1 rows)
+    row#2
+      gnu:    err (void-function byte-compile-warn)
+      remacs: ok "a"
+KNOWN  keymap--compile-check (2 rows)
+    row#2
+      gnu:    err (void-function byte-compile-warn)
+      remacs: ok nil
+    row#3
+      gnu:    err (void-function byte-compile-warn)
+      remacs: ok nil
+KNOWN  keymap-global-lookup (1 rows)
+    row#2
+      gnu:    ok (fn)
+      remacs: ok nil
+KNOWN  keymap-global-lookup--anon-cmacro (1 rows)
+    row#2
+      gnu:    err (void-function byte-compile-warn)
+      remacs: ok "a"
+KNOWN  keymap-global-set--anon-cmacro (1 rows)
+    row#2
+      gnu:    err (void-function byte-compile-warn)
+      remacs: ok "a"
+KNOWN  keymap-global-unset--anon-cmacro (1 rows)
+    row#2
+      gnu:    err (void-function byte-compile-warn)
+      remacs: ok "a"
+KNOWN  keymap-local-lookup--anon-cmacro (1 rows)
+    row#2
+      gnu:    err (void-function byte-compile-warn)
+      remacs: ok "a"
+KNOWN  keymap-local-set--anon-cmacro (1 rows)
+    row#2
+      gnu:    err (void-function byte-compile-warn)
+      remacs: ok "a"
+KNOWN  keymap-local-unset--anon-cmacro (1 rows)
+    row#2
+      gnu:    err (void-function byte-compile-warn)
+      remacs: ok "a"
+KNOWN  kqueue-add-watch (1 rows)
+    row#2
+      gnu:    err (wrong-type-argument listp "a\\b")
+      remacs: err (file-missing "File does not exist" "No such file or directory" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/a")
+KNOWN  lisp-complete-symbol (3 rows)
+    row#1
+      gnu:    ok t
+      remacs: err (invalid-function #<X>)
+    row#2
+      gnu:    ok t
+      remacs: err (invalid-function #<X>)
+    row#4
+      gnu:    ok t
+      remacs: err (invalid-function #<X>)
+KNOWN  lisp-completion-at-point (3 rows)
+    row#1
+      gnu:    ok (1 1 #<X> 6 "\n\n(fn STRING)"] boundaries metadata minibuffer-selected-window window-live-p window-buffer complete-with-action] 8 "\n\n(fn STRING PRED ACTION)"] #<X> 6 "\n\n(fn &rest ARGS2)"]) #s(hash-table test eq data 
+      remacs: ok (1 1 #<X> 6 "\n\n(fn &rest ARGS2)"]))] :company-kind #<X> #^^[1 0 #^^[2 0 #^^[3 0 ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ..
+    row#2
+      gnu:    ok (1 1 #<X> 6 "\n\n(fn STRING)"] boundaries metadata minibuffer-selected-window window-live-p window-buffer complete-with-action] 8 "\n\n(fn STRING PRED ACTION)"] #<X> 6 "\n\n(fn &rest ARGS2)"]) #s(hash-table test eq data 
+      remacs: ok (1 1 #<X> 6 "\n\n(fn &rest ARGS2)"]))] :company-kind #<X> #^^[1 0 #^^[2 0 #^^[3 0 ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ..
+    row#4
+      gnu:    ok (7 11 #<X> 6 "\n\n(fn STRING)"] boundaries metadata minibuffer-selected-window window-live-p window-buffer complete-with-action] 8 "\n\n(fn STRING PRED ACTION)"] #<X> 6 "\n\n(fn &rest ARGS2)"]) #s(hash-table test eq data
+      remacs: ok (7 11 #<X> 6 "\n\n(fn &rest ARGS2)"]))] :company-kind #<X> #^^[1 0 #^^[2 0 #^^[3 0 ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... .
+KNOWN  lisp-outline-level (2 rows)
+    row#1
+      gnu:    ok 4
+      remacs: ok 0
+    row#3
+      gnu:    ok 4
+      remacs: ok 0
+KNOWN  list-abbrevs (3 rows)
+    row#1
+      gnu:    ok (window t)
+      remacs: err (invalid-function #<X>)
+    row#2
+      gnu:    ok (window t)
+      remacs: err (invalid-function #<X>)
+    row#4
+      gnu:    ok (window t)
+      remacs: err (invalid-function #<X>)
+KNOWN  list-buffers (3 rows)
+    row#1
+      gnu:    ok (window t)
+      remacs: err (invalid-function #<X>)
+    row#2
+      gnu:    ok (window t)
+      remacs: err (invalid-function #<X>)
+    row#4
+      gnu:    ok (window t)
+      remacs: err (invalid-function #<X>)
+KNOWN  list-buffers--refresh (2 rows)
+    row#1
+      gnu:    ok ("" header-line-indent #(" C R M Buffer    Size Mode File " 0 1 (display (space :align-to (+ header-line-indent-width 0))) 1 2 (keymap #1=(keymap (follow-link . mouse-face) (13 . tabulated-list-sort) (mouse-2 . tabulated
+      remacs: ok ("" header-line-indent #(" C R M Buffer    Size Mode File " 0 1 (display (space :align-to (+ header-line-indent-width 0))) 1 2 (keymap (keymap (follow-link . mouse-face) (13 . tabulated-list-sort) (mouse-2 . tabulated-li
+    row#4
+      gnu:    ok ("" header-line-indent #(" C R M Buffer    Size Mode File " 0 1 (display (space :align-to (+ header-line-indent-width 0))) 1 2 (keymap #1=(keymap (follow-link . mouse-face) (13 . tabulated-list-sort) (mouse-2 . tabulated
+      remacs: ok ("" header-line-indent #(" C R M Buffer    Size Mode File " 0 1 (display (space :align-to (+ header-line-indent-width 0))) 1 2 (keymap (keymap (follow-link . mouse-face) (13 . tabulated-list-sort) (mouse-2 . tabulated-li
+KNOWN  list-directory (2 rows)
+    row#2
+      gnu:    ok "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/"
+      remacs: err (invalid-function #<X>)
+    row#3
+      gnu:    ok "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/"
+      remacs: err (invalid-function #<X>)
+KNOWN  list-faces-display (3 rows)
+    row#1
+      gnu:    ok t
+      remacs: err (invalid-function #<X>)
+    row#2
+      gnu:    ok t
+      remacs: err (invalid-function #<X>)
+    row#4
+      gnu:    ok t
+      remacs: err (invalid-function #<X>)
+KNOWN  list-registers (2 rows)
+    row#1
+      gnu:    ok nil
+      remacs: err (wrong-type-argument number-or-marker-p "a")
+    row#3
+      gnu:    ok nil
+      remacs: err (wrong-type-argument number-or-marker-p "a")
+KNOWN  load-average (3 rows)
+    row#1
+      gnu:    ok (524 740 945)
+      remacs: ok (544 706 918)
+    row#2
+      gnu:    ok (5.24267578125 7.40234375 9.45458984375)
+      remacs: ok (5.4443359375 7.0673828125 9.18798828125)
+    row#4
+      gnu:    ok (524 740 945)
+      remacs: ok (544 706 918)
+KNOWN  load-file (1 rows)
+    row#2
+      gnu:    ok t
+      remacs: err (file-missing "Cannot open load file" "No such file or directory" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/a")
+KNOWN  load-history-filename-element (1 rows)
+    row#2
+      gnu:    ok ("/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a")
+      remacs: ok ("builtin:jka-compr" (require . jka-cmpr-hook) jka-compr-shell jka-compr-use-shell jka-compr-really-do-compress jka-compr-acceptable-retval-list (defun . jka-compr-error) jka-compr-dd-program jka-compr-dd-blocksize (defu
+KNOWN  load-with-code-conversion (1 rows)
+    row#2
+      gnu:    ok t
+      remacs: err (file-error "Cannot open load file" "a\\b")
+KNOWN  locate-dominating-file (1 rows)
+    row#2
+      gnu:    ok "~/"
+      remacs: ok nil
+KNOWN  macroexp--backtrace (2 rows)
+    row#1
+      gnu:    ok ((t backtrace-frame 0) (t #<X>) (t apply #<X> nil) (nil dif--norm . #1=((apply f args))) (nil if . #2=((member name dif--norm-type) (list 'type (type-of (apply f args))) (dif--norm . #1#))) (nil dif--emit . #3=(name seq 
+      remacs: ok ((t backtrace-frame 0) (t #1=#<X>) (t apply #1# nil) (t dif--run #2="macroexp--backtrace" 1 #1# nil) (t dif--call #2# 1 #1# nil))
+    row#3
+      gnu:    ok ((t backtrace-frame 0) (t #<X>) (t apply #<X> nil) (nil dif--norm . #1=((apply f args))) (nil if . #2=((member name dif--norm-type) (list 'type (type-of (apply f args))) (dif--norm . #1#))) (nil dif--emit . #3=(name seq 
+      remacs: ok ((t backtrace-frame 0) (t #1=#<X>) (t apply #1# nil) (t dif--run #2="macroexp--backtrace" 3 #1# nil) (t dif--call-buf #2# 3 #1# nil))
+KNOWN  macroexp--warn-wrap (2 rows)
+    row#2
+      gnu:    ok (progn (macroexp--funcall-if-compiled '#<X> 4]) "(")
+      remacs: ok (progn (macroexp--funcall-if-compiled '#<X>) "(")
+    row#5
+      gnu:    ok (progn (macroexp--funcall-if-compiled '#<X> 4]) write-file)
+      remacs: ok (progn (macroexp--funcall-if-compiled '#<X>) write-file)
+KNOWN  macroexp-file-name (2 rows)
+    row#1
+      gnu:    ok "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/diff/driver.el"
+      remacs: ok nil
+    row#3
+      gnu:    ok "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/diff/driver.el"
+      remacs: ok nil
+DIVERG macroexp-macroexpand (2 rows)
+    row#2
+      gnu:    ok "a"
+      remacs: err (wrong-type-argument listp "a\\b")
+    row#5
+      gnu:    ok function
+      remacs: err (wrong-type-argument listp test.foo)
+DIVERG macroexpand (1 rows)
+    row#3
+      gnu:    ok "%-10s|%05.2f"
+      remacs: err (wrong-type-argument listp "file-a.txt")
+DIVERG macroexpand--all-toplevel (1 rows)
+    row#3
+      gnu:    ok "%-10s|%05.2f"
+      remacs: err (wrong-type-argument listp "file-a.txt")
+DIVERG macroexpand-1 (1 rows)
+    row#3
+      gnu:    ok "%-10s|%05.2f"
+      remacs: err (wrong-type-argument listp "file-a.txt")
+DIVERG macroexpand-all (1 rows)
+    row#3
+      gnu:    ok "%-10s|%05.2f"
+      remacs: err (wrong-type-argument listp "file-a.txt")
+KNOWN  make-auto-save-file-name (2 rows)
+    row#1
+      gnu:    ok "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/#%20dfx-scratch#mIkBz6#"
+      remacs: ok "/var/tmp/#%20dfx-scratch#DcG45C#"
+    row#3
+      gnu:    ok "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/#%20dfx#oyBNM5#"
+      remacs: ok "/var/tmp/#%20dfx#Md57w6#"
+KNOWN  make-directory (2 rows)
+    row#2
+      gnu:    err (file-already-exists "File exists" "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a")
+      remacs: err (permission-denied "Creating directory" "Permission denied" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/a")
+    row#3
+      gnu:    ok nil
+      remacs: err (permission-denied "Creating directory" "Permission denied" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/%-10s|%05.2f")
+KNOWN  make-directory-internal (1 rows)
+    row#2
+      gnu:    err (file-already-exists "File exists" "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a")
+      remacs: err (permission-denied "Creating directory" "Permission denied" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/a")
+KNOWN  make-empty-file (2 rows)
+    row#2
+      gnu:    err (file-already-exists "File exists" "a")
+      remacs: err (permission-denied "Opening output file" "Permission denied" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/a")
+    row#3
+      gnu:    err (file-error "Opening output file" "Is a directory" "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/%-10s|%05.2f")
+      remacs: err (permission-denied "Opening output file" "Permission denied" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/%-10s|%05.2f")
+KNOWN  make-face-bold (1 rows)
+    row#5
+      gnu:    err (error "Invalid face" function)
+      remacs: ok nil
+KNOWN  make-face-bold-italic (1 rows)
+    row#5
+      gnu:    err (error "Invalid face" function)
+      remacs: ok nil
+KNOWN  make-face-italic (1 rows)
+    row#5
+      gnu:    err (error "Invalid face" function)
+      remacs: ok nil
+KNOWN  make-face-unbold (1 rows)
+    row#5
+      gnu:    err (error "Invalid face" function)
+      remacs: ok nil
+KNOWN  make-face-unitalic (1 rows)
+    row#5
+      gnu:    err (error "Invalid face" function)
+      remacs: ok nil
+KNOWN  make-lock-file-name (2 rows)
+    row#2
+      gnu:    ok "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/.#a"
+      remacs: ok "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/.#a"
+    row#4
+      gnu:    ok "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/.#~"
+      remacs: ok "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/.#~"
+KNOWN  make-ppss--cmacro (2 rows)
+    row#2
+      gnu:    ok (let ((depth nil) (innermost-start nil) (last-complete-sexp-start nil) (string-terminator nil) (comment-depth nil) (quoted-p nil) (min-depth nil) (comment-style nil) (comment-or-string-start nil) (open-parens nil) (two-c
+      remacs: ok (with-suppressed-warnings ((lexical comment-style)) (funcall (lambda #1=(depth innermost-start last-complete-sexp-start string-terminator comment-depth quoted-p min-depth comment-style comment-or-string-start open-parens
+    row#5
+      gnu:    ok (let ((depth nil) (innermost-start nil) (last-complete-sexp-start nil) (string-terminator nil) (comment-depth nil) (quoted-p nil) (min-depth nil) (comment-style nil) (comment-or-string-start nil) (open-parens nil) (two-c
+      remacs: ok (with-suppressed-warnings ((lexical comment-style)) (funcall (lambda #1=(depth innermost-start last-complete-sexp-start string-terminator comment-depth quoted-p min-depth comment-style comment-or-string-start open-parens
+KNOWN  make-symbolic-link (1 rows)
+    row#2
+      gnu:    ok nil
+      remacs: err (permission-denied "Making symbolic link" "Permission denied" "a" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/a\\b")
+KNOWN  make-temp-file-internal (1 rows)
+    row#2
+      gnu:    err (file-error "Write error" "Bad file descriptor" "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/aCDoHQB(")
+      remacs: ok (type string)
+KNOWN  match-buffers (1 rows)
+    row#2
+      gnu:    ok (#<X> #<X> #<X> #<X> #<X>)
+      remacs: ok (#<X> #<X> #<X> #<X> #<X> #<X> #<X> #<X>)
+KNOWN  match-data (3 rows)
+    row#1
+      gnu:    ok (0 0)
+      remacs: ok (#<X> #<X>)
+    row#2
+      gnu:    ok (0 0)
+      remacs: ok (21 22 #<X>)
+    row#4
+      gnu:    ok (0 0)
+      remacs: ok (#<X> #<X>)
+KNOWN  match-substitute-replacement (2 rows)
+    row#2
+      gnu:    err (args-out-of-range #<X> 0 0)
+      remacs: err (args-out-of-range #<X> 21 22)
+    row#5
+      gnu:    err (args-out-of-range #<X> 0 0)
+      remacs: err (wrong-type-argument stringp function)
+KNOWN  maximize-window (2 rows)
+    row#1
+      gnu:    err (error "Cannot resize the root window of a frame")
+      remacs: ok t
+    row#4
+      gnu:    err (error "Cannot resize the root window of a frame")
+      remacs: ok t
+KNOWN  memory-use-counts (2 rows)
+    row#1
+      gnu:    ok (5930892 280 1543091 20558 9601659 3679 173012)
+      remacs: ok (0 0 0 0 0 0 29)
+    row#3
+      gnu:    ok (5931051 280 1543429 20558 9602324 3679 173037)
+      remacs: ok (0 0 0 0 0 0 29)
+KNOWN  menu-bar-open (3 rows)
+    row#1
+      gnu:    err (wrong-type-argument number-or-marker-p nil)
+      remacs: ok nil
+    row#2
+      gnu:    err (wrong-type-argument framep "a")
+      remacs: ok nil
+    row#4
+      gnu:    err (wrong-type-argument number-or-marker-p nil)
+      remacs: ok nil
+KNOWN  menu-bar-read-lispintro (2 rows)
+    row#1
+      gnu:    ok (window t)
+      remacs: err (invalid-function #<X>)
+    row#3
+      gnu:    ok (window t)
+      remacs: err (invalid-function #<X>)
+KNOWN  menu-bar-read-lispref (2 rows)
+    row#1
+      gnu:    ok (window t)
+      remacs: err (invalid-function #<X>)
+    row#3
+      gnu:    ok (window t)
+      remacs: err (invalid-function #<X>)
+KNOWN  menu-bar-select-buffer (2 rows)
+    row#1
+      gnu:    ok (buf *info*)
+      remacs: err (wrong-type-argument stringp 97)
+    row#3
+      gnu:    ok (buf RMAIL)
+      remacs: err (wrong-type-argument stringp 97)
+KNOWN  menu-bar-select-yank (2 rows)
+    row#1
+      gnu:    err (wrong-type-argument char-or-string-p nil)
+      remacs: ok nil
+    row#3
+      gnu:    err (wrong-type-argument char-or-string-p nil)
+      remacs: ok nil
+KNOWN  menu-bar-update-buffers (3 rows)
+    row#1
+      gnu:    ok ("Buffers" [("*Customize Opti...n: Fringe Mode*  *" . #<X> 2 nil nil]) ("*Customize Opti...fer Boundaries*  *" . #<X> 2 nil nil]) ("RMAIL  %" . #<X> 2 nil nil]) ("*info*  %" . #<X> 2 nil nil]) ("*Occur*  %" . #<X> 2 nil 
+      remacs: ok ("Buffers" [("*Customize Opti...n: Fringe Mode*  *" . #<X>) (i . 0) (pair "*Customize Opti...n: Fringe Mode*  *" . #<X>) (tail))]) ("*Customize Opti...fer Boundaries*  *" . #<X>) (i . 0) (pair "*Customize Opti...fer Boun
+    row#2
+      gnu:    ok ("Buffers" [("*Customize Opti...n: Fringe Mode*  *" . #<X> 2 nil nil]) ("*Customize Opti...fer Boundaries*  *" . #<X> 2 nil nil]) ("RMAIL  %" . #<X> 2 nil nil]) ("*info*  %" . #<X> 2 nil nil]) ("*Occur*  %" . #<X> 2 nil 
+      remacs: ok ("Buffers" [("*Customize Opti...n: Fringe Mode*  *" . #<X>) (i . 0) (pair "*Customize Opti...n: Fringe Mode*  *" . #<X>) (tail))]) ("*Customize Opti...fer Boundaries*  *" . #<X>) (i . 0) (pair "*Customize Opti...fer Boun
+    row#4
+      gnu:    ok nil
+      remacs: ok ("Buffers" [("*Customize Opti...n: Fringe Mode*  *" . #<X>) (i . 0) (pair "*Customize Opti...n: Fringe Mode*  *" . #<X>) (tail))]) ("*Customize Opti...fer Boundaries*  *" . #<X>) (i . 0) (pair "*Customize Opti...fer Boun
+KNOWN  minibuffer--delete-message-overlay (2 rows)
+    row#1
+      gnu:    ok (tooltip-hide)
+      remacs: ok (clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map tooltip-hide)
+    row#3
+      gnu:    ok (tooltip-hide)
+      remacs: ok (clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map tooltip-hide)
+KNOWN  minibuffer-history-isearch-message (3 rows)
+    row#1
+      gnu:    ok #("Failing I-search: a~alpha" 0 18 (face minibuffer-prompt read-only t) 18 25 (face isearch-fail))
+      remacs: ok #("Failing I-search: (a~alpha [repeat for next buffer]" 0 18 (read-only t face minibuffer-prompt) 18 26 (face isearch-fail) 26 51 (read-only t face minibuffer-prompt))
+    row#2
+      gnu:    ok #("Failing I-search: a~alpha^Q" 0 18 (face minibuffer-prompt read-only t) 18 25 (face isearch-fail) 25 27 (face minibuffer-prompt read-only t))
+      remacs: ok #("Failing I-search: (a~alpha^Q" 0 18 (face minibuffer-prompt read-only t) 18 26 (face isearch-fail) 26 28 (face minibuffer-prompt read-only t))
+    row#4
+      gnu:    ok #("Failing I-search: a~alpha" 0 18 (face minibuffer-prompt read-only t) 18 25 (face isearch-fail))
+      remacs: ok #("Failing I-search: (a~alpha" 0 18 (read-only t face minibuffer-prompt) 18 26 (face isearch-fail))
+KNOWN  minibuffer-history-isearch-push-state (2 rows)
+    row#1
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#3
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  minibuffer-history-isearch-search (2 rows)
+    row#1
+      gnu:    ok (subr F616e6f6e796d6f75732d6c616d626461_anonymous_lambda_80)
+      remacs: ok (subr nil)
+    row#3
+      gnu:    ok (subr F616e6f6e796d6f75732d6c616d626461_anonymous_lambda_80)
+      remacs: ok (subr nil)
+KNOWN  minibuffer-lazy-highlight-setup (2 rows)
+    row#1
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  minibuffer-prompt-properties--setter (1 rows)
+    row#5
+      gnu:    err (wrong-type-argument listp test.foo)
+      remacs: err (void-function test.foo)
+KNOWN  minimize-window (2 rows)
+    row#1
+      gnu:    err (error "Cannot resize the root window of a frame")
+      remacs: ok t
+    row#4
+      gnu:    err (error "Cannot resize the root window of a frame")
+      remacs: ok t
+KNOWN  minor-mode-key-binding (1 rows)
+    row#5
+      gnu:    ok nil
+      remacs: err (wrong-type-argument arrayp function)
+KNOWN  mode--line-format-right-align (2 rows)
+    row#1
+      gnu:    ok #(" " 0 1 (display (space :align-to (80))))
+      remacs: ok #(" " 0 1 (display (space :align-to (40))))
+    row#3
+      gnu:    ok #(" " 0 1 (display (space :align-to (80))))
+      remacs: ok #(" " 0 1 (display (space :align-to (40))))
+KNOWN  mode-line--minor-modes (2 rows)
+    row#1
+      gnu:    ok ("" (:propertize ("" ((dired-click-to-select-mode " Click-To-Select") (mml-mode " MML") (vc-dir-git-mode " Git") (diff-minor-mode " Diff") (hi-lock-mode (:eval ...)) (eldoc-mode eldoc-minor-mode-string) (center-line-mode
+      remacs: ok ("" (:propertize ("" ((hi-lock-mode (:eval ...)) (checkdoc-minor-mode checkdoc-minor-mode-string) (compilation-minor-mode " Compilation") (compilation-shell-minor-mode " Shell-Compile") (vc-dir-git-mode " Git") (diff-min
+    row#3
+      gnu:    ok ("" (:propertize ("" ((dired-click-to-select-mode " Click-To-Select") (mml-mode " MML") (vc-dir-git-mode " Git") (diff-minor-mode " Diff") (hi-lock-mode (:eval ...)) (eldoc-mode eldoc-minor-mode-string) (center-line-mode
+      remacs: ok ("" (:propertize ("" ((hi-lock-mode (:eval ...)) (checkdoc-minor-mode checkdoc-minor-mode-string) (compilation-minor-mode " Compilation") (compilation-shell-minor-mode " Shell-Compile") (vc-dir-git-mode " Git") (diff-min
+KNOWN  mode-line-toggle-read-only (1 rows)
+    row#2
+      gnu:    ok nil
+      remacs: ok t
+KNOWN  mouse-autoselect-window-cancel (3 rows)
+    row#1
+      gnu:    ok (tooltip-hide)
+      remacs: ok (clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map tooltip-hide)
+    row#2
+      gnu:    ok (tooltip-hide)
+      remacs: ok (clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map tooltip-hide)
+    row#4
+      gnu:    ok (tooltip-hide)
+      remacs: ok (clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map tooltip-hide)
+KNOWN  mouse-autoselect-window-select (2 rows)
+    row#1
+      gnu:    ok (tooltip-hide)
+      remacs: ok (clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map tooltip-hide)
+    row#3
+      gnu:    ok (tooltip-hide)
+      remacs: ok (clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map clear-transient-map tooltip-hide)
+KNOWN  mouse-buffer-menu-map (2 rows)
+    row#1
+      gnu:    ok ("Buffer Menu" ("" ("*ls error*  *   " . #<X>)) ("" ("*Directory*   %  " . #<X>) ("*Faces*       %  " . #<X>) ("*Output*      %  " . #<X>)) ("" ("*Customize Group: Window Divider*               *   " . #<X>) ("*Customize
+      remacs: ok ("Buffer Menu" ("Select Buffer" ("*Abbrevs*                                           /nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/(elisp) Top" . #<X>) ("*Buffer List*             
+    row#3
+      gnu:    ok ("Buffer Menu" ("" ("*ls error*  *   " . #<X>)) ("" ("*Directory*   %  " . #<X>) ("*Faces*       %  " . #<X>) ("*Output*      %  " . #<X>)) ("" ("*Customize Group: Window Divider*               *   " . #<X>) ("*Customize
+      remacs: ok ("Buffer Menu" ("Select Buffer" ("*Abbrevs*                                           /nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/(elisp) Top" . #<X>) ("*Buffer List*             
+KNOWN  mouse-drag-bottom-edge (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  mouse-drag-bottom-left-corner (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  mouse-drag-bottom-right-corner (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  mouse-drag-frame-move (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  mouse-drag-frame-resize (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#5
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  mouse-drag-left-edge (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  mouse-drag-line (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#5
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  mouse-drag-mode-line (2 rows)
+    row#2
+      gnu:    ok nil
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok nil
+      remacs: ok (subr nil)
+KNOWN  mouse-drag-region (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  mouse-drag-region-rectangle (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  mouse-drag-region-shift-adjust (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  mouse-drag-right-edge (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  mouse-drag-top-edge (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  mouse-drag-top-left-corner (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  mouse-drag-top-right-corner (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  mouse-drag-track (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  mouse-drag-vertical-line (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  mouse-kill-secondary (2 rows)
+    row#1
+      gnu:    err (error "Select or click on the buffer where the secondary selection is")
+      remacs: err (args-out-of-range "" -1)
+    row#3
+      gnu:    err (error "Select or click on the buffer where the secondary selection is")
+      remacs: err (args-out-of-range "" -1)
+KNOWN  mouse-set-region (1 rows)
+    row#2
+      gnu:    ok 538
+      remacs: ok 263
+KNOWN  mouse-set-secondary (2 rows)
+    row#2
+      gnu:    ok ""
+      remacs: err (wrong-type-argument integer-or-marker-p nil)
+    row#4
+      gnu:    ok ""
+      remacs: err (wrong-type-argument integer-or-marker-p nil)
+KNOWN  mouse-split-window-vertically (1 rows)
+    row#2
+      gnu:    ok (window t)
+      remacs: err (user-error "Window too short to split")
+KNOWN  mouse-wheel-change-button (1 rows)
+    row#5
+      gnu:    ok t
+      remacs: err (void-function test.foo)
+KNOWN  move-file-to-trash (1 rows)
+    row#2
+      gnu:    ok nil
+      remacs: err (file-missing "Removing old name" "No such file or directory" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/a")
+KNOWN  move-to-window-line-top-bottom (3 rows)
+    row#1
+      gnu:    err (error "move-to-window-line called from unrelated buffer")
+      remacs: ok 0
+    row#2
+      gnu:    err (error "move-to-window-line called from unrelated buffer")
+      remacs: ok 0
+    row#4
+      gnu:    err (error "move-to-window-line called from unrelated buffer")
+      remacs: ok 0
+KNOWN  mule--ucs-names-affixation (2 rows)
+    row#2
+      gnu:    err (wrong-type-argument hash-table-p nil)
+      remacs: ok ((97 " \11" ""))
+    row#4
+      gnu:    err (wrong-type-argument hash-table-p nil)
+      remacs: ok ((126 " \11" ""))
+KNOWN  mule--ucs-names-sort-by-code (2 rows)
+    row#2
+      gnu:    err (wrong-type-argument hash-table-p nil)
+      remacs: ok (97)
+    row#4
+      gnu:    err (wrong-type-argument hash-table-p nil)
+      remacs: ok (126)
+KNOWN  native-elisp-load (2 rows)
+    row#2
+      gnu:    err (native-lisp-load-failed "file does not exists" "a")
+      remacs: err (native-lisp-load-failed "a" "dlopen(a, 0x0001): tried: 'a' (), '/System/Volumes/Preboot/Cryptexes/OSa' (no such file), '/usr/lib/a' (no such file, not in dyld cache), 'a' ()")
+    row#3
+      gnu:    err (native-lisp-load-failed "%-10s|%05.2f" "dlopen(%-10s|%05.2f, 0x0001): tried: '%-10s|%05.2f' (not a file), '/System/Volumes/Preboot/Cryptexes/OS%-10s|%05.2f' (no such file), '/usr/lib/%-10s|%05.2f' (no such file, not in 
+      remacs: err (native-lisp-load-failed "%-10s|%05.2f" "dlopen(%-10s|%05.2f, 0x0001): tried: '%-10s|%05.2f' (), '/System/Volumes/Preboot/Cryptexes/OS%-10s|%05.2f' (no such file), '/usr/lib/%-10s|%05.2f' (no such file, not in dyld cache
+KNOWN  negative-argument (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  network-interface-list (3 rows)
+    row#1
+      gnu:    ok (("utun7" . [65152 0 0 0 23140 56410 25098 40668 0]) ("utun6" . [65152 0 0 0 55793 61540 34304 11887 0]) ("utun5" . [65152 0 0 0 29614 12258 60074 38835 0]) ("utun4" . [65152 0 0 0 28796 47685 26577 26912 0]) ("llw0" . [
+      remacs: ok (("lo0" . [127 0 0 1 0]) ("lo0" . [0 0 0 0 0 0 0 1 0]) ("lo0" . [65152 0 0 0 0 0 0 1 0]) ("en0" . [65152 0 0 0 63 54292 48599 58986 0]) ("en0" . [9216 9234 19105 18944 3243 23440 52341 21387 0]) ("en0" . [9216 9234 19105
+    row#2
+      gnu:    err (error "Unsupported address family")
+      remacs: ok (("lo0" . [127 0 0 1 0]) ("lo0" . [0 0 0 0 0 0 0 1 0]) ("lo0" . [65152 0 0 0 0 0 0 1 0]) ("en0" . [65152 0 0 0 63 54292 48599 58986 0]) ("en0" . [9216 9234 19105 18944 3243 23440 52341 21387 0]) ("en0" . [9216 9234 19105
+    row#4
+      gnu:    ok (("utun7" . [65152 0 0 0 23140 56410 25098 40668 0]) ("utun6" . [65152 0 0 0 55793 61540 34304 11887 0]) ("utun5" . [65152 0 0 0 29614 12258 60074 38835 0]) ("utun4" . [65152 0 0 0 28796 47685 26577 26912 0]) ("llw0" . [
+      remacs: ok (("lo0" . [127 0 0 1 0]) ("lo0" . [0 0 0 0 0 0 0 1 0]) ("lo0" . [65152 0 0 0 0 0 0 1 0]) ("en0" . [65152 0 0 0 63 54292 48599 58986 0]) ("en0" . [9216 9234 19105 18944 3243 23440 52341 21387 0]) ("en0" . [9216 9234 19105
+KNOWN  nonincremental-search-backward (1 rows)
+    row#1
+      gnu:    err (search-failed #("a~alpha" 0 7 (isearch-case-fold-search t isearch-regexp-function nil)))
+      remacs: err (search-failed "(a~alpha")
+KNOWN  nonincremental-search-forward (1 rows)
+    row#1
+      gnu:    err (search-failed #("a" 0 1 (isearch-case-fold-search t isearch-regexp-function nil)))
+      remacs: err (search-failed "a")
+KNOWN  normal-splash-screen (1 rows)
+    row#2
+      gnu:    ok (window t)
+      remacs: err (invalid-function #<X>)
+KNOWN  normal-top-level-add-subdirs-to-load-path (1 rows)
+    row#1
+      gnu:    ok ("/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/aCDoHQB(" "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/s
+      remacs: ok nil
+KNOWN  normal-top-level-add-to-load-path (2 rows)
+    row#2
+      gnu:    err (wrong-type-argument stringp 97)
+      remacs: ok nil
+    row#4
+      gnu:    err (wrong-type-argument stringp 126)
+      remacs: ok nil
+KNOWN  point-to-register (1 rows)
+    row#3
+      gnu:    ok ((frame-configuration (#<X> ((no-accept-focus) (visibility . t) (tab-bar-lines . 0) (buried-buffer-list) (buffer-list #<X> #<X> #<X> #<X> #<X> #<X> #<X> #<X> #<X>) (unsplittable) (modeline . t) (width . 80) (height . 25)
+      remacs: ok ((frame-configuration (#<X> ((no-accept-focus) (visibility . t) (tab-bar-lines . 1) (menu-bar-lines . 1) (buried-buffer-list) (buffer-list #<X> #<X> #<X> #<X> #<X> #<X> #<X> #<X> #<X> #<X> #<X> #<X>) (unsplittable) (mode
+KNOWN  pop-global-mark (1 rows)
+    row#3
+      gnu:    ok (buf *Occur*)
+      remacs: ok (buf COPYING)
+KNOWN  pop-to-buffer-same-window (2 rows)
+    row#2
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok (buf a)
+    row#3
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok (buf %-10s|%05.2f)
+KNOWN  process-file (1 rows)
+    row#2
+      gnu:    err (file-missing "Searching for program" "No such file or directory" "a")
+      remacs: err (permission-denied "Searching for program" "Permission denied" "a")
+KNOWN  process-lines-handling-status (1 rows)
+    row#2
+      gnu:    err (file-missing "Searching for program" "No such file or directory" "a")
+      remacs: err (permission-denied "Searching for program" "Permission denied" "a")
+KNOWN  process-type (1 rows)
+    row#4
+      gnu:    err (error "Process ~ does not exist")
+      remacs: err (error "Buffer ~ has no process")
+KNOWN  provided-mode-derived-p (1 rows)
+    row#5
+      gnu:    ok nil
+      remacs: err (wrong-type-argument listp test.foo)
+KNOWN  pwd (2 rows)
+    row#1
+      gnu:    ok "Directory ~/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/"
+      remacs: ok "Directory /nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/"
+    row#4
+      gnu:    ok "Directory ~/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/"
+      remacs: ok "Directory /nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/"
+KNOWN  query-replace-read-from-suggestions (2 rows)
+    row#1
+      gnu:    ok (#("a" 0 1 (isearch-case-fold-search t isearch-regexp-function nil)) #("a" 0 1 (isearch-case-fold-search t)))
+      remacs: ok (#("a" 0 1 (isearch-case-fold-search t isearch-regexp-function nil)) #("aaa" 0 3 (isearch-case-fold-search t)))
+    row#3
+      gnu:    ok ("beta" #("a" 0 1 (isearch-case-fold-search t isearch-regexp-function nil)) #("a" 0 1 (isearch-case-fold-search t)))
+      remacs: ok ("beta" #("a" 0 1 (isearch-case-fold-search t isearch-regexp-function nil)) #("aaa" 0 3 (isearch-case-fold-search t)))
+KNOWN  re--describe-compiled (2 rows)
+    row#2
+      gnu:    err (error "Not available: rebuild with --enable-checking")
+      remacs: ok nil
+    row#3
+      gnu:    ok "\2\11%-10s|%05\3\2\0022f\1"
+      remacs: ok nil
+KNOWN  read (2 rows)
+    row#1
+      gnu:    err (end-of-file #<X>)
+      remacs: err (error "read: stdin not supported")
+    row#4
+      gnu:    err (end-of-file #<X>)
+      remacs: err (error "read: stdin not supported")
+KNOWN  read--expression (1 rows)
+    row#5
+      gnu:    err (wrong-type-argument stringp function)
+      remacs: err (end-of-file "Error reading from stdin")
+KNOWN  read-all-face-attributes (1 rows)
+    row#5
+      gnu:    err (error "Invalid face" function)
+      remacs: err (end-of-file "Error reading from stdin")
+KNOWN  read-face-attribute (1 rows)
+    row#6
+      gnu:    err (error "Invalid face" eql)
+      remacs: err (error "Invalid face attribute name" in)
+KNOWN  read-positioning-symbols (2 rows)
+    row#2
+      gnu:    ok #<X>
+      remacs: ok (record)
+    row#4
+      gnu:    err (end-of-file #<X>)
+      remacs: ok (record)
+KNOWN  recent-keys (1 rows)
+    row#1
+      gnu:    ok ["%-10s|%05.2f" "file-a.txt" cons setq]
+      remacs: ok []
+KNOWN  recover-file (1 rows)
+    row#2
+      gnu:    err (user-error "Auto-save file ~/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/#a# not current")
+      remacs: err (user-error "Auto-save file /nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/#a# not current")
+KNOWN  recover-session (2 rows)
+    row#1
+      gnu:    err (file-missing "Searching for program" "No such file or directory" "ls")
+      remacs: err (error "You set `auto-save-list-file-prefix' to disable making session files")
+    row#3
+      gnu:    err (file-missing "Searching for program" "No such file or directory" "ls")
+      remacs: err (error "You set `auto-save-list-file-prefix' to disable making session files")
+KNOWN  register-preview (1 rows)
+    row#2
+      gnu:    err (type-mismatch "%-10s|%05.2f" function)
+      remacs: err (type-mismatch)
+KNOWN  register-read-with-preview-fancy (1 rows)
+    row#2
+      gnu:    err (wrong-type-argument characterp function)
+      remacs: err (wrong-type-argument characterp "%-10s|%05.2f")
+KNOWN  rename-file (1 rows)
+    row#2
+      gnu:    err (file-missing "Renaming" "No such file or directory" "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a" "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/
+      remacs: err (file-missing "Renaming" "No such file or directory" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/a" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/3
+KNOWN  replace-eval-replacement (1 rows)
+    row#5
+      gnu:    ok "test.foo"
+      remacs: err (error "Error evaluating replacement expression: (void-variable function)")
+KNOWN  replace-match (1 rows)
+    row#2
+      gnu:    err (args-out-of-range 31 34)
+      remacs: err (args-out-of-range 12 15)
+KNOWN  replace-match-data (2 rows)
+    row#2
+      gnu:    ok (31 34)
+      remacs: ok (12 15)
+    row#6
+      gnu:    ok (31 34)
+      remacs: ok (12 15)
+KNOWN  revert-buffer-restore-read-only (2 rows)
+    row#1
+      gnu:    ok nil
+      remacs: ok (subr nil)
+    row#3
+      gnu:    ok nil
+      remacs: ok (subr nil)
+KNOWN  rmc--show-help (1 rows)
+    row#2
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok (buf ()
+KNOWN  run-hook-with-args (1 rows)
+    row#5
+      gnu:    err (void-function test.foo)
+      remacs: ok nil
+KNOWN  run-hook-with-args-until-failure (1 rows)
+    row#5
+      gnu:    err (void-function test.foo)
+      remacs: ok t
+KNOWN  run-hook-with-args-until-success (1 rows)
+    row#5
+      gnu:    err (void-function test.foo)
+      remacs: ok nil
+KNOWN  run-hook-wrapped (1 rows)
+    row#5
+      gnu:    err (void-function test.foo)
+      remacs: ok nil
+KNOWN  run-window-scroll-functions (2 rows)
+    row#1
+      gnu:    err (wrong-type-argument window-live-p nil)
+      remacs: ok nil
+    row#4
+      gnu:    err (wrong-type-argument window-live-p nil)
+      remacs: ok nil
+KNOWN  save-buffer (2 rows)
+    row#1
+      gnu:    ok nil
+      remacs: err (end-of-file "Error reading from stdin")
+    row#2
+      gnu:    ok nil
+      remacs: err (end-of-file "Error reading from stdin")
+KNOWN  save-some-buffers-root (2 rows)
+    row#1
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#3
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+DIVERG scratch-buffer (2 rows)
+    row#1
+      gnu:    ok (buf *scratch*)
+      remacs: err (error "Window is dedicated to `~'")
+    row#3
+      gnu:    ok (buf *scratch*)
+      remacs: err (error "Window is dedicated to `~'")
+KNOWN  scroll-bar-toolkit-horizontal-scroll (2 rows)
+    row#2
+      gnu:    ok 148
+      remacs: ok 1
+    row#4
+      gnu:    ok 148
+      remacs: ok 1
+KNOWN  scroll-bar-toolkit-scroll (2 rows)
+    row#2
+      gnu:    ok 148
+      remacs: ok 1
+    row#4
+      gnu:    ok 148
+      remacs: ok 1
+KNOWN  scroll-other-window (3 rows)
+    row#1
+      gnu:    err (error "There is no other window")
+      remacs: err (end-of-buffer)
+    row#2
+      gnu:    err (error "There is no other window")
+      remacs: err (end-of-buffer)
+    row#4
+      gnu:    err (error "There is no other window")
+      remacs: err (end-of-buffer)
+DIVERG scroll-other-window-down (3 rows)
+    row#1
+      gnu:    err (error "There is no other window")
+      remacs: err (beginning-of-buffer)
+    row#2
+      gnu:    err (error "There is no other window")
+      remacs: err (beginning-of-buffer)
+    row#4
+      gnu:    err (error "There is no other window")
+      remacs: err (beginning-of-buffer)
+KNOWN  scroll-up (1 rows)
+    row#2
+      gnu:    ok nil
+      remacs: err (end-of-buffer)
+KNOWN  scroll-up-command (1 rows)
+    row#2
+      gnu:    ok nil
+      remacs: err (end-of-buffer)
+KNOWN  scroll-up-line (3 rows)
+    row#1
+      gnu:    ok nil
+      remacs: err (end-of-buffer)
+    row#2
+      gnu:    ok nil
+      remacs: err (end-of-buffer)
+    row#4
+      gnu:    ok nil
+      remacs: err (end-of-buffer)
+KNOWN  search-emacs-glossary (2 rows)
+    row#1
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok (window t)
+    row#3
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok (window t)
+KNOWN  set-buffer (1 rows)
+    row#4
+      gnu:    err (error "No buffer named ~")
+      remacs: ok (buf ~)
+KNOWN  set-face-attribute-from-resource (1 rows)
+    row#5
+      gnu:    err (error "Not a face: function")
+      remacs: err (wrong-type-argument sequencep write-file)
+KNOWN  set-face-background (1 rows)
+    row#6
+      gnu:    err (error "Invalid face" eql)
+      remacs: ok nil
+KNOWN  set-face-bold (1 rows)
+    row#6
+      gnu:    err (error "Invalid face" eql)
+      remacs: ok nil
+KNOWN  set-face-extend (1 rows)
+    row#6
+      gnu:    err (error "Invalid face" eql)
+      remacs: ok nil
+KNOWN  set-face-font (1 rows)
+    row#6
+      gnu:    err (error "Invalid face" eql)
+      remacs: err (error "Invalid font or font-spec" in)
+KNOWN  set-face-foreground (1 rows)
+    row#6
+      gnu:    err (error "Invalid face" eql)
+      remacs: err (wrong-type-argument stringp in)
+KNOWN  set-face-inverse-video (1 rows)
+    row#6
+      gnu:    err (error "Invalid face" eql)
+      remacs: err (error "Invalid inverse-video face attribute value" in)
+KNOWN  set-face-italic (1 rows)
+    row#6
+      gnu:    err (error "Invalid face" eql)
+      remacs: ok nil
+KNOWN  set-face-stipple (1 rows)
+    row#6
+      gnu:    err (error "Invalid face" eql)
+      remacs: err (error "Invalid stipple attribute" in)
+KNOWN  set-face-underline (1 rows)
+    row#6
+      gnu:    err (error "Invalid face" eql)
+      remacs: err (error "Invalid face underline" in)
+KNOWN  set-file-times (1 rows)
+    row#2
+      gnu:    err (file-missing "Setting file times" "No such file or directory" "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a")
+      remacs: err (file-missing "Setting file times" "No such file or directory" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/a")
+KNOWN  set-input-method (1 rows)
+    row#5
+      gnu:    ok function
+      remacs: err (file-error "Locking file: Permission denied (os error 13)" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/function")
+KNOWN  set-process-window-size (2 rows)
+    row#2
+      gnu:    err (wrong-type-argument processp "a")
+      remacs: ok nil
+    row#5
+      gnu:    err (wrong-type-argument processp function)
+      remacs: ok nil
+KNOWN  set-scroll-bar-mode (2 rows)
+    row#2
+      gnu:    ok ((tab-bar-lines . 1) (right-divider-width . 6) (left-fringe . 0) (right-fringe) (vertical-scroll-bars . "a"))
+      remacs: ok ((right-divider-width . 6) (tab-bar-lines . 1) (left-fringe . 0) (right-fringe) (vertical-scroll-bars . "a"))
+    row#4
+      gnu:    ok ((tab-bar-lines . 1) (right-divider-width . 6) (left-fringe . 0) (right-fringe) (vertical-scroll-bars . "~"))
+      remacs: ok ((right-divider-width . 6) (tab-bar-lines . 1) (left-fringe . 0) (right-fringe) (vertical-scroll-bars . "~"))
+KNOWN  set-transient-map (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#5
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  set-window-combination-limit (2 rows)
+    row#2
+      gnu:    err (wrong-type-argument window-valid-p "a")
+      remacs: err (error "Combination limit is meaningful for internal windows only")
+    row#5
+      gnu:    err (wrong-type-argument window-valid-p function)
+      remacs: err (error "Combination limit is meaningful for internal windows only")
+KNOWN  set-window-display-table (2 rows)
+    row#2
+      gnu:    err (wrong-type-argument window-live-p "a")
+      remacs: ok "a\\b"
+    row#5
+      gnu:    err (wrong-type-argument window-live-p function)
+      remacs: ok test.foo
+KNOWN  setup-default-fontset (2 rows)
+    row#1
+      gnu:    ok nil
+      remacs: err (error "Invalid script or charset name: armenian")
+    row#3
+      gnu:    ok nil
+      remacs: err (error "Invalid script or charset name: armenian")
+KNOWN  setup-specified-language-environment (2 rows)
+    row#1
+      gnu:    err (error "Language environment not defined: \"nil\"")
+      remacs: err (error "Bogus calling sequence")
+    row#3
+      gnu:    err (error "Language environment not defined: \"nil\"")
+      remacs: err (error "Bogus calling sequence")
+DIVERG shell-command-on-region (1 rows)
+    row#2
+      gnu:    ok 1
+      remacs: ok 2
+DIVERG shell-command-to-string (2 rows)
+    row#2
+      gnu:    ok "zsh:1: command not found: a\n"
+      remacs: ok "/bin/sh: a: command not found\n"
+    row#4
+      gnu:    ok "zsh:1: permission denied: /Users/suzumiyaaoba\n"
+      remacs: ok "/bin/sh: /Users/suzumiyaaoba: is a directory\n"
+KNOWN  split-root-window-below (2 rows)
+    row#1
+      gnu:    ok (window t)
+      remacs: err (error "#<X> is not a valid window")
+    row#4
+      gnu:    ok (window t)
+      remacs: err (error "#<X> is not a valid window")
+KNOWN  split-root-window-right (2 rows)
+    row#1
+      gnu:    ok (window t)
+      remacs: err (error "#<X> is not a valid window")
+    row#4
+      gnu:    ok (window t)
+      remacs: err (error "#<X> is not a valid window")
+KNOWN  split-window (1 rows)
+    row#1
+      gnu:    err (error "Window #<X> too small for splitting")
+      remacs: ok (window t)
+KNOWN  split-window-no-error (2 rows)
+    row#1
+      gnu:    ok nil
+      remacs: ok (window t)
+    row#4
+      gnu:    ok nil
+      remacs: ok (window t)
+KNOWN  startup--update-eln-cache (2 rows)
+    row#1
+      gnu:    ok nil
+      remacs: ok ("/Users/suzumiyaaoba/.emacs.d/eln-cache/")
+    row#3
+      gnu:    ok nil
+      remacs: ok ("/Users/suzumiyaaoba/.emacs.d/eln-cache/")
+KNOWN  startup-redirect-eln-cache (2 rows)
+    row#2
+      gnu:    ok ("/Users/suzumiyaaoba/.emacs.d/a/" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/../lib/emacs/31.1/native-lisp/")
+      remacs: ok ("/Users/suzumiyaaoba/.emacs.d/a/")
+    row#4
+      gnu:    ok ("/Users/suzumiyaaoba/" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/../lib/emacs/31.1/native-lisp/")
+      remacs: ok ("/Users/suzumiyaaoba/")
+KNOWN  switch-to-buffer (2 rows)
+    row#2
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok (buf a)
+    row#3
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok (buf %-10s|%05.2f)
+KNOWN  switch-to-buffer-other-tab (2 rows)
+    row#2
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok (buf a)
+    row#3
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok (buf %-10s|%05.2f)
+KNOWN  switch-to-buffer-other-window (2 rows)
+    row#2
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok (buf a)
+    row#3
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok (buf %-10s|%05.2f)
+KNOWN  switch-to-next-buffer (2 rows)
+    row#1
+      gnu:    ok (buf *Occur*)
+      remacs: ok (buf a)
+    row#4
+      gnu:    ok (buf *Customize Group: Window Divider*)
+      remacs: ok (buf ~)
+KNOWN  switch-to-prev-buffer (2 rows)
+    row#1
+      gnu:    ok (buf *Occur*)
+      remacs: ok (buf a)
+    row#4
+      gnu:    ok (buf *scratch*)
+      remacs: ok (buf %-10s|%05.2f)
+KNOWN  sxhash-eq (2 rows)
+    row#2
+      gnu:    ok 12791235732
+      remacs: ok 6770767141
+    row#4
+      gnu:    ok 12791230508
+      remacs: ok 6770767112
+KNOWN  sxhash-eql (2 rows)
+    row#2
+      gnu:    ok 12791230760
+      remacs: ok 6770767129
+    row#4
+      gnu:    ok 12791231168
+      remacs: ok 6770767204
+KNOWN  syntax-ppss-stats (2 rows)
+    row#1
+      gnu:    ok ((23 . 0) nil (32 . 3) nil nil (2 . 1250))
+      remacs: ok ((35 . 0) nil (82 . 3) nil nil (2 . 1250))
+    row#3
+      gnu:    ok ((23 . 0) nil (32 . 3) nil nil (2 . 1250))
+      remacs: ok ((35 . 0) nil (82 . 3) nil nil (2 . 1250))
+KNOWN  syntax-propertize-via-font-lock (2 rows)
+    row#2
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#4
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  system-move-file-to-trash (1 rows)
+    row#2
+      gnu:    err (file-missing "Removing old name" "No such file or directory" "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a")
+      remacs: err (file-missing "Removing old name" "No such file or directory" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/a")
+KNOWN  tab-bar--current-tab (2 rows)
+    row#1
+      gnu:    ok (current-tab (name . "*scratch*") (explicit-name))
+      remacs: ok (current-tab (name . "%-10s|%05.2f") (explicit-name))
+    row#4
+      gnu:    ok (current-tab (name . "*scratch*") (explicit-name))
+      remacs: ok (current-tab (name . "%-10s|%05.2f") (explicit-name))
+KNOWN  tab-bar--current-tab-find (2 rows)
+    row#1
+      gnu:    ok (current-tab (name . "*scratch*") (explicit-name))
+      remacs: ok (current-tab (name . "%-10s|%05.2f") (explicit-name))
+    row#4
+      gnu:    ok (current-tab (name . "*scratch*") (explicit-name))
+      remacs: ok (current-tab (name . "%-10s|%05.2f") (explicit-name))
+KNOWN  tab-bar--current-tab-make (2 rows)
+    row#1
+      gnu:    ok (current-tab (name . "*scratch*") (explicit-name))
+      remacs: ok (current-tab (name . "%-10s|%05.2f") (explicit-name))
+    row#4
+      gnu:    ok (current-tab (name . "*scratch*") (explicit-name))
+      remacs: ok (current-tab (name . "%-10s|%05.2f") (explicit-name))
+KNOWN  tab-bar--tab (2 rows)
+    row#1
+      gnu:    ok (tab (name . #1="*scratch*") (explicit-name) (time . 1792318552.770929) (ws ((min-height . 12) (min-width . 40) (min-height-ignore . 6) (min-width-ignore . 8) (min-height-safe . 3) (min-width-safe . 8) (min-pixel-height 
+      remacs: ok (tab (name . "%-10s|%05.2f") (explicit-name) (time . 1792318631.93504) (ws ((min-height . 12) (min-width . 40) (min-height-ignore . 6) (min-width-ignore . 8) (min-height-safe . 3) (min-width-safe . 8) (min-pixel-height .
+    row#4
+      gnu:    ok (tab (name . #1="*scratch*") (explicit-name) (time . 1792318552.771174) (ws ((min-height . 12) (min-width . 40) (min-height-ignore . 6) (min-width-ignore . 8) (min-height-safe . 3) (min-width-safe . 8) (min-pixel-height 
+      remacs: ok (tab (name . "%-10s|%05.2f") (explicit-name) (time . 1792318631.938015) (ws ((min-height . 12) (min-width . 40) (min-height-ignore . 6) (min-width-ignore . 8) (min-height-safe . 3) (min-width-safe . 8) (min-pixel-height 
+KNOWN  tab-bar--tab-index-by-name (1 rows)
+    row#2
+      gnu:    ok 1
+      remacs: ok nil
+KNOWN  tab-bar--tabs-recent (2 rows)
+    row#1
+      gnu:    ok ((tab (name . #1="a") (explicit-name) (time . 1792318552.376045) (ws ((min-height . 4) (min-width . 10) (min-height-ignore . 2) (min-width-ignore . 2) (min-height-safe . 1) (min-width-safe . 2) (min-pixel-height . 4) (mi
+      remacs: ok ((tab (name . "*About GNU Emacs*") (explicit-name) (time . 1792318577.258748) (ws ((min-height . 4) (min-width . 10) (min-height-ignore . 2) (min-width-ignore . 2) (min-height-safe . 1) (min-width-safe . 2) (min-pixel-he
+    row#4
+      gnu:    ok ((tab (name . #1="a") (explicit-name) (time . 1792318552.376045) (ws ((min-height . 4) (min-width . 10) (min-height-ignore . 2) (min-width-ignore . 2) (min-height-safe . 1) (min-width-safe . 2) (min-pixel-height . 4) (mi
+      remacs: ok ((tab (name . "*About GNU Emacs*") (explicit-name) (time . 1792318577.258748) (ws ((min-height . 4) (min-width . 10) (min-height-ignore . 2) (min-width-ignore . 2) (min-height-safe . 1) (min-width-safe . 2) (min-pixel-he
+KNOWN  tab-bar-close-tab-by-name (1 rows)
+    row#2
+      gnu:    err (wrong-type-argument number-or-marker-p nil)
+      remacs: err (user-error "Attempt to delete the sole tab in a frame")
+KNOWN  tab-bar-format-tabs (2 rows)
+    row#1
+      gnu:    ok ((sep-1 menu-item #1="|" . #2=(ignore)) (tab-1 menu-item #(" *Old buffer /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a* x" 0 122 (mouse-face tab-bar-tab-high
+      remacs: ok ((sep-1 menu-item #1="|" . #2=(ignore)) (tab-1 menu-item #("a x" 0 1 (mouse-face tab-bar-tab-highlight face tab-bar-tab-inactive) 1 3 (mouse-face tab-bar-tab-highlight face tab-bar-tab-inactive help-echo "Click to close 
+    row#3
+      gnu:    ok ((sep-1 menu-item #1="|" . #2=(ignore)) (tab-1 menu-item #(" *Old buffer /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a* x" 0 122 (mouse-face tab-bar-tab-high
+      remacs: ok ((sep-1 menu-item #1="|" . #2=(ignore)) (tab-1 menu-item #("a x" 0 1 (mouse-face tab-bar-tab-highlight face tab-bar-tab-inactive) 1 3 (mouse-face tab-bar-tab-highlight face tab-bar-tab-inactive help-echo "Click to close 
+KNOWN  tab-bar-format-tabs-groups (2 rows)
+    row#1
+      gnu:    ok ((sep-1 menu-item #1="|" . #2=(ignore)) (tab-1 menu-item #(" *Old buffer /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a* x" 0 122 (mouse-face tab-bar-tab-high
+      remacs: ok ((sep-1 menu-item #1="|" . #2=(ignore)) (tab-1 menu-item #("a x" 0 1 (mouse-face tab-bar-tab-highlight face tab-bar-tab-ungrouped) 1 3 (mouse-face tab-bar-tab-highlight face tab-bar-tab-ungrouped help-echo "Click to clos
+    row#3
+      gnu:    ok ((sep-1 menu-item #1="|" . #2=(ignore)) (tab-1 menu-item #(" *Old buffer /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a* x" 0 122 (mouse-face tab-bar-tab-high
+      remacs: ok ((sep-1 menu-item #1="|" . #2=(ignore)) (tab-1 menu-item #("a x" 0 1 (mouse-face tab-bar-tab-highlight face tab-bar-tab-ungrouped) 1 3 (mouse-face tab-bar-tab-highlight face tab-bar-tab-ungrouped help-echo "Click to clos
+KNOWN  tab-bar-get-buffer-tab (1 rows)
+    row#2
+      gnu:    ok nil
+      remacs: ok (current-tab (name . "a") (explicit-name) (index . 3) (frame . #<X>))
+KNOWN  tab-bar-merge-tabs (1 rows)
+    row#4
+      gnu:    ok 2
+      remacs: err (error "#<X> is not a valid window")
+KNOWN  tab-bar-rename-tab-by-name (1 rows)
+    row#2
+      gnu:    err (wrong-type-argument number-or-marker-p nil)
+      remacs: ok nil
+KNOWN  tab-bar-tab-name-all (2 rows)
+    row#1
+      gnu:    ok " *Old buffer /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a*"
+      remacs: ok "a"
+    row#3
+      gnu:    ok " *Old buffer /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a*"
+      remacs: ok "a"
+KNOWN  tab-bar-tab-name-current (2 rows)
+    row#1
+      gnu:    ok " *Old buffer /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a*"
+      remacs: ok "a"
+    row#3
+      gnu:    ok " *Old buffer /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a*"
+      remacs: ok "a"
+KNOWN  tab-bar-tab-name-current-with-count (2 rows)
+    row#1
+      gnu:    ok " *Old buffer /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a*"
+      remacs: ok "a"
+    row#3
+      gnu:    ok " *Old buffer /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a*"
+      remacs: ok "a"
+KNOWN  tab-bar-tab-name-truncated (2 rows)
+    row#1
+      gnu:    ok #(" *Old buffer /Use..." 0 20 (help-echo " *Old buffer /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a*"))
+      remacs: ok "a"
+    row#3
+      gnu:    ok #(" *Old buffer /Use..." 0 20 (help-echo " *Old buffer /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a*"))
+      remacs: ok "a"
+KNOWN  tab-bar-tabs (2 rows)
+    row#1
+      gnu:    ok ((tab (name . #1=" *Old buffer /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a*") (explicit-name) (time . 1792318552.784325) (ws ((min-height . 4) (min-width .
+      remacs: ok ((tab (name . "a\\b") (explicit-name . t) (time . 1792318632.172598) (ws ((min-height . 4) (min-width . 10) (min-height-ignore . 2) (min-width-ignore . 2) (min-height-safe . 1) (min-width-safe . 2) (min-pixel-height . 4)
+    row#4
+      gnu:    ok ((tab (name . #1=" *Old buffer /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a*") (explicit-name) (time . 1792318552.784325) (ws ((min-height . 4) (min-width .
+      remacs: ok ((tab (name . "a\\b") (explicit-name . t) (time . 1792318632.172598) (ws ((min-height . 4) (min-width . 10) (min-height-ignore . 2) (min-width-ignore . 2) (min-height-safe . 1) (min-width-safe . 2) (min-pixel-height . 4)
+KNOWN  temp-buffer-window-show (2 rows)
+    row#2
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok (window t)
+    row#3
+      gnu:    err (error "Unknown terminal type")
+      remacs: err (wrong-type-argument listp function)
+KNOWN  terminal-parameters (2 rows)
+    row#1
+      gnu:    ok ((mouse-drag-start . "~") (normal-erase-is-backspace . 1))
+      remacs: ok ((normal-erase-is-backspace . 1) (keyboard-coding-saved-meta-mode t) (mouse-drag-start . "~"))
+    row#4
+      gnu:    ok ((mouse-drag-start . "~") (normal-erase-is-backspace . 1))
+      remacs: ok ((normal-erase-is-backspace . 1) (keyboard-coding-saved-meta-mode t) (mouse-drag-start . "~"))
+KNOWN  theme-list-variants (1 rows)
+    row#5
+      gnu:    ok (adwaita deeper-blue dichromacy light-blue manoj-dark misterioso modus-operandi-deuteranopia modus-operandi modus-operandi-tinted modus-operandi-tritanopia modus-vivendi-deuteranopia modus-vivendi modus-vivendi-tinted mo
+      remacs: ok (adwaita deeper-blue dichromacy leuven-dark leuven light-blue manoj-dark misterioso modus-operandi-deuteranopia modus-operandi modus-operandi-tinted modus-operandi-tritanopia modus-vivendi-deuteranopia modus-vivendi modu
+KNOWN  tool-bar--image-expression (2 rows)
+    row#2
+      gnu:    ok (find-image (cond ((not (display-color-p)) '(#4=(:type pbm :file "a.pbm" . #1=(:foreground "black")) #5=(:type xbm :file "a.xbm" . #1#) #2=(:type xpm :file "low-color/a.xpm") #3=(:type xpm :file "a.xpm"))) ((< (display-c
+      remacs: ok (find-image (cond ((not (display-color-p)) '(#4=(:type pbm :file "a.pbm" . #1=...) #5=(:type xbm :file "a.xbm" . #1#) #2=(:type xpm :file "low-color/a.xpm") #3=(:type xpm :file "a.xpm"))) ((< (display-color-cells) 256) '
+    row#4
+      gnu:    ok (find-image (cond ((not (display-color-p)) '(#4=(:type pbm :file "~.pbm" . #1=(:foreground "black")) #5=(:type xbm :file "~.xbm" . #1#) #2=(:type xpm :file "low-color/~.xpm") #3=(:type xpm :file "~.xpm"))) ((< (display-c
+      remacs: ok (find-image (cond ((not (display-color-p)) '(#4=(:type pbm :file "~.pbm" . #1=...) #5=(:type xbm :file "~.xbm" . #1#) #2=(:type xpm :file "low-color/~.xpm") #3=(:type xpm :file "~.xpm"))) ((< (display-color-cells) 256) '
+KNOWN  tooltip-event-buffer (2 rows)
+    row#2
+      gnu:    ok (buf  *Old buffer /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a*)
+      remacs: ok (buf a)
+    row#4
+      gnu:    ok (buf  *Old buffer /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a*)
+      remacs: ok (buf a)
+KNOWN  tooltip-expr-to-print (2 rows)
+    row#2
+      gnu:    ok "This"
+      remacs: ok nil
+    row#4
+      gnu:    ok "This"
+      remacs: ok nil
+KNOWN  tooltip-show-help (2 rows)
+    row#2
+      gnu:    ok [nil 27348 40025 517698 nil tooltip-timeout (nil) nil 999999 nil]
+      remacs: ok [nil 27348 40105 312955 nil tooltip-timeout (nil) nil 0 nil]
+    row#4
+      gnu:    ok [nil 27348 40025 517781 nil tooltip-timeout (nil) nil 999999 nil]
+      remacs: ok [nil 27348 40105 314083 nil tooltip-timeout (nil) nil 0 nil]
+KNOWN  tooltip-start-delayed-tip (2 rows)
+    row#1
+      gnu:    ok [nil 27348 40025 517981 nil tooltip-timeout (nil) nil 999999 nil]
+      remacs: ok [nil 27348 40105 316428 nil tooltip-timeout (nil) nil 0 nil]
+    row#3
+      gnu:    ok [nil 27348 40025 518051 nil tooltip-timeout (nil) nil 999999 nil]
+      remacs: ok [nil 27348 40105 317473 nil tooltip-timeout (nil) nil 0 nil]
+KNOWN  treesit-parser-create (1 rows)
+    row#5
+      gnu:    err (treesit-load-language-error not-found "dlopen(/Users/suzumiyaaoba/.emacs.d/tree-sitter/libtree-sitter-function.so, 0x0009): tried: '/Users/suzumiyaaoba/.emacs.d/tree-sitter/libtree-sitter-function.so' (no such file), '/
+      remacs: err (treesit-load-language-error not-found "/Users/suzumiyaaoba/.emacs.d/tree-sitter/libtree-sitter-function.dylib.0.0: dlopen(/Users/suzumiyaaoba/.emacs.d/tree-sitter/libtree-sitter-function.dylib.0.0, 0x0005): tried: '/Use
+KNOWN  tty--output-buffer-size (1 rows)
+    row#2
+      gnu:    err (wrong-type-argument terminal-live-p "a")
+      remacs: err (error "Not a tty terminal")
+KNOWN  unbury-buffer (2 rows)
+    row#1
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok (buf *Backtrace*)
+    row#3
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok (buf file-a.txt)
+KNOWN  undo-auto--boundary-ensure-timer (1 rows)
+    row#1
+      gnu:    ok nil
+      remacs: ok [nil 27348 40115 75612 nil undo-auto--boundary-timer nil nil 0 nil]
+KNOWN  undo-auto--undoable-change (1 rows)
+    row#1
+      gnu:    ok [nil 27348 40034 905551 nil undo-auto--boundary-timer nil nil 0 nil]
+      remacs: ok [nil 27348 40115 82871 nil undo-auto--boundary-timer nil nil 0 nil]
+KNOWN  uniquify-buffer-file-name (1 rows)
+    row#2
+      gnu:    ok "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox"
+      remacs: err (error "No buffer named a")
+KNOWN  universal-argument (2 rows)
+    row#1
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#3
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  universal-argument--mode (2 rows)
+    row#1
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+    row#3
+      gnu:    ok (bytecode)
+      remacs: ok (subr nil)
+KNOWN  update-leim-list-file (2 rows)
+    row#2
+      gnu:    err (error "Can't write to file \"/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a/leim-list.el\"")
+      remacs: err (error "Can't write to file \"/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/a/leim-list.el\"")
+    row#3
+      gnu:    err (wrong-type-argument stringp cons)
+      remacs: err (error "Can't write to file \"/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/%-10s|%05.2f/leim-list.el\"")
+KNOWN  use-hard-newlines (1 rows)
+    row#4
+      gnu:    err (end-of-file "Error reading from stdin")
+      remacs: ok t
+KNOWN  vc-find-root (1 rows)
+    row#2
+      gnu:    ok "~/"
+      remacs: ok nil
+KNOWN  vc-insert-file (1 rows)
+    row#3
+      gnu:    err (wrong-type-argument number-or-marker-p cons)
+      remacs: ok nil
+KNOWN  vc-symbolic-working-revision (1 rows)
+    row#3
+      gnu:    err (wrong-type-argument symbolp "file-a.txt")
+      remacs: ok nil
+KNOWN  vc-version-backup-file-name (1 rows)
+    row#2
+      gnu:    ok "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a.~.~"
+      remacs: ok "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/a.~.~"
+KNOWN  view-echo-area-messages (2 rows)
+    row#1
+      gnu:    err (error "Unknown terminal type")
+      remacs: err (wrong-type-argument listp function)
+    row#3
+      gnu:    err (error "Unknown terminal type")
+      remacs: err (wrong-type-argument listp function)
+KNOWN  view-emacs-FAQ (2 rows)
+    row#1
+      gnu:    err (error "Unknown terminal type")
+      remacs: err (wrong-type-argument listp function)
+    row#3
+      gnu:    err (error "Unknown terminal type")
+      remacs: err (wrong-type-argument listp function)
+KNOWN  view-emacs-debugging (2 rows)
+    row#1
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok 1
+    row#3
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok 1
+KNOWN  view-emacs-news (3 rows)
+    row#1
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok nil
+    row#2
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok nil
+    row#4
+      gnu:    err (end-of-file "Error reading from stdin")
+      remacs: ok nil
+KNOWN  view-emacs-problems (2 rows)
+    row#1
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok 1
+    row#3
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok 1
+KNOWN  view-emacs-todo (3 rows)
+    row#1
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok 1
+    row#2
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok 1
+    row#4
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok 1
+KNOWN  view-external-packages (2 rows)
+    row#1
+      gnu:    err (error "Unknown terminal type")
+      remacs: err (wrong-type-argument listp function)
+    row#3
+      gnu:    err (error "Unknown terminal type")
+      remacs: err (wrong-type-argument listp function)
+KNOWN  view-hello-file (2 rows)
+    row#1
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok #("View mode: type C-h for help, h for commands, q to quit." 16 19 (face help-key-binding font-lock-face help-key-binding) 30 31 (face help-key-binding font-lock-face help-key-binding) 46 47 (face help-key-binding font-l
+    row#3
+      gnu:    err (error "Unknown terminal type")
+      remacs: ok nil
+KNOWN  view-help-file (1 rows)
+    row#3
+      gnu:    err (error "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/file-a.txt/%-10s|%05.2f does not exist")
+      remacs: err (error "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/file-a.txt/%-10s|%05.2f does not exist")
+KNOWN  view-lossage (3 rows)
+    row#1
+      gnu:    err (error "Unknown terminal type")
+      remacs: err (wrong-type-argument listp function)
+    row#2
+      gnu:    err (error "Unknown terminal type")
+      remacs: err (wrong-type-argument listp function)
+    row#4
+      gnu:    err (error "Unknown terminal type")
+      remacs: err (wrong-type-argument listp function)
+KNOWN  view-order-manuals (2 rows)
+    row#1
+      gnu:    err (error "Unknown terminal type")
+      remacs: err (wrong-type-argument listp function)
+    row#3
+      gnu:    err (error "Unknown terminal type")
+      remacs: err (wrong-type-argument listp function)
+KNOWN  window--state-put-2 (2 rows)
+    row#2
+      gnu:    err (wrong-type-argument window-valid-p #<X>)
+      remacs: ok nil
+    row#5
+      gnu:    err (wrong-type-argument window-valid-p #<X>)
+      remacs: ok nil
+KNOWN  window-at-side-list (2 rows)
+    row#1
+      gnu:    ok (#<X> #<X> #<X> #<X>)
+      remacs: ok (#<X>>)
+    row#4
+      gnu:    ok (#<X> #<X> #<X> #<X>)
+      remacs: ok (#<X>>)
+KNOWN  window-at-side-p (2 rows)
+    row#1
+      gnu:    ok t
+      remacs: ok nil
+    row#4
+      gnu:    ok t
+      remacs: ok nil
+KNOWN  window-body-edges (3 rows)
+    row#1
+      gnu:    ok (0 2 9 24)
+      remacs: ok (0 0 20 5)
+    row#2
+      gnu:    err (error "a is not a live window")
+      remacs: err (wrong-type-argument window-live-p "a")
+    row#4
+      gnu:    ok (0 2 9 24)
+      remacs: ok (0 0 20 5)
+KNOWN  window-body-height (2 rows)
+    row#1
+      gnu:    ok 22
+      remacs: ok 5
+    row#4
+      gnu:    ok 22
+      remacs: ok 5
+KNOWN  window-body-pixel-edges (2 rows)
+    row#1
+      gnu:    ok (0 2 9 24)
+      remacs: ok (0 0 20 5)
+    row#4
+      gnu:    ok (0 2 9 24)
+      remacs: ok (0 0 20 5)
+KNOWN  window-body-size (2 rows)
+    row#1
+      gnu:    ok 22
+      remacs: ok 5
+    row#4
+      gnu:    ok 22
+      remacs: ok 5
+KNOWN  window-body-width (2 rows)
+    row#1
+      gnu:    ok 9
+      remacs: ok 19
+    row#4
+      gnu:    ok 9
+      remacs: ok 19
+KNOWN  window-buffer (2 rows)
+    row#1
+      gnu:    ok (buf  *Old buffer /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a*)
+      remacs: ok (buf HELLO)
+    row#4
+      gnu:    ok (buf  *Old buffer /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/current/full-suite/differential/sandbox/a*)
+      remacs: ok (buf HELLO)
+KNOWN  window-edges (3 rows)
+    row#1
+      gnu:    ok (0 2 10 25)
+      remacs: ok (0 1 20 7)
+    row#2
+      gnu:    err (error "a is not a live window")
+      remacs: err (wrong-type-argument window-live-p "a")
+    row#4
+      gnu:    ok (0 2 10 25)
+      remacs: ok (0 1 20 7)
+KNOWN  window-end (2 rows)
+    row#1
+      gnu:    ok 154
+      remacs: ok 262
+    row#4
+      gnu:    ok 154
+      remacs: ok 262
+KNOWN  window-full-height-p (2 rows)
+    row#1
+      gnu:    ok t
+      remacs: ok nil
+    row#4
+      gnu:    ok t
+      remacs: ok nil
+KNOWN  window-group-end (2 rows)
+    row#1
+      gnu:    ok 154
+      remacs: ok 262
+    row#4
+      gnu:    ok 154
+      remacs: ok 262
+KNOWN  window-line-height (1 rows)
+    row#2
+      gnu:    err (wrong-type-argument window-live-p "a\\b")
+      remacs: err (error "a\\b is not a live window")
+KNOWN  window-list (2 rows)
+    row#1
+      gnu:    ok (#<X> #<X> #<X> #<X>)
+      remacs: ok (#<X> #<X> #<X> #<X> #<X>>)
+    row#4
+      gnu:    ok (#<X> #<X> #<X> #<X>)
+      remacs: ok (#<X> #<X> #<X> #<X> #<X>>)
+KNOWN  window-list-1 (2 rows)
+    row#1
+      gnu:    ok (#<X> #<X> #<X> #<X>)
+      remacs: ok (#<X> #<X> #<X> #<X> #<X>>)
+    row#4
+      gnu:    ok (#<X> #<X> #<X> #<X>)
+      remacs: ok (#<X> #<X> #<X> #<X> #<X>>)
+KNOWN  window-main-window (2 rows)
+    row#1
+      gnu:    ok (window t)
+      remacs: ok (window nil)
+    row#4
+      gnu:    ok (window t)
+      remacs: ok (window nil)
+KNOWN  window-max-chars-per-line (2 rows)
+    row#1
+      gnu:    ok 8
+      remacs: ok 19
+    row#4
+      gnu:    ok 8
+      remacs: ok 19
+KNOWN  window-new-pixel (2 rows)
+    row#1
+      gnu:    ok 23
+      remacs: ok 6
+    row#4
+      gnu:    ok 23
+      remacs: ok 6
+KNOWN  window-new-total (2 rows)
+    row#1
+      gnu:    ok 23
+      remacs: ok 6
+    row#4
+      gnu:    ok 23
+      remacs: ok 6
+KNOWN  window-old-buffer (2 rows)
+    row#1
+      gnu:    ok nil
+      remacs: ok (buf HELLO)
+    row#4
+      gnu:    ok nil
+      remacs: ok (buf HELLO)
+KNOWN  window-pixel-edges (3 rows)
+    row#1
+      gnu:    ok (0 2 10 25)
+      remacs: ok (0 0 20 6)
+    row#2
+      gnu:    err (error "a is not a valid window")
+      remacs: err (error "a is not a live window")
+    row#4
+      gnu:    ok (0 2 10 25)
+      remacs: ok (0 0 20 6)
+KNOWN  window-pixel-height (2 rows)
+    row#1
+      gnu:    ok 23
+      remacs: ok 6
+    row#4
+      gnu:    ok 23
+      remacs: ok 6
+KNOWN  window-pixel-top (2 rows)
+    row#1
+      gnu:    ok 2
+      remacs: ok 1
+    row#4
+      gnu:    ok 2
+      remacs: ok 1
+KNOWN  window-pixel-width (2 rows)
+    row#1
+      gnu:    ok 10
+      remacs: ok 20
+    row#4
+      gnu:    ok 10
+      remacs: ok 20
+KNOWN  window-point-context-use (2 rows)
+    row#1
+      gnu:    ok nil
+      remacs: err (wrong-type-argument stringp (\
+    row#3
+      gnu:    ok nil
+      remacs: err (wrong-type-argument stringp (\
+KNOWN  window-prev-buffers (2 rows)
+    row#1
+      gnu:    ok nil
+      remacs: ok ((#<X> #<X> #<X>) (#<X> #<X> #<X>) (#<X> #<X> #<X>) (#<X> #<X> #<X>) (#<X> #<X> #<X>) (#<X>> #<X>> #<X>>))
+    row#4
+      gnu:    ok nil
+      remacs: ok ((#<X> #<X> #<X>) (#<X> #<X> #<X>) (#<X> #<X> #<X>) (#<X> #<X> #<X>) (#<X> #<X> #<X>) (#<X>> #<X>> #<X>>))
+KNOWN  window-resize-apply (2 rows)
+    row#1
+      gnu:    ok t
+      remacs: ok nil
+    row#4
+      gnu:    ok t
+      remacs: ok nil
+KNOWN  window-safely-shrinkable-p (2 rows)
+    row#1
+      gnu:    ok nil
+      remacs: ok t
+    row#4
+      gnu:    ok nil
+      remacs: ok t
+KNOWN  window-screen-lines (2 rows)
+    row#1
+      gnu:    ok 22.0
+      remacs: ok 5.0
+    row#3
+      gnu:    ok 22.0
+      remacs: ok 5.0
+KNOWN  window-size (2 rows)
+    row#1
+      gnu:    ok 23
+      remacs: ok 6
+    row#4
+      gnu:    ok 23
+      remacs: ok 6
+KNOWN  window-size-fixed-p (1 rows)
+    row#2
+      gnu:    ok nil
+      remacs: err (error "a is not a valid window")
+KNOWN  window-state-get (2 rows)
+    row#1
+      gnu:    ok (((min-height . 4) (min-width . 40) (min-height-ignore . 2) (min-width-ignore . 8) (min-height-safe . 1) (min-width-safe . 8) (min-pixel-height . 4) (min-pixel-width . 40) (min-pixel-height-ignore . 2) (min-pixel-width-i
+      remacs: ok (((min-height . 12) (min-width . 30) (min-height-ignore . 6) (min-width-ignore . 6) (min-height-safe . 3) (min-width-safe . 6) (min-pixel-height . 12) (min-pixel-width . 30) (min-pixel-height-ignore . 6) (min-pixel-width
+    row#4
+      gnu:    ok (((min-height . 4) (min-width . 40) (min-height-ignore . 2) (min-width-ignore . 8) (min-height-safe . 1) (min-width-safe . 8) (min-pixel-height . 4) (min-pixel-width . 40) (min-pixel-height-ignore . 2) (min-pixel-width-i
+      remacs: ok (((min-height . 12) (min-width . 30) (min-height-ignore . 6) (min-width-ignore . 6) (min-height-safe . 3) (min-width-safe . 6) (min-pixel-height . 12) (min-pixel-width . 30) (min-pixel-height-ignore . 6) (min-pixel-width
+KNOWN  window-text-height (3 rows)
+    row#1
+      gnu:    ok 22
+      remacs: ok 5
+    row#2
+      gnu:    err (wrong-type-argument window-live-p "a")
+      remacs: err (wrong-type-argument window-valid-p "a")
+    row#4
+      gnu:    ok 22
+      remacs: ok 5
+KNOWN  window-text-pixel-size (2 rows)
+    row#1
+      gnu:    ok (79 . 3)
+      remacs: ok (0 . 0)
+    row#4
+      gnu:    ok (79 . 3)
+      remacs: ok (0 . 0)
+KNOWN  window-text-width (2 rows)
+    row#1
+      gnu:    ok 80
+      remacs: ok 19
+    row#4
+      gnu:    ok 80
+      remacs: ok 19
+KNOWN  window-top-line (2 rows)
+    row#1
+      gnu:    ok 2
+      remacs: ok 1
+    row#4
+      gnu:    ok 2
+      remacs: ok 1
+KNOWN  window-total-height (2 rows)
+    row#1
+      gnu:    ok 23
+      remacs: ok 6
+    row#4
+      gnu:    ok 23
+      remacs: ok 6
+KNOWN  window-total-size (2 rows)
+    row#1
+      gnu:    ok 23
+      remacs: ok 6
+    row#4
+      gnu:    ok 23
+      remacs: ok 6
+KNOWN  window-total-width (2 rows)
+    row#1
+      gnu:    ok 80
+      remacs: ok 19
+    row#4
+      gnu:    ok 80
+      remacs: ok 19
+KNOWN  window-tree (2 rows)
+    row#1
+      gnu:    ok (#<X> #<X>)
+      remacs: ok ((t (0 1 80 25) (nil (0 1 80 7) #<X> #<X> #<X>) #<X> #<X>>) #<X>)
+    row#4
+      gnu:    ok (#<X> #<X>)
+      remacs: ok ((t (0 1 80 25) (nil (0 1 80 7) #<X> #<X> #<X>) #<X> #<X>>) #<X>)
+KNOWN  window-use-time (2 rows)
+    row#1
+      gnu:    ok 164
+      remacs: ok 241
+    row#4
+      gnu:    ok 164
+      remacs: ok 241
+KNOWN  write-abbrev-file (1 rows)
+    row#2
+      gnu:    ok nil
+      remacs: err (permission-denied "Opening output file" "Permission denied" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/a")
+KNOWN  write-file (1 rows)
+    row#2
+      gnu:    ok nil
+      remacs: err (end-of-file "Error reading from stdin")
+KNOWN  write-region (1 rows)
+    row#2
+      gnu:    ok nil
+      remacs: err (permission-denied "Opening output file" "Permission denied" "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/share/emacs/31.1/etc/(")
+KNOWN  x-family-fonts (1 rows)
+    row#2
+      gnu:    err (wrong-type-argument frame-live-p "a\\b")
+      remacs: ok nil
+KNOWN  x-focus-frame (3 rows)
+    row#2
+      gnu:    err (wrong-type-argument frame-live-p "a")
+      remacs: err (error "Window system frame should be used")
+    row#3
+      gnu:    err (wrong-type-argument frame-live-p "%-10s|%05.2f")
+      remacs: err (error "Window system frame should be used")
+    row#5
+      gnu:    err (wrong-type-argument frame-live-p function)
+      remacs: err (error "Window system frame should be used")
+KNOWN  x-handle-iconic (2 rows)
+    row#2
+      gnu:    ok ((visibility . icon) (left-fringe . 0) (right-fringe) (vertical-scroll-bars . "~") (bottom-divider-width . 0) (right-divider-width . 6))
+      remacs: ok ((visibility . icon))
+    row#4
+      gnu:    ok (#1=(visibility . icon) #1# (left-fringe . 0) (right-fringe) (vertical-scroll-bars . "~") (bottom-divider-width . 0) (right-divider-width . 6))
+      remacs: ok (#1=(visibility . icon) #1#)
+KNOWN  x-handle-name-switch (2 rows)
+    row#2
+      gnu:    err (error "emacs-31.1: missing argument to `a' option")
+      remacs: err (error "remacs: missing argument to `a' option")
+    row#4
+      gnu:    err (error "emacs-31.1: missing argument to `~' option")
+      remacs: err (error "remacs: missing argument to `~' option")
+KNOWN  x-handle-xrm-switch (2 rows)
+    row#2
+      gnu:    err (error "emacs-31.1: missing argument to `a' option")
+      remacs: err (error "remacs: missing argument to `a' option")
+    row#4
+      gnu:    err (error "emacs-31.1: missing argument to `~' option")
+      remacs: err (error "remacs: missing argument to `~' option")
+rows: gnu=23019 remacs=23023 divergent-names=409 new=11 gnu-status=DONE remacs-status=DONE

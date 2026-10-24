@@ -1,0 +1,197 @@
+{
+  "head": "926cbfc7fe1ddde28c53d0555be1f6b99563535b",
+  "worktree_head": "4fa55e5f05311b26e5af242c09397c7583cad14f",
+  "binary_sha256": "37aec7800115143d785086fa184114757237776c93c892e30696644b5c255017",
+  "runs": [
+    {
+      "id": "constructor:direct",
+      "group": "struct_rest_constructor",
+      "form": "(audit-r2-create nil #'identity :raw-value)",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_struct_rest_constructor.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.3,
+      "value": "(ok [audit-r2-boa identity (:raw-value) nil])",
+      "stdout": "constructor-direct.current.gnu.out",
+      "stderr": "constructor-direct.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "constructor:direct",
+      "group": "struct_rest_constructor",
+      "form": "(audit-r2-create nil #'identity :raw-value)",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_struct_rest_constructor.el"
+      ],
+      "returncode": 0,
+      "seconds": 13.99,
+      "value": "(ok [audit-r2-boa identity (:raw-value) nil])",
+      "stdout": "constructor-direct.current.remacs.out",
+      "stderr": "constructor-direct.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "constructor:alias",
+      "group": "struct_rest_constructor",
+      "form": "(audit-r2-alias :raw-value)",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_struct_rest_constructor.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.31,
+      "value": "(error (void-function keyword))",
+      "stdout": "constructor-alias.current.gnu.out",
+      "stderr": "constructor-alias.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "constructor:alias",
+      "group": "struct_rest_constructor",
+      "form": "(audit-r2-alias :raw-value)",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_struct_rest_constructor.el"
+      ],
+      "returncode": 0,
+      "seconds": 13.78,
+      "value": "(error (void-function keyword))",
+      "stdout": "constructor-alias.current.remacs.out",
+      "stderr": "constructor-alias.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "constructor:many",
+      "group": "struct_rest_constructor",
+      "form": "(audit-r2-many 1 2)",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_struct_rest_constructor.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.31,
+      "value": "(error (void-function a))",
+      "stdout": "constructor-many.current.gnu.out",
+      "stderr": "constructor-many.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "constructor:many",
+      "group": "struct_rest_constructor",
+      "form": "(audit-r2-many 1 2)",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_struct_rest_constructor.el"
+      ],
+      "returncode": 0,
+      "seconds": 13.48,
+      "value": "(error (void-function a))",
+      "stdout": "constructor-many.current.remacs.out",
+      "stderr": "constructor-many.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "constructor:zero",
+      "group": "struct_rest_constructor",
+      "form": "(audit-r2-zero)",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_struct_rest_constructor.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.29,
+      "value": "(ok [audit-r2-boa identity nil nil])",
+      "stdout": "constructor-zero.current.gnu.out",
+      "stderr": "constructor-zero.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "constructor:zero",
+      "group": "struct_rest_constructor",
+      "form": "(audit-r2-zero)",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_struct_rest_constructor.el"
+      ],
+      "returncode": 0,
+      "seconds": 13.46,
+      "value": "(ok [audit-r2-boa identity nil nil])",
+      "stdout": "constructor-zero.current.remacs.out",
+      "stderr": "constructor-zero.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "constructor:funcall",
+      "group": "struct_rest_constructor",
+      "form": "(funcall #'audit-r2-create nil #'identity :raw-value)",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_struct_rest_constructor.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.28,
+      "value": "(ok [audit-r2-boa identity (:raw-value) nil])",
+      "stdout": "constructor-funcall.current.gnu.out",
+      "stderr": "constructor-funcall.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "constructor:funcall",
+      "group": "struct_rest_constructor",
+      "form": "(funcall #'audit-r2-create nil #'identity :raw-value)",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_struct_rest_constructor.el"
+      ],
+      "returncode": 0,
+      "seconds": 13.24,
+      "value": "(ok [audit-r2-boa identity (:raw-value) nil])",
+      "stdout": "constructor-funcall.current.remacs.out",
+      "stderr": "constructor-funcall.current.remacs.err",
+      "complete": true
+    }
+  ]
+}

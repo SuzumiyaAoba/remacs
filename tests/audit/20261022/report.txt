@@ -1,0 +1,110 @@
+Remacs 追加バグ監査 — 2026-10-22
+
+対象 HEAD: 38af4d1d720760348e725dac51f8c4252c2b03d5
+環境: macOS / aarch64、GNU Emacs 31.1 との比較。
+新規 Issue: 25 件（#301〜#325）。既存の open/closed Issue と照合した。
+実装コードの修正・ブランチ変更・サブエージェント使用は行っていない。
+
+検証結果
+- 追加 141 ケースを GNU/Remacs の独立プロセスで比較（282 実行）。
+- 72 ケースで差分。71 ケースは下記 Issue の再現例または同じ原因の派生例。
+- 1 ケース（負の MINIMUM を渡した indent-to の current-column）は保留。
+  戻り値・point・本文は同じで GNU の報告する列だけが異なる。
+  GNU 側の列キャッシュの影響が疑われ、実用上の移植不具合と断定しない。
+  indent-negative-minimum.json に追試を保存。
+- REMACS_NO_ELC=1 の起動で 134 ケースを再実行。全件完走し、AOT 起動の結果と一致。
+- 関連する既存 QA 9 本・計 1,705 チェックは GNU/Remacs とも成功。
+- 公開済み 25 Issue のタイトル・本文・URL を GitHub から再取得し、台帳と完全一致を確認。
+- ビルド出力が更新されたため、最後に実行バイナリを一時ディレクトリへ固定して
+  各 Issue の代表例を再検証。結果と SHA-256 は final-verification.json に保存。
+
+影響の大きい例
+#311: kill 済みバッファへの make-overlay が Rust panic でプロセス終了。
+#314: JSON シリアライズが循環データで停止しない／stack overflow で abort。
+#323: 変更前フックの挿入後、削除対象がずれて別の文字を消す。
+#324: 削除前フックが対象を kill すると、別バッファの本文を削除する。
+#303〜#305: JSON 入出力の文字コード・バイト列が壊れる。
+
+登録一覧
+https://github.com/SuzumiyaAoba/remacs/issues/301
+  JSON の null-object / false-object がシンボル以外の指定を無視する
+https://github.com/SuzumiyaAoba/remacs/issues/302
+  json-parse-buffer が narrowing の終端を越えて JSON を読む
+https://github.com/SuzumiyaAoba/remacs/issues/303
+  json-parse-string が unibyte の UTF-8 を復号せず、不正な UTF-8 も受け入れる
+https://github.com/SuzumiyaAoba/remacs/issues/304
+  json-serialize が unibyte の高位バイトを拒否せず内部の代理文字を出力する
+https://github.com/SuzumiyaAoba/remacs/issues/305
+  json-insert が unibyte バッファへ UTF-8 ではなく文字コード値を挿入する
+https://github.com/SuzumiyaAoba/remacs/issues/306
+  JSON の浮動小数点オーバーフローがエラーにならず Infinity を返す
+https://github.com/SuzumiyaAoba/remacs/issues/307
+  kill-buffer 後の overlay が属性を失い別バッファへ再利用できない
+https://github.com/SuzumiyaAoba/remacs/issues/308
+  overlay の取得・更新 API が偽の [overlay BUFFER INDEX] ベクタを受け入れる
+https://github.com/SuzumiyaAoba/remacs/issues/309
+  overlay の優先順位が cons 型 priority と入れ子の包含関係を無視する
+https://github.com/SuzumiyaAoba/remacs/issues/310
+  category から継承した evaporate を持つ overlay が空になっても削除されない
+https://github.com/SuzumiyaAoba/remacs/issues/311
+  kill 済みバッファへの make-overlay が Rust panic でプロセスを終了する
+https://github.com/SuzumiyaAoba/remacs/issues/312
+  get-char-property が overlay の category から継承した属性を返さない
+https://github.com/SuzumiyaAoba/remacs/issues/313
+  get-char-property の WINDOW 指定が overlay の window 属性を無視する
+https://github.com/SuzumiyaAoba/remacs/issues/314
+  json-serialize が循環データで停止せず、vector/hash-table の循環では stack overflow で abort する
+https://github.com/SuzumiyaAoba/remacs/issues/315
+  indent-to が挿入した空白へテキスト属性を継承せず、矩形編集や tabify でも属性が失われる
+https://github.com/SuzumiyaAoba/remacs/issues/316
+  insert-char と insert-byte が INHERIT 引数を無視する
+https://github.com/SuzumiyaAoba/remacs/issues/317
+  newline が改行に周囲のテキスト属性を継承しない
+https://github.com/SuzumiyaAoba/remacs/issues/318
+  unibyte バッファの insert-char が負数や範囲外の文字コードを下位8ビットへ切り詰める
+https://github.com/SuzumiyaAoba/remacs/issues/319
+  空の挿入・削除操作が read-only バッファで不要なエラーになる
+https://github.com/SuzumiyaAoba/remacs/issues/320
+  関数型 completion table に渡す STRING の同一性・属性が失われ、test-completion は戻り値も t に変える
+https://github.com/SuzumiyaAoba/remacs/issues/321
+  補完関数が不正な completion-regexp-list を無視し、フィルターを適用せず候補を返す
+https://github.com/SuzumiyaAoba/remacs/issues/322
+  try-completion の返す共通接頭辞が文字列のバイト表現を保持しない
+https://github.com/SuzumiyaAoba/remacs/issues/323
+  before-change-functions の挿入で削除対象がずれ、delete-region / delete-char が別の文字を消す
+https://github.com/SuzumiyaAoba/remacs/issues/324
+  削除前フックが対象バッファを kill すると別バッファのテキストを削除する
+https://github.com/SuzumiyaAoba/remacs/issues/325
+  delete-and-extract-region の戻り値がバイト表現と変更前フックの属性更新を失う
+
+調査資料
+- findings.json: Issue 本文、再現ケースと URL の対応
+- summary.json: 全ケース・GNU/Remacs 出力・Issue への対応・ソースのハッシュ
+- isolated*.json: 単独プロセスのコマンド、終了コード、所要時間
+- *.out / *.err: 生の標準出力・標準エラー
+- source-mode*.json: AOT 無効時の比較結果
+- qa-results.json: 既存 QA の結果
+- github-verified.json: GitHub から取得した登録済み本文
+- final-repro/: 固定バイナリで再検証した代表再現ファイルとログ
+- fixed-binary.json / final-verification.json: 固定バイナリ情報と最終追試
+- EXTRA-20261022-*.md: 登録した本文のローカルコピー
+
+再実行
+rtk cargo build --offline --bin remacs
+rtk proxy python3 tests/audit/20261022/verify.py overlay_edges json_edges json_limits edit_commands insert_edges completion_edges change_hook_edges change_relocation extract_edges
+rtk proxy python3 tests/audit/20261022/source-mode.py
+rtk proxy python3 tests/audit/20261022/source-mode.py change_relocation extract_edges
+rtk proxy python3 tests/audit/20261022/qa-checks.py
+
+verify.py / qa-checks.py の GNU パスはこの環境の GNU Emacs 31.1 の実行ファイル。
+別環境では GNU のパスを変更する。各 Remacs ケースは30秒上限。
+既知の panic/abort/停止も検証結果として記録するため、実行が非ゼロになるケースがある。
+verify-final.py は fixed-binary.json の一時バイナリを使うため、一時領域削除後には再コピーが必要。
+
+範囲と限界
+今回は JSON、overlay、編集コマンド、文字列挿入・削除、補完、変更フックを追加監査した。
+141 ケースの結果は全 API・全入力の網羅率を示さない。
+GUI/TUI 実操作、ネットワーク、プロセス、ネイティブコンパイラ、すべての Lisp ライブラリの
+再監査は今回の範囲に含まれていない。過去の監査記録は tests/audit/current/ に残してある。
+全不具合の洗い出しが完了したと保証するものではない。
+

@@ -1,0 +1,135 @@
+{
+  "recorded_at": "2026-10-22T15:02:58.182104+00:00",
+  "head": "aeaff5597e60834c21d464b7ad2a4caf167726dc",
+  "exhaustive": false,
+  "runs": [
+    {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_sqlite_text.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.229739,
+      "completed": true,
+      "stdout_file": "sqlite_text.gnu.out",
+      "stderr_file": "sqlite_text.gnu.err",
+      "group": "sqlite_text",
+      "side": "gnu"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_sqlite_text.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 9.594971,
+      "completed": true,
+      "stdout_file": "sqlite_text.remacs.out",
+      "stderr_file": "sqlite_text.remacs.err",
+      "group": "sqlite_text",
+      "side": "remacs"
+    }
+  ],
+  "cases": [
+    {
+      "id": "sqlite-text:",
+      "group": "sqlite_text",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (let ((s (caar (sqlite-select db \"select cast(x'' as text)\")))) (list (multibyte-string-p s) (string-bytes s) (string-to-list s))) (sqlite-close db)))",
+      "gnu": "(ok (t 0 nil))",
+      "remacs": "(ok (nil 0 nil))",
+      "differs": true
+    },
+    {
+      "id": "sqlite-text:00",
+      "group": "sqlite_text",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (let ((s (caar (sqlite-select db \"select cast(x'00' as text)\")))) (list (multibyte-string-p s) (string-bytes s) (string-to-list s))) (sqlite-close db)))",
+      "gnu": "(ok (t 1 (0)))",
+      "remacs": "(ok (nil 1 (0)))",
+      "differs": true
+    },
+    {
+      "id": "sqlite-text:61",
+      "group": "sqlite_text",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (let ((s (caar (sqlite-select db \"select cast(x'61' as text)\")))) (list (multibyte-string-p s) (string-bytes s) (string-to-list s))) (sqlite-close db)))",
+      "gnu": "(ok (t 1 (97)))",
+      "remacs": "(ok (nil 1 (97)))",
+      "differs": true
+    },
+    {
+      "id": "sqlite-text:610062",
+      "group": "sqlite_text",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (let ((s (caar (sqlite-select db \"select cast(x'610062' as text)\")))) (list (multibyte-string-p s) (string-bytes s) (string-to-list s))) (sqlite-close db)))",
+      "gnu": "(ok (t 3 (97 0 98)))",
+      "remacs": "(ok (nil 3 (97 0 98)))",
+      "differs": true
+    },
+    {
+      "id": "sqlite-text:80ff",
+      "group": "sqlite_text",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (let ((s (caar (sqlite-select db \"select cast(x'80ff' as text)\")))) (list (multibyte-string-p s) (string-bytes s) (string-to-list s))) (sqlite-close db)))",
+      "gnu": "(ok (t 4 (4194176 4194303)))",
+      "remacs": "(ok (t 6 (65533 65533)))",
+      "differs": true
+    },
+    {
+      "id": "sqlite-text:c328",
+      "group": "sqlite_text",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (let ((s (caar (sqlite-select db \"select cast(x'c328' as text)\")))) (list (multibyte-string-p s) (string-bytes s) (string-to-list s))) (sqlite-close db)))",
+      "gnu": "(ok (t 3 (4194243 40)))",
+      "remacs": "(ok (t 4 (65533 40)))",
+      "differs": true
+    },
+    {
+      "id": "sqlite-text:c3a9e38182",
+      "group": "sqlite_text",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (let ((s (caar (sqlite-select db \"select cast(x'c3a9e38182' as text)\")))) (list (multibyte-string-p s) (string-bytes s) (string-to-list s))) (sqlite-close db)))",
+      "gnu": "(ok (t 5 (233 12354)))",
+      "remacs": "(ok (t 5 (233 12354)))",
+      "differs": false
+    },
+    {
+      "id": "sqlite-text:e282",
+      "group": "sqlite_text",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (let ((s (caar (sqlite-select db \"select cast(x'e282' as text)\")))) (list (multibyte-string-p s) (string-bytes s) (string-to-list s))) (sqlite-close db)))",
+      "gnu": "(ok (t 4 (4194274 4194178)))",
+      "remacs": "(ok (t 3 (65533)))",
+      "differs": true
+    },
+    {
+      "id": "sqlite-text:eda080",
+      "group": "sqlite_text",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (let ((s (caar (sqlite-select db \"select cast(x'eda080' as text)\")))) (list (multibyte-string-p s) (string-bytes s) (string-to-list s))) (sqlite-close db)))",
+      "gnu": "(ok (t 6 (4194285 4194208 4194176)))",
+      "remacs": "(ok (t 9 (65533 65533 65533)))",
+      "differs": true
+    },
+    {
+      "id": "sqlite-text:f4908080",
+      "group": "sqlite_text",
+      "form": "(let ((db (sqlite-open))) (unwind-protect (let ((s (caar (sqlite-select db \"select cast(x'f4908080' as text)\")))) (list (multibyte-string-p s) (string-bytes s) (string-to-list s))) (sqlite-close db)))",
+      "gnu": "(ok (t 4 (1114112)))",
+      "remacs": "(ok (t 12 (65533 65533 65533 65533)))",
+      "differs": true
+    }
+  ],
+  "probe_sha256": {
+    "tests/audit_sqlite_text.el": "3381616b8d9220ce11a004e8a5efe8414543ef33176129722d170cc91e8737fc"
+  },
+  "scope": [
+    "sqlite_text"
+  ]
+}

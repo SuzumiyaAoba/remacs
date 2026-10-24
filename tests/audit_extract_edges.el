@@ -1,0 +1,11 @@
+;;; -*- lexical-binding: t; -*-
+(load (expand-file-name "audit_helpers.el" (file-name-directory load-file-name)) nil t)
+(audit-check "extract:multibyte-ascii" '(with-temp-buffer (insert "abc") (let ((s (delete-and-extract-region 1 3))) (list (multibyte-string-p s) (string-to-list s)))))
+(audit-check "extract:unibyte-high" '(with-temp-buffer (set-buffer-multibyte nil) (insert (unibyte-string 255 65)) (let ((s (delete-and-extract-region 1 3))) (list (multibyte-string-p s) (string-to-list s)))))
+(audit-check "extract:properties-after-before-hook" '(with-temp-buffer (insert (propertize "abc" 'face 'bold)) (let ((before-change-functions (list (lambda (beg end) (put-text-property beg end 'face 'italic))))) (get-text-property 0 'face (delete-and-extract-region 1 3)))))
+(audit-check "extract:markers" '(with-temp-buffer (insert "abc") (delete-and-extract-region (copy-marker 1) (copy-marker 3))))
+(audit-check "extract:empty-readonly-delete-region" '(with-temp-buffer (setq buffer-read-only t) (condition-case e (delete-region 1 1) (error (car e)))))
+(audit-check "extract:empty-readonly-extract" '(with-temp-buffer (setq buffer-read-only t) (condition-case e (delete-and-extract-region 1 1) (error (car e)))))
+(audit-check "extract:empty-readonly-delete-char" '(with-temp-buffer (setq buffer-read-only t) (condition-case e (delete-char 0) (error (car e)))))
+(audit-check "extract:empty-readonly-erase-empty" '(with-temp-buffer (setq buffer-read-only t) (condition-case e (erase-buffer) (error (car e)))))
+(princ "AUDIT-DONE\n")

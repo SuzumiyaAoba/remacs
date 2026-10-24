@@ -1,0 +1,66 @@
+[
+  {
+    "side": "gnu",
+    "size": [
+      24,
+      80
+    ],
+    "frame_seen": false,
+    "exit_before_quit": null,
+    "exit": 1,
+    "seconds": 0.18,
+    "bytes": 38,
+    "stdout_file": "sized.gnu.out",
+    "scratch_in_raw_bytes": false,
+    "scratch_after_ansi_removal": false,
+    "preview": "emacs: Could not open file: /dev/tty\r\n"
+  },
+  {
+    "side": "gnu",
+    "size": [
+      0,
+      0
+    ],
+    "frame_seen": false,
+    "exit_before_quit": null,
+    "exit": 1,
+    "seconds": 0.17,
+    "bytes": 38,
+    "stdout_file": "zero.gnu.out",
+    "scratch_in_raw_bytes": false,
+    "scratch_after_ansi_removal": false,
+    "preview": "emacs: Could not open file: /dev/tty\r\n"
+  },
+  {
+    "side": "remacs",
+    "size": [
+      24,
+      80
+    ],
+    "frame_seen": true,
+    "exit_before_quit": null,
+    "exit": 0,
+    "seconds": 7.61,
+    "bytes": 4618,
+    "stdout_file": "sized.remacs.out",
+    "scratch_in_raw_bytes": true,
+    "scratch_after_ansi_removal": true,
+    "preview": "\u001b[?1049h\u001b[?25l\u001b[1;1H\u001b[1;1H\u001b[0m                                                                                \u001b[0m\u001b[2;1H\u001b[0m                                                                                \u001b[0m\u001b[3;1H\u001b[0m                                "
+  },
+  {
+    "side": "remacs",
+    "size": [
+      0,
+      0
+    ],
+    "frame_seen": true,
+    "exit_before_quit": null,
+    "exit": 0,
+    "seconds": 7.59,
+    "bytes": 268,
+    "stdout_file": "zero.remacs.out",
+    "scratch_in_raw_bytes": false,
+    "scratch_after_ansi_removal": true,
+    "preview": "\u001b[?1049h\u001b[?25l\u001b[1;1H\u001b[1;1H\u001b[0m          \u001b[0m\u001b[2;1H\u001b[0m\u001b[7m----- *scr\u001b[0match*   L1 C0  [sel]\u001b[0m\u001b[3;1H\u001b[0m          \u001b[0m\u001b[1;1H\u001b[?25h\u001b[1;1H\u001b[1;1H\u001b[0m          \u001b[0m\u001b[2;1H\u001b[0m\u001b[7m----- *scr\u001b[0match*   L1 C0  [sel]\u001b[0m\u001b[3;1H\u001b[0m          \u001b[0m\u001b[1;1H\u001b[?25h"
+  }
+]

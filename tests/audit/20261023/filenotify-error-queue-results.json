@@ -1,0 +1,114 @@
+[
+  {
+    "id": "notify:callback-error-queue",
+    "side": "gnu",
+    "metadata": {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_filenotify_lifecycle.el"
+      ],
+      "only": "notify:callback-error-queue",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.428291,
+      "completed": true,
+      "stdout_file": "filenotify_lifecycle.gnu-callback-error-queue.out",
+      "stderr_file": "filenotify_lifecycle.gnu-callback-error-queue.err"
+    },
+    "values": {
+      "notify:callback-error-queue": "(ok (t t t))"
+    },
+    "forms": {
+      "notify:callback-error-queue": "(audit-notify-error-queue t)"
+    }
+  },
+  {
+    "id": "notify:callback-error-queue",
+    "side": "remacs",
+    "metadata": {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_filenotify_lifecycle.el"
+      ],
+      "only": "notify:callback-error-queue",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 12.438587,
+      "completed": true,
+      "stdout_file": "filenotify_lifecycle.remacs-callback-error-queue.out",
+      "stderr_file": "filenotify_lifecycle.remacs-callback-error-queue.err"
+    },
+    "values": {
+      "notify:callback-error-queue": "(ok (t nil t))"
+    },
+    "forms": {
+      "notify:callback-error-queue": "(audit-notify-error-queue t)"
+    }
+  },
+  {
+    "id": "notify:callback-success-queue-control",
+    "side": "gnu",
+    "metadata": {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_filenotify_lifecycle.el"
+      ],
+      "only": "notify:callback-success-queue-control",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.42913,
+      "completed": true,
+      "stdout_file": "filenotify_lifecycle.gnu-callback-success-queue-control.out",
+      "stderr_file": "filenotify_lifecycle.gnu-callback-success-queue-control.err"
+    },
+    "values": {
+      "notify:callback-success-queue-control": "(ok (t t nil))"
+    },
+    "forms": {
+      "notify:callback-success-queue-control": "(audit-notify-error-queue nil)"
+    }
+  },
+  {
+    "id": "notify:callback-success-queue-control",
+    "side": "remacs",
+    "metadata": {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_filenotify_lifecycle.el"
+      ],
+      "only": "notify:callback-success-queue-control",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 10.3288,
+      "completed": true,
+      "stdout_file": "filenotify_lifecycle.remacs-callback-success-queue-control.out",
+      "stderr_file": "filenotify_lifecycle.remacs-callback-success-queue-control.err"
+    },
+    "values": {
+      "notify:callback-success-queue-control": "(ok (t t nil))"
+    },
+    "forms": {
+      "notify:callback-success-queue-control": "(audit-notify-error-queue nil)"
+    }
+  }
+]

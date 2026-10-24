@@ -1,0 +1,184 @@
+[
+  {
+    "side": "gnu",
+    "id": "AUD-087",
+    "returncode": 0,
+    "stdout": "(ok (filled nil (97 97)))\n(ok (filled nil (233 233)))\n(ok (error t (97 97)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-087",
+    "returncode": 0,
+    "stdout": "(ok (error nil (128 255)))\n(ok (error nil (128 255)))\n(ok (filled t (233 233)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-088",
+    "returncode": 0,
+    "stdout": "(ok (2 2 (0 0)))\n(ok (5 5 nil (0 0 0 0 0)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-088",
+    "returncode": 0,
+    "stdout": "(ok (8 8 (0 0 0 0 0 0 0 0)))\n(ok (5 5 nil (0 0 0 0 0)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-089",
+    "returncode": 0,
+    "stdout": "(ok (nil (255 128) nil (128 255)))\n(ok (nil (255 128) nil (128 255)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-089",
+    "returncode": 0,
+    "stdout": "(ok (nil (4194303 4194176) nil (128 255)))\n(ok (nil (4194303 4194176) nil (128 255)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-090",
+    "returncode": 0,
+    "stdout": "(ok (4 4 \"\\11\"))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-090",
+    "returncode": 0,
+    "stdout": "(ok (4 8 \"\\11\"))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-091",
+    "returncode": 0,
+    "stdout": "(ok (2))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-091",
+    "returncode": 0,
+    "stdout": "(ok (1 1))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-092",
+    "returncode": 0,
+    "stdout": "(ok (\"cba\" (nil nil nil)))\n(ok (\"cba\" (nil nil nil)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-092",
+    "returncode": 0,
+    "stdout": "(ok (\"cba\" (nil nil bold)))\n(ok (\"cba\" (nil nil nil)))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-093",
+    "returncode": 0,
+    "stdout": "(ok (11 22))\n(ok (11 33))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-093",
+    "returncode": 0,
+    "stdout": "(ok (11 11))\n(ok (11 33))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-094",
+    "returncode": 0,
+    "stdout": "(ok (11 (wrong-type-argument arrayp) 11))\n(ok (11 (wrong-type-argument arrayp) 11))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-094",
+    "returncode": 0,
+    "stdout": "(ok (11 stored 22))\n(ok (11 stored 33))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-095",
+    "returncode": 0,
+    "stdout": "(ok (nil (1 2) (9 2)))\n(error (wrong-type-argument listp 2))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-095",
+    "returncode": 0,
+    "stdout": "(ok (t #1=(9 2) #1#))\n(ok (1 . 2))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-096",
+    "returncode": 0,
+    "stdout": "(ok [1 2])\n(ok (nil [1 2]))\n(ok [t nil])\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-096",
+    "returncode": 0,
+    "stdout": "(error (wrong-type-argument stringp (1 2)))\n(error (wrong-type-argument stringp [1 2]))\n(error (wrong-type-argument stringp #&2\"\u0001\"))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-097",
+    "returncode": 0,
+    "stdout": "(ok (t nil 1))\n(ok (nil nil nil nil 1))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-097",
+    "returncode": 0,
+    "stdout": "(ok (nil t 1))\n(ok (nil nil nil t 1))\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-098",
+    "returncode": 0,
+    "stdout": "(ok (88 t t))\n(ok 1)\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-098",
+    "returncode": 0,
+    "stdout": "(ok (88 nil -1))\n(ok t)\n",
+    "stderr": ""
+  },
+  {
+    "side": "gnu",
+    "id": "AUD-099",
+    "returncode": 0,
+    "stdout": "(ok (nil nil nil))\n(ok (nil nil nil))\n",
+    "stderr": ""
+  },
+  {
+    "side": "remacs",
+    "id": "AUD-099",
+    "returncode": 0,
+    "stdout": "(ok (t t t))\n(ok (nil nil nil))\n",
+    "stderr": ""
+  }
+]

@@ -1,0 +1,26 @@
+[
+  {
+    "name": "coverage_tests::u_probe_buffer4",
+    "returncode": 101,
+    "stdout": "coverage_tests--u_probe_buffer4.out",
+    "stderr": "coverage_tests--u_probe_buffer4.err",
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+      "coverage_tests::u_probe_buffer4",
+      "--exact",
+      "--nocapture"
+    ]
+  },
+  {
+    "name": "coverage_tests::u_probe_editor3",
+    "returncode": 101,
+    "stdout": "coverage_tests--u_probe_editor3.out",
+    "stderr": "coverage_tests--u_probe_editor3.err",
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+      "coverage_tests::u_probe_editor3",
+      "--exact",
+      "--nocapture"
+    ]
+  }
+]

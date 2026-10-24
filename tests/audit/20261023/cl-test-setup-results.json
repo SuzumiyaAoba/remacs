@@ -1,0 +1,146 @@
+[
+  {
+    "side": "gnu",
+    "requires_cl_lib": false,
+    "metadata": {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_cl_test_setup.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.220419,
+      "completed": true,
+      "stdout_file": "cl_test_setup.gnu-without-require.out",
+      "stderr_file": "cl_test_setup.gnu-without-require.err"
+    },
+    "values": {
+      "test-setup:cl_defstruct_accepts_docstring": "(error (void-function cl-defstruct))",
+      "test-setup:cl_destructuring_bind_dotted_tail": "(error (void-function cl-destructuring-bind))",
+      "test-setup:cl_flet_lexical_escape": "(error (void-function cl-flet))",
+      "test-setup:cl_labels_recursion": "(error (void-function cl-labels))",
+      "test-setup:cl_loop_hash_iteration": "(error (void-function cl-loop))"
+    },
+    "forms": {
+      "test-setup:cl_defstruct_accepts_docstring": "(progn (when (getenv \"AUDIT_REQUIRE_CL\") (require 'cl-lib)) (progn (cl-defstruct ec-probe-struct \"A struct doc.\" one (two 2)) (let ((s (make-ec-probe-struct :one 1))) (list (ec-probe-struct-one s) (ec-probe-struct-two s) (ec-probe-struct-p s)))))",
+      "test-setup:cl_destructuring_bind_dotted_tail": "(progn (when (getenv \"AUDIT_REQUIRE_CL\") (require 'cl-lib)) (list (cl-destructuring-bind (a . b) '(1 2 3) (list a b)) (cl-destructuring-bind (a b . c) '(1 2 3 4) (list a b c))))",
+      "test-setup:cl_flet_lexical_escape": "(progn (when (getenv \"AUDIT_REQUIRE_CL\") (require 'cl-lib)) (eval '(let ((f (cl-flet ((h (x) (* x 2))) (lambda (y) (h y))))) (funcall f 5)) t))",
+      "test-setup:cl_labels_recursion": "(progn (when (getenv \"AUDIT_REQUIRE_CL\") (require 'cl-lib)) (eval '(list (cl-labels ((f (n) (if (<= n 1) 1 (* n (f (1- n)))))) (f 5)) (cl-labels ((ev (n) (if (= n 0) t (od (1- n)))) (od (n) (if (= n 0) nil (ev (1- n))))) (ev 10)) (let ((f (cl-labels ((g (n) (if (<= n 0) 0 (+ n (g (1- n)))))) (lambda (k) (g k))))) (funcall f 4))) t))",
+      "test-setup:cl_loop_hash_iteration": "(progn (when (getenv \"AUDIT_REQUIRE_CL\") (require 'cl-lib)) (let ((h (make-hash-table :test 'equal))) (puthash \"a\" 1 h) (puthash \"b\" 2 h) (list (sort (cl-loop for k being the hash-keys of h using (hash-values v) collect (cons k v)) (lambda (a b) (string< (car a) (car b)))) (sort (cl-loop for v being the hash-values of h using (hash-keys k) collect (cons v k)) (lambda (a b) (< (car a) (car b)))))))"
+    }
+  },
+  {
+    "side": "remacs",
+    "requires_cl_lib": false,
+    "metadata": {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_cl_test_setup.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 9.100806,
+      "completed": true,
+      "stdout_file": "cl_test_setup.remacs-without-require.out",
+      "stderr_file": "cl_test_setup.remacs-without-require.err"
+    },
+    "values": {
+      "test-setup:cl_defstruct_accepts_docstring": "(error (void-function cl-defstruct))",
+      "test-setup:cl_destructuring_bind_dotted_tail": "(error (void-function cl-destructuring-bind))",
+      "test-setup:cl_flet_lexical_escape": "(error (void-function cl-flet))",
+      "test-setup:cl_labels_recursion": "(error (void-function cl-labels))",
+      "test-setup:cl_loop_hash_iteration": "(error (void-function cl-loop))"
+    },
+    "forms": {
+      "test-setup:cl_defstruct_accepts_docstring": "(progn (when (getenv \"AUDIT_REQUIRE_CL\") (require 'cl-lib)) (progn (cl-defstruct ec-probe-struct \"A struct doc.\" one (two 2)) (let ((s (make-ec-probe-struct :one 1))) (list (ec-probe-struct-one s) (ec-probe-struct-two s) (ec-probe-struct-p s)))))",
+      "test-setup:cl_destructuring_bind_dotted_tail": "(progn (when (getenv \"AUDIT_REQUIRE_CL\") (require 'cl-lib)) (list (cl-destructuring-bind (a . b) '(1 2 3) (list a b)) (cl-destructuring-bind (a b . c) '(1 2 3 4) (list a b c))))",
+      "test-setup:cl_flet_lexical_escape": "(progn (when (getenv \"AUDIT_REQUIRE_CL\") (require 'cl-lib)) (eval '(let ((f (cl-flet ((h (x) (* x 2))) (lambda (y) (h y))))) (funcall f 5)) t))",
+      "test-setup:cl_labels_recursion": "(progn (when (getenv \"AUDIT_REQUIRE_CL\") (require 'cl-lib)) (eval '(list (cl-labels ((f (n) (if (<= n 1) 1 (* n (f (1- n)))))) (f 5)) (cl-labels ((ev (n) (if (= n 0) t (od (1- n)))) (od (n) (if (= n 0) nil (ev (1- n))))) (ev 10)) (let ((f (cl-labels ((g (n) (if (<= n 0) 0 (+ n (g (1- n)))))) (lambda (k) (g k))))) (funcall f 4))) t))",
+      "test-setup:cl_loop_hash_iteration": "(progn (when (getenv \"AUDIT_REQUIRE_CL\") (require 'cl-lib)) (let ((h (make-hash-table :test 'equal))) (puthash \"a\" 1 h) (puthash \"b\" 2 h) (list (sort (cl-loop for k being the hash-keys of h using (hash-values v) collect (cons k v)) (lambda (a b) (string< (car a) (car b)))) (sort (cl-loop for v being the hash-values of h using (hash-keys k) collect (cons v k)) (lambda (a b) (< (car a) (car b)))))))"
+    }
+  },
+  {
+    "side": "gnu",
+    "requires_cl_lib": true,
+    "metadata": {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_cl_test_setup.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.283918,
+      "completed": true,
+      "stdout_file": "cl_test_setup.gnu-with-require.out",
+      "stderr_file": "cl_test_setup.gnu-with-require.err"
+    },
+    "values": {
+      "test-setup:cl_defstruct_accepts_docstring": "(ok (1 2 t))",
+      "test-setup:cl_destructuring_bind_dotted_tail": "(ok ((1 (2 3)) (1 2 (3 4))))",
+      "test-setup:cl_flet_lexical_escape": "(ok 10)",
+      "test-setup:cl_labels_recursion": "(ok (120 t 10))",
+      "test-setup:cl_loop_hash_iteration": "(ok (((#1=\"a\" . 1) (#2=\"b\" . 2)) ((1 . #1#) (2 . #2#))))"
+    },
+    "forms": {
+      "test-setup:cl_defstruct_accepts_docstring": "(progn (when (getenv \"AUDIT_REQUIRE_CL\") (require 'cl-lib)) (progn (cl-defstruct ec-probe-struct \"A struct doc.\" one (two 2)) (let ((s (make-ec-probe-struct :one 1))) (list (ec-probe-struct-one s) (ec-probe-struct-two s) (ec-probe-struct-p s)))))",
+      "test-setup:cl_destructuring_bind_dotted_tail": "(progn (when (getenv \"AUDIT_REQUIRE_CL\") (require 'cl-lib)) (list (cl-destructuring-bind (a . b) '(1 2 3) (list a b)) (cl-destructuring-bind (a b . c) '(1 2 3 4) (list a b c))))",
+      "test-setup:cl_flet_lexical_escape": "(progn (when (getenv \"AUDIT_REQUIRE_CL\") (require 'cl-lib)) (eval '(let ((f (cl-flet ((h (x) (* x 2))) (lambda (y) (h y))))) (funcall f 5)) t))",
+      "test-setup:cl_labels_recursion": "(progn (when (getenv \"AUDIT_REQUIRE_CL\") (require 'cl-lib)) (eval '(list (cl-labels ((f (n) (if (<= n 1) 1 (* n (f (1- n)))))) (f 5)) (cl-labels ((ev (n) (if (= n 0) t (od (1- n)))) (od (n) (if (= n 0) nil (ev (1- n))))) (ev 10)) (let ((f (cl-labels ((g (n) (if (<= n 0) 0 (+ n (g (1- n)))))) (lambda (k) (g k))))) (funcall f 4))) t))",
+      "test-setup:cl_loop_hash_iteration": "(progn (when (getenv \"AUDIT_REQUIRE_CL\") (require 'cl-lib)) (let ((h (make-hash-table :test 'equal))) (puthash \"a\" 1 h) (puthash \"b\" 2 h) (list (sort (cl-loop for k being the hash-keys of h using (hash-values v) collect (cons k v)) (lambda (a b) (string< (car a) (car b)))) (sort (cl-loop for v being the hash-values of h using (hash-keys k) collect (cons v k)) (lambda (a b) (< (car a) (car b)))))))"
+    }
+  },
+  {
+    "side": "remacs",
+    "requires_cl_lib": true,
+    "metadata": {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_cl_test_setup.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 10.337414,
+      "completed": true,
+      "stdout_file": "cl_test_setup.remacs-with-require.out",
+      "stderr_file": "cl_test_setup.remacs-with-require.err"
+    },
+    "values": {
+      "test-setup:cl_defstruct_accepts_docstring": "(ok (1 2 t))",
+      "test-setup:cl_destructuring_bind_dotted_tail": "(ok ((1 (2 3)) (1 2 (3 4))))",
+      "test-setup:cl_flet_lexical_escape": "(ok 10)",
+      "test-setup:cl_labels_recursion": "(ok (120 t 10))",
+      "test-setup:cl_loop_hash_iteration": "(ok (((#1=\"a\" . 1) (#2=\"b\" . 2)) ((1 . #1#) (2 . #2#))))"
+    },
+    "forms": {
+      "test-setup:cl_defstruct_accepts_docstring": "(progn (when (getenv \"AUDIT_REQUIRE_CL\") (require 'cl-lib)) (progn (cl-defstruct ec-probe-struct \"A struct doc.\" one (two 2)) (let ((s (make-ec-probe-struct :one 1))) (list (ec-probe-struct-one s) (ec-probe-struct-two s) (ec-probe-struct-p s)))))",
+      "test-setup:cl_destructuring_bind_dotted_tail": "(progn (when (getenv \"AUDIT_REQUIRE_CL\") (require 'cl-lib)) (list (cl-destructuring-bind (a . b) '(1 2 3) (list a b)) (cl-destructuring-bind (a b . c) '(1 2 3 4) (list a b c))))",
+      "test-setup:cl_flet_lexical_escape": "(progn (when (getenv \"AUDIT_REQUIRE_CL\") (require 'cl-lib)) (eval '(let ((f (cl-flet ((h (x) (* x 2))) (lambda (y) (h y))))) (funcall f 5)) t))",
+      "test-setup:cl_labels_recursion": "(progn (when (getenv \"AUDIT_REQUIRE_CL\") (require 'cl-lib)) (eval '(list (cl-labels ((f (n) (if (<= n 1) 1 (* n (f (1- n)))))) (f 5)) (cl-labels ((ev (n) (if (= n 0) t (od (1- n)))) (od (n) (if (= n 0) nil (ev (1- n))))) (ev 10)) (let ((f (cl-labels ((g (n) (if (<= n 0) 0 (+ n (g (1- n)))))) (lambda (k) (g k))))) (funcall f 4))) t))",
+      "test-setup:cl_loop_hash_iteration": "(progn (when (getenv \"AUDIT_REQUIRE_CL\") (require 'cl-lib)) (let ((h (make-hash-table :test 'equal))) (puthash \"a\" 1 h) (puthash \"b\" 2 h) (list (sort (cl-loop for k being the hash-keys of h using (hash-values v) collect (cons k v)) (lambda (a b) (string< (car a) (car b)))) (sort (cl-loop for v being the hash-values of h using (hash-keys k) collect (cons v k)) (lambda (a b) (< (car a) (car b)))))))"
+    }
+  }
+]

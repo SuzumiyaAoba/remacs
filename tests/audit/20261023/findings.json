@@ -1,0 +1,74 @@
+[
+  {
+    "id": "R3-20261023-001",
+    "title": "ディレクトリ監視コールバックで自身を解除するとpanic",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/346",
+    "issue_number": 346,
+    "draft": "R3-20261023-001.md",
+    "status": "open"
+  },
+  {
+    "id": "R3-20261023-002",
+    "title": "shortdoc-docの初期requireが循環エラー",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/347",
+    "issue_number": 347,
+    "draft": "R3-20261023-002.md",
+    "status": "open"
+  },
+  {
+    "id": "R3-20261023-003",
+    "title": "最後の監視解除後に再登録しても通知が届かない",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/348",
+    "issue_number": 348,
+    "draft": "R3-20261023-003.md",
+    "status": "open"
+  },
+  {
+    "id": "R3-20261023-004",
+    "title": "make-interpreted-closureのdotted ARGSの過剰検証",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/349",
+    "issue_number": 349,
+    "draft": "R3-20261023-004.md",
+    "status": "open"
+  },
+  {
+    "id": "R3-20261023-005",
+    "title": "sqlite-openがdefault-directoryを無視",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/350",
+    "issue_number": 350,
+    "draft": "R3-20261023-005.md",
+    "status": "open"
+  },
+  {
+    "id": "R3-20261023-006",
+    "title": "CL関連5テストのrequire不足",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/351",
+    "issue_number": 351,
+    "draft": "R3-20261023-006.md",
+    "status": "open"
+  },
+  {
+    "id": "R3-20261023-007",
+    "title": "SQLite TEXTの不正UTF-8置換と表現消失",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/352",
+    "issue_number": 352,
+    "draft": "R3-20261023-007.md",
+    "status": "open"
+  },
+  {
+    "id": "R3-20261023-008",
+    "title": "compileテストが終了前にプロセスをkillして偽失敗",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/353",
+    "issue_number": 353,
+    "draft": "R3-20261023-008.md",
+    "status": "open"
+  },
+  {
+    "id": "R3-20261023-009",
+    "title": "通知コールバックのerrorで後続通知が失われる",
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/354",
+    "issue_number": 354,
+    "draft": "R3-20261023-009.md",
+    "status": "open"
+  }
+]

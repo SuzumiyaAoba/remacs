@@ -1,0 +1,6934 @@
+{
+  "targets": [
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": -9,
+      "timed_out": true,
+      "seconds": 391.54,
+      "log": "lib-remacs.log",
+      "results": [
+        {
+          "name": "buffer::gapbuf::tests::abandoned_edit_observers_are_not_called",
+          "status": "ok"
+        },
+        {
+          "name": "buffer::gapbuf::tests::read_projection_preserves_gap_and_invalidates_after_mutation",
+          "status": "ok"
+        },
+        {
+          "name": "buffer::gapbuf::tests::equal_length_replacement_is_one_complete_observer_edit",
+          "status": "ok"
+        },
+        {
+          "name": "buffer::gapbuf::tests::edit_observers_follow_shared_storage_without_owning_it",
+          "status": "ok"
+        },
+        {
+          "name": "buffer::gapbuf::tests::byte_budget_tracks_multibyte_insert_delete_and_snapshot",
+          "status": "ok"
+        },
+        {
+          "name": "buffer::textprops::tests::inherited_boundary_joins_only_a_matching_neighbor",
+          "status": "ok"
+        },
+        {
+          "name": "buffer::textprops::tests::graft_preserves_source_cuts_and_inherited_values",
+          "status": "ok"
+        },
+        {
+          "name": "buffer::textprops::tests::inherited_boundary_prefers_left_without_merging_existing_equal_cut",
+          "status": "ok"
+        },
+        {
+          "name": "buffer::textprops::tests::change_points_distinguish_raw_cuts_from_eq_plist_changes",
+          "status": "ok"
+        },
+        {
+          "name": "buffer::textprops::tests::inherited_plain_edges_merge_nil_tree_but_do_not_create_one",
+          "status": "ok"
+        },
+        {
+          "name": "buffer::textprops::tests::inherited_interior_removes_only_new_cuts_and_keeps_original_order",
+          "status": "ok"
+        },
+        {
+          "name": "buffer::textprops::tests::insertion_and_deletion_keep_dead_interval_boundaries",
+          "status": "ok"
+        },
+        {
+          "name": "buffer::textprops::tests::nil_set_preserves_absent_tree_but_not_existing_tree",
+          "status": "ok"
+        },
+        {
+          "name": "buffer::textprops::tests::plist_equality_retains_duplicate_key_counts_and_first_value_rule",
+          "status": "ok"
+        },
+        {
+          "name": "buffer::textprops::tests::projection_preserves_plist_order_for_reverse_readers",
+          "status": "ok"
+        },
+        {
+          "name": "buffer::textprops::tests::put_only_splits_intervals_with_a_changed_key",
+          "status": "ok"
+        },
+        {
+          "name": "buffer::textprops::tests::remove_absent_key_does_not_split_and_removal_keeps_empty_intervals",
+          "status": "ok"
+        },
+        {
+          "name": "buffer::textprops::tests::setter_replaces_whole_interior_and_keeps_equal_outside_cuts",
+          "status": "ok"
+        },
+        {
+          "name": "buffer::textprops::tests::slice_rebases_empty_and_equal_intervals",
+          "status": "ok"
+        },
+        {
+          "name": "buffer::textprops::tests::whole_buffer_graft_copies_source_order_and_nil_cuts_for_both_modes",
+          "status": "ok"
+        },
+        {
+          "name": "cli::tests::aliases_and_inline_values_share_the_execution_view",
+          "status": "ok"
+        },
+        {
+          "name": "cli::tests::canonical_startup_scan_keeps_raw_tokens_and_operand_boundaries",
+          "status": "ok"
+        },
+        {
+          "name": "cli::tests::dump_options_are_initial_options_with_ordinary_operand_boundaries",
+          "status": "ok"
+        },
+        {
+          "name": "cli::tests::empty_trailing_separator_and_missing_operand_are_safe",
+          "status": "ok"
+        },
+        {
+          "name": "cli::tests::help_is_a_startup_flag_only_outside_operands_and_separator",
+          "status": "ok"
+        },
+        {
+          "name": "cli::tests::inline_directory_is_an_option_but_not_an_operand_pair",
+          "status": "ok"
+        },
+        {
+          "name": "buffer::gapbuf::tests::replacing_text_reuses_capacity_and_gap_growth_scales_with_existing_text",
+          "status": "ok"
+        },
+        {
+          "name": "cli::tests::mixed_repeated_options_and_files_keep_original_indices",
+          "status": "ok"
+        },
+        {
+          "name": "cli::tests::separator_preserves_every_remaining_filename",
+          "status": "ok"
+        },
+        {
+          "name": "cli::tests::option_operands_do_not_change_startup_or_end_options",
+          "status": "ok"
+        },
+        {
+          "name": "coverage_tests::u_interactive_spec_command_args",
+          "status": "ok"
+        },
+        {
+          "name": "coverage_tests::u_interactive_spec_reader",
+          "status": "ok"
+        },
+        {
+          "name": "coverage_tests::u_probe_all",
+          "status": "ok"
+        },
+        {
+          "name": "coverage_tests::u_probe_buffer2",
+          "status": "ok"
+        },
+        {
+          "name": "coverage_tests::u_output_sinks",
+          "status": "ok"
+        },
+        {
+          "name": "coverage_tests::u_probe_buffer3",
+          "status": "ok"
+        },
+        {
+          "name": "coverage_tests::u_probe_buffer4",
+          "status": "FAILED"
+        },
+        {
+          "name": "coverage_tests::u_probe_buffer5",
+          "status": "ok"
+        },
+        {
+          "name": "coverage_tests::u_probe_deep",
+          "status": "ok"
+        },
+        {
+          "name": "coverage_tests::u_probe_edge",
+          "status": "ok"
+        },
+        {
+          "name": "coverage_tests::u_probe_editor",
+          "status": "ok"
+        },
+        {
+          "name": "coverage_tests::u_probe_editor2",
+          "status": "ok"
+        },
+        {
+          "name": "coverage_tests::u_probe_editor3",
+          "status": "FAILED"
+        },
+        {
+          "name": "coverage_tests::u_probe_editor4",
+          "status": "ok"
+        },
+        {
+          "name": "coverage_tests::u_probe_editor5",
+          "status": "ok"
+        },
+        {
+          "name": "coverage_tests::u_probe_editor6",
+          "status": "ok"
+        },
+        {
+          "name": "coverage_tests::u_probe_eval10",
+          "status": "ok"
+        },
+        {
+          "name": "coverage_tests::u_probe_eval11",
+          "status": "ok"
+        },
+        {
+          "name": "coverage_tests::u_probe_eval12",
+          "status": "ok"
+        },
+        {
+          "name": "coverage_tests::u_probe_eval13",
+          "status": "ok"
+        }
+      ],
+      "label": "lib-remacs",
+      "expected_tests": 173,
+      "isolated_retries": [
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_eval14",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": -9,
+          "timed_out": true,
+          "seconds": 120.52,
+          "log": "lib-remacs-remaining-0.log",
+          "results": [],
+          "name": "coverage_tests::u_probe_eval14"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_eval2",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 12.04,
+          "log": "lib-remacs-remaining-1.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_eval2",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_eval2"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_eval3",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 11.04,
+          "log": "lib-remacs-remaining-2.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_eval3",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_eval3"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_eval4",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.03,
+          "log": "lib-remacs-remaining-3.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_eval4",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_eval4"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_eval5",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 12.05,
+          "log": "lib-remacs-remaining-4.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_eval5",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_eval5"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_eval6",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-5.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_eval6",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_eval6"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_eval7",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 12.05,
+          "log": "lib-remacs-remaining-6.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_eval7",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_eval7"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_eval8",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 11.04,
+          "log": "lib-remacs-remaining-7.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_eval8",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_eval8"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_eval9",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 17.07,
+          "log": "lib-remacs-remaining-8.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_eval9",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_eval9"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_fillcomment",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-9.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_fillcomment",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_fillcomment"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_format",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 10.04,
+          "log": "lib-remacs-remaining-10.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_format",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_format"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_gap",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 17.07,
+          "log": "lib-remacs-remaining-11.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_gap",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_gap"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_lisp2",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 12.06,
+          "log": "lib-remacs-remaining-12.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_lisp2",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_lisp2"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_lisp3",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 12.06,
+          "log": "lib-remacs-remaining-13.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_lisp3",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_lisp3"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_misc2",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 12.05,
+          "log": "lib-remacs-remaining-14.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_misc2",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_misc2"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_misc3",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 12.04,
+          "log": "lib-remacs-remaining-15.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_misc3",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_misc3"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_misc4",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 11.04,
+          "log": "lib-remacs-remaining-16.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_misc4",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_misc4"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_paragraphs",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-17.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_paragraphs",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_paragraphs"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_printread",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 11.05,
+          "log": "lib-remacs-remaining-18.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_printread",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_printread"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_rect",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 11.04,
+          "log": "lib-remacs-remaining-19.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_rect",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_rect"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_registers",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-20.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_registers",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_registers"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_runtime",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 101,
+          "timed_out": false,
+          "seconds": 12.06,
+          "log": "lib-remacs-remaining-21.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_runtime",
+              "status": "FAILED"
+            }
+          ],
+          "name": "coverage_tests::u_probe_runtime"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_probe_sort",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 11.04,
+          "log": "lib-remacs-remaining-22.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_probe_sort",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_probe_sort"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "coverage_tests::u_uptime_text",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-23.log",
+          "results": [
+            {
+              "name": "coverage_tests::u_uptime_text",
+              "status": "ok"
+            }
+          ],
+          "name": "coverage_tests::u_uptime_text"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "editor::changes::tests::notifications_match_gnu_terminal_results",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-24.log",
+          "results": [
+            {
+              "name": "editor::changes::tests::notifications_match_gnu_terminal_results",
+              "status": "ok"
+            }
+          ],
+          "name": "editor::changes::tests::notifications_match_gnu_terminal_results"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::input::tests::composition_uses_utf16_without_splitting_surrogates",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-25.log",
+          "results": [
+            {
+              "name": "gui::input::tests::composition_uses_utf16_without_splitting_surrogates",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::input::tests::composition_uses_utf16_without_splitting_surrogates"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::input::tests::partial_commit_and_unmark_retain_composition_once",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.0,
+          "log": "lib-remacs-remaining-26.log",
+          "results": [
+            {
+              "name": "gui::input::tests::partial_commit_and_unmark_retain_composition_once",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::input::tests::partial_commit_and_unmark_retain_composition_once"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::build_editor_view_pumps_grids",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.0,
+          "log": "lib-remacs-remaining-27.log",
+          "results": [
+            {
+              "name": "gui::tests::build_editor_view_pumps_grids",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::build_editor_view_pumps_grids"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::chanio_committed_text_preserves_unicode_and_unread_order",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-28.log",
+          "results": [
+            {
+              "name": "gui::tests::chanio_committed_text_preserves_unicode_and_unread_order",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::chanio_committed_text_preserves_unicode_and_unread_order"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::chanio_disconnect_errors",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-29.log",
+          "results": [
+            {
+              "name": "gui::tests::chanio_disconnect_errors",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::chanio_disconnect_errors"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::chanio_key_events_and_unread",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-30.log",
+          "results": [
+            {
+              "name": "gui::tests::chanio_key_events_and_unread",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::chanio_key_events_and_unread"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::chanio_render_and_draw_echo",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-31.log",
+          "results": [
+            {
+              "name": "gui::tests::chanio_render_and_draw_echo",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::chanio_render_and_draw_echo"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::chanio_resize_updates_size",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.0,
+          "log": "lib-remacs-remaining-32.log",
+          "results": [
+            {
+              "name": "gui::tests::chanio_resize_updates_size",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::chanio_resize_updates_size"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::chanio_send_grid_latest_wins_and_closed",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.0,
+          "log": "lib-remacs-remaining-33.log",
+          "results": [
+            {
+              "name": "gui::tests::chanio_send_grid_latest_wins_and_closed",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::chanio_send_grid_latest_wins_and_closed"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::headless_view_renders_and_reports_size",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-34.log",
+          "results": [
+            {
+              "name": "gui::tests::headless_view_renders_and_reports_size",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::headless_view_renders_and_reports_size"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::input_handler_commits_multichar_text_and_composition_only_once",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-35.log",
+          "results": [
+            {
+              "name": "gui::tests::input_handler_commits_multichar_text_and_composition_only_once",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::input_handler_commits_multichar_text_and_composition_only_once"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::keystroke_ctrl_folds_to_control_char",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-36.log",
+          "results": [
+            {
+              "name": "gui::tests::keystroke_ctrl_folds_to_control_char",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::keystroke_ctrl_folds_to_control_char"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::keystroke_meta_and_super",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-37.log",
+          "results": [
+            {
+              "name": "gui::tests::keystroke_meta_and_super",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::keystroke_meta_and_super"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::keystroke_modified_named_and_unknown",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.0,
+          "log": "lib-remacs-remaining-38.log",
+          "results": [
+            {
+              "name": "gui::tests::keystroke_modified_named_and_unknown",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::keystroke_modified_named_and_unknown"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::keystroke_named_keys",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.0,
+          "log": "lib-remacs-remaining-39.log",
+          "results": [
+            {
+              "name": "gui::tests::keystroke_named_keys",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::keystroke_named_keys"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::keystroke_plain_chars",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.0,
+          "log": "lib-remacs-remaining-40.log",
+          "results": [
+            {
+              "name": "gui::tests::keystroke_plain_chars",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::keystroke_plain_chars"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::keystroke_shift_folds_into_char",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-41.log",
+          "results": [
+            {
+              "name": "gui::tests::keystroke_shift_folds_into_char",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::keystroke_shift_folds_into_char"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::logic_thread_applies_directory_options_before_visiting_files",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 12.05,
+          "log": "lib-remacs-remaining-42.log",
+          "results": [
+            {
+              "name": "gui::tests::logic_thread_applies_directory_options_before_visiting_files",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::logic_thread_applies_directory_options_before_visiting_files"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::logic_thread_drives_editing_session",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 10.04,
+          "log": "lib-remacs-remaining-43.log",
+          "results": [
+            {
+              "name": "gui::tests::logic_thread_drives_editing_session",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::logic_thread_drives_editing_session"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::logic_thread_renders_and_quits",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.03,
+          "log": "lib-remacs-remaining-44.log",
+          "results": [
+            {
+              "name": "gui::tests::logic_thread_renders_and_quits",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::logic_thread_renders_and_quits"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::missing_dump_fails_before_ui_startup",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-45.log",
+          "results": [
+            {
+              "name": "gui::tests::missing_dump_fails_before_ui_startup",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::missing_dump_fails_before_ui_startup"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::modified_named_keys_follow_gui_command_bindings",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-46.log",
+          "results": [
+            {
+              "name": "gui::tests::modified_named_keys_follow_gui_command_bindings",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::modified_named_keys_follow_gui_command_bindings"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::multichar_os_text_does_not_enter_the_command_key_path",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-47.log",
+          "results": [
+            {
+              "name": "gui::tests::multichar_os_text_does_not_enter_the_command_key_path",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::multichar_os_text_does_not_enter_the_command_key_path"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::os_text_input_reaches_logic_and_saved_utf8_file",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.03,
+          "log": "lib-remacs-remaining-48.log",
+          "results": [
+            {
+              "name": "gui::tests::os_text_input_reaches_logic_and_saved_utf8_file",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::os_text_input_reaches_logic_and_saved_utf8_file"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "gui::tests::registered_input_delivers_text_once_and_keeps_commands_separate",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.0,
+          "log": "lib-remacs-remaining-49.log",
+          "results": [
+            {
+              "name": "gui::tests::registered_input_delivers_text_once_and_keeps_commands_separate",
+              "status": "ok"
+            }
+          ],
+          "name": "gui::tests::registered_input_delivers_text_once_and_keeps_commands_separate"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::builtins::coding_detect::tests::combines_only_the_requested_non_iso_category_states",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-50.log",
+          "results": [
+            {
+              "name": "lisp::builtins::coding_detect::tests::combines_only_the_requested_non_iso_category_states",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::builtins::coding_detect::tests::combines_only_the_requested_non_iso_category_states"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::builtins::coding_detect::tests::legacy_detection_consumes_the_whole_input",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-51.log",
+          "results": [
+            {
+              "name": "lisp::builtins::coding_detect::tests::legacy_detection_consumes_the_whole_input",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::builtins::coding_detect::tests::legacy_detection_consumes_the_whole_input"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::builtins::coding_detect::tests::mule_checks_charset_lengths_and_composite_termination",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-52.log",
+          "results": [
+            {
+              "name": "lisp::builtins::coding_detect::tests::mule_checks_charset_lengths_and_composite_termination",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::builtins::coding_detect::tests::mule_checks_charset_lengths_and_composite_termination"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::builtins::coding_detect::tests::mule_compositions_measure_multibyte_storage_widths",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-53.log",
+          "results": [
+            {
+              "name": "lisp::builtins::coding_detect::tests::mule_compositions_measure_multibyte_storage_widths",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::builtins::coding_detect::tests::mule_compositions_measure_multibyte_storage_widths"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::builtins::coding_detect::tests::mule_preserves_the_early_iso_prefix_boundary",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-54.log",
+          "results": [
+            {
+              "name": "lisp::builtins::coding_detect::tests::mule_preserves_the_early_iso_prefix_boundary",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::builtins::coding_detect::tests::mule_preserves_the_early_iso_prefix_boundary"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::builtins::coding_detect::tests::utf16_bom_odd_lengths_and_dispersion",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-55.log",
+          "results": [
+            {
+              "name": "lisp::builtins::coding_detect::tests::utf16_bom_odd_lengths_and_dispersion",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::builtins::coding_detect::tests::utf16_bom_odd_lengths_and_dispersion"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::builtins::coding_detect::tests::utf8_bom_distinguishes_literal_bytes_from_escaped_raw_bytes",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.0,
+          "log": "lib-remacs-remaining-56.log",
+          "results": [
+            {
+              "name": "lisp::builtins::coding_detect::tests::utf8_bom_distinguishes_literal_bytes_from_escaped_raw_bytes",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::builtins::coding_detect::tests::utf8_bom_distinguishes_literal_bytes_from_escaped_raw_bytes"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::builtins::coding_detect::tests::utf8_checks_byte_structure_and_the_complete_final_block",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-57.log",
+          "results": [
+            {
+              "name": "lisp::builtins::coding_detect::tests::utf8_checks_byte_structure_and_the_complete_final_block",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::builtins::coding_detect::tests::utf8_checks_byte_structure_and_the_complete_final_block"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::builtins::coding_stream::tests::encoder_keeps_state_until_a_raw_send_resets_it",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-58.log",
+          "results": [
+            {
+              "name": "lisp::builtins::coding_stream::tests::encoder_keeps_state_until_a_raw_send_resets_it",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::builtins::coding_stream::tests::encoder_keeps_state_until_a_raw_send_resets_it"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::builtins::coding_stream::tests::every_byte_boundary_preserves_text_and_bounds_pending_input",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-59.log",
+          "results": [
+            {
+              "name": "lisp::builtins::coding_stream::tests::every_byte_boundary_preserves_text_and_bounds_pending_input",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::builtins::coding_stream::tests::every_byte_boundary_preserves_text_and_bounds_pending_input"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::builtins::dbus::tests::bignum_integer_arguments_use_checked_dbus_ranges",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.05,
+          "log": "lib-remacs-remaining-60.log",
+          "results": [
+            {
+              "name": "lisp::builtins::dbus::tests::bignum_integer_arguments_use_checked_dbus_ranges",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::builtins::dbus::tests::bignum_integer_arguments_use_checked_dbus_ranges"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::builtins::timefmt::tests::portable_modifiers_do_not_reach_libc",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.0,
+          "log": "lib-remacs-remaining-61.log",
+          "results": [
+            {
+              "name": "lisp::builtins::timefmt::tests::portable_modifiers_do_not_reach_libc",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::builtins::timefmt::tests::portable_modifiers_do_not_reach_libc"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::builtins::treesit::edit_tests::deleted_lines_and_empty_inputs_keep_valid_points",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-62.log",
+          "results": [
+            {
+              "name": "lisp::builtins::treesit::edit_tests::deleted_lines_and_empty_inputs_keep_valid_points",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::builtins::treesit::edit_tests::deleted_lines_and_empty_inputs_keep_valid_points"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::builtins::treesit::edit_tests::unicode_edit_boundaries_and_columns_use_utf8_bytes",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-63.log",
+          "results": [
+            {
+              "name": "lisp::builtins::treesit::edit_tests::unicode_edit_boundaries_and_columns_use_utf8_bytes",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::builtins::treesit::edit_tests::unicode_edit_boundaries_and_columns_use_utf8_bytes"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::dump::graph::tests::graph_roundtrip_keeps_cycles_aliases_float_keys_and_large_integers",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-64.log",
+          "results": [
+            {
+              "name": "lisp::dump::graph::tests::graph_roundtrip_keeps_cycles_aliases_float_keys_and_large_integers",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::dump::graph::tests::graph_roundtrip_keeps_cycles_aliases_float_keys_and_large_integers"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::dump::graph::tests::graph_roundtrip_keeps_shared_lexical_binding_cells",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-65.log",
+          "results": [
+            {
+              "name": "lisp::dump::graph::tests::graph_roundtrip_keeps_shared_lexical_binding_cells",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::dump::graph::tests::graph_roundtrip_keeps_shared_lexical_binding_cells"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::dump::graph::tests::graph_roundtrip_keeps_string_properties_and_record_backing_aliases",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-66.log",
+          "results": [
+            {
+              "name": "lisp::dump::graph::tests::graph_roundtrip_keeps_string_properties_and_record_backing_aliases",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::dump::graph::tests::graph_roundtrip_keeps_string_properties_and_record_backing_aliases"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::dump::graph::tests::invalid_graph_references_are_errors",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-67.log",
+          "results": [
+            {
+              "name": "lisp::dump::graph::tests::invalid_graph_references_are_errors",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::dump::graph::tests::invalid_graph_references_are_errors"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::dump::session::tests::complete_session_roundtrip_preserves_program_buffers_and_dispatch_metadata",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 19.09,
+          "log": "lib-remacs-remaining-68.log",
+          "results": [
+            {
+              "name": "lisp::dump::session::tests::complete_session_roundtrip_preserves_program_buffers_and_dispatch_metadata",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::dump::session::tests::complete_session_roundtrip_preserves_program_buffers_and_dispatch_metadata"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::dump::session::tests::session_images_without_autosave_ticks_remain_readable",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 19.07,
+          "log": "lib-remacs-remaining-69.log",
+          "results": [
+            {
+              "name": "lisp::dump::session::tests::session_images_without_autosave_ticks_remain_readable",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::dump::session::tests::session_images_without_autosave_ticks_remain_readable"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::dump::session::tests::session_roundtrip_preserves_normal_window_sizes",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 20.09,
+          "log": "lib-remacs-remaining-70.log",
+          "results": [
+            {
+              "name": "lisp::dump::session::tests::session_roundtrip_preserves_normal_window_sizes",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::dump::session::tests::session_roundtrip_preserves_normal_window_sizes"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::dump::session::tests::window_change_history_survives_pending_changes_and_removed_frames",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 21.08,
+          "log": "lib-remacs-remaining-71.log",
+          "results": [
+            {
+              "name": "lisp::dump::session::tests::window_change_history_survives_pending_changes_and_removed_frames",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::dump::session::tests::window_change_history_survives_pending_changes_and_removed_frames"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::dump::session::tests::window_old_point_markers_survive_redisplay_and_session_restore",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 20.09,
+          "log": "lib-remacs-remaining-72.log",
+          "results": [
+            {
+              "name": "lisp::dump::session::tests::window_old_point_markers_survive_redisplay_and_session_restore",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::dump::session::tests::window_old_point_markers_survive_redisplay_and_session_restore"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::dump::session::tests::window_use_counts_are_isolated_and_survive_session_restore",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 28.12,
+          "log": "lib-remacs-remaining-73.log",
+          "results": [
+            {
+              "name": "lisp::dump::session::tests::window_use_counts_are_isolated_and_survive_session_restore",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::dump::session::tests::window_use_counts_are_isolated_and_survive_session_restore"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::eval::threads::tests::dropping_a_suspended_worker_releases_its_captures",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-74.log",
+          "results": [
+            {
+              "name": "lisp::eval::threads::tests::dropping_a_suspended_worker_releases_its_captures",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::eval::threads::tests::dropping_a_suspended_worker_releases_its_captures"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::eval::threads::tests::native_panic_restores_the_resumers_runtime_and_bindings",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.05,
+          "log": "lib-remacs-remaining-75.log",
+          "results": [
+            {
+              "name": "lisp::eval::threads::tests::native_panic_restores_the_resumers_runtime_and_bindings",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::eval::threads::tests::native_panic_restores_the_resumers_runtime_and_bindings"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::memory::tests::accounting_observer_preserves_unique_closure_updates",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-76.log",
+          "results": [
+            {
+              "name": "lisp::memory::tests::accounting_observer_preserves_unique_closure_updates",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::memory::tests::accounting_observer_preserves_unique_closure_updates"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::memory::tests::allocation_counts_distinguish_types_and_aliases",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-77.log",
+          "results": [
+            {
+              "name": "lisp::memory::tests::allocation_counts_distinguish_types_and_aliases",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::memory::tests::allocation_counts_distinguish_types_and_aliases"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::memory::tests::interval_ownership_and_edits_track_storage",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-78.log",
+          "results": [
+            {
+              "name": "lisp::memory::tests::interval_ownership_and_edits_track_storage",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::memory::tests::interval_ownership_and_edits_track_storage"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::memory::tests::reusable_capacity_is_not_cumulative_deallocation",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.0,
+          "log": "lib-remacs-remaining-79.log",
+          "results": [
+            {
+              "name": "lisp::memory::tests::reusable_capacity_is_not_cumulative_deallocation",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::memory::tests::reusable_capacity_is_not_cumulative_deallocation"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::memory::tests::symbols_and_editor_objects_are_accounted",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-80.log",
+          "results": [
+            {
+              "name": "lisp::memory::tests::symbols_and_editor_objects_are_accounted",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::memory::tests::symbols_and_editor_objects_are_accounted"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::memory::weak::tests::collection_preserves_a_borrowed_table_until_its_borrow_ends",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.05,
+          "log": "lib-remacs-remaining-81.log",
+          "results": [
+            {
+              "name": "lisp::memory::weak::tests::collection_preserves_a_borrowed_table_until_its_borrow_ends",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::memory::weak::tests::collection_preserves_a_borrowed_table_until_its_borrow_ends"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::process::send_tests::datagram_sends_are_atomic_and_transient_errors_do_not_consume_bytes",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-82.log",
+          "results": [
+            {
+              "name": "lisp::process::send_tests::datagram_sends_are_atomic_and_transient_errors_do_not_consume_bytes",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::process::send_tests::datagram_sends_are_atomic_and_transient_errors_do_not_consume_bytes"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::process::send_tests::nested_send_appends_after_unwritten_input",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-83.log",
+          "results": [
+            {
+              "name": "lisp::process::send_tests::nested_send_appends_after_unwritten_input",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::process::send_tests::nested_send_appends_after_unwritten_input"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::process::send_tests::partial_writes_and_retries_preserve_exact_suffix",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-84.log",
+          "results": [
+            {
+              "name": "lisp::process::send_tests::partial_writes_and_retries_preserve_exact_suffix",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::process::send_tests::partial_writes_and_retries_preserve_exact_suffix"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::process::send_tests::zero_and_permanent_errors_do_not_report_success",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-85.log",
+          "results": [
+            {
+              "name": "lisp::process::send_tests::zero_and_permanent_errors_do_not_report_success",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::process::send_tests::zero_and_permanent_errors_do_not_report_success"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::profiler::tests::bounded_logs_preserve_evicted_weight_and_pad_traces",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-86.log",
+          "results": [
+            {
+              "name": "lisp::profiler::tests::bounded_logs_preserve_evicted_weight_and_pad_traces",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::profiler::tests::bounded_logs_preserve_evicted_weight_and_pad_traces"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "lisp::value::tests::debug_fmt_covers_every_variant",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.05,
+          "log": "lib-remacs-remaining-87.log",
+          "results": [
+            {
+              "name": "lisp::value::tests::debug_fmt_covers_every_variant",
+              "status": "ok"
+            }
+          ],
+          "name": "lisp::value::tests::debug_fmt_covers_every_variant"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::ctrl_chars_fold_to_control_codes",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-88.log",
+          "results": [
+            {
+              "name": "term::tests::ctrl_chars_fold_to_control_codes",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::ctrl_chars_fold_to_control_codes"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::dispatch_inserts_undo_boundaries_per_command",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.05,
+          "log": "lib-remacs-remaining-89.log",
+          "results": [
+            {
+              "name": "term::tests::dispatch_inserts_undo_boundaries_per_command",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::dispatch_inserts_undo_boundaries_per_command"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::dispatch_self_insert_expands_abbrev",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-90.log",
+          "results": [
+            {
+              "name": "term::tests::dispatch_self_insert_expands_abbrev",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::dispatch_self_insert_expands_abbrev"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::draw_echo_pads_and_positions_cursor",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.0,
+          "log": "lib-remacs-remaining-91.log",
+          "results": [
+            {
+              "name": "term::tests::draw_echo_pads_and_positions_cursor",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::draw_echo_pads_and_positions_cursor"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::isearch_backward_searches_backward",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-92.log",
+          "results": [
+            {
+              "name": "term::tests::isearch_backward_searches_backward",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::isearch_backward_searches_backward"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::isearch_cg_restores_entry",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-93.log",
+          "results": [
+            {
+              "name": "term::tests::isearch_cg_restores_entry",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::isearch_cg_restores_entry"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::isearch_chars_move_point_to_match",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-94.log",
+          "results": [
+            {
+              "name": "term::tests::isearch_chars_move_point_to_match",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::isearch_chars_move_point_to_match"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::isearch_cs_repeats_and_del_unwinds",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.05,
+          "log": "lib-remacs-remaining-95.log",
+          "results": [
+            {
+              "name": "term::tests::isearch_cs_repeats_and_del_unwinds",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::isearch_cs_repeats_and_del_unwinds"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::isearch_extends_match_in_place_and_overlays_paint",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-96.log",
+          "results": [
+            {
+              "name": "term::tests::isearch_extends_match_in_place_and_overlays_paint",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::isearch_extends_match_in_place_and_overlays_paint"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::isearch_failing_then_empty_query",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.05,
+          "log": "lib-remacs-remaining-97.log",
+          "results": [
+            {
+              "name": "term::tests::isearch_failing_then_empty_query",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::isearch_failing_then_empty_query"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::isearch_loop_abort_restores",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-98.log",
+          "results": [
+            {
+              "name": "term::tests::isearch_loop_abort_restores",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::isearch_loop_abort_restores"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::isearch_loop_end_to_end",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-99.log",
+          "results": [
+            {
+              "name": "term::tests::isearch_loop_end_to_end",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::isearch_loop_end_to_end"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::isearch_other_key_redispatches",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-100.log",
+          "results": [
+            {
+              "name": "term::tests::isearch_other_key_redispatches",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::isearch_other_key_redispatches"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::isearch_ret_sets_mark",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-101.log",
+          "results": [
+            {
+              "name": "term::tests::isearch_ret_sets_mark",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::isearch_ret_sets_mark"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::key_event_to_code_named_keys",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-102.log",
+          "results": [
+            {
+              "name": "term::tests::key_event_to_code_named_keys",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::key_event_to_code_named_keys"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::key_event_to_code_plain_and_modified_chars",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-103.log",
+          "results": [
+            {
+              "name": "term::tests::key_event_to_code_plain_and_modified_chars",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::key_event_to_code_plain_and_modified_chars"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::lookup_routes_to_bindings",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-104.log",
+          "results": [
+            {
+              "name": "term::tests::lookup_routes_to_bindings",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::lookup_routes_to_bindings"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::meta_sets_bit",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-105.log",
+          "results": [
+            {
+              "name": "term::tests::meta_sets_bit",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::meta_sets_bit"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::minibuf_loop_del_and_cg",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-106.log",
+          "results": [
+            {
+              "name": "term::tests::minibuf_loop_del_and_cg",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::minibuf_loop_del_and_cg"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::minibuf_loop_fido_ret",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 10.05,
+          "log": "lib-remacs-remaining-107.log",
+          "results": [
+            {
+              "name": "term::tests::minibuf_loop_fido_ret",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::minibuf_loop_fido_ret"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::minibuf_loop_icomplete_exhibits",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 10.05,
+          "log": "lib-remacs-remaining-108.log",
+          "results": [
+            {
+              "name": "term::tests::minibuf_loop_icomplete_exhibits",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::minibuf_loop_icomplete_exhibits"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::minibuf_loop_icomplete_vertical",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 10.04,
+          "log": "lib-remacs-remaining-109.log",
+          "results": [
+            {
+              "name": "term::tests::minibuf_loop_icomplete_vertical",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::minibuf_loop_icomplete_vertical"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::minibuf_loop_mb_depth_nested",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-110.log",
+          "results": [
+            {
+              "name": "term::tests::minibuf_loop_mb_depth_nested",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::minibuf_loop_mb_depth_nested"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::minibuf_loop_reads_text",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.05,
+          "log": "lib-remacs-remaining-111.log",
+          "results": [
+            {
+              "name": "term::tests::minibuf_loop_reads_text",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::minibuf_loop_reads_text"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::minibuf_loop_single_key_mode",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-112.log",
+          "results": [
+            {
+              "name": "term::tests::minibuf_loop_single_key_mode",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::minibuf_loop_single_key_mode"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::modified_named_keys_follow_lisp_bindings",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-113.log",
+          "results": [
+            {
+              "name": "term::tests::modified_named_keys_follow_lisp_bindings",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::modified_named_keys_follow_lisp_bindings"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::modified_named_keys_round_trip_without_hashing_the_prefix",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-114.log",
+          "results": [
+            {
+              "name": "term::tests::modified_named_keys_round_trip_without_hashing_the_prefix",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::modified_named_keys_round_trip_without_hashing_the_prefix"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::named_keys_get_symbol_codes",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.0,
+          "log": "lib-remacs-remaining-115.log",
+          "results": [
+            {
+              "name": "term::tests::named_keys_get_symbol_codes",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::named_keys_get_symbol_codes"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::nonblocking_sleep_short",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-116.log",
+          "results": [
+            {
+              "name": "term::tests::nonblocking_sleep_short",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::nonblocking_sleep_short"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::plain_chars_and_whitespace",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-117.log",
+          "results": [
+            {
+              "name": "term::tests::plain_chars_and_whitespace",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::plain_chars_and_whitespace"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::render_draws_buffer_and_mode_line",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-118.log",
+          "results": [
+            {
+              "name": "term::tests::render_draws_buffer_and_mode_line",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::render_draws_buffer_and_mode_line"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::render_handles_multi_window_frame",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.05,
+          "log": "lib-remacs-remaining-119.log",
+          "results": [
+            {
+              "name": "term::tests::render_handles_multi_window_frame",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::render_handles_multi_window_frame"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::render_minibuffer_text_wins_over_echo",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-120.log",
+          "results": [
+            {
+              "name": "term::tests::render_minibuffer_text_wins_over_echo",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::render_minibuffer_text_wins_over_echo"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::render_shows_echo_message_when_minibuf_empty",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 9.04,
+          "log": "lib-remacs-remaining-121.log",
+          "results": [
+            {
+              "name": "term::tests::render_shows_echo_message_when_minibuf_empty",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::render_shows_echo_message_when_minibuf_empty"
+        },
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369",
+            "term::tests::unread_key_is_returned_by_poll",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": 0,
+          "timed_out": false,
+          "seconds": 1.01,
+          "log": "lib-remacs-remaining-122.log",
+          "results": [
+            {
+              "name": "term::tests::unread_key_is_returned_by_poll",
+              "status": "ok"
+            }
+          ],
+          "name": "term::tests::unread_key_is_returned_by_poll"
+        }
+      ],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-68cefec21f02194c",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 1.01,
+      "log": "bin-remacs.log",
+      "results": [
+        {
+          "name": "headless_tests::waits_for_the_interpreter_worker_to_finish",
+          "status": "ok"
+        },
+        {
+          "name": "headless_tests::worker_panic_propagates_after_unwinding_its_resources",
+          "status": "ok"
+        }
+      ],
+      "label": "bin-remacs",
+      "expected_tests": 2,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/qa-3bcd45541de437b0",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 101,
+      "timed_out": false,
+      "seconds": 1089.86,
+      "log": "test-qa.log",
+      "results": [
+        {
+          "name": "qa_accept_process_output",
+          "status": "ok"
+        },
+        {
+          "name": "qa_absolute_name",
+          "status": "ok"
+        },
+        {
+          "name": "qa_abbrev2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_abbrev",
+          "status": "ok"
+        },
+        {
+          "name": "qa_accept_process_wait",
+          "status": "ok"
+        },
+        {
+          "name": "qa_append_to_buffer",
+          "status": "ok"
+        },
+        {
+          "name": "qa_apply",
+          "status": "ok"
+        },
+        {
+          "name": "qa_advice",
+          "status": "ok"
+        },
+        {
+          "name": "qa_apply2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_arith",
+          "status": "ok"
+        },
+        {
+          "name": "qa_array",
+          "status": "ok"
+        },
+        {
+          "name": "qa_arbitrary_precision",
+          "status": "ok"
+        },
+        {
+          "name": "qa_autoload_dispatch",
+          "status": "ok"
+        },
+        {
+          "name": "qa_backquote",
+          "status": "ok"
+        },
+        {
+          "name": "qa_backup",
+          "status": "ok"
+        },
+        {
+          "name": "qa_backtrace_frames",
+          "status": "ok"
+        },
+        {
+          "name": "qa_basic_faces",
+          "status": "ok"
+        },
+        {
+          "name": "qa_before_markers",
+          "status": "ok"
+        },
+        {
+          "name": "qa_blank_line_characters",
+          "status": "ok"
+        },
+        {
+          "name": "qa_buffer",
+          "status": "ok"
+        },
+        {
+          "name": "qa_buffer2",
+          "status": "FAILED"
+        },
+        {
+          "name": "qa_buffer_history",
+          "status": "ok"
+        },
+        {
+          "name": "qa_buffer_history_frames",
+          "status": "ok"
+        },
+        {
+          "name": "qa_buffer_local_value_type",
+          "status": "ok"
+        },
+        {
+          "name": "qa_buffer_name_validation",
+          "status": "ok"
+        },
+        {
+          "name": "qa_buffer_string_flags",
+          "status": "ok"
+        },
+        {
+          "name": "qa_buffer_transfer",
+          "status": "ok"
+        },
+        {
+          "name": "qa_bufferfile",
+          "status": "ok"
+        },
+        {
+          "name": "qa_buffmenu",
+          "status": "ok"
+        },
+        {
+          "name": "qa_byte_character_conversion",
+          "status": "ok"
+        },
+        {
+          "name": "qa_build_identity",
+          "status": "ok"
+        },
+        {
+          "name": "qa_bytecode_errors",
+          "status": "ok"
+        },
+        {
+          "name": "qa_bytecode_mutation",
+          "status": "ok"
+        },
+        {
+          "name": "qa_bytecode_slots",
+          "status": "ok"
+        },
+        {
+          "name": "qa_case",
+          "status": "ok"
+        },
+        {
+          "name": "qa_case_name_properties",
+          "status": "ok"
+        },
+        {
+          "name": "qa_case_table_fold",
+          "status": "ok"
+        },
+        {
+          "name": "qa_category_defaults",
+          "status": "ok"
+        },
+        {
+          "name": "qa_char",
+          "status": "ok"
+        },
+        {
+          "name": "qa_char_markers",
+          "status": "ok"
+        },
+        {
+          "name": "qa_char_table_range_alias",
+          "status": "ok"
+        },
+        {
+          "name": "qa_char_table_reader",
+          "status": "ok"
+        },
+        {
+          "name": "qa_char_to_string",
+          "status": "ok"
+        },
+        {
+          "name": "qa_character_width_table",
+          "status": "ok"
+        },
+        {
+          "name": "qa_charset",
+          "status": "ok"
+        },
+        {
+          "name": "qa_chartables",
+          "status": "ok"
+        },
+        {
+          "name": "qa_cl_boot_surface",
+          "status": "ok"
+        },
+        {
+          "name": "qa_clear_string",
+          "status": "ok"
+        },
+        {
+          "name": "qa_clloop",
+          "status": "ok"
+        },
+        {
+          "name": "qa_clloop2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_clloop3",
+          "status": "ok"
+        },
+        {
+          "name": "qa_clloop4",
+          "status": "ok"
+        },
+        {
+          "name": "qa_clloop5",
+          "status": "ok"
+        },
+        {
+          "name": "qa_clloop6",
+          "status": "ok"
+        },
+        {
+          "name": "qa_clloop7",
+          "status": "ok"
+        },
+        {
+          "name": "qa_closure_constructor",
+          "status": "ok"
+        },
+        {
+          "name": "qa_clmisc",
+          "status": "ok"
+        },
+        {
+          "name": "qa_clprint",
+          "status": "ok"
+        },
+        {
+          "name": "qa_clseq",
+          "status": "ok"
+        },
+        {
+          "name": "qa_clseq2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_cmds",
+          "status": "ok"
+        },
+        {
+          "name": "qa_coding",
+          "status": "ok"
+        },
+        {
+          "name": "qa_coding2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_coding_detection",
+          "status": "ok"
+        },
+        {
+          "name": "qa_coding_region",
+          "status": "ok"
+        },
+        {
+          "name": "qa_completion",
+          "status": "ok"
+        },
+        {
+          "name": "qa_copy_file_self",
+          "status": "ok"
+        },
+        {
+          "name": "qa_count_lines",
+          "status": "ok"
+        },
+        {
+          "name": "qa_copy_file_times",
+          "status": "ok"
+        },
+        {
+          "name": "qa_current_kill",
+          "status": "ok"
+        },
+        {
+          "name": "qa_ctl",
+          "status": "ok"
+        },
+        {
+          "name": "qa_custom",
+          "status": "ok"
+        },
+        {
+          "name": "qa_custom2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_decomposition_description",
+          "status": "ok"
+        },
+        {
+          "name": "qa_define_key_type",
+          "status": "ok"
+        },
+        {
+          "name": "qa_delete_char_bounds",
+          "status": "ok"
+        },
+        {
+          "name": "qa_diffface",
+          "status": "ok"
+        },
+        {
+          "name": "qa_directory_order",
+          "status": "ok"
+        },
+        {
+          "name": "qa_descr",
+          "status": "ok"
+        },
+        {
+          "name": "qa_display_fallback",
+          "status": "ok"
+        },
+        {
+          "name": "qa_doc",
+          "status": "ok"
+        },
+        {
+          "name": "qa_docstring_escape",
+          "status": "ok"
+        },
+        {
+          "name": "qa_documentation_property",
+          "status": "ok"
+        },
+        {
+          "name": "qa_dotted_error_data",
+          "status": "ok"
+        },
+        {
+          "name": "qa_edge_semantics",
+          "status": "ok"
+        },
+        {
+          "name": "qa_dump_history",
+          "status": "ok"
+        },
+        {
+          "name": "qa_eieio",
+          "status": "ok"
+        },
+        {
+          "name": "qa_eieio2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_elisp_mode_name",
+          "status": "ok"
+        },
+        {
+          "name": "qa_equal_callers",
+          "status": "ok"
+        },
+        {
+          "name": "qa_equal_cycles",
+          "status": "ok"
+        },
+        {
+          "name": "qa_equal_depth",
+          "status": "ok"
+        },
+        {
+          "name": "qa_equal_runtime",
+          "status": "ok"
+        },
+        {
+          "name": "qa_err2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_errors",
+          "status": "ok"
+        },
+        {
+          "name": "qa_eval_lexenv",
+          "status": "ok"
+        },
+        {
+          "name": "qa_eval",
+          "status": "ok"
+        },
+        {
+          "name": "qa_eval_lexical",
+          "status": "ok"
+        },
+        {
+          "name": "qa_eval_narrowing",
+          "status": "ok"
+        },
+        {
+          "name": "qa_event_conversion",
+          "status": "ok"
+        },
+        {
+          "name": "qa_extension_period",
+          "status": "ok"
+        },
+        {
+          "name": "qa_face",
+          "status": "ok"
+        },
+        {
+          "name": "qa_face3",
+          "status": "ok"
+        },
+        {
+          "name": "qa_faces2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_feature_capabilities",
+          "status": "ok"
+        },
+        {
+          "name": "qa_file_broken_symlinks",
+          "status": "ok"
+        },
+        {
+          "name": "qa_file_completion_prefix",
+          "status": "ok"
+        },
+        {
+          "name": "qa_file_handler_io",
+          "status": "ok"
+        },
+        {
+          "name": "qa_file_modes",
+          "status": "ok"
+        },
+        {
+          "name": "qa_file_primitive_handlers",
+          "status": "ok"
+        },
+        {
+          "name": "qa_file_directory_handlers",
+          "status": "ok"
+        },
+        {
+          "name": "qa_file_replace",
+          "status": "ok"
+        },
+        {
+          "name": "qa_file_truename_roots",
+          "status": "ok"
+        },
+        {
+          "name": "qa_fileattr",
+          "status": "ok"
+        },
+        {
+          "name": "qa_file_remote",
+          "status": "ok"
+        },
+        {
+          "name": "qa_filesys",
+          "status": "ok"
+        },
+        {
+          "name": "qa_fillarray_strings",
+          "status": "ok"
+        },
+        {
+          "name": "qa_fill",
+          "status": "ok"
+        },
+        {
+          "name": "qa_float_output",
+          "status": "ok"
+        },
+        {
+          "name": "qa_fontlock",
+          "status": "ok"
+        },
+        {
+          "name": "qa_format",
+          "status": "ok"
+        },
+        {
+          "name": "qa_filelocal",
+          "status": "ok"
+        },
+        {
+          "name": "qa_format_conversions",
+          "status": "ok"
+        },
+        {
+          "name": "qa_frame_buffer_changes",
+          "status": "ok"
+        },
+        {
+          "name": "qa_frame_parameters",
+          "status": "ok"
+        },
+        {
+          "name": "qa_fresh_buffer_locals",
+          "status": "ok"
+        },
+        {
+          "name": "qa_function_alias_docs",
+          "status": "ok"
+        },
+        {
+          "name": "qa_gap",
+          "status": "ok"
+        },
+        {
+          "name": "qa_gensym_counter",
+          "status": "ok"
+        },
+        {
+          "name": "qa_globdir",
+          "status": "ok"
+        },
+        {
+          "name": "qa_gv",
+          "status": "ok"
+        },
+        {
+          "name": "qa_hash",
+          "status": "ok"
+        },
+        {
+          "name": "qa_hash2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_hash_cycles",
+          "status": "ok"
+        },
+        {
+          "name": "qa_hash_custom",
+          "status": "ok"
+        },
+        {
+          "name": "qa_hash_float_identity",
+          "status": "ok"
+        },
+        {
+          "name": "qa_hash_markers",
+          "status": "ok"
+        },
+        {
+          "name": "qa_help",
+          "status": "ok"
+        },
+        {
+          "name": "qa_hook",
+          "status": "ok"
+        },
+        {
+          "name": "qa_hooks2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_html_comments",
+          "status": "ok"
+        },
+        {
+          "name": "qa_html_head",
+          "status": "ok"
+        },
+        {
+          "name": "qa_html_repair",
+          "status": "ok"
+        },
+        {
+          "name": "qa_html_tbody",
+          "status": "ok"
+        },
+        {
+          "name": "qa_indent",
+          "status": "ok"
+        },
+        {
+          "name": "qa_indentcmds",
+          "status": "ok"
+        },
+        {
+          "name": "qa_indentfill",
+          "status": "ok"
+        },
+        {
+          "name": "qa_input",
+          "status": "ok"
+        },
+        {
+          "name": "qa_interactive_ignore",
+          "status": "ok"
+        },
+        {
+          "name": "qa_japanese",
+          "status": "ok"
+        },
+        {
+          "name": "qa_json",
+          "status": "ok"
+        },
+        {
+          "name": "qa_kbd",
+          "status": "ok"
+        },
+        {
+          "name": "qa_key_parse",
+          "status": "ok"
+        },
+        {
+          "name": "qa_keymap",
+          "status": "ok"
+        },
+        {
+          "name": "qa_keymap2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_keymap3",
+          "status": "ok"
+        },
+        {
+          "name": "qa_keymap_cycles",
+          "status": "ok"
+        },
+        {
+          "name": "qa_kill_new",
+          "status": "ok"
+        },
+        {
+          "name": "qa_killed_match_markers",
+          "status": "ok"
+        },
+        {
+          "name": "qa_kmacro",
+          "status": "ok"
+        },
+        {
+          "name": "qa_legacy_codecs",
+          "status": "ok"
+        },
+        {
+          "name": "qa_list",
+          "status": "ok"
+        },
+        {
+          "name": "qa_lists2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_lists",
+          "status": "ok"
+        },
+        {
+          "name": "qa_load_buffer",
+          "status": "ok"
+        },
+        {
+          "name": "qa_load",
+          "status": "ok"
+        },
+        {
+          "name": "qa_load_elc_header",
+          "status": "ok"
+        },
+        {
+          "name": "qa_load_read_stream",
+          "status": "ok"
+        },
+        {
+          "name": "qa_load_macroexpand",
+          "status": "ok"
+        },
+        {
+          "name": "qa_locate_embedded",
+          "status": "ok"
+        },
+        {
+          "name": "qa_locvar",
+          "status": "ok"
+        },
+        {
+          "name": "qa_logb",
+          "status": "ok"
+        },
+        {
+          "name": "qa_macro",
+          "status": "ok"
+        },
+        {
+          "name": "qa_macro_environment",
+          "status": "ok"
+        },
+        {
+          "name": "qa_map",
+          "status": "ok"
+        },
+        {
+          "name": "qa_map2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_mapring",
+          "status": "ok"
+        },
+        {
+          "name": "qa_mark",
+          "status": "FAILED"
+        },
+        {
+          "name": "qa_marker",
+          "status": "ok"
+        },
+        {
+          "name": "qa_markers",
+          "status": "ok"
+        },
+        {
+          "name": "qa_mark_excursion",
+          "status": "ok"
+        },
+        {
+          "name": "qa_match",
+          "status": "ok"
+        },
+        {
+          "name": "qa_math",
+          "status": "ok"
+        },
+        {
+          "name": "qa_menu_keys",
+          "status": "ok"
+        },
+        {
+          "name": "qa_minibuf",
+          "status": "ok"
+        },
+        {
+          "name": "qa_minibuffer",
+          "status": "ok"
+        },
+        {
+          "name": "qa_memory_statistics",
+          "status": "ok"
+        },
+        {
+          "name": "qa_misc2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_misc3",
+          "status": "ok"
+        },
+        {
+          "name": "qa_misc_differences",
+          "status": "ok"
+        },
+        {
+          "name": "qa_miscfn",
+          "status": "ok"
+        },
+        {
+          "name": "qa_modhooks",
+          "status": "ok"
+        },
+        {
+          "name": "qa_modified_named_keys",
+          "status": "ok"
+        },
+        {
+          "name": "qa_mutex_ownership",
+          "status": "ok"
+        },
+        {
+          "name": "qa_modes",
+          "status": "ok"
+        },
+        {
+          "name": "qa_narrow",
+          "status": "ok"
+        },
+        {
+          "name": "qa_native_boolean",
+          "status": "ok"
+        },
+        {
+          "name": "qa_native_closures",
+          "status": "ok"
+        },
+        {
+          "name": "qa_native_error",
+          "status": "ok"
+        },
+        {
+          "name": "qa_native_constants",
+          "status": "ok"
+        },
+        {
+          "name": "qa_native_parse_errors",
+          "status": "ok"
+        },
+        {
+          "name": "qa_native_letstar",
+          "status": "ok"
+        },
+        {
+          "name": "qa_native_strings",
+          "status": "ok"
+        },
+        {
+          "name": "qa_network_accept_callbacks",
+          "status": "ok"
+        },
+        {
+          "name": "qa_native_toplevel",
+          "status": "ok"
+        },
+        {
+          "name": "qa_native_variables",
+          "status": "ok"
+        },
+        {
+          "name": "qa_network_contacts",
+          "status": "ok"
+        },
+        {
+          "name": "qa_network_listener_delete",
+          "status": "ok"
+        },
+        {
+          "name": "qa_network_datagram",
+          "status": "ok"
+        },
+        {
+          "name": "qa_network_random_service",
+          "status": "ok"
+        },
+        {
+          "name": "qa_network_nowait",
+          "status": "ok"
+        },
+        {
+          "name": "qa_network_stop",
+          "status": "ok"
+        },
+        {
+          "name": "qa_numbers",
+          "status": "ok"
+        },
+        {
+          "name": "qa_object_intervals",
+          "status": "ok"
+        },
+        {
+          "name": "qa_obarray",
+          "status": "ok"
+        },
+        {
+          "name": "qa_obsolete_pushnew",
+          "status": "ok"
+        },
+        {
+          "name": "qa_output_stream_state",
+          "status": "ok"
+        },
+        {
+          "name": "qa_overlay_equality",
+          "status": "ok"
+        },
+        {
+          "name": "qa_output_streams",
+          "status": "ok"
+        },
+        {
+          "name": "qa_overlay",
+          "status": "ok"
+        },
+        {
+          "name": "qa_overlay_type",
+          "status": "ok"
+        },
+        {
+          "name": "qa_overlays",
+          "status": "ok"
+        },
+        {
+          "name": "qa_plists",
+          "status": "ok"
+        },
+        {
+          "name": "qa_pcase",
+          "status": "ok"
+        },
+        {
+          "name": "qa_point",
+          "status": "ok"
+        },
+        {
+          "name": "qa_print_overrides",
+          "status": "ok"
+        },
+        {
+          "name": "qa_pp",
+          "status": "ok"
+        },
+        {
+          "name": "qa_print_variables",
+          "status": "ok"
+        },
+        {
+          "name": "qa_printvars",
+          "status": "ok"
+        },
+        {
+          "name": "qa_process",
+          "status": "ok"
+        },
+        {
+          "name": "qa_pdumper",
+          "status": "ok"
+        },
+        {
+          "name": "qa_process_coding",
+          "status": "ok"
+        },
+        {
+          "name": "qa_process_buffer_identity",
+          "status": "ok"
+        },
+        {
+          "name": "qa_process_connection",
+          "status": "ok"
+        },
+        {
+          "name": "qa_process_defaults",
+          "status": "ok"
+        },
+        {
+          "name": "qa_process_directory",
+          "status": "ok"
+        },
+        {
+          "name": "qa_process_environment",
+          "status": "ok"
+        },
+        {
+          "name": "qa_process_exec_path",
+          "status": "ok"
+        },
+        {
+          "name": "qa_process_filter_pause",
+          "status": "ok"
+        },
+        {
+          "name": "qa_process_names",
+          "status": "ok"
+        },
+        {
+          "name": "qa_process_network_eof",
+          "status": "ok"
+        },
+        {
+          "name": "qa_process_large_send",
+          "status": "ok"
+        },
+        {
+          "name": "qa_process_send_region",
+          "status": "ok"
+        },
+        {
+          "name": "qa_process_timeout",
+          "status": "ok"
+        },
+        {
+          "name": "qa_process_stderr",
+          "status": "ok"
+        },
+        {
+          "name": "qa_process_utf8_chunks",
+          "status": "ok"
+        },
+        {
+          "name": "qa_process_window_size",
+          "status": "ok"
+        },
+        {
+          "name": "qa_propertize_bytes",
+          "status": "ok"
+        },
+        {
+          "name": "qa_property_argument_checks",
+          "status": "ok"
+        },
+        {
+          "name": "qa_quoting_scope",
+          "status": "ok"
+        },
+        {
+          "name": "qa_profiler",
+          "status": "ok"
+        },
+        {
+          "name": "qa_radix",
+          "status": "ok"
+        },
+        {
+          "name": "qa_reader_circles",
+          "status": "ok"
+        },
+        {
+          "name": "qa_read",
+          "status": "ok"
+        },
+        {
+          "name": "qa_reader_error_context",
+          "status": "ok"
+        },
+        {
+          "name": "qa_readonly",
+          "status": "ok"
+        },
+        {
+          "name": "qa_readprint",
+          "status": "ok"
+        },
+        {
+          "name": "qa_rect",
+          "status": "ok"
+        },
+        {
+          "name": "qa_reader_function_stream",
+          "status": "ok"
+        },
+        {
+          "name": "qa_regex_properties",
+          "status": "ok"
+        },
+        {
+          "name": "qa_regex",
+          "status": "ok"
+        },
+        {
+          "name": "qa_regexp_errors",
+          "status": "ok"
+        },
+        {
+          "name": "qa_regexpopt",
+          "status": "ok"
+        },
+        {
+          "name": "qa_replace",
+          "status": "ok"
+        },
+        {
+          "name": "qa_regexp_classes",
+          "status": "ok"
+        },
+        {
+          "name": "qa_replace_bounds",
+          "status": "ok"
+        },
+        {
+          "name": "qa_replace_metadata",
+          "status": "ok"
+        },
+        {
+          "name": "qa_replace_region_contents",
+          "status": "ok"
+        },
+        {
+          "name": "qa_replace_case",
+          "status": "ok"
+        },
+        {
+          "name": "qa_replace_region_narrowing",
+          "status": "ok"
+        },
+        {
+          "name": "qa_replace_region_properties",
+          "status": "ok"
+        },
+        {
+          "name": "qa_ring",
+          "status": "ok"
+        },
+        {
+          "name": "qa_rx",
+          "status": "ok"
+        },
+        {
+          "name": "qa_search",
+          "status": "ok"
+        },
+        {
+          "name": "qa_secure_hash_binary",
+          "status": "ok"
+        },
+        {
+          "name": "qa_reverse_strings",
+          "status": "ok"
+        },
+        {
+          "name": "qa_seq",
+          "status": "ok"
+        },
+        {
+          "name": "qa_seq2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_set_minibuffer_window",
+          "status": "ok"
+        },
+        {
+          "name": "qa_skip_classes",
+          "status": "ok"
+        },
+        {
+          "name": "qa_sort",
+          "status": "ok"
+        },
+        {
+          "name": "qa_special",
+          "status": "ok"
+        },
+        {
+          "name": "qa_special2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_sort_callbacks",
+          "status": "ok"
+        },
+        {
+          "name": "qa_special_variables",
+          "status": "ok"
+        },
+        {
+          "name": "qa_split_string",
+          "status": "ok"
+        },
+        {
+          "name": "qa_split_window_limits",
+          "status": "ok"
+        },
+        {
+          "name": "qa_sqlite_blob",
+          "status": "ok"
+        },
+        {
+          "name": "qa_sqlite_errors",
+          "status": "ok"
+        },
+        {
+          "name": "qa_sqlite_lazy_sets",
+          "status": "ok"
+        },
+        {
+          "name": "qa_sqlite_parameters",
+          "status": "ok"
+        },
+        {
+          "name": "qa_sqlite_validation",
+          "status": "ok"
+        },
+        {
+          "name": "qa_string",
+          "status": "ok"
+        },
+        {
+          "name": "qa_string_make_multibyte",
+          "status": "ok"
+        },
+        {
+          "name": "qa_string_glyph_split",
+          "status": "ok"
+        },
+        {
+          "name": "qa_string_number",
+          "status": "ok"
+        },
+        {
+          "name": "qa_string_order",
+          "status": "ok"
+        },
+        {
+          "name": "qa_string_to_list",
+          "status": "ok"
+        },
+        {
+          "name": "qa_string_search",
+          "status": "ok"
+        },
+        {
+          "name": "qa_string_to_vector",
+          "status": "ok"
+        },
+        {
+          "name": "qa_string_width_tabs",
+          "status": "ok"
+        },
+        {
+          "name": "qa_strings",
+          "status": "ok"
+        },
+        {
+          "name": "qa_strings2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_subrinfo",
+          "status": "ok"
+        },
+        {
+          "name": "qa_subrx",
+          "status": "ok"
+        },
+        {
+          "name": "qa_substitute_chars",
+          "status": "ok"
+        },
+        {
+          "name": "qa_subrx2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_subrx3",
+          "status": "ok"
+        },
+        {
+          "name": "qa_sxhash_boundaries",
+          "status": "ok"
+        },
+        {
+          "name": "qa_symbol_print_escape",
+          "status": "ok"
+        },
+        {
+          "name": "qa_syntax",
+          "status": "ok"
+        },
+        {
+          "name": "qa_syntax2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_symbol",
+          "status": "ok"
+        },
+        {
+          "name": "qa_syntax_class_bounds",
+          "status": "ok"
+        },
+        {
+          "name": "qa_syntax_lookup",
+          "status": "ok"
+        },
+        {
+          "name": "qa_syntaxtable",
+          "status": "ok"
+        },
+        {
+          "name": "qa_system",
+          "status": "ok"
+        },
+        {
+          "name": "qa_tab_indent",
+          "status": "ok"
+        },
+        {
+          "name": "qa_tablist",
+          "status": "ok"
+        },
+        {
+          "name": "qa_text_char_description",
+          "status": "ok"
+        },
+        {
+          "name": "qa_textprops",
+          "status": "ok"
+        },
+        {
+          "name": "qa_thing",
+          "status": "ok"
+        },
+        {
+          "name": "qa_thing2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_thread_bookkeeping",
+          "status": "ok"
+        },
+        {
+          "name": "qa_thread_isolation",
+          "status": "ok"
+        },
+        {
+          "name": "qa_thread_scheduling",
+          "status": "ok"
+        },
+        {
+          "name": "qa_time",
+          "status": "ok"
+        },
+        {
+          "name": "qa_time_modifiers",
+          "status": "FAILED"
+        },
+        {
+          "name": "qa_time_spec_validation",
+          "status": "ok"
+        },
+        {
+          "name": "qa_time_zero_zone",
+          "status": "ok"
+        },
+        {
+          "name": "qa_timer",
+          "status": "ok"
+        },
+        {
+          "name": "qa_timefmt",
+          "status": "ok"
+        },
+        {
+          "name": "qa_transpose_properties",
+          "status": "ok"
+        },
+        {
+          "name": "qa_transpose_regions",
+          "status": "ok"
+        },
+        {
+          "name": "qa_treesit_edit",
+          "status": "ok"
+        },
+        {
+          "name": "qa_treesit_node_generation",
+          "status": "ok"
+        },
+        {
+          "name": "qa_treesit_indirect",
+          "status": "ok"
+        },
+        {
+          "name": "qa_treesit_notifiers",
+          "status": "ok"
+        },
+        {
+          "name": "qa_treesit_ranges",
+          "status": "ok"
+        },
+        {
+          "name": "qa_treesit_query_case",
+          "status": "ok"
+        },
+        {
+          "name": "qa_treesit_repeat_capture",
+          "status": "ok"
+        },
+        {
+          "name": "qa_types2",
+          "status": "ok"
+        },
+        {
+          "name": "qa_undo",
+          "status": "ok"
+        },
+        {
+          "name": "qa_ucs",
+          "status": "ok"
+        },
+        {
+          "name": "qa_undo_properties",
+          "status": "ok"
+        },
+        {
+          "name": "qa_unibyte_bounds",
+          "status": "ok"
+        },
+        {
+          "name": "qa_unicode_codecs",
+          "status": "ok"
+        },
+        {
+          "name": "qa_unintern_identity",
+          "status": "ok"
+        },
+        {
+          "name": "qa_unload_dependencies",
+          "status": "ok"
+        },
+        {
+          "name": "qa_unreadable_callable",
+          "status": "ok"
+        },
+        {
+          "name": "qa_variable_protection",
+          "status": "ok"
+        },
+        {
+          "name": "qa_variable_documentation",
+          "status": "ok"
+        },
+        {
+          "name": "qa_variable_watchers",
+          "status": "ok"
+        },
+        {
+          "name": "qa_vconcat_unibyte",
+          "status": "ok"
+        },
+        {
+          "name": "qa_vector",
+          "status": "ok"
+        },
+        {
+          "name": "qa_whitespace_narrowing",
+          "status": "ok"
+        },
+        {
+          "name": "qa_window",
+          "status": "ok"
+        },
+        {
+          "name": "qa_window_configuration",
+          "status": "ok"
+        },
+        {
+          "name": "qa_window_dedication",
+          "status": "ok"
+        },
+        {
+          "name": "qa_window_scroll_hooks",
+          "status": "ok"
+        },
+        {
+          "name": "qa_window_state_minimum",
+          "status": "ok"
+        },
+        {
+          "name": "qa_weak_hash",
+          "status": "ok"
+        },
+        {
+          "name": "qa_winstate",
+          "status": "ok"
+        },
+        {
+          "name": "qa_write_char",
+          "status": "ok"
+        },
+        {
+          "name": "qa_xml_dtd_entities",
+          "status": "ok"
+        },
+        {
+          "name": "qa_xml_namespace_attrs",
+          "status": "ok"
+        },
+        {
+          "name": "qa_xml_normalization",
+          "status": "ok"
+        },
+        {
+          "name": "qa_xml_well_formed",
+          "status": "ok"
+        },
+        {
+          "name": "qa_xref",
+          "status": "ok"
+        }
+      ],
+      "label": "test-qa",
+      "expected_tests": 369,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/backtrace_cli-6c9ccf5d9fa39300",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 90.41,
+      "log": "test-backtrace_cli.log",
+      "results": [
+        {
+          "name": "error_snapshots_have_real_frames_without_duplicate_command_line_tails",
+          "status": "ok"
+        },
+        {
+          "name": "eval_records_pending_expression_and_real_command_line_entries",
+          "status": "ok"
+        },
+        {
+          "name": "funcall_uses_its_own_action_without_an_eval_or_funcall_wrapper",
+          "status": "ok"
+        },
+        {
+          "name": "script_uses_the_real_loader_callback",
+          "status": "ok"
+        },
+        {
+          "name": "conversion_arguments_use_boolean_load_options",
+          "status": "ok"
+        },
+        {
+          "name": "source_load_records_conversion_and_nested_load_calls",
+          "status": "ok"
+        }
+      ],
+      "label": "test-backtrace_cli",
+      "expected_tests": 6,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/buffer_extra-d3b5e0388f19aad2",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 79.36,
+      "log": "test-buffer_extra.log",
+      "results": [
+        {
+          "name": "buffer_swap_text",
+          "status": "ok"
+        },
+        {
+          "name": "delete_and_extract",
+          "status": "ok"
+        },
+        {
+          "name": "fields",
+          "status": "ok"
+        },
+        {
+          "name": "indent_column",
+          "status": "ok"
+        },
+        {
+          "name": "current_indentation",
+          "status": "ok"
+        },
+        {
+          "name": "narrow_to_indirect",
+          "status": "ok"
+        },
+        {
+          "name": "region_encoding",
+          "status": "ok"
+        },
+        {
+          "name": "subst_char_in_region",
+          "status": "ok"
+        },
+        {
+          "name": "transpose_regions",
+          "status": "ok"
+        },
+        {
+          "name": "translate_region",
+          "status": "ok"
+        },
+        {
+          "name": "text_properties",
+          "status": "ok"
+        }
+      ],
+      "label": "test-buffer_extra",
+      "expected_tests": 11,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/build_metadata-caa4b684fd136735",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 1.01,
+      "log": "test-build_metadata.log",
+      "results": [
+        {
+          "name": "cross_builds_and_missing_or_invalid_releases_keep_the_target",
+          "status": "ok"
+        },
+        {
+          "name": "darwin_configuration_records_build_host_release_for_target_architecture",
+          "status": "ok"
+        }
+      ],
+      "label": "test-build_metadata",
+      "expected_tests": 2,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/builtins_extlib-dffac711c06813cc",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 128.54,
+      "log": "test-builtins_extlib.log",
+      "results": [
+        {
+          "name": "libxml_xml_failures",
+          "status": "ok"
+        },
+        {
+          "name": "libxml_html",
+          "status": "ok"
+        },
+        {
+          "name": "libxml_xml_basic",
+          "status": "ok"
+        },
+        {
+          "name": "big5_decode_encode",
+          "status": "ok"
+        },
+        {
+          "name": "sqlite_errors",
+          "status": "ok"
+        },
+        {
+          "name": "sqlite_execute_rows_and_count",
+          "status": "ok"
+        },
+        {
+          "name": "sqlite_select_return_types",
+          "status": "ok"
+        },
+        {
+          "name": "sjis_decode_encode",
+          "status": "ok"
+        },
+        {
+          "name": "sqlite_transactions_and_pragma",
+          "status": "ok"
+        },
+        {
+          "name": "sqlite_set_lazy_more_p",
+          "status": "ok"
+        },
+        {
+          "name": "sqlite_open_close_pred",
+          "status": "ok"
+        }
+      ],
+      "label": "test-builtins_extlib",
+      "expected_tests": 11,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/builtins_misc-6f1b933ee7254dd1",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 164.66,
+      "log": "test-builtins_misc.log",
+      "results": [
+        {
+          "name": "apply_partially",
+          "status": "ok"
+        },
+        {
+          "name": "assoc_string",
+          "status": "ok"
+        },
+        {
+          "name": "base64",
+          "status": "ok"
+        },
+        {
+          "name": "char_width",
+          "status": "ok"
+        },
+        {
+          "name": "crypto_hash",
+          "status": "ok"
+        },
+        {
+          "name": "gensym",
+          "status": "ok"
+        },
+        {
+          "name": "indirect_function",
+          "status": "ok"
+        },
+        {
+          "name": "format_spec",
+          "status": "ok"
+        },
+        {
+          "name": "misc_predicates",
+          "status": "ok"
+        },
+        {
+          "name": "make_string",
+          "status": "ok"
+        },
+        {
+          "name": "error_message_string",
+          "status": "ok"
+        },
+        {
+          "name": "string_seq_conv",
+          "status": "ok"
+        },
+        {
+          "name": "symbol_misc",
+          "status": "ok"
+        },
+        {
+          "name": "plist_ops",
+          "status": "ok"
+        },
+        {
+          "name": "take_ntake",
+          "status": "ok"
+        },
+        {
+          "name": "time_fns",
+          "status": "ok"
+        }
+      ],
+      "label": "test-builtins_misc",
+      "expected_tests": 16,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/char_output_cli-8bba40129a3d38bc",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 27.11,
+      "log": "test-char_output_cli.log",
+      "results": [
+        {
+          "name": "surrogate_and_mule_output_matches_gnu_bytes",
+          "status": "ok"
+        }
+      ],
+      "label": "test-char_output_cli",
+      "expected_tests": 1,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/cli_argument_queue-6923d521bf985d8b",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 209.99,
+      "log": "test-cli_argument_queue.log",
+      "results": [
+        {
+          "name": "funcall_can_delete_middle_arguments_and_mutate_an_operand",
+          "status": "ok"
+        },
+        {
+          "name": "funcall_can_replace_or_prepend_remaining_arguments",
+          "status": "ok"
+        },
+        {
+          "name": "eval_and_load_can_also_consume_the_live_queue",
+          "status": "ok"
+        },
+        {
+          "name": "replacement_can_chain_a_new_funcall_and_consume_its_own_operands",
+          "status": "ok"
+        },
+        {
+          "name": "replacement_separator_is_processed_once_and_keeps_following_flags_literal",
+          "status": "ok"
+        },
+        {
+          "name": "funcall_can_consume_all_or_a_prefix_or_nothing",
+          "status": "ok"
+        },
+        {
+          "name": "invalid_queue_elements_and_tails_fail_after_prior_actions",
+          "status": "ok"
+        }
+      ],
+      "label": "test-cli_argument_queue",
+      "expected_tests": 7,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/cli_help-78d6ef296722e367",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 95.35,
+      "log": "test-cli_help.log",
+      "results": [
+        {
+          "name": "help_preempts_actions_without_bootstrapping",
+          "status": "ok"
+        },
+        {
+          "name": "help_aliases_print_usage_without_bootstrapping",
+          "status": "ok"
+        },
+        {
+          "name": "version_keeps_priority_over_help_in_either_order",
+          "status": "ok"
+        },
+        {
+          "name": "help_injected_after_startup_retains_the_gnu_runtime_error",
+          "status": "ok"
+        },
+        {
+          "name": "help_retains_selected_image_validation_and_restore",
+          "status": "ok"
+        },
+        {
+          "name": "help_in_operands_or_after_separator_remains_literal",
+          "status": "ok"
+        }
+      ],
+      "label": "test-cli_help",
+      "expected_tests": 6,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/cli_load_path-edb51a1f6869c88f",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 159.62,
+      "log": "test-cli_load_path.log",
+      "results": [
+        {
+          "name": "directory_options_from_the_live_queue_are_applied",
+          "status": "ok"
+        },
+        {
+          "name": "directory_append_and_subsequent_splice_match_gnu",
+          "status": "ok"
+        },
+        {
+          "name": "directory_options_preserve_action_order_and_current_buffer_base",
+          "status": "ok"
+        },
+        {
+          "name": "directory_aliases_and_inline_form_find_external_libraries_after_boot",
+          "status": "ok"
+        },
+        {
+          "name": "directory_prefix_order_duplicates_and_trailing_slash_match_gnu",
+          "status": "ok"
+        },
+        {
+          "name": "separator_keeps_directory_options_literal",
+          "status": "ok"
+        },
+        {
+          "name": "empty_directory_options_report_the_normalizer_error",
+          "status": "ok"
+        }
+      ],
+      "label": "test-cli_load_path",
+      "expected_tests": 7,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/cli_option_forms-4f0cf5f2ddd0890e",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 202.78,
+      "log": "test-cli_option_forms.log",
+      "results": [
+        {
+          "name": "empty_inline_eval_values_are_not_missing_operands",
+          "status": "ok"
+        },
+        {
+          "name": "directory_and_script_single_hyphen_aliases_work",
+          "status": "ok"
+        },
+        {
+          "name": "flag_shaped_operands_and_files_after_separator_are_not_normalized",
+          "status": "ok"
+        },
+        {
+          "name": "eval_and_execute_aliases_and_inline_values_read_one_object",
+          "status": "ok"
+        },
+        {
+          "name": "version_alias_uses_the_existing_fast_path",
+          "status": "ok"
+        },
+        {
+          "name": "original_spellings_remain_in_argv_and_live_queue_forms_are_decoded",
+          "status": "ok"
+        },
+        {
+          "name": "load_and_funcall_aliases_do_not_consume_a_following_action",
+          "status": "ok"
+        },
+        {
+          "name": "startup_flag_aliases_are_options_instead_of_visited_files",
+          "status": "ok"
+        }
+      ],
+      "label": "test-cli_option_forms",
+      "expected_tests": 8,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/cli_separator-d83b5179fee61bd9",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 25.1,
+      "log": "test-cli_separator.log",
+      "results": [
+        {
+          "name": "funcall_consumed_files_and_separator_are_not_reprocessed",
+          "status": "ok"
+        },
+        {
+          "name": "separator_is_an_eval_operand_when_expected",
+          "status": "ok"
+        },
+        {
+          "name": "separator_does_not_evaluate_following_arguments",
+          "status": "ok"
+        },
+        {
+          "name": "option_operands_can_be_separator_or_startup_flags",
+          "status": "ok"
+        },
+        {
+          "name": "trailing_batch_and_script_filenames_do_not_select_batch_mode",
+          "status": "ok"
+        },
+        {
+          "name": "separator_visits_all_flags_and_repeated_separator_as_files",
+          "status": "ok"
+        },
+        {
+          "name": "separator_preserves_mixed_file_and_action_order",
+          "status": "ok"
+        },
+        {
+          "name": "trailing_batch_flags_do_not_change_initial_lisp_state",
+          "status": "ok"
+        },
+        {
+          "name": "trailing_init_flags_do_not_change_startup_settings",
+          "status": "ok"
+        }
+      ],
+      "label": "test-cli_separator",
+      "expected_tests": 9,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/compat-4fd6f9c734d1e5da",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 187.74,
+      "log": "test-compat.log",
+      "results": [
+        {
+          "name": "gensym_counter",
+          "status": "ok"
+        },
+        {
+          "name": "reader_char_mods",
+          "status": "ok"
+        },
+        {
+          "name": "printer_abbrevs",
+          "status": "ok"
+        },
+        {
+          "name": "kbd_events",
+          "status": "ok"
+        },
+        {
+          "name": "plist_order",
+          "status": "ok"
+        },
+        {
+          "name": "reader_hash_syntax",
+          "status": "ok"
+        },
+        {
+          "name": "sequences",
+          "status": "ok"
+        },
+        {
+          "name": "string_funcs",
+          "status": "ok"
+        }
+      ],
+      "label": "test-compat",
+      "expected_tests": 8,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/compat_cmds-84885a1ffae64166",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 161.67,
+      "log": "test-compat_cmds.log",
+      "results": [
+        {
+          "name": "append_next_kill_consumed_once",
+          "status": "ok"
+        },
+        {
+          "name": "circular_list_printing",
+          "status": "ok"
+        },
+        {
+          "name": "append_next_kill_merges_entries",
+          "status": "ok"
+        },
+        {
+          "name": "circular_safe_length_and_proper_list_p",
+          "status": "ok"
+        },
+        {
+          "name": "delete_blank_lines_variants",
+          "status": "ok"
+        },
+        {
+          "name": "ctrl_punctuation_keys",
+          "status": "ok"
+        },
+        {
+          "name": "circular_member_assoc_error",
+          "status": "ok"
+        },
+        {
+          "name": "goto_line",
+          "status": "ok"
+        },
+        {
+          "name": "occur_does_not_select_buffer",
+          "status": "ok"
+        },
+        {
+          "name": "occur_buffer_contents",
+          "status": "ok"
+        },
+        {
+          "name": "occur_single_match_grammar",
+          "status": "ok"
+        },
+        {
+          "name": "list_navigation",
+          "status": "ok"
+        },
+        {
+          "name": "record_constructor",
+          "status": "ok"
+        },
+        {
+          "name": "transpose_sexps",
+          "status": "ok"
+        },
+        {
+          "name": "default_key_bindings",
+          "status": "ok"
+        },
+        {
+          "name": "print_circle_labels",
+          "status": "ok"
+        }
+      ],
+      "label": "test-compat_cmds",
+      "expected_tests": 16,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/dbus-807c9f5a3195cbd0",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 141.48,
+      "log": "test-dbus.log",
+      "results": [
+        {
+          "name": "dbus_no_bus_errors",
+          "status": "ok"
+        },
+        {
+          "name": "dbus_bad_bus_name",
+          "status": "ok"
+        },
+        {
+          "name": "dbus_init_and_unique_name",
+          "status": "ok"
+        },
+        {
+          "name": "dbus_request_and_release_name",
+          "status": "ok"
+        },
+        {
+          "name": "dbus_call_method_sync",
+          "status": "ok"
+        },
+        {
+          "name": "dbus_signal_registration",
+          "status": "ok"
+        },
+        {
+          "name": "dbus_vars_and_tables",
+          "status": "ok"
+        }
+      ],
+      "label": "test-dbus",
+      "expected_tests": 7,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/difftest-8fb3213556c09216",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 1.01,
+      "log": "test-difftest.log",
+      "results": [],
+      "label": "test-difftest",
+      "expected_tests": 1,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/dump_history_startup-5fefcc5ec8cbd18f",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 36.16,
+      "log": "test-dump_history_startup.log",
+      "results": [
+        {
+          "name": "copied_binary_exposes_readable_provenance_and_keeps_external_loads",
+          "status": "ok"
+        },
+        {
+          "name": "image_relocates_bundled_provenance_when_installed_sources_disappear",
+          "status": "ok"
+        }
+      ],
+      "label": "test-dump_history_startup",
+      "expected_tests": 2,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/embedded_cache-5d051004fbe51e19",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 1.01,
+      "log": "test-embedded_cache.log",
+      "results": [
+        {
+          "name": "failed_publication_is_retryable_and_existing_sources_are_preserved",
+          "status": "ok"
+        },
+        {
+          "name": "concurrent_source_publication_never_exposes_partial_files",
+          "status": "ok"
+        }
+      ],
+      "label": "test-embedded_cache",
+      "expected_tests": 2,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/embedded_libraries-7ca7d5b5d906948a",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 46.22,
+      "log": "test-embedded_libraries.log",
+      "results": [
+        {
+          "name": "standalone_locate_paths_are_readable_and_loadable",
+          "status": "ok"
+        },
+        {
+          "name": "standalone_source_boot_locate_paths_are_readable_and_loadable",
+          "status": "ok"
+        }
+      ],
+      "label": "test-embedded_libraries",
+      "expected_tests": 2,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/extlib-9cdc4c21899049d7",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 133.03,
+      "log": "test-extlib.log",
+      "results": [
+        {
+          "name": "gnutls_symmetric_roundtrip",
+          "status": "ok"
+        },
+        {
+          "name": "gnutls_digests_and_hash",
+          "status": "ok"
+        },
+        {
+          "name": "image_spec_tty_behavior",
+          "status": "ok"
+        },
+        {
+          "name": "gnutls_error_helpers",
+          "status": "ok"
+        },
+        {
+          "name": "kqueue_watch_roundtrip",
+          "status": "ok"
+        },
+        {
+          "name": "lcms_cie2000_reference",
+          "status": "ok"
+        },
+        {
+          "name": "init_image_library_types",
+          "status": "ok"
+        },
+        {
+          "name": "lcms_white_point_and_roundtrip",
+          "status": "ok"
+        },
+        {
+          "name": "lookup_image_map_geometry",
+          "status": "ok"
+        }
+      ],
+      "label": "test-extlib",
+      "expected_tests": 9,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/file_coding-3318230b8bc4efb7",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 9.08,
+      "log": "test-file_coding.log",
+      "results": [
+        {
+          "name": "insert_file_contents_decoding",
+          "status": "ok"
+        }
+      ],
+      "label": "test-file_coding",
+      "expected_tests": 1,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/file_coding_io-60eef95f3d6257bf",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 12.1,
+      "log": "test-file_coding_io.log",
+      "results": [
+        {
+          "name": "file_coding_round_trips",
+          "status": "ok"
+        }
+      ],
+      "label": "test-file_coding_io",
+      "expected_tests": 1,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/frame_parameters-3bd43a2d331bc65f",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 9.05,
+      "log": "test-frame_parameters.log",
+      "results": [
+        {
+          "name": "names_and_minibuffers_across_frames",
+          "status": "ok"
+        }
+      ],
+      "label": "test-frame_parameters",
+      "expected_tests": 1,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/interactive-ee145c68264df874",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 133.14,
+      "log": "test-interactive.log",
+      "results": [
+        {
+          "name": "command_args_supply_spec_values",
+          "status": "ok"
+        },
+        {
+          "name": "current_kill_and_yank_paths",
+          "status": "ok"
+        },
+        {
+          "name": "completing_read_paths",
+          "status": "ok"
+        },
+        {
+          "name": "describe_key_undefined",
+          "status": "ok"
+        },
+        {
+          "name": "describe_key_shape",
+          "status": "ok"
+        },
+        {
+          "name": "digit_argument_from_event",
+          "status": "ok"
+        },
+        {
+          "name": "digit_argument_minus_and_accumulate",
+          "status": "ok"
+        },
+        {
+          "name": "eval_expression_interactive",
+          "status": "ok"
+        },
+        {
+          "name": "execute_extended_command_runs_named_command",
+          "status": "ok"
+        },
+        {
+          "name": "forward_char_prefix",
+          "status": "ok"
+        },
+        {
+          "name": "interactive_b_defaults_current_buffer",
+          "status": "ok"
+        },
+        {
+          "name": "interactive_i_ignores_input_and_command_args",
+          "status": "ok"
+        },
+        {
+          "name": "interactive_list_form",
+          "status": "ok"
+        },
+        {
+          "name": "interactive_r_region_bounds",
+          "status": "ok"
+        },
+        {
+          "name": "commandp_reports_commands",
+          "status": "ok"
+        },
+        {
+          "name": "interactive_s_and_a_codes",
+          "status": "ok"
+        },
+        {
+          "name": "interactive_spec_codes_batch",
+          "status": "ok"
+        },
+        {
+          "name": "interactive_spec_command_args",
+          "status": "ok"
+        },
+        {
+          "name": "interactive_x_evals_input",
+          "status": "ok"
+        },
+        {
+          "name": "kill_region_interactive",
+          "status": "ok"
+        },
+        {
+          "name": "lambda_optional_rest_bindings",
+          "status": "ok"
+        },
+        {
+          "name": "load_missing_signals",
+          "status": "ok"
+        },
+        {
+          "name": "load_file_evals_forms",
+          "status": "ok"
+        },
+        {
+          "name": "load_path_search",
+          "status": "ok"
+        },
+        {
+          "name": "macroexpand_forms",
+          "status": "ok"
+        },
+        {
+          "name": "minibuf_quit_signals",
+          "status": "ok"
+        },
+        {
+          "name": "minibuf_read_history_and_defaults",
+          "status": "ok"
+        },
+        {
+          "name": "minibuf_read_runs_hooks_and_restores_state",
+          "status": "ok"
+        },
+        {
+          "name": "minibuf_read_setup_hook_error_unwinds",
+          "status": "ok"
+        },
+        {
+          "name": "optional_args_dynamic_binding",
+          "status": "ok"
+        },
+        {
+          "name": "key_binding_and_define_key",
+          "status": "ok"
+        },
+        {
+          "name": "prefix_numeric_values",
+          "status": "ok"
+        },
+        {
+          "name": "read_char_via_hook",
+          "status": "ok"
+        },
+        {
+          "name": "read_minibuffer_absent_hook",
+          "status": "ok"
+        },
+        {
+          "name": "read_string_via_hook",
+          "status": "ok"
+        },
+        {
+          "name": "self_insert_prefix_repeat",
+          "status": "ok"
+        },
+        {
+          "name": "read_key_sequence_paths",
+          "status": "ok"
+        },
+        {
+          "name": "self_insert_via_command_execute",
+          "status": "ok"
+        },
+        {
+          "name": "standard_output_dests",
+          "status": "ok"
+        },
+        {
+          "name": "universal_argument_sets_prefix",
+          "status": "ok"
+        },
+        {
+          "name": "where_is_internal_finds_binding",
+          "status": "ok"
+        },
+        {
+          "name": "substitute_command_keys_basic",
+          "status": "ok"
+        },
+        {
+          "name": "y_or_n_p_via_hook",
+          "status": "ok"
+        },
+        {
+          "name": "y_or_n_p_reprompt_and_quit",
+          "status": "ok"
+        }
+      ],
+      "label": "test-interactive",
+      "expected_tests": 44,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/legacy_file_coding-54174a85b6a397df",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 11.09,
+      "log": "test-legacy_file_coding.log",
+      "results": [
+        {
+          "name": "legacy_insert_file_contents_decoding",
+          "status": "ok"
+        }
+      ],
+      "label": "test-legacy_file_coding",
+      "expected_tests": 1,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/lisp_core-61c86bc1e2d7b3e7",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 485.3,
+      "log": "test-lisp_core.log",
+      "results": [
+        {
+          "name": "buffer_local",
+          "status": "ok"
+        },
+        {
+          "name": "closures_lexical",
+          "status": "ok"
+        },
+        {
+          "name": "catch_throw",
+          "status": "ok"
+        },
+        {
+          "name": "apply_funcall",
+          "status": "ok"
+        },
+        {
+          "name": "dynamic_scope",
+          "status": "ok"
+        },
+        {
+          "name": "condition_case",
+          "status": "ok"
+        },
+        {
+          "name": "dlet_dynamic_scope",
+          "status": "ok"
+        },
+        {
+          "name": "arith",
+          "status": "ok"
+        },
+        {
+          "name": "equality_deep_cons_contents",
+          "status": "ok"
+        },
+        {
+          "name": "errors",
+          "status": "ok"
+        },
+        {
+          "name": "equality",
+          "status": "ok"
+        },
+        {
+          "name": "eval_forms",
+          "status": "ok"
+        },
+        {
+          "name": "hash_tables",
+          "status": "ok"
+        },
+        {
+          "name": "float_fns",
+          "status": "ok"
+        },
+        {
+          "name": "macros",
+          "status": "ok"
+        },
+        {
+          "name": "markers",
+          "status": "ok"
+        },
+        {
+          "name": "format",
+          "status": "ok"
+        },
+        {
+          "name": "save_excursion",
+          "status": "ok"
+        },
+        {
+          "name": "scoped_defvar_declarations",
+          "status": "ok"
+        },
+        {
+          "name": "read_print",
+          "status": "ok"
+        },
+        {
+          "name": "prelude_macros",
+          "status": "ok"
+        },
+        {
+          "name": "list_ops",
+          "status": "ok"
+        },
+        {
+          "name": "undo_basic",
+          "status": "ok"
+        },
+        {
+          "name": "sequences",
+          "status": "ok"
+        },
+        {
+          "name": "string_ops",
+          "status": "ok"
+        },
+        {
+          "name": "vector_ops",
+          "status": "ok"
+        },
+        {
+          "name": "type_predicates",
+          "status": "ok"
+        }
+      ],
+      "label": "test-lisp_core",
+      "expected_tests": 27,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/lisp_libs-846b90f4eb614e9a",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 257.14,
+      "log": "test-lisp_libs.log",
+      "results": [
+        {
+          "name": "bare_defvar_in_loaded_file_marks_special_for_later_lets",
+          "status": "ok"
+        },
+        {
+          "name": "avl_tree_iter_and_stack",
+          "status": "ok"
+        },
+        {
+          "name": "cl_advised_dolist_wraps_in_nil_block",
+          "status": "ok"
+        },
+        {
+          "name": "avl_tree_insert_order_delete",
+          "status": "ok"
+        },
+        {
+          "name": "cl_typep_via_cl_macs",
+          "status": "ok"
+        },
+        {
+          "name": "configure_info_directory_bound",
+          "status": "ok"
+        },
+        {
+          "name": "define_key_prefix_descent_noinherit",
+          "status": "ok"
+        },
+        {
+          "name": "closure_aref_env_and_docstring_slots",
+          "status": "ok"
+        },
+        {
+          "name": "defconst_not_enforced_and_marks_risky",
+          "status": "ok"
+        },
+        {
+          "name": "cl_generic_real_dispatch",
+          "status": "ok"
+        },
+        {
+          "name": "ede_project_autoload_load_path",
+          "status": "ok"
+        },
+        {
+          "name": "dom_children_by_tag_and_pp",
+          "status": "ok"
+        },
+        {
+          "name": "dumped_help_font_lock_jit_lock_loadable",
+          "status": "ok"
+        },
+        {
+          "name": "eieio_make_instance_and_initialize",
+          "status": "ok"
+        },
+        {
+          "name": "lambda_documentation_form_consumed",
+          "status": "ok"
+        },
+        {
+          "name": "eieio_class_specializers_dispatch",
+          "status": "ok"
+        },
+        {
+          "name": "eval_when_compile_evals_at_expansion",
+          "status": "ok"
+        },
+        {
+          "name": "load_decodes_emacs_internal_chars",
+          "status": "ok"
+        },
+        {
+          "name": "macroexp_quote_is_function",
+          "status": "ok"
+        },
+        {
+          "name": "let_alist_binds_dot_names",
+          "status": "ok"
+        },
+        {
+          "name": "map_generic_lookup",
+          "status": "ok"
+        },
+        {
+          "name": "map_let_and_others",
+          "status": "ok"
+        },
+        {
+          "name": "mule_conf_charsets_registered_at_startup",
+          "status": "ok"
+        },
+        {
+          "name": "map_put_and_delete",
+          "status": "ok"
+        },
+        {
+          "name": "pcase_basic_patterns",
+          "status": "ok"
+        },
+        {
+          "name": "pcase_cl_type_pattern_expands",
+          "status": "ok"
+        },
+        {
+          "name": "pcase_eieio_pattern_expands",
+          "status": "ok"
+        },
+        {
+          "name": "pcase_lambda",
+          "status": "ok"
+        },
+        {
+          "name": "pcase_rx_let_binding_matches_gnu",
+          "status": "ok"
+        },
+        {
+          "name": "oclosure_accessors_and_type",
+          "status": "ok"
+        },
+        {
+          "name": "pcase_let_and_pred",
+          "status": "ok"
+        },
+        {
+          "name": "princ_record_prints_hash_s",
+          "status": "ok"
+        },
+        {
+          "name": "ring_basics",
+          "status": "ok"
+        },
+        {
+          "name": "quail_subdir_load_and_leim_list",
+          "status": "ok"
+        },
+        {
+          "name": "radix_tree_ops",
+          "status": "ok"
+        },
+        {
+          "name": "progv_binds_dynamically",
+          "status": "ok"
+        },
+        {
+          "name": "saveplace_mode_hooks",
+          "status": "ok"
+        },
+        {
+          "name": "saveplace_roundtrip",
+          "status": "ok"
+        },
+        {
+          "name": "ring_remove_and_empty",
+          "status": "ok"
+        },
+        {
+          "name": "subr_x_named_let",
+          "status": "ok"
+        },
+        {
+          "name": "seq_indexed_and_positions",
+          "status": "ok"
+        },
+        {
+          "name": "seq_set_ops_and_split",
+          "status": "ok"
+        },
+        {
+          "name": "subr_x_work_buffer",
+          "status": "ok"
+        },
+        {
+          "name": "thingatpt_basics",
+          "status": "ok"
+        },
+        {
+          "name": "subr_x_string_and_list_utils",
+          "status": "ok"
+        },
+        {
+          "name": "thunk_delay_force_memoizes",
+          "status": "ok"
+        },
+        {
+          "name": "time_arith_forms",
+          "status": "ok"
+        },
+        {
+          "name": "thingatpt_uuid",
+          "status": "ok"
+        },
+        {
+          "name": "thunk_let_star",
+          "status": "ok"
+        },
+        {
+          "name": "time_date_decoded_add",
+          "status": "ok"
+        },
+        {
+          "name": "translation_table_extra_slots",
+          "status": "ok"
+        },
+        {
+          "name": "time_date_helpers",
+          "status": "ok"
+        },
+        {
+          "name": "type_of_nested_record_tag",
+          "status": "ok"
+        },
+        {
+          "name": "top_level_lambda_captures_when_lexical",
+          "status": "ok"
+        },
+        {
+          "name": "viscii_unified_charset_maps",
+          "status": "ok"
+        }
+      ],
+      "label": "test-lisp_libs",
+      "expected_tests": 55,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/lisp_libs2-3d25393cffc00c58",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 101,
+      "timed_out": false,
+      "seconds": 485.05,
+      "log": "test-lisp_libs2.log",
+      "results": [
+        {
+          "name": "array_dos_vars_fringe_font_core_dynamic_setting",
+          "status": "ok"
+        },
+        {
+          "name": "ansi_color_apply_basic",
+          "status": "ok"
+        },
+        {
+          "name": "ansi_osc_help_macro_master_ports",
+          "status": "ok"
+        },
+        {
+          "name": "align_regexp_basic",
+          "status": "ok"
+        },
+        {
+          "name": "bidi_string_mark_left_to_right_appends_lrm",
+          "status": "ok"
+        },
+        {
+          "name": "bs_entry_points_and_config",
+          "status": "ok"
+        },
+        {
+          "name": "autoinsert_and_expand_features",
+          "status": "ok"
+        },
+        {
+          "name": "cl_defstruct_accepts_docstring",
+          "status": "FAILED"
+        },
+        {
+          "name": "case_table_chistory_midnight_load",
+          "status": "ok"
+        },
+        {
+          "name": "cl_destructuring_bind_dotted_tail",
+          "status": "FAILED"
+        },
+        {
+          "name": "cl_flet_lexical_escape",
+          "status": "FAILED"
+        },
+        {
+          "name": "cl_labels_recursion",
+          "status": "FAILED"
+        },
+        {
+          "name": "cl_loop_hash_iteration",
+          "status": "FAILED"
+        },
+        {
+          "name": "autoloaded_misc_libraries",
+          "status": "ok"
+        },
+        {
+          "name": "cl_remove_keyword_semantics",
+          "status": "ok"
+        },
+        {
+          "name": "cookie_snarf_parses_phrase_file",
+          "status": "ok"
+        },
+        {
+          "name": "dabbrev_and_tq_features",
+          "status": "ok"
+        },
+        {
+          "name": "cond_star_range_timer_list_copyright_parity",
+          "status": "ok"
+        },
+        {
+          "name": "delimit_columns_region_and_format",
+          "status": "ok"
+        },
+        {
+          "name": "compile_runs_subprocess_to_exit",
+          "status": "FAILED"
+        },
+        {
+          "name": "disp_table_slots_and_makers",
+          "status": "ok"
+        },
+        {
+          "name": "display_fill_column_indicator_entry_points",
+          "status": "ok"
+        },
+        {
+          "name": "doctor_grammar_helpers",
+          "status": "ok"
+        },
+        {
+          "name": "dotted_rest_defun",
+          "status": "ok"
+        },
+        {
+          "name": "doctor_mode_defined",
+          "status": "ok"
+        },
+        {
+          "name": "dotted_rest_lambda",
+          "status": "FAILED"
+        },
+        {
+          "name": "disabled_command_routes_to_handler",
+          "status": "ok"
+        },
+        {
+          "name": "double_isearch_map_entry_points",
+          "status": "ok"
+        },
+        {
+          "name": "editorconfig_load_and_fnmatch",
+          "status": "ok"
+        },
+        {
+          "name": "editorconfig_tools_and_conf_mode_autoloads",
+          "status": "ok"
+        },
+        {
+          "name": "elide_head_loads",
+          "status": "ok"
+        },
+        {
+          "name": "dumped_and_autoloaded_misc_libs2_parity",
+          "status": "FAILED"
+        },
+        {
+          "name": "env_substitute_and_getenv_internal",
+          "status": "ok"
+        },
+        {
+          "name": "emacs_lock_bind_key_mouse_copy_t_mouse",
+          "status": "ok"
+        },
+        {
+          "name": "epg_config_entry_points",
+          "status": "ok"
+        },
+        {
+          "name": "eval_when_compile_evals_when_not_compiling",
+          "status": "ok"
+        },
+        {
+          "name": "dumped_and_autoloaded_misc_libs_parity",
+          "status": "ok"
+        },
+        {
+          "name": "ewoc_create_and_collect",
+          "status": "ok"
+        },
+        {
+          "name": "file_cache_add_and_delete",
+          "status": "ok"
+        },
+        {
+          "name": "external_completion_table_cl_flet",
+          "status": "ok"
+        },
+        {
+          "name": "fileloop_entry_points",
+          "status": "ok"
+        },
+        {
+          "name": "find_file_name_handler_filters_by_operations",
+          "status": "ok"
+        },
+        {
+          "name": "executable_and_debug_early_parity",
+          "status": "ok"
+        },
+        {
+          "name": "float_sup_is_dumped",
+          "status": "ok"
+        },
+        {
+          "name": "format_spec_flags_and_errors",
+          "status": "ok"
+        },
+        {
+          "name": "generator_iter_defun_yields",
+          "status": "ok"
+        },
+        {
+          "name": "gomoku_board_and_score",
+          "status": "ok"
+        },
+        {
+          "name": "hex_util_roundtrip",
+          "status": "ok"
+        },
+        {
+          "name": "fillarray_covers_all_array_kinds",
+          "status": "ok"
+        },
+        {
+          "name": "inline_alias_and_coding_system_list_parity",
+          "status": "ok"
+        },
+        {
+          "name": "jka_cmpr_hook_is_dumped_and_installs",
+          "status": "ok"
+        },
+        {
+          "name": "jka_compr_compression_info",
+          "status": "ok"
+        },
+        {
+          "name": "keymap_read_only_bind_menu_item",
+          "status": "ok"
+        },
+        {
+          "name": "isearch_x_ibuf_macs_entry_points",
+          "status": "ok"
+        },
+        {
+          "name": "macroexpand_all_preserves_arglists",
+          "status": "ok"
+        },
+        {
+          "name": "macroexpand_all_setq_condition_case",
+          "status": "ok"
+        },
+        {
+          "name": "macroexpand_environment_argument",
+          "status": "ok"
+        },
+        {
+          "name": "mb_depth_mode_toggles_hook",
+          "status": "ok"
+        },
+        {
+          "name": "load_optional_arguments",
+          "status": "ok"
+        },
+        {
+          "name": "md4_known_digests",
+          "status": "ok"
+        },
+        {
+          "name": "mail_international_libraries_parity",
+          "status": "ok"
+        },
+        {
+          "name": "member_if_any",
+          "status": "ok"
+        },
+        {
+          "name": "games_and_misc_tooling_entry_points",
+          "status": "ok"
+        },
+        {
+          "name": "misc_lpr_hl_line_ecomplete_loadhist_entry_points",
+          "status": "ok"
+        },
+        {
+          "name": "misc_libs_load_and_entry_points",
+          "status": "ok"
+        },
+        {
+          "name": "misc_mode_libs_autoloads",
+          "status": "ok"
+        },
+        {
+          "name": "misc_libs_autoloads_and_crm_separator",
+          "status": "ok"
+        },
+        {
+          "name": "misc_mode_libs_require",
+          "status": "ok"
+        },
+        {
+          "name": "mpuz_puzzle_board_shape",
+          "status": "ok"
+        },
+        {
+          "name": "password_cache_add_read_remove",
+          "status": "ok"
+        },
+        {
+          "name": "mode_macro_autoload_cells_and_lazy_load",
+          "status": "ok"
+        },
+        {
+          "name": "propertized_string_reader_syntax",
+          "status": "ok"
+        },
+        {
+          "name": "proced_loads_and_reports_attributes",
+          "status": "ok"
+        },
+        {
+          "name": "msb_rect_xml_and_defsubst_parity",
+          "status": "ok"
+        },
+        {
+          "name": "project_vc_git_detection",
+          "status": "ok"
+        },
+        {
+          "name": "r7_autoload_libs_parity",
+          "status": "ok"
+        },
+        {
+          "name": "radix_tree_insert_lookup",
+          "status": "ok"
+        },
+        {
+          "name": "radix_tree_prefixes_and_mappings",
+          "status": "ok"
+        },
+        {
+          "name": "r8_dumped_libs_parity",
+          "status": "ok"
+        },
+        {
+          "name": "radix_tree_remove_and_subtree",
+          "status": "ok"
+        },
+        {
+          "name": "r9_sort_help_fns_libs_parity",
+          "status": "ok"
+        },
+        {
+          "name": "regexp_opt_charset_ranges",
+          "status": "ok"
+        },
+        {
+          "name": "regexp_opt_gnu_factoring",
+          "status": "ok"
+        },
+        {
+          "name": "recentf_widget_chain_loads",
+          "status": "ok"
+        },
+        {
+          "name": "regi_compiles_frame",
+          "status": "ok"
+        },
+        {
+          "name": "registry_db_insert_lookup_search",
+          "status": "ok"
+        },
+        {
+          "name": "require_signals_when_feature_not_provided",
+          "status": "ok"
+        },
+        {
+          "name": "rfn_eshadow_scroll_all_send_to_flow_ctrl",
+          "status": "ok"
+        },
+        {
+          "name": "rot13_region_and_string",
+          "status": "ok"
+        },
+        {
+          "name": "rtree_make_and_memq",
+          "status": "ok"
+        },
+        {
+          "name": "reposition_reveal_dos_fns_sqlite_entry_points",
+          "status": "ok"
+        },
+        {
+          "name": "r10_compat_libs_parity",
+          "status": "ok"
+        },
+        {
+          "name": "rx_let_local_definitions",
+          "status": "ok"
+        },
+        {
+          "name": "rx_macro_expand",
+          "status": "ok"
+        },
+        {
+          "name": "rx_to_string_basics",
+          "status": "ok"
+        },
+        {
+          "name": "skeleton_conditional_eval",
+          "status": "ok"
+        },
+        {
+          "name": "skeleton_define_skeleton",
+          "status": "ok"
+        },
+        {
+          "name": "skeleton_insert_basic",
+          "status": "ok"
+        },
+        {
+          "name": "skeleton_insert_positions",
+          "status": "ok"
+        },
+        {
+          "name": "skeleton_pair_wrap_region",
+          "status": "ok"
+        },
+        {
+          "name": "server_local_socket_round_trip",
+          "status": "ok"
+        },
+        {
+          "name": "soundex_known_codes",
+          "status": "ok"
+        },
+        {
+          "name": "studlify_region_basic",
+          "status": "ok"
+        },
+        {
+          "name": "sqlite_mode_entry_points",
+          "status": "ok"
+        },
+        {
+          "name": "tabify_untabify_obarray",
+          "status": "ok"
+        },
+        {
+          "name": "tabulated_list_print_and_sort",
+          "status": "ok"
+        },
+        {
+          "name": "tempo_template_functions",
+          "status": "ok"
+        },
+        {
+          "name": "tildify_region_inserts_hard_space",
+          "status": "ok"
+        },
+        {
+          "name": "text_property_search_prop_match",
+          "status": "ok"
+        },
+        {
+          "name": "time_stamp_format_and_zone_type",
+          "status": "ok"
+        },
+        {
+          "name": "timezone_parse_and_format",
+          "status": "ok"
+        },
+        {
+          "name": "tool_bar_and_version_loaded",
+          "status": "ok"
+        },
+        {
+          "name": "tty_tip_entry_points",
+          "status": "ok"
+        },
+        {
+          "name": "underline_region_roundtrip",
+          "status": "ok"
+        },
+        {
+          "name": "widget_w32_vars_entry_points",
+          "status": "ok"
+        },
+        {
+          "name": "window_x_xt_mouse_yank_media_tmm",
+          "status": "ok"
+        },
+        {
+          "name": "w32_fns_and_ebuff_menu_entry_points",
+          "status": "ok"
+        },
+        {
+          "name": "xdg_entry_points",
+          "status": "ok"
+        }
+      ],
+      "label": "test-lisp_libs2",
+      "expected_tests": 118,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/list_cycles-1f00335974fdd3de",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 14.06,
+      "log": "test-list_cycles.log",
+      "results": [
+        {
+          "name": "native_search_checks_pending_quit_without_preempting_a_hit",
+          "status": "ok"
+        },
+        {
+          "name": "searches_allow_proper_lists_beyond_the_old_scan_limit",
+          "status": "ok"
+        },
+        {
+          "name": "circular_list_search_and_removal",
+          "status": "ok"
+        }
+      ],
+      "label": "test-list_cycles",
+      "expected_tests": 3,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/load_path_startup-4cb124f553ba946a",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 73.23,
+      "log": "test-load_path_startup.log",
+      "results": [
+        {
+          "name": "source_boot_uses_internal_libraries_before_environment_paths",
+          "status": "ok"
+        },
+        {
+          "name": "environment_paths_and_default_placeholders",
+          "status": "ok"
+        }
+      ],
+      "label": "test-load_path_startup",
+      "expected_tests": 2,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/main_cli-50113d74da36fb99",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 170.67,
+      "log": "test-main_cli.log",
+      "results": [
+        {
+          "name": "a_worker_can_exit_the_batch_process",
+          "status": "ok"
+        },
+        {
+          "name": "batch_flag_exits_cleanly",
+          "status": "ok"
+        },
+        {
+          "name": "batch_file_arguments_reselect_existing_buffers_and_keep_point",
+          "status": "ok"
+        },
+        {
+          "name": "boot_menu_properties_keep_functions_and_runtime_closures_trim_context",
+          "status": "ok"
+        },
+        {
+          "name": "build_identity_is_reproducible_and_records_the_configured_target",
+          "status": "ok"
+        },
+        {
+          "name": "batch_file_arguments_reach_exit_hooks_and_allow_new_files",
+          "status": "ok"
+        },
+        {
+          "name": "batch_file_arguments_use_the_startup_directory_in_order",
+          "status": "ok"
+        },
+        {
+          "name": "eval_error_exits_nonzero",
+          "status": "ok"
+        },
+        {
+          "name": "eval_first_form_keeps_lexical_evaluation_and_option_order",
+          "status": "ok"
+        },
+        {
+          "name": "eval_runs_lisp",
+          "status": "ok"
+        },
+        {
+          "name": "boot_dependencies_allow_unloading_cl_lib",
+          "status": "ok"
+        },
+        {
+          "name": "eval_uncaught_throw_reports",
+          "status": "ok"
+        },
+        {
+          "name": "execute_alias_works",
+          "status": "ok"
+        },
+        {
+          "name": "file_arg_enters_interactive_path",
+          "status": "ok"
+        },
+        {
+          "name": "huge_process_timeout_does_not_reuse_a_child_exit_notification",
+          "status": "ok"
+        },
+        {
+          "name": "huge_process_timeout_is_catchable_and_evaluation_continues",
+          "status": "ok"
+        },
+        {
+          "name": "interactive_without_tty_errors",
+          "status": "ok"
+        },
+        {
+          "name": "load_missing_file_errors",
+          "status": "ok"
+        },
+        {
+          "name": "load_flag_evals_file",
+          "status": "ok"
+        },
+        {
+          "name": "no_window_flag_is_accepted",
+          "status": "ok"
+        },
+        {
+          "name": "pty_editor_smoke",
+          "status": "ok"
+        },
+        {
+          "name": "quick_start_symbol_metadata_matches_gnu",
+          "status": "ok"
+        },
+        {
+          "name": "quit_flow_reports",
+          "status": "ok"
+        },
+        {
+          "name": "quit_flow_via_throw",
+          "status": "ok"
+        },
+        {
+          "name": "eval_first_read_error_aborts_remaining_options",
+          "status": "ok"
+        },
+        {
+          "name": "script_loads_file",
+          "status": "ok"
+        },
+        {
+          "name": "script_missing_file_errors",
+          "status": "ok"
+        },
+        {
+          "name": "eval_first_object_leaves_trailing_input_unread",
+          "status": "ok"
+        },
+        {
+          "name": "remote_identification_autoloads_tramp_on_first_call",
+          "status": "ok"
+        },
+        {
+          "name": "version_prints_and_exits",
+          "status": "ok"
+        },
+        {
+          "name": "synchronous_process_stderr_stays_with_destination",
+          "status": "ok"
+        },
+        {
+          "name": "source_with_elc_suffix_requires_script_evaluation",
+          "status": "ok"
+        },
+        {
+          "name": "unhandled_huge_process_timeout_is_a_failure_exit",
+          "status": "ok"
+        }
+      ],
+      "label": "test-main_cli",
+      "expected_tests": 33,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/nativecomp-e854018367a38440",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 128.51,
+      "log": "test-nativecomp.log",
+      "results": [
+        {
+          "name": "async_file_parse_errors",
+          "status": "ok"
+        },
+        {
+          "name": "arbitrary_precision_arithmetic_survives_native_calls",
+          "status": "ok"
+        },
+        {
+          "name": "async_file_toplevel",
+          "status": "ok"
+        },
+        {
+          "name": "compile_load_run_file",
+          "status": "ok"
+        },
+        {
+          "name": "direct_string_constants_preserve_source_kinds",
+          "status": "ok"
+        },
+        {
+          "name": "compile_lambda_object",
+          "status": "ok"
+        },
+        {
+          "name": "dropping_a_suspended_native_worker_unwinds_across_the_c_boundary",
+          "status": "ok"
+        },
+        {
+          "name": "eln_filename_shape",
+          "status": "ok"
+        },
+        {
+          "name": "failed_read_and_fallback_eval_abort",
+          "status": "ok"
+        },
+        {
+          "name": "availability_and_feature",
+          "status": "ok"
+        },
+        {
+          "name": "fallback_and_macro",
+          "status": "ok"
+        },
+        {
+          "name": "interleaved_threads_preserve_native_handles_and_constant_contexts",
+          "status": "ok"
+        },
+        {
+          "name": "native_feature_name_does_not_depend_on_runtime_compiler",
+          "status": "ok"
+        },
+        {
+          "name": "error_paths",
+          "status": "ok"
+        },
+        {
+          "name": "obsolete_macro_aliases_compile_with_keywords",
+          "status": "ok"
+        },
+        {
+          "name": "optional_rest_letstar",
+          "status": "ok"
+        },
+        {
+          "name": "metadata_surface",
+          "status": "ok"
+        }
+      ],
+      "label": "test-nativecomp",
+      "expected_tests": 17,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/network_bind-cbbe25e20ef020ac",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 9.04,
+      "log": "test-network_bind.log",
+      "results": [
+        {
+          "name": "network_server_preserves_loopback_bind_address",
+          "status": "ok"
+        }
+      ],
+      "label": "test-network_bind",
+      "expected_tests": 1,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/network_datagram-6d52eea5305d855b",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 9.04,
+      "log": "test-network_datagram.log",
+      "results": [
+        {
+          "name": "datagram_kernel_transport_boundaries_bytes_and_lifetime",
+          "status": "ok"
+        }
+      ],
+      "label": "test-network_datagram",
+      "expected_tests": 1,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/network_eof-90e92aecdb6c69e3",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 34.13,
+      "log": "test-network_eof.log",
+      "results": [
+        {
+          "name": "contact_endpoints_match_kernel_addresses_and_resolved_address_families",
+          "status": "ok"
+        },
+        {
+          "name": "network_stop_preserves_kernel_input_until_resume_and_keeps_writes_live",
+          "status": "ok"
+        },
+        {
+          "name": "deleted_listeners_release_ports_paths_and_recycled_descriptors",
+          "status": "ok"
+        },
+        {
+          "name": "stream_eof_preserves_reads_discards_later_writes_and_closes_descriptors",
+          "status": "ok"
+        }
+      ],
+      "label": "test-network_eof",
+      "expected_tests": 4,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/network_nowait-b776437e5b97318b",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 17.06,
+      "log": "test-network_nowait.log",
+      "results": [
+        {
+          "name": "nowait_refusal_is_deferred_and_preserves_errno",
+          "status": "ok"
+        },
+        {
+          "name": "nowait_kernel_success_orders_open_before_ready_input_and_early_send",
+          "status": "ok"
+        }
+      ],
+      "label": "test-network_nowait",
+      "expected_tests": 2,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/nsgui-aeaf99d6925214d3",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 216.81,
+      "log": "test-nsgui.log",
+      "results": [
+        {
+          "name": "sleep_assertion_roundtrip",
+          "status": "ok"
+        },
+        {
+          "name": "startup_platform_lisp_defs",
+          "status": "ok"
+        },
+        {
+          "name": "headless_queries",
+          "status": "ok"
+        },
+        {
+          "name": "window_system_errors_and_nils",
+          "status": "ok"
+        }
+      ],
+      "label": "test-nsgui",
+      "expected_tests": 4,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/portable_dump-631217b8ca278381",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 80.3,
+      "log": "test-portable_dump.log",
+      "results": [
+        {
+          "name": "image_restores_arbitrary_integers_and_identity_keys",
+          "status": "ok"
+        },
+        {
+          "name": "image_restores_autosave_counters_for_base_and_indirect_buffers",
+          "status": "ok"
+        },
+        {
+          "name": "image_restores_recursive_mutex_ownership",
+          "status": "ok"
+        },
+        {
+          "name": "image_restores_shared_lisp_state_buffers_and_reports_actual_startup",
+          "status": "ok"
+        },
+        {
+          "name": "invalid_images_fail_before_command_execution",
+          "status": "ok"
+        },
+        {
+          "name": "restored_weak_tables_keep_live_keys_and_release_unreachable_keys",
+          "status": "ok"
+        }
+      ],
+      "label": "test-portable_dump",
+      "expected_tests": 6,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-04dbe592014272b5",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": -9,
+      "timed_out": true,
+      "seconds": 361.39,
+      "log": "test-probe_all.log",
+      "results": [
+        {
+          "name": "probe_buffer_motion",
+          "status": "ok"
+        },
+        {
+          "name": "probe_buffer_deep",
+          "status": "ok"
+        },
+        {
+          "name": "probe_all_subrs_no_panic",
+          "status": "ok"
+        },
+        {
+          "name": "probe_buffer_ops",
+          "status": "ok"
+        },
+        {
+          "name": "probe_buffer_props",
+          "status": "FAILED"
+        },
+        {
+          "name": "probe_custom_api",
+          "status": "FAILED"
+        },
+        {
+          "name": "probe_edge_typed_args",
+          "status": "ok"
+        },
+        {
+          "name": "probe_deep_editing_session",
+          "status": "ok"
+        },
+        {
+          "name": "probe_editor_deep",
+          "status": "FAILED"
+        },
+        {
+          "name": "probe_editor_branches",
+          "status": "ok"
+        },
+        {
+          "name": "probe_editor_kill_files",
+          "status": "ok"
+        },
+        {
+          "name": "probe_editor_module",
+          "status": "ok"
+        },
+        {
+          "name": "probe_editor_ops",
+          "status": "ok"
+        },
+        {
+          "name": "probe_editor_files",
+          "status": "ok"
+        },
+        {
+          "name": "probe_eval13_misc",
+          "status": "ok"
+        },
+        {
+          "name": "probe_eval_branches",
+          "status": "ok"
+        },
+        {
+          "name": "probe_eval_data",
+          "status": "ok"
+        },
+        {
+          "name": "probe_eval_misc5",
+          "status": "ok"
+        },
+        {
+          "name": "probe_eval_misc7",
+          "status": "ok"
+        },
+        {
+          "name": "probe_eval_misc8",
+          "status": "ok"
+        },
+        {
+          "name": "probe_eval_misc9",
+          "status": "ok"
+        },
+        {
+          "name": "probe_evalfn_arith",
+          "status": "ok"
+        },
+        {
+          "name": "probe_file_locking",
+          "status": "FAILED"
+        },
+        {
+          "name": "probe_fillcomment",
+          "status": "ok"
+        },
+        {
+          "name": "probe_format_specs",
+          "status": "ok"
+        },
+        {
+          "name": "probe_json",
+          "status": "FAILED"
+        },
+        {
+          "name": "probe_lisp_deep",
+          "status": "ok"
+        },
+        {
+          "name": "probe_lisp_edges",
+          "status": "ok"
+        },
+        {
+          "name": "probe_misc_builtins",
+          "status": "ok"
+        },
+        {
+          "name": "probe_page",
+          "status": "FAILED"
+        },
+        {
+          "name": "probe_misc_builtins3",
+          "status": "ok"
+        },
+        {
+          "name": "probe_misc_builtins2",
+          "status": "ok"
+        },
+        {
+          "name": "probe_paragraphs",
+          "status": "ok"
+        },
+        {
+          "name": "probe_process_charset10",
+          "status": "ok"
+        },
+        {
+          "name": "probe_print_read",
+          "status": "ok"
+        },
+        {
+          "name": "probe_reader_data6",
+          "status": "ok"
+        },
+        {
+          "name": "probe_process_charset11",
+          "status": "ok"
+        },
+        {
+          "name": "probe_process_cov12",
+          "status": "ok"
+        },
+        {
+          "name": "probe_registers",
+          "status": "ok"
+        },
+        {
+          "name": "probe_runtime_semantics",
+          "status": "FAILED"
+        },
+        {
+          "name": "probe_sort",
+          "status": "ok"
+        },
+        {
+          "name": "probe_subrs",
+          "status": "FAILED"
+        },
+        {
+          "name": "probe_timer",
+          "status": "FAILED"
+        },
+        {
+          "name": "probe_uniquify",
+          "status": "FAILED"
+        },
+        {
+          "name": "probe_winner",
+          "status": "FAILED"
+        },
+        {
+          "name": "probe_uncovered_subrs",
+          "status": "ok"
+        }
+      ],
+      "label": "test-probe_all",
+      "expected_tests": 47,
+      "isolated_retries": [
+        {
+          "command": [
+            "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-04dbe592014272b5",
+            "probe_eval14_cov",
+            "--exact",
+            "--nocapture"
+          ],
+          "returncode": -9,
+          "timed_out": true,
+          "seconds": 120.5,
+          "log": "test-probe_all-remaining-0.log",
+          "results": [],
+          "name": "probe_eval14_cov"
+        }
+      ],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/process_pipe-45935f3c3100ba09",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 24.1,
+      "log": "test-process_pipe.log",
+      "results": [
+        {
+          "name": "separate_stderr_closes_on_exit_and_delete",
+          "status": "ok"
+        },
+        {
+          "name": "pipe_eof_keeps_output_readable_and_all_descriptors_close",
+          "status": "ok"
+        },
+        {
+          "name": "failed_spawns_release_pipe_and_terminal_descriptors",
+          "status": "ok"
+        }
+      ],
+      "label": "test-process_pipe",
+      "expected_tests": 3,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/shell_environment-b6d69bdedc0c3a1a",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 126.53,
+      "log": "test-shell_environment.log",
+      "results": [
+        {
+          "name": "selected_shell_runs_and_an_explicit_binding_overrides_it",
+          "status": "ok"
+        },
+        {
+          "name": "startup_uses_shell_and_ignores_eshell",
+          "status": "ok"
+        }
+      ],
+      "label": "test-shell_environment",
+      "expected_tests": 2,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/tui_dired-313e1bd45b70a0a4",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 13.06,
+      "log": "test-tui_dired.log",
+      "results": [
+        {
+          "name": "tui_dired_select_file",
+          "status": "ok"
+        }
+      ],
+      "label": "test-tui_dired",
+      "expected_tests": 1,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/tui_session-bfdce3f7a156106a",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 60.27,
+      "log": "test-tui_session.log",
+      "results": [
+        {
+          "name": "tui_face_text_props_and_region_paint",
+          "status": "ok"
+        },
+        {
+          "name": "tui_find_file_quit_aborts_read",
+          "status": "ok"
+        },
+        {
+          "name": "tui_find_file_tab_completion_runs",
+          "status": "ok"
+        },
+        {
+          "name": "tui_hscroll_suspends_until_point_moves",
+          "status": "ok"
+        },
+        {
+          "name": "tui_schedules_workers_while_waiting_for_input",
+          "status": "ok"
+        },
+        {
+          "name": "tui_scroll_up_command_scrolls_and_moves_point",
+          "status": "ok"
+        },
+        {
+          "name": "tui_isearch_highlights_matches",
+          "status": "ok"
+        },
+        {
+          "name": "tui_session_find_file_mx_switch_save_quit",
+          "status": "ok"
+        },
+        {
+          "name": "tui_window_change_history_is_published_at_redisplay",
+          "status": "ok"
+        },
+        {
+          "name": "tui_window_scrolls_to_keep_point_visible",
+          "status": "ok"
+        },
+        {
+          "name": "tui_yank_imports_external_text_and_preserves_properties",
+          "status": "ok"
+        },
+        {
+          "name": "tui_find_file_directory_opens_dired",
+          "status": "ok"
+        }
+      ],
+      "label": "test-tui_session",
+      "expected_tests": 12,
+      "isolated_retries": [],
+      "complete": true
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/window_frame-98c7b5470d0a8e48",
+        "--test-threads",
+        "4"
+      ],
+      "returncode": 0,
+      "timed_out": false,
+      "seconds": 140.63,
+      "log": "test-window_frame.log",
+      "results": [
+        {
+          "name": "minibuffer_window",
+          "status": "ok"
+        },
+        {
+          "name": "frame_params",
+          "status": "ok"
+        },
+        {
+          "name": "posn_at_point",
+          "status": "ok"
+        },
+        {
+          "name": "get_buffer_window_list",
+          "status": "ok"
+        },
+        {
+          "name": "scroll_lr",
+          "status": "ok"
+        },
+        {
+          "name": "split_and_delete",
+          "status": "ok"
+        },
+        {
+          "name": "frame_basics",
+          "status": "ok"
+        },
+        {
+          "name": "window_edges",
+          "status": "ok"
+        },
+        {
+          "name": "window_basics",
+          "status": "ok"
+        },
+        {
+          "name": "window_navigation",
+          "status": "ok"
+        },
+        {
+          "name": "window_params_and_margins",
+          "status": "ok"
+        },
+        {
+          "name": "window_resize",
+          "status": "ok"
+        },
+        {
+          "name": "window_sizes",
+          "status": "ok"
+        }
+      ],
+      "label": "test-window_frame",
+      "expected_tests": 13,
+      "isolated_retries": [],
+      "complete": true
+    }
+  ],
+  "started_at": "2026-10-22T13:26:30.596116+00:00",
+  "total_tests": 1074,
+  "session_bus": true,
+  "complete": true,
+  "finished_at": "2026-10-22T15:16:50.963174+00:00"
+}

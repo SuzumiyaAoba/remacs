@@ -1,0 +1,614 @@
+{
+  "head": "38af4d1d720760348e725dac51f8c4252c2b03d5",
+  "binary_sha256": "b06709033aef86cc8c57b027584a0ce2c7ac4534c537f76e956edac2569d5c05",
+  "runs": [
+    {
+      "id": "hooks:before-change-functions-binding",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let* ((seen nil) (before-change-functions (list (lambda (&rest _) (push inhibit-modification-hooks seen))))) (delete-region 2 3) seen))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (t))",
+      "stdout": "hooks-before-change-functions-binding.gnu.out",
+      "stderr": "hooks-before-change-functions-binding.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:before-change-functions-binding",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let* ((seen nil) (before-change-functions (list (lambda (&rest _) (push inhibit-modification-hooks seen))))) (delete-region 2 3) seen))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.66,
+      "value": "(ok (t))",
+      "stdout": "hooks-before-change-functions-binding.remacs.out",
+      "stderr": "hooks-before-change-functions-binding.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:after-change-functions-binding",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let* ((seen nil) (after-change-functions (list (lambda (&rest _) (push inhibit-modification-hooks seen))))) (delete-region 2 3) seen))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.18,
+      "value": "(ok (t))",
+      "stdout": "hooks-after-change-functions-binding.gnu.out",
+      "stderr": "hooks-after-change-functions-binding.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:after-change-functions-binding",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let* ((seen nil) (after-change-functions (list (lambda (&rest _) (push inhibit-modification-hooks seen))))) (delete-region 2 3) seen))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.69,
+      "value": "(ok (t))",
+      "stdout": "hooks-after-change-functions-binding.remacs.out",
+      "stderr": "hooks-after-change-functions-binding.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:text-mod-delete",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((seen nil)) (put-text-property 1 4 'modification-hooks (list (lambda (&rest _) (push inhibit-modification-hooks seen)))) (delete-region 2 3) seen))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (nil))",
+      "stdout": "hooks-text-mod-delete.gnu.out",
+      "stderr": "hooks-text-mod-delete.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:text-mod-delete",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((seen nil)) (put-text-property 1 4 'modification-hooks (list (lambda (&rest _) (push inhibit-modification-hooks seen)))) (delete-region 2 3) seen))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.7,
+      "value": "(ok (nil))",
+      "stdout": "hooks-text-mod-delete.remacs.out",
+      "stderr": "hooks-text-mod-delete.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:overlay-mod-delete",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((seen nil) (o (make-overlay 1 4))) (overlay-put o 'modification-hooks (list (lambda (&rest _) (push inhibit-modification-hooks seen)))) (delete-region 2 3) seen))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok (t t))",
+      "stdout": "hooks-overlay-mod-delete.gnu.out",
+      "stderr": "hooks-overlay-mod-delete.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:overlay-mod-delete",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((seen nil) (o (make-overlay 1 4))) (overlay-put o 'modification-hooks (list (lambda (&rest _) (push inhibit-modification-hooks seen)))) (delete-region 2 3) seen))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.74,
+      "value": "(ok (t t))",
+      "stdout": "hooks-overlay-mod-delete.remacs.out",
+      "stderr": "hooks-overlay-mod-delete.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:text-mod-insert",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((seen nil)) (put-text-property 1 4 'modification-hooks (list (lambda (&rest _) (push inhibit-modification-hooks seen)))) (goto-char 2) (insert \"X\") seen))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok nil)",
+      "stdout": "hooks-text-mod-insert.gnu.out",
+      "stderr": "hooks-text-mod-insert.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:text-mod-insert",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((seen nil)) (put-text-property 1 4 'modification-hooks (list (lambda (&rest _) (push inhibit-modification-hooks seen)))) (goto-char 2) (insert \"X\") seen))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.7,
+      "value": "(ok nil)",
+      "stdout": "hooks-text-mod-insert.remacs.out",
+      "stderr": "hooks-text-mod-insert.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:overlay-mod-insert",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((seen nil) (o (make-overlay 1 4))) (overlay-put o 'modification-hooks (list (lambda (&rest _) (push inhibit-modification-hooks seen)))) (goto-char 2) (insert \"X\") seen))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (t t))",
+      "stdout": "hooks-overlay-mod-insert.gnu.out",
+      "stderr": "hooks-overlay-mod-insert.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:overlay-mod-insert",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((seen nil) (o (make-overlay 1 4))) (overlay-put o 'modification-hooks (list (lambda (&rest _) (push inhibit-modification-hooks seen)))) (goto-char 2) (insert \"X\") seen))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.68,
+      "value": "(ok (t t))",
+      "stdout": "hooks-overlay-mod-insert.remacs.out",
+      "stderr": "hooks-overlay-mod-insert.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:text-mod-property",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((seen nil)) (put-text-property 1 4 'modification-hooks (list (lambda (&rest _) (push inhibit-modification-hooks seen)))) (put-text-property 2 3 'face 'bold) seen))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (nil))",
+      "stdout": "hooks-text-mod-property.gnu.out",
+      "stderr": "hooks-text-mod-property.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:text-mod-property",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((seen nil)) (put-text-property 1 4 'modification-hooks (list (lambda (&rest _) (push inhibit-modification-hooks seen)))) (put-text-property 2 3 'face 'bold) seen))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.66,
+      "value": "(ok (nil))",
+      "stdout": "hooks-text-mod-property.remacs.out",
+      "stderr": "hooks-text-mod-property.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:overlay-mod-property",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((seen nil) (o (make-overlay 1 4))) (overlay-put o 'modification-hooks (list (lambda (&rest _) (push inhibit-modification-hooks seen)))) (put-text-property 2 3 'face 'bold) seen))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (t t))",
+      "stdout": "hooks-overlay-mod-property.gnu.out",
+      "stderr": "hooks-overlay-mod-property.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:overlay-mod-property",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((seen nil) (o (make-overlay 1 4))) (overlay-put o 'modification-hooks (list (lambda (&rest _) (push inhibit-modification-hooks seen)))) (put-text-property 2 3 'face 'bold) seen))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.66,
+      "value": "(ok (t t))",
+      "stdout": "hooks-overlay-mod-property.remacs.out",
+      "stderr": "hooks-overlay-mod-property.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:kill-current-insert",
+      "group": "change_hook_edges",
+      "form": "(let ((b (generate-new-buffer \" *audit-hook-kill*\"))) (with-current-buffer b (insert \"abc\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (kill-buffer (current-buffer)))))) (condition-case e (insert \"X\") (error (car e))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok nil)",
+      "stdout": "hooks-kill-current-insert.gnu.out",
+      "stderr": "hooks-kill-current-insert.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:kill-current-insert",
+      "group": "change_hook_edges",
+      "form": "(let ((b (generate-new-buffer \" *audit-hook-kill*\"))) (with-current-buffer b (insert \"abc\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (kill-buffer (current-buffer)))))) (condition-case e (insert \"X\") (error (car e))))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.71,
+      "value": "(ok nil)",
+      "stdout": "hooks-kill-current-insert.remacs.out",
+      "stderr": "hooks-kill-current-insert.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:insert-prefix-insert",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abcd\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (save-excursion (goto-char 1) (insert \"P\")))))) (insert \"X\") (list (buffer-string) (point))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (\"PaXbcd\" 4))",
+      "stdout": "hooks-insert-prefix-insert.gnu.out",
+      "stderr": "hooks-insert-prefix-insert.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:insert-prefix-insert",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abcd\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (save-excursion (goto-char 1) (insert \"P\")))))) (insert \"X\") (list (buffer-string) (point))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.67,
+      "value": "(ok (\"PaXbcd\" 4))",
+      "stdout": "hooks-insert-prefix-insert.remacs.out",
+      "stderr": "hooks-insert-prefix-insert.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:kill-current-delete",
+      "group": "change_hook_edges",
+      "form": "(let ((b (generate-new-buffer \" *audit-hook-kill*\"))) (with-current-buffer b (insert \"abc\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (kill-buffer (current-buffer)))))) (condition-case e (delete-region 2 3) (error (car e))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.18,
+      "value": "(ok error)",
+      "stdout": "hooks-kill-current-delete.gnu.out",
+      "stderr": "hooks-kill-current-delete.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:kill-current-delete",
+      "group": "change_hook_edges",
+      "form": "(let ((b (generate-new-buffer \" *audit-hook-kill*\"))) (with-current-buffer b (insert \"abc\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (kill-buffer (current-buffer)))))) (condition-case e (delete-region 2 3) (error (car e))))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.67,
+      "value": "(ok nil)",
+      "stdout": "hooks-kill-current-delete.remacs.out",
+      "stderr": "hooks-kill-current-delete.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:insert-prefix-delete",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abcd\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (save-excursion (goto-char 1) (insert \"P\")))))) (delete-region 2 3) (list (buffer-string) (point))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (\"Pacd\" 3))",
+      "stdout": "hooks-insert-prefix-delete.gnu.out",
+      "stderr": "hooks-insert-prefix-delete.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:insert-prefix-delete",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abcd\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (save-excursion (goto-char 1) (insert \"P\")))))) (delete-region 2 3) (list (buffer-string) (point))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.66,
+      "value": "(ok (\"Pbcd\" 2))",
+      "stdout": "hooks-insert-prefix-delete.remacs.out",
+      "stderr": "hooks-insert-prefix-delete.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:kill-current-property",
+      "group": "change_hook_edges",
+      "form": "(let ((b (generate-new-buffer \" *audit-hook-kill*\"))) (with-current-buffer b (insert \"abc\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (kill-buffer (current-buffer)))))) (condition-case e (put-text-property 2 3 'face 'bold) (error (car e))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok nil)",
+      "stdout": "hooks-kill-current-property.gnu.out",
+      "stderr": "hooks-kill-current-property.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:kill-current-property",
+      "group": "change_hook_edges",
+      "form": "(let ((b (generate-new-buffer \" *audit-hook-kill*\"))) (with-current-buffer b (insert \"abc\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (kill-buffer (current-buffer)))))) (condition-case e (put-text-property 2 3 'face 'bold) (error (car e))))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.82,
+      "value": "(ok nil)",
+      "stdout": "hooks-kill-current-property.remacs.out",
+      "stderr": "hooks-kill-current-property.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:insert-prefix-property",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abcd\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (save-excursion (goto-char 1) (insert \"P\")))))) (put-text-property 2 3 'face 'bold) (list (buffer-string) (point))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (#(\"Pabcd\" 1 2 (face bold)) 3))",
+      "stdout": "hooks-insert-prefix-property.gnu.out",
+      "stderr": "hooks-insert-prefix-property.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:insert-prefix-property",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abcd\") (goto-char 2) (let ((before-change-functions (list (lambda (&rest _) (save-excursion (goto-char 1) (insert \"P\")))))) (put-text-property 2 3 'face 'bold) (list (buffer-string) (point))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.82,
+      "value": "(ok (#(\"Pabcd\" 1 2 (face bold)) 3))",
+      "stdout": "hooks-insert-prefix-property.remacs.out",
+      "stderr": "hooks-insert-prefix-property.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:text-mod-recursion",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abcd\") (let ((count 0)) (put-text-property 1 5 'modification-hooks (list (lambda (&rest _) (setq count (1+ count)) (when (= count 1) (delete-region 3 4))))) (delete-region 2 3) (list count (buffer-string))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (2 #(\"ad\" 0 2 (modification-hooks (#[(&rest _) ((setq count (1+ count)) (if (= count 1) (progn (delete-region 3 4)))) ((count . 2))])))))",
+      "stdout": "hooks-text-mod-recursion.gnu.out",
+      "stderr": "hooks-text-mod-recursion.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:text-mod-recursion",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abcd\") (let ((count 0)) (put-text-property 1 5 'modification-hooks (list (lambda (&rest _) (setq count (1+ count)) (when (= count 1) (delete-region 3 4))))) (delete-region 2 3) (list count (buffer-string))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.87,
+      "value": "(ok (2 #(\"ad\" 0 2 (modification-hooks (#[(&rest _) ((setq count (1+ count)) (if (= count 1) (progn (delete-region 3 4)))) ((count . 2))])))))",
+      "stdout": "hooks-text-mod-recursion.remacs.out",
+      "stderr": "hooks-text-mod-recursion.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:first-change-buffer",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (set-buffer-modified-p nil) (let ((seen nil) (first-change-hook (list (lambda nil (setq seen inhibit-modification-hooks))))) (insert \"x\") seen))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok nil)",
+      "stdout": "hooks-first-change-buffer.gnu.out",
+      "stderr": "hooks-first-change-buffer.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "hooks:first-change-buffer",
+      "group": "change_hook_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (set-buffer-modified-p nil) (let ((seen nil) (first-change-hook (list (lambda nil (setq seen inhibit-modification-hooks))))) (insert \"x\") seen))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.61,
+      "value": "(ok nil)",
+      "stdout": "hooks-first-change-buffer.remacs.out",
+      "stderr": "hooks-first-change-buffer.remacs.err",
+      "complete": true
+    }
+  ]
+}

@@ -1,0 +1,128 @@
+[
+  {
+    "case": "eval",
+    "arguments": [
+      "--eval",
+      "(setq audit-cli-startup t)"
+    ],
+    "side": "gnu",
+    "size": [
+      24,
+      80
+    ],
+    "frame_seen": true,
+    "exit_before_quit": null,
+    "exit": 0,
+    "seconds": 0.45,
+    "bytes": 796,
+    "stdout_file": "eval.gnu.out",
+    "scratch_in_raw_bytes": true,
+    "scratch_after_ansi_removal": true,
+    "preview": "\u001b[?1049h\u001b[?12;25h\u001b[?1h\u001b=\u001b[H\u001b[2J\u001b[24d\u001b[K\u001b[?1l\u001b>\u001b[?12l\u001b[?25h\u001b[?1049l\u001b[39;49m\r\u001b[?1049h\u001b[?12;25h\u001b[?1h\u001b=\u001b[>0c\u001b[H\u001b[2J\u001b[24d\u001b[K\u001b[H\u001b[?25l\u001b[7mFile Edit Options Buffers Tools Lisp-Interaction Help                           \u001b[0m\u001b[39;49m\u001b[27m\r\n\u001b[A\n\u001b[K\n\u001b[K\n\u001b[K\n\u001b[K"
+  },
+  {
+    "case": "load",
+    "arguments": [
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-startup-options/startup.el"
+    ],
+    "side": "gnu",
+    "size": [
+      24,
+      80
+    ],
+    "frame_seen": true,
+    "exit_before_quit": null,
+    "exit": 0,
+    "seconds": 0.5,
+    "bytes": 796,
+    "stdout_file": "load.gnu.out",
+    "scratch_in_raw_bytes": true,
+    "scratch_after_ansi_removal": true,
+    "preview": "\u001b[?1049h\u001b[?12;25h\u001b[?1h\u001b=\u001b[H\u001b[2J\u001b[24d\u001b[K\u001b[?1l\u001b>\u001b[?12l\u001b[?25h\u001b[?1049l\u001b[39;49m\r\u001b[?1049h\u001b[?12;25h\u001b[?1h\u001b=\u001b[>0c\u001b[H\u001b[2J\u001b[24d\u001b[K\u001b[H\u001b[?25l\u001b[7mFile Edit Options Buffers Tools Lisp-Interaction Help                           \u001b[0m\u001b[39;49m\u001b[27m\r\n\u001b[A\n\u001b[K\n\u001b[K\n\u001b[K\n\u001b[K"
+  },
+  {
+    "case": "funcall",
+    "arguments": [
+      "-f",
+      "ignore"
+    ],
+    "side": "gnu",
+    "size": [
+      24,
+      80
+    ],
+    "frame_seen": true,
+    "exit_before_quit": null,
+    "exit": 0,
+    "seconds": 0.45,
+    "bytes": 796,
+    "stdout_file": "funcall.gnu.out",
+    "scratch_in_raw_bytes": true,
+    "scratch_after_ansi_removal": true,
+    "preview": "\u001b[?1049h\u001b[?12;25h\u001b[?1h\u001b=\u001b[H\u001b[2J\u001b[24d\u001b[K\u001b[?1l\u001b>\u001b[?12l\u001b[?25h\u001b[?1049l\u001b[39;49m\r\u001b[?1049h\u001b[?12;25h\u001b[?1h\u001b=\u001b[>0c\u001b[H\u001b[2J\u001b[24d\u001b[K\u001b[H\u001b[?25l\u001b[7mFile Edit Options Buffers Tools Lisp-Interaction Help                           \u001b[0m\u001b[39;49m\u001b[27m\r\n\u001b[A\n\u001b[K\n\u001b[K\n\u001b[K\n\u001b[K"
+  },
+  {
+    "case": "eval",
+    "arguments": [
+      "--eval",
+      "(setq audit-cli-startup t)"
+    ],
+    "side": "remacs",
+    "size": [
+      24,
+      80
+    ],
+    "frame_seen": false,
+    "exit_before_quit": 0,
+    "exit": 0,
+    "seconds": 8.25,
+    "bytes": 0,
+    "stdout_file": "eval.remacs.out",
+    "scratch_in_raw_bytes": false,
+    "scratch_after_ansi_removal": false,
+    "preview": ""
+  },
+  {
+    "case": "load",
+    "arguments": [
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-startup-options/startup.el"
+    ],
+    "side": "remacs",
+    "size": [
+      24,
+      80
+    ],
+    "frame_seen": false,
+    "exit_before_quit": 0,
+    "exit": 0,
+    "seconds": 9.99,
+    "bytes": 352,
+    "stdout_file": "load.remacs.out",
+    "scratch_in_raw_bytes": false,
+    "scratch_after_ansi_removal": false,
+    "preview": "Warning (files): Missing ‘lexical-binding’ cookie in \"/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-startup-options/startup.el\".\r\nYou can add one with ‘M-x elisp-enable-lexical-binding RET’.\r\nSee ‘(e"
+  },
+  {
+    "case": "funcall",
+    "arguments": [
+      "-f",
+      "ignore"
+    ],
+    "side": "remacs",
+    "size": [
+      24,
+      80
+    ],
+    "frame_seen": false,
+    "exit_before_quit": 0,
+    "exit": 0,
+    "seconds": 8.27,
+    "bytes": 0,
+    "stdout_file": "funcall.remacs.out",
+    "scratch_in_raw_bytes": false,
+    "scratch_after_ansi_removal": false,
+    "preview": ""
+  }
+]

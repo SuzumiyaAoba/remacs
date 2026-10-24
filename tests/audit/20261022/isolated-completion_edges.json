@@ -1,0 +1,766 @@
+{
+  "head": "38af4d1d720760348e725dac51f8c4252c2b03d5",
+  "binary_sha256": "b06709033aef86cc8c57b027584a0ce2c7ac4534c537f76e956edac2569d5c05",
+  "runs": [
+    {
+      "id": "completion:try-completion-invalid",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list \"[\"))) (condition-case e (try-completion \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.18,
+      "value": "(ok invalid-regexp)",
+      "stdout": "completion-try-completion-invalid.gnu.out",
+      "stderr": "completion-try-completion-invalid.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "completion:try-completion-invalid",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list \"[\"))) (condition-case e (try-completion \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 10.39,
+      "value": "(ok \"foo\")",
+      "stdout": "completion-try-completion-invalid.remacs.out",
+      "stderr": "completion-try-completion-invalid.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "completion:try-completion-non-string",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list 42))) (condition-case e (try-completion \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.18,
+      "value": "(ok wrong-type-argument)",
+      "stdout": "completion-try-completion-non-string.gnu.out",
+      "stderr": "completion-try-completion-non-string.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "completion:try-completion-non-string",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list 42))) (condition-case e (try-completion \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 10.22,
+      "value": "(ok \"foo\")",
+      "stdout": "completion-try-completion-non-string.remacs.out",
+      "stderr": "completion-try-completion-non-string.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "completion:try-completion-negated",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list (cons \"foo\" nil)))) (condition-case e (try-completion \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok wrong-type-argument)",
+      "stdout": "completion-try-completion-negated.gnu.out",
+      "stderr": "completion-try-completion-negated.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "completion:try-completion-negated",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list (cons \"foo\" nil)))) (condition-case e (try-completion \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 10.05,
+      "value": "(ok \"foo\")",
+      "stdout": "completion-try-completion-negated.remacs.out",
+      "stderr": "completion-try-completion-negated.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "completion:try-completion-input-identity",
+      "group": "completion_edges",
+      "form": "(let ((input (propertize \"foo\" 'audit 42))) (try-completion input (lambda (s p a) (list (eq s input) (get-text-property 0 'audit s)))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.18,
+      "value": "(ok (t 42))",
+      "stdout": "completion-try-completion-input-identity.gnu.out",
+      "stderr": "completion-try-completion-input-identity.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "completion:try-completion-input-identity",
+      "group": "completion_edges",
+      "form": "(let ((input (propertize \"foo\" 'audit 42))) (try-completion input (lambda (s p a) (list (eq s input) (get-text-property 0 'audit s)))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.7,
+      "value": "(ok (nil nil))",
+      "stdout": "completion-try-completion-input-identity.remacs.out",
+      "stderr": "completion-try-completion-input-identity.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "completion:try-completion-match-data",
+      "group": "completion_edges",
+      "form": "(progn (string-match \"b\" \"abc\") (let ((before (match-data)) (completion-regexp-list '(\"o\"))) (try-completion \"foo\" '(\"foo\" \"foobar\")) (equal before (match-data))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.18,
+      "value": "(ok t)",
+      "stdout": "completion-try-completion-match-data.gnu.out",
+      "stderr": "completion-try-completion-match-data.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "completion:try-completion-match-data",
+      "group": "completion_edges",
+      "form": "(progn (string-match \"b\" \"abc\") (let ((before (match-data)) (completion-regexp-list '(\"o\"))) (try-completion \"foo\" '(\"foo\" \"foobar\")) (equal before (match-data))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.7,
+      "value": "(ok t)",
+      "stdout": "completion-try-completion-match-data.remacs.out",
+      "stderr": "completion-try-completion-match-data.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "completion:all-completions-invalid",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list \"[\"))) (condition-case e (all-completions \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok invalid-regexp)",
+      "stdout": "completion-all-completions-invalid.gnu.out",
+      "stderr": "completion-all-completions-invalid.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "completion:all-completions-invalid",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list \"[\"))) (condition-case e (all-completions \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.69,
+      "value": "(ok (\"foo\" \"foobar\"))",
+      "stdout": "completion-all-completions-invalid.remacs.out",
+      "stderr": "completion-all-completions-invalid.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "completion:all-completions-non-string",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list 42))) (condition-case e (all-completions \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok wrong-type-argument)",
+      "stdout": "completion-all-completions-non-string.gnu.out",
+      "stderr": "completion-all-completions-non-string.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "completion:all-completions-non-string",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list 42))) (condition-case e (all-completions \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.76,
+      "value": "(ok (\"foo\" \"foobar\"))",
+      "stdout": "completion-all-completions-non-string.remacs.out",
+      "stderr": "completion-all-completions-non-string.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "completion:all-completions-negated",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list (cons \"foo\" nil)))) (condition-case e (all-completions \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok wrong-type-argument)",
+      "stdout": "completion-all-completions-negated.gnu.out",
+      "stderr": "completion-all-completions-negated.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "completion:all-completions-negated",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list (cons \"foo\" nil)))) (condition-case e (all-completions \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.73,
+      "value": "(ok (\"foo\" \"foobar\"))",
+      "stdout": "completion-all-completions-negated.remacs.out",
+      "stderr": "completion-all-completions-negated.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "completion:all-completions-input-identity",
+      "group": "completion_edges",
+      "form": "(let ((input (propertize \"foo\" 'audit 42))) (all-completions input (lambda (s p a) (list (eq s input) (get-text-property 0 'audit s)))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.18,
+      "value": "(ok (t 42))",
+      "stdout": "completion-all-completions-input-identity.gnu.out",
+      "stderr": "completion-all-completions-input-identity.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "completion:all-completions-input-identity",
+      "group": "completion_edges",
+      "form": "(let ((input (propertize \"foo\" 'audit 42))) (all-completions input (lambda (s p a) (list (eq s input) (get-text-property 0 'audit s)))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.72,
+      "value": "(ok (nil nil))",
+      "stdout": "completion-all-completions-input-identity.remacs.out",
+      "stderr": "completion-all-completions-input-identity.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "completion:all-completions-match-data",
+      "group": "completion_edges",
+      "form": "(progn (string-match \"b\" \"abc\") (let ((before (match-data)) (completion-regexp-list '(\"o\"))) (all-completions \"foo\" '(\"foo\" \"foobar\")) (equal before (match-data))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok t)",
+      "stdout": "completion-all-completions-match-data.gnu.out",
+      "stderr": "completion-all-completions-match-data.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "completion:all-completions-match-data",
+      "group": "completion_edges",
+      "form": "(progn (string-match \"b\" \"abc\") (let ((before (match-data)) (completion-regexp-list '(\"o\"))) (all-completions \"foo\" '(\"foo\" \"foobar\")) (equal before (match-data))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.09,
+      "value": "(ok t)",
+      "stdout": "completion-all-completions-match-data.remacs.out",
+      "stderr": "completion-all-completions-match-data.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "completion:test-completion-invalid",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list \"[\"))) (condition-case e (test-completion \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok invalid-regexp)",
+      "stdout": "completion-test-completion-invalid.gnu.out",
+      "stderr": "completion-test-completion-invalid.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "completion:test-completion-invalid",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list \"[\"))) (condition-case e (test-completion \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.1,
+      "value": "(ok t)",
+      "stdout": "completion-test-completion-invalid.remacs.out",
+      "stderr": "completion-test-completion-invalid.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "completion:test-completion-non-string",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list 42))) (condition-case e (test-completion \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok wrong-type-argument)",
+      "stdout": "completion-test-completion-non-string.gnu.out",
+      "stderr": "completion-test-completion-non-string.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "completion:test-completion-non-string",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list 42))) (condition-case e (test-completion \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.22,
+      "value": "(ok t)",
+      "stdout": "completion-test-completion-non-string.remacs.out",
+      "stderr": "completion-test-completion-non-string.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "completion:test-completion-negated",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list (cons \"foo\" nil)))) (condition-case e (test-completion \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok wrong-type-argument)",
+      "stdout": "completion-test-completion-negated.gnu.out",
+      "stderr": "completion-test-completion-negated.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "completion:test-completion-negated",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list (cons \"foo\" nil)))) (condition-case e (test-completion \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.49,
+      "value": "(ok t)",
+      "stdout": "completion-test-completion-negated.remacs.out",
+      "stderr": "completion-test-completion-negated.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "completion:test-completion-input-identity",
+      "group": "completion_edges",
+      "form": "(let ((input (propertize \"foo\" 'audit 42))) (test-completion input (lambda (s p a) (list (eq s input) (get-text-property 0 'audit s)))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok (t 42))",
+      "stdout": "completion-test-completion-input-identity.gnu.out",
+      "stderr": "completion-test-completion-input-identity.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "completion:test-completion-input-identity",
+      "group": "completion_edges",
+      "form": "(let ((input (propertize \"foo\" 'audit 42))) (test-completion input (lambda (s p a) (list (eq s input) (get-text-property 0 'audit s)))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.42,
+      "value": "(ok t)",
+      "stdout": "completion-test-completion-input-identity.remacs.out",
+      "stderr": "completion-test-completion-input-identity.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "completion:test-completion-match-data",
+      "group": "completion_edges",
+      "form": "(progn (string-match \"b\" \"abc\") (let ((before (match-data)) (completion-regexp-list '(\"o\"))) (test-completion \"foo\" '(\"foo\" \"foobar\")) (equal before (match-data))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.22,
+      "value": "(ok t)",
+      "stdout": "completion-test-completion-match-data.gnu.out",
+      "stderr": "completion-test-completion-match-data.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "completion:test-completion-match-data",
+      "group": "completion_edges",
+      "form": "(progn (string-match \"b\" \"abc\") (let ((before (match-data)) (completion-regexp-list '(\"o\"))) (test-completion \"foo\" '(\"foo\" \"foobar\")) (equal before (match-data))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.47,
+      "value": "(ok t)",
+      "stdout": "completion-test-completion-match-data.remacs.out",
+      "stderr": "completion-test-completion-match-data.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "completion:hide-spaces-''",
+      "group": "completion_edges",
+      "form": "(all-completions \"\" '(\" abc\" \"alpha\" \" hidden\" \"beta\") nil t)",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(error (wrong-number-of-arguments all-completions 4))",
+      "stdout": "completion-hide-spaces-''.gnu.out",
+      "stderr": "completion-hide-spaces-''.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "completion:hide-spaces-''",
+      "group": "completion_edges",
+      "form": "(all-completions \"\" '(\" abc\" \"alpha\" \" hidden\" \"beta\") nil t)",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.09,
+      "value": "(error (wrong-number-of-arguments all-completions 4))",
+      "stdout": "completion-hide-spaces-''.remacs.out",
+      "stderr": "completion-hide-spaces-''.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "completion:hide-spaces-' '",
+      "group": "completion_edges",
+      "form": "(all-completions \" \" '(\" abc\" \"alpha\" \" hidden\" \"beta\") nil t)",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(error (wrong-number-of-arguments all-completions 4))",
+      "stdout": "completion-hide-spaces-' '.gnu.out",
+      "stderr": "completion-hide-spaces-' '.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "completion:hide-spaces-' '",
+      "group": "completion_edges",
+      "form": "(all-completions \" \" '(\" abc\" \"alpha\" \" hidden\" \"beta\") nil t)",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.06,
+      "value": "(error (wrong-number-of-arguments all-completions 4))",
+      "stdout": "completion-hide-spaces-' '.remacs.out",
+      "stderr": "completion-hide-spaces-' '.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "completion:hide-spaces-'a'",
+      "group": "completion_edges",
+      "form": "(all-completions \"a\" '(\" abc\" \"alpha\" \" hidden\" \"beta\") nil t)",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(error (wrong-number-of-arguments all-completions 4))",
+      "stdout": "completion-hide-spaces-'a'.gnu.out",
+      "stderr": "completion-hide-spaces-'a'.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "completion:hide-spaces-'a'",
+      "group": "completion_edges",
+      "form": "(all-completions \"a\" '(\" abc\" \"alpha\" \" hidden\" \"beta\") nil t)",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.01,
+      "value": "(error (wrong-number-of-arguments all-completions 4))",
+      "stdout": "completion-hide-spaces-'a'.remacs.out",
+      "stderr": "completion-hide-spaces-'a'.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "completion:unibyte-result",
+      "group": "completion_edges",
+      "form": "(let* ((s (unibyte-string 255 65)) (out (try-completion \"\" (list s)))) (list (multibyte-string-p out) (string-to-list out)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (nil (255 65)))",
+      "stdout": "completion-unibyte-result.gnu.out",
+      "stderr": "completion-unibyte-result.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "completion:unibyte-result",
+      "group": "completion_edges",
+      "form": "(let* ((s (unibyte-string 255 65)) (out (try-completion \"\" (list s)))) (list (multibyte-string-p out) (string-to-list out)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.47,
+      "value": "(ok (nil (4194303 65)))",
+      "stdout": "completion-unibyte-result.remacs.out",
+      "stderr": "completion-unibyte-result.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "completion:multibyte-ascii-result",
+      "group": "completion_edges",
+      "form": "(let* ((s (string-to-multibyte \"abc\")) (out (try-completion \"\" (list s)))) (multibyte-string-p out))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.18,
+      "value": "(ok t)",
+      "stdout": "completion-multibyte-ascii-result.gnu.out",
+      "stderr": "completion-multibyte-ascii-result.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "completion:multibyte-ascii-result",
+      "group": "completion_edges",
+      "form": "(let* ((s (string-to-multibyte \"abc\")) (out (try-completion \"\" (list s)))) (multibyte-string-p out))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.51,
+      "value": "(ok nil)",
+      "stdout": "completion-multibyte-ascii-result.remacs.out",
+      "stderr": "completion-multibyte-ascii-result.remacs.err",
+      "complete": true
+    }
+  ]
+}

@@ -1,0 +1,114 @@
+[
+  {
+    "id": "notify:file-rearm",
+    "side": "gnu",
+    "metadata": {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_filenotify_lifecycle.el"
+      ],
+      "only": "notify:file-rearm",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 45,
+      "elapsed_seconds": 0.350972,
+      "completed": true,
+      "stdout_file": "filenotify_lifecycle.gnu-retry-file-rearm.out",
+      "stderr_file": "filenotify_lifecycle.gnu-retry-file-rearm.err"
+    },
+    "values": {
+      "notify:file-rearm": "(ok (t t t))"
+    },
+    "forms": {
+      "notify:file-rearm": "(audit-notify-rearm nil)"
+    }
+  },
+  {
+    "id": "notify:file-rearm",
+    "side": "remacs",
+    "metadata": {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_filenotify_lifecycle.el"
+      ],
+      "only": "notify:file-rearm",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 45,
+      "elapsed_seconds": 12.52762,
+      "completed": true,
+      "stdout_file": "filenotify_lifecycle.remacs-retry-file-rearm.out",
+      "stderr_file": "filenotify_lifecycle.remacs-retry-file-rearm.err"
+    },
+    "values": {
+      "notify:file-rearm": "(ok (t nil t))"
+    },
+    "forms": {
+      "notify:file-rearm": "(audit-notify-rearm nil)"
+    }
+  },
+  {
+    "id": "notify:file-rearm-keep-another-control",
+    "side": "gnu",
+    "metadata": {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_filenotify_lifecycle.el"
+      ],
+      "only": "notify:file-rearm-keep-another-control",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 45,
+      "elapsed_seconds": 0.355021,
+      "completed": true,
+      "stdout_file": "filenotify_lifecycle.gnu-retry-file-rearm-keep-another-control.out",
+      "stderr_file": "filenotify_lifecycle.gnu-retry-file-rearm-keep-another-control.err"
+    },
+    "values": {
+      "notify:file-rearm-keep-another-control": "(ok (t t t))"
+    },
+    "forms": {
+      "notify:file-rearm-keep-another-control": "(audit-notify-rearm t)"
+    }
+  },
+  {
+    "id": "notify:file-rearm-keep-another-control",
+    "side": "remacs",
+    "metadata": {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_filenotify_lifecycle.el"
+      ],
+      "only": "notify:file-rearm-keep-another-control",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 45,
+      "elapsed_seconds": 10.195533,
+      "completed": true,
+      "stdout_file": "filenotify_lifecycle.remacs-retry-file-rearm-keep-another-control.out",
+      "stderr_file": "filenotify_lifecycle.remacs-retry-file-rearm-keep-another-control.err"
+    },
+    "values": {
+      "notify:file-rearm-keep-another-control": "(ok (t t t))"
+    },
+    "forms": {
+      "notify:file-rearm-keep-another-control": "(audit-notify-rearm t)"
+    }
+  }
+]

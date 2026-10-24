@@ -1,0 +1,27 @@
+{
+  "recorded_at": "2026-10-22T15:00:27.462515+00:00",
+  "head": "aeaff5597e60834c21d464b7ad2a4caf167726dc",
+  "binary": "target/debug/remacs",
+  "binary_sha256": "b8a44a4e398cc83e08f95a5502a75ebe56fb629a83ecbe66b7060512f86d9961",
+  "exhaustive": false,
+  "previous_goal_turn": "progress",
+  "goal_status": "active",
+  "predecessor": "tests/audit/20261022-round2",
+  "full_suite_process_pid": 82458,
+  "full_suite": "tests/audit/20261022-round2/full-suite/rust-results.json",
+  "notes": "OS上で前回全テストジョブの継続を確認。元exec handleは失効しているため再起動せずOSの同じPIDと結果ファイルを監視する。",
+  "latest_observed_head": "5265da7bc4d3af6cc9dbb93a4d40135460c413cf",
+  "latest_observed_at": "2026-10-22T15:08:12.237436+00:00",
+  "head_change_note": "監査中に外部の作業でcoverage probe隔離のcommitが追加された。新規Issueの実装再現対象（filenotify/sqlite/closure/load）には変更がない。旧全テストrunのprobe結果は旧ビルドとして扱い、変更されたテストは新しいビルドで再確認する。",
+  "updated_at": "2026-10-22T15:21:07.942791+00:00",
+  "full_suite_state": "finished; baseline build aeaff55",
+  "new_issue_count": 9,
+  "probe_sha256": {
+    "tests/audit_compile_wait.el": "df19c6dc7748e2eab3c2d065b3e6491c004cff9e0877bd43e266e6c69bb73101",
+    "tests/audit_filenotify_lifecycle.el": "6efbee2a41b8907712b0bb55b4becc2333b454c44f79c4df364563e9d6c160d8",
+    "tests/audit_sqlite_text.el": "3381616b8d9220ce11a004e8a5efe8414543ef33176129722d170cc91e8737fc",
+    "tests/audit_sqlite_lifecycle_more.el": "134d18db386ba02ab6a50ac024976a8fb26ee4f6102538199ac44dad330f4923",
+    "tests/audit_library_lifecycle_more.el": "56debeeb6aeccd6d0316bd13f300219684c42e3f1448604320f4d827804ea373",
+    "tests/audit_cl_test_setup.el": "29281aa4339a14b3fd02bcff01a15eb055c51be1da78f86f7b2b57c456400241"
+  }
+}

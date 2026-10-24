@@ -1,0 +1,54 @@
+[
+  {
+    "group": "change_relocation",
+    "returncode": 0,
+    "seconds": 20.41,
+    "complete": true,
+    "values": {
+      "relocation:delete-region": "(ok (nil \"Pbcd\" 2))",
+      "relocation:delete-char": "(ok (nil \"Pbcd\" 2))",
+      "relocation:delete-and-extract-region": "(ok (\"a\" \"Pbcd\" 2))",
+      "relocation:replace-region-contents": "(ok (t \"PXbcd\" 3))",
+      "relocation:kill-insert": "(ok (nil \"SAFEX\"))",
+      "relocation:kill-delete": "(ok (nil \"SFE\"))"
+    },
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_relocation.el"
+    ],
+    "environment": {
+      "REMACS_NO_ELC": "1",
+      "REMACS_AUDIT_SKIP": "overlay:make-dead-buffer"
+    }
+  },
+  {
+    "group": "extract_edges",
+    "returncode": 0,
+    "seconds": 20.34,
+    "complete": true,
+    "values": {
+      "extract:multibyte-ascii": "(ok (nil (97 98)))",
+      "extract:unibyte-high": "(ok (t (255 65)))",
+      "extract:properties-after-before-hook": "(ok bold)",
+      "extract:markers": "(ok \"ab\")",
+      "extract:empty-readonly-delete-region": "(ok buffer-read-only)",
+      "extract:empty-readonly-extract": "(ok buffer-read-only)",
+      "extract:empty-readonly-delete-char": "(ok nil)",
+      "extract:empty-readonly-erase-empty": "(ok buffer-read-only)"
+    },
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_extract_edges.el"
+    ],
+    "environment": {
+      "REMACS_NO_ELC": "1",
+      "REMACS_AUDIT_SKIP": "overlay:make-dead-buffer"
+    }
+  }
+]

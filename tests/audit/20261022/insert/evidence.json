@@ -1,0 +1,199 @@
+{
+  "recorded_at": "2026-10-22T11:30:57.965137+00:00",
+  "head": "38af4d1d720760348e725dac51f8c4252c2b03d5",
+  "exhaustive": false,
+  "runs": [
+    {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_insert_edges.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.192757,
+      "completed": true,
+      "stdout_file": "insert_edges.gnu.out",
+      "stderr_file": "insert_edges.gnu.err",
+      "group": "insert_edges",
+      "side": "gnu"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_insert_edges.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 9.093936,
+      "completed": true,
+      "stdout_file": "insert_edges.remacs.out",
+      "stderr_file": "insert_edges.remacs.err",
+      "group": "insert_edges",
+      "side": "remacs"
+    }
+  ],
+  "cases": [
+    {
+      "id": "insert:indent-front-sticky",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold 'front-sticky '(face))) (goto-char 1) (indent-to 3) (get-text-property 1 'face))",
+      "gnu": "(ok bold)",
+      "remacs": "(ok nil)",
+      "differs": true
+    },
+    {
+      "id": "insert:indent-negative-minimum",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (list (indent-to 0 -1) (current-column)))",
+      "gnu": "(ok (2 2))",
+      "remacs": "(ok (2 3))",
+      "differs": true
+    },
+    {
+      "id": "insert:indent-rear-nonsticky",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold 'rear-nonsticky '(face))) (indent-to 3) (get-text-property 2 'face))",
+      "gnu": "(ok nil)",
+      "remacs": "(ok nil)",
+      "differs": false
+    },
+    {
+      "id": "insert:indent-to-inherit",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (indent-to 4) (list (buffer-string) (get-text-property 2 'face)))",
+      "gnu": "(ok (#(\"a   \" 0 4 (face bold)) bold))",
+      "remacs": "(ok (#(\"a   \" 0 1 (face bold)) nil))",
+      "differs": true
+    },
+    {
+      "id": "insert:inherit-hook",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (let ((observed nil) (after-change-functions (list (lambda (beg end old) (setq observed (get-text-property beg 'face)))))) (insert-char 32 1 t) observed))",
+      "gnu": "(ok nil)",
+      "remacs": "(ok nil)",
+      "differs": false
+    },
+    {
+      "id": "insert:insert-byte-character--1",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (list (condition-case e (progn (insert-byte -1 1) 'inserted) (error (car e))) (string-to-list (buffer-string))))",
+      "gnu": "(ok (args-out-of-range nil))",
+      "remacs": "(ok (args-out-of-range nil))",
+      "differs": false
+    },
+    {
+      "id": "insert:insert-byte-character-4194304",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (list (condition-case e (progn (insert-byte 4194304 1) 'inserted) (error (car e))) (string-to-list (buffer-string))))",
+      "gnu": "(ok (args-out-of-range nil))",
+      "remacs": "(ok (args-out-of-range nil))",
+      "differs": false
+    },
+    {
+      "id": "insert:insert-byte-character-4294967361",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (list (condition-case e (progn (insert-byte 4294967361 1) 'inserted) (error (car e))) (string-to-list (buffer-string))))",
+      "gnu": "(ok (args-out-of-range nil))",
+      "remacs": "(ok (args-out-of-range nil))",
+      "differs": false
+    },
+    {
+      "id": "insert:insert-byte-inherit-nil",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (insert-byte 32 2 nil) (list (buffer-string) (get-text-property 2 'face)))",
+      "gnu": "(ok (#(\"a  \" 0 1 (face bold)) nil))",
+      "remacs": "(ok (#(\"a  \" 0 1 (face bold)) nil))",
+      "differs": false
+    },
+    {
+      "id": "insert:insert-byte-inherit-t",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (insert-byte 32 2 t) (list (buffer-string) (get-text-property 2 'face)))",
+      "gnu": "(ok (#(\"a  \" 0 3 (face bold)) bold))",
+      "remacs": "(ok (#(\"a  \" 0 1 (face bold)) nil))",
+      "differs": true
+    },
+    {
+      "id": "insert:insert-byte-zero-readonly",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (setq buffer-read-only t) (insert-byte 65 0))",
+      "gnu": "(ok nil)",
+      "remacs": "(ok nil)",
+      "differs": false
+    },
+    {
+      "id": "insert:insert-char-character--1",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (list (condition-case e (progn (insert-char -1 1) 'inserted) (error (car e))) (string-to-list (buffer-string))))",
+      "gnu": "(ok (wrong-type-argument nil))",
+      "remacs": "(ok (inserted (255)))",
+      "differs": true
+    },
+    {
+      "id": "insert:insert-char-character-4194304",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (list (condition-case e (progn (insert-char 4194304 1) 'inserted) (error (car e))) (string-to-list (buffer-string))))",
+      "gnu": "(ok (wrong-type-argument nil))",
+      "remacs": "(ok (inserted (0)))",
+      "differs": true
+    },
+    {
+      "id": "insert:insert-char-character-4294967361",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (list (condition-case e (progn (insert-char 4294967361 1) 'inserted) (error (car e))) (string-to-list (buffer-string))))",
+      "gnu": "(ok (wrong-type-argument nil))",
+      "remacs": "(ok (inserted (65)))",
+      "differs": true
+    },
+    {
+      "id": "insert:insert-char-inherit-nil",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (insert-char 32 2 nil) (list (buffer-string) (get-text-property 2 'face)))",
+      "gnu": "(ok (#(\"a  \" 0 1 (face bold)) nil))",
+      "remacs": "(ok (#(\"a  \" 0 1 (face bold)) nil))",
+      "differs": false
+    },
+    {
+      "id": "insert:insert-char-inherit-t",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (insert-char 32 2 t) (list (buffer-string) (get-text-property 2 'face)))",
+      "gnu": "(ok (#(\"a  \" 0 3 (face bold)) bold))",
+      "remacs": "(ok (#(\"a  \" 0 1 (face bold)) nil))",
+      "differs": true
+    },
+    {
+      "id": "insert:insert-char-zero-readonly",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (setq buffer-read-only t) (insert-char 65 0))",
+      "gnu": "(ok nil)",
+      "remacs": "(error (buffer-read-only #<killed buffer>))",
+      "differs": true
+    },
+    {
+      "id": "insert:newline-inherit",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (newline) (list (buffer-string) (get-text-property 2 'face)))",
+      "gnu": "(ok (#(\"a\\n\" 0 2 (face bold)) bold))",
+      "remacs": "(ok (#(\"a\\n\" 0 1 (face bold)) nil))",
+      "differs": true
+    }
+  ],
+  "probe_sha256": {
+    "tests/audit_insert_edges.el": "bdb2073a4c919e49e1f4bd2aa83c4e3333eec95f73f93bd41014c4690de9950d"
+  },
+  "scope": [
+    "insert_edges"
+  ]
+}

@@ -1,0 +1,379 @@
+{
+  "recorded_at": "2026-10-22T11:22:41.584763+00:00",
+  "head": "38af4d1d720760348e725dac51f8c4252c2b03d5",
+  "exhaustive": false,
+  "runs": [
+    {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_overlay_edges.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.193498,
+      "completed": true,
+      "stdout_file": "overlay_edges.gnu.out",
+      "stderr_file": "overlay_edges.gnu.err",
+      "group": "overlay_edges",
+      "side": "gnu"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_overlay_edges.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 8.872123,
+      "completed": true,
+      "stdout_file": "overlay_edges.remacs.out",
+      "stderr_file": "overlay_edges.remacs.err",
+      "group": "overlay_edges",
+      "side": "remacs"
+    },
+    {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_json_edges.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.184753,
+      "completed": true,
+      "stdout_file": "json_edges.gnu.out",
+      "stderr_file": "json_edges.gnu.err",
+      "group": "json_edges",
+      "side": "gnu"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_json_edges.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 7.495045,
+      "completed": true,
+      "stdout_file": "json_edges.remacs.out",
+      "stderr_file": "json_edges.remacs.err",
+      "group": "json_edges",
+      "side": "remacs"
+    }
+  ],
+  "cases": [
+    {
+      "id": "overlay:category-evaporate",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((cat (make-symbol \"audit-evap\")) (o (make-overlay 1 3))) (put cat 'evaporate t) (overlay-put o 'category cat) (delete-region 1 3) (list (overlay-start o) (and (overlay-buffer o) t))))",
+      "gnu": "(ok (nil nil))",
+      "remacs": "(ok (1 t))",
+      "differs": true
+    },
+    {
+      "id": "overlay:copy-deleted",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((o (make-overlay 1 3))) (overlay-put o 'x 1) (delete-overlay o) (let ((c (copy-overlay o))) (list (overlay-buffer c) (overlay-start c) (overlay-get c 'x)))))",
+      "gnu": "(ok (nil nil 1))",
+      "remacs": "(ok (nil nil 1))",
+      "differs": false
+    },
+    {
+      "id": "overlay:dead-buffer-properties",
+      "group": "overlay_edges",
+      "form": "(let* ((b (generate-new-buffer \" *audit-dead*\")) (o (make-overlay 1 1 b))) (overlay-put o 'x 1) (kill-buffer b) (list (overlay-buffer o) (overlay-start o) (overlay-get o 'x) (progn (overlay-put o 'y 2) (overlay-get o 'y))))",
+      "gnu": "(ok (nil nil 1 2))",
+      "remacs": "(ok (nil nil nil nil))",
+      "differs": true
+    },
+    {
+      "id": "overlay:fake",
+      "group": "overlay_edges",
+      "form": "(list (overlayp #<overlay in no buffer>) (condition-case e (overlay-start #<overlay in no buffer>) (error (car e))) (condition-case e (overlay-put #<overlay in no buffer> 'x 1) (error (car e))))",
+      "gnu": "(ok (nil wrong-type-argument wrong-type-argument))",
+      "remacs": "(ok (nil nil 1))",
+      "differs": true
+    },
+    {
+      "id": "overlay:insert-boundary-hooks",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abcd\") (let ((events nil) (o (make-overlay 2 4))) (overlay-put o 'insert-in-front-hooks (list (lambda (_ after beg end &optional old) (push (list after beg end old) events)))) (goto-char 2) (insert \"X\") (nreverse events)))",
+      "gnu": "(ok ((nil 2 2 nil) (t 2 3 0)))",
+      "remacs": "(ok ((nil 2 2 nil) (t 2 3 0)))",
+      "differs": false
+    },
+    {
+      "id": "overlay:markers",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((o (make-overlay (copy-marker 1) (copy-marker 3)))) (move-overlay o (copy-marker 2) (copy-marker 4)) (list (overlay-start o) (overlay-end o) (length (overlays-at (copy-marker 2))))))",
+      "gnu": "(ok (2 4 1))",
+      "remacs": "(ok (2 4 1))",
+      "differs": false
+    },
+    {
+      "id": "overlay:modification-hooks",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abcd\") (let ((events nil) (o (make-overlay 1 5))) (overlay-put o 'modification-hooks (list (lambda (_ after beg end &optional old) (push (list after beg end old) events)))) (delete-region 2 3) (nreverse events)))",
+      "gnu": "(ok ((nil 2 3 nil) (t 2 2 1)))",
+      "remacs": "(ok ((nil 2 3 nil) (t 2 2 1)))",
+      "differs": false
+    },
+    {
+      "id": "overlay:read-only",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abcd\") (let ((o (make-overlay 1 5))) (overlay-put o 'read-only t) (list (condition-case e (progn (delete-region 2 3) 'deleted) (error (car e))) (buffer-string))))",
+      "gnu": "(ok (deleted \"acd\"))",
+      "remacs": "(ok (deleted \"acd\"))",
+      "differs": false
+    },
+    {
+      "id": "overlay:remove-category",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((cat (make-symbol \"audit-category\")) (o (make-overlay 1 4))) (put cat 'audit-tag t) (overlay-put o 'category cat) (remove-overlays 1 4 'audit-tag t) (and (overlay-buffer o) t)))",
+      "gnu": "(ok nil)",
+      "remacs": "(ok nil)",
+      "differs": false
+    },
+    {
+      "id": "overlay:remove-middle",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abcdef\") (let ((o (make-overlay 1 7))) (overlay-put o 'face 'bold) (remove-overlays 3 5) (mapcar (lambda (x) (list (overlay-start x) (overlay-end x) (overlay-get x 'face))) (sort (overlays-in 1 7) (lambda (a b) (< (overlay-start a) (overlay-start b)))))))",
+      "gnu": "(ok ((1 3 bold) (5 7 bold)))",
+      "remacs": "(ok ((1 3 bold) (5 7 bold)))",
+      "differs": false
+    },
+    {
+      "id": "overlay:remove-narrowed-default",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abcdef\") (let ((a (make-overlay 1 2)) (b (make-overlay 3 4)) (c (make-overlay 6 7))) (narrow-to-region 3 5) (remove-overlays) (mapcar (lambda (o) (and (overlay-buffer o) t)) (list a b c))))",
+      "gnu": "(ok (t nil t))",
+      "remacs": "(ok (t nil t))",
+      "differs": false
+    },
+    {
+      "id": "overlay:revive-after-kill",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let* ((b (generate-new-buffer \" *audit-dead*\")) (o (make-overlay 1 1 b))) (overlay-put o 'x 1) (kill-buffer b) (move-overlay o 1 3 (current-buffer)) (list (eq (overlay-buffer o) (current-buffer)) (overlay-start o) (overlay-get o 'x))))",
+      "gnu": "(ok (t 1 1))",
+      "remacs": "(ok (nil nil nil))",
+      "differs": true
+    },
+    {
+      "id": "overlay:sorted-nesting",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abcdef\") (let ((a (make-overlay 3 5)) (b (make-overlay 1 5))) (overlay-put a 'face 'bold) (overlay-put b 'face 'italic) (list (eq a (car (overlays-at 3 t))) (get-char-property 3 'face))))",
+      "gnu": "(ok (t bold))",
+      "remacs": "(ok (nil italic))",
+      "differs": true
+    },
+    {
+      "id": "overlay:sorted-priority-cons",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((a (make-overlay 1 4)) (b (make-overlay 1 4))) (overlay-put a 'priority '(nil . 10)) (overlay-put b 'priority '(nil . 1)) (overlay-put a 'face 'bold) (overlay-put b 'face 'italic) (list (eq a (car (overlays-at 2 t))) (get-char-property 2 'face))))",
+      "gnu": "(ok (t bold))",
+      "remacs": "(ok (nil italic))",
+      "differs": true
+    },
+    {
+      "id": "json:duplicate-key",
+      "group": "json_edges",
+      "form": "(json-parse-string \"{\\\"a\\\":1,\\\"a\\\":2}\" :object-type 'alist)",
+      "gnu": "(ok ((a . 1) (a . 2)))",
+      "remacs": "(ok ((a . 1) (a . 2)))",
+      "differs": false
+    },
+    {
+      "id": "json:false-nil",
+      "group": "json_edges",
+      "form": "(json-serialize [nil] :false-object nil)",
+      "gnu": "(ok \"[false]\")",
+      "remacs": "(ok \"[{}]\")",
+      "differs": true
+    },
+    {
+      "id": "json:float-negative-zero",
+      "group": "json_edges",
+      "form": "(let ((x (json-parse-string \"-0.0\"))) (list (floatp x) (copysign 1.0 x)))",
+      "gnu": "(ok (t -1.0))",
+      "remacs": "(ok (t -1.0))",
+      "differs": false
+    },
+    {
+      "id": "json:float-overflow",
+      "group": "json_edges",
+      "form": "(condition-case e (json-parse-string \"1e9999\") (error (car e)))",
+      "gnu": "(ok json-number-out-of-range-error)",
+      "remacs": "(ok 1.0e+INF)",
+      "differs": true
+    },
+    {
+      "id": "json:insert-unibyte",
+      "group": "json_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (json-insert \"é\") (string-to-list (buffer-string)))",
+      "gnu": "(ok (34 195 169 34))",
+      "remacs": "(ok (34 233 34))",
+      "differs": true
+    },
+    {
+      "id": "json:invalid-utf8-input",
+      "group": "json_edges",
+      "form": "(condition-case e (json-parse-string (unibyte-string 34 255 34)) (error (car e)))",
+      "gnu": "(ok json-utf8-decode-error)",
+      "remacs": "(ok \"\\377\")",
+      "differs": true
+    },
+    {
+      "id": "json:invalid-utf8-serialize",
+      "group": "json_edges",
+      "form": "(condition-case e (json-serialize (unibyte-string 255)) (error (car e)))",
+      "gnu": "(ok wrong-type-argument)",
+      "remacs": "(ok \"\\\"��������\\\"\")",
+      "differs": true
+    },
+    {
+      "id": "json:large-int",
+      "group": "json_edges",
+      "form": "(json-parse-string \"12345678901234567890123456789012345678901234567890\")",
+      "gnu": "(ok 12345678901234567890123456789012345678901234567890)",
+      "remacs": "(ok 12345678901234567890123456789012345678901234567890)",
+      "differs": false
+    },
+    {
+      "id": "json:null-nil",
+      "group": "json_edges",
+      "form": "(json-serialize [nil] :null-object nil)",
+      "gnu": "(ok \"[null]\")",
+      "remacs": "(ok \"[{}]\")",
+      "differs": true
+    },
+    {
+      "id": "json:parse-error-point",
+      "group": "json_edges",
+      "form": "(with-temp-buffer (insert \"[1, bad]\") (goto-char 1) (list (condition-case e (json-parse-buffer) (error (car e))) (point)))",
+      "gnu": "(ok (json-parse-error 1))",
+      "remacs": "(ok (json-parse-error 1))",
+      "differs": false
+    },
+    {
+      "id": "json:parse-narrow",
+      "group": "json_edges",
+      "form": "(with-temp-buffer (insert \"[1,2]\") (narrow-to-region 1 4) (goto-char 1) (list (condition-case e (json-parse-buffer) (error (car e))) (point)))",
+      "gnu": "(ok (json-end-of-file 1))",
+      "remacs": "(ok ([1 2] 4))",
+      "differs": true
+    },
+    {
+      "id": "json:parse-nul-key",
+      "group": "json_edges",
+      "form": "(json-parse-string \"{\\\"a\\\\u0000b\\\":1}\" :object-type 'alist)",
+      "gnu": "(ok ((a\\\u0000b . 1)))",
+      "remacs": "(ok ((a\\\u0000b . 1)))",
+      "differs": false
+    },
+    {
+      "id": "json:parse-trailing-point",
+      "group": "json_edges",
+      "form": "(with-temp-buffer (insert \"42   true\") (goto-char 1) (list (json-parse-buffer) (point)))",
+      "gnu": "(ok (42 3))",
+      "remacs": "(ok (42 3))",
+      "differs": false
+    },
+    {
+      "id": "json:sentinel-integer",
+      "group": "json_edges",
+      "form": "(json-serialize [42] :null-object 42)",
+      "gnu": "(ok \"[null]\")",
+      "remacs": "(ok \"[42]\")",
+      "differs": true
+    },
+    {
+      "id": "json:sentinel-objects",
+      "group": "json_edges",
+      "form": "(let ((x (list 1))) (json-serialize (vector x) :null-object x))",
+      "gnu": "(ok \"[null]\")",
+      "remacs": "(error (wrong-type-argument consp nil))",
+      "differs": true
+    },
+    {
+      "id": "json:sentinel-string",
+      "group": "json_edges",
+      "form": "(let ((x (copy-sequence \"null\"))) (json-serialize (vector x) :null-object x))",
+      "gnu": "(ok \"[null]\")",
+      "remacs": "(ok \"[\\\"null\\\"]\")",
+      "differs": true
+    },
+    {
+      "id": "json:serialize-large-int",
+      "group": "json_edges",
+      "form": "(json-serialize 12345678901234567890123456789012345678901234567890)",
+      "gnu": "(ok \"12345678901234567890123456789012345678901234567890\")",
+      "remacs": "(ok \"12345678901234567890123456789012345678901234567890\")",
+      "differs": false
+    },
+    {
+      "id": "json:serialize-nul",
+      "group": "json_edges",
+      "form": "(json-serialize (string 97 0 98))",
+      "gnu": "(ok \"\\\"a\\\\u0000b\\\"\")",
+      "remacs": "(ok \"\\\"a\\\\u0000b\\\"\")",
+      "differs": false
+    },
+    {
+      "id": "json:serialize-nul-key",
+      "group": "json_edges",
+      "form": "(json-serialize (list (cons (intern (string 97 0 98)) 1)))",
+      "gnu": "(ok \"{\\\"a\\\\u0000b\\\":1}\")",
+      "remacs": "(ok \"{\\\"a\\\\u0000b\\\":1}\")",
+      "differs": false
+    },
+    {
+      "id": "json:utf8-input",
+      "group": "json_edges",
+      "form": "(string-to-list (json-parse-string (unibyte-string 34 195 169 34)))",
+      "gnu": "(ok (233))",
+      "remacs": "(ok (4194243 4194217))",
+      "differs": true
+    },
+    {
+      "id": "json:utf8-serialize",
+      "group": "json_edges",
+      "form": "(string-to-list (json-serialize (unibyte-string 195 169)))",
+      "gnu": "(error (wrong-type-argument json-value-p \"����\"))",
+      "remacs": "(ok (34 243 176 131 131 243 176 130 169 34))",
+      "differs": true
+    }
+  ],
+  "probe_sha256": {
+    "tests/audit_overlay_edges.el": "c9b3c793a9850eb58102fe5dbce73fcf2f90ba57fdb653f1f8f03ba5816d094d",
+    "tests/audit_json_edges.el": "8c5cc156f4a0f51c64693be0fdb79725d5136bfdc401fea104c1a87419be85f3"
+  },
+  "scope": [
+    "json_edges",
+    "overlay_edges"
+  ],
+  "existing_issue_count": 300,
+  "issue_baseline_file": "existing-issues.json"
+}

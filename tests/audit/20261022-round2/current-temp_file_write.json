@@ -1,0 +1,83 @@
+{
+  "head": "926cbfc7fe1ddde28c53d0555be1f6b99563535b",
+  "worktree_head": "8e148b418e7175dfe66292f395c93bff6d336b9e",
+  "binary_sha256": "37aec7800115143d785086fa184114757237776c93c892e30696644b5c255017",
+  "runs": [
+    {
+      "id": "temp-write:public",
+      "group": "temp_file_write",
+      "form": "(let ((dir (make-temp-file \"remacs-audit-write-\" t)) file (old-modes (default-file-modes))) (unwind-protect (progn (unwind-protect (progn (set-default-file-modes 256) (setq file (make-temp-file (expand-file-name \"data-\" dir) nil nil \"abc\"))) (set-default-file-modes old-modes)) (list (logand (file-modes file) 511) (with-temp-buffer (insert-file-contents-literally file) (buffer-string)))) (when file (delete-file file)) (delete-directory dir t)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_write.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok (256 \"abc\"))",
+      "stdout": "temp-write-public.current.gnu.out",
+      "stderr": "temp-write-public.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "temp-write:public",
+      "group": "temp_file_write",
+      "form": "(let ((dir (make-temp-file \"remacs-audit-write-\" t)) file (old-modes (default-file-modes))) (unwind-protect (progn (unwind-protect (progn (set-default-file-modes 256) (setq file (make-temp-file (expand-file-name \"data-\" dir) nil nil \"abc\"))) (set-default-file-modes old-modes)) (list (logand (file-modes file) 511) (with-temp-buffer (insert-file-contents-literally file) (buffer-string)))) (when file (delete-file file)) (delete-directory dir t)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_write.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.0,
+      "value": "(ok (256 \"\"))",
+      "stdout": "temp-write-public.current.remacs.out",
+      "stderr": "temp-write-public.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "temp-write:internal",
+      "group": "temp_file_write",
+      "form": "(let ((dir (make-temp-file \"remacs-audit-write-\" t)) file (old-modes (default-file-modes))) (unwind-protect (progn (unwind-protect (progn (set-default-file-modes 256) (setq file (make-temp-file-internal (expand-file-name \"data-\" dir) nil \"\" \"abc\"))) (set-default-file-modes old-modes)) (list (logand (file-modes file) 511) (with-temp-buffer (insert-file-contents-literally file) (buffer-string)))) (when file (delete-file file)) (delete-directory dir t)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_write.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok (256 \"abc\"))",
+      "stdout": "temp-write-internal.current.gnu.out",
+      "stderr": "temp-write-internal.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "temp-write:internal",
+      "group": "temp_file_write",
+      "form": "(let ((dir (make-temp-file \"remacs-audit-write-\" t)) file (old-modes (default-file-modes))) (unwind-protect (progn (unwind-protect (progn (set-default-file-modes 256) (setq file (make-temp-file-internal (expand-file-name \"data-\" dir) nil \"\" \"abc\"))) (set-default-file-modes old-modes)) (list (logand (file-modes file) 511) (with-temp-buffer (insert-file-contents-literally file) (buffer-string)))) (when file (delete-file file)) (delete-directory dir t)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_write.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.96,
+      "value": "(ok (256 \"abc\"))",
+      "stdout": "temp-write-internal.current.remacs.out",
+      "stderr": "temp-write-internal.current.remacs.err",
+      "complete": true
+    }
+  ]
+}

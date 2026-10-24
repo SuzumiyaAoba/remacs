@@ -1,0 +1,12 @@
+[
+  {
+    "name": "coverage_tests::u_probe_buffer4",
+    "returncode": 101,
+    "log": "u_probe_buffer4.isolated.log"
+  },
+  {
+    "name": "coverage_tests::u_probe_editor3",
+    "returncode": 101,
+    "log": "u_probe_editor3.isolated.log"
+  }
+]

@@ -1,0 +1,236 @@
+[
+  {
+    "group": "overlay_edges",
+    "returncode": 0,
+    "seconds": 18.04,
+    "complete": true,
+    "values": {
+      "overlay:remove-middle": "(ok ((1 3 bold) (5 7 bold)))",
+      "overlay:remove-category": "(ok nil)",
+      "overlay:remove-narrowed-default": "(ok (t nil t))",
+      "overlay:markers": "(ok (2 4 1))",
+      "overlay:fake": "(ok (nil nil 1))",
+      "overlay:dead-buffer-properties": "(ok (nil nil nil nil))",
+      "overlay:revive-after-kill": "(ok (nil nil nil))",
+      "overlay:copy-deleted": "(ok (nil nil 1))",
+      "overlay:category-evaporate": "(ok (1 t))",
+      "overlay:sorted-priority-cons": "(ok (nil italic))",
+      "overlay:sorted-nesting": "(ok (nil italic))",
+      "overlay:modification-hooks": "(ok ((nil 2 3 nil) (t 2 2 1)))",
+      "overlay:insert-boundary-hooks": "(ok ((nil 2 2 nil) (t 2 3 0)))",
+      "overlay:read-only": "(ok (deleted \"acd\"))",
+      "overlay:category-visible": "(ok (bold nil))",
+      "overlay:copy-independent-plist": "(ok (bold italic))",
+      "overlay:window-restricted": "(ok (bold bold bold))"
+    },
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+    ],
+    "environment": {
+      "REMACS_NO_ELC": "1",
+      "REMACS_AUDIT_SKIP": "overlay:make-dead-buffer"
+    }
+  },
+  {
+    "group": "json_edges",
+    "returncode": 0,
+    "seconds": 18.06,
+    "complete": true,
+    "values": {
+      "json:null-nil": "(ok \"[{}]\")",
+      "json:false-nil": "(ok \"[{}]\")",
+      "json:sentinel-objects": "(error (wrong-type-argument consp nil))",
+      "json:sentinel-integer": "(ok \"[42]\")",
+      "json:sentinel-string": "(ok \"[\\\"null\\\"]\")",
+      "json:parse-narrow": "(ok ([1 2] 4))",
+      "json:parse-error-point": "(ok (json-parse-error 1))",
+      "json:parse-trailing-point": "(ok (42 3))",
+      "json:duplicate-key": "(ok ((a . 1) (a . 2)))",
+      "json:large-int": "(ok 12345678901234567890123456789012345678901234567890)",
+      "json:serialize-large-int": "(ok \"12345678901234567890123456789012345678901234567890\")",
+      "json:utf8-input": "(ok (4194243 4194217))",
+      "json:invalid-utf8-input": "(ok \"\\377\")",
+      "json:utf8-serialize": "(ok (34 243 176 131 131 243 176 130 169 34))",
+      "json:invalid-utf8-serialize": "(ok \"\\\"��������\\\"\")",
+      "json:insert-unibyte": "(ok (34 233 34))",
+      "json:parse-nul-key": "(ok ((a\\\u0000b . 1)))",
+      "json:serialize-nul": "(ok \"\\\"a\\\\u0000b\\\"\")",
+      "json:serialize-nul-key": "(ok \"{\\\"a\\\\u0000b\\\":1}\")",
+      "json:float-overflow": "(ok 1.0e+INF)",
+      "json:float-negative-zero": "(ok (t -1.0))"
+    },
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+    ],
+    "environment": {
+      "REMACS_NO_ELC": "1",
+      "REMACS_AUDIT_SKIP": "overlay:make-dead-buffer"
+    }
+  },
+  {
+    "group": "insert_edges",
+    "returncode": 0,
+    "seconds": 18.0,
+    "complete": true,
+    "values": {
+      "insert:insert-char-inherit-nil": "(ok (#(\"a  \" 0 1 (face bold)) nil))",
+      "insert:insert-char-inherit-t": "(ok (#(\"a  \" 0 1 (face bold)) nil))",
+      "insert:insert-char-character--1": "(ok (inserted (255)))",
+      "insert:insert-char-character-4194304": "(ok (inserted (0)))",
+      "insert:insert-char-character-4294967361": "(ok (inserted (65)))",
+      "insert:insert-char-zero-readonly": "(error (buffer-read-only #<killed buffer>))",
+      "insert:insert-byte-inherit-nil": "(ok (#(\"a  \" 0 1 (face bold)) nil))",
+      "insert:insert-byte-inherit-t": "(ok (#(\"a  \" 0 1 (face bold)) nil))",
+      "insert:insert-byte-character--1": "(ok (args-out-of-range nil))",
+      "insert:insert-byte-character-4194304": "(ok (args-out-of-range nil))",
+      "insert:insert-byte-character-4294967361": "(ok (args-out-of-range nil))",
+      "insert:insert-byte-zero-readonly": "(ok nil)",
+      "insert:indent-to-inherit": "(ok (#(\"a   \" 0 1 (face bold)) nil))",
+      "insert:indent-negative-minimum": "(ok (2 3))",
+      "insert:newline-inherit": "(ok (#(\"a\\n\" 0 1 (face bold)) nil))",
+      "insert:indent-front-sticky": "(ok nil)",
+      "insert:indent-rear-nonsticky": "(ok nil)",
+      "insert:inherit-hook": "(ok nil)"
+    },
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+    ],
+    "environment": {
+      "REMACS_NO_ELC": "1",
+      "REMACS_AUDIT_SKIP": "overlay:make-dead-buffer"
+    }
+  },
+  {
+    "group": "completion_edges",
+    "returncode": 0,
+    "seconds": 18.26,
+    "complete": true,
+    "values": {
+      "completion:try-completion-invalid": "(ok \"foo\")",
+      "completion:try-completion-non-string": "(ok \"foo\")",
+      "completion:try-completion-negated": "(ok \"foo\")",
+      "completion:try-completion-input-identity": "(ok (nil nil))",
+      "completion:try-completion-match-data": "(ok t)",
+      "completion:all-completions-invalid": "(ok (\"foo\" \"foobar\"))",
+      "completion:all-completions-non-string": "(ok (\"foo\" \"foobar\"))",
+      "completion:all-completions-negated": "(ok (\"foo\" \"foobar\"))",
+      "completion:all-completions-input-identity": "(ok (nil nil))",
+      "completion:all-completions-match-data": "(ok t)",
+      "completion:test-completion-invalid": "(ok t)",
+      "completion:test-completion-non-string": "(ok t)",
+      "completion:test-completion-negated": "(ok t)",
+      "completion:test-completion-input-identity": "(ok t)",
+      "completion:test-completion-match-data": "(ok t)",
+      "completion:hide-spaces-''": "(error (wrong-number-of-arguments all-completions 4))",
+      "completion:hide-spaces-' '": "(error (wrong-number-of-arguments all-completions 4))",
+      "completion:hide-spaces-'a'": "(error (wrong-number-of-arguments all-completions 4))",
+      "completion:unibyte-result": "(ok (nil (4194303 65)))",
+      "completion:multibyte-ascii-result": "(ok nil)"
+    },
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_completion_edges.el"
+    ],
+    "environment": {
+      "REMACS_NO_ELC": "1",
+      "REMACS_AUDIT_SKIP": "overlay:make-dead-buffer"
+    }
+  },
+  {
+    "group": "edit_commands",
+    "returncode": 0,
+    "seconds": 21.52,
+    "complete": true,
+    "values": {
+      "edit:indent-positive": "(ok (\"    a\\n    b\\n    c\\n\" 6 6 (nil nil nil nil 0 1 nil nil nil nil 2 3 nil nil nil nil 4 5)))",
+      "edit:indent-negative": "(ok (\"      a\\n      b\\n\" 7 7 (nil nil nil nil nil nil 1 2 nil nil nil nil nil nil 4 5)))",
+      "edit:indent-tabs": "(ok (\"\\11 a\\n\\11 b\\n\" 3 3 (nil nil 1 2 nil nil 4 5)))",
+      "edit:indent-filter": "(ok (\"  a\\n  skip\\n  c\\n\" 4 4 (nil nil 0 1 nil nil 2 3 4 5 6 nil nil 7 8)))",
+      "edit:sort-lines": "(ok (\"a\\nb\\nc\\n\" 1 1 (2 1 4 3 0 5)))",
+      "edit:sort-numeric": "(ok (\"y 1.1\\nx 1.2\\nz 1.9\\n\" 1 1 (6 7 8 9 10 5 0 1 2 3 4 11 12 13 14 15 16 17)))",
+      "edit:sort-fields": "(ok (\"a 1\\nb 2\\nc 3\\n\" 1 1 (4 5 6 3 8 9 10 7 0 1 2 11)))",
+      "edit:reverse-region": "(ok (\"c\\nb\\na\\n\" 1 1 (4 nil 2 nil 0 5)))",
+      "edit:capitalize-word": "(ok (\"Straße foo\" 7 2 (0 1 2 3 4 5 6 7 8 9)))",
+      "edit:transpose-words": "(ok (\"beta alpha gamma\" 11 1 (6 7 8 9 5 0 1 2 3 4 10 11 12 13 14 15)))",
+      "edit:transpose-lines": "(ok (\"beta\\nalpha\\ngamma\\n\" 12 1 (6 7 8 9 10 0 1 2 3 4 5 11 12 13 14 15 16)))",
+      "edit:delete-rectangle": "(ok (\"ac\\ndf\\ngi\\n\" 2 2 (0 2 3 4 6 7 8 10 11)))",
+      "edit:string-rectangle": "(ok (\"aXc\\ndXf\\ngXi\\n\" 11 2 (0 nil 2 3 4 nil 6 7 8 nil 10 11)))",
+      "edit:insert-rectangle": "(ok (\"aXbc\\ndYef\\ngZhi\\n\" 13 2 (0 99 1 2 3 4 nil 5 6 7 8 nil 9 10 11)))",
+      "edit:open-rectangle": "(ok (\"a bc\\nd ef\\ng hi\\n\" 2 2 (0 nil 1 2 3 4 nil 5 6 7 8 nil 9 10 11)))",
+      "edit:clear-rectangle": "(ok (\"a c\\nd f\\ng i\\n\" 2 2 (0 nil 2 3 4 nil 6 7 8 nil 10 11)))",
+      "edit:comment-region": "(ok (\";; (foo)\\n;; (bar)\\n\" 5 5 (nil nil nil 0 1 2 3 4 5 nil nil nil 6 7 8 9 10 11)))",
+      "edit:uncomment-region": "(ok (\"(foo)\\n(bar)\\n\" 1 1 (3 4 5 6 7 8 12 13 14 15 16 17)))",
+      "edit:tabify": "(ok (\"\\11a\\n\\11b\\n\" 1 1 (nil 8 9 nil 18 19)))",
+      "edit:untabify": "(ok (\"        a\\n        b\\n\" 9 1 (nil nil nil nil nil nil nil nil 1 2 nil nil nil nil nil nil nil nil 4 5)))",
+      "edit:fill-region": "(ok (\"one two\\nthree four\\nfive six\" 2 2 (0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26)))",
+      "edit:center-region": "(ok (\"     a\\n     b\\n     c\\n\" 7 7 (nil nil nil nil nil 0 1 nil nil nil nil nil 2 3 nil nil nil nil nil 4 5)))",
+      "edit:readonly-indent": "(ok (buffer-read-only \"    b\\n    a\\n\"))",
+      "edit:undo-indent": "(ok \"    b\\n    a\\n\")",
+      "edit:readonly-sort": "(ok (buffer-read-only \"    b\\n    a\\n\"))",
+      "edit:undo-sort": "(ok \"    b\\n    a\\n\")",
+      "edit:readonly-tabify": "(ok (changed \"    b\\n    a\\n\"))",
+      "edit:undo-tabify": "(ok \"    b\\n    a\\n\")"
+    },
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_edit_commands.el"
+    ],
+    "environment": {
+      "REMACS_NO_ELC": "1",
+      "REMACS_AUDIT_SKIP": "overlay:make-dead-buffer"
+    }
+  },
+  {
+    "group": "change_hook_edges",
+    "returncode": 0,
+    "seconds": 18.22,
+    "complete": true,
+    "values": {
+      "hooks:before-change-functions-binding": "(ok (t))",
+      "hooks:after-change-functions-binding": "(ok (t))",
+      "hooks:text-mod-delete": "(ok (nil))",
+      "hooks:overlay-mod-delete": "(ok (t t))",
+      "hooks:text-mod-insert": "(ok nil)",
+      "hooks:overlay-mod-insert": "(ok (t t))",
+      "hooks:text-mod-property": "(ok (nil))",
+      "hooks:overlay-mod-property": "(ok (t t))",
+      "hooks:kill-current-insert": "(ok nil)",
+      "hooks:insert-prefix-insert": "(ok (\"PaXbcd\" 4))",
+      "hooks:kill-current-delete": "(ok nil)",
+      "hooks:insert-prefix-delete": "(ok (\"Pbcd\" 2))",
+      "hooks:kill-current-property": "(ok nil)",
+      "hooks:insert-prefix-property": "(ok (#(\"Pabcd\" 1 2 (face bold)) 3))",
+      "hooks:text-mod-recursion": "(ok (2 #(\"ad\" 0 2 (modification-hooks (#[(&rest _) ((setq count (1+ count)) (if (= count 1) (progn (delete-region 3 4)))) ((count . 2))])))))",
+      "hooks:first-change-buffer": "(ok nil)"
+    },
+    "command": [
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+      "-Q",
+      "--batch",
+      "-l",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_change_hook_edges.el"
+    ],
+    "environment": {
+      "REMACS_NO_ELC": "1",
+      "REMACS_AUDIT_SKIP": "overlay:make-dead-buffer"
+    }
+  }
+]

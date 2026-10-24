@@ -1,0 +1,12 @@
+;;; -*- lexical-binding: t; -*-
+(load (expand-file-name "audit_helpers.el" (file-name-directory load-file-name)) nil t)
+(audit-check "mode-init:lisp-locals" '(with-temp-buffer (lisp-mode) (list lisp-indent-function (and font-lock-defaults t) find-tag-default-function comment-start-skip)))
+(audit-check "mode-init:lisp-font-lock" '(with-temp-buffer (insert "(defun foo (x) x)") (lisp-mode) (font-lock-mode 1) (font-lock-ensure) (list (get-text-property 2 'face) (get-text-property 8 'face))))
+(audit-check "mode-init:lisp-require" '(progn (require 'lisp-mode) (with-temp-buffer (lisp-mode) (list lisp-indent-function (and font-lock-defaults t)))))
+(audit-check "mode-init:lisp-reload" '(progn (load "lisp-mode" nil t) (with-temp-buffer (lisp-mode) (list lisp-indent-function (and font-lock-defaults t)))))
+(audit-check "mode-init:lisp-data" '(with-temp-buffer (lisp-data-mode) (list (and font-lock-defaults t) (char-syntax ?|) (char-syntax ?#))))
+(audit-check "mode-init:org-require" '(progn (require 'org) 'loaded))
+(audit-check "mode-init:org-empty" '(with-temp-buffer (org-mode) major-mode))
+(audit-check "mode-init:org-fontlock" '(with-temp-buffer (insert "* Heading\n") (org-mode) (font-lock-mode 1) (font-lock-ensure) (get-text-property 1 'face)))
+(audit-check "mode-init:org-indent" '(with-temp-buffer (insert "* Heading\ntext\n") (org-mode) (indent-region 1 (point-max)) (buffer-string)))
+(princ "AUDIT-DONE\n")

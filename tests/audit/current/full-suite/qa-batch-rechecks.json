@@ -1,0 +1,12 @@
+[
+  {
+    "name": "qa_buffer2",
+    "returncode": 0,
+    "log": "qa_buffer2.batch-recheck.log"
+  },
+  {
+    "name": "qa_mark",
+    "returncode": 0,
+    "log": "qa_mark.batch-recheck.log"
+  }
+]

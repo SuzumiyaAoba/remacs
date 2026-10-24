@@ -1,0 +1,146 @@
+{
+  "returncode": 0,
+  "skip": [
+    {
+      "index": 513,
+      "form": "(command-error-default-function 'a 'b 'c)",
+      "reason": "GNU aborts on malformed internal command-error call"
+    }
+  ],
+  "expected": 680,
+  "records": 680,
+  "differences": [
+    {
+      "index": 6,
+      "form": "(member 'probe-feat features)",
+      "gnu": "(probe-feat warnings icons cl-loaddefs cl-lib rmc iso-transl tooltip cconv eldoc paren electric uniquify ediff-hook vc-hooks lisp-float-type elisp-mode mwheel term/ns-win ns-win ucs-normalize mule-util term/common-win tool-bar dnd fontset image regexp-opt fringe tabulated-list replace newcomment text-mode lisp-mode prog-mode register page tab-bar menu-bar rfn-eshadow isearch easymenu timer select scroll-bar mouse jit-lock font-lock syntax font-core term/tty-colors frame minibuffer nadvice seq simple cl-generic indonesian philippine cham georgian utf-8-lang misc-lang vietnamese tibetan thai tai-viet lao korean japanese eucjp-ms cp51932 hebrew greek romanian slovak czech european ethiopic indian cyrillic chinese composite emoji-zwj charscript charprop case-table epa-hook jka-cmpr-hook help abbrev obarray oclosure cl-preloaded button loaddefs theme-loaddefs faces cus-face macroexp files window text-properties overlay sha1 md5 base64 format env code-pages mule custom widget keymap hashtable-print-readable backquote threads kqueue cocoa ns multi-tty make-network-process tty-child-frames native-compile emacs)",
+      "remacs": "(probe-feat warnings icons remacs-compat easy-mmode cl-macs cl-seq inline pcase cl-loaddefs cl-lib gv japan-util rmc iso-transl tooltip cconv eldoc paren electric uniquify ediff-hook vc-hooks lisp-float-type elisp-mode mwheel term/ns-win ns-win ucs-normalize mule-util term/common-win tool-bar dnd fontset image regexp-opt fringe tabulated-list replace newcomment text-mode lisp-mode prog-mode register page tab-bar menu-bar rfn-eshadow isearch easymenu timer select scroll-bar mouse jit-lock font-lock syntax font-core term/tty-colors frame minibuffer nadvice seq simple cl-generic indonesian philippine cham georgian utf-8-lang misc-lang vietnamese tibetan thai tai-viet lao korean japanese eucjp-ms cp51932 hebrew greek romanian slovak czech european ethiopic indian cyrillic chinese composite emoji-zwj charscript charprop case-table epa-hook jka-cmpr-hook help abbrev obarray oclosure cl-preloaded button loaddefs theme-loaddefs faces cus-face macroexp files window text-properties overlay sha1 md5 base64 format env code-pages mule custom widget keymap hashtable-print-readable backquote threads kqueue cocoa ns multi-tty make-network-process tty-child-frames native-compile emacs lcms2 dbusbind native-comp)"
+    },
+    {
+      "index": 11,
+      "form": "(emacs-version)",
+      "gnu": "\"GNU Emacs 31.1 (build 1, aarch64-apple-darwin25.5.0, NS appkit-2685.60 Version 26.5.2 (Build 25F84))\"",
+      "remacs": "\"GNU Emacs 31.1 (build 1, aarch64-apple-darwin, NS appkit-2685.60 Version 26.5.2 (Build 25F84))\n of 2026-10-18\""
+    },
+    {
+      "index": 21,
+      "form": "(invocation-name)",
+      "gnu": "\"emacs-31.1\"",
+      "remacs": "\"remacs\""
+    },
+    {
+      "index": 30,
+      "form": "(system-groups)",
+      "gnu": "(\"_oahd\" \"com.apple.access_remote_ae\" \"com.apple.access_ssh\" \"com.apple.access_screensharing\" \"com.apple.access_sessionkey\" \"com.apple.access_disabled\" \"com.apple.access_ftp\" \"_mds_stores\" \"_diagnosticservicesd\" \"_corespeechd\" \"_spinandd\" \"_naturallanguaged\" \"_swtransparencyd\" \"_reportsystemmemory\" \"_modelmanagerd\" \"_aonsensed\" \"_systemstatusd\" \"_eligibilityd\" \"_neuralengine\" \"_terminusd\" \"_audiomxd\" \"_mobilegestalthelper\" \"_backgroundassets\" \"_biome\" \"_avphidbridge\" \"_notification_proxy\" \"_darwindaemon\" \"_mmaintenanced\" \"_trustd\" \"_sntpd\" \"_coreml\" \"_knowledgegraphd\" \"_accessoryupdater\" \"_rmd\" \"_demod\" \"_installcoordinationd\" \"_appinstalld\" \"_logd\" \"_diskimagesiod\" \"_driverkit\" \"_reportmemoryexception\" \"_nearbyd\" \"_timed\" \"_fpsd\" \"_webdeveloper\" \"_analyticsd\" \"_cmiodalassistants\" \"_hidd\" \"_applepay\" \"_ctkd\" \"_captiveagent\" \"_datadetectors\" \"_findmydevice\" \"_mobileasset\" \"_wwwproxy\" \"_xserverdocs\" \"_analyticsusers\" \"_ondemand\" \"_mbsetupuser\" \"_gamecontrollerd\" \"_astris\" \"_displaypolicyd\" \"_nsurlsessiond\" \"_distnote\" \"_iconservices\" \"_launchservicesd\" \"_coremediaiod\" \"_assetcache\" \"_netstatistics\" \"_dovenull\" \"_warmd\" \"_netbios\" \"_webauthserver\" \"_devicemgr\" \"_postgres\" \"_dpaudio\" \"_usbmuxd\" \"_cvms\" \"_lda\" \"_timezone\" \"_odchpass\" \"_trustevaluationagent\" \"_detachedsig\" \"_locationd\" \"_developer\" \"_screensaver\" \"_coreaudiod\" \"_guest\" \"_softwareupdate\" \"_lpoperator\" \"_unknown\" \"_lpadmin\" \"_atsserver\" \"_installer\" \"_update_sharing\" \"_teamsserver\" \"_calendar\" \"_securityagent\" \"_tokend\" \"accessibility\" \"_spotlight\" \"_windowserver\" \"_appowner\" \"_jabber\" \"_amavisd\" \"_clamav\" \"_appserveradm\" \"admin\" \"_appserverusr\" \"_mailman\" \"_qtss\" \"_sshd\" \"_mysql\" \"_svn\" \"_cvs\" \"_eppc\" \"_www\" \"network\" \"dialer\" \"_ard\" \"_uucp\" \"_mdnsresponder\" \"netaccounts\" \"localaccounts\" \"_sandbox\" \"_devdocs\" \"_geod\" \"_appleevents\" \"_mcxalr\" \"consoleusers\" \"netusers\" \"interactusers\" \"authedusers\" \"utmp\" \"_appstore\" \"_ces\" \"_scsd\" \"_keytabusers\" \"certusers\" \"_postdrop\" \"_postfix\" \"_lp\" \"_installassistant\" \"_networkd\" \"staff\" \"group\" \"_taskgated\" \"everyone\" \"owner\" \"procmod\" \"procview\" \"bin\" \"mail\" \"operator\" \"tty\" \"sys\" \"kmem\" \"daemon\" \"wheel\" \"nogroup\" \"nobody\" \"_appserveradm\" \"_locationd\" \"_qtss\" \"_spinandd\" \"_distnote\" \"_cvs\" \"dialer\" \"certusers\" \"_screensaver\" \"_naturallanguaged\" \"com.apple.access_remote_ae\" \"_findmydevice\" \"operator\" \"_reportmemoryexception\" \"_gamecontrollerd\" \"_taskgated\" \"_diskimagesiod\" \"com.apple.access_sessionkey\" \"_hidd\" \"com.apple.access_screensharing\" \"_postfix\" \"_mds_stores\" \"_nearbyd\" \"_scsd\" \"bin\" \"staff\" \"_timezone\" \"_wwwproxy\" \"accessibility\" \"_backgroundassets\" \"_biome\" \"admin\" \"daemon\" \"_teamsserver\" \"_nsurlsessiond\" \"_appleevents\" \"network\" \"_sandbox\" \"_devdocs\" \"_trustd\" \"kmem\" \"netusers\" \"_webdeveloper\" \"consoleusers\" \"_darwindaemon\" \"_odchpass\" \"_iconservices\" \"_devicemgr\" \"_coreml\" \"_webauthserver\" \"com.apple.access_ssh\" \"_mobileasset\" \"_networkd\" \"_update_sharing\" \"_detachedsig\" \"_oahd\" \"_neuralengine\" \"nogroup\" \"_mailman\" \"_jabber\" \"_modelmanagerd\" \"_netbios\" \"_demod\" \"_lp\" \"_driverkit\" \"_postdrop\" \"_displaypolicyd\" \"authedusers\" \"_sshd\" \"_swtransparencyd\" \"_lda\" \"_cvms\" \"_aonsensed\" \"tty\" \"_developer\" \"_spotlight\" \"_mobilegestalthelper\" \"_eligibilityd\" \"procview\" \"owner\" \"com.apple.sharepoint.group.1\" \"_usbmuxd\" \"_mmaintenanced\" \"_analyticsusers\" \"_corespeechd\" \"_mbsetupuser\" \"_guest\" \"_www\" \"mail\" \"netaccounts\" \"everyone\" \"_appstore\" \"_rmd\" \"sys\" \"_unknown\" \"_lpoperator\" \"_dpaudio\" \"_clamav\" \"_installassistant\" \"_terminusd\" \"localaccounts\" \"_appserverusr\" \"_timed\" \"_fpsd\" \"_amavisd\" \"_mysql\" \"_installcoordinationd\" \"_datadetectors\" \"_lpadmin\" \"_atsserver\" \"_ctkd\" \"_accessoryupdater\" \"wheel\" \"_installer\" \"com.apple.access_disabled\" \"_calendar\" \"nobody\" \"interactusers\" \"_eppc\" \"_systemstatusd\" \"_ces\" \"_cmiodalassistants\" \"_coremediaiod\" \"_geod\" \"_uucp\" \"_reportsystemmemory\" \"_keytabusers\" \"_mcxalr\" \"_postgres\" \"procmod\" \"com.apple.access_ftp\" \"_windowserver\" \"_svn\" \"_mdnsresponder\" \"utmp\" \"_audiomxd\" \"_sntpd\" \"_ondemand\" \"_trustevaluationagent\" \"_assetcache\" \"_analyticsd\" \"_avphidbridge\" \"_diagnosticservicesd\" \"group\" \"_applepay\" \"_coreaudiod\" \"_warmd\" \"_securityagent\" \"_tokend\" \"_appinstalld\" \"nixbld\" \"_astris\" \"_notification_proxy\" \"_xserverdocs\" \"_launchservicesd\" \"_logd\" \"_captiveagent\" \"_ard\" \"_softwareupdate\" \"_netstatistics\" \"_dovenull\" \"_knowledgegraphd\" \"_appowner\")",
+      "remacs": "(\"_appowner\" \"_knowledgegraphd\" \"_dovenull\" \"_netstatistics\" \"_softwareupdate\" \"_ard\" \"_captiveagent\" \"_logd\" \"_launchservicesd\" \"_xserverdocs\" \"_notification_proxy\" \"_astris\" \"nixbld\" \"_appinstalld\" \"_tokend\" \"_securityagent\" \"_warmd\" \"_coreaudiod\" \"_applepay\" \"group\" \"_diagnosticservicesd\" \"_avphidbridge\" \"_analyticsd\" \"_assetcache\" \"_trustevaluationagent\" \"_ondemand\" \"_sntpd\" \"_audiomxd\" \"utmp\" \"_mdnsresponder\" \"_svn\" \"_windowserver\" \"com.apple.access_ftp\" \"procmod\" \"_postgres\" \"_mcxalr\" \"_keytabusers\" \"_reportsystemmemory\" \"_uucp\" \"_geod\" \"_coremediaiod\" \"_cmiodalassistants\" \"_ces\" \"_systemstatusd\" \"_eppc\" \"interactusers\" \"nobody\" \"_calendar\" \"com.apple.access_disabled\" \"_installer\" \"wheel\" \"_accessoryupdater\" \"_ctkd\" \"_atsserver\" \"_lpadmin\" \"_datadetectors\" \"_installcoordinationd\" \"_mysql\" \"_amavisd\" \"_fpsd\" \"_timed\" \"_appserverusr\" \"localaccounts\" \"_terminusd\" \"_installassistant\" \"_clamav\" \"_dpaudio\" \"_lpoperator\" \"_unknown\" \"sys\" \"_rmd\" \"_appstore\" \"everyone\" \"netaccounts\" \"mail\" \"_www\" \"_guest\" \"_mbsetupuser\" \"_corespeechd\" \"_analyticsusers\" \"_mmaintenanced\" \"_usbmuxd\" \"com.apple.sharepoint.group.1\" \"owner\" \"procview\" \"_eligibilityd\" \"_mobilegestalthelper\" \"_spotlight\" \"_developer\" \"tty\" \"_aonsensed\" \"_cvms\" \"_lda\" \"_swtransparencyd\" \"_sshd\" \"authedusers\" \"_displaypolicyd\" \"_postdrop\" \"_driverkit\" \"_lp\" \"_demod\" \"_netbios\" \"_modelmanagerd\" \"_jabber\" \"_mailman\" \"nogroup\" \"_neuralengine\" \"_oahd\" \"_detachedsig\" \"_update_sharing\" \"_networkd\" \"_mobileasset\" \"com.apple.access_ssh\" \"_webauthserver\" \"_coreml\" \"_devicemgr\" \"_iconservices\" \"_odchpass\" \"_darwindaemon\" \"consoleusers\" \"_webdeveloper\" \"netusers\" \"kmem\" \"_trustd\" \"_devdocs\" \"_sandbox\" \"network\" \"_appleevents\" \"_nsurlsessiond\" \"_teamsserver\" \"daemon\" \"admin\" \"_biome\" \"_backgroundassets\" \"accessibility\" \"_wwwproxy\" \"_timezone\" \"staff\" \"bin\" \"_scsd\" \"_nearbyd\" \"_mds_stores\" \"_postfix\" \"com.apple.access_screensharing\" \"_hidd\" \"com.apple.access_sessionkey\" \"_diskimagesiod\" \"_taskgated\" \"_gamecontrollerd\" \"_reportmemoryexception\" \"operator\" \"_findmydevice\" \"com.apple.access_remote_ae\" \"_naturallanguaged\" \"_screensaver\" \"certusers\" \"dialer\" \"_cvs\" \"_distnote\" \"_spinandd\" \"_qtss\" \"_locationd\" \"_appserveradm\" \"nobody\" \"nogroup\" \"wheel\" \"daemon\" \"kmem\" \"sys\" \"tty\" \"operator\" \"mail\" \"bin\" \"procview\" \"procmod\" \"owner\" \"everyone\" \"_taskgated\" \"group\" \"staff\" \"_networkd\" \"_installassistant\" \"_lp\" \"_postfix\" \"_postdrop\" \"certusers\" \"_keytabusers\" \"_scsd\" \"_ces\" \"_appstore\" \"utmp\" \"authedusers\" \"interactusers\" \"netusers\" \"consoleusers\" \"_mcxalr\" \"_appleevents\" \"_geod\" \"_devdocs\" \"_sandbox\" \"localaccounts\" \"netaccounts\" \"_mdnsresponder\" \"_uucp\" \"_ard\" \"dialer\" \"network\" \"_www\" \"_eppc\" \"_cvs\" \"_svn\" \"_mysql\" \"_sshd\" \"_qtss\" \"_mailman\" \"_appserverusr\" \"admin\" \"_appserveradm\" \"_clamav\" \"_amavisd\" \"_jabber\" \"_appowner\" \"_windowserver\" \"_spotlight\" \"accessibility\" \"_tokend\" \"_securityagent\" \"_calendar\" \"_teamsserver\" \"_update_sharing\" \"_installer\" \"_atsserver\" \"_lpadmin\" \"_unknown\" \"_lpoperator\" \"_softwareupdate\" \"_guest\" \"_coreaudiod\" \"_screensaver\" \"_developer\" \"_locationd\" \"_detachedsig\" \"_trustevaluationagent\" \"_odchpass\" \"_timezone\" \"_lda\" \"_cvms\" \"_usbmuxd\" \"_dpaudio\" \"_postgres\" \"_devicemgr\" \"_webauthserver\" \"_netbios\" \"_warmd\" \"_dovenull\" \"_netstatistics\" \"_assetcache\" \"_coremediaiod\" \"_launchservicesd\" \"_iconservices\" \"_distnote\" \"_nsurlsessiond\" \"_displaypolicyd\" \"_astris\" \"_gamecontrollerd\" \"_mbsetupuser\" \"_ondemand\" \"_analyticsusers\" \"_xserverdocs\" \"_wwwproxy\" \"_mobileasset\" \"_findmydevice\" \"_datadetectors\" \"_captiveagent\" \"_ctkd\" \"_applepay\" \"_hidd\" \"_cmiodalassistants\" \"_analyticsd\" \"_webdeveloper\" \"_fpsd\" \"_timed\" \"_nearbyd\" \"_reportmemoryexception\" \"_driverkit\" \"_diskimagesiod\" \"_logd\" \"_appinstalld\" \"_installcoordinationd\" \"_demod\" \"_rmd\" \"_accessoryupdater\" \"_knowledgegraphd\" \"_coreml\" \"_sntpd\" \"_trustd\" \"_mmaintenanced\" \"_darwindaemon\" \"_notification_proxy\" \"_avphidbridge\" \"_biome\" \"_backgroundassets\" \"_mobilegestalthelper\" \"_audiomxd\" \"_terminusd\" \"_neuralengine\" \"_eligibilityd\" \"_systemstatusd\" \"_aonsensed\" \"_modelmanagerd\" \"_reportsystemmemory\" \"_swtransparencyd\" \"_naturallanguaged\" \"_spinandd\" \"_corespeechd\" \"_diagnosticservicesd\" \"_mds_stores\" \"com.apple.access_ftp\" \"com.apple.access_disabled\" \"com.apple.access_sessionkey\" \"com.apple.access_screensharing\" \"com.apple.access_ssh\" \"com.apple.access_remote_ae\" \"_oahd\")"
+    },
+    {
+      "index": 31,
+      "form": "(emacs-pid)",
+      "gnu": "51700",
+      "remacs": "37214"
+    },
+    {
+      "index": 167,
+      "form": "(frame-list)",
+      "gnu": "(#<frame F1 0xb8ac0dbf8>)",
+      "remacs": "(#<frame F1 0x10abfa910>)"
+    },
+    {
+      "index": 171,
+      "form": "(selected-frame)",
+      "gnu": "#<frame F1 0xb8ac0dbf8>",
+      "remacs": "#<frame F1 0x10abfa910>"
+    },
+    {
+      "index": 182,
+      "form": "(window-frame (selected-window))",
+      "gnu": "#<frame F1 0xb8ac0dbf8>",
+      "remacs": "#<frame F1 0x10abfa910>"
+    },
+    {
+      "index": 208,
+      "form": "(float-time)",
+      "gnu": "1792319647.625476",
+      "remacs": "1792318530.17374"
+    },
+    {
+      "index": 209,
+      "form": "(current-time)",
+      "gnu": "(27348 41119 625585 0)",
+      "remacs": "(27348 40002 173775 0)"
+    },
+    {
+      "index": 210,
+      "form": "(current-time-string)",
+      "gnu": "\"Sun Oct 18 19:34:07 2026\"",
+      "remacs": "\"Sun Oct 18 19:15:30 2026\""
+    },
+    {
+      "index": 224,
+      "form": "(garbage-collect)",
+      "gnu": "((conses 16 8476 10490) (symbols 48 2256 0) (strings 32 2198 1336) (string-bytes 1 150852) (vectors 16 1124) (vector-slots 8 15237 3142) (floats 8 15 9) (intervals 56 12 21) (buffers 1064 5))",
+      "remacs": "((conses 16 30651 0) (symbols 48 30651 0) (strings 32 0 0) (string-bytes 1 0) (vectors 16 0) (vector-slots 8 0 0) (floats 8 0 0) (intervals 56 0 0) (buffers 1064 0))"
+    },
+    {
+      "index": 226,
+      "form": "(memory-limit)",
+      "gnu": "435437504",
+      "remacs": "436041856"
+    },
+    {
+      "index": 305,
+      "form": "(visible-frame-list)",
+      "gnu": "(#<frame F1 0xb8ac0dbf8>)",
+      "remacs": "(#<frame F1 0x10abfa910>)"
+    },
+    {
+      "index": 307,
+      "form": "(current-frame-configuration)",
+      "gnu": "(frame-configuration (#<frame F1 0xb8ac0dbf8> ((no-accept-focus) (visibility . t) (tab-bar-lines . 0) (menu-bar-lines . 1) (buried-buffer-list) (buffer-list #<buffer *scratch*>) (unsplittable) (modeline . t) (width . 80) (height . 25) (name . \"F1\") (font . \"tty\") (background-color . \"unspecified-bg\") (foreground-color . \"unspecified-fg\") (probe-p2 . 9) (probe-p . 5) (cursor-color . \"white\") (background-mode . dark) (display-type . mono) (minibuffer . t)) #<window-configuration>))",
+      "remacs": "(frame-configuration (#<frame F1 0x10abfa910> ((no-accept-focus) (visibility . t) (tab-bar-lines . 0) (menu-bar-lines . 1) (buried-buffer-list) (buffer-list #<buffer *scratch*>) (unsplittable) (modeline . t) (width . 80) (height . 25) (name . \"F1\") (font . \"tty\") (background-color . \"unspecified-bg\") (foreground-color . \"unspecified-fg\") (cursor-color . \"white\") (background-mode . dark) (display-type . mono) (minibuffer . t) (probe-p . 5) (probe-p2 . 9)) #<window-configuration>))"
+    },
+    {
+      "index": 308,
+      "form": "(make-frame-visible)",
+      "gnu": "#<frame F1 0xb8ac0dbf8>",
+      "remacs": "#<frame F1 0x10abfa910>"
+    },
+    {
+      "index": 314,
+      "form": "(mouse-position)",
+      "gnu": "(#<frame F1 0xb8ac0dbf8> nil)",
+      "remacs": "(#<frame F1 0x10abfa910> nil)"
+    },
+    {
+      "index": 315,
+      "form": "(mouse-pixel-position)",
+      "gnu": "(#<frame F1 0xb8ac0dbf8> nil)",
+      "remacs": "(#<frame F1 0x10abfa910> nil)"
+    },
+    {
+      "index": 571,
+      "form": "(with-temp-buffer (assq 'text-scale-mode minor-mode-alist))",
+      "gnu": "(text-scale-mode (\" \" text-scale-mode-lighter))",
+      "remacs": "nil"
+    },
+    {
+      "index": 585,
+      "form": "(list (key-parse \"3*C-x\") (key-parse \"C-M-x\") (key-parse \"M-<next>\") (key-parse \"SPC\"))",
+      "gnu": "([24 24 24] [134217752] [M-next] [32])",
+      "remacs": "([51 42 67 45 120] [134217752] [M-next] [32])"
+    },
+    {
+      "index": 611,
+      "form": "(list (string-width \"\\t\") (string-width \"\\n\") (string-width \"a\\tb\") (string-width (string 128)) (string-width (string 917505)) (string-width \"é…α§\") (string-width (string 34920)))",
+      "gnu": "(8 0 10 4 0 4 2)",
+      "remacs": "(8 0 10 4 0 8 2)"
+    },
+    {
+      "index": 613,
+      "form": "(save-window-excursion (let ((w1 (selected-window))) (split-window-horizontally) (let ((ws (window-list))) (list (mapcar (lambda (w) (list (window-pixel-left w) (window-pixel-top w) (window-pixel-width w) (window-pixel-height w))) ws) (mapcar (lambda (s) (window-at-side-p w1 s)) '(left top right bottom)) (window-at-side-p (nth 1 ws) 'right) (window-at-side-p (nth 1 ws) 'left)))))",
+      "gnu": "(((0 1 40 4) (40 1 40 4) (0 5 80 19)) (t t nil nil) t nil)",
+      "remacs": "(((0 1 40 6) (40 1 40 6) (0 7 80 6) (0 13 80 12)) (t t nil nil) t nil)"
+    }
+  ]
+}

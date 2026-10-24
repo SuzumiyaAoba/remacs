@@ -1,0 +1,13 @@
+{
+  "macroexpand-1": "https://github.com/SuzumiyaAoba/remacs/issues/293",
+  "macroexpand": "https://github.com/SuzumiyaAoba/remacs/issues/293",
+  "macroexpand-all": "https://github.com/SuzumiyaAoba/remacs/issues/293",
+  "macroexpand--all-toplevel": "https://github.com/SuzumiyaAoba/remacs/issues/293",
+  "macroexp-macroexpand": "https://github.com/SuzumiyaAoba/remacs/issues/293",
+  "shell-command-to-string": "https://github.com/SuzumiyaAoba/remacs/issues/295",
+  "shell-command-on-region": "https://github.com/SuzumiyaAoba/remacs/issues/295",
+  "call-shell-region": "https://github.com/SuzumiyaAoba/remacs/issues/295",
+  "async-shell-command": "No standalone divergence; sequential sweep state affected window splitting. Display fallback independently reported in #294.",
+  "scratch-buffer": "No standalone divergence; sequential sweep left a dedicated window.",
+  "scroll-other-window-down": "No standalone divergence with one window; sweep state had additional windows."
+}

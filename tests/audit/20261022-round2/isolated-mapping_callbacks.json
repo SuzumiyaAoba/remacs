@@ -1,0 +1,463 @@
+{
+  "head": "38af4d1d720760348e725dac51f8c4252c2b03d5",
+  "worktree_head": "926cbfc7fe1ddde28c53d0555be1f6b99563535b",
+  "binary_sha256": "b06709033aef86cc8c57b027584a0ce2c7ac4534c537f76e956edac2569d5c05",
+  "runs": [
+    {
+      "id": "map:mapcar-vector",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (vector 1 2 3)) (seen nil)) (let ((value (mapcar (lambda (x) (push x seen) (aset sequence 1 9) x) sequence))) (list value (nreverse seen) sequence)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok ((1 9 3) (1 9 3) [1 9 3]))",
+      "stdout": "map-mapcar-vector.gnu.out",
+      "stderr": "map-mapcar-vector.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapcar-vector",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (vector 1 2 3)) (seen nil)) (let ((value (mapcar (lambda (x) (push x seen) (aset sequence 1 9) x) sequence))) (list value (nreverse seen) sequence)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.78,
+      "value": "(ok ((1 2 3) (1 2 3) [1 9 3]))",
+      "stdout": "map-mapcar-vector.remacs.out",
+      "stderr": "map-mapcar-vector.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapcar-list",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (list 1 2 3)) (seen nil)) (let ((value (mapcar (lambda (x) (push x seen) (setcar (cdr sequence) 9) x) sequence))) (list value (nreverse seen) sequence)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok ((1 9 3) (1 9 3) (1 9 3)))",
+      "stdout": "map-mapcar-list.gnu.out",
+      "stderr": "map-mapcar-list.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapcar-list",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (list 1 2 3)) (seen nil)) (let ((value (mapcar (lambda (x) (push x seen) (setcar (cdr sequence) 9) x) sequence))) (list value (nreverse seen) sequence)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.74,
+      "value": "(ok ((1 2 3) (1 2 3) (1 9 3)))",
+      "stdout": "map-mapcar-list.remacs.out",
+      "stderr": "map-mapcar-list.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapcar-string",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (copy-sequence \"abc\")) (seen nil)) (let ((value (mapcar (lambda (x) (push x seen) (aset sequence 1 88) x) sequence))) (list value (nreverse seen) sequence)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.18,
+      "value": "(ok ((97 88 99) (97 88 99) \"aXc\"))",
+      "stdout": "map-mapcar-string.gnu.out",
+      "stderr": "map-mapcar-string.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapcar-string",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (copy-sequence \"abc\")) (seen nil)) (let ((value (mapcar (lambda (x) (push x seen) (aset sequence 1 88) x) sequence))) (list value (nreverse seen) sequence)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.78,
+      "value": "(ok ((97 98 99) (97 98 99) \"aXc\"))",
+      "stdout": "map-mapcar-string.remacs.out",
+      "stderr": "map-mapcar-string.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapc-vector",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (vector 1 2 3)) (seen nil)) (let ((value (mapc (lambda (x) (push x seen) (aset sequence 1 9) x) sequence))) (list (eq value sequence) (nreverse seen) sequence)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (t (1 9 3) [1 9 3]))",
+      "stdout": "map-mapc-vector.gnu.out",
+      "stderr": "map-mapc-vector.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapc-vector",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (vector 1 2 3)) (seen nil)) (let ((value (mapc (lambda (x) (push x seen) (aset sequence 1 9) x) sequence))) (list (eq value sequence) (nreverse seen) sequence)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.84,
+      "value": "(ok (t (1 2 3) [1 9 3]))",
+      "stdout": "map-mapc-vector.remacs.out",
+      "stderr": "map-mapc-vector.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapc-list",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (list 1 2 3)) (seen nil)) (let ((value (mapc (lambda (x) (push x seen) (setcar (cdr sequence) 9) x) sequence))) (list (eq value sequence) (nreverse seen) sequence)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok (t (1 9 3) (1 9 3)))",
+      "stdout": "map-mapc-list.gnu.out",
+      "stderr": "map-mapc-list.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapc-list",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (list 1 2 3)) (seen nil)) (let ((value (mapc (lambda (x) (push x seen) (setcar (cdr sequence) 9) x) sequence))) (list (eq value sequence) (nreverse seen) sequence)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.88,
+      "value": "(ok (t (1 2 3) (1 9 3)))",
+      "stdout": "map-mapc-list.remacs.out",
+      "stderr": "map-mapc-list.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapc-string",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (copy-sequence \"abc\")) (seen nil)) (let ((value (mapc (lambda (x) (push x seen) (aset sequence 1 88) x) sequence))) (list (eq value sequence) (nreverse seen) sequence)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (t (97 88 99) \"aXc\"))",
+      "stdout": "map-mapc-string.gnu.out",
+      "stderr": "map-mapc-string.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapc-string",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (copy-sequence \"abc\")) (seen nil)) (let ((value (mapc (lambda (x) (push x seen) (aset sequence 1 88) x) sequence))) (list (eq value sequence) (nreverse seen) sequence)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.88,
+      "value": "(ok (t (97 98 99) \"aXc\"))",
+      "stdout": "map-mapc-string.remacs.out",
+      "stderr": "map-mapc-string.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapconcat-vector",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (vector 1 2 3)) (seen nil)) (let ((value (mapconcat (lambda (x) (push x seen) (aset sequence 1 9) (number-to-string x)) sequence \",\"))) (list value (nreverse seen) sequence)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (\"1,9,3\" (1 9 3) [1 9 3]))",
+      "stdout": "map-mapconcat-vector.gnu.out",
+      "stderr": "map-mapconcat-vector.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapconcat-vector",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (vector 1 2 3)) (seen nil)) (let ((value (mapconcat (lambda (x) (push x seen) (aset sequence 1 9) (number-to-string x)) sequence \",\"))) (list value (nreverse seen) sequence)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.86,
+      "value": "(ok (\"1,2,3\" (1 2 3) [1 9 3]))",
+      "stdout": "map-mapconcat-vector.remacs.out",
+      "stderr": "map-mapconcat-vector.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapconcat-list",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (list 1 2 3)) (seen nil)) (let ((value (mapconcat (lambda (x) (push x seen) (setcar (cdr sequence) 9) (number-to-string x)) sequence \",\"))) (list value (nreverse seen) sequence)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (\"1,9,3\" (1 9 3) (1 9 3)))",
+      "stdout": "map-mapconcat-list.gnu.out",
+      "stderr": "map-mapconcat-list.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapconcat-list",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (list 1 2 3)) (seen nil)) (let ((value (mapconcat (lambda (x) (push x seen) (setcar (cdr sequence) 9) (number-to-string x)) sequence \",\"))) (list value (nreverse seen) sequence)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.83,
+      "value": "(ok (\"1,2,3\" (1 2 3) (1 9 3)))",
+      "stdout": "map-mapconcat-list.remacs.out",
+      "stderr": "map-mapconcat-list.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapconcat-string",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (copy-sequence \"abc\")) (seen nil)) (let ((value (mapconcat (lambda (x) (push x seen) (aset sequence 1 88) (number-to-string x)) sequence \",\"))) (list value (nreverse seen) sequence)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (\"97,88,99\" (97 88 99) \"aXc\"))",
+      "stdout": "map-mapconcat-string.gnu.out",
+      "stderr": "map-mapconcat-string.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapconcat-string",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (copy-sequence \"abc\")) (seen nil)) (let ((value (mapconcat (lambda (x) (push x seen) (aset sequence 1 88) (number-to-string x)) sequence \",\"))) (list value (nreverse seen) sequence)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.85,
+      "value": "(ok (\"97,98,99\" (97 98 99) \"aXc\"))",
+      "stdout": "map-mapconcat-string.remacs.out",
+      "stderr": "map-mapconcat-string.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:list-tail-delete",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (list 1 2 3))) (mapcar (lambda (x) (setcdr sequence nil) x) sequence))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (1))",
+      "stdout": "map-list-tail-delete.gnu.out",
+      "stderr": "map-list-tail-delete.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:list-tail-delete",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (list 1 2 3))) (mapcar (lambda (x) (setcdr sequence nil) x) sequence))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.82,
+      "value": "(ok (1 2 3))",
+      "stdout": "map-list-tail-delete.remacs.out",
+      "stderr": "map-list-tail-delete.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapcan-vector",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (vector 1 2 3))) (mapcan (lambda (x) (aset sequence 1 9) (list x)) sequence))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (1 9 3))",
+      "stdout": "map-mapcan-vector.gnu.out",
+      "stderr": "map-mapcan-vector.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapcan-vector",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (vector 1 2 3))) (mapcan (lambda (x) (aset sequence 1 9) (list x)) sequence))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.8,
+      "value": "(ok (1 2 3))",
+      "stdout": "map-mapcan-vector.remacs.out",
+      "stderr": "map-mapcan-vector.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:vector-properties",
+      "group": "mapping_callbacks",
+      "form": "(let* ((s (propertize \"abc\" 'face 'bold)) (parts (mapcar (lambda (x) (char-to-string x)) s))) (list parts (get-text-property 0 'face s)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok ((\"a\" \"b\" \"c\") bold))",
+      "stdout": "map-vector-properties.gnu.out",
+      "stderr": "map-vector-properties.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:vector-properties",
+      "group": "mapping_callbacks",
+      "form": "(let* ((s (propertize \"abc\" 'face 'bold)) (parts (mapcar (lambda (x) (char-to-string x)) s))) (list parts (get-text-property 0 'face s)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.78,
+      "value": "(ok ((\"a\" \"b\" \"c\") bold))",
+      "stdout": "map-vector-properties.remacs.out",
+      "stderr": "map-vector-properties.remacs.err",
+      "complete": true
+    }
+  ]
+}

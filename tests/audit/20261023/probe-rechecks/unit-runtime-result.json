@@ -1,0 +1,18 @@
+{
+  "command": [
+    "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-c06a3b34b5a00adc",
+    "coverage_tests::u_probe_runtime",
+    "--exact",
+    "--nocapture"
+  ],
+  "returncode": 0,
+  "timed_out": false,
+  "seconds": 15.07,
+  "log": "current-unit-runtime.log",
+  "results": [
+    {
+      "name": "coverage_tests::u_probe_runtime",
+      "status": "ok"
+    }
+  ]
+}

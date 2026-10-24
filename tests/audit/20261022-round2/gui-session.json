@@ -1,0 +1,21 @@
+{
+  "root": "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-goal-gui-f7ov5hw6",
+  "bundle": "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-goal-gui-f7ov5hw6/Remacs Goal Audit.app",
+  "binary": "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-goal-gui-f7ov5hw6/Remacs Goal Audit.app/Contents/MacOS/remacs",
+  "file": "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-goal-gui-f7ov5hw6/audit.txt",
+  "sha256": "b8a44a4e398cc83e08f95a5502a75ebe56fb629a83ecbe66b7060512f86d9961",
+  "head": "aeaff5597e60834c21d464b7ad2a4caf167726dc",
+  "cleanup_pids": [
+    5181
+  ],
+  "native_input_test": {
+    "input": "日本語A日😀B",
+    "saved_text": "alpha beta\nsecond line\nAB\n",
+    "result": "ASCII only via CUA typeText; matches existing issue 292",
+    "limitations": [
+      "Native Japanese IME composition was not tested",
+      "CUA paste timed out waiting for clipboard read",
+      "Later CUA operations lost the window surface; cause not attributed to Remacs"
+    ]
+  }
+}

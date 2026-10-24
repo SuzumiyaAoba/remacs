@@ -1,0 +1,235 @@
+{
+  "head": "38af4d1d720760348e725dac51f8c4252c2b03d5",
+  "binary_sha256": "b06709033aef86cc8c57b027584a0ce2c7ac4534c537f76e956edac2569d5c05",
+  "runs": [
+    {
+      "id": "locals-more:kill-all",
+      "group": "local_context_more",
+      "form": "(progn (defvar audit-r2-var 1) (with-temp-buffer (setq-local audit-r2-var 10) (list (let ((audit-r2-var 20)) (kill-all-local-variables) (list audit-r2-var (local-variable-p 'audit-r2-var))) audit-r2-var (local-variable-p 'audit-r2-var))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok ((1 nil) 1 nil))",
+      "stdout": "locals-more-kill-all.gnu.out",
+      "stderr": "locals-more-kill-all.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:kill-all",
+      "group": "local_context_more",
+      "form": "(progn (defvar audit-r2-var 1) (with-temp-buffer (setq-local audit-r2-var 10) (list (let ((audit-r2-var 20)) (kill-all-local-variables) (list audit-r2-var (local-variable-p 'audit-r2-var))) audit-r2-var (local-variable-p 'audit-r2-var))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.73,
+      "value": "(ok ((1 nil) 10 t))",
+      "stdout": "locals-more-kill-all.remacs.out",
+      "stderr": "locals-more-kill-all.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:recreate",
+      "group": "local_context_more",
+      "form": "(progn (defvar audit-r2-var 1) (with-temp-buffer (setq-local audit-r2-var 10) (list (let ((audit-r2-var 20)) (kill-local-variable 'audit-r2-var) (setq-local audit-r2-var 30) (list audit-r2-var (local-variable-p 'audit-r2-var))) audit-r2-var (local-variable-p 'audit-r2-var))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok ((30 t) 10 t))",
+      "stdout": "locals-more-recreate.gnu.out",
+      "stderr": "locals-more-recreate.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:recreate",
+      "group": "local_context_more",
+      "form": "(progn (defvar audit-r2-var 1) (with-temp-buffer (setq-local audit-r2-var 10) (list (let ((audit-r2-var 20)) (kill-local-variable 'audit-r2-var) (setq-local audit-r2-var 30) (list audit-r2-var (local-variable-p 'audit-r2-var))) audit-r2-var (local-variable-p 'audit-r2-var))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.73,
+      "value": "(ok ((30 t) 10 t))",
+      "stdout": "locals-more-recreate.remacs.out",
+      "stderr": "locals-more-recreate.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:default-change",
+      "group": "local_context_more",
+      "form": "(progn (defvar audit-r2-var 1) (with-temp-buffer (setq-local audit-r2-var 10) (list (let ((audit-r2-var 20)) (kill-local-variable 'audit-r2-var) (set-default 'audit-r2-var 3) (list audit-r2-var (local-variable-p 'audit-r2-var))) audit-r2-var (local-variable-p 'audit-r2-var))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok ((3 nil) 3 nil))",
+      "stdout": "locals-more-default-change.gnu.out",
+      "stderr": "locals-more-default-change.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:default-change",
+      "group": "local_context_more",
+      "form": "(progn (defvar audit-r2-var 1) (with-temp-buffer (setq-local audit-r2-var 10) (list (let ((audit-r2-var 20)) (kill-local-variable 'audit-r2-var) (set-default 'audit-r2-var 3) (list audit-r2-var (local-variable-p 'audit-r2-var))) audit-r2-var (local-variable-p 'audit-r2-var))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.73,
+      "value": "(ok ((3 nil) 10 t))",
+      "stdout": "locals-more-default-change.remacs.out",
+      "stderr": "locals-more-default-change.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:create-during-let",
+      "group": "local_context_more",
+      "form": "(progn (defvar audit-r2-var 1) (with-temp-buffer (list (let ((audit-r2-var 20)) (setq-local audit-r2-var 30) audit-r2-var) audit-r2-var (local-variable-p 'audit-r2-var))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (30 30 t))",
+      "stdout": "locals-more-create-during-let.gnu.out",
+      "stderr": "locals-more-create-during-let.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:create-during-let",
+      "group": "local_context_more",
+      "form": "(progn (defvar audit-r2-var 1) (with-temp-buffer (list (let ((audit-r2-var 20)) (setq-local audit-r2-var 30) audit-r2-var) audit-r2-var (local-variable-p 'audit-r2-var))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.8,
+      "value": "(ok (30 30 t))",
+      "stdout": "locals-more-create-during-let.remacs.out",
+      "stderr": "locals-more-create-during-let.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:hook-ordinary-variable",
+      "group": "local_context_more",
+      "form": "(with-temp-buffer (setq-local audit-r2-local 10) (let ((f (lambda nil nil))) (setq-local audit-r2-custom-hook (list f)) (kill-all-local-variables) (list (local-variable-p 'audit-r2-custom-hook) (local-variable-p 'audit-r2-local))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (nil nil))",
+      "stdout": "locals-more-hook-ordinary-variable.gnu.out",
+      "stderr": "locals-more-hook-ordinary-variable.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:hook-ordinary-variable",
+      "group": "local_context_more",
+      "form": "(with-temp-buffer (setq-local audit-r2-local 10) (let ((f (lambda nil nil))) (setq-local audit-r2-custom-hook (list f)) (kill-all-local-variables) (list (local-variable-p 'audit-r2-custom-hook) (local-variable-p 'audit-r2-local))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.8,
+      "value": "(ok (nil nil))",
+      "stdout": "locals-more-hook-ordinary-variable.remacs.out",
+      "stderr": "locals-more-hook-ordinary-variable.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:hook-kill-permanent",
+      "group": "local_context_more",
+      "form": "(let ((f (make-symbol \"audit-r2-permanent\"))) (fset f (lambda nil nil)) (put f 'permanent-local-hook t) (with-temp-buffer (add-hook 'after-save-hook f nil t) (kill-all-local-variables t) (and (memq f after-save-hook) t)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok nil)",
+      "stdout": "locals-more-hook-kill-permanent.gnu.out",
+      "stderr": "locals-more-hook-kill-permanent.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:hook-kill-permanent",
+      "group": "local_context_more",
+      "form": "(let ((f (make-symbol \"audit-r2-permanent\"))) (fset f (lambda nil nil)) (put f 'permanent-local-hook t) (with-temp-buffer (add-hook 'after-save-hook f nil t) (kill-all-local-variables t) (and (memq f after-save-hook) t)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-final-woeh58fv/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.78,
+      "value": "(ok nil)",
+      "stdout": "locals-more-hook-kill-permanent.remacs.out",
+      "stderr": "locals-more-hook-kill-permanent.remacs.err",
+      "complete": true
+    }
+  ],
+  "worktree_head": "926cbfc7fe1ddde28c53d0555be1f6b99563535b"
+}

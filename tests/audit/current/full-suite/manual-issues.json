@@ -1,0 +1,34 @@
+[
+  {
+    "id": "GUI-001",
+    "number": 292,
+    "title": "macOS GUI が Unicode テキスト入力を失い A日B が AB になる",
+    "body_file": "issues/GUI-001.md",
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/292",
+    "marker": "<!-- remacs-suite-id: GUI-001 -->"
+  },
+  {
+    "id": "GUI-002",
+    "number": 297,
+    "title": "修飾付き特殊キーのイベント表現がキーマップと一致せず C-Home が未定義になる",
+    "body_file": "issues/GUI-002.md",
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/297",
+    "marker": "<!-- remacs-suite-id: GUI-002 -->"
+  },
+  {
+    "id": "TEST-001",
+    "number": 298,
+    "title": "probe_eval14 の停止が PROBE_LOCK を通じて後続 unit テストも止める",
+    "body_file": "issues/TEST-001.md",
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/298",
+    "marker": "<!-- remacs-suite-id: TEST-001 -->"
+  },
+  {
+    "id": "TEST-002",
+    "number": 299,
+    "title": "pty_editor_smoke が端末サイズ未指定と ANSI 出力の判定で初期フレームを見落とす",
+    "body_file": "issues/TEST-002.md",
+    "url": "https://github.com/SuzumiyaAoba/remacs/issues/299",
+    "marker": "<!-- remacs-suite-id: TEST-002 -->"
+  }
+]

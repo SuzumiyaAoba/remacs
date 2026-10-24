@@ -1,0 +1,13 @@
+{
+  "command": [
+    "rtk",
+    "proxy",
+    "cargo",
+    "test",
+    "--offline",
+    "--doc"
+  ],
+  "returncode": 0,
+  "seconds": 3.52,
+  "log": "doc-tests.log"
+}

@@ -1,0 +1,90 @@
+{
+  "objective": "既存の Issue と重複しないようにバグを全て洗い出し、Issue を作成。Issue は問題を見つける度に作成すること。",
+  "status": "active",
+  "exhaustive": false,
+  "previous_goal_turn": "progress",
+  "predecessor": "tests/audit/20261022-round2/coverage.json",
+  "new_issue_count": 9,
+  "findings": "findings.json",
+  "report": "report.txt",
+  "full_suite": "full-suite-summary.json",
+  "full_suite_note": "aeaff55基準の46ターゲット1074テスト。ddb7398の変更箇所は旧失敗/停止16件と追加ハーネス4件を新バイナリで個別に再検証し全成功。現行HEAD全体の再走とは区別する。",
+  "completion_criteria": [
+    "各領域の既存根拠を現在のコードと照合する",
+    "未知の経路を再現可能なGNU比較またはUI観測で検査する",
+    "確定不具合は重複確認してIssue化する",
+    "未検査・不確実・タイムアウトを成功扱いにしない"
+  ],
+  "areas": [
+    {
+      "area": "reader/printer",
+      "status": "incomplete",
+      "remaining": "入出力ストリーム・循環・文字表現の未検査の組合せ。"
+    },
+    {
+      "area": "numbers/strings/sequences",
+      "status": "incomplete",
+      "remaining": "数値境界・巨大入力・callbackによる状態変更。"
+    },
+    {
+      "area": "evaluator/closures/macros",
+      "status": "incomplete",
+      "evidence": "dotted ARGS構築の過剰検証を#349、shortdoc-doc循環ロードを#347に登録。",
+      "remaining": "汎用マクロ・bytecode境界と評価文脈の組合せ。"
+    },
+    {
+      "area": "buffers/text-properties/undo",
+      "status": "incomplete",
+      "remaining": "編集・フック再入・undoの追加の組合せ。"
+    },
+    {
+      "area": "overlays/windows/frames",
+      "status": "incomplete",
+      "remaining": "実描画・複数フレームと保存/復元の組合せ。"
+    },
+    {
+      "area": "files/coding",
+      "status": "incomplete",
+      "evidence": "file notifyのcallback解除・再登録・error後の通知を#346/#348/#354に登録。",
+      "remaining": "ACL・大容量I/O・文字コード境界・監視の競合。"
+    },
+    {
+      "area": "process/network/thread/timer",
+      "status": "incomplete",
+      "remaining": "大容量I/O・再入・IPv6/UDP・相互待機・終了競合。"
+    },
+    {
+      "area": "json/xml/sqlite/treesit",
+      "status": "incomplete",
+      "evidence": "SQLiteのdefault-directoryとTEXT復号を#350/#352に登録。GC/close/finalizeの4対照はGNUと一致。",
+      "remaining": "複雑query/再解析/SQL lifecycleと入力境界。"
+    },
+    {
+      "area": "nativecomp/bytecode",
+      "status": "incomplete",
+      "remaining": "コンパイラの組合せ・非局所脱出・再ロード・GC。"
+    },
+    {
+      "area": "major-modes/libraries",
+      "status": "incomplete",
+      "remaining": "全同梱Lispの実用経路を追加検査する。"
+    },
+    {
+      "area": "CLI/TUI/GUI",
+      "status": "incomplete",
+      "remaining": "修正後の実操作・IME・端末制御・イベントの組合せ。"
+    },
+    {
+      "area": "test infrastructure",
+      "status": "incomplete",
+      "evidence": "旧1074件を全ターゲットで試行。旧probe不良の現行再確認20件は全成功。残る11失敗は既存/今回Issueへ対応。スイープは両側DONE。",
+      "remaining": "既知マスク付き394関数名の差分の再評価と現行HEAD全体の状態更新。"
+    }
+  ],
+  "next_priorities": [
+    "既知マスク付き差分を原因と既存Issueに照合し、隠れた未知の不具合を検査する",
+    "全同梱Lispの実用経路を追加検査する",
+    "ネットワーク・プロセス・タイマー・スレッドの競合と大容量I/O・再入を検査する",
+    "native/bytecode、coding、監視、SQL等の未検査境界を継続し、確定する都度Issue登録する"
+  ]
+}

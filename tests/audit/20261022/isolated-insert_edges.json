@@ -1,0 +1,690 @@
+{
+  "head": "38af4d1d720760348e725dac51f8c4252c2b03d5",
+  "binary_sha256": "7e365b2dfb995c14644f130431219dd25c753891fc2de2877c683d376a755a3f",
+  "runs": [
+    {
+      "id": "insert:insert-char-inherit-nil",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (insert-char 32 2 nil) (list (buffer-string) (get-text-property 2 'face)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.25,
+      "value": "(ok (#(\"a  \" 0 1 (face bold)) nil))",
+      "stdout": "insert-insert-char-inherit-nil.gnu.out",
+      "stderr": "insert-insert-char-inherit-nil.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-char-inherit-nil",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (insert-char 32 2 nil) (list (buffer-string) (get-text-property 2 'face)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 11.22,
+      "value": "(ok (#(\"a  \" 0 1 (face bold)) nil))",
+      "stdout": "insert-insert-char-inherit-nil.remacs.out",
+      "stderr": "insert-insert-char-inherit-nil.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-char-inherit-t",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (insert-char 32 2 t) (list (buffer-string) (get-text-property 2 'face)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.24,
+      "value": "(ok (#(\"a  \" 0 3 (face bold)) bold))",
+      "stdout": "insert-insert-char-inherit-t.gnu.out",
+      "stderr": "insert-insert-char-inherit-t.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-char-inherit-t",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (insert-char 32 2 t) (list (buffer-string) (get-text-property 2 'face)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 11.16,
+      "value": "(ok (#(\"a  \" 0 1 (face bold)) nil))",
+      "stdout": "insert-insert-char-inherit-t.remacs.out",
+      "stderr": "insert-insert-char-inherit-t.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-char-character--1",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (list (condition-case e (progn (insert-char -1 1) 'inserted) (error (car e))) (string-to-list (buffer-string))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.26,
+      "value": "(ok (wrong-type-argument nil))",
+      "stdout": "insert-insert-char-character--1.gnu.out",
+      "stderr": "insert-insert-char-character--1.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-char-character--1",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (list (condition-case e (progn (insert-char -1 1) 'inserted) (error (car e))) (string-to-list (buffer-string))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 11.22,
+      "value": "(ok (inserted (255)))",
+      "stdout": "insert-insert-char-character--1.remacs.out",
+      "stderr": "insert-insert-char-character--1.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-char-character-4194304",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (list (condition-case e (progn (insert-char 4194304 1) 'inserted) (error (car e))) (string-to-list (buffer-string))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.25,
+      "value": "(ok (wrong-type-argument nil))",
+      "stdout": "insert-insert-char-character-4194304.gnu.out",
+      "stderr": "insert-insert-char-character-4194304.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-char-character-4194304",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (list (condition-case e (progn (insert-char 4194304 1) 'inserted) (error (car e))) (string-to-list (buffer-string))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 9.69,
+      "value": "(ok (inserted (0)))",
+      "stdout": "insert-insert-char-character-4194304.remacs.out",
+      "stderr": "insert-insert-char-character-4194304.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-char-character-4294967361",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (list (condition-case e (progn (insert-char 4294967361 1) 'inserted) (error (car e))) (string-to-list (buffer-string))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.26,
+      "value": "(ok (wrong-type-argument nil))",
+      "stdout": "insert-insert-char-character-4294967361.gnu.out",
+      "stderr": "insert-insert-char-character-4294967361.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-char-character-4294967361",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (list (condition-case e (progn (insert-char 4294967361 1) 'inserted) (error (car e))) (string-to-list (buffer-string))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 9.69,
+      "value": "(ok (inserted (65)))",
+      "stdout": "insert-insert-char-character-4294967361.remacs.out",
+      "stderr": "insert-insert-char-character-4294967361.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-char-zero-readonly",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (setq buffer-read-only t) (insert-char 65 0))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.23,
+      "value": "(ok nil)",
+      "stdout": "insert-insert-char-zero-readonly.gnu.out",
+      "stderr": "insert-insert-char-zero-readonly.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-char-zero-readonly",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (setq buffer-read-only t) (insert-char 65 0))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 9.64,
+      "value": "(error (buffer-read-only #<killed buffer>))",
+      "stdout": "insert-insert-char-zero-readonly.remacs.out",
+      "stderr": "insert-insert-char-zero-readonly.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-byte-inherit-nil",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (insert-byte 32 2 nil) (list (buffer-string) (get-text-property 2 'face)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.23,
+      "value": "(ok (#(\"a  \" 0 1 (face bold)) nil))",
+      "stdout": "insert-insert-byte-inherit-nil.gnu.out",
+      "stderr": "insert-insert-byte-inherit-nil.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-byte-inherit-nil",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (insert-byte 32 2 nil) (list (buffer-string) (get-text-property 2 'face)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 9.11,
+      "value": "(ok (#(\"a  \" 0 1 (face bold)) nil))",
+      "stdout": "insert-insert-byte-inherit-nil.remacs.out",
+      "stderr": "insert-insert-byte-inherit-nil.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-byte-inherit-t",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (insert-byte 32 2 t) (list (buffer-string) (get-text-property 2 'face)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.24,
+      "value": "(ok (#(\"a  \" 0 3 (face bold)) bold))",
+      "stdout": "insert-insert-byte-inherit-t.gnu.out",
+      "stderr": "insert-insert-byte-inherit-t.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-byte-inherit-t",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (insert-byte 32 2 t) (list (buffer-string) (get-text-property 2 'face)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 9.26,
+      "value": "(ok (#(\"a  \" 0 1 (face bold)) nil))",
+      "stdout": "insert-insert-byte-inherit-t.remacs.out",
+      "stderr": "insert-insert-byte-inherit-t.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-byte-character--1",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (list (condition-case e (progn (insert-byte -1 1) 'inserted) (error (car e))) (string-to-list (buffer-string))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.27,
+      "value": "(ok (args-out-of-range nil))",
+      "stdout": "insert-insert-byte-character--1.gnu.out",
+      "stderr": "insert-insert-byte-character--1.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-byte-character--1",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (list (condition-case e (progn (insert-byte -1 1) 'inserted) (error (car e))) (string-to-list (buffer-string))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 9.13,
+      "value": "(ok (args-out-of-range nil))",
+      "stdout": "insert-insert-byte-character--1.remacs.out",
+      "stderr": "insert-insert-byte-character--1.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-byte-character-4194304",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (list (condition-case e (progn (insert-byte 4194304 1) 'inserted) (error (car e))) (string-to-list (buffer-string))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.22,
+      "value": "(ok (args-out-of-range nil))",
+      "stdout": "insert-insert-byte-character-4194304.gnu.out",
+      "stderr": "insert-insert-byte-character-4194304.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-byte-character-4194304",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (list (condition-case e (progn (insert-byte 4194304 1) 'inserted) (error (car e))) (string-to-list (buffer-string))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.93,
+      "value": "(ok (args-out-of-range nil))",
+      "stdout": "insert-insert-byte-character-4194304.remacs.out",
+      "stderr": "insert-insert-byte-character-4194304.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-byte-character-4294967361",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (list (condition-case e (progn (insert-byte 4294967361 1) 'inserted) (error (car e))) (string-to-list (buffer-string))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.22,
+      "value": "(ok (args-out-of-range nil))",
+      "stdout": "insert-insert-byte-character-4294967361.gnu.out",
+      "stderr": "insert-insert-byte-character-4294967361.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-byte-character-4294967361",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (list (condition-case e (progn (insert-byte 4294967361 1) 'inserted) (error (car e))) (string-to-list (buffer-string))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.87,
+      "value": "(ok (args-out-of-range nil))",
+      "stdout": "insert-insert-byte-character-4294967361.remacs.out",
+      "stderr": "insert-insert-byte-character-4294967361.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-byte-zero-readonly",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (setq buffer-read-only t) (insert-byte 65 0))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.22,
+      "value": "(ok nil)",
+      "stdout": "insert-insert-byte-zero-readonly.gnu.out",
+      "stderr": "insert-insert-byte-zero-readonly.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "insert:insert-byte-zero-readonly",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (setq buffer-read-only t) (insert-byte 65 0))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.92,
+      "value": "(ok nil)",
+      "stdout": "insert-insert-byte-zero-readonly.remacs.out",
+      "stderr": "insert-insert-byte-zero-readonly.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "insert:indent-to-inherit",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (indent-to 4) (list (buffer-string) (get-text-property 2 'face)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok (#(\"a   \" 0 4 (face bold)) bold))",
+      "stdout": "insert-indent-to-inherit.gnu.out",
+      "stderr": "insert-indent-to-inherit.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "insert:indent-to-inherit",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (indent-to 4) (list (buffer-string) (get-text-property 2 'face)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.78,
+      "value": "(ok (#(\"a   \" 0 1 (face bold)) nil))",
+      "stdout": "insert-indent-to-inherit.remacs.out",
+      "stderr": "insert-indent-to-inherit.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "insert:indent-negative-minimum",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (list (indent-to 0 -1) (current-column)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.22,
+      "value": "(ok (2 2))",
+      "stdout": "insert-indent-negative-minimum.gnu.out",
+      "stderr": "insert-indent-negative-minimum.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "insert:indent-negative-minimum",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (list (indent-to 0 -1) (current-column)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.74,
+      "value": "(ok (2 3))",
+      "stdout": "insert-indent-negative-minimum.remacs.out",
+      "stderr": "insert-indent-negative-minimum.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "insert:newline-inherit",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (newline) (list (buffer-string) (get-text-property 2 'face)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok (#(\"a\\n\" 0 2 (face bold)) bold))",
+      "stdout": "insert-newline-inherit.gnu.out",
+      "stderr": "insert-newline-inherit.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "insert:newline-inherit",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (newline) (list (buffer-string) (get-text-property 2 'face)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.8,
+      "value": "(ok (#(\"a\\n\" 0 1 (face bold)) nil))",
+      "stdout": "insert-newline-inherit.remacs.out",
+      "stderr": "insert-newline-inherit.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "insert:indent-front-sticky",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold 'front-sticky '(face))) (goto-char 1) (indent-to 3) (get-text-property 1 'face))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok bold)",
+      "stdout": "insert-indent-front-sticky.gnu.out",
+      "stderr": "insert-indent-front-sticky.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "insert:indent-front-sticky",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold 'front-sticky '(face))) (goto-char 1) (indent-to 3) (get-text-property 1 'face))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.76,
+      "value": "(ok nil)",
+      "stdout": "insert-indent-front-sticky.remacs.out",
+      "stderr": "insert-indent-front-sticky.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "insert:indent-rear-nonsticky",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold 'rear-nonsticky '(face))) (indent-to 3) (get-text-property 2 'face))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok nil)",
+      "stdout": "insert-indent-rear-nonsticky.gnu.out",
+      "stderr": "insert-indent-rear-nonsticky.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "insert:indent-rear-nonsticky",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold 'rear-nonsticky '(face))) (indent-to 3) (get-text-property 2 'face))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.71,
+      "value": "(ok nil)",
+      "stdout": "insert-indent-rear-nonsticky.remacs.out",
+      "stderr": "insert-indent-rear-nonsticky.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "insert:inherit-hook",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (let* ((observed nil) (after-change-functions (list (lambda (beg end old) (setq observed (get-text-property beg 'face)))))) (insert-char 32 1 t) observed))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok bold)",
+      "stdout": "insert-inherit-hook.gnu.out",
+      "stderr": "insert-inherit-hook.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "insert:inherit-hook",
+      "group": "insert_edges",
+      "form": "(with-temp-buffer (insert (propertize \"a\" 'face 'bold)) (let* ((observed nil) (after-change-functions (list (lambda (beg end old) (setq observed (get-text-property beg 'face)))))) (insert-char 32 1 t) observed))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_insert_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.83,
+      "value": "(ok nil)",
+      "stdout": "insert-inherit-hook.remacs.out",
+      "stderr": "insert-inherit-hook.remacs.err",
+      "complete": true
+    }
+  ]
+}

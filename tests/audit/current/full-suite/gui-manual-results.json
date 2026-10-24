@@ -1,0 +1,34 @@
+{
+  "recorded_at": "2026-10-18T10:28:34.434380+00:00",
+  "backend": "macOS gpui; CUA native app control",
+  "bundle": "/tmp/RemacsAudit.app",
+  "binary": "target/debug/remacs",
+  "checks": {
+    "open_file": true,
+    "ascii_edit_save": true,
+    "incremental_search_point": true,
+    "split_and_delete_other_windows": true,
+    "normal_exit": true,
+    "unicode_text_input": false
+  },
+  "unicode_input": [
+    "日本語",
+    "A日B"
+  ],
+  "actual_file": "alpha beta\nsecond line\nAB\n",
+  "expected_last_line": "日本語A日B",
+  "issue_draft": "issues/GUI-001.md",
+  "initial_frame_note": "Initial background window was blank; it painted after activation and input. Not counted as a confirmed defect.",
+  "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/292",
+  "issue_number": 292,
+  "modified_named_key": {
+    "expected_binding": "beginning-of-buffer",
+    "point_before": 9,
+    "point_after": 9,
+    "echo": "C-<home> is undefined",
+    "unmodified_home_point": 1,
+    "issue_url": "https://github.com/SuzumiyaAoba/remacs/issues/297",
+    "source": "named_key_dispatch.rs",
+    "log": "named-key-dispatch.log"
+  }
+}

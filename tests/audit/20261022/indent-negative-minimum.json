@@ -1,0 +1,14 @@
+[
+  {
+    "side": "gnu",
+    "stdout": "(2 4 2 \"abc\" 2)",
+    "stderr": "Warning (files): Missing ‘lexical-binding’ cookie in \"~/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022/indent-negative-minimum.el\".\nYou can add one with ‘M-x elisp-enable-lexical-binding RET’.\nSee ‘(elisp)Selecting Lisp Dialect’ and ‘(elisp)Converting to Lexical Binding’\nfor more information.\n",
+    "returncode": 0
+  },
+  {
+    "side": "remacs",
+    "stdout": "(2 4 3 \"abc\" 3)",
+    "stderr": "Warning (files): Missing ‘lexical-binding’ cookie in \"/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022/indent-negative-minimum.el\".\nYou can add one with ‘M-x elisp-enable-lexical-binding RET’.\nSee ‘(elisp)Selecting Lisp Dialect’ and ‘(elisp)Converting to Lexical Binding’\nfor more information.\n",
+    "returncode": 0
+  }
+]

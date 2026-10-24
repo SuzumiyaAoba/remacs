@@ -1,0 +1,215 @@
+{
+  "recorded_at": "2026-10-22T11:33:19.337604+00:00",
+  "head": "38af4d1d720760348e725dac51f8c4252c2b03d5",
+  "exhaustive": false,
+  "runs": [
+    {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_completion_edges.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.199037,
+      "completed": true,
+      "stdout_file": "completion_edges.gnu.out",
+      "stderr_file": "completion_edges.gnu.err",
+      "group": "completion_edges",
+      "side": "gnu"
+    },
+    {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_completion_edges.el"
+      ],
+      "only": null,
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 8.153836,
+      "completed": true,
+      "stdout_file": "completion_edges.remacs.out",
+      "stderr_file": "completion_edges.remacs.err",
+      "group": "completion_edges",
+      "side": "remacs"
+    }
+  ],
+  "cases": [
+    {
+      "id": "completion:all-completions-input-identity",
+      "group": "completion_edges",
+      "form": "(let ((input (propertize \"foo\" 'audit 42))) (all-completions input (lambda (s p a) (list (eq s input) (get-text-property 0 'audit s)))))",
+      "gnu": "(ok (t 42))",
+      "remacs": "(ok (nil nil))",
+      "differs": true
+    },
+    {
+      "id": "completion:all-completions-invalid",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list \"[\"))) (condition-case e (all-completions \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "gnu": "(ok invalid-regexp)",
+      "remacs": "(ok (\"foo\" \"foobar\"))",
+      "differs": true
+    },
+    {
+      "id": "completion:all-completions-match-data",
+      "group": "completion_edges",
+      "form": "(progn (string-match \"b\" \"abc\") (let ((before (match-data)) (completion-regexp-list '(\"o\"))) (all-completions \"foo\" '(\"foo\" \"foobar\")) (equal before (match-data))))",
+      "gnu": "(ok t)",
+      "remacs": "(ok t)",
+      "differs": false
+    },
+    {
+      "id": "completion:all-completions-negated",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list (cons \"foo\" nil)))) (condition-case e (all-completions \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "gnu": "(ok wrong-type-argument)",
+      "remacs": "(ok (\"foo\" \"foobar\"))",
+      "differs": true
+    },
+    {
+      "id": "completion:all-completions-non-string",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list 42))) (condition-case e (all-completions \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "gnu": "(ok wrong-type-argument)",
+      "remacs": "(ok (\"foo\" \"foobar\"))",
+      "differs": true
+    },
+    {
+      "id": "completion:hide-spaces-' '",
+      "group": "completion_edges",
+      "form": "(all-completions \" \" '(\" abc\" \"alpha\" \" hidden\" \"beta\") nil t)",
+      "gnu": "(error (wrong-number-of-arguments all-completions 4))",
+      "remacs": "(error (wrong-number-of-arguments all-completions 4))",
+      "differs": false
+    },
+    {
+      "id": "completion:hide-spaces-''",
+      "group": "completion_edges",
+      "form": "(all-completions \"\" '(\" abc\" \"alpha\" \" hidden\" \"beta\") nil t)",
+      "gnu": "(error (wrong-number-of-arguments all-completions 4))",
+      "remacs": "(error (wrong-number-of-arguments all-completions 4))",
+      "differs": false
+    },
+    {
+      "id": "completion:hide-spaces-'a'",
+      "group": "completion_edges",
+      "form": "(all-completions \"a\" '(\" abc\" \"alpha\" \" hidden\" \"beta\") nil t)",
+      "gnu": "(error (wrong-number-of-arguments all-completions 4))",
+      "remacs": "(error (wrong-number-of-arguments all-completions 4))",
+      "differs": false
+    },
+    {
+      "id": "completion:multibyte-ascii-result",
+      "group": "completion_edges",
+      "form": "(let* ((s (string-to-multibyte \"abc\")) (out (try-completion \"\" (list s)))) (multibyte-string-p out))",
+      "gnu": "(ok t)",
+      "remacs": "(ok nil)",
+      "differs": true
+    },
+    {
+      "id": "completion:test-completion-input-identity",
+      "group": "completion_edges",
+      "form": "(let ((input (propertize \"foo\" 'audit 42))) (test-completion input (lambda (s p a) (list (eq s input) (get-text-property 0 'audit s)))))",
+      "gnu": "(ok (t 42))",
+      "remacs": "(ok t)",
+      "differs": true
+    },
+    {
+      "id": "completion:test-completion-invalid",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list \"[\"))) (condition-case e (test-completion \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "gnu": "(ok invalid-regexp)",
+      "remacs": "(ok t)",
+      "differs": true
+    },
+    {
+      "id": "completion:test-completion-match-data",
+      "group": "completion_edges",
+      "form": "(progn (string-match \"b\" \"abc\") (let ((before (match-data)) (completion-regexp-list '(\"o\"))) (test-completion \"foo\" '(\"foo\" \"foobar\")) (equal before (match-data))))",
+      "gnu": "(ok t)",
+      "remacs": "(ok t)",
+      "differs": false
+    },
+    {
+      "id": "completion:test-completion-negated",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list (cons \"foo\" nil)))) (condition-case e (test-completion \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "gnu": "(ok wrong-type-argument)",
+      "remacs": "(ok t)",
+      "differs": true
+    },
+    {
+      "id": "completion:test-completion-non-string",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list 42))) (condition-case e (test-completion \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "gnu": "(ok wrong-type-argument)",
+      "remacs": "(ok t)",
+      "differs": true
+    },
+    {
+      "id": "completion:try-completion-input-identity",
+      "group": "completion_edges",
+      "form": "(let ((input (propertize \"foo\" 'audit 42))) (try-completion input (lambda (s p a) (list (eq s input) (get-text-property 0 'audit s)))))",
+      "gnu": "(ok (t 42))",
+      "remacs": "(ok (nil nil))",
+      "differs": true
+    },
+    {
+      "id": "completion:try-completion-invalid",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list \"[\"))) (condition-case e (try-completion \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "gnu": "(ok invalid-regexp)",
+      "remacs": "(ok \"foo\")",
+      "differs": true
+    },
+    {
+      "id": "completion:try-completion-match-data",
+      "group": "completion_edges",
+      "form": "(progn (string-match \"b\" \"abc\") (let ((before (match-data)) (completion-regexp-list '(\"o\"))) (try-completion \"foo\" '(\"foo\" \"foobar\")) (equal before (match-data))))",
+      "gnu": "(ok t)",
+      "remacs": "(ok t)",
+      "differs": false
+    },
+    {
+      "id": "completion:try-completion-negated",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list (cons \"foo\" nil)))) (condition-case e (try-completion \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "gnu": "(ok wrong-type-argument)",
+      "remacs": "(ok \"foo\")",
+      "differs": true
+    },
+    {
+      "id": "completion:try-completion-non-string",
+      "group": "completion_edges",
+      "form": "(let ((completion-regexp-list (list 42))) (condition-case e (try-completion \"foo\" '(\"foo\" \"foobar\")) (error (car e))))",
+      "gnu": "(ok wrong-type-argument)",
+      "remacs": "(ok \"foo\")",
+      "differs": true
+    },
+    {
+      "id": "completion:unibyte-result",
+      "group": "completion_edges",
+      "form": "(let* ((s (unibyte-string 255 65)) (out (try-completion \"\" (list s)))) (list (multibyte-string-p out) (string-to-list out)))",
+      "gnu": "(ok (nil (255 65)))",
+      "remacs": "(ok (nil (4194303 65)))",
+      "differs": true
+    }
+  ],
+  "probe_sha256": {
+    "tests/audit_completion_edges.el": "577518ede8c6a916fce75a238e38a8198a5b31f8c84f7efc6158b6e110a245ce"
+  },
+  "scope": [
+    "completion_edges"
+  ]
+}

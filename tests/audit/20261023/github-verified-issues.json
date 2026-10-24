@@ -1,0 +1,69 @@
+{
+  "verified_at": "2026-10-23 Asia/Tokyo",
+  "provider": "GitHub connector fetch_issue",
+  "issues": [
+    {
+      "issue_number": 346,
+      "title": "ディレクトリの file-notify コールバックで自身の監視を解除すると Rust panic で終了する",
+      "url": "https://github.com/SuzumiyaAoba/remacs/issues/346",
+      "state": "open",
+      "marker": "R3-20261023-001"
+    },
+    {
+      "issue_number": 347,
+      "title": "shortdoc-doc を初期状態で require すると eager macro expansion の循環エラーでロードできない",
+      "url": "https://github.com/SuzumiyaAoba/remacs/issues/347",
+      "state": "open",
+      "marker": "R3-20261023-002"
+    },
+    {
+      "issue_number": 348,
+      "title": "最後の file-notify 監視を解除すると、再登録後は valid な監視にも通知が届かない",
+      "url": "https://github.com/SuzumiyaAoba/remacs/issues/348",
+      "state": "open",
+      "marker": "R3-20261023-003"
+    },
+    {
+      "issue_number": 349,
+      "title": "make-interpreted-closure が dotted な ARGS を構築時に拒否し、呼び出し時の invalid-function にならない",
+      "url": "https://github.com/SuzumiyaAoba/remacs/issues/349",
+      "state": "open",
+      "marker": "R3-20261023-004"
+    },
+    {
+      "issue_number": 350,
+      "title": "sqlite-open が default-directory を無視し、相対パスの DB を別のディレクトリに作成する",
+      "url": "https://github.com/SuzumiyaAoba/remacs/issues/350",
+      "state": "open",
+      "marker": "R3-20261023-005"
+    },
+    {
+      "issue_number": 351,
+      "title": "lisp_libs2 の CL 関連5テストが cl-lib を require せず、GNUでも void-function になる式を期待値と比較している",
+      "url": "https://github.com/SuzumiyaAoba/remacs/issues/351",
+      "state": "open",
+      "marker": "R3-20261023-006"
+    },
+    {
+      "issue_number": 352,
+      "title": "SQLite TEXT の復号が不正な UTF-8 を U+FFFD に置換し、ASCII の multibyte 状態も失う",
+      "url": "https://github.com/SuzumiyaAoba/remacs/issues/352",
+      "state": "open",
+      "marker": "R3-20261023-007"
+    },
+    {
+      "issue_number": 353,
+      "title": "compile_runs_subprocess_to_exit が出力受信を終了待ちと扱い、実行中プロセスを kill して偽失敗する",
+      "url": "https://github.com/SuzumiyaAoba/remacs/issues/353",
+      "state": "open",
+      "marker": "R3-20261023-008"
+    },
+    {
+      "issue_number": 354,
+      "title": "file-notify のコールバックがエラーになると、待機中の別ファイルの通知まで失われる",
+      "url": "https://github.com/SuzumiyaAoba/remacs/issues/354",
+      "state": "open",
+      "marker": "R3-20261023-009"
+    }
+  ]
+}

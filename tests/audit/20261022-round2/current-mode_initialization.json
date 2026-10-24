@@ -1,0 +1,349 @@
+{
+  "head": "926cbfc7fe1ddde28c53d0555be1f6b99563535b",
+  "worktree_head": "4fa55e5f05311b26e5af242c09397c7583cad14f",
+  "binary_sha256": "37aec7800115143d785086fa184114757237776c93c892e30696644b5c255017",
+  "runs": [
+    {
+      "id": "mode-init:lisp-locals",
+      "group": "mode_initialization",
+      "form": "(with-temp-buffer (lisp-mode) (list lisp-indent-function (and font-lock-defaults t) find-tag-default-function comment-start-skip))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mode_initialization.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.29,
+      "value": "(ok (common-lisp-indent-function t lisp-find-tag-default \"\\\\(\\\\(^\\\\|[^\\\\\\n]\\\\)\\\\(\\\\\\\\\\\\\\\\\\\\)*\\\\)\\\\(;+\\\\|#|\\\\) *\"))",
+      "stdout": "mode-init-lisp-locals.current.gnu.out",
+      "stderr": "mode-init-lisp-locals.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode-init:lisp-locals",
+      "group": "mode_initialization",
+      "form": "(with-temp-buffer (lisp-mode) (list lisp-indent-function (and font-lock-defaults t) find-tag-default-function comment-start-skip))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mode_initialization.el"
+      ],
+      "returncode": 0,
+      "seconds": 12.76,
+      "value": "(ok (lisp-indent-function nil nil \";+ *\"))",
+      "stdout": "mode-init-lisp-locals.current.remacs.out",
+      "stderr": "mode-init-lisp-locals.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "mode-init:lisp-font-lock",
+      "group": "mode_initialization",
+      "form": "(with-temp-buffer (insert \"(defun foo (x) x)\") (lisp-mode) (font-lock-mode 1) (font-lock-ensure) (list (get-text-property 2 'face) (get-text-property 8 'face)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mode_initialization.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.29,
+      "value": "(ok (font-lock-keyword-face font-lock-function-name-face))",
+      "stdout": "mode-init-lisp-font-lock.current.gnu.out",
+      "stderr": "mode-init-lisp-font-lock.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode-init:lisp-font-lock",
+      "group": "mode_initialization",
+      "form": "(with-temp-buffer (insert \"(defun foo (x) x)\") (lisp-mode) (font-lock-mode 1) (font-lock-ensure) (list (get-text-property 2 'face) (get-text-property 8 'face)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mode_initialization.el"
+      ],
+      "returncode": 0,
+      "seconds": 12.69,
+      "value": "(ok (nil nil))",
+      "stdout": "mode-init-lisp-font-lock.current.remacs.out",
+      "stderr": "mode-init-lisp-font-lock.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "mode-init:lisp-require",
+      "group": "mode_initialization",
+      "form": "(progn (require 'lisp-mode) (with-temp-buffer (lisp-mode) (list lisp-indent-function (and font-lock-defaults t))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mode_initialization.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.32,
+      "value": "(ok (common-lisp-indent-function t))",
+      "stdout": "mode-init-lisp-require.current.gnu.out",
+      "stderr": "mode-init-lisp-require.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode-init:lisp-require",
+      "group": "mode_initialization",
+      "form": "(progn (require 'lisp-mode) (with-temp-buffer (lisp-mode) (list lisp-indent-function (and font-lock-defaults t))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mode_initialization.el"
+      ],
+      "returncode": 0,
+      "seconds": 12.71,
+      "value": "(ok (lisp-indent-function nil))",
+      "stdout": "mode-init-lisp-require.current.remacs.out",
+      "stderr": "mode-init-lisp-require.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "mode-init:lisp-reload",
+      "group": "mode_initialization",
+      "form": "(progn (load \"lisp-mode\" nil t) (with-temp-buffer (lisp-mode) (list lisp-indent-function (and font-lock-defaults t))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mode_initialization.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.25,
+      "value": "(ok (common-lisp-indent-function t))",
+      "stdout": "mode-init-lisp-reload.current.gnu.out",
+      "stderr": "mode-init-lisp-reload.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode-init:lisp-reload",
+      "group": "mode_initialization",
+      "form": "(progn (load \"lisp-mode\" nil t) (with-temp-buffer (lisp-mode) (list lisp-indent-function (and font-lock-defaults t))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mode_initialization.el"
+      ],
+      "returncode": 0,
+      "seconds": 15.49,
+      "value": "(ok (common-lisp-indent-function t))",
+      "stdout": "mode-init-lisp-reload.current.remacs.out",
+      "stderr": "mode-init-lisp-reload.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "mode-init:lisp-data",
+      "group": "mode_initialization",
+      "form": "(with-temp-buffer (lisp-data-mode) (list (and font-lock-defaults t) (char-syntax 124) (char-syntax 35)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mode_initialization.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.25,
+      "value": "(ok (t 95 39))",
+      "stdout": "mode-init-lisp-data.current.gnu.out",
+      "stderr": "mode-init-lisp-data.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode-init:lisp-data",
+      "group": "mode_initialization",
+      "form": "(with-temp-buffer (lisp-data-mode) (list (and font-lock-defaults t) (char-syntax 124) (char-syntax 35)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mode_initialization.el"
+      ],
+      "returncode": 0,
+      "seconds": 12.56,
+      "value": "(ok (nil 95 39))",
+      "stdout": "mode-init-lisp-data.current.remacs.out",
+      "stderr": "mode-init-lisp-data.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "mode-init:org-require",
+      "group": "mode_initialization",
+      "form": "(progn (require 'org) 'loaded)",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mode_initialization.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.5,
+      "value": "(ok loaded)",
+      "stdout": "mode-init-org-require.current.gnu.out",
+      "stderr": "mode-init-org-require.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode-init:org-require",
+      "group": "mode_initialization",
+      "form": "(progn (require 'org) 'loaded)",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mode_initialization.el"
+      ],
+      "returncode": 0,
+      "seconds": 86.47,
+      "value": "(ok loaded)",
+      "stdout": "mode-init-org-require.current.remacs.out",
+      "stderr": "mode-init-org-require.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "mode-init:org-empty",
+      "group": "mode_initialization",
+      "form": "(with-temp-buffer (org-mode) major-mode)",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mode_initialization.el"
+      ],
+      "returncode": 0,
+      "seconds": 1.8,
+      "value": "(ok org-mode)",
+      "stdout": "mode-init-org-empty.current.gnu.out",
+      "stderr": "mode-init-org-empty.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode-init:org-empty",
+      "group": "mode_initialization",
+      "form": "(with-temp-buffer (org-mode) major-mode)",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mode_initialization.el"
+      ],
+      "returncode": null,
+      "seconds": 90.02,
+      "value": "",
+      "stdout": "mode-init-org-empty.current.remacs.out",
+      "stderr": "mode-init-org-empty.current.remacs.err",
+      "complete": false
+    },
+    {
+      "id": "mode-init:org-fontlock",
+      "group": "mode_initialization",
+      "form": "(with-temp-buffer (insert \"* Heading\\n\") (org-mode) (font-lock-mode 1) (font-lock-ensure) (get-text-property 1 'face))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mode_initialization.el"
+      ],
+      "returncode": 0,
+      "seconds": 1.9,
+      "value": "(ok org-level-1)",
+      "stdout": "mode-init-org-fontlock.current.gnu.out",
+      "stderr": "mode-init-org-fontlock.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode-init:org-fontlock",
+      "group": "mode_initialization",
+      "form": "(with-temp-buffer (insert \"* Heading\\n\") (org-mode) (font-lock-mode 1) (font-lock-ensure) (get-text-property 1 'face))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mode_initialization.el"
+      ],
+      "returncode": null,
+      "seconds": 90.02,
+      "value": "",
+      "stdout": "mode-init-org-fontlock.current.remacs.out",
+      "stderr": "mode-init-org-fontlock.current.remacs.err",
+      "complete": false
+    },
+    {
+      "id": "mode-init:org-indent",
+      "group": "mode_initialization",
+      "form": "(with-temp-buffer (insert \"* Heading\\ntext\\n\") (org-mode) (indent-region 1 (point-max)) (buffer-string))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mode_initialization.el"
+      ],
+      "returncode": 0,
+      "seconds": 2.52,
+      "value": "(ok \"* Heading\\ntext\\n\")",
+      "stdout": "mode-init-org-indent.current.gnu.out",
+      "stderr": "mode-init-org-indent.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "mode-init:org-indent",
+      "group": "mode_initialization",
+      "form": "(with-temp-buffer (insert \"* Heading\\ntext\\n\") (org-mode) (indent-region 1 (point-max)) (buffer-string))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mode_initialization.el"
+      ],
+      "returncode": 0,
+      "seconds": 79.36,
+      "value": "(error (void-function keyword))",
+      "stdout": "mode-init-org-indent.current.remacs.out",
+      "stderr": "mode-init-org-indent.current.remacs.err",
+      "complete": true
+    }
+  ]
+}

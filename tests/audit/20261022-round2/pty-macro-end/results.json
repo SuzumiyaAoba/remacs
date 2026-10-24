@@ -1,0 +1,46 @@
+[
+  {
+    "case": "kbd-end",
+    "side": "gnu",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 6.47,
+    "saved_hex": "780a",
+    "saved_text": "x\n",
+    "input_hex": [
+      "1828",
+      "78",
+      "1829"
+    ],
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "-nw",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-macro-end/kbd-end.gnu.txt"
+    ],
+    "tail": "\u001b=\u001b>\r\u001b=File Edit Options Buffers Tools Lisp-Interaction Help                           \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  *scratch*      All L1     (Lisp Interaction ElDoc) ----------------\r\nFor information about GNU Emacs and the GNU system, type C-h C-a.\nFor information about GNU Emacs and the GNU system, type C-h C-a.File Edit Options Buffers Tools Text Help                                       \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  kbd-end.gnu.txt   All L1     (Text) -------------------------------\r\nDefining kbd macro...\nDefining kbd macro...File Edit Options Buffers Tools Text Help                                       \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  kbd-end.gnu.txt   All L1     (Text Def) ---------------------------\r\nx**Keyboard macro defined) ----20261022-round2/pty-macro-end/kbd-end.gnu.txt...\rSaving file /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/\\\r\n2-round2/pty-macro-end/kbd-end.gnu.txt\rWrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/202610--\u001b>\r"
+  },
+  {
+    "case": "kbd-end",
+    "side": "remacs",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 15.76,
+    "saved_hex": "78780a",
+    "saved_text": "xx\n",
+    "input_hex": [
+      "1828",
+      "78",
+      "1829"
+    ],
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "-nw",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-macro-end/kbd-end.remacs.txt"
+    ],
+    "tail": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            ----- kbd-end.remacs.txt   L2 C0  [sel]                                         Wrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/2026102"
+  }
+]

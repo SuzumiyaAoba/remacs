@@ -1,0 +1,20 @@
+{
+  "head": "ddb739830ec89144612d2cf7755b1115ef5b1058",
+  "started_at": "2026-10-22T15:10:45.378720+00:00",
+  "exhaustive": false,
+  "status": "finished",
+  "binary_sha256": "b8a44a4e398cc83e08f95a5502a75ebe56fb629a83ecbe66b7060512f86d9961",
+  "exclusions": {
+    "isearch-forward": "前回GNU batchの入力待ちで停止したケース。既存除外を明示継承。",
+    "isearch-forward-regexp": "GNU batch interactive input wait; explicitly terminated owned child; resumed remaining targets."
+  },
+  "known_mask_source": "tests/diff/known.txt",
+  "known_masks_are_not_proof": true,
+  "returncode": 1,
+  "finished_at": "2026-10-22T15:15:24.820943+00:00",
+  "driver_output_path_note": "After the first GNU attempt, audit-local Lisp paths were added to the copied driver. See report.txt.",
+  "isolated_control_results": "../differential-isolated/differences.json",
+  "unmasked_differences": 10,
+  "matched_when_isolated": 9,
+  "resource_state_difference": "dump-emacs-portable: GNU rejects existing overlays; Remacs rejects existing process objects. Both states are invalid."
+}

@@ -1,0 +1,338 @@
+[
+  {
+    "id": "closure:dotted-constructor-only",
+    "side": "gnu",
+    "metadata": {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_library_lifecycle_more.el"
+      ],
+      "only": "closure:dotted-constructor-only",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.19446,
+      "completed": true,
+      "stdout_file": "library_lifecycle_more.gnu-closure-dotted-constructor-only.out",
+      "stderr_file": "library_lifecycle_more.gnu-closure-dotted-constructor-only.err"
+    },
+    "values": {
+      "closure:dotted-constructor-only": "(ok t)"
+    },
+    "forms": {
+      "closure:dotted-constructor-only": "(functionp (make-interpreted-closure '(a . b) '(a) nil))"
+    }
+  },
+  {
+    "id": "closure:dotted-constructor-only",
+    "side": "remacs",
+    "metadata": {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_library_lifecycle_more.el"
+      ],
+      "only": "closure:dotted-constructor-only",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 8.134529,
+      "completed": true,
+      "stdout_file": "library_lifecycle_more.remacs-closure-dotted-constructor-only.out",
+      "stderr_file": "library_lifecycle_more.remacs-closure-dotted-constructor-only.err"
+    },
+    "values": {
+      "closure:dotted-constructor-only": "(error (wrong-type-argument listp b))"
+    },
+    "forms": {
+      "closure:dotted-constructor-only": "(functionp (make-interpreted-closure '(a . b) '(a) nil))"
+    }
+  },
+  {
+    "id": "sqlite:open-default-directory",
+    "side": "gnu",
+    "metadata": {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_sqlite_lifecycle_more.el"
+      ],
+      "only": "sqlite:open-default-directory",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.198617,
+      "completed": true,
+      "stdout_file": "sqlite_lifecycle_more.gnu-sqlite-open-default-directory.out",
+      "stderr_file": "sqlite_lifecycle_more.gnu-sqlite-open-default-directory.err"
+    },
+    "values": {
+      "sqlite:open-default-directory": "(ok (t t nil))"
+    },
+    "forms": {
+      "sqlite:open-default-directory": "(let* ((dir (file-name-as-directory (make-temp-file \"remacs-sqlite-dir-\" t))) (original-directory default-directory) (base (concat (make-temp-name \"remacs-sqlite-relative-\") \".sqlite\")) (wanted (expand-file-name base dir)) (unwanted (expand-file-name base original-directory)) db) (unwind-protect (let ((default-directory dir)) (setq db (sqlite-open base)) (list (sqlitep db) (file-exists-p wanted) (file-exists-p unwanted))) (when db (sqlite-close db)) (when (file-exists-p unwanted) (delete-file unwanted)) (delete-directory dir t)))"
+    }
+  },
+  {
+    "id": "sqlite:open-default-directory",
+    "side": "remacs",
+    "metadata": {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_sqlite_lifecycle_more.el"
+      ],
+      "only": "sqlite:open-default-directory",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 8.098812,
+      "completed": true,
+      "stdout_file": "sqlite_lifecycle_more.remacs-sqlite-open-default-directory.out",
+      "stderr_file": "sqlite_lifecycle_more.remacs-sqlite-open-default-directory.err"
+    },
+    "values": {
+      "sqlite:open-default-directory": "(ok (t nil t))"
+    },
+    "forms": {
+      "sqlite:open-default-directory": "(let* ((dir (file-name-as-directory (make-temp-file \"remacs-sqlite-dir-\" t))) (original-directory default-directory) (base (concat (make-temp-name \"remacs-sqlite-relative-\") \".sqlite\")) (wanted (expand-file-name base dir)) (unwanted (expand-file-name base original-directory)) db) (unwind-protect (let ((default-directory dir)) (setq db (sqlite-open base)) (list (sqlitep db) (file-exists-p wanted) (file-exists-p unwanted))) (when db (sqlite-close db)) (when (file-exists-p unwanted) (delete-file unwanted)) (delete-directory dir t)))"
+    }
+  },
+  {
+    "id": "sqlite:gc-open-transaction",
+    "side": "gnu",
+    "metadata": {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_sqlite_lifecycle_more.el"
+      ],
+      "only": "sqlite:gc-open-transaction",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.219891,
+      "completed": true,
+      "stdout_file": "sqlite_lifecycle_more.gnu-sqlite-gc-open-transaction.out",
+      "stderr_file": "sqlite_lifecycle_more.gnu-sqlite-gc-open-transaction.err"
+    },
+    "values": {
+      "sqlite:gc-open-transaction": "(ok sqlite-locked-error)"
+    },
+    "forms": {
+      "sqlite:gc-open-transaction": "(audit-sqlite-gc-lock nil)"
+    }
+  },
+  {
+    "id": "sqlite:gc-open-transaction",
+    "side": "remacs",
+    "metadata": {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_sqlite_lifecycle_more.el"
+      ],
+      "only": "sqlite:gc-open-transaction",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 8.891772,
+      "completed": true,
+      "stdout_file": "sqlite_lifecycle_more.remacs-sqlite-gc-open-transaction.out",
+      "stderr_file": "sqlite_lifecycle_more.remacs-sqlite-gc-open-transaction.err"
+    },
+    "values": {
+      "sqlite:gc-open-transaction": "(ok sqlite-locked-error)"
+    },
+    "forms": {
+      "sqlite:gc-open-transaction": "(audit-sqlite-gc-lock nil)"
+    }
+  },
+  {
+    "id": "sqlite:gc-explicit-close-control",
+    "side": "gnu",
+    "metadata": {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_sqlite_lifecycle_more.el"
+      ],
+      "only": "sqlite:gc-explicit-close-control",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.214668,
+      "completed": true,
+      "stdout_file": "sqlite_lifecycle_more.gnu-sqlite-gc-explicit-close-control.out",
+      "stderr_file": "sqlite_lifecycle_more.gnu-sqlite-gc-explicit-close-control.err"
+    },
+    "values": {
+      "sqlite:gc-explicit-close-control": "(ok 1)"
+    },
+    "forms": {
+      "sqlite:gc-explicit-close-control": "(audit-sqlite-gc-lock t)"
+    }
+  },
+  {
+    "id": "sqlite:gc-explicit-close-control",
+    "side": "remacs",
+    "metadata": {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_sqlite_lifecycle_more.el"
+      ],
+      "only": "sqlite:gc-explicit-close-control",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 8.899287,
+      "completed": true,
+      "stdout_file": "sqlite_lifecycle_more.remacs-sqlite-gc-explicit-close-control.out",
+      "stderr_file": "sqlite_lifecycle_more.remacs-sqlite-gc-explicit-close-control.err"
+    },
+    "values": {
+      "sqlite:gc-explicit-close-control": "(ok 1)"
+    },
+    "forms": {
+      "sqlite:gc-explicit-close-control": "(audit-sqlite-gc-lock t)"
+    }
+  },
+  {
+    "id": "sqlite:gc-active-set",
+    "side": "gnu",
+    "metadata": {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_sqlite_lifecycle_more.el"
+      ],
+      "only": "sqlite:gc-active-set",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.20546,
+      "completed": true,
+      "stdout_file": "sqlite_lifecycle_more.gnu-sqlite-gc-active-set.out",
+      "stderr_file": "sqlite_lifecycle_more.gnu-sqlite-gc-active-set.err"
+    },
+    "values": {
+      "sqlite:gc-active-set": "(ok sqlite-locked-error)"
+    },
+    "forms": {
+      "sqlite:gc-active-set": "(audit-sqlite-gc-set-lock nil)"
+    }
+  },
+  {
+    "id": "sqlite:gc-active-set",
+    "side": "remacs",
+    "metadata": {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_sqlite_lifecycle_more.el"
+      ],
+      "only": "sqlite:gc-active-set",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 8.795401,
+      "completed": true,
+      "stdout_file": "sqlite_lifecycle_more.remacs-sqlite-gc-active-set.out",
+      "stderr_file": "sqlite_lifecycle_more.remacs-sqlite-gc-active-set.err"
+    },
+    "values": {
+      "sqlite:gc-active-set": "(ok sqlite-locked-error)"
+    },
+    "forms": {
+      "sqlite:gc-active-set": "(audit-sqlite-gc-set-lock nil)"
+    }
+  },
+  {
+    "id": "sqlite:gc-explicit-finalize-control",
+    "side": "gnu",
+    "metadata": {
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_sqlite_lifecycle_more.el"
+      ],
+      "only": "sqlite:gc-explicit-finalize-control",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 0.203153,
+      "completed": true,
+      "stdout_file": "sqlite_lifecycle_more.gnu-sqlite-gc-explicit-finalize-control.out",
+      "stderr_file": "sqlite_lifecycle_more.gnu-sqlite-gc-explicit-finalize-control.err"
+    },
+    "values": {
+      "sqlite:gc-explicit-finalize-control": "(ok 1)"
+    },
+    "forms": {
+      "sqlite:gc-explicit-finalize-control": "(audit-sqlite-gc-set-lock t)"
+    }
+  },
+  {
+    "id": "sqlite:gc-explicit-finalize-control",
+    "side": "remacs",
+    "metadata": {
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "tests/audit_sqlite_lifecycle_more.el"
+      ],
+      "only": "sqlite:gc-explicit-finalize-control",
+      "skip": null,
+      "returncode": 0,
+      "timed_out": false,
+      "timeout_seconds": 60,
+      "elapsed_seconds": 8.685525,
+      "completed": true,
+      "stdout_file": "sqlite_lifecycle_more.remacs-sqlite-gc-explicit-finalize-control.out",
+      "stderr_file": "sqlite_lifecycle_more.remacs-sqlite-gc-explicit-finalize-control.err"
+    },
+    "values": {
+      "sqlite:gc-explicit-finalize-control": "(ok 1)"
+    },
+    "forms": {
+      "sqlite:gc-explicit-finalize-control": "(audit-sqlite-gc-set-lock t)"
+    }
+  }
+]

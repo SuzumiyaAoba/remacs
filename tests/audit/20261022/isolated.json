@@ -1,0 +1,1488 @@
+{
+  "head": "38af4d1d720760348e725dac51f8c4252c2b03d5",
+  "binary_sha256": "eda1dd4d5a51a5e6a3ee96908f8e92e19003e88eae38f4fc044c096ed416afbe",
+  "runs": [
+    {
+      "id": "overlay:remove-middle",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abcdef\") (let ((o (make-overlay 1 7))) (overlay-put o 'face 'bold) (remove-overlays 3 5) (mapcar (lambda (x) (list (overlay-start x) (overlay-end x) (overlay-get x 'face))) (sort (overlays-in 1 7) (lambda (a b) (< (overlay-start a) (overlay-start b)))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok ((1 3 bold) (5 7 bold)))",
+      "stdout": "overlay-remove-middle.gnu.out",
+      "stderr": "overlay-remove-middle.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:remove-middle",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abcdef\") (let ((o (make-overlay 1 7))) (overlay-put o 'face 'bold) (remove-overlays 3 5) (mapcar (lambda (x) (list (overlay-start x) (overlay-end x) (overlay-get x 'face))) (sort (overlays-in 1 7) (lambda (a b) (< (overlay-start a) (overlay-start b)))))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.01,
+      "value": "(ok ((1 3 bold) (5 7 bold)))",
+      "stdout": "overlay-remove-middle.remacs.out",
+      "stderr": "overlay-remove-middle.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:remove-category",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((cat (make-symbol \"audit-category\")) (o (make-overlay 1 4))) (put cat 'audit-tag t) (overlay-put o 'category cat) (remove-overlays 1 4 'audit-tag t) (and (overlay-buffer o) t)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok nil)",
+      "stdout": "overlay-remove-category.gnu.out",
+      "stderr": "overlay-remove-category.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:remove-category",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((cat (make-symbol \"audit-category\")) (o (make-overlay 1 4))) (put cat 'audit-tag t) (overlay-put o 'category cat) (remove-overlays 1 4 'audit-tag t) (and (overlay-buffer o) t)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.0,
+      "value": "(ok nil)",
+      "stdout": "overlay-remove-category.remacs.out",
+      "stderr": "overlay-remove-category.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:remove-narrowed-default",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abcdef\") (let ((a (make-overlay 1 2)) (b (make-overlay 3 4)) (c (make-overlay 6 7))) (narrow-to-region 3 5) (remove-overlays) (mapcar (lambda (o) (and (overlay-buffer o) t)) (list a b c))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (t nil t))",
+      "stdout": "overlay-remove-narrowed-default.gnu.out",
+      "stderr": "overlay-remove-narrowed-default.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:remove-narrowed-default",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abcdef\") (let ((a (make-overlay 1 2)) (b (make-overlay 3 4)) (c (make-overlay 6 7))) (narrow-to-region 3 5) (remove-overlays) (mapcar (lambda (o) (and (overlay-buffer o) t)) (list a b c))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.03,
+      "value": "(ok (t nil t))",
+      "stdout": "overlay-remove-narrowed-default.remacs.out",
+      "stderr": "overlay-remove-narrowed-default.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:markers",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((o (make-overlay (copy-marker 1) (copy-marker 3)))) (move-overlay o (copy-marker 2) (copy-marker 4)) (list (overlay-start o) (overlay-end o) (length (overlays-at (copy-marker 2))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (2 4 1))",
+      "stdout": "overlay-markers.gnu.out",
+      "stderr": "overlay-markers.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:markers",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((o (make-overlay (copy-marker 1) (copy-marker 3)))) (move-overlay o (copy-marker 2) (copy-marker 4)) (list (overlay-start o) (overlay-end o) (length (overlays-at (copy-marker 2))))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.3,
+      "value": "(ok (2 4 1))",
+      "stdout": "overlay-markers.remacs.out",
+      "stderr": "overlay-markers.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:fake",
+      "group": "overlay_edges",
+      "form": "(list (overlayp [overlay 0 0]) (condition-case e (overlay-start [overlay 0 0]) (error (car e))) (condition-case e (overlay-put [overlay 0 0] 'x 1) (error (car e))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (nil wrong-type-argument wrong-type-argument))",
+      "stdout": "overlay-fake.gnu.out",
+      "stderr": "overlay-fake.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:fake",
+      "group": "overlay_edges",
+      "form": "(list (overlayp [overlay 0 0]) (condition-case e (overlay-start [overlay 0 0]) (error (car e))) (condition-case e (overlay-put [overlay 0 0] 'x 1) (error (car e))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.29,
+      "value": "(ok (nil nil 1))",
+      "stdout": "overlay-fake.remacs.out",
+      "stderr": "overlay-fake.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:dead-buffer-properties",
+      "group": "overlay_edges",
+      "form": "(let* ((b (generate-new-buffer \" *audit-dead*\")) (o (make-overlay 1 1 b))) (overlay-put o 'x 1) (kill-buffer b) (list (overlay-buffer o) (overlay-start o) (overlay-get o 'x) (progn (overlay-put o 'y 2) (overlay-get o 'y))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (nil nil 1 2))",
+      "stdout": "overlay-dead-buffer-properties.gnu.out",
+      "stderr": "overlay-dead-buffer-properties.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:dead-buffer-properties",
+      "group": "overlay_edges",
+      "form": "(let* ((b (generate-new-buffer \" *audit-dead*\")) (o (make-overlay 1 1 b))) (overlay-put o 'x 1) (kill-buffer b) (list (overlay-buffer o) (overlay-start o) (overlay-get o 'x) (progn (overlay-put o 'y 2) (overlay-get o 'y))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.26,
+      "value": "(ok (nil nil nil nil))",
+      "stdout": "overlay-dead-buffer-properties.remacs.out",
+      "stderr": "overlay-dead-buffer-properties.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:revive-after-kill",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let* ((b (generate-new-buffer \" *audit-dead*\")) (o (make-overlay 1 1 b))) (overlay-put o 'x 1) (kill-buffer b) (move-overlay o 1 3 (current-buffer)) (list (eq (overlay-buffer o) (current-buffer)) (overlay-start o) (overlay-get o 'x))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok (t 1 1))",
+      "stdout": "overlay-revive-after-kill.gnu.out",
+      "stderr": "overlay-revive-after-kill.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:revive-after-kill",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let* ((b (generate-new-buffer \" *audit-dead*\")) (o (make-overlay 1 1 b))) (overlay-put o 'x 1) (kill-buffer b) (move-overlay o 1 3 (current-buffer)) (list (eq (overlay-buffer o) (current-buffer)) (overlay-start o) (overlay-get o 'x))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.58,
+      "value": "(ok (nil nil nil))",
+      "stdout": "overlay-revive-after-kill.remacs.out",
+      "stderr": "overlay-revive-after-kill.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:copy-deleted",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((o (make-overlay 1 3))) (overlay-put o 'x 1) (delete-overlay o) (let ((c (copy-overlay o))) (list (overlay-buffer c) (overlay-start c) (overlay-get c 'x)))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok (nil nil 1))",
+      "stdout": "overlay-copy-deleted.gnu.out",
+      "stderr": "overlay-copy-deleted.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:copy-deleted",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((o (make-overlay 1 3))) (overlay-put o 'x 1) (delete-overlay o) (let ((c (copy-overlay o))) (list (overlay-buffer c) (overlay-start c) (overlay-get c 'x)))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.65,
+      "value": "(ok (nil nil 1))",
+      "stdout": "overlay-copy-deleted.remacs.out",
+      "stderr": "overlay-copy-deleted.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:category-evaporate",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((cat (make-symbol \"audit-evap\")) (o (make-overlay 1 3))) (put cat 'evaporate t) (overlay-put o 'category cat) (delete-region 1 3) (list (overlay-start o) (and (overlay-buffer o) t))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.23,
+      "value": "(ok (nil nil))",
+      "stdout": "overlay-category-evaporate.gnu.out",
+      "stderr": "overlay-category-evaporate.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:category-evaporate",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((cat (make-symbol \"audit-evap\")) (o (make-overlay 1 3))) (put cat 'evaporate t) (overlay-put o 'category cat) (delete-region 1 3) (list (overlay-start o) (and (overlay-buffer o) t))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.61,
+      "value": "(ok (1 t))",
+      "stdout": "overlay-category-evaporate.remacs.out",
+      "stderr": "overlay-category-evaporate.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:sorted-priority-cons",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((a (make-overlay 1 4)) (b (make-overlay 1 4))) (overlay-put a 'priority '(nil . 10)) (overlay-put b 'priority '(nil . 1)) (overlay-put a 'face 'bold) (overlay-put b 'face 'italic) (list (eq a (car (overlays-at 2 t))) (get-char-property 2 'face))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (t bold))",
+      "stdout": "overlay-sorted-priority-cons.gnu.out",
+      "stderr": "overlay-sorted-priority-cons.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:sorted-priority-cons",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((a (make-overlay 1 4)) (b (make-overlay 1 4))) (overlay-put a 'priority '(nil . 10)) (overlay-put b 'priority '(nil . 1)) (overlay-put a 'face 'bold) (overlay-put b 'face 'italic) (list (eq a (car (overlays-at 2 t))) (get-char-property 2 'face))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.48,
+      "value": "(ok (nil italic))",
+      "stdout": "overlay-sorted-priority-cons.remacs.out",
+      "stderr": "overlay-sorted-priority-cons.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:sorted-nesting",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abcdef\") (let ((a (make-overlay 3 5)) (b (make-overlay 1 5))) (overlay-put a 'face 'bold) (overlay-put b 'face 'italic) (list (eq a (car (overlays-at 3 t))) (get-char-property 3 'face))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok (t bold))",
+      "stdout": "overlay-sorted-nesting.gnu.out",
+      "stderr": "overlay-sorted-nesting.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:sorted-nesting",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abcdef\") (let ((a (make-overlay 3 5)) (b (make-overlay 1 5))) (overlay-put a 'face 'bold) (overlay-put b 'face 'italic) (list (eq a (car (overlays-at 3 t))) (get-char-property 3 'face))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.48,
+      "value": "(ok (nil italic))",
+      "stdout": "overlay-sorted-nesting.remacs.out",
+      "stderr": "overlay-sorted-nesting.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:modification-hooks",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abcd\") (let ((events nil) (o (make-overlay 1 5))) (overlay-put o 'modification-hooks (list (lambda (_ after beg end &optional old) (push (list after beg end old) events)))) (delete-region 2 3) (nreverse events)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok ((nil 2 3 nil) (t 2 2 1)))",
+      "stdout": "overlay-modification-hooks.gnu.out",
+      "stderr": "overlay-modification-hooks.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:modification-hooks",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abcd\") (let ((events nil) (o (make-overlay 1 5))) (overlay-put o 'modification-hooks (list (lambda (_ after beg end &optional old) (push (list after beg end old) events)))) (delete-region 2 3) (nreverse events)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.48,
+      "value": "(ok ((nil 2 3 nil) (t 2 2 1)))",
+      "stdout": "overlay-modification-hooks.remacs.out",
+      "stderr": "overlay-modification-hooks.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:insert-boundary-hooks",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abcd\") (let ((events nil) (o (make-overlay 2 4))) (overlay-put o 'insert-in-front-hooks (list (lambda (_ after beg end &optional old) (push (list after beg end old) events)))) (goto-char 2) (insert \"X\") (nreverse events)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok ((nil 2 2 nil) (t 2 3 0)))",
+      "stdout": "overlay-insert-boundary-hooks.gnu.out",
+      "stderr": "overlay-insert-boundary-hooks.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:insert-boundary-hooks",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abcd\") (let ((events nil) (o (make-overlay 2 4))) (overlay-put o 'insert-in-front-hooks (list (lambda (_ after beg end &optional old) (push (list after beg end old) events)))) (goto-char 2) (insert \"X\") (nreverse events)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 10.64,
+      "value": "(ok ((nil 2 2 nil) (t 2 3 0)))",
+      "stdout": "overlay-insert-boundary-hooks.remacs.out",
+      "stderr": "overlay-insert-boundary-hooks.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:read-only",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abcd\") (let ((o (make-overlay 1 5))) (overlay-put o 'read-only t) (list (condition-case e (progn (delete-region 2 3) 'deleted) (error (car e))) (buffer-string))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (deleted \"acd\"))",
+      "stdout": "overlay-read-only.gnu.out",
+      "stderr": "overlay-read-only.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:read-only",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abcd\") (let ((o (make-overlay 1 5))) (overlay-put o 'read-only t) (list (condition-case e (progn (delete-region 2 3) 'deleted) (error (car e))) (buffer-string))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 10.57,
+      "value": "(ok (deleted \"acd\"))",
+      "stdout": "overlay-read-only.remacs.out",
+      "stderr": "overlay-read-only.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:category-visible",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((o (make-overlay 1 4)) (cat (make-symbol \"audit-cat\"))) (put cat 'face 'bold) (overlay-put o 'category cat) (list (overlay-get o 'face) (get-char-property 2 'face))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.23,
+      "value": "(ok (bold bold))",
+      "stdout": "overlay-category-visible.gnu.out",
+      "stderr": "overlay-category-visible.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:category-visible",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((o (make-overlay 1 4)) (cat (make-symbol \"audit-cat\"))) (put cat 'face 'bold) (overlay-put o 'category cat) (list (overlay-get o 'face) (get-char-property 2 'face))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 10.51,
+      "value": "(ok (bold nil))",
+      "stdout": "overlay-category-visible.remacs.out",
+      "stderr": "overlay-category-visible.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:copy-independent-plist",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((o (make-overlay 1 3))) (overlay-put o 'face 'bold) (let ((c (copy-overlay o))) (overlay-put c 'face 'italic) (list (overlay-get o 'face) (overlay-get c 'face)))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (bold italic))",
+      "stdout": "overlay-copy-independent-plist.gnu.out",
+      "stderr": "overlay-copy-independent-plist.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:copy-independent-plist",
+      "group": "overlay_edges",
+      "form": "(with-temp-buffer (insert \"abc\") (let ((o (make-overlay 1 3))) (overlay-put o 'face 'bold) (let ((c (copy-overlay o))) (overlay-put c 'face 'italic) (list (overlay-get o 'face) (overlay-get c 'face)))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.99,
+      "value": "(ok (bold italic))",
+      "stdout": "overlay-copy-independent-plist.remacs.out",
+      "stderr": "overlay-copy-independent-plist.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:window-restricted",
+      "group": "overlay_edges",
+      "form": "(save-window-excursion (with-temp-buffer (insert \"abc\") (switch-to-buffer (current-buffer)) (let ((o (make-overlay 1 4)) (other (split-window))) (overlay-put o 'face 'bold) (overlay-put o 'window other) (list (get-char-property 2 'face (selected-window)) (get-char-property 2 'face other) (get-char-property 2 'face (current-buffer))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.18,
+      "value": "(ok (nil bold bold))",
+      "stdout": "overlay-window-restricted.gnu.out",
+      "stderr": "overlay-window-restricted.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:window-restricted",
+      "group": "overlay_edges",
+      "form": "(save-window-excursion (with-temp-buffer (insert \"abc\") (switch-to-buffer (current-buffer)) (let ((o (make-overlay 1 4)) (other (split-window))) (overlay-put o 'face 'bold) (overlay-put o 'window other) (list (get-char-property 2 'face (selected-window)) (get-char-property 2 'face other) (get-char-property 2 'face (current-buffer))))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.0,
+      "value": "(ok (bold bold bold))",
+      "stdout": "overlay-window-restricted.remacs.out",
+      "stderr": "overlay-window-restricted.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:make-dead-buffer",
+      "group": "overlay_edges",
+      "form": "(let ((b (generate-new-buffer \" *audit-dead-arg*\"))) (kill-buffer b) (condition-case e (make-overlay 1 1 b) (error (car e))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok error)",
+      "stdout": "overlay-make-dead-buffer.gnu.out",
+      "stderr": "overlay-make-dead-buffer.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "overlay:make-dead-buffer",
+      "group": "overlay_edges",
+      "form": "(let ((b (generate-new-buffer \" *audit-dead-arg*\"))) (kill-buffer b) (condition-case e (make-overlay 1 1 b) (error (car e))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_overlay_edges.el"
+      ],
+      "returncode": 101,
+      "seconds": 8.08,
+      "value": "",
+      "stdout": "overlay-make-dead-buffer.remacs.out",
+      "stderr": "overlay-make-dead-buffer.remacs.err",
+      "complete": false
+    },
+    {
+      "id": "json:null-nil",
+      "group": "json_edges",
+      "form": "(json-serialize [nil] :null-object nil)",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok \"[null]\")",
+      "stdout": "json-null-nil.gnu.out",
+      "stderr": "json-null-nil.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:null-nil",
+      "group": "json_edges",
+      "form": "(json-serialize [nil] :null-object nil)",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.99,
+      "value": "(ok \"[{}]\")",
+      "stdout": "json-null-nil.remacs.out",
+      "stderr": "json-null-nil.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:false-nil",
+      "group": "json_edges",
+      "form": "(json-serialize [nil] :false-object nil)",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok \"[false]\")",
+      "stdout": "json-false-nil.gnu.out",
+      "stderr": "json-false-nil.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:false-nil",
+      "group": "json_edges",
+      "form": "(json-serialize [nil] :false-object nil)",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.89,
+      "value": "(ok \"[{}]\")",
+      "stdout": "json-false-nil.remacs.out",
+      "stderr": "json-false-nil.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:sentinel-objects",
+      "group": "json_edges",
+      "form": "(let ((x (list 1))) (json-serialize (vector x) :null-object x))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok \"[null]\")",
+      "stdout": "json-sentinel-objects.gnu.out",
+      "stderr": "json-sentinel-objects.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:sentinel-objects",
+      "group": "json_edges",
+      "form": "(let ((x (list 1))) (json-serialize (vector x) :null-object x))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.95,
+      "value": "(error (wrong-type-argument consp nil))",
+      "stdout": "json-sentinel-objects.remacs.out",
+      "stderr": "json-sentinel-objects.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:sentinel-integer",
+      "group": "json_edges",
+      "form": "(json-serialize [42] :null-object 42)",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok \"[null]\")",
+      "stdout": "json-sentinel-integer.gnu.out",
+      "stderr": "json-sentinel-integer.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:sentinel-integer",
+      "group": "json_edges",
+      "form": "(json-serialize [42] :null-object 42)",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.89,
+      "value": "(ok \"[42]\")",
+      "stdout": "json-sentinel-integer.remacs.out",
+      "stderr": "json-sentinel-integer.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:sentinel-string",
+      "group": "json_edges",
+      "form": "(let ((x (copy-sequence \"null\"))) (json-serialize (vector x) :null-object x))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok \"[null]\")",
+      "stdout": "json-sentinel-string.gnu.out",
+      "stderr": "json-sentinel-string.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:sentinel-string",
+      "group": "json_edges",
+      "form": "(let ((x (copy-sequence \"null\"))) (json-serialize (vector x) :null-object x))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.9,
+      "value": "(ok \"[\\\"null\\\"]\")",
+      "stdout": "json-sentinel-string.remacs.out",
+      "stderr": "json-sentinel-string.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:parse-narrow",
+      "group": "json_edges",
+      "form": "(with-temp-buffer (insert \"[1,2]\") (narrow-to-region 1 4) (goto-char 1) (list (condition-case e (json-parse-buffer) (error (car e))) (point)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (json-end-of-file 1))",
+      "stdout": "json-parse-narrow.gnu.out",
+      "stderr": "json-parse-narrow.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:parse-narrow",
+      "group": "json_edges",
+      "form": "(with-temp-buffer (insert \"[1,2]\") (narrow-to-region 1 4) (goto-char 1) (list (condition-case e (json-parse-buffer) (error (car e))) (point)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.91,
+      "value": "(ok ([1 2] 4))",
+      "stdout": "json-parse-narrow.remacs.out",
+      "stderr": "json-parse-narrow.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:parse-error-point",
+      "group": "json_edges",
+      "form": "(with-temp-buffer (insert \"[1, bad]\") (goto-char 1) (list (condition-case e (json-parse-buffer) (error (car e))) (point)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.18,
+      "value": "(ok (json-parse-error 1))",
+      "stdout": "json-parse-error-point.gnu.out",
+      "stderr": "json-parse-error-point.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:parse-error-point",
+      "group": "json_edges",
+      "form": "(with-temp-buffer (insert \"[1, bad]\") (goto-char 1) (list (condition-case e (json-parse-buffer) (error (car e))) (point)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.89,
+      "value": "(ok (json-parse-error 1))",
+      "stdout": "json-parse-error-point.remacs.out",
+      "stderr": "json-parse-error-point.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:parse-trailing-point",
+      "group": "json_edges",
+      "form": "(with-temp-buffer (insert \"42   true\") (goto-char 1) (list (json-parse-buffer) (point)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (42 3))",
+      "stdout": "json-parse-trailing-point.gnu.out",
+      "stderr": "json-parse-trailing-point.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:parse-trailing-point",
+      "group": "json_edges",
+      "form": "(with-temp-buffer (insert \"42   true\") (goto-char 1) (list (json-parse-buffer) (point)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.83,
+      "value": "(ok (42 3))",
+      "stdout": "json-parse-trailing-point.remacs.out",
+      "stderr": "json-parse-trailing-point.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:duplicate-key",
+      "group": "json_edges",
+      "form": "(json-parse-string \"{\\\"a\\\":1,\\\"a\\\":2}\" :object-type 'alist)",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok ((a . 1) (a . 2)))",
+      "stdout": "json-duplicate-key.gnu.out",
+      "stderr": "json-duplicate-key.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:duplicate-key",
+      "group": "json_edges",
+      "form": "(json-parse-string \"{\\\"a\\\":1,\\\"a\\\":2}\" :object-type 'alist)",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.84,
+      "value": "(ok ((a . 1) (a . 2)))",
+      "stdout": "json-duplicate-key.remacs.out",
+      "stderr": "json-duplicate-key.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:large-int",
+      "group": "json_edges",
+      "form": "(json-parse-string \"12345678901234567890123456789012345678901234567890\")",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok 12345678901234567890123456789012345678901234567890)",
+      "stdout": "json-large-int.gnu.out",
+      "stderr": "json-large-int.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:large-int",
+      "group": "json_edges",
+      "form": "(json-parse-string \"12345678901234567890123456789012345678901234567890\")",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.0,
+      "value": "(ok 12345678901234567890123456789012345678901234567890)",
+      "stdout": "json-large-int.remacs.out",
+      "stderr": "json-large-int.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:serialize-large-int",
+      "group": "json_edges",
+      "form": "(json-serialize 12345678901234567890123456789012345678901234567890)",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok \"12345678901234567890123456789012345678901234567890\")",
+      "stdout": "json-serialize-large-int.gnu.out",
+      "stderr": "json-serialize-large-int.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:serialize-large-int",
+      "group": "json_edges",
+      "form": "(json-serialize 12345678901234567890123456789012345678901234567890)",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.05,
+      "value": "(ok \"12345678901234567890123456789012345678901234567890\")",
+      "stdout": "json-serialize-large-int.remacs.out",
+      "stderr": "json-serialize-large-int.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:utf8-input",
+      "group": "json_edges",
+      "form": "(string-to-list (json-parse-string (unibyte-string 34 195 169 34)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (233))",
+      "stdout": "json-utf8-input.gnu.out",
+      "stderr": "json-utf8-input.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:utf8-input",
+      "group": "json_edges",
+      "form": "(string-to-list (json-parse-string (unibyte-string 34 195 169 34)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.05,
+      "value": "(ok (4194243 4194217))",
+      "stdout": "json-utf8-input.remacs.out",
+      "stderr": "json-utf8-input.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:invalid-utf8-input",
+      "group": "json_edges",
+      "form": "(condition-case e (json-parse-string (unibyte-string 34 255 34)) (error (car e)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok json-utf8-decode-error)",
+      "stdout": "json-invalid-utf8-input.gnu.out",
+      "stderr": "json-invalid-utf8-input.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:invalid-utf8-input",
+      "group": "json_edges",
+      "form": "(condition-case e (json-parse-string (unibyte-string 34 255 34)) (error (car e)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.02,
+      "value": "(ok \"\\377\")",
+      "stdout": "json-invalid-utf8-input.remacs.out",
+      "stderr": "json-invalid-utf8-input.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:utf8-serialize",
+      "group": "json_edges",
+      "form": "(string-to-list (json-serialize (unibyte-string 195 169)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.18,
+      "value": "(error (wrong-type-argument json-value-p \"����\"))",
+      "stdout": "json-utf8-serialize.gnu.out",
+      "stderr": "json-utf8-serialize.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:utf8-serialize",
+      "group": "json_edges",
+      "form": "(string-to-list (json-serialize (unibyte-string 195 169)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.02,
+      "value": "(ok (34 243 176 131 131 243 176 130 169 34))",
+      "stdout": "json-utf8-serialize.remacs.out",
+      "stderr": "json-utf8-serialize.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:invalid-utf8-serialize",
+      "group": "json_edges",
+      "form": "(condition-case e (json-serialize (unibyte-string 255)) (error (car e)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok wrong-type-argument)",
+      "stdout": "json-invalid-utf8-serialize.gnu.out",
+      "stderr": "json-invalid-utf8-serialize.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:invalid-utf8-serialize",
+      "group": "json_edges",
+      "form": "(condition-case e (json-serialize (unibyte-string 255)) (error (car e)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.08,
+      "value": "(ok \"\\\"��������\\\"\")",
+      "stdout": "json-invalid-utf8-serialize.remacs.out",
+      "stderr": "json-invalid-utf8-serialize.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:insert-unibyte",
+      "group": "json_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (json-insert \"é\") (string-to-list (buffer-string)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (34 195 169 34))",
+      "stdout": "json-insert-unibyte.gnu.out",
+      "stderr": "json-insert-unibyte.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:insert-unibyte",
+      "group": "json_edges",
+      "form": "(with-temp-buffer (set-buffer-multibyte nil) (json-insert \"é\") (string-to-list (buffer-string)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.5,
+      "value": "(ok (34 233 34))",
+      "stdout": "json-insert-unibyte.remacs.out",
+      "stderr": "json-insert-unibyte.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:parse-nul-key",
+      "group": "json_edges",
+      "form": "(json-parse-string \"{\\\"a\\\\u0000b\\\":1}\" :object-type 'alist)",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok ((a\\\u0000b . 1)))",
+      "stdout": "json-parse-nul-key.gnu.out",
+      "stderr": "json-parse-nul-key.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:parse-nul-key",
+      "group": "json_edges",
+      "form": "(json-parse-string \"{\\\"a\\\\u0000b\\\":1}\" :object-type 'alist)",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.55,
+      "value": "(ok ((a\\\u0000b . 1)))",
+      "stdout": "json-parse-nul-key.remacs.out",
+      "stderr": "json-parse-nul-key.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:serialize-nul",
+      "group": "json_edges",
+      "form": "(json-serialize (string 97 0 98))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok \"\\\"a\\\\u0000b\\\"\")",
+      "stdout": "json-serialize-nul.gnu.out",
+      "stderr": "json-serialize-nul.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:serialize-nul",
+      "group": "json_edges",
+      "form": "(json-serialize (string 97 0 98))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.54,
+      "value": "(ok \"\\\"a\\\\u0000b\\\"\")",
+      "stdout": "json-serialize-nul.remacs.out",
+      "stderr": "json-serialize-nul.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:serialize-nul-key",
+      "group": "json_edges",
+      "form": "(json-serialize (list (cons (intern (string 97 0 98)) 1)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok \"{\\\"a\\\\u0000b\\\":1}\")",
+      "stdout": "json-serialize-nul-key.gnu.out",
+      "stderr": "json-serialize-nul-key.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:serialize-nul-key",
+      "group": "json_edges",
+      "form": "(json-serialize (list (cons (intern (string 97 0 98)) 1)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.96,
+      "value": "(ok \"{\\\"a\\\\u0000b\\\":1}\")",
+      "stdout": "json-serialize-nul-key.remacs.out",
+      "stderr": "json-serialize-nul-key.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:float-overflow",
+      "group": "json_edges",
+      "form": "(condition-case e (json-parse-string \"1e9999\") (error (car e)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok json-number-out-of-range-error)",
+      "stdout": "json-float-overflow.gnu.out",
+      "stderr": "json-float-overflow.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:float-overflow",
+      "group": "json_edges",
+      "form": "(condition-case e (json-parse-string \"1e9999\") (error (car e)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.91,
+      "value": "(ok 1.0e+INF)",
+      "stdout": "json-float-overflow.remacs.out",
+      "stderr": "json-float-overflow.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:float-negative-zero",
+      "group": "json_edges",
+      "form": "(let ((x (json-parse-string \"-0.0\"))) (list (floatp x) (copysign 1.0 x)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.22,
+      "value": "(ok (t -1.0))",
+      "stdout": "json-float-negative-zero.gnu.out",
+      "stderr": "json-float-negative-zero.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:float-negative-zero",
+      "group": "json_edges",
+      "form": "(let ((x (json-parse-string \"-0.0\"))) (list (floatp x) (copysign 1.0 x)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_edges.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.92,
+      "value": "(ok (t -1.0))",
+      "stdout": "json-float-negative-zero.remacs.out",
+      "stderr": "json-float-negative-zero.remacs.err",
+      "complete": true
+    }
+  ]
+}

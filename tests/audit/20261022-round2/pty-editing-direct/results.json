@@ -1,0 +1,348 @@
+[
+  {
+    "case": "unicode",
+    "side": "gnu",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 6.58,
+    "saved_hex": "41e697a5f09f9880420a",
+    "saved_text": "A日😀B\n",
+    "input_hex": [
+      "41e697a5f09f988042",
+      "0d"
+    ],
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "-nw",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing-direct/unicode.gnu.txt"
+    ],
+    "tail": "\u001b=\u001b>\r\u001b=File Edit Options Buffers Tools Lisp-Interaction Help                           \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  *scratch*      All L1     (Lisp Interaction ElDoc) ----------------\r\nFor information about GNU Emacs and the GNU system, type C-h C-a.\nFor information about GNU Emacs and the GNU system, type C-h C-a.File Edit Options Buffers Tools Text Help                                       \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  unicode.gnu.txt   All L1     (Text) -------------------------------\r\nA日😀B**2\n\n20261022-round2/pty-editing-direct/unicode.gnu.txt...\rSaving file /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/\\\r\n2-round2/pty-editing-direct/unicode.gnu.txt\rWrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/202610\n\n--\n\n\u001b>\r"
+  },
+  {
+    "case": "unicode",
+    "side": "remacs",
+    "ready": false,
+    "forced": true,
+    "returncode": -15,
+    "seconds": 30.08,
+    "saved_hex": "",
+    "saved_text": "",
+    "input_hex": [
+      "41e697a5f09f988042",
+      "0d"
+    ],
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "-nw",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing-direct/unicode.remacs.txt"
+    ],
+    "tail": ""
+  },
+  {
+    "case": "ctrl-edit",
+    "side": "gnu",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 6.07,
+    "saved_hex": "610a",
+    "saved_text": "a\n",
+    "input_hex": [
+      "05027f04"
+    ],
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "-nw",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing-direct/ctrl-edit.gnu.txt"
+    ],
+    "tail": "\u001b=\u001b>\r\u001b=File Edit Options Buffers Tools Lisp-Interaction Help                           \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  *scratch*      All L1     (Lisp Interaction ElDoc) ----------------\r\nFor information about GNU Emacs and the GNU system, type C-h C-a.\nFor information about GNU Emacs and the GNU system, type C-h C-a.File Edit Options Buffers Tools Text Help                                       \r\n\nabc\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UU-:--- F1  ctrl-edit.gnu.txt   All L1     (Text) -----------------------------\r\n**20261022-round2/pty-editing-direct/ctrl-edit.gnu.txt...\rSaving file /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/\\\r\n2-round2/pty-editing-direct/ctrl-edit.gnu.txt\rWrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/202610--\u001b>\r"
+  },
+  {
+    "case": "ctrl-edit",
+    "side": "remacs",
+    "ready": false,
+    "forced": true,
+    "returncode": -15,
+    "seconds": 30.1,
+    "saved_hex": "6162630a",
+    "saved_text": "abc\n",
+    "input_hex": [
+      "05027f04"
+    ],
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "-nw",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing-direct/ctrl-edit.remacs.txt"
+    ],
+    "tail": ""
+  },
+  {
+    "case": "undo",
+    "side": "gnu",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 7.02,
+    "saved_hex": "6162630a",
+    "saved_text": "abc\n",
+    "input_hex": [
+      "616263",
+      "0105",
+      "58",
+      "1f"
+    ],
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "-nw",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing-direct/undo.gnu.txt"
+    ],
+    "tail": "\u001b=\u001b>\r\u001b=File Edit Options Buffers Tools Lisp-Interaction Help                           \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  *scratch*      All L1     (Lisp Interaction ElDoc) ----------------\r\nFor information about GNU Emacs and the GNU system, type C-h C-a.\nFor information about GNU Emacs and the GNU system, type C-h C-a.File Edit Options Buffers Tools Text Help                                       \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  undo.gnu.txt   All L1     (Text) ----------------------------------\r\nabc**XUndo\b20261022-round2/pty-editing-direct/undo.gnu.txt...\rSaving file /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/\\\r\n2-round2/pty-editing-direct/undo.gnu.txt\rWrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/202610--\u001b>\r"
+  },
+  {
+    "case": "undo",
+    "side": "remacs",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 27.75,
+    "saved_hex": "616263580a",
+    "saved_text": "abcX\n",
+    "input_hex": [
+      "616263",
+      "0105",
+      "58",
+      "1f"
+    ],
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "-nw",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing-direct/undo.remacs.txt"
+    ],
+    "tail": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            ----- undo.remacs.txt   L2 C0  [sel]                                            Wrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/2026102"
+  },
+  {
+    "case": "isearch",
+    "side": "gnu",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 6.38,
+    "saved_hex": "6f6e652074776f58206f6e650a",
+    "saved_text": "one twoX one\n",
+    "input_hex": [
+      "1374776f0d",
+      "58"
+    ],
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "-nw",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing-direct/isearch.gnu.txt"
+    ],
+    "tail": "\u001b=\u001b>\r\u001b=File Edit Options Buffers Tools Lisp-Interaction Help                           \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  *scratch*      All L1     (Lisp Interaction ElDoc) ----------------\r\nFor information about GNU Emacs and the GNU system, type C-h C-a.\nFor information about GNU Emacs and the GNU system, type C-h C-a.File Edit Options Buffers Tools Text Help                                       \r\n\none two one\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UU-:--- F1  isearch.gnu.txt   All L1     (Text) -------------------------------\r\nIsearch Help Isearch) \nI-search: ttI-search: twwI-search: twooMark saved where search startedHelp        two) --------X one**\n\t20261022-round2/pty-editing-direct/isearch.gnu.txt...\rSaving file /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/\\\r\n\n\t2-round2/pty-editing-direct/isearch.gnu.txt\rWrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/202610\n\t--\n\t\n\t\u001b>\r"
+  },
+  {
+    "case": "isearch",
+    "side": "remacs",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 20.78,
+    "saved_hex": "6f6e652074776f58206f6e650a",
+    "saved_text": "one twoX one\n",
+    "input_hex": [
+      "1374776f0d",
+      "58"
+    ],
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "-nw",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing-direct/isearch.remacs.txt"
+    ],
+    "tail": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            ----- isearch.remacs.txt   L1 C8  [sel]                                         Wrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/2026102"
+  },
+  {
+    "case": "split",
+    "side": "gnu",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 7.0,
+    "saved_hex": "616263580a",
+    "saved_text": "abcX\n",
+    "input_hex": [
+      "1832",
+      "186f",
+      "0558",
+      "1831"
+    ],
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "-nw",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing-direct/split.gnu.txt"
+    ],
+    "tail": "\u001b=\u001b>\r\u001b=File Edit Options Buffers Tools Lisp-Interaction Help                           \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  *scratch*      All L1     (Lisp Interaction ElDoc) ----------------\r\nFor information about GNU Emacs and the GNU system, type C-h C-a.\nFor information about GNU Emacs and the GNU system, type C-h C-a.File Edit Options Buffers Tools Text Help                                       \r\n\nabc\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UU-:--- F1  split.gnu.txt   All L1     (Text) ---------------------------------\r\n-UU-:--- F1  split.gnu.txt   All L1     (Text) ---------------------------------\r\nabc-UU-:--- F1  split.gnu.txt   All L1     (Text) ---------------------------------\r\n-UU-:--- F1  split.gnu.txt   All L1     (Text) ---------------------------------\r\n-UU-:--- F1  split.gnu.txt   All L1     (Text) ---------------------------------\r\nX**\n\b\b\b\bX**\r\n20261022-round2/pty-editing-direct/split.gnu.txt...\rSaving file /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/\\\r\n2-round2/pty-editing-direct/split.gnu.txt\rWrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/202610--\u001b>\r"
+  },
+  {
+    "case": "split",
+    "side": "remacs",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 25.35,
+    "saved_hex": "616263580a",
+    "saved_text": "abcX\n",
+    "input_hex": [
+      "1832",
+      "186f",
+      "0558",
+      "1831"
+    ],
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "-nw",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing-direct/split.remacs.txt"
+    ],
+    "tail": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            ----- split.remacs.txt   L1 C4  [sel]                                           Wrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/2026102"
+  },
+  {
+    "case": "ctrl-home",
+    "side": "gnu",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 6.51,
+    "saved_hex": "586162630a6465660a",
+    "saved_text": "Xabc\ndef\n",
+    "input_hex": [
+      "1b3e",
+      "1b5b313b3548",
+      "58"
+    ],
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "-nw",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing-direct/ctrl-home.gnu.txt"
+    ],
+    "tail": "\u001b=\u001b>\r\u001b=File Edit Options Buffers Tools Lisp-Interaction Help                           \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  *scratch*      All L1     (Lisp Interaction ElDoc) ----------------\r\nFor information about GNU Emacs and the GNU system, type C-h C-a.\nFor information about GNU Emacs and the GNU system, type C-h C-a.File Edit Options Buffers Tools Text Help                                       \r\n\nabc\r\ndef\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UU-:--- F1  ctrl-home.gnu.txt   All L1     (Text) -----------------------------\r\nMark set\n3Mark set1\nXabc**20261022-round2/pty-editing-direct/ctrl-home.gnu.txt...\rSaving file /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/\\\r\n2-round2/pty-editing-direct/ctrl-home.gnu.txt\rWrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/202610--\u001b>\r"
+  },
+  {
+    "case": "ctrl-home",
+    "side": "remacs",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 18.19,
+    "saved_hex": "6162630a6465660a580a",
+    "saved_text": "abc\ndef\nX\n",
+    "input_hex": [
+      "1b3e",
+      "1b5b313b3548",
+      "58"
+    ],
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "-nw",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing-direct/ctrl-home.remacs.txt"
+    ],
+    "tail": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            ----- ctrl-home.remacs.txt   L4 C0  [sel]                                       Wrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/2026102"
+  },
+  {
+    "case": "kbd-macro",
+    "side": "gnu",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 6.8,
+    "saved_hex": "78780a",
+    "saved_text": "xx\n",
+    "input_hex": [
+      "1828",
+      "78",
+      "1829",
+      "1865"
+    ],
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "-nw",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing-direct/kbd-macro.gnu.txt"
+    ],
+    "tail": "\u001b=\u001b>\r\u001b=File Edit Options Buffers Tools Lisp-Interaction Help                           \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  *scratch*      All L1     (Lisp Interaction ElDoc) ----------------\r\nFor information about GNU Emacs and the GNU system, type C-h C-a.\nFor information about GNU Emacs and the GNU system, type C-h C-a.File Edit Options Buffers Tools Text Help                                       \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  kbd-macro.gnu.txt   All L1     (Text) -----------------------------\r\nDefining kbd macro...\nDefining kbd macro...File Edit Options Buffers Tools Text Help                                       \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  kbd-macro.gnu.txt   All L1     (Text Def) -------------------------\r\nx**Keyboard macro defined) ----(Type e to repeat macro)(Type e to repeat macro)File Edit Options Buffers Tools Text Help                                       \r\n\nxx\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:**- F1  kbd-macro.gnu.txt   All L1     (Text) -----------------------------\r\n20261022-round2/pty-editing-direct/kbd-macro.gnu.txt...\rSaving file /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/\\\r\n2-round2/pty-editing-direct/kbd-macro.gnu.txt\rWrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/202610--\u001b>\r"
+  },
+  {
+    "case": "kbd-macro",
+    "side": "remacs",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 19.58,
+    "saved_hex": "7878780a",
+    "saved_text": "xxx\n",
+    "input_hex": [
+      "1828",
+      "78",
+      "1829",
+      "1865"
+    ],
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "-nw",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing-direct/kbd-macro.remacs.txt"
+    ],
+    "tail": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            ----- kbd-macro.remacs.txt   L2 C0  [sel]                                       Wrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/2026102"
+  },
+  {
+    "case": "prefix-repeat",
+    "side": "gnu",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 5.8,
+    "saved_hex": "7878780a",
+    "saved_text": "xxx\n",
+    "input_hex": [
+      "153378"
+    ],
+    "command": [
+      "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+      "-Q",
+      "-nw",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing-direct/prefix-repeat.gnu.txt"
+    ],
+    "tail": "\u001b=\u001b>\r\u001b=File Edit Options Buffers Tools Lisp-Interaction Help                           \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  *scratch*      All L1     (Lisp Interaction ElDoc) ----------------\r\nFor information about GNU Emacs and the GNU system, type C-h C-a.\nFor information about GNU Emacs and the GNU system, type C-h C-a.File Edit Options Buffers Tools Text Help                                       \r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-UUU:--- F1  prefix-repeat.gnu.txt   All L1     (Text) -------------------------\r\nxxx**20261022-round2/pty-editing-direct/prefix-repeat.gnu.txt...\rSaving file /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/\\\r\n2-round2/pty-editing-direct/prefix-repeat.gnu.txt\rWrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/202610--\u001b>\r"
+  },
+  {
+    "case": "prefix-repeat",
+    "side": "remacs",
+    "ready": true,
+    "forced": false,
+    "returncode": 0,
+    "seconds": 17.34,
+    "saved_hex": "7878780a",
+    "saved_text": "xxx\n",
+    "input_hex": [
+      "153378"
+    ],
+    "command": [
+      "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+      "-Q",
+      "-nw",
+      "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/20261022-round2/pty-editing-direct/prefix-repeat.remacs.txt"
+    ],
+    "tail": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            ----- prefix-repeat.remacs.txt   L2 C0  [sel]                                   Wrote /Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit/2026102"
+  }
+]

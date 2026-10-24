@@ -1,0 +1,19 @@
+{
+  "form": "(progn (describe-buffer-bindings (current-buffer)) (princ \"AUDIT-DESCRIBE-DONE\"))",
+  "results": [
+    {
+      "side": "gnu",
+      "returncode": 0,
+      "timed_out": false,
+      "done": true,
+      "seconds": 0.37
+    },
+    {
+      "side": "remacs",
+      "returncode": 0,
+      "timed_out": false,
+      "done": true,
+      "seconds": 10.47
+    }
+  ]
+}

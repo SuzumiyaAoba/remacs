@@ -1,0 +1,327 @@
+{
+  "returncode": 0,
+  "artifacts": [
+    {
+      "name": "build_metadata",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/build_metadata-caa4b684fd136735"
+    },
+    {
+      "name": "shell_environment",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/shell_environment-b6d69bdedc0c3a1a"
+    },
+    {
+      "name": "cli_load_path",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/cli_load_path-edb51a1f6869c88f"
+    },
+    {
+      "name": "cli_separator",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/cli_separator-d83b5179fee61bd9"
+    },
+    {
+      "name": "portable_dump",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/portable_dump-631217b8ca278381"
+    },
+    {
+      "name": "frame_parameters",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/frame_parameters-3bd43a2d331bc65f"
+    },
+    {
+      "name": "compat",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/compat-4fd6f9c734d1e5da"
+    },
+    {
+      "name": "network_bind",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/network_bind-cbbe25e20ef020ac"
+    },
+    {
+      "name": "file_coding",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/file_coding-3318230b8bc4efb7"
+    },
+    {
+      "name": "nativecomp",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/nativecomp-e854018367a38440"
+    },
+    {
+      "name": "network_nowait",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/network_nowait-b776437e5b97318b"
+    },
+    {
+      "name": "window_frame",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/window_frame-98c7b5470d0a8e48"
+    },
+    {
+      "name": "list_cycles",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/list_cycles-1f00335974fdd3de"
+    },
+    {
+      "name": "difftest",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/difftest-8fb3213556c09216"
+    },
+    {
+      "name": "dbus",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/dbus-807c9f5a3195cbd0"
+    },
+    {
+      "name": "embedded_libraries",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/embedded_libraries-7ca7d5b5d906948a"
+    },
+    {
+      "name": "cli_help",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/cli_help-78d6ef296722e367"
+    },
+    {
+      "name": "cli_option_forms",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/cli_option_forms-4f0cf5f2ddd0890e"
+    },
+    {
+      "name": "qa",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/qa-3bcd45541de437b0"
+    },
+    {
+      "name": "tui_dired",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/tui_dired-313e1bd45b70a0a4"
+    },
+    {
+      "name": "tui_session",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/tui_session-bfdce3f7a156106a"
+    },
+    {
+      "name": "buffer_extra",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/buffer_extra-d3b5e0388f19aad2"
+    },
+    {
+      "name": "embedded_cache",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/embedded_cache-5d051004fbe51e19"
+    },
+    {
+      "name": "lisp_core",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/lisp_core-61c86bc1e2d7b3e7"
+    },
+    {
+      "name": "compat_cmds",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/compat_cmds-84885a1ffae64166"
+    },
+    {
+      "name": "lisp_libs",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/lisp_libs-846b90f4eb614e9a"
+    },
+    {
+      "name": "backtrace_cli",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/backtrace_cli-6c9ccf5d9fa39300"
+    },
+    {
+      "name": "dump_history_startup",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/dump_history_startup-5fefcc5ec8cbd18f"
+    },
+    {
+      "name": "probe_all",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/probe_all-04dbe592014272b5"
+    },
+    {
+      "name": "cli_argument_queue",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/cli_argument_queue-6923d521bf985d8b"
+    },
+    {
+      "name": "load_path_startup",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/load_path_startup-4cb124f553ba946a"
+    },
+    {
+      "name": "builtins_extlib",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/builtins_extlib-dffac711c06813cc"
+    },
+    {
+      "name": "builtins_misc",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/builtins_misc-6f1b933ee7254dd1"
+    },
+    {
+      "name": "network_eof",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/network_eof-90e92aecdb6c69e3"
+    },
+    {
+      "name": "legacy_file_coding",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/legacy_file_coding-54174a85b6a397df"
+    },
+    {
+      "name": "main_cli",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/main_cli-50113d74da36fb99"
+    },
+    {
+      "name": "remacs",
+      "kind": [
+        "bin"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-68cefec21f02194c"
+    },
+    {
+      "name": "file_coding_io",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/file_coding_io-60eef95f3d6257bf"
+    },
+    {
+      "name": "char_output_cli",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/char_output_cli-8bba40129a3d38bc"
+    },
+    {
+      "name": "extlib",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/extlib-9cdc4c21899049d7"
+    },
+    {
+      "name": "nsgui",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/nsgui-aeaf99d6925214d3"
+    },
+    {
+      "name": "lisp_libs2",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/lisp_libs2-3d25393cffc00c58"
+    },
+    {
+      "name": "network_datagram",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/network_datagram-6d52eea5305d855b"
+    },
+    {
+      "name": "process_pipe",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/process_pipe-45935f3c3100ba09"
+    },
+    {
+      "name": "interactive",
+      "kind": [
+        "test"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/interactive-ee145c68264df874"
+    },
+    {
+      "name": "remacs",
+      "kind": [
+        "lib"
+      ],
+      "executable": "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/deps/remacs-e7d049021ba59369"
+    }
+  ]
+}

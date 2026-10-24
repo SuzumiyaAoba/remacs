@@ -1,0 +1,2971 @@
+{
+  "head": "926cbfc7fe1ddde28c53d0555be1f6b99563535b",
+  "worktree_head": "4fa55e5f05311b26e5af242c09397c7583cad14f",
+  "binary_sha256": "37aec7800115143d785086fa184114757237776c93c892e30696644b5c255017",
+  "runs": [
+    {
+      "id": "temp-file:text-ascii",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (let ((file (make-temp-file (expand-file-name \"text-\" dir) nil nil \"abc\"))) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (delete-directory dir t)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (97 98 99))",
+      "stdout": "temp-file-text-ascii.current.gnu.out",
+      "stderr": "temp-file-text-ascii.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "temp-file:text-ascii",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (let ((file (make-temp-file (expand-file-name \"text-\" dir) nil nil \"abc\"))) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (delete-directory dir t)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 9.13,
+      "value": "(ok (97 98 99))",
+      "stdout": "temp-file-text-ascii.current.remacs.out",
+      "stderr": "temp-file-text-ascii.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "temp-file:text-unibyte",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (let ((file (make-temp-file (expand-file-name \"text-\" dir) nil nil (unibyte-string 0 128 255)))) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (delete-directory dir t)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (0 128 255))",
+      "stdout": "temp-file-text-unibyte.current.gnu.out",
+      "stderr": "temp-file-text-unibyte.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "temp-file:text-unibyte",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (let ((file (make-temp-file (expand-file-name \"text-\" dir) nil nil (unibyte-string 0 128 255)))) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (delete-directory dir t)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 9.0,
+      "value": "(ok (0 243 176 130 128 243 176 131 191))",
+      "stdout": "temp-file-text-unibyte.current.remacs.out",
+      "stderr": "temp-file-text-unibyte.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "temp-file:text-unicode",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (let ((file (make-temp-file (expand-file-name \"text-\" dir) nil nil \"é日\"))) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (delete-directory dir t)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (195 169 230 151 165))",
+      "stdout": "temp-file-text-unicode.current.gnu.out",
+      "stderr": "temp-file-text-unicode.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "temp-file:text-unicode",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (let ((file (make-temp-file (expand-file-name \"text-\" dir) nil nil \"é日\"))) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (delete-directory dir t)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.75,
+      "value": "(ok (195 169 230 151 165))",
+      "stdout": "temp-file-text-unicode.current.remacs.out",
+      "stderr": "temp-file-text-unicode.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "temp-file:text-raw-byte",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (let ((file (make-temp-file (expand-file-name \"text-\" dir) nil nil (string 4194176 4194303)))) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (delete-directory dir t)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "Select coding system (default raw-text): (error (end-of-file \"Error reading from stdin\"))",
+      "stdout": "temp-file-text-raw-byte.current.gnu.out",
+      "stderr": "temp-file-text-raw-byte.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "temp-file:text-raw-byte",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (let ((file (make-temp-file (expand-file-name \"text-\" dir) nil nil (string 4194176 4194303)))) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (delete-directory dir t)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.88,
+      "value": "(ok (243 176 130 128 243 176 131 191))",
+      "stdout": "temp-file-text-raw-byte.current.remacs.out",
+      "stderr": "temp-file-text-raw-byte.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "temp-file:text-invalid",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (let ((file (make-temp-file (expand-file-name \"text-\" dir) nil nil 42))) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (delete-directory dir t)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.18,
+      "value": "(ok nil)",
+      "stdout": "temp-file-text-invalid.current.gnu.out",
+      "stderr": "temp-file-text-invalid.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "temp-file:text-invalid",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (let ((file (make-temp-file (expand-file-name \"text-\" dir) nil nil 42))) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (delete-directory dir t)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.88,
+      "value": "(error (wrong-type-argument stringp 42))",
+      "stdout": "temp-file-text-invalid.current.remacs.out",
+      "stderr": "temp-file-text-invalid.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "temp-file:directory-mode",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (logand (file-modes dir) 511) (delete-directory dir t)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok 448)",
+      "stdout": "temp-file-directory-mode.current.gnu.out",
+      "stderr": "temp-file-directory-mode.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "temp-file:directory-mode",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (logand (file-modes dir) 511) (delete-directory dir t)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.92,
+      "value": "(ok 493)",
+      "stdout": "temp-file-directory-mode.current.remacs.out",
+      "stderr": "temp-file-directory-mode.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "temp-file:ordinary-mode",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (let ((f (make-temp-file (expand-file-name \"data-\" dir)))) (logand (file-modes f) 511)) (delete-directory dir t)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok 384)",
+      "stdout": "temp-file-ordinary-mode.current.gnu.out",
+      "stderr": "temp-file-ordinary-mode.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "temp-file:ordinary-mode",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (let ((f (make-temp-file (expand-file-name \"data-\" dir)))) (logand (file-modes f) 511)) (delete-directory dir t)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.2,
+      "value": "(ok 420)",
+      "stdout": "temp-file-ordinary-mode.current.remacs.out",
+      "stderr": "temp-file-ordinary-mode.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "temp-file:directory-ignores-text",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (let ((d (make-temp-file (expand-file-name \"nested-\" dir) t nil \"data\"))) (directory-files d nil \"^[^.]\")) (delete-directory dir t)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(error (file-error \"Write error\" \"Bad file descriptor\" \"/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-files-D6GULX/nested-GdkNJX\"))",
+      "stdout": "temp-file-directory-ignores-text.current.gnu.out",
+      "stderr": "temp-file-directory-ignores-text.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "temp-file:directory-ignores-text",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((dir (make-temp-file \"remacs-audit-files-\" t))) (unwind-protect (let ((d (make-temp-file (expand-file-name \"nested-\" dir) t nil \"data\"))) (directory-files d nil \"^[^.]\")) (delete-directory dir t)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.17,
+      "value": "(ok nil)",
+      "stdout": "temp-file-directory-ignores-text.current.remacs.out",
+      "stderr": "temp-file-directory-ignores-text.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:access-file",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (access-file name \"audit access\") (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (handled ((access-file (\"/audit-virtual/file\" \"audit access\")))))",
+      "stdout": "file-handler-access-file.current.gnu.out",
+      "stderr": "file-handler-access-file.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:access-file",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (access-file name \"audit access\") (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.24,
+      "value": "(ok (file-missing nil))",
+      "stdout": "file-handler-access-file.current.remacs.out",
+      "stderr": "file-handler-access-file.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:file-equal-p",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-equal-p name name) (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (handled ((file-equal-p (#1=\"/audit-virtual/file\" #1#)))))",
+      "stdout": "file-handler-file-equal-p.current.gnu.out",
+      "stderr": "file-handler-file-equal-p.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:file-equal-p",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-equal-p name name) (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.13,
+      "value": "(ok (nil nil))",
+      "stdout": "file-handler-file-equal-p.current.remacs.out",
+      "stderr": "file-handler-file-equal-p.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:file-newer-than-file-p",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-newer-than-file-p name name) (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (handled ((file-newer-than-file-p (#1=\"/audit-virtual/file\" #1#)))))",
+      "stdout": "file-handler-file-newer-than-file-p.current.gnu.out",
+      "stderr": "file-handler-file-newer-than-file-p.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:file-newer-than-file-p",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-newer-than-file-p name name) (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.16,
+      "value": "(ok (nil nil))",
+      "stdout": "file-handler-file-newer-than-file-p.current.remacs.out",
+      "stderr": "file-handler-file-newer-than-file-p.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:file-directory-p",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-directory-p name) (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (handled ((file-directory-p (\"/audit-virtual/file\")))))",
+      "stdout": "file-handler-file-directory-p.current.gnu.out",
+      "stderr": "file-handler-file-directory-p.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:file-directory-p",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-directory-p name) (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.16,
+      "value": "(ok (nil nil))",
+      "stdout": "file-handler-file-directory-p.current.remacs.out",
+      "stderr": "file-handler-file-directory-p.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:file-regular-p",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-regular-p name) (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (handled ((file-regular-p (\"/audit-virtual/file\")))))",
+      "stdout": "file-handler-file-regular-p.current.gnu.out",
+      "stderr": "file-handler-file-regular-p.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:file-regular-p",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-regular-p name) (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.88,
+      "value": "(ok (nil nil))",
+      "stdout": "file-handler-file-regular-p.current.remacs.out",
+      "stderr": "file-handler-file-regular-p.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:file-executable-p",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-executable-p name) (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (handled ((file-executable-p (\"/audit-virtual/file\")))))",
+      "stdout": "file-handler-file-executable-p.current.gnu.out",
+      "stderr": "file-handler-file-executable-p.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:file-executable-p",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-executable-p name) (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.89,
+      "value": "(ok (nil nil))",
+      "stdout": "file-handler-file-executable-p.current.remacs.out",
+      "stderr": "file-handler-file-executable-p.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:file-attributes",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-attributes name) (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (handled ((file-attributes (\"/audit-virtual/file\")))))",
+      "stdout": "file-handler-file-attributes.current.gnu.out",
+      "stderr": "file-handler-file-attributes.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:file-attributes",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-attributes name) (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.89,
+      "value": "(ok (nil nil))",
+      "stdout": "file-handler-file-attributes.current.remacs.out",
+      "stderr": "file-handler-file-attributes.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:file-modes",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-modes name) (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (handled ((file-modes (\"/audit-virtual/file\" nil)))))",
+      "stdout": "file-handler-file-modes.current.gnu.out",
+      "stderr": "file-handler-file-modes.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:file-modes",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-modes name) (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.87,
+      "value": "(ok (handled ((file-modes (\"/audit-virtual/file\" nil)))))",
+      "stdout": "file-handler-file-modes.current.remacs.out",
+      "stderr": "file-handler-file-modes.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:file-symlink-p",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-symlink-p name) (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (handled ((file-symlink-p (\"/audit-virtual/file\")))))",
+      "stdout": "file-handler-file-symlink-p.current.gnu.out",
+      "stderr": "file-handler-file-symlink-p.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:file-symlink-p",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-symlink-p name) (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.84,
+      "value": "(ok (nil nil))",
+      "stdout": "file-handler-file-symlink-p.current.remacs.out",
+      "stderr": "file-handler-file-symlink-p.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:file-local-copy",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-local-copy name) (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (handled ((file-local-copy (\"/audit-virtual/file\")))))",
+      "stdout": "file-handler-file-local-copy.current.gnu.out",
+      "stderr": "file-handler-file-local-copy.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:file-local-copy",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-local-copy name) (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.83,
+      "value": "(ok (nil nil))",
+      "stdout": "file-handler-file-local-copy.current.remacs.out",
+      "stderr": "file-handler-file-local-copy.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:file-exists-p",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-exists-p name) (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (handled ((file-exists-p (\"/audit-virtual/file\")))))",
+      "stdout": "file-handler-file-exists-p.current.gnu.out",
+      "stderr": "file-handler-file-exists-p.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "file-handler:file-exists-p",
+      "group": "file_edges_roundtwo",
+      "form": "(let ((name \"/audit-virtual/file\") (audit-r2-file-log nil) (file-name-handler-alist (list (cons \"^/audit-virtual/\" 'audit-r2-file-handler)))) (list (condition-case e (file-exists-p name) (error (car e))) (nreverse audit-r2-file-log)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.87,
+      "value": "(ok (handled ((file-exists-p (\"/audit-virtual/file\")))))",
+      "stdout": "file-handler-file-exists-p.current.remacs.out",
+      "stderr": "file-handler-file-exists-p.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "set-file-times:flag-nil",
+      "group": "file_edges_roundtwo",
+      "form": "(let* ((dir (make-temp-file \"remacs-audit-files-\" t)) (file (expand-file-name \"file\" dir)) (link (expand-file-name \"link\" dir))) (unwind-protect (progn (write-region \"x\" nil file nil 'silent) (make-symbolic-link file link) (set-file-times file 1000000000) (list (condition-case e (set-file-times link 1100000000 nil) (error (car e))) (time-convert (file-attribute-modification-time (file-attributes file)) 'integer))) (delete-directory dir t)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (t 1100000000))",
+      "stdout": "set-file-times-flag-nil.current.gnu.out",
+      "stderr": "set-file-times-flag-nil.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "set-file-times:flag-nil",
+      "group": "file_edges_roundtwo",
+      "form": "(let* ((dir (make-temp-file \"remacs-audit-files-\" t)) (file (expand-file-name \"file\" dir)) (link (expand-file-name \"link\" dir))) (unwind-protect (progn (write-region \"x\" nil file nil 'silent) (make-symbolic-link file link) (set-file-times file 1000000000) (list (condition-case e (set-file-times link 1100000000 nil) (error (car e))) (time-convert (file-attribute-modification-time (file-attributes file)) 'integer))) (delete-directory dir t)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.9,
+      "value": "(ok (t 1100000000))",
+      "stdout": "set-file-times-flag-nil.current.remacs.out",
+      "stderr": "set-file-times-flag-nil.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "set-file-times:flag-'nofollow",
+      "group": "file_edges_roundtwo",
+      "form": "(let* ((dir (make-temp-file \"remacs-audit-files-\" t)) (file (expand-file-name \"file\" dir)) (link (expand-file-name \"link\" dir))) (unwind-protect (progn (write-region \"x\" nil file nil 'silent) (make-symbolic-link file link) (set-file-times file 1000000000) (list (condition-case e (set-file-times link 1100000000 'nofollow) (error (car e))) (time-convert (file-attribute-modification-time (file-attributes file)) 'integer))) (delete-directory dir t)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (t 1000000000))",
+      "stdout": "set-file-times-flag-'nofollow.current.gnu.out",
+      "stderr": "set-file-times-flag-'nofollow.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "set-file-times:flag-'nofollow",
+      "group": "file_edges_roundtwo",
+      "form": "(let* ((dir (make-temp-file \"remacs-audit-files-\" t)) (file (expand-file-name \"file\" dir)) (link (expand-file-name \"link\" dir))) (unwind-protect (progn (write-region \"x\" nil file nil 'silent) (make-symbolic-link file link) (set-file-times file 1000000000) (list (condition-case e (set-file-times link 1100000000 'nofollow) (error (car e))) (time-convert (file-attribute-modification-time (file-attributes file)) 'integer))) (delete-directory dir t)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 7.89,
+      "value": "(ok (t 1000000000))",
+      "stdout": "set-file-times-flag-'nofollow.current.remacs.out",
+      "stderr": "set-file-times-flag-'nofollow.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "set-file-times:flag-t",
+      "group": "file_edges_roundtwo",
+      "form": "(let* ((dir (make-temp-file \"remacs-audit-files-\" t)) (file (expand-file-name \"file\" dir)) (link (expand-file-name \"link\" dir))) (unwind-protect (progn (write-region \"x\" nil file nil 'silent) (make-symbolic-link file link) (set-file-times file 1000000000) (list (condition-case e (set-file-times link 1100000000 t) (error (car e))) (time-convert (file-attribute-modification-time (file-attributes file)) 'integer))) (delete-directory dir t)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (t 1000000000))",
+      "stdout": "set-file-times-flag-t.current.gnu.out",
+      "stderr": "set-file-times-flag-t.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "set-file-times:flag-t",
+      "group": "file_edges_roundtwo",
+      "form": "(let* ((dir (make-temp-file \"remacs-audit-files-\" t)) (file (expand-file-name \"file\" dir)) (link (expand-file-name \"link\" dir))) (unwind-protect (progn (write-region \"x\" nil file nil 'silent) (make-symbolic-link file link) (set-file-times file 1000000000) (list (condition-case e (set-file-times link 1100000000 t) (error (car e))) (time-convert (file-attribute-modification-time (file-attributes file)) 'integer))) (delete-directory dir t)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.49,
+      "value": "(ok (t 1100000000))",
+      "stdout": "set-file-times-flag-t.current.remacs.out",
+      "stderr": "set-file-times-flag-t.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "set-file-times:flag-'bogus",
+      "group": "file_edges_roundtwo",
+      "form": "(let* ((dir (make-temp-file \"remacs-audit-files-\" t)) (file (expand-file-name \"file\" dir)) (link (expand-file-name \"link\" dir))) (unwind-protect (progn (write-region \"x\" nil file nil 'silent) (make-symbolic-link file link) (set-file-times file 1000000000) (list (condition-case e (set-file-times link 1100000000 'bogus) (error (car e))) (time-convert (file-attribute-modification-time (file-attributes file)) 'integer))) (delete-directory dir t)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (t 1000000000))",
+      "stdout": "set-file-times-flag-'bogus.current.gnu.out",
+      "stderr": "set-file-times-flag-'bogus.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "set-file-times:flag-'bogus",
+      "group": "file_edges_roundtwo",
+      "form": "(let* ((dir (make-temp-file \"remacs-audit-files-\" t)) (file (expand-file-name \"file\" dir)) (link (expand-file-name \"link\" dir))) (unwind-protect (progn (write-region \"x\" nil file nil 'silent) (make-symbolic-link file link) (set-file-times file 1000000000) (list (condition-case e (set-file-times link 1100000000 'bogus) (error (car e))) (time-convert (file-attribute-modification-time (file-attributes file)) 'integer))) (delete-directory dir t)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_file_edges_roundtwo.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.52,
+      "value": "(ok (t 1100000000))",
+      "stdout": "set-file-times-flag-'bogus.current.remacs.out",
+      "stderr": "set-file-times-flag-'bogus.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals:change-major-hook",
+      "group": "local_lifecycle",
+      "form": "(with-temp-buffer (let ((seen nil)) (setq-local audit-r2-local 7) (add-hook 'change-major-mode-hook (lambda nil (push (list audit-r2-local major-mode) seen)) nil t) (kill-all-local-variables) seen))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok ((7 fundamental-mode)))",
+      "stdout": "locals-change-major-hook.current.gnu.out",
+      "stderr": "locals-change-major-hook.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals:change-major-hook",
+      "group": "local_lifecycle",
+      "form": "(with-temp-buffer (let ((seen nil)) (setq-local audit-r2-local 7) (add-hook 'change-major-mode-hook (lambda nil (push (list audit-r2-local major-mode) seen)) nil t) (kill-all-local-variables) seen))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.55,
+      "value": "(ok nil)",
+      "stdout": "locals-change-major-hook.current.remacs.out",
+      "stderr": "locals-change-major-hook.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals:permanent-local-hook",
+      "group": "local_lifecycle",
+      "form": "(let ((fn (make-symbol \"audit-r2-permanent\"))) (fset fn (lambda nil nil)) (put fn 'permanent-local-hook t) (with-temp-buffer (add-hook 'after-save-hook fn nil t) (kill-all-local-variables) (list (local-variable-p 'after-save-hook) (and (memq fn after-save-hook) t))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok (t t))",
+      "stdout": "locals-permanent-local-hook.current.gnu.out",
+      "stderr": "locals-permanent-local-hook.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals:permanent-local-hook",
+      "group": "local_lifecycle",
+      "form": "(let ((fn (make-symbol \"audit-r2-permanent\"))) (fset fn (lambda nil nil)) (put fn 'permanent-local-hook t) (with-temp-buffer (add-hook 'after-save-hook fn nil t) (kill-all-local-variables) (list (local-variable-p 'after-save-hook) (and (memq fn after-save-hook) t))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.72,
+      "value": "(ok (t t))",
+      "stdout": "locals-permanent-local-hook.current.remacs.out",
+      "stderr": "locals-permanent-local-hook.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals:permanent-hook-filter",
+      "group": "local_lifecycle",
+      "form": "(let ((a (make-symbol \"audit-r2-permanent\")) (b (make-symbol \"audit-r2-ordinary\"))) (fset a (lambda nil nil)) (fset b (lambda nil nil)) (put a 'permanent-local-hook t) (with-temp-buffer (add-hook 'after-save-hook a nil t) (add-hook 'after-save-hook b nil t) (kill-all-local-variables) (list (and (memq a after-save-hook) t) (and (memq b after-save-hook) t))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok (t nil))",
+      "stdout": "locals-permanent-hook-filter.current.gnu.out",
+      "stderr": "locals-permanent-hook-filter.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals:permanent-hook-filter",
+      "group": "local_lifecycle",
+      "form": "(let ((a (make-symbol \"audit-r2-permanent\")) (b (make-symbol \"audit-r2-ordinary\"))) (fset a (lambda nil nil)) (fset b (lambda nil nil)) (put a 'permanent-local-hook t) (with-temp-buffer (add-hook 'after-save-hook a nil t) (add-hook 'after-save-hook b nil t) (kill-all-local-variables) (list (and (memq a after-save-hook) t) (and (memq b after-save-hook) t))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.74,
+      "value": "(ok (t t))",
+      "stdout": "locals-permanent-hook-filter.current.remacs.out",
+      "stderr": "locals-permanent-hook-filter.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals:permanent-clear",
+      "group": "local_lifecycle",
+      "form": "(with-temp-buffer (setq-local audit-r2-local 7) (put 'audit-r2-local 'permanent-local t) (kill-all-local-variables t) (local-variable-p 'audit-r2-local))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok nil)",
+      "stdout": "locals-permanent-clear.current.gnu.out",
+      "stderr": "locals-permanent-clear.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals:permanent-clear",
+      "group": "local_lifecycle",
+      "form": "(with-temp-buffer (setq-local audit-r2-local 7) (put 'audit-r2-local 'permanent-local t) (kill-all-local-variables t) (local-variable-p 'audit-r2-local))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.74,
+      "value": "(ok nil)",
+      "stdout": "locals-permanent-clear.current.remacs.out",
+      "stderr": "locals-permanent-clear.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals:major-hook-error",
+      "group": "local_lifecycle",
+      "form": "(with-temp-buffer (setq-local audit-r2-local 7) (add-hook 'change-major-mode-hook (lambda nil (error \"audit-stop\")) nil t) (list (condition-case e (kill-all-local-variables) (error (car e))) (local-variable-p 'audit-r2-local)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok (error t))",
+      "stdout": "locals-major-hook-error.current.gnu.out",
+      "stderr": "locals-major-hook-error.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals:major-hook-error",
+      "group": "local_lifecycle",
+      "form": "(with-temp-buffer (setq-local audit-r2-local 7) (add-hook 'change-major-mode-hook (lambda nil (error \"audit-stop\")) nil t) (list (condition-case e (kill-all-local-variables) (error (car e))) (local-variable-p 'audit-r2-local)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.96,
+      "value": "(ok (nil nil))",
+      "stdout": "locals-major-hook-error.current.remacs.out",
+      "stderr": "locals-major-hook-error.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals:makunbound-dynamic",
+      "group": "local_lifecycle",
+      "form": "(progn (defvar audit-r2-var 1) (list (let ((audit-r2-var 2)) (makunbound 'audit-r2-var) (boundp 'audit-r2-var)) audit-r2-var))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok (nil 1))",
+      "stdout": "locals-makunbound-dynamic.current.gnu.out",
+      "stderr": "locals-makunbound-dynamic.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals:makunbound-dynamic",
+      "group": "local_lifecycle",
+      "form": "(progn (defvar audit-r2-var 1) (list (let ((audit-r2-var 2)) (makunbound 'audit-r2-var) (boundp 'audit-r2-var)) audit-r2-var))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.93,
+      "value": "(ok (nil 1))",
+      "stdout": "locals-makunbound-dynamic.current.remacs.out",
+      "stderr": "locals-makunbound-dynamic.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals:set-default-dynamic",
+      "group": "local_lifecycle",
+      "form": "(progn (defvar audit-r2-var 1) (list (let ((audit-r2-var 2)) (set-default 'audit-r2-var 3) audit-r2-var) audit-r2-var))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok (3 1))",
+      "stdout": "locals-set-default-dynamic.current.gnu.out",
+      "stderr": "locals-set-default-dynamic.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals:set-default-dynamic",
+      "group": "local_lifecycle",
+      "form": "(progn (defvar audit-r2-var 1) (list (let ((audit-r2-var 2)) (set-default 'audit-r2-var 3) audit-r2-var) audit-r2-var))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.91,
+      "value": "(ok (3 1))",
+      "stdout": "locals-set-default-dynamic.current.remacs.out",
+      "stderr": "locals-set-default-dynamic.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals:kill-local-dynamic",
+      "group": "local_lifecycle",
+      "form": "(progn (defvar audit-r2-var 1) (with-temp-buffer (setq-local audit-r2-var 10) (list (let ((audit-r2-var 20)) (kill-local-variable 'audit-r2-var) (list audit-r2-var (local-variable-p 'audit-r2-var))) audit-r2-var (local-variable-p 'audit-r2-var))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok ((1 nil) 1 nil))",
+      "stdout": "locals-kill-local-dynamic.current.gnu.out",
+      "stderr": "locals-kill-local-dynamic.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals:kill-local-dynamic",
+      "group": "local_lifecycle",
+      "form": "(progn (defvar audit-r2-var 1) (with-temp-buffer (setq-local audit-r2-var 10) (list (let ((audit-r2-var 20)) (kill-local-variable 'audit-r2-var) (list audit-r2-var (local-variable-p 'audit-r2-var))) audit-r2-var (local-variable-p 'audit-r2-var))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.22,
+      "value": "(ok ((1 nil) 10 t))",
+      "stdout": "locals-kill-local-dynamic.current.remacs.out",
+      "stderr": "locals-kill-local-dynamic.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals:default-after-kill-buffer",
+      "group": "local_lifecycle",
+      "form": "(progn (defvar audit-r2-var 1) (let ((b (generate-new-buffer \" *audit-r2-local*\"))) (with-current-buffer b (setq-local audit-r2-var 10) (let ((audit-r2-var 20)) (kill-buffer b))) audit-r2-var))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok 1)",
+      "stdout": "locals-default-after-kill-buffer.current.gnu.out",
+      "stderr": "locals-default-after-kill-buffer.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals:default-after-kill-buffer",
+      "group": "local_lifecycle",
+      "form": "(progn (defvar audit-r2-var 1) (let ((b (generate-new-buffer \" *audit-r2-local*\"))) (with-current-buffer b (setq-local audit-r2-var 10) (let ((audit-r2-var 20)) (kill-buffer b))) audit-r2-var))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.19,
+      "value": "(ok 1)",
+      "stdout": "locals-default-after-kill-buffer.current.remacs.out",
+      "stderr": "locals-default-after-kill-buffer.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals:kill-buffer-query-local",
+      "group": "local_lifecycle",
+      "form": "(let ((b (generate-new-buffer \" *audit-r2-query*\"))) (unwind-protect (progn (with-current-buffer b (setq-local kill-buffer-query-functions (list (lambda nil nil)))) (list (kill-buffer b) (buffer-live-p b))) (with-current-buffer b (setq kill-buffer-query-functions nil)) (kill-buffer b)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (nil t))",
+      "stdout": "locals-kill-buffer-query-local.current.gnu.out",
+      "stderr": "locals-kill-buffer-query-local.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals:kill-buffer-query-local",
+      "group": "local_lifecycle",
+      "form": "(let ((b (generate-new-buffer \" *audit-r2-query*\"))) (unwind-protect (progn (with-current-buffer b (setq-local kill-buffer-query-functions (list (lambda nil nil)))) (list (kill-buffer b) (buffer-live-p b))) (with-current-buffer b (setq kill-buffer-query-functions nil)) (kill-buffer b)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.24,
+      "value": "(ok (nil t))",
+      "stdout": "locals-kill-buffer-query-local.current.remacs.out",
+      "stderr": "locals-kill-buffer-query-local.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals:kill-buffer-hook-local",
+      "group": "local_lifecycle",
+      "form": "(let ((b (generate-new-buffer \" *audit-r2-kill*\")) (seen nil)) (with-current-buffer b (add-hook 'kill-buffer-hook (lambda nil (setq seen (eq (current-buffer) b))) nil t)) (kill-buffer b) seen)",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok t)",
+      "stdout": "locals-kill-buffer-hook-local.current.gnu.out",
+      "stderr": "locals-kill-buffer-hook-local.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals:kill-buffer-hook-local",
+      "group": "local_lifecycle",
+      "form": "(let ((b (generate-new-buffer \" *audit-r2-kill*\")) (seen nil)) (with-current-buffer b (add-hook 'kill-buffer-hook (lambda nil (setq seen (eq (current-buffer) b))) nil t)) (kill-buffer b) seen)",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.04,
+      "value": "(ok t)",
+      "stdout": "locals-kill-buffer-hook-local.current.remacs.out",
+      "stderr": "locals-kill-buffer-hook-local.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals:buffer-local-toplevel",
+      "group": "local_lifecycle",
+      "form": "(progn (defvar audit-r2-var 1) (with-temp-buffer (setq-local audit-r2-var 10) (let ((audit-r2-var 20)) (list audit-r2-var (buffer-local-toplevel-value 'audit-r2-var (current-buffer))))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (20 10))",
+      "stdout": "locals-buffer-local-toplevel.current.gnu.out",
+      "stderr": "locals-buffer-local-toplevel.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals:buffer-local-toplevel",
+      "group": "local_lifecycle",
+      "form": "(progn (defvar audit-r2-var 1) (with-temp-buffer (setq-local audit-r2-var 10) (let ((audit-r2-var 20)) (list audit-r2-var (buffer-local-toplevel-value 'audit-r2-var (current-buffer))))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.05,
+      "value": "(ok (20 10))",
+      "stdout": "locals-buffer-local-toplevel.current.remacs.out",
+      "stderr": "locals-buffer-local-toplevel.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals:case-table-after-kill",
+      "group": "local_lifecycle",
+      "form": "(with-temp-buffer (set-case-table (copy-case-table (standard-case-table))) (kill-all-local-variables) (eq (current-case-table) (standard-case-table)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok t)",
+      "stdout": "locals-case-table-after-kill.current.gnu.out",
+      "stderr": "locals-case-table-after-kill.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals:case-table-after-kill",
+      "group": "local_lifecycle",
+      "form": "(with-temp-buffer (set-case-table (copy-case-table (standard-case-table))) (kill-all-local-variables) (eq (current-case-table) (standard-case-table)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.01,
+      "value": "(ok t)",
+      "stdout": "locals-case-table-after-kill.current.remacs.out",
+      "stderr": "locals-case-table-after-kill.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals:default-directory-preserved",
+      "group": "local_lifecycle",
+      "form": "(with-temp-buffer (setq default-directory \"/tmp/\") (kill-all-local-variables) default-directory)",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok \"/tmp/\")",
+      "stdout": "locals-default-directory-preserved.current.gnu.out",
+      "stderr": "locals-default-directory-preserved.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals:default-directory-preserved",
+      "group": "local_lifecycle",
+      "form": "(with-temp-buffer (setq default-directory \"/tmp/\") (kill-all-local-variables) default-directory)",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.37,
+      "value": "(ok \"/tmp/\")",
+      "stdout": "locals-default-directory-preserved.current.remacs.out",
+      "stderr": "locals-default-directory-preserved.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals:permanent-local-value",
+      "group": "local_lifecycle",
+      "form": "(with-temp-buffer (setq-local audit-r2-local 7) (put 'audit-r2-local 'permanent-local t) (kill-all-local-variables) (list audit-r2-local (local-variable-p 'audit-r2-local)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (7 t))",
+      "stdout": "locals-permanent-local-value.current.gnu.out",
+      "stderr": "locals-permanent-local-value.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals:permanent-local-value",
+      "group": "local_lifecycle",
+      "form": "(with-temp-buffer (setq-local audit-r2-local 7) (put 'audit-r2-local 'permanent-local t) (kill-all-local-variables) (list audit-r2-local (local-variable-p 'audit-r2-local)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_lifecycle.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.47,
+      "value": "(ok (7 t))",
+      "stdout": "locals-permanent-local-value.current.remacs.out",
+      "stderr": "locals-permanent-local-value.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:kill-all",
+      "group": "local_context_more",
+      "form": "(progn (defvar audit-r2-var 1) (with-temp-buffer (setq-local audit-r2-var 10) (list (let ((audit-r2-var 20)) (kill-all-local-variables) (list audit-r2-var (local-variable-p 'audit-r2-var))) audit-r2-var (local-variable-p 'audit-r2-var))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok ((1 nil) 1 nil))",
+      "stdout": "locals-more-kill-all.current.gnu.out",
+      "stderr": "locals-more-kill-all.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:kill-all",
+      "group": "local_context_more",
+      "form": "(progn (defvar audit-r2-var 1) (with-temp-buffer (setq-local audit-r2-var 10) (list (let ((audit-r2-var 20)) (kill-all-local-variables) (list audit-r2-var (local-variable-p 'audit-r2-var))) audit-r2-var (local-variable-p 'audit-r2-var))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.92,
+      "value": "(ok ((1 nil) 10 t))",
+      "stdout": "locals-more-kill-all.current.remacs.out",
+      "stderr": "locals-more-kill-all.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:recreate",
+      "group": "local_context_more",
+      "form": "(progn (defvar audit-r2-var 1) (with-temp-buffer (setq-local audit-r2-var 10) (list (let ((audit-r2-var 20)) (kill-local-variable 'audit-r2-var) (setq-local audit-r2-var 30) (list audit-r2-var (local-variable-p 'audit-r2-var))) audit-r2-var (local-variable-p 'audit-r2-var))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.31,
+      "value": "(ok ((30 t) 10 t))",
+      "stdout": "locals-more-recreate.current.gnu.out",
+      "stderr": "locals-more-recreate.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:recreate",
+      "group": "local_context_more",
+      "form": "(progn (defvar audit-r2-var 1) (with-temp-buffer (setq-local audit-r2-var 10) (list (let ((audit-r2-var 20)) (kill-local-variable 'audit-r2-var) (setq-local audit-r2-var 30) (list audit-r2-var (local-variable-p 'audit-r2-var))) audit-r2-var (local-variable-p 'audit-r2-var))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 13.02,
+      "value": "(ok ((30 t) 10 t))",
+      "stdout": "locals-more-recreate.current.remacs.out",
+      "stderr": "locals-more-recreate.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:default-change",
+      "group": "local_context_more",
+      "form": "(progn (defvar audit-r2-var 1) (with-temp-buffer (setq-local audit-r2-var 10) (list (let ((audit-r2-var 20)) (kill-local-variable 'audit-r2-var) (set-default 'audit-r2-var 3) (list audit-r2-var (local-variable-p 'audit-r2-var))) audit-r2-var (local-variable-p 'audit-r2-var))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.37,
+      "value": "(ok ((3 nil) 3 nil))",
+      "stdout": "locals-more-default-change.current.gnu.out",
+      "stderr": "locals-more-default-change.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:default-change",
+      "group": "local_context_more",
+      "form": "(progn (defvar audit-r2-var 1) (with-temp-buffer (setq-local audit-r2-var 10) (list (let ((audit-r2-var 20)) (kill-local-variable 'audit-r2-var) (set-default 'audit-r2-var 3) (list audit-r2-var (local-variable-p 'audit-r2-var))) audit-r2-var (local-variable-p 'audit-r2-var))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 12.91,
+      "value": "(ok ((3 nil) 10 t))",
+      "stdout": "locals-more-default-change.current.remacs.out",
+      "stderr": "locals-more-default-change.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:create-during-let",
+      "group": "local_context_more",
+      "form": "(progn (defvar audit-r2-var 1) (with-temp-buffer (list (let ((audit-r2-var 20)) (setq-local audit-r2-var 30) audit-r2-var) audit-r2-var (local-variable-p 'audit-r2-var))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.29,
+      "value": "(ok (30 30 t))",
+      "stdout": "locals-more-create-during-let.current.gnu.out",
+      "stderr": "locals-more-create-during-let.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:create-during-let",
+      "group": "local_context_more",
+      "form": "(progn (defvar audit-r2-var 1) (with-temp-buffer (list (let ((audit-r2-var 20)) (setq-local audit-r2-var 30) audit-r2-var) audit-r2-var (local-variable-p 'audit-r2-var))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 12.77,
+      "value": "(ok (30 30 t))",
+      "stdout": "locals-more-create-during-let.current.remacs.out",
+      "stderr": "locals-more-create-during-let.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:hook-ordinary-variable",
+      "group": "local_context_more",
+      "form": "(with-temp-buffer (setq-local audit-r2-local 10) (let ((f (lambda nil nil))) (setq-local audit-r2-custom-hook (list f)) (kill-all-local-variables) (list (local-variable-p 'audit-r2-custom-hook) (local-variable-p 'audit-r2-local))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.46,
+      "value": "(ok (nil nil))",
+      "stdout": "locals-more-hook-ordinary-variable.current.gnu.out",
+      "stderr": "locals-more-hook-ordinary-variable.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:hook-ordinary-variable",
+      "group": "local_context_more",
+      "form": "(with-temp-buffer (setq-local audit-r2-local 10) (let ((f (lambda nil nil))) (setq-local audit-r2-custom-hook (list f)) (kill-all-local-variables) (list (local-variable-p 'audit-r2-custom-hook) (local-variable-p 'audit-r2-local))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 9.16,
+      "value": "(ok (nil nil))",
+      "stdout": "locals-more-hook-ordinary-variable.current.remacs.out",
+      "stderr": "locals-more-hook-ordinary-variable.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:hook-kill-permanent",
+      "group": "local_context_more",
+      "form": "(let ((f (make-symbol \"audit-r2-permanent\"))) (fset f (lambda nil nil)) (put f 'permanent-local-hook t) (with-temp-buffer (add-hook 'after-save-hook f nil t) (kill-all-local-variables t) (and (memq f after-save-hook) t)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.32,
+      "value": "(ok nil)",
+      "stdout": "locals-more-hook-kill-permanent.current.gnu.out",
+      "stderr": "locals-more-hook-kill-permanent.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "locals-more:hook-kill-permanent",
+      "group": "local_context_more",
+      "form": "(let ((f (make-symbol \"audit-r2-permanent\"))) (fset f (lambda nil nil)) (put f 'permanent-local-hook t) (with-temp-buffer (add-hook 'after-save-hook f nil t) (kill-all-local-variables t) (and (memq f after-save-hook) t)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_local_context_more.el"
+      ],
+      "returncode": 0,
+      "seconds": 9.0,
+      "value": "(ok nil)",
+      "stdout": "locals-more-hook-kill-permanent.current.remacs.out",
+      "stderr": "locals-more-hook-kill-permanent.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "temp-context:directory-variable",
+      "group": "temp_file_context",
+      "form": "(let* ((dir (make-temp-file \"remacs-audit-context-\" t)) (temporary-file-directory (file-name-as-directory dir)) file) (unwind-protect (progn (setq file (make-temp-file \"child-\")) (equal (file-name-directory file) temporary-file-directory)) (when file (delete-file file)) (delete-directory dir t)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.25,
+      "value": "(ok t)",
+      "stdout": "temp-context-directory-variable.current.gnu.out",
+      "stderr": "temp-context-directory-variable.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "temp-context:directory-variable",
+      "group": "temp_file_context",
+      "form": "(let* ((dir (make-temp-file \"remacs-audit-context-\" t)) (temporary-file-directory (file-name-as-directory dir)) file) (unwind-protect (progn (setq file (make-temp-file \"child-\")) (equal (file-name-directory file) temporary-file-directory)) (when file (delete-file file)) (delete-directory dir t)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.87,
+      "value": "(ok nil)",
+      "stdout": "temp-context-directory-variable.current.remacs.out",
+      "stderr": "temp-context-directory-variable.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "temp-context:write-coding",
+      "group": "temp_file_context",
+      "form": "(let ((coding-system-for-write 'iso-latin-1) file) (unwind-protect (progn (setq file (make-temp-file \"remacs-audit-text-\" nil nil \"é\")) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (when file (delete-file file))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok (233))",
+      "stdout": "temp-context-write-coding.current.gnu.out",
+      "stderr": "temp-context-write-coding.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "temp-context:write-coding",
+      "group": "temp_file_context",
+      "form": "(let ((coding-system-for-write 'iso-latin-1) file) (unwind-protect (progn (setq file (make-temp-file \"remacs-audit-text-\" nil nil \"é\")) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (when file (delete-file file))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.55,
+      "value": "(ok (195 169))",
+      "stdout": "temp-context-write-coding.current.remacs.out",
+      "stderr": "temp-context-write-coding.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "temp-context:internal-bytes",
+      "group": "temp_file_context",
+      "form": "(let (file) (unwind-protect (progn (setq file (make-temp-file-internal (expand-file-name \"remacs-audit-internal-\" temporary-file-directory) nil \"\" (unibyte-string 128 255))) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (when file (delete-file file))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.23,
+      "value": "(ok (128 255))",
+      "stdout": "temp-context-internal-bytes.current.gnu.out",
+      "stderr": "temp-context-internal-bytes.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "temp-context:internal-bytes",
+      "group": "temp_file_context",
+      "form": "(let (file) (unwind-protect (progn (setq file (make-temp-file-internal (expand-file-name \"remacs-audit-internal-\" temporary-file-directory) nil \"\" (unibyte-string 128 255))) (with-temp-buffer (set-buffer-multibyte nil) (insert-file-contents-literally file) (string-to-list (buffer-string)))) (when file (delete-file file))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.53,
+      "value": "(ok (243 176 130 128 243 176 131 191))",
+      "stdout": "temp-context-internal-bytes.current.remacs.out",
+      "stderr": "temp-context-internal-bytes.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "temp-context:internal-file-mode",
+      "group": "temp_file_context",
+      "form": "(let (file) (unwind-protect (progn (setq file (make-temp-file-internal (expand-file-name \"remacs-audit-internal-\" temporary-file-directory) nil \"\" nil)) (logand (file-modes file) 511)) (when file (delete-file file))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.24,
+      "value": "(ok 384)",
+      "stdout": "temp-context-internal-file-mode.current.gnu.out",
+      "stderr": "temp-context-internal-file-mode.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "temp-context:internal-file-mode",
+      "group": "temp_file_context",
+      "form": "(let (file) (unwind-protect (progn (setq file (make-temp-file-internal (expand-file-name \"remacs-audit-internal-\" temporary-file-directory) nil \"\" nil)) (logand (file-modes file) 511)) (when file (delete-file file))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.5,
+      "value": "(ok 384)",
+      "stdout": "temp-context-internal-file-mode.current.remacs.out",
+      "stderr": "temp-context-internal-file-mode.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "temp-context:internal-dir-mode",
+      "group": "temp_file_context",
+      "form": "(let (file) (unwind-protect (progn (setq file (make-temp-file-internal (expand-file-name \"remacs-audit-internal-\" temporary-file-directory) t \"\" nil)) (logand (file-modes file) 511)) (when file (delete-directory file))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok 448)",
+      "stdout": "temp-context-internal-dir-mode.current.gnu.out",
+      "stderr": "temp-context-internal-dir-mode.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "temp-context:internal-dir-mode",
+      "group": "temp_file_context",
+      "form": "(let (file) (unwind-protect (progn (setq file (make-temp-file-internal (expand-file-name \"remacs-audit-internal-\" temporary-file-directory) t \"\" nil)) (logand (file-modes file) 511)) (when file (delete-directory file))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_temp_file_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.13,
+      "value": "(ok 493)",
+      "stdout": "temp-context-internal-dir-mode.current.remacs.out",
+      "stderr": "temp-context-internal-dir-mode.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:direct-'any",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (called-interactively-p 'any)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok t)",
+      "stdout": "interactive-direct-'any.current.gnu.out",
+      "stderr": "interactive-direct-'any.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:direct-'any",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (called-interactively-p 'any)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.18,
+      "value": "(ok t)",
+      "stdout": "interactive-direct-'any.current.remacs.out",
+      "stderr": "interactive-direct-'any.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:helper-'any",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (funcall (lambda nil (called-interactively-p 'any)))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok nil)",
+      "stdout": "interactive-helper-'any.current.gnu.out",
+      "stderr": "interactive-helper-'any.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:helper-'any",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (funcall (lambda nil (called-interactively-p 'any)))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.23,
+      "value": "(ok t)",
+      "stdout": "interactive-helper-'any.current.remacs.out",
+      "stderr": "interactive-helper-'any.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:direct-'interactive",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (called-interactively-p 'interactive)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok nil)",
+      "stdout": "interactive-direct-'interactive.current.gnu.out",
+      "stderr": "interactive-direct-'interactive.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:direct-'interactive",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (called-interactively-p 'interactive)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.12,
+      "value": "(ok t)",
+      "stdout": "interactive-direct-'interactive.current.remacs.out",
+      "stderr": "interactive-direct-'interactive.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:helper-'interactive",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (funcall (lambda nil (called-interactively-p 'interactive)))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok nil)",
+      "stdout": "interactive-helper-'interactive.current.gnu.out",
+      "stderr": "interactive-helper-'interactive.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:helper-'interactive",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (funcall (lambda nil (called-interactively-p 'interactive)))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.1,
+      "value": "(ok t)",
+      "stdout": "interactive-helper-'interactive.current.remacs.out",
+      "stderr": "interactive-helper-'interactive.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:direct-'bogus",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (called-interactively-p 'bogus)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok t)",
+      "stdout": "interactive-direct-'bogus.current.gnu.out",
+      "stderr": "interactive-direct-'bogus.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:direct-'bogus",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (called-interactively-p 'bogus)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.12,
+      "value": "(ok t)",
+      "stdout": "interactive-direct-'bogus.current.remacs.out",
+      "stderr": "interactive-direct-'bogus.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:helper-'bogus",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (funcall (lambda nil (called-interactively-p 'bogus)))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok nil)",
+      "stdout": "interactive-helper-'bogus.current.gnu.out",
+      "stderr": "interactive-helper-'bogus.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:helper-'bogus",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (funcall (lambda nil (called-interactively-p 'bogus)))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.19,
+      "value": "(ok t)",
+      "stdout": "interactive-helper-'bogus.current.remacs.out",
+      "stderr": "interactive-helper-'bogus.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:direct-nil",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (called-interactively-p nil)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok t)",
+      "stdout": "interactive-direct-nil.current.gnu.out",
+      "stderr": "interactive-direct-nil.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:direct-nil",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (called-interactively-p nil)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.18,
+      "value": "(ok t)",
+      "stdout": "interactive-direct-nil.current.remacs.out",
+      "stderr": "interactive-direct-nil.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:helper-nil",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (funcall (lambda nil (called-interactively-p nil)))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok nil)",
+      "stdout": "interactive-helper-nil.current.gnu.out",
+      "stderr": "interactive-helper-nil.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:helper-nil",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (funcall (lambda nil (called-interactively-p nil)))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.14,
+      "value": "(ok t)",
+      "stdout": "interactive-helper-nil.current.remacs.out",
+      "stderr": "interactive-helper-nil.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:call-interactively-batch",
+      "group": "interactive_context",
+      "form": "(call-interactively (lambda nil (interactive) (list (called-interactively-p 'any) (called-interactively-p 'interactive))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok (t nil))",
+      "stdout": "interactive-call-interactively-batch.current.gnu.out",
+      "stderr": "interactive-call-interactively-batch.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:call-interactively-batch",
+      "group": "interactive_context",
+      "form": "(call-interactively (lambda nil (interactive) (list (called-interactively-p 'any) (called-interactively-p 'interactive))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.32,
+      "value": "(ok (t t))",
+      "stdout": "interactive-call-interactively-batch.current.remacs.out",
+      "stderr": "interactive-call-interactively-batch.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:apply-helper",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (apply (lambda (&rest _) (called-interactively-p 'any)) '(1))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok nil)",
+      "stdout": "interactive-apply-helper.current.gnu.out",
+      "stderr": "interactive-apply-helper.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:apply-helper",
+      "group": "interactive_context",
+      "form": "(funcall-interactively (lambda nil (apply (lambda (&rest _) (called-interactively-p 'any)) '(1))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.32,
+      "value": "(ok t)",
+      "stdout": "interactive-apply-helper.current.remacs.out",
+      "stderr": "interactive-apply-helper.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:error-restores",
+      "group": "interactive_context",
+      "form": "(progn (condition-case nil (funcall-interactively (lambda nil (error \"stop\"))) (error nil)) (called-interactively-p 'any))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok nil)",
+      "stdout": "interactive-error-restores.current.gnu.out",
+      "stderr": "interactive-error-restores.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:error-restores",
+      "group": "interactive_context",
+      "form": "(progn (condition-case nil (funcall-interactively (lambda nil (error \"stop\"))) (error nil)) (called-interactively-p 'any))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.35,
+      "value": "(ok nil)",
+      "stdout": "interactive-error-restores.current.remacs.out",
+      "stderr": "interactive-error-restores.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:bytecompiled-helper",
+      "group": "interactive_context",
+      "form": "(let ((f (byte-compile (lambda nil (called-interactively-p 'any))))) (funcall-interactively (lambda nil (funcall f))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok nil)",
+      "stdout": "interactive-bytecompiled-helper.current.gnu.out",
+      "stderr": "interactive-bytecompiled-helper.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "interactive:bytecompiled-helper",
+      "group": "interactive_context",
+      "form": "(let ((f (byte-compile (lambda nil (called-interactively-p 'any))))) (funcall-interactively (lambda nil (funcall f))))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 12.62,
+      "value": "(ok t)",
+      "stdout": "interactive-bytecompiled-helper.current.remacs.out",
+      "stderr": "interactive-bytecompiled-helper.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "handler:all-observers",
+      "group": "interactive_context",
+      "form": "(let ((seen nil)) (condition-case nil (handler-bind ((error (lambda (_) (push 1 seen))) (error (lambda (_) (push 2 seen)))) (error \"x\")) (error nil)) (nreverse seen))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (1 2))",
+      "stdout": "handler-all-observers.current.gnu.out",
+      "stderr": "handler-all-observers.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "handler:all-observers",
+      "group": "interactive_context",
+      "form": "(let ((seen nil)) (condition-case nil (handler-bind ((error (lambda (_) (push 1 seen))) (error (lambda (_) (push 2 seen)))) (error \"x\")) (error nil)) (nreverse seen))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.3,
+      "value": "(ok (1 2))",
+      "stdout": "handler-all-observers.current.remacs.out",
+      "stderr": "handler-all-observers.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "handler:nested-observers",
+      "group": "interactive_context",
+      "form": "(let ((seen nil)) (condition-case nil (handler-bind ((error (lambda (_) (push 'outer seen)))) (handler-bind ((error (lambda (_) (push 'inner seen)))) (error \"x\"))) (error nil)) (nreverse seen))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok (inner outer))",
+      "stdout": "handler-nested-observers.current.gnu.out",
+      "stderr": "handler-nested-observers.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "handler:nested-observers",
+      "group": "interactive_context",
+      "form": "(let ((seen nil)) (condition-case nil (handler-bind ((error (lambda (_) (push 'outer seen)))) (handler-bind ((error (lambda (_) (push 'inner seen)))) (error \"x\"))) (error nil)) (nreverse seen))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.26,
+      "value": "(ok (inner outer))",
+      "stdout": "handler-nested-observers.current.remacs.out",
+      "stderr": "handler-nested-observers.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "handler:nonlocal-exit",
+      "group": "interactive_context",
+      "form": "(let ((seen nil)) (list (catch 'exit (handler-bind ((error (lambda (_) (push 'handler seen) (throw 'exit 7)))) (unwind-protect (error \"x\") (push 'cleanup seen)))) (nreverse seen)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok (7 (handler cleanup)))",
+      "stdout": "handler-nonlocal-exit.current.gnu.out",
+      "stderr": "handler-nonlocal-exit.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "handler:nonlocal-exit",
+      "group": "interactive_context",
+      "form": "(let ((seen nil)) (list (catch 'exit (handler-bind ((error (lambda (_) (push 'handler seen) (throw 'exit 7)))) (unwind-protect (error \"x\") (push 'cleanup seen)))) (nreverse seen)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.04,
+      "value": "(ok (7 (handler cleanup)))",
+      "stdout": "handler-nonlocal-exit.current.remacs.out",
+      "stderr": "handler-nonlocal-exit.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "handler:inside-protected-success",
+      "group": "interactive_context",
+      "form": "(let ((seen nil)) (handler-bind ((error (lambda (_) (push 'observed seen)))) (condition-case nil (error \"x\") (error 'caught))) seen)",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok nil)",
+      "stdout": "handler-inside-protected-success.current.gnu.out",
+      "stderr": "handler-inside-protected-success.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "handler:inside-protected-success",
+      "group": "interactive_context",
+      "form": "(let ((seen nil)) (handler-bind ((error (lambda (_) (push 'observed seen)))) (condition-case nil (error \"x\") (error 'caught))) seen)",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.11,
+      "value": "(ok (observed))",
+      "stdout": "handler-inside-protected-success.current.remacs.out",
+      "stderr": "handler-inside-protected-success.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "handler:dynamic-context",
+      "group": "interactive_context",
+      "form": "(progn (defvar audit-r2-special 1) (let ((seen nil)) (condition-case nil (handler-bind ((error (lambda (_) (setq seen audit-r2-special)))) (let ((audit-r2-special 2)) (error \"x\"))) (error nil)) seen))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.19,
+      "value": "(ok 2)",
+      "stdout": "handler-dynamic-context.current.gnu.out",
+      "stderr": "handler-dynamic-context.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "handler:dynamic-context",
+      "group": "interactive_context",
+      "form": "(progn (defvar audit-r2-special 1) (let ((seen nil)) (condition-case nil (handler-bind ((error (lambda (_) (setq seen audit-r2-special)))) (let ((audit-r2-special 2)) (error \"x\"))) (error nil)) seen))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_interactive_context.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.33,
+      "value": "(ok 2)",
+      "stdout": "handler-dynamic-context.current.remacs.out",
+      "stderr": "handler-dynamic-context.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapcar-vector",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (vector 1 2 3)) (seen nil)) (let ((value (mapcar (lambda (x) (push x seen) (aset sequence 1 9) x) sequence))) (list value (nreverse seen) sequence)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok ((1 9 3) (1 9 3) [1 9 3]))",
+      "stdout": "map-mapcar-vector.current.gnu.out",
+      "stderr": "map-mapcar-vector.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapcar-vector",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (vector 1 2 3)) (seen nil)) (let ((value (mapcar (lambda (x) (push x seen) (aset sequence 1 9) x) sequence))) (list value (nreverse seen) sequence)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.58,
+      "value": "(ok ((1 2 3) (1 2 3) [1 9 3]))",
+      "stdout": "map-mapcar-vector.current.remacs.out",
+      "stderr": "map-mapcar-vector.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapcar-list",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (list 1 2 3)) (seen nil)) (let ((value (mapcar (lambda (x) (push x seen) (setcar (cdr sequence) 9) x) sequence))) (list value (nreverse seen) sequence)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok ((1 9 3) (1 9 3) (1 9 3)))",
+      "stdout": "map-mapcar-list.current.gnu.out",
+      "stderr": "map-mapcar-list.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapcar-list",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (list 1 2 3)) (seen nil)) (let ((value (mapcar (lambda (x) (push x seen) (setcar (cdr sequence) 9) x) sequence))) (list value (nreverse seen) sequence)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.51,
+      "value": "(ok ((1 2 3) (1 2 3) (1 9 3)))",
+      "stdout": "map-mapcar-list.current.remacs.out",
+      "stderr": "map-mapcar-list.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapcar-string",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (copy-sequence \"abc\")) (seen nil)) (let ((value (mapcar (lambda (x) (push x seen) (aset sequence 1 88) x) sequence))) (list value (nreverse seen) sequence)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok ((97 88 99) (97 88 99) \"aXc\"))",
+      "stdout": "map-mapcar-string.current.gnu.out",
+      "stderr": "map-mapcar-string.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapcar-string",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (copy-sequence \"abc\")) (seen nil)) (let ((value (mapcar (lambda (x) (push x seen) (aset sequence 1 88) x) sequence))) (list value (nreverse seen) sequence)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.74,
+      "value": "(ok ((97 98 99) (97 98 99) \"aXc\"))",
+      "stdout": "map-mapcar-string.current.remacs.out",
+      "stderr": "map-mapcar-string.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapc-vector",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (vector 1 2 3)) (seen nil)) (let ((value (mapc (lambda (x) (push x seen) (aset sequence 1 9) x) sequence))) (list (eq value sequence) (nreverse seen) sequence)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok (t (1 9 3) [1 9 3]))",
+      "stdout": "map-mapc-vector.current.gnu.out",
+      "stderr": "map-mapc-vector.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapc-vector",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (vector 1 2 3)) (seen nil)) (let ((value (mapc (lambda (x) (push x seen) (aset sequence 1 9) x) sequence))) (list (eq value sequence) (nreverse seen) sequence)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.96,
+      "value": "(ok (t (1 2 3) [1 9 3]))",
+      "stdout": "map-mapc-vector.current.remacs.out",
+      "stderr": "map-mapc-vector.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapc-list",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (list 1 2 3)) (seen nil)) (let ((value (mapc (lambda (x) (push x seen) (setcar (cdr sequence) 9) x) sequence))) (list (eq value sequence) (nreverse seen) sequence)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok (t (1 9 3) (1 9 3)))",
+      "stdout": "map-mapc-list.current.gnu.out",
+      "stderr": "map-mapc-list.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapc-list",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (list 1 2 3)) (seen nil)) (let ((value (mapc (lambda (x) (push x seen) (setcar (cdr sequence) 9) x) sequence))) (list (eq value sequence) (nreverse seen) sequence)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.96,
+      "value": "(ok (t (1 2 3) (1 9 3)))",
+      "stdout": "map-mapc-list.current.remacs.out",
+      "stderr": "map-mapc-list.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapc-string",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (copy-sequence \"abc\")) (seen nil)) (let ((value (mapc (lambda (x) (push x seen) (aset sequence 1 88) x) sequence))) (list (eq value sequence) (nreverse seen) sequence)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.22,
+      "value": "(ok (t (97 88 99) \"aXc\"))",
+      "stdout": "map-mapc-string.current.gnu.out",
+      "stderr": "map-mapc-string.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapc-string",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (copy-sequence \"abc\")) (seen nil)) (let ((value (mapc (lambda (x) (push x seen) (aset sequence 1 88) x) sequence))) (list (eq value sequence) (nreverse seen) sequence)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.99,
+      "value": "(ok (t (97 98 99) \"aXc\"))",
+      "stdout": "map-mapc-string.current.remacs.out",
+      "stderr": "map-mapc-string.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapconcat-vector",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (vector 1 2 3)) (seen nil)) (let ((value (mapconcat (lambda (x) (push x seen) (aset sequence 1 9) (number-to-string x)) sequence \",\"))) (list value (nreverse seen) sequence)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok (\"1,9,3\" (1 9 3) [1 9 3]))",
+      "stdout": "map-mapconcat-vector.current.gnu.out",
+      "stderr": "map-mapconcat-vector.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapconcat-vector",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (vector 1 2 3)) (seen nil)) (let ((value (mapconcat (lambda (x) (push x seen) (aset sequence 1 9) (number-to-string x)) sequence \",\"))) (list value (nreverse seen) sequence)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 9.1,
+      "value": "(ok (\"1,2,3\" (1 2 3) [1 9 3]))",
+      "stdout": "map-mapconcat-vector.current.remacs.out",
+      "stderr": "map-mapconcat-vector.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapconcat-list",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (list 1 2 3)) (seen nil)) (let ((value (mapconcat (lambda (x) (push x seen) (setcar (cdr sequence) 9) (number-to-string x)) sequence \",\"))) (list value (nreverse seen) sequence)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok (\"1,9,3\" (1 9 3) (1 9 3)))",
+      "stdout": "map-mapconcat-list.current.gnu.out",
+      "stderr": "map-mapconcat-list.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapconcat-list",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (list 1 2 3)) (seen nil)) (let ((value (mapconcat (lambda (x) (push x seen) (setcar (cdr sequence) 9) (number-to-string x)) sequence \",\"))) (list value (nreverse seen) sequence)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 9.09,
+      "value": "(ok (\"1,2,3\" (1 2 3) (1 9 3)))",
+      "stdout": "map-mapconcat-list.current.remacs.out",
+      "stderr": "map-mapconcat-list.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapconcat-string",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (copy-sequence \"abc\")) (seen nil)) (let ((value (mapconcat (lambda (x) (push x seen) (aset sequence 1 88) (number-to-string x)) sequence \",\"))) (list value (nreverse seen) sequence)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok (\"97,88,99\" (97 88 99) \"aXc\"))",
+      "stdout": "map-mapconcat-string.current.gnu.out",
+      "stderr": "map-mapconcat-string.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapconcat-string",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (copy-sequence \"abc\")) (seen nil)) (let ((value (mapconcat (lambda (x) (push x seen) (aset sequence 1 88) (number-to-string x)) sequence \",\"))) (list value (nreverse seen) sequence)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 9.08,
+      "value": "(ok (\"97,98,99\" (97 98 99) \"aXc\"))",
+      "stdout": "map-mapconcat-string.current.remacs.out",
+      "stderr": "map-mapconcat-string.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:list-tail-delete",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (list 1 2 3))) (mapcar (lambda (x) (setcdr sequence nil) x) sequence))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok (1))",
+      "stdout": "map-list-tail-delete.current.gnu.out",
+      "stderr": "map-list-tail-delete.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:list-tail-delete",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (list 1 2 3))) (mapcar (lambda (x) (setcdr sequence nil) x) sequence))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 9.13,
+      "value": "(ok (1 2 3))",
+      "stdout": "map-list-tail-delete.current.remacs.out",
+      "stderr": "map-list-tail-delete.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapcan-vector",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (vector 1 2 3))) (mapcan (lambda (x) (aset sequence 1 9) (list x)) sequence))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.21,
+      "value": "(ok (1 9 3))",
+      "stdout": "map-mapcan-vector.current.gnu.out",
+      "stderr": "map-mapcan-vector.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:mapcan-vector",
+      "group": "mapping_callbacks",
+      "form": "(let ((sequence (vector 1 2 3))) (mapcan (lambda (x) (aset sequence 1 9) (list x)) sequence))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 9.2,
+      "value": "(ok (1 2 3))",
+      "stdout": "map-mapcan-vector.current.remacs.out",
+      "stderr": "map-mapcan-vector.current.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "map:vector-properties",
+      "group": "mapping_callbacks",
+      "form": "(let* ((s (propertize \"abc\" 'face 'bold)) (parts (mapcar (lambda (x) (char-to-string x)) s))) (list parts (get-text-property 0 'face s)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.22,
+      "value": "(ok ((\"a\" \"b\" \"c\") bold))",
+      "stdout": "map-vector-properties.current.gnu.out",
+      "stderr": "map-vector-properties.current.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "map:vector-properties",
+      "group": "mapping_callbacks",
+      "form": "(let* ((s (propertize \"abc\" 'face 'bold)) (parts (mapcar (lambda (x) (char-to-string x)) s))) (list parts (get-text-property 0 'face s)))",
+      "side": "remacs",
+      "command": [
+        "/var/folders/9f/5ppq6dg904l3bp8t3zxhbzw40000gn/T/remacs-audit-current-mnrv292i/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_mapping_callbacks.el"
+      ],
+      "returncode": 0,
+      "seconds": 9.31,
+      "value": "(ok ((\"a\" \"b\" \"c\") bold))",
+      "stdout": "map-vector-properties.current.remacs.out",
+      "stderr": "map-vector-properties.current.remacs.err",
+      "complete": true
+    }
+  ]
+}

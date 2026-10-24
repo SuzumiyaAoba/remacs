@@ -1,0 +1,234 @@
+{
+  "head": "38af4d1d720760348e725dac51f8c4252c2b03d5",
+  "binary_sha256": "eda1dd4d5a51a5e6a3ee96908f8e92e19003e88eae38f4fc044c096ed416afbe",
+  "runs": [
+    {
+      "id": "json:cyclic-vector",
+      "group": "json_limits",
+      "form": "(let ((v (vector nil))) (aset v 0 v) (condition-case e (json-serialize v) (error (car e))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_limits.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok error)",
+      "stdout": "json-cyclic-vector.gnu.out",
+      "stderr": "json-cyclic-vector.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:cyclic-vector",
+      "group": "json_limits",
+      "form": "(let ((v (vector nil))) (aset v 0 v) (condition-case e (json-serialize v) (error (car e))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_limits.el"
+      ],
+      "returncode": -6,
+      "seconds": 8.33,
+      "value": "",
+      "stdout": "json-cyclic-vector.remacs.out",
+      "stderr": "json-cyclic-vector.remacs.err",
+      "complete": false
+    },
+    {
+      "id": "json:cyclic-alist",
+      "group": "json_limits",
+      "form": "(let ((v (list (cons 'x 1)))) (setcdr v v) (condition-case e (json-serialize v) (error (car e))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_limits.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok circular-list)",
+      "stdout": "json-cyclic-alist.gnu.out",
+      "stderr": "json-cyclic-alist.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:cyclic-alist",
+      "group": "json_limits",
+      "form": "(let ((v (list (cons 'x 1)))) (setcdr v v) (condition-case e (json-serialize v) (error (car e))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_limits.el"
+      ],
+      "returncode": null,
+      "seconds": 30.01,
+      "value": "",
+      "stdout": "json-cyclic-alist.remacs.out",
+      "stderr": "json-cyclic-alist.remacs.err",
+      "complete": false
+    },
+    {
+      "id": "json:cyclic-hash",
+      "group": "json_limits",
+      "form": "(let ((h (make-hash-table :test 'equal))) (puthash \"x\" h h) (condition-case e (json-serialize h) (error (car e))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_limits.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok error)",
+      "stdout": "json-cyclic-hash.gnu.out",
+      "stderr": "json-cyclic-hash.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:cyclic-hash",
+      "group": "json_limits",
+      "form": "(let ((h (make-hash-table :test 'equal))) (puthash \"x\" h h) (condition-case e (json-serialize h) (error (car e))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_limits.el"
+      ],
+      "returncode": -6,
+      "seconds": 8.41,
+      "value": "",
+      "stdout": "json-cyclic-hash.remacs.out",
+      "stderr": "json-cyclic-hash.remacs.err",
+      "complete": false
+    },
+    {
+      "id": "json:parse-depth",
+      "group": "json_limits",
+      "form": "(condition-case e (progn (json-parse-string (concat (make-string 1200 91) \"0\" (make-string 1200 93))) 'parsed) (error (car e)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_limits.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok parsed)",
+      "stdout": "json-parse-depth.gnu.out",
+      "stderr": "json-parse-depth.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:parse-depth",
+      "group": "json_limits",
+      "form": "(condition-case e (progn (json-parse-string (concat (make-string 1200 91) \"0\" (make-string 1200 93))) 'parsed) (error (car e)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_limits.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.21,
+      "value": "(ok parsed)",
+      "stdout": "json-parse-depth.remacs.out",
+      "stderr": "json-parse-depth.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:serialize-depth",
+      "group": "json_limits",
+      "form": "(let ((v 0)) (dotimes (_ 1200) (setq v (vector v))) (condition-case e (progn (json-serialize v) 'serialized) (error (car e))))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_limits.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok error)",
+      "stdout": "json-serialize-depth.gnu.out",
+      "stderr": "json-serialize-depth.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:serialize-depth",
+      "group": "json_limits",
+      "form": "(let ((v 0)) (dotimes (_ 1200) (setq v (vector v))) (condition-case e (progn (json-serialize v) 'serialized) (error (car e))))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_limits.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.21,
+      "value": "(ok serialized)",
+      "stdout": "json-serialize-depth.remacs.out",
+      "stderr": "json-serialize-depth.remacs.err",
+      "complete": true
+    },
+    {
+      "id": "json:invalid-unicode",
+      "group": "json_limits",
+      "form": "(condition-case e (json-serialize (string 55296)) (error (car e)))",
+      "side": "gnu",
+      "command": [
+        "/nix/store/xbihkz9wlccg6ibr96j2qkgindirjs3l-emacs-unstable-31.1/bin/emacs-31.1",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_limits.el"
+      ],
+      "returncode": 0,
+      "seconds": 0.2,
+      "value": "(ok wrong-type-argument)",
+      "stdout": "json-invalid-unicode.gnu.out",
+      "stderr": "json-invalid-unicode.gnu.err",
+      "complete": true
+    },
+    {
+      "id": "json:invalid-unicode",
+      "group": "json_limits",
+      "form": "(condition-case e (json-serialize (string 55296)) (error (car e)))",
+      "side": "remacs",
+      "command": [
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/target/debug/remacs",
+        "-Q",
+        "--batch",
+        "-l",
+        "/Users/suzumiyaaoba/ghq/github.com/SuzumiyaAoba/remacs/tests/audit_json_limits.el"
+      ],
+      "returncode": 0,
+      "seconds": 8.42,
+      "value": "(ok \"\\\"��������\\\"\")",
+      "stdout": "json-invalid-unicode.remacs.out",
+      "stderr": "json-invalid-unicode.remacs.err",
+      "complete": true
+    }
+  ]
+}

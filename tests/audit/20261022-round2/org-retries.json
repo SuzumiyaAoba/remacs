@@ -1,0 +1,14 @@
+[
+  {
+    "id": "mode-init:org-empty",
+    "returncode": 0,
+    "seconds": 69.23,
+    "stdout": "AUDIT|\"mode-init:org-empty\"|(error (void-function keyword))\nAUDIT-DONE\n"
+  },
+  {
+    "id": "mode-init:org-fontlock",
+    "returncode": 0,
+    "seconds": 82.4,
+    "stdout": "AUDIT|\"mode-init:org-fontlock\"|(error (void-function keyword))\nAUDIT-DONE\n"
+  }
+]

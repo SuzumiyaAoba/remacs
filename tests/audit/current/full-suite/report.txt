@@ -1,0 +1,101 @@
+Remacs 全領域テスト実行結果
+実行完了: yes
+対象 HEAD: 29e7c960edec18a99107741c351d95444f8f6b18
+環境: macOS / aarch64 / debug build / GNU Emacs 31.1
+
+Rust: 735 テスト / 24 ターゲット
+結果: {'ignored': 1, 'ok': 720, 'FAILED': 12, 'TIMEOUT': 2}
+成功だけを抜き出した結果ではない。以下に失敗・タイムアウトも列挙する。
+
+  test-difftest: 1 tests {'ignored': 1}
+  bin-remacs: 0 tests {}
+  test-main_cli: 16 tests {'ok': 15, 'FAILED': 1}
+  test-qa: 197 tests {'ok': 192, 'FAILED': 5}
+  test-compat: 8 tests {'ok': 8}
+  test-builtins_extlib: 11 tests {'ok': 11}
+  test-nsgui: 4 tests {'ok': 4}
+  test-builtins_misc: 16 tests {'ok': 16}
+  test-file_coding: 1 tests {'ok': 1}
+  test-dbus: 7 tests {'ok': 7}
+  test-lisp_core: 26 tests {'ok': 26}
+  test-compat_cmds: 16 tests {'ok': 16}
+  test-tui_session: 9 tests {'ok': 9}
+  test-window_frame: 13 tests {'ok': 13}
+  test-probe_all: 47 tests {'ok': 43, 'FAILED': 3, 'TIMEOUT': 1}
+  test-extlib: 9 tests {'ok': 9}
+  test-buffer_extra: 11 tests {'ok': 11}
+  test-nativecomp: 8 tests {'ok': 8}
+  test-legacy_file_coding: 1 tests {'ok': 1}
+  test-lisp_libs: 55 tests {'ok': 55}
+  test-lisp_libs2: 118 tests {'ok': 118}
+  test-tui_dired: 1 tests {'ok': 1}
+  test-interactive: 44 tests {'ok': 44}
+  lib-remacs: 116 tests {'ok': 112, 'FAILED': 3, 'TIMEOUT': 1}
+
+失敗・タイムアウト:
+  test-main_cli::pty_editor_smoke [FAILED] test-main_cli.log
+  test-qa::qa_buffer2 [FAILED] test-qa.log
+  test-qa::qa_buffmenu [FAILED] test-qa.log
+  test-qa::qa_charset [FAILED] test-qa.log
+  test-qa::qa_mark [FAILED] test-qa.log
+  test-qa::qa_time_zero_zone [FAILED] test-qa.log
+  test-probe_all::probe_buffer_props [FAILED] test-probe_all.log
+  test-probe_all::probe_editor_deep [FAILED] test-probe_all.log
+  test-probe_all::probe_eval14_cov [TIMEOUT] test-probe_all-remaining-0.log
+  test-probe_all::probe_runtime_semantics [FAILED] test-probe_all.log
+  lib-remacs::coverage_tests::u_probe_buffer4 [FAILED] lib-remacs.log
+  lib-remacs::coverage_tests::u_probe_editor3 [FAILED] lib-remacs.log
+  lib-remacs::coverage_tests::u_probe_eval14 [TIMEOUT] lib-remacs-remaining-0.log
+  lib-remacs::coverage_tests::u_probe_runtime [FAILED] lib-remacs-remaining-21.log
+
+切り分け:
+  qa_buffer2 / qa_mark は REMACS_NONINTERACTIVE=1 を初期化前に設定した追試で成功。
+  qa_buffmenu は CLI でも再現し #294 に登録。qa_time_zero_zone は #77 に追記・再オープン。
+  qa_charset は GNU 側でも同じ期待値が不一致。GNU QA の他の期待値不一致も下記参照。
+  unit の停止は同じ PROBE_LOCK を待つ他のテストから分離し、未実行分を個別に実行した。
+  probe_eval14 は先行する状態変更後の describe-buffer-bindings で停止。初期状態の単独呼び出しは成功し、#298 でテスト問題として追跡。
+  ignored の differential_vs_gnu は同じ差分ツールを別ディレクトリで直接完走させた。
+  pty_editor_smoke の raw substring 判定と 0x0 端末は、サイズを明示した実 PTY 検査で区別。偽の失敗として #299 に登録。
+
+GNU QA: 196 ファイル実行、通常環境での追試後 189 成功。
+  期待値不一致: qa_basic_faces.el, qa_char.el, qa_charset.el, qa_process.el, qa_strings.el, qa_strings2.el, qa_subrx.el
+  C ロケールでの引用符差と、文字幅・フォント・SHELL の前提を実装差から区別した。
+
+式コーパス: 17 ファイル / 4159 式。
+  misc の GNU abort 式を明示除外し、残る680式を追試済み。
+  overlays 末尾の括弧不足は診断コピーを補正して実行済み。GNU にない追加 API の差はバグに数えない。
+  face-remap の minor-mode 表示登録漏れは #300。files-x は公開APIと明示 require の単独検査では一致。
+
+全関数スイープ: GNU 23019 行 / remacs 23023 行、両側 DONE。
+  409関数名に差分。既知マスク外11関数名を個別に再確認した。
+  macroexpand系5名は #293、shell系3名は #295 と同じ原因。
+  async-shell-command / scratch-buffer / scroll-other-window-down は単独では一致。
+  GNU の isearch-forward は batch の不正な呼び出しで停止したため、停止を記録して再開した。
+
+個別 GNU 比較: 428 ケース。既存348ケースは再ビルド後の値と全件一致。
+Tree-sitter: 52 文法を検査、利用可能な51文法の解析・Unicode座標・queryが一致。
+  janet は両側で利用不可。
+外部機能: 専用 D-Bus セッション、GnuTLS暗号、LCMS、kqueue、NS、nativecompを既存スイートで検査。
+TLS補完: 一時CAを明示信頼し、検証を有効にしたローカルHTTPS通信は両側成功。
+実TUI: 80x24 と 0x0 の両条件で GNU/remacs の表示・C-x C-c 終了を確認。
+実GUI: ファイル操作、ASCII編集保存、検索、分割・分割解除、終了を確認。
+  Unicode入力の欠落は #292、C-Homeのイベント不一致は #297 に登録。
+
+今回の新規 Issue:
+  https://github.com/SuzumiyaAoba/remacs/issues/291
+  https://github.com/SuzumiyaAoba/remacs/issues/292
+  https://github.com/SuzumiyaAoba/remacs/issues/293
+  https://github.com/SuzumiyaAoba/remacs/issues/294
+  https://github.com/SuzumiyaAoba/remacs/issues/295
+  https://github.com/SuzumiyaAoba/remacs/issues/296
+  https://github.com/SuzumiyaAoba/remacs/issues/297
+  https://github.com/SuzumiyaAoba/remacs/issues/298
+  https://github.com/SuzumiyaAoba/remacs/issues/299
+  https://github.com/SuzumiyaAoba/remacs/issues/300
+既存 Issue 更新: https://github.com/SuzumiyaAoba/remacs/issues/77
+
+証拠: inventory.json, rust-results.json, gnu-qa-results.json, gnu-qa-default-rechecks.json,
+corpus/, differential/, differential-isolated/, differential-shell-control/, runtime/，
+tls-local-results.json, gui-manual-results.json, pty/comparison.json。
+
+これは用意された全テストと補完検査の完走を示す。全コード経路の無欠陥を示す結果ではない。
