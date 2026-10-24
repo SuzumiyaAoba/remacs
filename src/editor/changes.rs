@@ -35,8 +35,8 @@ fn call_list(i: &mut Interp, mut list: Value, args: &[Value], muted: bool) -> Re
         if !matches!(function, Value::Sym(sym::T)) {
             match i.apply(&function, args.to_vec()) {
                 Ok(_) => (),
-                Err(Flow::Signal(symbol, data, _)) if muted => {
-                    let error = Value::cons(symbol, data);
+                Err(Flow::Signal(signal)) if muted => {
+                    let error = signal.condition;
                     let call = Value::cons(function, Value::list(args.to_vec()));
                     let message = format!(
                         "Error muted by safe_call: {} signaled {}",
@@ -45,7 +45,7 @@ fn call_list(i: &mut Interp, mut list: Value, args: &[Value], muted: bool) -> Re
                     );
                     i.message_log(&message);
                 }
-                Err(Flow::Quit) if muted => (),
+                Err(flow) if muted && flow.is_quit() => (),
                 Err(flow) => return Err(flow),
             }
         }
@@ -82,7 +82,7 @@ fn global(i: &mut Interp, hook: &str, frame: &FrameRef) -> Result<(), Flow> {
 }
 
 fn configuration_hook(i: &mut Interp, frame: &FrameRef) -> Result<(), Flow> {
-    let symbol = i.intern("window-configuration-change-hook");
+    let symbol = i.q("window-configuration-change-hook");
     let default = i.obarray.symbol(symbol).value.clone();
     let original_frame = i.selected_frame.clone();
     let original_buffer = i.current_buffer;
@@ -172,7 +172,7 @@ fn record(i: &Interp) {
 /// Called from a mutable, non-recursive redisplay boundary. Batch evaluation
 /// does not call this, just as GNU's batch frames do not run change functions.
 pub fn run(i: &mut Interp) -> Result<(), Flow> {
-    let inhibit = i.intern("inhibit-redisplay");
+    let inhibit = i.q("inhibit-redisplay");
     if i.symbol_value(inhibit).truthy() {
         return Ok(());
     }
@@ -291,7 +291,7 @@ mod tests {
             .stack_size(128 << 20)
             .spawn(|| {
                 let mut i = Interp::new();
-                let name = i.intern("qa289-notify");
+                let name = i.q("qa289-notify");
                 i.fset(name, Value::Subr(&NOTIFY));
                 let path = concat!(
                     env!("CARGO_MANIFEST_DIR"),

@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::lisp::eval::LexFrame;
@@ -170,6 +170,8 @@ impl Node {
 pub(super) struct SymbolData {
     pub name: Vec<u32>,
     pub name_string: Option<Ref>,
+    #[serde(default)]
+    pub internment_key: Option<crate::lisp::obarray::InternKey>,
     pub uninterned: bool,
     pub initial_obarray: bool,
     pub void_marker: bool,
@@ -365,6 +367,7 @@ impl<'a> Encoder<'a> {
                     let symbol = self.interp.obarray.symbol(id);
                     let data = SymbolData {
                         name: encode_text(&symbol.name),
+                        internment_key: symbol.internment_key.clone(),
                         name_string: symbol
                             .name_string
                             .as_ref()
@@ -624,6 +627,7 @@ impl<'a> Decoder<'a> {
                 }
             }
         }
+        let mut allocated_symbols = FxHashSet::default();
         for (index, node) in nodes.iter().enumerate() {
             decoder.objects[index] = match node {
                 Node::Symbol(data) => {
@@ -638,8 +642,19 @@ impl<'a> Decoder<'a> {
                     } else if !data.initial_obarray {
                         i.make_symbol(&name)
                     } else {
-                        i.intern(&name)
+                        match &data.internment_key {
+                            Some(key) => {
+                                let existing = i.obarray.lookup_key(key);
+                                if existing.is_some_and(|id| allocated_symbols.contains(&id)) {
+                                    i.obarray.intern_new_with_key(&name, key.clone())
+                                } else {
+                                    i.obarray.intern_with_key(&name, key.clone())
+                                }
+                            }
+                            None => i.intern(&name),
+                        }
                     };
+                    allocated_symbols.insert(id);
                     decoder.symbols[index] = Some(id);
                     Some(i.sym(id))
                 }
@@ -1007,6 +1022,9 @@ impl<'a> Decoder<'a> {
                     })
                     .transpose()?;
                 let symbol = i.obarray.symbol_mut(id);
+                if data.internment_key.is_some() {
+                    symbol.internment_key = data.internment_key.clone();
+                }
                 symbol.name_string = name_string;
                 symbol.value = value;
                 symbol.function = function;

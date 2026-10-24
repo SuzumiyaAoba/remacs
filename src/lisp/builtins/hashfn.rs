@@ -305,15 +305,15 @@ pub(crate) fn f_make_hash_table(i: &mut Interp, args: crate::lisp::Argv) -> Eval
         let kw = &pair[0];
         let arg = &pair[1];
         let kw_id = i.sym_id(kw);
-        if kw_id == Some(i.intern(":test")) {
+        if kw_id == Some(i.q(":test")) {
             test_arg = arg.clone();
-        } else if kw_id == Some(i.intern(":weakness")) {
+        } else if kw_id == Some(i.q(":weakness")) {
             weakness_arg = arg.clone();
-        } else if kw_id == Some(i.intern(":size")) {
+        } else if kw_id == Some(i.q(":size")) {
             size_arg = arg.clone();
-        } else if kw_id == Some(i.intern(":rehash-threshold"))
-            || kw_id == Some(i.intern(":rehash-size"))
-            || kw_id == Some(i.intern(":purecopy"))
+        } else if kw_id == Some(i.q(":rehash-threshold"))
+            || kw_id == Some(i.q(":rehash-size"))
+            || kw_id == Some(i.q(":purecopy"))
         {
         } else {
             // GNU signal_error("Invalid keyword argument", KW):
@@ -348,7 +348,7 @@ pub(crate) fn f_make_hash_table(i: &mut Interp, args: crate::lisp::Argv) -> Eval
             "equal" => (HashTest::Equal, Value::Nil, None),
             _ => {
                 let id = i.sym_id(&test_arg).unwrap();
-                let prop = i.intern("hash-table-test");
+                let prop = i.q("hash-table-test");
                 let definition = i.get_prop(id, prop);
                 if let Value::Cons(first) = &definition
                     && let Value::Cons(second) = &first.borrow().cdr
@@ -384,7 +384,7 @@ pub(crate) fn f_make_hash_table(i: &mut Interp, args: crate::lisp::Argv) -> Eval
             let w = i.sym_id(v).map(|id| i.symbol_name(id).to_string());
             match w.as_deref() {
                 // GNU: `t' is a synonym for `key-and-value'.
-                Some("t") | Some("key-and-value") => Some(Value::Sym(i.intern("key-and-value"))),
+                Some("t") | Some("key-and-value") => Some(Value::Sym(i.q("key-and-value"))),
                 Some("key") | Some("value") | Some("key-or-value") => {
                     Some(Value::Sym(i.sym_id(v).unwrap()))
                 }
@@ -495,7 +495,7 @@ pub(crate) fn table_key(i: &mut Interp, h: &HashRef, key: &Value) -> Result<Hash
     Ok(HashKey::Custom(hash, slot))
 }
 
-fn f_gethash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_gethash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[1] {
         Value::Hash(h) => {
             let key = table_key(i, h, &args[0])?;
@@ -641,7 +641,7 @@ fn f_define_hash_table_test(i: &mut Interp, args: crate::lisp::Argv) -> EvalResu
         return Err(i.wrong_type_mut("symbolp", &args[0]));
     };
     let entry = Value::list(vec![args[1].clone(), args[2].clone()]);
-    let prop = i.intern("hash-table-test");
+    let prop = i.q("hash-table-test");
     i.put_prop(name, prop, entry.clone());
     Ok(entry)
 }

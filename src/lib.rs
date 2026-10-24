@@ -11,6 +11,8 @@ pub mod startup;
 pub mod editor;
 pub mod gui;
 pub mod lisp;
+pub mod lifecycle;
+pub mod stdio;
 pub mod term;
 
 #[cfg(test)]
@@ -42,8 +44,10 @@ mod coverage_tests {
             Ok(_) => {}
             Err(f) => {
                 let flow_desc = match &f {
-                    crate::lisp::Flow::Signal(s, d, _) => {
-                        format!("signal {} {}", i.prin1_to_string(s), i.prin1_to_string(d))
+                    crate::lisp::Flow::Signal(signal) => {
+                        let s = signal.symbol();
+                        let d = signal.data();
+                        format!("signal {} {}", i.prin1_to_string(&s), i.prin1_to_string(&d))
                     }
                     other => format!("{other:?}"),
                 };
@@ -254,11 +258,11 @@ mod coverage_tests {
             i2.eval_str("(setq seen \"\")").unwrap();
             i2.eval_str("(defun collect-s (s) (setq seen (concat seen s)))")
                 .unwrap();
-            let sid = i2.intern("collect-s");
+            let sid = i2.q("collect-s");
             let f = i2.symbol_function(sid);
             i2.output = Some(OutputSink::Function(f));
             i2.eval_str("(princ \"via-fn\")").unwrap();
-            let vsym = i2.intern("seen");
+            let vsym = i2.q("seen");
             let seen = i2.symbol_value(vsym);
             assert_eq!(i2.princ_to_string(&seen), "via-fn");
 

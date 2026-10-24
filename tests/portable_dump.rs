@@ -78,6 +78,13 @@ fn image_restores_shared_lisp_state_buffers_and_reports_actual_startup() {
       (setq dump124-symbol (make-symbol dump124-name))
       (setq dump112-obarray (obarray-make))
       (setq dump112-other-symbol (intern "dump112-only-custom" dump112-obarray))
+      (setq dump-byte-name (concat "dump-byte-key-" (unibyte-string 255))
+            dump-multi-name (concat "dump-byte-key-" (string #x3fffff))
+            dump-byte-symbol (intern dump-byte-name)
+            dump-multi-symbol (intern dump-multi-name))
+      (setq dump-mutated-symbol (intern (copy-sequence "dump-mutated-name-x")))
+      (aset (symbol-name dump-mutated-symbol) 18 ?y)
+      (setq dump-original-name-symbol (intern "dump-mutated-name-x"))
       (string #x110005) (setq dump112-mule (string #x110007 #x110001))
       (setq dump112-bytes (unibyte-string 0 127 128 255))
       (setq dump112-buffer (get-buffer-create "dump112-buffer"))
@@ -102,6 +109,16 @@ fn image_restores_shared_lisp_state_buffers_and_reports_actual_startup() {
         (overlay-put dump307-killed 'dump-property dump112-cycle)
         (kill-buffer source))
       (setq after-pdump-load-hook (list (lambda () (setq dump112-hook-ran t))))
+      (let ((original (symbol-function 'format)) (active nil))
+        (unwind-protect
+            (progn
+              (fset 'format (lambda (&rest args)
+                              (when active
+                                (setq dump-gensym-format (car args) dump-gensym-prefix (cadr args)))
+                              (apply original args)))
+              (setq active t) (gensym))
+          (setq active nil) (fset 'format original)))
+      (aset dump-gensym-prefix 0 ?p)
       (dump-emacs-portable {} t)
       (prin1 (list (pdumper-stats) (> (file-attribute-size (file-attributes {})) 100))))"#,
         literal(&fixture.image()),
@@ -130,6 +147,24 @@ fn image_restores_shared_lisp_state_buffers_and_reports_actual_startup() {
                  (get-text-property 0 'dump124-later (symbol-name dump124-symbol)))
           (eq (intern-soft "dump112-only-custom" dump112-obarray) dump112-other-symbol)
           (not (intern-soft "dump112-only-custom"))
+          (not (eq dump-byte-symbol dump-multi-symbol))
+          (eq dump-byte-symbol (intern dump-byte-name))
+          (eq dump-multi-symbol (intern dump-multi-name))
+          (eq dump-byte-name (symbol-name dump-byte-symbol))
+          (eq dump-multi-name (symbol-name dump-multi-symbol))
+          (not (eq dump-mutated-symbol dump-original-name-symbol))
+          (eq (intern "dump-mutated-name-x") dump-original-name-symbol)
+          (let ((original (symbol-function 'format)) (active nil) identity (gensym-counter 200))
+            (unwind-protect
+                (progn
+                  (fset 'format (lambda (&rest args)
+                                  (when active
+                                    (setq identity (list (eq (car args) dump-gensym-format)
+                                                         (eq (cadr args) dump-gensym-prefix))))
+                                  (apply original args)))
+                  (setq active t)
+                  (and (equal (symbol-name (gensym)) "p200") (equal identity '(t t))))
+              (setq active nil) (fset 'format original)))
           (equal (string-to-list dump112-mule) '(1114119 1114113))
           (not (multibyte-string-p dump112-bytes)) (= (aref dump112-bytes 2) 128) (= (aref dump112-bytes 3) 255)
           (and (with-current-buffer dump112-buffer
@@ -168,7 +203,7 @@ fn image_restores_shared_lisp_state_buffers_and_reports_actual_startup() {
         &["--dump-file", fixture.image().to_str().unwrap()],
         &code,
     ));
-    assert_eq!(result, format!("({})", vec!["t"; 37].join(" ")));
+    assert_eq!(result, format!("({})", vec!["t"; 45].join(" ")));
     let equals = format!("--dump-file={}", fixture.image().display());
     assert_eq!(
         Fixture::ok(fixture.eval(

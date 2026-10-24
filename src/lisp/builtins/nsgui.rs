@@ -563,7 +563,7 @@ fn f_ns_send_items(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     (cb.car.clone(), cb.cdr.clone())
                 };
                 if !matches!(car, Value::Str(_)) {
-                    let err = i.intern("error");
+                    let err = i.q("error");
                     return Err(
                         i.signal_data(err, vec![Value::string("Element not a string"), car])
                     );

@@ -396,10 +396,12 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
                 break;
             }
         }
+        r = i.offer_flow(r);
         let saved = std::mem::replace(&mut i.lexenv, Some(frame));
         if r.is_ok() {
             r = i.eval_progn(&body);
         }
+        r = i.offer_flow(r);
         i.lexenv = saved;
         i.unbind_to(mark)?;
         r
@@ -425,6 +427,7 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
         if r.is_ok() {
             r = i.eval_progn(&body);
         }
+        r = i.offer_flow(r);
         i.unbind_to(mark)?;
         r
     }
@@ -451,6 +454,7 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
         if r.is_ok() {
             r = i.eval_progn(&body);
         }
+        r = i.offer_flow(r);
         i.lexenv = saved;
         i.unbind_to(mark)?;
         r
@@ -468,6 +472,7 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
         if r.is_ok() {
             r = i.eval_progn(&body);
         }
+        r = i.offer_flow(r);
         i.unbind_to(mark)?;
         r
     }
@@ -586,7 +591,7 @@ fn sf_defvar(i: &mut Interp, args: Value) -> EvalResult {
     let doc = nth_arg(&args, 2);
     if let Value::Str(s) = doc {
         // GNU: Fput(symbol, Qvariable_documentation, doc).
-        let vd = i.intern("variable-documentation");
+        let vd = i.q("variable-documentation");
         i.put_prop(sid, vd, Value::string(s.borrow().clone()));
     }
     // GNU eval.c `defvar' LOADHIST_ATTACHes the bare symbol — this is
@@ -617,10 +622,10 @@ fn sf_defconst(i: &mut Interp, args: Value) -> EvalResult {
     let doc = nth_arg(&args, 2);
     if let Value::Str(s) = doc {
         // GNU: Fput(symbol, Qvariable_documentation, doc).
-        let vd = i.intern("variable-documentation");
+        let vd = i.q("variable-documentation");
         i.put_prop(sid, vd, Value::string(s.borrow().clone()));
     }
-    let rlv = i.intern("risky-local-variable");
+    let rlv = i.q("risky-local-variable");
     i.put_prop(sid, rlv, Value::t());
     // GNU routes `defconst' through `defvar' (eval.c), which
     // LOADHIST_ATTACHes the bare symbol.
@@ -699,7 +704,7 @@ fn sf_defun(i: &mut Interp, args: Value) -> EvalResult {
     eval_defun_declarations(i, &name_v, &params, &body, false)?;
     // GNU `defun' reaches `defalias' (eval.c), which
     // LOADHIST_ATTACHes `(defun . SYM)'.
-    let defun_id = i.intern("defun");
+    let defun_id = i.q("defun");
     crate::lisp::builtins::evalfn::loadhist_attach(i, Value::cons(i.sym(defun_id), name_v.clone()));
     Ok(name_v)
 }
@@ -736,7 +741,7 @@ fn sf_defmacro(i: &mut Interp, args: Value) -> EvalResult {
     i.fset_defalias(sid, function)?;
     eval_defun_declarations(i, &name_v, &params, &body, true)?;
     // GNU `defmacro' reaches `defalias' the same way.
-    let defun_id = i.intern("defun");
+    let defun_id = i.q("defun");
     crate::lisp::builtins::evalfn::loadhist_attach(i, Value::cons(i.sym(defun_id), name_v.clone()));
     Ok(name_v)
 }
@@ -770,7 +775,7 @@ fn eval_defun_declarations(
     if !matches!(alist, Value::Cons(_)) {
         return Ok(Value::Nil);
     }
-    let declare_id = i.intern("declare");
+    let declare_id = i.q("declare");
     // Scan past the optional docstring, then collect `declare' forms.
     let mut start = 0;
     if matches!(body.first(), Some(Value::Str(_))) && body.len() > 1 {
@@ -854,14 +859,11 @@ fn sf_while(i: &mut Interp, args: Value) -> EvalResult {
     let body = cdr(&args);
     let mut iters: u64 = 0;
     loop {
-        if i.quit_flag {
-            i.quit_flag = false;
-            return Err(Flow::Quit);
-        }
         let v = i.eval(&test)?;
         if v.is_nil() {
             return Ok(Value::Nil);
         }
+        i.maybe_quit()?;
         i.eval_progn(&body)?;
         iters += 1;
         if i.dbg_flags & 0x20 != 0 && iters == 2_000_000 {
@@ -900,10 +902,16 @@ fn sf_catch(i: &mut Interp, args: Value) -> EvalResult {
     match r {
         Err(Flow::Throw(t, v)) => {
             if crate::lisp::eq_values(&t, &tag) {
+                i.finish_quit_unwind();
                 Ok(v)
             } else {
+                i.rebase_quit_unwind();
                 Err(Flow::Throw(t, v))
             }
+        }
+        Err(flow) => {
+            i.rebase_quit_unwind();
+            Err(flow)
         }
         other => other,
     }
@@ -913,7 +921,8 @@ fn sf_unwind_protect(i: &mut Interp, args: Value) -> EvalResult {
     let form = car(&args);
     let cleanup = cdr(&args);
     let result = i.eval(&form);
-    let clean = i.eval_progn(&cleanup);
+    let result = i.offer_flow(result);
+    let clean = i.with_quit_preserved(|i| i.eval_progn(&cleanup));
     match (result, clean) {
         (Ok(v), Ok(_)) => Ok(v),
         (Ok(_), Err(e)) => Err(e),
@@ -981,31 +990,37 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
     // Register our condition names so a signal raised in BODY knows it
     // will be caught — `handler-bind' handlers only fire for signals
     // no enclosing `condition-case' claims (Emacs debugger semantics).
+    let success = i.q(":success");
+    let mut clauses = Vec::new();
     let mut cond_names = Vec::new();
-    handlers.each_car(|h| cond_names.push(car(h)));
-    i.case_handlers.push(Value::list(cond_names));
+    let mut success_handler = None;
+    handlers.each_car(|h| {
+        let conditions = car(h);
+        if i.sym_id(&conditions) == Some(success) {
+            success_handler = Some(h.clone());
+        } else {
+            cond_names.push(conditions);
+            clauses.push(h.clone());
+        }
+    });
+    // GNU retains the original clause objects in an alloca table. A cleanup
+    // can replace the caller's handler-list cells without replacing that table.
+    let handlers = Value::list(clauses);
+    let case_depth = i.case_handlers.len();
+    i.case_handlers.push(crate::lisp::error::CaseHandler { clauses: cond_names });
     let body_result = i.eval(&bodyform);
+    let body_result = i.offer_flow(body_result);
     i.case_handlers.pop();
     match body_result {
         Ok(v) => {
             // GNU: a `:success' pseudo-handler runs when BODYFORM
             // returns normally — VAR is bound to the body's value.
-            let success = i.intern(":success");
-            let mut cur = handlers;
+            let cur = Value::list(success_handler.into_iter().collect());
             loop {
                 match cur {
                     Value::Nil => return Ok(v),
                     Value::Cons(c) => {
-                        let (handler, next) = {
-                            let b = c.borrow();
-                            (b.car.clone(), b.cdr.clone())
-                        };
-                        let conds = car(&handler);
-                        let is_success = matches!(&conds, Value::Sym(s) if *s == success);
-                        if !is_success {
-                            cur = next;
-                            continue;
-                        }
+                        let handler = c.borrow().car.clone();
                         let hbody = cdr(&handler);
                         let mark = i.specbind_depth();
                         let lex_frame = if i.lexical_binding_active() {
@@ -1044,20 +1059,23 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                 }
             }
         }
-        Err(Flow::Signal(sig, data, offered)) => {
-            // Build the condition object: (sig . data)
-            let err_val = Value::cons(sig.clone(), data.clone());
+        Err(Flow::Signal(signal)) => {
+            let err_val = signal.condition.clone();
             let mut cur = handlers;
+            let mut clause = 0;
             loop {
                 match cur {
-                    Value::Nil => return Err(Flow::Signal(sig, data, offered)),
+                    Value::Nil => {
+                        i.rebase_quit_unwind();
+                        return Err(Flow::Signal(signal));
+                    }
                     Value::Cons(c) => {
                         let (handler, next) = {
                             let b = c.borrow();
                             (b.car.clone(), b.cdr.clone())
                         };
-                        let conds = car(&handler);
-                        if i.signal_matches(&sig, &conds) {
+                        if signal.claims_clause(case_depth, clause) {
+                            i.finish_quit_unwind();
                             // Bind var and run handler body.
                             let hbody = cdr(&handler);
                             let mark = i.specbind_depth();
@@ -1094,12 +1112,19 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                             return r;
                         }
                         cur = next;
+                        clause += 1;
                     }
-                    _ => return Err(Flow::Signal(sig, data, offered)),
+                    _ => {
+                        i.rebase_quit_unwind();
+                        return Err(Flow::Signal(signal));
+                    }
                 }
             }
         }
-        other => other,
+        Err(flow) => {
+            i.rebase_quit_unwind();
+            Err(flow)
+        }
     }
 }
 
@@ -1115,12 +1140,12 @@ fn sf_save_excursion(i: &mut Interp, args: Value) -> EvalResult {
 fn sf_save_mark_and_excursion(i: &mut Interp, args: Value) -> EvalResult {
     // Match simple.el's macro: save the mark, restore ordinary excursion
     // first, then restore the mark (and its hooks) as unwind-protect cleanup.
-    let save_mark = Value::Sym(i.intern("save-mark-and-excursion--save"));
+    let save_mark = Value::Sym(i.q("save-mark-and-excursion--save"));
     let mark = i.apply(&save_mark, vec![])?;
     let saved = i.save_excursion_state(false);
     let r = i.eval_progn(&args);
     i.restore_excursion_state(saved);
-    let restore_mark = Value::Sym(i.intern("save-mark-and-excursion--restore"));
+    let restore_mark = Value::Sym(i.q("save-mark-and-excursion--restore"));
     i.apply(&restore_mark, vec![mark])?;
     r
 }

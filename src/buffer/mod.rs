@@ -308,7 +308,7 @@ pub struct Overlay {
 
 impl Overlay {
     pub(crate) fn matches_window(&self, i: &crate::lisp::Interp, window: &Value) -> bool {
-        let Some(property) = i.intern_soft("window") else {
+        let Some(property) = i.q_soft("window") else {
             return true;
         };
         let restriction = self.property(i, &Value::Sym(property));
@@ -321,7 +321,7 @@ impl Overlay {
             return value;
         }
         let category =
-            i.intern_soft("category").and_then(|key| {
+            i.q_soft("category").and_then(|key| {
                 match crate::lisp::eval::plist_get(&self.plist, key) {
                     Value::Sym(symbol) => Some(symbol),
                     _ => None,
@@ -341,7 +341,7 @@ impl Overlay {
                 0
             }
         }
-        let Some(priority) = i.intern_soft("priority") else {
+        let Some(priority) = i.q_soft("priority") else {
             return (0, 0);
         };
         let value = self.property(i, &Value::Sym(priority));

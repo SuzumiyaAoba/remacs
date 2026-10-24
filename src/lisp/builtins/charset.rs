@@ -332,7 +332,7 @@ fn f_define_charset_alias(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         // GNU Fdefine_charset_alias: `Vcharset_list = Fcons (alias,
         // Vcharset_list)' — aliases prepend just like real charsets
         // (that's how `ucs' enters the list in mule-conf).
-        let cl = i.intern("charset-list");
+        let cl = i.q("charset-list");
         let cur = i.symbol_value(cl);
         let cell = Value::cons(a[0].clone(), cur);
         let _ = i.set_symbol_default(cl, cell);
@@ -584,9 +584,36 @@ fn f_char_resolve_modifiers(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     match &a[0] {
         // GNU CHECK_FIXNUM (any integer — out-of-range modifiers are
         // folded by char_resolve_modifier_mask), not CHECK_CHARACTER.
-        Value::Int(_) => Ok(a[0].clone()),
+        Value::Int(code) if a[0].fixnump() => Ok(Value::Int(resolve_modifier_mask(*code))),
         _ => Err(i.wrong_type_mut("fixnump", &a[0])),
     }
+}
+
+/// GNU character.c char_resolve_modifier_mask. This reflects only ASCII
+/// Shift/Control into the base character; other modifiers remain event bits.
+pub(crate) fn resolve_modifier_mask(mut code: i128) -> i128 {
+    use crate::editor::{CHAR_CTL, CHAR_MODIFIER_MASK, CHAR_SHIFT};
+    let base = code & !CHAR_MODIFIER_MASK;
+    if !(0..128).contains(&base) { return code; }
+    if code & CHAR_SHIFT != 0 {
+        if (65..=90).contains(&(code & 255)) {
+            code &= !CHAR_SHIFT;
+        } else if (97..=122).contains(&(code & 255)) {
+            code = (code & !CHAR_SHIFT) - 32;
+        } else if (code & !CHAR_MODIFIER_MASK) <= 32 {
+            code &= !CHAR_SHIFT;
+        }
+    }
+    if code & CHAR_CTL != 0 {
+        if code & 255 == 32 {
+            code &= !127 & !CHAR_CTL;
+        } else if code & 255 == 63 {
+            code = 127 | (code & !127 & !CHAR_CTL);
+        } else if (65..=90).contains(&(code & 95)) || (64..=95).contains(&(code & 127)) {
+            code &= 31 | (!127 & !CHAR_CTL);
+        }
+    }
+    code
 }
 
 // ---------- char-code properties ----------
@@ -610,7 +637,7 @@ fn register_prop_alist(i: &mut Interp, name: &str, backing: Value) {
     if let Value::Cons(c) = entry {
         c.borrow_mut().cdr = backing;
     } else {
-        let vid = i.intern("char-code-property-alist");
+        let vid = i.q("char-code-property-alist");
         let alist = i.symbol_value(vid);
         let cell = Value::cons(Value::Sym(i.intern(name)), backing);
         let _ = i.set_symbol(vid, Value::cons(cell, alist));
@@ -1305,7 +1332,7 @@ fn f_define_translation_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
         }
         _ => f_make_translation_table(i, a[1..].to_vec().into())?,
     };
-    let ttv = i.intern("translation-table-vector");
+    let ttv = i.q("translation-table-vector");
     let mut vec = match i.symbol_value(ttv) {
         Value::Vec(v) => v.borrow().clone(),
         _ => Vec::new(),
@@ -1331,9 +1358,9 @@ fn f_define_translation_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
     }
     vec[tid] = Value::cons(Value::Sym(id), table.clone());
     let _ = i.set_symbol(ttv, Value::vector(vec));
-    let prop = i.intern("translation-table");
+    let prop = i.q("translation-table");
     i.put_prop(id, prop, table);
-    let tidp = i.intern("translation-table-id");
+    let tidp = i.q("translation-table-id");
     i.put_prop(id, tidp, Value::Int(tid as i128));
     Ok(Value::Int(tid as i128))
 }
@@ -1345,7 +1372,7 @@ fn f_make_translation_table_from_vector(i: &mut Interp, a: crate::lisp::Argv) ->
         Value::Vec(v) => {
             let v = v.borrow();
             if v.len() != 256 {
-                let s = i.intern("args-out-of-range");
+                let s = i.q("args-out-of-range");
                 return Err(i.signal_data(s, vec![a[0].clone(), Value::Int(v.len() as i128)]));
             }
             v.clone()
@@ -1384,7 +1411,7 @@ pub(crate) fn f_coding_system_type(i: &mut Interp, a: crate::lisp::Argv) -> Eval
         .unwrap_or(&name);
     // GNU signals `coding-system-error` for undefined coding systems.
     if !matches!(&a[0], Value::Nil) && coding_known(i, &a[0]).is_none() {
-        let s = i.intern("coding-system-error");
+        let s = i.q("coding-system-error");
         return Err(i.signal_data(s, vec![a[0].clone()]));
     }
     // GNU's coding-system types: charset is the default for the
@@ -1504,7 +1531,7 @@ fn coding_plist_key(i: &Interp, name: &str) -> String {
 /// (charset-list attr, coding-type attr) from the coding system's
 /// plist in `remacs-coding-system-plists'.
 fn coding_charset_attrs(i: &mut Interp, v: &Value) -> Option<(Value, Value)> {
-    let table_id = i.intern("remacs-coding-system-plists");
+    let table_id = i.q("remacs-coding-system-plists");
     let table = i.symbol_value(table_id);
     let name = coding_known(i, v)?;
     let key = coding_plist_key(i, &name);
@@ -1521,8 +1548,8 @@ fn coding_charset_attrs(i: &mut Interp, v: &Value) -> Option<(Value, Value)> {
                 (b.car.clone(), b.cdr.clone())
             };
             if matches!(&k, Value::Sym(s) if *s == keysym) {
-                let cl = crate::lisp::eval::plist_get(&pl, i.intern(":charset-list"));
-                let ty = crate::lisp::eval::plist_get(&pl, i.intern(":coding-type"));
+                let cl = crate::lisp::eval::plist_get(&pl, i.q(":charset-list"));
+                let ty = crate::lisp::eval::plist_get(&pl, i.q(":coding-type"));
                 return Some((cl, ty));
             }
         }
@@ -1567,7 +1594,7 @@ fn f_coding_system_charset_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
     }
     if coding_known(i, &a[0]).is_none() {
         // GNU signals coding-system-error on an undefined coding system.
-        let cs = i.intern("coding-system-error");
+        let cs = i.q("coding-system-error");
         return Err(i.signal_data(cs, vec![a[0].clone()]));
     }
     // The Lisp function returns the raw :charset-list attribute — a
@@ -1579,7 +1606,7 @@ fn f_coding_system_charset_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
 /// coding system: (category-symbol, base-name) resolved through the
 /// alias chain and `remacs-coding-system-plists'.
 pub(crate) fn coding_category_member(i: &mut Interp, v: &Value) -> Option<(String, String)> {
-    let table_id = i.intern("remacs-coding-system-plists");
+    let table_id = i.q("remacs-coding-system-plists");
     let table = i.symbol_value(table_id);
     let name = coding_known(i, v)?;
     let key = coding_plist_key(i, &name);
@@ -1596,8 +1623,8 @@ pub(crate) fn coding_category_member(i: &mut Interp, v: &Value) -> Option<(Strin
                 (b.car.clone(), b.cdr.clone())
             };
             if matches!(&k, Value::Sym(s) if *s == keysym) {
-                let cat = crate::lisp::eval::plist_get(&pl, i.intern(":category"));
-                let base = crate::lisp::eval::plist_get(&pl, i.intern(":name"));
+                let cat = crate::lisp::eval::plist_get(&pl, i.q(":category"));
+                let base = crate::lisp::eval::plist_get(&pl, i.q(":name"));
                 let cat = match cat {
                     Value::Sym(s) => i.symbol_name(s).to_string(),
                     _ => return None,
@@ -1624,7 +1651,7 @@ fn f_set_coding_system_priority(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
     for v in a.iter() {
         want_sym(i, v)?;
         if coding_known(i, v).is_none() {
-            let cs = i.intern("coding-system-error");
+            let cs = i.q("coding-system-error");
             return Err(i.signal_data(cs, vec![v.clone()]));
         }
     }
@@ -1645,7 +1672,7 @@ fn f_set_coding_system_priority(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
         moved.push(symv(i, &base));
     }
     if !moved.is_empty() {
-        let var = i.intern("remacs-coding-system-priorities");
+        let var = i.q("remacs-coding-system-priorities");
         let mut rest = Vec::new();
         let mut cur = i.symbol_value(var);
         while let Value::Cons(c) = cur {
@@ -1690,18 +1717,18 @@ fn f_set_keyboard_coding_system_internal(i: &mut Interp, a: crate::lisp::Argv) -
     }
     let _ = want_sym(i, &a[0])?;
     if !a[0].is_nil() && super::misc::coding_known(i, &a[0]).is_none() {
-        let e = i.intern("coding-system-error");
+        let e = i.q("coding-system-error");
         return Err(i.signal_data(e, vec![a[0].clone()]));
     }
     let sym = if a[0].is_nil() {
-        Value::Sym(i.intern("no-conversion"))
+        Value::Sym(i.q("no-conversion"))
     } else {
         a[0].clone()
     };
     i.keyboard_coding = sym.clone();
     // `keyboard-coding-system' is ALSO a defcustom that the mule.el
     // wrapper setqs; keep it in sync so the var and the subr agree.
-    let kc = i.intern("keyboard-coding-system");
+    let kc = i.q("keyboard-coding-system");
     if i.bound_p(kc) {
         let _ = i.set_symbol(kc, sym.clone());
     }
@@ -1727,10 +1754,10 @@ fn f_find_coding_systems_region_internal(i: &mut Interp, a: crate::lisp::Argv) -
             .unwrap_or_default();
         let len = text.chars().count() as i128;
         if !(1 <= start && start <= end && end <= len + 1) {
-            let sid = i.intern("args-out-of-range");
+            let sid = i.q("args-out-of-range");
             return Err(i.signal(sid, Value::list(vec![a[0].clone(), a[1].clone()])));
         }
-        let multi = i.intern("enable-multibyte-characters");
+        let multi = i.q("enable-multibyte-characters");
         if !i.symbol_value(multi).truthy() {
             return Ok(Value::t());
         }
@@ -1753,7 +1780,7 @@ fn f_find_coding_systems_region_internal(i: &mut Interp, a: crate::lisp::Argv) -
         .get(2)
         .and_then(|v| v.list_to_vec().ok())
         .unwrap_or_default();
-    let list_id = i.intern("coding-system-list");
+    let list_id = i.q("coding-system-list");
     let codings = i.symbol_value(list_id).list_to_vec().unwrap_or_default();
     let mut safe = Vec::new();
     for coding in codings {
@@ -2074,7 +2101,7 @@ pub(crate) fn make_char(i: &mut Interp, name: &str, codes: &[Value]) -> Result<i
                 Some(other) => match other {
                     Value::Int(n) if *n >= 0 => {
                         if *n >= 0x100 {
-                            let sym = i.intern("args-out-of-range");
+                            let sym = i.q("args-out-of-range");
                             return Err(i.signal_data(sym, vec![Value::Int(0xFF), other.clone()]));
                         }
                         *n as i64
@@ -2642,7 +2669,7 @@ fn f_clear_charset_maps(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 
 /// Entry `(prop . TABLE)' in `char-code-property-alist', or nil.
 fn prop_alist_entry(i: &mut Interp, prop: &str) -> Value {
-    let vid = i.intern("char-code-property-alist");
+    let vid = i.q("char-code-property-alist");
     let alist = i.symbol_value(vid);
     for e in alist.list_to_vec().unwrap_or_default() {
         if let Value::Cons(c) = &e {
@@ -3834,7 +3861,7 @@ fn f_define_charset_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     // (17) args, and the in-function check conses NAME . NARGS (a
     // dotted pair, unlike the dispatcher's list).
     if a.len() != 17 {
-        let wna = i.intern("wrong-number-of-arguments");
+        let wna = i.q("wrong-number-of-arguments");
         let who = symv(i, "define-charset-internal");
         return Err(i.signal(wna, Value::cons(who, Value::Int(a.len() as i128))));
     }
@@ -3852,7 +3879,7 @@ fn dci_aref(i: &mut Interp, v: &Value, idx: usize) -> Result<Value, Flow> {
                 Some(x) => Ok(x.clone()),
                 None => {
                     drop(vv);
-                    let s = i.intern("args-out-of-range");
+                    let s = i.q("args-out-of-range");
                     Err(i.signal_data(s, vec![v.clone(), Value::Int(idx as i128)]))
                 }
             }
@@ -3863,7 +3890,7 @@ fn dci_aref(i: &mut Interp, v: &Value, idx: usize) -> Result<Value, Flow> {
                 Some(c) => Ok(Value::Int(c as i128)),
                 None => {
                     drop(sv);
-                    let s2 = i.intern("args-out-of-range");
+                    let s2 = i.q("args-out-of-range");
                     Err(i.signal_data(s2, vec![v.clone(), Value::Int(idx as i128)]))
                 }
             }
@@ -3878,7 +3905,7 @@ fn check_int_range(i: &mut Interp, v: &Value, lo: i128, hi: i128) -> Result<i128
     match v {
         Value::Int(n) => {
             if *n < lo || *n > hi {
-                let s = i.intern("args-out-of-range");
+                let s = i.q("args-out-of-range");
                 Err(i.signal_data(s, vec![v.clone(), Value::Int(lo), Value::Int(hi)]))
             } else {
                 Ok(*n)
@@ -3985,7 +4012,7 @@ fn define_charset_internal_impl(i: &mut Interp, a: &[Value]) -> EvalResult {
             if code < min_code || code > max_code {
                 // GNU's reversed args_out_of_range_3 order:
                 // (MIN-CODE MAX-CODE VAL).
-                let s = i.intern("args-out-of-range");
+                let s = i.q("args-out-of-range");
                 return Err(i.signal_data(
                     s,
                     vec![
@@ -4170,7 +4197,7 @@ fn define_charset_internal_impl(i: &mut Interp, a: &[Value]) -> EvalResult {
         // Vcharset_list)' — newest definitions prepend; the seed in
         // eval.rs holds the builtins oldest-first at the tail.
         {
-            let cl = i.intern("charset-list");
+            let cl = i.q("charset-list");
             let cur = i.symbol_value(cl);
             let cell = Value::cons(Value::Sym(sid), cur);
             let _ = i.set_symbol_default(cl, cell);
@@ -4233,7 +4260,7 @@ fn f_define_coding_system_internal(i: &mut Interp, a: crate::lisp::Argv) -> Eval
     // GNU coding.c Fdefine_coding_system_internal pushes
     // `(SYMBOL-NAME . nil)' onto `coding-system-alist' when absent
     // (subsidiary eol names get the same treatment below).
-    let alist_sym = i.intern("coding-system-alist");
+    let alist_sym = i.q("coding-system-alist");
     let push_alist = |i: &mut Interp, name: &str| -> Result<(), Flow> {
         let cur = i.symbol_value(alist_sym).list_to_vec().unwrap_or_default();
         let present = cur.iter().any(|v| match v {

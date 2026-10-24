@@ -46,6 +46,51 @@ fn availability_and_feature() {
 }
 
 #[test]
+fn old_native_api_prefix_remains_loadable() {
+    if !avail() { return; }
+    let source = scratch("legacy-api-prefix.c", r#"
+typedef unsigned long long em_obj;
+typedef unsigned long em_env;
+typedef em_obj (*entry_fn)(const void *, em_env, const em_obj *, long);
+struct old_api {
+  em_obj (*nil)(em_env);
+  em_obj (*t)(em_env);
+  em_obj (*integer)(em_env, long long);
+  void *unused_prefix[14];
+  long (*defsubr)(const void *, em_env, long, const void *);
+};
+struct old_desc {
+  const char *name; unsigned long name_len;
+  unsigned int min, max; entry_fn entry;
+  const char *doc; unsigned long doc_len;
+  const char *arglist; unsigned long arglist_len;
+  const char *iform; unsigned long iform_len;
+  const char *sexp; unsigned long sexp_len;
+};
+static em_obj legacy_entry(const void *api, em_env env, const em_obj *args, long count) {
+  return ((const struct old_api *)api)->integer(env, 37);
+}
+static const struct old_desc desc = {
+  "qa-legacy-native", 16, 0, 0, legacy_entry, 0, 0, "nil", 3, 0, 0, 0, 0
+};
+int remacs_eln_init(const void *api, em_env env, long unit) {
+  return ((const struct old_api *)api)->defsubr(api, env, unit, &desc);
+}
+"#);
+    let output = std::path::Path::new(&source).with_extension("eln");
+    let compiler = std::env::var("REMACS_CC").unwrap_or_else(|_| "cc".into());
+    let status = std::process::Command::new(compiler)
+        .args(["-shared", "-fPIC", "-x", "c", &source, "-o"])
+        .arg(&output).status().unwrap();
+    assert!(status.success());
+    assert_eq!(ev(&format!("(progn (native-elisp-load {:?}) (list (qa-legacy-native) \
+        (native-comp-function-p (symbol-function 'qa-legacy-native))))", output.to_str().unwrap())),
+        "(37 t)");
+    let _ = std::fs::remove_file(source);
+    let _ = std::fs::remove_file(output);
+}
+
+#[test]
 fn interleaved_threads_preserve_native_handles_and_constant_contexts() {
     if !avail() {
         return;

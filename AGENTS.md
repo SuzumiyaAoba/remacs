@@ -108,6 +108,25 @@ path and may contain ordinary source, as in GNU. `--script` uses buffer
 evaluation and bypasses this classification. Regression:
 `qa_load_elc_header`.
 
+Source `load` and `eval-buffer` share lread.c's lexical-cookie scanner:
+the first declaration wins, only the exact value `nil` means dynamic,
+and a missing declaration differs from an explicit nil declaration.
+Scan only an initial comment or the comment after a shebang, using GNU's
+marker state machine and field limits. With no cookie, call the real
+`internal--get-default-lexical-binding-function`; preserve its returned
+object. The source callback sees its consumed buffer position and the
+caller's standard-input, while standard-output is already nil. Restore
+the read position before evaluation and unwind callback failures normally.
+Direct compiled loads bypass that callback and use the toplevel default.
+Reader signals are offered before load bindings or the source buffer are
+removed. Regression: `qa_load_lexical_cookie` (38 GNU checks). Ordinary
+post-boot loads retain the caller's byte-optimize value; only bootstrap and
+the source optimizer's own recursive loading inhibit it.
+Native compilation follows bytecomp.el's separate normal-mode/safe-local-
+variable protocol, where non-boolean values are ignored and duplicate
+directives can select the last value. `qa_native_comp_load` covers both
+rules with actual native functions as well as compiler-library reloads.
+
 Both `read` and `read-positioning-symbols` resolve nil/omitted streams
 through `standard-input`. Source loads expose the existing input buffer;
 direct/compiled loads expose the private uninterned `get-file-char`
@@ -240,7 +259,7 @@ GNU).  `backquote'/`\`'/`backquote-list*' are bound as
 Similarly, `subr.el''s Lisp defuns are loaded for cell-shape parity but
 then any symbol that no longer names a Rust subr is re-fset to the
 subr (right after `boot_lib "subr"') — several subrs carry parity
-tweaks (gensym's interned-name skip, oddp's marker rejection,
+tweaks (gensym's native call/update semantics, oddp's marker rejection,
 apply-partially's `#[128]' shape, locate-library's suffix rules); GNU's
 nativecomp build reports `subrp' t for all of these anyway.
 Macro cells (`(macro . _)', `is_macro' lambdas) are skipped: the
@@ -851,6 +870,192 @@ types have been checked. Valid regions retain byte kind and text
 properties through `buffer-substring`; endpoints are never clamped.
 Regression: `qa_process_send_region` (marker, narrowing and wire checks).
 
+Process filter/sentinel dispatch binds `inhibit-quit` and `last-nonmenu-event`
+to t and restores the interrupted current buffer if it survives, without
+restoring point. The scope includes decoding hooks, default insertion/change
+hooks, separate stderr and decoder tails. Match registers use GNU search.c's
+lazy save on first search, including predicate/failed searches. Recursive
+callbacks additionally unwind a marker-based copy after restoring the lazy
+snapshot; a simple per-callback clone gives different observable registers.
+The asynchronous flag and saved registers travel with each coroutine and
+reset on image restore. GNU's manual search-state cleanup runs only on normal
+return; throws still unwind dynamic bindings and the saved buffer. Regression:
+`qa_process_callback_context` (41 GNU-verified checks). Zero-count buffer
+searches validate bounds in GNU's backward direction and record an empty
+match at point; invalid bounds fail before touching asynchronous match data.
+
+Filter/sentinel function calls install GNU's internal error catch when
+`debug-on-error` is nil on entry. Report caught errors through the current
+`command-error-function` with the full condition, contextual prefix, and
+private signaling-function value; register the catch before offering signals
+so outer `handler-bind` observers do not intercept them. GNU's C `Qerror`
+catch tag covers all signal conditions, including quits and non-error
+conditions; reporter failures, throws and exits propagate. Successful reports clear
+quit flags, re-inhibit quit and honor `process-error-pause-time` while pumping
+timers/processes. Decoding and the fast default-insertion path stay outside
+this function-call catch. Signaling-function metadata is coroutine state and
+resets on image restore. Regressions: `qa_process_callback_errors` (33 GNU
+checks), `tests/process_callback_errors.rs` (fresh normal/source CLI runs).
+The default batch reporter exits through the real `kill-emacs` path. Batch
+exit hooks use `safe_run_hooks`' internal catch, report/remove failed hooks,
+and continue later hooks; interactive exit uses GNU's timed-query wrapper.
+The default reporter validates context strings and prints minibuffer quits
+without exiting, including GNU's batch stdout/bell behavior.
+
+`Flow::Signal` owns a `Signal` packet containing the one Lisp condition
+object and its cached error-conditions list. Preserve the object across
+`handler-bind`, interpreted/byte-code `condition-case`, process reporters,
+native pending errors, and thread error storage; never reconstruct a cons
+from separate symbol/data fields. `(signal CONDITION)` retains CONDITION
+itself. Handler and cleanup mutations to its car/cdr stay visible, while
+clause selection uses the list captured at raise time. Replacing a symbol's
+property does not replace that list; destructive edits to the list do affect
+the ongoing search. Do not add an implicit match for the signal's symbol
+when its error-conditions list omits that symbol. VM opcode failures offer
+the packet before running unwind-protect cleanup, and native signaling uses
+the same validated `signal` entry. Reader diagnostic enrichment updates an
+unoffered packet's cdr in place. Regressions: `qa_signal_objects` (37 GNU
+checks) and `qa_signal_native` (7 checks requiring actual native compilation).
+
+Each signal also records its chosen condition-case scope and clause during
+the initial handler walk, before cleanup. Later property/spec mutations do
+not retarget that packet. Walk interpreted grouped clauses, VM clauses and
+native catchers in dynamic order with handler-bind observers; an observer
+temporarily hides both itself and all inner conditional scopes. Keep the
+original interpreted clause objects, rather than rereading a caller-mutated
+handler list. GNU interpreted evaluation retains the last :success clause;
+the GNU byte compiler retains the first. New exits from cleanup choose a
+fresh destination while the appropriate old catch scopes are still active.
+VM unwind records return errors instead of discarding them, and unwinding
+proceeds to each handler's saved depth before that handler is removed.
+Binding restoration continues after a failing unlet watcher; later cleanup
+failures take precedence. Track a varbind entry even if its let watcher
+signals after the specbind was pushed, and clean up partial dynamic argument
+bindings on setup failure. Regression coverage: `qa_vm_unwind` (57 GNU
+checks) and `qa_signal_targets` (24 GNU checks), including interpreted/VM
+controls, nested jumps, scope restoration, observers, GC and thread switches.
+
+`signal-hook-function` runs for caught signals too, before error-name
+validation, condition-list lookup, handler-bind observers and catcher
+selection. Hook errors/throws replace the original signal; hook changes
+to error-conditions affect that signal's selection. Keep the originally
+selected name even if the shared condition's car changes in the hook.
+`(signal nil CONDITION)` with a cons uses GNU's memory-full path, sharing
+CONDITION and skipping this hook; other nil names become `error`.
+Regression: `qa_signal_hook` (19 GNU checks).
+Error callbacks reserve evaluation depth through GNU's max_ensure_room
+protocol: 20 levels for signal-hook-function, 200 for handler-bind, capped
+by lisp-eval-depth-reserve. These internal updates do not notify watchers.
+Restore the old limit and return the callback's net limit changes to the
+reserve on normal and nonlocal exits. Deliver a depth-limit signal before
+decrementing the failing eval's depth. Regression: `qa_signal_room` (5 GNU
+checks), including the former nonterminating caught-error hook.
+
+Only cons forms consume eval depth; funcall/apply boundaries, native calls
+and Bcall consume their own level. Host call frames participate too, so
+fresh CLI budgets agree with GNU. Bcall reports GNU's generic nesting
+error, while eval/funcall report excessive-lisp-nesting with the failing
+depth. Autoload retry reuses its original call's level and displayed name,
+including when compatibility loading returns a hidden definition.
+Dedicated VM primitives call the canonical C subr without another depth
+entry, function-cell lookup, advice or artificial call frame. Build this
+registry from all subr sets, including editor/buffer primitives, and map
+string=/string< to string-equal/string-lessp. Regressions: qa_call_depth
+(12 GNU checks, run through fresh normal/source CLI with a watchdog) and
+qa_native_call_depth (3 checks using actual native code).
+
+Pending quits use the Lisp quit-flag value, including dynamic/alias bindings;
+the host boolean is only an incoming request and is synchronized before use.
+maybe_quit honors inhibit-quit, clears the flag without watcher notifications,
+then gives kill-emacs priority over throw-on-input before signaling quit.
+Check call/form entries before the depth guard, interpreted while after its
+test, and native loop checkpoints. The VM checks every 255 backward branches,
+sharing that counter for fast lexical-bytecode calls and reentering for
+aliases/autoloads/dynamic calls; a caught exit resets it to 255.
+Unbinding and unwind-protect temporarily hide pending quits. Preserve the
+saved request unless a newer one replaces it; a failed cleanup abandons its
+old saved request. Nonlocal exits retain this state across evaluator frames
+and renew it at discarded handler boundaries. User cleanup runs with its own
+normal binding scopes. Quit signals follow the ordinary observer/handler
+protocol and abort minibuffers/macros like host cancellations.
+Regressions: qa_quit_flag (48 GNU checks, normal/source boot), the pending
+kill tests in exit_unwind, and native list/pending-connect quit tests.
+
+Opcode 142 chooses a function action versus a legacy progn body when the
+record is registered, using GNU FUNCTIONP without invoking Lisp advice or
+autoloading. Preserve that choice if the function cell later changes.
+Legacy nil/atom bodies do nothing and legacy dotted tails are ignored;
+function actions still signal normal call/autoload errors. This includes
+the empty unwind-protect generated by the compiler (#132), whose nil action
+must not become a call to nil. Function predicates follow complete alias
+chains rather than imposing a 64-hop cap. `eval_progn` follows Fprogn's
+ordering: retain the form and next cdr before evaluating the form, while
+reading that next cell's car when it is reached. Its internal atom/tail
+tolerance does not bypass eval's proper-argument-list validation.
+Regressions: `qa_unwind_legacy` (24 GNU checks), `qa_progn_traversal`
+(21 checks), and the existing empty compiled unwind check in `qa_eval`.
+
+An accepted `Flow::Exit` latches a shared interpreter exit status. Evaluation,
+application and signal delivery thereafter propagate that same status without
+executing Lisp cleanup, unlet watchers, sentinels or later forms. This is
+global to cooperating threads, and is reset with other execution state on
+image restore. Interactive `kill-emacs` also returns the uncatchable exit;
+front ends observe `quit_editor`. Hook throws/restoration errors before
+acceptance still abort shutdown and permit ordinary cleanup. `safe_run_hooks`
+must propagate its binding-restoration failures rather than discard them.
+Implicit batch termination uses the real kill path so a failed hook cannot
+skip later hooks. Normal completion calls the public kill-emacs cell with t,
+honoring advice and replacements; fatal/pending exits call the C primitive.
+If a replacement returns, run normal-top-level's startup/term/window hooks
+through the public run-hooks function, respecting inhibit-startup-hooks at
+both GNU checkpoints, then enter the nonterminal batch event loop. Queued
+commands and timers remain live without reading redirected stdin as commands.
+The command-loop top-level catch then exits batch mode through the C primitive;
+the startup top-level catch instead proceeds into the command loop.
+Command errors reach command-error-function before post-command-hook; restore
+the input/output and quit state before the next command.
+Removing failed hooks uses normal variable setters and
+propagates watcher failures before accepting shutdown. A default function
+reached through a local `t` is removed from the default, preserving local
+entries; alias bindings follow the same rule. Batch string exit arguments
+do not print diagnostics. Regressions: `tests/exit_unwind.rs` (normal/source CLI,
+GNU comparisons, actual native entry, worker exit and interactive host).
+
+All hook runners share GNU's live cons traversal: read each cdr after its
+callback, retain the original list across binding replacement, and accept
+bare `(lambda ...)` functions and dotted list tails. A `t` fetches the
+current default at that position; nested default-list `t` entries are
+skipped. This also applies to safe hooks and before/after-change hooks.
+Regression: `qa_hook_traversal` (16 GNU-verified checks).
+
+Executable entry saves the pristine OS argv before parsing. `kill-emacs`'s
+RESTART checks the original executable's existence (F_OK, not X_OK) before
+shutdown hooks; resolve PATH and symlinks once, keeping the original argv[0]
+for error messages. Only accepted shutdown records the process-wide request,
+so an inner exit from a hook wins and an aborted restart cannot arm a later
+normal exit. All CLI/front-end exits consume that request after terminal/UI
+resources have been released. Unix restart uses execvp, retaining the PID,
+OS environment and ignored signals, rather than the mutable Lisp argv or
+process-environment. Failed exec reports errno and keeps the original exit
+code. Quote validation errors through error_q without translating argv text.
+Regression: `tests/restart.rs`, including disposable GNU copies and real PTYs.
+
+Batch output uses the process C stdout buffer. Printing does not flush it;
+flush-standard-output, terminal output and minibuffer prompts flush explicitly.
+Successful exec discards unflushed piped output, while ordinary exit flushes it.
+Batch minibuffer input shares C stdin's getchar cursor. Construct each line
+like alloc.c make_string: all sequences must be canonical Emacs UTF-8 (including
+surrogates/Mule) to select multibyte storage; any invalid sequence keeps the
+entire original line unibyte. Locale coding and last-coding-system-used are
+unaffected. Keep the Lisp string object through the minibuffer/read/completion
+wrappers, including interning, so representation flags are not lost in a Rust
+String conversion. Keyboard readers wait for queued events/timers rather than
+consuming stdin; key sequences continue through active prefix maps. Interactive
+c/k/K use this event path (K returns a vector), while e takes parameter events
+from the supplied KEYS vector. read-key-sequence does not apply the character
+readers' inhibit-interaction guard. Regressions: `tests/batch_input.rs` and the
+existing CLI/character-output suites.
+
 ## Process input pause (`src/lisp/process.rs`)
 
 `stop-process` inhibits reads/accepts for every network backend, including
@@ -1049,6 +1254,28 @@ Architecture:
   can't pull GNU's comp.el LIMPLE pipeline in. `interactive-form`,
   `commandp`, `call-interactively`, `documentation`, and
   `subr-native-lambda-list` consult the native metadata table.
+- Loading unchanged shipped comp.el/comp-run.el initializes the GNU helper
+  surface while retaining the live cc-backend compiler drivers before each
+  subsequent top-level form and after-load callback. User load-path copies
+  and edited sources remain authoritative. This prevents an explicit
+  `(require 'comp)` from replacing the working backend with GNU's incompatible
+  libgccjit driver. `qa_native_comp_load` covers compilation from an after-load
+  callback, explicit reloads, comp-run initialization and a user comp.el override.
+- Dynamic let/let* bindings and dynamic-function parameters use the real
+  specbind stack through the native API. Evaluate parallel initializers before
+  binding, unwind native scopes normally, and restore partially installed
+  bindings after failed callbacks. Lexical-function arguments stay lexical
+  even when their names are special; compiled inner dynamic lets shadow those
+  arguments as GNU native code does. Use the real byte-optimize-letX rules,
+  normalizing bare binders to one-element lists as cconv does before calling
+  the optimizer. Honor byte-optimize and propagate compile-time callback exits.
+  qa_native_letstar covers 37 GNU checks, including omitted initializers.
+- Native value reads call the C getter without an extra funcall unless a
+  symbol-value trampoline has been installed. Replacing/restoring that subr
+  retains GNU's trampoline behavior; the enable variable and portable images
+  preserve its state. New units export remacs_eln_init_v2 and use the v2 cache;
+  the loader retains old init/API-prefix compatibility. qa_native_bindings
+  covers 33 GNU checks; nativecomp tests load a real old-prefix C unit.
 - `comp-libgccjit-version` → nil (no jit), same as a GNU
   `--without-native-compilation` build's surface.
 - Known limits: max 256 native functions/units (trampoline pool),
@@ -1104,7 +1331,16 @@ GNU structure kept: `read-file-name`/`completing-read`/`read-buffer`
 are subrs that delegate to the user variables
 (`read-file-name-function`, `completing-read-function`,
 `read-buffer-function`) or their -default counterparts, exactly like
-GNU's Lisp wrappers.  `f_completing_read_default` does
+GNU's Lisp wrappers. `completing-read` passes all eight arguments to the
+selected function before batch-input guards or prompt/initial-input
+validation. A nil function signals `void-function`; the default implementation
+owns physical input. Empty completion with nil DEF keeps the empty string;
+a non-nil list DEF selects its car, including nil or non-string cars.
+`completing-read-multiple` remains the real `crm.el` autoload so separator
+regexps, prompt formats, properties and per-element completion share GNU's
+implementation. Regressions: `qa_crm`, completion cases in `batch_input`,
+and `tui_multiple_completion_completes_each_element`.
+`f_completing_read_default` does
 `completing-read-default`'s work in Rust: picks
 `minibuffer-local-must-match-map`/`minibuffer-local-completion-map` by
 REQUIRE-MATCH, composes `minibuffer-local-filename-completion-map` on
@@ -1750,6 +1986,90 @@ pins one-form consumption, callbacks, errors, GC/reentry, labels and byte kinds.
 buffer and marker cursors advance before parse errors propagate, marker reads
 leave the buffer's own point unchanged, and EOF data identifies the proper
 input kind. This behavior was already provided by the #93 reader fix.
+`read` and `read-positioning-symbols` share stream dispatch, including
+callable sources. The exact t/read-char stream identities call the public
+`read-minibuffer` with "Lisp expression: "; this path returns ordinary
+objects even for positioned reads. Nil resolves `standard-input` once,
+so a nil-valued standard input is called as a function and signals
+`void-function`. Regressions: `qa_reader_source_dispatch` and the physical
+stdin cases in `tests/batch_input.rs`.
+
+Reader source kinds also apply to strings, buffers and markers: preserve
+the source's multibyte flag when constructing new symbol-name strings,
+including uninterned symbols and ASCII names. Existing interned names keep
+their original objects and kinds. Literal strings choose their own kind:
+byte8 characters alone produce unibyte storage, while a real non-ASCII
+character makes the whole literal multibyte. The shared character-escape
+parser supplies Unicode/surrogate, Shift and Meta characters; string-specific
+handling removes escaped spaces/newlines, folds ASCII Shift, translates
+Meta to byte8 and rejects remaining modifiers. ASCII Unicode/long hex
+escapes do not force multibyte storage. `string_to_object` retains the input
+or default string's kind before parsing. Regressions:
+`qa_reader_string_kind` and the raw object-read cases in `tests/batch_input.rs`.
+The `#_` and `#:` token paths use that same symbol-name construction and
+annotate nonempty names starting after the two-character prefix. Empty
+names and the interned nil remain bare. `bare-symbol-p` accepts nil, and
+`bare-symbol` returns nil both directly and when unwrapping a positioned
+nil. Regression: `qa_reader_symbol_source`.
+
+Public interning APIs and reader symbol tokens honor the dynamic `obarray`
+value. Validate it before string checks or shorthand lookup; numeric reader
+tokens and uninterned `#:` names bypass that validation. `intern-soft` with
+a symbol requires that exact member, including positioned symbols; a
+same-name uninterned twin is not a hit. Removing a symbol updates membership
+and enumeration without discarding its cells. Registration keys contain
+Emacs storage bytes and character counts, so an unibyte byte and a multibyte
+byte8 character can name distinct symbols. Preserve the supplied name object
+on first registration. Portable images store those keys and allocate separate
+nodes for distinct symbols sharing an original key after name mutation.
+The native interner's ASCII index is derived from that membership, not a
+separate namespace. Synchronize it on registration/removal/boot cleanup and
+rebuild it after image restoration; evaluator polls must not allocate byte
+keys for their usual ASCII variable names.
+
+Native literal symbol references use `Interp::q`/`q_soft`, backed by the
+bootstrap symbol objects, so uninterning or clearing a namespace does not
+retarget C-style Q references. Public interning and reader lookup stay in the
+mutable obarray. Fixed references are GC roots and serialized as graph symbol
+references, including uninterned originals. The current static-call migration
+has compile, focused QA, image and isolated GNU clear-table verification;
+the full regression suite still needs to run after that migration.
+
+`gensym` follows dumped subr.el's native order: read the counter, inline 1+,
+set it through ordinary variable handling, then call format and make-symbol
+through the native trampoline protocol. Formatting retains byte kinds,
+properties and delegated return values. Its mutable format/default-prefix
+literals live in `native_lisp_literals`, which is rooted and included in
+portable images. `format` keeps styled_format's direct-object returns for
+unchanged literals and unpropertized two-character string conversions;
+otherwise string arguments determine multibyte output, including unused
+arguments. Regressions: `qa_gensym_semantics`, `qa_format_string_kind`, the
+gensym counter-unintern CLI test and literal identity checks in portable_dump.
+
+`read-symbol-shorthands` matches byte prefixes using the first valid string
+pair, ignoring malformed entries and dotted/circular tails as GNU's safe
+walk does. Reader punctuation-only names (`^*+-/<=>_|`) and nonempty `#_`/`#:`
+tokens bypass expansion. Public interning APIs still expand punctuation and
+empty names. A new transformed `intern` name is multibyte; reader-created
+names retain the source kind. Source loads call the real
+`hack-read-symbol-shorthands-function` in the temporary load buffer, with
+the caller's input/output and eval-buffer-list, then bind its result for
+evaluation. `.elc` filename suffixes inhibit inherited shorthands, including
+buffer evaluation; a compiled header on an `.el` name does not. Regressions:
+`qa_obarray_defaults`, `qa_symbol_shorthands`, `qa_load_shorthands`, and the
+name-kind/name-mutation round trips in `tests/portable_dump.rs`.
+For a transformed unibyte reader name, GNU's make_specified_string uses the
+calculated character count as the byte length. A multibyte replacement prefix
+can therefore truncate its raw bytes and discard the suffix; retain this
+observable behavior. `qa_shorthand_characters` covers surrogate, Mule and
+byte8 replacement prefixes in string/buffer/public-intern paths.
+
+CLI `--eval` retains the argument's Lisp string kind, including arguments
+inserted into command-line-args-left and inline `--eval=...` operands. Pass
+the actual string to eval_first_object instead of flattening it to Rust text.
+`--funcall` uses the normal native-call interning protocol, so dynamic obarrays,
+symbol shorthands and enabled intern trampolines are observed. Regression:
+`tests/cli_symbol_names.rs`.
 
 `prin1` and `prin1-to-string` apply GNU's OVERRIDES mapping with temporary
 specbindings. Keep all 17 entries, including `unreadeable-function`'s historic
@@ -2149,6 +2469,13 @@ handles nil as a symbol, copies string inputs, and shares symbol-name with
 NO-ANGLES. The key parser consumes a modifier prefix only when another
 character follows it, so a lone `C-` remains literal. Regression coverage:
 `tests/qa_event_conversion.el`; text-char-description 128 already matched.
+
+The prelude installs keyboard.c's core `special-event-map` bindings and
+bindings.el's signal handlers through the real keymap constructors. Keep
+frame focus/move/delete, visibility, save-session, thread, sleep and NS
+working-text events in that map; switch-frame and select-window remain
+outside it. This also creates their normal event parsing caches.
+Regression: `qa_read_events`.
 
 `event-convert-list` also preserves `FOR_EACH_TAIL_SAFE` cycle behavior:
 Brent's walk stops without signalling, while a second base can fail before

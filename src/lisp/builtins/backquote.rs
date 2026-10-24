@@ -104,7 +104,7 @@ fn bq_error(i: &mut Interp, msg_prefix: &str, s: &Value) -> Flow {
 }
 
 fn quote_sym(i: &mut Interp) -> Value {
-    let id = i.intern("quote");
+    let id = i.q("quote");
     i.sym(id)
 }
 
@@ -125,8 +125,8 @@ fn bq_process(i: &mut Interp, s: &Value, level: i64, syms: &BqSyms) -> Result<Va
             if is_tag(&car(&n), 0) {
                 return Ok(Value::cons(Value::Int(0), s.clone()));
             }
-            let list_id = i.intern("list");
-            let append_id = i.intern("append");
+            let list_id = i.q("list");
+            let append_id = i.q("append");
             let form = cdr(&n);
             // n = (tag . form): `(nth 1 n)' is `car form', `(nthcdr 2 n)'
             // is `cdr form' — GNU relies on the same pair indexing.
@@ -151,7 +151,7 @@ fn bq_process(i: &mut Interp, s: &Value, level: i64, syms: &BqSyms) -> Result<Va
                         if list_length(i, s)? > 2 {
                             return Err(bq_error(i, "Multiple args to , are not supported: ", s));
                         }
-                        let qid = i.intern("quote");
+                        let qid = i.q("quote");
                         let inner = nth(s, 1);
                         let tag = if i.sym_is(&car(&inner), qid) { 0 } else { 1 };
                         return Ok(Value::cons(Value::Int(tag), inner));
@@ -241,7 +241,7 @@ fn bq_process(i: &mut Interp, s: &Value, level: i64, syms: &BqSyms) -> Result<Va
             } else {
                 expression
             };
-            let qid = i.intern("quote");
+            let qid = i.q("quote");
             let tag = if i.sym_is(&car(&expression), qid) {
                 0
             } else {
@@ -278,7 +278,7 @@ fn bq_delay_process(i: &mut Interp, s: &Value, level: i64, syms: &BqSyms) -> Res
     let head_item = Value::cons(Value::Int(0), Value::list(vec![quote_sym(i), car(s)]));
     let tail = bq_process(i, &cdr(s), level, syms)?;
     let exp = bq_listify(i, &Value::list(vec![head_item]), &tail, syms)?;
-    let qid = i.intern("quote");
+    let qid = i.q("quote");
     let tag = if i.sym_is(&car(&exp), qid) { 0 } else { 1 };
     Ok(Value::cons(Value::Int(tag), exp))
 }

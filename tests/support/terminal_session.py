@@ -37,6 +37,7 @@ def run(binary, case):
 
         environment = os.environ.copy()
         environment["TERM"] = "xterm-256color"
+        environment.pop("REMACS_NONINTERACTIVE", None)
         editor_arguments = [binary, "-Q", "-nw", str(target)]
         startup_form = '(insert (if noninteractive "wrong-batch" "startup"))'
         if case == "startup-eval":
@@ -47,6 +48,10 @@ def run(binary, case):
             editor_arguments += ["-l", str(startup_file)]
         elif case == "startup-funcall":
             editor_arguments += ["-f", "newline"]
+        elif case == "startup-init-separator":
+            state_form = ("(progn (write-region (prin1-to-string global-font-lock-mode) nil "
+                          + json.dumps(str(target)) + " nil 'silent) (kill-emacs))")
+            editor_arguments += ["--eval", state_form, "--", "--batch", "--script"]
         child = subprocess.Popen(
             editor_arguments,
             stdin=slave, stdout=slave, stderr=slave,
@@ -83,6 +88,13 @@ def run(binary, case):
                 data = data[sent:]
 
         try:
+            if case == "startup-init-separator":
+                while child.poll() is None:
+                    pump()
+                    if time.monotonic() >= deadline:
+                        raise AssertionError(f"startup probe did not quit: {plain(transcript)[-3000:]}")
+                assert child.returncode == 0, (child.returncode, plain(transcript)[-3000:])
+                return {"status": child.returncode, "state": target.read_text()}
             wait_for(lambda: b"\x1b[" in transcript and "sample.dat" in plain(transcript), "first frame")
             marker = "TTY-READY"
             ready_form = "(message (string " + " ".join(str(ord(c)) for c in marker) + "))"
@@ -121,7 +133,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", required=True)
     parser.add_argument("--case", choices=[
-        "controls", "undo", "startup-eval", "startup-load", "startup-funcall",
+        "controls", "undo", "startup-eval", "startup-load", "startup-funcall", "startup-init-separator",
     ], required=True)
     arguments = parser.parse_args()
     print(json.dumps(run(arguments.binary, arguments.case)))

@@ -57,6 +57,27 @@ const RET: i128 = b'\r' as i128;
 const TAB: i128 = b'\t' as i128;
 const META: i128 = 0x0800_0000;
 
+#[test]
+fn tui_multiple_completion_completes_each_element() {
+    run_on_big_stack(|| {
+        let mut i = Interp::new();
+        i.eval_str(r#"(progn
+          (defun qa-crm-ui-read ()
+            (interactive)
+            (setq qa-crm-ui-result
+                  (completing-read-multiple "Names: " '("alpha" "beta") nil t)))
+          (global-set-key (kbd "C-c C-r") 'qa-crm-ui-read))"#).unwrap();
+        let mut script = vec![3, 18];
+        keys(&mut script, "al");
+        script.push(TAB);
+        keys(&mut script, ",be");
+        script.extend([TAB, RET, C_X, 3]);
+        run(script, &mut i);
+        let value = i.eval_str("qa-crm-ui-result").expect("multiple completion returned");
+        assert_eq!(i.prin1_to_string(&value), "(\"alpha\" \"beta\")");
+    });
+}
+
 fn keys(script: &mut Vec<i128>, s: &str) {
     script.extend(s.chars().map(|c| c as i128));
 }

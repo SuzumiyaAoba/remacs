@@ -72,7 +72,7 @@ fn prelude_source(i: &mut Interp, file: &str) -> Result<String, super::Flow> {
 /// No definitions are evaluated and no feature cells are changed here.
 pub(crate) fn restore(i: &mut Interp) -> EvalResult {
     let manifest = manifest();
-    let history = i.intern("load-history");
+    let history = i.q("load-history");
     let old = i.symbol_value(history).list_to_vec().unwrap_or_default();
     let prelude = concat!(env!("CARGO_MANIFEST_DIR"), "/src/lisp/prelude.el");
     let mut external = Vec::new();

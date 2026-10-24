@@ -606,7 +606,7 @@ pub(crate) static SUBRS: &[crate::lisp::value::Subr] = &[
 /// `Fprovide (intern_c_string ("lcms2"))' when built with HAVE_LCMS2).
 pub(crate) fn install(i: &mut crate::lisp::eval::Interp) {
     if lcms().is_some() {
-        let f = i.intern("lcms2");
+        let f = i.q("lcms2");
         if !i.features.contains(&f) {
             i.features.push(f);
         }

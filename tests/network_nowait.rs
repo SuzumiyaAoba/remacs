@@ -5,7 +5,7 @@ mod common;
 
 use common::*;
 use remacs::lisp::process::ProcIo;
-use remacs::lisp::{Flow, Interp, Value};
+use remacs::lisp::{Interp, Value};
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
@@ -638,7 +638,7 @@ fn nowait_saturated_backlog_returns_promptly_pumps_timers_and_cancels() {
         let started = Instant::now();
         let result = (send.func)(&mut i, vec![process.clone(), Value::string("quit")].into());
         assert!(
-            matches!(result, Err(Flow::Quit)),
+            matches!(result, Err(ref flow) if flow.is_quit()),
             "pending send ignored quit: {result:?}"
         );
         assert!(started.elapsed() < Duration::from_millis(500));

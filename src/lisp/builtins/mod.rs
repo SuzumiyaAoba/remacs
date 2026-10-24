@@ -121,6 +121,25 @@ pub(crate) fn dump_subrs() -> Vec<&'static Subr> {
     subrs
 }
 
+/// Calls made by native-compiled dumped Lisp can use a C subr directly until
+/// fset installs its trampoline. Dedicated inlined byte-code operations use
+/// the canonical entry even when the symbol's function cell has changed.
+pub(crate) fn call_native_builtin(interp: &mut Interp, name: &str, args: Vec<Value>) -> Result<Value, Flow> {
+    if interp.native_trampolines.contains(name) {
+        let function = Value::Sym(interp.q(name));
+        return interp.apply(&function, args);
+    }
+    call_canonical_builtin(interp, name, args)
+}
+
+pub(crate) fn call_canonical_builtin(interp: &mut Interp, name: &str, args: Vec<Value>) -> Result<Value, Flow> {
+    static SUBRS: std::sync::OnceLock<rustc_hash::FxHashMap<&'static str, &'static Subr>> = std::sync::OnceLock::new();
+    let subrs = SUBRS.get_or_init(|| dump_subrs().into_iter().map(|subr| (subr.name, subr)).collect());
+    let Some(subr) = subrs.get(name) else { return Err(interp.error(format!("Unknown native primitive: {name}"))); };
+    let result = (subr.func)(interp, args.into());
+    interp.offer_flow(result)
+}
+
 /// Intern every subr name and bind its function cell.
 pub fn install(interp: &mut Interp) {
     let _t = std::env::var_os("REMACS_BOOT_PROF")
@@ -349,7 +368,7 @@ pub(crate) fn want_int(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
     match v {
         Value::Int(n) => Ok(*n),
         Value::BigInt(n) => n.to_i128().ok_or_else(|| {
-            let condition = i.intern("args-out-of-range");
+            let condition = i.q("args-out-of-range");
             i.signal_data(condition, vec![v.clone()])
         }),
         _ => Err(i.wrong_type_mut("integerp", v)),

@@ -280,8 +280,8 @@ fn seq_let_bind(
         Value::Vec(v) => v.borrow().clone(),
         _ => unreachable!(),
     };
-    let amp_rest = i.intern("&rest");
-    let amp_opt = i.intern("&optional");
+    let amp_rest = i.q("&rest");
+    let amp_opt = i.q("&optional");
     let (mut idx, mut pos) = (0usize, 0usize);
     while pos < elems.len() {
         let el = elems[pos].clone();
@@ -313,7 +313,7 @@ fn f_seq_let_raw(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Err(_) => return Err(i.wrong_type_mut("listp", &all)),
     };
     if forms.len() < 2 {
-        let s = Value::Sym(i.intern("seq-let"));
+        let s = Value::Sym(i.q("seq-let"));
         return Err(i.wrong_number_of_args(&s, forms.len() as i128));
     }
     let seqv = i.eval(&forms[1])?;
@@ -983,9 +983,9 @@ fn f_string_to_sequence(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let items = seq_to_vec(i, &args[0])?;
     let ty = arg(&args, 1);
     match i.sym_id(&ty) {
-        Some(s) if s == i.intern("list") || s == 0 => Ok(Value::list(items)),
-        Some(s) if s == i.intern("vector") => Ok(Value::vector(items)),
-        Some(s) if s == i.intern("string") => Ok(args[0].clone()),
+        Some(s) if s == i.q("list") || s == 0 => Ok(Value::list(items)),
+        Some(s) if s == i.q("vector") => Ok(Value::vector(items)),
+        Some(s) if s == i.q("string") => Ok(args[0].clone()),
         _ => Ok(Value::list(items)),
     }
 }
@@ -1188,9 +1188,9 @@ fn f_seq_concatenate(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     for s in &args[1..] {
         items.extend(seq_to_vec(i, s)?);
     }
-    let list_id = i.intern("list");
-    let vec_id = i.intern("vector");
-    let str_id = i.intern("string");
+    let list_id = i.q("list");
+    let vec_id = i.q("vector");
+    let str_id = i.q("string");
     Ok(if ty == list_id {
         Value::list(items)
     } else if ty == vec_id {
@@ -1426,9 +1426,9 @@ fn f_seq_drop_while(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 fn f_seq_into(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let items = seq_to_vec(i, &args[0])?;
-    let list_id = i.intern("list");
-    let vec_id = i.intern("vector");
-    let str_id = i.intern("string");
+    let list_id = i.q("list");
+    let vec_id = i.q("vector");
+    let str_id = i.q("string");
     let ty = i.sym_id(&args[1]).unwrap_or(0);
     Ok(if ty == list_id {
         Value::list(items)
@@ -1485,12 +1485,12 @@ fn f_seq_min(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // sequence fails with wrong-number-of-arguments and any
     // non-number element is a type error.
     let items = seq_to_vec(i, &args[0])?;
-    let f = Value::Sym(i.intern("min"));
+    let f = Value::Sym(i.q("min"));
     i.apply(&f, items)
 }
 fn f_seq_max(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let items = seq_to_vec(i, &args[0])?;
-    let f = Value::Sym(i.intern("max"));
+    let f = Value::Sym(i.q("max"));
     i.apply(&f, items)
 }
 fn f_seq_uniq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -1524,7 +1524,7 @@ fn f_make_char_table(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let subtype = arg(&args, 0);
     let init = arg(&args, 1);
     let vec = Value::vector(vec![init.clone(); 65]);
-    let prop = i.intern("char-table-extra-slots");
+    let prop = i.q("char-table-extra-slots");
     // GNU `CHECK_FIXNAT': a non-nil property must be a natural number
     // — `(wholenump PROP)', not silently zero slots.
     let n = match crate::lisp::builtins::data::f_get(
@@ -1535,7 +1535,7 @@ fn f_make_char_table(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Int(n) if n >= 0 => (n as usize).min(1 << 22),
         ref other => return Err(i.wrong_type_mut("wholenump", other)),
     };
-    let mut rec = vec![Value::Sym(i.intern("char-table")), subtype, vec];
+    let mut rec = vec![Value::Sym(i.q("char-table")), subtype, vec];
     rec.resize(3 + n, Value::Nil);
     let t = Value::record(rec);
     if !init.is_nil() {
@@ -1548,14 +1548,14 @@ fn f_make_char_table(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 /// `keyboard-translate-table' before Lisp runs).
 pub(crate) fn make_char_table_raw(i: &mut Interp, subtype: Value, init: Value) -> Value {
     let vec = Value::vector(vec![init.clone(); 65]);
-    let prop = i.intern("char-table-extra-slots");
+    let prop = i.q("char-table-extra-slots");
     let n =
         match crate::lisp::builtins::data::f_get(i, vec![subtype.clone(), Value::Sym(prop)].into())
         {
             Ok(Value::Int(n)) if n >= 0 => (n as usize).min(1 << 22),
             _ => 0,
         };
-    let mut rec = vec![Value::Sym(i.intern("char-table")), subtype, vec];
+    let mut rec = vec![Value::Sym(i.q("char-table")), subtype, vec];
     rec.resize(3 + n, Value::Nil);
     let t = Value::record(rec);
     if !init.is_nil() {

@@ -480,10 +480,10 @@ fn accepted_contact(
         contact = super::eval::plist_put(&contact, i.intern(key), value);
     }
     if let Some(service) = service {
-        contact = super::eval::plist_put(&contact, i.intern(":service"), service);
+        contact = super::eval::plist_put(&contact, i.q(":service"), service);
     }
     if let Some(local) = local {
-        contact = super::eval::plist_put(&contact, i.intern(":local"), local);
+        contact = super::eval::plist_put(&contact, i.q(":local"), local);
     }
     Ok(contact)
 }
@@ -701,7 +701,7 @@ fn coding_value(i: &mut Interp, name: &str) -> Value {
 }
 
 fn buffer_multibyte(i: &mut Interp, buffer: usize) -> bool {
-    let variable = i.intern("enable-multibyte-characters");
+    let variable = i.q("enable-multibyte-characters");
     i.buffers
         .get(buffer)
         .and_then(|b| b.borrow().locals.get(&variable).cloned())
@@ -720,7 +720,7 @@ fn decode_process_output(
     let default_filter = {
         let p = process.borrow();
         p.filter.is_nil()
-            || matches!(p.filter, Value::Sym(id) if id == i.intern("internal-default-process-filter"))
+            || matches!(p.filter, Value::Sym(id) if id == i.q("internal-default-process-filter"))
     };
     let raw =
         buffer.is_some_and(|buffer| (stderr || default_filter) && !buffer_multibyte(i, buffer));
@@ -745,7 +745,7 @@ fn decode_process_output(
         (value, used)
     };
     let coding = coding_value(i, &used);
-    let last = i.intern("last-coding-system-used");
+    let last = i.q("last-coding-system-used");
     i.obarray.symbol_mut(last).value = coding.clone();
     if value.is_nil() {
         return Ok(value);
@@ -773,7 +773,7 @@ fn encode_process_input(
         value
     };
     let bytes = process.borrow_mut().codecs.input.encode(i, &name, value)?;
-    let last = i.intern("last-coding-system-used");
+    let last = i.q("last-coding-system-used");
     i.obarray.symbol_mut(last).value = coding;
     Ok(bytes)
 }
@@ -813,6 +813,99 @@ fn decode(bytes: &[u8]) -> String {
 
 // ---------- output / status engine ----------
 
+/// GNU's read_process_output/exec_sentinel protect the interrupted buffer,
+/// bind the event/quit context, and use search.c's lazy register save. Nested
+/// callbacks additionally unwind a marker-based copy of the interrupted data;
+/// simply saving each callback's entry registers gives different results.
+fn with_process_callback_context(
+    i: &mut Interp,
+    body: impl FnOnce(&mut Interp) -> Result<(), Flow>,
+) -> Result<(), Flow> {
+    use crate::buffer::primitives::{f_match_data, f_set_match_data};
+
+    let buffer = i.current_buffer;
+    let depth = i.specbind_depth();
+    let outer_async = i.running_asynch_code;
+    let mut nested_match = None;
+    let result = (|| {
+        let quit = i.q("inhibit-quit");
+        i.specbind(quit, Value::t())?;
+        let event = i.q("last-nonmenu-event");
+        i.specbind(event, Value::t())?;
+        if outer_async {
+            let current = f_match_data(i, vec![].into())?;
+            i.restore_async_match_data();
+            nested_match = Some(f_match_data(i, vec![].into())?);
+            f_set_match_data(i, vec![current, Value::t()].into())?;
+        }
+        i.running_asynch_code = true;
+        body(i)
+    })();
+    // GNU performs this part after a normal callback return, rather than
+    // recording an unwind action. A throw still unwinds bindings/buffer below.
+    if result.is_ok() {
+        i.restore_async_match_data();
+        i.running_asynch_code = outer_async;
+    }
+    let mut unwind = i.unbind_to(depth);
+    if let Some(saved) = nested_match {
+        let restore = f_set_match_data(i, vec![saved, Value::t()].into()).map(|_| ());
+        unwind = unwind.and(restore);
+    }
+    if i.buffer_live(buffer) {
+        i.set_current_buffer(buffer);
+    }
+    unwind.and(result)
+}
+
+fn call_process_callback(
+    i: &mut Interp,
+    function: &Value,
+    arguments: Vec<Value>,
+    context: &str,
+) -> Result<(), Flow> {
+    // GNU chooses the internal catch tag before calling the callback. Any
+    // non-nil debug-on-error disables this catch, including a condition list.
+    let debug = i.q("debug-on-error");
+    let catch_errors = i.symbol_value(debug).is_nil();
+    let depth = i.case_handlers.len();
+    if catch_errors {
+        // C internal_condition_case's Qerror tag catches all conditions,
+        // including quit; it is broader than Lisp (condition-case ... (error)).
+        i.case_handlers.push(super::error::CaseHandler::single(Value::t()));
+    }
+    let result = i.apply(function, arguments);
+    let result = match result {
+        Err(Flow::Quit) if catch_errors => {
+            Err(Flow::signal(Value::Sym(i.q("quit")), Value::Nil))
+        }
+        other => other,
+    };
+    let result = i.offer_flow(result);
+    i.case_handlers.truncate(depth);
+    match result {
+        Err(Flow::Signal(signal)) if catch_errors && signal.claims_frame(depth) =>
+        {
+            i.finish_quit_unwind();
+            super::builtins::evalfn::command_error(i, signal.condition, context)?;
+            let inhibit = i.q("inhibit-quit");
+            i.obarray.symbol_mut(inhibit).value = Value::t();
+            let pause = i.q("process-error-pause-time");
+            let pause = i.symbol_value(pause);
+            if pause.int().is_some_and(|seconds| seconds > 0) {
+                super::builtins::evalfn::f_sleep_for(i, vec![pause].into())?;
+            }
+            Ok(())
+        }
+        other => {
+            if catch_errors && other.is_err() {
+                i.rebase_quit_unwind();
+            }
+            other.map(|_| ())
+        }
+    }
+}
+
 /// Feed process output to its filter or buffer (no borrow held).
 fn deliver_output(
     i: &mut Interp,
@@ -823,20 +916,38 @@ fn deliver_output(
     if out.is_empty() {
         return Ok(());
     }
+    with_process_callback_context(i, |i| {
+        deliver_output_inner(i, pref, &out, to_stderr_dest, false)
+    })
+}
+
+fn finish_output(i: &mut Interp, pref: &ProcessRef, stderr: bool) -> Result<(), Flow> {
+    with_process_callback_context(i, |i| {
+        deliver_output_inner(i, pref, &[], stderr, true)
+    })
+}
+
+fn deliver_output_inner(
+    i: &mut Interp,
+    pref: &ProcessRef,
+    out: &[u8],
+    to_stderr_dest: bool,
+    finish: bool,
+) -> Result<(), Flow> {
     let sdest = pref.borrow().stderr_dest.clone();
     if to_stderr_dest {
         // Route to the configured stderr destination.
         match &sdest {
             Value::Nil => {}
             Value::Sym(id) if *id == sym::T => {
-                deliver_output(i, pref, out, false)?;
+                deliver_output_inner(i, pref, out, false, finish)?;
             }
             v => {
                 if let Value::Process(target) = v {
                     let t = target.clone();
-                    deliver_output(i, &t, out, false)?;
+                    deliver_output_inner(i, &t, out, false, finish)?;
                 } else if let Some(bid) = i.buffer_id_of(v) {
-                    let value = decode_process_output(i, pref, &out, true, false, Some(bid))?;
+                    let value = decode_process_output(i, pref, out, true, finish, Some(bid))?;
                     insert_coded_into_buffer(i, bid, None, &value);
                 }
             }
@@ -844,7 +955,7 @@ fn deliver_output(
         return Ok(());
     }
     let buffer = pref.borrow().buffer;
-    let value = decode_process_output(i, pref, &out, false, false, buffer)?;
+    let value = decode_process_output(i, pref, out, false, finish, buffer)?;
     deliver_decoded(i, pref, value)
 }
 
@@ -859,7 +970,12 @@ fn deliver_decoded(i: &mut Interp, pref: &ProcessRef, value: Value) -> Result<()
     }
     let text = str_value(&value).unwrap_or_default();
     if filter.truthy() {
-        i.apply(&filter, vec![Value::Process(pref.clone()), value])?;
+        call_process_callback(
+            i,
+            &filter,
+            vec![Value::Process(pref.clone()), value],
+            "error in process filter: ",
+        )?;
         return Ok(());
     }
     if let Some(bid) = buffer {
@@ -922,11 +1038,14 @@ fn run_sentinel_message(i: &mut Interp, pref: &ProcessRef, message: String) -> R
     if sentinel.is_nil() {
         sentinel = symv(i, "internal-default-process-sentinel");
     }
-    i.apply(
-        &sentinel,
-        vec![Value::Process(pref.clone()), Value::string(message)],
-    )?;
-    Ok(())
+    with_process_callback_context(i, |i| {
+        call_process_callback(
+            i,
+            &sentinel,
+            vec![Value::Process(pref.clone()), Value::string(message)],
+            "error in process sentinel: ",
+        )
+    })
 }
 
 fn accepted_host(address: std::net::IpAddr) -> String {
@@ -1277,19 +1396,16 @@ fn poll_proc_once(
         match ev {
             Ev::Out(bytes, stderr) => deliver_output(i, pref, bytes, stderr)?,
             Ev::Exit(st, code) => {
-                let buffer = pref.borrow().buffer;
                 if matches!(pref.borrow().filter, Value::Sym(s) if s == sym::T) {
                     // GNU discards unread stdout when a paused child exits;
                     // pending decoder bytes must not reappear after resume.
                     pref.borrow_mut().codecs.output = Default::default();
                 } else {
-                    let tail = decode_process_output(i, pref, &[], false, true, buffer)?;
-                    deliver_decoded(i, pref, tail)?;
+                    finish_output(i, pref, false)?;
                 }
                 let stderr = pref.borrow().stderr_dest.clone();
-                if let Some(buffer) = i.buffer_id_of(&stderr) {
-                    let tail = decode_process_output(i, pref, &[], true, true, Some(buffer))?;
-                    insert_coded_into_buffer(i, buffer, None, &tail);
+                if i.buffer_id_of(&stderr).is_some() {
+                    finish_output(i, pref, true)?;
                 }
 
                 // GNU's status_notify: a process reaching `exit',
@@ -1466,8 +1582,8 @@ fn poll_connect(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
         Ok(Some(socket)) => {
             let local = socket.local_addr().ok().map(socket_addr_value);
             let remote = socket.peer_addr().ok().map(socket_addr_value);
-            let local_kw = i.intern(":local");
-            let remote_kw = i.intern(":remote");
+            let local_kw = i.q(":local");
+            let remote_kw = i.q(":remote");
             {
                 let mut p = pref.borrow_mut();
                 p.io = ProcIo::Net(socket);
@@ -1555,10 +1671,8 @@ fn poll_datagram(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
             {
                 // GNU first flushes an incomplete character as raw bytes. That
                 // read produced output; a later empty datagram closes it.
-                let buffer = pref.borrow().buffer;
-                let value = decode_process_output(i, pref, &[], false, true, buffer)?;
                 did = true;
-                deliver_decoded(i, pref, value)?;
+                finish_output(i, pref, false)?;
             }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
@@ -1759,14 +1873,14 @@ fn finish_setup(
 /// GNU is_pty_from_symbol: nil inherits the dynamic default on either side.
 fn child_pty_mode(i: &mut Interp, mode: &Value) -> Result<bool, Flow> {
     if mode.is_nil() {
-        let variable = i.intern("process-connection-type");
+        let variable = i.q("process-connection-type");
         return Ok(i.symbol_value(variable).truthy());
     }
     if let Value::Sym(symbol) = mode {
-        if *symbol == i.intern("pty") {
+        if *symbol == i.q("pty") {
             return Ok(true);
         }
-        if *symbol == i.intern("pipe") {
+        if *symbol == i.q("pipe") {
             return Ok(false);
         }
     }
@@ -1786,10 +1900,10 @@ fn f_make_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         return Ok(Value::Nil);
     }
     if a.len() % 2 != 0 {
-        let error = i.intern("malformed-keyword-arg-list");
+        let error = i.q("malformed-keyword-arg-list");
         return Err(i.signal_data(error, vec![]));
     }
-    let name_key = i.intern(":name");
+    let name_key = i.q(":name");
     if !a
         .as_slice()
         .chunks_exact(2)
@@ -1807,8 +1921,8 @@ fn f_make_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // (wrong-type-argument null <value>); pipe processes accept :stop.
     let stop_v = kw(i, &args, ":stop");
     if stop_v.truthy() {
-        let pred = i.intern("null");
-        let wta = i.intern("wrong-type-argument");
+        let pred = i.q("null");
+        let wta = i.q("wrong-type-argument");
         return Err(i.signal_data(wta, vec![Value::Sym(pred), stop_v]));
     }
     let ct_v = kw(i, &args, ":connection-type");
@@ -2134,7 +2248,7 @@ fn make_datagram_process(i: &mut Interp, name: String, args: &Value) -> EvalResu
         remote,
         address_size: address.size(),
         read_max: {
-            let id = i.intern("read-process-output-max");
+            let id = i.q("read-process-output-max");
             // IP datagrams cannot exceed 65535 bytes. Larger configured
             // buffers do not needlessly allocate unbounded memory per poll.
             let requested = i
@@ -2186,13 +2300,13 @@ fn make_datagram_process(i: &mut Interp, name: String, args: &Value) -> EvalResu
     if server && let Value::Vec(parts) = &local {
         contact = super::eval::plist_put(
             &contact,
-            i.intern(":service"),
+            i.q(":service"),
             parts.borrow().last().unwrap().clone(),
         );
     }
-    contact = super::eval::plist_put(&contact, i.intern(":local"), local);
+    contact = super::eval::plist_put(&contact, i.q(":local"), local);
     if !server {
-        contact = super::eval::plist_put(&contact, i.intern(":remote"), address.value());
+        contact = super::eval::plist_put(&contact, i.q(":remote"), address.value());
     }
     let mut p = base_proc(name, "network", ProcIo::Datagram(io));
     p.status = "open";
@@ -2231,10 +2345,7 @@ fn write_datagram(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
         io.pending.push_back(bytes.to_vec());
     }
     loop {
-        if i.quit_flag {
-            i.quit_flag = false;
-            return Err(Flow::Quit);
-        }
+        i.maybe_quit()?;
         let result = {
             let mut pb = p.borrow_mut();
             if pb.dead || !pb.alive() {
@@ -2270,7 +2381,7 @@ fn write_datagram(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
                 crate::lisp::eval::threads::pause(i, std::time::Duration::from_millis(5))?;
             }
             Err(e) => {
-                let symbol = i.intern("file-error");
+                let symbol = i.q("file-error");
                 let message = e.to_string();
                 return Err(i.signal_data(
                     symbol,
@@ -2372,7 +2483,7 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             let local = unix_local_addr(i, listener.as_raw_fd()).unwrap_or(Value::Nil);
             let mut p = base_proc(name, "network", ProcIo::LocalListen(listener, path.clone()));
             p.status = "listen";
-            p.contact = super::eval::plist_put(&args, i.intern(":local"), local);
+            p.contact = super::eval::plist_put(&args, i.q(":local"), local);
             let pref = finish_setup(i, p, &args, false)?;
             i.processes.push(pref.clone());
             return Ok(Value::Process(pref));
@@ -2381,7 +2492,7 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             Ok(s) => s,
             Err(e) => {
                 // GNU: (file-error "make client process failed" <errno> <plist>)
-                let fe = i.intern("file-error");
+                let fe = i.q("file-error");
                 let mut data = vec![
                     Value::string("make client process failed"),
                     Value::string(e.to_string()),
@@ -2397,8 +2508,8 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let remote = unix_address_value(i, path.as_bytes());
         let mut p = base_proc(name, "network", ProcIo::LocalNet(stream));
         p.status = "open";
-        p.contact = super::eval::plist_put(&args, i.intern(":local"), local);
-        p.contact = super::eval::plist_put(&p.contact, i.intern(":remote"), remote);
+        p.contact = super::eval::plist_put(&args, i.q(":local"), local);
+        p.contact = super::eval::plist_put(&p.contact, i.q(":remote"), remote);
         let pref = finish_setup(i, p, &args, false)?;
         i.processes.push(pref.clone());
         return Ok(Value::Process(pref));
@@ -2477,7 +2588,7 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Ok(io) => io,
         Err(e) => {
             // GNU: (file-error "make client process failed" <errno> <plist>)
-            let fe = i.intern("file-error");
+            let fe = i.q("file-error");
             if nowait {
                 let message = e.to_string();
                 let mut data = vec![
@@ -2562,7 +2673,7 @@ fn f_make_serial_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         .open(&path)
         .map_err(|e| {
             // GNU: (file-missing "Opening serial port" <errno> <path>)
-            let fm = i.intern("file-missing");
+            let fm = i.q("file-missing");
             i.signal_data(
                 fm,
                 vec![
@@ -2580,7 +2691,7 @@ fn f_make_serial_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let mut tio: libc::termios = unsafe { std::mem::zeroed() };
         if unsafe { libc::tcgetattr(fd, &mut tio) } != 0 {
             let e = std::io::Error::last_os_error();
-            let fe = i.intern("file-error");
+            let fe = i.q("file-error");
             return Err(i.signal_data(
                 fe,
                 vec![
@@ -2628,7 +2739,7 @@ fn f_serial_process_configure(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
             .chunks_exact(2)
             .any(|kv| matches!(&kv[1], Value::Sym(s) if i.symbol_name(*s).starts_with(':')))
     {
-        let s = i.intern("malformed-keyword-arg-list");
+        let s = i.q("malformed-keyword-arg-list");
         return Err(i.signal_data(s, vec![Value::Nil]));
     }
     let args = Value::list(a.as_slice().to_vec());
@@ -2775,7 +2886,7 @@ fn f_set_process_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         update_process_marker(i, &mut pb);
     }
     if matches!(pb.kind, "pipe" | "network" | "serial") {
-        let key = i.intern(":buffer");
+        let key = i.q(":buffer");
         pb.contact = super::eval::plist_put(&pb.contact, key, a[1].clone());
     }
     Ok(a[1].clone())
@@ -2841,7 +2952,7 @@ fn f_process_contact(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let key = arg(&a, 1);
     if matches!(&key, Value::Sym(id) if *id == sym::T || i.symbol_name(*id) == ":remote") {
         if let ProcIo::Datagram(io) = &p.borrow().io {
-            c = super::eval::plist_put(&c, i.intern(":remote"), io.remote_value());
+            c = super::eval::plist_put(&c, i.q(":remote"), io.remote_value());
         }
     }
     if kind == "real" {
@@ -2853,14 +2964,14 @@ fn f_process_contact(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Nil => match kind {
             // (host service) list — :local for servers, :remote for clients.
             "network" => {
-                let host = crate::lisp::eval::plist_get(&c, i.intern(":host"));
-                let service = crate::lisp::eval::plist_get(&c, i.intern(":service"));
+                let host = crate::lisp::eval::plist_get(&c, i.q(":host"));
+                let service = crate::lisp::eval::plist_get(&c, i.q(":service"));
                 Ok(Value::list(vec![host, service]))
             }
             // serial: (PORT SPEED)
             "serial" => {
-                let port = crate::lisp::eval::plist_get(&c, i.intern(":port"));
-                let speed = crate::lisp::eval::plist_get(&c, i.intern(":speed"));
+                let port = crate::lisp::eval::plist_get(&c, i.q(":port"));
+                let speed = crate::lisp::eval::plist_get(&c, i.q(":speed"));
                 Ok(Value::list(vec![port, speed]))
             }
             _ => Ok(Value::Nil),
@@ -2956,9 +3067,9 @@ fn f_process_tty_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let uses_tty = if stream.is_nil() {
         true
     } else {
-        let stdin = i.intern("stdin");
-        let stdout = i.intern("stdout");
-        let stderr = i.intern("stderr");
+        let stdin = i.q("stdin");
+        let stdout = i.q("stdout");
+        let stderr = i.q("stderr");
         match &stream {
             Value::Sym(id) if *id == stdin => matches!(
                 &p.io,
@@ -3230,10 +3341,7 @@ fn write_child_input(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult
         }
     }
     loop {
-        if i.quit_flag {
-            i.quit_flag = false;
-            return Err(Flow::Quit);
-        }
+        i.maybe_quit()?;
         let result = {
             let mut pb = p.borrow_mut();
             // A filter or timer may have deleted/reaped the process while we
@@ -3285,10 +3393,7 @@ fn prepare_process_write(i: &mut Interp, p: &ProcessRef) -> Result<(), Flow> {
     // Never hold a RefCell borrow across callbacks or fall back to a blocking
     // socket; a timer/sentinel can cancel this wait by deleting the process.
     while matches!(p.borrow().io, ProcIo::Connecting(_)) && !p.borrow().dead {
-        if i.quit_flag {
-            i.quit_flag = false;
-            return Err(Flow::Quit);
-        }
+        i.maybe_quit()?;
         timer_check(i)?;
         poll_all(i)?;
         if matches!(p.borrow().io, ProcIo::Connecting(_)) && !p.borrow().dead {
@@ -3660,7 +3765,7 @@ fn f_internal_default_signal_process(i: &mut Interp, a: crate::lisp::Argv) -> Ev
         // bignum sigcode falls through to CHECK_SYMBOL instead.
         Value::Int(n) => {
             if *n < i32::MIN as i128 || *n > i32::MAX as i128 {
-                let s = i.intern("args-out-of-range");
+                let s = i.q("args-out-of-range");
                 return Err(i.signal_data(
                     s,
                     vec![
@@ -4768,7 +4873,7 @@ fn f_internal_default_process_sentinel(i: &mut Interp, a: crate::lisp::Argv) -> 
             .unwrap_or_else(|| buffer.borrow().text_len());
         buffer.borrow_mut().set_point(at);
         let before = buffer.borrow().point();
-        let read_only = i.intern("buffer-read-only");
+        let read_only = i.q("buffer-read-only");
         // GNU changes the buffer slot directly, without variable watchers.
         let saved_read_only = buffer.borrow_mut().locals.insert(read_only, Value::Nil);
         let insert = symv(i, "insert");
@@ -4816,10 +4921,10 @@ fn f_internal_default_process_sentinel(i: &mut Interp, a: crate::lisp::Argv) -> 
 pub(crate) fn install(i: &mut Interp) {
     // This is a GNU DEFVAR_INT: lexical let bindings must reach the native
     // constructor just like dynamic bindings do.
-    let read_max = i.intern("read-process-output-max");
+    let read_max = i.q("read-process-output-max");
     i.obarray.symbol_mut(read_max).special = true;
-    let mnp = i.intern("make-network-process");
-    let subs = i.intern("subfeatures");
+    let mnp = i.q("make-network-process");
+    let subs = i.q("subfeatures");
     let mkpair = |i: &mut Interp, a: &str, b: Value| Value::list(vec![Value::Sym(i.intern(a)), b]);
     let mut items: Vec<Value> = vec![
         mkpair(i, ":server", Value::t()),
@@ -4829,7 +4934,7 @@ pub(crate) fn install(i: &mut Interp) {
         let fs = Value::Sym(i.intern(fam));
         items.push(mkpair(i, ":family", fs));
     }
-    let datagram = Value::Sym(i.intern("datagram"));
+    let datagram = Value::Sym(i.q("datagram"));
     items.push(mkpair(i, ":type", datagram));
     i.put_prop(mnp, subs, Value::list(items));
 }

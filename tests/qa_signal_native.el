@@ -1,0 +1,62 @@
+;;; Signal object identity across native entry and callback boundaries. -*- lexical-binding: t; -*-
+(defvar qa-sn-one)
+(defvar qa-sn-two)
+(defvar qa-sn-callback)
+(defvar qa-sn-catcher)
+(defun qa-sn-observe (function input)
+  (let (seen)
+    (condition-case caught
+        (handler-bind ((error (lambda (condition) (setq seen condition))))
+          (funcall function input))
+      (error (list (eq seen caught) (eq caught input)
+                   (eq (cdr caught) (cdr input)))))))
+
+(let* ((directory (make-temp-file "qa-signal-native-" t))
+       (user-emacs-directory directory)
+       (native-comp-eln-load-path (list directory)))
+  (unwind-protect
+      (progn
+        (unless (native-comp-available-p) (error "Native compilation is required"))
+        (let* ((qa-sn-one (native-compile (lambda (condition) (signal condition))
+                                    (expand-file-name "one.eln" directory)))
+               (qa-sn-two (native-compile (lambda (condition) (signal (car condition) (cdr condition)))
+                                    (expand-file-name "two.eln" directory)))
+               (qa-sn-callback (native-compile (lambda (thunk) (funcall thunk))
+                                         (expand-file-name "callback.eln" directory)))
+               (qa-sn-catcher (native-compile (lambda (condition)
+                                         (condition-case caught (signal condition)
+                                           (error caught)))
+                                        (expand-file-name "catcher.eln" directory))))
+          (qa (mapcar #'native-comp-function-p (list qa-sn-one qa-sn-two qa-sn-callback qa-sn-catcher)) '(t t t t))
+          (qa (qa-sn-observe qa-sn-one (list 'error "native-one")) '(t t t))
+          (qa (qa-sn-observe qa-sn-two (list 'error "native-two")) '(t nil t))
+          (qa (let ((input (list 'error "caught"))) (eq (funcall qa-sn-catcher input) input)) t)
+          (qa-lex (let ((input (list 'error "callback")) seen)
+                (condition-case caught
+                    (handler-bind ((error (lambda (condition) (setq seen condition))))
+                      (funcall qa-sn-callback (lambda () (signal input))))
+                  (error (list (eq input caught) (eq seen caught))))) '(t t))
+          (qa-lex (let ((input (list 'error "callback")) seen)
+                (condition-case caught
+                    (handler-bind ((error (lambda (condition) (setq seen condition)
+                                           (setcar condition 'file-error))))
+                      (funcall qa-sn-callback (lambda () (signal input))))
+                  (file-error 'wrong-clause)
+                  (error (list (eq input caught) (eq seen caught) (car caught)))))
+              '(t t file-error))
+          (qa-err-data (funcall qa-sn-one 5) 'wrong-type-argument '(symbolp 5))
+          (qa-lex
+              (let ((input (list 'error "hook")) events)
+                (let ((signal-hook-function
+                       (lambda (symbol data) (push (list symbol data) events))))
+                  (list (eq (funcall qa-sn-catcher input) input) events)))
+            '(t ((error ("hook")))))
+          (qa-lex
+              (let (events)
+                (let ((signal-hook-function
+                       (lambda (symbol _data) (push symbol events))))
+                  (list (condition-case err (funcall qa-sn-one 5) (error (car err)))
+                        (nreverse events))))
+            '(wrong-type-argument (5 wrong-type-argument)))))
+    (delete-directory directory t)))
+(princ (qa--done))

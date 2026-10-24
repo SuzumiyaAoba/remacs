@@ -42,22 +42,25 @@ pub struct Reader<'a> {
     /// True when the source is a buffer (GNU `from_buffer_p'): read
     /// errors then carry `(MSG LINE COLUMN)` like `invalid_syntax_lisp'.
     pub from_buffer: bool,
+    /// GNU source_t::multibyte controls newly read symbol-name storage.
+    /// Literal strings choose their own kind from the characters read.
+    pub source_multibyte: bool,
 }
 
 fn read_err(interp: &mut Interp, msg: &str) -> Flow {
-    let sym_id = interp.intern("invalid-read-syntax");
+    let sym_id = interp.q("invalid-read-syntax");
     interp.signal_data(sym_id, vec![Value::string(msg)])
 }
 
 /// `invalid-read-syntax' with a symbol argument, like Emacs's `#|', `#z'.
 fn read_err_sym(interp: &mut Interp, name: &str) -> Flow {
-    let sym_id = interp.intern("invalid-read-syntax");
+    let sym_id = interp.q("invalid-read-syntax");
     interp.signal_data(sym_id, vec![Value::string(name)])
 }
 
 /// `invalid-read-syntax' for radix integers: `(integer, radix N)'.
 fn read_err_radix(interp: &mut Interp, radix: u32) -> Flow {
-    let sym_id = interp.intern("invalid-read-syntax");
+    let sym_id = interp.q("invalid-read-syntax");
     interp.signal_data(
         sym_id,
         vec![Value::string(format!("integer, radix {radix}"))],
@@ -65,21 +68,21 @@ fn read_err_radix(interp: &mut Interp, radix: u32) -> Flow {
 }
 
 fn eof_err(interp: &mut Interp) -> Flow {
-    let sym_id = interp.intern("end-of-file");
+    let sym_id = interp.q("end-of-file");
     interp.signal(sym_id, Value::Nil)
 }
 
 /// GNU `error ()' inside the reader (bad escapes, bad modifiers) —
 /// (error "msg"), distinct from `invalid-read-syntax'.
 fn plain_err(interp: &mut Interp, msg: &str) -> Flow {
-    let sym_id = interp.intern("error");
+    let sym_id = interp.q("error");
     interp.signal_data(sym_id, vec![Value::string(msg)])
 }
 
 /// GNU signals a plain `error' when a \u or \U escape exceeds the
 /// Unicode range: (error "Non-Unicode character: 0x%x").
 fn non_unicode_err(interp: &mut Interp, n: i128) -> Flow {
-    let sym_id = interp.intern("error");
+    let sym_id = interp.q("error");
     interp.signal_data(
         sym_id,
         vec![Value::string(format!("Non-Unicode character: 0x{n:x}"))],
@@ -104,6 +107,7 @@ impl<'a> Reader<'a> {
             annotate_pos: None,
             sympos_enabled: false,
             from_buffer: false,
+            source_multibyte: true,
         }
     }
 
@@ -150,7 +154,13 @@ impl<'a> Reader<'a> {
     fn peek_at(&mut self, n: usize) -> Result<Option<char>, Flow> {
         let index = self.pos + n;
         self.fill_to(index)?;
-        Ok(self.chars.get(index).copied())
+        Ok(self.chars.get(index).copied().map(|c| {
+            if !self.source_multibyte && (0x80..=0xff).contains(&(c as u32)) {
+                super::value::lisp_char(0x3fff00 + c as u32).unwrap()
+            } else {
+                c
+            }
+        }))
     }
 
     fn next(&mut self) -> Result<Option<char>, Flow> {
@@ -221,18 +231,18 @@ impl<'a> Reader<'a> {
     /// `invalid_syntax_lisp' appends (LINE COLUMN) to the error data —
     /// computed at the reader position where the error surfaced.
     pub fn read(&mut self) -> Result<Option<Value>, Flow> {
-        let r = self.read_inner();
+        let mut r = self.read_inner();
         if r.is_ok() {
             self.unread_from(self.pos)?;
         }
-        if let Err(Flow::Signal(s, data, b)) = &r {
-            let irs = self.interp.intern("invalid-read-syntax");
-            if self.from_buffer && self.interp.sym_id(s) == Some(irs) {
+        if let Err(Flow::Signal(signal)) = &mut r {
+            let irs = self.interp.q("invalid-read-syntax");
+            if self.from_buffer && self.interp.sym_id(&signal.symbol()) == Some(irs) {
                 let (line, col) = self.error_pos();
-                let mut data2 = data.list_to_vec().unwrap_or_default();
+                let mut data2 = signal.data().list_to_vec().unwrap_or_default();
                 data2.push(Value::Int(line as i128));
                 data2.push(Value::Int(col as i128));
-                return Err(Flow::Signal(s.clone(), Value::list(data2), *b));
+                signal.set_data(Value::list(data2));
             }
         }
         r
@@ -465,9 +475,9 @@ impl<'a> Reader<'a> {
                 None => return Err(eof_err(self.interp)),
                 Some('"') => {
                     let v = Value::string(out);
-                    // GNU: a literal is unibyte unless it contains a
-                    // decoded source char ≥0x80 or an escape producing
-                    // a char >0xFF; \NNN escapes ≤0xFF stay bytes.
+                    // GNU: only real non-ASCII characters force multibyte
+                    // storage. Byte8 characters alone remain raw bytes,
+                    // independently of the source's representation.
                     if multibyte {
                         if let Value::Str(r) = &v {
                             self.interp.mark_multibyte(r);
@@ -478,15 +488,9 @@ impl<'a> Reader<'a> {
                     return Ok(v);
                 }
                 Some('\\') => {
-                    // The returned flag marks escapes GNU reads as real
-                    // characters (\u, \U, \N, \x with >2 digits); other
-                    // escapes producing eight-bit proxy chars (octal,
-                    // short \xNN ≤0xFF) stay raw bytes.
-                    let (c, force_mb) = self.read_string_escape()?;
-                    if let Some(c) = c {
-                        if force_mb
-                            || ((c as u32) > 0xFF
-                                && crate::lisp::value::eight_bit_byte(c).is_none())
+                    if let Some(c) = self.read_string_escape()? {
+                        if (c as u32) >= 0x80
+                            && crate::lisp::value::eight_bit_byte(c).is_none()
                         {
                             multibyte = true;
                         }
@@ -494,7 +498,9 @@ impl<'a> Reader<'a> {
                     }
                 }
                 Some(c) => {
-                    if (c as u32) >= 0x80 {
+                    if (c as u32) >= 0x80
+                        && crate::lisp::value::eight_bit_byte(c).is_none()
+                    {
                         multibyte = true;
                     }
                     out.push(c);
@@ -503,128 +509,47 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// One escape inside a string. The bool forces multibyte (GNU
-    /// read_escape: \u/\U/\N and >2-digit \x escapes read real
-    /// characters even when they fit a byte).  None = `\<newline>'.
-    fn read_string_escape(&mut self) -> Result<(Option<char>, bool), Flow> {
-        match self.next()? {
-            None => Err(eof_err(self.interp)),
-            Some('\n') => Ok((None, false)),
-            Some(' ') => Ok((Some(' '), false)),
-            Some('a') => Ok((Some('\x07'), false)),
-            Some('b') => Ok((Some('\x08'), false)),
-            Some('d') => Ok((Some('\x7f'), false)),
-            Some('e') => Ok((Some('\x1b'), false)),
-            Some('f') => Ok((Some('\x0c'), false)),
-            Some('n') => Ok((Some('\n'), false)),
-            Some('r') => Ok((Some('\r'), false)),
-            Some('s') => Ok((Some(' '), false)),
-            Some('t') => Ok((Some('\t'), false)),
-            Some('v') => Ok((Some('\x0b'), false)),
-            Some('x') => {
-                // GNU read_escape: \x with more than two hex digits
-                // always reads a *character* (multibyte), even when the
-                // value fits a byte — "\x00E9" is multibyte while
-                // "\xE9" is a raw byte8 char.
-                let (n, digits) = self.read_hex_char_escape()?;
-                if n & (CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT) != 0
-                {
-                    return Err(read_err(self.interp, "Invalid modifier in string"));
-                }
-                Ok((
-                    Some(
-                        crate::lisp::value::lisp_char(n as u32)
-                            .unwrap_or_else(|| crate::lisp::value::mule_seq_char(n as u32)),
-                    ),
-                    digits > 2,
-                ))
-            }
-            Some('u') => {
-                let n = self.read_exact_hex(4)?;
-                Ok((char::from_u32(n as u32), true))
-            }
-            Some('U') => {
-                let n = self.read_exact_hex(8)?;
-                if n > 0x10_ffff {
-                    return Err(non_unicode_err(self.interp, n));
-                }
-                Ok((char::from_u32(n as u32), true))
-            }
-            Some('N') => {
-                let n = self.read_named_char()?;
-                Ok((crate::lisp::value::lisp_char(n as u32), true))
-            }
-            Some('C') if self.peek()? == Some('-') => {
+    /// String-specific rules around GNU's shared character-escape parser.
+    fn read_string_escape(&mut self) -> Result<Option<char>, Flow> {
+        match self.peek()? {
+            Some(' ' | '\n') => {
                 self.pos += 1;
-                let v = self.read_char_literal()?;
-                // Strings hold plain chars: fold C- like ?\C-x (control
-                // char); a meta bit survives as base+128 (GNU 8-bit char).
-                let base =
-                    v & !(CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT);
-                // GNU allows \C-SPC / \^SPC as a literal NUL (bug#55738).
-                let mut ch = if base == 32 && v & CHAR_CTL != 0 {
-                    0
-                } else {
-                    match ctrl_fold(base) {
-                        Some(f) => f,
-                        // Non-foldable \C-x keeps CHAR_CTL — a modifier
-                        // GNU rejects inside strings.
-                        None => return Err(read_err(self.interp, "Invalid modifier in string")),
-                    }
-                };
-                if v & CHAR_META != 0 && ch < 0x80 {
-                    ch |= 0x80;
-                }
-                Ok((char::from_u32(ch as u32), false))
+                return Ok(None);
             }
-            Some('M') if self.peek()? == Some('-') => {
+            Some('s') => {
                 self.pos += 1;
-                let v = self.read_char_literal()?;
-                // Meta chars live in strings as base+128 (like GNU's
-                // 8-bit metafied chars), so key lookup sees M-x.
-                let base =
-                    v & !(CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT);
-                Ok((
-                    char::from_u32(if base < 0x80 {
-                        base as u32 | 0x80
-                    } else {
-                        base as u32
-                    }),
-                    false,
-                ))
+                return Ok(Some(' '));
             }
-            Some('^') => match self.next()? {
-                None => Err(eof_err(self.interp)),
-                Some(' ') => Ok((Some('\0'), false)),
-                Some(c) => match ctrl_fold(c as i128) {
-                    Some(f) => Ok((char::from_u32(f as u32), false)),
-                    None => Err(read_err(self.interp, "Invalid modifier in string")),
-                },
-            },
-            Some(c @ ('C' | 'M' | 'S' | 'H' | 'A')) => Err(read_err(
-                self.interp,
-                &format!("Invalid escape char syntax: \\{c} not followed by -"),
-            )),
-            Some(c) if c.is_digit(8) => {
-                let mut n = (c as i128) - ('0' as i128);
-                for _ in 0..2 {
-                    match self.peek()? {
-                        Some(d) if d.is_digit(8) => {
-                            n = n * 8 + (d as i128 - '0' as i128);
-                            self.pos += 1;
-                        }
-                        _ => break,
-                    }
-                }
-                // GNU: octal escapes in 0x80..0xFF are raw bytes.
-                if (0x80..0x100).contains(&n) {
-                    n = 0x3F_FF00 + n;
-                }
-                self.unread_from(self.pos)?;
-                Ok((crate::lisp::value::lisp_char(n as u32), false))
-            }
-            Some(c) => Ok((Some(c), false)),
+            _ => {}
         }
+        let escaped = self.read_char_escape()?;
+        const MODIFIERS: i128 =
+            CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT;
+        let mut modifiers = escaped & MODIFIERS;
+        let mut character = escaped & !MODIFIERS;
+        if modifiers == CHAR_CTL && character == 32 {
+            character = 0;
+            modifiers = 0;
+        }
+        if character < 128 {
+            if modifiers & CHAR_SHIFT != 0 {
+                if (b'A' as i128..=b'Z' as i128).contains(&character) {
+                    modifiers &= !CHAR_SHIFT;
+                } else if (b'a' as i128..=b'z' as i128).contains(&character) {
+                    character -= 32;
+                    modifiers &= !CHAR_SHIFT;
+                }
+            }
+            if modifiers & CHAR_META != 0 {
+                modifiers &= !CHAR_META;
+                character = 0x3fff00 + (character | 0x80);
+            }
+        }
+        if modifiers != 0 {
+            return Err(read_err(self.interp, "Invalid modifier in string"));
+        }
+        Ok(Some(super::value::lisp_char(character as u32)
+            .unwrap_or_else(|| super::value::mule_seq_char(character as u32))))
     }
 
     /// Read a char literal after `?` or `\` inside a string modifier.
@@ -887,17 +812,21 @@ impl<'a> Reader<'a> {
             }
             Some(':') => {
                 self.pos += 2;
+                let start = self.pos;
                 // Uninterned symbol; GNU accepts an empty name (`#:'),
                 // which reads back as `##'.
                 let (tok, _) = self.read_symbol_token()?;
-                Ok(Value::Sym(self.interp.make_symbol(&tok)))
+                let symbol = self.symbol_token(&tok, true, false)?;
+                Ok(if tok.is_empty() { self.interp.sym(symbol) }
+                   else { self.located_symbol(symbol, start) })
             }
             Some('#') => {
                 // `##' — the interned empty-name symbol (this is its
                 // print representation), used e.g. in `declare-function'
                 // arglists to mean "unknown signature".
                 self.pos += 2;
-                Ok(Value::Sym(self.interp.intern("")))
+                let symbol = self.symbol_token("", false, true)?;
+                Ok(self.interp.sym(symbol))
             }
             Some('&') => {
                 // `#&N"..."' — bool vector literal: N bits packed
@@ -1058,7 +987,7 @@ impl<'a> Reader<'a> {
                         ));
                     }
                     let mut rec = Vec::with_capacity(items.len() + 1);
-                    rec.push(Value::Sym(self.interp.intern("sub-char-table")));
+                    rec.push(Value::Sym(self.interp.q("sub-char-table")));
                     rec.extend(items);
                     return Ok(Value::record(rec));
                 }
@@ -1071,7 +1000,7 @@ impl<'a> Reader<'a> {
                 let mut slots: Vec<Value> = items.iter().skip(3).take(65).cloned().collect();
                 slots.resize(65, Value::Nil);
                 let mut rec = vec![
-                    Value::Sym(self.interp.intern("char-table")),
+                    Value::Sym(self.interp.q("char-table")),
                     purpose,
                     Value::vector(slots),
                 ];
@@ -1160,11 +1089,13 @@ impl<'a> Reader<'a> {
                 Ok(Value::record(items))
             }
             Some('_') => {
-                // `#_' — read the next token as an interned symbol
-                // (symbol-with-position marker in byte-compiled files).
+                // `#_' forces a symbol and suppresses shorthand expansion.
                 self.pos += 2;
+                let start = self.pos;
                 let (tok, _) = self.read_symbol_token()?;
-                Ok(Value::Sym(self.interp.intern(&tok)))
+                let symbol = self.symbol_token(&tok, false, false)?;
+                Ok(if tok.is_empty() { self.interp.sym(symbol) }
+                   else { self.located_symbol(symbol, start) })
             }
             Some('|') | Some('<') => {
                 // GNU's read point is past `#' when these signal.
@@ -1400,8 +1331,6 @@ impl<'a> Reader<'a> {
             }
         }
         match tok.as_str() {
-            // `nil' reads as the nil object, not a symbol cell.
-            "nil" => return Ok(Value::Nil),
             // `.' is only a symbol when `)' or `]' follows directly;
             // `\.' is always the symbol `.' (GNU reads (a \. b) as a
             // 3-element list whose middle element is the `.' symbol).
@@ -1410,21 +1339,69 @@ impl<'a> Reader<'a> {
             "." => return Err(read_err(self.interp, ".")),
             _ => {}
         }
-        let sym = self.interp.intern(&tok);
+        let sym = self.symbol_token(&tok, false, true)?;
+        Ok(self.located_symbol(sym, start))
+    }
+
+    fn located_symbol(&mut self, symbol: super::value::SymId, start: usize) -> Value {
+        if symbol == sym::NIL { return Value::Nil; }
         if let Some(base) = self.annotate_pos {
             if self.sympos_enabled {
-                return Ok(crate::lisp::builtins::misc::make_sympos(
-                    sym,
+                return crate::lisp::builtins::misc::make_sympos(
+                    symbol,
                     base + start as i128,
-                ));
+                );
             }
-            return Ok(crate::lisp::builtins::misc::make_symbol_with_pos(
+            return crate::lisp::builtins::misc::make_symbol_with_pos(
                 self.interp,
-                sym,
+                symbol,
                 base + start as i128,
-            ));
+            );
         }
-        Ok(Value::Sym(sym))
+        Value::Sym(symbol)
+    }
+
+    fn symbol_token(&mut self, token: &str, uninterned: bool, shorthand: bool) -> Result<super::value::SymId, Flow> {
+        let obarray = if !uninterned && !token.is_empty() {
+            super::builtins::data::resolve_obarray(self.interp, None)?
+        } else { None };
+        let core = token.bytes().all(|byte| b"^*+-/<=>_|".contains(&byte));
+        let expanding = shorthand && !core && self.interp.q_soft("read-symbol-shorthands")
+            .is_some_and(|symbol| matches!(self.interp.symbol_value(symbol), Value::Cons(_)));
+        if !uninterned && !token.is_empty() && !expanding {
+            let key = super::obarray::InternKey::from_text_kind(token, self.source_multibyte);
+            if let Some(symbol) = super::builtins::data::lookup_in_obarray(self.interp, &obarray, &key) {
+                return Ok(symbol);
+            }
+        }
+        // Unibyte sources expose high bytes as byte8 characters while reading,
+        // but their symbol names retain the original one-byte representation.
+        let name = Value::string(token);
+        if let Value::Str(string) = &name {
+            if self.source_multibyte && !token.is_empty() {
+                self.interp.mark_multibyte(string);
+            } else {
+                self.interp.mark_unibyte(string);
+            }
+        }
+        let Value::Str(string) = name else { unreachable!() };
+        if uninterned {
+            let symbol = self.interp.make_symbol(token);
+            self.interp.obarray.symbol_mut(symbol).name_string = Some(string);
+            return Ok(symbol);
+        }
+        // GNU's empty #_ / ## paths call Fintern directly, including
+        // shorthand expansion and the shared empty unibyte representation.
+        if token.is_empty() {
+            let value = super::builtins::data::f_intern(self.interp, vec![Value::Str(string)].into())?;
+            return Ok(self.interp.sym_id(&value).unwrap());
+        }
+        // Core punctuation-only names are exempt from reader shorthands.
+        let string = if expanding {
+            super::builtins::data::expand_symbol_shorthand(self.interp, &string, self.source_multibyte)
+                .unwrap_or(string)
+        } else { string };
+        Ok(super::builtins::data::intern_in_obarray(self.interp, &string, &obarray))
     }
 }
 
@@ -1506,9 +1483,9 @@ fn read_hash_literal(i: &mut Interp, fields: &[Value]) -> Result<Option<Value>, 
         if pairs.len() % 2 != 0 {
             return Err(i.error("Hash table data length is odd"));
         }
-        let test_kw = Value::Sym(i.intern(":test"));
-        let size_kw = Value::Sym(i.intern(":size"));
-        let weakness_kw = Value::Sym(i.intern(":weakness"));
+        let test_kw = Value::Sym(i.q(":test"));
+        let size_kw = Value::Sym(i.q(":size"));
+        let weakness_kw = Value::Sym(i.q(":weakness"));
         let table = crate::lisp::builtins::hashfn::f_make_hash_table(
             i,
             vec![

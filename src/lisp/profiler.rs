@@ -182,7 +182,7 @@ fn export(i: &mut Interp, cpu: bool) -> EvalResult {
         export_sample(i, &table, sample.trace, sample.count)?;
     }
     if log.discarded > 0 {
-        let discarded = Value::Sym(i.intern("Discarded Samples"));
+        let discarded = Value::Sym(i.q("Discarded Samples"));
         export_sample(i, &table, vec![discarded, Value::Nil], log.discarded)?;
     }
     if running {

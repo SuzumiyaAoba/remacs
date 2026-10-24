@@ -76,7 +76,7 @@ fn json_wrong_choice(i: &mut Interp, choices: &[&str], wrong: &Value) -> Flow {
         msg.push_str(c);
     }
     msg.push_str(" should be specified");
-    let e = i.intern("error");
+    let e = i.q("error");
     i.signal_data(e, vec![Value::string(msg), wrong.clone()])
 }
 
@@ -84,14 +84,14 @@ fn parse_opts(i: &mut Interp, rest: &[Value], for_serialize: bool) -> Result<Opt
     let mut o = Opts {
         obj: ObjType::Hash,
         array_list: false,
-        null_obj: Value::Sym(i.intern(":null")),
-        false_obj: Value::Sym(i.intern(":false")),
+        null_obj: Value::Sym(i.q(":null")),
+        false_obj: Value::Sym(i.q(":false")),
     };
     let pairs = plist_args(i, rest)?;
-    let obj_type = i.intern(":object-type");
-    let array_type = i.intern(":array-type");
-    let null_object = i.intern(":null-object");
-    let false_object = i.intern(":false-object");
+    let obj_type = i.q(":object-type");
+    let array_type = i.q(":array-type");
+    let null_object = i.q(":null-object");
+    let false_object = i.q(":false-object");
     // GNU json_parse_args iterates BACKWARD so keyword values appearing
     // first take precedence — the FIRST signal from the tail wins.
     for (key, value) in pairs.into_iter().rev() {
@@ -145,7 +145,7 @@ fn parse_opts(i: &mut Interp, rest: &[Value], for_serialize: bool) -> Result<Opt
 /// Lazily install a json error's `error-conditions' chain (as GNU's
 /// define_error does) so `condition-case' catches it by parent.
 fn json_cond_chain(i: &mut Interp, id: u32) {
-    let ec = i.intern("error-conditions");
+    let ec = i.q("error-conditions");
     if i.get_prop(id, ec).truthy() {
         return;
     }
@@ -668,7 +668,7 @@ fn f_json_parse_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         // `json-trailing-content' error with (LINE nil POS) data.
         let (pos, line) = (p.pos + 1, p.line as i128);
         drop(p);
-        let e = i.intern("json-trailing-content");
+        let e = i.q("json-trailing-content");
         json_cond_chain(i, e);
         return Err(i.signal_data(
             e,
@@ -681,7 +681,7 @@ fn f_json_parse_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_json_parse_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let o = parse_opts(i, &a[..], false)?;
     let buf = i.current_buffer;
-    let multibyte = i.intern("enable-multibyte-characters");
+    let multibyte = i.q("enable-multibyte-characters");
     let byte_input = i.symbol_value(multibyte).is_nil();
     let (text, point, end) = {
         let Some(b) = i.buffers.get(buf) else {

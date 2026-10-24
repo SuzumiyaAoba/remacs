@@ -57,7 +57,7 @@ pub(crate) struct Scheduler {
 }
 
 pub(crate) fn signal_main(i: &mut Interp, symbol: Value, data: Value) {
-    let event = i.intern("thread-event");
+    let event = i.q("thread-event");
     let sender = Value::Thread(i.threads[i.current_thread].clone());
     i.thread_scheduler
         .main_events
@@ -68,7 +68,7 @@ pub(crate) fn drain_main_events(i: &mut Interp) -> Result<(), Flow> {
     if i.current_thread == 0 {
         let events = std::mem::take(&mut i.thread_scheduler.main_events);
         for event in events {
-            let handler = i.intern("thread-handle-event");
+            let handler = i.q("thread-handle-event");
             i.apply(&Value::Sym(handler), vec![event])?;
         }
     }
@@ -85,6 +85,7 @@ macro_rules! thread_context {
         }
         impl ThreadContext {
             fn take(i: &mut Interp) -> Self {
+                i.synchronize_quit_request();
                 exchange_bindings(i, true);
                 Self {
                     native: crate::lisp::builtins::comp::take_thread_state(),
@@ -110,13 +111,18 @@ thread_context! {
     explicit_eval_depth: usize = 0,
     max_lisp_eval_depth: usize = 1600,
     quit_flag: bool = false,
+    bc_quit_counter: Option<Rc<std::cell::Cell<u8>>> = None,
+    unwind_quit: Option<Value> = None,
     catch_tags: Vec<Value> = Vec::new(),
     command_args: Vec<Value> = Vec::new(),
     interactive_call_depth: u32 = 0,
     defining_symbol: Option<SymId> = None,
     recursion_depth: usize = 0,
     last_error: Option<(Value, Value)> = None,
+    signaling_function: Value = Value::Nil,
     match_data: Option<MatchData> = None,
+    running_asynch_code: bool = false,
+    saved_async_match_data: Option<Option<MatchData>> = None,
     pending_insert_behind: Vec<Value> = Vec::new(),
     pending_insert_front: Vec<Value> = Vec::new(),
     pending_overlay_hooks: Vec<(Value, Value)> = Vec::new(),
@@ -137,7 +143,7 @@ thread_context! {
     expand_unadvised_depth: usize = 0,
     loading_compiled_library: bool = false,
     handler_bindings: Vec<(Value, Value, usize)> = Vec::new(),
-    case_handlers: Vec<Value> = Vec::new(),
+    case_handlers: Vec<crate::lisp::error::CaseHandler> = Vec::new(),
     lisp_stack: Vec<(Value, Argv)> = Vec::new(),
     pending_frames: Vec<crate::lisp::backtrace::PendingFrame> = Vec::new(),
     cur_head_form: Value = Value::Nil,
@@ -206,8 +212,8 @@ pub(crate) fn spawn(i: &mut Interp, function: Value, thread: ThreadRef) -> Resul
             t.blocker = None;
             match outcome {
                 Ok(Ok(value)) => t.result = Some(value),
-                Ok(Err(Flow::Signal(symbol, data, _))) => {
-                    let error = Value::cons(symbol, data);
+                Ok(Err(Flow::Signal(signal))) => {
+                    let error = signal.condition;
                     t.last_error = Some(error.clone());
                     runtime.thread_last_error = error;
                 }
@@ -217,7 +223,7 @@ pub(crate) fn spawn(i: &mut Interp, function: Value, thread: ThreadRef) -> Resul
                     runtime.thread_last_error = error;
                 }
                 Ok(Err(Flow::Throw(tag, value))) => {
-                    let no_catch = runtime.intern("no-catch");
+                    let no_catch = runtime.q("no-catch");
                     let error = Value::list(vec![Value::Sym(no_catch), tag, value]);
                     t.last_error = Some(error.clone());
                     runtime.thread_last_error = error;
@@ -434,15 +440,15 @@ mod tests {
     fn native_panic_restores_the_resumers_runtime_and_bindings() {
         large_stack(|| {
             let mut i = Interp::new();
-            let panic_symbol = i.intern("qa196-panic");
+            let panic_symbol = i.q("qa196-panic");
             i.fset(panic_symbol, Value::Subr(&PANIC));
             i.eval_str(
                 "(defvar qa196-special 'global) \
                 (make-thread (lambda () (let ((qa196-special 'child)) (qa196-panic))))",
             )
             .unwrap();
-            let special = i.intern("qa196-special");
-            let parent = i.intern("parent");
+            let special = i.q("qa196-special");
+            let parent = i.q("parent");
             let buffer = i.current_buffer;
             i.specbind(special, Value::Sym(parent)).unwrap();
             yield_now(&mut i).unwrap();
@@ -457,7 +463,7 @@ mod tests {
                 &Value::Sym(parent)
             ));
             i.unbind(1).unwrap();
-            let global = i.intern("global");
+            let global = i.q("global");
             assert!(crate::lisp::eq_values(
                 &i.symbol_value(special),
                 &Value::Sym(global)

@@ -78,14 +78,16 @@ impl Interp {
         arguments: Vec<Value>,
         run: impl FnOnce(&mut Self) -> EvalResult,
     ) -> EvalResult {
-        let function = Value::Sym(self.intern(name));
-        let depth = self.lisp_stack.len();
-        self.profiler_checkpoint();
-        self.lisp_stack.push((function, Argv::new(arguments)));
-        let result = run(self);
-        let result = self.offer_flow(result);
-        self.profiler_checkpoint();
-        self.lisp_stack.truncate(depth);
-        result
+        self.with_lisp_eval_depth(false, |i| {
+            let function = Value::Sym(i.intern(name));
+            let depth = i.lisp_stack.len();
+            i.profiler_checkpoint();
+            i.lisp_stack.push((function, Argv::new(arguments)));
+            let result = run(i);
+            let result = i.offer_flow(result);
+            i.profiler_checkpoint();
+            i.lisp_stack.truncate(depth);
+            result
+        })
     }
 }

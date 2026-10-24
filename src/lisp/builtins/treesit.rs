@@ -188,7 +188,7 @@ fn node_entry(i: &mut Interp, v: &Value) -> Result<NodeKey, Flow> {
 }
 
 fn node_entry_soft(i: &Interp, v: &Value) -> Option<NodeKey> {
-    let tag = i.intern_soft("treesit-node")?;
+    let tag = i.q_soft("treesit-node")?;
     if let Value::Record(r) = v {
         let rr = r.borrow();
         if let [
@@ -2630,7 +2630,7 @@ fn match_predicate(
             let pat = s.borrow().clone();
             let typ = cursor_node.kind();
             let case_fold = {
-                let cf = i.intern_soft("case-fold-search");
+                let cf = i.q_soft("case-fold-search");
                 cf.map(|x| i.symbol_value(x).truthy()).unwrap_or(false)
             };
             match crate::lisp::regexp::compile_case(&pat, case_fold) {
@@ -2701,7 +2701,7 @@ fn match_predicate(
                     let pat = s.borrow().clone();
                     let typ = cursor_node.kind();
                     let case_fold = {
-                        let cf = i.intern_soft("case-fold-search");
+                        let cf = i.q_soft("case-fold-search");
                         cf.map(|x| i.symbol_value(x).truthy()).unwrap_or(false)
                     };
                     let re = crate::lisp::regexp::compile_case(&pat, case_fold)

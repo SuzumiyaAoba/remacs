@@ -1163,7 +1163,7 @@ pub(crate) fn apply_case_text(
     }
     if let Some(undo) = undo {
         i.set_str_props(&undo, old_props);
-        let multi = i.intern("enable-multibyte-characters");
+        let multi = i.q("enable-multibyte-characters");
         if buffer.borrow().locals.get(&multi).is_none_or(Value::truthy) {
             i.mark_multibyte(&undo);
         } else {
@@ -1204,7 +1204,7 @@ fn f_string_to_number(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 
     // Emacs: BASE must be an integer in 2..16 (0 is out of range).
     if !(2..=16).contains(&base) {
-        let sym = i.intern("args-out-of-range");
+        let sym = i.q("args-out-of-range");
         return Err(i.signal_data(sym, vec![Value::Int(base)]));
     }
     if base != 10 {
@@ -1484,7 +1484,7 @@ fn f_split_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let source = args[0].clone();
     let keep_empty = args.get(1).is_some_and(Value::truthy)
         && !args.get(2).is_some_and(Value::truthy);
-    let length_fn = i.intern("length");
+    let length_fn = i.q("length");
     let length = i.apply(&Value::Sym(length_fn), vec![source.clone()])?;
     let len = want_int(i, &length)? as usize;
     let trim = match args.get(3) {
@@ -1501,7 +1501,7 @@ fn f_split_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let sep = match args.get(1) {
         Some(v) if v.truthy() => v.clone(),
         _ => {
-            let id = i.intern("split-string-default-separators");
+            let id = i.q("split-string-default-separators");
             i.eval(&Value::Sym(id))?
         }
     };
@@ -1566,7 +1566,7 @@ fn split_string_match(
 }
 
 fn split_match_end(i: &mut Interp) -> Result<usize, Flow> {
-    let id = i.intern("match-end");
+    let id = i.q("match-end");
     let end = i.apply(&Value::Sym(id), vec![Value::Int(0)])?;
     Ok(want_int(i, &end)? as usize)
 }
@@ -1603,7 +1603,7 @@ fn f_string_replace(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let from = want_string(i, &args[0])?;
     let s = want_string(i, &args[2])?;
     if from.is_empty() {
-        let sym = i.intern("wrong-length-argument");
+        let sym = i.q("wrong-length-argument");
         return Err(i.signal_data(sym, vec![Value::Int(0)]));
     }
     // GNU's string-replace keeps the text properties of the
@@ -1718,7 +1718,7 @@ fn f_string_chop_newline(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
 fn display_tab_width(i: &Interp) -> usize {
     // GNU buffer.h sanitize_tab_width: any non-fixnum or value outside
     // 1..=1000 falls back to 8, including zero, floats and bignums.
-    match i.intern_soft("tab-width").map(|id| i.symbol_value(id)) {
+    match i.q_soft("tab-width").map(|id| i.symbol_value(id)) {
         Some(Value::Int(width)) if (1..=1000).contains(&width) => width as usize,
         _ => 8,
     }
@@ -1745,7 +1745,7 @@ fn gnu_char_code_width(i: &Interp, code: u32) -> usize {
             _ => 2,
         };
     }
-    if let Some(id) = i.intern_soft("char-width-table") {
+    if let Some(id) = i.q_soft("char-width-table") {
         if let Value::Int(width) = misc::char_table_ref(i, &i.symbol_value(id), code as usize) {
             if width >= 0 {
                 return width as usize;
@@ -1810,7 +1810,7 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
         Value::Nil => None,
         Value::Str(e) => Some(e.borrow().clone()),
         _ => {
-            let eid = i.intern("truncate-string-ellipsis");
+            let eid = i.q("truncate-string-ellipsis");
             match i.symbol_value(eid) {
                 Value::Str(e) => Some(e.borrow().clone()),
                 _ => Some("…".to_string()),
@@ -2034,7 +2034,7 @@ fn f_char_equal(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let b = check(&args[1])?;
     // Emacs consults `case-fold-search' (default t in -Q).
     let fold = i
-        .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
+        .symbol_value(i.q_soft("case-fold-search").unwrap_or(0))
         .truthy();
     if a == b {
         return Ok(Value::t());
@@ -2078,7 +2078,7 @@ fn f_string_search(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // Validate in character positions before either an empty-needle
     // return or conversion to usize, as GNU's Fstring_search does.
     if !(0..=hchars.len() as i128).contains(&start) {
-        let sym = i.intern("args-out-of-range");
+        let sym = i.q("args-out-of-range");
         return Err(i.signal_data(sym, vec![Value::Int(start)]));
     }
     let nchars: Vec<char> = needle.chars().collect();
@@ -2222,7 +2222,7 @@ fn f_string_distance(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Int(prev[m] as i128))
 }
 fn f_string_glyph_split(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let length = Value::Sym(i.intern("length"));
+    let length = Value::Sym(i.q("length"));
     let len = i.apply(&length, vec![args[0].clone()])?.int().unwrap_or(0);
     let mut pieces = Vec::new();
     let mut start = 0;
@@ -2326,7 +2326,7 @@ pub(crate) fn sxhash_char_array(bytes: &[u8]) -> u64 {
 /// while multibyte strings hash Emacs' UTF-8 variant, which encodes
 /// raw-byte chars (our eight-bit proxies) as BYTE8_STRING
 /// (0xC0|((b>>6)&1), 0x80|(b&0x3F)), NOT UTF-8.
-fn gnu_sbytes(i: &Interp, s: &StrRef) -> Vec<u8> {
+pub(crate) fn gnu_sbytes(i: &Interp, s: &StrRef) -> Vec<u8> {
     let text = s.borrow();
     if i.is_unibyte_str(s) {
         return text
@@ -2467,7 +2467,7 @@ fn sxhash_overlay(i: &Interp, vv: &[Value], depth: usize) -> Option<u64> {
     else {
         return None;
     };
-    if Some(*tag) != i.intern_soft("overlay") {
+    if Some(*tag) != i.q_soft("overlay") {
         return None;
     }
     let ov = i
@@ -4310,7 +4310,7 @@ fn sxhash_obj(i: &Interp, v: &Value, depth: usize) -> u64 {
             if misc::is_bool_vector(i, v) {
                 return sxhash_bool_vector(i, v);
             }
-            if let Some(tag) = i.intern_soft("sub-char-table") {
+            if let Some(tag) = i.q_soft("sub-char-table") {
                 if misc::is_sub_ct_tag(tag, v) {
                     return 42;
                 }
@@ -4535,6 +4535,7 @@ fn f_string_aref(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 /// `%c` char, `%%` literal. Supports `%Nd`, `%-Ns`, `%0Nd`, `%.Nf`.
 fn f_format(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let fmt = want_string(i, &args[0])?;
+    if !fmt.contains('%') { return Ok(args[0].clone()); }
     let fmt_ivs = match &args[0] {
         Value::Str(s) => i.str_props(s).to_vec(),
         _ => Vec::new(),
@@ -4567,13 +4568,48 @@ pub(crate) fn f_format_message(i: &mut Interp, args: crate::lisp::Argv) -> EvalR
 }
 
 fn format_impl_spans(
-    i: &Interp,
+    i: &mut Interp,
     fmt: &str,
     args: &[Value],
     fmt_ivs: &[(usize, usize, Vec<Value>)],
     spans: &mut Vec<(usize, usize, Vec<Value>)>,
 ) -> EvalResult {
+    // styled_format returns the converted first argument directly for an
+    // unpropertized two-character string conversion. Other arguments and
+    // the format's storage kind then have no effect on that returned object.
+    if !fmt.contains('%') && matches!(&args[0], Value::Str(source) if source.borrow().as_str() == fmt) {
+        return Ok(args[0].clone());
+    }
+    if fmt_ivs.is_empty() && fmt.len() == 2 && fmt.starts_with('%') {
+        let conversion = fmt.as_bytes()[1];
+        if matches!(conversion, b's' | b'S' | b'c') {
+            let Some(argument) = args.get(1) else {
+                return Err(i.error("Not enough arguments for format string"));
+            };
+            if conversion == b's' {
+                if matches!(argument, Value::Str(_)) { return Ok(argument.clone()); }
+                if i.sym_id(argument).is_some() {
+                    return super::data::f_symbol_name(i, vec![argument.clone()].into());
+                }
+            }
+            if conversion == b'c' {
+                if matches!(argument, Value::Int(code) if *code >= 128) {
+                    return f_char_to_string(i, vec![argument.clone()].into());
+                }
+            } else {
+                let text = if conversion == b'S' { i.print_to_string(argument) }
+                           else { i.princ_to_string(argument) };
+                let multibyte = content_is_multibyte(&text);
+                let value = Value::string(text);
+                if let Value::Str(string) = &value {
+                    if multibyte { i.mark_multibyte(string); } else { i.mark_unibyte(string); }
+                }
+                return Ok(value);
+            }
+        }
+    }
     let mut out = String::new();
+    let mut multibyte = args.iter().any(|value| string_multibyte_p(i, value));
     let fchars: Vec<char> = fmt.chars().collect();
     // GNU doprnt copies the format string's text properties onto the
     // result via `text_property_list' + `add_text_properties_from_list'
@@ -4723,9 +4759,13 @@ fn format_impl_spans(
         }
         // GNU signals (error "Not enough arguments for format string")
         // when a spec has no corresponding argument.
-        let Some(a) = args.get(aidx).cloned() else {
+        let Some(mut a) = args.get(aidx).cloned() else {
             return Err(i.error("Not enough arguments for format string"));
         };
+        if letter == 's' && i.sym_id(&a).is_some() {
+            a = super::data::f_symbol_name(i, vec![a].into())?;
+        }
+        if letter == 's' && string_multibyte_p(i, &a) { multibyte = true; }
         let piece = match letter {
             's' => {
                 // GNU copies string arguments verbatim — the `%s' path
@@ -4806,7 +4846,7 @@ fn format_impl_spans(
                     match crate::lisp::value::lisp_char(n as u32) {
                         Some(ch) if (0..=0x3f_ffff).contains(&n) => ch,
                         _ => {
-                            let pid = i.intern_soft("characterp").unwrap_or(0);
+                            let pid = i.q_soft("characterp").unwrap_or(0);
                             return Err(i.signal_data(
                                 sym::WRONG_TYPE_ARGUMENT,
                                 vec![Value::Sym(pid), a.clone()],
@@ -4814,6 +4854,7 @@ fn format_impl_spans(
                         }
                     }
                 };
+                if n >= 128 { multibyte = true; }
                 ch.to_string()
             }
             'o' | 'x' | 'X' | 'b' => {
@@ -4942,7 +4983,12 @@ fn format_impl_spans(
             }
         }
     }
-    Ok(Value::string(out))
+    multibyte |= content_is_multibyte(&out);
+    let result = Value::string(out);
+    if let Value::Str(string) = &result {
+        if multibyte { i.mark_multibyte(string); } else { i.mark_unibyte(string); }
+    }
+    Ok(result)
 }
 
 /// GNU styled_format uses snprintf for floating-point conversions,
@@ -5032,7 +5078,7 @@ fn format_char_width(i: &Interp, ch: char) -> usize {
     if ch == '\t' {
         return display_tab_width(i);
     }
-    if let Some(id) = i.intern_soft("char-width-table") {
+    if let Some(id) = i.q_soft("char-width-table") {
         if let Value::Int(width) = misc::char_table_ref(
             i,
             &i.symbol_value(id),
@@ -5067,7 +5113,7 @@ fn int_of(i: &Interp, v: &Value) -> Result<num_bigint::BigInt, super::Flow> {
         Value::BigInt(n) => Ok((**n).clone()),
         Value::Float(f) if f.is_finite() => Ok(num_bigint::BigInt::from_f64(f.trunc()).unwrap()),
         Value::Float(_) => Err(i.signal_data(
-            i.intern_soft("overflow-error").unwrap_or(sym::ERROR),
+            i.q_soft("overflow-error").unwrap_or(sym::ERROR),
             vec![],
         )),
         _ => Err(fmt_type_err(i)),
@@ -5398,7 +5444,7 @@ pub(super) fn validate_subarray(
         other => return Err(i.wrong_type_mut("integerp", other)),
     };
     if !(0 <= f && f <= t && t <= size as i128) {
-        let sym = i.intern("args-out-of-range");
+        let sym = i.q("args-out-of-range");
         return Err(i.signal_data(sym, vec![arr.clone(), from.clone(), to.clone()]));
     }
     Ok((f as usize, t as usize))
@@ -5726,7 +5772,7 @@ fn f_unibyte_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     for a in args.iter() {
         let n = want_int(i, a)?;
         if !(0..=255).contains(&n) {
-            let sym = i.intern("args-out-of-range");
+            let sym = i.q("args-out-of-range");
             return Err(i.signal_data(sym, vec![a.clone(), Value::Int(0), Value::Int(255)]));
         }
         let c = char::from_u32(n as u32).unwrap();
@@ -5927,7 +5973,7 @@ fn charset_restricted_charset(i: &mut Interp, ch: i64, v: &Value) -> EvalResult 
                 other => return Err(i.wrong_type_mut("symbolp", other)),
             }
             if super::misc::coding_known(i, v).is_none() {
-                let cs = i.intern("coding-system-error");
+                let cs = i.q("coding-system-error");
                 return Err(i.signal_data(cs, vec![v.clone()]));
             }
             let list = super::charset::coding_system_charset_names(i, v);

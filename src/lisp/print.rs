@@ -298,7 +298,7 @@ impl Interp {
         if hits.is_empty() {
             return Ok(s);
         }
-        let puf = self.intern("print-unreadable-function");
+        let puf = self.q("print-unreadable-function");
         let f = self.symbol_value(puf);
         if !super::builtins::data::functionp_val(self, &f) {
             return Ok(s);
@@ -327,7 +327,7 @@ impl Interp {
         if hits.is_empty() {
             return Ok(s);
         }
-        let puf = self.intern("print-unreadable-function");
+        let puf = self.q("print-unreadable-function");
         let f = self.symbol_value(puf);
         if !super::builtins::data::functionp_val(self, &f) {
             return Ok(s);
@@ -361,7 +361,7 @@ impl Interp {
         let mark = self.specbind_depth();
         let result = (|| {
             // GNU suppresses recursive use of the same unreadable printer.
-            let variable = self.intern("print-unreadable-function");
+            let variable = self.q("print-unreadable-function");
             self.specbind(variable, Value::Nil)?;
             self.apply(callback, vec![object, Value::from_bool(escape)])
         })();
@@ -378,7 +378,7 @@ impl Interp {
             return;
         }
         PRINT_NUMBER_INDEX.with(|index| index.set(0));
-        let symbol = self.intern("print-number-table");
+        let symbol = self.q("print-number-table");
         if let Some(buffer) = self.current_buffer_ref() {
             if let Some(value) = buffer.borrow_mut().locals.get_mut(&symbol) {
                 *value = Value::Nil;
@@ -539,7 +539,7 @@ impl Interp {
                 // `print-charset-text-property' is t (or `default',
                 // which shows only map-based charsets).
                 let pct = self.print_var("print-charset-text-property");
-                let charset_id = self.intern_soft("charset");
+                let charset_id = self.q_soft("charset");
                 // nil → hide all charset props; `default' → only
                 // map-based charsets; anything else → show all.
                 let show_all = charset_id.is_none()
@@ -1311,7 +1311,7 @@ impl Interp {
     /// `print-gensym` variable (default nil): print uninterned
     /// symbols with `#:' only when non-nil.
     fn print_gensym(&self) -> bool {
-        self.intern_soft("print-gensym")
+        self.q_soft("print-gensym")
             .filter(|id| self.bound_p(*id))
             .map(|id| self.symbol_value(id).truthy())
             .unwrap_or(false)
@@ -1320,7 +1320,7 @@ impl Interp {
     /// `print-quoted` variable (default t): abbreviate
     /// (quote x) -> 'x, (function x) -> #'x, (\` x) -> `x, etc.
     fn print_quoted(&self) -> bool {
-        self.intern_soft("print-quoted")
+        self.q_soft("print-quoted")
             .filter(|id| self.bound_p(*id))
             .map(|id| self.symbol_value(id).truthy())
             .unwrap_or(true)
@@ -1794,7 +1794,7 @@ pub fn f_print_preprocess(i: &mut Interp, a: crate::lisp::Argv) -> crate::lisp::
         return Ok(Value::Nil);
     }
     PRINT_NUMBER_INDEX.with(|c| c.set(0));
-    let nt_id = i.intern("print-number-table");
+    let nt_id = i.q("print-number-table");
     let mut nt = i.symbol_value(nt_id);
     if !matches!(nt, Value::Hash(_)) {
         nt = Value::Hash(crate::lisp::memory::allocate(

@@ -189,6 +189,9 @@ impl Graph {
         self.root(&i.cur_head_form);
         self.root(&i.read_expression_history);
         self.root(&i.thread_last_error);
+        self.root(&i.unread_switch_frame);
+        for value in i.native_lisp_literals.values() { self.root(value); }
+        for &symbol in i.fixed_symbols.values() { self.root(&Value::Sym(symbol)); }
         for value in i
             .catch_tags
             .iter()
@@ -196,9 +199,13 @@ impl Graph {
             .chain(i.pending_insert_behind.iter())
             .chain(i.pending_insert_front.iter())
             .chain(i.kbd_macro_events.iter())
-            .chain(i.case_handlers.iter())
         {
             self.root(value);
+        }
+        for handler in &i.case_handlers {
+            for conditions in &handler.clauses {
+                self.root(conditions);
+            }
         }
         if let Some((a, b)) = &i.last_error {
             self.root(a);
@@ -217,6 +224,7 @@ impl Graph {
             &i.standard_case_table,
             &i.standard_category_table,
             &i.terminal,
+            &i.unwind_quit,
         ] {
             if let Some(value) = value {
                 self.root(value);

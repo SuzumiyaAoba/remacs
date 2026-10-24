@@ -105,7 +105,7 @@ pub(crate) fn save(i: &mut Interp, args: Argv) -> super::EvalResult {
     }
     super::memory::collect_interp(i);
     let mark = i.specbind_depth();
-    let processed = i.intern("command-line-processed");
+    let processed = i.q("command-line-processed");
     i.specbind(processed, Value::Nil)?;
     let result = (|| {
         let Value::Str(name) = &args[0] else {
@@ -176,13 +176,13 @@ pub(crate) fn stats(i: &mut Interp, _args: Argv) -> super::EvalResult {
         return Ok(Value::Nil);
     };
     Ok(Value::list(vec![
-        Value::cons(Value::Sym(i.intern("dumped-with-pdumper")), Value::t()),
+        Value::cons(Value::Sym(i.q("dumped-with-pdumper")), Value::t()),
         Value::cons(
-            Value::Sym(i.intern("load-time")),
+            Value::Sym(i.q("load-time")),
             Value::float(info.load_time),
         ),
         Value::cons(
-            Value::Sym(i.intern("dump-file-name")),
+            Value::Sym(i.q("dump-file-name")),
             Value::string(info.file_name),
         ),
     ]))
@@ -257,7 +257,7 @@ pub fn load_with_arguments(
         return Err(fail("Unsupported portable dump version".into()));
     }
     let mut i = Interp::new();
-    let load_path = i.intern("load-path");
+    let load_path = i.q("load-path");
     let fresh_path = i.symbol_value(load_path);
     let current_cache = super::embedded_cache::directory()
         .map(|p| p.to_string_lossy().into_owned())
@@ -296,7 +296,7 @@ pub fn load_with_arguments(
         i.obarray.symbol_mut(id).value = value;
     }
     if std::env::var_os("EMACSLOADPATH").is_some() {
-        let id = i.intern("load-path");
+        let id = i.q("load-path");
         i.obarray.symbol_mut(id).value = fresh_path;
     }
     i.loaded_dump = Some(LoadedDump {
@@ -311,10 +311,10 @@ pub fn load_with_arguments(
         Err(Flow::Exit(code)) => Err(LoadError::Exit(code)),
         Err(flow) => {
             let message = match flow {
-                Flow::Signal(symbol, data, _) => format!(
+                Flow::Signal(signal) => format!(
                     "{} {}",
-                    i.prin1_to_string(&symbol),
-                    i.prin1_to_string(&data)
+                    i.prin1_to_string(&signal.symbol()),
+                    i.prin1_to_string(&signal.data())
                 ),
                 other => format!("{other:?}"),
             };

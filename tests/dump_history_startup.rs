@@ -160,3 +160,32 @@ fn image_relocates_bundled_provenance_when_installed_sources_disappear() {
         "restored"
     );
 }
+
+#[test]
+fn image_retains_an_installed_native_trampoline_after_cell_restoration() {
+    let fixture = Fixture::new("native-trampoline");
+    if fixture.run(&["--batch", "--eval", "(princ (native-comp-available-p))"], false) != "t" {
+        return;
+    }
+    let image = fixture.0.join("trampoline.pdmp").to_string_lossy().into_owned();
+    let output = fixture.0.join("restored.eln").to_string_lossy().into_owned();
+    let save = format!(r#"(progn
+      (let ((original (symbol-function 'symbol-value)))
+        (fset 'symbol-value (lambda (_) 'replacement))
+        (fset 'symbol-value original))
+      (dump-emacs-portable {image:?}) (princ "saved"))"#);
+    assert_eq!(fixture.run(&["--batch", "--eval", &save], false), "saved");
+    let probe = format!(r#"(progn
+      (require 'comp)
+      (defvar qa-image-global 42)
+      (let ((function (native-compile
+                        (lambda () (setq quit-flag t inhibit-quit nil) qa-image-global)
+                        {output:?}))
+            (inhibit-quit t) (quit-flag nil))
+        (let ((result (condition-case nil
+                          (let ((inhibit-quit t)) (funcall function))
+                        (quit 'caught))))
+          (setq quit-flag nil)
+          (prin1 result))))"#);
+    assert_eq!(fixture.run(&["--batch", "--dump-file", &image, "--eval", &probe], false), "caught");
+}

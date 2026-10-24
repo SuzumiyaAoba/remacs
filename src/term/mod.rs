@@ -692,7 +692,7 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
                 // for this window's buffer and not suspended by an
                 // explicit `scroll-left'/`-right'/`set-window-hscroll'.
                 // GNU's min_hscroll floors the automatic value.
-                let ahs_id = i.intern_soft("auto-hscroll-mode").unwrap_or(u32::MAX);
+                let ahs_id = i.q_soft("auto-hscroll-mode").unwrap_or(u32::MAX);
                 let ahs_on = i
                     .buffer_local_toplevel_value(ahs_id, buf_id)
                     .or_else(|| i.default_toplevel_value(ahs_id))
@@ -1129,6 +1129,99 @@ pub fn run_editor(i: &mut Interp) -> io::Result<()> {
     run_editor_with(Terminal::enter()?, i)
 }
 
+/// A batch startup can reach the command loop when a replacement for
+/// `kill-emacs' returns.  The threaded GNU event loop waits for queued
+/// events and timers here; it neither enters terminal mode nor consumes
+/// redirected stdin as editor commands.
+pub(crate) fn run_batch_editor(i: &mut Interp) -> Result<(), crate::lisp::Flow> {
+    use crate::lisp::{Flow, Value};
+    let top_level = Value::Sym(i.q("top-level"));
+    i.catch_tags.push(top_level.clone());
+    let result = (|| {
+        let mut keys = Vec::new();
+        let mut arg_mode = false;
+        crate::lisp::builtins::evalfn::safe_call_hook(i, "post-command-hook")?;
+        loop {
+            crate::lisp::eval::threads::yield_now(i)?;
+            crate::lisp::builtins::evalfn::thread_wait_events(i)?;
+            if let Some(code) = i.exit_status {
+                return Err(Flow::Exit(code));
+            }
+            let Some(event) = crate::editor::pop_unread_command_event(i) else {
+                crate::lisp::eval::threads::pause(i, Duration::from_millis(20))?;
+                continue;
+            };
+            let mut flow = None;
+            let codes = crate::editor::key_seq(i, &Value::vector(vec![event]))?;
+            for key in codes {
+                dispatch_key_core_inner(i, key, &mut keys, &mut arg_mode, None, Some(&mut flow))
+                    .map_err(|error| i.error(&error.to_string()))?;
+                if flow.is_some() {
+                    break;
+                }
+            }
+            if let Some(flow) = flow {
+                let condition = match flow {
+                    Flow::Signal(signal) => signal.condition,
+                    Flow::Quit => Value::list(vec![Value::Sym(i.q("quit"))]),
+                    Flow::Throw(tag, value) if crate::lisp::builtins::eq_values(&tag, &top_level) => {
+                        return Err(Flow::Throw(tag, value));
+                    }
+                    Flow::Throw(tag, value) => Value::list(vec![
+                        Value::Sym(i.q("no-catch")), tag, value,
+                    ]),
+                    Flow::Exit(code) => return Err(Flow::Exit(code)),
+                };
+                i.finish_quit_unwind();
+                batch_command_error(i, condition)?;
+                crate::lisp::builtins::evalfn::safe_call_hook(i, "post-command-hook")?;
+            }
+        }
+    })();
+    i.catch_tags.pop();
+    match result {
+        Err(Flow::Throw(tag, _)) if crate::lisp::builtins::eq_values(&tag, &top_level) => {
+            // keyboard.c exits batch mode directly after the command-loop
+            // catch returns, even when the public function cell was replaced.
+            i.finish_quit_unwind();
+            let result = crate::lisp::builtins::evalfn::f_kill_emacs(i, vec![Value::t()].into());
+            i.offer_flow(result).map(|_| ())
+        }
+        other => other,
+    }
+}
+
+/// keyboard.c's cmd_error adds these scopes around cmd_error_internal.
+/// Process callback reporters intentionally use only the latter protocol.
+pub(crate) fn batch_command_error(i: &mut Interp, condition: Value) -> crate::lisp::EvalResult {
+    let mark = i.specbind_depth();
+    let result = (|| {
+        for name in ["standard-output", "standard-input"] {
+            let id = i.intern(name);
+            i.specbind(id, Value::t())?;
+        }
+        for name in ["prefix-arg", "last-prefix-arg"] {
+            let id = i.intern(name);
+            i.obarray.symbol_mut(id).value = Value::Nil;
+        }
+        let print_level = i.q("print-level");
+        let print_length = i.q("print-length");
+        let old_level = i.symbol_value(print_level);
+        let old_length = i.symbol_value(print_length);
+        i.obarray.symbol_mut(print_level).value = Value::Int(10);
+        i.obarray.symbol_mut(print_length).value = Value::Int(10);
+        crate::lisp::builtins::evalfn::command_error(i, condition, "")?;
+        i.obarray.symbol_mut(print_level).value = old_level;
+        i.obarray.symbol_mut(print_length).value = old_length;
+        i.clear_quit_flag();
+        let inhibit = i.q("inhibit-quit");
+        i.obarray.symbol_mut(inhibit).value = Value::Nil;
+        Ok(Value::Nil)
+    })();
+    let result = i.offer_flow(result);
+    i.unbind_to(mark).and(result)
+}
+
 /// The editor command loop, parameterized over a front-end. Also
 /// used by the gpui front-end, which supplies a channel-backed KeyIo
 /// and runs this on a dedicated logic thread (Interp is !Send).
@@ -1175,7 +1268,7 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
                 k
             }
             None => {
-                let ek = i.intern("executing-kbd-macro");
+                let ek = i.q("executing-kbd-macro");
                 if i.symbol_value(ek).truthy() {
                     let _ = i.set_symbol(ek, Value::Nil);
                 }
@@ -1211,7 +1304,18 @@ pub fn dispatch_key_core(
     key: i128,
     keys: &mut Vec<i128>,
     arg_mode: &mut bool,
+    isearch: Option<&mut dyn FnMut(&mut Interp, bool, bool) -> io::Result<()>>,
+) -> io::Result<()> {
+    dispatch_key_core_inner(i, key, keys, arg_mode, isearch, None)
+}
+
+fn dispatch_key_core_inner(
+    i: &mut Interp,
+    key: i128,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
     mut isearch: Option<&mut dyn FnMut(&mut Interp, bool, bool) -> io::Result<()>>,
+    mut command_flow: Option<&mut Option<crate::lisp::Flow>>,
 ) -> io::Result<()> {
     {
         if *arg_mode {
@@ -1219,7 +1323,7 @@ pub fn dispatch_key_core(
             let minus = key == 45;
             let cu = key == 21;
             if digit || minus || cu {
-                let lce = i.intern("last-command-event");
+                let lce = i.q("last-command-event");
                 let _ = i.set_symbol(lce, Value::Int(key));
                 let name = if cu {
                     "universal-argument"
@@ -1238,7 +1342,7 @@ pub fn dispatch_key_core(
         // Record the event when defining a keyboard macro (replayed
         // keys are not re-recorded, matching GNU).
         if !i.macro_replaying {
-            let dm = i.intern("defining-kbd-macro");
+            let dm = i.q("defining-kbd-macro");
             if i.symbol_value(dm).truthy() {
                 i.kbd_macro_events.push(Value::Int(key));
             }
@@ -1260,16 +1364,16 @@ pub fn dispatch_key_core(
                     _ => raw_cmd.clone(),
                 };
                 keys.clear();
-                let lce = i.intern("last-command-event");
+                let lce = i.q("last-command-event");
                 let _ = i.set_symbol(lce, Value::Int(key));
-                let this_cmd = i.intern("this-command");
+                let this_cmd = i.q("this-command");
                 let prev = i.symbol_value(this_cmd);
-                let lc = i.intern("last-command");
+                let lc = i.q("last-command");
                 let _ = i.set_symbol(lc, prev);
                 let _ = i.set_symbol(this_cmd, cmd.clone());
-                let pa = i.intern("prefix-arg");
+                let pa = i.q("prefix-arg");
                 let prefix = i.symbol_value(pa);
-                let cpa = i.intern("current-prefix-arg");
+                let cpa = i.q("current-prefix-arg");
                 let _ = i.set_symbol(cpa, prefix);
                 // Consume prefix-arg BEFORE executing so commands that
                 // set it (C-u, digit-argument) affect the NEXT command.
@@ -1303,19 +1407,12 @@ pub fn dispatch_key_core(
                     Ok(_) => {
                         boundary = true;
                     }
-                    Err(crate::lisp::error::Flow::Quit) => {
-                        if i.minibuf_catching_exit {
-                            // Inside read_minibuf's catch: a quit aborts
-                            // the read — hand the flow to minibuf_loop.
-                            i.minibuf_pending_flow = Some(crate::lisp::error::Flow::Quit);
-                        } else if i.macro_replaying || i.macro_strict {
-                            // GNU: a quit inside execute-kbd-macro aborts
-                            // the macro and propagates.
-                            i.macro_replay.clear();
-                            i.macro_pending_flow = Some(crate::lisp::error::Flow::Quit);
-                        } else {
-                            i.message("Quit");
-                        }
+                    Err(flow) if command_flow.is_some() => {
+                        **command_flow.as_mut().unwrap() = Some(flow);
+                    }
+                    Err(flow @ crate::lisp::error::Flow::Quit) => command_quit(i, flow),
+                    Err(flow @ crate::lisp::error::Flow::Signal(..)) if flow.is_quit() => {
+                        command_quit(i, flow);
                     }
                     Err(e @ crate::lisp::error::Flow::Signal(..)) => {
                         if i.macro_replaying || i.macro_strict {
@@ -1325,9 +1422,11 @@ pub fn dispatch_key_core(
                             i.macro_replay.clear();
                             i.macro_pending_flow = Some(e);
                         } else {
-                            let crate::lisp::error::Flow::Signal(sym, data, _) = e else {
+                            let crate::lisp::error::Flow::Signal(signal) = e else {
                                 unreachable!()
                             };
+                            let sym = signal.symbol();
+                            let data = signal.data();
                             let name = match &sym {
                                 Value::Sym(id) => i.symbol_name(*id),
                                 _ => "error".into(),
@@ -1357,12 +1456,11 @@ pub fn dispatch_key_core(
                                 Value::Nil => i.minibuf_exited = true,
                                 Value::Str(s) => {
                                     let msg = Value::string(s.borrow().clone());
-                                    let es = Value::Sym(i.intern("error"));
+                                    let es = Value::Sym(i.q("error"));
                                     i.minibuf_pending_flow =
-                                        Some(crate::lisp::error::Flow::Signal(
+                                        Some(crate::lisp::error::Flow::signal(
                                             es,
                                             Value::list(vec![msg]),
-                                            false,
                                         ));
                                 }
                                 Value::Sym(_) if v.truthy() => {
@@ -1397,7 +1495,9 @@ pub fn dispatch_key_core(
                 if boundary {
                     post_command_undo_boundary(i);
                 }
-                let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "post-command-hook");
+                if !command_flow.as_ref().is_some_and(|flow| flow.is_some()) {
+                    let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "post-command-hook");
+                }
                 // Continue arg entry after C-u / M-digit / M--.
                 if let Value::Sym(id) = &cmd {
                     let n = i.symbol_name(*id);
@@ -1433,9 +1533,9 @@ pub fn dispatch_key_core(
                                 i,
                                 "pre-command-hook",
                             );
-                            let this_cmd = i.intern("this-command");
+                            let this_cmd = i.q("this-command");
                             let prev = i.symbol_value(this_cmd);
-                            let lc = i.intern("last-command");
+                            let lc = i.q("last-command");
                             let _ = i.set_symbol(lc, prev);
                             let cmd_sym = Value::Sym(i.intern(n));
                             let _ = i.set_symbol(this_cmd, cmd_sym);
@@ -1495,7 +1595,7 @@ pub fn replay_macro_events(i: &mut Interp, stop: usize) {
         let Some(k) = i.macro_replay.pop_front() else {
             break;
         };
-        let eki = i.intern("executing-kbd-macro-index");
+        let eki = i.q("executing-kbd-macro-index");
         let _ = i.set_symbol(eki, Value::Int(idx));
         idx += 1;
         i.macro_replaying = true;
@@ -1510,12 +1610,28 @@ pub fn replay_macro_events(i: &mut Interp, stop: usize) {
     }
 }
 
-/// Echo a deferred command flow (abort/uncaught-throw from a macro
-/// replay) the same way `dispatch_key_core' reports live errors.
+fn command_quit(i: &mut Interp, flow: crate::lisp::error::Flow) {
+    if i.minibuf_catching_exit {
+        i.minibuf_pending_flow = Some(flow);
+    } else if i.macro_replaying || i.macro_strict {
+        i.macro_replay.clear();
+        i.macro_pending_flow = Some(flow);
+    } else {
+        i.message("Quit");
+    }
+}
+
+/// Echo a deferred command flow the same way the command dispatcher does.
 fn report_flow(i: &mut Interp, f: crate::lisp::error::Flow) {
     match f {
         crate::lisp::error::Flow::Quit => i.message("Quit"),
-        crate::lisp::error::Flow::Signal(sym, data, _) => {
+        crate::lisp::error::Flow::Signal(signal) => {
+            if signal.is_symbol(crate::lisp::obarray::sym::QUIT) {
+                i.message("Quit");
+                return;
+            }
+            let sym = signal.symbol();
+            let data = signal.data();
             let name = match &sym {
                 Value::Sym(id) => i.symbol_name(*id),
                 _ => "error".into(),
@@ -1853,7 +1969,7 @@ impl Isearch {
                 );
             }
             (None, true) => {
-                let f = Value::Sym(i.intern("make-overlay"));
+                let f = Value::Sym(i.q("make-overlay"));
                 if let Ok(ov) = i.apply(
                     &f,
                     vec![
@@ -1861,9 +1977,9 @@ impl Isearch {
                         Value::Int(span.1 as i128 + 1),
                     ],
                 ) {
-                    let pri = Value::Sym(i.intern("priority"));
-                    let face = Value::Sym(i.intern("face"));
-                    let isearch = Value::Sym(i.intern("isearch"));
+                    let pri = Value::Sym(i.q("priority"));
+                    let face = Value::Sym(i.q("face"));
+                    let isearch = Value::Sym(i.q("isearch"));
                     Self::call(i, "overlay-put", vec![ov.clone(), pri, Value::Int(1001)]);
                     Self::call(i, "overlay-put", vec![ov.clone(), face, isearch]);
                     self.match_ov = Some(ov);
@@ -1878,13 +1994,13 @@ impl Isearch {
         if !active || self.failing || !lazy_on {
             return;
         }
-        let sw = Value::Sym(i.intern("selected-window"));
+        let sw = Value::Sym(i.q("selected-window"));
         let wv = match i.apply(&sw, vec![]) {
             Ok(v) => v,
             Err(_) => return,
         };
-        let ws_sym = i.intern("window-start");
-        let we_sym = i.intern("window-end");
+        let ws_sym = i.q("window-start");
+        let we_sym = i.q("window-end");
         let wstart = i
             .apply(&Value::Sym(ws_sym), vec![wv.clone()])
             .ok()
@@ -1899,10 +2015,10 @@ impl Isearch {
             .unwrap_or(usize::MAX);
         let mut pos = wstart;
         let mut count = 0usize;
-        let pri = Value::Sym(i.intern("priority"));
-        let face = Value::Sym(i.intern("face"));
-        let lazy = Value::Sym(i.intern("lazy-highlight"));
-        let winprop = Value::Sym(i.intern("window"));
+        let pri = Value::Sym(i.q("priority"));
+        let face = Value::Sym(i.q("face"));
+        let lazy = Value::Sym(i.q("lazy-highlight"));
+        let winprop = Value::Sym(i.q("window"));
         while count < 200 {
             let Some((_, b, e)) = isearch_search(i, &self.query, false, self.regexp, pos) else {
                 break;
@@ -1914,7 +2030,7 @@ impl Isearch {
             if (b, e) == span {
                 continue;
             }
-            let f = Value::Sym(i.intern("make-overlay"));
+            let f = Value::Sym(i.q("make-overlay"));
             let Ok(ov) = i.apply(
                 &f,
                 vec![Value::Int(b as i128 + 1), Value::Int(e as i128 + 1)],
@@ -2020,7 +2136,7 @@ fn lookup_command(i: &mut Interp, seq: &Value) -> LookupResult {
         Some(v) => {
             // is it a keymap (prefix)?
             if let Value::Cons(c) = &v {
-                if i.sym_is(&c.borrow().car, i.intern_soft("keymap").unwrap_or(u32::MAX)) {
+                if i.sym_is(&c.borrow().car, i.q_soft("keymap").unwrap_or(u32::MAX)) {
                     return LookupResult::Prefix;
                 }
             }
@@ -2115,8 +2231,8 @@ fn minibuf_echo_text(i: &mut Interp, prompt: &str) -> String {
     let text = bb.text.text();
     // Collect (pos, string) splices; after-string goes at the
     // overlay's end, before-string at its start.
-    let before_sym = i.intern("before-string");
-    let after_sym = i.intern("after-string");
+    let before_sym = i.q("before-string");
+    let after_sym = i.q("after-string");
     let mut splices: Vec<(usize, usize, String)> = Vec::new();
     for ov in &bb.overlays {
         if ov.buffer.is_none() {
@@ -2589,7 +2705,7 @@ mod tests {
             .intern_soft("minibuffer-local-map")
             .map(|id| i.symbol_value(id))
             .unwrap_or(Value::Nil);
-        let km = i.intern("local-keymap");
+        let km = i.q("local-keymap");
         {
             let b = i.buffers.get(mb).unwrap();
             let mut bb = b.borrow_mut();
@@ -2600,7 +2716,7 @@ mod tests {
         i.minibuf_prompts.push(prompt.to_string());
         i.minibuf_level = 1;
         i.minibuf_catching_exit = true;
-        let exit_sym = Value::Sym(i.intern("exit"));
+        let exit_sym = Value::Sym(i.q("exit"));
         i.catch_tags.push(exit_sym);
         i
     }
@@ -2667,7 +2783,7 @@ mod tests {
         // `completing-read''s dynamic context (the specbind f_completing_read
         // installs around minibuf_read).
         let mark = i.specbind_depth();
-        let mct = i.intern("minibuffer-completion-table");
+        let mct = i.q("minibuffer-completion-table");
         let table = i.eval_str("(list \"alpha\" \"alpine\" \"beta\")").unwrap();
         let _ = i.specbind(mct, table);
         let t2 = term.clone();
@@ -2701,7 +2817,7 @@ mod tests {
         let mut i = crate::lisp::Interp::new();
         i.eval_str("(require 'icomplete) (fido-mode 1)").unwrap();
         let mark = i.specbind_depth();
-        let mct = i.intern("minibuffer-completion-table");
+        let mct = i.q("minibuffer-completion-table");
         let table = i.eval_str("(list \"alpha\" \"alpine\" \"beta\")").unwrap();
         let _ = i.specbind(mct, table);
         let t2 = term.clone();
@@ -2714,10 +2830,10 @@ mod tests {
             Ok(v) => v,
             Err(f) => {
                 let d = match &f {
-                    crate::lisp::error::Flow::Signal(s, data, _) => format!(
+                    crate::lisp::error::Flow::Signal(signal) => format!(
                         "signal {} {}",
-                        i.prin1_to_string(s),
-                        i.prin1_to_string(data)
+                        i.prin1_to_string(&signal.symbol()),
+                        i.prin1_to_string(&signal.data())
                     ),
                     other => format!("{other:?}"),
                 };
@@ -2765,7 +2881,7 @@ mod tests {
         i.eval_str("(require 'icomplete) (icomplete-mode 1) (icomplete-vertical-mode 1)")
             .unwrap();
         let mark = i.specbind_depth();
-        let mct = i.intern("minibuffer-completion-table");
+        let mct = i.q("minibuffer-completion-table");
         let table = i.eval_str("(list \"alpha\" \"alpine\" \"beta\")").unwrap();
         let _ = i.specbind(mct, table);
         let t2 = term.clone();

@@ -62,14 +62,14 @@ impl Sources {
             }
             Ok(())
         };
-        if let Some(history) = i.intern_soft("load-history") {
+        if let Some(history) = i.q_soft("load-history") {
             for entry in i.symbol_value(history).list_to_vec().unwrap_or_default() {
                 if let Value::Cons(cell) = entry {
                     file(&cell.borrow().car, encoder)?;
                 }
             }
         }
-        if let Some(property) = i.intern_soft("function-history") {
+        if let Some(property) = i.q_soft("function-history") {
             for id in 0..i.obarray.len() as crate::lisp::value::SymId {
                 let history = i.get_prop(id, property).list_to_vec().unwrap_or_default();
                 for filename in history.iter().step_by(2) {
@@ -115,7 +115,7 @@ impl Sources {
                 }
             }
         }
-        if let Some(id) = i.intern_soft("default-directory") {
+        if let Some(id) = i.q_soft("default-directory") {
             for buffer in buffers.iter().flatten() {
                 let buffer = buffer.borrow();
                 if let Some(value) = buffer.locals.get(&id) {

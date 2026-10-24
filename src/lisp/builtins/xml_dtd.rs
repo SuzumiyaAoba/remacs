@@ -144,7 +144,7 @@ unsafe fn make_dom(i: &mut Interp, head: *const Head) -> Value {
             } else {
                 let text = Value::string(unsafe { string(n.content) });
                 if h.kind == 8 {
-                    Value::list(vec![Value::Sym(i.intern("comment")), Value::Nil, text])
+                    Value::list(vec![Value::Sym(i.q("comment")), Value::Nil, text])
                 } else {
                     text
                 }
@@ -203,7 +203,7 @@ pub(super) fn parse(i: &mut Interp, text: &str, discard_comments: bool) -> Optio
             unsafe { make_dom(i, root) }
         }
     } else {
-        let mut top = vec![Value::Sym(i.intern("top")), Value::Nil];
+        let mut top = vec![Value::Sym(i.q("top")), Value::Nil];
         top.extend(out);
         top.push(previous);
         Value::list(top)

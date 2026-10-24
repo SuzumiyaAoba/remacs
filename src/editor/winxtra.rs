@@ -871,7 +871,7 @@ fn f_window_deletable_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // Tab path (first GNU clause, applies to the root too — bug#71386):
     // `(> (frame-parameter frame 'tab-bar-lines) 0)'.
     {
-        let tbl_name = i.intern("tab-bar-lines");
+        let tbl_name = i.q("tab-bar-lines");
         let tbl = crate::lisp::eval::plist_get(&frame.borrow().params, tbl_name);
         let tbl = if matches!(tbl, Value::Int(n) if n > 0) {
             tbl
@@ -881,7 +881,7 @@ fn f_window_deletable_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         if tbl.truthy() {
             // GNU calls `tab-bar-tabs-function' unconditionally; an
             // unset function there signals void-variable.
-            let tf_sym = i.intern("tab-bar-tabs-function");
+            let tf_sym = i.q("tab-bar-tabs-function");
             let tf = i.symbol_value(tf_sym);
             if matches!(tf, Value::Sym(s) if s == sym::UNBOUND) {
                 return Err(i.signal_data(sym::VOID_VARIABLE, vec![Value::Sym(tf_sym)]));
@@ -889,17 +889,17 @@ fn f_window_deletable_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             let tabs = i.apply(&tf, vec![Value::Frame(frame.clone())])?;
             let ntabs = tabs.list_to_vec().map(|v| v.len()).unwrap_or(0);
             if ntabs > 1 {
-                let qr = i.intern("quit-restore");
-                let tab = i.intern("tab");
+                let qr = i.q("quit-restore");
+                let tab = i.q("tab");
                 let is_tab_qr = |win: &WindowRef| {
                     let v = window_param(i, win, qr);
                     matches!(&v, Value::Cons(c) if c.borrow().cdr.list_to_vec().map(|x| matches!(x.first(), Some(v2) if i.sym_is(v2, tab))).unwrap_or(false))
                         || i.sym_is(&v, tab)
                 };
                 if is_root || is_tab_qr(&w) {
-                    let qwindow = i.intern("window");
-                    let qframe = i.intern("frame");
-                    let qsame = i.intern("same");
+                    let qwindow = i.q("window");
+                    let qframe = i.q("frame");
+                    let qsame = i.q("same");
                     let counted = frame
                         .borrow()
                         .windows
@@ -939,7 +939,7 @@ fn f_window_deletable_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 return Ok(Value::Nil);
             }
         }
-        return Ok(Value::Sym(i.intern("frame")));
+        return Ok(Value::Sym(i.q("frame")));
     }
     // Ordinary leaf: GNU requires non-main-window (our model has no
     // side windows, main == root, so this is always satisfied here).
@@ -955,7 +955,7 @@ fn f_window_deletable_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// `(run-hook-with-args-until-failure 'window-deletable-functions w flag)'
 /// run in the window's buffer when the window is live, as GNU does.
 fn run_deletable_hook(i: &mut Interp, w: &WindowRef, arg2: bool) -> Result<bool, Flow> {
-    let hook_sym = i.intern("window-deletable-functions");
+    let hook_sym = i.q("window-deletable-functions");
     let saved = i.current_buffer;
     let live = !w.borrow().dead && w.borrow().horiz.is_none();
     if live {
@@ -964,7 +964,7 @@ fn run_deletable_hook(i: &mut Interp, w: &WindowRef, arg2: bool) -> Result<bool,
             i.set_current_buffer(bid);
         }
     }
-    let hook_fn = Value::Sym(i.intern("run-hook-with-args-until-failure"));
+    let hook_fn = Value::Sym(i.q("run-hook-with-args-until-failure"));
     let res = i.apply(
         &hook_fn,
         vec![
@@ -1653,7 +1653,7 @@ fn f_posn_at_xy(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // The window's last row is its mode line: GNU reports the
     // `mode-line' area symbol with nil position fields.
     if y == wtop + wh - 1 {
-        let ml = i.intern("mode-line");
+        let ml = i.q("mode-line");
         return Ok(Value::list(vec![
             Value::Window(w),
             Value::Sym(ml),
@@ -2552,7 +2552,7 @@ fn f_tty_find_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         _ => false,
     };
     if !callable {
-        let s = i.intern("invalid-function");
+        let s = i.q("invalid-function");
         return Err(i.signal_data(s, vec![a[0].clone()]));
     }
     let mut typ = a[1].clone();
@@ -2585,11 +2585,11 @@ fn terminal_params(i: &mut Interp) -> &Vec<(Value, Value)> {
     if i.terminal_params.is_empty() {
         i.terminal_params = vec![
             (
-                Value::Sym(i.intern("normal-erase-is-backspace")),
+                Value::Sym(i.q("normal-erase-is-backspace")),
                 Value::Int(0),
             ),
             (
-                Value::Sym(i.intern("keyboard-coding-saved-meta-mode")),
+                Value::Sym(i.q("keyboard-coding-saved-meta-mode")),
                 // GNU stores a one-element list here (the saved
                 // meta-mode flag), not bare t.
                 Value::list(vec![Value::Sym(sym::T)]),
@@ -2660,7 +2660,7 @@ fn f_frame_face_hash_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     use crate::lisp::value::{HashTest, LispHash};
     let mut h = LispHash::new(HashTest::Eq);
-    let un = Value::Sym(i.intern("unspecified"));
+    let un = Value::Sym(i.q("unspecified"));
     // GNU stores an lface vector per face — populate its attribute slots
     // from the face's stored plist (face_table, seeded with spec attrs;
     // face_t_table overrides for new-frame defaults written via isla t).
@@ -2694,7 +2694,7 @@ fn f_frame_face_hash_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let sym = Value::Sym(i.intern(&n));
         let key = crate::lisp::builtins::hashfn::hash_key_for(i, &sym, HashTest::Eq);
         let mut v = Vec::with_capacity(20);
-        v.push(Value::Sym(i.intern("face")));
+        v.push(Value::Sym(i.q("face")));
         v.resize(20, un.clone());
         // Apply spec attrs from face_table then face_t_table overrides.
         for src_plist in [
@@ -2963,7 +2963,7 @@ pub(crate) fn f_run_window_scroll_functions(i: &mut Interp, a: crate::lisp::Argv
     let buffer = window.borrow().buffer;
     let caller = i.current_buffer;
     i.set_current_buffer(buffer);
-    let hook = i.intern("window-scroll-functions");
+    let hook = i.q("window-scroll-functions");
     let start = Value::Int(window.borrow().start as i128 + 1);
     // GNU passes the original WINDOW argument: nil stays nil even
     // though decode_live_window has resolved the selected window.
@@ -2995,7 +2995,7 @@ fn f_x_focus_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU errors "Cannot switch to an invisible frame" etc. in batch;
     // on a lone tty frame any arg raises `error'.
     let _ = a;
-    let sym = i.intern("error");
+    let sym = i.q("error");
     Err(i.signal_data(
         sym,
         vec![Value::string("Window system frame should be used")],
@@ -3124,7 +3124,7 @@ fn f_redirect_debugging_output(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
         Err(e) => {
             let s = match e.kind() {
                 std::io::ErrorKind::NotFound => sym::FILE_MISSING,
-                std::io::ErrorKind::PermissionDenied => i.intern("permission-denied"),
+                std::io::ErrorKind::PermissionDenied => i.q("permission-denied"),
                 _ => sym::FILE_ERROR,
             };
             Err(i.signal_data(
@@ -3142,6 +3142,6 @@ fn f_redirect_debugging_output(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
 /// `search-emacs-glossary' — GNU's menu-bar defun is a subr in the
 /// native-compiled dump (0 args); body is `(info "(emacs)Glossary")'.
 fn f_search_emacs_glossary(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    let info = Value::Sym(i.intern("info"));
+    let info = Value::Sym(i.q("info"));
     i.apply(&info, vec![Value::string("(emacs)Glossary")])
 }

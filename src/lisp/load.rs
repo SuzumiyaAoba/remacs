@@ -16,29 +16,29 @@ pub struct CommandLineLoadPath {
 
 impl CommandLineLoadPath {
     pub fn add(&mut self, i: &mut Interp, directory: Value) -> EvalResult {
-        let separator = i.intern("path-separator");
-        let format = Value::Sym(i.intern("format"));
+        let separator = i.q("path-separator");
+        let format = Value::Sym(i.q("format"));
         let pattern = i.apply(
             &format,
             vec![Value::string("\\`%s"), i.symbol_value(separator)],
         )?;
-        let matches = Value::Sym(i.intern("string-match-p"));
+        let matches = Value::Sym(i.q("string-match-p"));
         let append = i
             .apply(&matches, vec![pattern, directory.clone()])?
             .truthy();
         let directory = if append {
-            let substring = Value::Sym(i.intern("substring"));
+            let substring = Value::Sym(i.q("substring"));
             i.apply(&substring, vec![directory, Value::Int(1)])?
         } else {
             directory
         };
-        let normalize = Value::Sym(i.intern("command-line-normalize-file-name"));
+        let normalize = Value::Sym(i.q("command-line-normalize-file-name"));
         let directory = i.apply(&normalize, vec![directory])?;
-        let expand = Value::Sym(i.intern("expand-file-name"));
+        let expand = Value::Sym(i.q("expand-file-name"));
         let directory = i.apply(&expand, vec![directory])?;
-        let load_path = i.intern("load-path");
+        let load_path = i.q("load-path");
         if append {
-            let append_fn = Value::Sym(i.intern("append"));
+            let append_fn = Value::Sym(i.q("append"));
             let paths = i.apply(
                 &append_fn,
                 vec![i.symbol_value(load_path), Value::list(vec![directory])],
@@ -164,7 +164,7 @@ pub(crate) fn locate_full(
     // newest of the candidates inside a dir wins before the next dir.
     let prefer_newer = !nosuffix
         && !mustsuffix
-        && i.symbol_value(i.intern_soft("load-prefer-newer").unwrap_or(0))
+        && i.symbol_value(i.q_soft("load-prefer-newer").unwrap_or(0))
             .truthy();
     // GNU's `openp' on "" stats "" and misses (ENOENT) — never a hit.
     if name.is_empty() {
@@ -244,7 +244,7 @@ pub(crate) fn locate_full(
 
 /// `load-path' dirs followed by the bundled lisp/ dirs.
 fn search_dirs(i: &mut Interp) -> Vec<PathBuf> {
-    let lp_id = i.intern("load-path");
+    let lp_id = i.q("load-path");
     let lp = i.symbol_value(lp_id);
     let mut v: Vec<PathBuf> = lp
         .list_to_vec()
@@ -276,7 +276,7 @@ pub(crate) fn builtin_dirs() -> Vec<String> {
 /// not replace internal bootstrap libraries before the dumped surface
 /// has been reconstructed. Empty EMACSLOADPATH entries insert defaults.
 pub(crate) fn finish_load_path(i: &mut Interp) {
-    let load_path = i.intern("load-path");
+    let load_path = i.q("load-path");
     let mut defaults = i.symbol_value(load_path).list_to_vec().unwrap_or_default();
     let environment = std::env::var_os("EMACSLOADPATH")
         .map(|value| std::env::split_paths(&value).collect::<Vec<_>>());
@@ -2951,7 +2951,7 @@ fn eval_file_lex_dumped(
     // file (ethio-util.el relies on this).
     let bytes = std::fs::read(path).map_err(|error| {
         let symbol = if error.kind() == std::io::ErrorKind::NotFound {
-            i.intern("file-missing")
+            i.q("file-missing")
         } else {
             crate::lisp::sym::FILE_ERROR
         };
@@ -3007,13 +3007,13 @@ fn compiled_file_version(i: &mut Interp, bytes: &[u8]) -> Result<i32, crate::lis
     let Some(newline) = bytes.iter().position(|byte| *byte == b'\n') else {
         return Ok(0);
     };
-    let variable = i.intern("bytecomp-version-regexp");
+    let variable = i.q("bytecomp-version-regexp");
     let pattern = i.symbol_value(variable);
     let Value::Str(pattern) = &pattern else {
         return Err(i.wrong_type_mut("stringp", &pattern));
     };
     let regexp = super::regexp::compile_case(pattern.borrow().as_str(), true).map_err(|error| {
-        let symbol = i.intern("invalid-regexp");
+        let symbol = i.q("invalid-regexp");
         i.signal_data(symbol, vec![Value::string(error.0)])
     })?;
     let chars: Vec<_> = bytes[newline..]
@@ -3073,6 +3073,25 @@ fn eval_src_kind(
     dumped_like: bool,
     compiled: bool,
 ) -> EvalResult {
+    // Fload resets lexical binding before entering the source converter.
+    let depth = i.specbind_depth();
+    let lexical = i.q("lexical-binding");
+    let result = (|| {
+        i.specbind(lexical, Value::Nil)?;
+        eval_src_bound(i, file, src, force_lex, dumped_like, compiled)
+    })();
+    let result = i.offer_flow(result);
+    i.unbind_to(depth).and(result)
+}
+
+fn eval_src_bound(
+    i: &mut Interp,
+    file: &str,
+    src: &str,
+    force_lex: bool,
+    dumped_like: bool,
+    compiled: bool,
+) -> EvalResult {
     // On-disk source loads use GNU's load-with-code-conversion buffer.
     // Boot/embedded libraries model dumped code, and compiled streams
     // have their own direct reader, so neither acquires this buffer.
@@ -3121,21 +3140,20 @@ fn eval_src_in_context(
     compiled: bool,
 ) -> EvalResult {
     let load_buffer = if source {
-        let dir_sym = i.intern("default-directory");
+        let dir_sym = i.q("default-directory");
         let dir = i.symbol_value(dir_sym);
-        let generate = Value::Sym(i.intern("generate-new-buffer"));
+        let generate = Value::Sym(i.q("generate-new-buffer"));
         let value = i.apply(&generate, vec![Value::string(" *load*")])?;
         let Value::Buffer(buffer) = value else {
             return Err(i.wrong_type_mut("bufferp", &value));
         };
-        let multi = i.intern("enable-multibyte-characters");
+        let multi = i.q("enable-multibyte-characters");
         {
             let mut b = buffer.borrow_mut();
             b.locals.insert(dir_sym, dir);
             b.locals.insert(multi, Value::t());
             b.insert(src);
             b.set_point(0);
-            b.note_modified(false);
         }
         Some(buffer)
     } else {
@@ -3143,29 +3161,18 @@ fn eval_src_in_context(
     };
     let saved_excursion = load_buffer.as_ref().map(|_| i.save_excursion_state(false));
     let saved_stream = i.load_stream.clone();
+    let saved_lexenv = i.lexenv.clone();
     let mark = i.specbind_depth();
     let result = (|| {
-        if let Some(buffer) = &load_buffer {
-            let input = i.intern("standard-input");
-            let list = i.intern("eval-buffer-list");
-            let old = i.symbol_value(list);
-            i.specbind(input, Value::Buffer(buffer.clone()))?;
-            i.specbind(list, Value::cons(Value::Buffer(buffer.clone()), old))?;
-        } else {
-            let stream_symbol = match i.load_stream_symbol {
-                Some(symbol) => symbol,
-                None => {
-                    let symbol = i.make_symbol("get-file-char");
-                    i.load_stream_symbol = Some(symbol);
-                    symbol
-                }
-            };
+        if load_buffer.is_none() {
+            if i.load_stream_symbol.is_none() {
+                let symbol = i.make_symbol("get-file-char");
+                i.load_stream_symbol = Some(symbol);
+            }
             i.load_stream = Some(Rc::new(RefCell::new(LoadStream {
                 chars: Rc::new(src.chars().collect()),
                 position: 0,
             })));
-            let input = i.intern("standard-input");
-            i.specbind(input, Value::Sym(stream_symbol))?;
         }
         eval_src_opts_inner(
             i,
@@ -3177,6 +3184,8 @@ fn eval_src_in_context(
             compiled,
         )
     })();
+    let result = i.offer_flow(result);
+    i.lexenv = saved_lexenv;
     if let Some(saved) = saved_excursion {
         i.restore_excursion_state(saved);
     }
@@ -3191,7 +3200,7 @@ fn eval_src_in_context(
                 let symbol = i.intern(name);
                 i.specbind(symbol, Value::Nil)?;
             }
-            let kill = Value::Sym(i.intern("kill-buffer"));
+            let kill = Value::Sym(i.q("kill-buffer"));
             i.apply(&kill, vec![Value::Buffer(buffer)])
         })();
         i.unbind_to(cleanup_mark)?;
@@ -3212,38 +3221,95 @@ fn eval_src_opts_inner(
     load_buffer: Option<&crate::lisp::value::BufferRef>,
     compiled: bool,
 ) -> EvalResult {
-    let lfn = i.intern("load-file-name");
-    let ltfn = i.intern("load-true-file-name");
-    let lip = i.intern("load-in-progress");
-    let cll = i.intern("current-load-list");
+    let lfn = i.q("load-file-name");
+    let ltfn = i.q("load-true-file-name");
+    let lip = i.q("load-in-progress");
+    let cll = i.q("current-load-list");
     let mark = i.specbind_depth();
-    i.specbind(lfn, Value::string(file))?;
+    let filename = Value::string(file);
+    i.specbind(lfn, filename.clone())?;
     // GNU lread.c: `load-true-file-name' binds `found' — openp's hit
     // (load-path-expanded, NOT canonicalized; /tmp stays /tmp on macOS
     // since openp's path isn't a symlink resolution).
-    i.specbind(ltfn, Value::string(file))?;
+    i.specbind(ltfn, filename)?;
     i.specbind(lip, Value::t())?;
-    // Emacs: `load' honors a `lexical-binding' file cookie on the first
-    // line (or the second, after a `#!' line); absent → dynamic eval.
-    let lex_id = i.intern("lexical-binding");
-    let lex_on = force_lex || file_lexical_binding(&src);
-    i.specbind(lex_id, if lex_on { Value::t() } else { Value::Nil })?;
-    // Disable the byte-compiler's optimizer for the whole load:
-    // `(eval-when-compile ...)' forms inside a file loaded *during* a
-    // byte-compilation expand through the ambient
-    // `macroexpand-all-environment' into `byte-compile-top-level', whose
-    // `byte-optimize-one-form' call would autoload `byte-opt' while
-    // `byte-opt' itself is still loading — a cycle GNU never sees
-    // because it loads .elc bytecode there instead of source.  Binding
-    // `byte-optimize' to nil keeps subsidiary compilations correct
-    // (unoptimized code evaluates the same) without recursion.  The
-    // binding is only installed when the variable already has a global
-    // value: otherwise a `defcustom byte-optimize' in the file being
-    // loaded (bytecomp.el's own) would write its default into this
-    // throwaway dynamic binding, leaving the variable unbound after
-    // unwinding.
-    let bo = i.intern("byte-optimize");
-    if i.bound_p(bo) {
+    if let Some(buffer) = load_buffer {
+        // mule.el discovers file shorthands in the source buffer before
+        // eval-buffer's input/output scopes and lexical-cookie callback.
+        let automatic = i.q("set-auto-coding-for-load");
+        i.specbind(automatic, Value::t())?;
+        let operation = i.q("inhibit-file-name-operation");
+        i.specbind(operation, Value::Nil)?;
+        let caller = i.current_buffer;
+        i.set_current_buffer(buffer.borrow().id);
+        let hook = i.q("hack-read-symbol-shorthands-function");
+        let function = i.symbol_value(hook);
+        let result = if function.is_nil() { Ok(Value::Nil) }
+                     else { i.apply(&function, vec![]) };
+        let result = i.offer_flow(result);
+        if i.buffer_live(caller) { i.set_current_buffer(caller); }
+        let shorthands = result?;
+        let variable = i.q("read-symbol-shorthands");
+        i.specbind(variable, shorthands)?;
+        buffer.borrow_mut().note_modified(false);
+        let list = i.q("eval-buffer-list");
+        let old = i.symbol_value(list);
+        i.specbind(list, Value::cons(Value::Buffer(buffer.clone()), old))?;
+        let output = i.q("standard-output");
+        i.specbind(output, Value::Nil)?;
+    }
+    // Source conversion uses eval-buffer's cookie/default protocol. Direct
+    // compiled streams read a cookie, then the toplevel default without
+    // calling the fallback hook. Keep the hook's actual value, not just t.
+    let lex_id = i.q("lexical-binding");
+    if let Some(buffer) = load_buffer {
+        if !buffer.borrow().locals.contains_key(&lex_id) {
+            let (cookie, consumed) = {
+                let b = buffer.borrow();
+                lexical_cookie(&b.text.substring(b.begv, b.zv))
+            };
+            let begv = buffer.borrow().begv;
+            buffer.borrow_mut().set_point(begv + consumed);
+            let value = lexical_binding_value(i, cookie, Some(Value::Buffer(buffer.clone())))?;
+            i.specbind(lex_id, value)?;
+        }
+        let begv = buffer.borrow().begv;
+        buffer.borrow_mut().set_point(begv);
+    } else {
+        let (cookie, consumed) = lexical_cookie(src);
+        if let Some(stream) = &i.load_stream {
+            stream.borrow_mut().position = consumed;
+        }
+        let value = if force_lex {
+            Value::t()
+        } else {
+            let from = (!compiled && !i.boot_loading && !file.starts_with("builtin:"))
+                .then(|| Value::string(file));
+            lexical_binding_value(i, cookie, from)?
+        };
+        i.set_symbol(lex_id, value)?;
+    }
+    let lex_on = i.symbol_value(lex_id).truthy();
+    let input = i.q("standard-input");
+    let stream = match load_buffer {
+        Some(buffer) => Value::Buffer(buffer.clone()),
+        None => Value::Sym(i.load_stream_symbol.expect("direct load stream symbol")),
+    };
+    i.specbind(input, stream)?;
+    if file.ends_with(".elc") {
+        let variable = i.q("read-symbol-shorthands");
+        i.specbind(variable, Value::Nil)?;
+    }
+    // Avoid self-autoloading the source optimizer during compiler bootstrap.
+    // Ordinary post-boot loads retain the caller's actual optimizer setting.
+    let optimizer_source = |path: &str| {
+        (path.starts_with("builtin:") || path_is_bundled_source(path))
+            && embedded_entry(path.strip_prefix("builtin:").unwrap_or(path))
+                .is_some_and(|(key, _)| key == "byte-opt")
+    };
+    let bo = i.q("byte-optimize");
+    if i.bound_p(bo) && (i.boot_loading || optimizer_source(file)
+        || i.loads_in_progress.iter().any(|path| optimizer_source(path))) {
         i.specbind(bo, Value::Nil)?;
     }
     // GNU's `readevalloop' specbinds `internal-interpreter-environment'
@@ -3258,38 +3324,6 @@ fn eval_src_opts_inner(
             None
         },
     );
-    // GNU's `internal--get-default-lexical-binding': a non-empty file
-    // with no cookie gets a `files missing-lexbind-cookie' warning
-    // before its forms run.  (--script forces lexical, so no warning.)
-    // Compiled streams were recognized from their compiler headers;
-    // GNU does not warn for them either.
-    if !lex_on
-        && !src.is_empty()
-        && !file.starts_with("builtin:")
-        && !compiled
-    {
-        let ty = Value::list(vec![
-            Value::Sym(i.intern("files")),
-            Value::Sym(i.intern("missing-lexbind-cookie")),
-            Value::string(file),
-        ]);
-        let msg = Value::string(format!(
-            "Missing \u{2018}lexical-binding\u{2019} cookie in {file:?}.\n\
-             You can add one with \u{2018}M-x elisp-enable-lexical-binding RET\u{2019}.\n\
-             See \u{2018}(elisp)Selecting Lisp Dialect\u{2019} and \
-             \u{2018}(elisp)Converting to Lexical Binding\u{2019}\n\
-             for more information."
-        ));
-        let dw = Value::Sym(i.intern("display-warning"));
-        let lvl = Value::Sym(i.intern(":warning"));
-        if i.apply(&dw, vec![ty, msg, lvl]).is_err() {
-            // GNU's fallback when `display-warning' can't run yet.
-            i.message(&format!(
-                "Missing \u{2018}lexical-binding\u{2019} cookie in {file:?}"
-            ));
-        }
-    }
-
     // NOTE: `features' is a plain variable whose current (possibly
     // dynamically bound) value `provide' pushes onto — GNU has no
     // second feature set, so nothing is synced from `i.features' here.
@@ -3298,7 +3332,7 @@ fn eval_src_opts_inner(
     i.specbind(cll, Value::list(vec![Value::string(file)]))?;
     // GNU readevalloop keeps top-level dynamic declarations local to
     // this load, while allowing successive forms to share them.
-    let dynvars = i.intern("macroexp--dynvars");
+    let dynvars = i.q("macroexp--dynvars");
     if i.bound_p(dynvars) {
         i.specbind(dynvars, i.symbol_value(dynvars))?;
     }
@@ -3337,6 +3371,9 @@ fn eval_src_opts_inner(
     let r = i.with_eval_context(compiled_library, |i| {
         eval_str_for_load(i, file, &src, load_buffer, compiled)
     });
+    // Reader failures are raised here too, while all load bindings and
+    // the source buffer still belong to the signaling context.
+    let r = i.offer_flow(r);
     let popped = i.loads_in_progress.pop();
     debug_assert!(popped.as_deref() == Some(file));
     i.reading_elc = was_elc;
@@ -3366,8 +3403,8 @@ fn eval_src_opts_inner(
 /// Finish GNU's readevalloop history. The filename marker is the last
 /// element of current-load-list and becomes the entry's car on reversal.
 pub(crate) fn build_history(i: &mut Interp, filename: Value, entire: bool) -> EvalResult {
-    let variable = i.intern("load-history");
-    let current_variable = i.intern("current-load-list");
+    let variable = i.q("load-history");
+    let current_variable = i.q("current-load-list");
     let current = i.symbol_value(current_variable);
     let new_items = crate::lisp::builtins::want_list(i, &current)?;
     let mut root = i.symbol_value(variable);
@@ -3437,7 +3474,7 @@ pub(crate) fn build_history(i: &mut Interp, filename: Value, entire: bool) -> Ev
 /// file just loaded.  Early boot loads skip it: nothing is registered
 /// yet and the defun doesn't exist yet.
 fn run_after_load(i: &mut Interp, file: &str) {
-    if let Some(dale) = i.intern_soft("do-after-load-evaluation") {
+    if let Some(dale) = i.q_soft("do-after-load-evaluation") {
         if i.fbound_p(dale) {
             let _ = i.apply(&Value::Sym(dale), vec![Value::string(file)]);
         }
@@ -3455,6 +3492,7 @@ fn eval_str_for_load(
     load_buffer: Option<&crate::lisp::value::BufferRef>,
     compiled: bool,
 ) -> EvalResult {
+    let native_bridges = native_backend_bridges(i, file, src);
     let stream = if load_buffer.is_none() {
         i.load_stream.clone()
     } else {
@@ -3472,13 +3510,16 @@ fn eval_str_for_load(
     // Capture availability once per stream, as GNU readevalloop does.
     // The symbol itself remains live so redefinitions during the load
     // affect later calls.  Compiled streams have already been expanded.
-    let expander = i.intern("internal-macroexpand-for-load");
+    let expander = i.q("internal-macroexpand-for-load");
     let expander = if i.fbound_p(expander) && !compiled {
         Value::Sym(expander)
     } else {
         Value::Nil
     };
-    let lrf_sym = i.intern("load-read-function");
+    let lrf_sym = i.q("load-read-function");
+    let source_multibyte = load_buffer
+        .map(|buffer| crate::lisp::builtins::readfn::buffer_source_multibyte(i, buffer))
+        .unwrap_or(true);
     let stream_source = i.load_stream_symbol.map(Value::Sym).unwrap_or(Value::Nil);
     let result = 'load: loop {
         if let Some(buffer) = load_buffer {
@@ -3512,7 +3553,7 @@ fn eval_str_for_load(
                 // Loaded forms never position symbols. Only buffer
                 // sources add line/column data to syntax errors.
                 let (read, end) = crate::lisp::builtins::readfn::read_parser_at(
-                    i, chars.clone(), pos, None, load_buffer.is_some(),
+                    i, chars.clone(), pos, None, load_buffer.is_some(), source_multibyte,
                 );
                 if let Some(buffer) = load_buffer {
                     buffer.borrow_mut().set_point(end);
@@ -3525,7 +3566,7 @@ fn eval_str_for_load(
                         let context = match load_buffer {
                             Some(buffer) => Value::Buffer(buffer.clone()),
                             None => {
-                                let filename = i.intern("load-true-file-name");
+                                let filename = i.q("load-true-file-name");
                                 i.symbol_value(filename)
                             }
                         };
@@ -3623,6 +3664,13 @@ fn eval_str_for_load(
                 let t0 = (i.dbg_flags & 0x200 != 0).then(std::time::Instant::now);
                 match eval_for_load(i, form.clone(), &expander) {
                     Ok(v) => {
+                        // comp.el/comp-run.el initialize the real GNU helper
+                        // surface, but their libgccjit driver cannot replace
+                        // this build's cc backend. Restore before subsequent
+                        // forms, provide callbacks and after-load hooks.
+                        for (symbol, function) in &native_bridges {
+                            i.obarray.symbol_mut(*symbol).function = function.clone();
+                        }
                         last = v;
                         if let Some(t0) = t0 {
                             let ms = t0.elapsed().as_millis();
@@ -3647,10 +3695,10 @@ fn eval_str_for_load(
                     Err(f) => {
                         if i.dbg_flags & 0x1000 != 0 {
                             let fdesc = match &f {
-                                crate::lisp::Flow::Signal(s, d, _) => format!(
+                                crate::lisp::Flow::Signal(signal) => format!(
                                     "signal {} {}",
-                                    i.prin1_to_string(s),
-                                    i.prin1_to_string(d).chars().take(120).collect::<String>()
+                                    i.prin1_to_string(&signal.symbol()),
+                                    i.prin1_to_string(&signal.data()).chars().take(120).collect::<String>()
                                 ),
                                 other => format!("{:?}", other),
                             };
@@ -3672,6 +3720,42 @@ fn eval_str_for_load(
         }
     };
     result
+}
+
+fn native_backend_bridges(
+    i: &Interp,
+    file: &str,
+    source: &str,
+) -> Vec<(crate::lisp::SymId, Value)> {
+    if i.boot_loading {
+        return Vec::new();
+    }
+    let identity = file.strip_prefix("builtin:").unwrap_or(file);
+    let Some((key, embedded_source)) = embedded_entry(identity) else {
+        return Vec::new();
+    };
+    if !matches!(key, "comp" | "comp-run")
+        || source != embedded_source
+        || !(file.starts_with("builtin:") || path_is_bundled_source(file))
+    {
+        return Vec::new();
+    }
+    [
+        "native-compile",
+        "native-compile-async",
+        "batch-native-compile",
+        "batch-byte+native-compile",
+    ]
+    .into_iter()
+    .filter_map(|name| {
+        let symbol = i.intern_soft(name)?;
+        let function = i.symbol_function(symbol);
+        match &function {
+            Value::Lambda(_) | Value::Subr(_) => Some((symbol, function)),
+            _ => None,
+        }
+    })
+    .collect()
 }
 
 /// Expand + eval one top-level form the way GNU's
@@ -3707,7 +3791,7 @@ fn eval_for_load(i: &mut Interp, form: Value, expander: &Value) -> EvalResult {
         // so `byte-code'-wrapped defs in `.elc' files register too.
         Ok(v) => Ok(v),
         Err(crate::lisp::Flow::Throw(tag, val)) => {
-            let nc = i.intern("no-catch");
+            let nc = i.q("no-catch");
             Err(i.signal_data(nc, vec![tag, val]))
         }
         Err(f) => Err(f),
@@ -3729,7 +3813,7 @@ fn expand_for_load(i: &mut Interp, expander: &Value, form: Value, full: bool) ->
 /// symbols.  GNU records every dumped library in `load-history' the same
 /// way; FILE names the on-disk copy of the prelude source.
 pub(crate) fn record_prelude_load_history(i: &mut Interp, file: &str, src: &str) {
-    let cll = i.intern("current-load-list");
+    let cll = i.q("current-load-list");
     let mark = i.specbind_depth();
     if i.specbind(cll, Value::Nil).is_err() {
         return;
@@ -3756,7 +3840,7 @@ pub(crate) fn record_prelude_load_history(i: &mut Interp, file: &str, src: &str)
     let mut entries = i.symbol_value(cll).list_to_vec().unwrap_or_default();
     entries.reverse();
     let entry = Value::cons(Value::string(file), Value::list(entries));
-    let lh = i.intern("load-history");
+    let lh = i.q("load-history");
     let cur = match i.symbol_value(lh) {
         Value::Sym(s) if s == crate::lisp::sym::UNBOUND => Value::Nil,
         v => v,
@@ -3792,7 +3876,7 @@ fn record_load_entry(i: &mut Interp, form: &Value) {
         return;
     };
     // NAME is (cadr FORM); unwrap a `quote' wrapper (`provide' et al).
-    let quote_id = i.intern("quote");
+    let quote_id = i.q("quote");
     let name = |items: &[Value]| -> Option<Value> {
         match items.get(1)? {
             v @ Value::Sym(_) => Some(v.clone()),
@@ -3831,9 +3915,9 @@ fn record_load_entry(i: &mut Interp, form: &Value) {
         "define-obsolete-variable-alias",
     ];
     let head_name = i.symbol_name(head).to_string();
-    let defun_id = i.intern("defun");
-    let defface_id = i.intern("defface");
-    let require_id = i.intern("require");
+    let defun_id = i.q("defun");
+    let defface_id = i.q("defface");
+    let require_id = i.q("require");
     let entry = match head_name.as_str() {
         h if DEFUN_HEADS.contains(&h) => name(&items).map(|nm| Value::cons(i.sym(defun_id), nm)),
         h if DEFVAR_HEADS.contains(&h) => name(&items),
@@ -3850,7 +3934,7 @@ fn record_load_entry(i: &mut Interp, form: &Value) {
         _ => None,
     };
     if let Some(e) = entry {
-        let cll = i.intern("current-load-list");
+        let cll = i.q("current-load-list");
         let cur = match i.symbol_value(cll) {
             Value::Sym(s) if s == crate::lisp::sym::UNBOUND => Value::Nil,
             v => v,
@@ -3864,7 +3948,7 @@ fn progn_children(i: &mut Interp, form: &Value) -> Option<Vec<Value>> {
     if let Value::Cons(c) = form {
         let cb = c.borrow();
         if let Value::Sym(s) = &cb.car {
-            if *s == i.intern("progn") {
+            if *s == i.q("progn") {
                 return cb.cdr.list_to_vec().ok();
             }
         }
@@ -3872,18 +3956,121 @@ fn progn_children(i: &mut Interp, form: &Value) -> Option<Vec<Value>> {
     None
 }
 
-/// True when the file declares `-*- lexical-binding: t -*-' (or the
-/// `lexical-binding: t' local-variable form) on its first line — or on
-/// the second line when the first is a `#!' line, like Emacs.
-pub(crate) fn file_lexical_binding(src: &str) -> bool {
-    let mut lines = src.lines();
-    let first = lines.next().unwrap_or("");
-    let probe = if first.starts_with("#!") {
-        lines.next().unwrap_or("")
+/// Parse GNU lread.c's first-line cookie, including its 99-byte fields
+/// and non-overlapping marker state machine. The consumed position is in
+/// characters and includes the comment line and any initial shebang.
+pub(crate) fn lexical_cookie(source: &str) -> (Option<bool>, usize) {
+    fn marker(ch: char, state: &mut u8) -> bool {
+        match *state {
+            0 => *state = u8::from(ch == '-'),
+            1 => *state = if ch == '*' { 2 } else { 0 },
+            _ => {
+                *state = 0;
+                return ch == '-';
+            }
+        }
+        false
+    }
+    fn trim(field: &mut Vec<u8>) {
+        while matches!(field.last(), Some(b' ' | b'\t')) {
+            field.pop();
+        }
+    }
+    fn c_string(field: &[u8]) -> &[u8] {
+        field.split(|byte| *byte == 0).next().unwrap_or_default()
+    }
+    let start = if source.starts_with("#!") {
+        source.find('\n').map_or(source.len(), |end| end + 1)
     } else {
-        first
+        0
     };
-    probe.contains("lexical-binding: t") || probe.contains("lexical-binding:t")
+    let preceding = source[..start].chars().count();
+    let rest = &source[start..];
+    if !rest.starts_with(';') {
+        return (None, preceding);
+    }
+    let (line, newline) = rest.split_once('\n').map_or((rest, 0), |(line, _)| (line, 1));
+    let consumed = preceding + line.chars().count() + newline;
+    let mut chars = line.chars().skip(1);
+    let mut state = 0;
+    let mut in_variables = false;
+    for ch in chars.by_ref() {
+        if marker(ch, &mut state) {
+            in_variables = true;
+            break;
+        }
+    }
+    while in_variables {
+        let mut ch = chars.next();
+        while matches!(ch, Some(' ' | '\t')) {
+            ch = chars.next();
+        }
+        let mut name = Vec::new();
+        state = 0;
+        while let Some(character) = ch {
+            if character == ':' || !in_variables {
+                break;
+            }
+            if name.len() < 99 {
+                name.push(character as u8);
+            }
+            if marker(character, &mut state) {
+                in_variables = false;
+            }
+            ch = chars.next();
+        }
+        if !in_variables || ch.is_none() {
+            break;
+        }
+        trim(&mut name);
+        ch = chars.next();
+        while matches!(ch, Some(' ' | '\t')) {
+            ch = chars.next();
+        }
+        let mut value = Vec::new();
+        state = 0;
+        while let Some(character) = ch {
+            if character == ';' || !in_variables {
+                break;
+            }
+            if value.len() < 99 {
+                value.push(character as u8);
+            }
+            if marker(character, &mut state) {
+                in_variables = false;
+            }
+            ch = chars.next();
+        }
+        if !in_variables {
+            value.truncate(value.len().saturating_sub(3));
+        }
+        trim(&mut value);
+        if c_string(&name) == b"lexical-binding" {
+            return (Some(c_string(&value) != b"nil"), consumed);
+        }
+    }
+    (None, consumed)
+}
+
+/// Resolve a scanned cookie through GNU's observable default callback.
+/// FROM=None represents a direct compiled stream, which bypasses that hook.
+pub(crate) fn lexical_binding_value(
+    i: &mut Interp,
+    cookie: Option<bool>,
+    from: Option<Value>,
+) -> EvalResult {
+    if let Some(enabled) = cookie {
+        return Ok(Value::from_bool(enabled));
+    }
+    if let Some(from) = from {
+        let hook = i.q("internal--get-default-lexical-binding-function");
+        let function = i.symbol_value(hook);
+        if !function.is_nil() {
+            return i.apply(&function, vec![from]);
+        }
+    }
+    let lexical = i.q("lexical-binding");
+    Ok(i.default_toplevel_value(lexical).unwrap_or(Value::Nil))
 }
 
 /// Outcome of a `load' attempt.
@@ -3918,7 +4105,7 @@ fn eval_gnu_subr_x(
 
 /// Every live (non-void, non-autoload) function cell.
 fn live_definitions(i: &Interp) -> std::collections::HashMap<crate::lisp::SymId, Value> {
-    let autoload = i.intern_soft("autoload");
+    let autoload = i.q_soft("autoload");
     i.obarray
         .all_ids()
         .into_iter()
@@ -3945,8 +4132,8 @@ fn keep_live_definitions(
     file: &str,
     live: &std::collections::HashMap<crate::lisp::SymId, Value>,
 ) {
-    let lh = i.intern("load-history");
-    let defun = i.intern("defun");
+    let lh = i.q("load-history");
+    let defun = i.q("defun");
     let entry = i
         .symbol_value(lh)
         .list_to_vec()
@@ -4016,7 +4203,7 @@ pub(crate) fn load_library_opts_msg(
         } else {
             "Loading %s..."
         };
-        let msg = i.intern("message");
+        let msg = i.q("message");
         let _ = i.apply(
             &Value::Sym(msg),
             vec![Value::string(fmt), Value::string(file)],
@@ -4041,7 +4228,7 @@ pub(crate) fn load_library_opts_msg(
         Some(Found::Dir(_)) => false,
         None => embedded(stem).is_some(),
     };
-    let gc = i.intern("gensym-counter");
+    let gc = i.q("gensym-counter");
     let saved_gc = bundled.then(|| i.symbol_value(gc));
     // Post-boot `subr-x' reads GNU's verbatim subr-x.el, not the
     // bundled lisp/subr-x.el: that file amalgamates the dump-time
@@ -4096,7 +4283,7 @@ pub(crate) fn load_library_opts_msg(
                 && path_is_bundled_source(&path)
                 && embedded_elc(stem).is_some()
                 && !i
-                    .symbol_value(i.intern_soft("load-prefer-newer").unwrap_or(0))
+                    .symbol_value(i.q_soft("load-prefer-newer").unwrap_or(0))
                     .truthy();
             if use_elc {
                 let src = embedded_elc(stem).unwrap();
@@ -4124,8 +4311,11 @@ pub(crate) fn load_library_opts_msg(
                             eprintln!(
                                 "[elc-fail] {stem}: {} | head={}",
                                 match &f {
-                                    crate::lisp::Flow::Signal(s, d, _) =>
-                                        format!("{} {}", i.prin1_to_string(s), i.prin1_to_string(d)),
+                                    crate::lisp::Flow::Signal(signal) => format!(
+                                        "{} {}",
+                                        i.prin1_to_string(&signal.symbol()),
+                                        i.prin1_to_string(&signal.data())
+                                    ),
                                     o => format!("{o:?}"),
                                 },
                                 i.princ_to_string(&i.cur_head_form)
@@ -4227,11 +4417,13 @@ pub(crate) fn load_library_opts_msg(
         match &result {
             Err(f) => {
                 let msg = match f {
-                    crate::lisp::Flow::Signal(sig, data, _) => {
+                    crate::lisp::Flow::Signal(signal) => {
+                        let sig = signal.symbol();
+                        let data = signal.data();
                         format!(
                             "signal {} {}",
-                            i.print_to_string(sig),
-                            i.print_to_string(data)
+                            i.print_to_string(&sig),
+                            i.print_to_string(&data)
                         )
                     }
                     crate::lisp::Flow::Throw(t, _) => {

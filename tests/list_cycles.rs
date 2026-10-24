@@ -3,7 +3,7 @@
 mod common;
 
 use common::{interp, on_big_stack};
-use remacs::lisp::{Flow, Value};
+use remacs::lisp::Value;
 use std::io::Read;
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
@@ -160,7 +160,7 @@ fn native_search_checks_pending_quit_without_preempting_a_hit() {
         assert!(same_cons(&hit, &source));
         assert!(i.quit_flag);
         let result = (subr.func)(&mut i, vec![Value::Int(9), source].into());
-        assert!(matches!(result, Err(Flow::Quit)));
+        assert!(matches!(result, Err(ref flow) if flow.is_quit()));
         assert!(!i.quit_flag);
     });
 }

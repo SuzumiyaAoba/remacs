@@ -509,61 +509,45 @@ fn f_hash_table_p(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(matches!(&args[0], Value::Hash(_))))
 }
 fn f_functionp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::from_bool(functionp_val(i, &args[0])))
+    functionp_checked(i, &args[0]).map(Value::from_bool)
 }
 
 /// GNU `FUNCTIONP': callable objects — subrs that aren't special
 /// forms, non-macros lambdas, `(lambda …)' forms, and symbols whose
 /// (possibly aliased) function cell resolves to one of those.
 pub(crate) fn functionp_val(i: &mut Interp, arg: &Value) -> bool {
-    let v = crate::lisp::builtins::misc::unpos(arg);
-    let v = &v;
-    let r = match v {
-        Value::Subr(s) => crate::lisp::special::special_form(i.intern(s.name)).is_none(),
-        // GNU `functionp' on a macro object (`(macro . fn)') is nil.
-        Value::Lambda(l) => !l.is_macro,
-        Value::Sym(id) => {
-            // a symbol is a function if its function cell is defined
-            // (and isn't a macro).  GNU follows `defalias' chains:
-            // `(functionp 'alias)' tests the alias's final target.
-            let mut f = i.symbol_function(*id);
-            let mut hops = 0usize;
-            while let Value::Sym(next) = f {
-                if next == sym::UNBOUND || hops >= 64 {
-                    return false;
-                }
-                hops += 1;
-                f = i.symbol_function(next);
+    functionp_checked(i, arg).unwrap_or(false)
+}
+
+pub(crate) fn functionp_checked(i: &mut Interp, arg: &Value) -> Result<bool, Flow> {
+    let mut value = crate::lisp::builtins::misc::unpos(arg);
+    let symbol = matches!(value, Value::Sym(_));
+    if let Value::Sym(id) = value {
+        value = i.symbol_function(id);
+        if let Value::Sym(next) = value {
+            if next == sym::UNBOUND {
+                return Ok(false);
             }
-            match f {
-                // Special forms install pseudo-subrs but are not callable
-                // functions: (functionp #'if) -> nil.
-                Value::Subr(s) => crate::lisp::special::special_form(i.intern(s.name)).is_none(),
-                Value::Lambda(l) => !l.is_macro,
-                Value::Cons(c) => {
-                    let b = c.borrow();
-                    // Macro/keymap autoloads are not callable: GNU
-                    // FUNCTIONP accepts an autoload only with nil TYPE.
-                    let auto_id = i.intern("autoload");
-                    if i.sym_is(&b.car, sym::LAMBDA) {
-                        true
-                    } else if i.sym_is(&b.car, auto_id) {
-                        let tail = super::listfn::nthcdr_of(&Value::Cons(c.clone()), 4);
-                        !matches!(tail, Value::Cons(t) if t.borrow().car.truthy())
-                    } else {
-                        false
-                    }
-                }
-                _ => false,
-            }
+            // Follow the complete chain, with the shared cycle validation.
+            value = f_indirect_function(i, vec![arg.clone()].into())?;
         }
+    }
+    Ok(match &value {
+        Value::Subr(s) => !matches!(s.arity, crate::lisp::Arity::Unevalled),
+        Value::Lambda(l) => !l.is_macro,
         Value::Cons(c) => {
-            let b = c.borrow();
-            i.sym_is(&b.car, sym::LAMBDA)
+            let head = c.borrow().car.clone();
+            if i.sym_is(&head, sym::LAMBDA) {
+                true
+            } else if symbol && i.sym_id(&head).is_some_and(|id| Some(id) == i.q_soft("autoload")) {
+                let tail = super::listfn::nthcdr_of(&value, 4);
+                !matches!(tail, Value::Cons(t) if t.borrow().car.truthy())
+            } else {
+                false
+            }
         }
         _ => false,
-    };
-    r
+    })
 }
 fn f_subrp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // Emacs: strict type check — (subrp 'car) is nil.  GNU 31.1
@@ -609,7 +593,7 @@ fn f_macrop(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             if i.sym_is(&b.car, sym::MACRO) {
                 return Ok(Value::t());
             }
-            let auto_id = i.intern("autoload");
+            let auto_id = i.q("autoload");
             if i.sym_is(&b.car, auto_id) {
                 // GNU subr.el `macrop': `(memq (nth 4 def) '(macro t))'
                 // — the return value is the memq tail, so TYPE `macro'
@@ -719,12 +703,12 @@ fn f_type_of(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Record(r) => {
             // `symbols-with-pos-enabled' objects are `symbol'.
             if crate::lisp::builtins::misc::as_sympos(&args[0]).is_some() {
-                return Ok(Value::Sym(i.intern("symbol")));
+                return Ok(Value::Sym(i.q("symbol")));
             }
             // GNU reports an obarray as `obarray', not its tag-record
             // slot — obarrays are a distinct pseudovec type there.
             if is_obarray(i, &args[0]) {
-                return Ok(Value::Sym(i.intern("obarray")));
+                return Ok(Value::Sym(i.q("obarray")));
             }
             let rr = r.borrow();
             match rr.first() {
@@ -876,7 +860,7 @@ pub(crate) fn f_defalias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
         loop {
             if cur == id || !seen.insert(cur) {
                 if cur == id {
-                    let sig = i.intern("cyclic-function-indirection");
+                    let sig = i.q("cyclic-function-indirection");
                     return Err(i.signal_data(sig, vec![Value::Sym(id)]));
                 }
                 break;
@@ -891,7 +875,7 @@ pub(crate) fn f_defalias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
     // GNU data.c `defalias' LOADHIST_ATTACHes `(defun . SYM)' when the
     // definition is installed — source `defun'/`defmacro' forms and
     // `.elc' defalias calls alike (an `(autoload ...)' cell counts too).
-    let defun_id = i.intern("defun");
+    let defun_id = i.q("defun");
     crate::lisp::builtins::evalfn::loadhist_attach(
         i,
         Value::cons(i.sym(defun_id), args[0].clone()),
@@ -901,7 +885,7 @@ pub(crate) fn f_defalias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
     // property — what `documentation' reads through the alias.
     if let Some(doc) = args.get(2) {
         if doc.truthy() {
-            let fd = i.intern("function-documentation");
+            let fd = i.q("function-documentation");
             i.put_prop(id, fd, doc.clone());
         }
     }
@@ -925,13 +909,13 @@ fn f_defvaralias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         let mut cur = base;
         loop {
             if cur == newv {
-                let sig = i.intern("cyclic-variable-indirection");
+                let sig = i.q("cyclic-variable-indirection");
                 return Err(i.signal_data(sig, vec![args[1].clone()]));
             }
             if !seen.insert(cur) {
                 break;
             }
-            let alias_prop = i.intern("variable-alias");
+            let alias_prop = i.q("variable-alias");
             match i.get_prop(cur, alias_prop) {
                 Value::Sym(next) => cur = next,
                 _ => break,
@@ -973,13 +957,13 @@ fn f_defvaralias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // the proposed base as NEWVAL, and can abort the aliasing.
     let watched = i.var_alias_target(newv);
     i.fire_var_watchers(watched, &args[1], "defvaralias", None)?;
-    let prop = i.intern("variable-alias");
+    let prop = i.q("variable-alias");
     i.put_prop(newv, prop, args[1].clone());
     i.obarray.symbol_mut(newv).special = true;
     i.obarray.symbol_mut(base).special = true;
     i.obarray.symbol_mut(newv).constant = i.obarray.symbol(base).constant;
     // GNU stores docstring unconditionally — nil ERASES an old one.
-    let vd = i.intern("variable-documentation");
+    let vd = i.q("variable-documentation");
     let doc = args.get(2).cloned().unwrap_or(Value::Nil);
     i.put_prop(newv, vd, doc);
     crate::lisp::builtins::evalfn::loadhist_attach(i, args[0].clone());
@@ -1126,7 +1110,7 @@ fn f_defvar_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     if let Some(Value::Str(s)) = args.get(2) {
         // GNU: Fput(symbol, Qvariable_documentation, doc).
-        let vd = i.intern("variable-documentation");
+        let vd = i.q("variable-documentation");
         i.put_prop(id, vd, Value::string(s.borrow().clone()));
     }
     Ok(args[0].clone())
@@ -1140,10 +1124,10 @@ fn f_defconst_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     i.set_symbol_default(id, args[1].clone())?;
     if let Some(Value::Str(s)) = args.get(2) {
         // GNU: Fput(symbol, Qvariable_documentation, doc).
-        let vd = i.intern("variable-documentation");
+        let vd = i.q("variable-documentation");
         i.put_prop(id, vd, Value::string(s.borrow().clone()));
     }
-    let rlv = i.intern("risky-local-variable");
+    let rlv = i.q("risky-local-variable");
     i.put_prop(id, rlv, Value::t());
     Ok(args[0].clone())
 }
@@ -1169,7 +1153,7 @@ fn f_define_uninitialized_variable(i: &mut Interp, args: crate::lisp::Argv) -> E
     if let Some(doc) = args.get(1) {
         if !doc.is_nil() {
             // GNU: Fput(symbol, Qvariable_documentation, doc).
-            let vd = i.intern("variable-documentation");
+            let vd = i.q("variable-documentation");
             i.put_prop(id, vd, doc.clone());
         }
     }
@@ -1183,7 +1167,7 @@ fn f_delete_indirect_variable(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
     let _ = want_sym(i, &args[0])?;
     // GNU signals (error "Cannot undeclare..." VARIABLE): the datum
     // carries the offending symbol.
-    let sym = i.intern("error");
+    let sym = i.q("error");
     Err(i.signal_data(
         sym,
         vec![
@@ -1197,7 +1181,7 @@ fn f_obarray_buckets(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU `check_obarray's the argument first — non-obarrays
     // signal `obarrayp'.  Our obarray isn't bucketed; expose one bucket
     // holding all symbols of the default obarray.
-    let ob = resolve_obarray(i, args.get(0))?;
+    let ob = Some(check_obarray(i, &args[0])?);
     if let Some(o) = &ob {
         if !is_default_obarray(i, o) {
             return Ok(Value::list(vec![Value::list(obarray_syms(i, o))]));
@@ -1219,7 +1203,7 @@ fn f_make_record(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let n = match &args[1] {
         Value::Int(n) if *n >= 0 => *n as usize,
         _ => {
-            let wholenump = Value::Sym(i.intern("wholenump"));
+            let wholenump = Value::Sym(i.q("wholenump"));
             return Err(i.signal_data(sym::WRONG_TYPE_ARGUMENT, vec![wholenump, args[1].clone()]));
         }
     };
@@ -1283,130 +1267,145 @@ fn f_setplist(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         };
     Ok(args[1].clone())
 }
-fn f_intern(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let ob = resolve_obarray(i, args.get(1))?;
-    // GNU resolve_symbol_positions: a sympos argument is stripped to its
-    // bare symbol before the string check — the byte compiler's
-    // `read-positioning-symbols' reader flows sympos into `intern'/
-    // `intern-soft' via cconv--warn-unused-msg and friends.
-    let args0 = match crate::lisp::builtins::misc::as_sympos(&args[0]) {
-        Some((s, _)) => Value::Sym(s),
-        None => args[0].clone(),
-    };
-    match &args0 {
-        Value::Str(s) => {
-            let name = s.borrow().clone();
-            // A custom obarray keeps its own symbol vector; symbols in
-            // it are NOT interned in the global obarray (GNU parity:
-            // intern-soft on the default obarray won't find them).
-            if let Some(ob) = &ob {
-                if !is_default_obarray(i, ob) {
-                    if let Some(sym) = obarray_syms(i, ob)
-                        .into_iter()
-                        .find(|v| matches!(v, Value::Sym(s) if i.symbol_name(*s) == name))
-                    {
-                        return Ok(sym);
-                    }
-                    let id = i.make_symbol(&name);
-                    i.obarray.symbol_mut(id).name_string = Some(s.clone());
-                    let sym = i.sym(id);
-                    obarray_push(i, ob, &sym);
-                    return Ok(sym);
-                }
-            }
-            let existing = i.intern_soft(&name);
-            let id = i.intern(&name);
-            if existing.is_none() {
-                i.obarray.symbol_mut(id).name_string = Some(s.clone());
-            }
-            Ok(i.sym(id))
-        }
-        _ => Err(i.wrong_type_mut("stringp", &args[0])),
+pub(crate) fn string_intern_key(i: &Interp, string: &crate::lisp::value::StrRef) -> crate::lisp::obarray::InternKey {
+    crate::lisp::obarray::InternKey {
+        bytes: super::strfn::gnu_sbytes(i, string),
+        characters: string.borrow().chars().count(),
     }
 }
+
+fn symbol_name_key(i: &Interp, symbol: crate::lisp::value::SymId) -> crate::lisp::obarray::InternKey {
+    let cell = i.obarray.symbol(symbol);
+    match &cell.name_string {
+        Some(string) => string_intern_key(i, string),
+        None => cell.internment_key.clone()
+            .unwrap_or_else(|| crate::lisp::obarray::InternKey::from_text(&cell.name)),
+    }
+}
+
+pub(crate) fn lookup_in_obarray(
+    i: &Interp, obarray: &Option<Value>, key: &crate::lisp::obarray::InternKey,
+) -> Option<crate::lisp::value::SymId> {
+    if let Some(table) = obarray {
+        if !is_default_obarray(i, table) {
+            return obarray_syms(i, table).into_iter().find_map(|value| {
+                let symbol = i.sym_id(&value)?;
+                (symbol_name_key(i, symbol) == *key).then_some(symbol)
+            });
+        }
+    }
+    i.obarray.key_candidates(key).iter().rev().copied()
+        .find(|&symbol| symbol_name_key(i, symbol) == *key)
+}
+
+/// The intern_driver operation, after name transformation and obarray checks.
+/// It bypasses the public intern cell, just as lread.c does.
+pub(crate) fn intern_in_obarray(i: &mut Interp, name: &crate::lisp::value::StrRef, obarray: &Option<Value>) -> crate::lisp::value::SymId {
+    let key = string_intern_key(i, name);
+    if let Some(symbol) = lookup_in_obarray(i, obarray, &key) { return symbol; }
+    let text = name.borrow().clone();
+    let custom = obarray.as_ref().filter(|table| !is_default_obarray(i, table));
+    let symbol = if custom.is_some() { i.make_symbol(&text) }
+                 else { i.obarray.intern_new_with_key(&text, key) };
+    i.obarray.symbol_mut(symbol).name_string = Some(name.clone());
+    if let Some(table) = custom { obarray_push(i, table, &i.sym(symbol)); }
+    symbol
+}
+
+/// oblookup_considering_shorthand: byte-prefix matching, first valid pair,
+/// permissive dotted/invalid entries and GNU's bounded-space safe traversal.
+pub(crate) fn expand_symbol_shorthand(
+    i: &mut Interp, name: &crate::lisp::value::StrRef, multibyte: bool,
+) -> Option<crate::lisp::value::StrRef> {
+    let variable = i.q_soft("read-symbol-shorthands")?;
+    let mut tail = i.symbol_value(variable);
+    if !matches!(tail, Value::Cons(_)) { return None; }
+    let bytes = super::strfn::gnu_sbytes(i, name);
+    let mut tortoise = tail.clone();
+    let mut span = 2usize;
+    let mut blocks = 0isize;
+    let mut steps = 2u16;
+    while let Value::Cons(cell) = tail {
+        let (pair, next) = { let cell = cell.borrow(); (cell.car.clone(), cell.cdr.clone()) };
+        if let Value::Cons(pair) = pair {
+            let pair = pair.borrow();
+            if let (Value::Str(short), Value::Str(long)) = (&pair.car, &pair.cdr) {
+                let prefix = super::strfn::gnu_sbytes(i, short);
+                if bytes.starts_with(&prefix) {
+                    let mut expanded = super::strfn::gnu_sbytes(i, long);
+                    expanded.extend_from_slice(&bytes[prefix.len()..]);
+                    let characters = name.borrow().chars().count() as isize
+                        - short.borrow().chars().count() as isize
+                        + long.borrow().chars().count() as isize;
+                    let text = if multibyte { crate::lisp::value::emacs_string_bytes(&expanded) }
+                               else {
+                                   // make_specified_string's unibyte path uses
+                                   // the calculated character count as its byte length.
+                                   expanded.into_iter().take(characters.max(0) as usize)
+                                       .map(char::from).collect()
+                               };
+                    let string = Value::string_ref(text);
+                    if multibyte { i.mark_multibyte(&string); } else { i.mark_unibyte(&string); }
+                    return Some(string);
+                }
+            }
+        }
+        tail = next;
+        steps = steps.wrapping_sub(1);
+        let check = if steps != 0 { true } else {
+            blocks -= 1;
+            if blocks > 0 { true } else {
+                span = span.saturating_mul(2);
+                steps = span as u16;
+                blocks = (span >> 16) as isize;
+                tortoise = tail.clone();
+                false
+            }
+        };
+        if check && eq_values(&tail, &tortoise) { break; }
+    }
+    None
+}
+
+pub(crate) fn f_intern(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    let obarray = resolve_obarray(i, args.get(1))?;
+    let Value::Str(name) = &args[0] else { return Err(i.wrong_type_mut("stringp", &args[0])); };
+    let name = expand_symbol_shorthand(i, name, true).unwrap_or_else(|| name.clone());
+    let symbol = intern_in_obarray(i, &name, &obarray);
+    Ok(i.sym(symbol))
+}
+
 fn f_intern_soft(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let ob = resolve_obarray(i, args.get(1))?;
-    // GNU resolve_symbol_positions: strip a sympos to its bare symbol.
-    let args0 = match crate::lisp::builtins::misc::as_sympos(&args[0]) {
-        Some((s, _)) => Value::Sym(s),
-        None => args[0].clone(),
-    };
-    match &args0 {
-        Value::Str(s) => {
-            let name = s.borrow().clone();
-            if let Some(ob) = &ob {
-                if !is_default_obarray(i, ob) {
-                    return Ok(obarray_syms(i, ob)
-                        .into_iter()
-                        .find(|v| matches!(v, Value::Sym(s) if i.symbol_name(*s) == name))
-                        .unwrap_or(Value::Nil));
-                }
-            }
-            match i.intern_soft(&name) {
-                Some(id) => Ok(i.sym(id)),
-                None => Ok(Value::Nil),
-            }
-        }
-        Value::Sym(sid) => {
-            // GNU: a symbol arg returns itself only when it is actually
-            // interned in OBARRAY — `make-symbol' results yield nil.
-            let name = i.symbol_name(*sid);
-            let hit = match &ob {
-                Some(ob) if !is_default_obarray(i, ob) => obarray_syms(i, ob)
-                    .into_iter()
-                    .any(|v| matches!(v, Value::Sym(x) if i.symbol_name(x) == name)),
-                _ => i.intern_soft(&name).is_some(),
-            };
-            Ok(if hit { args[0].clone() } else { Value::Nil })
-        }
-        Value::Nil => Ok(Value::Nil), // GNU Fintern_soft: nil → nil, not stringp.
-        _ => Err(i.wrong_type_mut("stringp", &args[0])),
+    let obarray = resolve_obarray(i, args.get(1))?;
+    if let Some(symbol) = i.sym_id(&args[0]) {
+        let key = symbol_name_key(i, symbol);
+        return Ok(if lookup_in_obarray(i, &obarray, &key) == Some(symbol) {
+            args[0].clone()
+        } else { Value::Nil });
     }
+    let Value::Str(name) = &args[0] else { return Err(i.wrong_type_mut("stringp", &args[0])); };
+    let name = expand_symbol_shorthand(i, name, true).unwrap_or_else(|| name.clone());
+    Ok(lookup_in_obarray(i, &obarray, &string_intern_key(i, &name))
+        .map(|symbol| i.sym(symbol)).unwrap_or(Value::Nil))
 }
+
 fn f_unintern(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let ob = resolve_obarray(i, args.get(1))?;
-    if let Some(ob) = &ob {
-        if !is_default_obarray(i, ob) {
-            // GNU still checks NAME is string-or-symbol before removing.
-            if i.sym_id(&args[0]).is_none() && !matches!(args[0], Value::Str(_)) {
-                return Err(i.wrong_type_mut("stringp", &args[0]));
-            }
-            return Ok(Value::from_bool(obarray_remove(i, ob, &args[0])));
+    let obarray = resolve_obarray(i, args.get(1))?;
+    let symbol = match i.sym_id(&args[0]) {
+        Some(symbol) => Some(symbol),
+        None => {
+            let Value::Str(name) = &args[0] else { return Err(i.wrong_type_mut("stringp", &args[0])); };
+            let name = expand_symbol_shorthand(i, name, true).unwrap_or_else(|| name.clone());
+            lookup_in_obarray(i, &obarray, &string_intern_key(i, &name))
+        }
+    };
+    let Some(symbol) = symbol else { return Ok(Value::Nil); };
+    if let Some(table) = &obarray {
+        if !is_default_obarray(i, table) {
+            return Ok(Value::from_bool(obarray_remove(i, table, &i.sym(symbol))));
         }
     }
-    match &args[0] {
-        _ if i.sym_id(&args[0]).is_some() => {
-            let id = i.sym_id(&args[0]).unwrap();
-            if id == sym::NIL || id == sym::T {
-                // GNU refuses to unintern `nil'/`t' (returns nil).
-                return Ok(Value::Nil);
-            }
-            // Our obarray can't physically remove (indices are stable),
-            // but we can drop the name mapping so a fresh intern creates
-            // a new symbol — matching unintern semantics.
-            let name = i.symbol_name(id);
-            // GNU Funintern returns t only when the obarray actually
-            // held THIS symbol: an uninterned same-name twin removes
-            // nothing and yields nil.
-            if i.intern_soft(&name) == Some(id) {
-                i.obarray.unintern_by_name(&name);
-                return Ok(Value::t());
-            }
-            Ok(Value::Nil)
-        }
-        Value::Str(s) => {
-            let name = s.borrow().clone();
-            if i.intern_soft(&name).is_some() {
-                i.obarray.unintern_by_name(&name);
-                Ok(Value::t())
-            } else {
-                Ok(Value::Nil)
-            }
-        }
-        // GNU Funintern: NAME must be a string-or-symbol — other types
-        // signal `stringp' (the sym_id arm already covered symbols).
-        _ => Err(i.wrong_type_mut("stringp", &args[0])),
-    }
+    Ok(Value::from_bool(i.obarray.unintern_symbol(symbol)))
 }
 fn f_make_symbol(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let name = match &args[0] {
@@ -1423,7 +1422,8 @@ fn f_make_symbol(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 /// `obarray` and whose slot 1 is a vector of buckets; GNU's obarrays
 /// are a distinct type (vectorp → nil), which the record gives us.
 fn obarray_tag(i: &Interp) -> Value {
-    Value::Sym(i.intern_soft("obarray").unwrap_or(0))
+    i.default_obarray.as_ref().and_then(|table| table.borrow().first().cloned())
+        .unwrap_or_else(|| Value::Sym(i.q_soft("obarray").unwrap_or(0)))
 }
 
 pub(crate) fn is_obarray(i: &Interp, v: &Value) -> bool {
@@ -1605,16 +1605,27 @@ fn obarray_remove(i: &Interp, ob: &Value, sym: &Value) -> bool {
 }
 
 /// Check an optional OBARRAY argument and resolve it to the effective
-/// obarray: nil/absent means the default obarray (None); a tagged
+/// obarray: nil/absent means the value of `obarray'; a tagged
 /// record is used directly; a VECTOR is GNU's legacy vector-as-obarray
 /// — every slot must be 0 or a symbol hashed to that bucket
 /// (obarray_slow check).  A valid vector is promoted by placing an
 /// obarray record in slot 0, carrying over any pre-existing symbols.
 /// Anything else is a type error.
 pub(crate) fn resolve_obarray(i: &mut Interp, v: Option<&Value>) -> Result<Option<Value>, Flow> {
+    let value = match v {
+        None | Some(Value::Nil) => {
+            let symbol = i.sym_id(&obarray_tag(i)).unwrap();
+            i.symbol_value(symbol)
+        }
+        Some(value) => value.clone(),
+    };
+    check_obarray(i, &value).map(Some)
+}
+
+fn check_obarray(i: &mut Interp, value: &Value) -> Result<Value, Flow> {
+    let v = Some(value);
     match v {
-        None | Some(Value::Nil) => Ok(None),
-        Some(v) if is_obarray(i, v) => Ok(Some(v.clone())),
+        Some(v) if is_obarray(i, v) => Ok(v.clone()),
         Some(w @ Value::Vec(vec)) => {
             // GNU `check_obarray_slow': a non-empty vector is an
             // obarray iff slot 0 is 0 (fresh obarray object is stored
@@ -1623,7 +1634,7 @@ pub(crate) fn resolve_obarray(i: &mut Interp, v: Option<&Value>) -> Result<Optio
             let v0 = vec.borrow().first().cloned();
             if let Some(v0) = v0 {
                 if is_obarray(i, &v0) {
-                    return Ok(Some(v0));
+                    return Ok(v0);
                 }
                 if matches!(v0, Value::Int(0)) {
                     let rec = Value::record(vec![
@@ -1633,12 +1644,13 @@ pub(crate) fn resolve_obarray(i: &mut Interp, v: Option<&Value>) -> Result<Optio
                         Value::Int(0),
                     ]);
                     vec.borrow_mut()[0] = rec.clone();
-                    return Ok(Some(rec));
+                    return Ok(rec);
                 }
             }
             Err(i.wrong_type_mut("obarrayp", w))
         }
         Some(v) => Err(i.wrong_type_mut("obarrayp", v)),
+        None => unreachable!(),
     }
 }
 
@@ -1678,7 +1690,7 @@ pub(crate) fn f_indirect_function(i: &mut Interp, args: crate::lisp::Argv) -> Ev
                     // `cyclic-function-indirection' with the symbol
                     // whose alias points back into the chain.
                     Value::Sym(next) if seen.contains(&next) => {
-                        let sig = i.intern("cyclic-function-indirection");
+                        let sig = i.q("cyclic-function-indirection");
                         return Err(i.signal_data(sig, vec![Value::Sym(id)]));
                     }
                     Value::Sym(next) => cur = i.sym(next),
@@ -1696,7 +1708,7 @@ pub(crate) fn f_interactive_form(i: &mut Interp, args: crate::lisp::Argv) -> Eva
     if resolved.is_nil() {
         return Ok(Value::Nil);
     }
-    let property = i.intern("interactive-form");
+    let property = i.q("interactive-form");
     let mut f = args[0].clone();
     while let Value::Sym(id) = f {
         let form = i.get_prop(id, property);
@@ -1709,7 +1721,7 @@ pub(crate) fn f_interactive_form(i: &mut Interp, args: crate::lisp::Argv) -> Eva
     if matches!(f, Value::Sym(_)) {
         return f_interactive_form(i, vec![f].into());
     }
-    let autoload = i.intern("autoload");
+    let autoload = i.q("autoload");
     if matches!(&f, Value::Cons(c) if i.sym_is(&c.borrow().car, autoload)) {
         // GNU passes CMD as FUNNAME; a bare autoload cons is not a symbol.
         if !matches!(args[0], Value::Sym(_)) {
@@ -1737,7 +1749,7 @@ pub(crate) fn f_interactive_form(i: &mut Interp, args: crate::lisp::Argv) -> Eva
                     // `calln(oclosure-interactive-form, fun)' when the
                     // generic exists.
                     None => {
-                        let oif = i.intern_soft("oclosure-interactive-form");
+                        let oif = i.q_soft("oclosure-interactive-form");
                         // OClosure: bc_items[4] (the docstring slot)
                         // holds the type symbol; GNU delegates to
                         // `oclosure-interactive-form' whenever the
@@ -1796,12 +1808,12 @@ pub(crate) fn bc_interactive_form(i: &mut Interp, l: &Rc<Lambda>) -> Option<Valu
         Value::Vec(v) => v.borrow().first().cloned().unwrap_or(Value::Nil),
         s => s.clone(),
     };
-    Some(Value::list(vec![Value::Sym(i.intern("interactive")), spec]))
+    Some(Value::list(vec![Value::Sym(i.q("interactive")), spec]))
 }
 /// GNU `documentation-function-or-1' semantics for `(macro . FUN)':
 /// unwrap the macro cell so doc/subr lookups see the inner function.
 pub(crate) fn macro_inner(i: &mut Interp, f: Value) -> Value {
-    let m = i.intern("macro");
+    let m = i.q("macro");
     match &f {
         Value::Cons(c) if i.sym_id(&c.borrow().car) == Some(m) => c.borrow().cdr.clone(),
         _ => f,
@@ -1811,7 +1823,7 @@ pub(crate) fn macro_inner(i: &mut Interp, f: Value) -> Value {
 /// GNU `interactive-form' result for an `(interactive ...)' element:
 /// a bare `(interactive)' reads back as `(interactive nil)'.
 fn normalize_interactive_spec(i: &mut Interp, v: Value) -> Value {
-    let interactive = i.intern("interactive");
+    let interactive = i.q("interactive");
     match &v {
         Value::Cons(c)
             if i.sym_id(&c.borrow().car) == Some(interactive) && c.borrow().cdr.is_nil() =>
@@ -1847,9 +1859,9 @@ fn interactive_form_list(i: &mut Interp, f: &Value) -> Value {
         Some("closure") => 3,
         _ => return Value::Nil,
     };
-    let interactive = i.intern("interactive");
-    let declare = i.intern("declare");
-    let ideclare = i.intern("interactive-declare");
+    let interactive = i.q("interactive");
+    let declare = i.q("declare");
+    let ideclare = i.q("interactive-declare");
     for el in &items[body_at.min(items.len())..] {
         if matches!(el, Value::Str(_)) {
             continue;
@@ -1916,8 +1928,8 @@ fn f_function_put(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                         return Ok(args[2].clone());
                     }
                     _ => {
-                        let swp = i.intern("symbol-with-pos-p");
-                        let symbolp = i.intern("symbolp");
+                        let swp = i.q("symbol-with-pos-p");
+                        let symbolp = i.q("symbolp");
                         return Err(i.signal_data(
                             sym::WRONG_TYPE_ARGUMENT,
                             vec![
@@ -1929,8 +1941,8 @@ fn f_function_put(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                 }
             }
             _ => {
-                let swp = i.intern("symbol-with-pos-p");
-                let symbolp = i.intern("symbolp");
+                let swp = i.q("symbol-with-pos-p");
+                let symbolp = i.q("symbolp");
                 return Err(i.signal_data(
                     sym::WRONG_TYPE_ARGUMENT,
                     vec![
@@ -1988,6 +2000,7 @@ fn f_obarray_clear(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     let ob = ob_val.clone();
     if is_default_obarray(i, &ob) {
+        i.obarray.clear_namespace();
         return Ok(Value::Nil);
     }
     if let Value::Record(r) = &ob {

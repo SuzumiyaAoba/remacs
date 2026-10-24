@@ -344,13 +344,13 @@ pub fn collect_interp(i: &mut super::Interp) -> bool {
     prune_side_tables(i);
     collect();
     LAST_GC_BYTES.with(|bytes| bytes.set(allocated_bytes()));
-    let done = i.intern("gcs-done");
+    let done = i.q("gcs-done");
     let count = match i.symbol_value(done) {
         Value::Int(n) => n,
         _ => 0,
     };
     i.obarray.symbol_mut(done).value = Value::Int(count + 1);
-    let elapsed = i.intern("gc-elapsed");
+    let elapsed = i.q("gc-elapsed");
     let seconds = match i.symbol_value(elapsed) {
         Value::Float(n) => *n,
         _ => 0.0,

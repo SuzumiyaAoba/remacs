@@ -35,6 +35,8 @@ enum Unwind {
     SaveCurrentBuffer(usize),
     /// `unwind-protect' thunk: called on unwind (normal or nonlocal).
     Thunk(Value),
+    /// Old byte-code stores a progn body instead of a function.
+    Forms(Value),
 }
 
 /// A catch/condition-case frame record from pushcatch/pushconditioncase.
@@ -51,7 +53,7 @@ struct BcHandler {
 
 enum BcHandlerKind {
     Catch { tag: Value },
-    CondCase { conditions: Value },
+    CondCase { index: usize },
 }
 
 fn pop_handler_scope(i: &mut Interp, handler: &BcHandler) {
@@ -279,7 +281,10 @@ fn run(
             } else {
                 Value::Nil
             };
-            i.specbind(*name, v)?;
+            if let Err(flow) = i.specbind(*name, v) {
+                let flow = offer_exit(i, flow);
+                return finish_bindings(i, specmark, Err(flow));
+            }
             idx += 1;
         }
     }
@@ -325,30 +330,107 @@ fn run(
     i.case_handlers.truncate(case_depth);
     // Any unwind records still open (a nonlocal exit or an unbalanced
     // `unbind' count) get cleaned here — GNU's specpdl does the same.
-    unwind_all(i, &mut unwinds);
-    let _ = i.unbind_to(specmark);
-    r
+    let cleanup = i.with_quit_preserved(|i| {
+        let result = unwind_all(i, &mut unwinds);
+        i.unbind_raw_to(specmark).and(result)
+    });
+    cleanup.and(r)
 }
 
-fn unwind_all(i: &mut Interp, unwinds: &mut Vec<Unwind>) {
-    while let Some(u) = unwinds.pop() {
-        unwind_one(i, u);
+fn finish_bindings(i: &mut Interp, depth: usize, result: EvalResult) -> EvalResult {
+    i.unbind_to(depth)?;
+    result
+}
+
+fn offer_exit(i: &mut Interp, flow: Flow) -> Flow {
+    match i.offer_flow(Err(flow)) {
+        Err(flow) => flow,
+        Ok(_) => unreachable!("offering a nonlocal exit cannot return a value"),
     }
 }
 
-fn unwind_one(i: &mut Interp, u: Unwind) {
-    match u {
-        Unwind::VarBind => {
-            let _ = i.unbind(1);
+fn unwind_all(i: &mut Interp, unwinds: &mut Vec<Unwind>) -> Result<(), Flow> {
+    let mut result = Ok(());
+    while let Some(u) = unwinds.pop() {
+        if let Err(flow) = unwind_one(i, u) {
+            // Outer cleanup still runs; its exit replaces an earlier one.
+            result = Err(offer_exit(i, flow));
         }
+    }
+    result
+}
+
+fn unwind_one(i: &mut Interp, u: Unwind) -> Result<(), Flow> {
+    match u {
+        Unwind::VarBind => return i.unbind_bindings(1),
         Unwind::SaveExcursion(s) => i.restore_excursion_state(s),
         Unwind::SaveRestriction(s) => i.restore_restriction_state(s),
-        Unwind::SaveCurrentBuffer(old) => i.set_current_buffer(old),
+        Unwind::SaveCurrentBuffer(old) => {
+            if i.buffer_live(old) {
+                i.set_current_buffer(old);
+            }
+        }
         Unwind::Thunk(t) => {
             // GNU runs the thunk during unwind; a failing thunk's
             // error propagates out of the unwind.
-            let _ = i.apply(&t, Vec::new());
+            i.apply(&t, Vec::new())?;
         }
+        Unwind::Forms(forms) => {
+            i.eval_progn(&forms)?;
+        }
+    }
+    Ok(())
+}
+
+fn matching_handler(flow: &Flow, handlers: &[BcHandler]) -> Option<usize> {
+    handlers.iter().rposition(|h| match (flow, &h.kind) {
+        (Flow::Signal(signal), BcHandlerKind::CondCase { index }) => {
+            signal.claims_frame(*index)
+        }
+        (Flow::Throw(tag, _), BcHandlerKind::Catch { tag: target }) => eq_values(tag, target),
+        _ => false,
+    })
+}
+
+/// GNU unwinds to each handler's saved binding depth before removing that
+/// handler. Cleanup may signal/throw to that very handler, even when it did
+/// not match the original exit. Preserve the chosen destination until a new
+/// exit replaces it; a normal cleanup can mutate condition/tag objects.
+fn unwind_flow(
+    i: &mut Interp,
+    mut flow: Flow,
+    unwinds: &mut Vec<Unwind>,
+    handlers: &mut Vec<BcHandler>,
+) -> Result<(usize, usize, Value), Flow> {
+    let mut target = matching_handler(&flow, handlers);
+    'search: loop {
+        let boundary = handlers.last().map_or(0, |h| h.unwind_depth);
+        let result = i.with_quit_preserved(|i| {
+            while unwinds.len() > boundary {
+                unwind_one(i, unwinds.pop().unwrap())?;
+            }
+            Ok(())
+        });
+        if let Err(replacement) = result {
+            flow = offer_exit(i, replacement);
+            target = matching_handler(&flow, handlers);
+            continue 'search;
+        }
+        let Some(h) = handlers.pop() else {
+            return Err(flow);
+        };
+        let index = handlers.len();
+        pop_handler_scope(i, &h);
+        if target == Some(index) {
+            i.finish_quit_unwind();
+            let value = match flow {
+                Flow::Signal(signal) => signal.condition,
+                Flow::Throw(_, value) => value,
+                _ => unreachable!("only signals and throws select VM handlers"),
+            };
+            return Ok((h.dest, h.sp, value));
+        }
+        i.rebase_quit_unwind();
     }
 }
 
@@ -362,6 +444,25 @@ fn dispatch(
     stack: &mut Vec<Value>,
     unwinds: &mut Vec<Unwind>,
     handlers: &mut Vec<BcHandler>,
+) -> EvalResult {
+    let counter = i.bc_quit_counter.clone()
+        .unwrap_or_else(|| Rc::new(std::cell::Cell::new(1)));
+    let saved = i.bc_quit_counter.replace(counter.clone());
+    let result = dispatch_inner(i, prog, source, consts, stack, unwinds, handlers, &counter);
+    i.bc_quit_counter = saved;
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dispatch_inner(
+    i: &mut Interp,
+    prog: &BcProg,
+    source: &Value,
+    consts: &RefCell<Vec<Value>>,
+    stack: &mut Vec<Value>,
+    unwinds: &mut Vec<Unwind>,
+    handlers: &mut Vec<BcHandler>,
+    quitcounter: &std::cell::Cell<u8>,
 ) -> EvalResult {
     let mut code = Cow::Borrowed(prog.code.as_slice());
     let mut source_text = Cow::Borrowed(prog.source_text.as_str());
@@ -380,10 +481,6 @@ fn dispatch(
                 }
             }
             seen_tick = Some(i.string_data_tick);
-        }
-        if i.quit_flag {
-            i.quit_flag = false;
-            return Err(Flow::Quit);
         }
         let op = *code.get(pc).unwrap_or(&0) as usize;
         if i.dbg_flags & 0x40 != 0 {
@@ -421,7 +518,7 @@ fn dispatch(
             }
         }
         pc += 1;
-        match step_op(
+        let step = step_op(
             i,
             code.as_ref(),
             consts,
@@ -430,65 +527,25 @@ fn dispatch(
             handlers,
             &mut pc,
             op,
-        ) {
+            quitcounter,
+        );
+        // C's Fsignal runs observers before unwinding VM cleanup records.
+        // Direct opcode failures (car, arithmetic, etc.) have not passed
+        // through apply/eval's normal signal-delivery boundary yet.
+        let step = match step {
+            Step::Flow(flow) => Step::Flow(offer_exit(i, flow)),
+            other => other,
+        };
+        match step {
             Step::Next => {}
             Step::Return(v) => return Ok(v),
-            Step::Flow(Flow::Signal(sig, data, offered)) => {
-                // Innermost matching condition-case claims the signal.
-                let mut claimed = false;
-                while let Some(h) = handlers.last() {
-                    let hit = match &h.kind {
-                        BcHandlerKind::CondCase { conditions } => {
-                            i.signal_matches(&sig, conditions)
-                        }
-                        _ => false,
-                    };
-                    let h = handlers.pop().unwrap();
-                    pop_handler_scope(i, &h);
-                    if hit {
-                        while unwinds.len() > h.unwind_depth {
-                            let u = unwinds.pop().unwrap();
-                            unwind_one(i, u);
-                        }
-                        stack.truncate(h.sp);
-                        stack.push(Value::cons(sig.clone(), data.clone()));
-                        pc = h.dest;
-                        claimed = true;
-                        break;
-                    }
-                    // Non-matching handlers between the signal and the
-                    // claiming handler are discarded (GNU parity).
-                }
-                if !claimed {
-                    return Err(Flow::Signal(sig, data, offered));
-                }
+            Step::Flow(flow) => {
+                let (dest, sp, value) = unwind_flow(i, flow, unwinds, handlers)?;
+                stack.truncate(sp);
+                stack.push(value);
+                pc = dest;
+                quitcounter.set(u8::MAX);
             }
-            Step::Flow(Flow::Throw(tag, val)) => {
-                let mut claimed = false;
-                while let Some(h) = handlers.last() {
-                    let hit = match &h.kind {
-                        BcHandlerKind::Catch { tag: t } => eq_values(t, &tag),
-                        _ => false,
-                    };
-                    let h = handlers.pop().unwrap();
-                    pop_handler_scope(i, &h);
-                    if hit {
-                        while unwinds.len() > h.unwind_depth {
-                            let u = unwinds.pop().unwrap();
-                            unwind_one(i, u);
-                        }
-                        stack.truncate(h.sp);
-                        stack.push(val.clone());
-                        pc = h.dest;
-                        claimed = true;
-                        break;
-                    }
-                }
-                if !claimed {
-                    return Err(Flow::Throw(tag, val));
-                }
-            }
-            Step::Flow(f) => return Err(f),
         }
     }
 }
@@ -510,6 +567,7 @@ fn step_op(
     handlers: &mut Vec<BcHandler>,
     pc: &mut usize,
     op: usize,
+    quitcounter: &std::cell::Cell<u8>,
 ) -> Step {
     macro_rules! push {
         ($v:expr) => {
@@ -580,14 +638,27 @@ fn step_op(
             }
         };
     }
+    macro_rules! branch {
+        ($dest:expr) => {{
+            let destination = $dest;
+            if destination < *pc {
+                let count = quitcounter.get().wrapping_add(1);
+                quitcounter.set(count);
+                if count == 0 {
+                    quitcounter.set(1);
+                    r!(i.maybe_quit());
+                }
+            }
+            *pc = destination;
+        }};
+    }
     // Pop `count` operands and apply the named subr.
     macro_rules! scall {
         ($name:expr, $count:expr) => {{
             let n = $count;
             let fpos = stack.len().saturating_sub(n);
             let argv: Vec<Value> = stack.split_off(fpos);
-            let s = Value::Sym(i.intern($name));
-            let v = r!(i.apply(&s, argv));
+            let v = r!(i.bytecode_subr($name, argv));
             push!(v);
         }};
     }
@@ -631,8 +702,12 @@ fn step_op(
             let n = operand!();
             let id = csym!(n);
             let v = pop!();
-            r!(i.specbind(id, v));
-            unwinds.push(Unwind::VarBind);
+            let depth = i.specbind_depth();
+            let result = i.specbind(id, v);
+            if i.specbind_depth() > depth {
+                unwinds.push(Unwind::VarBind);
+            }
+            r!(result);
         }
         // call: fn sits BELOW its N args on the stack (deepest); GNU
         // `BcallN' DISCARDs N args then reads call_fun = TOP.
@@ -643,8 +718,8 @@ fn step_op(
             if i.dbg_flags & 0x01 != 0 {
                 let bad = if let Value::Cons(c) = &fun {
                     let car = c.borrow().car.clone();
-                    let lam = i.intern("lambda");
-                    let mac = i.intern("macro");
+                    let lam = i.q("lambda");
+                    let mac = i.q("macro");
                     !(i.sym_is(&car, lam) || i.sym_is(&car, mac))
                 } else {
                     false
@@ -676,17 +751,20 @@ fn step_op(
             }
             let argv: Vec<Value> = stack.split_off(fpos + 1);
             stack.pop(); // fn slot
-            let v = r!(i.apply(&fun, argv));
+            let v = r!(i.apply_bytecode(&fun, argv));
             push!(v);
         }
         // unbind N unwind records.
         40..=47 => {
             let n = operand!();
-            for _ in 0..n {
-                if let Some(u) = unwinds.pop() {
-                    unwind_one(i, u);
+            r!(i.with_quit_preserved(|i| {
+                for _ in 0..n {
+                    if let Some(u) = unwinds.pop() {
+                        unwind_one(i, u)?;
+                    }
                 }
-            }
+                Ok(())
+            }));
         }
         // pophandler: drop the innermost handler.
         48 => {
@@ -698,12 +776,13 @@ fn step_op(
         49 => {
             let dest = fetch2!();
             let conditions = pop!();
-            i.case_handlers.push(conditions.clone());
+            let index = i.case_handlers.len();
+            i.case_handlers.push(super::error::CaseHandler::single(conditions));
             handlers.push(BcHandler {
                 dest,
                 sp: stack.len(),
                 unwind_depth: unwinds.len(),
-                kind: BcHandlerKind::CondCase { conditions },
+                kind: BcHandlerKind::CondCase { index },
             });
         }
         // pushcatch DEST: stack top = tag.
@@ -886,25 +965,25 @@ fn step_op(
             let n = fetch2!();
             push!(konst!(n));
         }
-        130 => *pc = fetch2!(),
+        130 => { let destination = fetch2!(); branch!(destination); }
         131 => {
             let dest = fetch2!();
             let v = pop!();
             if v.is_nil() {
-                *pc = dest;
+                branch!(dest);
             }
         }
         132 => {
             let dest = fetch2!();
             let v = pop!();
             if v.truthy() {
-                *pc = dest;
+                branch!(dest);
             }
         }
         133 => {
             let dest = fetch2!();
             if tos!().is_nil() {
-                *pc = dest;
+                branch!(dest);
             } else {
                 pop!();
             }
@@ -912,7 +991,7 @@ fn step_op(
         134 => {
             let dest = fetch2!();
             if tos!().truthy() {
-                *pc = dest;
+                branch!(dest);
             } else {
                 pop!();
             }
@@ -942,11 +1021,12 @@ fn step_op(
         }
         // byte-catch: not generated since Emacs 25.
         141 => fail!(i.error("byte-catch opcode is obsolete")),
-        // unwind-protect: stack top is the compiled thunk; it runs
-        // when the next `unbind' (or nonlocal exit) pops it.
+        // GNU classifies the action at registration, before the body can
+        // change a symbol's function cell. Non-functions are legacy forms.
         142 => {
-            let thunk = pop!();
-            unwinds.push(Unwind::Thunk(thunk));
+            let action = pop!();
+            let function = r!(super::builtins::data::functionp_checked(i, &action));
+            unwinds.push(if function { Unwind::Thunk(action) } else { Unwind::Forms(action) });
         }
         143 => fail!(i.error("byte-condition-case opcode is obsolete")),
         147 => scall!("set-marker", 3),
@@ -1005,16 +1085,14 @@ fn step_op(
             let n = fetch!() as usize;
             let fpos = stack.len().saturating_sub(n);
             let argv: Vec<Value> = stack.split_off(fpos);
-            let s = Value::Sym(i.intern("concat"));
-            let v = r!(i.apply(&s, argv));
+            let v = r!(i.bytecode_subr("concat", argv));
             push!(v);
         }
         177 => {
             let n = fetch!() as usize;
             let fpos = stack.len().saturating_sub(n);
             let argv: Vec<Value> = stack.split_off(fpos);
-            let s = Value::Sym(i.intern("insert"));
-            let v = r!(i.apply(&s, argv));
+            let v = r!(i.bytecode_subr("insert", argv));
             push!(v);
         }
         // stack-set / stack-set2: TOS replaces the element K below it,
@@ -1053,12 +1131,13 @@ fn step_op(
             // the lookup hits.
             let table = pop!();
             let key = pop!();
-            let gethash = Value::Sym(i.intern("gethash"));
-            let sentinel = Value::Sym(i.intern("remacs--switch-miss"));
-            let v = r!(i.apply(&gethash, vec![key, table, sentinel.clone()]));
+            let sentinel = Value::Sym(i.q("remacs--switch-miss"));
+            let v = r!(super::builtins::hashfn::f_gethash(
+                i, vec![key, table, sentinel.clone()].into(),
+            ));
             if !eq_values(&v, &sentinel) {
                 if let Some(n) = v.int() {
-                    *pc = n.max(0) as usize;
+                    branch!(n.max(0) as usize);
                 }
             }
         }
@@ -1085,8 +1164,8 @@ pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> (usize, usize, bool, O
         }
         Value::Nil => (0, 0, false, Some(Vec::new())),
         Value::Cons(_) => {
-            let opt = i.intern("&optional");
-            let rst = i.intern("&rest");
+            let opt = i.q("&optional");
+            let rst = i.q("&rest");
             let mut req = 0usize;
             let mut max = 0usize;
             let mut rest = false;

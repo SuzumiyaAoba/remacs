@@ -17,7 +17,7 @@ fn arith_err(i: &Interp, _msg: &str) -> Flow {
 }
 
 fn overflow_err(i: &mut Interp, _v: &Value) -> Flow {
-    let s = i.intern("overflow-error");
+    let s = i.q("overflow-error");
     i.signal_data(s, vec![])
 }
 
@@ -630,7 +630,7 @@ fn round_with(i: &mut Interp, args: &[Value], mode: u8) -> EvalResult {
     BigInt::from_f64(rounded)
         .map(Value::from_bigint)
         .ok_or_else(|| {
-            let condition = i.intern("overflow-error");
+            let condition = i.q("overflow-error");
             i.signal_data(condition, vec![])
         })
 }
@@ -669,7 +669,7 @@ pub(crate) fn want_int_or_marker(i: &mut Interp, v: &Value) -> Result<i128, Flow
     match v {
         Value::Int(n) => Ok(*n),
         Value::BigInt(n) => n.to_i128().ok_or_else(|| {
-            let condition = i.intern("args-out-of-range");
+            let condition = i.q("args-out-of-range");
             i.signal_data(condition, vec![v.clone()])
         }),
         Value::Marker(m) => marker_pos_err(i, m),
@@ -1002,7 +1002,7 @@ fn random_bignum(limit: &BigInt) -> Value {
     }
 }
 fn f_random(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let t_sym = i.intern_soft("t").unwrap_or(u32::MAX);
+    let t_sym = i.q_soft("t").unwrap_or(u32::MAX);
     match args.get(0) {
         Some(Value::Sym(s)) if *s == t_sym => {
             let time = std::time::SystemTime::now()
@@ -1021,7 +1021,7 @@ fn f_random(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Some(value) if value.integerp() => {
             let limit = value.as_bigint().unwrap();
             if limit <= BigInt::from(0) {
-                let condition = i.intern("args-out-of-range");
+                let condition = i.q("args-out-of-range");
                 return Err(i.signal_data(condition, vec![value.clone()]));
             }
             if !value.fixnump() {

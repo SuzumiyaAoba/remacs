@@ -62,6 +62,8 @@ qa!(qa_buffer_history, "qa_buffer_history.el");
 qa!(qa_before_markers, "qa_before_markers.el");
 qa!(qa_float_output, "qa_float_output.el");
 qa!(qa_process_defaults, "qa_process_defaults.el");
+qa!(qa_process_callback_context, "qa_process_callback_context.el");
+qa!(qa_process_callback_errors, "qa_process_callback_errors.el");
 qa!(qa_process_buffer_identity, "qa_process_buffer_identity.el");
 qa!(qa_process_window_size, "qa_process_window_size.el");
 qa!(qa_process_names, "qa_process_names.el");
@@ -191,6 +193,44 @@ qa!(qa_hash2, "qa_hash2.el");
 qa!(qa_help, "qa_help.el");
 qa!(qa_hook, "qa_hook.el");
 qa!(qa_hooks2, "qa_hooks2.el");
+qa!(qa_hook_traversal, "qa_hook_traversal.el");
+qa!(qa_load_lexical_cookie, "qa_load_lexical_cookie.el");
+qa!(qa_signal_hook, "qa_signal_hook.el");
+qa!(qa_signal_room, "qa_signal_room.el");
+qa!(qa_quit_flag, "qa_quit_flag.el");
+// Exact nesting budgets depend on the entry context: use GNU's real -l
+// path, rather than the in-process runner's extra (progn (load ...)) call.
+#[test]
+fn qa_call_depth() {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+    for source in [false, true] {
+        let root = env!("CARGO_MANIFEST_DIR");
+        let mut command = Command::new(env!("CARGO_BIN_EXE_remacs"));
+        command.args(["-Q", "--batch", "-l", &format!("{root}/tests/qa_framework.el"),
+                      "-l", &format!("{root}/tests/qa_call_depth.el")])
+            .env_remove("EMACSLOADPATH")
+            .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        if source { command.env("REMACS_NO_ELC", "1"); }
+        else { command.env_remove("REMACS_NO_ELC"); }
+        let mut child = command.spawn().unwrap();
+        let started = Instant::now();
+        loop {
+            if child.try_wait().unwrap().is_some() { break; }
+            if started.elapsed() > Duration::from_secs(180) {
+                child.kill().unwrap();
+                let output = child.wait_with_output().unwrap();
+                panic!("call-depth watchdog source={source}: {}\n{}",
+                       String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "call-depth source={source}: {}\n{}",
+                String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("checks passed"));
+    }
+}
 qa!(qa_modhooks, "qa_modhooks.el");
 qa!(qa_readonly, "qa_readonly.el");
 qa!(qa_indent, "qa_indent.el");
@@ -198,6 +238,9 @@ qa!(qa_indentcmds, "qa_indentcmds.el");
 qa!(qa_indentfill, "qa_indentfill.el");
 qa!(qa_input, "qa_input.el");
 qa!(qa_event_conversion, "qa_event_conversion.el");
+qa!(qa_char_resolve, "qa_char_resolve.el");
+qa!(qa_read_events, "qa_read_events.el");
+qa!(qa_crm, "qa_crm.el");
 qa!(qa_json, "qa_json.el");
 qa!(qa_kbd, "qa_kbd.el");
 qa!(qa_define_key_type, "qa_define_key_type.el");
@@ -372,6 +415,13 @@ qa!(qa_radix, "qa_radix.el");
 qa!(qa_read, "qa_read.el");
 qa!(qa_readprint, "qa_readprint.el");
 qa!(qa_reader_function_stream, "qa_reader_function_stream.el");
+qa!(qa_reader_string_kind, "qa_reader_string_kind.el");
+qa!(qa_reader_symbol_source, "qa_reader_symbol_source.el");
+qa!(qa_reader_source_dispatch, "qa_reader_source_dispatch.el");
+qa!(qa_obarray_defaults, "qa_obarray_defaults.el");
+qa!(qa_symbol_shorthands, "qa_symbol_shorthands.el");
+qa!(qa_load_shorthands, "qa_load_shorthands.el");
+qa!(qa_shorthand_characters, "qa_shorthand_characters.el");
 qa!(qa_reader_error_context, "qa_reader_error_context.el");
 qa!(qa_reader_circles, "qa_reader_circles.el");
 qa!(qa_rect, "qa_rect.el");
@@ -495,6 +545,43 @@ qa!(qa_permanent_local_hooks, "qa_permanent_local_hooks.el");
 qa!(qa_erase_buffer_widen, "qa_erase_buffer_widen.el");
 qa!(qa_local_dynamic_unwind, "qa_local_dynamic_unwind.el");
 qa!(qa_handler_dynamic_order, "qa_handler_dynamic_order.el");
+qa!(qa_signal_objects, "qa_signal_objects.el");
+qa!(qa_vm_unwind, "qa_vm_unwind.el");
+qa!(qa_unwind_legacy, "qa_unwind_legacy.el");
+qa!(qa_progn_traversal, "qa_progn_traversal.el");
+qa!(qa_signal_targets, "qa_signal_targets.el");
+#[test]
+fn qa_signal_native() {
+    if ev("(native-comp-available-p)") != "t" {
+        eprintln!("skipping native signal tests: no C compiler available");
+        return;
+    }
+    run("qa_signal_native.el");
+}
+#[test]
+fn qa_native_comp_load() {
+    if ev("(native-comp-available-p)") != "t" {
+        eprintln!("skipping native compiler load tests: no C compiler available");
+        return;
+    }
+    run("qa_native_comp_load.el");
+}
+
+#[test]
+fn qa_native_call_depth() {
+    if ev("(native-comp-available-p)") != "t" {
+        return;
+    }
+    run("qa_native_call_depth.el");
+}
+
+#[test]
+fn qa_native_bindings() {
+    if ev("(native-comp-available-p)") != "t" {
+        return;
+    }
+    run("qa_native_bindings.el");
+}
 qa!(qa_called_interactively_frames, "qa_called_interactively_frames.el");
 qa!(qa_map_live_sequence, "qa_map_live_sequence.el");
 qa!(qa_lisp_mode_init, "qa_lisp_mode_init.el");
@@ -508,6 +595,8 @@ qa!(qa_shortdoc_data, "qa_shortdoc_data.el");
 qa!(qa_shortdoc_source_first, "qa_shortdoc_source_first.el");
 
 qa!(qa_gensym_counter, "qa_gensym_counter.el");
+qa!(qa_gensym_semantics, "qa_gensym_semantics.el");
+qa!(qa_format_string_kind, "qa_format_string_kind.el");
 
 qa!(qa_delete_char_bounds, "qa_delete_char_bounds.el");
 

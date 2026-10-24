@@ -11,10 +11,10 @@ pub fn run(i: &mut Interp, args: &[String]) {
     // GNU captures this directory once before processing file arguments.
     // Visiting a file changes its buffer's default-directory, but must not
     // change the base used for the next command-line file name.
-    let directory_symbol = i.intern("command-line-default-directory");
+    let directory_symbol = i.q("command-line-default-directory");
     let file_directory = i.symbol_value(directory_symbol);
 
-    let left_symbol = i.intern("command-line-args-left");
+    let left_symbol = i.q("command-line-args-left");
     let _ = i.set_symbol_default(
         left_symbol,
         Value::list(args.iter().map(Value::string).collect()),
@@ -26,10 +26,10 @@ pub fn run(i: &mut Interp, args: &[String]) {
         if cli_rest.is_nil() {
             break;
         }
-        let token =
+        let token_value =
             match with_command_line_frames(i, cli_rest.clone(), |i| pop_cli_string(i, left_symbol))
             {
-                Ok(Value::Str(text)) => text.borrow().clone(),
+                Ok(value @ Value::Str(_)) => value,
                 Ok(_) => unreachable!(),
                 Err(flow) => {
                     report_flow(i, flow);
@@ -37,6 +37,8 @@ pub fn run(i: &mut Interp, args: &[String]) {
                     batch_exit(i, 255);
                 }
             };
+        let Value::Str(token_text) = &token_value else { unreachable!() };
+        let token = token_text.borrow().clone();
         if parse_options && token == "--" {
             parse_options = false;
             continue;
@@ -51,14 +53,14 @@ pub fn run(i: &mut Interp, args: &[String]) {
             // their buffers, but every relative path uses the startup base.
             inhibit_startup(i);
             let result = (|| {
-                let expand = Value::Sym(i.intern("expand-file-name"));
+                let expand = Value::Sym(i.q("expand-file-name"));
                 let file = i.apply(&expand, vec![Value::string(&token), file_directory.clone()])?;
-                let visit = Value::Sym(i.intern("find-file"));
+                let visit = Value::Sym(i.q("find-file"));
                 i.apply(&visit, vec![file])
             })();
             match result {
                 Ok(_) => {}
-                Err(Flow::Exit(code)) => std::process::exit(code as i32),
+                Err(Flow::Exit(code)) => crate::lifecycle::exit(code),
                 Err(flow) => {
                     report_flow(i, flow);
                     batch_exit(i, 255);
@@ -68,12 +70,21 @@ pub fn run(i: &mut Interp, args: &[String]) {
         }
         let option = option.expect("recognized option");
         let mut args = vec![token.clone()];
+        let mut operand = None;
         if let Some(value) = option.value {
             args.push(value.to_owned());
+            let start = token.chars().count() - value.chars().count();
+            let substring = crate::lisp::builtins::strfn::f_substring(i,
+                vec![token_value.clone(), Value::Int(start as i128)].into());
+            operand = Some(substring.expect("inline operand is a valid token substring"));
         } else if cli::takes_operand(&token) {
             match with_command_line_frames(i, cli_rest.clone(), |i| pop_cli_string(i, left_symbol))
             {
-                Ok(Value::Str(text)) => args.push(text.borrow().clone()),
+                Ok(value @ Value::Str(_)) => {
+                    let Value::Str(text) = &value else { unreachable!() };
+                    args.push(text.borrow().clone());
+                    operand = Some(value);
+                }
                 Ok(_) => unreachable!(),
                 Err(flow) => {
                     report_flow(i, flow);
@@ -90,11 +101,11 @@ pub fn run(i: &mut Interp, args: &[String]) {
                 // never loads an init file or splash screen, so the
                 // observable remainder is the resource inhibition;
                 // interactive startup proceeds normally.
-                let sid = i.intern("inhibit-x-resources");
+                let sid = i.q("inhibit-x-resources");
                 let _ = i.set_symbol_default(sid, Value::t());
             }
             "-no-x-resources" | "--no-x-resources" => {
-                let sid = i.intern("inhibit-x-resources");
+                let sid = i.q("inhibit-x-resources");
                 let _ = i.set_symbol_default(sid, Value::t());
             }
             "--batch" | "-batch" => {
@@ -112,10 +123,10 @@ pub fn run(i: &mut Interp, args: &[String]) {
                         Ok(_) => {}
                         Err(f) => {
                             let d = match &f {
-                                crate::lisp::Flow::Signal(s, dd, _) => format!(
+                                crate::lisp::Flow::Signal(signal) => format!(
                                     "signal {} {}",
-                                    i.prin1_to_string(s),
-                                    i.prin1_to_string(dd)
+                                    i.prin1_to_string(&signal.symbol()),
+                                    i.prin1_to_string(&signal.data())
                                 ),
                                 other => format!("{other:?}"),
                             };
@@ -144,10 +155,10 @@ pub fn run(i: &mut Interp, args: &[String]) {
                                 match i.eval(&form) {
                                     Err(e) => {
                                         let d = match &e {
-                                            crate::lisp::Flow::Signal(s, dd, _) => format!(
+                                            crate::lisp::Flow::Signal(signal) => format!(
                                                 "signal {} {}",
-                                                i.prin1_to_string(s),
-                                                i.prin1_to_string(dd)
+                                                i.prin1_to_string(&signal.symbol()),
+                                                i.prin1_to_string(&signal.data())
                                             ),
                                             other => format!("{other:?}"),
                                         };
@@ -157,10 +168,10 @@ pub fn run(i: &mut Interp, args: &[String]) {
                                     Ok(_) => pos = next,
                                 }
                             }
-                            std::process::exit(255);
+                            crate::lifecycle::exit(255);
                         }
                     }
-                    std::process::exit(exit);
+                    crate::lifecycle::exit(exit as i128);
                 }
             }
             "-L" | "--directory" => {
@@ -179,14 +190,14 @@ pub fn run(i: &mut Interp, args: &[String]) {
                     // GNU `command-line-1': -eval/-execute set
                     // `inhibit-startup-screen' before evaluating.
                     inhibit_startup(i);
-                    if !run_action(i, &args[idx], cli_rest.clone(), false) {
+                    if !run_action(i, operand.as_ref().unwrap(), cli_rest.clone(), false) {
                         // GNU's `command-line-1': a signaled error
                         // aborts the remaining args and exits 255
                         // (after running `kill-emacs-hook').
                         batch_exit(i, 255);
                     }
                     if i.quit_editor {
-                        std::process::exit(exit);
+                        crate::lifecycle::exit(exit as i128);
                     }
                 }
             }
@@ -197,7 +208,7 @@ pub fn run(i: &mut Interp, args: &[String]) {
                         batch_exit(i, 255);
                     }
                     if i.quit_editor {
-                        std::process::exit(exit);
+                        crate::lifecycle::exit(exit as i128);
                     }
                 }
             }
@@ -210,11 +221,11 @@ pub fn run(i: &mut Interp, args: &[String]) {
                 if idx < args.len() {
                     // GNU `command-line-1': -f/-funcall inhibit too.
                     inhibit_startup(i);
-                    if !run_action(i, &args[idx], cli_rest.clone(), true) {
+                    if !run_action(i, operand.as_ref().unwrap(), cli_rest.clone(), true) {
                         batch_exit(i, 255);
                     }
                     if i.quit_editor {
-                        std::process::exit(exit);
+                        crate::lifecycle::exit(exit as i128);
                     }
                     // The next iteration reads the live Lisp value. Functions
                     // may consume, replace, or mutate any remaining arguments.
@@ -255,10 +266,88 @@ pub fn run(i: &mut Interp, args: &[String]) {
 /// Run `kill-emacs-hook' (reporting but ignoring its errors) and exit
 /// with CODE — GNU's `kill-emacs' on every batch exit path.
 fn batch_exit(i: &mut Interp, code: i32) -> ! {
-    if let Err(flow) = i.eval_str("(run-hooks 'kill-emacs-hook)") {
-        report_flow(i, flow);
+    if code == 0 {
+        normal_batch_exit(i);
     }
-    std::process::exit(code);
+    let argument = Value::Int(if code == 255 { -1 } else { code as i128 });
+    let result = i.with_call_frame("normal-top-level", vec![], |i| {
+        i.with_call_frame("command-line", vec![], |i| {
+            i.with_call_frame("kill-emacs", vec![argument.clone()], |i| {
+                crate::lisp::builtins::evalfn::f_kill_emacs(i, vec![argument].into())
+            })
+        })
+    });
+    match i.offer_flow(result) {
+        Err(Flow::Exit(status)) => crate::lifecycle::exit(status),
+        Err(flow) => report_flow(i, flow),
+        Ok(_) => {}
+    }
+    crate::lifecycle::exit(code as i128);
+}
+
+/// Unlike keyboard.c's fatal exit paths, startup.el calls the public
+/// function cell.  Advice or a replacement may return; in that case the
+/// normal-top-level cleanup and command loop still have work to do.
+fn normal_batch_exit(i: &mut Interp) -> ! {
+    let top_level = Value::Sym(i.q("top-level"));
+    i.catch_tags.push(top_level.clone());
+    let result = i.with_call_frame("normal-top-level", vec![], |i| {
+        let result = i.with_call_frame("command-line", vec![], |i| {
+            let kill = Value::Sym(i.q("kill-emacs"));
+            i.apply(&kill, vec![Value::t()])
+        });
+        let result = i.offer_flow(result);
+        if matches!(result, Err(Flow::Exit(_))) {
+            return result;
+        }
+        // These hooks are the unwind-protect tail of normal-top-level.
+        // An accepted process exit bypasses it, like other Lisp cleanup.
+        let cleanup = i.with_quit_preserved(|i| {
+            let inhibit = i.q("inhibit-startup-hooks");
+            let runner = Value::Sym(i.q("run-hooks"));
+            if !i.symbol_value(inhibit).truthy() {
+                let startup = Value::Sym(i.q("emacs-startup-hook"));
+                let term = Value::Sym(i.q("term-setup-hook"));
+                i.apply(&runner, vec![startup, term])?;
+            }
+            if !i.symbol_value(inhibit).truthy() {
+                let window = Value::Sym(i.q("window-setup-hook"));
+                i.apply(&runner, vec![window])?;
+            }
+            Ok(Value::Nil)
+        });
+        cleanup.and(result)
+    });
+    i.catch_tags.pop();
+    match i.offer_flow(result) {
+        Ok(_) => {}
+        Err(Flow::Throw(tag, _)) if crate::lisp::builtins::eq_values(&tag, &top_level) => {
+            i.finish_quit_unwind();
+        }
+        Err(Flow::Exit(status)) => crate::lifecycle::exit(status),
+        Err(flow) => {
+            let condition = match flow {
+                Flow::Signal(signal) => signal.condition,
+                Flow::Quit => Value::list(vec![Value::Sym(i.q("quit"))]),
+                Flow::Throw(tag, value) => Value::list(vec![
+                    Value::Sym(i.q("no-catch")), tag, value,
+                ]),
+                Flow::Exit(_) => unreachable!(),
+            };
+            i.finish_quit_unwind();
+            if let Err(flow) = crate::term::batch_command_error(i, condition) {
+                report_flow(i, flow);
+                batch_exit(i, 255);
+            }
+        }
+    }
+    match crate::term::run_batch_editor(i) {
+        Ok(()) => crate::lifecycle::exit(i.exit_status.unwrap_or(0)),
+        Err(flow) => {
+            report_flow(i, flow);
+            batch_exit(i, 255);
+        }
+    }
 }
 
 /// GNU `command-line-1' sets `inhibit-startup-screen' for -eval/-f/
@@ -266,7 +355,7 @@ fn batch_exit(i: &mut Interp, code: i32) -> ! {
 /// always true on this headless build.  The varalias
 /// `inhibit-splash-screen' shares the cell, so one set covers both.
 fn inhibit_startup(i: &mut Interp) {
-    let id = i.intern("inhibit-startup-screen");
+    let id = i.q("inhibit-startup-screen");
     let _ = i.set_symbol_default(id, Value::t());
 }
 
@@ -321,21 +410,21 @@ fn print_batch_backtrace(i: &mut Interp) {
     }
 }
 
-fn run_action(i: &mut Interp, src: &str, cli_rest: Value, funcall: bool) -> bool {
+fn run_action(i: &mut Interp, source: &Value, cli_rest: Value, funcall: bool) -> bool {
     if i.output.is_none() {
         i.output = Some(OutputSink::Stdout);
     }
     let result = with_command_line_frames(i, cli_rest, |i| {
         if funcall {
-            let function = Value::Sym(i.intern(src));
+            let function = crate::lisp::builtins::call_native_builtin(i, "intern", vec![source.clone()])?;
             i.apply(&function, vec![])
         } else {
-            i.eval_first_form(src)
+            i.eval_first_object(source)
         }
     });
     match result {
         Ok(_) => true,
-        Err(Flow::Exit(code)) => std::process::exit(code as i32),
+        Err(Flow::Exit(code)) => crate::lifecycle::exit(code),
         Err(flow) => {
             report_flow(i, flow);
             print_batch_backtrace(i);
@@ -365,7 +454,7 @@ fn load_file(i: &mut Interp, path: &str, cli_rest: Value) -> bool {
     let path = &cli_truename(i, path, true);
     match with_command_line_frames(i, cli_rest, |i| crate::lisp::load::eval_file(i, path)) {
         Ok(_) => true,
-        Err(Flow::Exit(code)) => std::process::exit(code as i32),
+        Err(Flow::Exit(code)) => crate::lifecycle::exit(code),
         Err(flow) => {
             report_flow(i, flow);
             print_batch_backtrace(i);
@@ -381,7 +470,7 @@ fn load_file_script(i: &mut Interp, path: &str, cli_rest: Value) -> bool {
     if i.output.is_none() {
         i.output = Some(OutputSink::Stdout);
     }
-    let nid = i.intern("noninteractive");
+    let nid = i.q("noninteractive");
     let _ = i.set_symbol_default(nid, Value::t());
     let path = &cli_truename(i, path, false);
     let tail = match cli_rest {
@@ -390,12 +479,12 @@ fn load_file_script(i: &mut Interp, path: &str, cli_rest: Value) -> bool {
     };
     let script_args = Value::cons(Value::string("-scriptload"), tail);
     let result = with_command_line_frames(i, script_args, |i| {
-        let function = Value::Sym(i.intern("command-line--load-script"));
+        let function = Value::Sym(i.q("command-line--load-script"));
         i.apply(&function, vec![Value::string(path.clone())])
     });
     match result {
         Ok(_) => true,
-        Err(Flow::Exit(code)) => std::process::exit(code as i32),
+        Err(Flow::Exit(code)) => crate::lifecycle::exit(code),
         Err(flow) => {
             report_flow(i, flow);
             print_batch_backtrace(i);
@@ -406,11 +495,13 @@ fn load_file_script(i: &mut Interp, path: &str, cli_rest: Value) -> bool {
 
 fn report_flow(i: &mut Interp, flow: Flow) {
     match flow {
-        Flow::Signal(sym, data, _) => {
+        Flow::Signal(signal) => {
+            let sym = signal.symbol();
+            let data = signal.data();
             // GNU's early debugger announces itself once before the
             // error message it is about to print.
             eprintln!("\ndebug-early-backtrace...done");
-            let err_obj = Value::cons(sym.clone(), data.clone());
+            let err_obj = signal.condition;
             let msg = crate::lisp::builtins::error_message(i, &err_obj);
             let name = match &sym {
                 Value::Sym(id) => i.symbol_name(*id),
@@ -436,7 +527,7 @@ fn report_flow(i: &mut Interp, flow: Flow) {
             eprintln!("Quit");
         }
         Flow::Exit(code) => {
-            std::process::exit(code as i32);
+            crate::lifecycle::exit(code);
         }
     }
 }

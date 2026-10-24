@@ -753,7 +753,7 @@ pub(crate) static SUBRS: &[crate::lisp::value::Subr] = &[
 /// platforms where kqueue exists.
 pub(crate) fn install(i: &mut crate::lisp::eval::Interp) {
     if HAVE_KQUEUE {
-        let f = i.intern("kqueue");
+        let f = i.q("kqueue");
         if !i.features.contains(&f) {
             i.features.push(f);
         }

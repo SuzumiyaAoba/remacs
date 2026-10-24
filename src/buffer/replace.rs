@@ -54,7 +54,7 @@ pub(super) fn replace_region_contents(i: &mut Interp, args: &[Value]) -> EvalRes
         Value::Vec(vector) => {
             let vector = vector.borrow();
             if vector.len() < 3 {
-                let signal = i.intern("args-out-of-range");
+                let signal = i.q("args-out-of-range");
                 return Err(i.signal_data(signal, vec![source.clone(), Value::Int(2)]));
             }
             match &vector[0] {
@@ -68,7 +68,7 @@ pub(super) fn replace_region_contents(i: &mut Interp, args: &[Value]) -> EvalRes
                     .map(|s| Value::Sym(i.intern(s)))
                     .to_vec(),
             );
-            let signal = i.intern("wrong-type-argument");
+            let signal = i.q("wrong-type-argument");
             return Err(i.signal_data(signal, vec![predicate, source]));
         }
     };
@@ -100,7 +100,7 @@ pub(super) fn replace_region_contents(i: &mut Interp, args: &[Value]) -> EvalRes
         unreachable!()
     };
     let replacement = source.borrow().clone();
-    let multibyte = i.intern("enable-multibyte-characters");
+    let multibyte = i.q("enable-multibyte-characters");
     let unibyte = target
         .borrow()
         .locals
@@ -187,7 +187,7 @@ pub(super) fn replace_region_contents(i: &mut Interp, args: &[Value]) -> EvalRes
         super::primitives::barf_if_file_locked(i)?;
         super::primitives::text_ro_range(i, start, end)?;
         signal_before_change(i, start + 1, end + 1)?;
-        let inhibit = i.intern("inhibit-modification-hooks");
+        let inhibit = i.q("inhibit-modification-hooks");
         i.specbind(inhibit, Value::t())?;
     }
     let result = (|| {

@@ -504,9 +504,9 @@ pub(crate) fn find_file_name_handler(
     file: &str,
     operation: Value,
 ) -> Option<Value> {
-    let fid = i.intern("file-name-handler-alist");
+    let fid = i.q("file-name-handler-alist");
     let alist = i.symbol_value(fid);
-    let ops_id = i.intern("operations");
+    let ops_id = i.q("operations");
     let mut cur = alist;
     // GNU fileio.c Ffind_file_name_handler:
     // - every matching (REGEXP . HANDLER) is scanned; the match with
@@ -519,11 +519,11 @@ pub(crate) fn find_file_name_handler(
     //   `tramp-run-real-handler' binds it to the inner operation, so
     //   handlers suppress themselves for that call — while ordinary
     //   operations ignore it (GNU-verified on 31.1).
-    let ifno = i.intern("inhibit-file-name-operation");
+    let ifno = i.q("inhibit-file-name-operation");
     let inhibit_target = i.symbol_value(ifno);
     let inhibited: Option<Value> = if crate::lisp::builtins::eq_values(&operation, &inhibit_target)
     {
-        let iid = i.intern("inhibit-file-name-handlers");
+        let iid = i.q("inhibit-file-name-handlers");
         Some(i.symbol_value(iid))
     } else {
         None
@@ -764,7 +764,7 @@ fn beg_end(
 fn f_current_indentation(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     // GNU SANE_TAB_WIDTH honors the current dynamic/buffer-local value
     // and falls back to eight for values outside 1..=1000.
-    let tab_width = match i.symbol_value(i.intern_soft("tab-width").unwrap_or(0)) {
+    let tab_width = match i.symbol_value(i.q_soft("tab-width").unwrap_or(0)) {
         Value::Int(width @ 1..=1000) => width,
         _ => 8,
     };
@@ -936,7 +936,7 @@ fn with_narrow<T>(
 }
 
 fn is_key_tag(i: &mut Interp, tag: &Value) -> bool {
-    matches!(tag, Value::Sym(s) if *s == i.intern("key"))
+    matches!(tag, Value::Sym(s) if *s == i.q("key"))
 }
 
 /// The key computation of `sort-build-lists`: call startkeyfun, else take
@@ -964,7 +964,7 @@ fn sort_key(
         *done = true;
     } else {
         // GNU: (funcall nil) -> void-function nil.
-        let sym = i.intern("void-function");
+        let sym = i.q("void-function");
         return Err(i.signal_data(sym, vec![Value::Nil]));
     }
     let kend = pt(i);
@@ -1042,7 +1042,7 @@ fn sort_engine_inner(
     // ---- sort-build-lists (records collected in buffer order) ----
     // GNU wraps key computation in (catch 'key ...); pushing the tag lets
     // Lisp-level `throw' reach us instead of signaling `no-catch'.
-    let ksym = i.intern("key");
+    let ksym = i.q("key");
     i.catch_tags.push(Value::Sym(ksym));
     let mut recs: Vec<SortRec> = Vec::new();
     let mut build = |i: &mut Interp| -> Result<(), Flow> {
@@ -1104,7 +1104,7 @@ fn sort_engine_inner(
         _ => Kind::Str,
     };
     let fold = i
-        .symbol_value(i.intern_soft("sort-fold-case").unwrap_or(0))
+        .symbol_value(i.q_soft("sort-fold-case").unwrap_or(0))
         .truthy();
     let mut sorted = recs.clone();
     let mut sort_err: Option<Flow> = None;
@@ -1249,16 +1249,16 @@ fn f_sort_lines(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_sort_paragraphs(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let reverse = a[0].truthy();
     let (s, e) = beg_end(i, &a, 1, 2)?;
-    let sep = match i.symbol_value(i.intern_soft("paragraph-separate").unwrap_or(0)) {
+    let sep = match i.symbol_value(i.q_soft("paragraph-separate").unwrap_or(0)) {
         Value::Str(s) => s.borrow().clone(),
         _ => "[ \t\x0c]*$".to_string(),
     };
     let fold = i
-        .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
+        .symbol_value(i.q_soft("case-fold-search").unwrap_or(0))
         .truthy();
     let re = crate::lisp::regexp::compile_case(&sep, fold)
         .map_err(|er| err_sym(i, "invalid-regexp", vec![Value::string(er.0)]))?;
-    let fp = Value::Sym(i.intern("forward-paragraph"));
+    let fp = Value::Sym(i.q("forward-paragraph"));
     with_narrow(i, s, e, |i| {
         let mut nr = |i: &mut Interp| {
             loop {
@@ -1310,7 +1310,7 @@ fn f_sort_paragraphs(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_sort_pages(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let reverse = a[0].truthy();
     let (s, e) = beg_end(i, &a, 1, 2)?;
-    let fp = Value::Sym(i.intern("forward-page"));
+    let fp = Value::Sym(i.q("forward-page"));
     with_narrow(i, s, e, |i| {
         let mut nr = |i: &mut Interp| {
             skip_while(i, true, |c| c == '\n');
@@ -1368,7 +1368,7 @@ fn sort_fields_1(i: &mut Interp, field: i128, s: usize, e: usize, numeric: bool)
     // up running sort-skip-fields(0), which lands at the last field.
     // Passing the raw value reproduces that.
     let base_default = i
-        .symbol_value(i.intern_soft("sort-numeric-base").unwrap_or(0))
+        .symbol_value(i.q_soft("sort-numeric-base").unwrap_or(0))
         .int()
         .unwrap_or(10);
     with_narrow(i, s, e, |i| {
@@ -1533,6 +1533,7 @@ fn re_search_fwd(
     bound: Option<usize>,
     move_on_fail: bool,
 ) -> EvalResult {
+    i.save_async_match_data();
     let (text, pos, begv) = {
         let b = cur(i);
         let bb = b.borrow();
@@ -1617,10 +1618,10 @@ fn f_sort_regexp_fields(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     let (s, e) = beg_end(i, &a, 3, 4)?;
     let ambient_fold = i
-        .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
+        .symbol_value(i.q_soft("case-fold-search").unwrap_or(0))
         .truthy();
     let fold = i
-        .symbol_value(i.intern_soft("sort-fold-case").unwrap_or(0))
+        .symbol_value(i.q_soft("sort-fold-case").unwrap_or(0))
         .truthy();
     let record_re0 = crate::lisp::regexp::compile_case(&record_pat, ambient_fold)
         .map_err(|er| err_sym(i, "invalid-regexp", vec![Value::string(er.0)]))?;
@@ -1707,7 +1708,7 @@ fn col_at(i: &Interp, p: usize) -> i128 {
     let b = cur(i);
     let bb = b.borrow();
     let tab_width = i
-        .symbol_value(i.intern_soft("tab-width").unwrap_or(0))
+        .symbol_value(i.q_soft("tab-width").unwrap_or(0))
         .int()
         .unwrap_or(8)
         .max(1);
@@ -1730,7 +1731,7 @@ fn move_to_col(i: &mut Interp, goal: i128) -> EvalResult {
     // `tab-width' is buffer-local: read it before borrow_mut so
     // `symbol_value' can see the local binding.
     let tab_width = i
-        .symbol_value(i.intern_soft("tab-width").unwrap_or(0))
+        .symbol_value(i.q_soft("tab-width").unwrap_or(0))
         .int()
         .unwrap_or(8)
         .max(1);
@@ -1959,7 +1960,7 @@ fn f_how_many(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         s = cur(i).borrow().point.min(e);
     }
     let case_fold = i
-        .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
+        .symbol_value(i.q_soft("case-fold-search").unwrap_or(0))
         .truthy();
     let re = crate::lisp::regexp::compile_case(&pat, case_fold)
         .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
@@ -1997,7 +1998,7 @@ fn delete_lines_matching(i: &mut Interp, a: &[Value], keep_match: bool) -> EvalR
     let pat = want_string(i, &a[0])?;
     let (s, e) = beg_end(i, a, 1, 2)?;
     let case_fold = i
-        .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
+        .symbol_value(i.q_soft("case-fold-search").unwrap_or(0))
         .truthy();
     let re = crate::lisp::regexp::compile_case(&pat, case_fold)
         .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
@@ -2067,7 +2068,7 @@ fn f_replace_regexp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let pat = want_string(i, &a[0])?;
     let to = want_string(i, &a[1])?;
     let case_fold = i
-        .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
+        .symbol_value(i.q_soft("case-fold-search").unwrap_or(0))
         .truthy();
     let re = crate::lisp::regexp::compile_case(&pat, case_fold)
         .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
@@ -2216,11 +2217,11 @@ fn f_replace_regexp_in_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
         v => want_int(i, &v)?.max(0) as usize,
     };
     if start > l {
-        let e = i.intern("args-out-of-range");
+        let e = i.q("args-out-of-range");
         return Err(i.signal_data(e, vec![Value::string(s.clone()), Value::Int(start as i128)]));
     }
     let case_fold = i
-        .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
+        .symbol_value(i.q_soft("case-fold-search").unwrap_or(0))
         .truthy();
     let re = crate::lisp::regexp::compile_case(&pat, case_fold)
         .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
@@ -2402,7 +2403,7 @@ fn f_subst_char_in_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Int(n) if (0..=0x3fffff).contains(n) => *n as u32,
         other => return Err(i.wrong_type_mut("characterp", other)),
     };
-    let multi_symbol = i.intern("enable-multibyte-characters");
+    let multi_symbol = i.q("enable-multibyte-characters");
     let multibyte = i.symbol_value(multi_symbol).truthy();
     let character = |code: u32| {
         let code = if multibyte {
@@ -2434,8 +2435,8 @@ fn f_subst_char_in_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let depth = i.specbind_depth();
     let result = (|| {
         if no_undo {
-            let undo = i.intern("buffer-undo-list");
-            let filename = i.intern("buffer-file-name");
+            let undo = i.q("buffer-undo-list");
+            let filename = i.q("buffer-file-name");
             i.specbind(undo, Value::t())?;
             i.specbind(filename, Value::Nil)?;
         }
@@ -2648,7 +2649,7 @@ fn f_translate_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // `translate-region-internal'.
     let mut table = a[2].clone();
     if let Value::Sym(sid) = &table {
-        let tpid = i.intern("translation-table");
+        let tpid = i.q("translation-table");
         let p = i.get_prop(*sid, tpid);
         // GNU: (or (char-table-p val) (error "Invalid translation table
         // name: %s" table)).
@@ -2667,7 +2668,7 @@ fn f_translate_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// (([FROM-CHAR ...] . TO) ...) built by nconc'ing new entries.
 fn f_make_translation_table_from_alist(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let items = a[0].list_to_vec().unwrap_or_default();
-    let tag = Value::Sym(i.intern("translation-table"));
+    let tag = Value::Sym(i.q("translation-table"));
     let forward =
         crate::lisp::builtins::misc::make_ct(i, tag.clone(), Value::Nil, vec![Value::Nil; 2]);
     let reverse = crate::lisp::builtins::misc::make_ct(i, tag, Value::Nil, vec![Value::Nil; 2]);
@@ -2807,7 +2808,7 @@ fn f_buffer_swap_text(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     mine.locals.insert(undo_sym, tu);
     theirs.locals.insert(undo_sym, mu);
     std::mem::swap(&mut mine.mark, &mut theirs.mark);
-    let ma = i.intern("mark-active");
+    let ma = i.q("mark-active");
     let (mm_a, tm_a) = (
         mine.locals.shift_remove(&ma),
         theirs.locals.shift_remove(&ma),
@@ -2906,6 +2907,7 @@ fn f_buffer_chars_mod_tick(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_store_match_data(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    i.save_async_match_data();
     // Same as set-match-data plus reseat markers (we use plain ints).
     let items = a[0].list_to_vec().unwrap_or_default();
     let mut regs = Vec::new();
@@ -2966,8 +2968,8 @@ fn find_field(
     if pos < begv || pos > zv {
         return Err(err_sym(i, "args-out-of-range", vec![Value::Int(pos)]));
     }
-    let field_sym = i.intern("field");
-    let boundary_sym = i.intern("boundary");
+    let field_sym = i.q("field");
+    let boundary_sym = i.q("boundary");
     let gcp = |i: &mut Interp, p: i128| -> Value {
         if p < begv || p > zv {
             return Value::Nil;
@@ -3200,7 +3202,7 @@ fn f_constrain_to_field(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let merge = arg(&a, 2).truthy();
     let only_in_line = arg(&a, 3).truthy();
     let inhibit_prop = a.get(4).cloned().unwrap_or(Value::Nil);
-    let field_sym = i.intern("field");
+    let field_sym = i.q("field");
     let begv = cur(i).borrow().begv as i128 + 1;
     let zv = cur(i).borrow().zv as i128 + 1;
     // GNU calls Fget_char_property at each position — an out-of-range
@@ -3680,7 +3682,7 @@ fn f_move_point_visually(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     let pos = Value::Int(pt);
     drop(bb);
-    let sym = i.intern("args-out-of-range");
+    let sym = i.q("args-out-of-range");
     Err(i.signal_data(sym, vec![pos.clone(), pos]))
 }
 
@@ -3705,7 +3707,7 @@ pub(super) fn region_text(i: &mut Interp, a: &[Value]) -> Result<(usize, usize, 
                 _ => Err(i.wrong_type_mut("integer-or-marker-p", v)),
             },
             None => {
-                let sym = i.intern("wrong-number-of-arguments");
+                let sym = i.q("wrong-number-of-arguments");
                 Err(i.signal_data(sym, Vec::new()))
             }
         }

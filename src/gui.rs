@@ -491,7 +491,7 @@ fn start_logic_with_dump(
                 ) {
                     Ok(interpreter) => interpreter,
                     Err(crate::lisp::dump::LoadError::Exit(code)) => {
-                        std::process::exit(code as i32)
+                        crate::lifecycle::exit(code)
                     }
                     Err(error) => {
                         let _ = startup_tx.send(Err(error.to_string()));

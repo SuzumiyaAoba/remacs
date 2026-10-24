@@ -226,7 +226,7 @@ impl SqlError {
 }
 
 fn sqlite_err(i: &mut Interp, data: crate::lisp::Argv) -> Flow {
-    let se = i.intern("sqlite-error");
+    let se = i.q("sqlite-error");
     i.signal_data(se, data.as_slice().to_vec())
 }
 
@@ -246,7 +246,7 @@ fn sql_err(i: &mut Interp, e: SqlError, execute: bool) -> Flow {
     // GNU uses the locked subtype only in sqlite-execute. Select preparation
     // and sqlite-next always signal sqlite-error, even for BUSY/LOCKED.
     if execute && matches!(e.code, ffi::SQLITE_LOCKED | ffi::SQLITE_BUSY) {
-        let le = i.intern("sqlite-locked-error");
+        let le = i.q("sqlite-locked-error");
         i.signal_data(le, vec![data])
     } else {
         sqlite_err(i, vec![data].into())
@@ -272,7 +272,7 @@ fn handle(v: &Value, i: &mut Interp) -> Option<Handle> {
         [Value::Sym(tag), Value::Sym(kind), Value::Int(id)] => (*tag, *kind, *id),
         _ => return None,
     };
-    if tag != i.intern("sqlite") {
+    if tag != i.q("sqlite") {
         return None;
     }
     let id = u64::try_from(id).ok()?;
@@ -350,16 +350,16 @@ fn with_set<R>(
 
 fn make_db_record(i: &mut Interp, id: u64) -> Rc<RefCell<Vec<Value>>> {
     crate::lisp::Value::vector_ref(vec![
-        Value::Sym(i.intern("sqlite")),
-        Value::Sym(i.intern("db")),
+        Value::Sym(i.q("sqlite")),
+        Value::Sym(i.q("db")),
         Value::Int(id as i128),
     ])
 }
 
 fn make_set_record(i: &mut Interp, id: u64) -> Rc<RefCell<Vec<Value>>> {
     crate::lisp::Value::vector_ref(vec![
-        Value::Sym(i.intern("sqlite")),
-        Value::Sym(i.intern("set")),
+        Value::Sym(i.q("sqlite")),
+        Value::Sym(i.q("set")),
         Value::Int(id as i128),
     ])
 }
@@ -405,7 +405,7 @@ fn bind_args(i: &mut Interp, v: &Value) -> Result<Vec<SVal>, Flow> {
 // Invalid octets remain eight-bit characters; TEXT is always multibyte.
 fn text_to_value(i: &mut Interp, bytes: &[u8]) -> Value {
     let mut text = super::coding_legacy::internal_decode(bytes);
-    let inhibit = i.intern("inhibit-eol-conversion");
+    let inhibit = i.q("inhibit-eol-conversion");
     if !i.symbol_value(inhibit).truthy() && bytes.contains(&b'\r') {
         // GNU detects DOS from the first LF, even after an earlier lone CR.
         // With no LF, CR selects Mac line endings.
@@ -724,15 +724,15 @@ pub(crate) fn f_sqlitep(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// Called once from `builtins::install': give `sqlite-error' a real
 /// error-conditions property so `condition-case ... (error ...)' catches it.
 pub(crate) fn install(i: &mut Interp) {
-    let ec = i.intern("error-conditions");
-    let em = i.intern("error-message");
-    let se = i.intern("sqlite-error");
-    let conds = Value::list(vec![Value::Sym(se), Value::Sym(i.intern("error"))]);
+    let ec = i.q("error-conditions");
+    let em = i.q("error-message");
+    let se = i.q("sqlite-error");
+    let conds = Value::list(vec![Value::Sym(se), Value::Sym(i.q("error"))]);
     i.put_prop(se, ec, conds);
     i.put_prop(se, em, Value::string("SQLite error"));
     // `sqlite-locked-error' is a subcase of `sqlite-error' in GNU.
-    let le = i.intern("sqlite-locked-error");
-    let err = i.intern("error");
+    let le = i.q("sqlite-locked-error");
+    let err = i.q("error");
     i.put_prop(
         le,
         ec,

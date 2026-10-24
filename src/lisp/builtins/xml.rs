@@ -63,7 +63,7 @@ fn region_text(i: &mut Interp, a: &[Value]) -> Result<String, Flow> {
     let s = coerce(i, &arg(a, 0), lo_pos)?;
     let e = coerce(i, &arg(a, 1), hi_pos)?;
     if s.min(e) < lo_pos || s.max(e) > hi_pos {
-        let sym = i.intern("args-out-of-range");
+        let sym = i.q("args-out-of-range");
         let or_int = |v: Value, n: i128| {
             if matches!(v, Value::Nil) {
                 Value::Int(n)
@@ -424,7 +424,7 @@ fn html_node(
         }
         NodeData::Comment { contents } => {
             out.push(Value::list(vec![
-                Value::Sym(i.intern("comment")),
+                Value::Sym(i.q("comment")),
                 Value::Nil,
                 Value::string(contents.to_string()),
             ]));
@@ -462,7 +462,7 @@ fn parse_html(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
     match out.as_slice() {
         [single] => single.clone(),
         _ => {
-            let mut top = vec![Value::Sym(i.intern("top")), Value::Nil];
+            let mut top = vec![Value::Sym(i.q("top")), Value::Nil];
             top.extend(out);
             Value::list(top)
         }
@@ -777,7 +777,7 @@ fn parse_xml(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
                     push_node(
                         stack.last_mut().unwrap(),
                         Value::list(vec![
-                            Value::Sym(i.intern("comment")),
+                            Value::Sym(i.q("comment")),
                             Value::Nil,
                             Value::string(t),
                         ]),
@@ -817,7 +817,7 @@ fn parse_xml(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
     match out.as_slice() {
         [single] => single.clone(),
         _ => {
-            let mut top = vec![Value::Sym(i.intern("top")), Value::Nil];
+            let mut top = vec![Value::Sym(i.q("top")), Value::Nil];
             top.extend(out);
             Value::list(top)
         }

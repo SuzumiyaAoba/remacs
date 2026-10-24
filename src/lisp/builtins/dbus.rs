@@ -761,7 +761,7 @@ fn extract_signed(i: &mut Interp, v: &Value, lo: i64, hi: i64) -> Result<i64, Fl
             .map(|n| n as i64)
     };
     value.ok_or_else(|| {
-        let condition = i.intern("args-out-of-range");
+        let condition = i.q("args-out-of-range");
         i.signal_data(
             condition,
             vec![
@@ -783,7 +783,7 @@ fn extract_unsigned(i: &mut Interp, v: &Value, hi: u64) -> Result<u64, Flow> {
             .map(|n| n as u64)
     };
     value.ok_or_else(|| {
-        let condition = i.intern("args-out-of-range");
+        let condition = i.q("args-out-of-range");
         i.signal_data(
             condition,
             vec![v.clone(), Value::Int(0), Value::integer(hi as i128)],
@@ -1935,7 +1935,7 @@ pub fn drain(i: &mut Interp) -> EvalResult {
             // GNU: internal_catch (Qdbus_error, ...) — only D-Bus
             // errors are swallowed; everything else propagates.
             match f {
-                Flow::Signal(ref sig, _, _) if matches!(sig, Value::Sym(s) if *s == dbe) => {}
+                Flow::Signal(ref signal) if signal.is_symbol(dbe) => {}
                 _ => return Err(f),
             }
         }
@@ -2098,16 +2098,16 @@ mod tests {
                 // Untagged bignums are not guessed to be a 32-bit D-Bus type.
                 assert_eq!(object_to_dbus_type(&mut i, &maximum), DBUS_TYPE_INVALID);
                 let too_large = Value::from_bigint(num_bigint::BigInt::from(1) << 130usize);
-                let Err(Flow::Signal(condition, data, _)) =
+                let Err(Flow::Signal(signal)) =
                     extract_unsigned(&mut i, &too_large, u64::MAX)
                 else {
                     panic!("large unsigned integer must signal a range error");
                 };
                 assert_eq!(
-                    i.symbol_name(i.sym_id(&condition).unwrap()),
+                    i.symbol_name(i.sym_id(&signal.symbol()).unwrap()),
                     "args-out-of-range"
                 );
-                let data = data.list_to_vec().unwrap();
+                let data = signal.data().list_to_vec().unwrap();
                 assert!(crate::lisp::builtins::eql_values(&data[0], &too_large));
                 assert_eq!(
                     data[2].as_bigint().unwrap(),

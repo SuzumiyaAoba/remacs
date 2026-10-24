@@ -878,10 +878,7 @@ impl ListCycle {
         self.q = self.q.wrapping_sub(1);
         if self.q == 0 {
             // GNU checks for quit whenever the low counter expires.
-            if i.quit_flag {
-                i.quit_flag = false;
-                return Err(Flow::Quit);
-            }
+            i.maybe_quit()?;
             self.n -= 1;
             if self.n <= 0 {
                 self.max = self.max.saturating_mul(2);
@@ -1562,7 +1559,7 @@ fn plist_put(i: &mut Interp, args: crate::lisp::Argv, lax: bool) -> EvalResult {
     // Malformed plists signal `plistp' on the WHOLE argument; a 4th
     // arg is a comparison predicate (subr-x `plist-put').
     let pred: Option<Value> = if lax {
-        Some(Value::Sym(i.intern("equal")))
+        Some(Value::Sym(i.q("equal")))
     } else {
         args.get(3).cloned().filter(|p| p.truthy())
     };
@@ -1725,8 +1722,8 @@ fn f_apply_partially(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let consts = vec![
         Value::list(fixed),
         fun,
-        Value::Sym(i.intern("apply")),
-        Value::Sym(i.intern("append")),
+        Value::Sym(i.q("apply")),
+        Value::Sym(i.q("append")),
     ];
     // argdesc for `(&rest ARGS2)' = 128 (req=0, rest bit, max=0).
     // Byte program (remacs opcode set): push consts[2] (apply), consts[1]
@@ -1744,7 +1741,7 @@ fn f_apply_partially(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     if let Value::Str(r) = &byte_str_s {
         i.mark_unibyte(r);
     }
-    let r_sym = i.intern("--apply-partially-args");
+    let r_sym = i.q("--apply-partially-args");
     let lam = crate::lisp::value::Lambda {
         is_macro: false,
         required: Vec::new(),

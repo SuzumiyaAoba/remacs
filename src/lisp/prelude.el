@@ -10441,9 +10441,24 @@ This is the first translation applied to input events.")
   "Keymap of bindings for events that should be handled at a low level.")
 
 ;; GNU's keyboard.c `initial_define_lispy_key' defaults.
+(define-key special-event-map [delete-frame] 'handle-delete-frame)
+(define-key special-event-map [iconify-frame] 'ignore)
+(define-key special-event-map [make-frame-visible] 'ignore)
+(define-key special-event-map [save-session] 'handle-save-session)
+(define-key special-event-map [thread-event] 'thread-handle-event)
 (define-key special-event-map [file-notify] 'file-notify-handle-event)
 (define-key special-event-map [dbus-event] 'dbus-handle-event)
 (define-key special-event-map [config-changed-event] 'ignore)
+(define-key special-event-map [focus-in] 'handle-focus-in)
+(define-key special-event-map [focus-out] 'handle-focus-out)
+(define-key special-event-map [move-frame] 'handle-move-frame)
+(define-key special-event-map [sleep-event] 'ignore)
+(when (featurep 'ns)
+  (define-key special-event-map [ns-put-working-text] 'ns-put-working-text)
+  (define-key special-event-map [ns-unput-working-text] 'ns-unput-working-text))
+;; GNU bindings.el's signal handlers.
+(define-key special-event-map [sigusr1] 'ignore)
+(define-key special-event-map [sigusr2] 'ignore)
 
 (defvar local-function-key-map
   (let ((map (make-sparse-keymap)))
@@ -15743,6 +15758,21 @@ More precisely, a char with closeparen syntax is self-inserted.")
           ;; `sit-for'. That's also the reason it get a `priority' prop
           ;; of 100.
           'append)
+
+;Remacs: GNU bindings.el's minibuffer bindings precede minibuffer.el setup.
+(let ((map minibuffer-local-map))
+  (define-key map "\en" 'next-history-element)
+  (define-key map [next] 'next-history-element)
+  (define-key map [down] 'next-line-or-history-element)
+  (define-key map [XF86Forward] 'next-history-element)
+  (define-key map "\ep" 'previous-history-element)
+  (define-key map [prior] 'previous-history-element)
+  (define-key map [up] 'previous-line-or-history-element)
+  (define-key map [XF86Back] 'previous-history-element)
+  (define-key map "\es" 'next-matching-history-element)
+  (define-key map "\er" 'previous-matching-history-element)
+  (define-key map "\t" 'self-insert-command)
+  (define-key map [C-tab] 'file-cache-minibuffer-complete))
 
 ;; GNU minibuffer.el installs these bindings on `minibuffer-local-map'
 ;; at load (RET last so \\[exit-minibuffer] prefers it over C-j).

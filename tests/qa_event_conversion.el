@@ -82,4 +82,12 @@
 (qa (let ((cycle (copy-sequence '(meta shift))))
       (setcdr (last cycle) cycle)
       (condition-case e (event-convert-list cycle) (error e))) 'M-S-nil)
+(qa (mapcar (lambda (name)
+              (let ((event (make-symbol name)) (map (make-sparse-keymap)))
+                (define-key map (vector event) 'ignore)
+                (get event 'event-symbol-element-mask)))
+            '("C-M-qa-mod-mask" "M-C-qa-mod-mask" "A-C-H-M-S-s-qa-mod-mask"
+              "S-qa-mod-mask" "double-down-mouse-1" "mouse-1"))
+    '((qa-mod-mask 201326592) (qa-mod-mask 201326592) (qa-mod-mask 264241152)
+      (qa-mod-mask 33554432) (mouse-1 18) (mouse-1 8)))
 (princ (qa--done))

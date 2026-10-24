@@ -52,6 +52,13 @@
           '(8 nil))
       (qa (funcall (qa185-compile
                     '(lambda (x) (let* (x (y x)) (list x y)))) 7) '(nil nil))
+      (qa (funcall (qa185-compile
+                    '(lambda (x) (let ((x (1+ x)) y) (list x y)))) 7)
+          '(8 nil))
+      (qa (funcall (qa185-compile '(lambda () (let (y) y)))) nil)
+      (qa (funcall (qa185-compile '(lambda () (let* (y) y)))) nil)
+      (qa (funcall (qa185-compile '(lambda () (let* (y) 'constant))))
+          'constant)
       (qa (funcall (qa185-compile '(lambda (x) (let* () x))) 7) 7)
       (qa (funcall (qa185-compile '(lambda (x) (let* ((x (1+ x)))))) 7) nil)
 

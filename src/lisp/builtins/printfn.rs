@@ -127,7 +127,7 @@ fn with_print_overrides(
     let mark = i.specbind_depth();
     let result = (|| {
         if string_output {
-            let hooks = i.intern("inhibit-modification-hooks");
+            let hooks = i.q("inhibit-modification-hooks");
             i.specbind(hooks, Value::t())?;
         }
         if !overrides.is_nil() {
@@ -193,7 +193,7 @@ fn f_prin1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // override watchers run, but validates that destination afterwards.
     let output = arg(&args, 1);
     let output = if output.is_nil() {
-        let standard = i.intern("standard-output");
+        let standard = i.q("standard-output");
         let value = i.symbol_value(standard);
         if value.is_nil() { Value::t() } else { value }
     } else {

@@ -76,9 +76,16 @@ impl Runtime {
     }
     pub fn capture(i: &Interp, e: &mut Encoder<'_>) -> Result<Self> {
         let mut saved = Self(BTreeMap::new());
+        saved.put("fixed_symbols", i.fixed_symbols.iter()
+            .map(|(name, symbol)| Ok((name.clone(), e.symbol(*symbol)?)))
+            .collect::<Result<Vec<_>>>()?)?;
+        saved.put("native_lisp_literals", i.native_lisp_literals.iter()
+            .map(|(key, value)| Ok((key.clone(), e.value(value)?)))
+            .collect::<Result<Vec<_>>>()?)?;
         macro_rules! scalar { ($($field:ident),* $(,)?) => { $(saved.put(stringify!($field), &i.$field)?;)* }; }
         scalar!(
             max_lisp_eval_depth,
+            native_trampolines,
             next_frame_name,
             tz_rule,
             charset_aliases,
@@ -286,9 +293,24 @@ impl Runtime {
     }
 
     pub fn restore(&self, i: &mut Interp, d: &mut Decoder<'_>) -> Result<()> {
+        if self.0.contains_key("fixed_symbols") {
+            let symbols: Vec<(String, Ref)> = self.get("fixed_symbols")?;
+            i.fixed_symbols = symbols.into_iter()
+                .map(|(name, reference)| Ok((name, d.symbol(&reference)?)))
+                .collect::<Result<_>>()?;
+        }
+        i.native_lisp_literals.clear();
+        if self.0.contains_key("native_lisp_literals") {
+            let literals: Vec<(String, Ref)> = self.get("native_lisp_literals")?;
+            for (key, reference) in literals {
+                let value = d.value(i, &reference)?;
+                i.native_lisp_literals.insert(key, value);
+            }
+        }
         macro_rules! scalar { ($($field:ident),* $(,)?) => { $(i.$field = self.get(stringify!($field))?;)* }; }
         scalar!(
             max_lisp_eval_depth,
+            native_trampolines,
             next_frame_name,
             tz_rule,
             charset_aliases,
@@ -418,6 +440,10 @@ impl Runtime {
             .into_iter()
             .map(|(k, v)| Ok((d.value(i, &k)?, d.value(i, &v)?)))
             .collect::<Result<_>>()?;
+        // Asynchronous callbacks are execution state, never resumed by an image.
+        i.running_asynch_code = false;
+        i.saved_async_match_data = None;
+        i.signaling_function = Value::Nil;
         i.match_data = self
             .get::<Option<(Vec<Option<usize>>, bool, usize, Option<Ref>)>>("match_data")?
             .map(|(regs, in_buffer, base, buffer)| -> Result<MatchData> {

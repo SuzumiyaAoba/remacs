@@ -20,7 +20,7 @@ pub(crate) static SUBRS: &[Subr] = &[
 
 pub(crate) fn default_read_source(i: &mut Interp, source: Value) -> Value {
     if source.is_nil() {
-        let input = i.intern("standard-input");
+        let input = i.q("standard-input");
         i.symbol_value(input)
     } else {
         source
@@ -38,13 +38,15 @@ pub(crate) fn read_parser_at(
     position: usize,
     annotate_pos: Option<i128>,
     from_buffer: bool,
+    multibyte: bool,
 ) -> (Result<Option<Value>, Flow>, usize) {
     let enabled = super::misc::sympos_enabled_p(i);
-    let invalid_syntax = i.intern("invalid-read-syntax");
+    let invalid_syntax = i.q("invalid-read-syntax");
     let (result, mut end) = {
         let mut reader = crate::lisp::reader::Reader::with_chars(i, chars.clone());
         reader.set_position(position);
         reader.from_buffer = from_buffer;
+        reader.source_multibyte = multibyte;
         reader.sympos_enabled = enabled;
         reader.annotate_pos = annotate_pos;
         let result = reader.read();
@@ -52,10 +54,10 @@ pub(crate) fn read_parser_at(
     };
     // Diagnostic positions identify a consumed delimiter/hash token.
     // A consuming stream advances past it even when parsing signals.
-    if let Err(Flow::Signal(Value::Sym(symbol), data, _)) = &result {
-        if *symbol == invalid_syntax {
+    if let Err(Flow::Signal(signal)) = &result {
+        if signal.is_symbol(invalid_syntax) {
             if let Some(Value::Str(message)) =
-                data.list_to_vec().ok().and_then(|v| v.first().cloned())
+                signal.data().list_to_vec().ok().and_then(|v| v.first().cloned())
             {
                 let message = message.borrow();
                 if (message.as_str() == ")" && matches!(chars.get(end), Some(')' | ']')))
@@ -81,11 +83,10 @@ pub(crate) fn finish_stream_read(
     match result {
         Ok(Some(value)) => Ok(value),
         Ok(None) => Err(i.signal_data(sym::END_OF_FILE, eof_context.into_iter().collect())),
-        Err(Flow::Signal(Value::Sym(sym::END_OF_FILE), _, flags)) => Err(Flow::Signal(
-            Value::Sym(sym::END_OF_FILE),
-            Value::list(eof_context.into_iter().collect()),
-            flags,
-        )),
+        Err(Flow::Signal(mut signal)) if signal.is_symbol(sym::END_OF_FILE) => {
+            signal.set_data(Value::list(eof_context.into_iter().collect()));
+            Err(Flow::Signal(signal))
+        }
         Err(error) => Err(error),
     }
 }
@@ -102,6 +103,7 @@ pub(crate) fn read_buffer_stream(i: &mut Interp, source: &Value, positioning: bo
         }
         _ => unreachable!("buffer or marker stream"),
     };
+    let multibyte = buffer_source_multibyte(i, &buffer);
     let (chars, position) = {
         let buffer = buffer.borrow();
         (
@@ -129,6 +131,7 @@ pub(crate) fn read_buffer_stream(i: &mut Interp, source: &Value, positioning: bo
         position,
         positioning.then_some(base),
         marker.is_none(),
+        multibyte,
     );
     if let Some(marker) = marker {
         marker.borrow_mut().position = end;
@@ -153,26 +156,36 @@ pub(crate) fn read_load_stream(i: &mut Interp, positioning: bool) -> EvalResult 
         position,
         positioning.then_some(-(position as i128)),
         false,
+        true,
     );
     stream.borrow_mut().position = end;
-    let filename = i.intern("load-true-file-name");
+    let filename = i.q("load-true-file-name");
     let context = i.symbol_value(filename);
     finish_stream_read(i, result, Some(context))
 }
 
 fn f_read(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let source = default_read_source(i, super::arg(&args, 0));
+    read_source(i, super::arg(&args, 0), false)
+}
+
+pub(crate) fn read_source(i: &mut Interp, source: Value, positioning: bool) -> EvalResult {
+    let source = default_read_source(i, source);
+    let read_char = i.q("read-char");
+    if matches!(source, Value::Sym(symbol) if symbol == sym::T || symbol == read_char) {
+        let reader = Value::Sym(i.q("read-minibuffer"));
+        return i.apply(&reader, vec![Value::string("Lisp expression: ")]);
+    }
     if is_load_stream(i, &source) {
-        return read_load_stream(i, false);
+        return read_load_stream(i, positioning);
     }
     match &source {
-        Value::Nil | Value::Sym(sym::T) => Err(i.error("read: stdin not supported")),
         Value::Str(s) => {
             let src = s.borrow().clone();
-            let (v, _) = i.read_from_string(&src, 0)?;
+            let multibyte = super::strfn::string_multibyte_p(i, &source);
+            let (v, _) = i.read_from_string_kind(&src, 0, positioning.then_some(0), multibyte)?;
             Ok(v)
         }
-        Value::Buffer(_) | Value::Marker(_) => read_buffer_stream(i, &source, false),
+        Value::Buffer(_) | Value::Marker(_) => read_buffer_stream(i, &source, positioning),
         other => {
             // GNU Fread: any other STREAM is FUNCALLed to produce
             // chars — non-functions surface `invalid-function'.
@@ -180,6 +193,7 @@ fn f_read(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             let result = {
                 let mut reader = crate::lisp::reader::Reader::with_function(i, other.clone());
                 reader.sympos_enabled = sympos_enabled;
+                reader.annotate_pos = positioning.then_some(0);
                 reader.read()
             };
             match result {
@@ -193,6 +207,7 @@ fn f_read(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_read_from_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    let multibyte = super::strfn::string_multibyte_p(i, &args[0]);
     let src = match &args[0] {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
@@ -221,7 +236,7 @@ fn f_read_from_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         e += len;
     }
     if s < 0 || s > len || e < s || e > len {
-        let eid = i.intern("args-out-of-range");
+        let eid = i.q("args-out-of-range");
         return Err(i.signal_data(
             eid,
             vec![
@@ -233,6 +248,12 @@ fn f_read_from_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     let (start, end) = (s, e);
     let sub: String = chars[start as usize..end as usize].iter().collect();
-    let (v, pos) = i.read_from_string(&sub, 0)?;
+    let (v, pos) = i.read_from_string_kind(&sub, 0, None, multibyte)?;
     Ok(Value::cons(v, Value::Int(start + pos as i128)))
+}
+
+pub(crate) fn buffer_source_multibyte(i: &mut Interp, buffer: &crate::lisp::value::BufferRef) -> bool {
+    let variable = i.q("enable-multibyte-characters");
+    buffer.borrow().locals.get(&variable)
+        .unwrap_or(&i.obarray.symbol(variable).value).truthy()
 }

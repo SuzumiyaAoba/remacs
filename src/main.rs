@@ -40,6 +40,7 @@ For diagnostics, --ieval EXPR evaluates forms and locates an evaluation error.
 "#;
 
 fn main() {
+    remacs::lifecycle::initialize();
     let args: Vec<String> = std::env::args().skip(1).collect();
     // GNU sets its `noninteractive' flag during main()'s argv scan —
     // before the interpreter is initialized — so init-time code like
@@ -71,9 +72,10 @@ fn main() {
     });
     if headless {
         run_headless(move || real_main(args));
-        return;
+        remacs::lifecycle::exit(0);
     }
     real_main(args);
+    remacs::lifecycle::exit(0);
 }
 
 fn run_headless(run: impl FnOnce() + Send + 'static) {
@@ -133,7 +135,7 @@ mod headless_tests {
 fn real_main(args: Vec<String>) {
     // GNU prints the version without booting the interpreter.
     if cli::options(&args).any(|a| a == "--version") {
-        println!("remacs 0.1 (Emacs-compatible editor in Rust)");
+        remacs::stdio::write(b"remacs 0.1 (Emacs-compatible editor in Rust)\n");
         return;
     }
     // Version has GNU's priority; help still respects explicit/sidecar image
@@ -143,7 +145,7 @@ fn real_main(args: Vec<String>) {
         Ok(values) => values,
         Err(error) => {
             eprintln!("remacs: {error}");
-            std::process::exit(255);
+            remacs::lifecycle::exit(255);
         }
     };
     let dump_file = dump_file.or_else(|| {
@@ -154,7 +156,7 @@ fn real_main(args: Vec<String>) {
             .map(|p| p.to_string_lossy().into_owned())
     });
     if help_requested && dump_file.is_none() {
-        print!("{HELP}");
+        remacs::stdio::write(HELP.as_bytes());
         return;
     }
 
@@ -184,7 +186,7 @@ fn real_main(args: Vec<String>) {
             Ok(()) => {}
             Err(e) => {
                 eprintln!("remacs: gui error: {}", e);
-                std::process::exit(1);
+                remacs::lifecycle::exit(1);
             }
         };
     }
@@ -195,16 +197,16 @@ fn real_main(args: Vec<String>) {
             match remacs::lisp::dump::load_with_arguments(std::path::Path::new(&path), Some(&args))
             {
                 Ok(interpreter) => interpreter,
-                Err(remacs::lisp::dump::LoadError::Exit(code)) => std::process::exit(code as i32),
+                Err(remacs::lisp::dump::LoadError::Exit(code)) => remacs::lifecycle::exit(code),
                 Err(error) => {
                     eprintln!("remacs: {error}");
-                    std::process::exit(255);
+                    remacs::lifecycle::exit(255);
                 }
             }
         }
     };
     if help_requested {
-        print!("{HELP}");
+        remacs::stdio::write(HELP.as_bytes());
         return;
     }
 
@@ -219,7 +221,7 @@ fn real_main(args: Vec<String>) {
         Ok(()) => {}
         Err(e) => {
             eprintln!("remacs: terminal error: {}", e);
-            std::process::exit(1);
+            remacs::lifecycle::exit(1);
         }
     }
 }

@@ -41,7 +41,7 @@ fn ev_in(i: &mut Interp, src: &str) -> Value {
 fn ev_err_in(i: &mut Interp, src: &str) -> String {
     match i.eval_str(src) {
         Ok(v) => panic!("expected error, got {}", i.prin1_to_string(&v)),
-        Err(Flow::Signal(sym, _, _)) => match &sym {
+        Err(Flow::Signal(signal)) => match &signal.symbol() {
             Value::Sym(id) => i.symbol_name(*id),
             _ => "?".into(),
         },
@@ -517,14 +517,19 @@ fn read_key_sequence_paths() {
         canned(&mut i, vec![MinibufInput::Key(97)]);
         let v = ev_in(&mut i, "(read-key-sequence \"K: \")");
         assert_eq!(i.prin1_to_string(&v), "\"a\"");
-        // Meta char ≥128 → vector.
+        // GNU make_event_array packs ASCII plus Meta in a unibyte string.
         canned(&mut i, vec![MinibufInput::Key(0x800_0061)]);
         let v = ev_in(&mut i, "(read-key-sequence \"K: \")");
-        assert!(i.prin1_to_string(&v).starts_with('['));
+        let list = Value::Sym(i.intern("string-to-list"));
+        let characters = i.apply(&list, vec![v.clone()]).unwrap();
+        assert_eq!(i.prin1_to_string(&characters), "(225)");
+        let multibyte = Value::Sym(i.intern("multibyte-string-p"));
+        assert!(i.apply(&multibyte, vec![v]).unwrap().is_nil());
         // Vector variant returns a vector.
+        canned(&mut i, vec![MinibufInput::Key(97)]);
         let v = ev_in(&mut i, "(read-key-sequence-vector \"K: \")");
-        assert!(i.prin1_to_string(&v).starts_with('['));
-        // Batch (no reader): GNU signals end-of-file reading stdin.
+        assert_eq!(i.prin1_to_string(&v), "[97]");
+        // An interactive embedding without a front end reports no input source.
         let (mut j, _) = interp();
         assert_eq!(
             ev_err_in(&mut j, "(read-key-sequence \"K: \")"),

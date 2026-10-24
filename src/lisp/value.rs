@@ -528,6 +528,77 @@ pub fn surrogate_code(c: char) -> Option<u32> {
         .then(|| 0xD800 + (u - SURROGATE_BASE))
 }
 
+/// alloc.c's make_string: use multibyte storage only when every byte belongs
+/// to a valid canonical Emacs UTF-8 sequence, including surrogates and Mule.
+/// A single invalid byte makes the entire input unibyte.
+pub(crate) fn auto_string_bytes(bytes: &[u8]) -> (String, bool) {
+    let unibyte = || (bytes.iter().map(|&byte| char::from(byte)).collect(), false);
+    let mut text = String::new();
+    let mut at = 0;
+    let mut multibyte = false;
+    while at < bytes.len() {
+        let first = bytes[at];
+        let length = match first {
+            0..=127 => 1,
+            0xc2..=0xdf => 2,
+            0xe0..=0xef => 3,
+            0xf0..=0xf7 => 4,
+            0xf8 => 5,
+            _ => return unibyte(),
+        };
+        if at + length > bytes.len() || bytes[at + 1..at + length].iter().any(|b| b & 0xc0 != 0x80) {
+            return unibyte();
+        }
+        let mut code = u32::from(first & [0, 127, 31, 15, 7, 3][length]);
+        for &byte in &bytes[at + 1..at + length] {
+            code = (code << 6) | u32::from(byte & 63);
+        }
+        if code < [0, 0, 0x80, 0x800, 0x10000, 0x200000][length] || code >= 0x3fff80 {
+            return unibyte();
+        }
+        text.push(lisp_char(code).unwrap_or_else(|| mule_seq_char(code)));
+        multibyte |= length > 1;
+        at += length;
+    }
+    (text, multibyte)
+}
+
+/// Decode stored Emacs multibyte characters, including byte8, surrogates
+/// and five-byte Mule characters. Invalid octets retain byte8 identity.
+pub(crate) fn emacs_string_bytes(bytes: &[u8]) -> String {
+    let mut result = String::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        let first = bytes[at];
+        let length = match first {
+            0..=127 => 1,
+            0xc0..=0xdf => 2,
+            0xe0..=0xef => 3,
+            0xf0..=0xf7 => 4,
+            0xf8 => 5,
+            _ => 0,
+        };
+        if length == 0 || at + length > bytes.len()
+            || bytes[at + 1..at + length].iter().any(|b| b & 0xc0 != 0x80)
+        {
+            result.push(lisp_char(0x3fff00 + first as u32).unwrap());
+            at += 1;
+            continue;
+        }
+        let mut code = u32::from(first & [0, 127, 31, 15, 7, 3][length]);
+        for byte in &bytes[at + 1..at + length] { code = (code << 6) | u32::from(byte & 63); }
+        if first < 0xc2 && length == 2 { code += 0x3fff80; }
+        if code > 0x3fffff {
+            result.push(lisp_char(0x3fff00 + first as u32).unwrap());
+            at += 1;
+            continue;
+        }
+        result.push(lisp_char(code).unwrap_or_else(|| mule_seq_char(code)));
+        at += length;
+    }
+    result
+}
+
 /// The GNU char code a string char stands for (proxies return their
 /// real code: 0x3FFFxx for eight-bit, 0xD8xx..0xDFxx for surrogates,
 /// 0x110000..=0x3FFF7F for mule-seq proxies).
@@ -726,6 +797,10 @@ impl Value {
 
     pub fn string(s: impl Into<String>) -> Value {
         Value::Str(Self::string_ref(s))
+    }
+
+    pub(crate) fn is_empty_string(&self) -> bool {
+        matches!(self, Value::Str(text) if text.borrow().is_empty())
     }
 
     pub fn string_ref(s: impl Into<String>) -> StrRef {

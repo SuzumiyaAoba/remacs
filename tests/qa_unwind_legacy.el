@@ -1,0 +1,83 @@
+;;; Old unwind-protect opcodes store either a function or a progn body. -*- lexical-binding: t; -*-
+(defvar qa-ul-trace)
+(defvar qa-ul-action)
+(defvar qa-ul-name)
+(defun qa-ul-cleanup () (push 'called qa-ul-trace))
+(defun qa-ul-run (action &optional setup)
+  (let (qa-ul-trace)
+    (list (condition-case err
+              (funcall (if setup
+                           (make-byte-code 0 (unibyte-string 192 142 193 32 136 194 41 135)
+                                           (vector action setup 'body) 1)
+                         (make-byte-code 0 (unibyte-string 192 142 193 41 135)
+                                         (vector action 'body) 1)))
+            (error (list (car err) (cdr err))))
+          (reverse qa-ul-trace))))
+
+(qa (qa-ul-run nil) '(body nil))
+(qa (qa-ul-run t) '(body nil))
+(qa (qa-ul-run 42) '(body nil))
+(qa (qa-ul-run [unused]) '(body nil))
+(qa (qa-ul-run 'qa-ul-unbound) '(body nil))
+(qa (qa-ul-run 'qa-ul-cleanup) '(body (called)))
+(qa (qa-ul-run (symbol-function 'qa-ul-cleanup)) '(body (called)))
+(qa (qa-ul-run '(lambda () (push 'lambda qa-ul-trace))) '(body (lambda)))
+(qa (qa-ul-run '((push 'form qa-ul-trace))) '(body (form)))
+(qa (qa-ul-run '((push 'first qa-ul-trace) (push 'second qa-ul-trace))) '(body (first second)))
+(qa (qa-ul-run '((error "forms-error"))) '((error ("forms-error")) nil))
+(qa (qa-ul-run (cons '(push 'dotted qa-ul-trace) 'ignored)) '(body (dotted)))
+(qa (qa-ul-run 'if) '(body nil))
+(qa (qa-ul-run (symbol-function 'if)) '(body nil))
+(qa (qa-ul-run 'when) '(body nil))
+(qa (qa-ul-run '(autoload "missing-file" nil nil nil))
+    '((void-variable (autoload)) nil))
+
+;; Classification is fixed when the record is pushed. Invocation of a
+;; function-valued symbol still resolves the symbol when cleanup runs.
+(qa-lex
+ (let ((qa-ul-name (make-symbol "late-cleanup")))
+   (fset qa-ul-name #'qa-ul-cleanup)
+   (let* ((result (qa-ul-run qa-ul-name (lambda () (fmakunbound qa-ul-name))))
+          (condition (car result)))
+     (list (car condition) (eq (car (cadr condition)) qa-ul-name) (cadr result))))
+ '(void-function t nil))
+(qa-lex
+ (let ((qa-ul-name (make-symbol "late-cleanup")))
+   (qa-ul-run qa-ul-name (lambda () (fset qa-ul-name #'qa-ul-cleanup))))
+ '(body nil))
+(qa-lex
+ (let ((qa-ul-name (make-symbol "late-cleanup")))
+   (fset qa-ul-name #'qa-ul-cleanup)
+   (qa-ul-run qa-ul-name (lambda () (fset qa-ul-name (lambda () (push 'replacement qa-ul-trace))))))
+ '(body (replacement)))
+
+(defun qa-ul-aliases (count)
+  (let ((function 'qa-ul-cleanup))
+    (dotimes (_ count)
+      (let ((alias (make-symbol "cleanup-alias")))
+        (fset alias function) (setq function alias)))
+    function))
+(qa-lex
+ (let ((function (qa-ul-aliases 100)))
+   (list (functionp function) (qa-ul-run function)))
+ '(t (body (called))))
+(qa (let ((symbol (make-symbol "macro-autoload")))
+      (autoload symbol "qa-ul-missing" nil nil 'macro)
+      (qa-ul-run symbol)) '(body nil))
+(qa (let ((symbol (make-symbol "function-autoload")))
+      (autoload symbol "qa-ul-missing" nil nil nil)
+      (let ((result (qa-ul-run symbol)))
+        (list (caar result) (cadr result))))
+    '(file-missing nil))
+
+;; An initially captured next tail survives replacement of the current cdr.
+(qa (let* ((tail (list '(push 'old qa-ul-trace)))
+           (qa-ul-action (cons '(progn (setcdr qa-ul-action '((push 'new qa-ul-trace)))
+                                     (push 'first qa-ul-trace)) tail)))
+      (qa-ul-run qa-ul-action)) '(body (first old)))
+(qa (let* ((tail (list '(push 'old qa-ul-trace)))
+           (qa-ul-action (cons '(progn (setcar (cdr qa-ul-action) '(push 'changed qa-ul-trace))
+                                     (push 'first qa-ul-trace)) tail)))
+      (qa-ul-run qa-ul-action)) '(body (first changed)))
+
+(princ (qa--done))

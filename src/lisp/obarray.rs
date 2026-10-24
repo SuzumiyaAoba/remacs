@@ -8,12 +8,48 @@ use rustc_hash::FxHashMap as HashMap;
 
 use super::value::{SymId, Value};
 
+/// lread.c compares both the stored bytes and character count of names.
+/// In particular, an unibyte byte and a multibyte byte8 character differ.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub(crate) struct InternKey {
+    pub bytes: Vec<u8>,
+    pub characters: usize,
+}
+
+impl InternKey {
+    pub(crate) fn from_text(text: &str) -> Self {
+        if text.is_ascii() {
+            return Self { bytes: text.as_bytes().to_vec(), characters: text.len() };
+        }
+        let multibyte = text.chars().any(|c| c as u32 >= 128
+            && super::value::eight_bit_byte(c).is_none());
+        Self::from_text_kind(text, multibyte)
+    }
+
+    pub(crate) fn from_text_kind(text: &str, multibyte: bool) -> Self {
+        if text.is_ascii() {
+            return Self { bytes: text.as_bytes().to_vec(), characters: text.len() };
+        }
+        let mut bytes = Vec::with_capacity(text.len());
+        for c in text.chars() {
+            if !multibyte {
+                bytes.push(super::value::eight_bit_byte(c).unwrap_or(c as u8));
+            } else {
+                bytes.extend(super::builtins::coding_legacy::internal_encode(
+                    super::value::lisp_char_code(c) as u32));
+            }
+        }
+        Self { bytes, characters: text.chars().count() }
+    }
+}
+
 /// Per-symbol storage.
 pub struct Symbol {
     pub name: String,
     /// Lisp-visible name, retained by identity when supplied to intern/
     /// make-symbol. Internal names allocate this lazily on symbol-name.
     pub name_string: Option<super::value::StrRef>,
+    pub(crate) internment_key: Option<InternKey>,
     /// Global value cell. Dynamic bindings save/restore this slot
     /// (the specbind stack), so lookup is always O(1).
     pub value: Value,
@@ -220,7 +256,10 @@ const CORE_SYMBOLS: &[&str] = &[
 
 /// The obarray: interned symbol table.
 pub struct Obarray {
-    map: HashMap<String, SymId>,
+    map: HashMap<InternKey, Vec<SymId>>,
+    /// Derived index for the frequent internal ASCII lookups. Borrowing &str
+    /// here avoids allocating a storage-byte key at every evaluator poll.
+    ascii: HashMap<String, SymId>,
     symbols: Vec<Symbol>,
     /// `nil`, `t` and `nil` again for a stable `[nil t ...]` test ordering.
     gensym_counter: u64,
@@ -232,6 +271,7 @@ impl Obarray {
     pub(crate) fn empty() -> Self {
         Self {
             map: HashMap::default(),
+            ascii: HashMap::default(),
             symbols: Vec::new(),
             gensym_counter: 0,
             gensym_n: 0,
@@ -241,6 +281,7 @@ impl Obarray {
     pub fn new() -> Self {
         let mut ob = Obarray {
             map: HashMap::with_capacity_and_hasher(4096, rustc_hash::FxBuildHasher::default()),
+            ascii: HashMap::with_capacity_and_hasher(4096, rustc_hash::FxBuildHasher::default()),
             symbols: Vec::with_capacity(4096),
             gensym_counter: 0,
             gensym_n: 0,
@@ -252,7 +293,8 @@ impl Obarray {
         // The unbound marker must not be reachable via `intern`: in Emacs,
         // `unbound` is an ordinary interned symbol and `boundp` doesn't
         // treat it specially — the real marker is internal.
-        ob.map.remove("unbound");
+        ob.map.remove(&InternKey::from_text("unbound"));
+        ob.ascii.remove("unbound");
         ob.symbols[sym::UNBOUND as usize].uninterned = true;
         // nil and t are self-evaluating constants.
         ob.symbols[sym::NIL as usize].constant = true;
@@ -266,15 +308,28 @@ impl Obarray {
 
     /// Intern `name`, creating the symbol if necessary.
     pub fn intern(&mut self, name: &str) -> SymId {
-        if let Some(&id) = self.map.get(name) {
+        if name.is_ascii() {
+            if let Some(&symbol) = self.ascii.get(name) { return symbol; }
+        }
+        self.intern_with_key(name, InternKey::from_text(name))
+    }
+
+    pub(crate) fn intern_with_key(&mut self, name: &str, key: InternKey) -> SymId {
+        if let Some(id) = self.lookup_key(&key) {
             return id;
         }
+        self.intern_new_with_key(name, key)
+    }
+
+    pub(crate) fn intern_new_with_key(&mut self, name: &str, key: InternKey) -> SymId {
         let id = self.symbols.len() as SymId;
-        self.map.insert(name.to_string(), id);
+        self.map.entry(key.clone()).or_default().push(id);
+        self.refresh_ascii(&key);
         let old_capacity = self.symbols.capacity();
         self.symbols.push(Symbol {
             name: name.to_string(),
             name_string: None,
+            internment_key: Some(key),
             value: Value::Sym(sym::UNBOUND),
             function: Value::Sym(sym::UNBOUND),
             plist: Value::Nil,
@@ -298,21 +353,38 @@ impl Obarray {
 
     /// Look up a symbol without interning.
     pub fn intern_soft(&self, name: &str) -> Option<SymId> {
-        self.map.get(name).copied()
+        if name.is_ascii() { return self.ascii.get(name).copied(); }
+        self.lookup_key(&InternKey::from_text(name))
+    }
+
+    fn refresh_ascii(&mut self, key: &InternKey) {
+        if key.characters == key.bytes.len() && key.bytes.is_ascii() {
+            let name = std::str::from_utf8(&key.bytes).unwrap();
+            if let Some(symbol) = self.lookup_key(key) {
+                self.ascii.insert(name.to_owned(), symbol);
+            } else {
+                self.ascii.remove(name);
+            }
+        }
+    }
+
+    pub(crate) fn lookup_key(&self, key: &InternKey) -> Option<SymId> {
+        self.map.get(key).and_then(|ids| ids.last()).copied()
+    }
+
+    pub(crate) fn key_candidates(&self, key: &InternKey) -> &[SymId] {
+        self.map.get(key).map(Vec::as_slice).unwrap_or(&[])
     }
 
     /// Fresh uninterned symbol (for `make-symbol`/`gensym`).
     pub fn make_symbol(&mut self, name: &str) -> SymId {
-        // Uninterned symbols get unique internal names so the map key
-        // never collides with real symbols.
         self.gensym_counter += 1;
-        let key = format!("#uninterned#{}\x00{}", name, self.gensym_counter);
         let id = self.symbols.len() as SymId;
-        self.map.insert(key, id);
         let old_capacity = self.symbols.capacity();
         self.symbols.push(Symbol {
             name: name.to_string(),
             name_string: None,
+            internment_key: None,
             value: Value::Sym(sym::UNBOUND),
             function: Value::Sym(sym::UNBOUND),
             plist: Value::Nil,
@@ -356,18 +428,20 @@ impl Obarray {
     /// (`let' bindings named g0..): GNU's `.elc' boot never interns
     /// them, so `gensym' would skip names it should hand out.
     pub fn unintern_boot_gensyms(&mut self) {
-        let stray: Vec<String> = self
+        let stray: Vec<InternKey> = self
             .map
-            .keys()
-            .filter(|k| {
-                k.len() > 1 && k.starts_with('g') && k[1..].chars().all(|c| c.is_ascii_digit())
+            .iter()
+            .filter(|(_, ids)| {
+                let name = &self.symbols[*ids.last().unwrap() as usize].name;
+                name.len() > 1 && name.starts_with('g') && name[1..].chars().all(|c| c.is_ascii_digit())
             })
-            .cloned()
+            .map(|(key, _)| key.clone())
             .collect();
         for name in stray {
-            if let Some(id) = self.map.remove(&name) {
-                self.symbols[id as usize].uninterned = true;
+            if let Some(ids) = self.map.remove(&name) {
+                for id in ids { self.symbols[id as usize].uninterned = true; }
             }
+            self.refresh_ascii(&name);
         }
     }
 
@@ -375,14 +449,34 @@ impl Obarray {
     /// stays — indices are stable — but `intern` on the name will create
     /// a fresh symbol.
     pub fn unintern_by_name(&mut self, name: &str) {
-        self.map.remove(name);
+        if let Some(id) = self.lookup_key(&InternKey::from_text(name)) {
+            self.unintern_symbol(id);
+        }
+    }
+
+    pub(crate) fn unintern_symbol(&mut self, id: SymId) -> bool {
+        let Some(key) = self.symbols[id as usize].internment_key.clone() else { return false; };
+        let Some(ids) = self.map.get_mut(&key) else { return false; };
+        let Some(position) = ids.iter().position(|&member| member == id) else { return false; };
+        ids.remove(position);
+        if ids.is_empty() { self.map.remove(&key); }
+        self.refresh_ascii(&key);
+        self.symbols[id as usize].uninterned = true;
+        true
+    }
+
+    pub(crate) fn clear_namespace(&mut self) {
+        // GNU obarray-clear leaves the symbols' interned flags and cells
+        // alone, but releases every bucket in the table.
+        self.map.clear();
+        self.ascii.clear();
     }
 
     /// Every interned symbol id (for `mapatoms`); uninterned symbols
     /// (gensyms, the `unbound` marker) are skipped like in Emacs.
     pub fn all_ids(&self) -> Vec<SymId> {
         (0..self.symbols.len() as SymId)
-            .filter(|id| !self.symbols[*id as usize].uninterned)
+            .filter(|id| self.is_initial_symbol(*id))
             .collect()
     }
 
@@ -395,7 +489,8 @@ impl Obarray {
     }
 
     pub(crate) fn is_initial_symbol(&self, id: SymId) -> bool {
-        self.map.get(&self.symbols[id as usize].name) == Some(&id)
+        self.symbols[id as usize].internment_key.as_ref()
+            .is_some_and(|key| self.key_candidates(key).contains(&id))
     }
 
     pub(crate) fn prepare_dump_core(&mut self, id: SymId, uninterned: bool) -> Result<(), String> {
@@ -403,10 +498,7 @@ impl Obarray {
             return Err("Invalid core symbol id".into());
         }
         if uninterned {
-            let name = self.symbols[id as usize].name.clone();
-            if self.map.get(&name) == Some(&id) {
-                self.map.remove(&name);
-            }
+            self.unintern_symbol(id);
             self.symbols[id as usize].uninterned = true;
         }
         Ok(())
@@ -418,30 +510,31 @@ impl Obarray {
         retained: &[SymId],
         counters: (u64, u64),
     ) -> Result<(), String> {
-        let mut map = HashMap::default();
+        let mut map: HashMap<InternKey, Vec<SymId>> = HashMap::default();
         for id in interned {
             let symbol = self
                 .symbols
                 .get(*id as usize)
                 .ok_or("Invalid dumped interned symbol")?;
-            if symbol.uninterned || map.insert(symbol.name.clone(), *id).is_some() {
+            let key = symbol.internment_key.clone()
+                .unwrap_or_else(|| InternKey::from_text(&symbol.name));
+            if symbol.uninterned || map.get(&key).is_some_and(|ids| ids.contains(id)) {
                 return Err("Invalid dumped symbol membership".into());
             }
+            map.entry(key).or_default().push(*id);
         }
-        let members: std::collections::HashSet<_> = interned.iter().copied().collect();
         let retained: std::collections::HashSet<_> = retained.iter().copied().collect();
         for (id, symbol) in self.symbols.iter_mut().enumerate() {
             if !retained.contains(&(id as SymId)) {
                 symbol.uninterned = true;
             }
         }
-        // Uninterned lookup keys are private unique bookkeeping, not names.
-        for (name, id) in &self.map {
-            if !members.contains(id) && name.starts_with("#uninterned#") {
-                map.insert(name.clone(), *id);
-            }
-        }
         self.map = map;
+        self.ascii = self.map.iter().filter_map(|(key, symbols)| {
+            (key.characters == key.bytes.len() && key.bytes.is_ascii()).then(|| (
+                String::from_utf8(key.bytes.clone()).unwrap(), *symbols.last().unwrap(),
+            ))
+        }).collect();
         self.gensym_counter = self.gensym_counter.max(counters.0);
         self.gensym_n = counters.1;
         Ok(())

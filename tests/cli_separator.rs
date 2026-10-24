@@ -224,20 +224,20 @@ fn trailing_init_flags_do_not_change_startup_settings() {
 
 #[test]
 fn trailing_batch_flags_do_not_change_initial_lisp_state() {
-    let fixture = Fixture::new();
-    // --eval itself sets noninteractive while running, but this mode's
-    // initial value was chosen during Interp::new, before that action.
-    succeeds(
-        &fixture.0,
-        &[
-            "--eval",
-            "(prin1 global-font-lock-mode)",
-            "--",
-            "--batch",
-            "--script",
-        ],
-        "t",
-    );
+    // --eval does not select batch mode. Use a real terminal and an explicit
+    // exit; the trailing flag-shaped filenames must not affect bootstrap.
+    let mut binaries = vec![std::ffi::OsString::from(env!("CARGO_BIN_EXE_remacs"))];
+    if let Some(gnu) = std::env::var_os("GNU_EMACS") { binaries.push(gnu); }
+    for binary in binaries {
+        let output = Command::new("python3").arg("-B")
+            .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/terminal_session.py"))
+            .arg("--binary").arg(binary).args(["--case", "startup-init-separator"])
+            .output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["status"], 0);
+        assert_eq!(result["state"], "t");
+    }
 }
 
 #[test]

@@ -104,7 +104,8 @@ unsafe fn host(e: EmEnv) -> &'static mut Interp {
     &mut *(e as *mut Interp)
 }
 
-unsafe fn outcome(_e: EmEnv, r: Result<Value, Flow>) -> EmObj {
+unsafe fn outcome(e: EmEnv, r: Result<Value, Flow>) -> EmObj {
+    let r = host(e).offer_flow(r);
     match r {
         Ok(v) => reg(v),
         Err(flow) => {
@@ -150,6 +151,10 @@ struct EmApi {
     float_constant: unsafe extern "C-unwind" fn(EmEnv, f64) -> EmObj,
     /// Preserve the source string's byte-kind flags; appended for old units.
     string_constant_kind: unsafe extern "C-unwind" fn(EmEnv, *const c_char, usize, i64) -> EmObj,
+    binding_mark: unsafe extern "C-unwind" fn(EmEnv) -> usize,
+    bind: unsafe extern "C-unwind" fn(EmEnv, EmObj, EmObj) -> EmObj,
+    unbind: unsafe extern "C-unwind" fn(EmEnv, usize) -> EmObj,
+    sym_value: unsafe extern "C-unwind" fn(EmEnv, EmObj) -> EmObj,
 }
 
 unsafe extern "C-unwind" fn api_nil(_e: EmEnv) -> EmObj {
@@ -263,9 +268,38 @@ unsafe extern "C-unwind" fn api_sym_set(e: EmEnv, s: EmObj, v: EmObj) -> EmObj {
         other => outcome(e, Err(i.wrong_type_mut("symbolp", &other))),
     }
 }
-unsafe extern "C-unwind" fn api_signal(_e: EmEnv, s: EmObj, d: EmObj) -> EmObj {
-    PENDING.with(|p| *p.borrow_mut() = Some(Flow::Signal(obj(s), obj(d), false)));
-    EM_INVALID
+unsafe extern "C-unwind" fn api_binding_mark(e: EmEnv) -> usize {
+    host(e).specbind_depth()
+}
+unsafe extern "C-unwind" fn api_bind(e: EmEnv, symbol: EmObj, value: EmObj) -> EmObj {
+    let i = host(e);
+    let symbol = obj(symbol);
+    let result = match i.sym_id(&symbol) {
+        Some(id) => i.specbind(id, obj(value)).map(|_| Value::Nil),
+        None => Err(i.wrong_type_mut("symbolp", &symbol)),
+    };
+    outcome(e, result)
+}
+unsafe extern "C-unwind" fn api_unbind(e: EmEnv, depth: usize) -> EmObj {
+    let result = host(e).unbind_to(depth).map(|_| Value::Nil);
+    outcome(e, result)
+}
+unsafe extern "C-unwind" fn api_sym_value(e: EmEnv, symbol: EmObj) -> EmObj {
+    let i = host(e);
+    let name = i.q("symbol-value");
+    let symbol = obj(symbol);
+    let original = super::data::SUBRS.iter().find(|subr| subr.name == "symbol-value").unwrap();
+    let result = if i.native_trampolines.contains("symbol-value") {
+        // GNU's subr trampoline still observes a replacement function cell.
+        i.apply(&Value::Sym(name), vec![symbol])
+    } else {
+        (original.func)(i, vec![symbol].into())
+    };
+    outcome(e, result)
+}
+unsafe extern "C-unwind" fn api_signal(e: EmEnv, s: EmObj, d: EmObj) -> EmObj {
+    let result = super::evalfn::f_signal(host(e), vec![obj(s), obj(d)].into());
+    outcome(e, result)
 }
 unsafe extern "C-unwind" fn api_car(e: EmEnv, h: EmObj) -> EmObj {
     let v = obj(h);
@@ -328,16 +362,16 @@ unsafe extern "C-unwind" fn api_defsubr(
         return match i.read_from_string(&s, 0) {
             Ok((form, _)) => match i.eval(&form) {
                 Ok(_) => 0,
-                Err(Flow::Signal(sg, dd, _)) => {
+                Err(Flow::Signal(signal)) => {
                     if std::env::var_os("REMACS_ELN_DBG").is_some() {
                         eprintln!(
                             "ELN defsubr sexp eval failed for {}: {} {}",
                             name,
-                            i.prin1_to_string(&sg),
-                            i.prin1_to_string(&dd)
+                            i.prin1_to_string(&signal.symbol()),
+                            i.prin1_to_string(&signal.data())
                         );
                     }
-                    PENDING.with(|p| *p.borrow_mut() = Some(Flow::Signal(sg, dd, false)));
+                    PENDING.with(|p| *p.borrow_mut() = Some(Flow::Signal(signal)));
                     1
                 }
                 Err(flow) => {
@@ -398,6 +432,10 @@ static API: EmApi = EmApi {
     string_constant: api_string_constant,
     float_constant: api_float_constant,
     string_constant_kind: api_string_constant_kind,
+    binding_mark: api_binding_mark,
+    bind: api_bind,
+    unbind: api_unbind,
+    sym_value: api_sym_value,
 };
 
 /// Mirrors the generated descriptor (repr(C), must match codegen).
@@ -440,6 +478,7 @@ fn tramp<const K: usize>(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let mark = OBJTAB.with(|t| t.borrow().len());
     let args: Vec<EmObj> = a.iter().map(|v| reg(v.clone())).collect();
     let previous_native = ACTIVE_NATIVE.replace(Some(K));
+    let bindings = i.specbind_depth();
     let r = unsafe { entry(&API, env, args.as_ptr(), args.len() as i64) };
     ACTIVE_NATIVE.set(previous_native);
     // A pending signal always wins, including for previously compiled units
@@ -449,6 +488,8 @@ fn tramp<const K: usize>(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         None if r == EM_INVALID => Err(i.error("native function failed")),
         None => Ok(obj(r)),
     };
+    let out = i.offer_flow(out);
+    let out = i.unbind_to(bindings).and(out);
     // Handles registered during this call are disposable — the result
     // was cloned out; constant caches retain Values, never these handles.
     OBJTAB.with(|t| t.borrow_mut().truncate(mark));
@@ -503,7 +544,8 @@ fn load_eln(i: &mut Interp, path: &str) -> Result<usize, LoadError> {
     }
     .map_err(|e| e.to_string())?;
     let init: UnitInit = unsafe {
-        *lib.get(b"remacs_eln_init\0")
+        *lib.get(b"remacs_eln_init_v2\0")
+            .or_else(|_| lib.get(b"remacs_eln_init\0"))
             .map_err(|_| "Not a remacs .eln (missing remacs_eln_init)".to_string())?
     };
     // New file units carry their source's binding mode. Old units and
@@ -551,7 +593,7 @@ fn load_eln(i: &mut Interp, path: &str) -> Result<usize, LoadError> {
 }
 
 fn unit_tag(i: &mut Interp) -> SymId {
-    i.intern("native-comp-unit")
+    i.q("native-comp-unit")
 }
 
 fn unit_value(i: &mut Interp, idx: usize) -> Value {
@@ -681,6 +723,10 @@ struct em_api {
     em_obj (*string_constant)(em_env, const char *, unsigned long);
     em_obj (*float_constant)(em_env, double);
     em_obj (*string_constant_kind)(em_env, const char *, unsigned long, long);
+    unsigned long (*binding_mark)(em_env);
+    em_obj (*bind)(em_env, em_obj, em_obj);
+    em_obj (*unbind)(em_env, unsigned long);
+    em_obj (*sym_value)(em_env, em_obj);
 };
 typedef const struct em_api *A_t;
 #define NIL (A->nil)(E)
@@ -698,7 +744,9 @@ typedef const struct em_api *A_t;
 #define RDC(lit) CHECK((A->read)(E,(lit),sizeof(lit)-1))
 #define KDC(lit) CHECK((A->read_constant)(E,(lit),sizeof(lit)-1))
 #define SDC(lit) (A->intern)(E,(lit),sizeof(lit)-1)
-#define SYMVAL(s) ({em_obj symbol=(s);CALL(SDC("symbol-value"),&symbol,1);})
+#define SYMVAL(s) CHECK((A->sym_value)(E,(s)))
+#define BIND(s,v) CHECK((A->bind)(E,(s),(v)))
+#define UNBIND(mark) CHECK((A->unbind)(E,(mark)))
 "#;
 
 /// Sanitize a Lisp symbol name to a C identifier.
@@ -745,10 +793,12 @@ fn c_str(s: &str) -> String {
 struct Emitter<'a> {
     i: &'a mut Interp,
     /// Lexical variable → C name mapping stack.
-    scopes: Vec<Vec<(SymId, String)>>,
+    scopes: Vec<Vec<(SymId, Option<String>)>>,
+    lexical: bool,
     serial: usize,
     /// Set when a form cannot be emitted directly.
     unsupported: bool,
+    error: Option<Flow>,
 }
 
 impl<'a> Emitter<'a> {
@@ -762,11 +812,28 @@ impl<'a> Emitter<'a> {
             .rev()
             .flat_map(|s| s.iter().rev())
             .find(|(k, _)| *k == id)
-            .map(|(_, n)| n.clone())
+            .and_then(|(_, n)| n.clone())
+    }
+
+    fn dynamic(&self, id: SymId) -> bool {
+        !self.lexical || self.i.obarray.symbol(self.i.var_alias_target(id)).special
+    }
+
+    fn parameter_binding(&mut self, id: SymId, value: &str) -> String {
+        // Lambda arguments are lexical in a lexical function, even when
+        // their names also designate globally special variables.
+        if !self.lexical {
+            self.scopes.last_mut().unwrap().push((id, None));
+            format!("BIND(SDC({}),{value});", c_str(&self.i.symbol_name(id)))
+        } else {
+            self.scopes.last_mut().unwrap().push((id, Some(value.to_string())));
+            String::new()
+        }
     }
 
     /// Emit an expression evaluating to `em_obj'.
     fn form(&mut self, f: &Value) -> String {
+        if self.error.is_some() { return "NIL".into(); }
         match f {
             Value::Nil => "NIL".into(),
             Value::Int(n) => {
@@ -999,7 +1066,7 @@ impl<'a> Emitter<'a> {
     }
 
     fn expand_once(&mut self, whole: &Value) -> Option<Value> {
-        let mid = self.i.intern("macroexpand");
+        let mid = self.i.q("macroexpand");
         let call = Value::list(vec![
             Value::Sym(mid),
             Value::list(vec![Value::Sym(sym::QUOTE), whole.clone()]),
@@ -1045,9 +1112,40 @@ impl<'a> Emitter<'a> {
         if a.is_empty() {
             return "NIL".into();
         }
-        let binders = a[0].list_to_vec().unwrap_or_default();
+        let Ok(binders) = a[0].list_to_vec() else {
+            self.unsupported = true;
+            return "NIL".into();
+        };
+        let optimize = self.i.q("byte-optimize");
+        if self.i.symbol_value(optimize).truthy() {
+            // cconv turns bare variable binders into one-element lists before
+            // byte-optimize-letX sees them.  Keep the caller's form unchanged.
+            let input = if binders.iter().any(|b| matches!(b, Value::Sym(_))) {
+                let normalized = Value::list(binders.iter().map(|b| match b {
+                    Value::Sym(_) => Value::list(vec![b.clone()]),
+                    _ => b.clone(),
+                }).collect());
+                let head = Value::Sym(self.i.intern(if star { "let*" } else { "let" }));
+                Value::cons(head, Value::cons(normalized, Value::list(a[1..].to_vec())))
+            } else {
+                whole.clone()
+            };
+            let optimizer = Value::Sym(self.i.q("byte-optimize-letX"));
+            match self.i.apply(&optimizer, vec![input.clone()]) {
+                Ok(form) if !same_form(&form, &input) => return self.form(&form),
+                Ok(_) => {}
+                Err(flow) => {
+                    self.error = Some(flow);
+                    return "NIL".into();
+                }
+            }
+        }
         let mut frame = Vec::new();
         let mut decls = String::new();
+        let mut bindings = String::new();
+        let block = self.serial;
+        self.serial += 1;
+        let mut has_dynamic = false;
         if star {
             self.scopes.push(Vec::new());
         }
@@ -1057,7 +1155,8 @@ impl<'a> Emitter<'a> {
                 Value::Cons(_) => {
                     let v = b.list_to_vec().unwrap_or_default();
                     match v.first() {
-                        Some(Value::Sym(id)) => (*id, v.get(1).cloned().unwrap_or(Value::Nil)),
+                        Some(Value::Sym(id)) if v.len() <= 2 =>
+                            (*id, v.get(1).cloned().unwrap_or(Value::Nil)),
                         _ => {
                             self.unsupported = true;
                             continue;
@@ -1069,25 +1168,33 @@ impl<'a> Emitter<'a> {
                     continue;
                 }
             };
-            // Dynamic (special) variables need specbind + unwind
-            // protection — the whole function falls back to eval.
-            if self.i.obarray.symbol(id).special {
+            if self.i.obarray.symbol(self.i.var_alias_target(id)).constant {
                 self.unsupported = true;
                 continue;
             }
+            let dynamic = self.dynamic(id);
+            has_dynamic |= dynamic;
             let cn = format!("v{}", self.serial);
             self.serial += 1;
+            let iv = self.form(&init);
+            decls.push_str(&format!("em_obj {cn}={iv};"));
+            let binding = if dynamic {
+                format!("BIND(SDC({}),{cn});", c_str(&self.i.symbol_name(id)))
+            } else {
+                String::new()
+            };
+            // Compiled dynamic lets shadow a lexical argument of the same
+            // name, unlike the interpreted evaluator's environment lookup.
+            let entry = (id, (!dynamic).then_some(cn));
             if star {
                 // The new binding is visible to later initializers and the
                 // body, but its own initializer still sees the outer binding.
-                let iv = self.form(&init);
-                self.scopes.last_mut().unwrap().push((id, cn.clone()));
-                decls.push_str(&format!("em_obj {cn}={iv};"));
+                decls.push_str(&binding);
+                self.scopes.last_mut().unwrap().push(entry);
             } else {
                 // `let': every init form sees the outer scope.
-                let iv = self.form(&init);
-                decls.push_str(&format!("em_obj {cn}={iv};"));
-                frame.push((id, cn));
+                bindings.push_str(&binding);
+                frame.push(entry);
             }
         }
         if !star {
@@ -1095,7 +1202,12 @@ impl<'a> Emitter<'a> {
         }
         let body = self.seq(&a[1..]);
         self.scopes.pop();
-        format!("({{{decls}{body};}})")
+        if has_dynamic {
+            format!("({{unsigned long scope{block}=A->binding_mark(E);{decls}{bindings}\
+                      em_obj result{block}={body};UNBIND(scope{block});result{block};}})")
+        } else {
+            format!("({{{decls}{body};}})")
+        }
     }
 }
 
@@ -1106,13 +1218,13 @@ impl<'a> Emitter<'a> {
 fn arglist_syms(i: &mut Interp, l: &crate::lisp::value::Lambda) -> Vec<Value> {
     let mut v: Vec<Value> = l.required.iter().map(|s| Value::Sym(*s)).collect();
     if !l.optional.is_empty() {
-        v.push(Value::Sym(i.intern("&optional")));
+        v.push(Value::Sym(i.q("&optional")));
         for o in &l.optional {
             v.push(Value::Sym(o.sym));
         }
     }
     if let Some(r) = &l.rest {
-        v.push(Value::Sym(i.intern("&rest")));
+        v.push(Value::Sym(i.q("&rest")));
         v.push(Value::Sym(*r));
     }
     v
@@ -1126,7 +1238,7 @@ fn emit_fn(
     l: &Rc<crate::lisp::value::Lambda>,
     k: usize,
     force_fallback: bool,
-) -> (String, String) {
+) -> Result<(String, String), Flow> {
     let cn = c_name(name, k);
     let min = l.required.len() as u32;
     let max = if l.rest.is_some() {
@@ -1138,7 +1250,7 @@ fn emit_fn(
     let direct = if force_fallback {
         None
     } else {
-        try_emit_body(i, l, &cn)
+        try_emit_body(i, l, &cn)?
     };
     let entry = direct.unwrap_or_else(|| emit_fallback(i, name, l, &cn));
     let arglist = l
@@ -1156,7 +1268,7 @@ fn emit_fn(
     // for the loader to evaluate; entry stays a fallback trampoline.
     let sexp_s = if l.is_macro {
         let mut head = vec![
-            Value::Sym(i.intern("defmacro")),
+            Value::Sym(i.q("defmacro")),
             Value::Sym(i.intern(name)),
             arglist.clone(),
         ];
@@ -1189,33 +1301,29 @@ fn emit_fn(
         sstr = c_str(&sexp_s),
         sl = sexp_s.len(),
     );
-    (entry, desc)
+    Ok((entry, desc))
 }
 
 /// Direct codegen; None when any form needs eval fallback.
-fn try_emit_body(i: &mut Interp, l: &Rc<crate::lisp::value::Lambda>, cn: &str) -> Option<String> {
+fn try_emit_body(i: &mut Interp, l: &Rc<crate::lisp::value::Lambda>, cn: &str) -> Result<Option<String>, Flow> {
+    let require = Value::Sym(i.q("require"));
+    let feature = Value::Sym(i.q("byte-opt"));
+    i.apply(&require, vec![feature])?;
     let mut e = Emitter {
         i,
         scopes: Vec::new(),
+        lexical: l.env.is_some(),
         serial: 0,
         unsupported: false,
+        error: None,
     };
-    let mut sc = Vec::new();
-    for (n, p) in l.required.iter().enumerate() {
-        sc.push((*p, format!("p{n}")));
-    }
-    for (k, p) in l.optional.iter().enumerate() {
-        sc.push((p.sym, format!("o{k}")));
-    }
-    if let Some(r) = &l.rest {
-        sc.push((*r, "rest".into()));
-    }
-    e.scopes.push(sc);
+    e.scopes.push(Vec::new());
 
     // Parameter unpacking.
     let mut params = String::new();
     for n in 0..l.required.len() {
         params.push_str(&format!("em_obj p{n}=args[{n}];"));
+        params.push_str(&e.parameter_binding(l.required[n], &format!("p{n}")));
     }
     for (k, p) in l.optional.iter().enumerate() {
         let idx = l.required.len() + k;
@@ -1225,12 +1333,13 @@ fn try_emit_body(i: &mut Interp, l: &Rc<crate::lisp::value::Lambda>, cn: &str) -
             .map(|dv| e.form(dv))
             .unwrap_or_else(|| "NIL".into());
         params.push_str(&format!("em_obj o{k}=(n>{idx})?args[{idx}]:{d};"));
+        params.push_str(&e.parameter_binding(p.sym, &format!("o{k}")));
         if let Some(s) = p.supplied {
             // supplied-p param: expose as an em_obj too.
             let c = format!("v{}", e.serial);
             e.serial += 1;
-            e.scopes.last_mut().unwrap().push((s, c.clone()));
             params.push_str(&format!("em_obj {c}=(n>{idx})?TT:NIL;"));
+            params.push_str(&e.parameter_binding(s, &c));
         }
     }
     if l.rest.is_some() {
@@ -1238,6 +1347,7 @@ fn try_emit_body(i: &mut Interp, l: &Rc<crate::lisp::value::Lambda>, cn: &str) -
         params.push_str(&format!(
             "em_obj rest=(n>{fixed})?LISTN(args+{fixed},n-{fixed}):NIL;"
         ));
+        params.push_str(&e.parameter_binding(l.rest.unwrap(), "rest"));
     }
 
     // Fully expand each body form so `cond'/`when'/`dolist' & co.
@@ -1253,15 +1363,17 @@ fn try_emit_body(i: &mut Interp, l: &Rc<crate::lisp::value::Lambda>, cn: &str) -
         }
     }
     if e.unsupported {
-        return None;
+        if let Some(flow) = e.error { return Err(flow); }
+        return Ok(None);
     }
     let code = e.seq(&expanded);
-    if e.unsupported {
-        return None;
-    }
-    Some(format!(
-        "em_obj {cn}(const void *A_, em_env E, const em_obj *args, long n){{A_t A=(A_t)A_;(void)A;{params}return {code};}}"
-    ))
+    if let Some(flow) = e.error { return Err(flow); }
+    if e.unsupported { return Ok(None); }
+    Ok(Some(format!(
+        "em_obj {cn}(const void *A_, em_env E, const em_obj *args, long n){{A_t A=(A_t)A_;\
+         unsigned long parameter_depth=A->binding_mark(E);{params}\
+         em_obj native_result={code};UNBIND(parameter_depth);return native_result;}}"
+    )))
 }
 
 /// Macroexpand each top-level form; None when expansion signals.
@@ -1273,7 +1385,7 @@ fn expand_all(e: &mut Emitter, f: &Value) -> Option<Value> {
         if !matches!(cur, Value::Cons(_)) {
             return Some(cur);
         }
-        let mid = e.i.intern("macroexpand");
+        let mid = e.i.q("macroexpand");
         let call = Value::list(vec![
             Value::Sym(mid),
             Value::list(vec![Value::Sym(sym::QUOTE), cur.clone()]),
@@ -1285,7 +1397,7 @@ fn expand_all(e: &mut Emitter, f: &Value) -> Option<Value> {
                 }
                 cur = v;
             }
-            Err(_) => return None,
+            Err(flow) => { e.error = Some(flow); return None; }
         }
     }
     Some(cur)
@@ -1336,13 +1448,13 @@ fn emit_fallback(
 }
 
 /// Emit a whole unit (several functions) to C source text.
-fn emit_unit(i: &mut Interp, fns: &[(String, Rc<crate::lisp::value::Lambda>)]) -> String {
+fn emit_unit(i: &mut Interp, fns: &[(String, Rc<crate::lisp::value::Lambda>)]) -> Result<String, Flow> {
     let mut out = String::from(C_PRELUDE);
     let mut inits = String::from(
-        "\nint remacs_eln_init(const void *api_, em_env E, long U){A_t A=(A_t)api_;(void)A;int rc=0;",
+        "\nint remacs_eln_init_v2(const void *api_, em_env E, long U){A_t A=(A_t)api_;(void)A;int rc=0;",
     );
     for (k, (name, l)) in fns.iter().enumerate() {
-        let (entry, desc) = emit_fn(i, name, l, k, false);
+        let (entry, desc) = emit_fn(i, name, l, k, false)?;
         out.push_str(&entry);
         out.push_str(&desc);
         let cn = c_name(name, k);
@@ -1350,7 +1462,7 @@ fn emit_unit(i: &mut Interp, fns: &[(String, Rc<crate::lisp::value::Lambda>)]) -
     }
     inits.push_str("return rc;}\n");
     out.push_str(&inits);
-    out
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -1384,7 +1496,7 @@ fn compiler_available() -> bool {
 
 fn eln_cache_dir() -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    let d = format!("{home}/.emacs.d/eln-cache/31.1-remacs");
+    let d = format!("{home}/.emacs.d/eln-cache/31.1-remacs-v2");
     let _ = std::fs::create_dir_all(&d);
     d
 }
@@ -1576,7 +1688,7 @@ impl FileEmitter {
                     crate::lisp::memory::allocated(&Value::Lambda(lambda.clone()));
                     let name = i.symbol_name(id);
                     let (entry, desc) =
-                        emit_fn(i, &name, &lambda, self.serial, self.has_declarations);
+                        emit_fn(i, &name, &lambda, self.serial, self.has_declarations)?;
                     self.code.push_str(&entry);
                     self.code.push_str(&desc);
                     let cn = c_name(&name, self.serial);
@@ -1606,7 +1718,7 @@ impl FileEmitter {
         }
         // Expand only the head first, so a macro-generated top-level progn
         // or defun is handled just like its literal counterpart.
-        let expand = i.intern("macroexpand");
+        let expand = i.q("macroexpand");
         let expanded = i.apply(
             &Value::Sym(expand),
             vec![form.clone(), self.macro_env.clone()],
@@ -1625,7 +1737,7 @@ impl FileEmitter {
     }
 
     fn expand(&self, i: &mut Interp, form: &Value) -> EvalResult {
-        let expand = i.intern("macroexpand-all");
+        let expand = i.q("macroexpand-all");
         i.apply(
             &Value::Sym(expand),
             vec![form.clone(), self.macro_env.clone()],
@@ -1636,9 +1748,29 @@ impl FileEmitter {
 fn compile_file_to(i: &mut Interp, path: &str, out: &str) -> Result<bool, Flow> {
     let data =
         std::fs::read_to_string(path).map_err(|e| i.error(format!("Cannot read {path}: {e}")))?;
-    let lexical = crate::lisp::load::file_lexical_binding(&data);
+    // byte-compile-file uses normal-mode and safe local variables, not
+    // lread.c's first-cookie rule. This distinguishes duplicate cookies,
+    // non-boolean values and local-variable blocks at the end of a file.
+    let (form, _) = i.read_from_string(
+        r#"(lambda (file source)
+             (with-temp-buffer
+               (insert source)
+               (let ((buffer-file-name file)
+                     (dmm (default-value 'major-mode))
+                     (enable-local-variables :safe)
+                     (enable-local-eval nil))
+                 (unwind-protect
+                     (progn
+                       (setq-default major-mode 'emacs-lisp-mode)
+                       (delay-mode-hooks (normal-mode t)))
+                   (setq-default major-mode dmm)))
+               (and (local-variable-p 'lexical-binding) lexical-binding)))"#,
+        0,
+    )?;
+    let function = i.eval(&form)?;
+    let lexical = i.apply(&function, vec![Value::string(path), Value::string(&data)])?.truthy();
     let mark = i.specbind_depth();
-    let lb = i.intern("lexical-binding");
+    let lb = i.q("lexical-binding");
     i.specbind(lb, Value::from_bool(lexical))?;
     let saved_lexenv = std::mem::replace(
         &mut i.lexenv,
@@ -1655,14 +1787,14 @@ fn compile_file_to(i: &mut Interp, path: &str, out: &str) -> Result<bool, Flow> 
             "(lambda (&rest body) (let ((expanded (macroexpand-all (cons 'progn body) macroexpand-all-environment))) (eval expanded lexical-binding) expanded))", 0)?;
         let expander = i.eval(&form)?;
         Ok(Value::list(vec![Value::cons(
-            Value::Sym(i.intern("eval-and-compile")),
+            Value::Sym(i.q("eval-and-compile")),
             expander,
         )]))
     })();
     let mut emitter = FileEmitter {
         code: String::from(C_PRELUDE),
         init: format!(
-            "\nconst int remacs_eln_lexical={};\nint remacs_eln_init(const void *api_, em_env E, long U){{A_t A=(A_t)api_;",
+            "\nconst int remacs_eln_lexical={};\nint remacs_eln_init_v2(const void *api_, em_env E, long U){{A_t A=(A_t)api_;",
             lexical as u8
         ),
         serial: 0,
@@ -1714,8 +1846,8 @@ fn form_to_lambda(
     let mut optional = Vec::new();
     let mut rest = None;
     let mut mode = 0u8;
-    let opt_id = i.intern("&optional");
-    let rest_id = i.intern("&rest");
+    let opt_id = i.q("&optional");
+    let rest_id = i.q("&rest");
     for a in arglist.list_to_vec().unwrap_or_default() {
         if let Value::Sym(id) = a {
             if id == opt_id {
@@ -1811,9 +1943,9 @@ fn compile_fns_to(
     i: &mut Interp,
     fns: &[(String, Rc<crate::lisp::value::Lambda>)],
     out: &str,
-) -> Result<(), String> {
-    let src = emit_unit(i, fns);
-    compile_source_to(&src, out)
+) -> Result<(), Flow> {
+    let src = emit_unit(i, fns)?;
+    compile_source_to(&src, out).map_err(|message| i.error(message))
 }
 
 fn compile_source_to(src: &str, out: &str) -> Result<(), String> {
@@ -1850,7 +1982,7 @@ fn f_native_elisp_load(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // data ("file does not exists" FILE) — sic, GNU's typo — while a
     // dlopen failure carries (FILE dlerror-string).
     if !std::path::Path::new(&path).exists() {
-        let s = i.intern("native-lisp-load-failed");
+        let s = i.q("native-lisp-load-failed");
         return Err(i.signal_data(
             s,
             vec![Value::string("file does not exists"), Value::string(path)],
@@ -1860,7 +1992,7 @@ fn f_native_elisp_load(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Ok(idx) => Ok(unit_value(i, idx)),
         Err(LoadError::Lisp(flow)) => Err(flow),
         Err(LoadError::Open(e)) => {
-            let s = i.intern("native-lisp-load-failed");
+            let s = i.q("native-lisp-load-failed");
             Err(i.signal_data(s, vec![Value::string(path), Value::string(e)]))
         }
     }
@@ -1905,7 +2037,7 @@ fn f_native_compile(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU `comp--native-compile' rejects anything but a function or a
     // file name before any pass runs.
     if !matches!(&a[0], Value::Str(_)) && !crate::lisp::builtins::data::functionp_val(i, &a[0]) {
-        let nce = i.intern("native-compiler-error");
+        let nce = i.q("native-compiler-error");
         return Err(i.signal_data(
             nce,
             vec![Value::string("Not a function symbol or file"), a[0].clone()],
@@ -1917,7 +2049,7 @@ fn f_native_compile(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             // GNU: the first pass's `insert-file-contents' error,
             // re-signaled by `comp--error-add-context' with the input
             // appended.
-            let ef = i.intern("expand-file-name");
+            let ef = i.q("expand-file-name");
             let abs = i.apply(&Value::Sym(ef), vec![a[0].clone()])?;
             let abs_path = match &abs {
                 Value::Str(s) => s.borrow().clone(),
@@ -1930,7 +2062,7 @@ fn f_native_compile(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     "No such file or directory",
                 )),
                 Ok(m) if m.is_dir() => {
-                    Some((i.intern("file-error"), "Read error", "Is a directory"))
+                    Some((i.q("file-error"), "Read error", "Is a directory"))
                 }
                 Ok(_) => None,
             };
@@ -2013,7 +2145,7 @@ fn compile_one_lambda(
             Err(LoadError::Open(e)) => Err(i.error(e)),
             Err(LoadError::Lisp(flow)) => Err(flow),
         },
-        Err(e) => Err(i.error(e)),
+        Err(flow) => Err(flow),
     }
 }
 
@@ -2209,8 +2341,8 @@ fn signature_lambda_arity(i: &mut Interp, l: &Rc<crate::lisp::value::Lambda>) ->
                 }
             }
             Some(list @ (Value::Cons(_) | Value::Nil)) => {
-                let opt = i.intern("&optional");
-                let rst = i.intern("&rest");
+                let opt = i.q("&optional");
+                let rst = i.q("&rest");
                 let (mut min, mut max, mut rest, mut mode) = (0u16, 0u16, false, 0);
                 let mut cur = list.clone();
                 while let Value::Cons(c) = cur {
@@ -2609,7 +2741,7 @@ pub(crate) fn install(i: &mut Interp) {
     // GNU advertises the compiled-in backend as `native-compile'.
     // Runtime compiler usability is a separate native-comp-available-p
     // probe; there is no additional `native-comp' feature.
-    let f = i.intern("native-compile");
+    let f = i.q("native-compile");
     if !i.features.contains(&f) {
         i.features.push(f);
     }
