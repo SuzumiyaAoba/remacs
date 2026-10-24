@@ -1,2 +1,0 @@
-FORM|"equal:cycles"|(let ((a (list 1)) (b (list 1))) (setcdr a a) (setcdr b b) (equal a b))
-AUDIT|"equal:cycles"|

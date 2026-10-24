@@ -38,3 +38,27 @@ tests/diff/skip-dynamic.txt
 tests/diff/symdump.el
 tests/diff/loop-*.log
 tests/diff/.loop-run
+
+# Regenerable audit output (structured evidence and reproduction sources stay versioned)
+/tests/audit/**/*.log
+/tests/audit/**/*.out
+/tests/audit/**/*.err
+/tests/audit/**/*.stdout
+/tests/audit/**/*.stderr
+/tests/audit/**/*.terminal
+/tests/audit/**/*.records
+/tests/audit/**/build.jsonl
+/tests/audit/**/differential-isolated/
+/tests/audit/**/sandbox/
+/tests/audit/**/sandbox-*/
+/tests/audit/**/sbx*/
+/tests/audit/**/cache/
+/tests/audit/**/home/
+/tests/audit/**/.emacs.d/
+/tests/audit/**/native-lisp/
+
+# Temporary files left by file/customization regression tests in the checkout root
+/custom-??????
+/rp??????
+/rp??????.el
+/x

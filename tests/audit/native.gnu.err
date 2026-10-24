@@ -1,4 +1,0 @@
-
-tests/audit_native.el: Warning: Lexical argument shadows the dynamic variable audit-native-special
-tests/audit_native.el: Warning: Unused lexical argument `audit-native-special'
-tests/audit_native.el: Warning: symbol-value cannot use lexical var `audit-native-special'
