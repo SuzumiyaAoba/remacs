@@ -756,8 +756,14 @@ fn f_nconc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                 last_cons = Some(last);
             }
             // GNU `nconc' CHECK_LIST_CONS's every non-final arg:
-            // non-nil non-cons signals `consp' on that arg.
-            other => return Err(i.wrong_type_mut("consp", other)),
+            // non-nil non-cons signals `consp' on that arg, after the
+            // previous cons has already been linked to it.
+            other => {
+                if let Some(cell) = &last_cons {
+                    cell.borrow_mut().cdr = other.clone();
+                }
+                return Err(i.wrong_type_mut("consp", other));
+            }
         }
     }
     // The final argument is the tail itself. In particular, do not walk
