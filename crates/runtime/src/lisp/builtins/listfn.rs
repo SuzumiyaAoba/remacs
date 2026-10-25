@@ -1323,6 +1323,8 @@ fn f_copy_tree(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // (and records) are copied recursively too when VECP is non-nil
     // (GNU fns.c Fcopy_tree).
     let vecp = arg(&args, 1).truthy();
+    let vecp_arg = args.get(1).cloned().unwrap_or(Value::Nil);
+    let copy_tree_function = Value::Sym(i.q("copy-tree"));
     fn descend(i: &Interp, value: &Value, vecp: bool) -> bool {
         match value {
             Value::Cons(_) => true,
@@ -1331,36 +1333,42 @@ fn f_copy_tree(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             _ => false,
         }
     }
-    fn cp(i: &mut Interp, value: &Value, vecp: bool) -> EvalResult {
-        if !descend(i, value, vecp) {
-            return Ok(value.clone());
-        }
-        i.with_lisp_eval_depth(false, |i| cp_inner(i, value, vecp))
+    fn cp(i: &mut Interp, function: &Value, value: &Value, vecp_arg: &Value) -> EvalResult {
+        i.apply(function, vec![value.clone(), vecp_arg.clone()])
     }
-    fn cp_inner(i: &mut Interp, v: &Value, vecp: bool) -> EvalResult {
+    fn cp_inner(
+        i: &mut Interp,
+        v: &Value,
+        vecp: bool,
+        vecp_arg: &Value,
+        copy_tree_function: &Value,
+    ) -> EvalResult {
         match v {
             Value::Cons(_) => {
                 let mut tail = v.clone();
                 let mut cars = Vec::new();
                 let mut quit_count = 0u16;
-                while let Value::Cons(cell) = &tail {
+                loop {
+                    let cell = match &tail {
+                        Value::Cons(cell) => cell.clone(),
+                        _ => break,
+                    };
                     quit_count = quit_count.wrapping_add(1);
                     if quit_count == 0 {
                         i.maybe_quit()?;
                     }
-                    let (car, cdr) = {
-                        let b = cell.borrow();
-                        (b.car.clone(), b.cdr.clone())
-                    };
+                    let car = cell.borrow().car.clone();
                     cars.push(if descend(i, &car, vecp) {
-                        cp(i, &car, vecp)?
+                        cp(i, copy_tree_function, &car, vecp_arg)?
                     } else {
                         car
                     });
-                    tail = cdr;
+                    // Recursive copy calls may mutate the source spine;
+                    // read its cdr only after the live function returns.
+                    tail = cell.borrow().cdr.clone();
                 }
                 let mut result = if descend(i, &tail, vecp) {
-                    cp(i, &tail, vecp)?
+                    cp(i, copy_tree_function, &tail, vecp_arg)?
                 } else {
                     tail
                 };
@@ -1378,7 +1386,7 @@ fn f_copy_tree(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                         i.maybe_quit()?;
                     }
                     if descend(i, slot, vecp) {
-                        *slot = cp(i, slot, vecp)?;
+                        *slot = cp(i, copy_tree_function, slot, vecp_arg)?;
                     }
                 }
                 Ok(Value::vector(copied))
@@ -1392,7 +1400,7 @@ fn f_copy_tree(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                         i.maybe_quit()?;
                     }
                     if descend(i, slot, vecp) {
-                        *slot = cp(i, slot, vecp)?;
+                        *slot = cp(i, copy_tree_function, slot, vecp_arg)?;
                     }
                 }
                 Ok(Value::record(copied))
@@ -1400,7 +1408,7 @@ fn f_copy_tree(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             other => Ok(other.clone()),
         }
     }
-    cp(i, &args[0], vecp)
+    cp_inner(i, &args[0], vecp, &vecp_arg, &copy_tree_function)
 }
 fn f_list_tail(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let n = want_int(i, &args[1])?.max(0);
