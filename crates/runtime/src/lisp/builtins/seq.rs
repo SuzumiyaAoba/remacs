@@ -857,7 +857,7 @@ fn f_mapconcat(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let mut parts = Vec::new();
     map_seq(i, &fun, &args[1], |i, v| {
         let r = i.apply(&fun, vec![v.clone()])?;
-        if !parts.is_empty() {
+        if !parts.is_empty() && !sep.is_empty_string() {
             parts.push(sep.clone());
         }
         parts.push(r);

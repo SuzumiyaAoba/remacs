@@ -1510,13 +1510,14 @@ fn f_string_pad(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 
 fn f_string_join(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let items = super::seq::seq_to_vec(i, &args[0])?;
+    let separator = args.get(1).cloned().unwrap_or(Value::Nil);
     // GNU's string-join is `(mapconcat #'identity STRINGS SEPARATOR)':
     // elements and SEPARATOR are passed to concat, preserving each
     // string's text properties. Coerce SEPARATOR only when joining.
     let mut parts = Vec::with_capacity(items.len().saturating_mul(2));
     for (idx, item) in items.into_iter().enumerate() {
-        if idx > 0 {
-            parts.push(args.get(1).cloned().unwrap_or(Value::Nil));
+        if idx > 0 && !separator.is_empty_string() {
+            parts.push(separator.clone());
         }
         parts.push(item);
     }
