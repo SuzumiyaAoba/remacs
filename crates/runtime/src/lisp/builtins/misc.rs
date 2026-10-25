@@ -5646,6 +5646,14 @@ pub(crate) fn f_file_name_case_insensitive_p(
     args: crate::lisp::Argv,
 ) -> EvalResult {
     let path = want_string(i, &args[0])?;
+    let operation = Value::Sym(i.q("file-name-case-insensitive-p"));
+    if let Some(handler) = crate::buffer::extra::find_file_name_handler(
+        i,
+        &path,
+        operation.clone(),
+    ) {
+        return i.apply(&handler, vec![operation, args[0].clone()]);
+    }
     // GNU fileio.c `check_case_insensitive': query the FILESYSTEM of
     // the parent directory (expand-file-name + directory-name), so a
     // nonexistent file under an existing dir still answers t on APFS.

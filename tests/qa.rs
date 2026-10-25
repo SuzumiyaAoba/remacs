@@ -522,6 +522,7 @@ qa!(qa_filename_helpers_handlers, "qa_filename_helpers_handlers.el");
 qa!(qa_file_name_base_versions, "qa_file_name_base_versions.el");
 qa!(qa_file_relative_name_handler, "qa_file_relative_name_handler.el");
 qa!(qa_directory_file_name_slash_roots, "qa_directory_file_name_slash_roots.el");
+qa!(qa_file_name_case_insensitive_handler, "qa_file_name_case_insensitive_handler.el");
 qa!(qa_expand_file_name_nul, "qa_expand_file_name_nul.el");
 qa!(qa_expand_file_name_handler, "qa_expand_file_name_handler.el");
 qa!(qa_byte_to_string_range, "qa_byte_to_string_range.el");
