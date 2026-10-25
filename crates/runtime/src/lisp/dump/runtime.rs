@@ -160,6 +160,7 @@ impl Runtime {
                         match kind {
                             crate::lisp::eval::SpecialRecordKind::Obarray => 0u8,
                             crate::lisp::eval::SpecialRecordKind::FontSpec => 1u8,
+                            crate::lisp::eval::SpecialRecordKind::SymbolWithPos => 2u8,
                         },
                     ))
                 })
@@ -395,6 +396,7 @@ impl Runtime {
                 let kind = match kind {
                     0 => crate::lisp::eval::SpecialRecordKind::Obarray,
                     1 => crate::lisp::eval::SpecialRecordKind::FontSpec,
+                    2 => crate::lisp::eval::SpecialRecordKind::SymbolWithPos,
                     _ => return Err("Invalid dumped special record kind".to_owned()),
                 };
                 i.special_records.push((Rc::downgrade(&record), kind));

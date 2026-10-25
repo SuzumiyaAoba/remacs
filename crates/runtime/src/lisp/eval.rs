@@ -263,6 +263,7 @@ pub enum OutputSink {
 pub(crate) enum SpecialRecordKind {
     Obarray,
     FontSpec,
+    SymbolWithPos,
 }
 
 /// The interpreter: all global Lisp state. Lives on the eval thread.

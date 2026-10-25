@@ -3729,10 +3729,17 @@ fn f_false(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 }
 
 /// `symbol-with-pos' objects print `#<symbol NAME at POS>' in GNU.
-/// Ours are records `#s(symbol-with-pos BARE POS)'; this checks the
-/// tag and returns (symbol, position).
+/// Ours are records `#s(symbol-with-pos BARE POS)'; identity metadata
+/// distinguishes these from user-created records with the same tag.
 pub(crate) fn sym_pos_parts(i: &Interp, v: &Value) -> Option<(SymId, i128)> {
     if let Value::Record(r) = v {
+        let is_positioned_symbol = i.special_records.iter().any(|(weak, kind)| {
+            *kind == crate::lisp::eval::SpecialRecordKind::SymbolWithPos
+                && weak.upgrade().is_some_and(|known| std::rc::Rc::ptr_eq(&known, r))
+        });
+        if !is_positioned_symbol {
+            return None;
+        }
         let rr = r.borrow();
         if let [Value::Sym(tag), Value::Sym(s), Value::Int(p)] = rr.as_slice() {
             if i.symbol_name(*tag) == "symbol-with-pos" {
@@ -3788,11 +3795,20 @@ pub(crate) fn sympos_enabled_p(i: &Interp) -> bool {
 
 /// Build a `symbol-with-pos' object for SYM at POS.
 pub(crate) fn make_symbol_with_pos(i: &mut Interp, sym: SymId, pos: i128) -> Value {
-    Value::record(vec![
+    let value = Value::record(vec![
         Value::Sym(i.q("symbol-with-pos")),
         Value::Sym(sym),
         Value::Int(pos),
-    ])
+    ]);
+    if let Value::Record(record) = &value {
+        i.special_records
+            .retain(|(known, _)| known.strong_count() > 0);
+        i.special_records.push((
+            std::rc::Rc::downgrade(record),
+            crate::lisp::eval::SpecialRecordKind::SymbolWithPos,
+        ));
+    }
+    value
 }
 
 fn f_bare_symbol(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
