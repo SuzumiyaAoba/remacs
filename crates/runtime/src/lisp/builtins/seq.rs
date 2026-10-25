@@ -443,9 +443,9 @@ fn f_elt(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             }
             Ok(super::misc::char_table_ref(i, &args[0], n as usize))
         }
-        // Plain records are sequences for `elt' (GNU CHECK_ARRAY admits
-        // them, then `aref' handles the index check itself).
-        Value::Record(_) => f_aref(i, args),
+        // Plain records are arrays but not sequences; GNU `elt' rejects
+        // them before checking the index, unlike the `aref' primitive.
+        Value::Record(_) => Err(i.wrong_type_mut("sequencep", &args[0])),
         other => Err(i.wrong_type_mut("sequencep", other)),
     }
 }
