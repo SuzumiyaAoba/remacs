@@ -948,14 +948,14 @@ fn member_if_impl(i: &mut Interp, pred: &Value, list: &Value, want: bool) -> Eva
                 if guard > 500_000 {
                     return Err(err_circular(i));
                 }
-                let (car, next) = {
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
-                };
+                let cell = c.clone();
+                let car = cell.borrow().car.clone();
                 if i.apply(pred, vec![car])?.truthy() == want {
                     return Ok(cur);
                 }
-                cur = next;
+                // PRED may have changed this cell's cdr. Read it only
+                // after returning from user code, like GNU's FOR_EACH_TAIL.
+                cur = cell.borrow().cdr.clone();
             }
             Value::Nil => return Ok(Value::Nil),
             other => return Err(i.wrong_type_mut("listp", other)),
