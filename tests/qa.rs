@@ -467,6 +467,7 @@ qa!(qa_subst_char_mule, "qa_subst_char_mule.el");
 qa!(qa_store_substring_mule, "qa_store_substring_mule.el");
 qa!(qa_case_table_mule, "qa_case_table_mule.el");
 qa!(qa_truncate_string_width_edges, "qa_truncate_string_width_edges.el");
+qa!(qa_truncate_width_mule_padding, "qa_truncate_width_mule_padding.el");
 qa!(qa_case_table_fold, "qa_case_table_fold.el");
 qa!(qa_byte_character_conversion, "qa_byte_character_conversion.el");
 qa!(qa_bytecode_errors, "qa_bytecode_errors.el");

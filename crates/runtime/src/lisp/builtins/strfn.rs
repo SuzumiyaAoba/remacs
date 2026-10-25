@@ -1734,7 +1734,8 @@ fn gnu_char_width(i: &Interp, c: char) -> usize {
 fn truncate_padding_char(i: &mut Interp, padding: &Value) -> Result<char, Flow> {
     match padding {
         Value::Int(n) if (0..=0x3f_ffff).contains(n) => {
-            Ok(char::from_u32(*n as u32).unwrap_or(' '))
+            let code = *n as u32;
+            Ok(lisp_char(code).unwrap_or_else(|| crate::lisp::value::mule_seq_char(code)))
         }
         other => Err(i.wrong_type_mut("characterp", other)),
     }
