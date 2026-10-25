@@ -1879,11 +1879,11 @@ fn f_assoc_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         }
     };
     let mut cur = args[1].clone();
-    let mut guard = 0usize;
+    let mut quit_count = 0u16;
     loop {
-        guard += 1;
-        if guard > 500_000 {
-            return Err(err_circular(i));
+        quit_count = quit_count.wrapping_add(1);
+        if quit_count == 0 {
+            i.maybe_quit()?;
         }
         match cur {
             Value::Cons(c) => {
