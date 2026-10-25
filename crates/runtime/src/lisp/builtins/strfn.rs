@@ -301,13 +301,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Levenshtein distance."
     ),
     S!(
-        "string-pixel-width",
-        1,
-        2,
-        f_string_width,
-        "Width (in columns here)."
-    ),
-    S!(
         "string-glyph-split",
         1,
         1,
