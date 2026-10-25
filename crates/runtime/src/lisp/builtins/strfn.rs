@@ -1654,11 +1654,11 @@ fn f_string_replace(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // occurred — so the arg-check order is FROM, IN, then TO (and only
     // on a hit).
     let from = want_string(i, &args[0])?;
-    let s = want_string(i, &args[2])?;
     if from.is_empty() {
         let sym = i.q("wrong-length-argument");
         return Err(i.signal_data(sym, vec![Value::Int(0)]));
     }
+    let s = want_string(i, &args[2])?;
     // GNU's string-replace keeps source runs verbatim, and its final
     // concat copies TO-STRING's text properties into each replacement.
     let schars: Vec<char> = s.chars().collect();
