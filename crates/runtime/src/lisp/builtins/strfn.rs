@@ -463,16 +463,18 @@ fn f_unibyte_char_to_multibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalR
 /// GNU string-truncate-left: when STRING is longer than LENGTH,
 /// return "..." plus the last max(LENGTH-3, 1) characters.
 fn f_string_truncate_left(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let s = want_string(i, &args[0])?;
+    let length_fn = i.q("length");
+    let len = i.apply(&Value::Sym(length_fn), vec![args[0].clone()])?;
+    let len = want_int(i, &len)?;
     let length = want_int(i, &args[1])?;
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() as i128 <= length {
+    if len <= length {
         return Ok(args[0].clone());
     }
-    let keep = (length - 3).max(1).min(chars.len() as i128) as usize;
+    let len = usize::try_from(len).map_err(|_| i.error("Invalid sequence length"))?;
+    let keep = (length - 3).max(1).min(len as i128) as usize;
     let suffix = f_substring(
         i,
-        vec![args[0].clone(), Value::Int((chars.len() - keep) as i128)].into(),
+        vec![args[0].clone(), Value::Int((len - keep) as i128)].into(),
     )?;
     f_concat(i, vec![Value::string("..."), suffix].into())
 }
