@@ -1,0 +1,21 @@
+;;; -*- lexical-binding: nil; -*-
+;; eq/eql tables reuse the most recently freed slot, including after copy (#538).
+(defun qa-hash-free-slot-order (test keys removed replacement)
+  (let ((table (make-hash-table :test test)))
+    (dolist (key keys) (puthash key key table))
+    (dolist (key removed) (remhash key table))
+    (let ((copy (copy-hash-table table)))
+      (puthash replacement replacement table)
+      (puthash replacement replacement copy)
+      (list (let (result)
+              (maphash (lambda (key _value) (push key result)) table)
+              (nreverse result))
+            (let (result)
+              (maphash (lambda (key _value) (push key result)) copy)
+              (nreverse result))))))
+
+(qa (qa-hash-free-slot-order 'eq '(a b c d) '(a c) 'x)
+    '((b x d) (b x d)))
+(qa (qa-hash-free-slot-order 'eql '(1 2 3 4) '(1 3) 9)
+    '((2 9 4) (2 9 4)))
+(princ (qa--done))

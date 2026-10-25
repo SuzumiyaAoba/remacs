@@ -156,7 +156,7 @@ pub struct LispHash {
     pub map: HashMap<HashKey, Value>,
     /// Original keys for `maphash`/`hash-table-keys`, kept in GNU's
     /// slot order: entries append at the end, `remhash' leaves a
-    /// tombstone and the next `puthash' reuses the first free slot.
+    /// tombstone and the next `puthash' reuses the most recently freed slot.
     pub keys: KeySlots,
     /// Lisp-visible weakness, also retained in printed/dumped tables.
     pub weakness: Option<Value>,
@@ -231,9 +231,11 @@ impl LispHash {
             }
             return;
         }
-        match self.keys.0.iter_mut().find(|e| e.is_none()) {
-            Some(slot) => *slot = Some((hk, k)),
-            None => self.keys.0.push(Some((hk, k))),
+        let slot = self.free_slots.pop().unwrap_or(self.keys.0.len());
+        if slot == self.keys.0.len() {
+            self.keys.0.push(Some((hk, k)));
+        } else {
+            self.keys.0[slot] = Some((hk, k));
         }
     }
 
@@ -245,9 +247,9 @@ impl LispHash {
             .position(|e| matches!(e, Some((h, _)) if h == hk))
         {
             self.keys.0[slot] = None;
+            self.free_slots.push(slot);
             if self.user_test.is_some() || self.test == HashTest::Equal {
                 self.collision_order.retain(|index| *index != slot);
-                self.free_slots.push(slot);
             }
         }
     }
