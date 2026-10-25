@@ -1895,6 +1895,7 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
     };
     let padding = args.get(3).cloned().unwrap_or(Value::Nil);
     let ellipsis_v = args.get(4).cloned().unwrap_or(Value::Nil);
+    let ellipsis_text_property = args.get(5).is_some_and(Value::truthy);
 
     // Resolve the ellipsis string (GNU: a string is used verbatim;
     // any other non-nil value means `truncate-string-ellipsis',
@@ -1992,16 +1993,29 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
         col += cw;
     }
     let mut ellipsis_start = None;
+    let mut elided_range = None;
+    let textprop_ellipsis = ellipsis_text_property
+        && truncated
+        && !fits
+        && ellipsis.as_ref().is_some_and(|text| !text.is_empty());
     if truncated && !fits {
         if let Some(e) = &ellipsis {
             ellipsis_start = Some(out.chars().count());
-            out.push_str(e);
-            col += ell_w;
+            if !textprop_ellipsis {
+                out.push_str(e);
+                col += ell_w;
+            }
         }
+    }
+    if textprop_ellipsis {
+        let hidden_start = retained_start + retained_len;
+        let hidden_len = chars.len().saturating_sub(hidden_start);
+        out.extend(chars[hidden_start..].iter());
+        elided_range = Some((hidden_start, hidden_len));
     }
     // PADDING: non-nil pads out to WIDTH with the padding char (or
     // spaces when PADDING isn't a character).
-    if padding.truthy() && (col as f64) < width {
+    if !textprop_ellipsis && padding.truthy() && (col as f64) < width {
         // GNU reaches make-string only after determining that padding is
         // needed, so a floating END-COLUMN is rejected at this point.
         let pad_width = want_int(i, &args[1])?.max(0) as usize;
@@ -2012,11 +2026,12 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
     }
     let result = Value::string_ref(out);
     let mut properties = Vec::new();
+    let source_prop_len = retained_len + elided_range.map_or(0, |(_, len)| len);
     if let Value::Str(source) = &args[0]
-        && retained_len > 0
+        && source_prop_len > 0
         && i.has_str_props(source)
     {
-        let retained_end = retained_start + retained_len;
+        let retained_end = retained_start + source_prop_len;
         for (start, end, plist) in i.str_props(source) {
             let lo = (*start).max(retained_start);
             let hi = (*end).min(retained_end);
@@ -2029,12 +2044,25 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
             }
         }
     }
-    if let (Some(start), Some(source)) = (ellipsis_start, ellipsis_source)
+    if !textprop_ellipsis
+        && let (Some(start), Some(source)) = (ellipsis_start, ellipsis_source.clone())
         && i.has_str_props(&source)
     {
         for (lo, hi, plist) in i.str_props(&source) {
             properties.push((start + lo, start + hi, plist.clone()));
         }
+    }
+    if let Some((_, hidden_len)) = elided_range
+        && hidden_len > 0
+    {
+        let display_value = ellipsis_source
+            .map(Value::Str)
+            .unwrap_or_else(|| Value::string(ellipsis.clone().unwrap_or_default()));
+        properties.push((
+            head_padding + retained_len,
+            head_padding + retained_len + hidden_len,
+            vec![Value::Sym(i.q("display")), display_value],
+        ));
     }
     if !properties.is_empty() {
         i.set_str_props(&result, properties);
