@@ -16300,13 +16300,17 @@ fn f_record(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_recordp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    Ok(Value::from_bool(recordp(i, &a[0])))
+}
+
+pub(crate) fn recordp(i: &Interp, value: &Value) -> bool {
     // `symbols-with-pos-enabled' objects are symbols, not records;
     // obarrays are their own pseudovec type in GNU (PVEC_OBARRAY,
     // distinct from PVEC_RECORD) so `recordp' is nil on them.
     // A font-spec is stored as a record internally but is a
     // pseudovector (PVEC_FONT), not a record, in GNU — `recordp' is
     // nil on it (type-of reports `font-spec').
-    let font_spec = match &a[0] {
+    let font_spec = match value {
         Value::Record(r) => {
             let rb = r.borrow();
             matches!(
@@ -16316,13 +16320,13 @@ fn f_recordp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
         _ => false,
     };
-    Ok(Value::from_bool(
-        matches!(a[0], Value::Record(_))
-            && !crate::editor::window_configuration_object(&a[0])
+    matches!(value, Value::Record(_))
+            && !crate::editor::window_configuration_object(value)
             && !font_spec
-            && as_sympos(&a[0]).is_none()
-            && !crate::lisp::builtins::data::is_obarray(i, &a[0]),
-    ))
+            && as_sympos(value).is_none()
+            && !crate::lisp::builtins::data::is_obarray(i, value)
+            && !is_bool_vector(i, value)
+            && !is_char_table(i, value)
 }
 
 // ---------- added GNU compat subrs ----------
