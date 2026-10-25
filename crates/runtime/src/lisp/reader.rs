@@ -474,6 +474,9 @@ impl<'a> Reader<'a> {
             match self.next()? {
                 None => return Err(eof_err(self.interp)),
                 Some('"') => {
+                    if out.is_empty() {
+                        return Ok(self.interp.empty_string(multibyte));
+                    }
                     let v = Value::string(out);
                     // GNU: only real non-ASCII characters force multibyte
                     // storage. Byte8 characters alone remain raw bytes,

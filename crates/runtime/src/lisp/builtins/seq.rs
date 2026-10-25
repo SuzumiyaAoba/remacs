@@ -649,6 +649,9 @@ pub(crate) fn f_copy_sequence(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
             Ok(Value::list(items))
         }
         Value::Str(s) => {
+            if s.borrow().is_empty() {
+                return Ok(i.empty_string(super::strfn::string_multibyte_p(i, &args[0])));
+            }
             // A real copy: new identity, own copy of prop intervals.
             let ns = crate::lisp::Value::string_ref(s.borrow().clone());
             if i.has_str_props(s) {

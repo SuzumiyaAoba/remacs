@@ -1,0 +1,30 @@
+;;; -*- lexical-binding: nil; -*-
+;; Zero-length strings are shared by byte representation (#552).
+(qa (eq (make-string 0 ?a) (make-string 0 ?b)) t)
+(qa (eq (make-string 0 ?a nil) (make-string 0 ?b nil)) t)
+(qa (eq (make-string 0 ?a t) (make-string 0 ?b t)) t)
+(qa (eq "" (make-string 0 ?a nil)) t)
+(qa (eq "" (make-string 0 ?a t)) nil)
+(qa (let ((empty (make-string 0 ?a))) (eq (read "\"\"") empty)) t)
+(qa (list (multibyte-string-p (make-string 0 ?a))
+          (multibyte-string-p (make-string 0 ?a t)))
+    '(nil t))
+
+(let ((unibyte (make-string 0 ?a nil))
+      (multibyte (make-string 0 ?a t)))
+  (qa (list (eq unibyte multibyte)
+            (eq unibyte (concat))
+            (eq unibyte (unibyte-string))
+            (eq unibyte (substring (unibyte-string 65) 0 0))
+            (eq unibyte (copy-sequence unibyte))
+            (eq unibyte (format ""))
+            (eq multibyte (format "%s" multibyte))
+            (eq multibyte (string-to-multibyte unibyte))
+            (eq unibyte (string-to-unibyte multibyte))
+            (eq multibyte (substring (string-to-multibyte "A") 0 0))
+            (eq multibyte (copy-sequence multibyte)))
+      '(nil t t t t t t t t t t)))
+
+;; Validation still happens before the zero-length fast path.
+(qa-err (make-string 0 'not-a-character) 'wrong-type-argument)
+(princ (qa--done))

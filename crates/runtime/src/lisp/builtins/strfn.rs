@@ -485,6 +485,9 @@ fn f_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU's `string' builds a MULTIBYTE string — bytes 0x80-0xFF are
     // stored as eight-bit chars (codes 0x3FFF80-0x3FFFFF, PUA proxies
     // internally); `multibyte-string-p' is t on the result.
+    if args.is_empty() {
+        return Ok(i.empty_string(false));
+    }
     let mut out = String::new();
     for a in args.iter() {
         match a {
@@ -631,6 +634,9 @@ pub(crate) fn f_concat(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             _ => {}
         }
     }
+    if out.is_empty() {
+        return Ok(i.empty_string(any_multi));
+    }
     let ns = crate::lisp::Value::string_ref(out);
     if any_multi {
         i.mark_multibyte(&ns);
@@ -723,6 +729,9 @@ fn substring_impl(i: &mut Interp, args: crate::lisp::Argv, copy_props: bool) -> 
         }
         Ok(Value::vector(slice))
     } else {
+        if slice.is_empty() {
+            return Ok(i.empty_string(string_multibyte_p(i, &args[0])));
+        }
         let ns = crate::lisp::Value::string_ref(
             slice
                 .iter()
@@ -4889,7 +4898,13 @@ fn f_string_aref(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 /// `%c` char, `%%` literal. Supports `%Nd`, `%-Ns`, `%0Nd`, `%.Nf`.
 fn f_format(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let fmt = want_string(i, &args[0])?;
-    if !fmt.contains('%') { return Ok(args[0].clone()); }
+    if !fmt.contains('%') {
+        return if fmt.is_empty() {
+            Ok(i.empty_string(string_multibyte_p(i, &args[0])))
+        } else {
+            Ok(args[0].clone())
+        };
+    }
     let fmt_ivs = match &args[0] {
         Value::Str(s) => i.str_props(s).to_vec(),
         _ => Vec::new(),
@@ -4932,7 +4947,11 @@ fn format_impl_spans(
     // unpropertized two-character string conversion. Other arguments and
     // the format's storage kind then have no effect on that returned object.
     if !fmt.contains('%') && matches!(&args[0], Value::Str(source) if source.borrow().as_str() == fmt) {
-        return Ok(args[0].clone());
+        return if fmt.is_empty() {
+            Ok(i.empty_string(string_multibyte_p(i, &args[0])))
+        } else {
+            Ok(args[0].clone())
+        };
     }
     if fmt_ivs.is_empty() && fmt.len() == 2 && fmt.starts_with('%') {
         let conversion = fmt.as_bytes()[1];
@@ -5338,6 +5357,9 @@ fn format_impl_spans(
         }
     }
     multibyte |= content_is_multibyte(&out);
+    if out.is_empty() {
+        return Ok(i.empty_string(multibyte));
+    }
     let result = Value::string(out);
     if let Value::Str(string) = &result {
         if multibyte { i.mark_multibyte(string); } else { i.mark_unibyte(string); }
@@ -5505,6 +5527,9 @@ fn f_make_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let ch = lisp_char(code).unwrap_or_else(|| crate::lisp::value::mule_seq_char(code));
     // Only ASCII with a nil MULTIBYTE argument uses unibyte storage.
     let multibyte = code >= 128 || args.get(2).is_some_and(Value::truthy);
+    if n == 0 {
+        return Ok(i.empty_string(multibyte));
+    }
     let mut text = String::with_capacity(n * ch.len_utf8());
     for _ in 0..n {
         text.push(ch);
@@ -5979,6 +6004,9 @@ fn f_string_to_multibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
             }
         })
         .collect();
+    if out.is_empty() {
+        return Ok(i.empty_string(true));
+    }
     let v = Value::string(out);
     if let Value::Str(r) = &v {
         i.mark_multibyte(r);
@@ -6010,6 +6038,9 @@ fn f_string_to_unibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         } else {
             return Err(i.error(format!("Cannot convert character at index {ix} to unibyte")));
         }
+    }
+    if out.is_empty() {
+        return Ok(i.empty_string(false));
     }
     let v = Value::string(out);
     if let Value::Str(r) = &v {
@@ -6049,6 +6080,9 @@ pub(crate) fn f_string_as_unibyte(i: &mut Interp, args: crate::lisp::Argv) -> Ev
     } else {
         s
     };
+    if out.is_empty() {
+        return Ok(i.empty_string(false));
+    }
     let v = Value::string(out);
     if let Value::Str(r) = &v {
         i.mark_unibyte(r);
@@ -6094,6 +6128,9 @@ fn f_string_as_multibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
         // retained byte-by-byte as eight-bit characters.
         out.push(lisp_char(bytes[k] as u32 + 0x3FFF00).unwrap());
         k += 1;
+    }
+    if out.is_empty() {
+        return Ok(i.empty_string(true));
     }
     let v = Value::string(out);
     if let Value::Str(r) = &v {
@@ -6165,6 +6202,9 @@ fn f_unibyte_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         }
         let c = char::from_u32(n as u32).unwrap();
         s.push(c);
+    }
+    if args.is_empty() {
+        return Ok(i.empty_string(false));
     }
     let v = Value::string(s);
     if let Value::Str(r) = &v {

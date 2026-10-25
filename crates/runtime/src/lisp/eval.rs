@@ -746,6 +746,10 @@ pub struct Interp {
     /// GNU's `zero_vector': the single shared 0-length vector —
     /// `(vector)', `[]' and `(make-vector 0)' are all `eq' to it.
     pub zero_vector: Value,
+    /// GNU shares empty strings by byte representation. Keep the canonical
+    /// unibyte and multibyte values separate, like the zero-length vectors.
+    pub zero_unibyte_string: Value,
+    pub zero_multibyte_string: Value,
 }
 
 /// Result of a minibuffer read from the front-end.
@@ -923,7 +927,7 @@ impl Interp {
         feature_syms: Vec<SymId>,
         noninteractive: bool,
     ) -> Self {
-        Interp {
+        let mut interp = Interp {
             obarray,
             specbind: Vec::new(),
             catch_tags: Vec::new(),
@@ -1114,7 +1118,16 @@ impl Interp {
             string_data_tick: 0,
             string_props: HashMap::default(),
             zero_vector: Value::vector(Vec::new()),
-        }
+            zero_unibyte_string: Value::Nil,
+            zero_multibyte_string: Value::Nil,
+        };
+        let unibyte = crate::lisp::value::Value::string_ref("");
+        interp.mark_unibyte(&unibyte);
+        interp.zero_unibyte_string = Value::Str(unibyte);
+        let multibyte = crate::lisp::value::Value::string_ref("");
+        interp.mark_multibyte(&multibyte);
+        interp.zero_multibyte_string = Value::Str(multibyte);
+        interp
     }
 
     pub fn new() -> Interp {
@@ -5400,6 +5413,14 @@ command-line arguments.\" \
     pub fn mark_multibyte(&mut self, s: &crate::lisp::value::StrRef) {
         self.multibyte_strings
             .insert(std::rc::Rc::as_ptr(s) as usize, std::rc::Rc::downgrade(s));
+    }
+
+    pub(crate) fn empty_string(&self, multibyte: bool) -> Value {
+        if multibyte {
+            self.zero_multibyte_string.clone()
+        } else {
+            self.zero_unibyte_string.clone()
+        }
     }
 
     /// Is this string a marked multibyte string?
