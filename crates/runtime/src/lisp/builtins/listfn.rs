@@ -1637,6 +1637,9 @@ fn plist_put(i: &mut Interp, args: crate::lisp::Argv, lax: bool) -> EvalResult {
                     let b = c.borrow();
                     (b.car.clone(), b.cdr.clone())
                 };
+                if !matches!(&old_rest, Value::Cons(_)) {
+                    return Err(i.wrong_type_mut("plistp", &whole));
+                }
                 let matches = match &pred {
                     Some(p) => i
                         .apply(p, vec![k.clone(), args[1].clone()])
