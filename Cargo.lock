@@ -4698,11 +4698,43 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "remacs"
 version = "0.1.0"
 dependencies = [
+ "libc",
+ "remacs-cli",
+ "remacs-gui",
+ "remacs-runtime",
+ "serde_json",
+]
+
+[[package]]
+name = "remacs-cli"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+ "remacs-runtime",
+]
+
+[[package]]
+name = "remacs-gui"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "remacs-cli",
+ "remacs-runtime",
+ "smol",
+ "unicode-width",
+]
+
+[[package]]
+name = "remacs-libraries"
+version = "0.1.0"
+
+[[package]]
+name = "remacs-runtime"
+version = "0.1.0"
+dependencies = [
  "base64",
  "corosensei",
- "crossterm",
  "flate2",
- "gpui",
  "html5ever",
  "indexmap",
  "libc",
@@ -4714,6 +4746,7 @@ dependencies = [
  "num-rational",
  "num-traits",
  "quick-xml 0.38.4",
+ "remacs-libraries",
  "rusqlite",
  "rustc-hash 2.1.3",
  "serde",
@@ -4721,7 +4754,6 @@ dependencies = [
  "sha1",
  "sha2 0.10.9",
  "sha3",
- "smol",
  "tree-sitter",
  "tree-sitter-language",
  "unicode-width",

@@ -58,7 +58,7 @@ fn private_definition(i: &Interp, entry: &Value, known: &HashSet<String>) -> boo
 
 fn prelude_source(i: &mut Interp, file: &str) -> Result<String, super::Flow> {
     let development =
-        std::env::current_exe().is_ok_and(|exe| exe.starts_with(env!("CARGO_MANIFEST_DIR")));
+        std::env::current_exe().is_ok_and(|exe| exe.starts_with(env!("REMACS_SOURCE_ROOT")));
     if development && Path::new(file).is_file() {
         return Ok(file.to_string());
     }
@@ -74,7 +74,7 @@ pub(crate) fn restore(i: &mut Interp) -> EvalResult {
     let manifest = manifest();
     let history = i.q("load-history");
     let old = i.symbol_value(history).list_to_vec().unwrap_or_default();
-    let prelude = concat!(env!("CARGO_MANIFEST_DIR"), "/src/lisp/prelude.el");
+    let prelude = concat!(env!("REMACS_SOURCE_ROOT"), "/crates/runtime/src/lisp/prelude.el");
     let mut external = Vec::new();
     let mut private = Vec::new();
     for entry in old {

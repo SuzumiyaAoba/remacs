@@ -294,7 +294,7 @@ mod tests {
                 let name = i.q("qa289-notify");
                 i.fset(name, Value::Subr(&NOTIFY));
                 let path = concat!(
-                    env!("CARGO_MANIFEST_DIR"),
+                    env!("REMACS_SOURCE_ROOT"),
                     "/tests/window_change_notifications.el"
                 );
                 i.eval_str(&format!("(load {:?} nil t)", path)).unwrap();
@@ -306,7 +306,7 @@ mod tests {
                     "qa289-throw",
                 ];
                 let expected: Vec<_> =
-                    include_str!("../../tests/window_change_notifications.expected")
+                    include_str!("../../../../tests/window_change_notifications.expected")
                         .lines()
                         .collect();
                 assert_eq!(probes.len(), expected.len());

@@ -1,4 +1,4 @@
-//! Tests for the D-Bus subrs in src/lisp/builtins/dbus.rs.
+//! Tests for the D-Bus subrs in crates/runtime/src/lisp/builtins/dbus.rs.
 //!
 //! These tests need two external things:
 //!   * libdbus-1 loadable by `dynlib' (feature `dbusbind')

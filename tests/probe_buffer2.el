@@ -287,7 +287,8 @@
   (ignore-errors (frame-or-buffer-changed-p))
   (ignore-errors (open-termscript "f"))
   (ignore-errors (suspend-emacs))
-  (ignore-errors (kill-emacs 0))
+  ;; Process exit is covered by main_cli/restart tests.  ignore-errors does
+  ;; not catch kill-emacs, which would skip the remaining coverage probes.
   (ignore-errors (iconify-or-deiconify-frame))
   (ignore-errors (list-timers))
   (ignore-errors (current-idle-time))

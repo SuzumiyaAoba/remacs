@@ -2,11 +2,11 @@
 """AOT byte-compile boot libraries and compiled data with GNU Emacs.
 
 remacs boots by loading the same set of files GNU Emacs dumps into
-temacs (see `boot_lib' in src/lisp/eval.rs).  GNU loads those libraries
+temacs (see `boot_lib' in crates/runtime/src/lisp/eval.rs).  GNU loads those libraries
 as byte-compiled .elc at dump time; we interpret the .el sources, which
 costs ~900 ms per startup.  This script byte-compiles each boot library
 with a reference GNU Emacs and emits the resulting .elc blobs under
-lisp-elc/ plus a Rust table src/lisp/embedded_elc.rs that the loader
+lisp-elc/ plus a Rust table crates/libraries/src/embedded_elc.rs that the loader
 consults before the embedded .el source.
 
 Requirements:
@@ -32,7 +32,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LISP = os.path.join(ROOT, "lisp")
 OUT = os.path.join(ROOT, "lisp-elc")
-GEN = os.path.join(ROOT, "src", "lisp", "embedded_elc.rs")
+GEN = os.path.join(ROOT, "crates", "libraries", "src", "embedded_elc.rs")
 
 # Every library `boot_lib'/`load_library' pulls in during Interp::new,
 # in load order.  charprop.el is `no-byte-compile: t' like GNU's;
@@ -170,7 +170,7 @@ def main() -> int:
     ]
     for stem in LIBRARIES:
         if stem in emitted:
-            lines.append(f'    ("{stem}", include_str!("../../lisp-elc/{stem}.elc")),')
+            lines.append(f'    ("{stem}", include_str!("../../../lisp-elc/{stem}.elc")),')
     lines.append("];\n")
     with open(GEN, "w") as f:
         f.write("\n".join(lines))

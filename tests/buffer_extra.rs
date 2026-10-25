@@ -1,4 +1,4 @@
-//! Tests for region/text-property/motion subrs (src/buffer/extra.rs)
+//! Tests for region/text-property/motion subrs (crates/runtime/src/buffer/extra.rs)
 //! and core buffer primitives.
 
 mod common;

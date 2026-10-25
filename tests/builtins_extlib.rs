@@ -1,7 +1,7 @@
 //! Tests for the external-library subrs:
-//!   src/lisp/builtins/sqlite.rs  (sqlite-*)
-//!   src/lisp/builtins/xml.rs     (libxml-parse-*-region)
-//!   src/lisp/builtins/charset.rs (decode/encode-big5-char, -sjis-char)
+//!   crates/runtime/src/lisp/builtins/sqlite.rs  (sqlite-*)
+//!   crates/runtime/src/lisp/builtins/xml.rs     (libxml-parse-*-region)
+//!   crates/runtime/src/lisp/builtins/charset.rs (decode/encode-big5-char, -sjis-char)
 //! Expected values were verified against GNU Emacs 31.1.
 
 mod common;

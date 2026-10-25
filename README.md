@@ -11,6 +11,27 @@ byte-identically from GNU Emacs 31.1).
 > what is shared with GNU Emacs is the Lisp library and external
 > behavior.
 
+## Workspace and standalone execution
+
+The workspace separates `remacs-runtime` (evaluator and Emacs editor state),
+`remacs-libraries` (bundled Lisp data), `remacs-cli` (startup and terminal),
+and `remacs-gui` (GPUI and OS input). The root package preserves the existing
+`remacs` API and integrated executable.
+
+```sh
+cargo run -p remacs-runtime --bin remacs-lisp -- --eval '(+ 1 2)'
+cargo run -p remacs-cli -- --batch --eval '(princ (+ 1 2))'
+cargo run -p remacs-cli -- -nw
+cargo run -p remacs-gui -- README.md
+cargo build --no-default-features # Integrated CLI without GPUI
+python3 tools/check_architecture.py
+```
+
+The standalone runtime has no GUI or terminal dependencies. `remacs-lisp`
+supports ordered `--eval`, `--load`, `--script` actions, or standard input
+with no arguments. Use `remacs-cli` for GNU-compatible startup options.
+See [architecture and dependency boundaries](docs/architecture.md).
+
 ## Features
 
 - **Emacs Lisp runtime** — full evaluator: special forms, macros,
@@ -19,7 +40,7 @@ byte-identically from GNU Emacs 31.1).
   semantics, `defvar`/`defcustom`, advice, `cl-generic`, and the
   dumped-library feature model.
 - **Byte-code execution** — a real GNU `#[...]` executor
-  (`src/lisp/bytecode.rs`): loads and runs `.elc` files, including
+  (`crates/runtime/src/lisp/bytecode.rs`): loads and runs `.elc` files, including
   `byte-switch` jump tables, handler frames, and the interpreter
   `catch_tags` contract. `byte-compile-file` produces real bytecode.
 - **Native compilation** — a generated-C pipeline instead of
@@ -31,14 +52,14 @@ byte-identically from GNU Emacs 31.1).
   - GPU-rendered GUI via [gpui](https://gpui.rs) — the evaluator lives
     on its own logic thread; the window paints `render_grid` snapshots
     over a latest-wins channel, so the UI never blocks on Lisp.
-  - macOS NeXTstep layer (`src/lisp/builtins/nsgui.rs`): real AppKit /
+  - macOS NeXTstep layer (`crates/runtime/src/lisp/builtins/nsgui.rs`): real AppKit /
     Foundation calls through dlopen'd `libobjc.A.dylib` +
     `objc_msgSend` — `ns-list-colors`, `x-create-frame`,
     `x-file-dialog`, `ns-badge`, `ns-begin-drag`, services, etc.
 - **Library coverage** — all of GNU Emacs 31.1's Lisp tree lives flat
   under `lisp/` and is embedded via `EMBEDDED_LISP`
-  (`src/lisp/load.rs`); `require`/`load` resolve against it. Startup
-  is driven by `src/lisp/prelude.el`.
+  (`crates/libraries/src/lib.rs`); `require`/`load` resolve against it. Startup
+  is driven by `crates/runtime/src/lisp/prelude.el`.
 - **Data types & primitives** — buffers (gap buffer), markers,
   windows/frames, hash tables, char-tables, bool-vectors, records,
   regexps, charsets incl. CJK tables, processes, timers, FFI-free

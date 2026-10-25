@@ -339,7 +339,8 @@
 (ignore-errors (special-variable-p 'car))
 (ignore-errors (indirect-function 'car))
 (ignore-errors (indirect-function 'car t))
-(ignore-errors (kill-emacs))
+;; kill-emacs is exercised by dedicated CLI tests; ignore-errors cannot
+;; catch process termination, which would skip the following probes.
 (ignore-errors (funcall 'prog1 1 2 3))
 (ignore-errors (apply 'or '(nil 2)))
 (ignore-errors (apply 'and '(1 nil)))

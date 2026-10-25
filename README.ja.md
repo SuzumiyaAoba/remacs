@@ -11,6 +11,32 @@ GNU Emacs 31.1 からバイト同一に移植）をそのまま実行します�
 > ランタイム全体が Rust で、GNU Emacs と共有するのは Lisp
 > ライブラリと外部挙動です。
 
+## 構成と単独実行
+
+Cargo workspace で処理系・CLI・GUI・同梱 Lisp ライブラリを分離しています。
+
+| クレート | 責務 |
+| --- | --- |
+| `remacs-runtime` | Lisp 評価器、Emacs のバッファ・フレーム状態、共通描画・コマンドループ |
+| `remacs-libraries` | `lisp/` と `lisp-elc/` の同梱データ。処理系への依存なし |
+| `remacs-cli` | 引数解析、起動処理、端末 UI |
+| `remacs-gui` | GPUI 表示、OS 入力、評価スレッドとの通信 |
+| `remacs` | 既存 API と統合実行ファイルの互換ファサード |
+
+```sh
+cargo run -p remacs-runtime --bin remacs-lisp -- --eval '(+ 1 2)'
+cargo run -p remacs-cli -- --batch --eval '(princ (+ 1 2))'
+cargo run -p remacs-cli -- -nw
+cargo run -p remacs-gui -- README.ja.md
+cargo build --no-default-features # GPUI なしの統合 CLI
+python3 tools/check_architecture.py
+```
+
+処理系単独では GUI・端末ライブラリをビルドしません。`remacs-lisp` は
+`--eval`、`--load`、`--script` と、引数なしでの標準入力を扱います。
+GNU CLI 互換のオプション処理には `remacs-cli` を使います。
+詳細は [構成と依存境界](docs/architecture.md) を参照してください。
+
 ## 機能
 
 - **Emacs Lisp ランタイム** — 完全な評価器：スペシャルフォーム、
@@ -19,7 +45,7 @@ GNU Emacs 31.1 からバイト同一に移植）をそのまま実行します�
   持つ `symbols-with-pos`（位置付きシンボル）、`defvar`/`defcustom`、
   advice、`cl-generic`、ダンプ済みライブラリの feature モデル。
 - **バイトコード実行** — 本物の GNU `#[...]` 実行器
-  （`src/lisp/bytecode.rs`）：`.elc` のロードと実行に対応し、
+  （`crates/runtime/src/lisp/bytecode.rs`）：`.elc` のロードと実行に対応し、
   `byte-switch` のジャンプテーブル、ハンドラフレーム、
   インタプリタの `catch_tags` 契約も実装。`byte-compile-file` が
   実際のバイトコードを生成します。
@@ -33,14 +59,14 @@ GNU Emacs 31.1 からバイト同一に移植）をそのまま実行します�
     ロジックスレッドに置き、ウィンドウは `render_grid` のスナップショットを
     latest-wins チャネルで描画するため、Lisp 実行中も UI が
     ブロックしません。
-  - macOS NeXTstep レイヤ（`src/lisp/builtins/nsgui.rs`）：dlopen した
+  - macOS NeXTstep レイヤ（`crates/runtime/src/lisp/builtins/nsgui.rs`）：dlopen した
     `libobjc.A.dylib` + `objc_msgSend` 経由で本物の AppKit /
     Foundation を呼び出します — `ns-list-colors`、`x-create-frame`、
     `x-file-dialog`、`ns-badge`、`ns-begin-drag`、サービス等。
 - **ライブラリカバレッジ** — GNU Emacs 31.1 の Lisp ツリー全体が
   `lisp/` 以下にフラットに置かれ、`EMBEDDED_LISP`
-  （`src/lisp/load.rs`）で埋め込まれています。`require`/`load` は
-  これに対して解決します。起動は `src/lisp/prelude.el` が駆動します。
+  （`crates/libraries/src/lib.rs`）で埋め込まれています。`require`/`load` は
+  これに対して解決します。起動は `crates/runtime/src/lisp/prelude.el` が駆動します。
 - **データ型とプリミティブ** — バッファ（gap buffer）、マーカー、
   window/frame、ハッシュテーブル、char-table、bool-vector、
   record、正規表現、CJK テーブル含む charset、プロセス、タイマー、

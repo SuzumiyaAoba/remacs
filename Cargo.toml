@@ -1,18 +1,26 @@
-[package]
-name = "remacs"
+[workspace]
+members = ["crates/runtime", "crates/libraries", "crates/cli", "crates/gui"]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
+[workspace.dependencies]
+remacs-runtime = { path = "crates/runtime" }
+remacs-libraries = { path = "crates/libraries" }
+remacs-cli = { path = "crates/cli", default-features = false }
+remacs-gui = { path = "crates/gui" }
+crossterm = "0.29.0"
+gpui = { version = "0.2.2", features = ["runtime_shaders"] }
+smol = "2.0.2"
 num-bigint = "0.4.8"
 num-integer = "0.1.46"
 num-rational = "0.4.2"
 num-traits = "0.2.19"
 base64 = "0.22.1"
-crossterm = "0.29.0"
 corosensei = "0.3.4"
 flate2 = "1.1.5"
-gpui = { version = "0.2.2", features = ["runtime_shaders"] }
 html5ever = "0.39"
 indexmap = "2.14.2"
 libc = "0.2.189"
@@ -23,7 +31,6 @@ rusqlite = { version = "0.40.2", features = ["bundled", "load_extension"] }
 sha1 = "0.10.6"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
-smol = "2.0.2"
 tree-sitter = "0.25.10"
 tree-sitter-language = "0.1.8"
 libloading = "0.8.9"
@@ -33,12 +40,25 @@ rustc-hash = "2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 
-[dev-dependencies]
-gpui = { version = "0.2.2", features = ["runtime_shaders", "test-support"] }
+[package]
+name = "remacs"
+version.workspace = true
+edition.workspace = true
+default-run = "remacs"
 
-# The interpreter spends its time in eval loops; an unoptimized debug
-# build pays ~6x on every `Interp::new' (~17s of prelude+libraries per
-# batch run / test Interp).  opt-level 1 keeps debug info and compile
-# times reasonable while making dev runs usable.
+[features]
+default = ["gui"]
+gui = ["dep:remacs-gui"]
+
+[dependencies]
+remacs-runtime.workspace = true
+remacs-cli = { workspace = true, features = ["terminal"] }
+remacs-gui = { workspace = true, optional = true }
+
+[dev-dependencies]
+libc.workspace = true
+serde_json.workspace = true
+
+# Keep interpreter startup practical in development and tests.
 [profile.dev]
 opt-level = 1

@@ -1,5 +1,5 @@
 //! Regression tests for the NeXTstep/macOS primitives
-//! (src/lisp/builtins/nsgui.rs) and for the platform Lisp libraries
+//! (crates/runtime/src/lisp/builtins/nsgui.rs) and for the platform Lisp libraries
 //! (term/ns-win.el, term/common-win.el, fontset.el) that GNU dumps
 //! into the image.  Everything here targets batch/TTY behaviour:
 //! there is no NS terminal, so GUI entry points must either work

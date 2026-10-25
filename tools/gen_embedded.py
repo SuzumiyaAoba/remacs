@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate EMBEDDED_LISP entries for src/lisp/load.rs.
+"""Generate EMBEDDED_LISP entries for crates/libraries/src/lib.rs.
 
 Scans lisp/*.el, matches each file against the GNU Emacs source tree by
 content hash, and emits (key, include_str!(path)) lines.  The key is the
@@ -64,8 +64,8 @@ def main() -> int:
     ap.add_argument("--lisp", default="lisp", help="repo lisp dir")
     ap.add_argument(
         "--prefix",
-        default="../../lisp/",
-        help="include_str! path prefix from load.rs",
+        default="../../../lisp/",
+        help="include_str! path prefix from crates/libraries/src/lib.rs",
     )
     args = ap.parse_args()
 

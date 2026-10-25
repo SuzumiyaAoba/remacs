@@ -30,7 +30,7 @@ args = ["build", "--release"]
 [tasks.check]
 description = "Type-check without building."
 command = "cargo"
-args = ["check"]
+args = ["check", "--workspace", "--all-targets"]
 
 [tasks.clean]
 description = "Remove build artifacts."
@@ -82,19 +82,19 @@ exec cargo run --release -- -nw "$@"
 [tasks.eval]
 description = "Evaluate a Lisp form in batch mode: makers eval \"(message \\\"hi\\\")\""
 script = '''
-exec cargo run --quiet -- --eval "${CARGO_MAKE_TASK_ARGS}"
+exec cargo run --quiet -p remacs-runtime --bin remacs-lisp -- --eval "${CARGO_MAKE_TASK_ARGS}"
 '''
 
 [tasks.load]
 description = "Load a Lisp file in batch mode: makers load file.el"
 script = '''
-exec cargo run --quiet -- --load "${CARGO_MAKE_TASK_ARGS}"
+exec cargo run --quiet -p remacs-runtime --bin remacs-lisp -- --load "${CARGO_MAKE_TASK_ARGS}"
 '''
 
 [tasks.script]
 description = "Run a Lisp file and exit: makers script file.el"
 script = '''
-exec cargo run --quiet -- --script "${CARGO_MAKE_TASK_ARGS}"
+exec cargo run --quiet -p remacs-runtime --bin remacs-lisp -- --script "${CARGO_MAKE_TASK_ARGS}"
 '''
 
 # ----------------------------------------------------------------- test
@@ -102,7 +102,7 @@ exec cargo run --quiet -- --script "${CARGO_MAKE_TASK_ARGS}"
 [tasks.test]
 description = "Run the test suite."
 command = "cargo"
-args = ["test"]
+args = ["test", "--workspace"]
 
 [tasks.probe]
 description = "Diff remacs vs GNU Emacs on a corpus file: makers probe corpus/arith.txt [-v]"
@@ -124,18 +124,38 @@ exec python3 tools/probe_gen.py "$file" target/debug/remacs "$@"
 [tasks.fmt]
 description = "Format the code."
 command = "cargo"
-args = ["fmt"]
+args = ["fmt", "--all"]
 
 [tasks.fmt-check]
 description = "Check formatting without changing files."
 command = "cargo"
-args = ["fmt", "--", "--check"]
+args = ["fmt", "--all", "--", "--check"]
 
 [tasks.clippy]
 description = "Lint with clippy."
 command = "cargo"
-args = ["clippy", "--all-targets"]
+args = ["clippy", "--workspace", "--all-targets"]
 
 [tasks.verify]
-description = "fmt-check + clippy + test."
-dependencies = ["fmt-check", "clippy", "test"]
+description = "architecture + fmt-check + clippy + test."
+dependencies = ["architecture", "fmt-check", "clippy", "test"]
+
+[tasks.architecture]
+description = "Validate workspace dependency boundaries."
+command = "python3"
+args = ["tools/check_architecture.py"]
+
+[tasks.build-runtime]
+description = "Build the standalone Lisp runner without a frontend."
+command = "cargo"
+args = ["build", "-p", "remacs-runtime"]
+
+[tasks.build-cli]
+description = "Build the terminal CLI without GPUI."
+command = "cargo"
+args = ["build", "-p", "remacs-cli"]
+
+[tasks.build-gui]
+description = "Build the GUI without the terminal adapter."
+command = "cargo"
+args = ["build", "-p", "remacs-gui"]

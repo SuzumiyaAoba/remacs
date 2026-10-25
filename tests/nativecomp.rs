@@ -1,4 +1,4 @@
-//! Regression tests for native compilation (src/lisp/builtins/comp.rs):
+//! Regression tests for native compilation (crates/runtime/src/lisp/builtins/comp.rs):
 //! cc-emitted .eln shared objects, the em_obj handle API, trampoline
 //! dispatch, .eln naming, and the comp-* primitive surface.
 //! Tests skip when no C compiler is available (native-comp-available-p

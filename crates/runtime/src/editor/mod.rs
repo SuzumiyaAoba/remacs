@@ -7629,7 +7629,7 @@ const NAMED_KEY_MODIFIERS: [(i128, &str); 6] = [
     (CHAR_SUPER, "s-"),
 ];
 
-pub(crate) fn event_code_for(mut name: &str) -> i128 {
+pub fn event_code_for(mut name: &str) -> i128 {
     // Keymaps supply symbols such as C-home; front-ends supply the
     // home code with CHAR_CTL set. Hash only the base name so both
     // paths describe the same event (#297).
@@ -7685,7 +7685,7 @@ fn named_key_names() -> &'static std::sync::Mutex<Option<std::collections::HashM
 /// key descriptions and `where-is` results, so `[down]` prints as
 /// `down` rather than a raw integer.
 /// Return the event name for a named-key code, if registered.
-pub(crate) fn key_name_for(code: i128) -> Option<String> {
+pub fn key_name_for(code: i128) -> Option<String> {
     let modifier_mask = NAMED_KEY_MODIFIERS.iter().fold(0, |mask, (bit, _)| mask | bit);
     let bare = code & !modifier_mask;
     if bare < NAMED_KEY_BASE || bare > NAMED_KEY_BASE + NAMED_KEY_MASK {
@@ -9479,11 +9479,11 @@ fn parse_key_word(i: &mut Interp, word: &str) -> Result<Vec<Value>, Flow> {
     parse_key_token(i, word)
 }
 
-pub(crate) const CHAR_META: i128 = 0x0800_0000;
-pub(crate) const CHAR_CTL: i128 = 0x0400_0000;
-pub(crate) const CHAR_SHIFT: i128 = 0x0200_0000;
-pub(crate) const CHAR_HYPER: i128 = 0x0100_0000;
-pub(crate) const CHAR_SUPER: i128 = 0x0080_0000;
+pub const CHAR_META: i128 = 0x0800_0000;
+pub const CHAR_CTL: i128 = 0x0400_0000;
+pub const CHAR_SHIFT: i128 = 0x0200_0000;
+pub const CHAR_HYPER: i128 = 0x0100_0000;
+pub const CHAR_SUPER: i128 = 0x0080_0000;
 pub(crate) const CHAR_ALT: i128 = 0x0040_0000;
 
 /// Parse one `kbd` token into `Value` events: `Value::Int` for
@@ -19324,7 +19324,7 @@ fn f_execute_kbd_macro(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
         }
         let stop = if i.macro_replaying { outer_rest } else { 0 };
-        crate::term::replay_macro_events(i, stop);
+        crate::frontend::replay_macro_events(i, stop);
         if let Some(f) = i.macro_pending_flow.take() {
             i.macro_strict = saved_strict;
             let _ = i.set_symbol(ek, Value::Nil);

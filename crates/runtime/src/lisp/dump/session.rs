@@ -1074,7 +1074,7 @@ mod tests {
                     )
                     .unwrap();
                 assert_eq!(restored.prin1_to_string(&point), "11");
-                crate::term::render_grid(&restored, 80, 25);
+                crate::frontend::render_grid(&restored, 80, 25);
                 let equal = restored
                     .eval_str("(= (window-old-point dump288-other) (window-point dump288-other))")
                     .unwrap();
@@ -1102,7 +1102,7 @@ mod tests {
                     .unwrap();
                 assert_eq!(restored.prin1_to_string(&point), "9");
                 restored.eval_str("(erase-buffer)").unwrap();
-                crate::term::render_grid(&restored, 80, 25);
+                crate::frontend::render_grid(&restored, 80, 25);
                 let point = restored.eval_str("(window-old-point dump288-other)").unwrap();
                 assert_eq!(restored.prin1_to_string(&point), "1");
             })

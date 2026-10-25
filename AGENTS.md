@@ -1,3 +1,14 @@
+# Workspace boundaries
+
+- `crates/runtime`: Lisp runtime and Emacs editor state; no CLI, GPUI, or crossterm dependencies.
+- `crates/libraries`: data-only source/AOT registries for root `lisp/` and `lisp-elc/`.
+- `crates/cli`: arguments, application/startup, and optional `terminal` adapter.
+- `crates/gui`: GPUI application, logic-thread transport, command keys, and OS text input.
+- Root `src/`: compatibility facade and integrated launcher. Keep existing public paths working.
+- Common rendering/command loops live in `crates/runtime/src/frontend/`, not in a device adapter.
+- Read `docs/architecture.md` and run `python3 tools/check_architecture.py` when changing dependencies.
+- Source-tree paths use build-time `REMACS_SOURCE_ROOT`, not a member's `CARGO_MANIFEST_DIR`.
+
 # Remacs GNU library port notes
 
 ## Layout
@@ -15,13 +26,13 @@ subdirectories — name collisions were resolved by renaming:
 - `lisp/remacs-compat.el` — compatibility fallbacks; guard new shims with
   `(unless (fboundp ...))` and mark edits with `;Remacs:` comments.
 - `lisp/subr.el` — real GNU file now; subr's functionality is still
-  provided by `src/lisp/prelude.el` at init, and `(require 'subr)` hits
+  provided by `crates/runtime/src/lisp/prelude.el` at init, and `(require 'subr)` hits
   the pre-registered feature, so the file only matters for `load`.
 - `etc/themes/*.el` — the 25 built-in themes referenced by
   `lisp/theme-loaddefs.el`.
 
 All core GNU files are now ported byte-identically — including the
-ones that used to be folded into `src/lisp/prelude.el` (bindings,
+ones that used to be folded into `crates/runtime/src/lisp/prelude.el` (bindings,
 button, custom, faces, files, font-lock, frame, help, indent, isearch,
 jit-lock, keymap, menu-bar, minibuffer, mwheel, simple, startup, subr,
 window).  The prelude's own folded definitions still drive init; the
@@ -31,7 +42,7 @@ Skipped: `.dir-locals.el`, `ldefs-boot.el`
 
 ## EMBEDDED_LISP registration (done — regenerate with tools/gen_embedded.py)
 
-`src/lisp/load.rs` `EMBEDDED_LISP` covers all ported files — every
+`crates/libraries/src/lib.rs` `EMBEDDED_LISP` covers all ported files — every
 `lisp/*.el` is now valid UTF-8, so `include_str!` embeds the lot.
 (The 13 files that used to carry GNU's emacs-mule internal encoding
 — ARRAY30, ECDICT, Punct-b5, ethio-util, ethiopic, ind-util,
@@ -46,10 +57,10 @@ each file to its GNU key by content hash (qualified keys like
 files.
 Registration rules:
 
-- Flat files: `("name", include_str!("../../lisp/name.el"))`
+- Flat files: `("name", include_str!("../../../lisp/name.el"))`
 - CEDET-qualified: key must be the GNU qualified path so
   `(require 'semantic/ctxt)` resolves, e.g.
-  `("semantic/ctxt", include_str!("../../lisp/semantic-ctxt.el"))`
+  `("semantic/ctxt", include_str!("../../../lisp/semantic-ctxt.el"))`
 - Renamed quail: key `"quail/emoji"` → `lisp/quail-emoji.el`
   (`embedded()` tries exact match, then `dir-base` flat fallback, then
   basename fallback — so a flat `quail-emoji` key also resolves).
@@ -60,7 +71,7 @@ Registration rules:
 table. An explicit PATH is authoritative. Default embedded hits return
 absolute, readable `.el` paths: use an existing flat bundled file, or
 publish its source into a private process-local temporary directory
-(`src/lisp/embedded_cache.rs`). Publication is atomic; repeated lookups
+(`crates/runtime/src/lisp/embedded_cache.rs`). Publication is atomic; repeated lookups
 preserve edits to the materialized file. Never return `builtin:` load
 identities as filenames. Respect NOSUFFIX and configured suffixes rather
 than inventing `.elc` files for embedded bytecode twins.
@@ -76,7 +87,7 @@ Regressions: `qa_locate_embedded`, `tests/embedded_cache.rs`, and the
 standalone copied-binary tests in `tests/embedded_libraries.rs` (also
 run with `REMACS_NO_ELC`).
 
-`src/lisp/dump_history.json` records GNU 31.1's 136 dumped libraries and
+`crates/runtime/src/lisp/dump_history.json` records GNU 31.1's 136 dumped libraries and
 their definition/dependency ownership. Regenerate with
 `python3 tools/gen_dump_history.py --emacs /path/to/emacs-31.1` and use
 `--check` to verify it. At the end of bootstrap, `dump_history::restore`
@@ -159,7 +170,7 @@ fixnum, including when its encoded character differs. `qa_write_char`
 checks string/buffer/marker/function destinations and validation ordering.
 
 Variable protection uses a committed GNU forwarding snapshot
-(`src/lisp/forwarded_variables.txt`, regenerate with
+(`crates/runtime/src/lisp/forwarded_variables.txt`, regenerate with
 `tools/gen_forwarded_variables.py --emacs GNU31_BINARY`). `G` entries
 use non-buffer forwarding; `B` entries are C buffer slots. Apply flags only
 to existing bound symbols after boot, without relying on DOC availability.
@@ -250,7 +261,7 @@ into `lisp-elc/*.elc` (see below); `load_library` prefers an embedded
 `.elc' twin over the `.el' source while `boot_loading', and the
 `REMACS_NO_ELC' env var drops back to interpreted source for parity
 debugging.  The backquote expander is a Rust port
-(`src/lisp/builtins/backquote.rs`) — GNU byte-compiles backquote.el, so
+(`crates/runtime/src/lisp/builtins/backquote.rs`) — GNU byte-compiles backquote.el, so
 an interpreted copy both cost ~700 ms of macroexpansion per boot and
 broke on `(fmakunbound 'car)' (its `car' calls are `Bcar' opcodes in
 GNU).  `backquote'/`\`'/`backquote-list*' are bound as
@@ -319,11 +330,11 @@ Regular folded-function fallbacks remain for incomplete source/autoload
 paths (face-remap, rx, etc.). Regressions: `qa_cl_boot_surface` and the
 copied-binary library tests, whose watchdog also guards against loop hangs.
 
-## AOT .elc twins (`src/lisp/embedded_elc.rs` + `lisp-elc/`)
+## AOT .elc twins (`crates/libraries/src/embedded_elc.rs` + `lisp-elc/`)
 
 `tools/gen_boot_elc.py` runs GNU Emacs's `byte-compile-file' over the
 boot libraries and emits `lisp-elc/<stem>.elc' blobs plus a Rust table
-`src/lisp/embedded_elc.rs'.  `load_library_opts_msg' prefers a blob
+`crates/libraries/src/embedded_elc.rs'.  `load_library_opts_msg' prefers a blob
 over the `.el' source while `boot_loading' (Interp::new's boot-lib
 window) is set — post-boot `(require '…)'/`load' of the same names
 reads the real `.el' so `symbol-file'/`load-history' stay right.
@@ -438,8 +449,8 @@ Regression: `qa_display_fallback` (8 GNU-verified checks) and `qa_buffmenu` (#29
   longer emitted since the `equal`-on-`#[...]` fix; keep the note as
   a canary: if the warning returns, suspect the constant-dedup path).
 - `xwidget-internal` unimplemented. NS/macOS GUI primitives are
-  covered by `src/lisp/builtins/nsgui.rs` (see below). Native
-  compilation is implemented in `src/lisp/builtins/comp.rs` (see
+  covered by `crates/runtime/src/lisp/builtins/nsgui.rs` (see below). Native
+  compilation is implemented in `crates/runtime/src/lisp/builtins/comp.rs` (see
   below).
 - Bulk-load test (all lisp/*.el under --batch, `blessmail.el` skipped —
   it writes the `blessmail` script to CWD and calls `kill-emacs` by
@@ -678,7 +689,7 @@ so long tails/shared DAGs cannot overflow before collision checking.
 Regressions: `tests/qa_hash_custom.el`, `tests/qa_hash_cycles.el`
 (GNU Emacs 31.1).
 
-## Tree-sitter support (`src/lisp/builtins/treesit.rs`)
+## Tree-sitter support (`crates/runtime/src/lisp/builtins/treesit.rs`)
 
 Implemented: grammar loading via `libloading` (lookup order:
 `treesit-extra-load-path`, `user-emacs-directory/tree-sitter/`, then bare
@@ -750,7 +761,7 @@ Design notes:
 Verified: `treesit.el`, `json-ts-mode`, `c-ts-mode`, `rust-ts-mode`
 load, parse, and fontify correctly under `--batch`.
 
-## Subprocess pipe and PTY transports (`src/lisp/process/child.rs`)
+## Subprocess pipe and PTY transports (`crates/runtime/src/lisp/process/child.rs`)
 
 `make-process` selects stdin and stdout independently: `pipe`, `pty`, or
 the `(INPUT . OUTPUT)` pair; nil on either side inherits the dynamic
@@ -1056,7 +1067,7 @@ from the supplied KEYS vector. read-key-sequence does not apply the character
 readers' inhibit-interaction guard. Regressions: `tests/batch_input.rs` and the
 existing CLI/character-output suites.
 
-## Process input pause (`src/lisp/process.rs`)
+## Process input pause (`crates/runtime/src/lisp/process.rs`)
 
 `stop-process` inhibits reads/accepts for every network backend, including
 Unix streams, TCP/Unix listeners and TLS. Connect completion still runs;
@@ -1111,11 +1122,11 @@ Regression: `qa_process_timeout`, plus CLI catch/exit/notification checks.
 The headless entry point propagates unexpected interpreter-worker panics
 after worker cleanup, instead of silently reporting exit status zero.
 
-## External libraries (`src/lisp/dynlib.rs` + builtins)
+## External libraries (`crates/runtime/src/lisp/dynlib.rs` + builtins)
 
 Optional GNU libraries are dlopen'd at runtime (`dynlib::Library`):
-`libgnutls` (crypto + TLS sessions, `src/lisp/builtins/gnutls.rs` —
-TLS I/O routed inside `src/lisp/process.rs`), `liblcms2`
+`libgnutls` (crypto + TLS sessions, `crates/runtime/src/lisp/builtins/gnutls.rs` —
+TLS I/O routed inside `crates/runtime/src/lisp/process.rs`), `liblcms2`
 (`lcms.rs`), `libdbus-1` (`dbus.rs`), kqueue file-notify
 (`filenotify.rs`). Features (`lcms2`, `gnutls`, `dbusbind`,
 `file-notify`) are provided only when the library actually loads;
@@ -1150,7 +1161,7 @@ and skip when `DBUS_SESSION_BUS_ADDRESS` is unset). kqueue note:
 `NOTE_WRITE` only fires on a real write() — `write-region` over an
 empty point range is a no-op and produces no event.
 
-## NS/macOS GUI (`src/lisp/builtins/nsgui.rs`)
+## NS/macOS GUI (`crates/runtime/src/lisp/builtins/nsgui.rs`)
 
 NeXTstep primitives bridge to AppKit/Foundation via dlopen'd
 `libobjc.A.dylib` + `objc_msgSend` (Objc function table kept alive in
@@ -1188,7 +1199,7 @@ nativecomp (functions compile to native subrs).
 
 Regression suite: `tests/nsgui.rs` (macOS-gated, 4 tests).
 
-## Native compilation (`src/lisp/builtins/comp.rs`)
+## Native compilation (`crates/runtime/src/lisp/builtins/comp.rs`)
 
 Not a libgccjit port — an equivalent pipeline: parse `.el`, generate
 C, compile with system `cc` into a shared object named `*.eln`, and
@@ -1287,9 +1298,9 @@ Architecture:
 
 Regression suite: `tests/nativecomp.rs` and the `qa_native_*` fixtures.
 
-## Subprocess environments (`src/lisp/process/environment.rs`)
+## Subprocess environments (`crates/runtime/src/lisp/process/environment.rs`)
 
-Subprocess environments are built by `src/lisp/process/environment.rs`
+Subprocess environments are built by `crates/runtime/src/lisp/process/environment.rs`
 from the current Lisp `process-environment` binding. Async children,
 `call-process`, `call-process-region`, `process-lines` and shell command
 helpers clear inherited OS variables and install this child-local copy;
@@ -1325,7 +1336,7 @@ Relative program names containing slashes still search each entry.
 later missing candidates preserve earlier specific errors (permission,
 directory, symlink loop). Regression: `qa_process_exec_path`.
 
-## Minibuffer reads (`src/lisp/eval.rs` + `src/editor/mod.rs` + `src/term`)
+## Minibuffer reads (`crates/runtime/src/lisp/eval.rs` + `crates/runtime/src/editor/mod.rs` + `src/term`)
 
 GNU structure kept: `read-file-name`/`completing-read`/`read-buffer`
 are subrs that delegate to the user variables
@@ -1376,7 +1387,7 @@ column (lines are truncated, no continuation rows).  Without it
 cursor motion past a window edge left the buffer text frozen and hid
 the cursor.
 
-Scrolling primitives live in `src/editor/mod.rs` (`window_scroll'):
+Scrolling primitives live in `crates/runtime/src/editor/mod.rs` (`window_scroll'):
 like GNU's `window_scroll' they move the window's `start' AND, when
 the scroll would leave point outside the window, move point to the
 edge GNU picks — first visible line on scroll-up, last on scroll-down
@@ -1442,7 +1453,7 @@ commands, composition ranges and a UTF-8 file saved through the logic thread
 
 ## Portable time formatting
 
-`src/lisp/builtins/timefmt.rs` implements GNU flag ordering, field widths,
+`crates/runtime/src/lisp/builtins/timefmt.rs` implements GNU flag ordering, field widths,
 numeric fields, composite dates, fractional precision, and zone formatting.
 Never forward GNU flags or widths to libc: macOS strftime does not support
 those extensions. `misc::strftime_spec` supplies only unadorned locale text
@@ -1454,7 +1465,7 @@ and right-padding; `%F` applies its width to the year field. Regressions:
 `qa_time_modifiers`, `qa_time_zero_zone`, `qa_timefmt`, and the portable
 formatter unit test that rejects nonportable calls to its native callback.
 
-## Cooperative Lisp threads (`src/lisp/threads.rs`)
+## Cooperative Lisp threads (`crates/runtime/src/lisp/threads.rs`)
 
 `make-thread` queues a `corosensei` coroutine; it returns before the worker
 runs. `thread-yield`, joins, sleeps, mutex/condition waits, timed event reads,
@@ -1822,7 +1833,7 @@ Open divergence classes under triage:
   collected ~840 entries from before the `cl--loop-expand`/`equal`
   fixes); the harness re-records genuine offenders.
 
-## Managed memory statistics (`src/lisp/memory.rs`)
+## Managed memory statistics (`crates/runtime/src/lisp/memory.rs`)
 
 `memory-use-counts` records cumulative cons, float, vector-cell, symbol,
 string-byte, interval, and string allocations. Route new managed objects
@@ -1853,7 +1864,7 @@ once per shared
 buffer text or string property tree, not again for its legacy flat view.
 Regression coverage: `tests/qa_memory_statistics.el` and `memory::tests`.
 
-Weak hash entries are swept by `src/lisp/memory/weak.rs`: an ownership graph
+Weak hash entries are swept by `crates/runtime/src/lisp/memory/weak.rs`: an ownership graph
 counts internal Rc references, marks external owners, and follows conditional
 key/value edges to a fixed point. `key-and-value` requires both endpoints to
 be live; `key-or-value` requires either. Shared lexical environments and text
@@ -1865,7 +1876,7 @@ IDs, rebuilding it when reading literals or restoring portable images.
 Regression coverage: `qa_weak_hash`, the borrowed-table memory unit test, and
 the portable-image weak-table test.
 
-## Profiler logs (`src/lisp/profiler.rs`)
+## Profiler logs (`crates/runtime/src/lisp/profiler.rs`)
 
 CPU and memory profilers keep independent pending logs across stop/start.
 Export returns an `equal` hash table, clears the pending log, and creates
@@ -1889,7 +1900,7 @@ losing weight. The inactive path only checks the running flags.
 Regression coverage: `tests/qa_profiler.el` (lifecycle, samples, bounded
 logs, all three report modes) and the profiler log weight-conservation test.
 
-## Byte-code diagnostics (`src/lisp/bytecode.rs`)
+## Byte-code diagnostics (`crates/runtime/src/lisp/bytecode.rs`)
 
 `byte-code` validates a string, a constants vector, and a non-negative
 fixnum stack depth before execution. This legacy entry converts multibyte
@@ -2262,7 +2273,7 @@ Session images persist snapshots and rebind shared epoch cells; orphan windows
 retain the owner's last epoch. GNU TTY golden fixtures and session tests pin
 these #289 notification, deletion, reentrancy and restoration rules.
 
-## Live backtraces (`src/lisp/backtrace.rs`)
+## Live backtraces (`crates/runtime/src/lisp/backtrace.rs`)
 
 `lisp_stack` holds evaluated calls for the profiler and evaluator. Source
 expressions add scoped `pending_frames` at the current call-stack depth;
@@ -2334,7 +2345,7 @@ tokens literal when they are operands or follow `--`. GNU does not accept
 `-h` as help, and help inserted into the live Lisp queue after startup is
 still an unknown runtime option. Regressions: `tests/cli_help.rs`.
 
-## Portable images (`src/lisp/dump/`)
+## Portable images (`crates/runtime/src/lisp/dump/`)
 
 `dump-emacs-portable` writes a real Remacs image; `--dump-file FILE`
 or `--dump-file=FILE` restores it before command-line actions. Without an
@@ -2382,7 +2393,7 @@ Regression coverage: dump graph/session unit tests, `tests/portable_dump.rs`
 (fresh copied executables, separate caches, corruption and startup metadata),
 and `tests/qa_pdumper.el` (GNU-verified errors and dump output).
 
-## Gap allocation (`src/buffer/gapbuf.rs`)
+## Gap allocation (`crates/runtime/src/buffer/gapbuf.rs`)
 
 The backing vector holds decoded characters but budgets Emacs encoded-byte
 capacity. `text_bytes` counts live storage (including two-byte eight-bit

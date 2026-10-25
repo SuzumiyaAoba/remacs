@@ -4525,7 +4525,7 @@ command-line arguments.\" \
             // find-func family can locate prelude-defined symbols.
             crate::lisp::load::record_prelude_load_history(
                 &mut interp,
-                concat!(env!("CARGO_MANIFEST_DIR"), "/src/lisp/prelude.el"),
+                concat!(env!("REMACS_SOURCE_ROOT"), "/crates/runtime/src/lisp/prelude.el"),
                 crate::lisp::prelude::PRELUDE,
             );
         }
@@ -11369,7 +11369,7 @@ command-line arguments.\" \
             ("invocation-directory", Value::Nil),
             (
                 "source-directory",
-                Value::string(env!("CARGO_MANIFEST_DIR")),
+                Value::string(env!("REMACS_SOURCE_ROOT")),
             ),
             ("emacs-program-version", Value::string("31.1")),
             ("emacs-major-version", Value::Int(31)),
@@ -12900,7 +12900,7 @@ command-line arguments.\" \
                     let r = loop {
                         match self.minibuf_input(prompt, false) {
                             Ok(MinibufInput::Key(k)) => {
-                                if let Err(e) = crate::term::minibuf_dispatch_key(
+                                if let Err(e) = crate::frontend::minibuf_dispatch_key(
                                     self,
                                     k,
                                     &mut keys,

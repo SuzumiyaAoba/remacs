@@ -1,4 +1,4 @@
-#[path = "../src/lisp/embedded_cache.rs"]
+#[path = "../crates/runtime/src/lisp/embedded_cache.rs"]
 mod embedded_cache;
 
 #[test]

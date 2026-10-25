@@ -52,7 +52,7 @@ def main():
     entries = sorted(json.loads(result.stdout))
     if not entries or any(any(c.isspace() for c in name) for name, _ in entries):
         raise ValueError("Invalid forwarded variable snapshot")
-    destination = Path(__file__).resolve().parents[1] / "src/lisp/forwarded_variables.txt"
+    destination = Path(__file__).resolve().parents[1] / "crates/runtime/src/lisp/forwarded_variables.txt"
     contents = "".join(f"{kind} {name}\n" for name, kind in entries)
     if not destination.exists() or destination.read_text() != contents:
         destination.write_text(contents)

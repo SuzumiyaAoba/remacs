@@ -1,0 +1,14 @@
+[package]
+name = "remacs-gui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+remacs-runtime = { workspace = true }
+remacs-cli = { workspace = true, default-features = false }
+gpui = { workspace = true }
+smol = { workspace = true }
+unicode-width = { workspace = true }
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

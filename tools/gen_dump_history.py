@@ -12,7 +12,7 @@ from pathlib import Path
 import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
-OUTPUT = ROOT / "src/lisp/dump_history.json"
+OUTPUT = ROOT / "crates/runtime/src/lisp/dump_history.json"
 EXPRESSION = r'''
 (let ((dump-history-generator--names nil)
       (dump-history-generator--history (copy-tree load-history))

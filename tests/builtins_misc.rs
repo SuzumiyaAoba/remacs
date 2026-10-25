@@ -1,4 +1,4 @@
-//! Tests for the misc subrs (src/lisp/builtins/misc.rs).
+//! Tests for the misc subrs (crates/runtime/src/lisp/builtins/misc.rs).
 
 mod common;
 use common::ev;

@@ -3284,7 +3284,7 @@ fn charset_map_dirs() -> Vec<std::path::PathBuf> {
                 .join("etc/charsets")
         })
         .collect();
-    v.push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("etc/charsets"));
+    v.push(std::path::PathBuf::from(env!("REMACS_SOURCE_ROOT")).join("etc/charsets"));
     v
 }
 

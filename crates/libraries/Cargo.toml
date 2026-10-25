@@ -1,0 +1,4 @@
+[package]
+name = "remacs-libraries"
+version.workspace = true
+edition.workspace = true

@@ -1,5 +1,5 @@
 //! Regression tests for dlopen-gated optional libraries
-//! (src/lisp/dynlib.rs + builtins/{lcms,gnutls,filenotify}.rs) and the
+//! (crates/runtime/src/lisp/dynlib.rs + builtins/{lcms,gnutls,filenotify}.rs) and the
 //! image-spec primitives.  Each test skips when its library or OS
 //! backend isn't loadable — they are no-ops in minimal environments.
 
@@ -17,7 +17,7 @@ fn kqueue() -> bool {
 }
 
 // ---------------------------------------------------------------
-// LCMS2 (src/lisp/builtins/lcms.rs)
+// LCMS2 (crates/runtime/src/lisp/builtins/lcms.rs)
 // ---------------------------------------------------------------
 
 #[test]
@@ -59,7 +59,7 @@ fn lcms_white_point_and_roundtrip() {
 }
 
 // ---------------------------------------------------------------
-// GnuTLS crypto (src/lisp/builtins/gnutls.rs)
+// GnuTLS crypto (crates/runtime/src/lisp/builtins/gnutls.rs)
 // ---------------------------------------------------------------
 
 #[test]
@@ -125,7 +125,7 @@ fn gnutls_error_helpers() {
 }
 
 // ---------------------------------------------------------------
-// kqueue file notifications (src/lisp/builtins/filenotify.rs)
+// kqueue file notifications (crates/runtime/src/lisp/builtins/filenotify.rs)
 // ---------------------------------------------------------------
 
 #[test]

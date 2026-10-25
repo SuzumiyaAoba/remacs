@@ -1,0 +1,17 @@
+[package]
+name = "remacs-cli"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = ["terminal"]
+terminal = ["dep:crossterm"]
+
+[dependencies]
+remacs-runtime = { workspace = true }
+crossterm = { workspace = true, optional = true }
+
+[[bin]]
+name = "remacs-cli"
+path = "src/main.rs"
+required-features = ["terminal"]

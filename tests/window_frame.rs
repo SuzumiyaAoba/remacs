@@ -1,4 +1,4 @@
-//! Tests for window/frame primitives (src/editor/{mod,winxtra}.rs).
+//! Tests for window/frame primitives (crates/runtime/src/editor/{mod,winxtra}.rs).
 
 mod common;
 use common::{ev, ev_err};

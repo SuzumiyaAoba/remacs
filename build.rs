@@ -20,7 +20,14 @@ fn main() {
     use std::env;
     use std::process::Command;
 
-    println!("cargo:rerun-if-changed=build.rs");
+    let manifest = std::path::PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let root = if manifest.ends_with("crates/runtime") {
+        manifest.parent().unwrap().parent().unwrap().to_path_buf()
+    } else {
+        manifest
+    };
+    println!("cargo:rustc-env=REMACS_SOURCE_ROOT={}", root.display());
+    println!("cargo:rerun-if-changed={}", root.join("build.rs").display());
     let target = env::var("TARGET").expect("Cargo TARGET");
     let host = env::var("HOST").expect("Cargo HOST");
     let release = if target.ends_with("-apple-darwin") && host.ends_with("-apple-darwin") {
