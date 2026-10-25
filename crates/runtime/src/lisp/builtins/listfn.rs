@@ -1167,7 +1167,10 @@ fn f_assoc_default(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                     v => v.clone(),
                 };
                 let hit = if test.is_nil() {
-                    equal_values(i, &key, &args[0])?
+                    // GNU's default is `(funcall #'equal KEY ITEM)', so
+                    // advice and live redefinitions remain observable.
+                    let equal = Value::Sym(i.q("equal"));
+                    i.apply(&equal, vec![key.clone(), args[0].clone()])?.truthy()
                 } else {
                     i.call_function(
                         &test,
