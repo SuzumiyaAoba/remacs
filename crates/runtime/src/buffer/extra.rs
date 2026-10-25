@@ -771,7 +771,7 @@ fn f_current_indentation(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow();
     let pos = bb.point();
-    let ls = line_start(&bb.text, pos);
+    let ls = line_start(&bb.text, pos).max(bb.begv);
     let mut col = 0i128;
     let mut p = ls;
     let end = bb.text_len();
