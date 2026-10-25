@@ -1396,6 +1396,30 @@ cxr_fn!(f_cddddr, "dddd");
 // ---------- plists ----------
 
 /// `plist-get` core with a caller-supplied predicate.
+struct PlistCycleDetector {
+    tortoise: Value,
+    power: usize,
+    steps: usize,
+}
+impl PlistCycleDetector {
+    fn new(plist: &Value) -> Self {
+        Self { tortoise: plist.clone(), power: 1, steps: 0 }
+    }
+
+    fn advance(&mut self, tail: &Value) -> bool {
+        self.steps = self.steps.saturating_add(1);
+        if eq_values(tail, &self.tortoise) {
+            return true;
+        }
+        if self.steps == self.power {
+            self.tortoise = tail.clone();
+            self.power = self.power.saturating_mul(2);
+            self.steps = 0;
+        }
+        false
+    }
+}
+
 fn plist_scan(
     i: &mut Interp,
     plist: &Value,
@@ -1404,12 +1428,8 @@ fn plist_scan(
     want_pair: bool,
 ) -> Result<Option<Value>, Flow> {
     let mut cur = plist.clone();
-    let mut guard = 0usize;
+    let mut cycle = PlistCycleDetector::new(plist);
     loop {
-        guard += 1;
-        if guard > 500_000 {
-            return Err(err_circular(i));
-        }
         match cur {
             Value::Nil => return Ok(None),
             Value::Cons(c) => {
@@ -1440,6 +1460,11 @@ fn plist_scan(
                     }));
                 }
                 cur = v.1;
+                if matches!(cur, Value::Cons(_)) && cycle.advance(&cur) {
+                    // The default plist-get family is deliberately
+                    // tolerant: an exhausted cyclic search returns nil.
+                    return Ok(None);
+                }
             }
             // GNU's plist_get iterates while CONSP: a non-cons tail
             // (or non-list PLIST) ends the scan with no match.
@@ -1458,12 +1483,8 @@ fn f_plist_get(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let pred = arg(&args, 2);
     if !pred.is_nil() {
         let mut cur = args[0].clone();
-        let mut guard = 0usize;
+        let mut cycle = PlistCycleDetector::new(&cur);
         loop {
-            guard += 1;
-            if guard > 500_000 {
-                return Err(err_circular(i));
-            }
             match cur {
                 Value::Nil => return Ok(Value::Nil),
                 Value::Cons(c) => {
@@ -1484,6 +1505,9 @@ fn f_plist_get(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                         Value::Cons(c2) => c2.borrow().cdr.clone(),
                         _ => Value::Nil,
                     };
+                    if matches!(cur, Value::Cons(_)) && cycle.advance(&cur) {
+                        return Ok(Value::Nil);
+                    }
                 }
                 // GNU: non-list PLIST ends the scan (returns nil).
                 _ => return Ok(Value::Nil),
