@@ -356,6 +356,7 @@ qa!(qa_string_trim_text_properties, "qa_string_trim_text_properties.el");
 qa!(qa_info_batch_find_node, "qa_info_batch_find_node.el");
 qa!(qa_format_string_substitution_properties, "qa_format_string_substitution_properties.el");
 qa!(qa_text_scale_buffer_local, "qa_text_scale_buffer_local.el");
+qa!(qa_symbol_with_pos_printing, "qa_symbol_with_pos_printing.el");
 qa!(qa_value_lt_circular_identity, "qa_value_lt_circular_identity.el");
 qa!(qa_value_lt_depth_limit, "qa_value_lt_depth_limit.el");
 qa!(qa_value_lt_record_bool_vector, "qa_value_lt_record_bool_vector.el");

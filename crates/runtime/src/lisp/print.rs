@@ -118,11 +118,25 @@ fn gensym_circle_key(i: &Interp, v: &Value) -> Option<usize> {
     Some(*id as usize | (1usize << (usize::BITS - 1)))
 }
 
+/// Position symbols use their bare symbol's identity when the dynamic
+/// symbol view is enabled. When disabled they are opaque records and do
+/// not participate in circle numbering.
+fn print_object_key(i: &Interp, v: &Value) -> Option<usize> {
+    if crate::lisp::builtins::misc::any_sympos_parts(i, v).is_some() {
+        return crate::lisp::builtins::misc::active_sympos_parts(i, v)
+            .and_then(|(sym, _)| gensym_circle_key(i, &Value::Sym(sym)));
+    }
+    print_stack_key(v).or_else(|| gensym_circle_key(i, v))
+}
+
 /// GNU `print_circle_candidate_p' (print.c): only these object kinds
 /// participate in `print-circle' numbering — notably EMPTY strings and
 /// EMPTY vectors are excluded, which keeps literal `""'s from
 /// sprouting `#N=' labels.
 fn print_circle_candidate(i: &Interp, v: &Value) -> bool {
+    if crate::lisp::builtins::misc::any_sympos_parts(i, v).is_some() {
+        return print_object_key(i, v).is_some();
+    }
     match v {
         Value::Cons(_) => true,
         Value::Str(s) => !s.borrow().is_empty(),
@@ -145,7 +159,7 @@ fn count_print_refs(i: &Interp, v: &Value, ctx: &mut CircleCtx) {
         if !print_circle_candidate(i, &x) {
             continue;
         }
-        let Some(k) = print_stack_key(&x).or_else(|| gensym_circle_key(i, &x)) else {
+        let Some(k) = print_object_key(i, &x) else {
             continue;
         };
         if !ctx.seen.insert(k) {
@@ -166,6 +180,7 @@ fn count_print_refs(i: &Interp, v: &Value, ctx: &mut CircleCtx) {
                 stack.push(cdr);
                 stack.push(car);
             }
+            Value::Record(_) if crate::lisp::builtins::misc::any_sympos_parts(i, &x).is_some() => {}
             Value::Vec(r) | Value::Record(r) => {
                 stack.extend(r.borrow().iter().rev().cloned());
             }
@@ -433,7 +448,7 @@ impl Interp {
     }
 
     fn prin1_inner(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
-        let key = print_stack_key(v).or_else(|| gensym_circle_key(self, v));
+        let key = print_object_key(self, v);
         if let Some(k) = key {
             if let Some(sub) = number_table_subst(self, v) {
                 match sub {
@@ -870,7 +885,7 @@ impl Interp {
     }
 
     fn princ_inner(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
-        if let Some(k) = print_stack_key(v) {
+        if let Some(k) = print_object_key(self, v) {
             if let Some(sub) = number_table_subst(self, v) {
                 match sub {
                     NtSubst::Replace(t) => {
@@ -1009,33 +1024,25 @@ impl Interp {
                 }
             };
         }
+        if let Some((sym, pos)) = crate::lisp::builtins::misc::any_sympos_parts(
+            self,
+            &Value::Record(items.clone()),
+        ) {
+            let value = Value::Sym(sym);
+            if princ {
+                self.princ_inner(&value, out, depth + 1, bq);
+            } else if self.print_var("print-symbols-bare").truthy() {
+                self.prin1_inner(&value, out, depth + 1, bq);
+            } else {
+                out.push_str("#<symbol ");
+                self.prin1_inner(&value, out, depth + 1, bq);
+                let _ = write!(out, " at {}>", pos);
+            }
+            return;
+        }
         {
             let rr = items.borrow();
-            // `symbols-with-pos-enabled' sympos: a real symbol in GNU —
-            // `princ' prints the bare name; `prin1' prints `#<symbol
-            // NAME at POS>' unless `print-symbols-bare' is bound.
-            if let Some(Value::Int(t)) = rr.first() {
-                if *t == crate::lisp::builtins::misc::SYMPOS_MAGIC {
-                    if let [_, Value::Sym(s), Value::Int(p)] = rr.as_slice() {
-                        if princ || self.print_var("print-symbols-bare").truthy() {
-                            push_sym_name(&self.symbol_name(*s), out);
-                        } else {
-                            let name = self.symbol_name(*s);
-                            let _ = write!(out, "#<symbol {} at {}>", name, p);
-                        }
-                        return;
-                    }
-                }
-            }
-            // Positioned symbols print `#<symbol NAME at POS>'.
             if let Some(Value::Sym(t)) = rr.first() {
-                if self.symbol_name(*t) == "symbol-with-pos" {
-                    if let [_, Value::Sym(s), Value::Int(p)] = rr.as_slice() {
-                        let name = self.symbol_name(*s);
-                        let _ = write!(out, "#<symbol {} at {}>", name, p);
-                        return;
-                    }
-                }
                 // Obarrays print `#<obarray n=COUNT>' — COUNT is
                 // the number of interned symbols.
                 if self.symbol_name(*t) == "obarray" {
@@ -1833,7 +1840,9 @@ pub fn f_print_preprocess(i: &mut Interp, a: crate::lisp::Argv) -> crate::lisp::
             // always gets a number (GNU's byte-compile-output-docform
             // special).
             None => {
-                let gensym = gensym_circle_key(i, &x).is_some();
+                let gensym = crate::lisp::builtins::misc::active_sympos_parts(i, &x)
+                    .map(|(sym, _)| gensym_circle_key(i, &Value::Sym(sym)).is_some())
+                    .unwrap_or_else(|| gensym_circle_key(i, &x).is_some());
                 if gensym && i.print_var("print-continuous-numbering").truthy() {
                     let n = PRINT_NUMBER_INDEX.with(|c| {
                         c.set(c.get() + 1);
@@ -1842,6 +1851,9 @@ pub fn f_print_preprocess(i: &mut Interp, a: crate::lisp::Argv) -> crate::lisp::
                     preprocess_put(i, &h, key, &x, Value::Int(-(n as i128)))?;
                 } else {
                     preprocess_put(i, &h, key, &x, Value::Sym(crate::lisp::sym::T))?;
+                }
+                if crate::lisp::builtins::misc::any_sympos_parts(i, &x).is_some() {
+                    continue;
                 }
                 match &x {
                     Value::Cons(c) => {
