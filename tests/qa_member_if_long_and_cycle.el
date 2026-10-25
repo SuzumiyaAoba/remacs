@@ -1,0 +1,16 @@
+;;; -*- lexical-binding: nil; -*-
+;; member-if has no fixed walk cap and may match after a cycle repeat (#515).
+(qa (let ((source (list 'a)) (calls 0))
+      (setcdr source source)
+      (list (eq (member-if (lambda (_)
+                             (setq calls (1+ calls))
+                             (> calls 500000))
+                           source)
+                source)
+            calls))
+    '(t 500001))
+(qa (let ((list (make-list 500001 nil)) (calls 0))
+      (list (member-if (lambda (_) (setq calls (1+ calls)) nil) list)
+            calls))
+    '(nil 500001))
+(princ (qa--done))
