@@ -73,6 +73,8 @@ pub struct CondVar {
 /// Integers outside this range are immutable heap-allocated bignums.
 pub const FIXNUM_MAX: i128 = (1i128 << 61) - 1;
 pub const FIXNUM_MIN: i128 = -(1i128 << 61);
+/// GNU's PSEUDOVECTOR_SIZE_MASK: record size limit, including the type slot.
+pub const MAX_RECORD_SLOTS: usize = 4095;
 
 #[derive(Clone)]
 pub enum Value {

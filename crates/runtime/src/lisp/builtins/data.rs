@@ -1200,7 +1200,17 @@ fn f_make_record(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // (make-record TYPE LENGTH INITVAL)
     // GNU Fmake_record: LENGTH is CHECK_FIXNAT → `wholenump'.
     let n = match &args[1] {
-        Value::Int(n) if *n >= 0 => *n as usize,
+        Value::Int(n) if *n >= 0 => {
+            let total = *n + 1; // include the record type slot
+            if total > crate::lisp::value::MAX_RECORD_SLOTS as i128 {
+                return Err(i.error(&format!(
+                    "Attempt to allocate a record of {} slots; max is {}",
+                    total,
+                    crate::lisp::value::MAX_RECORD_SLOTS
+                )));
+            }
+            *n as usize
+        }
         _ => {
             let wholenump = Value::Sym(i.q("wholenump"));
             return Err(i.signal_data(sym::WRONG_TYPE_ARGUMENT, vec![wholenump, args[1].clone()]));

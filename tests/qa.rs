@@ -364,6 +364,7 @@ qa!(qa_aset_multibyte_character_bounds, "qa_aset_multibyte_character_bounds.el")
 qa!(qa_bytecode_numeric_predicates_bignum, "qa_bytecode_numeric_predicates_bignum.el");
 qa!(qa_bytecode_marker_arithmetic, "qa_bytecode_marker_arithmetic.el");
 qa!(qa_bytecode_subr_unintern_identity, "qa_bytecode_subr_unintern_identity.el");
+qa!(qa_record_slot_limit, "qa_record_slot_limit.el");
 qa!(qa_value_lt_circular_identity, "qa_value_lt_circular_identity.el");
 qa!(qa_value_lt_depth_limit, "qa_value_lt_depth_limit.el");
 qa!(qa_value_lt_record_bool_vector, "qa_value_lt_record_bool_vector.el");

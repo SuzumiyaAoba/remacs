@@ -16503,7 +16503,14 @@ fn f_set_char_table_extra_slot(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     Ok(a[2].clone())
 }
 
-fn f_record(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+fn f_record(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    if a.len() > crate::lisp::value::MAX_RECORD_SLOTS {
+        return Err(i.error(&format!(
+            "Attempt to allocate a record of {} slots; max is {}",
+            a.len(),
+            crate::lisp::value::MAX_RECORD_SLOTS
+        )));
+    }
     Ok(Value::record(a.as_slice().to_vec()))
 }
 
