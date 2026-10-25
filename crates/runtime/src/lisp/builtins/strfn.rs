@@ -5269,7 +5269,7 @@ fn f_subst_char_in_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult
     // remacs strings keep no per-char text props here, so the replace
     // result is identical either way.
     let from_c = match &args[0] {
-        Value::Int(n) => char::from_u32(*n as u32),
+        Value::Int(n) => concat_char(*n),
         // Non-number FROMCHAR in the resize path was already checked;
         // on the slow path it's just a never-matching key — `aref'
         // comparisons are `eq', so non-chars simply never match.
@@ -5307,7 +5307,7 @@ fn f_subst_char_in_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult
                 }
             }
             let to_c = match &args[1] {
-                Value::Int(n) => char::from_u32(*n as u32).unwrap_or('\u{FFFD}'),
+                Value::Int(n) => concat_char(*n).unwrap_or('\u{FFFD}'),
                 _ => '\u{FFFD}',
             };
             let replaced: String = chars

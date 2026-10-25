@@ -463,6 +463,7 @@ qa!(qa_concat_mule_chars, "qa_concat_mule_chars.el");
 qa!(qa_string_replace_mule, "qa_string_replace_mule.el");
 qa!(qa_string_trim_mule, "qa_string_trim_mule.el");
 qa!(qa_string_trim_invalid_regexp, "qa_string_trim_invalid_regexp.el");
+qa!(qa_subst_char_mule, "qa_subst_char_mule.el");
 qa!(qa_case_table_fold, "qa_case_table_fold.el");
 qa!(qa_byte_character_conversion, "qa_byte_character_conversion.el");
 qa!(qa_bytecode_errors, "qa_bytecode_errors.el");
