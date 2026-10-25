@@ -12119,6 +12119,7 @@ fn f_directory_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_file_name_concat(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU files.el: nil components count as empty strings; empty
     // leading components don't force a leading slash.
+    let mut multibyte = crate::lisp::builtins::strfn::string_multibyte_p(i, &a[0]);
     let mut out = match &a[0] {
         Value::Nil => String::new(),
         v => want_str(i, v)?,
@@ -12128,6 +12129,7 @@ fn f_file_name_concat(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             Value::Nil => continue,
             _ => want_str(i, v)?,
         };
+        multibyte |= crate::lisp::builtins::strfn::string_multibyte_p(i, v);
         if part.is_empty() {
             continue;
         }
@@ -12136,7 +12138,13 @@ fn f_file_name_concat(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
         out.push_str(&part);
     }
-    Ok(Value::string(out))
+    let result = Value::string_ref(out);
+    if multibyte {
+        i.mark_multibyte(&result);
+    } else {
+        i.mark_unibyte(&result);
+    }
+    Ok(Value::Str(result))
 }
 fn f_file_relative_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU files.el's string algorithm, verbatim:
