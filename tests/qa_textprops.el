@@ -279,6 +279,10 @@
       (add-face-text-property 1 2 'bold t)
       (get-text-property 1 'face))
     '(bold italic bold))
+(qa (let ((s (propertize "x" 'face '(:foreground "red"))))
+      (add-face-text-property 0 1 'italic nil s)
+      (get-text-property 0 'face s))
+    '(italic (:foreground "red")))
 
 ;; == overlays: basics ==
 (qa (with-temp-buffer (insert "abc") (let ((o (make-overlay 1 3)))

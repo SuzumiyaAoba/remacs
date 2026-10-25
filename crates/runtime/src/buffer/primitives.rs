@@ -14314,12 +14314,25 @@ fn text_prop_any(i: &mut Interp, a: &[Value], any: bool) -> EvalResult {
 }
 /// interval in [S,E).  GNU dedups with memq when prepending; APPEND
 /// always adds FACE at the end, including when it is already present.
+fn is_face_attribute_plist(i: &Interp, value: &Value) -> bool {
+    let Ok(items) = value.list_to_vec() else {
+        return false;
+    };
+    items.len() >= 2
+        && items.len() % 2 == 0
+        && match items.first() {
+            Some(Value::Sym(id)) => i.symbol_name(*id).starts_with(':'),
+            _ => false,
+        }
+}
+
 pub(crate) fn f_add_face_text_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let face = a[2].clone();
     let append = a.get(3).map(|v| v.truthy()).unwrap_or(false);
-    let combine = |old: &Value| -> Value {
+    let combine = |old: &Value, interp: &Interp| -> Value {
         let mut items: Vec<Value> = match old {
             Value::Nil => Vec::new(),
+            Value::Cons(_) if is_face_attribute_plist(interp, old) => vec![old.clone()],
             Value::Cons(_) => old.list_to_vec().unwrap_or_default(),
             v => vec![v.clone()],
         };
@@ -14348,7 +14361,7 @@ pub(crate) fn f_add_face_text_property(i: &mut Interp, a: crate::lisp::Argv) -> 
         let mut ivs = str_ivs_for_edit(i, &s);
         let ii: &Interp = i;
         let fid = ii.sym_id(&face_sym).unwrap_or(0);
-        let fill = combine(&Value::Nil);
+        let fill = combine(&Value::Nil, i);
         iv_apply(
             &mut ivs,
             s0,
@@ -14356,7 +14369,7 @@ pub(crate) fn f_add_face_text_property(i: &mut Interp, a: crate::lisp::Argv) -> 
             |pl| {
                 // GNU `textget' is category-aware.
                 let old = str_plist_get_cat(pl, fid, ii).unwrap_or(Value::Nil);
-                let nv = combine(&old);
+                let nv = combine(&old, ii);
                 if nv.is_nil() {
                     str_plist_remove(pl, fid, ii);
                 } else {
@@ -14432,7 +14445,7 @@ pub(crate) fn f_add_face_text_property(i: &mut Interp, a: crate::lisp::Argv) -> 
             start: p,
             end: q,
             prop: fid,
-            value: combine(&old),
+            value: combine(&old, i),
         });
     }
     {
