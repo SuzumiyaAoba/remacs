@@ -1361,129 +1361,68 @@ fn f_char_to_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 /// TRIM at the edge. TRIM nil or absent defaults to whitespace.
 /// GNU: subr-x defsubst — (concat "\`" TRIM) requires TRIM to be a
 /// *sequence*; non-string sequences feed `concat' char conversion.
-fn trim_re(i: &mut Interp, args: &[Value], idx: usize) -> Result<String, Flow> {
-    match args.get(idx) {
-        None | Some(Value::Nil) => Ok("[ \t\n\r]+".into()),
-        Some(Value::Str(s)) => Ok(s.borrow().clone()),
-        Some(other @ (Value::Cons(_) | Value::Vec(_))) => {
-            let elems = super::seq::seq_to_vec(i, other)?;
-            let mut out = String::new();
-            for e in &elems {
-                match e {
-                    Value::Int(n) if (0..=0x3f_ffff).contains(n) => {
-                        let code = *n as u32;
-                        out.push(lisp_char(code).unwrap_or_else(|| {
-                            crate::lisp::value::mule_seq_char(code)
-                        }));
-                    }
-                    _ => return Err(i.wrong_type_mut("characterp", e)),
-                }
-            }
-            Ok(out)
-        }
-        Some(other) => Err(i.wrong_type_mut("sequencep", other)),
+fn trim_regexp(i: &mut Interp, trim: Option<&Value>, left: bool) -> Result<Value, Flow> {
+    if let Some(trim) = trim.filter(|trim| trim.truthy()) {
+        let prefix = if left { "\\`\\(?:" } else { "\\(?:" };
+        let suffix = if left { "\\)" } else { "\\)\\'" };
+        let concat = Value::Sym(i.q("concat"));
+        i.apply(
+            &concat,
+            vec![Value::string(prefix), trim.clone(), Value::string(suffix)],
+        )
+    } else {
+        Ok(Value::string(if left {
+            "\\`[ \t\n\r]+"
+        } else {
+            "[ \t\n\r]+\\'"
+        }))
     }
+}
+
+fn trim_apply(i: &mut Interp, function: &str, args: Vec<Value>) -> Result<Value, Flow> {
+    let function = Value::Sym(i.q(function));
+    i.apply(&function, args)
 }
 
 fn f_string_trim(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU subr-x.el `string-trim' evaluates the regexp args first
-    // (let ((trim-left ...) (trim-right ...)) ...), so TRIM-LEFT's
-    // `sequencep' check fires before STRING's `stringp'.
-    let left = trim_re(i, &args, 1)?;
-    let right = trim_re(i, &args, 2)?;
-    let s = want_string(i, &args[0])?;
-    let after_left = trim_left_re(i, &s, &left)?;
-    let left_removed = s.chars().count() - after_left.chars().count();
-    let result = trim_right_re(i, &after_left, &right)?;
-    let result_len = result.chars().count();
-    if left_removed == 0 && result_len == s.chars().count() {
-        return Ok(args[0].clone());
-    }
-    f_substring(
+    let left = trim_regexp(i, args.get(1), true)?;
+    let found = trim_apply(i, "string-match", vec![left, args[0].clone()])?;
+    let beg = if found.truthy() {
+        trim_apply(i, "match-end", vec![Value::Int(0)])?
+    } else {
+        Value::Nil
+    };
+    let right = trim_regexp(i, args.get(2), false)?;
+    let end = trim_apply(
         i,
-        vec![
-            args[0].clone(),
-            Value::Int(left_removed as i128),
-            Value::Int((left_removed + result_len) as i128),
-        ]
-        .into(),
-    )
+        "string-match-p",
+        vec![right, args[0].clone(), beg.clone()],
+    )?;
+    if beg.truthy() || end.truthy() {
+        trim_apply(i, "substring", vec![args[0].clone(), beg, end])
+    } else {
+        Ok(args[0].clone())
+    }
 }
 fn f_string_trim_left(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let re = trim_re(i, &args, 1)?;
-    let s = want_string(i, &args[0])?;
-    let result = trim_left_re(i, &s, &re)?;
-    if result == s {
-        return Ok(args[0].clone());
+    let regexp = trim_regexp(i, args.get(1), true)?;
+    if trim_apply(i, "string-match", vec![regexp, args[0].clone()])?.truthy() {
+        let beg = trim_apply(i, "match-end", vec![Value::Int(0)])?;
+        trim_apply(i, "substring", vec![args[0].clone(), beg])
+    } else {
+        Ok(args[0].clone())
     }
-    let removed = s.chars().count() - result.chars().count();
-    f_substring(
-        i,
-        vec![args[0].clone(), Value::Int(removed as i128)].into(),
-    )
 }
 fn f_string_trim_right(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let re = trim_re(i, &args, 1)?;
-    let s = want_string(i, &args[0])?;
-    let result = trim_right_re(i, &s, &re)?;
-    if result == s {
-        return Ok(args[0].clone());
-    }
-    f_substring(
-        i,
-        vec![
-            args[0].clone(),
-            Value::Int(0),
-            Value::Int(result.chars().count() as i128),
-        ]
-        .into(),
-    )
-}
-
-fn trim_left_re(i: &mut Interp, s: &str, trim: &str) -> Result<String, Flow> {
-    // GNU: (string-match (concat "\\`\\(?:" regexp "\\)") string) —
-    // a single match at the start is stripped.
-    let invalid_regexp = i.q("invalid-regexp");
-    let re = crate::lisp::regexp::compile(&format!("\\`\\(?:{}\\)", trim))
-        .map_err(|error| i.signal_data(invalid_regexp, vec![Value::string(error.0)]))?;
-    let syn = crate::editor::re_syntax(i);
-    let chars: Vec<char> = s.chars().collect();
-    match crate::lisp::regexp::looking_at(
-        &re,
-        &chars,
-        0,
-        &syn,
-        &crate::editor::re_category(i),
-        crate::lisp::regexp::NO_POINT,
-        false,
-    ) {
-        Some(regs) => {
-            let end = regs.get(1).copied().flatten().unwrap_or(0);
-            Ok(chars[end..].iter().collect())
-        }
-        None => Ok(s.to_string()),
+    let regexp = trim_regexp(i, args.get(1), false)?;
+    let end = trim_apply(i, "string-match-p", vec![regexp, args[0].clone()])?;
+    if end.truthy() {
+        trim_apply(i, "substring", vec![args[0].clone(), Value::Int(0), end])
+    } else {
+        Ok(args[0].clone())
     }
 }
 
-fn trim_right_re(i: &mut Interp, s: &str, trim: &str) -> Result<String, Flow> {
-    // GNU: (string-match (concat "\\(?:" regexp "\\)\\'") string).
-    let invalid_regexp = i.q("invalid-regexp");
-    let re = crate::lisp::regexp::compile(&format!("\\(?:{}\\)\\'", trim))
-        .map_err(|error| i.signal_data(invalid_regexp, vec![Value::string(error.0)]))?;
-    let syn = crate::editor::re_syntax(i);
-    let chars: Vec<char> = s.chars().collect();
-    match crate::lisp::regexp::search(
-        &re,
-        &chars,
-        0,
-        &syn,
-        &crate::editor::re_category(i),
-        crate::lisp::regexp::NO_POINT,
-    ) {
-        Some((ms, _me)) => Ok(chars[..ms].iter().collect()),
-        None => Ok(s.to_string()),
-    }
-}
 fn f_string_pad(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU's string-pad definition validates LENGTH with `natnump' first.
     let len = match &args[1] {
