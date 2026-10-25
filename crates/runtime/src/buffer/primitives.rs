@@ -5302,9 +5302,48 @@ fn f_count_lines(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let e = pos_idx(bb.text.len(), e_arg);
     let (s, e) = (s.min(e), s.max(e));
     let mut n = 0;
+    let ignore_invisible = a.get(2).is_some_and(Value::truthy);
+    let (invisible_sym, invisibility_spec) = if ignore_invisible {
+        let invisible = i.q("invisible");
+        let spec = i.q("buffer-invisibility-spec");
+        (Some(invisible), i.symbol_value(spec))
+    } else {
+        (None, Value::Nil)
+    };
+    let mut invisible_lines = 0;
     for k in s..e {
         if bb.text.char_at(k) == '\n' {
             n += 1;
+            if let Some(invisible) = invisible_sym {
+                let prop = f_get_char_property(
+                    i,
+                    vec![Value::Int(k as i128 + 1), Value::Sym(invisible)].into(),
+                )?;
+                let hidden = if matches!(&invisibility_spec, Value::Sym(s) if *s == sym::T) {
+                    !prop.is_nil()
+                } else {
+                    let mut tail = invisibility_spec.clone();
+                    let mut matched = false;
+                    while let Value::Cons(cell) = tail {
+                        let (entry, next) = {
+                            let cell = cell.borrow();
+                            (cell.car.clone(), cell.cdr.clone())
+                        };
+                        if crate::lisp::builtins::eq_values(&prop, &entry)
+                            || matches!(&entry, Value::Cons(pair)
+                                if crate::lisp::builtins::eq_values(&prop, &pair.borrow().car))
+                        {
+                            matched = true;
+                            break;
+                        }
+                        tail = next;
+                    }
+                    matched
+                };
+                if hidden {
+                    invisible_lines += 1;
+                }
+            }
         }
     }
     // GNU: if the greater position is not at the start of a line,
@@ -5312,7 +5351,7 @@ fn f_count_lines(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if e > s && bb.text.char_at(e - 1) != '\n' {
         n += 1;
     }
-    Ok(Value::Int(n))
+    Ok(Value::Int(n - invisible_lines))
 }
 
 fn f_current_column(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
