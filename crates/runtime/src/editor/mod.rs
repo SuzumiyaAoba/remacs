@@ -19797,8 +19797,20 @@ fn f_count_words(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let bb = b.borrow();
         bb.text.substring(s.min(e), s.max(e))
     };
-    let n = text.split_whitespace().count();
-    Ok(Value::Int(n as i128))
+    let syn = syntax_table_entries(i);
+    let mut count = 0i128;
+    let mut previous = None;
+    for c in text.chars() {
+        if syntax_entry_code(syn.as_ref(), c) != b'w' {
+            previous = None;
+            continue;
+        }
+        if previous.is_none_or(|p| word_boundary_p(i, p, c)) {
+            count += 1;
+        }
+        previous = Some(c);
+    }
+    Ok(Value::Int(count))
 }
 
 fn f_what_cursor_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -19929,6 +19941,71 @@ pub(crate) fn syntax_table_entries(i: &Interp) -> Option<SynTable> {
             .filter(|t| is_syntax_table(i, t))?,
     };
     syntax_table_snapshot(i, table)
+}
+
+/// GNU category.c `word_boundary_p': differing character scripts form a
+/// boundary unless the current category sets select an exception from
+/// `word-combining-categories'; equal scripts use
+/// `word-separating-categories' instead.
+pub(crate) fn word_boundary_p(i: &mut Interp, left: char, right: char) -> bool {
+    let script_table = i
+        .intern_soft("char-script-table")
+        .map(|id| i.symbol_value(id))
+        .unwrap_or(Value::Nil);
+    let left_script = crate::lisp::builtins::misc::char_table_ref(
+        i,
+        &script_table,
+        left as usize,
+    );
+    let right_script =
+        crate::lisp::builtins::misc::char_table_ref(i, &script_table, right as usize);
+    let same_script = crate::lisp::builtins::eq_values(&left_script, &right_script);
+    let default = !same_script;
+    let rules = i
+        .intern_soft(if default {
+            "word-combining-categories"
+        } else {
+            "word-separating-categories"
+        })
+        .map(|id| i.symbol_value(id))
+        .unwrap_or(Value::Nil);
+    let category_table = i
+        .buffers
+        .get(i.current_buffer)
+        .and_then(|buffer| buffer.try_borrow().ok().and_then(|b| b.category_table.clone()))
+        .unwrap_or_else(|| i.standard_category_table());
+    let left_set = crate::lisp::builtins::misc::char_table_ref(
+        i,
+        &category_table,
+        left as usize,
+    );
+    let right_set = crate::lisp::builtins::misc::char_table_ref(
+        i,
+        &category_table,
+        right as usize,
+    );
+    if !crate::lisp::builtins::misc::is_bool_vector(i, &left_set)
+        || !crate::lisp::builtins::misc::is_bool_vector(i, &right_set)
+    {
+        return default;
+    }
+    let left_bits = crate::lisp::builtins::misc::bool_vec_of(i, &left_set).unwrap_or_default();
+    let right_bits = crate::lisp::builtins::misc::bool_vec_of(i, &right_set).unwrap_or_default();
+    for rule in rules.list_to_vec().unwrap_or_default() {
+        let Value::Cons(pair) = rule else { continue };
+        let (left_category, right_category) = {
+            let pair = pair.borrow();
+            (pair.car.clone(), pair.cdr.clone())
+        };
+        let left_matches = left_category.is_nil()
+            || matches!(left_category, Value::Int(c) if c >= 0 && (c as usize) < left_bits.len() && left_bits[c as usize] && !right_bits[c as usize]);
+        let right_matches = right_category.is_nil()
+            || matches!(right_category, Value::Int(c) if c >= 0 && (c as usize) < right_bits.len() && !left_bits[c as usize] && right_bits[c as usize]);
+        if left_matches && right_matches {
+            return !default;
+        }
+    }
+    default
 }
 
 fn syntax_table_snapshot(i: &Interp, table: Value) -> Option<SynTable> {

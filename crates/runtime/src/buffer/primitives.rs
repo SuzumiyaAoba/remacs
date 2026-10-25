@@ -4805,46 +4805,67 @@ fn f_forward_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let syn = crate::editor::syntax_table_entries(i);
     let wordp = |c: char| crate::editor::syntax_entry_code(syn.as_ref(), c) == b'w';
     let b = cur(i);
-    let mut bb = b.borrow_mut();
+    let (chars, begv, start) = {
+        let bb = b.borrow();
+        (
+            (0..bb.text_len()).map(|p| bb.text.char_at(p)).collect::<Vec<_>>(),
+            bb.begv,
+            bb.point(),
+        )
+    };
+    let len = chars.len();
     // GNU scan_words: each iteration skips non-word constituents, then
     // scans a word.  If a boundary is reached before completing ARG
     // words, point still moves to the boundary and nil is returned;
     // t is returned only when all ARG words were traversed.
     let mut ok = true;
+    let mut point = start;
     if n >= 0 {
-        let len = bb.text_len();
         for _ in 0..n {
-            let mut p = bb.point();
-            while p < len && !wordp(bb.text.char_at(p)) {
+            let mut p = point;
+            while p < len && !wordp(chars[p]) {
                 p += 1;
             }
             if p == len {
                 ok = false;
-                bb.set_point(p);
+                point = p;
                 break;
             }
-            while p < len && wordp(bb.text.char_at(p)) {
+            let mut previous = chars[p];
+            p += 1;
+            while p < len
+                && wordp(chars[p])
+                && !crate::editor::word_boundary_p(i, previous, chars[p])
+            {
+                previous = chars[p];
                 p += 1;
             }
-            bb.set_point(p);
+            point = p;
         }
     } else {
         for _ in 0..-n {
-            let mut p = bb.point();
-            while p > bb.begv && !wordp(bb.text.char_at(p - 1)) {
+            let mut p = point;
+            while p > begv && !wordp(chars[p - 1]) {
                 p -= 1;
             }
-            if p == bb.begv {
+            if p == begv {
                 ok = false;
-                bb.set_point(p);
+                point = p;
                 break;
             }
-            while p > bb.begv && wordp(bb.text.char_at(p - 1)) {
+            let mut right = chars[p - 1];
+            p -= 1;
+            while p > begv
+                && wordp(chars[p - 1])
+                && !crate::editor::word_boundary_p(i, chars[p - 1], right)
+            {
+                right = chars[p - 1];
                 p -= 1;
             }
-            bb.set_point(p);
+            point = p;
         }
     }
+    b.borrow_mut().set_point(point);
     Ok(Value::from_bool(ok))
 }
 
