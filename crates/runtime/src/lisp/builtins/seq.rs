@@ -854,9 +854,22 @@ fn f_mapcan(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_mapconcat(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let fun = args[0].clone();
     let sep = args.get(2).cloned().unwrap_or(Value::Nil);
+    // GNU Fmapconcat bypasses the function cell only for the exact
+    // interned `identity' symbol with lists and ordinary vectors.
+    let identity = i.intern_soft("identity");
+    let identity_fast = matches!(&fun, Value::Sym(id) if Some(*id) == identity)
+        && match &args[1] {
+            Value::Cons(_) => true,
+            Value::Vec(_) => !i.is_overlay(&args[1]),
+            _ => false,
+        };
     let mut parts = Vec::new();
     map_seq(i, &fun, &args[1], |i, v| {
-        let r = i.apply(&fun, vec![v.clone()])?;
+        let r = if identity_fast {
+            v.clone()
+        } else {
+            i.apply(&fun, vec![v.clone()])?
+        };
         if !parts.is_empty() && !sep.is_empty_string() {
             parts.push(sep.clone());
         }

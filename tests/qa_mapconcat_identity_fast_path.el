@@ -1,0 +1,55 @@
+;;; -*- lexical-binding: nil; -*-
+;; mapconcat bypasses the identity cell only for lists and ordinary vectors (#557).
+(let ((saved (symbol-function 'identity)))
+  (unwind-protect
+      (progn
+        (fset 'identity (lambda (_value) "changed"))
+        (qa (mapconcat #'identity '("a" "b") "-") "a-b")
+        (qa (mapcar #'identity '("a" "b")) '("changed" "changed"))
+        (qa (mapconcat (symbol-function 'identity) '("a" "b") "-")
+            "changed-changed")
+        (qa (mapconcat #'identity ["a" "b"] "-") "a-b")
+        (qa (mapconcat #'identity "ab" "-") "changed-changed")
+        (qa (mapconcat #'identity (bool-vector t nil) "-")
+            "changed-changed")
+        (let ((seen nil)
+              (advice (lambda (original value)
+                        (push value seen)
+                        (funcall original value))))
+          (advice-add 'identity :around advice)
+          (unwind-protect
+              (progn
+                (qa (mapconcat #'identity '("a" "b") "-") "a-b")
+                (qa seen nil)
+                (qa (mapconcat (symbol-function 'identity) '("a" "b") "-")
+                    "changed-changed")
+                (qa (nreverse seen) '("a" "b")))
+            (advice-remove 'identity advice)))
+        (defalias 'qa-mapconcat-identity-alias 'identity)
+        (qa (mapconcat #'qa-mapconcat-identity-alias '("a" "b") "-")
+            "changed-changed")
+        (let ((uninterned (make-symbol "identity")))
+          (fset uninterned (lambda (_value) "changed"))
+          (qa (mapconcat uninterned '("a" "b") "-") "changed-changed"))
+        (qa-err (mapconcat #'identity 'not-a-sequence "-")
+                'wrong-type-argument)
+        (qa-err-data (mapconcat #'identity '(not-a-character) "-")
+                     'wrong-type-argument '(sequencep not-a-character))
+        (qa (string-join '("a" "b") "-") "a-b"))
+    (fset 'identity saved)))
+
+(let ((saved (symbol-function 'identity)))
+  (unwind-protect
+      (progn
+        (fmakunbound 'identity)
+        (qa (mapconcat #'identity '("a" "b") "-") "a-b")
+        (qa (mapconcat #'identity ["a" "b"] "-") "a-b")
+        (qa-err (mapconcat #'identity "ab" "-") 'void-function))
+    (fset 'identity saved)))
+
+(let* ((values (list (propertize "a" 'tag 'first)
+                     (propertize "b" 'tag 'last)))
+       (joined (mapconcat #'identity values "-")))
+  (qa (mapcar (lambda (n) (get-text-property n 'tag joined)) '(0 1 2))
+      '(first nil last)))
+(princ (qa--done))
