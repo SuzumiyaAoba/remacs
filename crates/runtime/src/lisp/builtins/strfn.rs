@@ -2282,8 +2282,7 @@ fn f_string_equal_ignore_case(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
             Value::Int(0),
             Value::Nil,
             Value::t(),
-        ]
-        .into(),
+        ],
     )?;
     Ok(Value::from_bool(matches!(result, Value::Sym(id) if id == sym::T)))
 }
