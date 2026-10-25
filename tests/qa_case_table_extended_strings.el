@@ -6,6 +6,6 @@
         (set-case-table table)
         (list (downcase #x110001)
               (string-to-list (downcase (string #x110001)))
-              (string-to-list (upcase (string #x110002)))))
+              (string-to-list (upcase (string #x110002))))))
     '(1114114 (1114114) (1114113)))
 (princ (qa--done))
