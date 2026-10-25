@@ -1537,12 +1537,8 @@ fn f_plist_member(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let pred = arg(&args, 2);
     let whole = args[0].clone();
     let mut cur = args[0].clone();
-    let mut guard = 0usize;
+    let mut cycle = PlistCycleDetector::new(&cur);
     loop {
-        guard += 1;
-        if guard > 500_000 {
-            return Err(err_circular(i));
-        }
         let (k, rest) = match cur.clone() {
             Value::Cons(c) => {
                 let b = c.borrow();
@@ -1568,6 +1564,9 @@ fn f_plist_member(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         } else {
             rest
         };
+        if matches!(cur, Value::Cons(_)) && cycle.advance(&cur) {
+            return Err(i.signal_data(sym::CIRCULAR_LIST, vec![whole.clone()]));
+        }
     }
 }
 
