@@ -683,7 +683,10 @@ pub(crate) fn f_copy_sequence(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
         Value::Record(_) if super::misc::is_char_table(i, &args[0]) => {
             Ok(super::misc::ct_copy(i, &args[0]))
         }
-        Value::Record(r) => Ok(Value::record(r.borrow().clone())),
+        Value::Record(r) if super::misc::recordp(i, &args[0]) => {
+            Ok(Value::record(r.borrow().clone()))
+        }
+        Value::Record(_) => Err(i.wrong_type_mut("sequencep", &args[0])),
         other => Err(i.wrong_type_mut("sequencep", other)),
     }
 }
