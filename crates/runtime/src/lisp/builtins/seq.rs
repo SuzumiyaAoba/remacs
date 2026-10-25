@@ -869,17 +869,25 @@ fn f_maphash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let fun = args[0].clone();
     match &args[1] {
         Value::Hash(h) => {
-            let pairs: Vec<(Value, Value)> = {
-                let hh = h.borrow();
-                hh.keys
-                    .iter()
-                    .map(|(hk, k)| {
-                        let val = hh.map.get(hk).cloned().unwrap_or(Value::Nil);
-                        (k.clone(), val)
-                    })
-                    .collect()
-            };
-            for (k, v) in pairs {
+            let mut index = 0;
+            loop {
+                // Look up each slot only when it is reached. The callback
+                // may update, remove, clear, or reuse any later slot, and
+                // may grow the table while this traversal is in progress.
+                let (pair, len) = {
+                    let hh = h.borrow();
+                    let pair = hh.keys.0.get(index).and_then(Option::as_ref).map(|(hk, key)| {
+                        (key.clone(), hh.map.get(hk).cloned().unwrap_or(Value::Nil))
+                    });
+                    (pair, hh.keys.0.len())
+                };
+                if index >= len {
+                    break;
+                }
+                index += 1;
+                let Some((k, v)) = pair else {
+                    continue;
+                };
                 i.apply(&fun, vec![k, v])?;
             }
             Ok(Value::Nil)
