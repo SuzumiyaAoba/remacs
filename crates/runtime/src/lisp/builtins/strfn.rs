@@ -1500,10 +1500,10 @@ fn f_string_pad(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // PADDING is only evaluated when make-string is needed.
     let pad_char = match args.get(2) {
         None | Some(Value::Nil) => ' ',
-        Some(Value::Int(n)) => match lisp_char(*n as u32) {
-            Some(c) => c,
-            None => return Err(i.wrong_type_mut("characterp", &args[2])),
-        },
+        Some(Value::Int(n)) if (0..=0x3f_ffff).contains(n) => {
+            let code = *n as u32;
+            lisp_char(code).unwrap_or_else(|| crate::lisp::value::mule_seq_char(code))
+        }
         Some(other) => return Err(i.wrong_type_mut("characterp", other)),
     };
     let pad: String = std::iter::repeat(pad_char).take(len - cur).collect();

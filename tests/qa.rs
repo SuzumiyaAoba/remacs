@@ -491,6 +491,7 @@ qa!(qa_string_truncate_left_float, "qa_string_truncate_left_float.el");
 qa!(qa_string_truncate_left_empty_negative, "qa_string_truncate_left_empty_negative.el");
 qa!(qa_string_pad_argument_order, "qa_string_pad_argument_order.el");
 qa!(qa_string_pad_unused_padding, "qa_string_pad_unused_padding.el");
+qa!(qa_string_pad_mule_padding, "qa_string_pad_mule_padding.el");
 qa!(qa_case_table_fold, "qa_case_table_fold.el");
 qa!(qa_byte_character_conversion, "qa_byte_character_conversion.el");
 qa!(qa_bytecode_errors, "qa_bytecode_errors.el");
