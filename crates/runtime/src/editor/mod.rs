@@ -1323,7 +1323,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "file-name-sans-versions",
         1,
         2,
-        f_file_name_sans_extension,
+        f_file_name_sans_versions,
         ""
     ),
     S!(
@@ -12054,6 +12054,29 @@ fn f_file_name_sans_extension(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
             }
         }
         None => Ok(file_name_result_like(i, &a[0], s)),
+    }
+}
+fn f_file_name_sans_versions(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let s = want_str(i, &a[0])?;
+    if let Some((handler, operation)) = file_handler(i, "file-name-sans-versions", &[&s]) {
+        return i.apply(&handler, vec![operation, a[0].clone(), arg(&a, 1)]);
+    }
+    if arg(&a, 1).truthy() {
+        return Ok(a[0].clone());
+    }
+    let regexp_id = i.q("file-name-version-regexp");
+    let regexp = i.symbol_value(regexp_id);
+    let pattern = crate::lisp::builtins::strfn::f_concat(
+        i,
+        vec![regexp, Value::string("\\'")].into(),
+    )?;
+    let string_match = i.q("string-match");
+    match i.apply(&Value::Sym(string_match), vec![pattern, a[0].clone()])? {
+        Value::Int(start) => crate::lisp::builtins::strfn::f_substring(
+            i,
+            vec![a[0].clone(), Value::Int(0), Value::Int(start)].into(),
+        ),
+        _ => Ok(a[0].clone()),
     }
 }
 fn f_file_name_base(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
