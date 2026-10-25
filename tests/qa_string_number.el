@@ -48,4 +48,6 @@
 (qa (string-to-number "++ff" 16) 0)
 (qa (string-to-number "-+ff" 16) 0)
 (qa (string-to-number "42" nil) 42)
+(qa-err-data (string-to-number "" 1) 'args-out-of-range '(1))
+(qa-err-data (string-to-number "   " 17) 'args-out-of-range '(17))
 (princ (qa--done))

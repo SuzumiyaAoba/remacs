@@ -1194,6 +1194,12 @@ fn f_string_to_number(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         None | Some(Value::Nil) => 10,
         Some(v) => crate::lisp::builtins::want_fixnum(i, v)?,
     };
+    // GNU validates BASE before skipping leading whitespace or returning
+    // zero for an empty input.
+    if !(2..=16).contains(&base) {
+        let sym = i.q("args-out-of-range");
+        return Err(i.signal_data(sym, vec![Value::Int(base)]));
+    }
     // GNU Fstring_to_number skips only spaces and tabs (a leading
     // newline or other whitespace stops the parse -> 0).
     let t = s.trim_start_matches([' ', '\t']);
@@ -1201,11 +1207,6 @@ fn f_string_to_number(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         return Ok(Value::Int(0));
     }
 
-    // Emacs: BASE must be an integer in 2..16 (0 is out of range).
-    if !(2..=16).contains(&base) {
-        let sym = i.q("args-out-of-range");
-        return Err(i.signal_data(sym, vec![Value::Int(base)]));
-    }
     if base != 10 {
         let neg = t.starts_with('-');
         let digits = if matches!(t.chars().next(), Some('+' | '-')) {
