@@ -8751,12 +8751,21 @@ use crate::editor::{
     sel_frame, sel_window, w_parent,
 };
 
-fn f_eventp(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let ok = match &a[0] {
-        Value::Cons(c) => matches!(c.borrow().car, Value::Sym(_) | Value::Int(_)),
-        Value::Int(_) | Value::Sym(_) => true,
-        _ => false,
+fn f_eventp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    if matches!(a[0], Value::Int(_) | Value::BigInt(_)) {
+        return Ok(Value::t());
+    }
+    let object = match &a[0] {
+        Value::Cons(c) => c.borrow().car.clone(),
+        other => other.clone(),
     };
+    // GNU subr.el's `(and object (symbolp object) (not (keywordp object)))'
+    // makes nil false and excludes keywords while accepting uninterned
+    // symbols.  sym_id supplies the active positioned-symbol view.
+    let ok = !object.is_nil()
+        && i.sym_id(&object).is_some_and(|id| {
+            i.obarray.symbol(id).uninterned || !i.symbol_name(id).starts_with(':')
+        });
     Ok(Value::from_bool(ok))
 }
 
