@@ -1736,6 +1736,28 @@ fn f_string_replace(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         return Ok(args[2].clone());
     }
     let ns = crate::lisp::Value::string_ref(out);
+    let source_multibyte = !runs.is_empty()
+        && match &args[2] {
+            Value::Str(source) => {
+                !i.is_unibyte_str(source)
+                    && (i.is_multibyte_str(source) || content_is_multibyte(&s))
+            }
+            _ => false,
+        };
+    let replacement_text = to.as_deref().unwrap_or_default();
+    let replacement_multibyte = if replacement_text.is_empty() {
+        false
+    } else if let Value::Str(replacement) = &args[1] {
+        !i.is_unibyte_str(replacement)
+            && (i.is_multibyte_str(replacement) || content_is_multibyte(replacement_text))
+    } else {
+        content_is_multibyte(replacement_text)
+    };
+    if source_multibyte || replacement_multibyte {
+        i.mark_multibyte(&ns);
+    } else {
+        i.mark_unibyte(&ns);
+    }
     let mut ivs = replacement_props;
     if let Value::Str(src) = &args[2] {
         if i.has_str_props(src) {
