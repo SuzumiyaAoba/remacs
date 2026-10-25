@@ -502,8 +502,8 @@ fn f_symbolp(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_stringp(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(matches!(&args[0], Value::Str(_))))
 }
-fn f_vectorp(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::from_bool(matches!(&args[0], Value::Vec(_))))
+fn f_vectorp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    Ok(Value::from_bool(matches!(&args[0], Value::Vec(_)) && !i.is_overlay(&args[0])))
 }
 fn f_hash_table_p(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(matches!(&args[0], Value::Hash(_))))
@@ -631,7 +631,8 @@ fn f_sequencep(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU `SEQUENCEP': lists, strings, vectors — and also
     // char-tables and bool-vectors (both Records here).
     Ok(Value::from_bool(match &args[0] {
-        Value::Cons(_) | Value::Nil | Value::Str(_) | Value::Vec(_) => true,
+        Value::Cons(_) | Value::Nil | Value::Str(_) => true,
+        Value::Vec(_) => !i.is_overlay(&args[0]),
         Value::Record(_) => {
             super::misc::is_bool_vector(i, &args[0]) || super::misc::is_char_table(i, &args[0])
         }
@@ -662,7 +663,8 @@ fn f_arrayp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // objects, and bool-vectors; char-tables are Records here and
     // `#[...]' byte-code objects are Lambdas tagged by `bc_items'.
     Ok(Value::from_bool(match &args[0] {
-        Value::Str(_) | Value::Vec(_) => true,
+        Value::Str(_) => true,
+        Value::Vec(_) => !i.is_overlay(&args[0]),
         // GNU `arrayp' excludes every function object — closures and
         // byte-code objects alike (element access still works through
         // `aref'/`length').

@@ -357,7 +357,7 @@ fn f_make_list(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::list(vec![args[1].clone(); n as usize]))
 }
 fn f_length(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    if crate::editor::window_configuration_object(&args[0]) {
+    if crate::editor::window_configuration_object(&args[0]) || i.is_overlay(&args[0]) {
         return Err(i.wrong_type_mut("sequencep", &args[0]));
     }
     match &args[0] {

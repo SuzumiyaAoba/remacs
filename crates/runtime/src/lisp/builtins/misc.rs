@@ -16398,7 +16398,7 @@ fn cons_seq_len(v: &Value) -> i128 {
 }
 
 fn seq_len(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
-    if crate::editor::window_configuration_object(v) {
+    if crate::editor::window_configuration_object(v) || i.is_overlay(v) {
         return Err(i.wrong_type_mut("sequencep", v));
     }
     Ok(match v {

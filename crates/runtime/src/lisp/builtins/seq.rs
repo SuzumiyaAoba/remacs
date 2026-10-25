@@ -215,6 +215,9 @@ pub(crate) static SUBRS: &[Subr] = &[
 /// Element IDX of a sequence, or nil when out of range or not a
 /// sequence — GNU seq.el's `seq--elt-safe' used by `seq-let'.
 fn seq_elt_safe(i: &mut Interp, seqv: &Value, idx: usize) -> Value {
+    if i.is_overlay(seqv) {
+        return Value::Nil;
+    }
     match seqv {
         Value::Nil => Value::Nil,
         Value::Cons(_) => match super::listfn::nthcdr_strict(i, seqv, idx) {
@@ -325,6 +328,9 @@ fn f_seq_let_raw(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 
 /// Convert sequence to Vec<Value> of its elements.
 pub(crate) fn seq_to_vec(i: &mut Interp, v: &Value) -> Result<Vec<Value>, super::Flow> {
+    if i.is_overlay(v) {
+        return Err(i.wrong_type_mut("sequencep", v));
+    }
     match v {
         Value::Nil => Ok(Vec::new()),
         Value::Cons(_) => want_list(i, v),
@@ -380,7 +386,7 @@ fn seq_from_like(_i: &mut Interp, like: &Value, items: Vec<Value>) -> Value {
 }
 
 fn f_elt(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    if crate::editor::window_configuration_object(&args[0]) {
+    if crate::editor::window_configuration_object(&args[0]) || i.is_overlay(&args[0]) {
         return Err(i.wrong_type_mut("sequencep", &args[0]));
     }
     // GNU Felt: cons/nil go through `nthcdr'; every other
@@ -455,7 +461,7 @@ fn f_aref(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // per-type dispatch on ARRAY — even a non-array argument
     // reports `(fixnump IDX)' when IDX isn't a fixnum.
     want_fixnum(i, &args[1])?;
-    if crate::editor::window_configuration_object(&args[0]) {
+    if crate::editor::window_configuration_object(&args[0]) || i.is_overlay(&args[0]) {
         return Err(i.wrong_type_mut("arrayp", &args[0]));
     }
     match &args[0] {
@@ -503,7 +509,7 @@ fn f_aset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU `Faset' checks the fixnum index before dispatching on ARRAY.
     // Unlike aref, it rejects closure and byte-code function objects.
     let n = want_fixnum(i, &args[1])?;
-    if crate::editor::window_configuration_object(&args[0]) {
+    if crate::editor::window_configuration_object(&args[0]) || i.is_overlay(&args[0]) {
         return Err(i.wrong_type_mut("arrayp", &args[0]));
     }
     match &args[0] {
@@ -634,7 +640,7 @@ fn f_aset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 pub(crate) fn f_copy_sequence(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    if crate::editor::window_configuration_object(&args[0]) {
+    if crate::editor::window_configuration_object(&args[0]) || i.is_overlay(&args[0]) {
         return Err(i.wrong_type_mut("sequencep", &args[0]));
     }
     match &args[0] {

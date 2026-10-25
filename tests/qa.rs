@@ -628,6 +628,7 @@ qa!(qa_overlay_priority, "qa_overlay_priority.el");
 qa!(qa_overlay_evaporation, "qa_overlay_evaporation.el");
 qa!(qa_overlay_target_buffer, "qa_overlay_target_buffer.el");
 qa!(qa_overlay_category, "qa_overlay_category.el");
+qa!(qa_overlay_not_sequence, "qa_overlay_not_sequence.el");
 qa!(qa_overlay_window, "qa_overlay_window.el");
 qa!(qa_indent_inheritance, "qa_indent_inheritance.el");
 qa!(qa_insert_primitive_inherit, "qa_insert_primitive_inherit.el");
