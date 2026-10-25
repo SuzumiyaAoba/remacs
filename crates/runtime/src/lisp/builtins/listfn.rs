@@ -1633,7 +1633,7 @@ fn plist_put(i: &mut Interp, args: crate::lisp::Argv, lax: bool) -> EvalResult {
                 ));
             }
             Value::Cons(c) => {
-                let (k, rest) = {
+                let (k, old_rest) = {
                     let b = c.borrow();
                     (b.car.clone(), b.cdr.clone())
                 };
@@ -1642,6 +1642,13 @@ fn plist_put(i: &mut Interp, args: crate::lisp::Argv, lax: bool) -> EvalResult {
                         .apply(p, vec![k.clone(), args[1].clone()])
                         .map(|v| v.truthy())?,
                     None => eq_values(&k, &args[1]),
+                };
+                let rest = if pred.is_some() {
+                    // A predicate may replace either the value cell or
+                    // the following plist tail; resume from the live link.
+                    c.borrow().cdr.clone()
+                } else {
+                    old_rest
                 };
                 if matches {
                     if let Value::Cons(cell) = &rest {
