@@ -1472,31 +1472,16 @@ fn f_string_reverse(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_string_join(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let items = super::seq::seq_to_vec(i, &args[0])?;
     // GNU's string-join is `(mapconcat #'identity STRINGS SEPARATOR)':
-    // elements and SEPARATOR are concat'ed, so they may be any char
-    // sequence, and SEPARATOR is only coerced when a join happens.
-    let mut sep: Option<String> = None;
-    let mut parts: Vec<String> = Vec::with_capacity(items.len());
-    for item in &items {
-        let mut p = String::new();
-        concat_seq(i, item, &mut p)?;
-        parts.push(p);
-    }
-    let mut out = String::new();
-    for (k, p) in parts.iter().enumerate() {
-        if k > 0 {
-            if sep.is_none() {
-                let mut s = String::new();
-                match args.get(1) {
-                    None | Some(Value::Nil) => {}
-                    Some(v) => concat_seq(i, v, &mut s)?,
-                }
-                sep = Some(s);
-            }
-            out.push_str(sep.as_deref().unwrap_or_default());
+    // elements and SEPARATOR are passed to concat, preserving each
+    // string's text properties. Coerce SEPARATOR only when joining.
+    let mut parts = Vec::with_capacity(items.len().saturating_mul(2));
+    for (idx, item) in items.into_iter().enumerate() {
+        if idx > 0 {
+            parts.push(args.get(1).cloned().unwrap_or(Value::Nil));
         }
-        out.push_str(p);
+        parts.push(item);
     }
-    Ok(Value::string(out))
+    f_concat(i, parts.into())
 }
 fn f_split_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU subr.el keeps the next search position separate from the
