@@ -514,6 +514,7 @@ qa!(qa_byte_to_string_byte_kind, "qa_byte_to_string_byte_kind.el");
 qa!(qa_string_as_multibyte_extended_utf8, "qa_string_as_multibyte_extended_utf8.el");
 qa!(qa_truncate_width_float_start, "qa_truncate_width_float_start.el");
 qa!(qa_truncate_width_head_padding, "qa_truncate_width_head_padding.el");
+qa!(qa_truncate_width_properties, "qa_truncate_width_properties.el");
 qa!(qa_case_table_fold, "qa_case_table_fold.el");
 qa!(qa_byte_character_conversion, "qa_byte_character_conversion.el");
 qa!(qa_bytecode_errors, "qa_bytecode_errors.el");

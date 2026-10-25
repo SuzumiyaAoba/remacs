@@ -1899,13 +1899,20 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
     // Resolve the ellipsis string (GNU: a string is used verbatim;
     // any other non-nil value means `truncate-string-ellipsis',
     // defaulting to "…").
+    let mut ellipsis_source = None;
     let ellipsis = match &ellipsis_v {
         Value::Nil => None,
-        Value::Str(e) => Some(e.borrow().clone()),
+        Value::Str(e) => {
+            ellipsis_source = Some(e.clone());
+            Some(e.borrow().clone())
+        }
         _ => {
             let eid = i.q("truncate-string-ellipsis");
             match i.symbol_value(eid) {
-                Value::Str(e) => Some(e.borrow().clone()),
+                Value::Str(e) => {
+                    ellipsis_source = Some(e.clone());
+                    Some(e.borrow().clone())
+                }
                 _ => Some("…".to_string()),
             }
         }
@@ -1971,18 +1978,23 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
         let pad = truncate_padding_char(i, &padding)?;
         out.extend(std::iter::repeat_n(pad, head_padding));
     }
+    let retained_start = idx;
+    let mut retained_len = 0usize;
     let mut truncated = false;
-    for &c in &chars[idx..] {
+    for (source_index, &c) in chars.iter().enumerate().skip(idx) {
         let cw = gnu_char_width(i, c);
         if col as f64 >= budget || (col + cw) as f64 > budget {
             truncated = true;
             break;
         }
         out.push(c);
+        retained_len = source_index + 1 - retained_start;
         col += cw;
     }
+    let mut ellipsis_start = None;
     if truncated && !fits {
         if let Some(e) = &ellipsis {
+            ellipsis_start = Some(out.chars().count());
             out.push_str(e);
             col += ell_w;
         }
@@ -1998,7 +2010,36 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
             out.push(pad);
         }
     }
-    Ok(Value::string(out))
+    let result = Value::string_ref(out);
+    let mut properties = Vec::new();
+    if let Value::Str(source) = &args[0]
+        && retained_len > 0
+        && i.has_str_props(source)
+    {
+        let retained_end = retained_start + retained_len;
+        for (start, end, plist) in i.str_props(source) {
+            let lo = (*start).max(retained_start);
+            let hi = (*end).min(retained_end);
+            if lo < hi {
+                properties.push((
+                    head_padding + lo - retained_start,
+                    head_padding + hi - retained_start,
+                    plist.clone(),
+                ));
+            }
+        }
+    }
+    if let (Some(start), Some(source)) = (ellipsis_start, ellipsis_source)
+        && i.has_str_props(&source)
+    {
+        for (lo, hi, plist) in i.str_props(&source) {
+            properties.push((start + lo, start + hi, plist.clone()));
+        }
+    }
+    if !properties.is_empty() {
+        i.set_str_props(&result, properties);
+    }
+    Ok(Value::Str(result))
 }
 /// `string-fill' — GNU's subr-x definition wraps `fill-region': the
 /// string is broken into words and whitespace runs (space, tab,
