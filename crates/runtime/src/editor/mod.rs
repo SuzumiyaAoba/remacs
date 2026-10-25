@@ -12012,9 +12012,19 @@ fn f_file_name_nondirectory(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         });
     }
     match s.rfind('/') {
-        Some(idx) => Ok(Value::string(&s[idx + 1..])),
-        None => Ok(Value::string(s)),
+        Some(idx) => Ok(file_name_result_like(i, &a[0], s[idx + 1..].to_string())),
+        None => Ok(file_name_result_like(i, &a[0], s)),
     }
+}
+
+fn file_name_result_like(i: &mut Interp, original: &Value, text: String) -> Value {
+    let result = Value::string_ref(text);
+    if crate::lisp::builtins::strfn::string_multibyte_p(i, original) {
+        i.mark_multibyte(&result);
+    } else {
+        i.mark_unibyte(&result);
+    }
+    Value::Str(result)
 }
 fn f_file_name_extension(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let s = want_str(i, &a[0])?;
