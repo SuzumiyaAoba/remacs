@@ -362,6 +362,7 @@ qa!(qa_empty_symbol_printing, "qa_empty_symbol_printing.el");
 qa!(qa_eventp_gnu_symbol_semantics, "qa_eventp_gnu_symbol_semantics.el");
 qa!(qa_aset_multibyte_character_bounds, "qa_aset_multibyte_character_bounds.el");
 qa!(qa_bytecode_numeric_predicates_bignum, "qa_bytecode_numeric_predicates_bignum.el");
+qa!(qa_bytecode_marker_arithmetic, "qa_bytecode_marker_arithmetic.el");
 qa!(qa_value_lt_circular_identity, "qa_value_lt_circular_identity.el");
 qa!(qa_value_lt_depth_limit, "qa_value_lt_depth_limit.el");
 qa!(qa_value_lt_record_bool_vector, "qa_value_lt_record_bool_vector.el");

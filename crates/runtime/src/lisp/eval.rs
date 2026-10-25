@@ -8105,6 +8105,8 @@ command-line arguments.\" \
                     | ">"
                     | "<="
                     | ">="
+                    | "1+"
+                    | "1-"
                     | "point"
                     | "point-max"
                     | "point-min"

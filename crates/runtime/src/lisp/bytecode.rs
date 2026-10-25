@@ -893,32 +893,15 @@ fn step_op(
         80 => scall!("concat", 2),
         81 => scall!("concat", 3),
         82 => scall!("concat", 4),
-        83 | 84 => {
-            // sub1 / add1
-            let v = pop!();
-            let d = if op == 83 { -1.0 } else { 1.0 };
-            push!(match v {
-                Value::Int(n) => n.checked_add(d as i128).map(Value::integer).unwrap_or_else(|| Value::from_bigint(num_bigint::BigInt::from(n) + d as i128)),
-                Value::BigInt(n) => Value::from_bigint(n.as_ref() + d as i128),
-                Value::Float(f) => Value::float(*f + d),
-                other => fail!(i.wrong_type_mut("number-or-marker-p", &other)),
-            });
-        }
+        83 => scall!("1-", 1),
+        84 => scall!("1+", 1),
         85 => scall!("=", 2),
         86 => scall!(">", 2),
         87 => scall!("<", 2),
         88 => scall!("<=", 2),
         89 => scall!(">=", 2),
         90 => scall!("-", 2),
-        91 => {
-            let v = pop!();
-            push!(match v {
-                Value::Int(n) => n.checked_neg().map(Value::integer).unwrap_or_else(|| Value::from_bigint(-num_bigint::BigInt::from(n))),
-                Value::BigInt(n) => Value::from_bigint(-n.as_ref()),
-                Value::Float(f) => Value::float(-*f),
-                other => fail!(i.wrong_type_mut("number-or-marker-p", &other)),
-            });
-        }
+        91 => scall!("-", 1),
         92 => scall!("+", 2),
         93 => scall!("max", 2),
         94 => scall!("min", 2),
