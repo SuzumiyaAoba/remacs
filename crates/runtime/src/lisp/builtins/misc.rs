@@ -7871,7 +7871,7 @@ fn f_invocation_name(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 
 // ---------- version strings ----------
 
-fn version_list_of(i: &mut Interp, v: &Value) -> Result<Vec<i128>, Flow> {
+fn version_list_of(i: &mut Interp, v: &Value) -> Result<Vec<BigInt>, Flow> {
     let s = match v {
         Value::Str(s) => s.borrow().clone(),
         _ => return Err(i.signal_data(sym::ERROR, vec![Value::string("Version must be a string")])),
@@ -7921,7 +7921,7 @@ fn version_list_of(i: &mut Interp, v: &Value) -> Result<Vec<i128>, Flow> {
                 pos += 1;
             }
             let number: String = chars[number_start..pos].iter().collect();
-            out.push(number.parse::<i128>().unwrap_or(i128::MAX));
+            out.push(BigInt::parse_bytes(number.as_bytes(), 10).unwrap_or_default());
 
             let suffix_start = pos;
             while pos < chars.len() && !chars[pos].is_ascii_digit() {
@@ -7962,7 +7962,8 @@ fn version_list_of(i: &mut Interp, v: &Value) -> Result<Vec<i128>, Flow> {
                 )?;
                 if matched.truthy() {
                     priority = Some(match value {
-                        Value::Int(n) => n,
+                        Value::Int(n) => BigInt::from(n),
+                        Value::BigInt(n) => (*n).clone(),
                         other => return Err(i.wrong_type_mut("integerp", &other)),
                     });
                     break;
@@ -7984,6 +7985,7 @@ fn version_list_of(i: &mut Interp, v: &Value) -> Result<Vec<i128>, Flow> {
                     "pre" | "rc" => Some(-1),
                     _ => None,
                 }
+                .map(BigInt::from)
             });
             if let Some(priority) = priority {
                 out.push(priority);
@@ -7996,7 +7998,7 @@ fn version_list_of(i: &mut Interp, v: &Value) -> Result<Vec<i128>, Flow> {
                     .is_some()
             {
                 let letter = suffix.chars().last().unwrap().to_ascii_lowercase() as i128;
-                out.push(letter - 'a' as i128 + 1);
+                out.push(BigInt::from(letter - 'a' as i128 + 1));
             } else {
                 return Err(i.error_q("Invalid version syntax: `%s'", &[&version]));
             }
@@ -8010,14 +8012,15 @@ fn version_list_of(i: &mut Interp, v: &Value) -> Result<Vec<i128>, Flow> {
 
 fn f_version_to_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let v = version_list_of(i, &a[0])?;
-    Ok(Value::list(v.into_iter().map(Value::Int).collect()))
+    Ok(Value::list(v.into_iter().map(Value::from_bigint).collect()))
 }
 
-fn version_cmp(a: &[i128], b: &[i128]) -> std::cmp::Ordering {
+fn version_cmp(a: &[BigInt], b: &[BigInt]) -> std::cmp::Ordering {
     let n = a.len().max(b.len());
+    let zero = BigInt::from(0);
     for k in 0..n {
-        let x = a.get(k).copied().unwrap_or(0);
-        let y = b.get(k).copied().unwrap_or(0);
+        let x = a.get(k).unwrap_or(&zero);
+        let y = b.get(k).unwrap_or(&zero);
         match x.cmp(&y) {
             std::cmp::Ordering::Equal => {}
             ord => return ord,
@@ -8037,7 +8040,7 @@ fn f_version_cmp(i: &mut Interp, a: &[Value]) -> Result<std::cmp::Ordering, Flow
 fn f_version_list_cmp(i: &mut Interp, a: &[Value]) -> Result<std::cmp::Ordering, Flow> {
     // `version-list-*' take int lists: listp on the arg, integerp
     // on elements.
-    fn ints(i: &mut Interp, v: &Value) -> Result<Vec<i128>, Flow> {
+    fn ints(i: &mut Interp, v: &Value) -> Result<Vec<BigInt>, Flow> {
         let items = match v {
             Value::Nil => Vec::new(),
             Value::Cons(_) => want_list(i, v)?,
@@ -8046,7 +8049,8 @@ fn f_version_list_cmp(i: &mut Interp, a: &[Value]) -> Result<std::cmp::Ordering,
         items
             .iter()
             .map(|e| match e {
-                Value::Int(n) => Ok(*n),
+                Value::Int(n) => Ok(BigInt::from(*n)),
+                Value::BigInt(n) => Ok((**n).clone()),
                 other => Err(i.wrong_type_mut("integerp", other)),
             })
             .collect()
