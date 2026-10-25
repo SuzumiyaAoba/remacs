@@ -8224,10 +8224,16 @@ fn f_make_finalizer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_byte_to_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let n = crate::lisp::builtins::want_fixnum(i, &a[0])?;
-    match u32::try_from(n).ok().and_then(char::from_u32) {
-        Some(c) => Ok(Value::string(c.to_string())),
-        None => Err(i.signal_data(sym::ARGS_OUT_OF_RANGE, vec![a[0].clone()])),
+    if !(0..=255).contains(&n) {
+        return Err(i.signal_data(sym::ARGS_OUT_OF_RANGE, vec![a[0].clone()]));
     }
+    let code = if n < 128 { n as u32 } else { n as u32 + 0x3fff00 };
+    let c = crate::lisp::value::lisp_char(code).unwrap_or_else(|| {
+        crate::lisp::value::mule_seq_char(code)
+    });
+    let result = crate::lisp::Value::string_ref(c.to_string());
+    i.mark_unibyte(&result);
+    Ok(Value::Str(result))
 }
 
 fn f_get_load_suffixes(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
