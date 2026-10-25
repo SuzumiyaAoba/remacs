@@ -9,7 +9,7 @@
 
 (defvar flymake-diagnostic-types-alist nil)
 (defvar flymake-diagnostic-functions nil)
-(defvar flymake-mode nil)
+(defvar-local flymake-mode nil)
 (defvar-local flymake--diagnostics nil)
 
 (defun flymake--log-1 (level sublog msg &rest args)
