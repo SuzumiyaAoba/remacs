@@ -12170,7 +12170,11 @@ fn f_directory_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // of slashes is already a directory name and stays unchanged
     // (`directory-file-name' of "/" is "/", of "//" is "//").
     if s.chars().all(|c| c == '/') {
-        return Ok(file_name_result_like(i, &a[0], s));
+        return Ok(file_name_result_like(
+            i,
+            &a[0],
+            if s.len() > 2 { "/".to_string() } else { s },
+        ));
     }
     Ok(file_name_result_like(
         i,
