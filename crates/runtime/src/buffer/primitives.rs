@@ -6923,8 +6923,10 @@ fn f_skip_syntax_forward(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let lim = match a.get(1) {
-        Some(v) if v.truthy() => pos_idx(bb.text.len(), want_int(i, v)?),
-        _ => bb.text_len(),
+        Some(v) if v.truthy() => {
+            pos_idx(bb.text.len(), want_int(i, v)?).clamp(bb.begv, bb.zv.min(bb.text.len()))
+        }
+        _ => bb.zv.min(bb.text.len()),
     };
     let neg = spec.starts_with('^');
     // `-` is an alias for the whitespace class, like in regexps.
@@ -6956,8 +6958,10 @@ fn f_skip_syntax_backward(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let lim = match a.get(1) {
-        Some(v) if v.truthy() => pos_idx(bb.text.len(), want_int(i, v)?),
-        _ => bb.begv,
+        Some(v) if v.truthy() => {
+            pos_idx(bb.text.len(), want_int(i, v)?).clamp(bb.begv, bb.zv.min(bb.text.len()))
+        }
+        _ => bb.begv.min(bb.text.len()),
     };
     let neg = spec.starts_with('^');
     let codes: Vec<u8> = spec
