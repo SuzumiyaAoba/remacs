@@ -2151,7 +2151,27 @@ fn f_string_lines(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             }
         }
     }
-    Ok(Value::list(lines.into_iter().map(Value::string).collect()))
+    let mut result = Vec::with_capacity(lines.len());
+    for line in lines {
+        if line.len() == s.len() && line.as_ptr() == s.as_ptr() {
+            result.push(args[0].clone());
+            continue;
+        }
+        let start_byte = line.as_ptr() as usize - s.as_ptr() as usize;
+        let end_byte = start_byte + line.len();
+        let start = s[..start_byte].chars().count();
+        let end = s[..end_byte].chars().count();
+        result.push(f_substring(
+            i,
+            vec![
+                args[0].clone(),
+                Value::Int(start as i128),
+                Value::Int(end as i128),
+            ]
+            .into(),
+        )?);
+    }
+    Ok(Value::list(result))
 }
 fn f_string_equal_ignore_case(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let a = want_string(i, &args[0])?;
