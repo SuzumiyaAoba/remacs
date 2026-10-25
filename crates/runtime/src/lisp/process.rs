@@ -4203,6 +4203,12 @@ fn f_process_lines_ignore_status(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
 // ---------- system enumeration ----------
 
 fn f_list_system_processes(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    #[cfg(target_os = "macos")]
+    {
+        return Ok(list_system_processes_macos());
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
     let mut pids = Vec::new();
     for pid in 1..=99999i32 {
         let r = unsafe { libc::kill(pid, 0) };
@@ -4211,6 +4217,59 @@ fn f_list_system_processes(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult
         }
     }
     Ok(Value::list(pids))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn list_system_processes_macos() -> Value {
+    // Match GNU's sysctl(KERN_PROC_ALL) availability contract. Some
+    // sandboxes deny this operation even though single-PID queries work;
+    // GNU returns nil in that case rather than guessing a PID range.
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_ALL];
+    let mut needed = 0usize;
+    let status = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as libc::c_uint,
+            std::ptr::null_mut(),
+            &mut needed,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if status != 0 || needed == 0 {
+        return Value::Nil;
+    }
+
+    // libproc returns the same native process enumeration in a simpler
+    // pid_t array. Reverse it like GNU's Fcons loop over KERN_PROC_ALL.
+    let count = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
+    let Ok(capacity) = usize::try_from(count) else {
+        return Value::Nil;
+    };
+    if capacity == 0 {
+        return Value::Nil;
+    }
+    let Some(buffer_bytes) = capacity.checked_mul(std::mem::size_of::<libc::pid_t>()) else {
+        return Value::Nil;
+    };
+    let Ok(buffer_bytes) = libc::c_int::try_from(buffer_bytes) else {
+        return Value::Nil;
+    };
+    let mut pids = vec![0 as libc::pid_t; capacity];
+    let returned = unsafe {
+        libc::proc_listallpids(pids.as_mut_ptr().cast(), buffer_bytes)
+    };
+    if returned <= 0 {
+        return Value::Nil;
+    }
+    pids.truncate((returned as usize).min(pids.len()));
+    Value::list(
+        pids.into_iter()
+            .rev()
+            .map(|pid| Value::Int(pid as i128))
+            .collect(),
+    )
 }
 
 fn f_process_attributes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
