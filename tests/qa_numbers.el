@@ -248,6 +248,8 @@
 (qa (lsh -256 -4) 288230376151711728)
 (qa (lsh -2 -1) 2305843009213693951)
 (qa (lsh (1+ most-positive-fixnum) -1) 1152921504606846976)
+(qa-err-data (lsh (- (expt 2 80)) -1) 'args-out-of-range
+             '(-1208925819614629174706176 -1))
 ;; lsh wants number-or-marker first, then integerp; ash wants integerp
 (qa-err-data (lsh 'a 1) 'wrong-type-argument '(number-or-marker-p a))
 (qa-err-data (lsh 1 1.5) 'wrong-type-argument '(integerp 1.5))

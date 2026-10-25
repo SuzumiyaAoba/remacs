@@ -872,6 +872,13 @@ fn f_lsh(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         other => return Err(i.wrong_type_mut("number-or-marker-p", other)),
     };
     let count = integer(i, &args[1], "integerp", false)?;
+    if !args[0].fixnump() && n.is_negative() && count.is_negative() {
+        let condition = i.q("args-out-of-range");
+        return Err(i.signal_data(
+            condition,
+            vec![args[0].clone(), args[1].clone()],
+        ));
+    }
     if args[0].fixnump() && count.is_negative() {
         if count <= BigInt::from(-62) {
             return Ok(Value::Int(0));
