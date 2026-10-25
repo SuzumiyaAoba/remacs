@@ -529,8 +529,13 @@ fn f_aset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                 Value::Int(x) => *x,
                 _ => return Err(i.wrong_type_mut("characterp", &args[2])),
             };
-            let c = crate::lisp::value::lisp_char(nch as u32)
-                .ok_or_else(|| i.wrong_type_mut("characterp", &args[2]))?;
+            let c = if (0..=0x3f_ffff).contains(&nch) {
+                let code = nch as u32;
+                crate::lisp::value::lisp_char(code)
+                    .unwrap_or_else(|| crate::lisp::value::mule_seq_char(code))
+            } else {
+                return Err(i.wrong_type_mut("characterp", &args[2]));
+            };
             let unibyte = i.is_unibyte_str(s);
             let old = chars[n as usize];
             if unibyte {
@@ -561,7 +566,7 @@ fn f_aset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                     byte_len(c, nch),
                     byte_len(old, crate::lisp::value::lisp_char_code(old)),
                 );
-                if nl != ol {
+                if nl != ol && crate::lisp::value::mule_seq_code(c).is_none() {
                     return Err(i.error(if nch < 0x80 {
                         "Attempt to replace non-ASCII char in multibyte string"
                     } else {
