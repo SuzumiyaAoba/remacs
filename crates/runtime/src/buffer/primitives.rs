@@ -1540,6 +1540,11 @@ fn parse_lock_target(target: &str) -> Option<(String, String, u32, i64)> {
     Some((user.to_string(), host.to_string(), pid, boot))
 }
 
+fn lock_boot_times_match(a: i64, b: i64) -> bool {
+    a.checked_sub(b)
+        .is_some_and(|difference| (-1..=1).contains(&difference))
+}
+
 /// GNU `current_lock_owner' result.
 enum LockOwner {
     /// The lock belongs to this Emacs process.
@@ -1564,7 +1569,7 @@ fn lock_owner(target: &str) -> Result<LockOwner, ()> {
         // boot time differs from the system's (the lock was left by a
         // process from a previous boot), or when the pid is dead.
         let bt = crate::buffer::boot_time();
-        if bt != 0 && (boot - bt).abs() > 1 {
+        if bt != 0 && !lock_boot_times_match(boot, bt) {
             return Err(());
         }
         #[cfg(unix)]
