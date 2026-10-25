@@ -835,48 +835,17 @@ fn f_mapc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_mapcan(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // Map the input live, then nconc all results. Collect first so an
-    // invalid result does not prevent later callbacks from running.
+    // GNU mapcan runs every mapping callback before applying the live nconc
+    // function to the results. Besides matching advice/redefinitions, this
+    // preserves nconc's circular-list errors and mutation-before-validation.
     let fun = args[0].clone();
     let mut results = Vec::new();
     map_seq(i, &fun, &args[1], |i, value| {
         results.push(i.apply(&fun, vec![value.clone()])?);
         Ok(())
     })?;
-    let mut out = Value::Nil;
-    let mut tail: Option<crate::lisp::value::ConsRef> = None;
-    for (k, r) in results.iter().enumerate() {
-        // The final nconc argument, including nil or an atom, replaces
-        // the accumulated tail verbatim.  Earlier dotted tails drop out.
-        if k + 1 == results.len() {
-            match &tail {
-                Some(t) => t.borrow_mut().cdr = r.clone(),
-                None => out = r.clone(),
-            }
-            break;
-        }
-        if r.is_nil() {
-            continue;
-        }
-        if !matches!(r, Value::Cons(_)) {
-            return Err(i.wrong_type_mut("consp", r));
-        }
-        match &tail {
-            Some(t) => t.borrow_mut().cdr = r.clone(),
-            None => out = r.clone(),
-        }
-        let mut cur = r.clone();
-        let mut seen = std::collections::HashSet::new();
-        while let Value::Cons(c) = cur {
-            if !seen.insert(std::rc::Rc::as_ptr(&c) as usize) {
-                return Err(i.error("circular list in mapcan"));
-            }
-            let next = c.borrow().cdr.clone();
-            tail = Some(c);
-            cur = next;
-        }
-    }
-    Ok(out)
+    let nconc = Value::Sym(i.q("nconc"));
+    i.apply(&nconc, results)
 }
 
 fn f_mapconcat(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
