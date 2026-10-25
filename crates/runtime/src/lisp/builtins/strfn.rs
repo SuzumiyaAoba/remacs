@@ -1827,7 +1827,36 @@ fn gnu_char_width(i: &Interp, c: char) -> usize {
     if c == '\t' {
         display_tab_width(i)
     } else {
-        gnu_char_code_width(i, lisp_char_code(c) as u32)
+        let code = lisp_char_code(c) as u32;
+        display_substitution_width(i, code).unwrap_or_else(|| gnu_char_code_width(i, code))
+    }
+}
+
+fn display_substitution_width(i: &Interp, code: u32) -> Option<usize> {
+    let buffer_table = i
+        .q_soft("buffer-display-table")
+        .map(|id| i.symbol_value(id))
+        .filter(Value::truthy);
+    let table = buffer_table.or_else(|| {
+        i.q_soft("standard-display-table")
+            .map(|id| i.symbol_value(id))
+            .filter(Value::truthy)
+    })?;
+    match misc::char_table_ref(i, &table, code as usize) {
+        Value::Str(text) => Some(
+            text.borrow()
+                .chars()
+                .map(|ch| gnu_char_code_width(i, lisp_char_code(ch) as u32))
+                .sum(),
+        ),
+        Value::Vec(text) => Some(
+            text.borrow()
+                .iter()
+                .filter_map(Value::int)
+                .map(|ch| gnu_char_code_width(i, ch as u32))
+                .sum(),
+        ),
+        _ => None,
     }
 }
 
@@ -5811,6 +5840,9 @@ fn f_char_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU `Fchar_width' reads the buffer-local `tab-width' for TAB.
     if c == '\t' as i128 {
         return Ok(Value::Int(display_tab_width(i) as i128));
+    }
+    if let Some(width) = display_substitution_width(i, c as u32) {
+        return Ok(Value::Int(width as i128));
     }
     let w = gnu_char_code_width(i, c as u32);
     Ok(Value::Int(w as i128))

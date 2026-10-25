@@ -516,6 +516,7 @@ qa!(qa_truncate_width_float_start, "qa_truncate_width_float_start.el");
 qa!(qa_truncate_width_head_padding, "qa_truncate_width_head_padding.el");
 qa!(qa_truncate_width_properties, "qa_truncate_width_properties.el");
 qa!(qa_truncate_width_ellipsis_property, "qa_truncate_width_ellipsis_property.el");
+qa!(qa_display_table_string_width, "qa_display_table_string_width.el");
 qa!(qa_string_fill_unibyte_byte8, "qa_string_fill_unibyte_byte8.el");
 qa!(qa_string_search_byte8, "qa_string_search_byte8.el");
 qa!(qa_string_replace_byte8_match, "qa_string_replace_byte8_match.el");
