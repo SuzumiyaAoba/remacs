@@ -2328,14 +2328,33 @@ fn f_string_search(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Some(v) if !v.is_nil() => super::want_fixnum(i, v)?,
         _ => 0,
     };
-    let hchars: Vec<char> = hay.chars().collect();
+    let needle_unibyte = !string_multibyte_p(i, &args[0]);
+    let hay_unibyte = !string_multibyte_p(i, &args[1]);
+    let mixed_byte_kinds = needle_unibyte != hay_unibyte;
+    let codes = |text: &str, unibyte: bool| -> Vec<i128> {
+        text.chars()
+            .map(|ch| {
+                if unibyte {
+                    let byte = eight_bit_byte(ch).map(i128::from).unwrap_or(ch as i128);
+                    if mixed_byte_kinds && byte >= 128 {
+                        0x3fff00 + byte
+                    } else {
+                        byte
+                    }
+                } else {
+                    lisp_char_code(ch)
+                }
+            })
+            .collect()
+    };
+    let hchars = codes(&hay, hay_unibyte);
     // Validate in character positions before either an empty-needle
     // return or conversion to usize, as GNU's Fstring_search does.
     if !(0..=hchars.len() as i128).contains(&start) {
         let sym = i.q("args-out-of-range");
         return Err(i.signal_data(sym, vec![Value::Int(start)]));
     }
-    let nchars: Vec<char> = needle.chars().collect();
+    let nchars = codes(&needle, needle_unibyte);
     if nchars.is_empty() {
         return Ok(Value::Int(start));
     }
