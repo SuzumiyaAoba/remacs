@@ -1787,6 +1787,7 @@ fn f_file_locked_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// A foreign live lock goes through ask-user-about-lock (signals
 /// `file-locked' in batch); ours or stale is replaced quietly.
 fn f_lock_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let file_arg = a[0].clone();
     let file = want_string(i, &a[0])?;
     if let Some(id) = i.q_soft("create-lockfiles") {
         if !i.symbol_value(id).truthy() {
@@ -1806,7 +1807,7 @@ fn f_lock_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     Ok(LockOwner::Foreign { info, .. }) => {
                         return Err(signal_file_locked(
                             i,
-                            Value::string(file),
+                            file_arg,
                             Value::string(info),
                         ));
                     }
