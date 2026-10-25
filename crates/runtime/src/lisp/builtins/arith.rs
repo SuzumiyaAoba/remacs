@@ -413,8 +413,15 @@ fn f_mod_fn(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         return Ok(Value::from_bigint(x.mod_floor(&y)));
     }
     let (x, y) = (x.float(), y.float());
-    let r = x.rem_euclid(y);
-    Ok(Value::float(if y < 0.0 && r != 0.0 { r + y } else { r }))
+    // GNU starts with fmod, then adjusts only a nonzero remainder whose
+    // sign differs from the divisor. rem_euclid would add |y| and then y,
+    // introducing rounding and producing infinity - infinity for y=-inf.
+    let r = x % y;
+    Ok(Value::float(if r != 0.0 && (r < 0.0) != (y < 0.0) {
+        r + y
+    } else {
+        r
+    }))
 }
 fn f_1plus(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let n = number(i, &args[0])?;
