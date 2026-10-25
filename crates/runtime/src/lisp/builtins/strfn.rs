@@ -1486,13 +1486,12 @@ fn trim_right_re(i: &mut Interp, s: &str, trim: &str) -> Result<String, Flow> {
     }
 }
 fn f_string_pad(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    // GNU CHECK_FIXNAT: negative LENGTH signals `wholenump'.
+    // GNU's string-pad definition validates LENGTH with `natnump' first.
     let len = match &args[1] {
         Value::Int(n) if *n >= 0 => *n as usize,
-        Value::Int(_) => return Err(i.wrong_type_mut("wholenump", &args[1])),
-        other => return Err(i.wrong_type_mut("fixnump", other)),
+        other => return Err(i.wrong_type_mut("natnump", other)),
     };
+    let s = want_string(i, &args[0])?;
     // GNU: PADDING is a single character; a string signals.
     let pad_char = match args.get(2) {
         None | Some(Value::Nil) => ' ',
