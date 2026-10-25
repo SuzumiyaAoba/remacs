@@ -1209,7 +1209,11 @@ fn f_string_to_number(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     if base != 10 {
         let neg = t.starts_with('-');
-        let digits = t.trim_start_matches(['+', '-']);
+        let digits = if matches!(t.chars().next(), Some('+' | '-')) {
+            &t[1..]
+        } else {
+            t
+        };
         // Parse the longest valid digit prefix for the base.
         let take: String = digits
             .chars()

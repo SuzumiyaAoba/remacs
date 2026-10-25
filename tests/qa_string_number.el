@@ -45,4 +45,6 @@
 (qa (string-to-number "1.e+INF" 16) 1)
 (qa (string-to-number "1e" 16) 30)
 (qa (string-to-number "101.1e2" 2) 5)
+(qa (string-to-number "++ff" 16) 0)
+(qa (string-to-number "-+ff" 16) 0)
 (princ (qa--done))
