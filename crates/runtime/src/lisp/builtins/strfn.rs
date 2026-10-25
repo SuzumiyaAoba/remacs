@@ -1849,9 +1849,10 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
     // GNU mule-util.el returns END-COLUMN padding characters when the
     // string ends before START-COLUMN is reached.
     if idx == chars.len() && col < start_col && padding.truthy() {
+        let pad_width = want_int(i, &args[1])?.max(0) as usize;
         let pad = truncate_padding_char(i, &padding)?;
         return Ok(Value::string(
-            std::iter::repeat_n(pad, width).collect::<String>(),
+            std::iter::repeat_n(pad, pad_width).collect::<String>(),
         ));
     }
     // Scan the tail to decide whether to reserve ellipsis width.
