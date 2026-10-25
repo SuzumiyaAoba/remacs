@@ -1492,19 +1492,23 @@ fn f_plist_get(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                         let b = c.borrow();
                         (b.car.clone(), b.cdr.clone())
                     };
+                    let Value::Cons(value_cell) = rest else {
+                        // plist-get's optional predicate is called only
+                        // for complete property/value pairs. An odd final
+                        // key has an implicit nil value but is not tested.
+                        return Ok(Value::Nil);
+                    };
+                    let (value, next) = {
+                        let b = value_cell.borrow();
+                        (b.car.clone(), b.cdr.clone())
+                    };
                     // GNU funcalls PREDICATE on the raw values —
                     // `invalid-function' on e.g. 5, not a quoted form.
                     let m = i.apply(&pred, vec![k.clone(), args[1].clone()])?;
                     if m.truthy() {
-                        return Ok(match &rest {
-                            Value::Cons(c2) => c2.borrow().car.clone(),
-                            _ => Value::Nil,
-                        });
+                        return Ok(value);
                     }
-                    cur = match &rest {
-                        Value::Cons(c2) => c2.borrow().cdr.clone(),
-                        _ => Value::Nil,
-                    };
+                    cur = next;
                     if matches!(cur, Value::Cons(_)) && cycle.advance(&cur) {
                         return Ok(Value::Nil);
                     }

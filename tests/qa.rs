@@ -396,6 +396,7 @@ qa!(qa_kill_new, "qa_kill_new.el");
 qa!(qa_pcase, "qa_pcase.el");
 qa!(qa_plists, "qa_plists.el");
 qa!(qa_plist_get_circular, "qa_plist_get_circular.el");
+qa!(qa_plist_get_predicate_odd_tail, "qa_plist_get_predicate_odd_tail.el");
 qa!(qa_plist_member_cycle_data, "qa_plist_member_cycle_data.el");
 qa!(qa_point, "qa_point.el");
 qa!(qa_pp, "qa_pp.el");
