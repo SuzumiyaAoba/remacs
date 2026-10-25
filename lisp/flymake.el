@@ -119,9 +119,28 @@ If COL is nil, return a region for the whole line."
               (and (<= beg end) (cons beg end)))
           (cons (point) (line-end-position)))))))
 
-(defun flymake-diagnostics (&optional _beg _end)
-  "Get Flymake diagnostics in the current buffer."
-  flymake--diagnostics)
+(defun flymake-diagnostics (&optional beg end)
+  "Get Flymake diagnostics in the current buffer.
+When BEG and END are non-nil, return diagnostics overlapping that region.
+When only BEG is non-nil, return diagnostics at BEG."
+  (let ((start (or beg (point-min)))
+        (finish (or end (point-max)))
+        result)
+    (dolist (diag flymake--diagnostics (nreverse result))
+      (let ((diag-beg (flymake-diagnostic-beg diag))
+            (diag-end (flymake-diagnostic-end diag)))
+        (when (and (eq (flymake-diagnostic-buffer diag) (current-buffer))
+                   (cond
+                    ((and beg end)
+                     (or (and (= diag-beg diag-end)
+                              (<= start diag-beg) (<= diag-beg finish))
+                         (and (< diag-beg finish) (> diag-end start))))
+                    (beg (and (<= diag-beg beg) (< beg diag-end)))
+                    (end (or (and (= diag-beg diag-end)
+                                  (<= start diag-beg) (<= diag-beg end))
+                             (and (< diag-beg end) (> diag-end start))))
+                    (t t))
+          (push diag result)))))))
 
 (defun flymake-mode (&optional arg)
   "Toggle Flymake mode on or off (stub)."
