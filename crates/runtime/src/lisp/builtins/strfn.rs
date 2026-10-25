@@ -546,12 +546,9 @@ pub(crate) fn concat_seq(i: &mut Interp, v: &Value, out: &mut String) -> Result<
             Ok(())
         }
         // Bool-vectors are sequences of t/nil bits; concatenating one
-        // hits the non-char element error like any other sequence.
+        // is not supported by GNU concat at all.
         Value::Record(_) if super::misc::is_bool_vector(i, v) => {
-            match super::misc::bool_vec_of(i, v)?.first() {
-                Some(bit) => Err(i.wrong_type_mut("characterp", &Value::from_bool(*bit))),
-                None => Ok(()),
-            }
+            Err(i.wrong_type_mut("sequencep", v))
         }
         _ => Err(i.wrong_type_mut("sequencep", v)),
     }
