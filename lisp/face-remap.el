@@ -12,6 +12,14 @@
 (add-minor-mode 'text-scale-mode '(" " text-scale-mode-lighter))
 (add-minor-mode 'buffer-face-mode " BufFace")
 
+;;Remacs: GNU makes these settings buffer-local when face-remap loads.
+(defvar text-scale-mode-amount 0
+  "Number of steps that `text-scale-mode' will increase/decrease text height.")
+(defvar text-scale-remap-header-line nil
+  "If non-nil, text scaling may change font size of header lines too.")
+(make-variable-buffer-local 'text-scale-mode-amount)
+(make-variable-buffer-local 'text-scale-remap-header-line)
+
 (provide 'face-remap)
 
 ;;; face-remap.el ends here
