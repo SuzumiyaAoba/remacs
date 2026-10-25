@@ -273,6 +273,12 @@
 (qa (with-temp-buffer (insert "abc") (add-face-text-property 1 3 'bold)
       (add-face-text-property 1 3 'italic t) (get-text-property 1 'face))
     '(bold italic))
+(qa (with-temp-buffer (insert "x")
+      (add-face-text-property 1 2 'bold)
+      (add-face-text-property 1 2 'italic t)
+      (add-face-text-property 1 2 'bold t)
+      (get-text-property 1 'face))
+    '(bold italic bold))
 
 ;; == overlays: basics ==
 (qa (with-temp-buffer (insert "abc") (let ((o (make-overlay 1 3)))

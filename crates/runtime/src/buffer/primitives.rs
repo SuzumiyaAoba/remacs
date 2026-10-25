@@ -14312,8 +14312,8 @@ fn text_prop_any(i: &mut Interp, a: &[Value], any: bool) -> EvalResult {
     }
     Ok(Value::Nil)
 }
-/// interval in [S,E).  GNU dedups with memq; APPEND puts the new face
-/// last, otherwise first.
+/// interval in [S,E).  GNU dedups with memq when prepending; APPEND
+/// always adds FACE at the end, including when it is already present.
 pub(crate) fn f_add_face_text_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let face = a[2].clone();
     let append = a.get(3).map(|v| v.truthy()).unwrap_or(false);
@@ -14326,12 +14326,10 @@ pub(crate) fn f_add_face_text_property(i: &mut Interp, a: crate::lisp::Argv) -> 
         let already = items
             .iter()
             .any(|x| crate::lisp::builtins::eq_values(x, &face));
-        if !already {
-            if append {
-                items.push(face.clone());
-            } else {
-                items.insert(0, face.clone());
-            }
+        if append {
+            items.push(face.clone());
+        } else if !already {
+            items.insert(0, face.clone());
         }
         match items.len() {
             0 => Value::Nil,
