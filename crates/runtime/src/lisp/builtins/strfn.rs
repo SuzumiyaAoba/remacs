@@ -2029,7 +2029,32 @@ fn f_string_fill(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             col = 0;
         }
     }
-    Ok(Value::string(out))
+    let result = Value::string(out);
+    if let (Value::Str(src), Value::Str(dst)) = (&args[0], &result)
+        && i.has_str_props(src)
+    {
+        let source_chars: Vec<char> = s.chars().collect();
+        let output_chars: Vec<char> = dst.borrow().chars().collect();
+        let source_props = i.str_props(src).to_vec();
+        let mut source_pos = 0usize;
+        let mut intervals = Vec::new();
+        for (output_pos, ch) in output_chars.into_iter().enumerate() {
+            let Some(offset) = source_chars[source_pos..].iter().position(|c| *c == ch) else {
+                continue;
+            };
+            let source_index = source_pos + offset;
+            source_pos = source_index + 1;
+            for (start, end, plist) in &source_props {
+                if *start <= source_index && source_index < *end {
+                    intervals.push((output_pos, output_pos + 1, plist.clone()));
+                }
+            }
+        }
+        if !intervals.is_empty() {
+            i.set_str_props(dst, intervals);
+        }
+    }
+    Ok(result)
 }
 fn f_string_lines(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU: nil splits to nil.
