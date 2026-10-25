@@ -702,6 +702,17 @@ fn f_nbutlast(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     };
     let n = match args.get(1) {
         None | Some(Value::Nil) => 1i128,
+        Some(Value::BigInt(n)) => {
+            let length = num_bigint::BigInt::from(m);
+            if n.as_ref() >= &length {
+                return Ok(Value::Nil);
+            }
+            if n.as_ref() <= &num_bigint::BigInt::from(0) {
+                return Ok(args[0].clone());
+            }
+            n.to_i128()
+                .expect("positive bignum below a sequence length fits i128")
+        }
         Some(v) => crate::editor::want_num_or_mark(i, v)? as i128,
     };
     if !(n < m) {
