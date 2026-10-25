@@ -678,12 +678,19 @@ fn f_hash_table_buckets(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_hash_table_index_size(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[0] {
         Value::Hash(h) => {
-            // GNU: empty table → 1, otherwise smallest power-of-2 >= 8.
-            let n = h.borrow().keys.len();
-            if n == 0 {
+            // GNU sizes the index from allocated entry capacity, not current
+            // occupancy: it is the smallest power of two strictly greater
+            // than hash-table-size. A zero-capacity table starts at one;
+            // its first insertion allocates capacity six (index size eight).
+            let capacity = h.borrow().size;
+            if capacity == 0 {
                 return Ok(Value::Int(1));
             }
-            Ok(Value::Int(n.next_power_of_two().max(8) as i128))
+            let mut index_size = 1i128;
+            while index_size <= capacity {
+                index_size *= 2;
+            }
+            Ok(Value::Int(index_size))
         }
         other => Err(i.wrong_type_mut("hash-table-p", other)),
     }
