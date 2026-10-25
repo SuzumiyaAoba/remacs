@@ -15283,7 +15283,7 @@ fn ct_ascii(i: &Interp, cb: &[Value]) -> Value {
 }
 
 /// Store `ct_ascii' into the contents vector's ASCII cache slot.
-fn ct_refresh_ascii(i: &Interp, contents: &Rc<RefCell<Vec<Value>>>) {
+pub(crate) fn ct_refresh_ascii(i: &Interp, contents: &Rc<RefCell<Vec<Value>>>) {
     let v = {
         let cb = contents.borrow();
         ct_ascii(i, &cb)

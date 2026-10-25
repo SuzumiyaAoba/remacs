@@ -7161,7 +7161,7 @@ pub(crate) fn is_autoload_keymap(i: &Interp, v: &Value) -> bool {
 /// recursively so nested keymaps and binding cells are fresh.
 /// Char-table and vector elements are copied too (GNU copies the
 /// char-table's contents); other leaf types share their value.
-fn copy_keymap_elem(i: &Interp, v: &Value, depth: usize) -> Value {
+fn copy_keymap_elem(i: &mut Interp, v: &Value, depth: usize) -> Value {
     if depth > 200 {
         return v.clone();
     }
@@ -7175,11 +7175,26 @@ fn copy_keymap_elem(i: &Interp, v: &Value, depth: usize) -> Value {
                 copy_keymap_elem(i, &cdr, depth + 1),
             )
         }
+        Value::Record(r) if crate::lisp::builtins::misc::is_char_table(i, v) => {
+            let copy = crate::lisp::builtins::misc::ct_copy(i, v);
+            let source = match r.borrow().get(2) {
+                Some(Value::Vec(contents)) => Some(contents.clone()),
+                _ => None,
+            };
+            let target = crate::lisp::builtins::misc::char_table_vec(&copy);
+            if let (Some(source), Some(target)) = (source, target) {
+                let slots = source.borrow().clone();
+                for (idx, slot) in slots.iter().enumerate().skip(1) {
+                    target.borrow_mut()[idx] = copy_keymap_elem(i, slot, depth + 1);
+                }
+                crate::lisp::builtins::misc::ct_refresh_ascii(i, &target);
+            }
+            copy
+        }
         Value::Record(r)
-            if crate::lisp::builtins::misc::is_char_table(i, v)
-                || i.q_soft("sub-char-table")
-                    .map(|tag| crate::lisp::builtins::misc::is_sub_ct_tag(tag, v))
-                    .unwrap_or(false) =>
+            if i.q_soft("sub-char-table")
+                .map(|tag| crate::lisp::builtins::misc::is_sub_ct_tag(tag, v))
+                .unwrap_or(false) =>
         {
             // GNU copies a char-table's whole trie; the leaf
             // `sub-char-table' records must detach too or an `aset' on

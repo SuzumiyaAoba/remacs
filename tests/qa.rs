@@ -257,6 +257,7 @@ qa!(qa_modified_named_keys, "qa_modified_named_keys.el");
 qa!(qa_keymap_cycles, "qa_keymap_cycles.el");
 qa!(qa_keymap2, "qa_keymap2.el");
 qa!(qa_keymap3, "qa_keymap3.el");
+qa!(qa_copy_keymap_full_char_table, "qa_copy_keymap_full_char_table.el");
 qa!(qa_kmacro, "qa_kmacro.el");
 qa!(qa_kbd_macro_repeat, "qa_kbd_macro_repeat.el");
 qa!(qa_list, "qa_list.el");
