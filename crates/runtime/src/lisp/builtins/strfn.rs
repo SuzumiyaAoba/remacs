@@ -1848,7 +1848,9 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
     // string ends before START-COLUMN is reached.
     if idx == chars.len() && col < start_col && padding.truthy() {
         let pad = truncate_padding_char(i, &padding)?;
-        return Ok(Value::string(std::iter::repeat_n(pad, width).collect()));
+        return Ok(Value::string(
+            std::iter::repeat_n(pad, width).collect::<String>(),
+        ));
     }
     // Scan the tail to decide whether to reserve ellipsis width.
     let mut fits = true;
