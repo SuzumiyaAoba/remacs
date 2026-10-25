@@ -603,6 +603,7 @@ qa!(qa_time, "qa_time.el");
 qa!(qa_timefmt, "qa_timefmt.el");
 qa!(qa_encode_time_ranges, "qa_encode_time_ranges.el");
 qa!(qa_format_time_ranges, "qa_format_time_ranges.el");
+qa!(qa_decode_time_offset_range, "qa_decode_time_offset_range.el");
 qa!(qa_timer, "qa_timer.el");
 qa!(qa_types2, "qa_types2.el");
 qa!(qa_recordp_opaque_vectors, "qa_recordp_opaque_vectors.el");
