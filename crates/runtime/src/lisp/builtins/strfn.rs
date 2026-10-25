@@ -466,10 +466,17 @@ fn f_string_truncate_left(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult
     let length_fn = i.q("length");
     let len = i.apply(&Value::Sym(length_fn), vec![args[0].clone()])?;
     let len = want_int(i, &len)?;
-    let length = want_int(i, &args[1])?;
-    if len <= length {
+    let length_cmp = match &args[1] {
+        Value::Int(n) => *n as f64,
+        Value::Float(n) => **n,
+        other => want_int(i, other)? as f64,
+    };
+    if (len as f64) <= length_cmp {
         return Ok(args[0].clone());
     }
+    // The truncating substring branch needs integer indices; GNU only
+    // reaches that integer-only operation after the early comparison.
+    let length = want_int(i, &args[1])?;
     let len = usize::try_from(len).map_err(|_| i.error("Invalid sequence length"))?;
     let keep = (length - 3).max(1).min(len as i128) as usize;
     let suffix = f_substring(
