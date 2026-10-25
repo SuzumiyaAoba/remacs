@@ -538,38 +538,6 @@ pub(crate) fn f_nth(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_nthcdr(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     nthcdr_integer(i, &args[1], &args[0])
 }
-/// GNU subr.el `safe-length' walk: count cons cells, stop at a
-/// non-cons tail or on a cycle (tortoise/hare); returns the count.
-fn safe_len(v: &Value) -> i128 {
-    let mut n = 0i128;
-    let mut cur = v.clone();
-    let mut slow = v.clone();
-    loop {
-        match &cur {
-            Value::Cons(c) => {
-                if n > 0 {
-                    if let (Value::Cons(a), Value::Cons(b)) = (&cur, &slow) {
-                        if Rc::ptr_eq(a, b) {
-                            break;
-                        }
-                    }
-                }
-                let next = c.borrow().cdr.clone();
-                n += 1;
-                cur = next;
-                if n % 2 == 0 {
-                    if let Value::Cons(h) = &slow {
-                        let nxt = h.borrow().cdr.clone();
-                        slow = nxt;
-                    }
-                }
-            }
-            _ => break,
-        }
-    }
-    n
-}
-
 fn f_last(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU subr.el `last':
     // (if n (and (>= n 0) (let ((m (safe-length list)))
@@ -578,46 +546,30 @@ fn f_last(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // `(>= n 0)' on a non-number signals `number-or-marker-p' BEFORE the
     // safe-length walk; a non-list arg returns itself (0 cells) when n
     // is absent or nonnegative, nil when n < 0.
-    match args.get(1) {
-        None | Some(Value::Nil) => {
-            if args[0].is_nil() {
-                return Ok(Value::Nil);
-            }
-            let m = safe_len(&args[0]);
-            Ok(nthcdr_of(&args[0], (m - 1).max(0) as usize))
+    let n = args.get(1).cloned().unwrap_or(Value::Nil);
+    let safe_length = Value::Sym(i.q("safe-length"));
+    let nthcdr = Value::Sym(i.q("nthcdr"));
+    let greater_equal = Value::Sym(i.q(">="));
+    let less = Value::Sym(i.q("<"));
+    let subtract = Value::Sym(i.q("-"));
+    let one_minus = Value::Sym(i.q("1-"));
+    if !n.is_nil() {
+        if i.apply(&greater_equal, vec![n.clone(), Value::Int(0)])?.is_nil() {
+            return Ok(Value::Nil);
         }
-        Some(Value::BigInt(n)) if n.to_i128().is_none() => {
-            Ok(if n.sign() == num_bigint::Sign::Minus {
-                Value::Nil
-            } else {
-                args[0].clone()
-            })
+        let length = i.apply(&safe_length, vec![args[0].clone()])?;
+        if i.apply(&less, vec![n.clone(), length.clone()])?.truthy() {
+            let index = i.apply(&subtract, vec![length, n])?;
+            i.apply(&nthcdr, vec![index, args[0].clone()])
+        } else {
+            Ok(args[0].clone())
         }
-        Some(Value::Float(n)) => {
-            // Comparisons accept floats, but subtraction retains the float
-            // type, so only the nthcdr branch rejects it as non-integer.
-            if n.is_nan() || **n < 0.0 {
-                return Ok(Value::Nil);
-            }
-            let m = safe_len(&args[0]) as f64;
-            if **n < m {
-                Err(i.wrong_type_mut("integerp", &Value::float(m - **n)))
-            } else {
-                Ok(args[0].clone())
-            }
-        }
-        Some(v) => {
-            let n = crate::editor::want_num_or_mark(i, v)?;
-            if n < 0 {
-                return Ok(Value::Nil);
-            }
-            let m = safe_len(&args[0]);
-            if (n as i128) < m {
-                Ok(nthcdr_of(&args[0], (m - n as i128) as usize))
-            } else {
-                Ok(args[0].clone())
-            }
-        }
+    } else if args[0].is_nil() {
+        Ok(Value::Nil)
+    } else {
+        let length = i.apply(&safe_length, vec![args[0].clone()])?;
+        let index = i.apply(&one_minus, vec![length])?;
+        i.apply(&nthcdr, vec![index, args[0].clone()])
     }
 }
 fn number_or_marker_value(i: &mut Interp, value: &Value) -> Result<Value, Flow> {
