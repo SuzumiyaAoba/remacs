@@ -2012,7 +2012,15 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
 /// dropped unless it's a separator. Columns are display columns:
 /// tab advances to the next multiple of 8 and newline resets.
 fn f_string_fill(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let s = want_string(i, &args[0])?;
+    let s = match &args[0] {
+        Value::Str(string) => string.borrow().clone(),
+        Value::Int(code) if (0..=0x3f_ffff).contains(code) => {
+            let code = *code as u32;
+            lisp_char(code).unwrap_or_else(|| crate::lisp::value::mule_seq_char(code)).to_string()
+        }
+        Value::Int(_) => return Err(i.wrong_type_mut("characterp", &args[0])),
+        _ => want_string(i, &args[0])?,
+    };
     let width = want_int(i, &args[1])?;
     let chars: Vec<char> = s.chars().collect();
     let n = chars.len();
