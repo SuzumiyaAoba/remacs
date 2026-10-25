@@ -719,14 +719,17 @@ fn f_nconc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         match a {
             Value::Nil => continue,
             Value::Cons(_) => {
+                // Link each new non-final list before walking it. GNU's
+                // nconc leaves this connection observable if that list is
+                // circular and the walk signals.
+                match &last_cons {
+                    Some(cell) => cell.borrow_mut().cdr = a.clone(),
+                    None => result = a.clone(),
+                }
                 // find last cons of `a`
                 let mut tail = a.clone();
-                let mut guard = 0;
+                let mut cycle = ListCycle::new(a);
                 let last = loop {
-                    guard += 1;
-                    if guard > 1_000_000 {
-                        return Err(i.error("circular list in nconc"));
-                    }
                     match &tail {
                         Value::Cons(c) => {
                             let next = {
@@ -734,7 +737,10 @@ fn f_nconc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                                 b.cdr.clone()
                             };
                             match next {
-                                Value::Cons(_) => tail = next,
+                                Value::Cons(_) => {
+                                    tail = next;
+                                    cycle.step(i, &tail)?;
+                                }
                                 Value::Nil => break c.clone(),
                                 _ => {
                                     // dotted tail inside arg — attach it
@@ -747,10 +753,6 @@ fn f_nconc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                         _ => unreachable!(),
                     }
                 };
-                match &last_cons {
-                    Some(c) => c.borrow_mut().cdr = a.clone(),
-                    None => result = a.clone(),
-                }
                 last_cons = Some(last);
             }
             // GNU `nconc' CHECK_LIST_CONS's every non-final arg:
