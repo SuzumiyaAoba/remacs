@@ -5140,16 +5140,19 @@ fn f_pos_bol(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let b = cur(i);
     let count = line_count_arg(i, a, false)?;
     let bb = b.borrow();
+    let begv = bb.begv.min(bb.text.len());
+    let zv = bb.zv.min(bb.text.len());
     let line = bb.text.line_of_pos(bb.point()) as i128 + count;
     // scan_newline_from_point stops at BEGV/ZV; overshoot returns ZV/BEGV.
     if line < 0 {
-        return Ok(Value::Int(1));
+        return Ok(Value::Int(begv as i128 + 1));
     }
     let last_line = bb.text.line_of_pos(bb.text.len()) as i128;
     if line > last_line {
-        return Ok(Value::Int(bb.text.len() as i128 + 1));
+        return Ok(Value::Int(zv as i128 + 1));
     }
-    Ok(Value::Int(bb.text.line_start(line as usize) as i128 + 1))
+    let position = bb.text.line_start(line as usize).clamp(begv, zv);
+    Ok(Value::Int(position as i128 + 1))
 }
 
 fn f_pos_eol(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -5158,18 +5161,22 @@ fn f_pos_eol(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU eol: find_before_next_newline(PT, 0, count - (count <= 0)) —
     // eol of the line (count-1) lines forward (count<=0 goes backward).
     let bb = b.borrow();
+    let begv = bb.begv.min(bb.text.len());
+    let zv = bb.zv.min(bb.text.len());
     let line = bb.text.line_of_pos(bb.point()) as i128 + (count - 1);
     let last_line = bb.text.line_of_pos(bb.text.len()) as i128;
     if line < 0 {
-        return Ok(Value::Int(1));
+        return Ok(Value::Int(begv as i128 + 1));
     }
     if line > last_line {
-        return Ok(Value::Int(bb.text.len() as i128 + 1));
+        return Ok(Value::Int(zv as i128 + 1));
     }
     // End of line L = first newline at/after line_start(L) (len if none).
-    Ok(Value::Int(
-        bb.text.line_end(bb.text.line_start(line as usize)) as i128 + 1,
-    ))
+    let position = bb
+        .text
+        .line_end(bb.text.line_start(line as usize))
+        .clamp(begv, zv);
+    Ok(Value::Int(position as i128 + 1))
 }
 
 fn f_line_beginning_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
