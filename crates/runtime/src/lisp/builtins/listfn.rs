@@ -1273,10 +1273,20 @@ fn f_delete(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Str(s) => {
             // delete chars equal to ELT from a string
             let elt = &args[0];
+            let source = s.borrow().clone();
+            let unibyte = i.is_unibyte_str(s)
+                || !crate::lisp::builtins::strfn::string_multibyte_p(i, &args[1]);
             let mut out = String::new();
             let mut changed = false;
-            for c in s.borrow().chars() {
-                let cv = Value::Int(c as i128);
+            for c in source.chars() {
+                let code = if unibyte {
+                    crate::lisp::value::eight_bit_byte(c)
+                        .map(|byte| byte as i128)
+                        .unwrap_or(c as i128)
+                } else {
+                    crate::lisp::value::lisp_char_code(c)
+                };
+                let cv = Value::Int(code);
                 if !equal_values(i, &cv, elt)? {
                     out.push(c);
                 } else {
@@ -1286,7 +1296,13 @@ fn f_delete(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             if !changed {
                 return Ok(args[1].clone());
             }
-            Ok(Value::string(out))
+            let result = crate::lisp::Value::string_ref(out);
+            if unibyte {
+                i.mark_unibyte(&result);
+            } else {
+                i.mark_multibyte(&result);
+            }
+            Ok(Value::Str(result))
         }
         Value::Vec(v) => {
             let mut kept = Vec::new();
