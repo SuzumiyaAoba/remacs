@@ -16530,21 +16530,17 @@ fn value_cmp_impl(
         (Value::Nil, Value::Nil) => Equal,
         (Value::Nil, Value::Cons(_)) => Less,
         (Value::Cons(_), Value::Nil) => Greater,
-        (Value::Nil, Value::Sym(b)) => i
-            .symbol_name(crate::lisp::sym::NIL)
-            .cmp(&i.symbol_name(*b)),
-        (Value::Sym(a), Value::Nil) => i
-            .symbol_name(*a)
-            .cmp(&i.symbol_name(crate::lisp::sym::NIL)),
-        (Value::Sym(a), Value::Sym(b)) => {
-            if a == b {
-                Equal
-            } else {
-                i.symbol_name(*a).cmp(&i.symbol_name(*b))
-            }
+        (Value::Nil | Value::Sym(_), Value::Nil | Value::Sym(_)) => {
+            let a = super::data::f_symbol_name(i, vec![x.clone()].into())?;
+            let b = super::data::f_symbol_name(i, vec![y.clone()].into())?;
+            let (Value::Str(a), Value::Str(b)) = (a, b) else {
+                unreachable!()
+            };
+            crate::lisp::builtins::strfn::gnu_string_order(i, &a, &b)
         }
         (Value::Sym(_), _) => return Err(mism(i, x, y)),
-        (Value::Str(p), Value::Str(q)) => p.borrow().cmp(&q.borrow()),
+        (Value::Str(p), Value::Str(q)) =>
+            crate::lisp::builtins::strfn::gnu_string_order(i, p, q),
         (Value::Str(_), _) => return Err(mism(i, x, y)),
         (Value::Cons(_), Value::Cons(_)) => {
             // GNU walks the right spine incrementally, comparing each car

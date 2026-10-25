@@ -816,8 +816,16 @@ pub(crate) fn ordering_string(i: &mut Interp, value: &Value) -> Result<StrRef, F
 fn f_string_lessp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let a = ordering_string(i, &args[0])?;
     let b = ordering_string(i, &args[1])?;
-    let a_unibyte = i.is_unibyte_str(&a);
-    let b_unibyte = i.is_unibyte_str(&b);
+    Ok(Value::from_bool(gnu_string_order(i, &a, &b) == std::cmp::Ordering::Less))
+}
+
+pub(crate) fn gnu_string_order(
+    i: &Interp,
+    a: &StrRef,
+    b: &StrRef,
+) -> std::cmp::Ordering {
+    let a_unibyte = i.is_unibyte_str(a);
+    let b_unibyte = i.is_unibyte_str(b);
     // GNU string_cmp compares unibyte bytes as 0..255 and multibyte
     // characters by their original Lisp codes, including byte8/Mule.
     let code = |c: char, unibyte: bool| {
@@ -829,14 +837,12 @@ fn f_string_lessp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             lisp_char_code(c)
         }
     };
-    let a = a.borrow();
-    let b = b.borrow();
-    Ok(Value::from_bool(
-        a.chars()
-            .map(|c| code(c, a_unibyte))
-            .cmp(b.chars().map(|c| code(c, b_unibyte)))
-            == std::cmp::Ordering::Less,
-    ))
+    let a_text = a.borrow();
+    let b_text = b.borrow();
+    a_text
+        .chars()
+        .map(|c| code(c, a_unibyte))
+        .cmp(b_text.chars().map(|c| code(c, b_unibyte)))
 }
 
 fn f_string_collate_equalp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
