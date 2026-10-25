@@ -326,6 +326,7 @@ qa!(qa_log_atan_nil_optional, "qa_log_atan_nil_optional.el");
 qa!(qa_log_base2_precision, "qa_log_base2_precision.el");
 qa!(qa_dom_print_quotes, "qa_dom_print_quotes.el");
 qa!(qa_mod_float_precision, "qa_mod_float_precision.el");
+qa!(qa_substring_fixnum_bounds, "qa_substring_fixnum_bounds.el");
 qa!(qa_frexp_mantissa_extremes, "qa_frexp_mantissa_extremes.el");
 qa!(qa_minibuf, "qa_minibuf.el");
 qa!(qa_minibuffer, "qa_minibuffer.el");

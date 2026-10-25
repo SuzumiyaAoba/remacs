@@ -697,7 +697,8 @@ fn substring_impl(i: &mut Interp, args: crate::lisp::Argv, copy_props: bool) -> 
     let mut int_or = |v: Option<&Value>, d: i128| -> Result<i128, Flow> {
         match v {
             None | Some(Value::Nil) => Ok(d),
-            Some(v) => want_int(i, v),
+            Some(v) if v.fixnump() => Ok(v.int().unwrap()),
+            Some(v) => Err(i.wrong_type_mut("integerp", v)),
         }
     };
     let from = int_or(args.get(1), 0)?;
