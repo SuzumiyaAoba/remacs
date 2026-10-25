@@ -16510,11 +16510,12 @@ fn value_lt_impl(i: &mut Interp, x: &Value, y: &Value, depth: u32) -> Result<boo
         i.signal_data(s, vec![])
     }
     Ok(match (x, y) {
-        (Value::Int(p), Value::Int(q)) => p < q,
-        (Value::Int(p), Value::Float(q)) => (*p as f64) < **q,
-        (Value::Float(p), Value::Int(q)) => **p < (*q as f64),
-        (Value::Float(p), Value::Float(q)) => p < q,
-        (Value::Int(_) | Value::Float(_), _) => return Err(mism(i)),
+        (
+            Value::Int(_) | Value::BigInt(_) | Value::Float(_),
+            Value::Int(_) | Value::BigInt(_) | Value::Float(_),
+        ) => crate::lisp::builtins::arith::number_order(x, y)
+            == Some(std::cmp::Ordering::Less),
+        (Value::Int(_) | Value::BigInt(_) | Value::Float(_), _) => return Err(mism(i)),
         (Value::Sym(a), Value::Sym(b)) => {
             if a == b {
                 false

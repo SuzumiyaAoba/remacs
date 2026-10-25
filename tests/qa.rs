@@ -335,6 +335,7 @@ qa!(qa_empty_string_identity, "qa_empty_string_identity.el");
 qa!(qa_string_representation, "qa_string_representation.el");
 qa!(qa_mapconcat_empty_separator, "qa_mapconcat_empty_separator.el");
 qa!(qa_mapconcat_identity_fast_path, "qa_mapconcat_identity_fast_path.el");
+qa!(qa_value_lt_bignum_precision, "qa_value_lt_bignum_precision.el");
 qa!(qa_frexp_mantissa_extremes, "qa_frexp_mantissa_extremes.el");
 qa!(qa_minibuf, "qa_minibuf.el");
 qa!(qa_minibuffer, "qa_minibuffer.el");
