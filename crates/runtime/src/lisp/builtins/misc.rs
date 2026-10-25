@@ -16505,9 +16505,9 @@ fn value_lt_impl(i: &mut Interp, x: &Value, y: &Value, depth: u32) -> Result<boo
     if depth > 64 {
         return Err(i.error("Circular object"));
     }
-    fn mism(i: &mut Interp) -> Flow {
+    fn mism(i: &mut Interp, x: &Value, y: &Value) -> Flow {
         let s = i.q("type-mismatch");
-        i.signal_data(s, vec![])
+        i.signal_data(s, vec![x.clone(), y.clone()])
     }
     Ok(match (x, y) {
         (
@@ -16515,7 +16515,10 @@ fn value_lt_impl(i: &mut Interp, x: &Value, y: &Value, depth: u32) -> Result<boo
             Value::Int(_) | Value::BigInt(_) | Value::Float(_),
         ) => crate::lisp::builtins::arith::number_order(x, y)
             == Some(std::cmp::Ordering::Less),
-        (Value::Int(_) | Value::BigInt(_) | Value::Float(_), _) => return Err(mism(i)),
+        (Value::BigInt(_), Value::Nil | Value::Sym(_) | Value::Str(_) | Value::Cons(_)) => {
+            return Err(mism(i, y, x));
+        }
+        (Value::Int(_) | Value::BigInt(_) | Value::Float(_), _) => return Err(mism(i, x, y)),
         (Value::Sym(a), Value::Sym(b)) => {
             if a == b {
                 false
@@ -16527,9 +16530,9 @@ fn value_lt_impl(i: &mut Interp, x: &Value, y: &Value, depth: u32) -> Result<boo
                 i.symbol_name(*a) < i.symbol_name(*b)
             }
         }
-        (Value::Sym(_), _) => return Err(mism(i)),
+        (Value::Sym(_), _) => return Err(mism(i, x, y)),
         (Value::Str(p), Value::Str(q)) => *p.borrow() < *q.borrow(),
-        (Value::Str(_), _) => return Err(mism(i)),
+        (Value::Str(_), _) => return Err(mism(i, x, y)),
         (Value::Cons(_), Value::Cons(_)) => {
             let xs = match want_list(i, x) {
                 Ok(v) => v,
@@ -16561,7 +16564,7 @@ fn value_lt_impl(i: &mut Interp, x: &Value, y: &Value, depth: u32) -> Result<boo
             }
             lt
         }
-        (Value::Cons(_), _) => return Err(mism(i)),
+        (Value::Cons(_), _) => return Err(mism(i, x, y)),
         (Value::Vec(p), Value::Vec(q)) => {
             let xs = p.borrow().clone();
             let ys = q.borrow().clone();
@@ -16587,14 +16590,14 @@ fn value_lt_impl(i: &mut Interp, x: &Value, y: &Value, depth: u32) -> Result<boo
             }
             lt
         }
-        (Value::Vec(_), _) => return Err(mism(i)),
+        (Value::Vec(_), _) => return Err(mism(i, x, y)),
         // Remaining same-type pairs (hash tables, buffers, subrs,
         // markers...) are unorderable → nil; mismatched types → error.
         _ => {
             if std::mem::discriminant(x) == std::mem::discriminant(y) {
                 false
             } else {
-                return Err(mism(i));
+                return Err(mism(i, x, y));
             }
         }
     })
