@@ -25586,7 +25586,7 @@ Point is moved to just past the fill prefix on the first line."
       (and (>= char #x3400) (<= char #x9fff))
       (and (>= char #xf900) (<= char #xfaff))
       (and (>= char #xff01) (<= char #xffef))
-      (and (>= char #x20000) (<= char #x323af)))
+      (and (>= char #x20000) (<= char #x323af))))
 
 (defun fill-move-to-break-point (linebeg)
   "Move to the position where the line should be broken.
