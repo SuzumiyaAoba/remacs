@@ -1513,14 +1513,12 @@ fn f_string_reverse(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             || (!i.is_unibyte_str(source) && content_is_multibyte(&s))
     });
     let result = Value::string_ref(s.chars().rev().collect::<String>());
-    if let Value::Str(result) = &result {
-        if multibyte {
-            i.mark_multibyte(result);
-        } else {
-            i.mark_unibyte(result);
-        }
+    if multibyte {
+        i.mark_multibyte(&result);
+    } else {
+        i.mark_unibyte(&result);
     }
-    Ok(result)
+    Ok(Value::Str(result))
 }
 fn f_string_join(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let items = super::seq::seq_to_vec(i, &args[0])?;
