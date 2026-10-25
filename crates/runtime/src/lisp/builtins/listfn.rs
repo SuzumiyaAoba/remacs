@@ -1087,7 +1087,11 @@ fn delete_all_by(i: &mut Interp, args: crate::lisp::Argv, on_cdr: bool) -> EvalR
 }
 
 fn f_assq_delete_all(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    delete_all_by(i, args, false)
+    // GNU's Lisp wrapper delegates to the current assoc-delete-all
+    // function cell and passes the `eq' symbol as TEST.
+    let function = Value::Sym(i.q("assoc-delete-all"));
+    let eq = Value::Sym(i.q("eq"));
+    i.apply(&function, vec![args[0].clone(), args[1].clone(), eq])
 }
 
 fn f_rassq_delete_all(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
