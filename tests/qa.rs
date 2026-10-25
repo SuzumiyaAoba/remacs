@@ -527,6 +527,7 @@ qa!(qa_directory_file_name_slash_roots, "qa_directory_file_name_slash_roots.el")
 qa!(qa_file_name_case_insensitive_handler, "qa_file_name_case_insensitive_handler.el");
 qa!(qa_file_name_case_sensitivity_missing_parent, "qa_file_name_case_sensitivity_missing_parent.el");
 qa!(qa_file_name_sans_extension_version, "qa_file_name_sans_extension_version.el");
+qa!(qa_file_name_extension_version, "qa_file_name_extension_version.el");
 qa!(qa_expand_file_name_nul, "qa_expand_file_name_nul.el");
 qa!(qa_expand_file_name_handler, "qa_expand_file_name_handler.el");
 qa!(qa_byte_to_string_range, "qa_byte_to_string_range.el");
