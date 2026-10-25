@@ -521,6 +521,7 @@ qa!(qa_file_name_concat_byte_kind, "qa_file_name_concat_byte_kind.el");
 qa!(qa_file_name_sans_versions, "qa_file_name_sans_versions.el");
 qa!(qa_filename_helpers_handlers, "qa_filename_helpers_handlers.el");
 qa!(qa_file_name_base_versions, "qa_file_name_base_versions.el");
+qa!(qa_file_relative_name_unicode_case, "qa_file_relative_name_unicode_case.el");
 qa!(qa_file_relative_name_handler, "qa_file_relative_name_handler.el");
 qa!(qa_flatten_shared_tree_large, "qa_flatten_shared_tree_large.el");
 qa!(qa_directory_file_name_slash_roots, "qa_directory_file_name_slash_roots.el");

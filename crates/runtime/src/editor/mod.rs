@@ -12238,7 +12238,9 @@ fn f_file_relative_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     )?;
     let fdir = want_str(i, &fdir_value)?;
     let mut ancestor = ".".to_string();
-    while !(string_prefix_p(&dir, &fdir, fold) || string_prefix_p(&dir, &filename, fold)) {
+    while !(string_prefix_p(i, &dir, &fdir, fold)?
+        || string_prefix_p(i, &dir, &filename, fold)?)
+    {
         let prefix = Value::string(&dir[..dir.len().saturating_sub(1)]);
         dir = match call_file_name_lisp(i, "file-name-directory", vec![prefix])? {
             Value::Str(directory) => directory.borrow().clone(),
@@ -12250,7 +12252,7 @@ fn f_file_relative_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             format!("../{}", ancestor)
         };
     }
-    if string_prefix_p(&dir, &filename, fold) {
+    if string_prefix_p(i, &dir, &filename, fold)? {
         let rest = &filename[dir.len()..];
         if ancestor == "." && !rest.is_empty() {
             return Ok(Value::string(rest));
@@ -12304,14 +12306,22 @@ fn file_name_directory_str(s: &str) -> Option<String> {
 /// `(string-prefix-p PREFIX STRING IGNORE-CASE)' on raw bytes; the
 /// case-fold path folds ASCII only (paths are byte strings, matching
 /// compare-strings' result for ASCII names).
-fn string_prefix_p(prefix: &str, s: &str, ignore_case: bool) -> bool {
-    if prefix.len() > s.len() {
-        return false;
-    }
-    let (pb, sb) = (prefix.as_bytes(), s.as_bytes());
-    pb.iter()
-        .zip(sb.iter())
-        .all(|(a, b)| a == b || (ignore_case && a.eq_ignore_ascii_case(b)))
+fn string_prefix_p(
+    i: &mut Interp,
+    prefix: &str,
+    s: &str,
+    ignore_case: bool,
+) -> Result<bool, Flow> {
+    let function = i.q("string-prefix-p");
+    let result = i.apply(
+        &Value::Sym(function),
+        vec![
+            Value::string(prefix),
+            Value::string(s),
+            Value::from_bool(ignore_case),
+        ],
+    )?;
+    Ok(result.truthy())
 }
 
 fn f_file_name_case_insensitive_p_impl(i: &mut Interp, path: &str) -> bool {
