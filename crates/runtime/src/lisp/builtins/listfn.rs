@@ -1342,21 +1342,24 @@ fn f_copy_tree(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // (and records) are copied recursively too when VECP is non-nil
     // (GNU fns.c Fcopy_tree).
     let vecp = arg(&args, 1).truthy();
-    fn cp(v: &Value, vecp: bool) -> Value {
+    fn cp(i: &Interp, v: &Value, vecp: bool) -> Value {
         match v {
             Value::Cons(c) => {
                 let b = c.borrow();
-                Value::cons(cp(&b.car, vecp), cp(&b.cdr, vecp))
+                Value::cons(cp(i, &b.car, vecp), cp(i, &b.cdr, vecp))
             }
             Value::Vec(vec) if vecp => {
                 let b = vec.borrow();
-                Value::vector(b.iter().map(|x| cp(x, vecp)).collect())
+                Value::vector(b.iter().map(|x| cp(i, x, vecp)).collect())
+            }
+            Value::Record(record) if vecp && super::misc::recordp(i, v) => {
+                let slots = record.borrow();
+                Value::record(slots.iter().map(|slot| cp(i, slot, vecp)).collect())
             }
             other => other.clone(),
         }
     }
-    let _ = i;
-    Ok(cp(&args[0], vecp))
+    Ok(cp(i, &args[0], vecp))
 }
 fn f_list_tail(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let n = want_int(i, &args[1])?.max(0);
