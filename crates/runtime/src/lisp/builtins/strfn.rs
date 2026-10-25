@@ -1492,7 +1492,12 @@ fn f_string_pad(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         other => return Err(i.wrong_type_mut("natnump", other)),
     };
     let s = want_string(i, &args[0])?;
-    // GNU: PADDING is a single character; a string signals.
+    let pad_start = args.get(3).map(|v| v.truthy()).unwrap_or(false);
+    let cur = s.chars().count();
+    if cur >= len {
+        return Ok(args[0].clone());
+    }
+    // PADDING is only evaluated when make-string is needed.
     let pad_char = match args.get(2) {
         None | Some(Value::Nil) => ' ',
         Some(Value::Int(n)) => match lisp_char(*n as u32) {
@@ -1501,11 +1506,6 @@ fn f_string_pad(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         },
         Some(other) => return Err(i.wrong_type_mut("characterp", other)),
     };
-    let pad_start = args.get(3).map(|v| v.truthy()).unwrap_or(false);
-    let cur = s.chars().count();
-    if cur >= len {
-        return Ok(args[0].clone());
-    }
     let pad: String = std::iter::repeat(pad_char).take(len - cur).collect();
     let padding = Value::string(pad);
     if pad_start {
