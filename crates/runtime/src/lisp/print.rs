@@ -947,8 +947,14 @@ impl Interp {
             Value::Int(i) => self.print_integer(*i, out, false),
             Value::BigInt(i) => { let _ = write!(out, "{i}"); },
             Value::Str(s) => out.push_str(&s.borrow()),
-            // princ prints symbol names raw — no backslash escapes.
-            Value::Sym(id) => out.push_str(&self.symbol_name(*id)),
+            // `princ' omits symbol-name escapes, but still marks
+            // uninterned symbols when `print-gensym' is enabled.
+            Value::Sym(id) => {
+                if self.obarray.symbol(*id).uninterned && self.print_gensym() {
+                    out.push_str("#:");
+                }
+                out.push_str(&self.symbol_name(*id));
+            }
             // princ prints live buffers as bare names; a killed buffer
             // prints `#<killed buffer>' like the escaped form.
             Value::Buffer(b) => {
