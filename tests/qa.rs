@@ -510,6 +510,7 @@ qa!(qa_string_fill_sentence_spacing, "qa_string_fill_sentence_spacing.el");
 qa!(qa_string_version_nil, "qa_string_version_nil.el");
 qa!(qa_string_version_file_order, "qa_string_version_file_order.el");
 qa!(qa_byte_to_string_range, "qa_byte_to_string_range.el");
+qa!(qa_byte_to_string_byte_kind, "qa_byte_to_string_byte_kind.el");
 qa!(qa_case_table_fold, "qa_case_table_fold.el");
 qa!(qa_byte_character_conversion, "qa_byte_character_conversion.el");
 qa!(qa_bytecode_errors, "qa_bytecode_errors.el");
