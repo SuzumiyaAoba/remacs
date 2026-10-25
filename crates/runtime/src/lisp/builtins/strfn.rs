@@ -1190,11 +1190,10 @@ fn f_upcase_initials(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 
 fn f_string_to_number(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let s = want_string(i, &args[0])?;
-    let base = args
-        .get(1)
-        .map(|v| crate::lisp::builtins::want_fixnum(i, v))
-        .transpose()?
-        .unwrap_or(10);
+    let base = match args.get(1) {
+        None | Some(Value::Nil) => 10,
+        Some(v) => crate::lisp::builtins::want_fixnum(i, v)?,
+    };
     // GNU Fstring_to_number skips only spaces and tabs (a leading
     // newline or other whitespace stops the parse -> 0).
     let t = s.trim_start_matches([' ', '\t']);

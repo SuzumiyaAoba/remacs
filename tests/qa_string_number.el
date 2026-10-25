@@ -47,4 +47,5 @@
 (qa (string-to-number "101.1e2" 2) 5)
 (qa (string-to-number "++ff" 16) 0)
 (qa (string-to-number "-+ff" 16) 0)
+(qa (string-to-number "42" nil) 42)
 (princ (qa--done))
