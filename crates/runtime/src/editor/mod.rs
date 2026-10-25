@@ -11824,6 +11824,21 @@ pub(crate) fn f_expand_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
     if name.contains('\0') {
         return Err(i.wrong_type_mut("filenamep", &a[0]));
     }
+    let handler_directory = match a.get(1) {
+        Some(Value::Str(directory)) => Some(directory.borrow().clone()),
+        Some(Value::Nil) | None => Some(default_directory(i)),
+        _ => None,
+    };
+    let mut handler_paths = vec![name.as_str()];
+    if let Some(directory) = &handler_directory {
+        handler_paths.push(directory);
+    }
+    if let Some((handler, operation)) = file_handler(i, "expand-file-name", &handler_paths) {
+        return i.apply(
+            &handler,
+            vec![operation, a[0].clone(), a.get(1).cloned().unwrap_or(Value::Nil)],
+        );
+    }
     // GNU expands DIRECTORY against `default-directory' and appends
     // NAME; an expandable `~' in NAME ignores DIRECTORY entirely, an
     // unexpandable `~user' is treated as relative to DIRECTORY.
