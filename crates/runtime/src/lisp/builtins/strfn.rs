@@ -922,7 +922,7 @@ fn push_down(
     } else if cp == 0x3a3 && prev_word && !next_word {
         out.push('\u{3c2}');
     } else {
-        out.push(char::from_u32(ct_case(i, down, cp)).unwrap_or(c));
+        out.push(concat_char(ct_case(i, down, cp) as i128).unwrap_or(c));
     }
 }
 
@@ -1075,7 +1075,7 @@ fn case_str_impl(
                 if let Some(sp) = special_lookup(crate::lisp::ctdata::SPECIAL_UPPER, c) {
                     out.push_str(sp);
                 } else {
-                    out.push(char::from_u32(ct_case(i, up, cp)).unwrap_or(c));
+                    out.push(concat_char(ct_case(i, up, cp) as i128).unwrap_or(c));
                 }
             }
             CaseOp::Down => {
@@ -1089,7 +1089,8 @@ fn case_str_impl(
                         if let Some(sp) = special_lookup(crate::lisp::ctdata::SPECIAL_TITLE, c) {
                             out.push_str(sp);
                         } else {
-                            out.push(char::from_u32(title_char(i, title, up, cp)).unwrap_or(c));
+                            out.push(concat_char(title_char(i, title, up, cp) as i128)
+                                .unwrap_or(c));
                         }
                         in_word = true;
                     } else if op == CaseOp::Cap {
