@@ -11997,7 +11997,7 @@ fn f_file_name_directory(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         });
     }
     match s.rfind('/') {
-        Some(idx) => Ok(Value::string(&s[..=idx])),
+        Some(idx) => Ok(file_name_result_like(i, &a[0], s[..=idx].to_string())),
         None => Ok(Value::Nil),
     }
 }
