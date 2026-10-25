@@ -5243,7 +5243,7 @@ fn f_line_number_at_pos(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let p2 = if absolute {
         p
     } else {
-        p.max(bb.begv.min(len)).min(bb.begv + len)
+        p.max(bb.begv.min(len)).min(bb.zv.min(len))
     };
     let line = bb.text.line_of_pos(p2.min(len));
     let base = if absolute {
