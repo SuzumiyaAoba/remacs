@@ -2103,9 +2103,9 @@ fn f_string_fill(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(result)
 }
 fn f_string_lines(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU: nil splits to nil.
+    // GNU's final-field path retains STRING when it is not equal to "".
     if args[0].is_nil() {
-        return Ok(Value::Nil);
+        return Ok(Value::list(vec![Value::Nil]));
     }
     if misc::is_bool_vector(i, &args[0]) {
         let length_fn = i.q("length");
