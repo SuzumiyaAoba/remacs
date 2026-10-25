@@ -628,13 +628,11 @@ fn f_butlast(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // `(nthcdr k list)' and `car's each cell, so an atom tail signals
     // `listp' on that tail (strings/vectors take the same path).
     if let Some(Value::BigInt(n)) = args.get(1) {
-        if n.to_i128().is_none() {
-            if n.sign() == num_bigint::Sign::Minus {
-                return Ok(args[0].clone());
-            }
-            super::seq::seq_to_vec(i, &args[0])?;
-            return Ok(Value::Nil);
+        if n.sign() == num_bigint::Sign::Minus {
+            return Ok(args[0].clone());
         }
+        super::seq::seq_to_vec(i, &args[0])?;
+        return Ok(Value::Nil);
     }
     let n = match args.get(1) {
         None | Some(Value::Nil) => 1,
