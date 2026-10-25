@@ -5296,6 +5296,7 @@ fn f_count_lines(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_current_column(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     let b = cur(i);
+    let display = i.q("display");
     let bb = b.borrow();
     let p = bb.point();
     let ls = bb.text.line_start(bb.text.line_of_pos(p));
@@ -5309,7 +5310,9 @@ fn f_current_column(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     while k < p {
         match bb.text.char_at(k) {
             '\t' => col = (col / tab_width + 1) * tab_width,
-            c => col += char_width(c),
+            c => {
+                col += text_display_width(&bb, k, display).unwrap_or_else(|| char_width(c));
+            }
         }
         k += 1;
     }
@@ -5341,6 +5344,7 @@ fn f_move_to_column(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let tabs_on = i
         .symbol_value(i.q_soft("indent-tabs-mode").unwrap_or(0))
         .truthy();
+    let display = i.q("display");
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let ls = bb.text.line_start(bb.text.line_of_pos(bb.point()));
@@ -5350,7 +5354,9 @@ fn f_move_to_column(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     while k < le && col < goal {
         match bb.text.char_at(k) {
             '\t' => col = (col / tab_width + 1) * tab_width,
-            c => col += char_width(c),
+            c => {
+                col += text_display_width(&bb, k, display).unwrap_or_else(|| char_width(c));
+            }
         }
         k += 1;
     }
@@ -5384,6 +5390,24 @@ fn f_move_to_column(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     } else {
         bb.set_point(k);
         Ok(Value::Int(col))
+    }
+}
+
+fn text_display_width(buffer: &Buffer, position: usize, display_prop: u32) -> Option<i128> {
+    let props = buffer.text.props.borrow();
+    let plist = props
+        .intervals()
+        .iter()
+        .find(|(start, end, _)| *start <= position && position < *end)?
+        .2
+        .as_slice();
+    let value = plist
+        .chunks_exact(2)
+        .find(|pair| matches!(pair.first(), Some(Value::Sym(id)) if *id == display_prop))?
+        .get(1)?;
+    match value {
+        Value::Str(text) => Some(text.borrow().chars().map(char_width).sum()),
+        _ => None,
     }
 }
 

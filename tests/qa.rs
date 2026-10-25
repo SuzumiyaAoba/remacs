@@ -532,6 +532,7 @@ qa!(qa_file_name_case_neutral_path, "qa_file_name_case_neutral_path.el");
 qa!(qa_time_zone_invalid_specs, "qa_time_zone_invalid_specs.el");
 qa!(qa_line_number_narrowing_limit, "qa_line_number_narrowing_limit.el");
 qa!(qa_pos_bol_eol_narrowing, "qa_pos_bol_eol_narrowing.el");
+qa!(qa_column_display_properties, "qa_column_display_properties.el");
 qa!(qa_skip_syntax_narrowing, "qa_skip_syntax_narrowing.el");
 qa!(qa_current_indentation_narrowing, "qa_current_indentation_narrowing.el");
 qa!(qa_file_name_sans_extension_version, "qa_file_name_sans_extension_version.el");
