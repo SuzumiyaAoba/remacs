@@ -205,16 +205,14 @@ pub(crate) fn lock_file_name(file: &str) -> String {
 
 /// Our hostname as GNU records it in lock files (`system-name').
 pub(crate) fn our_host_name() -> String {
-    let mut host = std::env::var("HOSTNAME").unwrap_or_default();
-    if host.is_empty() {
-        #[cfg(unix)]
-        unsafe {
-            let mut buf = [0i8; 256];
-            if libc::gethostname(buf.as_mut_ptr(), buf.len()) == 0 {
-                host = std::ffi::CStr::from_ptr(buf.as_ptr())
-                    .to_string_lossy()
-                    .into_owned();
-            }
+    let mut host = String::new();
+    #[cfg(unix)]
+    unsafe {
+        let mut buf = [0i8; 256];
+        if libc::gethostname(buf.as_mut_ptr(), buf.len()) == 0 {
+            host = std::ffi::CStr::from_ptr(buf.as_ptr())
+                .to_string_lossy()
+                .into_owned();
         }
     }
     if host.is_empty() {
