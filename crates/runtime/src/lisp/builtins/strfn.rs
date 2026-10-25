@@ -2062,9 +2062,16 @@ fn f_string_fill(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             // first newline on; a trailing run without two newlines is
             // dropped entirely.
             if let Some(f) = first_nl.filter(|_| nls >= 2 || pos >= n) {
-                for &c in &gap[f..] {
-                    col = adv(col, c);
-                    out.push(c);
+                if pos >= n {
+                    // GNU fill-region keeps one terminating newline and
+                    // deletes additional soft newlines at end of region.
+                    out.push('\n');
+                    col = 0;
+                } else {
+                    for &c in &gap[f..] {
+                        col = adv(col, c);
+                        out.push(c);
+                    }
                 }
             }
         } else if col + 1 + word_width(pos) <= width.max(0) as usize {
