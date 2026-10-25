@@ -448,6 +448,9 @@ impl<'a> Parser<'a> {
                 }
                 Some(c) => {
                     if (c as u32) < 0x20 {
+                        if c == '\n' {
+                            self.line += 1;
+                        }
                         return Err(self.err(false));
                     }
                     self.pos += 1;

@@ -252,6 +252,7 @@ qa!(qa_read_events, "qa_read_events.el");
 qa!(qa_crm, "qa_crm.el");
 qa!(qa_json, "qa_json.el");
 qa!(qa_json_escape_position, "qa_json_escape_position.el");
+qa!(qa_json_raw_newline_line, "qa_json_raw_newline_line.el");
 qa!(qa_kbd, "qa_kbd.el");
 qa!(qa_define_key_type, "qa_define_key_type.el");
 qa!(qa_keymap, "qa_keymap.el");
