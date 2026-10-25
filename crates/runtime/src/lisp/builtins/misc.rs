@@ -16545,14 +16545,17 @@ fn value_cmp_impl(
         (Value::Sym(_), _) => return Err(mism(i, x, y)),
         (Value::Str(p), Value::Str(q)) => p.borrow().cmp(&q.borrow()),
         (Value::Str(_), _) => return Err(mism(i, x, y)),
-        (Value::Cons(_), Value::Cons(_)) => {
+        (Value::Cons(_), Value::Cons(_) | Value::Nil) => {
             let xs = match want_list(i, x) {
                 Ok(v) => v,
                 Err(f) => return Err(f),
             };
-            let ys = match want_list(i, y) {
-                Ok(v) => v,
-                Err(f) => return Err(f),
+            let ys = match y {
+                Value::Nil => Vec::new(),
+                _ => match want_list(i, y) {
+                    Ok(v) => v,
+                    Err(f) => return Err(f),
+                },
             };
             let mut order = Equal;
             for k in 0..xs.len().max(ys.len()) {
