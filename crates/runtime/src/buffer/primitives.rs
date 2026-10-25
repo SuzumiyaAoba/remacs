@@ -1555,11 +1555,18 @@ enum LockOwner {
     Foreign { user: String, info: String },
 }
 
+#[derive(Clone, Copy)]
+enum LockOwnerError {
+    Stale,
+    Malformed,
+}
+
 /// Parse the lock target and classify ownership.  Err = not locked or
 /// stale (dead pid on this host, a boot-time mismatch meaning the
 /// lock predates the last reboot, or an unparseable target).
-fn lock_owner(target: &str) -> Result<LockOwner, ()> {
-    let (user, host, pid, boot) = parse_lock_target(target).ok_or(())?;
+fn lock_owner(target: &str) -> Result<LockOwner, LockOwnerError> {
+    let (user, host, pid, boot) =
+        parse_lock_target(target).ok_or(LockOwnerError::Malformed)?;
     let same_host = host == crate::buffer::our_host_name();
     if same_host && pid == std::process::id() {
         return Ok(LockOwner::Ours);
@@ -1571,12 +1578,12 @@ fn lock_owner(target: &str) -> Result<LockOwner, ()> {
         // missing/zero timestamp in the lock is unknown, so don't compare it.
         let bt = crate::buffer::boot_time();
         if boot != 0 && !lock_boot_times_match(boot, bt) {
-            return Err(());
+            return Err(LockOwnerError::Stale);
         }
         #[cfg(unix)]
         unsafe {
             if libc::kill(pid as i32, 0) != 0 && *libc::__error() == libc::ESRCH {
-                return Err(()); // stale lock
+                return Err(LockOwnerError::Stale);
             }
         }
     }
@@ -1625,8 +1632,15 @@ pub(crate) fn barf_if_file_locked(i: &mut Interp) -> EvalResult {
     };
     let f = file_truename(&f);
     if let Ok(target) = std::fs::read_link(&lock_file_name(&f)) {
-        if let Ok(LockOwner::Foreign { info, .. }) = lock_owner(&target.to_string_lossy()) {
-            return Err(signal_file_locked(i, Value::string(f), Value::string(info)));
+        let lock_path = lock_file_name(&f);
+        match lock_owner(&target.to_string_lossy()) {
+            Ok(LockOwner::Foreign { info, .. }) => {
+                return Err(signal_file_locked(i, Value::string(f), Value::string(info)));
+            }
+            Err(LockOwnerError::Stale) => {
+                let _ = std::fs::remove_file(lock_path);
+            }
+            Ok(LockOwner::Ours) | Err(LockOwnerError::Malformed) => {}
         }
     }
     Ok(Value::Nil)
@@ -1683,8 +1697,7 @@ fn f_lock_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                         Value::string(file),
                         Value::string(info),
                     )),
-                    // Stale/unparseable: GNU breaks the lock.
-                    Err(()) => {
+                    Err(LockOwnerError::Stale) => {
                         let _ = std::fs::remove_file(&lname);
                         match std::os::unix::fs::symlink(&owner, &lname) {
                             Ok(()) => {
@@ -1700,6 +1713,10 @@ fn f_lock_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                             )),
                         }
                     }
+                    Err(LockOwnerError::Malformed) => Err(i.signal_data(
+                        sym::FILE_ERROR,
+                        vec![Value::string("Locking file"), Value::string(file)],
+                    )),
                 },
                 Err(_) => Err(i.signal_data(
                     sym::FILE_ERROR,
@@ -1731,8 +1748,11 @@ fn f_unlock_buffer(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     if let Some(f) = file {
         let l = lock_file_name(&file_truename(&f));
         if let Ok(target) = std::fs::read_link(&l) {
-            if matches!(lock_owner(&target.to_string_lossy()), Ok(LockOwner::Ours)) {
-                let _ = std::fs::remove_file(&l);
+            match lock_owner(&target.to_string_lossy()) {
+                Ok(LockOwner::Ours) | Err(LockOwnerError::Stale) => {
+                    let _ = std::fs::remove_file(&l);
+                }
+                Ok(LockOwner::Foreign { .. }) | Err(LockOwnerError::Malformed) => {}
             }
         }
     }
@@ -1749,7 +1769,11 @@ fn f_file_locked_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             // user name.
             Ok(LockOwner::Ours) => Ok(Value::t()),
             Ok(LockOwner::Foreign { user, .. }) => Ok(Value::string(user)),
-            Err(()) => Ok(Value::Nil),
+            Err(LockOwnerError::Stale) => {
+                let _ = std::fs::remove_file(&lname);
+                Ok(Value::Nil)
+            }
+            Err(LockOwnerError::Malformed) => Ok(Value::Nil),
         },
     }
 }
@@ -1781,10 +1805,11 @@ fn f_lock_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                             Value::string(info),
                         ));
                     }
-                    Err(()) => {
+                    Err(LockOwnerError::Stale) => {
                         let _ = std::fs::remove_file(&lname);
                         let _ = std::os::unix::fs::symlink(&owner, &lname);
                     }
+                    Err(LockOwnerError::Malformed) => {}
                 },
                 Err(_) => {}
             }
@@ -1800,9 +1825,10 @@ fn f_unlock_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let lname = lock_file_name(&file_truename(&file));
     if let Ok(target) = std::fs::read_link(&lname) {
         match lock_owner(&target.to_string_lossy()) {
-            Ok(LockOwner::Ours) | Err(()) => {
+            Ok(LockOwner::Ours) | Err(LockOwnerError::Stale) => {
                 let _ = std::fs::remove_file(&lname);
             }
+            Err(LockOwnerError::Malformed) => {}
             Ok(LockOwner::Foreign { info, .. }) => {
                 return Err(signal_file_locked(
                     i,
