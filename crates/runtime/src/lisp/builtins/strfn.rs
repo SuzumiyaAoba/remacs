@@ -1069,7 +1069,7 @@ fn case_str_impl(
     let mut in_word = false;
     for (idx, &c) in chars.iter().enumerate() {
         let before = out.len();
-        let cp = c as u32;
+        let cp = lisp_char_code(c) as u32;
         match op {
             CaseOp::Up => {
                 if let Some(sp) = special_lookup(crate::lisp::ctdata::SPECIAL_UPPER, c) {
