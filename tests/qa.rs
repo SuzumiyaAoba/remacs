@@ -340,6 +340,7 @@ qa!(qa_value_lt_mismatch_data, "qa_value_lt_mismatch_data.el");
 qa!(qa_count_lines_invisible, "qa_count_lines_invisible.el");
 qa!(qa_value_lt_lexicographic_ties, "qa_value_lt_lexicographic_ties.el");
 qa!(qa_value_lt_circular_identity, "qa_value_lt_circular_identity.el");
+qa!(qa_value_lt_depth_limit, "qa_value_lt_depth_limit.el");
 qa!(qa_frexp_mantissa_extremes, "qa_frexp_mantissa_extremes.el");
 qa!(qa_minibuf, "qa_minibuf.el");
 qa!(qa_minibuffer, "qa_minibuffer.el");

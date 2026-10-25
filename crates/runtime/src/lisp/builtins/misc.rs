@@ -16508,8 +16508,8 @@ fn value_cmp_impl(
     depth: u32,
 ) -> Result<std::cmp::Ordering, Flow> {
     use std::cmp::Ordering::{Equal, Greater, Less};
-    if depth > 64 {
-        return Err(i.error("Circular object"));
+    if depth > 200 {
+        return Err(i.error("Maximum depth exceeded in comparison"));
     }
     if crate::lisp::builtins::eq_values(x, y) {
         return Ok(Equal);
