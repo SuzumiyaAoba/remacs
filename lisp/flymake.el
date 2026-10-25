@@ -43,8 +43,66 @@ Expands to `flymake--log-1' like GNU; MSG/ARGS are evaluated."
 
 (defun flymake-make-diagnostic (locus beg end type text &optional data _overlay-properties)
   "Make a Flymake diagnostic for LOCUS's region from BEG to END.
-This stub represents the diagnostic as a plain list."
-  (list locus beg end type text data))
+This stub returns a record compatible with Flymake diagnostic accessors."
+  (let* ((info (if (stringp text) (list nil nil text) text))
+         (code (cadr info))
+         (diag (make-record 'flymake--diag 13 nil)))
+    (when (numberp code)
+      (setq info (list (car info) (number-to-string code) (caddr info))))
+    (aset diag 1 (if (stringp locus) (expand-file-name locus) locus))
+    (aset diag 2 beg)
+    (aset diag 3 end)
+    (aset diag 4 type)
+    (aset diag 5 (car info))
+    (aset diag 6 (cadr info))
+    (aset diag 7 (caddr info))
+    (aset diag 9 data)
+    (aset diag 10 _overlay-properties)
+    (aset diag 12 beg)
+    (aset diag 13 end)
+    diag))
+
+(defun flymake-diagnostic-type (diag) (aref diag 4))
+(defun flymake-diagnostic-backend (diag) (aref diag 8))
+(defun flymake-diagnostic-origin (diag) (aref diag 5))
+(defun flymake-diagnostic-code (diag) (aref diag 6))
+(defun flymake-diagnostic-message (diag) (aref diag 7))
+(defun flymake-diagnostic-data (diag) (aref diag 9))
+(defun flymake-diagnostic-beg (diag) (aref diag 2))
+(defun flymake-diagnostic-end (diag) (aref diag 3))
+(defun flymake-diagnostic-buffer (diag) (aref diag 1))
+
+(defun flymake-diagnostic-text (diag &optional parts)
+  "Return diagnostic DIAG's text, optionally selecting PARTS."
+  (let ((parts (or parts '(origin code message)))
+        (origin (flymake-diagnostic-origin diag))
+        (code (flymake-diagnostic-code diag))
+        (message (flymake-diagnostic-message diag))
+        (headline-seen nil)
+        (prev nil)
+        (result ""))
+    (dolist (part parts result)
+      (let ((text (pcase part
+                    ('origin origin)
+                    ('code (and code (concat "[" code "]")))
+                    ('message message)
+                    ('oneliner (and message
+                                    (substring message 0
+                                               (or (string-match "\n" message)
+                                                   (length message))))))))
+        (when (and (memq part '(origin code)) text)
+          (setq headline-seen t))
+        (when (and (memq part '(message oneliner)) headline-seen)
+          (setq result (concat result ":")))
+        (when prev
+          (setq result (concat result " ")))
+        (when text
+          (setq result (concat result text)))
+        (setq prev part)))))
+
+(defun flymake-diagnostic-oneliner (diag &optional _nopaintp)
+  "Return a one-line description of DIAG."
+  (flymake-diagnostic-text diag '(origin code oneliner)))
 
 (defun flymake-diag-region (buffer line &optional col)
   "Compute BUFFER's region (BEG . END) corresponding to LINE and COL.
