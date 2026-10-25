@@ -7166,14 +7166,47 @@ fn copy_keymap_elem(i: &mut Interp, v: &Value, depth: usize) -> Value {
         return v.clone();
     }
     match v {
-        Value::Cons(c) => {
-            let b = c.borrow();
-            let (car, cdr) = (b.car.clone(), b.cdr.clone());
-            drop(b);
-            Value::cons(
-                copy_keymap_elem(i, &car, depth + 1),
-                copy_keymap_elem(i, &cdr, depth + 1),
-            )
+        Value::Cons(_) => {
+            // Copy cdr spines iteratively: full maps can have many
+            // hundreds of bindings, so recursive descent silently shared
+            // their tail at the former depth limit.
+            let mut tail = v.clone();
+            let mut head: Option<Value> = None;
+            let mut last: Option<crate::lisp::value::ConsRef> = None;
+            let mut copied: std::collections::HashMap<usize, Value> =
+                std::collections::HashMap::new();
+            loop {
+                let Value::Cons(cell) = &tail else {
+                    if let Some(last) = &last {
+                        last.borrow_mut().cdr = copy_keymap_elem(i, &tail, depth + 1);
+                    }
+                    break;
+                };
+                let ptr = std::rc::Rc::as_ptr(cell) as usize;
+                if let Some(previous) = copied.get(&ptr) {
+                    if let Some(last) = &last {
+                        last.borrow_mut().cdr = previous.clone();
+                    }
+                    break;
+                }
+                let (car, cdr) = {
+                    let b = cell.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                let next = Value::cons(copy_keymap_elem(i, &car, depth + 1), Value::Nil);
+                copied.insert(ptr, next.clone());
+                if let Some(last) = &last {
+                    last.borrow_mut().cdr = next.clone();
+                } else {
+                    head = Some(next.clone());
+                }
+                let Value::Cons(next_cell) = next else {
+                    unreachable!()
+                };
+                last = Some(next_cell);
+                tail = cdr;
+            }
+            head.unwrap_or(Value::Nil)
         }
         Value::Record(r) if crate::lisp::builtins::misc::is_char_table(i, v) => {
             let copy = crate::lisp::builtins::misc::ct_copy(i, v);
