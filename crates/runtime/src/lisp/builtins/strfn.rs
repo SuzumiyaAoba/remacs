@@ -1888,9 +1888,10 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
         other => want_int(i, other)?.max(0) as f64,
     };
     let start_col = match args.get(2) {
-        Some(Value::Int(n)) => (*n).max(0) as usize,
-        Some(other) if !other.is_nil() => return Err(i.wrong_type_mut("integerp", other)),
-        _ => 0,
+        Some(Value::Int(n)) => (*n).max(0) as f64,
+        Some(Value::Float(n)) => (**n).max(0.0),
+        Some(Value::Nil) | None => 0.0,
+        Some(other) => return Err(i.wrong_type_mut("integerp", other)),
     };
     let padding = args.get(3).cloned().unwrap_or(Value::Nil);
     let ellipsis_v = args.get(4).cloned().unwrap_or(Value::Nil);
@@ -1925,7 +1926,7 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
     let chars: Vec<char> = s.chars().collect();
     let mut col = 0usize;
     let mut idx = 0usize;
-    while idx < chars.len() && col < start_col {
+    while idx < chars.len() && (col as f64) < start_col {
         col += gnu_char_width(i, chars[idx]);
         idx += 1;
     }
