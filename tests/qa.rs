@@ -166,6 +166,7 @@ qa!(qa_fileattr, "qa_fileattr.el");
 qa!(qa_file_modes, "qa_file_modes.el");
 qa!(qa_file_attributes_pre_epoch, "qa_file_attributes_pre_epoch.el");
 qa!(qa_file_system_info_handler, "qa_file_system_info_handler.el");
+qa!(qa_directory_completion_handlers, "qa_directory_completion_handlers.el");
 qa!(qa_extension_period, "qa_extension_period.el");
 qa!(qa_file_completion_prefix, "qa_file_completion_prefix.el");
 qa!(qa_directory_order, "qa_directory_order.el");

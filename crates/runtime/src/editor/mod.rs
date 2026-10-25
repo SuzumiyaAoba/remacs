@@ -12593,6 +12593,11 @@ fn f_directory_files(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         ),
         None => None,
     };
+    if let Some((handler, op)) = file_handler(i, "directory-files", &[&dir]) {
+        let mut handler_args = vec![op, file_name_argument(&a[0], &dir)];
+        handler_args.extend(a[1..].iter().cloned());
+        return i.apply(&handler, handler_args);
+    }
     let base = if dir.ends_with('/') {
         dir.clone()
     } else {
@@ -12636,11 +12641,16 @@ fn f_directory_files(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_directory_files_and_attributes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let dir = want_filename(i, &a[0])?;
+    if let Some((handler, op)) = file_handler(i, "directory-files-and-attributes", &[&dir]) {
+        let mut handler_args = vec![op, file_name_argument(&a[0], &dir)];
+        handler_args.extend(a[1..].iter().cloned());
+        return i.apply(&handler, handler_args);
+    }
     let files = f_directory_files(
         i,
         vec![a[0].clone(), arg(&a, 1), arg(&a, 2), arg(&a, 3), arg(&a, 5)].into(),
     )?;
-    let dir = want_filename(i, &a[0])?;
     let full = a.get(1).map(|v| v.truthy()).unwrap_or(false);
     let items = files.list_to_vec().unwrap_or_default();
     let mut out = Vec::with_capacity(items.len());
@@ -12691,6 +12701,11 @@ fn dir_completion_names(i: &mut Interp, file: &str, dir: &str) -> Result<Vec<Str
 fn f_file_name_completion(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let dir = want_filename(i, &a[1])?;
     let file = want_str(i, &a[0])?;
+    if let Some((handler, op)) = file_handler(i, "file-name-completion", &[&dir]) {
+        let mut handler_args = vec![op, a[0].clone(), file_name_argument(&a[1], &dir)];
+        handler_args.extend(a[2..].iter().cloned());
+        return i.apply(&handler, handler_args);
+    }
     let mut matches = dir_completion_names(i, &file, &dir)?;
     // GNU excludes the trivial directory entries once a real candidate
     // exists. all-completions, in contrast, retains them unconditionally.
@@ -12755,6 +12770,12 @@ fn f_file_name_all_completions(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     // DIRECTORY means `default-directory'.
     let dir = want_filename(i, &a[1])?;
     let file = want_str(i, &a[0])?;
+    if let Some((handler, op)) = file_handler(i, "file-name-all-completions", &[&dir]) {
+        return i.apply(
+            &handler,
+            vec![op, a[0].clone(), file_name_argument(&a[1], &dir)],
+        );
+    }
     let matches = dir_completion_names(i, &file, &dir)?;
     Ok(Value::list(
         matches.into_iter().rev().map(Value::string).collect(),
