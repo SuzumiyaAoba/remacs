@@ -4822,7 +4822,8 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
-    let secs = t.div_euclid(1_000_000_000_000) as i64;
+    let secs = i64::try_from(t.div_euclid(1_000_000_000_000))
+        .map_err(|_| i.error("Specified time is not representable"))?;
     // sub-second digits as a 12-digit picosecond fraction.
     let frac12 = t.rem_euclid(1_000_000_000_000);
     // GNU (format-time-string FORMAT TIME ZONE): nil/`wall' = local,
@@ -4910,6 +4911,11 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             ));
         }
     };
+    // gmtime/localtime return null when the platform cannot represent a
+    // time_t as `struct tm`; the zeroed result has tm_mday == 0.
+    if tm.tm_mday == 0 {
+        return Err(i.error("Specified time is not representable"));
+    }
     // `system-time-locale' overrides LC_TIME for this call, falling
     // back to "C" for names the C library rejects (like GNU).
     let locale: Option<String> = i
