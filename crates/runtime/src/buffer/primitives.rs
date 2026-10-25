@@ -1532,11 +1532,13 @@ fn f_set_visited_file_modtime(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
 /// (user, host, pid, boot); None if malformed.  A missing `:BOOT'
 /// suffix parses as 0 (GNU filelock.c `current_lock_owner').
 fn parse_lock_target(target: &str) -> Option<(String, String, u32, i64)> {
-    let (user, rest) = target.split_once('@')?;
+    let (user, rest) = target.rsplit_once('@')?;
     let (host, pid) = rest.rsplit_once('.')?;
-    let mut parts = pid.splitn(2, ':');
-    let pid = parts.next()?.parse().ok()?;
-    let boot = parts.next().and_then(|b| b.parse().ok()).unwrap_or(0);
+    let (pid, boot) = match pid.split_once(':') {
+        Some((pid, boot)) => (pid, boot.parse().ok()?),
+        None => (pid, 0),
+    };
+    let pid = pid.parse().ok()?;
     Some((user.to_string(), host.to_string(), pid, boot))
 }
 
@@ -1773,7 +1775,10 @@ fn f_file_locked_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 let _ = std::fs::remove_file(&lname);
                 Ok(Value::Nil)
             }
-            Err(LockOwnerError::Malformed) => Ok(Value::Nil),
+            Err(LockOwnerError::Malformed) => Err(i.signal_data(
+                sym::FILE_ERROR,
+                vec![Value::string("Invalid lock file"), Value::string(lname)],
+            )),
         },
     }
 }
