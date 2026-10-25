@@ -328,6 +328,7 @@ qa!(qa_dom_print_quotes, "qa_dom_print_quotes.el");
 qa!(qa_mod_float_precision, "qa_mod_float_precision.el");
 qa!(qa_substring_fixnum_bounds, "qa_substring_fixnum_bounds.el");
 qa!(qa_word_script_boundaries, "qa_word_script_boundaries.el");
+qa!(qa_concat_bool_vector_constructor, "qa_concat_bool_vector_constructor.el");
 qa!(qa_frexp_mantissa_extremes, "qa_frexp_mantissa_extremes.el");
 qa!(qa_minibuf, "qa_minibuf.el");
 qa!(qa_minibuffer, "qa_minibuffer.el");
