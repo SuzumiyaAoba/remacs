@@ -380,6 +380,7 @@ qa!(qa_random_zero_seed_darwin, "qa_random_zero_seed_darwin.el");
 qa!(qa_value_lt_circular_identity, "qa_value_lt_circular_identity.el");
 qa!(qa_subst_char_properties, "qa_subst_char_properties.el");
 qa!(qa_subst_char_values, "qa_subst_char_values.el");
+qa!(qa_string_trim_sequence_bounds, "qa_string_trim_sequence_bounds.el");
 qa!(qa_value_lt_depth_limit, "qa_value_lt_depth_limit.el");
 qa!(qa_value_lt_record_bool_vector, "qa_value_lt_record_bool_vector.el");
 qa!(qa_value_lt_reference_objects, "qa_value_lt_reference_objects.el");

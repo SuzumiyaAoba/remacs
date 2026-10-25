@@ -1,0 +1,16 @@
+;;; -*- lexical-binding: nil; -*-
+;; Trim regexp sequences accept Emacs character values, not truncated fixnums.
+(qa-err-data (string-trim-left "aax" '(4294967393))
+             'wrong-type-argument '(characterp 4294967393))
+(qa-err-data (string-trim-right "aax" '(4294967393))
+             'wrong-type-argument '(characterp 4294967393))
+(qa-err-data (string-trim "aax" '(4294967393))
+             'wrong-type-argument '(characterp 4294967393))
+(qa-err-data (string-trim "aax" nil '(4294967393))
+             'wrong-type-argument '(characterp 4294967393))
+(let ((char #x3fff80))
+  (qa (string= (string-trim-left (concat (string char) "x") (vector char)) "x") t)
+  (qa (string= (string-trim-right (concat "x" (string char)) (vector char)) "x") t)
+  (qa (string= (string-trim (concat (string char) "x" (string char))
+                            (vector char) (vector char)) "x") t))
+(princ (qa--done))
