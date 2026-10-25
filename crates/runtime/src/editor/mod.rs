@@ -12003,6 +12003,14 @@ fn f_file_name_directory(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 fn f_file_name_nondirectory(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let s = want_str(i, &a[0])?;
+    if let Some((handler, operation)) = file_handler(i, "file-name-nondirectory", &[&s]) {
+        let result = i.apply(&handler, vec![operation, a[0].clone()])?;
+        return Ok(if matches!(result, Value::Str(_)) {
+            result
+        } else {
+            Value::Nil
+        });
+    }
     match s.rfind('/') {
         Some(idx) => Ok(Value::string(&s[idx + 1..])),
         None => Ok(Value::string(s)),
