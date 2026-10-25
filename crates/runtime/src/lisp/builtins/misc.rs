@@ -16529,6 +16529,7 @@ fn value_cmp_impl(
         (Value::Int(_) | Value::BigInt(_) | Value::Float(_), _) => return Err(mism(i, x, y)),
         (Value::Nil, Value::Nil) => Equal,
         (Value::Nil, Value::Cons(_)) => Less,
+        (Value::Cons(_), Value::Nil) => Greater,
         (Value::Nil, Value::Sym(b)) => i
             .symbol_name(crate::lisp::sym::NIL)
             .cmp(&i.symbol_name(*b)),
@@ -16545,39 +16546,44 @@ fn value_cmp_impl(
         (Value::Sym(_), _) => return Err(mism(i, x, y)),
         (Value::Str(p), Value::Str(q)) => p.borrow().cmp(&q.borrow()),
         (Value::Str(_), _) => return Err(mism(i, x, y)),
-        (Value::Cons(_), Value::Cons(_) | Value::Nil) => {
-            let xs = match want_list(i, x) {
-                Ok(v) => v,
-                Err(f) => return Err(f),
-            };
-            let ys = match y {
-                Value::Nil => Vec::new(),
-                _ => match want_list(i, y) {
-                    Ok(v) => v,
-                    Err(f) => return Err(f),
-                },
-            };
-            let mut order = Equal;
-            for k in 0..xs.len().max(ys.len()) {
-                match (xs.get(k), ys.get(k)) {
-                    (None, Some(_)) => {
-                        order = Less;
-                        break;
-                    }
-                    (None, None) => break,
-                    (Some(_), None) => {
-                        order = Greater;
-                        break;
-                    }
-                    (Some(a), Some(b)) => {
-                        order = value_cmp_impl(i, a, b, depth + 1)?;
-                        if order != Equal {
-                            break;
-                        }
-                    }
+        (Value::Cons(_), Value::Cons(_)) => {
+            // GNU walks the right spine incrementally, comparing each car
+            // before inspecting later cdrs. A dotted tail therefore gets
+            // compared as a value, and an unreachable malformed tail does
+            // not override an earlier ordering result.
+            let mut left = x.clone();
+            let mut right = y.clone();
+            let mut seen = std::collections::HashSet::new();
+            loop {
+                let (Value::Cons(left_cell), Value::Cons(right_cell)) = (&left, &right) else {
+                    break;
+                };
+                if !seen.insert(std::rc::Rc::as_ptr(right_cell) as usize) {
+                    return Err(i.signal_data(sym::CIRCULAR_LIST, vec![right.clone()]));
+                }
+                let (left_car, left_cdr) = {
+                    let cell = left_cell.borrow();
+                    (cell.car.clone(), cell.cdr.clone())
+                };
+                let (right_car, right_cdr) = {
+                    let cell = right_cell.borrow();
+                    (cell.car.clone(), cell.cdr.clone())
+                };
+                let order = value_cmp_impl(i, &left_car, &right_car, depth + 1)?;
+                if order != Equal {
+                    return Ok(order);
+                }
+                left = left_cdr;
+                right = right_cdr;
+                if !matches!(left, Value::Cons(_)) {
+                    return value_cmp_impl(i, &left, &right, depth);
                 }
             }
-            order
+            if right.is_nil() {
+                Greater
+            } else {
+                return Err(mism(i, &left, &right));
+            }
         }
         (Value::Cons(_), _) => return Err(mism(i, x, y)),
         (Value::Vec(p), Value::Vec(q)) => {
