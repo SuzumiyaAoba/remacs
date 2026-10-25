@@ -282,12 +282,13 @@ white-space."
           shadowrootserializable)))
 
 (defun dom--insert-entities (string)
-  "Like `url-insert-entities-in-string': escape & < > in STRING."
+  "Escape &, <, > and double quotes in STRING for HTML/XML output."
   (mapconcat
    (lambda (c)
      (cond ((eq c ?&) "&amp;")
            ((eq c ?<) "&lt;")
            ((eq c ?>) "&gt;")
+           ((eq c ?\") "&quot;")
            (t (string c))))
    string ""))
 

@@ -324,6 +324,7 @@ qa!(qa_math_frexp_boundaries, "qa_math_frexp_boundaries.el");
 qa!(qa_logb_pow2_boundary, "qa_logb_pow2_boundary.el");
 qa!(qa_log_atan_nil_optional, "qa_log_atan_nil_optional.el");
 qa!(qa_log_base2_precision, "qa_log_base2_precision.el");
+qa!(qa_dom_print_quotes, "qa_dom_print_quotes.el");
 qa!(qa_frexp_mantissa_extremes, "qa_frexp_mantissa_extremes.el");
 qa!(qa_minibuf, "qa_minibuf.el");
 qa!(qa_minibuffer, "qa_minibuffer.el");
