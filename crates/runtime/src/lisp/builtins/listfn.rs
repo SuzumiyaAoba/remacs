@@ -1323,24 +1323,84 @@ fn f_copy_tree(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // (and records) are copied recursively too when VECP is non-nil
     // (GNU fns.c Fcopy_tree).
     let vecp = arg(&args, 1).truthy();
-    fn cp(i: &Interp, v: &Value, vecp: bool) -> Value {
-        match v {
-            Value::Cons(c) => {
-                let b = c.borrow();
-                Value::cons(cp(i, &b.car, vecp), cp(i, &b.cdr, vecp))
-            }
-            Value::Vec(vec) if vecp => {
-                let b = vec.borrow();
-                Value::vector(b.iter().map(|x| cp(i, x, vecp)).collect())
-            }
-            Value::Record(record) if vecp && super::misc::recordp(i, v) => {
-                let slots = record.borrow();
-                Value::record(slots.iter().map(|slot| cp(i, slot, vecp)).collect())
-            }
-            other => other.clone(),
+    fn descend(i: &Interp, value: &Value, vecp: bool) -> bool {
+        match value {
+            Value::Cons(_) => true,
+            Value::Vec(_) => vecp && !i.is_overlay(value),
+            Value::Record(_) => vecp && super::misc::recordp(i, value),
+            _ => false,
         }
     }
-    Ok(cp(i, &args[0], vecp))
+    fn cp(i: &mut Interp, value: &Value, vecp: bool) -> EvalResult {
+        if !descend(i, value, vecp) {
+            return Ok(value.clone());
+        }
+        i.with_lisp_eval_depth(false, |i| cp_inner(i, value, vecp))
+    }
+    fn cp_inner(i: &mut Interp, v: &Value, vecp: bool) -> EvalResult {
+        match v {
+            Value::Cons(_) => {
+                let mut tail = v.clone();
+                let mut cars = Vec::new();
+                let mut quit_count = 0u16;
+                while let Value::Cons(cell) = &tail {
+                    quit_count = quit_count.wrapping_add(1);
+                    if quit_count == 0 {
+                        i.maybe_quit()?;
+                    }
+                    let (car, cdr) = {
+                        let b = cell.borrow();
+                        (b.car.clone(), b.cdr.clone())
+                    };
+                    cars.push(if descend(i, &car, vecp) {
+                        cp(i, &car, vecp)?
+                    } else {
+                        car
+                    });
+                    tail = cdr;
+                }
+                let mut result = if descend(i, &tail, vecp) {
+                    cp(i, &tail, vecp)?
+                } else {
+                    tail
+                };
+                for car in cars.into_iter().rev() {
+                    result = Value::cons(car, result);
+                }
+                Ok(result)
+            }
+            Value::Vec(vec) if vecp => {
+                let mut copied = vec.borrow().clone();
+                let mut quit_count = 0u16;
+                for slot in &mut copied {
+                    quit_count = quit_count.wrapping_add(1);
+                    if quit_count == 0 {
+                        i.maybe_quit()?;
+                    }
+                    if descend(i, slot, vecp) {
+                        *slot = cp(i, slot, vecp)?;
+                    }
+                }
+                Ok(Value::vector(copied))
+            }
+            Value::Record(record) if vecp && super::misc::recordp(i, v) => {
+                let mut copied = record.borrow().clone();
+                let mut quit_count = 0u16;
+                for slot in &mut copied {
+                    quit_count = quit_count.wrapping_add(1);
+                    if quit_count == 0 {
+                        i.maybe_quit()?;
+                    }
+                    if descend(i, slot, vecp) {
+                        *slot = cp(i, slot, vecp)?;
+                    }
+                }
+                Ok(Value::record(copied))
+            }
+            other => Ok(other.clone()),
+        }
+    }
+    cp(i, &args[0], vecp)
 }
 fn f_list_tail(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let n = want_int(i, &args[1])?.max(0);

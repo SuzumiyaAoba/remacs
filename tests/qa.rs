@@ -646,6 +646,7 @@ qa!(qa_timer, "qa_timer.el");
 qa!(qa_types2, "qa_types2.el");
 qa!(qa_recordp_opaque_vectors, "qa_recordp_opaque_vectors.el");
 qa!(qa_copy_tree_records, "qa_copy_tree_records.el");
+qa!(qa_copy_tree_eval_depth, "qa_copy_tree_eval_depth.el");
 qa!(qa_copy_sequence_opaque_types, "qa_copy_sequence_opaque_types.el");
 qa!(qa_elt_rejects_records, "qa_elt_rejects_records.el");
 qa!(qa_text_property_detached_markers, "qa_text_property_detached_markers.el");
