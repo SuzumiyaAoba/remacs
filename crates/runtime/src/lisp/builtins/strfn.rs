@@ -509,7 +509,7 @@ pub(crate) fn concat_seq(i: &mut Interp, v: &Value, out: &mut String) -> Result<
             let items = super::want_list(i, v)?;
             for item in items {
                 match item {
-                    Value::Int(n) => match concat_char(*n) {
+                    Value::Int(n) => match concat_char(n) {
                         Some(c) => out.push(c),
                         None => return Err(i.wrong_type_mut("characterp", &item)),
                     },
