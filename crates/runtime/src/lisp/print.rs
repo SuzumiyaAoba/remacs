@@ -569,11 +569,13 @@ impl Interp {
                         "koi8",
                         "koi8-r",
                         "windows-1251",
+                        "windows-1252",
                         "mac-roman",
                         "big5",
                         "chinese-gb2312",
                     ];
                     let cid = charset_id.unwrap();
+                    let has_non_ascii = s.borrow().chars().any(|c| (c as u32) >= 0x80);
                     let mut out: Vec<Value> = Vec::new();
                     let mut k = 0;
                     while k + 1 < pl.len() {
@@ -585,7 +587,7 @@ impl Interp {
                                     Value::Sym(id) => self.symbol_name(*id),
                                     _ => String::new(),
                                 };
-                                !MAP_CHARSETS.contains(&name.as_str())
+                                !has_non_ascii || !MAP_CHARSETS.contains(&name.as_str())
                             }
                         } else {
                             false

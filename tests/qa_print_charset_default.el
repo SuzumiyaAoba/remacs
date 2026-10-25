@@ -1,0 +1,15 @@
+;;; -*- lexical-binding: nil; -*-
+;; Default charset text-property filtering follows the string's content (#535).
+(qa (let ((print-charset-text-property 'default))
+      (prin1-to-string (propertize "café" 'charset 'windows-1252)))
+    "#(\"café\" 0 4 (charset windows-1252))")
+(qa (let ((print-charset-text-property 'default))
+      (prin1-to-string (propertize "x" 'charset 'iso-8859-2)))
+    "\"x\"")
+(qa (let ((print-charset-text-property t))
+      (prin1-to-string (propertize "café" 'charset 'windows-1252)))
+    "#(\"café\" 0 4 (charset windows-1252))")
+(qa (let ((print-charset-text-property nil))
+      (prin1-to-string (propertize "café" 'charset 'windows-1252)))
+    "\"café\"")
+(princ (qa--done))
