@@ -286,6 +286,32 @@ fn image_restores_arbitrary_integers_and_identity_keys() {
 }
 
 #[test]
+fn image_restores_equal_hash_keys_for_distinct_obarrays() {
+    let fixture = Fixture::new();
+    let producer = format!(
+        "(progn (setq dump479-left (obarray-make) dump479-right (obarray-make) \
+                      dump479-table (make-hash-table :test 'equal)) \
+                (puthash dump479-left 'left dump479-table) \
+                (puthash dump479-right 'right dump479-table) \
+                (dump-emacs-portable {} t) (princ \"created\"))",
+        literal(&fixture.image())
+    );
+    assert_eq!(
+        Fixture::ok(fixture.eval("producer-cache", &[], &producer)),
+        "created"
+    );
+    let restored = fixture.eval(
+        "consumer-cache",
+        &["--dump-file", fixture.image().to_str().unwrap()],
+        "(prin1 (list (equal dump479-left dump479-right)\
+                      (hash-table-count dump479-table)\
+                      (gethash dump479-left dump479-table)\
+                      (gethash dump479-right dump479-table)))",
+    );
+    assert_eq!(Fixture::ok(restored), "(nil 2 left right)");
+}
+
+#[test]
 fn image_restores_autosave_counters_for_base_and_indirect_buffers() {
     let fixture = Fixture::new();
     let producer = format!(

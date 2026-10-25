@@ -1,0 +1,20 @@
+;;; -*- lexical-binding: nil; -*-
+;; Obarrays compare only by identity under `equal' (#479).
+(qa (let ((ob (obarray-make))) (equal ob ob)) t)
+(qa (equal (obarray-make) (obarray-make)) nil)
+(qa (equal (list (obarray-make)) (list (obarray-make))) nil)
+;; Ordinary records with the same tag and font specs remain structural.
+(qa (equal (record 'obarray [] 3) (record 'obarray [] 3)) t)
+(qa (equal (font-spec :family "same") (font-spec :family "same")) t)
+(qa (let ((table (make-hash-table :test 'equal))
+          (left (obarray-make)) (right (obarray-make)))
+      (puthash left 'left table)
+      (puthash right 'right table)
+      (list (hash-table-count table) (gethash left table) (gethash right table)))
+    '(2 left right))
+(qa (let ((table (make-hash-table :test 'equal)))
+      (puthash (record 'obarray [] 3) 'first table)
+      (puthash (record 'obarray [] 3) 'second table)
+      (list (hash-table-count table) (gethash (record 'obarray [] 3) table)))
+    '(1 second))
+(princ (qa--done))

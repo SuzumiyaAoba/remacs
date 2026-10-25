@@ -718,6 +718,14 @@ fn equal_values_1(
                 }
             }
         }
+        (Value::Record(_), Value::Record(_))
+            if crate::lisp::builtins::data::is_obarray(interp, a)
+                || crate::lisp::builtins::data::is_obarray(interp, b) =>
+        {
+            // GNU obarrays are opaque pseudovectors: after the identity
+            // shortcut above, distinct obarrays are never structurally equal.
+            false
+        }
         (Value::Vec(x), Value::Vec(y)) | (Value::Record(x), Value::Record(y)) => equal_items(
             interp,
             &x.borrow(),

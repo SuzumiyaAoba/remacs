@@ -197,6 +197,10 @@ fn equal_key(
     if interp.is_overlay(v) {
         return None;
     }
+    if super::data::is_obarray(interp, v) {
+        let identity = ptr?;
+        return Some(HashKey::Tagged(4, vec![HashKey::Ptr(identity)]));
+    }
     let out = match v {
         Value::Str(s) => HashKey::Str(s.borrow().clone()),
         Value::Marker(m) => {
