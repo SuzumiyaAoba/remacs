@@ -20639,17 +20639,17 @@ fn f_modify_syntax_entry(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 let b = c.borrow();
                 (b.car.clone(), b.cdr.clone())
             };
-            let mut chk = |v: &Value| -> Result<i128, Flow> {
+            let chk = |i: &mut Interp, v: &Value| -> Result<u32, Flow> {
                 match v {
-                    Value::Int(n) => Ok(*n),
-                    Value::Marker(m) => {
-                        let p = m.borrow().position as i128 + 1;
-                        Ok(p)
+                    Value::Int(n)
+                        if (0..=crate::lisp::builtins::misc::CT_MAX_CHAR as i128).contains(n) =>
+                    {
+                        Ok(*n as u32)
                     }
                     _ => Err(i.wrong_type_mut("characterp", v)),
                 }
             };
-            (chk(&lo_v)? as u32, chk(&hi_v)? as u32)
+            (chk(i, &lo_v)?, chk(i, &hi_v)?)
         }
         v => {
             // GNU CHECK_CHARACTER: `characterp' on non-chars
@@ -20661,11 +20661,6 @@ fn f_modify_syntax_entry(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             (n as u32, n as u32)
         }
     };
-    if lo > crate::lisp::builtins::misc::CT_MAX_CHAR
-        || hi > crate::lisp::builtins::misc::CT_MAX_CHAR
-    {
-        return Err(i.wrong_type_mut("characterp", &a[0]));
-    }
     let desc = match &a[1] {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),

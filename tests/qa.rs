@@ -586,6 +586,7 @@ qa!(qa_subrx3, "qa_subrx3.el");
 qa!(qa_symbol, "qa_symbol.el");
 qa!(qa_variable_watchers, "qa_variable_watchers.el");
 qa!(qa_syntax, "qa_syntax.el");
+qa!(qa_modify_syntax_entry_range_validation, "qa_modify_syntax_entry_range_validation.el");
 qa!(qa_describe_syntax_mule, "qa_describe_syntax_mule.el");
 qa!(qa_syntax_lookup, "qa_syntax_lookup.el");
 qa!(qa_syntax_class_bounds, "qa_syntax_class_bounds.el");
