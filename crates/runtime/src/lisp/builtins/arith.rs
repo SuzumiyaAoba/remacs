@@ -1020,7 +1020,8 @@ fn f_random(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         }
         Some(Value::Str(s)) => {
             let mut seed = 0u32;
-            for (index, byte) in s.borrow().as_bytes().iter().enumerate() {
+            let bytes = super::strfn::gnu_sbytes(i, s);
+            for (index, byte) in bytes.iter().enumerate() {
                 seed ^= u32::from(*byte) << ((index % 4) * 8);
             }
             GEN.with(|g| *g.borrow_mut() = Rand3::seeded(seed));
