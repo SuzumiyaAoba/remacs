@@ -12217,22 +12217,29 @@ fn f_file_relative_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     //   directory filename), walking directory up and growing ancestor "..".
     // Note the check order: DIRECTORY is expanded (and CHECK_STRING'd)
     // before FILENAME.
-    let dir_in = match a.get(1) {
-        Some(v) if v.truthy() => want_str(i, v)?,
-        _ => default_directory(i),
+    let dir_input = match a.get(1) {
+        Some(v) if v.truthy() => v.clone(),
+        _ => Value::string(default_directory(i)),
     };
-    // GNU expands DIRECTORY *as a filename* first: expand-file-name of
-    // "" drops the separator ("" "" is "", "" "/x/" is "/x"), then
-    // file-name-as-directory restores exactly one trailing '/'.
-    let dir_exp = expand_string_arg(i, &dir_in)?;
-    let mut dir = file_name_as_directory_str(&dir_exp);
-    let name_in = want_str(i, &a[0])?;
-    let filename = expand_string_arg(i, &name_in)?;
+    let dir_exp = call_file_name_lisp(i, "expand-file-name", vec![dir_input])?;
+    let dir_value = call_file_name_lisp(i, "file-name-as-directory", vec![dir_exp])?;
+    let mut dir = want_str(i, &dir_value)?;
+    let filename_value = call_file_name_lisp(i, "expand-file-name", vec![a[0].clone()])?;
+    let filename = want_str(i, &filename_value)?;
     let fold = f_file_name_case_insensitive_p_impl(i, &filename);
-    let fdir = file_name_as_directory_str(&filename);
+    let fdir_value = call_file_name_lisp(
+        i,
+        "file-name-as-directory",
+        vec![filename_value.clone()],
+    )?;
+    let fdir = want_str(i, &fdir_value)?;
     let mut ancestor = ".".to_string();
     while !(string_prefix_p(&dir, &fdir, fold) || string_prefix_p(&dir, &filename, fold)) {
-        dir = file_name_directory_str(&dir[..dir.len().saturating_sub(1)]).unwrap_or_default();
+        let prefix = Value::string(&dir[..dir.len().saturating_sub(1)]);
+        dir = match call_file_name_lisp(i, "file-name-directory", vec![prefix])? {
+            Value::Str(directory) => directory.borrow().clone(),
+            _ => String::new(),
+        };
         ancestor = if ancestor == "." {
             "..".to_string()
         } else {
