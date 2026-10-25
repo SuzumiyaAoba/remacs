@@ -174,7 +174,12 @@ will have lines that are wider than WIDTH."
     (let ((fill-column width)
           (adaptive-fill-mode nil))
       (fill-region (point-min) (point-max)))
-    (buffer-string)))
+    (let ((filled (buffer-string)))
+      ;;Remacs: fill-region can leave multiple soft newlines at the end.
+      ;; GNU string-fill keeps only one final newline.
+      (if (string-match "\n\n+\\'" filled)
+          (substring filled 0 (1+ (match-beginning 0)))
+        filled))))
 
 ;;;###autoload
 (defun string-limit (string length &optional end coding-system)
