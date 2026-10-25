@@ -1517,22 +1517,7 @@ fn f_string_pad(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 
 /// `string-reverse' — GNU fns.c subr: character-reverse the string.
 fn f_string_reverse(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    let source = match &args[0] {
-        Value::Str(source) => Some(source),
-        _ => None,
-    };
-    let multibyte = source.is_some_and(|source| {
-        i.is_multibyte_str(source)
-            || (!i.is_unibyte_str(source) && content_is_multibyte(&s))
-    });
-    let result = Value::string_ref(s.chars().rev().collect::<String>());
-    if multibyte {
-        i.mark_multibyte(&result);
-    } else {
-        i.mark_unibyte(&result);
-    }
-    Ok(Value::Str(result))
+    crate::lisp::builtins::listfn::f_reverse(i, args)
 }
 fn f_string_join(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let items = super::seq::seq_to_vec(i, &args[0])?;
