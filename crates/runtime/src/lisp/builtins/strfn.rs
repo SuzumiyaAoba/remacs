@@ -777,19 +777,10 @@ fn substring_impl(i: &mut Interp, args: crate::lisp::Argv, copy_props: bool) -> 
 
 // GNU string-equal/string-lessp accept strings or symbols (symbols compare
 // by name); other types signal wrong-type-argument stringp.
-fn str_or_sym_arg(i: &mut Interp, v: &Value) -> Result<String, Flow> {
-    match v {
-        Value::Str(s) => Ok(s.borrow().clone()),
-        // nil is the symbol nil in GNU; symbols compare by name.
-        Value::Nil => Ok("nil".to_string()),
-        Value::Sym(id) => Ok(i.symbol_name(*id)),
-        other => Err(i.wrong_type_mut("stringp", other)),
-    }
-}
 fn f_string_equal(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let a = str_or_sym_arg(i, &args[0])?;
-    let b = str_or_sym_arg(i, &args[1])?;
-    Ok(Value::from_bool(a == b))
+    let a = ordering_string(i, &args[0])?;
+    let b = ordering_string(i, &args[1])?;
+    Ok(Value::from_bool(gnu_sbytes(i, &a) == gnu_sbytes(i, &b)))
 }
 /// Keep the actual string object so ordering sees its byte kind and a
 /// symbol name's current contents, rather than its internment key.
@@ -837,9 +828,7 @@ fn f_string_collate_equalp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResul
     // On this build GNU takes the !__STDC_ISO_10646__ branch: a plain
     // Fstring_equal — symbols compare by name, LOCALE and IGNORE-CASE
     // are ignored entirely.
-    let a = str_or_sym_arg(i, &args[0])?;
-    let b = str_or_sym_arg(i, &args[1])?;
-    Ok(Value::from_bool(a == b))
+    f_string_equal(i, args)
 }
 fn f_string_collate_lessp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // Match GNU's NS fallback, which ignores LOCALE and IGNORE-CASE.

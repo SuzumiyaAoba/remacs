@@ -646,7 +646,7 @@ fn equal_values_1(
     }
     Ok(match (a, b) {
         (Value::Str(x), Value::Str(y)) => {
-            *x.borrow() == *y.borrow()
+            strfn::gnu_sbytes(interp, x) == strfn::gnu_sbytes(interp, y)
                 && (!with_properties || equal_string_properties(interp, x, y)?)
         }
         (Value::Marker(x), Value::Marker(y)) => {

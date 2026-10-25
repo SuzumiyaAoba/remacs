@@ -452,6 +452,7 @@ qa!(qa_special, "qa_special.el");
 qa!(qa_special_variables, "qa_special_variables.el");
 qa!(qa_special2, "qa_special2.el");
 qa!(qa_string, "qa_string.el");
+qa!(qa_string_byte_representation_equal, "qa_string_byte_representation_equal.el");
 qa!(qa_string_number, "qa_string_number.el");
 qa!(qa_split_string, "qa_split_string.el");
 qa!(qa_string_search, "qa_string_search.el");

@@ -284,7 +284,9 @@ pub enum HashKey {
     BigInt(BigInt),
     /// Bit pattern so -0.0/NaN behave deterministically.
     Float(u64),
-    Str(String),
+    /// GNU string equality/hash use the stored byte representation,
+    /// distinguishing unibyte bytes from multibyte Mule encodings.
+    Str(Vec<u8>),
     /// Identity key for objects where `eq` compares by pointer.
     Ptr(usize),
     /// `equal' markers compare buffer and position, not object identity.

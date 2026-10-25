@@ -202,7 +202,7 @@ fn equal_key(
         return Some(HashKey::Tagged(4, vec![HashKey::Ptr(identity)]));
     }
     let out = match v {
-        Value::Str(s) => HashKey::Str(s.borrow().clone()),
+        Value::Str(s) => HashKey::Str(super::strfn::gnu_sbytes(interp, s)),
         Value::Marker(m) => {
             let m = m.borrow();
             // Match equal_values, including detached markers. Insertion
