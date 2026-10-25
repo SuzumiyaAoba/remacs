@@ -342,6 +342,7 @@ qa!(qa_value_lt_lexicographic_ties, "qa_value_lt_lexicographic_ties.el");
 qa!(qa_value_lt_circular_identity, "qa_value_lt_circular_identity.el");
 qa!(qa_value_lt_depth_limit, "qa_value_lt_depth_limit.el");
 qa!(qa_value_lt_record_bool_vector, "qa_value_lt_record_bool_vector.el");
+qa!(qa_value_lt_reference_objects, "qa_value_lt_reference_objects.el");
 qa!(qa_frexp_mantissa_extremes, "qa_frexp_mantissa_extremes.el");
 qa!(qa_minibuf, "qa_minibuf.el");
 qa!(qa_minibuffer, "qa_minibuffer.el");

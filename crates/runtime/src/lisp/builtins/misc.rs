@@ -16661,6 +16661,52 @@ fn value_cmp_impl(
                 }
             }
         }
+        (Value::Marker(a), Value::Marker(b)) => {
+            fn buffer_name(
+                i: &Interp,
+                buffer: Option<usize>,
+            ) -> Option<String> {
+                let buffer = i.buffers.get(buffer?)?;
+                let buffer = buffer.borrow();
+                buffer.live.then(|| buffer.name.clone())
+            }
+            let (buffer_a, pos_a) = {
+                let marker = a.borrow();
+                (marker.buffer, marker.position)
+            };
+            let (buffer_b, pos_b) = {
+                let marker = b.borrow();
+                (marker.buffer, marker.position)
+            };
+            let name_a = buffer_name(i, buffer_a);
+            let name_b = buffer_name(i, buffer_b);
+            let by_buffer = match (&name_a, &name_b) {
+                (None, None) => Equal,
+                (None, Some(_)) => Less,
+                (Some(_), None) => Greater,
+                (Some(a), Some(b)) => a.cmp(b),
+            };
+            if by_buffer != Equal || name_a.is_none() {
+                by_buffer
+            } else {
+                pos_a.cmp(&pos_b)
+            }
+        }
+        (Value::Buffer(a), Value::Buffer(b)) => {
+            fn name(buffer: &crate::lisp::value::BufferRef) -> Option<String> {
+                let buffer = buffer.borrow();
+                buffer.live.then(|| buffer.name.clone())
+            }
+            match (name(a), name(b)) {
+                (None, None) => Equal,
+                (None, Some(_)) => Less,
+                (Some(_), None) => Greater,
+                (Some(a), Some(b)) => a.cmp(&b),
+            }
+        }
+        (Value::Process(a), Value::Process(b)) => {
+            a.borrow().name.cmp(&b.borrow().name)
+        }
         (Value::Vec(_), _) => return Err(mism(i, x, y)),
         // Remaining same-type pairs (hash tables, buffers, subrs,
         // markers...) are unorderable → nil; mismatched types → error.
