@@ -745,20 +745,21 @@ fn f_acos(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_atan(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let y = want_number(i, &args[0])?;
     match args.get(1) {
+        None | Some(Value::Nil) => Ok(Value::float(y.atan())),
         Some(x) => Ok(Value::float(y.atan2(want_number(i, x)?))),
-        None => Ok(Value::float(y.atan())),
     }
 }
 fn f_log(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let n = want_number(i, &args[0])?;
     match args.get(1) {
-        Some(b) => {
+        Some(b) if !b.is_nil() => {
             let b = want_number(i, b)?;
             // GNU's Flog calls log10() directly for base 10, so
             // (log 1000 10) yields exactly 3.0.
             Ok(Value::float(if b == 10.0 { n.log10() } else { n.log(b) }))
         }
-        None => Ok(Value::float(n.ln())),
+        None | Some(Value::Nil) => Ok(Value::float(n.ln())),
+        Some(_) => unreachable!(),
     }
 }
 
