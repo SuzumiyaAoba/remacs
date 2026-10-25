@@ -365,6 +365,7 @@ qa!(qa_lock_boot_time_overflow, "qa_lock_boot_time_overflow.el");
 qa!(qa_lock_missing_boot_timestamp, "qa_lock_missing_boot_timestamp.el");
 qa!(qa_file_locked_p_cleans_stale_locks, "qa_file_locked_p_cleans_stale_locks.el");
 qa!(qa_malformed_lock_targets, "qa_malformed_lock_targets.el");
+qa!(qa_unlock_file_foreign_lock, "qa_unlock_file_foreign_lock.el");
 qa!(qa_aset_multibyte_character_bounds, "qa_aset_multibyte_character_bounds.el");
 qa!(qa_bytecode_numeric_predicates_bignum, "qa_bytecode_numeric_predicates_bignum.el");
 qa!(qa_bytecode_marker_arithmetic, "qa_bytecode_marker_arithmetic.el");

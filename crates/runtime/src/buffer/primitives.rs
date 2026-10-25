@@ -1833,14 +1833,8 @@ fn f_unlock_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             Ok(LockOwner::Ours) | Err(LockOwnerError::Stale) => {
                 let _ = std::fs::remove_file(&lname);
             }
-            Err(LockOwnerError::Malformed) => {}
-            Ok(LockOwner::Foreign { info, .. }) => {
-                return Err(signal_file_locked(
-                    i,
-                    Value::string(file),
-                    Value::string(info),
-                ));
-            }
+            // GNU unlock-file silently leaves live foreign locks alone.
+            Ok(LockOwner::Foreign { .. }) | Err(LockOwnerError::Malformed) => {}
         }
     }
     Ok(Value::Nil)
