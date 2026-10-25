@@ -464,6 +464,9 @@ fn f_aref(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             if super::misc::as_sympos(&args[0]).is_some() {
                 return Err(i.wrong_type_mut("arrayp", &args[0]));
             }
+            if super::misc::is_opaque_record(i, &args[0]) {
+                return Err(i.wrong_type_mut("arrayp", &args[0]));
+            }
             if !super::misc::is_bool_vector(i, &args[0]) && !super::misc::is_char_table(i, &args[0])
             {
                 let n = want_fixnum(i, &args[1])?;
@@ -609,6 +612,9 @@ fn f_aset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Record(r) => {
             // `symbols-with-pos-enabled' objects are not arrays.
             if super::misc::as_sympos(&args[0]).is_some() {
+                return Err(i.wrong_type_mut("arrayp", &args[0]));
+            }
+            if super::misc::is_opaque_record(i, &args[0]) {
                 return Err(i.wrong_type_mut("arrayp", &args[0]));
             }
             // Ordinary records: GNU allows writing any slot (even the

@@ -16343,20 +16343,27 @@ pub(crate) fn recordp(i: &Interp, value: &Value) -> bool {
     // A font-spec is stored as a record internally but is a
     // pseudovector (PVEC_FONT), not a record, in GNU — `recordp' is
     // nil on it (type-of reports `font-spec').
-    let font_spec = match value {
-        Value::Record(r) => i.special_records.iter().any(|(weak, kind)| {
-            *kind == crate::lisp::eval::SpecialRecordKind::FontSpec
-                && weak.upgrade().is_some_and(|known| std::rc::Rc::ptr_eq(&known, r))
-        }),
-        _ => false,
-    };
     matches!(value, Value::Record(_))
             && !crate::editor::window_configuration_object(value)
-            && !font_spec
+            && !is_opaque_record(i, value)
             && as_sympos(value).is_none()
             && !crate::lisp::builtins::data::is_obarray(i, value)
             && !is_bool_vector(i, value)
             && !is_char_table(i, value)
+}
+
+/// True for record-backed pseudovectors whose slots are not Lisp-visible.
+pub(crate) fn is_opaque_record(i: &Interp, value: &Value) -> bool {
+    match value {
+        Value::Record(r) => {
+            crate::lisp::builtins::data::is_obarray(i, value)
+                || i.special_records.iter().any(|(weak, _)| {
+                    weak.upgrade()
+                        .is_some_and(|known| std::rc::Rc::ptr_eq(&known, r))
+                })
+        }
+        _ => false,
+    }
 }
 
 // ---------- added GNU compat subrs ----------
@@ -16403,6 +16410,9 @@ fn seq_len(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
         // cover the whole internal char space (MAX_CHAR + 1).
         Value::Record(_) if is_bool_vector(i, v) => bool_vec_of(i, v)?.len() as i128,
         Value::Record(_) if is_char_table(i, v) => CT_MAX_CHAR as i128 + 1,
+        Value::Record(_) if is_opaque_record(i, v) => {
+            return Err(i.wrong_type_mut("sequencep", v));
+        }
         Value::Record(x) => x.borrow().len() as i128,
         Value::Lambda(l) => lambda_slot_values(l).len() as i128,
         // Hash tables aren't sequences (GNU signals sequencep).

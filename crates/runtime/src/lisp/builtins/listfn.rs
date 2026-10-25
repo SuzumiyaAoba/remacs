@@ -382,6 +382,9 @@ fn f_length(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Record(_) if crate::lisp::builtins::misc::is_char_table(i, &args[0]) => Ok(
             Value::Int(crate::lisp::builtins::misc::CT_MAX_CHAR as i128 + 1),
         ),
+        Value::Record(_) if crate::lisp::builtins::misc::is_opaque_record(i, &args[0]) => {
+            Err(i.wrong_type_mut("sequencep", &args[0]))
+        }
         // Records (incl. EIEIO instances) report their slot count.
         Value::Record(r) => Ok(Value::Int(r.borrow().len() as i128)),
         // Function objects (closures and `#[...]' byte-code literals)
