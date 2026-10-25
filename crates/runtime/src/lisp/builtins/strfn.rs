@@ -1663,6 +1663,28 @@ fn f_string_replace(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // concat copies TO-STRING's text properties into each replacement.
     let schars: Vec<char> = s.chars().collect();
     let fchars: Vec<char> = from.chars().collect();
+    let from_unibyte = !string_multibyte_p(i, &args[0]);
+    let source_unibyte = !string_multibyte_p(i, &args[2]);
+    let mixed_byte_kinds = from_unibyte != source_unibyte;
+    let search_codes = |chars: &[char], unibyte: bool| -> Vec<i128> {
+        chars
+            .iter()
+            .map(|&ch| {
+                if unibyte {
+                    let byte = eight_bit_byte(ch).map(i128::from).unwrap_or(ch as i128);
+                    if mixed_byte_kinds && byte >= 128 {
+                        0x3fff00 + byte
+                    } else {
+                        byte
+                    }
+                } else {
+                    lisp_char_code(ch)
+                }
+            })
+            .collect()
+    };
+    let source_codes = search_codes(&schars, source_unibyte);
+    let from_codes = search_codes(&fchars, from_unibyte);
     let flen = fchars.len();
     let mut out = String::new();
     // Kept source runs as (src_beg, src_end, dst_beg), all char indices.
@@ -1681,7 +1703,7 @@ fn f_string_replace(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Ok(out)
     };
     while pos + flen <= schars.len() {
-        if schars[pos..pos + flen] == fchars[..] {
+        if source_codes[pos..pos + flen] == from_codes[..] {
             if to.is_none() {
                 to = Some(to_of(i, &args[1])?);
             }
