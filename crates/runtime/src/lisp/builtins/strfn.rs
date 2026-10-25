@@ -5778,6 +5778,22 @@ fn f_subst_char_in_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult
                 } else if multibyte {
                     i.mark_multibyte(&result);
                 }
+                // GNU's copy-sequence/string-replace paths retain source
+                // properties on every character that survives substitution.
+                if i.has_str_props(source) {
+                    let properties = i
+                        .str_props(source)
+                        .iter()
+                        .map(|(start, end, plist)| {
+                            (
+                                *start,
+                                *end,
+                                crate::buffer::primitives::plist_pairs_rev(plist),
+                            )
+                        })
+                        .collect();
+                    i.set_str_props(&result, properties);
+                }
             }
             Ok(Value::Str(result))
         }

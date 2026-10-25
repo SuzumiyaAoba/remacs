@@ -378,6 +378,7 @@ qa!(qa_record_slot_limit, "qa_record_slot_limit.el");
 qa!(qa_random_unibyte_seed_bytes, "qa_random_unibyte_seed_bytes.el");
 qa!(qa_random_zero_seed_darwin, "qa_random_zero_seed_darwin.el");
 qa!(qa_value_lt_circular_identity, "qa_value_lt_circular_identity.el");
+qa!(qa_subst_char_properties, "qa_subst_char_properties.el");
 qa!(qa_value_lt_depth_limit, "qa_value_lt_depth_limit.el");
 qa!(qa_value_lt_record_bool_vector, "qa_value_lt_record_bool_vector.el");
 qa!(qa_value_lt_reference_objects, "qa_value_lt_reference_objects.el");
