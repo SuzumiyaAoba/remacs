@@ -1453,14 +1453,15 @@ fn f_string_pad(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let pad_start = args.get(3).map(|v| v.truthy()).unwrap_or(false);
     let cur = s.chars().count();
     if cur >= len {
-        return Ok(Value::string(s));
+        return Ok(args[0].clone());
     }
     let pad: String = std::iter::repeat(pad_char).take(len - cur).collect();
-    Ok(Value::string(if pad_start {
-        format!("{}{}", pad, s)
+    let padding = Value::string(pad);
+    if pad_start {
+        f_concat(i, vec![padding, args[0].clone()].into())
     } else {
-        format!("{}{}", s, pad)
-    }))
+        f_concat(i, vec![args[0].clone(), padding].into())
+    }
 }
 
 /// `string-reverse' — GNU fns.c subr: character-reverse the string.
