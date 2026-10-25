@@ -1615,9 +1615,8 @@ fn f_string_replace(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         let sym = i.q("wrong-length-argument");
         return Err(i.signal_data(sym, vec![Value::Int(0)]));
     }
-    // GNU's string-replace keeps the text properties of the
-    // non-replaced runs (verbatim, like copy-sequence); the
-    // replacement text itself gets no properties.
+    // GNU's string-replace keeps source runs verbatim, and its final
+    // concat copies TO-STRING's text properties into each replacement.
     let schars: Vec<char> = s.chars().collect();
     let fchars: Vec<char> = from.chars().collect();
     let flen = fchars.len();
@@ -1631,6 +1630,7 @@ fn f_string_replace(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // characters joined, anything else wrong-type-argument sequencep
     // (elements that aren't characters → integerp).
     let mut to: Option<String> = None;
+    let mut replacement_props: Vec<(usize, usize, Vec<Value>)> = Vec::new();
     let to_of = |i: &mut Interp, v: &Value| -> Result<String, Flow> {
         let mut out = String::new();
         concat_seq(i, v, &mut out)?;
@@ -1640,6 +1640,18 @@ fn f_string_replace(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         if schars[pos..pos + flen] == fchars[..] {
             if to.is_none() {
                 to = Some(to_of(i, &args[1])?);
+            }
+            let dst = out.chars().count();
+            if let Value::Str(replacement) = &args[1]
+                && i.has_str_props(replacement)
+            {
+                for (start, end, plist) in i.str_props(replacement) {
+                    replacement_props.push((
+                        dst + start,
+                        dst + end,
+                        crate::buffer::primitives::plist_pairs_rev(plist),
+                    ));
+                }
             }
             out.push_str(to.as_deref().unwrap());
             changed = true;
@@ -1676,9 +1688,9 @@ fn f_string_replace(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         return Ok(args[2].clone());
     }
     let ns = crate::lisp::Value::string_ref(out);
+    let mut ivs = replacement_props;
     if let Value::Str(src) = &args[2] {
         if i.has_str_props(src) {
-            let mut ivs: Vec<(usize, usize, Vec<Value>)> = Vec::new();
             for (a, b, pl) in i.str_props(src) {
                 for &(s0, s1, d0) in &runs {
                     let lo = (*a).max(s0);
@@ -1688,8 +1700,10 @@ fn f_string_replace(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                     }
                 }
             }
-            i.set_str_props(&ns, ivs);
         }
+    }
+    if !ivs.is_empty() {
+        i.set_str_props(&ns, ivs);
     }
     Ok(Value::Str(ns))
 }
