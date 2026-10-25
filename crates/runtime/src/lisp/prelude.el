@@ -25563,10 +25563,8 @@ Point is moved to just past the fill prefix on the first line."
 			   (aref (char-category-set prev) ?|)))
 		     (or (aref fill-nospace-between-words-table next)
 		   (aref fill-nospace-between-words-table prev)
-		   (memq (get-char-code-property next 'script)
-			 '(han kana bopomofo cjk-misc))
-		   (memq (get-char-code-property prev 'script)
-			 '(han kana bopomofo cjk-misc))))
+		   (remacs--fill-no-space-between-p next)
+		   (remacs--fill-no-space-between-p prev)))
 		(delete-char -1))))))
 
   (goto-char from)
@@ -25580,6 +25578,15 @@ Point is moved to just past the fill prefix on the first line."
     ;; Maybe canonically-space-region should do that.
     (goto-char to) (delete-char (- (skip-chars-backward " \t"))))
   (goto-char from))
+
+(defun remacs--fill-no-space-between-p (char)
+  ;Remacs: use Unicode script ranges when the generated script table is absent.
+  (or (and (>= char #x3000) (<= char #x30ff))
+      (and (>= char #x3100) (<= char #x312f))
+      (and (>= char #x3400) (<= char #x9fff))
+      (and (>= char #xf900) (<= char #xfaff))
+      (and (>= char #xff01) (<= char #xffef))
+      (and (>= char #x20000) (<= char #x323af)))
 
 (defun fill-move-to-break-point (linebeg)
   "Move to the position where the line should be broken.
