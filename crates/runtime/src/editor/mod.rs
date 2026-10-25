@@ -7157,114 +7157,145 @@ pub(crate) fn is_autoload_keymap(i: &Interp, v: &Value) -> bool {
         false
     }
 }
-/// Deep-copy a keymap spine cell: cons structure is copied
-/// recursively so nested keymaps and binding cells are fresh.
-/// Char-table and vector elements are copied too (GNU copies the
-/// char-table's contents); other leaf types share their value.
-fn copy_keymap_elem(i: &mut Interp, v: &Value, depth: usize) -> Value {
+fn copy_keymap_menu_wrapper(i: &mut Interp, value: &Value, def_index: usize) -> Value {
+    let mut tail = value.clone();
+    let mut head: Option<Value> = None;
+    let mut last: Option<crate::lisp::value::ConsRef> = None;
+    let mut seen = std::collections::HashMap::<usize, Value>::new();
+    let mut index = 0usize;
+    loop {
+        let Value::Cons(cell) = &tail else {
+            if let Some(last) = &last {
+                last.borrow_mut().cdr = tail;
+            }
+            break;
+        };
+        let ptr = std::rc::Rc::as_ptr(cell) as usize;
+        if let Some(previous) = seen.get(&ptr) {
+            if let Some(last) = &last {
+                last.borrow_mut().cdr = previous.clone();
+            }
+            break;
+        }
+        let (car, cdr) = {
+            let b = cell.borrow();
+            (b.car.clone(), b.cdr.clone())
+        };
+        let car = if index == def_index {
+            copy_keymap_definition(i, &car, 0)
+        } else {
+            car
+        };
+        let next = Value::cons(car, Value::Nil);
+        seen.insert(ptr, next.clone());
+        if let Some(last) = &last {
+            last.borrow_mut().cdr = next.clone();
+        } else {
+            head = Some(next.clone());
+        }
+        let Value::Cons(next_cell) = next else { unreachable!() };
+        last = Some(next_cell);
+        tail = cdr;
+        index += 1;
+    }
+    head.unwrap_or(Value::Nil)
+}
+
+fn copy_keymap_definition(i: &mut Interp, value: &Value, depth: usize) -> Value {
     if depth > 200 {
-        return v.clone();
+        return value.clone();
     }
-    match v {
-        Value::Cons(_) => {
-            // Copy cdr spines iteratively: full maps can have many
-            // hundreds of bindings, so recursive descent silently shared
-            // their tail at the former depth limit.
-            let mut tail = v.clone();
-            let mut head: Option<Value> = None;
-            let mut last: Option<crate::lisp::value::ConsRef> = None;
-            let mut copied: std::collections::HashMap<usize, Value> =
-                std::collections::HashMap::new();
-            loop {
-                let Value::Cons(cell) = &tail else {
-                    if let Some(last) = &last {
-                        last.borrow_mut().cdr = copy_keymap_elem(i, &tail, depth + 1);
-                    }
-                    break;
-                };
-                let ptr = std::rc::Rc::as_ptr(cell) as usize;
-                if let Some(previous) = copied.get(&ptr) {
-                    if let Some(last) = &last {
-                        last.borrow_mut().cdr = previous.clone();
-                    }
-                    break;
-                }
-                let (car, cdr) = {
-                    let b = cell.borrow();
-                    (b.car.clone(), b.cdr.clone())
-                };
-                let next = Value::cons(copy_keymap_elem(i, &car, depth + 1), Value::Nil);
-                copied.insert(ptr, next.clone());
-                if let Some(last) = &last {
-                    last.borrow_mut().cdr = next.clone();
-                } else {
-                    head = Some(next.clone());
-                }
-                let Value::Cons(next_cell) = next else {
-                    unreachable!()
-                };
-                last = Some(next_cell);
-                tail = cdr;
-            }
-            head.unwrap_or(Value::Nil)
-        }
-        Value::Record(r) if crate::lisp::builtins::misc::is_char_table(i, v) => {
-            let copy = crate::lisp::builtins::misc::ct_copy(i, v);
-            let source = match r.borrow().get(2) {
-                Some(Value::Vec(contents)) => Some(contents.clone()),
-                _ => None,
-            };
-            let target = crate::lisp::builtins::misc::char_table_vec(&copy);
-            if let (Some(source), Some(target)) = (source, target) {
-                let slots = source.borrow().clone();
-                for (idx, slot) in slots.iter().enumerate().skip(1) {
-                    target.borrow_mut()[idx] = copy_keymap_elem(i, slot, depth + 1);
-                }
-                crate::lisp::builtins::misc::ct_refresh_ascii(i, &target);
-            }
-            copy
-        }
-        Value::Record(r)
-            if i.q_soft("sub-char-table")
-                .map(|tag| crate::lisp::builtins::misc::is_sub_ct_tag(tag, v))
-                .unwrap_or(false) =>
-        {
-            // GNU copies a char-table's whole trie; the leaf
-            // `sub-char-table' records must detach too or an `aset' on
-            // the copy leaks into the original (calc-ext.el's
-            // `copy-keymap esc-map' then `aset' clobbered esc-map).
-            let items: Vec<Value> = r
-                .borrow()
-                .iter()
-                .map(|e| copy_keymap_elem(i, e, depth + 1))
-                .collect();
-            Value::record(items)
-        }
-        Value::Vec(vv) => {
-            let items: Vec<Value> = vv
-                .borrow()
-                .iter()
-                .map(|e| copy_keymap_elem(i, e, depth + 1))
-                .collect();
-            Value::vector(items)
-        }
-        _ => v.clone(),
+    if is_keymap(i, value) {
+        return copy_keymap_map(i, value, depth + 1);
     }
+    if let Value::Cons(cell) = value {
+        let car = cell.borrow().car.clone();
+        if matches!(car, Value::Str(_)) {
+            // Menu label wrapper: copy its cell, share the command unless
+            // the definition itself is a sub-keymap.
+            return copy_keymap_menu_wrapper(i, value, 1);
+        }
+        if matches!(&car, Value::Sym(s) if i.symbol_name(*s) == "menu-item") {
+            return copy_keymap_menu_wrapper(i, value, 2);
+        }
+    }
+    // Ordinary command definitions, including conses and vectors, are
+    // shared by GNU copy-keymap.
+    value.clone()
+}
+
+fn copy_keymap_binding(i: &mut Interp, value: &Value, depth: usize) -> Value {
+    let Value::Cons(cell) = value else {
+        return value.clone();
+    };
+    let (key, definition) = {
+        let cell = cell.borrow();
+        (cell.car.clone(), cell.cdr.clone())
+    };
+    Value::cons(key, copy_keymap_definition(i, &definition, depth + 1))
+}
+
+fn copy_keymap_table_value(i: &mut Interp, value: &Value, depth: usize) -> Value {
+    if depth > 200 {
+        return value.clone();
+    }
+    let sub_tag = i.q_soft("sub-char-table");
+    if matches!(value, Value::Record(_))
+        && sub_tag.is_some_and(|tag| crate::lisp::builtins::misc::is_sub_ct_tag(tag, value))
+    {
+        let Value::Record(record) = value else { unreachable!() };
+        let mut items = record.borrow().clone();
+        for slot in items.iter_mut().skip(3) {
+            *slot = copy_keymap_table_value(i, slot, depth + 1);
+        }
+        return Value::record(items);
+    }
+    copy_keymap_definition(i, value, depth + 1)
+}
+
+fn copy_keymap_char_table(i: &mut Interp, value: &Value, depth: usize) -> Value {
+    let copy = crate::lisp::builtins::misc::ct_copy(i, value);
+    if let Some(contents) = crate::lisp::builtins::misc::char_table_vec(&copy) {
+        let len = contents.borrow().len();
+        for idx in 1..len {
+            let slot = contents.borrow()[idx].clone();
+            contents.borrow_mut()[idx] = copy_keymap_table_value(i, &slot, depth + 1);
+        }
+        crate::lisp::builtins::misc::ct_refresh_ascii(i, &contents);
+    }
+    copy
+}
+
+fn copy_keymap_element(i: &mut Interp, value: &Value, depth: usize) -> Value {
+    if depth > 200 {
+        return value.clone();
+    }
+    if crate::lisp::builtins::misc::is_char_table(i, value) {
+        return copy_keymap_char_table(i, value, depth + 1);
+    }
+    if is_keymap(i, value) {
+        return copy_keymap_map(i, value, depth + 1);
+    }
+    copy_keymap_binding(i, value, depth + 1)
+}
+
+fn copy_keymap_map(i: &mut Interp, keymap: &Value, depth: usize) -> Value {
+    if depth > 200 {
+        return keymap.clone();
+    }
+    let (elements, parent) = keymap_parts(i, keymap);
+    let mut tail = parent;
+    for element in elements.into_iter().rev() {
+        tail = Value::cons(copy_keymap_element(i, &element, depth + 1), tail);
+    }
+    Value::cons(Value::Sym(i.q("keymap")), tail)
 }
 
 fn f_copy_keymap(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU copies the whole cdr spine, including the parent tail.
     if !is_keymap(i, &a[0]) {
         return Err(i.wrong_type_mut("keymapp", &a[0]));
     }
-    let bindings = match &a[0] {
-        Value::Cons(c) => c.borrow().cdr.clone(),
-        _ => Value::Nil,
-    };
-    Ok(Value::cons(
-        Value::Sym(i.q("keymap")),
-        copy_keymap_elem(i, &bindings, 0),
-    ))
+    Ok(copy_keymap_map(i, &a[0], 0))
 }
 
 /// The binding spine of KM: everything after the `keymap' head when
