@@ -16602,6 +16602,65 @@ fn value_cmp_impl(
             }
             order
         }
+        (Value::Record(p), Value::Record(q)) => {
+            let left_bool = super::misc::is_bool_vector(i, x);
+            let right_bool = super::misc::is_bool_vector(i, y);
+            if left_bool || right_bool {
+                if !(left_bool && right_bool) {
+                    return Err(mism(i, x, y));
+                }
+                let left = super::misc::bool_vec_of(i, x)?;
+                let right = super::misc::bool_vec_of(i, y)?;
+                let mut order = Equal;
+                for (a, b) in left.iter().zip(right.iter()) {
+                    if a != b {
+                        order = if *a { Greater } else { Less };
+                        break;
+                    }
+                }
+                if order == Equal {
+                    order = left.len().cmp(&right.len());
+                }
+                order
+            } else {
+                let left_record = super::misc::recordp(i, x);
+                let right_record = super::misc::recordp(i, y);
+                if left_record != right_record {
+                    return Err(mism(i, x, y));
+                }
+                if left_record {
+                    let xs = p.borrow().clone();
+                    let ys = q.borrow().clone();
+                    let mut order = Equal;
+                    for k in 0..xs.len().max(ys.len()) {
+                        match (xs.get(k), ys.get(k)) {
+                            (None, Some(_)) => {
+                                order = Less;
+                                break;
+                            }
+                            (Some(_), None) => {
+                                order = Greater;
+                                break;
+                            }
+                            (Some(a), Some(b)) => {
+                                order = value_cmp_impl(i, a, b, depth + 1)?;
+                                if order != Equal {
+                                    break;
+                                }
+                            }
+                            (None, None) => break,
+                        }
+                    }
+                    order
+                } else {
+                    let same_tag = match (p.borrow().first(), q.borrow().first()) {
+                        (Some(a), Some(b)) => crate::lisp::builtins::eq_values(a, b),
+                        _ => false,
+                    };
+                    if same_tag { Equal } else { return Err(mism(i, x, y)); }
+                }
+            }
+        }
         (Value::Vec(_), _) => return Err(mism(i, x, y)),
         // Remaining same-type pairs (hash tables, buffers, subrs,
         // markers...) are unorderable → nil; mismatched types → error.
