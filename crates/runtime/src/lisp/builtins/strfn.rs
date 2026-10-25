@@ -509,7 +509,7 @@ pub(crate) fn concat_seq(i: &mut Interp, v: &Value, out: &mut String) -> Result<
             let items = super::want_list(i, v)?;
             for item in items {
                 match item {
-                    Value::Int(n) => match lisp_char(n as u32) {
+                    Value::Int(n) => match concat_char(*n) {
                         Some(c) => out.push(c),
                         None => return Err(i.wrong_type_mut("characterp", &item)),
                     },
@@ -521,7 +521,7 @@ pub(crate) fn concat_seq(i: &mut Interp, v: &Value, out: &mut String) -> Result<
         Value::Vec(vec) => {
             for item in vec.borrow().iter() {
                 match item {
-                    Value::Int(n) => match lisp_char(*n as u32) {
+                    Value::Int(n) => match concat_char(*n) {
                         Some(c) => out.push(c),
                         None => return Err(i.wrong_type_mut("characterp", item)),
                     },
@@ -540,6 +540,14 @@ pub(crate) fn concat_seq(i: &mut Interp, v: &Value, out: &mut String) -> Result<
         }
         _ => Err(i.wrong_type_mut("sequencep", v)),
     }
+}
+
+fn concat_char(code: i128) -> Option<char> {
+    let code = u32::try_from(code).ok()?;
+    if code > 0x3f_ffff {
+        return None;
+    }
+    Some(lisp_char(code).unwrap_or_else(|| crate::lisp::value::mule_seq_char(code)))
 }
 
 /// GNU storage rule fallback for *unmarked* strings: multibyte iff
