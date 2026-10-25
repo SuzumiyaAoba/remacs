@@ -1567,9 +1567,10 @@ fn lock_owner(target: &str) -> Result<LockOwner, ()> {
     if same_host {
         // GNU current_lock_owner: the lock is stale when its recorded
         // boot time differs from the system's (the lock was left by a
-        // process from a previous boot), or when the pid is dead.
+        // process from a previous boot), or when the pid is dead. A
+        // missing/zero timestamp in the lock is unknown, so don't compare it.
         let bt = crate::buffer::boot_time();
-        if bt != 0 && !lock_boot_times_match(boot, bt) {
+        if boot != 0 && !lock_boot_times_match(boot, bt) {
             return Err(());
         }
         #[cfg(unix)]

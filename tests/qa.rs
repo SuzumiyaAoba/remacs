@@ -362,6 +362,7 @@ qa!(qa_empty_symbol_printing, "qa_empty_symbol_printing.el");
 qa!(qa_eventp_gnu_symbol_semantics, "qa_eventp_gnu_symbol_semantics.el");
 qa!(qa_lock_boot_time_suffix, "qa_lock_boot_time_suffix.el");
 qa!(qa_lock_boot_time_overflow, "qa_lock_boot_time_overflow.el");
+qa!(qa_lock_missing_boot_timestamp, "qa_lock_missing_boot_timestamp.el");
 qa!(qa_aset_multibyte_character_bounds, "qa_aset_multibyte_character_bounds.el");
 qa!(qa_bytecode_numeric_predicates_bignum, "qa_bytecode_numeric_predicates_bignum.el");
 qa!(qa_bytecode_marker_arithmetic, "qa_bytecode_marker_arithmetic.el");
