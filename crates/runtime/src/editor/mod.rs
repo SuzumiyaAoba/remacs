@@ -1549,7 +1549,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("file-local-name", 1, 1, f_file_local_name, ""),
     S!("file-name-quote", 1, 2, f_file_name_quote, ""),
     S!("file-name-unquote", 1, 2, f_file_name_unquote, ""),
-    S!("file-accessible-directory-p", 1, 1, f_file_directory_p, ""),
+    S!("file-accessible-directory-p", 1, 1, f_file_accessible_directory_p, ""),
     S!("default-file-modes", 0, 0, f_default_file_modes, ""),
     S!("set-default-file-modes", 1, 1, f_set_default_file_modes, ""),
     S!("file-modes-symbolic-to-number", 1, 2, f_modes_sym2num, ""),
@@ -11398,9 +11398,21 @@ fn f_file_exists_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(std::path::Path::new(&p).exists()))
 }
 fn f_file_directory_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    f_file_directory_p_operation(i, a, "file-directory-p")
+}
+
+fn f_file_accessible_directory_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    f_file_directory_p_operation(i, a, "file-accessible-directory-p")
+}
+
+fn f_file_directory_p_operation(
+    i: &mut Interp,
+    a: crate::lisp::Argv,
+    operation: &str,
+) -> EvalResult {
     let filename = expand_and_dir_to_file(i, &a[0])?;
     let p = want_str(i, &filename)?;
-    if let Some((handler, op)) = file_handler(i, "file-directory-p", &[&p]) {
+    if let Some((handler, op)) = file_handler(i, operation, &[&p]) {
         return i.apply(&handler, vec![op, filename]);
     }
     Ok(Value::from_bool(std::path::Path::new(&p).is_dir()))
