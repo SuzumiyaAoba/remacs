@@ -1,0 +1,17 @@
+;;; -*- lexical-binding: nil; -*-
+;; plist-put uses unbounded pair traversal and preserves cycle error data (#508).
+(qa (let ((plist (list 'a 1 'b 2)))
+      (setcdr (last plist) plist)
+      (condition-case err (plist-put plist 'missing 42)
+        (circular-list (list (eq (cadr err) plist) (car-safe (cadr err))))))
+    '(t a))
+(qa (let ((plist (list 'a 1 'b 2)) (calls 0))
+      (plist-put plist 'b 3 (lambda (key prop)
+                              (setq calls (1+ calls))
+                              (eq key prop)))
+      (list (cadr plist) (cadddr plist) calls))
+    '(1 3 2))
+(qa (let ((plist (make-list 1000002 nil)))
+      (eq (plist-put plist 'missing 42) plist))
+    t)
+(princ (qa--done))

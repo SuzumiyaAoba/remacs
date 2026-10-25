@@ -1612,12 +1612,8 @@ fn plist_put(i: &mut Interp, args: crate::lisp::Argv, lax: bool) -> EvalResult {
     let whole = args[0].clone();
     let mut cur = args[0].clone();
     let mut last_pair_cell: Option<Value> = None;
-    let mut guard = 0usize;
+    let mut cycle = PlistCycleDetector::new(&cur);
     loop {
-        guard += 1;
-        if guard > 500_000 {
-            return Err(err_circular(i));
-        }
         match &cur {
             Value::Nil => {
                 // Append (prop val) after the last pair's value cell.
@@ -1659,6 +1655,9 @@ fn plist_put(i: &mut Interp, args: crate::lisp::Argv, lax: bool) -> EvalResult {
                     Value::Cons(c2) => {
                         last_pair_cell = Some(cur.clone());
                         cur = c2.borrow().cdr.clone();
+                        if matches!(cur, Value::Cons(_)) && cycle.advance(&cur) {
+                            return Err(i.signal_data(sym::CIRCULAR_LIST, vec![whole.clone()]));
+                        }
                     }
                     _ => return Err(i.wrong_type_mut("plistp", &whole)),
                 }

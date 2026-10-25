@@ -400,6 +400,7 @@ qa!(qa_plist_get_circular, "qa_plist_get_circular.el");
 qa!(qa_plist_get_predicate_odd_tail, "qa_plist_get_predicate_odd_tail.el");
 qa!(qa_plist_member_cycle_data, "qa_plist_member_cycle_data.el");
 qa!(qa_plist_predicate_mutation, "qa_plist_predicate_mutation.el");
+qa!(qa_plist_put_cycle, "qa_plist_put_cycle.el");
 qa!(qa_point, "qa_point.el");
 qa!(qa_pp, "qa_pp.el");
 qa!(qa_printvars, "qa_printvars.el");
