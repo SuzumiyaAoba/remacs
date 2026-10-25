@@ -360,6 +360,7 @@ qa!(qa_symbol_with_pos_printing, "qa_symbol_with_pos_printing.el");
 qa!(qa_princ_print_gensym, "qa_princ_print_gensym.el");
 qa!(qa_empty_symbol_printing, "qa_empty_symbol_printing.el");
 qa!(qa_eventp_gnu_symbol_semantics, "qa_eventp_gnu_symbol_semantics.el");
+qa!(qa_lock_boot_time_suffix, "qa_lock_boot_time_suffix.el");
 qa!(qa_aset_multibyte_character_bounds, "qa_aset_multibyte_character_bounds.el");
 qa!(qa_bytecode_numeric_predicates_bignum, "qa_bytecode_numeric_predicates_bignum.el");
 qa!(qa_bytecode_marker_arithmetic, "qa_bytecode_marker_arithmetic.el");

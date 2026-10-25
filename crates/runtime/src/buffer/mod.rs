@@ -226,6 +226,27 @@ pub(crate) fn our_host_name() -> String {
 pub(crate) fn boot_time() -> i64 {
     #[cfg(target_os = "macos")]
     unsafe {
+        // GNU's gnulib get_boot_time checks utmpx first.  The system may
+        // deny kern.boottime sysctl access while still exposing its BOOT_TIME
+        // accounting record (common in restricted macOS environments).
+        static UTMPX_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        if let Ok(_guard) = UTMPX_LOCK.lock() {
+            let mut boot = 0i64;
+            libc::setutxent();
+            loop {
+                let entry = libc::getutxent();
+                if entry.is_null() {
+                    break;
+                }
+                if (*entry).ut_type == libc::BOOT_TIME {
+                    boot = (*entry).ut_tv.tv_sec as i64;
+                }
+            }
+            libc::endutxent();
+            if boot != 0 {
+                return boot;
+            }
+        }
         let name = std::ffi::CString::new("kern.boottime").unwrap();
         let mut tv: libc::timeval = std::mem::zeroed();
         let mut len = std::mem::size_of::<libc::timeval>();
