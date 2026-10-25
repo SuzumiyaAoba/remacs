@@ -468,6 +468,7 @@ impl Runtime {
                     .collect::<Result<_>>()
             })
             .transpose()?;
+        i.byte_op_subrs_by_name = None;
         i.terminal_params = self
             .get::<Vec<(Ref, Ref)>>("terminal_params")?
             .into_iter()

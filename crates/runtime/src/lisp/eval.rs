@@ -653,6 +653,10 @@ pub struct Interp {
     /// .elc bodies) calls these via the same direct dispatch when
     /// `dumped_call_depth' is nonzero.
     pub byte_op_subrs: Option<HashMap<SymId, &'static crate::lisp::value::Subr>>,
+    /// Name-keyed mirror for dedicated byte-code opcodes.  These calls
+    /// are tied to the canonical primitive even if Lisp uninterns its
+    /// public symbol and a later `intern' creates a new symbol ID.
+    pub byte_op_subrs_by_name: Option<HashMap<&'static str, &'static crate::lisp::value::Subr>>,
     /// `set-char-table-parent' registry: record identity → parent table.
     /// Char-table parents live outside the record so existing record
     /// layouts are untouched.  The Weak guards against a dead record's
@@ -915,6 +919,105 @@ fn boot_lib(i: &mut Interp, name: &str) {
     let _ = r;
 }
 
+fn is_byte_op_primitive(name: &str) -> bool {
+    matches!(
+        name,
+        "car" | "cdr"
+            | "cons"
+            | "list"
+            | "nth"
+            | "nthcdr"
+            | "memq"
+            | "member"
+            | "assq"
+            | "elt"
+            | "length"
+            | "aref"
+            | "aset"
+            | "nreverse"
+            | "setcar"
+            | "setcdr"
+            | "nconc"
+            | "concat"
+            | "substring"
+            | "get"
+            | "set"
+            | "fset"
+            | "symbolp"
+            | "consp"
+            | "stringp"
+            | "listp"
+            | "not"
+            | "null"
+            | "eq"
+            | "equal"
+            | "symbol-value"
+            | "symbol-function"
+            | "symbol-name"
+            | "eqlsign"
+            | "gtr"
+            | "lss"
+            | "leq"
+            | "geq"
+            | "+"
+            | "-"
+            | "*"
+            | "/"
+            | "%"
+            | "max"
+            | "min"
+            | "="
+            | "<"
+            | ">"
+            | "<="
+            | ">="
+            | "1+"
+            | "1-"
+            | "point"
+            | "point-max"
+            | "point-min"
+            | "goto-char"
+            | "insert"
+            | "char-after"
+            | "char-before"
+            | "following-char"
+            | "preceding-char"
+            | "current-column"
+            | "indent-to"
+            | "eolp"
+            | "eobp"
+            | "bolp"
+            | "bobp"
+            | "current-buffer"
+            | "set-buffer"
+            | "forward-char"
+            | "forward-word"
+            | "skip-chars-forward"
+            | "skip-chars-backward"
+            | "forward-line"
+            | "char-syntax"
+            | "buffer-substring"
+            | "delete-region"
+            | "narrow-to-region"
+            | "widen"
+            | "end-of-line"
+            | "set-marker"
+            | "match-beginning"
+            | "match-end"
+            | "upcase"
+            | "downcase"
+            | "string="
+            | "string<"
+            | "string-equal"
+            | "string-lessp"
+            | "numberp"
+            | "integerp"
+            | "car-safe"
+            | "cdr-safe"
+            | "interactive-p"
+    )
+}
+
 impl Interp {
     /// Storage used while the live runtime is owned by another coroutine.
     /// It is never evaluated; all live state travels through owned boxes.
@@ -1094,6 +1197,7 @@ impl Interp {
             advice_bases: Vec::new(),
             advice_links: Vec::new(),
             byte_op_subrs: None,
+            byte_op_subrs_by_name: None,
             char_table_parents: Vec::new(),
             char_table_defalts: Vec::new(),
             frame_state_seen: None,
@@ -7634,8 +7738,9 @@ command-line arguments.\" \
         if let Some(status) = self.exit_status {
             return Err(Flow::Exit(status));
         }
-        let symbol = self.intern(name);
-        let subr = self.byte_op_subr(symbol).expect("registered byte-code primitive");
+        let subr = self
+            .byte_op_subr_named(name)
+            .ok_or_else(|| self.error(format!("Invalid byte-code primitive: {name}")))?;
         let result = (subr.func)(self, argv.into());
         self.offer_flow(result)
     }
@@ -8049,123 +8154,68 @@ command-line arguments.\" \
     fn byte_op_subr(&mut self, id: SymId) -> Option<&'static crate::lisp::value::Subr> {
         if self.byte_op_subrs.is_none() {
             let mut m = HashMap::default();
+            let mut by_name = HashMap::default();
             // Names mirrored from GNU's bytecomp.el `byte-defop' table
             // (opcodes 56-168): each compiled call to one of these is
             // a dedicated opcode, not a `byte-call' through
             // `symbol-function'.
             for s in crate::lisp::builtins::dump_subrs() {
-                match s.name {
-                    "car"
-                    | "cdr"
-                    | "cons"
-                    | "list"
-                    | "nth"
-                    | "nthcdr"
-                    | "memq"
-                    | "member"
-                    | "assq"
-                    | "elt"
-                    | "length"
-                    | "aref"
-                    | "aset"
-                    | "nreverse"
-                    | "setcar"
-                    | "setcdr"
-                    | "nconc"
-                    | "concat"
-                    | "substring"
-                    | "get"
-                    | "set"
-                    | "fset"
-                    | "symbolp"
-                    | "consp"
-                    | "stringp"
-                    | "listp"
-                    | "not"
-                    | "null"
-                    | "eq"
-                    | "equal"
-                    | "symbol-value"
-                    | "symbol-function"
-                    | "symbol-name"
-                    | "eqlsign"
-                    | "gtr"
-                    | "lss"
-                    | "leq"
-                    | "geq"
-                    | "+"
-                    | "-"
-                    | "*"
-                    | "/"
-                    | "%"
-                    | "max"
-                    | "min"
-                    | "="
-                    | "<"
-                    | ">"
-                    | "<="
-                    | ">="
-                    | "1+"
-                    | "1-"
-                    | "point"
-                    | "point-max"
-                    | "point-min"
-                    | "goto-char"
-                    | "insert"
-                    | "char-after"
-                    | "char-before"
-                    | "following-char"
-                    | "preceding-char"
-                    | "current-column"
-                    | "indent-to"
-                    | "eolp"
-                    | "eobp"
-                    | "bolp"
-                    | "bobp"
-                    | "current-buffer"
-                    | "set-buffer"
-                    | "forward-char"
-                    | "forward-word"
-                    | "skip-chars-forward"
-                    | "skip-chars-backward"
-                    | "forward-line"
-                    | "char-syntax"
-                    | "buffer-substring"
-                    | "delete-region"
-                    | "narrow-to-region"
-                    | "widen"
-                    | "end-of-line"
-                    | "set-marker"
-                    | "match-beginning"
-                    | "match-end"
-                    | "upcase"
-                    | "downcase"
-                    | "string="
-                    | "string<"
-                    | "string-equal"
-                    | "string-lessp"
-                    | "numberp"
-                    | "integerp"
-                    | "car-safe"
-                    | "cdr-safe"
-                    | "interactive-p" => {
-                        let id = self.intern(s.name);
-                        m.insert(id, s);
-                        let alias = match s.name {
-                            "string-equal" => Some("string="),
-                            "string-lessp" => Some("string<"),
-                            _ => None,
-                        };
-                        if let Some(alias) = alias {
-                            m.insert(self.intern(alias), s);
-                        }
+                if is_byte_op_primitive(s.name) {
+                    let id = self.intern(s.name);
+                    m.insert(id, s);
+                    by_name.insert(s.name, s);
+                    let alias = match s.name {
+                        "string-equal" => Some("string="),
+                        "string-lessp" => Some("string<"),
+                        _ => None,
+                    };
+                    if let Some(alias) = alias {
+                        m.insert(self.intern(alias), s);
+                        by_name.insert(alias, s);
                     }
-                    _ => {}
                 }
             }
             self.byte_op_subrs = Some(m);
+            self.byte_op_subrs_by_name = Some(by_name);
         }
         self.byte_op_subrs.as_ref().unwrap().get(&id).copied()
+    }
+
+    fn byte_op_subr_named(&mut self, name: &str) -> Option<&'static crate::lisp::value::Subr> {
+        if self.byte_op_subrs_by_name.is_none() {
+            // Build from names without interning them: a byte-code opcode
+            // remains tied to the canonical primitive even after Lisp has
+            // removed that name from the public obarray.
+            let mut by_name = HashMap::default();
+            let mut add = |subr: &'static crate::lisp::value::Subr| {
+                by_name.insert(subr.name, subr);
+                match subr.name {
+                    "string-equal" => {
+                        by_name.insert("string=", subr);
+                    }
+                    "string-lessp" => {
+                        by_name.insert("string<", subr);
+                    }
+                    _ => {}
+                }
+            };
+            if let Some(map) = &self.byte_op_subrs {
+                for subr in map.values() {
+                    add(*subr);
+                }
+            } else {
+                for subr in crate::lisp::builtins::dump_subrs()
+                    .iter()
+                    .filter(|subr| is_byte_op_primitive(subr.name))
+                {
+                    add(*subr);
+                }
+            }
+            self.byte_op_subrs_by_name = Some(by_name);
+        }
+        self.byte_op_subrs_by_name
+            .as_ref()
+            .and_then(|map| map.get(name).copied())
     }
 
     /// Peel advice layers: innermost `next' of a trampoline chain —
