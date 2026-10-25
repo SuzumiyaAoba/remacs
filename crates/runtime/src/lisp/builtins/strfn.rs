@@ -2021,9 +2021,12 @@ fn f_string_fill(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Int(_) => return Err(i.wrong_type_mut("characterp", &args[0])),
         _ => want_string(i, &args[0])?,
     };
-    let width = want_int(i, &args[1])?;
     let chars: Vec<char> = s.chars().collect();
     let n = chars.len();
+    if n == 0 {
+        return Ok(Value::string(s));
+    }
+    let width = want_int(i, &args[1])?;
     let is_ws = |c: char| c == ' ' || c == '\t' || c == '\n';
     let adv = |col: usize, c: char| -> usize {
         if c == '\n' {
