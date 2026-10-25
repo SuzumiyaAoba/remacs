@@ -5809,7 +5809,15 @@ fn f_string_to_multibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
 /// byte value; anything else errors.
 fn f_string_to_unibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let s = want_string(i, &args[0])?;
-    let unibyte_in = matches!(&args[0], Value::Str(r) if i.is_unibyte_str(r));
+    let unibyte_in = match &args[0] {
+        Value::Str(r) => {
+            i.is_unibyte_str(r) || (!i.is_multibyte_str(r) && !content_is_multibyte(&s))
+        }
+        _ => false,
+    };
+    if unibyte_in {
+        return Ok(args[0].clone());
+    }
     let mut out = String::new();
     for (ix, c) in s.chars().enumerate() {
         let u = c as u32;
@@ -5839,6 +5847,9 @@ pub(crate) fn f_string_as_unibyte(i: &mut Interp, args: crate::lisp::Argv) -> Ev
         }
         _ => false,
     };
+    if !multibyte {
+        return Ok(args[0].clone());
+    }
     let out = if multibyte {
         let mut o = String::new();
         for c in s.chars() {
@@ -5875,11 +5886,7 @@ fn f_string_as_multibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
         _ => false,
     };
     if multibyte_in {
-        let v = Value::string(s);
-        if let Value::Str(r) = &v {
-            i.mark_multibyte(r);
-        }
-        return Ok(v);
+        return Ok(args[0].clone());
     }
     let bytes: Vec<u8> = s.chars().map(|c| c as u8).collect();
     let mut out = String::new();
@@ -5914,6 +5921,15 @@ fn f_string_as_multibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
 /// chars yield their byte; anything else keeps `c & 0xFF').
 fn f_string_make_unibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let s = want_string(i, &args[0])?;
+    let already_unibyte = match &args[0] {
+        Value::Str(r) => {
+            i.is_unibyte_str(r) || (!i.is_multibyte_str(r) && !content_is_multibyte(&s))
+        }
+        _ => false,
+    };
+    if already_unibyte {
+        return Ok(args[0].clone());
+    }
     let out: String = s
         .chars()
         .map(|c| {

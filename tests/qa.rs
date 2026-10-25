@@ -503,6 +503,7 @@ qa!(qa_string_lines_byte_kind, "qa_string_lines_byte_kind.el");
 qa!(qa_string_lines_bool_vector_error, "qa_string_lines_bool_vector_error.el");
 qa!(qa_string_lines_empty_vector, "qa_string_lines_empty_vector.el");
 qa!(qa_string_lines_nil, "qa_string_lines_nil.el");
+qa!(qa_string_byte_conversion_identity, "qa_string_byte_conversion_identity.el");
 qa!(qa_string_fill_trailing_newlines, "qa_string_fill_trailing_newlines.el");
 qa!(qa_case_table_fold, "qa_case_table_fold.el");
 qa!(qa_byte_character_conversion, "qa_byte_character_conversion.el");
