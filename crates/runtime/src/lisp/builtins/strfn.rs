@@ -5456,7 +5456,18 @@ fn f_subst_char_in_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult
                 }
                 unreachable!()
             }
-            Ok(Value::string(replaced))
+            let result = Value::string_ref(replaced);
+            if let (Value::Str(source), Value::Str(output)) = (s_v, &result) {
+                let source_unibyte = i.is_unibyte_str(source)
+                    || (!i.is_multibyte_str(source) && !content_is_multibyte(&s));
+                let replacement_is_byte = matches!(&args[1], Value::Int(n) if (0..=255).contains(n));
+                if source_unibyte && replacement_is_byte {
+                    i.mark_unibyte(output);
+                } else if multibyte {
+                    i.mark_multibyte(output);
+                }
+            }
+            Ok(Value::Str(result))
         }
     }
 }
