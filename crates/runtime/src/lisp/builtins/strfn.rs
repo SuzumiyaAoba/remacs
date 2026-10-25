@@ -1391,8 +1391,9 @@ fn f_string_trim_right(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn trim_left_re(i: &mut Interp, s: &str, trim: &str) -> Result<String, Flow> {
     // GNU: (string-match (concat "\\`\\(?:" regexp "\\)") string) —
     // a single match at the start is stripped.
+    let invalid_regexp = i.q("invalid-regexp");
     let re = crate::lisp::regexp::compile(&format!("\\`\\(?:{}\\)", trim))
-        .map_err(|_| i.error("Invalid regexp"))?;
+        .map_err(|error| i.signal_data(invalid_regexp, vec![Value::string(error.0)]))?;
     let syn = crate::editor::re_syntax(i);
     let chars: Vec<char> = s.chars().collect();
     match crate::lisp::regexp::looking_at(
@@ -1414,8 +1415,9 @@ fn trim_left_re(i: &mut Interp, s: &str, trim: &str) -> Result<String, Flow> {
 
 fn trim_right_re(i: &mut Interp, s: &str, trim: &str) -> Result<String, Flow> {
     // GNU: (string-match (concat "\\(?:" regexp "\\)\\'") string).
+    let invalid_regexp = i.q("invalid-regexp");
     let re = crate::lisp::regexp::compile(&format!("\\(?:{}\\)\\'", trim))
-        .map_err(|_| i.error("Invalid regexp"))?;
+        .map_err(|error| i.signal_data(invalid_regexp, vec![Value::string(error.0)]))?;
     let syn = crate::editor::re_syntax(i);
     let chars: Vec<char> = s.chars().collect();
     match crate::lisp::regexp::search(
