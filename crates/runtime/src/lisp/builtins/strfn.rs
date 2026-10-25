@@ -1792,10 +1792,7 @@ fn f_string_chop_newline(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
 fn display_tab_width(i: &Interp) -> usize {
     // GNU buffer.h sanitize_tab_width: any non-fixnum or value outside
     // 1..=1000 falls back to 8, including zero, floats and bignums.
-    match i.q_soft("tab-width").map(|id| i.symbol_value(id)) {
-        Some(Value::Int(width)) if (1..=1000).contains(&width) => width as usize,
-        _ => 8,
-    }
+    crate::buffer::primitives::sane_tab_width(i) as usize
 }
 
 /// Display column width under GNU strwidth rules: TAB contributes the

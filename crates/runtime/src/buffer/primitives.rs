@@ -5302,11 +5302,7 @@ fn f_current_column(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     let p = bb.point();
     let ls = bb.text.line_start(bb.text.line_of_pos(p));
     let mut col = 0i128;
-    let tab_width = i
-        .symbol_value(i.q_soft("tab-width").unwrap_or(0))
-        .int()
-        .unwrap_or(8)
-        .max(1);
+    let tab_width = sane_tab_width(i);
     let mut k = ls;
     while k < p {
         match bb.text.char_at(k) {
@@ -5338,11 +5334,7 @@ fn f_move_to_column(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let force = a.get(1).map(|v| v.truthy()).unwrap_or(false);
     // Read buffer-local vars before borrow_mut: `symbol_value' can only
     // see buffer-locals while the buffer is not mutably borrowed.
-    let tab_width = i
-        .symbol_value(i.q_soft("tab-width").unwrap_or(0))
-        .int()
-        .unwrap_or(8)
-        .max(1);
+    let tab_width = sane_tab_width(i);
     let tabs_on = i
         .symbol_value(i.q_soft("indent-tabs-mode").unwrap_or(0))
         .truthy();
@@ -5354,15 +5346,30 @@ fn f_move_to_column(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let le = bb.text.line_end(bb.point());
     let mut col = 0i128;
     let mut k = ls;
+    let mut split_tab = None;
     while k < le && col < goal {
         match bb.text.char_at(k) {
-            '\t' => col = (col / tab_width + 1) * tab_width,
+            '\t' => {
+                let next = (col / tab_width + 1) * tab_width;
+                if force && goal < next {
+                    split_tab = Some((k, (next - col) as usize, (goal - col) as usize));
+                    break;
+                }
+                col = next;
+            }
             c => {
                 col += text_display_width(&bb, k, display, ctl_arrow)
                     .unwrap_or_else(|| char_width_with_ctl(c, ctl_arrow));
             }
         }
         k += 1;
+    }
+    if let Some((at, width, offset)) = split_tab {
+        drop(bb);
+        chg_delete(i, at, at + 1)?;
+        chg_insert(i, at, &" ".repeat(width))?;
+        cur(i).borrow_mut().set_point(at + offset);
+        return Ok(Value::Int(goal));
     }
     // GNU lands on the first char boundary where col >= goal (a char is
     // never split), then returns the column actually reached.
@@ -9197,16 +9204,22 @@ pub(crate) fn char_width_with_ctl(c: char, ctl_arrow: bool) -> i128 {
     }
 }
 
+/// GNU SANE_TAB_WIDTH: only fixnums in 1..=1000 are used; other values
+/// fall back to the default width of eight.
+pub(crate) fn sane_tab_width(i: &Interp) -> i128 {
+    match i.q_soft("tab-width").map(|id| i.symbol_value(id)) {
+        Some(Value::Int(width)) if (1..=1000).contains(&width) => width,
+        _ => 8,
+    }
+}
+
 fn rect_char_width(c: char, tab: i128) -> i128 {
     let _ = tab;
     char_width(c)
 }
 
 fn rect_tab_width(i: &Interp) -> i128 {
-    i.symbol_value(i.q_soft("tab-width").unwrap_or(0))
-        .int()
-        .unwrap_or(8)
-        .max(1)
+    sane_tab_width(i)
 }
 
 /// Column of char index P on the line starting at LS.
@@ -9255,10 +9268,14 @@ fn rect_move_to(
                 return (k, col);
             }
             if ch == '\t' && force != RectForce::Nil {
-                // Split the tab: insert (col - c) spaces before it.
-                let pad = (col - c) as usize;
-                bb.insert_at(k, &" ".repeat(pad));
-                return (k + pad, col);
+                // Expand the full tab to spaces before stopping inside it.
+                // Keeping the remainder as a tab changes both rectangle
+                // contents and the columns of following characters.
+                let width = w as usize;
+                let offset = (col - c) as usize;
+                bb.delete_region(k, k + 1);
+                bb.insert_at(k, &" ".repeat(width));
+                return (k + offset, col);
             }
             return (k + 1, c + w); // overshoot: point lands after the char
         }

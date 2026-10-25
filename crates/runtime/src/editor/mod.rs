@@ -16688,11 +16688,7 @@ fn f_indent_line_to(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
         other => return Err(i.wrong_type_mut("number-or-marker-p", other)),
     };
-    let tab = i
-        .symbol_value(i.q_soft("tab-width").unwrap_or(0))
-        .int()
-        .unwrap_or(8)
-        .max(1) as usize;
+    let tab = crate::buffer::primitives::sane_tab_width(i) as usize;
     let tabs_on = i
         .symbol_value(i.q_soft("indent-tabs-mode").unwrap_or(0))
         .truthy();
@@ -16740,11 +16736,7 @@ fn f_indent_to(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Some(v) if v.truthy() => want_int(i, v)?,
         _ => 0,
     };
-    let tab = i
-        .symbol_value(i.q_soft("tab-width").unwrap_or(0))
-        .int()
-        .unwrap_or(8)
-        .max(1);
+    let tab = crate::buffer::primitives::sane_tab_width(i);
     let tabs_on = i
         .symbol_value(i.q_soft("indent-tabs-mode").unwrap_or(0))
         .truthy();

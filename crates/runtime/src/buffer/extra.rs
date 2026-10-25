@@ -1708,11 +1708,7 @@ fn col_at(i: &Interp, p: usize) -> i128 {
     let b = cur(i);
     let bb = b.borrow();
     let ctl_arrow = i.symbol_value(i.q_soft("ctl-arrow").unwrap_or(0)).truthy();
-    let tab_width = i
-        .symbol_value(i.q_soft("tab-width").unwrap_or(0))
-        .int()
-        .unwrap_or(8)
-        .max(1);
+    let tab_width = crate::buffer::primitives::sane_tab_width(i);
     let ls = line_start(&bb.text, p);
     let mut col = 0i128;
     let mut k = ls;
@@ -1731,11 +1727,7 @@ fn col_at(i: &Interp, p: usize) -> i128 {
 fn move_to_col(i: &mut Interp, goal: i128) -> EvalResult {
     // `tab-width' is buffer-local: read it before borrow_mut so
     // `symbol_value' can see the local binding.
-    let tab_width = i
-        .symbol_value(i.q_soft("tab-width").unwrap_or(0))
-        .int()
-        .unwrap_or(8)
-        .max(1);
+    let tab_width = crate::buffer::primitives::sane_tab_width(i);
     let ctl_arrow = i.symbol_value(i.q_soft("ctl-arrow").unwrap_or(0)).truthy();
     let b = cur(i);
     let mut bb = b.borrow_mut();
