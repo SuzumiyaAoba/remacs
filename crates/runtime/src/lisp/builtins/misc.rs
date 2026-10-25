@@ -3288,7 +3288,10 @@ fn f_internal_describe_syntax_value(i: &mut Interp, a: crate::lisp::Argv) -> Eva
                 out.push(SPEC[code]);
                 match match_char {
                     None => out.push(' '),
-                    Some(m) => out.push(char::from_u32(m).unwrap_or('\u{FFFD}')),
+                    Some(m) => out.push(
+                        crate::lisp::value::lisp_char(m)
+                            .unwrap_or_else(|| crate::lisp::value::mule_seq_char(m)),
+                    ),
                 }
                 if start1 {
                     out.push('1');
@@ -3318,7 +3321,10 @@ fn f_internal_describe_syntax_value(i: &mut Interp, a: crate::lisp::Argv) -> Eva
                 out.push_str(NAMES[code]);
                 if let Some(m) = match_char {
                     out.push_str(", matches ");
-                    out.push(char::from_u32(m).unwrap_or('\u{FFFD}'));
+                    out.push(
+                        crate::lisp::value::lisp_char(m)
+                            .unwrap_or_else(|| crate::lisp::value::mule_seq_char(m)),
+                    );
                 }
                 if start1 {
                     out.push_str(",\n\t  is the first character of a comment-start sequence");
