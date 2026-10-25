@@ -529,10 +529,14 @@ impl Interp {
                 let _ = write!(out, "{}", self.format_float_output(**f));
             }
             Value::Sym(id) => {
-                if self.obarray.symbol(*id).uninterned && self.print_gensym() {
+                let gensym_prefix = self.obarray.symbol(*id).uninterned && self.print_gensym();
+                if gensym_prefix {
                     out.push_str("#:");
                 }
                 let name = self.symbol_name(*id);
+                if gensym_prefix && name.is_empty() {
+                    return;
+                }
                 // GNU escapes number-like names, leading question marks,
                 // and a leading dot unless followed by an ASCII letter.
                 if super::reader::parse_number(&name).is_some()
@@ -950,10 +954,18 @@ impl Interp {
             // `princ' omits symbol-name escapes, but still marks
             // uninterned symbols when `print-gensym' is enabled.
             Value::Sym(id) => {
-                if self.obarray.symbol(*id).uninterned && self.print_gensym() {
+                let gensym_prefix = self.obarray.symbol(*id).uninterned && self.print_gensym();
+                if gensym_prefix {
                     out.push_str("#:");
                 }
-                out.push_str(&self.symbol_name(*id));
+                let name = self.symbol_name(*id);
+                if name.is_empty() {
+                    if !gensym_prefix {
+                        out.push_str("##");
+                    }
+                } else {
+                    out.push_str(&name);
+                }
             }
             // princ prints live buffers as bare names; a killed buffer
             // prints `#<killed buffer>' like the escaped form.

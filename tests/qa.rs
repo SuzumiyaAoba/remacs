@@ -358,6 +358,7 @@ qa!(qa_format_string_substitution_properties, "qa_format_string_substitution_pro
 qa!(qa_text_scale_buffer_local, "qa_text_scale_buffer_local.el");
 qa!(qa_symbol_with_pos_printing, "qa_symbol_with_pos_printing.el");
 qa!(qa_princ_print_gensym, "qa_princ_print_gensym.el");
+qa!(qa_empty_symbol_printing, "qa_empty_symbol_printing.el");
 qa!(qa_value_lt_circular_identity, "qa_value_lt_circular_identity.el");
 qa!(qa_value_lt_depth_limit, "qa_value_lt_depth_limit.el");
 qa!(qa_value_lt_record_bool_vector, "qa_value_lt_record_bool_vector.el");
