@@ -1713,24 +1713,37 @@ fn f_ntake(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_flatten_tree(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let _ = i;
+    enum Task {
+        Visit(Value),
+        Leave(usize),
+    }
     let mut out = Vec::new();
-    let mut stack = vec![args[0].clone()];
-    let mut guard = 0usize;
-    while let Some(v) = stack.pop() {
-        guard += 1;
-        if guard > 2_000_000 {
-            break;
-        }
-        match v {
-            Value::Cons(c) => {
-                let b = c.borrow();
-                // Push cdr first so car pops first (depth-first order).
-                stack.push(b.cdr.clone());
-                stack.push(b.car.clone());
+    let mut stack = vec![Task::Visit(args[0].clone())];
+    let mut active = std::collections::HashSet::new();
+    while let Some(task) = stack.pop() {
+        match task {
+            Task::Leave(pointer) => {
+                active.remove(&pointer);
             }
-            Value::Nil => {}
-            other => out.push(other),
+            Task::Visit(Value::Cons(cell)) => {
+                let pointer = Rc::as_ptr(&cell) as usize;
+                if !active.insert(pointer) {
+                    return Err(i.signal_data(
+                        sym::CIRCULAR_LIST,
+                        vec![Value::Cons(cell.clone())],
+                    ));
+                }
+                let (car, cdr) = {
+                    let cell = cell.borrow();
+                    (cell.car.clone(), cell.cdr.clone())
+                };
+                stack.push(Task::Leave(pointer));
+                // Push cdr first so car pops first (depth-first order).
+                stack.push(Task::Visit(cdr));
+                stack.push(Task::Visit(car));
+            }
+            Task::Visit(Value::Nil) => {}
+            Task::Visit(other) => out.push(other),
         }
     }
     Ok(Value::list(out))
