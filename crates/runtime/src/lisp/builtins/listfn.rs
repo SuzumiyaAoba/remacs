@@ -620,25 +620,29 @@ fn f_last(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         }
     }
 }
-fn f_butlast(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU subr.el
-    // `butlast': (unless n (setq n 1)) → (if (<= n 0) list
-    //                                     (take (- (length list) n) list)).
-    // `length' on a non-sequence signals `sequencep'; `take' walks
-    // `(nthcdr k list)' and `car's each cell, so an atom tail signals
-    // `listp' on that tail (strings/vectors take the same path).
-    if let Some(Value::BigInt(n)) = args.get(1) {
-        if n.sign() == num_bigint::Sign::Minus {
-            return Ok(args[0].clone());
+fn number_or_marker_value(i: &mut Interp, value: &Value) -> Result<Value, Flow> {
+    match value {
+        Value::Int(_) | Value::BigInt(_) | Value::Float(_) => Ok(value.clone()),
+        Value::Marker(marker) if marker.borrow().buffer.is_some() => {
+            Ok(Value::Int(marker.borrow().position as i128 + 1))
         }
-        super::seq::seq_to_vec(i, &args[0])?;
-        return Ok(Value::Nil);
+        Value::Marker(_) => Err(i.error("Marker does not point anywhere")),
+        other => Err(i.wrong_type_mut("number-or-marker-p", other)),
     }
+}
+
+fn f_butlast(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    // GNU subr.el: nonpositive N returns LIST before evaluating LENGTH;
+    // positive N computes (take (- (length LIST) N) LIST), leaving a
+    // fractional result for `take' to reject as integerp.
     let n = match args.get(1) {
-        None | Some(Value::Nil) => 1,
-        Some(v) => crate::editor::want_num_or_mark(i, v)?,
+        None | Some(Value::Nil) => Value::Int(1),
+        Some(v) => number_or_marker_value(i, v)?,
     };
-    if n <= 0 {
+    let zero = Value::Int(0);
+    if crate::lisp::builtins::arith::number_order(&n, &zero)
+        .is_some_and(|order| order != std::cmp::Ordering::Greater)
+    {
         return Ok(args[0].clone());
     }
     let len = match &args[0] {
@@ -646,7 +650,6 @@ fn f_butlast(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Cons(_) => args[0]
             .list_to_vec()
             .map_err(|e| match e {
-                // GNU `length' signals `listp' on the improper tail.
                 crate::lisp::value::ListError::Dotted(tail) => i.wrong_type_mut("listp", &tail),
                 _ => i.wrong_type_mut("listp", &args[0]),
             })?
@@ -655,28 +658,13 @@ fn f_butlast(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Vec(v) => v.borrow().len(),
         other => return Err(i.wrong_type_mut("sequencep", other)),
     };
-    let keep = len.saturating_sub(n as usize);
-    if keep == 0 {
-        return Ok(Value::Nil);
-    }
-    // take: (car (nthcdr i list)) for i in 0..keep — atom elements or a
-    // dotted tail signal `listp' like GNU's Fcar path.
-    let mut out = Vec::with_capacity(keep);
-    let mut cur = args[0].clone();
-    for _ in 0..keep {
-        match cur {
-            Value::Cons(c) => {
-                let (elt, next) = {
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
-                };
-                out.push(elt);
-                cur = next;
-            }
-            other => return Err(i.wrong_type_mut("listp", &other)),
-        }
-    }
-    Ok(Value::list(out))
+    let take_count = match n {
+        Value::Int(n) => Value::integer(len as i128 - n),
+        Value::BigInt(n) => Value::from_bigint(num_bigint::BigInt::from(len) - &*n),
+        Value::Float(n) => Value::float(len as f64 - *n),
+        _ => unreachable!(),
+    };
+    f_take(i, vec![take_count, args[0].clone()].into())
 }
 fn f_nbutlast(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU subr.el
@@ -699,31 +687,37 @@ fn f_nbutlast(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         other => return Err(i.wrong_type_mut("sequencep", other)),
     };
     let n = match args.get(1) {
-        None | Some(Value::Nil) => 1i128,
-        Some(Value::BigInt(n)) => {
-            let length = num_bigint::BigInt::from(m);
-            if n.as_ref() >= &length {
-                return Ok(Value::Nil);
-            }
-            if n.as_ref() <= &num_bigint::BigInt::from(0) {
-                return Ok(args[0].clone());
-            }
-            n.to_i128()
-                .expect("positive bignum below a sequence length fits i128")
-        }
-        Some(v) => crate::editor::want_num_or_mark(i, v)? as i128,
+        None | Some(Value::Nil) => Value::Int(1),
+        Some(v) => number_or_marker_value(i, v)?,
     };
-    if !(n < m) {
+    if crate::lisp::builtins::arith::number_order(&n, &Value::Int(m))
+        != Some(std::cmp::Ordering::Less)
+    {
         return Ok(Value::Nil);
     }
-    if n > 0 {
+    if crate::lisp::builtins::arith::number_order(&n, &Value::Int(0))
+        == Some(std::cmp::Ordering::Greater)
+    {
+        let index = match &n {
+            Value::Int(n) => Value::integer(m - 1 - *n),
+            Value::BigInt(n) => Value::from_bigint(num_bigint::BigInt::from(m - 1) - &**n),
+            Value::Float(n) => Value::float((m - 1) as f64 - **n),
+            _ => unreachable!(),
+        };
+        if !matches!(index, Value::Int(_) | Value::BigInt(_)) {
+            return Err(i.wrong_type_mut("integerp", &index));
+        }
+        let index = index
+            .as_bigint()
+            .and_then(|n| n.to_usize())
+            .ok_or_else(|| i.wrong_type_mut("integerp", &index))?;
         // GNU evaluates `(nthcdr (- (1- m) n) list)' then `setcdr's it:
         // a non-list sequence reaches Fsetcdr and signals `consp'.
         match &args[0] {
             Value::Cons(_) | Value::Nil => {}
             other => return Err(i.wrong_type_mut("consp", other)),
         }
-        let tail = nthcdr_of(&args[0], (m - 1 - n) as usize);
+        let tail = nthcdr_of(&args[0], index);
         if let Value::Cons(c) = tail {
             c.borrow_mut().cdr = Value::Nil;
         }
