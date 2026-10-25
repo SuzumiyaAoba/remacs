@@ -278,6 +278,7 @@ qa!(qa_assoc_default_live_cdr, "qa_assoc_default_live_cdr.el");
 qa!(qa_assoc_default_live_equal, "qa_assoc_default_live_equal.el");
 qa!(qa_assoc_default_long_cycle, "qa_assoc_default_long_cycle.el");
 qa!(qa_assoc_string_unicode_case, "qa_assoc_string_unicode_case.el");
+qa!(qa_assoc_string_nil_name, "qa_assoc_string_nil_name.el");
 qa!(qa_member_if_long_and_cycle, "qa_member_if_long_and_cycle.el");
 qa!(qa_length_functions, "qa_length_functions.el");
 qa!(qa_length_nonsequence, "qa_length_nonsequence.el");
