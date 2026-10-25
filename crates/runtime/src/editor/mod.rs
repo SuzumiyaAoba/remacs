@@ -12031,9 +12031,13 @@ fn f_file_name_extension(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let base = s.rsplit('/').next().unwrap_or(&s);
     let keep_dot = a.get(1).is_some_and(|v| v.truthy());
     match base.rfind('.') {
-        Some(idx) if idx > 0 => Ok(Value::string(&base[idx + usize::from(!keep_dot)..])),
+        Some(idx) if idx > 0 => Ok(file_name_result_like(
+            i,
+            &a[0],
+            base[idx + usize::from(!keep_dot)..].to_string(),
+        )),
         // With PERIOD, GNU returns an empty string for no extension.
-        _ if keep_dot => Ok(Value::string("")),
+        _ if keep_dot => Ok(file_name_result_like(i, &a[0], String::new())),
         _ => Ok(Value::Nil),
     }
 }
@@ -12044,12 +12048,12 @@ fn f_file_name_sans_extension(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
             // Only strip if the dot is after the last slash.
             let last_slash = s.rfind('/').map(|x| x + 1).unwrap_or(0);
             if idx > last_slash {
-                Ok(Value::string(&s[..idx]))
+                Ok(file_name_result_like(i, &a[0], s[..idx].to_string()))
             } else {
-                Ok(Value::string(s))
+                Ok(file_name_result_like(i, &a[0], s))
             }
         }
-        None => Ok(Value::string(s)),
+        None => Ok(file_name_result_like(i, &a[0], s)),
     }
 }
 fn f_file_name_base(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -12067,8 +12071,8 @@ fn f_file_name_base(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     let base = s.rsplit('/').next().unwrap_or(&s);
     match base.rfind('.') {
-        Some(idx) if idx > 0 => Ok(Value::string(&base[..idx])),
-        _ => Ok(Value::string(base)),
+        Some(idx) if idx > 0 => Ok(file_name_result_like(i, &sv, base[..idx].to_string())),
+        _ => Ok(file_name_result_like(i, &sv, base.to_string())),
     }
 }
 fn f_file_name_as_directory(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
