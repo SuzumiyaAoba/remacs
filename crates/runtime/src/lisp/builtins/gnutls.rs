@@ -39,6 +39,7 @@ type CipherInit = unsafe extern "C" fn(*mut Hd, i32, *const Datum, *const Datum)
 type CipherSetIv = unsafe extern "C" fn(Hd, *const u8, usize);
 type CipherCrypt2 = unsafe extern "C" fn(Hd, *const u8, usize, *mut u8, usize) -> i32;
 type CipherDeinit = unsafe extern "C" fn(Hd);
+type GnutlsRnd = unsafe extern "C" fn(i32, *mut u8, usize) -> i32;
 type AeadInit = unsafe extern "C" fn(*mut Hd, i32, *const Datum) -> i32;
 type AeadCrypt = unsafe extern "C" fn(
     Hd,
@@ -144,6 +145,7 @@ pub(crate) struct GnutlsFns {
     cipher_encrypt2: CipherCrypt2,
     cipher_decrypt2: CipherCrypt2,
     cipher_deinit: CipherDeinit,
+    rnd: Option<GnutlsRnd>,
     aead_cipher_init: Option<AeadInit>,
     aead_cipher_encrypt: Option<AeadCrypt>,
     aead_cipher_decrypt: Option<AeadCrypt>,
@@ -262,6 +264,7 @@ pub(crate) fn gnutls() -> Option<&'static GnutlsFns> {
                     cipher_encrypt2: sym(&lib, b"gnutls_cipher_encrypt2\0")?,
                     cipher_decrypt2: sym(&lib, b"gnutls_cipher_decrypt2\0")?,
                     cipher_deinit: sym(&lib, b"gnutls_cipher_deinit\0")?,
+                    rnd: sym(&lib, b"gnutls_rnd\0"),
                     aead_cipher_init: sym(&lib, b"gnutls_aead_cipher_init\0"),
                     aead_cipher_encrypt: sym(&lib, b"gnutls_aead_cipher_encrypt\0"),
                     aead_cipher_decrypt: sym(&lib, b"gnutls_aead_cipher_decrypt\0"),
@@ -837,6 +840,31 @@ fn f_hash_mac(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(unibyte(i, &out))
 }
 
+fn iv_auto_size(i: &mut Interp, iv: &Value) -> Result<Option<usize>, Flow> {
+    let Value::Cons(cell) = iv else {
+        return Ok(None);
+    };
+    let (head, tail) = {
+        let cell = cell.borrow();
+        (cell.car.clone(), cell.cdr.clone())
+    };
+    if !matches!(head, Value::Sym(id) if i.symbol_name(id) == "iv-auto") {
+        return Ok(None);
+    }
+    let length = match tail {
+        Value::Cons(cell) => cell.borrow().car.clone(),
+        _ => Value::Nil,
+    };
+    match &length {
+        Value::Int(n)
+            if (0..=crate::lisp::value::FIXNUM_MAX).contains(n) =>
+        {
+            Ok(usize::try_from(*n).ok())
+        }
+        _ => Err(i.error("Without a length, `iv-auto' can't be used; see Elisp manual")),
+    }
+}
+
 fn gnutls_symmetric(i: &mut Interp, encrypting: bool, a: crate::lisp::Argv) -> EvalResult {
     let Some(g) = gnutls() else {
         return Ok(Value::Nil);
@@ -877,7 +905,22 @@ fn gnutls_symmetric(i: &mut Interp, encrypting: bool, a: crate::lisp::Argv) -> E
             key_size
         )));
     }
-    let vdata = extract_data(i, &iv)?;
+    let vdata = if let Some(length) = iv_auto_size(i, &iv)? {
+        let Some(rnd) = g.rnd else {
+            return Err(i.error("GnuTLS random number generation is unavailable"));
+        };
+        let mut bytes = vec![0; length];
+        let ret = unsafe { rnd(1 /* GNUTLS_RND_RANDOM */, bytes.as_mut_ptr(), bytes.len()) };
+        if ret < GNUTLS_E_SUCCESS {
+            return Err(i.error(&format!(
+                "GnuTLS random IV generation failed: {}",
+                strerror(g, ret)
+            )));
+        }
+        bytes
+    } else {
+        extract_data(i, &iv)?
+    };
     let iv_size = unsafe { (g.cipher_get_iv_size)(gca) };
     if vdata.len() != iv_size {
         return Err(i.error(&format!(

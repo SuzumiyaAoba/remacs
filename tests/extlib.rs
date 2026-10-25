@@ -108,6 +108,28 @@ fn gnutls_symmetric_roundtrip() {
         ),
         "2"
     );
+    // `iv-auto' creates a random unibyte IV, returns it, and that IV
+    // round-trips through the ordinary explicit-IV decrypt path.
+    assert_eq!(
+        ev(
+            "(let* ((key \"0123456789abcdef\") (decrypt-key (copy-sequence key)) (plain \"hello12345678901\") (r (gnutls-symmetric-encrypt 'AES-128-CBC key (list 'iv-auto 16) plain)) (iv (cadr r)) (d (gnutls-symmetric-decrypt 'AES-128-CBC decrypt-key iv (car r)))) (list (multibyte-string-p iv) (length iv) (string= (car d) plain)))"
+        ),
+        "(nil 16 t)"
+    );
+    assert_eq!(
+        ev_err(
+            "(gnutls-symmetric-encrypt 'AES-128-CBC \"0123456789abcdef\" '(iv-auto) \"hello12345678901\")"
+        ),
+        "error"
+    );
+    // auth-source encrypts netrc contents with this IV form when GnuTLS is
+    // available; parsing a file must still produce its matching entry.
+    assert_eq!(
+        ev(
+            "(progn (require 'auth-source) (let ((file (make-temp-file \"remacs-netrc-\"))) (unwind-protect (progn (with-temp-file file (insert \"machine example.test login demo password fake\\n\")) (length (auth-source-netrc-parse-all file))) (delete-file file))))"
+        ),
+        "1"
+    );
 }
 
 #[test]
