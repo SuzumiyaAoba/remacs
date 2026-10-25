@@ -470,8 +470,11 @@ fn f_string_truncate_left(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult
         return Ok(args[0].clone());
     }
     let keep = (length - 3).max(1).min(chars.len() as i128) as usize;
-    let tail: String = chars[chars.len() - keep..].iter().collect();
-    Ok(Value::string(format!("...{tail}")))
+    let suffix = f_substring(
+        i,
+        vec![args[0].clone(), Value::Int((chars.len() - keep) as i128)].into(),
+    )?;
+    f_concat(i, vec![Value::string("..."), suffix].into())
 }
 
 fn f_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
