@@ -515,6 +515,7 @@ qa!(qa_file_name_nondirectory_byte_kind, "qa_file_name_nondirectory_byte_kind.el
 qa!(qa_file_name_directory_byte_kind, "qa_file_name_directory_byte_kind.el");
 qa!(qa_file_name_as_directory_byte_kind, "qa_file_name_as_directory_byte_kind.el");
 qa!(qa_directory_file_name_byte_kind, "qa_directory_file_name_byte_kind.el");
+qa!(qa_directory_file_name_many_slashes, "qa_directory_file_name_many_slashes.el");
 qa!(qa_filename_extension_byte_kind, "qa_filename_extension_byte_kind.el");
 qa!(qa_file_name_concat_byte_kind, "qa_file_name_concat_byte_kind.el");
 qa!(qa_file_name_sans_versions, "qa_file_name_sans_versions.el");
