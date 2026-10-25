@@ -518,6 +518,7 @@ qa!(qa_truncate_width_properties, "qa_truncate_width_properties.el");
 qa!(qa_truncate_width_ellipsis_property, "qa_truncate_width_ellipsis_property.el");
 qa!(qa_string_fill_unibyte_byte8, "qa_string_fill_unibyte_byte8.el");
 qa!(qa_string_search_byte8, "qa_string_search_byte8.el");
+qa!(qa_string_equal_ignore_case, "qa_string_equal_ignore_case.el");
 qa!(qa_case_table_fold, "qa_case_table_fold.el");
 qa!(qa_byte_character_conversion, "qa_byte_character_conversion.el");
 qa!(qa_bytecode_errors, "qa_bytecode_errors.el");

@@ -2271,9 +2271,21 @@ fn f_string_lines(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::list(result))
 }
 fn f_string_equal_ignore_case(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let a = want_string(i, &args[0])?;
-    let b = want_string(i, &args[1])?;
-    Ok(Value::from_bool(a.to_lowercase() == b.to_lowercase()))
+    let compare = i.q("compare-strings");
+    let result = i.apply(
+        &Value::Sym(compare),
+        vec![
+            args[0].clone(),
+            Value::Int(0),
+            Value::Nil,
+            args[1].clone(),
+            Value::Int(0),
+            Value::Nil,
+            Value::t(),
+        ]
+        .into(),
+    )?;
+    Ok(Value::from_bool(matches!(result, Value::Sym(id) if id == sym::T)))
 }
 fn f_char_equal(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU CHECK_CHARACTER: int in [0, 0x3FFFFF]; anything else is
