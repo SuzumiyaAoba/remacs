@@ -1065,9 +1065,29 @@ fn f_frexp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     if x == 0.0 || x.is_nan() || x.is_infinite() {
         return Ok(Value::cons(Value::float(x), Value::Int(0)));
     }
-    let e = x.abs().log2().floor() as i128 + 1;
-    let m = x / 2f64.powi(e as i32);
+    let (m, e) = frexp_parts(x);
     Ok(Value::cons(Value::float(m), Value::Int(e)))
+}
+
+/// Exact binary decomposition: X = M * 2^E, with 0.5 <= |M| < 1.
+/// Extracting the exponent from the bits avoids log2 rounding up just
+/// below powers of two, and constructing M directly avoids powi overflow.
+fn frexp_parts(x: f64) -> (f64, i128) {
+    let bits = x.to_bits();
+    let sign = bits & (1u64 << 63);
+    let exponent = ((bits >> 52) & 0x7ff) as i32;
+    let fraction = bits & ((1u64 << 52) - 1);
+    let mantissa_exponent = 1022u64 << 52;
+    if exponent == 0 {
+        debug_assert_ne!(fraction, 0);
+        let highest = 63 - fraction.leading_zeros();
+        let normalized = fraction << (52 - highest);
+        let mantissa = f64::from_bits(sign | mantissa_exponent | (normalized & ((1u64 << 52) - 1)));
+        (mantissa, highest as i128 - 1073)
+    } else {
+        let mantissa = f64::from_bits(sign | mantissa_exponent | fraction);
+        (mantissa, exponent as i128 - 1022)
+    }
 }
 
 fn f_ldexp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -1148,7 +1168,8 @@ fn f_logb(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     if x.is_infinite() {
         return Ok(Value::float(f64::INFINITY));
     }
-    Ok(Value::Int(x.abs().log2().floor() as i128))
+    let (_, exponent) = frexp_parts(x);
+    Ok(Value::Int(exponent - 1))
 }
 
 fn f_isnan(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {

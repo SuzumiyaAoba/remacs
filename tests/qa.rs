@@ -282,6 +282,7 @@ qa!(qa_markers, "qa_markers.el");
 qa!(qa_mark_excursion, "qa_mark_excursion.el");
 qa!(qa_match, "qa_match.el");
 qa!(qa_math, "qa_math.el");
+qa!(qa_math_frexp_boundaries, "qa_math_frexp_boundaries.el");
 qa!(qa_minibuf, "qa_minibuf.el");
 qa!(qa_minibuffer, "qa_minibuffer.el");
 qa!(qa_set_minibuffer_window, "qa_set_minibuffer_window.el");
