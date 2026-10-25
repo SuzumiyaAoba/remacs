@@ -1379,17 +1379,51 @@ fn f_string_trim(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let right = trim_re(i, &args, 2)?;
     let s = want_string(i, &args[0])?;
     let after_left = trim_left_re(i, &s, &left)?;
-    Ok(Value::string(trim_right_re(i, &after_left, &right)?))
+    let left_removed = s.chars().count() - after_left.chars().count();
+    let result = trim_right_re(i, &after_left, &right)?;
+    let result_len = result.chars().count();
+    if left_removed == 0 && result_len == s.chars().count() {
+        return Ok(args[0].clone());
+    }
+    f_substring(
+        i,
+        vec![
+            args[0].clone(),
+            Value::Int(left_removed as i128),
+            Value::Int((left_removed + result_len) as i128),
+        ]
+        .into(),
+    )
 }
 fn f_string_trim_left(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let re = trim_re(i, &args, 1)?;
     let s = want_string(i, &args[0])?;
-    Ok(Value::string(trim_left_re(i, &s, &re)?))
+    let result = trim_left_re(i, &s, &re)?;
+    if result == s {
+        return Ok(args[0].clone());
+    }
+    let removed = s.chars().count() - result.chars().count();
+    f_substring(
+        i,
+        vec![args[0].clone(), Value::Int(removed as i128)].into(),
+    )
 }
 fn f_string_trim_right(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let re = trim_re(i, &args, 1)?;
     let s = want_string(i, &args[0])?;
-    Ok(Value::string(trim_right_re(i, &s, &re)?))
+    let result = trim_right_re(i, &s, &re)?;
+    if result == s {
+        return Ok(args[0].clone());
+    }
+    f_substring(
+        i,
+        vec![
+            args[0].clone(),
+            Value::Int(0),
+            Value::Int(result.chars().count() as i128),
+        ]
+        .into(),
+    )
 }
 
 fn trim_left_re(i: &mut Interp, s: &str, trim: &str) -> Result<String, Flow> {
