@@ -1731,6 +1731,15 @@ fn gnu_char_width(i: &Interp, c: char) -> usize {
     }
 }
 
+fn truncate_padding_char(i: &mut Interp, padding: &Value) -> Result<char, Flow> {
+    match padding {
+        Value::Int(n) if (0..=0x3f_ffff).contains(n) => {
+            Ok(char::from_u32(*n as u32).unwrap_or(' '))
+        }
+        other => Err(i.wrong_type_mut("characterp", other)),
+    }
+}
+
 fn gnu_char_code_width(i: &Interp, code: u32) -> usize {
     // CHARACTER_WIDTH handles ASCII directly. For other characters,
     // consult the live table using the Lisp code rather than a Rust
@@ -1837,10 +1846,7 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
     // GNU mule-util.el returns END-COLUMN padding characters when the
     // string ends before START-COLUMN is reached.
     if idx == chars.len() && col < start_col && padding.truthy() {
-        let pad = match &padding {
-            Value::Int(n) => char::from_u32(*n as u32).unwrap_or(' '),
-            _ => ' ',
-        };
+        let pad = truncate_padding_char(i, &padding)?;
         return Ok(Value::string(std::iter::repeat_n(pad, width).collect()));
     }
     // Scan the tail to decide whether to reserve ellipsis width.
@@ -1882,10 +1888,7 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
     // PADDING: non-nil pads out to WIDTH with the padding char (or
     // spaces when PADDING isn't a character).
     if padding.truthy() && col < width {
-        let pad = match &padding {
-            Value::Int(n) => char::from_u32(*n as u32).unwrap_or(' '),
-            _ => ' ',
-        };
+        let pad = truncate_padding_char(i, &padding)?;
         for _ in col..width {
             out.push(pad);
         }
