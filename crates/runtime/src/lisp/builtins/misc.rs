@@ -7876,26 +7876,136 @@ fn version_list_of(i: &mut Interp, v: &Value) -> Result<Vec<i128>, Flow> {
         Value::Str(s) => s.borrow().clone(),
         _ => return Err(i.signal_data(sym::ERROR, vec![Value::string("Version must be a string")])),
     };
-    if !s
-        .chars()
-        .next()
-        .map(|c| c.is_ascii_digit())
-        .unwrap_or(false)
-    {
-        // GNU subr.el's `error' runs `format-message', which
-        // translates `` `' to curve quotes under the default
-        // text-quoting-style.
-        return Err(i.error_q(
-            "Invalid version syntax: `%s' (must start with a number)",
-            &[&s],
-        ));
-    }
-    let mut out = Vec::new();
-    for part in s.split('.') {
-        let digits: String = part.chars().take_while(|c| c.is_ascii_digit()).collect();
-        out.push(digits.parse().unwrap_or(0));
-    }
-    Ok(out)
+    let saved_match = i.match_data.clone();
+    let bind_depth = i.specbind_depth();
+    let case_fold = i.q("case-fold-search");
+    let result = (|| {
+        i.specbind(case_fold, Value::t())?;
+        let separator_sym = i.q("version-separator");
+        let separator = if i.bound_p(separator_sym) {
+            match i.symbol_value(separator_sym) {
+                Value::Str(separator) => separator.borrow().clone(),
+                other => return Err(i.wrong_type_mut("stringp", &other)),
+            }
+        } else {
+            ".".to_string()
+        };
+        let mut version = s.clone();
+        if !separator.is_empty() && version.starts_with(&separator) {
+            version.insert(0, '0');
+        }
+        let invalid_start = || {
+            i.error_q(
+                "Invalid version syntax: `%s' (must start with a number)",
+                &[&version],
+            )
+        };
+        if !version
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false)
+        {
+            return Err(invalid_start());
+        }
+
+        let mut out = Vec::new();
+        let mut pos = 0usize;
+        loop {
+            let chars: Vec<char> = version.chars().collect();
+            if pos >= chars.len() || !chars[pos].is_ascii_digit() {
+                break;
+            }
+            let number_start = pos;
+            while pos < chars.len() && chars[pos].is_ascii_digit() {
+                pos += 1;
+            }
+            let number: String = chars[number_start..pos].iter().collect();
+            out.push(number.parse::<i128>().unwrap_or(i128::MAX));
+
+            let suffix_start = pos;
+            while pos < chars.len() && !chars[pos].is_ascii_digit() {
+                pos += 1;
+            }
+            if suffix_start == pos {
+                continue;
+            }
+            let suffix: String = chars[suffix_start..pos].iter().collect();
+            if suffix == separator {
+                continue;
+            }
+
+            let alist_sym = i.q("version-regexp-alist");
+            let alist = if i.bound_p(alist_sym) {
+                i.symbol_value(alist_sym)
+            } else {
+                Value::Nil
+            };
+            let entries = match alist {
+                Value::Nil => Vec::new(),
+                Value::Cons(_) => want_list(i, &alist)?,
+                other => return Err(i.wrong_type_mut("listp", &other)),
+            };
+            let string_match = Value::Sym(i.q("string-match"));
+            let mut priority = None;
+            for entry in entries {
+                let Value::Cons(pair) = entry else {
+                    continue;
+                };
+                let (regexp, value) = {
+                    let pair = pair.borrow();
+                    (pair.car.clone(), pair.cdr.clone())
+                };
+                let matched = i.apply(
+                    &string_match,
+                    vec![regexp, Value::string(suffix.clone())],
+                )?;
+                if matched.truthy() {
+                    priority = Some(match value {
+                        Value::Int(n) => n,
+                        other => return Err(i.wrong_type_mut("integerp", &other)),
+                    });
+                    break;
+                }
+            }
+            let priority = priority.or_else(|| {
+                if i.bound_p(alist_sym) {
+                    return None;
+                }
+                let normalized = suffix
+                    .strip_prefix(['-', '.', '_', '+', ' '])
+                    .unwrap_or(&suffix)
+                    .to_ascii_lowercase();
+                match normalized.as_str() {
+                    "snapshot" | "cvs" | "git" | "bzr" | "svn" | "hg" | "darcs"
+                    | "unknown" => Some(-4),
+                    "alpha" => Some(-3),
+                    "beta" => Some(-2),
+                    "pre" | "rc" => Some(-1),
+                    _ => None,
+                }
+            });
+            if let Some(priority) = priority {
+                out.push(priority);
+            } else if pos == chars.len()
+                && suffix
+                    .strip_prefix(['-', '.', '_', '+', ' '])
+                    .filter(|tail| tail.len() == 1)
+                    .and_then(|tail| tail.chars().next())
+                    .filter(|c| c.is_ascii_alphabetic())
+                    .is_some()
+            {
+                let letter = suffix.chars().last().unwrap().to_ascii_lowercase() as i128;
+                out.push(letter - 'a' as i128 + 1);
+            } else {
+                return Err(i.error_q("Invalid version syntax: `%s'", &[&version]));
+            }
+        }
+        Ok(out)
+    })();
+    let _ = i.unbind_to(bind_depth);
+    i.match_data = saved_match;
+    result
 }
 
 fn f_version_to_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

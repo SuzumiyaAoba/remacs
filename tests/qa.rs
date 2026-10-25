@@ -349,6 +349,7 @@ qa!(qa_flymake_diagnostic_object, "qa_flymake_diagnostic_object.el");
 qa!(qa_flymake_mode_buffer_local, "qa_flymake_mode_buffer_local.el");
 qa!(qa_symbol_with_pos_record_identity, "qa_symbol_with_pos_record_identity.el");
 qa!(qa_flymake_diagnostics_region, "qa_flymake_diagnostics_region.el");
+qa!(qa_version_to_list_gnu_syntax, "qa_version_to_list_gnu_syntax.el");
 qa!(qa_value_lt_circular_identity, "qa_value_lt_circular_identity.el");
 qa!(qa_value_lt_depth_limit, "qa_value_lt_depth_limit.el");
 qa!(qa_value_lt_record_bool_vector, "qa_value_lt_record_bool_vector.el");
