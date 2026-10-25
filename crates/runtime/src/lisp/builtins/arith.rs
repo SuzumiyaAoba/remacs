@@ -914,10 +914,28 @@ struct Rand3 {
 impl Rand3 {
     fn seeded(seed: u32) -> Self {
         let mut st = [0i32; 31];
-        st[0] = if seed == 0 { 1 } else { seed as i32 };
+        // glibc's BSD-compatible random() normalizes a zero seed to one.
+        // Darwin's FreeBSD-derived srandom() keeps state[0] at zero and
+        // substitutes 123459876 only when good_rand advances from zero.
+        #[cfg(target_vendor = "apple")]
+        {
+            st[0] = seed as i32;
+        }
+        #[cfg(not(target_vendor = "apple"))]
+        {
+            st[0] = if seed == 0 { 1 } else { seed as i32 };
+        }
         for i in 1..31 {
-            let hi = st[i - 1] / 127773;
-            let lo = st[i - 1] % 127773;
+            #[cfg(target_vendor = "apple")]
+            let previous = if st[i - 1] == 0 {
+                123_459_876
+            } else {
+                st[i - 1]
+            };
+            #[cfg(not(target_vendor = "apple"))]
+            let previous = st[i - 1];
+            let hi = previous / 127773;
+            let lo = previous % 127773;
             let w = 16807i64 * lo as i64 - 2836i64 * hi as i64;
             st[i] = (if w < 0 { w + 2147483647 } else { w }) as i32;
         }
