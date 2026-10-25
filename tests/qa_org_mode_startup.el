@@ -11,6 +11,14 @@
       (progn
         (qa (with-temp-buffer (org-mode) major-mode) 'org-mode)
         (qa (featurep 'org-element) t)
+        (qa (let ((source (symbol-file 'org-element-parse-buffer)))
+              (and (stringp source)
+                   (not (null (string-match "/lisp/org-element\\.el\\'" source)))))
+            t)
+        (qa (let ((source (symbol-file 'org-assert-version)))
+              (and (stringp source)
+                   (not (null (string-match "/lisp/org-macs\\.el\\'" source)))))
+            t)
         (qa (with-temp-buffer
               (insert "* Title\n\nText with *bold*.\n")
               (org-mode) (font-lock-mode 1) (font-lock-ensure)

@@ -63,6 +63,8 @@
 ;; Hand-expanded from the GNU cl-defstruct (remacs's cl-defstruct
 ;; subset lacks :constructor/:type/:predicate options).  Layout:
 ;; a :named record [avl-tree- dummyroot cmpfun].
+;;Remacs: GNU byte-compiled consumers inspect this cl-defstruct tag list.
+(defvar cl-struct-avl-tree--tags '(avl-tree-))
 (defun avl-tree--create (cmpfun)
   (record 'avl-tree- (avl-tree--node-create nil nil nil 0) cmpfun))
 

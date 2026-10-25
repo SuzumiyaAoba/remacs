@@ -7,6 +7,94 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+/// Large Org-mode libraries compiled by GNU for their ordinary on-demand
+/// use. Their twins are enabled only while an Org AOT library is loading,
+/// preserving source behavior for unrelated callers.
+const POSTBOOT_AOT_LIBRARIES: &[&str] = &[
+    "auth-source",
+    "autorevert",
+    "comint",
+    "cl-extra",
+    "desktop",
+    "dired",
+    "doc-view",
+    "eieio",
+    "eieio-core",
+    "emoji-zwj",
+    "epg",
+    "eww",
+    "filenotify",
+    "frameset",
+    "gnus",
+    "gnus-art",
+    "gnus-cloud",
+    "gnus-group",
+    "gnus-start",
+    "gnus-sum",
+    "imap",
+    "mail-source",
+    "mailabbrev",
+    "message",
+    "mm-view",
+    "mml",
+    "mml-sec",
+    "nnheader",
+    "nnimap",
+    "nnmail",
+    "nnselect",
+    "ol-bbdb",
+    "ol-bibtex",
+    "ol-doi",
+    "ol-info",
+    "ol-irc",
+    "ol-mhe",
+    "ol-rmail",
+    "ol-w3m",
+    "ol-docview",
+    "ol-eww",
+    "ol-gnus",
+    "shortdoc",
+    "shr",
+    "text-property-search",
+    "track-changes",
+    "treesit",
+    "url",
+    "url-cookie",
+    "url-parse",
+    "url-queue",
+    "url-util",
+    "vtable",
+    "org",
+    "org-element",
+    "org-compat",
+    "org-entities",
+    "org-element-ast",
+    "org-footnote",
+    "org-fold",
+    "org-fold-core",
+    "org-id",
+    "org-keys",
+    "org-list",
+    "org-loaddefs",
+    "org-macs",
+    "org-macro",
+    "org-persist",
+    "org-pcomplete",
+    "org-src",
+    "org-table",
+    "ol",
+    "oc",
+    "ob",
+    "ob-core",
+    "ob-emacs-lisp",
+    "ob-lob",
+    "ob-tangle",
+    "sh-script",
+    "comint",
+    "format-spec",
+    "rx",
+];
+
 /// GNU command-line-1's load-path splice cursor. Preserve the cons identity:
 /// Lisp can replace load-path between options, leaving this cursor detached.
 #[derive(Default)]
@@ -1967,8 +2055,23 @@ pub(crate) fn load_library_opts_msg(
     // GNU ships shortdoc's definitions as compiled data.  Eagerly expanding
     // that data would autoload shortdoc, which requires the same file again.
     // Other compiled twins remain restricted to the boot window.
-    let compiled_twin_allowed =
-        i.boot_loading || (stem == "shortdoc-doc" && !name.ends_with(".el"));
+    let org_aot_parent = i.reading_elc
+        && i.loads_in_progress.iter().any(|path| {
+            let parent_stem = path
+                .strip_prefix("builtin:")
+                .or_else(|| Path::new(path).file_stem().and_then(|s| s.to_str()))
+                .unwrap_or("");
+            matches!(parent_stem, "org" | "org-element")
+        });
+    let org_modules_loading = i.lisp_stack.iter().any(|(function, _)| {
+        matches!(function, Value::Sym(id) if i.symbol_name(*id) == "org-load-modules-maybe")
+    });
+    let postboot_org_aot = POSTBOOT_AOT_LIBRARIES.contains(&stem)
+        && !name.ends_with(".el")
+        && (matches!(stem, "org" | "org-element") || org_aot_parent || org_modules_loading);
+    let compiled_twin_allowed = i.boot_loading
+        || (stem == "shortdoc-doc" && !name.ends_with(".el"))
+        || postboot_org_aot;
     let found = locate_full(i, name, nosuffix, mustsuffix);
     let bundled = match &found {
         Some(Found::File(path)) => path_is_bundled_source(path) && embedded(path).is_some(),
@@ -2034,7 +2137,13 @@ pub(crate) fn load_library_opts_msg(
                     .truthy();
             if use_elc {
                 let src = embedded_elc(stem).unwrap();
-                let virtual_path = format!("builtin:{}", stem);
+                // Post-boot Org AOT twins replace the bundled source only;
+                // keep its real path as the public load/symbol identity.
+                let virtual_path = if POSTBOOT_AOT_LIBRARIES.contains(&stem) {
+                    path.clone()
+                } else {
+                    format!("builtin:{}", stem)
+                };
                 announce(i, &virtual_path);
                 // `.elc' top-level forms eval dynamically in GNU
                 // (`loading_dumped' still marks defs compiled);
