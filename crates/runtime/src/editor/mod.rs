@@ -11604,7 +11604,12 @@ fn file_attributes_at(i: &mut Interp, p: &str, id_format: &Value) -> EvalResult 
                         i,
                         (d.as_secs() as i128) * 1_000_000_000 + d.subsec_nanos() as i128,
                     ),
-                    Err(_) => Value::Nil,
+                    Err(before_epoch) => {
+                        let d = before_epoch.duration();
+                        let ns = -((d.as_secs() as i128) * 1_000_000_000
+                            + d.subsec_nanos() as i128);
+                        crate::lisp::builtins::misc::ns_to_lisp_time_i(i, ns)
+                    }
                 },
                 Err(_) => Value::Nil,
             };
