@@ -479,6 +479,7 @@ qa!(qa_string_fill_properties, "qa_string_fill_properties.el");
 qa!(qa_string_reverse_byte_kind, "qa_string_reverse_byte_kind.el");
 qa!(qa_string_join_byte_kind, "qa_string_join_byte_kind.el");
 qa!(qa_string_pad_byte_kind, "qa_string_pad_byte_kind.el");
+qa!(qa_string_trim_byte_kind, "qa_string_trim_byte_kind.el");
 qa!(qa_case_table_fold, "qa_case_table_fold.el");
 qa!(qa_byte_character_conversion, "qa_byte_character_conversion.el");
 qa!(qa_bytecode_errors, "qa_bytecode_errors.el");
