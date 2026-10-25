@@ -560,29 +560,13 @@ fn f_aset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                 } else {
                     c
                 };
-            } else if nch >= 0x80 || (old as u32) >= 0x80 {
-                // GNU multibyte rule: ASCII -> ASCII is always fine;
-                // otherwise the new char must encode to the same byte
-                // length as the old one.
-                let byte_len = |ch: char, code: i128| -> usize {
-                    if (0x3FFF80..=0x3FFFFF).contains(&code) {
-                        2 // eight-bit codes are 2 bytes internally
-                    } else {
-                        ch.len_utf8()
-                    }
-                };
-                let (nl, ol) = (
-                    byte_len(c, nch),
-                    byte_len(old, crate::lisp::value::lisp_char_code(old)),
-                );
-                if nl != ol && crate::lisp::value::mule_seq_code(c).is_none() {
-                    return Err(i.error(if nch < 0x80 {
-                        "Attempt to replace non-ASCII char in multibyte string"
-                    } else {
-                        "Attempt to store non-ASCII char into multibyte string"
-                    }));
-                }
-                chars[n as usize] = c;
+            } else if nch >= 0x80 {
+                // GNU's multibyte-string aset path rejects every
+                // non-ASCII replacement, including one with the same
+                // encoded width as the old character.
+                return Err(i.error("Attempt to store non-ASCII char into multibyte string"));
+            } else if (old as u32) >= 0x80 {
+                return Err(i.error("Attempt to replace non-ASCII char in multibyte string"));
             } else {
                 chars[n as usize] = c;
             }
