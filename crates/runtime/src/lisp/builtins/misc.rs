@@ -5704,7 +5704,9 @@ pub(crate) fn f_file_name_case_insensitive_p(
         })
         .collect();
     if flipped == path {
-        return Ok(Value::from_bool(std::path::Path::new(&path).exists()));
+        // A name without case-changing letters cannot establish that the
+        // filesystem is case-insensitive; unknown filesystems default nil.
+        return Ok(Value::Nil);
     }
     Ok(Value::from_bool(
         std::path::Path::new(&flipped).exists() && std::path::Path::new(&path).exists(),
