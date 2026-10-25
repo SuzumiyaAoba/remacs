@@ -16511,6 +16511,9 @@ fn value_cmp_impl(
     if depth > 64 {
         return Err(i.error("Circular object"));
     }
+    if crate::lisp::builtins::eq_values(x, y) {
+        return Ok(Equal);
+    }
     fn mism(i: &mut Interp, x: &Value, y: &Value) -> Flow {
         let s = i.q("type-mismatch");
         i.signal_data(s, vec![x.clone(), y.clone()])
