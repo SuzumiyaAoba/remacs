@@ -263,6 +263,7 @@ qa!(qa_lists2, "qa_lists2.el");
 qa!(qa_butlast_bignum, "qa_butlast_bignum.el");
 qa!(qa_butlast_float_counts, "qa_butlast_float_counts.el");
 qa!(qa_nbutlast_bignum, "qa_nbutlast_bignum.el");
+qa!(qa_nconc_final_cycle, "qa_nconc_final_cycle.el");
 qa!(qa_load, "qa_load.el");
 qa!(qa_autoload_dispatch, "qa_autoload_dispatch.el");
 qa!(qa_load_read_stream, "qa_load_read_stream.el");

@@ -710,9 +710,12 @@ pub(crate) fn f_append(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_nconc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    if args.is_empty() {
+        return Ok(Value::Nil);
+    }
     let mut result = Value::Nil;
     let mut last_cons: Option<crate::lisp::value::ConsRef> = None;
-    for a in &args[..] {
+    for a in &args[..args.len() - 1] {
         match a {
             Value::Nil => continue,
             Value::Cons(_) => {
@@ -750,17 +753,17 @@ fn f_nconc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                 }
                 last_cons = Some(last);
             }
-            other if std::ptr::eq(other, args.last().unwrap()) => {
-                // Last arg is the dotted tail (like append).
-                match &last_cons {
-                    Some(c) => c.borrow_mut().cdr = other.clone(),
-                    None => result = other.clone(),
-                }
-            }
             // GNU `nconc' CHECK_LIST_CONS's every non-final arg:
             // non-nil non-cons signals `consp' on that arg.
             other => return Err(i.wrong_type_mut("consp", other)),
         }
+    }
+    // The final argument is the tail itself. In particular, do not walk
+    // it: a circular list is a valid final value and retains its identity.
+    let tail = args.last().unwrap().clone();
+    match &last_cons {
+        Some(cell) => cell.borrow_mut().cdr = tail,
+        None => result = tail,
     }
     Ok(result)
 }
