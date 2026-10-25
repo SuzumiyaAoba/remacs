@@ -784,7 +784,7 @@ fn f_string_equal(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 /// Keep the actual string object so ordering sees its byte kind and a
 /// symbol name's current contents, rather than its internment key.
-fn ordering_string(i: &mut Interp, value: &Value) -> Result<StrRef, Flow> {
+pub(crate) fn ordering_string(i: &mut Interp, value: &Value) -> Result<StrRef, Flow> {
     match value {
         Value::Str(s) => Ok(s.clone()),
         Value::Nil | Value::Sym(_) => {
@@ -2301,7 +2301,7 @@ fn f_string_lines(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     Ok(Value::list(result))
 }
-fn f_string_equal_ignore_case(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_string_equal_ignore_case(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let compare = i.q("compare-strings");
     let result = i.apply(
         &Value::Sym(compare),

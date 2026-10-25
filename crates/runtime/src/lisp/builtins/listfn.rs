@@ -1865,24 +1865,17 @@ fn f_assoc_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // the element loop — only reached when an element (or its car) is a
     // string/symbol to compare against.  Empty or non-string-element
     // lists return nil even for non-string keys.
-    let key_string: Option<String> = match &args[0] {
-        Value::Str(s) => Some(s.borrow().clone()),
-        Value::Sym(s) => Some(i.symbol_name(*s).to_string()),
+    let key_string = match &args[0] {
+        Value::Str(s) => Some(s.clone()),
+        Value::Sym(_) | Value::Nil => Some(super::strfn::ordering_string(i, &args[0])?),
         _ => None,
     };
     let fold = arg(&args, 2).truthy();
-    let name_of = |i: &Interp, v: &Value| -> Option<String> {
+    let name_of = |i: &mut Interp, v: &Value| -> Result<Option<crate::lisp::value::StrRef>, Flow> {
         match v {
-            Value::Str(s) => Some(s.borrow().clone()),
-            Value::Sym(s) => Some(i.symbol_name(*s).to_string()),
-            _ => None,
-        }
-    };
-    let matches = |s: &str, key: &str| -> bool {
-        if fold {
-            s.eq_ignore_ascii_case(key)
-        } else {
-            s == key
+            Value::Str(s) => Ok(Some(s.clone())),
+            Value::Sym(_) | Value::Nil => super::strfn::ordering_string(i, v).map(Some),
+            _ => Ok(None),
         }
     };
     let mut cur = args[1].clone();
@@ -1899,16 +1892,24 @@ fn f_assoc_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                     (b.car.clone(), b.cdr.clone())
                 };
                 // Key check only fires once a comparable element appears.
-                let check_key = |i: &mut Interp| -> Result<&str, Flow> {
+                let check_key = |i: &mut Interp| -> Result<crate::lisp::value::StrRef, Flow> {
                     match &key_string {
-                        Some(k) => Ok(k.as_str()),
+                        Some(k) => Ok(k.clone()),
                         None => Err(i.wrong_type_mut("stringp", &args[0])),
                     }
                 };
                 let try_elem = |i: &mut Interp, v: &Value| -> Result<bool, Flow> {
-                    if let Some(s) = name_of(i, v) {
+                    if let Some(s) = name_of(i, v)? {
                         let k = check_key(i)?;
-                        return Ok(matches(&s, k));
+                        if fold {
+                            return Ok(super::strfn::f_string_equal_ignore_case(
+                                i,
+                                vec![Value::Str(s), Value::Str(k)].into(),
+                            )?
+                            .truthy());
+                        }
+                        return Ok(super::strfn::gnu_sbytes(i, &s)
+                            == super::strfn::gnu_sbytes(i, &k));
                     }
                     Ok(false)
                 };
