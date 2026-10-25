@@ -756,7 +756,11 @@ fn f_log(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             let b = want_number(i, b)?;
             // GNU's Flog calls log10() directly for base 10, so
             // (log 1000 10) yields exactly 3.0.
-            Ok(Value::float(if b == 10.0 { n.log10() } else { n.log(b) }))
+            Ok(Value::float(match b {
+                10.0 => n.log10(),
+                2.0 => n.log2(),
+                _ => n.log(b),
+            }))
         }
         None | Some(Value::Nil) => Ok(Value::float(n.ln())),
         Some(_) => unreachable!(),
