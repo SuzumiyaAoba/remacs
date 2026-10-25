@@ -5669,7 +5669,9 @@ pub(crate) fn f_file_name_case_insensitive_p(
     #[cfg(unix)]
     {
         use std::ffi::CString;
-        if let Ok(c) = CString::new(dir) {
+        let mut probe = std::path::PathBuf::from(&dir);
+        loop {
+            if let Ok(c) = CString::new(probe.to_string_lossy().as_bytes()) {
             // _PC_CASE_SENSITIVE (11): 0 → case-insensitive FS → t;
             // 1 → sensitive → nil; -1/EINVAL → unknown → nil.
             let r = unsafe { libc::pathconf(c.as_ptr(), 11) };
@@ -5679,7 +5681,15 @@ pub(crate) fn f_file_name_case_insensitive_p(
             if r == 1 {
                 return Ok(Value::Nil);
             }
-            // Fall through to the probe on error.
+            }
+            // GNU walks up until pathconf can query an existing ancestor.
+            let Some(parent) = probe.parent() else {
+                break;
+            };
+            if parent == probe {
+                break;
+            }
+            probe = parent.to_path_buf();
         }
     }
     // Fallback (or non-unix): probe by statting a case-flipped name.
