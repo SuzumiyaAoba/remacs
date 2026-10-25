@@ -12082,7 +12082,7 @@ fn f_file_name_as_directory(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         });
     }
     // GNU: an empty name means the current directory ("./").
-    Ok(Value::string(if s.is_empty() {
+    Ok(file_name_result_like(i, &a[0], if s.is_empty() {
         "./".to_string()
     } else if s.ends_with('/') {
         s

@@ -513,6 +513,7 @@ qa!(qa_file_name_nondirectory_handler, "qa_file_name_nondirectory_handler.el");
 qa!(qa_file_name_as_directory_handler, "qa_file_name_as_directory_handler.el");
 qa!(qa_file_name_nondirectory_byte_kind, "qa_file_name_nondirectory_byte_kind.el");
 qa!(qa_file_name_directory_byte_kind, "qa_file_name_directory_byte_kind.el");
+qa!(qa_file_name_as_directory_byte_kind, "qa_file_name_as_directory_byte_kind.el");
 qa!(qa_byte_to_string_range, "qa_byte_to_string_range.el");
 qa!(qa_byte_to_string_byte_kind, "qa_byte_to_string_byte_kind.el");
 qa!(qa_string_as_multibyte_extended_utf8, "qa_string_as_multibyte_extended_utf8.el");
