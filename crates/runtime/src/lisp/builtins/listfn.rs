@@ -1028,13 +1028,13 @@ fn delete_all_by(i: &mut Interp, args: crate::lisp::Argv, on_cdr: bool) -> EvalR
         }
     };
     let mut alist = args[1].clone();
-    let mut guard = 0usize;
+    let mut quit_count = 0u16;
     // (while (and (consp (car alist)) (eq (car (car alist)) key))
     //   (setq alist (cdr alist)))
     loop {
-        guard += 1;
-        if guard > 500_000 {
-            return Err(err_circular(i));
+        quit_count = quit_count.wrapping_add(1);
+        if quit_count == 0 {
+            i.maybe_quit()?;
         }
         let head = match &alist {
             Value::Cons(c) => c.borrow().car.clone(),
@@ -1059,9 +1059,9 @@ fn delete_all_by(i: &mut Interp, args: crate::lisp::Argv, on_cdr: bool) -> EvalR
     //       (setq tail tail-cdr))))
     let mut tail = alist.clone();
     loop {
-        guard += 1;
-        if guard > 500_000 {
-            return Err(err_circular(i));
+        quit_count = quit_count.wrapping_add(1);
+        if quit_count == 0 {
+            i.maybe_quit()?;
         }
         let next = match &tail {
             Value::Cons(c) => c.borrow().cdr.clone(),
