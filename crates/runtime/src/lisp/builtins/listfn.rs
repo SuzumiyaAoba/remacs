@@ -5,7 +5,7 @@ use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, Value};
-use num_traits::ToPrimitive;
+use num_traits::{ToPrimitive, Zero};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -1669,12 +1669,19 @@ fn plist_put(i: &mut Interp, args: crate::lisp::Argv, lax: bool) -> EvalResult {
 // ---------- take / ntake / flatten ----------
 
 fn f_take(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let mut remaining = want_int(i, &args[0])?;
+    let mut remaining = match &args[0] {
+        Value::Int(n) => num_bigint::BigInt::from(*n),
+        Value::BigInt(n) => (**n).clone(),
+        other => return Err(i.wrong_type_mut("integerp", other)),
+    };
+    if remaining <= num_bigint::BigInt::zero() {
+        return Ok(Value::Nil);
+    }
     let mut cur = args[1].clone();
     let mut items = Vec::new();
     // Only inspect the requested prefix. A dotted tail is an error only
     // when more elements are requested; nonpositive N never checks LIST.
-    while remaining > 0 {
+    while !remaining.is_zero() {
         match cur {
             Value::Cons(cell) => {
                 let cell = cell.borrow();
@@ -1690,23 +1697,26 @@ fn f_take(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_ntake(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let n = want_int(i, &args[0])?.max(0) as usize;
+    let mut remaining = match &args[0] {
+        Value::Int(n) => num_bigint::BigInt::from(*n),
+        Value::BigInt(n) => (**n).clone(),
+        other => return Err(i.wrong_type_mut("integerp", other)),
+    };
     // ntake destructively truncates the list after N elements.
     let mut cur = args[1].clone();
-    if n == 0 {
+    if remaining <= num_bigint::BigInt::zero() {
         return Ok(Value::Nil);
     }
-    let mut k = 1;
     loop {
         match &cur {
             Value::Cons(c) => {
                 let next = c.borrow().cdr.clone();
-                if k == n {
+                remaining -= 1;
+                if remaining.is_zero() {
                     c.borrow_mut().cdr = Value::Nil;
                     return Ok(args[1].clone());
                 }
                 cur = next;
-                k += 1;
             }
             Value::Nil => return Ok(args[1].clone()),
             // GNU CHECK_LIST reports the original LIST argument.
