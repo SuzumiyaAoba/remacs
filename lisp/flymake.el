@@ -56,8 +56,9 @@ If COL is nil, return a region for the whole line."
         (goto-char (point-min))
         (forward-line (1- line))
         (if col
-            (cons (min (+ (point) (1- col)) (point-max))
-                  (min (+ (point) col) (point-max)))
+            (let ((beg (+ (point) (1- col)))
+                  (end (line-end-position)))
+              (and (<= beg end) (cons beg end)))
           (cons (point) (line-end-position)))))))
 
 (defun flymake-diagnostics (&optional _beg _end)
