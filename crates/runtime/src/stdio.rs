@@ -4,10 +4,17 @@ unsafe extern "C" {
     #[cfg_attr(target_vendor = "apple", link_name = "__stdoutp")]
     #[cfg_attr(not(target_vendor = "apple"), link_name = "stdout")]
     static mut C_STDOUT: *mut libc::FILE;
+    #[cfg_attr(target_vendor = "apple", link_name = "__stderrp")]
+    #[cfg_attr(not(target_vendor = "apple"), link_name = "stderr")]
+    static mut C_STDERR: *mut libc::FILE;
 }
 
 pub fn write(bytes: &[u8]) {
     unsafe { libc::fwrite(bytes.as_ptr().cast(), 1, bytes.len(), C_STDOUT); }
+}
+
+pub fn write_stderr(bytes: &[u8]) {
+    unsafe { libc::fwrite(bytes.as_ptr().cast(), 1, bytes.len(), C_STDERR); }
 }
 
 pub fn flush() {

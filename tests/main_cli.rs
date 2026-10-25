@@ -24,6 +24,16 @@ fn remacs(args: &[&str], stdin: &str) -> (String, String, i32) {
     )
 }
 
+#[test]
+fn external_debugging_output_emits_high_mule_bytes() {
+    let output = Command::new(env!("CARGO_BIN_EXE_remacs"))
+        .args(["-Q", "--batch", "--eval", "(external-debugging-output #x110000)"])
+        .output()
+        .expect("run remacs");
+    assert!(output.status.success());
+    assert_eq!(output.stderr, [0xF4, 0x90, 0x80, 0x80]);
+}
+
 #[cfg(target_os = "macos")]
 fn remacs_before_deadline(args: &[&str]) -> (String, String, i32) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_remacs"))

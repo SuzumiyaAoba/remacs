@@ -2878,7 +2878,26 @@ fn f_external_debugging_output(i: &mut Interp, args: crate::lisp::Argv) -> EvalR
     if stripped > 0x3FFFFF {
         return Err(i.error(&format!("Invalid character: {:x}", stripped)));
     }
-    eprint!("{}", char::from_u32(stripped).unwrap_or('?'));
+    let ch = crate::lisp::value::lisp_char(stripped)
+        .unwrap_or_else(|| crate::lisp::value::mule_seq_char(stripped));
+    let mut bytes = Vec::new();
+    if let Some(byte) = crate::lisp::value::raw_byte_marker(ch) {
+        bytes.push(byte);
+    } else if let Some(code) = crate::lisp::value::mule_seq_code(ch) {
+        bytes.extend_from_slice(&crate::lisp::value::mule_high_bytes(code));
+    } else if let Some(code) = crate::lisp::value::surrogate_code(ch) {
+        bytes.extend_from_slice(&crate::lisp::builtins::coding_legacy::internal_encode(code));
+    } else if let Some(byte) = crate::lisp::value::eight_bit_byte(ch)
+        .or_else(|| crate::lisp::value::print_eight_bit_byte(ch))
+        .or_else(|| crate::lisp::value::write_char_eight_bit_byte(ch))
+    {
+        bytes.push(0xC0 + ((byte >> 6) & 1));
+        bytes.push(0x80 + (byte & 0x3F));
+    } else {
+        let mut encoded = [0; 4];
+        bytes.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
+    }
+    crate::stdio::write_stderr(&bytes);
     Ok(args[0].clone())
 }
 
