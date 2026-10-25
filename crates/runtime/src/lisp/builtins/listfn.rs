@@ -1274,20 +1274,32 @@ fn f_delete(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             // delete chars equal to ELT from a string
             let elt = &args[0];
             let mut out = String::new();
+            let mut changed = false;
             for c in s.borrow().chars() {
                 let cv = Value::Int(c as i128);
                 if !equal_values(i, &cv, elt)? {
                     out.push(c);
+                } else {
+                    changed = true;
                 }
+            }
+            if !changed {
+                return Ok(args[1].clone());
             }
             Ok(Value::string(out))
         }
         Value::Vec(v) => {
             let mut kept = Vec::new();
+            let mut changed = false;
             for x in v.borrow().iter() {
                 if !equal_values(i, x, &args[0])? {
                     kept.push(x.clone());
+                } else {
+                    changed = true;
                 }
+            }
+            if !changed {
+                return Ok(args[1].clone());
             }
             Ok(Value::vector(kept))
         }

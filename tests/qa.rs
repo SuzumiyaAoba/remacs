@@ -483,6 +483,7 @@ qa!(qa_string_trim_byte_kind, "qa_string_trim_byte_kind.el");
 qa!(qa_string_chop_newline_byte_kind, "qa_string_chop_newline_byte_kind.el");
 qa!(qa_string_replace_byte_kind, "qa_string_replace_byte_kind.el");
 qa!(qa_subst_char_byte_kind, "qa_subst_char_byte_kind.el");
+qa!(qa_delete_identity, "qa_delete_identity.el");
 qa!(qa_case_table_fold, "qa_case_table_fold.el");
 qa!(qa_byte_character_conversion, "qa_byte_character_conversion.el");
 qa!(qa_bytecode_errors, "qa_bytecode_errors.el");
