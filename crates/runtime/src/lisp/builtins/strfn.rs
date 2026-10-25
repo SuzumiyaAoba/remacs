@@ -1635,32 +1635,9 @@ fn f_string_replace(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // (elements that aren't characters → integerp).
     let mut to: Option<String> = None;
     let to_of = |i: &mut Interp, v: &Value| -> Result<String, Flow> {
-        let s = match v {
-            Value::Str(s) => s.borrow().clone(),
-            Value::Nil => String::new(),
-            Value::Vec(vec) => {
-                let mut out = String::new();
-                for e in vec.borrow().iter() {
-                    match e {
-                        Value::Int(n) => out.push(char::from_u32(*n as u32).unwrap_or('\u{FFFD}')),
-                        other => return Err(i.wrong_type_mut("integerp", other)),
-                    }
-                }
-                out
-            }
-            Value::Cons(_) => {
-                let mut out = String::new();
-                for e in v.list_to_vec().unwrap_or_default() {
-                    match &e {
-                        Value::Int(n) => out.push(char::from_u32(*n as u32).unwrap_or('\u{FFFD}')),
-                        other => return Err(i.wrong_type_mut("integerp", other)),
-                    }
-                }
-                out
-            }
-            other => return Err(i.wrong_type_mut("sequencep", other)),
-        };
-        Ok(s)
+        let mut out = String::new();
+        concat_seq(i, v, &mut out)?;
+        Ok(out)
     };
     while pos + flen <= schars.len() {
         if schars[pos..pos + flen] == fchars[..] {
