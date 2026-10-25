@@ -4219,6 +4219,12 @@ fn f_process_attributes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Int(n) => *n as i32,
         _ => return Err(i.wrong_type_mut("numberp", &a[0])),
     };
+    #[cfg(target_os = "macos")]
+    {
+        return process_attributes_macos(i, pid);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
     // GNU's alist via ps(1): fixed key set in fixed order, time fields
     // as (hi lo usec psec) lists.
     // args goes last so all space-free fields split cleanly. macOS ps
@@ -4291,6 +4297,156 @@ fn f_process_attributes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         pair(i, "euid", num(f[12])),
     ];
     Ok(Value::list(items))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn process_attributes_macos(i: &mut Interp, pid: i32) -> EvalResult {
+    use std::mem::{MaybeUninit, size_of};
+
+    let mut info = MaybeUninit::<libc::proc_taskallinfo>::zeroed();
+    let info_size = size_of::<libc::proc_taskallinfo>() as i32;
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTASKALLINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            info_size,
+        )
+    };
+    if read < info_size {
+        return Ok(Value::Nil);
+    }
+    let info = unsafe { info.assume_init() };
+    let bsd = info.pbsd;
+    let task = info.ptinfo;
+    let now_us = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_micros() as i128)
+        .unwrap_or(0);
+    let start_us = (bsd.pbi_start_tvsec as i128) * 1_000_000
+        + bsd.pbi_start_tvusec as i128;
+    let etime_us = now_us.saturating_sub(start_us).max(0);
+    let utime_us = (task.pti_total_user / 1_000) as i128;
+    let stime_us = (task.pti_total_system / 1_000) as i128;
+    let comm = darwin_cchars(&bsd.pbi_comm);
+    let args = darwin_process_args(pid).unwrap_or_else(|| comm.clone());
+    let uid = bsd.pbi_uid;
+    let gid = bsd.pbi_gid;
+    let user = unsafe {
+        let passwd = libc::getpwuid(uid);
+        if passwd.is_null() {
+            uid.to_string()
+        } else {
+            std::ffi::CStr::from_ptr((*passwd).pw_name)
+                .to_string_lossy()
+                .into_owned()
+        }
+    };
+    let group = unsafe {
+        let group = libc::getgrgid(gid);
+        if group.is_null() {
+            gid.to_string()
+        } else {
+            std::ffi::CStr::from_ptr((*group).gr_name)
+                .to_string_lossy()
+                .into_owned()
+        }
+    };
+    let state = match bsd.pbi_status {
+        libc::SRUN => "R",
+        libc::SSLEEP => "S",
+        libc::SSTOP => "T",
+        libc::SZOMB => "Z",
+        libc::SIDL => "I",
+        _ => "?",
+    };
+    let pair = |i: &mut Interp, key: &str, value: Value| {
+        Value::cons(symv(i, key), value)
+    };
+    let items = vec![
+        pair(i, "args", Value::string(args)),
+        pair(i, "thcount", Value::Int(task.pti_threadnum as i128)),
+        pair(i, "rss", Value::Int((task.pti_resident_size / 1024) as i128)),
+        pair(i, "vsize", Value::Int((task.pti_virtual_size / 1024) as i128)),
+        pair(i, "etime", time_list(etime_us)),
+        pair(i, "start", time_list(start_us)),
+        pair(i, "nice", Value::Int(bsd.pbi_nice as i128)),
+        pair(i, "majflt", Value::Int(task.pti_pageins as i128)),
+        pair(i, "time", time_list(utime_us + stime_us)),
+        pair(i, "stime", time_list(stime_us)),
+        pair(i, "utime", time_list(utime_us)),
+        pair(i, "tpgid", Value::Int(bsd.e_tpgid as i32 as i128)),
+        pair(i, "pgrp", Value::Int(bsd.pbi_pgid as i128)),
+        pair(i, "ppid", Value::Int(bsd.pbi_ppid as i128)),
+        pair(i, "state", Value::string(state)),
+        pair(i, "comm", Value::string(comm)),
+        pair(i, "group", Value::string(group)),
+        pair(i, "egid", Value::Int(gid as i128)),
+        pair(i, "user", Value::string(user)),
+        pair(i, "euid", Value::Int(uid as i128)),
+    ];
+    Ok(Value::list(items))
+}
+
+#[cfg(target_os = "macos")]
+fn darwin_cchars(chars: &[libc::c_char]) -> String {
+    let bytes = chars
+        .iter()
+        .take_while(|c| **c != 0)
+        .map(|c| *c as u8)
+        .collect::<Vec<_>>();
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+#[cfg(target_os = "macos")]
+fn darwin_process_args(pid: i32) -> Option<String> {
+    const ARG_BUFFER_MAX: usize = 256 * 1024;
+    let mut bytes = vec![0u8; ARG_BUFFER_MAX];
+    let mut length = bytes.len();
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
+    let result = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as libc::c_uint,
+            bytes.as_mut_ptr().cast(),
+            &mut length,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if result != 0 || length < std::mem::size_of::<i32>() {
+        let mut path = vec![0 as libc::c_char; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+        let len = unsafe {
+            libc::proc_pidpath(
+                pid,
+                path.as_mut_ptr().cast(),
+                path.len() as u32,
+            )
+        };
+        return (len > 0).then(|| darwin_cchars(&path));
+    }
+    bytes.truncate(length);
+    let argc = i32::from_ne_bytes(bytes[..std::mem::size_of::<i32>()].try_into().ok()?)
+        .max(0) as usize;
+    let mut pos = std::mem::size_of::<i32>();
+    while pos < bytes.len() && bytes[pos] != 0 {
+        pos += 1; // executable path
+    }
+    while pos < bytes.len() && bytes[pos] == 0 {
+        pos += 1; // padding before argv
+    }
+    let mut argv = Vec::with_capacity(argc);
+    for _ in 0..argc {
+        if pos >= bytes.len() {
+            break;
+        }
+        let end = bytes[pos..].iter().position(|b| *b == 0)? + pos;
+        argv.push(String::from_utf8_lossy(&bytes[pos..end]).into_owned());
+        pos = end + 1;
+    }
+    Some(argv.join(" "))
 }
 
 /// GNU time list (HIGH LOW MICRO PICO) from total microseconds.
@@ -4306,6 +4462,7 @@ fn time_list(usec: i128) -> Value {
 }
 
 /// Parse `[[dd-]hh:]mm:ss[.frac]` into fractional total seconds.
+#[cfg(not(target_os = "macos"))]
 fn ps_time_secs_f(s: &str) -> f64 {
     let s = s.trim();
     let (days, rest) = match s.split_once('-') {

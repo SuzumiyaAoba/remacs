@@ -367,6 +367,7 @@ qa!(qa_file_locked_p_cleans_stale_locks, "qa_file_locked_p_cleans_stale_locks.el
 qa!(qa_malformed_lock_targets, "qa_malformed_lock_targets.el");
 qa!(qa_unlock_file_foreign_lock, "qa_unlock_file_foreign_lock.el");
 qa!(qa_lock_file_error_original_filename, "qa_lock_file_error_original_filename.el");
+qa!(qa_process_attributes_native_macos, "qa_process_attributes_native_macos.el");
 qa!(qa_aset_multibyte_character_bounds, "qa_aset_multibyte_character_bounds.el");
 qa!(qa_bytecode_numeric_predicates_bignum, "qa_bytecode_numeric_predicates_bignum.el");
 qa!(qa_bytecode_marker_arithmetic, "qa_bytecode_marker_arithmetic.el");
