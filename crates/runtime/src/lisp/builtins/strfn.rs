@@ -5927,22 +5927,26 @@ fn f_string_as_multibyte(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
     let mut out = String::new();
     let mut k = 0;
     while k < bytes.len() {
-        match std::str::from_utf8(&bytes[k..]) {
-            Ok(t) => {
-                out.push_str(t);
-                break;
-            }
-            Err(e) => {
-                let good = e.valid_up_to();
-                out.push_str(unsafe { std::str::from_utf8_unchecked(&bytes[k..k + good]) });
-                k += good;
-                let bad = e.error_len().unwrap_or(1);
-                for _ in 0..bad.min(bytes.len() - k) {
-                    out.push(lisp_char(bytes[k] as u32 + 0x3FFF00).unwrap());
-                    k += 1;
-                }
+        let length = match bytes[k] {
+            0..=0x7f => 1,
+            0xc2..=0xdf => 2,
+            0xe0..=0xef => 3,
+            0xf0..=0xf7 => 4,
+            0xf8 => 5,
+            _ => 0,
+        };
+        if length > 0 && k + length <= bytes.len() {
+            let (decoded, multibyte) = crate::lisp::value::auto_string_bytes(&bytes[k..k + length]);
+            if length == 1 && bytes[k] < 0x80 || multibyte {
+                out.push_str(&decoded);
+                k += length;
+                continue;
             }
         }
+        // Invalid, overlong, truncated, or reserved byte sequences are
+        // retained byte-by-byte as eight-bit characters.
+        out.push(lisp_char(bytes[k] as u32 + 0x3FFF00).unwrap());
+        k += 1;
     }
     let v = Value::string(out);
     if let Value::Str(r) = &v {
