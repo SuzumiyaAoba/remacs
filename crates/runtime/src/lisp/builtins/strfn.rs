@@ -1926,9 +1926,17 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
     let chars: Vec<char> = s.chars().collect();
     let mut col = 0usize;
     let mut idx = 0usize;
+    let mut head_padding = 0usize;
     while idx < chars.len() && (col as f64) < start_col {
+        let old_col = col;
         col += gnu_char_width(i, chars[idx]);
         idx += 1;
+        if (col as f64) > start_col {
+            head_padding = ((col as f64) - start_col).ceil() as usize;
+            if old_col as f64 >= start_col {
+                head_padding = 0;
+            }
+        }
     }
     // GNU mule-util.el returns END-COLUMN padding characters when the
     // string ends before START-COLUMN is reached.
@@ -1959,6 +1967,10 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
         (width - ell_w as f64).max(0.0)
     };
     let mut out = String::new();
+    if head_padding > 0 && padding.truthy() {
+        let pad = truncate_padding_char(i, &padding)?;
+        out.extend(std::iter::repeat_n(pad, head_padding));
+    }
     let mut truncated = false;
     for &c in &chars[idx..] {
         let cw = gnu_char_width(i, c);
