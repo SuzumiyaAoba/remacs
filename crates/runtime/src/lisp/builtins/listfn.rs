@@ -1488,27 +1488,27 @@ fn f_plist_get(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             match cur {
                 Value::Nil => return Ok(Value::Nil),
                 Value::Cons(c) => {
-                    let (k, rest) = {
-                        let b = c.borrow();
-                        (b.car.clone(), b.cdr.clone())
-                    };
-                    let Value::Cons(value_cell) = rest else {
+                    let k = c.borrow().car.clone();
+                    if !matches!(&c.borrow().cdr, Value::Cons(_)) {
                         // plist-get's optional predicate is called only
                         // for complete property/value pairs. An odd final
                         // key has an implicit nil value but is not tested.
                         return Ok(Value::Nil);
-                    };
-                    let (value, next) = {
-                        let b = value_cell.borrow();
-                        (b.car.clone(), b.cdr.clone())
-                    };
+                    }
                     // GNU funcalls PREDICATE on the raw values —
                     // `invalid-function' on e.g. 5, not a quoted form.
                     let m = i.apply(&pred, vec![k.clone(), args[1].clone()])?;
+                    let rest = c.borrow().cdr.clone();
                     if m.truthy() {
-                        return Ok(value);
+                        return Ok(match rest {
+                            Value::Cons(value_cell) => value_cell.borrow().car.clone(),
+                            _ => Value::Nil,
+                        });
                     }
-                    cur = next;
+                    cur = match rest {
+                        Value::Cons(value_cell) => value_cell.borrow().cdr.clone(),
+                        _ => Value::Nil,
+                    };
                     if matches!(cur, Value::Cons(_)) && cycle.advance(&cur) {
                         return Ok(Value::Nil);
                     }
@@ -1543,10 +1543,10 @@ fn f_plist_member(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let mut cur = args[0].clone();
     let mut cycle = PlistCycleDetector::new(&cur);
     loop {
-        let (k, rest) = match cur.clone() {
+        let (cell, k, rest) = match cur.clone() {
             Value::Cons(c) => {
                 let b = c.borrow();
-                (b.car.clone(), b.cdr.clone())
+                (c.clone(), b.car.clone(), b.cdr.clone())
             }
             // FOR_EACH_TAIL's `CONSP(tail)' stops on nil; any other
             // atom/dotted tail → `CHECK_TYPE' signals `plistp'.
@@ -1562,7 +1562,13 @@ fn f_plist_member(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             return Ok(cur);
         }
         // Advance past the value cell when it exists; GNU stops the
-        // scan when the cdr is not a cons.
+        // scan when the cdr is not a cons. With a predicate, reread
+        // the live cdr after the callback, which may have changed it.
+        let rest = if pred.is_nil() {
+            rest
+        } else {
+            cell.borrow().cdr.clone()
+        };
         cur = if let Value::Cons(c2) = &rest {
             c2.borrow().cdr.clone()
         } else {
