@@ -461,6 +461,7 @@ qa!(qa_string_to_vector, "qa_string_to_vector.el");
 qa!(qa_string_order, "qa_string_order.el");
 qa!(qa_concat_mule_chars, "qa_concat_mule_chars.el");
 qa!(qa_string_replace_mule, "qa_string_replace_mule.el");
+qa!(qa_string_trim_mule, "qa_string_trim_mule.el");
 qa!(qa_case_table_fold, "qa_case_table_fold.el");
 qa!(qa_byte_character_conversion, "qa_byte_character_conversion.el");
 qa!(qa_bytecode_errors, "qa_bytecode_errors.el");

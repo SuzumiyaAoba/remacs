@@ -1352,7 +1352,12 @@ fn trim_re(i: &mut Interp, args: &[Value], idx: usize) -> Result<String, Flow> {
             let mut out = String::new();
             for e in &elems {
                 match e {
-                    Value::Int(n) => out.push(char::from_u32(*n as u32).unwrap_or('\u{FFFD}')),
+                    Value::Int(n) if (0..=0x3f_ffff).contains(n) => {
+                        let code = *n as u32;
+                        out.push(lisp_char(code).unwrap_or_else(|| {
+                            crate::lisp::value::mule_seq_char(code)
+                        }));
+                    }
                     _ => return Err(i.wrong_type_mut("characterp", e)),
                 }
             }
