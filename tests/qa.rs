@@ -343,6 +343,7 @@ qa!(qa_value_lt_string_char_codes, "qa_value_lt_string_char_codes.el");
 qa!(qa_format_spec_properties, "qa_format_spec_properties.el");
 qa!(qa_url_unhex_bytes, "qa_url_unhex_bytes.el");
 qa!(qa_symbol_with_pos_dynamic_mode, "qa_symbol_with_pos_dynamic_mode.el");
+qa!(qa_dired_newline_filename, "qa_dired_newline_filename.el");
 qa!(qa_value_lt_circular_identity, "qa_value_lt_circular_identity.el");
 qa!(qa_value_lt_depth_limit, "qa_value_lt_depth_limit.el");
 qa!(qa_value_lt_record_bool_vector, "qa_value_lt_record_bool_vector.el");

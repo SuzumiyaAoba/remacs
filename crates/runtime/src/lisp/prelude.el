@@ -30963,27 +30963,14 @@ Valid wildcards are `*', `?', `[abc]' and `[a-z]'."
       (forward-line -1))
     (if (let ((case-fold-search nil)) (looking-at "//DIRED//"))
 	(let ((end (line-end-position))
-	      (linebeg (point))
-	      error-lines)
-	  ;; Find all the lines that are error messages,
-	  ;; and record the bounds of each one.
-	  (goto-char beg)
-	  (while (< (point) linebeg)
-	    (or (eql (following-char) ?\s)
-		(push (list (point) (line-end-position)) error-lines))
-	    (forward-line 1))
-	  (setq error-lines (nreverse error-lines))
+	      (linebeg (point)))
 	  ;; Now read the numeric positions of file names.
 	  (goto-char linebeg)
 	  (forward-word-strictly 1)
 	  (forward-char 3)
 	  (while (< (point) end)
-	    (let ((start (insert-directory-adj-pos
-			  (+ beg (read (current-buffer)))
-			  error-lines))
-		  (end (insert-directory-adj-pos
-			(+ beg (read (current-buffer)))
-			error-lines)))
+	    (let ((start (+ beg (read (current-buffer))))
+		  (end (+ beg (read (current-buffer)))))
 	      (if (memq (char-after end) '(?\n ?\s ?/ ?* ?@ ?% ?= ?|))
 		  ;; End is followed by \n or by output of -F.
 		  (put-text-property start end 'dired-filename t)
