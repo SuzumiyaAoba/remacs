@@ -522,6 +522,7 @@ qa!(qa_string_equal_ignore_case, "qa_string_equal_ignore_case.el");
 qa!(qa_concat_bool_vector, "qa_concat_bool_vector.el");
 qa!(qa_string_replace_empty_from_order, "qa_string_replace_empty_from_order.el");
 qa!(qa_string_fill_form_feed, "qa_string_fill_form_feed.el");
+qa!(qa_string_fill_cjk_join, "qa_string_fill_cjk_join.el");
 qa!(qa_case_table_fold, "qa_case_table_fold.el");
 qa!(qa_byte_character_conversion, "qa_byte_character_conversion.el");
 qa!(qa_bytecode_errors, "qa_bytecode_errors.el");
