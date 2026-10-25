@@ -518,6 +518,7 @@ qa!(qa_directory_file_name_byte_kind, "qa_directory_file_name_byte_kind.el");
 qa!(qa_filename_extension_byte_kind, "qa_filename_extension_byte_kind.el");
 qa!(qa_file_name_concat_byte_kind, "qa_file_name_concat_byte_kind.el");
 qa!(qa_file_name_sans_versions, "qa_file_name_sans_versions.el");
+qa!(qa_expand_file_name_nul, "qa_expand_file_name_nul.el");
 qa!(qa_byte_to_string_range, "qa_byte_to_string_range.el");
 qa!(qa_byte_to_string_byte_kind, "qa_byte_to_string_byte_kind.el");
 qa!(qa_string_as_multibyte_extended_utf8, "qa_string_as_multibyte_extended_utf8.el");
