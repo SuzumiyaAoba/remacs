@@ -16331,6 +16331,9 @@ fn cons_seq_len(v: &Value) -> i128 {
 }
 
 fn seq_len(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
+    if crate::editor::window_configuration_object(v) {
+        return Err(i.wrong_type_mut("sequencep", v));
+    }
     Ok(match v {
         Value::Nil => 0,
         Value::Cons(_) => cons_seq_len(v),
@@ -16341,6 +16344,7 @@ fn seq_len(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
         Value::Record(_) if is_bool_vector(i, v) => bool_vec_of(i, v)?.len() as i128,
         Value::Record(_) if is_char_table(i, v) => CT_MAX_CHAR as i128 + 1,
         Value::Record(x) => x.borrow().len() as i128,
+        Value::Lambda(l) => lambda_slot_values(l).len() as i128,
         // Hash tables aren't sequences (GNU signals sequencep).
         _ => return Err(i.wrong_type_mut("sequencep", v)),
     })
@@ -16353,6 +16357,10 @@ fn length_cmp(i: &mut Interp, a: &[Value], cmp: i8) -> EvalResult {
         Value::Int(x) => *x,
         other => return Err(i.wrong_type_mut("fixnump", other)),
     };
+    // GNU length= can reject a negative size without inspecting SEQUENCE.
+    if cmp == 0 && len < 0 {
+        return Ok(Value::Nil);
+    }
     let n = seq_len(i, &a[0])?;
     Ok(Value::from_bool(match cmp {
         -1 => n < len,

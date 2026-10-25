@@ -254,6 +254,8 @@ qa!(qa_kmacro, "qa_kmacro.el");
 qa!(qa_kbd_macro_repeat, "qa_kbd_macro_repeat.el");
 qa!(qa_list, "qa_list.el");
 qa!(qa_lists, "qa_lists.el");
+qa!(qa_length_functions, "qa_length_functions.el");
+qa!(qa_length_nonsequence, "qa_length_nonsequence.el");
 qa!(qa_lists2, "qa_lists2.el");
 qa!(qa_load, "qa_load.el");
 qa!(qa_autoload_dispatch, "qa_autoload_dispatch.el");
