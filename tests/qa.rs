@@ -488,6 +488,7 @@ qa!(qa_delete_string_mule, "qa_delete_string_mule.el");
 qa!(qa_string_truncate_left_properties, "qa_string_truncate_left_properties.el");
 qa!(qa_string_truncate_left_sequences, "qa_string_truncate_left_sequences.el");
 qa!(qa_string_truncate_left_float, "qa_string_truncate_left_float.el");
+qa!(qa_string_truncate_left_empty_negative, "qa_string_truncate_left_empty_negative.el");
 qa!(qa_case_table_fold, "qa_case_table_fold.el");
 qa!(qa_byte_character_conversion, "qa_byte_character_conversion.el");
 qa!(qa_bytecode_errors, "qa_bytecode_errors.el");

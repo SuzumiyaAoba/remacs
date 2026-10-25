@@ -477,6 +477,9 @@ fn f_string_truncate_left(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult
     // The truncating substring branch needs integer indices; GNU only
     // reaches that integer-only operation after the early comparison.
     let length = want_int(i, &args[1])?;
+    if len == 0 && length < 0 {
+        return f_substring(i, vec![args[0].clone(), Value::Int(-1)].into());
+    }
     let len = usize::try_from(len).map_err(|_| i.error("Invalid sequence length"))?;
     let keep = (length - 3).max(1).min(len as i128) as usize;
     let suffix = f_substring(
