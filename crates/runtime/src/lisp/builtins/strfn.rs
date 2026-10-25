@@ -4488,7 +4488,10 @@ fn f_store_substring(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             let mut chars: Vec<char> = s.borrow().chars().collect();
             let rep: Vec<char> = match &args[2] {
                 Value::Str(rs) => rs.borrow().chars().collect(),
-                Value::Int(n) => vec![char::from_u32(*n as u32).unwrap_or('\0')],
+                Value::Int(n) => match concat_char(*n) {
+                    Some(ch) => vec![ch],
+                    None => return Err(i.wrong_type_mut("characterp", &args[2])),
+                },
                 other => return Err(i.wrong_type_mut("char-or-string-p", other)),
             };
             // GNU stores character by character and signals
