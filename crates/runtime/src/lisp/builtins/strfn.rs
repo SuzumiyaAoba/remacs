@@ -2112,6 +2112,9 @@ fn f_string_lines(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         let _ = i.apply(&Value::Sym(length_fn), vec![args[0].clone()])?;
         return Err(i.wrong_type_mut("stringp", &args[0]));
     }
+    if matches!(&args[0], Value::Vec(vector) if vector.borrow().is_empty()) {
+        return Ok(Value::list(vec![args[0].clone()]));
+    }
     // `(length STRING)' evals first — atoms signal `sequencep';
     // conses/vectors pass length then fail `stringp' at string-search.
     let s = match &args[0] {
