@@ -149,6 +149,22 @@ impl Runtime {
                 .map(|v| e.value(&Value::Record(v.clone())))
                 .transpose()?,
         )?;
+        saved.put(
+            "special_records",
+            i.special_records
+                .iter()
+                .filter_map(|(weak, kind)| weak.upgrade().map(|record| (record, kind)))
+                .map(|(record, kind)| {
+                    Ok((
+                        e.value(&Value::Record(record))?,
+                        match kind {
+                            crate::lisp::eval::SpecialRecordKind::Obarray => 0u8,
+                            crate::lisp::eval::SpecialRecordKind::FontSpec => 1u8,
+                        },
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?,
+        )?;
         macro_rules! named { ($($field:ident),* $(,)?) => { $(
             saved.put(stringify!($field), i.$field.iter().map(|(name, value)| Ok((name.clone(), e.value(value)?))).collect::<Result<Vec<_>>>()?)?;
         )* }; }
@@ -369,6 +385,21 @@ impl Runtime {
                 _ => Err("Invalid dumped default obarray".to_owned()),
             })
             .transpose()?;
+        i.special_records.clear();
+        if self.0.contains_key("special_records") {
+            let records: Vec<(Ref, u8)> = self.get("special_records")?;
+            for (reference, kind) in records {
+                let Value::Record(record) = d.value(i, &reference)? else {
+                    return Err("Invalid dumped special record".to_owned());
+                };
+                let kind = match kind {
+                    0 => crate::lisp::eval::SpecialRecordKind::Obarray,
+                    1 => crate::lisp::eval::SpecialRecordKind::FontSpec,
+                    _ => return Err("Invalid dumped special record kind".to_owned()),
+                };
+                i.special_records.push((Rc::downgrade(&record), kind));
+            }
+        }
         macro_rules! named { ($($field:ident),* $(,)?) => { $(
             i.$field = self.get::<Vec<(String,Ref)>>(stringify!($field))?.into_iter().map(|(name,r)| Ok((name,d.value(i,&r)?))).collect::<Result<_>>()?;
         )* }; }

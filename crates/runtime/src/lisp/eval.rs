@@ -259,6 +259,12 @@ pub enum OutputSink {
     Stdout,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SpecialRecordKind {
+    Obarray,
+    FontSpec,
+}
+
 /// The interpreter: all global Lisp state. Lives on the eval thread.
 pub struct Interp {
     pub obarray: Obarray,
@@ -281,6 +287,9 @@ pub struct Interp {
     // independently of buffer lifetime, attachment, or vector contents.
     overlay_handles: HashMap<usize, std::rc::Weak<RefCell<Vec<Value>>>>,
     overlay_cleanup_at: usize,
+    /// Record-backed objects whose GNU type is not `record'. Keep this by
+    /// object identity because ordinary records may use the same tag.
+    pub(crate) special_records: Vec<(std::rc::Weak<RefCell<Vec<Value>>>, SpecialRecordKind)>,
     pub current_buffer: usize,
     /// Symbols provided via `provide` (the `features` variable).
     pub features: Vec<SymId>,
@@ -959,6 +968,7 @@ impl Interp {
             buffers: crate::buffer::BufferSet::new(),
             overlay_handles: HashMap::default(),
             overlay_cleanup_at: 256,
+            special_records: Vec::new(),
             current_buffer: 0,
             features: feature_syms,
             output: None,

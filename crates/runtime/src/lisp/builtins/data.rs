@@ -1418,9 +1418,8 @@ fn f_make_symbol(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     Ok(Value::Sym(id))
 }
-/// An obarray is represented as a record whose slot 0 is the symbol
-/// `obarray` and whose slot 1 is a vector of buckets; GNU's obarrays
-/// are a distinct type (vectorp → nil), which the record gives us.
+/// Obarrays are record-backed here, but their identity is tracked
+/// separately so an ordinary record tagged `obarray` stays a record.
 fn obarray_tag(i: &Interp) -> Value {
     i.default_obarray.as_ref().and_then(|table| table.borrow().first().cloned())
         .unwrap_or_else(|| Value::Sym(i.q_soft("obarray").unwrap_or(0)))
@@ -1429,10 +1428,11 @@ fn obarray_tag(i: &Interp) -> Value {
 pub(crate) fn is_obarray(i: &Interp, v: &Value) -> bool {
     match v {
         Value::Record(r) => {
-            let rr = r.borrow();
-            rr.first()
-                .map(|t| eq_values(t, &obarray_tag(i)))
-                .unwrap_or(false)
+            i.default_obarray.as_ref().is_some_and(|d| std::rc::Rc::ptr_eq(d, r))
+                || i.special_records.iter().any(|(weak, kind)| {
+                    *kind == crate::lisp::eval::SpecialRecordKind::Obarray
+                        && weak.upgrade().is_some_and(|known| std::rc::Rc::ptr_eq(&known, r))
+                })
         }
         _ => false,
     }
@@ -1981,11 +1981,20 @@ fn f_obarray_make(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         }
         Some(v) => return Err(i.wrong_type_mut("wholenump", v)),
     };
-    Ok(Value::record(vec![
+    let obarray = Value::record(vec![
         obarray_tag(i),
         Value::vector(Vec::new()),
         Value::Int(bits as i128),
-    ]))
+    ]);
+    if let Value::Record(record) = &obarray {
+        i.special_records
+            .retain(|(known, _)| known.strong_count() > 0);
+        i.special_records.push((
+            std::rc::Rc::downgrade(record),
+            crate::lisp::eval::SpecialRecordKind::Obarray,
+        ));
+    }
+    Ok(obarray)
 }
 fn f_obarrayp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(is_obarray(i, &args[0])))

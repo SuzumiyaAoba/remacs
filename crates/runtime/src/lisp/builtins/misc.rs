@@ -16344,13 +16344,10 @@ pub(crate) fn recordp(i: &Interp, value: &Value) -> bool {
     // pseudovector (PVEC_FONT), not a record, in GNU — `recordp' is
     // nil on it (type-of reports `font-spec').
     let font_spec = match value {
-        Value::Record(r) => {
-            let rb = r.borrow();
-            matches!(
-                rb.first(),
-                Some(Value::Sym(s)) if i.symbol_name(*s) == "font-spec"
-            )
-        }
+        Value::Record(r) => i.special_records.iter().any(|(weak, kind)| {
+            *kind == crate::lisp::eval::SpecialRecordKind::FontSpec
+                && weak.upgrade().is_some_and(|known| std::rc::Rc::ptr_eq(&known, r))
+        }),
         _ => false,
     };
     matches!(value, Value::Record(_))
@@ -17515,10 +17512,19 @@ fn f_font_spec(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
         idx += 2;
     }
-    Ok(Value::record(vec![
+    let font_spec = Value::record(vec![
         Value::Sym(i.q("font-spec")),
         Value::list(a.as_slice().to_vec()),
-    ]))
+    ]);
+    if let Value::Record(record) = &font_spec {
+        i.special_records
+            .retain(|(known, _)| known.strong_count() > 0);
+        i.special_records.push((
+            std::rc::Rc::downgrade(record),
+            crate::lisp::eval::SpecialRecordKind::FontSpec,
+        ));
+    }
+    Ok(font_spec)
 }
 
 /// `put-image` — GNU requires an image spec (list headed `image') and
