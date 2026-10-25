@@ -1069,12 +1069,12 @@ fn step_op(
             let v = pop!();
             push!(Value::from_bool(matches!(
                 v,
-                Value::Int(_) | Value::Float(_)
+                Value::Int(_) | Value::BigInt(_) | Value::Float(_)
             )));
         }
         168 => {
             let v = pop!();
-            push!(Value::from_bool(matches!(v, Value::Int(_))));
+            push!(Value::from_bool(matches!(v, Value::Int(_) | Value::BigInt(_))));
         }
         175 => {
             let n = fetch!() as usize;
