@@ -25562,7 +25562,11 @@ Point is moved to just past the fill prefix on the first line."
 		       (or (aref (char-category-set next) ?|)
 			   (aref (char-category-set prev) ?|)))
 		     (or (aref fill-nospace-between-words-table next)
-			 (aref fill-nospace-between-words-table prev)))
+		   (aref fill-nospace-between-words-table prev)
+		   (memq (get-char-code-property next 'script)
+			 '(han kana bopomofo cjk-misc))
+		   (memq (get-char-code-property prev 'script)
+			 '(han kana bopomofo cjk-misc))))
 		(delete-char -1))))))
 
   (goto-char from)
