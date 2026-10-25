@@ -701,6 +701,7 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
             .buffers
             .get(buf_id)
             .map(|b| window_faces(i, &fctx, &b, &Value::Window(w.clone())));
+        let mut visible_end = start;
         for row in 0..text_rows {
             let y = top + row;
             if y >= body_height {
@@ -708,15 +709,21 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
             }
             // Line-aligned rendering: `start' is a line start because
             // the scroll code above always lands it on line_start().
-            let (line, line_pos) = match i.buffers.get(buf_id) {
+            let (line, line_pos, row_end) = match i.buffers.get(buf_id) {
                 Some(b) => {
                     let bb = b.borrow();
                     let ls = bb.text.line_start(bb.text.line_of_pos(start) + row);
                     let le = bb.text.line_end(ls);
-                    (bb.text.substring(ls, le), ls)
+                    let row_end = if le < bb.text_len() && bb.text.char_at(le) == '\n' {
+                        le + 1
+                    } else {
+                        le
+                    };
+                    (bb.text.substring(ls, le), ls, row_end)
                 }
-                None => (String::new(), 0),
+                None => (String::new(), 0, 0),
             };
+            visible_end = row_end;
             let nvis = line.chars().count().saturating_sub(hscroll).min(width);
             let mut vis = String::with_capacity(nvis);
             // Characters visible in this row and their cells' styles.
@@ -751,6 +758,12 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
             }
             rows[y] = format!("{vis:<width$}", width = width);
         }
+        let tick = i
+            .buffers
+            .get(buf_id)
+            .map(|b| b.borrow().text.mod_tick.get())
+            .unwrap_or(0);
+        w.borrow_mut().redisplay_end = Some((buf_id, tick, start, visible_end));
         // Mode line.
         let my = top + text_rows;
         if my < body_height {

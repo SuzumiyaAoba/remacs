@@ -58,6 +58,9 @@ pub struct Window {
     pub point: usize,
     /// First visible char position (0-based).
     pub start: usize,
+    /// End position recorded by the last redisplay for this buffer/start.
+    /// The text modification tick invalidates the cached endpoint.
+    pub redisplay_end: Option<(usize, u64, usize, usize)>,
     /// Horizontal scroll column.
     pub hscroll: usize,
     /// Screen layout (terminal cells, set by the front-end).
@@ -232,6 +235,7 @@ impl Window {
                 buffer,
                 point: 0,
                 start: 0,
+                redisplay_end: None,
                 hscroll: 0,
                 top: 0,
                 height: 24,
@@ -2846,35 +2850,48 @@ fn f_window_cursor_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_set_window_start(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live(i, &arg(&a, 0))?;
     let pos = want_int(i, &a[1])?.max(1) as usize - 1;
-    w.borrow_mut().start = pos;
+    let mut ww = w.borrow_mut();
+    ww.start = pos;
+    ww.redisplay_end = None;
     Ok(a[1].clone())
 }
 
 fn f_window_end(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live(i, &arg(&a, 0))?;
-    let (start, height, buf) = {
+    let update = a.get(1).is_some_and(Value::truthy);
+    let (buffer, start) = {
         let ww = w.borrow();
-        (ww.start, ww.height, ww.buffer)
+        (ww.buffer, ww.start)
     };
-    let len = i
-        .buffers
-        .get(buf)
-        .map(|b| b.borrow().text_len())
-        .unwrap_or(0);
-    // Approximate: start + height lines.
-    let end = if let Some(b) = i.buffers.get(buf) {
-        let bb = b.borrow();
-        let mut p = start.min(bb.text_len());
-        for _ in 0..height {
-            p = bb.text.line_end(p).min(bb.text.len());
-            if p < bb.text.len() {
-                p += 1;
-            }
+    let Some(buffer_ref) = i.buffers.get(buffer) else {
+        return Ok(Value::Int(1));
+    };
+    let (zv, tick) = {
+        let bb = buffer_ref.borrow();
+        (bb.zv, bb.text.mod_tick.get())
+    };
+    if update {
+        if !i.noninteractive
+            && let (Some(frame), Some(selected)) = (&i.selected_frame, frame_of_window(i, &w))
+            && std::rc::Rc::ptr_eq(frame, &selected)
+        {
+            let (width, height) = {
+                let frame = frame.borrow();
+                (frame.width, frame.height)
+            };
+            let _ = crate::frontend::render_grid(i, width, height);
+        } else {
+            // Batch has no visible grid; its displayed endpoint is the
+            // buffer's accessible end, matching GNU's batch redisplay.
+            w.borrow_mut().redisplay_end = Some((buffer, tick, start, zv));
         }
-        p
-    } else {
-        len
-    };
+    }
+    let end = w
+        .borrow()
+        .redisplay_end
+        .filter(|(b, t, s, _)| *b == buffer && *t == tick && *s == start)
+        .map(|(_, _, _, end)| end)
+        .unwrap_or(zv);
     Ok(Value::Int(end as i128 + 1))
 }
 
