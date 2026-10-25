@@ -129,7 +129,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Trim right."
     ),
     S!("string-pad", 2, 4, f_string_pad, "Pad STRING to LENGTH."),
-    S!("string-reverse", 1, 1, f_string_reverse, "Reverse STRING."),
     S!(
         "string-join",
         1,
@@ -1505,10 +1504,6 @@ fn f_string_pad(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
 }
 
-/// `string-reverse' — GNU fns.c subr: character-reverse the string.
-fn f_string_reverse(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    crate::lisp::builtins::listfn::f_reverse(i, args)
-}
 fn f_string_join(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let items = super::seq::seq_to_vec(i, &args[0])?;
     // GNU's string-join is `(mapconcat #'identity STRINGS SEPARATOR)':

@@ -498,6 +498,7 @@ qa!(qa_string_replace_invalid_code, "qa_string_replace_invalid_code.el");
 qa!(qa_string_fill_trailing_newline, "qa_string_fill_trailing_newline.el");
 qa!(qa_string_fill_empty_width, "qa_string_fill_empty_width.el");
 qa!(qa_string_reverse_sequences, "qa_string_reverse_sequences.el");
+qa!(qa_string_reverse_alias, "qa_string_reverse_alias.el");
 qa!(qa_string_lines_properties, "qa_string_lines_properties.el");
 qa!(qa_string_lines_byte_kind, "qa_string_lines_byte_kind.el");
 qa!(qa_string_lines_bool_vector_error, "qa_string_lines_bool_vector_error.el");
