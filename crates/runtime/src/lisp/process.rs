@@ -4214,11 +4214,24 @@ fn f_list_system_processes(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult
 }
 
 fn f_process_attributes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // GNU system_process_attributes first checks NUMBERP, then
+    // CONS_TO_INTEGER with an int range.  Reject process objects rather
+    // than treating them as a convenience extension, and don't wrap large
+    // integer PIDs through a narrowing cast.
     let pid = match &a[0] {
-        Value::Process(p) => p.borrow().pid,
-        Value::Int(n) => *n as i32,
+        Value::Int(n) => i32::try_from(*n).ok(),
+        Value::BigInt(n) => n.to_i32(),
+        Value::Float(f) => {
+            let f = **f;
+            (f.is_finite()
+                && f >= i32::MIN as f64
+                && f < i32::MAX as f64 + 1.0
+                && f.trunc() == f)
+                .then_some(f as i32)
+        }
         _ => return Err(i.wrong_type_mut("numberp", &a[0])),
-    };
+    }
+    .ok_or_else(|| i.error("Not an in-range integer, integral float, or cons of integers"))?;
     #[cfg(target_os = "macos")]
     {
         return process_attributes_macos(i, pid);
