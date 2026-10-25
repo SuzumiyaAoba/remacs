@@ -85,3 +85,16 @@ pub(super) fn command_keystroke(ks: &Keystroke) -> bool {
         )
         || (ks.key.starts_with('f') && ks.key[1..].parse::<u32>().is_ok())
 }
+
+/// Return text from a Unicode key event when the platform bypasses the input
+/// client. ASCII remains owned by the OS input handler to avoid duplicates.
+pub(super) fn unicode_key_text(ks: &Keystroke) -> Option<&str> {
+    let text = ks
+        .key_char
+        .as_deref()
+        .filter(|text| !text.is_empty())
+        .unwrap_or(ks.key.as_str());
+    let mut chars = text.chars();
+    let first = chars.next()?;
+    (!first.is_ascii() && chars.all(|ch| !ch.is_ascii())).then_some(text)
+}

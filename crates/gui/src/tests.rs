@@ -2,6 +2,7 @@ use super::{
     ChanIo, EditorView, GuiEvent, build_editor_view, command_keystroke, keystroke_to_code,
     start_logic,
 };
+use super::keys::unicode_key_text;
 use gpui::{EntityInputHandler, Keystroke, Modifiers};
 use remacs_runtime::editor::{CHAR_CTL, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
 use remacs_runtime::frontend::{Grid, KeyIo};
@@ -59,6 +60,26 @@ fn multichar_os_text_does_not_enter_the_command_key_path() {
         false,
         false
     )));
+}
+
+#[test]
+fn non_ascii_key_text_has_a_fallback_when_the_input_client_is_skipped() {
+    assert_eq!(
+        unicode_key_text(&ks("日", Some("日"), false, false, false, false)),
+        Some("日")
+    );
+    assert_eq!(
+        unicode_key_text(&ks("😀", Some("😀"), false, false, false, false)),
+        Some("😀")
+    );
+    assert_eq!(
+        unicode_key_text(&ks("a", Some("a"), false, false, false, false)),
+        None
+    );
+    assert_eq!(
+        unicode_key_text(&ks("", Some("A日B"), false, false, false, false)),
+        None
+    );
 }
 
 #[test]

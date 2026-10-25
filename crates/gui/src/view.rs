@@ -1,6 +1,6 @@
 //! GPUI view construction and painting of frontend-neutral grids.
 use super::{
-    keys::{command_keystroke, keystroke_to_code},
+    keys::{command_keystroke, keystroke_to_code, unicode_key_text},
     logic::GuiEvent,
 };
 use gpui::*;
@@ -86,6 +86,12 @@ impl Render for EditorView {
                     && let Some(code) = keystroke_to_code(&event.keystroke)
                 {
                     let _ = tx.send(GuiEvent::Key(code));
+                    window.prevent_default();
+                    cx.stop_propagation();
+                } else if let Some(text) = unicode_key_text(&event.keystroke) {
+                    // Some macOS text injection paths report non-ASCII text
+                    // as a key event without calling the input client.
+                    let _ = tx.send(GuiEvent::Text(text.to_owned()));
                     window.prevent_default();
                     cx.stop_propagation();
                 }
