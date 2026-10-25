@@ -930,11 +930,13 @@ fn f_member(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     member_impl(i, &args[0], &args[1], |ii, a, b| equal_values(ii, a, b))
 }
 fn f_memq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    member_impl(i, &args[0], &args[1], |_ii, a, b| Ok(eq_values(a, b)))
+    member_impl(i, &args[0], &args[1], |ii, a, b| {
+        Ok(super::eq_values_with_interp(ii, a, b))
+    })
 }
 fn f_memql(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    member_impl(i, &args[0], &args[1], |_ii, a, b| {
-        Ok(super::eql_values(a, b))
+    member_impl(i, &args[0], &args[1], |ii, a, b| {
+        Ok(super::eql_values_with_interp(ii, a, b))
     })
 }
 
@@ -1005,7 +1007,7 @@ fn f_assq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         i,
         &args[0],
         &args[1],
-        |_ii, a, b| Ok(eq_values(a, b)),
+        |i, a, b| Ok(super::eq_values_with_interp(i, a, b)),
         false,
     )
 }
@@ -1015,18 +1017,18 @@ fn delete_all_by(i: &mut Interp, args: crate::lisp::Argv, on_cdr: bool) -> EvalR
     // skip matching head cells, then splice matches out of the list
     // structure in place — non-head deletions mutate the original
     // list and return it.
-    let matches = |item: &Value| -> bool {
+    fn matches(i: &Interp, item: &Value, key: &Value, on_cdr: bool) -> bool {
         match item {
             Value::Cons(ic) => {
                 let part = {
                     let b = ic.borrow();
                     if on_cdr { b.cdr.clone() } else { b.car.clone() }
                 };
-                eq_values(&part, &args[0])
+                super::eq_values_with_interp(i, &part, key)
             }
             _ => false,
         }
-    };
+    }
     let mut alist = args[1].clone();
     let mut quit_count = 0u16;
     // (while (and (consp (car alist)) (eq (car (car alist)) key))
@@ -1043,7 +1045,7 @@ fn delete_all_by(i: &mut Interp, args: crate::lisp::Argv, on_cdr: bool) -> EvalR
             // tail (dotted list end or non-list arg) signals listp on it.
             other => return Err(i.wrong_type_mut("listp", other)),
         };
-        if matches(&head) {
+        if matches(i, &head, &args[0], on_cdr) {
             let next = match &alist {
                 Value::Cons(c) => c.borrow().cdr.clone(),
                 _ => break,
@@ -1070,7 +1072,7 @@ fn delete_all_by(i: &mut Interp, args: crate::lisp::Argv, on_cdr: bool) -> EvalR
         match &next {
             Value::Nil => break,
             Value::Cons(nc) => {
-                if matches(&nc.borrow().car.clone()) {
+                if matches(i, &nc.borrow().car.clone(), &args[0], on_cdr) {
                     let nn = nc.borrow().cdr.clone();
                     if let Value::Cons(tc) = &tail {
                         tc.borrow_mut().cdr = nn;
@@ -1132,7 +1134,13 @@ fn f_assoc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_rassq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    assoc_impl(i, &args[0], &args[1], |_ii, a, b| Ok(eq_values(a, b)), true)
+    assoc_impl(
+        i,
+        &args[0],
+        &args[1],
+        |i, a, b| Ok(super::eq_values_with_interp(i, a, b)),
+        true,
+    )
 }
 fn f_rassoc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     assoc_impl(
@@ -1224,7 +1232,7 @@ fn del_impl(i: &mut Interp, elt: &Value, list: &Value, use_eq: bool) -> EvalResu
                     (b.car.clone(), b.cdr.clone())
                 };
                 let matched = if use_eq {
-                    eq_values(&car, elt)
+                    super::eq_values_with_interp(i, &car, elt)
                 } else {
                     equal_values(i, &car, elt)?
                 };
@@ -1530,7 +1538,7 @@ fn plist_scan(
                 let matches = if lax {
                     equal_values(i, &k, prop)?
                 } else {
-                    eq_values(&k, prop)
+                    super::eq_values_with_interp(i, &k, prop)
                 };
                 if matches {
                     return Ok(Some(if want_pair {
@@ -1634,7 +1642,7 @@ fn f_plist_member(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             _ => return Err(i.wrong_type_mut("plistp", &whole)),
         };
         let matches = if pred.is_nil() {
-            eq_values(&k, &args[1])
+            super::eq_values_with_interp(i, &k, &args[1])
         } else {
             i.apply(&pred, vec![k.clone(), args[1].clone()])?.truthy()
         };
@@ -1724,7 +1732,7 @@ fn plist_put(i: &mut Interp, args: crate::lisp::Argv, lax: bool) -> EvalResult {
                     Some(p) => i
                         .apply(p, vec![k.clone(), args[1].clone()])
                         .map(|v| v.truthy())?,
-                    None => eq_values(&k, &args[1]),
+                    None => super::eq_values_with_interp(i, &k, &args[1]),
                 };
                 let rest = if pred.is_some() {
                     // A predicate may replace either the value cell or
@@ -2063,7 +2071,7 @@ fn f_remq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                     let b = c.borrow();
                     (b.car.clone(), b.cdr.clone())
                 };
-                if eq_values(elt, &car) {
+                if super::eq_values_with_interp(i, elt, &car) {
                     list = next;
                 } else {
                     break;
@@ -2073,7 +2081,9 @@ fn f_remq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             other => return Err(i.wrong_type_mut("listp", other)),
         }
     }
-    let found = member_impl(i, elt, &list, |_, a, b| Ok(eq_values(a, b)))?.truthy();
+    let found = member_impl(i, elt, &list, |ii, a, b| {
+        Ok(super::eq_values_with_interp(ii, a, b))
+    })?.truthy();
     if found {
         // copy-sequence + delq (delq splices the copy in place).
         let items = copy_list_items(i, &list)?;

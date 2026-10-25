@@ -378,8 +378,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
 ];
 
-fn f_eq(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::from_bool(eq_values(&args[0], &args[1])))
+fn f_eq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    Ok(Value::from_bool(super::eq_values_with_interp(i, &args[0], &args[1])))
 }
 
 fn f_null(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -492,12 +492,8 @@ fn f_nlistp(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Cons(_) | Value::Nil
     )))
 }
-fn f_symbolp(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::from_bool(match &args[0] {
-        Value::Sym(_) | Value::Nil => true,
-        // `symbols-with-pos-enabled' objects are real symbols in GNU.
-        v => crate::lisp::builtins::misc::as_sympos(v).is_some(),
-    }))
+fn f_symbolp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    Ok(Value::from_bool(i.sym_id(&args[0]).is_some()))
 }
 fn f_stringp(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(matches!(&args[0], Value::Str(_))))
@@ -520,7 +516,7 @@ pub(crate) fn functionp_val(i: &mut Interp, arg: &Value) -> bool {
 }
 
 pub(crate) fn functionp_checked(i: &mut Interp, arg: &Value) -> Result<bool, Flow> {
-    let mut value = crate::lisp::builtins::misc::unpos(arg);
+    let mut value = crate::lisp::builtins::misc::unpos(i, arg);
     let symbol = matches!(value, Value::Sym(_));
     if let Value::Sym(id) = value {
         value = i.symbol_function(id);
@@ -703,8 +699,9 @@ fn f_type_of(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Vec(_) if i.is_overlay(&args[0]) => "overlay",
         Value::Vec(_) => "vector",
         Value::Record(r) => {
-            // `symbols-with-pos-enabled' objects are `symbol'.
-            if crate::lisp::builtins::misc::as_sympos(&args[0]).is_some() {
+            // `symbol-with-pos' is dynamically classified as a symbol
+            // when `symbols-with-pos-enabled' is non-nil.
+            if crate::lisp::builtins::misc::active_sympos_parts(i, &args[0]).is_some() {
                 return Ok(Value::Sym(i.q("symbol")));
             }
             // GNU reports an obarray as `obarray', not its tag-record
@@ -1674,7 +1671,7 @@ fn f_mapatoms(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Nil)
 }
 pub(crate) fn f_indirect_function(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let mut cur = crate::lisp::builtins::misc::unpos(&args[0]);
+    let mut cur = crate::lisp::builtins::misc::unpos(i, &args[0]);
     let mut seen: std::collections::HashSet<crate::lisp::value::SymId> =
         std::collections::HashSet::new();
     loop {

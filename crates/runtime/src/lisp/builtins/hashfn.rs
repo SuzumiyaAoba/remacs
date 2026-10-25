@@ -104,14 +104,14 @@ pub(crate) static SUBRS: &[Subr] = &[
 /// Normalize a key for the table's test.
 pub(crate) fn hash_key_for(interp: &Interp, v: &Value, test: HashTest) -> HashKey {
     match test {
-        HashTest::Eq => eq_key(v),
-        HashTest::Eql => eql_key(v),
+        HashTest::Eq => eq_key(interp, v),
+        HashTest::Eql => eql_key(interp, v),
         HashTest::Equal => {
             let mut ancestors = std::collections::HashSet::new();
             // Keep compact acyclic keys, but a cycle or a large unfolding
             // needs a hash bucket whose original objects are compared.
             equal_key(interp, v, &mut ancestors, &mut 4096, 0).unwrap_or_else(|| {
-                let HashKey::Ptr(identity) = eq_key(v) else {
+                let HashKey::Ptr(identity) = eq_key(interp, v) else {
                     unreachable!("only compound equal keys can need a fallback")
                 };
                 HashKey::EqualFallback(super::strfn::equal_hash_code(interp, v), identity)
@@ -120,10 +120,9 @@ pub(crate) fn hash_key_for(interp: &Interp, v: &Value, test: HashTest) -> HashKe
     }
 }
 
-fn eq_key(v: &Value) -> HashKey {
-    // `symbols-with-pos-enabled' objects hash as their bare symbol
-    // (they are `eq' to it, so the hash must agree).
-    if let Some((s, _)) = super::misc::as_sympos(v) {
+fn eq_key(interp: &Interp, v: &Value) -> HashKey {
+    // Enabled position symbols hash with their underlying symbol, as GNU EQ does.
+    if let Some((s, _)) = super::misc::active_sympos_parts(interp, v) {
         return HashKey::Sym(s);
     }
     match v {
@@ -153,7 +152,7 @@ fn eq_key(v: &Value) -> HashKey {
     }
 }
 
-fn eql_key(v: &Value) -> HashKey {
+fn eql_key(interp: &Interp, v: &Value) -> HashKey {
     // eql: numbers compare by value, everything else like eq.
     match v {
         Value::Int(n) => HashKey::Int(*n),
@@ -162,7 +161,7 @@ fn eql_key(v: &Value) -> HashKey {
             None => HashKey::BigInt((**n).clone()),
         },
         Value::Float(f) => HashKey::Float(f.to_bits()),
-        _ => eq_key(v),
+        _ => eq_key(interp, v),
     }
 }
 
@@ -211,8 +210,8 @@ fn equal_key(
         }
         // Enabled sympos are `equal' to their bare symbol — same key
         // as the plain symbol arm below.
-        _ if super::misc::as_sympos(v).is_some() => {
-            let (s, _) = super::misc::as_sympos(v).unwrap();
+        _ if super::misc::active_sympos_parts(interp, v).is_some() => {
+            let (s, _) = super::misc::active_sympos_parts(interp, v).unwrap();
             HashKey::Sym(s)
         }
         Value::Cons(c) => {
@@ -284,7 +283,7 @@ fn equal_key(
                 HashKey::Tagged(3, keys)
             }
         }
-        _ => eql_key(v),
+        _ => eql_key(interp, v),
     };
     if let Some(p) = ptr {
         ancestors.remove(&p);
@@ -484,7 +483,7 @@ pub(crate) fn table_key(i: &mut Interp, h: &HashRef, key: &Value) -> Result<Hash
             .collect()
     };
     for (stored_key, original) in candidates {
-        if super::eq_values(key, &original)
+        if super::eq_values_with_interp(i, key, &original)
             || user_call(i, h, &compare, vec![key.clone(), original])?.truthy()
         {
             return Ok(stored_key);

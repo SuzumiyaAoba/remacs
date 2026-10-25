@@ -1069,8 +1069,7 @@ fn f_random(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_eql(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let _ = i;
-    Ok(Value::from_bool(super::eql_values(&args[0], &args[1])))
+    Ok(Value::from_bool(super::eql_values_with_interp(i, &args[0], &args[1])))
 }
 
 fn f_frexp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {

@@ -5219,13 +5219,7 @@ command-line arguments.\" \
     }
 
     pub fn sym_is(&self, v: &Value, id: SymId) -> bool {
-        match v {
-            Value::Sym(s) => *s == id,
-            Value::Nil => id == sym::NIL,
-            _ => crate::lisp::builtins::misc::as_sympos(v)
-                .map(|(s, _)| s == id)
-                .unwrap_or(false),
-        }
+        self.sym_id(v) == Some(id)
     }
 
     /// The symbol id of a `Value::Sym`/`Value::Nil`/enabled
@@ -5236,7 +5230,7 @@ command-line arguments.\" \
         match v {
             Value::Sym(s) => Some(*s),
             Value::Nil => Some(sym::NIL),
-            _ => crate::lisp::builtins::misc::as_sympos(v).map(|(s, _)| s),
+            _ => crate::lisp::builtins::misc::active_sympos_parts(self, v).map(|(s, _)| s),
         }
     }
 
@@ -5488,7 +5482,7 @@ command-line arguments.\" \
     /// Follow a symbol's function-alias chain; return the final
     /// non-symbol value (or UNBOUND sym).
     pub fn indirect_function_value(&self, v: &Value) -> Value {
-        let mut cur = crate::lisp::builtins::misc::unpos(v);
+        let mut cur = crate::lisp::builtins::misc::unpos(self, v);
         for _ in 0..64 {
             match cur {
                 Value::Sym(id) => {
@@ -6514,7 +6508,6 @@ command-line arguments.\" \
         pos_base: Option<i128>,
         multibyte: bool,
     ) -> Result<(Value, usize), Flow> {
-        let enabled = crate::lisp::builtins::misc::sympos_enabled_p(self);
         let mut reader = Reader::new(self, src);
         reader.source_multibyte = multibyte;
         reader.set_position(start);
@@ -6523,7 +6516,6 @@ command-line arguments.\" \
         // `read'/`read-from-string' never position symbols, no matter
         // how `symbols-with-pos-enabled' is bound.
         reader.annotate_pos = pos_base;
-        reader.sympos_enabled = enabled;
         match reader.read()? {
             None => Err(self.signal(sym::END_OF_FILE, Value::Nil)),
             Some(v) => Ok((v, reader.position())),
@@ -6537,10 +6529,8 @@ command-line arguments.\" \
         src: &str,
         start: usize,
     ) -> Result<(Value, usize), Flow> {
-        let enabled = crate::lisp::builtins::misc::sympos_enabled_p(self);
         let mut reader = Reader::new(self, src);
         reader.set_position(start);
-        reader.sympos_enabled = enabled;
         reader.from_buffer = true;
         match reader.read()? {
             None => Err(self.signal(sym::END_OF_FILE, Value::Nil)),
@@ -6972,7 +6962,7 @@ command-line arguments.\" \
             Value::Record(_) => {
                 // `symbols-with-pos-enabled' objects evaluate like
                 // their bare symbol (GNU: they are real symbols).
-                match crate::lisp::builtins::misc::as_sympos(form) {
+                match crate::lisp::builtins::misc::active_sympos_parts(self, form) {
                     Some((s, _)) => self.eval_symbol(s),
                     None => Ok(form.clone()),
                 }
@@ -7030,7 +7020,7 @@ command-line arguments.\" \
             let cell = cell.borrow();
             (cell.car.clone(), cell.cdr.clone())
         };
-        let head = crate::lisp::builtins::misc::unpos(&head);
+        let head = crate::lisp::builtins::misc::unpos(self, &head);
         self.with_pending_frame(head, args, |i, frame| {
             let result = i.eval_form_inner(form, frame);
             i.offer_flow(result)
@@ -7048,7 +7038,7 @@ command-line arguments.\" \
         };
         // `symbols-with-pos-enabled' symbols in operator position are
         // real symbols (GNU parity): dispatch on the bare symbol.
-        let head = crate::lisp::builtins::misc::unpos(&head);
+        let head = crate::lisp::builtins::misc::unpos(self, &head);
         // GNU `eval_sub' runs CHECK_LIST on the arg spine before
         // dispatch (and `list_length' once fun is known), so a dotted
         // call `(f a . b)' signals `wrong-type-argument listp b'
@@ -7322,7 +7312,7 @@ command-line arguments.\" \
         spine_len: i128,
         frame: usize,
     ) -> EvalResult {
-        let fun = crate::lisp::builtins::misc::unpos(fun);
+        let fun = crate::lisp::builtins::misc::unpos(self, fun);
         match &fun {
             Value::Sym(id) => {
                 // Function alias chain: chase.  GNU's
@@ -7668,7 +7658,7 @@ command-line arguments.\" \
                 }
             }
         }
-        let fun = crate::lisp::builtins::misc::unpos(fun);
+        let fun = crate::lisp::builtins::misc::unpos(self, fun);
         let shown = origin.unwrap_or_else(|| fun.clone());
         match &fun {
             Value::Sym(id) => {
@@ -8979,7 +8969,7 @@ command-line arguments.\" \
                     }
                     // Enabled `symbols-with-pos' cars expand through
                     // their bare symbol's function cell.
-                    let car = crate::lisp::builtins::misc::unpos(&car);
+                    let car = crate::lisp::builtins::misc::unpos(self, &car);
                     match car {
                         Value::Sym(id) => {
                             // GNU `macroexpand-1' consults the ENVIRONMENT

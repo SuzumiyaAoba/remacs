@@ -261,8 +261,7 @@ fn bq_process(i: &mut Interp, s: &Value, level: i64, syms: &BqSyms) -> Result<Va
                 Value::Nil => s.clone(),
                 Value::Sym(id) if *id == sym::T => s.clone(),
                 Value::Sym(_) => Value::list(vec![quote_sym(i), s.clone()]),
-                v if crate::lisp::builtins::misc::as_sympos(v).is_some()
-                    || crate::lisp::builtins::misc::sym_pos_parts(i, v).is_some() =>
+                v if crate::lisp::builtins::misc::any_sympos_parts(i, v).is_some() =>
                 {
                     Value::list(vec![quote_sym(i), v.clone()])
                 }

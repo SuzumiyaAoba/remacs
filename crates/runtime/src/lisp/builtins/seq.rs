@@ -467,7 +467,7 @@ fn f_aref(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[0] {
         Value::Str(_) | Value::Vec(_) => {}
         Value::Record(r) => {
-            if super::misc::as_sympos(&args[0]).is_some() {
+            if super::misc::any_sympos_parts(i, &args[0]).is_some() {
                 return Err(i.wrong_type_mut("arrayp", &args[0]));
             }
             if super::misc::is_opaque_record(i, &args[0]) {
@@ -617,7 +617,7 @@ fn f_aset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         }
         Value::Record(r) => {
             // `symbols-with-pos-enabled' objects are not arrays.
-            if super::misc::as_sympos(&args[0]).is_some() {
+            if super::misc::any_sympos_parts(i, &args[0]).is_some() {
                 return Err(i.wrong_type_mut("arrayp", &args[0]));
             }
             if super::misc::is_opaque_record(i, &args[0]) {

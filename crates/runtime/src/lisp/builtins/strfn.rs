@@ -4635,7 +4635,7 @@ fn sxhash_obj(i: &Interp, v: &Value, depth: usize) -> u64 {
     }
     // `symbols-with-pos-enabled' objects are `equal'/`eql' to their
     // bare symbol — hash the symbol so the invariant holds.
-    if let Some((id, _)) = misc::as_sympos(v) {
+    if let Some((id, _)) = misc::active_sympos_parts(i, v) {
         return sxhash_sym_hash(i, id);
     }
     match v {
@@ -4746,7 +4746,7 @@ fn sxhash_obj(i: &Interp, v: &Value, depth: usize) -> u64 {
 fn sxhash_eq(i: &Interp, v: &Value) -> u64 {
     // `symbols-with-pos-enabled' objects ARE the symbol in GNU — hash
     // the bare symbol, ignoring the position.
-    if let Some((id, _)) = misc::as_sympos(v) {
+    if let Some((id, _)) = misc::active_sympos_parts(i, v) {
         return sxhash_sym_hash(i, id);
     }
     match v {
@@ -5941,7 +5941,7 @@ fn f_format_spec(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                             let b = pair.borrow();
                             (b.car.clone(), b.cdr.clone())
                         };
-                        if super::eq_values(&k, &key) {
+                        if super::eq_values_with_interp(i, &k, &key) {
                             val = v;
                             found = true;
                             break;

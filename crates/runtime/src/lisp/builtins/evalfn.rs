@@ -786,7 +786,7 @@ fn compiler_macro_handler(i: &mut Interp, form: &Value) -> Option<Value> {
     }) {
         return None;
     }
-    let mut func = crate::lisp::builtins::misc::unpos(&car);
+    let mut func = crate::lisp::builtins::misc::unpos(i, &car);
     let cmacro = i.q("compiler-macro");
     let mut guard = 0;
     while let Value::Sym(id) = func {

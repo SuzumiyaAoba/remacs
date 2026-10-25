@@ -40,14 +40,12 @@ pub(crate) fn read_parser_at(
     from_buffer: bool,
     multibyte: bool,
 ) -> (Result<Option<Value>, Flow>, usize) {
-    let enabled = super::misc::sympos_enabled_p(i);
     let invalid_syntax = i.q("invalid-read-syntax");
     let (result, mut end) = {
         let mut reader = crate::lisp::reader::Reader::with_chars(i, chars.clone());
         reader.set_position(position);
         reader.from_buffer = from_buffer;
         reader.source_multibyte = multibyte;
-        reader.sympos_enabled = enabled;
         reader.annotate_pos = annotate_pos;
         let result = reader.read();
         (result, reader.position().max(position))
@@ -189,10 +187,8 @@ pub(crate) fn read_source(i: &mut Interp, source: Value, positioning: bool) -> E
         other => {
             // GNU Fread: any other STREAM is FUNCALLed to produce
             // chars — non-functions surface `invalid-function'.
-            let sympos_enabled = super::misc::sympos_enabled_p(i);
             let result = {
                 let mut reader = crate::lisp::reader::Reader::with_function(i, other.clone());
-                reader.sympos_enabled = sympos_enabled;
                 reader.annotate_pos = positioning.then_some(0);
                 reader.read()
             };

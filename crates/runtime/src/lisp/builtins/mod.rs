@@ -468,18 +468,8 @@ pub(crate) fn want_list(i: &mut Interp, v: &Value) -> Result<Vec<Value>, Flow> {
     }
 }
 
-/// `eq` — identity.  GNU's `symbols-with-pos-enabled' objects are
-/// `eq' to their bare symbol (and to each other across positions):
-/// unwrap them here so list/search predicates agree.
+/// Object identity without interpreter-dependent symbol-position handling.
 pub fn eq_values(a: &Value, b: &Value) -> bool {
-    if misc::as_sympos(a).is_some() || misc::as_sympos(b).is_some() {
-        return match (misc::as_sympos(a), misc::as_sympos(b)) {
-            (Some((x, _)), Some((y, _))) => x == y,
-            (Some((x, _)), None) => matches!(b, Value::Sym(y) if *y == x),
-            (None, Some((y, _))) => matches!(a, Value::Sym(x) if *x == y),
-            (None, None) => unreachable!(),
-        };
-    }
     match (a, b) {
         (Value::Nil, Value::Nil) => true,
         (Value::Nil, Value::Sym(0)) | (Value::Sym(0), Value::Nil) => true,
@@ -511,6 +501,17 @@ pub fn eq_values(a: &Value, b: &Value) -> bool {
     }
 }
 
+/// GNU EQ with the current `symbols-with-pos-enabled' classification.
+pub fn eq_values_with_interp(interp: &Interp, a: &Value, b: &Value) -> bool {
+    if crate::lisp::builtins::misc::sympos_enabled_p(interp)
+        && (crate::lisp::builtins::misc::any_sympos_parts(interp, a).is_some()
+            || crate::lisp::builtins::misc::any_sympos_parts(interp, b).is_some())
+    {
+        return matches!((interp.sym_id(a), interp.sym_id(b)), (Some(x), Some(y)) if x == y);
+    }
+    eq_values(a, b)
+}
+
 /// `eql` — eq, or equal numbers of the same type (int vs float differ).
 /// GNU compares floats bitwise: 0.0 and -0.0 differ, while NaN eqls
 /// NaN when the payloads match.
@@ -525,6 +526,14 @@ pub fn eql_values(a: &Value, b: &Value) -> bool {
         }
         (Value::Float(x), Value::Float(y)) => (**x).to_bits() == (**y).to_bits(),
         _ => eq_values(a, b),
+    }
+}
+
+pub fn eql_values_with_interp(interp: &Interp, a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Int(_) | Value::BigInt(_) | Value::Float(_),
+         Value::Int(_) | Value::BigInt(_) | Value::Float(_)) => eql_values(a, b),
+        _ => eq_values_with_interp(interp, a, b),
     }
 }
 
@@ -562,7 +571,10 @@ fn equal_string_properties(
             if a.len() != 2 {
                 return Ok(false);
             }
-            let Some(b) = pb.chunks(2).find(|b| eq_values(&b[0], &a[0])) else {
+            let Some(b) = pb
+                .chunks(2)
+                .find(|b| eq_values_with_interp(interp, &b[0], &a[0]))
+            else {
                 return Ok(false);
             };
             if b.len() != 2 || !equal_values(interp, &b[1], &a[1])? {
@@ -618,12 +630,15 @@ fn equal_values_1(
             }
         }
     }
-    // Enabled sympos are atoms (symbols): compare by `eq' unwrapping,
-    // not record slot contents (positions must not matter).
-    if misc::as_sympos(a).is_some() || misc::as_sympos(b).is_some() {
-        return Ok(eql_values(a, b));
+    // Enabled position symbols compare as their bare symbols, independent
+    // of their location. With the flag off they remain ordinary records.
+    if misc::sympos_enabled_p(interp)
+        && (misc::any_sympos_parts(interp, a).is_some()
+            || misc::any_sympos_parts(interp, b).is_some())
+    {
+        return Ok(eql_values_with_interp(interp, a, b));
     }
-    if eq_values(a, b) {
+    if eq_values_with_interp(interp, a, b) {
         return Ok(true);
     }
     let left_config = crate::editor::window_configuration_object(a);

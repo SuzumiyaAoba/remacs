@@ -3743,13 +3743,7 @@ pub(crate) fn sym_pos_parts(i: &Interp, v: &Value) -> Option<(SymId, i128)> {
     None
 }
 
-/// Tag head of a `symbols-with-pos-enabled' symbol-with-position.
-/// GNU's enabled sympos are a different object flavor from the
-/// `symbol-with-pos' PVEC: `type-of' reports `symbol', `symbolp' is
-/// t, symbol primitives work on them, and `eq' unwraps to the bare
-/// symbol.  We encode them as `[Int(MAGIC) BARE POS]' records — the
-/// magic Int head keeps detection `Interp'-free (`eq_values', hash
-/// keys) and cannot be produced by any Lisp-visible record.
+/// Decode the legacy magic-tag encoding used by earlier Remacs snapshots.
 pub(crate) const SYMPOS_MAGIC: i128 = 0x5EED_CAFE_1;
 
 /// `symbols-with-pos-enabled' parts: (bare symbol, position).
@@ -3765,27 +3759,26 @@ pub(crate) fn as_sympos(v: &Value) -> Option<(SymId, i128)> {
     None
 }
 
-/// Build an enabled `symbols-with-pos-enabled' sympos for BARE at POS.
-pub(crate) fn make_sympos(bare: SymId, pos: i128) -> Value {
-    Value::record(vec![
-        Value::Int(SYMPOS_MAGIC),
-        Value::Sym(bare),
-        Value::Int(pos),
-    ])
+pub(crate) fn any_sympos_parts(i: &Interp, v: &Value) -> Option<(SymId, i128)> {
+    sym_pos_parts(i, v).or_else(|| as_sympos(v))
+}
+
+pub(crate) fn active_sympos_parts(i: &Interp, v: &Value) -> Option<(SymId, i128)> {
+    sympos_enabled_p(i).then(|| any_sympos_parts(i, v)).flatten()
 }
 
 /// Strip an enabled sympos to its bare symbol; everything else is
 /// returned unchanged.  Cheap because `as_sympos' borrows only when V
 /// is a record.
-pub(crate) fn unpos(v: &Value) -> Value {
-    match as_sympos(v) {
+pub(crate) fn unpos(i: &Interp, v: &Value) -> Value {
+    match active_sympos_parts(i, v) {
         Some((s, _)) => Value::Sym(s),
         None => v.clone(),
     }
 }
 
 /// Is `symbols-with-pos-enabled' dynamically bound to a non-nil value?
-pub(crate) fn sympos_enabled_p(i: &mut Interp) -> bool {
+pub(crate) fn sympos_enabled_p(i: &Interp) -> bool {
     let Some(id) = i.q_soft("symbols-with-pos-enabled") else {
         return false;
     };
@@ -3803,7 +3796,7 @@ pub(crate) fn make_symbol_with_pos(i: &mut Interp, sym: SymId, pos: i128) -> Val
 }
 
 fn f_bare_symbol(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    if let Some((s, _)) = sym_pos_parts(i, &args[0]).or_else(|| as_sympos(&args[0])) {
+    if let Some((s, _)) = any_sympos_parts(i, &args[0]) {
         return Ok(i.sym(s));
     }
     match &args[0] {
@@ -3827,7 +3820,8 @@ fn f_bare_symbol(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_bare_symbol_p(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // t only for a plain symbol — a positioned symbol is not bare.
     Ok(Value::from_bool(
-        matches!(&args[0], Value::Sym(_) | Value::Nil) && sym_pos_parts(i, &args[0]).is_none(),
+        matches!(&args[0], Value::Sym(_) | Value::Nil)
+            && any_sympos_parts(i, &args[0]).is_none(),
     ))
 }
 
@@ -3836,7 +3830,7 @@ fn f_position_symbol(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // CHECK_SYMBOL_OR_SYMBOL_WITH_POS's SYM (the signaled predicate is
     // the two-element list) and accepts a fixnum or a positioned symbol
     // for POS (`fixnum-or-symbol-with-pos-p').
-    let s = if let Some((s, _)) = sym_pos_parts(i, &args[0]).or_else(|| as_sympos(&args[0])) {
+    let s = if let Some((s, _)) = any_sympos_parts(i, &args[0]) {
         s
     } else {
         match i.sym_id(&args[0]) {
@@ -3856,26 +3850,21 @@ fn f_position_symbol(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     };
     let pos = match &args[1] {
         Value::Int(n) => *n,
-        v => match sym_pos_parts(i, v).or_else(|| as_sympos(v)) {
+        v => match any_sympos_parts(i, v) {
             Some((_, p)) => p,
             None => return Err(i.wrong_type_mut("fixnum-or-symbol-with-pos-p", &args[1])),
         },
     };
-    // GNU `Fposition_symbol': under `symbols-with-pos-enabled' the
-    // result is a real positioned symbol; otherwise a
-    // `symbol-with-pos' record.
-    if sympos_enabled_p(i) {
-        Ok(make_sympos(s, pos))
-    } else {
-        Ok(make_symbol_with_pos(i, s, pos))
-    }
+    // GNU `position-symbol' always creates the same object; the dynamic
+    // flag controls whether symbol primitives expose it as a symbol.
+    Ok(make_symbol_with_pos(i, s, pos))
 }
 
 fn f_remove_pos_from_symbol(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU `remove-pos-from-symbol' unwraps a positioned
     // symbol; any other object passes through unchanged (unlike
     // `bare-symbol' which type-checks).
-    if let Some((s, _)) = sym_pos_parts(i, &args[0]).or_else(|| as_sympos(&args[0])) {
+    if let Some((s, _)) = any_sympos_parts(i, &args[0]) {
         return Ok(Value::Sym(s));
     }
     Ok(args[0].clone())
@@ -3891,12 +3880,12 @@ fn f_remove_images(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 
 fn f_symbol_with_pos_p(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(
-        sym_pos_parts(i, &args[0]).is_some() || as_sympos(&args[0]).is_some(),
+        any_sympos_parts(i, &args[0]).is_some(),
     ))
 }
 
 fn f_symbol_with_pos_pos(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    match sym_pos_parts(i, &args[0]).or_else(|| as_sympos(&args[0])) {
+    match any_sympos_parts(i, &args[0]) {
         Some((_, p)) => Ok(Value::Int(p)),
         None => Err(i.wrong_type_mut("symbol-with-pos-p", &args[0])),
     }
@@ -16393,7 +16382,7 @@ pub(crate) fn recordp(i: &Interp, value: &Value) -> bool {
     matches!(value, Value::Record(_))
             && !crate::editor::window_configuration_object(value)
             && !is_opaque_record(i, value)
-            && as_sympos(value).is_none()
+            && any_sympos_parts(i, value).is_none()
             && !crate::lisp::builtins::data::is_obarray(i, value)
             && !is_bool_vector(i, value)
             && !is_char_table(i, value)
@@ -16517,6 +16506,18 @@ fn value_cmp_impl(
     fn mism(i: &mut Interp, x: &Value, y: &Value) -> Flow {
         let s = i.q("type-mismatch");
         i.signal_data(s, vec![x.clone(), y.clone()])
+    }
+    if sympos_enabled_p(i)
+        && (any_sympos_parts(i, x).is_some() || any_sympos_parts(i, y).is_some())
+    {
+        return match (i.sym_id(x), i.sym_id(y)) {
+            (Some(a), Some(b)) => {
+                let a = Value::Sym(a);
+                let b = Value::Sym(b);
+                value_cmp_impl(i, &a, &b, depth)
+            }
+            _ => Err(mism(i, x, y)),
+        };
     }
     Ok(match (x, y) {
         (

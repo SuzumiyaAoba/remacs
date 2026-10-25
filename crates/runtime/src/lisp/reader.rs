@@ -35,10 +35,6 @@ pub struct Reader<'a> {
     /// token reads as a `symbol-with-pos' record carrying position
     /// `base + token_start' (`read' keeps it off).
     pub annotate_pos: Option<i128>,
-    /// `symbols-with-pos-enabled': positioned tokens emit GNU's enabled
-    /// sympos (a real symbol for every primitive) instead of the
-    /// `symbol-with-pos' record.
-    pub sympos_enabled: bool,
     /// True when the source is a buffer (GNU `from_buffer_p'): read
     /// errors then carry `(MSG LINE COLUMN)` like `invalid_syntax_lisp'.
     pub from_buffer: bool,
@@ -105,7 +101,6 @@ impl<'a> Reader<'a> {
             interp,
             labels: HashMap::default(),
             annotate_pos: None,
-            sympos_enabled: false,
             from_buffer: false,
             source_multibyte: true,
         }
@@ -1349,12 +1344,6 @@ impl<'a> Reader<'a> {
     fn located_symbol(&mut self, symbol: super::value::SymId, start: usize) -> Value {
         if symbol == sym::NIL { return Value::Nil; }
         if let Some(base) = self.annotate_pos {
-            if self.sympos_enabled {
-                return crate::lisp::builtins::misc::make_sympos(
-                    symbol,
-                    base + start as i128,
-                );
-            }
             return crate::lisp::builtins::misc::make_symbol_with_pos(
                 self.interp,
                 symbol,
