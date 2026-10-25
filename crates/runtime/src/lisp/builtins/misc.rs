@@ -16501,7 +16501,13 @@ fn f_length_eq(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// conses/vectors elementwise; any type mismatch signals
 /// (error 'type-mismatch), and otherwise-comparable pairs with no
 /// ordering answer yield nil.
-fn value_lt_impl(i: &mut Interp, x: &Value, y: &Value, depth: u32) -> Result<bool, Flow> {
+fn value_cmp_impl(
+    i: &mut Interp,
+    x: &Value,
+    y: &Value,
+    depth: u32,
+) -> Result<std::cmp::Ordering, Flow> {
+    use std::cmp::Ordering::{Equal, Greater, Less};
     if depth > 64 {
         return Err(i.error("Circular object"));
     }
@@ -16513,25 +16519,28 @@ fn value_lt_impl(i: &mut Interp, x: &Value, y: &Value, depth: u32) -> Result<boo
         (
             Value::Int(_) | Value::BigInt(_) | Value::Float(_),
             Value::Int(_) | Value::BigInt(_) | Value::Float(_),
-        ) => crate::lisp::builtins::arith::number_order(x, y)
-            == Some(std::cmp::Ordering::Less),
+        ) => crate::lisp::builtins::arith::number_order(x, y).unwrap_or(Equal),
         (Value::BigInt(_), Value::Nil | Value::Sym(_) | Value::Str(_) | Value::Cons(_)) => {
             return Err(mism(i, y, x));
         }
         (Value::Int(_) | Value::BigInt(_) | Value::Float(_), _) => return Err(mism(i, x, y)),
+        (Value::Nil, Value::Nil) => Equal,
+        (Value::Nil, Value::Cons(_)) => Less,
+        (Value::Nil, Value::Sym(b)) => i
+            .symbol_name(crate::lisp::sym::NIL)
+            .cmp(&i.symbol_name(*b)),
+        (Value::Sym(a), Value::Nil) => i
+            .symbol_name(*a)
+            .cmp(&i.symbol_name(crate::lisp::sym::NIL)),
         (Value::Sym(a), Value::Sym(b)) => {
             if a == b {
-                false
-            } else if x.is_nil() {
-                true
-            } else if y.is_nil() {
-                false
+                Equal
             } else {
-                i.symbol_name(*a) < i.symbol_name(*b)
+                i.symbol_name(*a).cmp(&i.symbol_name(*b))
             }
         }
         (Value::Sym(_), _) => return Err(mism(i, x, y)),
-        (Value::Str(p), Value::Str(q)) => *p.borrow() < *q.borrow(),
+        (Value::Str(p), Value::Str(q)) => p.borrow().cmp(&q.borrow()),
         (Value::Str(_), _) => return Err(mism(i, x, y)),
         (Value::Cons(_), Value::Cons(_)) => {
             let xs = match want_list(i, x) {
@@ -16542,65 +16551,69 @@ fn value_lt_impl(i: &mut Interp, x: &Value, y: &Value, depth: u32) -> Result<boo
                 Ok(v) => v,
                 Err(f) => return Err(f),
             };
-            let mut lt = false;
+            let mut order = Equal;
             for k in 0..xs.len().max(ys.len()) {
                 match (xs.get(k), ys.get(k)) {
                     (None, Some(_)) => {
-                        lt = true;
+                        order = Less;
                         break;
                     }
                     (None, None) => break,
                     (Some(_), None) => {
-                        lt = false;
+                        order = Greater;
                         break;
                     }
                     (Some(a), Some(b)) => {
-                        if !crate::lisp::builtins::equal_values(i, a, b)? {
-                            lt = value_lt_impl(i, a, b, depth + 1)?;
+                        order = value_cmp_impl(i, a, b, depth + 1)?;
+                        if order != Equal {
                             break;
                         }
                     }
                 }
             }
-            lt
+            order
         }
         (Value::Cons(_), _) => return Err(mism(i, x, y)),
         (Value::Vec(p), Value::Vec(q)) => {
             let xs = p.borrow().clone();
             let ys = q.borrow().clone();
-            let mut lt = false;
+            let mut order = Equal;
             for k in 0..xs.len().max(ys.len()) {
                 match (xs.get(k), ys.get(k)) {
                     (None, Some(_)) => {
-                        lt = true;
+                        order = Less;
                         break;
                     }
                     (None, None) => break,
                     (Some(_), None) => {
-                        lt = false;
+                        order = Greater;
                         break;
                     }
                     (Some(a), Some(b)) => {
-                        if !crate::lisp::builtins::equal_values(i, a, b)? {
-                            lt = value_lt_impl(i, a, b, depth + 1)?;
+                        order = value_cmp_impl(i, a, b, depth + 1)?;
+                        if order != Equal {
                             break;
                         }
                     }
                 }
             }
-            lt
+            order
         }
         (Value::Vec(_), _) => return Err(mism(i, x, y)),
         // Remaining same-type pairs (hash tables, buffers, subrs,
         // markers...) are unorderable → nil; mismatched types → error.
         _ => {
             if std::mem::discriminant(x) == std::mem::discriminant(y) {
-                false
+                Equal
             } else {
                 return Err(mism(i, x, y));
             }
         }
     })
+}
+
+fn value_lt_impl(i: &mut Interp, x: &Value, y: &Value, depth: u32) -> Result<bool, Flow> {
+    Ok(value_cmp_impl(i, x, y, depth)? == std::cmp::Ordering::Less)
 }
 
 pub(super) fn f_value_lt(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
