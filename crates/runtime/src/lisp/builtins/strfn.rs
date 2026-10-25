@@ -2272,6 +2272,7 @@ fn f_string_version_lessp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult
         ($v:expr) => {
             match $v {
                 Value::Str(s) => s.borrow().clone(),
+                Value::Nil => "nil".to_string(),
                 Value::Sym(s) => i.symbol_name(*s).to_string(),
                 _ => return Err(i.wrong_type_mut("stringp", $v)),
             }
