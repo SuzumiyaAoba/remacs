@@ -5,6 +5,7 @@
   (set-case-syntax-pair high ?a table)
   (with-temp-buffer
     (set-case-table table)
-    (qa (equal (upcase (string-make-multibyte "a")) (string high)) t)
+    (qa (equal (upcase (substring (string #x3fff80 ?a) 1 2))
+               (string high)) t)
     (qa (equal (downcase (string high)) "a") t)))
 (princ (qa--done))
