@@ -4718,7 +4718,10 @@ fn f_current_time_zone(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let (off, name) = match args.get(1) {
         // GNU tzlookup treats numeric zero like t, not a named +00 offset.
         Some(Value::Int(0)) => (0, "UTC".to_string()),
-        Some(Value::Int(off)) => (*off as i64, offset_name(*off as i64)),
+        Some(Value::Int(off)) if super::misc::valid_fixed_zone_offset(*off) => {
+            (*off as i64, offset_name(*off as i64))
+        }
+        Some(Value::Int(_)) => (0, "UTC".to_string()),
         Some(Value::Sym(s)) if *s == t_sym => (0, "UTC".to_string()),
         Some(Value::Sym(s)) if *s == wall_sym => {
             // `wall' = startup wall clock, unaffected by
@@ -4735,23 +4738,9 @@ fn f_current_time_zone(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                 (tm.tm_gmtoff, name)
             }
         }
-        Some(Value::Cons(c)) => {
-            let (off, name) = {
-                let b = c.borrow();
-                let off = match &b.car {
-                    Value::Int(n) => *n as i64,
-                    _ => 0,
-                };
-                let name = match &b.cdr {
-                    Value::Cons(c2) => match &c2.borrow().car {
-                        Value::Str(s) => s.borrow().clone(),
-                        _ => String::new(),
-                    },
-                    Value::Str(s) => s.borrow().clone(),
-                    _ => String::new(),
-                };
-                (off, name)
-            };
+        Some(zone @ Value::Cons(_)) => {
+            let (off, name) = super::misc::checked_time_zone_cons(i, zone)?;
+            let off = off as i64;
             (
                 off,
                 if name.is_empty() {
@@ -4846,11 +4835,19 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             super::misc::gmt_tm(secs),
             ZoneLabel::Named("UTC".to_string()),
         ),
-        Some(Value::Int(off)) => {
-            let mut tm = super::misc::gmt_tm(secs + *off as i64);
-            tm.tm_gmtoff = *off as i64;
-            (tm, ZoneLabel::Offset(*off as i64))
+        Some(Value::Int(off)) if super::misc::valid_fixed_zone_offset(*off) => {
+            let offset = *off as i64;
+            let Some(local_seconds) = secs.checked_add(offset) else {
+                return Err(i.error("Specified time is not representable"));
+            };
+            let mut tm = super::misc::gmt_tm(local_seconds);
+            tm.tm_gmtoff = offset;
+            (tm, ZoneLabel::Offset(offset))
         }
+        Some(Value::Int(_)) => (
+            super::misc::gmt_tm(secs),
+            ZoneLabel::Named("UTC".to_string()),
+        ),
         Some(Value::Sym(s)) if *s == t_sym => (
             super::misc::gmt_tm(secs),
             ZoneLabel::Named("UTC".to_string()),
@@ -4878,24 +4875,13 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         }
         // GNU's decode_time_zone accepts `current-time-zone' output —
         // a (OFFSET NAME) cons — and uses the car as the fixed offset.
-        Some(Value::Cons(c)) => {
-            let (off, name) = {
-                let b = c.borrow();
-                let off = match &b.car {
-                    Value::Int(n) => *n as i64,
-                    _ => 0,
-                };
-                let name = match &b.cdr {
-                    Value::Cons(c2) => match &c2.borrow().car {
-                        Value::Str(s) => s.borrow().clone(),
-                        _ => String::new(),
-                    },
-                    Value::Str(s) => s.borrow().clone(),
-                    _ => String::new(),
-                };
-                (off, name)
+        Some(zone @ Value::Cons(_)) => {
+            let (off, name) = super::misc::checked_time_zone_cons(i, zone)?;
+            let off = off as i64;
+            let Some(local_seconds) = secs.checked_add(off) else {
+                return Err(i.error("Specified time is not representable"));
             };
-            let mut tm = super::misc::gmt_tm(secs + off);
+            let mut tm = super::misc::gmt_tm(local_seconds);
             tm.tm_gmtoff = off;
             (
                 tm,

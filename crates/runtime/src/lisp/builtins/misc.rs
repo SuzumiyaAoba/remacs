@@ -4287,6 +4287,49 @@ enum ZoneKind {
     Named(String),
 }
 
+pub(crate) const MAX_FIXED_ZONE_OFFSET: i128 = 24 * 60 * 60;
+
+pub(crate) fn valid_fixed_zone_offset(offset: i128) -> bool {
+    (-MAX_FIXED_ZONE_OFFSET..=MAX_FIXED_ZONE_OFFSET).contains(&offset)
+}
+
+pub(crate) fn invalid_time_zone(i: &mut Interp, zone: &Value) -> Flow {
+    i.signal_data(
+        sym::ERROR,
+        vec![Value::string("Invalid time zone specification"), zone.clone()],
+    )
+}
+
+pub(crate) fn checked_time_zone_cons(
+    i: &mut Interp,
+    zone: &Value,
+) -> Result<(i128, String), Flow> {
+    let Value::Cons(pair) = zone else {
+        return Err(invalid_time_zone(i, zone));
+    };
+    let (offset, tail) = {
+        let pair = pair.borrow();
+        (pair.car.clone(), pair.cdr.clone())
+    };
+    let Value::Int(offset) = offset else {
+        return Err(invalid_time_zone(i, zone));
+    };
+    let Value::Cons(name_cell) = tail else {
+        return Err(invalid_time_zone(i, zone));
+    };
+    let (name, end) = {
+        let name_cell = name_cell.borrow();
+        (name_cell.car.clone(), name_cell.cdr.clone())
+    };
+    let Value::Str(name) = name else {
+        return Err(invalid_time_zone(i, zone));
+    };
+    if !end.is_nil() || !valid_fixed_zone_offset(offset) {
+        return Err(invalid_time_zone(i, zone));
+    }
+    Ok((offset, name.borrow().clone()))
+}
+
 fn decode_zone(i: &mut Interp, zone: &Value) -> Result<ZoneKind, Flow> {
     let t_sym = i.q("t");
     let wall_sym = i.q("wall");
@@ -4295,7 +4338,9 @@ fn decode_zone(i: &mut Interp, zone: &Value) -> Result<ZoneKind, Flow> {
     // mean local; anything else signals "Invalid time zone
     // specification".
     Ok(match zone {
-        Value::Int(off) if zone.fixnump() => ZoneKind::Fixed(*off),
+        Value::Int(off) if zone.fixnump() => ZoneKind::Fixed(
+            if valid_fixed_zone_offset(*off) { *off } else { 0 },
+        ),
         Value::Sym(s) if *s == t_sym => ZoneKind::Fixed(0),
         Value::Sym(s) if *s == wall_sym => ZoneKind::Wall,
         Value::Str(z) => {
@@ -4306,27 +4351,9 @@ fn decode_zone(i: &mut Interp, zone: &Value) -> Result<ZoneKind, Flow> {
                 ZoneKind::Named(z)
             }
         }
-        Value::Cons(c) if c.borrow().car.fixnump() && matches!(c.borrow().cdr, Value::Cons(_)) => {
-            let c = c.borrow();
-            let Value::Int(offset) = c.car else {
-                unreachable!()
-            };
-            let Value::Cons(tail) = &c.cdr else {
-                unreachable!()
-            };
-            let abbreviation = tail.borrow().car.clone();
-            if !matches!(abbreviation, Value::Str(_)) {
-                return Err(i.wrong_type_mut("stringp", &abbreviation));
-            }
-            ZoneKind::Fixed(offset)
-        }
+        Value::Cons(_) => ZoneKind::Fixed(checked_time_zone_cons(i, zone)?.0),
         Value::Nil => ZoneKind::Local,
-        v => {
-            return Err(i.signal_data(
-                sym::ERROR,
-                vec![Value::string("Invalid time zone specification"), v.clone()],
-            ));
-        }
+        v => return Err(invalid_time_zone(i, v)),
     })
 }
 
@@ -4503,7 +4530,13 @@ fn f_decode_time(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let t_sym = i.q("t");
     let wall_sym = i.q("wall");
     let (tm, zone) = match args.get(1) {
-        Some(Value::Int(off)) => (gmt_tm(secs + *off as i64), *off),
+        Some(Value::Int(off)) if valid_fixed_zone_offset(*off) => {
+            let adjusted = secs
+                .checked_add(*off as i64)
+                .ok_or_else(|| i.error("Specified time is not representable"))?;
+            (gmt_tm(adjusted), *off)
+        }
+        Some(Value::Int(_)) => (gmt_tm(secs), 0),
         Some(Value::Sym(s)) if *s == t_sym => (gmt_tm(secs), 0),
         Some(Value::Sym(s)) if *s == wall_sym => {
             // `wall' is the system wall clock — GNU keeps a separate
@@ -4523,12 +4556,12 @@ fn f_decode_time(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                 (t, off)
             }
         }
-        Some(Value::Cons(c)) => {
-            let off = match &c.borrow().car {
-                Value::Int(n) => *n as i64,
-                _ => 0,
-            };
-            (gmt_tm(secs + off), off as i128)
+        Some(zone @ Value::Cons(_)) => {
+            let (offset, _) = checked_time_zone_cons(i, zone)?;
+            let adjusted = secs
+                .checked_add(offset as i64)
+                .ok_or_else(|| i.error("Specified time is not representable"))?;
+            (gmt_tm(adjusted), offset)
         }
         Some(Value::Nil) | None => {
             let t = interp_local_tm(i, secs);

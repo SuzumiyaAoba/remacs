@@ -529,6 +529,7 @@ qa!(qa_directory_file_name_slash_roots, "qa_directory_file_name_slash_roots.el")
 qa!(qa_file_name_case_insensitive_handler, "qa_file_name_case_insensitive_handler.el");
 qa!(qa_file_name_case_sensitivity_missing_parent, "qa_file_name_case_sensitivity_missing_parent.el");
 qa!(qa_file_name_case_neutral_path, "qa_file_name_case_neutral_path.el");
+qa!(qa_time_zone_invalid_specs, "qa_time_zone_invalid_specs.el");
 qa!(qa_line_number_narrowing_limit, "qa_line_number_narrowing_limit.el");
 qa!(qa_file_name_sans_extension_version, "qa_file_name_sans_extension_version.el");
 qa!(qa_file_name_extension_version, "qa_file_name_extension_version.el");
