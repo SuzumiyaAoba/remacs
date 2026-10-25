@@ -4188,27 +4188,31 @@ fn days_from_civil(y: i128, m: i128, d: i128) -> i128 {
     era * 146097 + doe - 719468
 }
 
+fn time_tm_field(i: &mut Interp, value: i128) -> Result<i32, Flow> {
+    i32::try_from(value).map_err(|_| i.error("Specified time is not representable"))
+}
+
 /// POSIX mktime: interpret a (possibly out-of-range) broken-down time
 /// in the given TZ spec — None means the ambient local zone — honoring
 /// tm_isdst (-1 guess / 0 standard / >0 DST).  Returns epoch seconds.
 fn mktime_secs(
-    sec: i64,
-    min: i64,
-    hour: i64,
-    day: i64,
-    mon: i64,
-    year: i64,
+    sec: i32,
+    min: i32,
+    hour: i32,
+    day: i32,
+    mon: i32,
+    year: i32,
     isdst: i32,
     tz: Option<&str>,
 ) -> i64 {
     let _g = tz_lock();
     let mut tm: Tm = unsafe { std::mem::zeroed() };
-    tm.tm_sec = sec as i32;
-    tm.tm_min = min as i32;
-    tm.tm_hour = hour as i32;
-    tm.tm_mday = day as i32;
-    tm.tm_mon = mon as i32 - 1;
-    tm.tm_year = year as i32 - 1900;
+    tm.tm_sec = sec;
+    tm.tm_min = min;
+    tm.tm_hour = hour;
+    tm.tm_mday = day;
+    tm.tm_mon = mon;
+    tm.tm_year = year;
     tm.tm_isdst = isdst;
     // GNU's gnulib mktime normalizes a forced tm_isdst to the zone's
     // real flag: an isdst=1 request in a non-DST zone (e.g. JST) must
@@ -4285,12 +4289,12 @@ fn mktime_secs(
             // libc resolved (fields were normalized in place, so
             // rebuild the tm from the request first).
             let mut tm2: Tm = unsafe { std::mem::zeroed() };
-            tm2.tm_sec = sec as i32;
-            tm2.tm_min = min as i32;
-            tm2.tm_hour = hour as i32;
-            tm2.tm_mday = day as i32;
-            tm2.tm_mon = mon as i32 - 1;
-            tm2.tm_year = year as i32 - 1900;
+            tm2.tm_sec = sec;
+            tm2.tm_min = min;
+            tm2.tm_hour = hour;
+            tm2.tm_mday = day;
+            tm2.tm_mon = mon;
+            tm2.tm_year = year;
             tm2.tm_isdst = if tm.tm_isdst > 0 { 1 } else { 0 };
             return with_tz(tz, &mut || unsafe { mktime(&mut tm2) });
         }
@@ -4482,6 +4486,15 @@ fn f_encode_time(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         };
         (zone, isdst)
     };
+    // Every broken-down field is ultimately stored in a C `struct tm`.
+    // Reject values that cannot be represented there before either the
+    // libc or fixed-zone path can wrap or normalize a truncated value.
+    let tm_sec = time_tm_field(i, sec_whole)?;
+    let tm_min = time_tm_field(i, min)?;
+    let tm_hour = time_tm_field(i, hour)?;
+    let tm_mday = time_tm_field(i, day)?;
+    let tm_mon = time_tm_field(i, mon - 1)?;
+    let tm_year = time_tm_field(i, year - 1900)?;
     let secs = match decode_zone(i, &zone)? {
         ZoneKind::Fixed(off) => {
             // Arithmetic path: normalize overflowing fields like
@@ -4489,37 +4502,46 @@ fn f_encode_time(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             let total_m = year * 12 + (mon - 1);
             let (ny, nm0) = (total_m.div_euclid(12), total_m.rem_euclid(12) + 1);
             let days = days_from_civil(ny, nm0, day);
-            days * 86400 + hour * 3600 + min * 60 + sec_whole - off
+            let seconds = days
+                .checked_mul(86400)
+                .and_then(|n| n.checked_add(hour.checked_mul(3600)?))
+                .and_then(|n| n.checked_add(min.checked_mul(60)?))
+                .and_then(|n| n.checked_add(sec_whole))
+                .and_then(|n| n.checked_sub(off))
+                .ok_or_else(|| i.error("Specified time is not representable"))?;
+            i64::try_from(seconds)
+                .map(i128::from)
+                .map_err(|_| i.error("Specified time is not representable"))?
         }
         ZoneKind::Local => mktime_secs(
-            sec_whole as i64,
-            min as i64,
-            hour as i64,
-            day as i64,
-            mon as i64,
-            year as i64,
+            tm_sec,
+            tm_min,
+            tm_hour,
+            tm_mday,
+            tm_mon,
+            tm_year,
             isdst,
             // The interpreter's `set-time-zone-rule', when set, IS the
             // local zone — don't read the process `TZ'.
             i.tz_rule.as_deref(),
         ) as i128,
         ZoneKind::Named(z) => mktime_secs(
-            sec_whole as i64,
-            min as i64,
-            hour as i64,
-            day as i64,
-            mon as i64,
-            year as i64,
+            tm_sec,
+            tm_min,
+            tm_hour,
+            tm_mday,
+            tm_mon,
+            tm_year,
             isdst,
             Some(&z),
         ) as i128,
         ZoneKind::Wall => mktime_secs(
-            sec_whole as i64,
-            min as i64,
-            hour as i64,
-            day as i64,
-            mon as i64,
-            year as i64,
+            tm_sec,
+            tm_min,
+            tm_hour,
+            tm_mday,
+            tm_mon,
+            tm_year,
             isdst,
             None,
         ) as i128,
