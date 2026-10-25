@@ -12044,34 +12044,59 @@ fn file_name_result_like(i: &mut Interp, original: &Value, text: String) -> Valu
     }
     Value::Str(result)
 }
+fn call_file_name_lisp(i: &mut Interp, name: &str, args: Vec<Value>) -> EvalResult {
+    let function = i.q(name);
+    i.apply(&Value::Sym(function), args)
+}
 fn f_file_name_extension(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let s = want_str(i, &a[0])?;
-    let base = s.rsplit('/').next().unwrap_or(&s);
+    let nondirectory = call_file_name_lisp(i, "file-name-nondirectory", vec![a[0].clone()])?;
+    let file = call_file_name_lisp(i, "file-name-sans-versions", vec![nondirectory])?;
+    let base = want_str(i, &file)?;
     let keep_dot = a.get(1).is_some_and(|v| v.truthy());
     match base.rfind('.') {
-        Some(idx) if idx > 0 => Ok(file_name_result_like(
+        Some(idx) if idx > 0 => crate::lisp::builtins::strfn::f_substring(
             i,
-            &a[0],
-            base[idx + usize::from(!keep_dot)..].to_string(),
-        )),
+            vec![
+                file,
+                Value::Int((idx + usize::from(!keep_dot)) as i128),
+                Value::Nil,
+            ]
+            .into(),
+        ),
         // With PERIOD, GNU returns an empty string for no extension.
-        _ if keep_dot => Ok(file_name_result_like(i, &a[0], String::new())),
+        _ if keep_dot => crate::lisp::builtins::strfn::f_substring(
+            i,
+            vec![file.clone(), Value::Int(base.chars().count() as i128)].into(),
+        ),
         _ => Ok(Value::Nil),
     }
 }
 fn f_file_name_sans_extension(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let s = want_str(i, &a[0])?;
+    let nondirectory = call_file_name_lisp(i, "file-name-nondirectory", vec![a[0].clone()])?;
+    let file = call_file_name_lisp(i, "file-name-sans-versions", vec![nondirectory])?;
+    let s = want_str(i, &file)?;
     match s.rfind('.') {
         Some(idx) => {
-            // Only strip if the dot is after the last slash.
-            let last_slash = s.rfind('/').map(|x| x + 1).unwrap_or(0);
-            if idx > last_slash {
-                Ok(file_name_result_like(i, &a[0], s[..idx].to_string()))
+            if idx > 0 {
+                let sans_extension = crate::lisp::builtins::strfn::f_substring(
+                    i,
+                    vec![file, Value::Int(0), Value::Int(idx as i128)].into(),
+                )?;
+                let directory =
+                    call_file_name_lisp(i, "file-name-directory", vec![a[0].clone()])?;
+                if directory.truthy() {
+                    crate::lisp::builtins::strfn::f_concat(
+                        i,
+                        vec![directory, sans_extension].into(),
+                    )
+                } else {
+                    Ok(sans_extension)
+                }
             } else {
-                Ok(file_name_result_like(i, &a[0], s))
+                Ok(a[0].clone())
             }
         }
-        None => Ok(file_name_result_like(i, &a[0], s)),
+        None => Ok(a[0].clone()),
     }
 }
 fn f_file_name_sans_versions(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -12101,20 +12126,17 @@ fn f_file_name_base(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU: FILENAME nil/omitted → `buffer-file-name' of the current
     // buffer.
     let sv = arg(&a, 0);
-    let s = match &sv {
-        // GNU CHECK_STRINGs the resolved name: a nil buffer-file-name
-        // signals `wrong-type-argument (stringp nil)'.
-        Value::Nil => match cur(i).borrow().file_name.clone() {
-            Some(f) => f,
-            None => return Err(i.wrong_type_mut("stringp", &sv)),
-        },
-        _ => want_str(i, &sv)?,
+    let filename = match &sv {
+        Value::Nil => cur(i)
+            .borrow()
+            .file_name
+            .clone()
+            .map(Value::string)
+            .unwrap_or(Value::Nil),
+        _ => sv,
     };
-    let base = s.rsplit('/').next().unwrap_or(&s);
-    match base.rfind('.') {
-        Some(idx) if idx > 0 => Ok(file_name_result_like(i, &sv, base[..idx].to_string())),
-        _ => Ok(file_name_result_like(i, &sv, base.to_string())),
-    }
+    let nondirectory = call_file_name_lisp(i, "file-name-nondirectory", vec![filename])?;
+    call_file_name_lisp(i, "file-name-sans-extension", vec![nondirectory])
 }
 fn f_file_name_as_directory(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let s = want_str(i, &a[0])?;
