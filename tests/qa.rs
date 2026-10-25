@@ -332,6 +332,7 @@ qa!(qa_concat_bool_vector_constructor, "qa_concat_bool_vector_constructor.el");
 qa!(qa_concat_character_code_bounds, "qa_concat_character_code_bounds.el");
 qa!(qa_concat_mule_characters, "qa_concat_mule_characters.el");
 qa!(qa_empty_string_identity, "qa_empty_string_identity.el");
+qa!(qa_string_representation, "qa_string_representation.el");
 qa!(qa_frexp_mantissa_extremes, "qa_frexp_mantissa_extremes.el");
 qa!(qa_minibuf, "qa_minibuf.el");
 qa!(qa_minibuffer, "qa_minibuffer.el");

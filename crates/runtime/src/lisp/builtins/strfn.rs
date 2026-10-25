@@ -482,16 +482,17 @@ fn f_string_truncate_left(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult
 }
 
 fn f_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU's `string' builds a MULTIBYTE string — bytes 0x80-0xFF are
-    // stored as eight-bit chars (codes 0x3FFF80-0x3FFFFF, PUA proxies
-    // internally); `multibyte-string-p' is t on the result.
+    // GNU `string' promotes only when an input character is non-ASCII.
+    // Eight-bit character codes still use the multibyte representation.
     if args.is_empty() {
         return Ok(i.empty_string(false));
     }
     let mut out = String::new();
+    let mut multibyte = false;
     for a in args.iter() {
         match a {
             Value::Int(n) if (0..=0x3fffff).contains(n) => {
+                multibyte |= *n >= 128;
                 out.push(
                     lisp_char(*n as u32)
                         .unwrap_or_else(|| crate::lisp::value::mule_seq_char(*n as u32)),
@@ -502,7 +503,11 @@ fn f_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     let v = Value::string(out);
     if let Value::Str(r) = &v {
-        i.mark_multibyte(r);
+        if multibyte {
+            i.mark_multibyte(r);
+        } else {
+            i.mark_unibyte(r);
+        }
     }
     Ok(v)
 }
