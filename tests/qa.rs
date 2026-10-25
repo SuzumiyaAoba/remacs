@@ -87,6 +87,7 @@ qa!(qa_char_markers, "qa_char_markers.el");
 qa!(qa_substitute_chars, "qa_substitute_chars.el");
 qa!(qa_charset, "qa_charset.el");
 qa!(qa_character_width_table, "qa_character_width_table.el");
+qa!(qa_ctl_arrow_width, "qa_ctl_arrow_width.el");
 qa!(
     qa_decomposition_description,
     "qa_decomposition_description.el"

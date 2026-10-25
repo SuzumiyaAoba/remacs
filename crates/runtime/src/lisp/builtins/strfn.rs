@@ -1851,10 +1851,19 @@ fn gnu_char_code_width(i: &Interp, code: u32) -> usize {
     // CHARACTER_WIDTH handles ASCII directly. For other characters,
     // consult the live table using the Lisp code rather than a Rust
     // proxy scalar (surrogates, high Mule codes, and eight-bit chars).
+    if code == 10 {
+        return 0;
+    }
     if code < 0x80 {
         return match code {
-            10 => 0,
             0x20..=0x7E => 1,
+            0..=0x1F | 0x7F => {
+                if i.symbol_value(i.q_soft("ctl-arrow").unwrap_or(0)).truthy() {
+                    2
+                } else {
+                    4
+                }
+            }
             _ => 2,
         };
     }

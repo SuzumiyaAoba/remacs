@@ -5297,6 +5297,7 @@ fn f_count_lines(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_current_column(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     let b = cur(i);
     let display = i.q("display");
+    let ctl_arrow = i.symbol_value(i.q_soft("ctl-arrow").unwrap_or(0)).truthy();
     let bb = b.borrow();
     let p = bb.point();
     let ls = bb.text.line_start(bb.text.line_of_pos(p));
@@ -5311,7 +5312,8 @@ fn f_current_column(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
         match bb.text.char_at(k) {
             '\t' => col = (col / tab_width + 1) * tab_width,
             c => {
-                col += text_display_width(&bb, k, display).unwrap_or_else(|| char_width(c));
+                col += text_display_width(&bb, k, display, ctl_arrow)
+                    .unwrap_or_else(|| char_width_with_ctl(c, ctl_arrow));
             }
         }
         k += 1;
@@ -5344,6 +5346,7 @@ fn f_move_to_column(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let tabs_on = i
         .symbol_value(i.q_soft("indent-tabs-mode").unwrap_or(0))
         .truthy();
+    let ctl_arrow = i.symbol_value(i.q_soft("ctl-arrow").unwrap_or(0)).truthy();
     let display = i.q("display");
     let b = cur(i);
     let mut bb = b.borrow_mut();
@@ -5355,7 +5358,8 @@ fn f_move_to_column(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         match bb.text.char_at(k) {
             '\t' => col = (col / tab_width + 1) * tab_width,
             c => {
-                col += text_display_width(&bb, k, display).unwrap_or_else(|| char_width(c));
+                col += text_display_width(&bb, k, display, ctl_arrow)
+                    .unwrap_or_else(|| char_width_with_ctl(c, ctl_arrow));
             }
         }
         k += 1;
@@ -5393,7 +5397,12 @@ fn f_move_to_column(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 }
 
-fn text_display_width(buffer: &Buffer, position: usize, display_prop: u32) -> Option<i128> {
+fn text_display_width(
+    buffer: &Buffer,
+    position: usize,
+    display_prop: u32,
+    ctl_arrow: bool,
+) -> Option<i128> {
     let props = buffer.text.props.borrow();
     let plist = props
         .intervals()
@@ -5406,7 +5415,12 @@ fn text_display_width(buffer: &Buffer, position: usize, display_prop: u32) -> Op
         .find(|pair| matches!(pair.first(), Some(Value::Sym(id)) if *id == display_prop))?
         .get(1)?;
     match value {
-        Value::Str(text) => Some(text.borrow().chars().map(char_width).sum()),
+        Value::Str(text) => Some(
+            text.borrow()
+                .chars()
+                .map(|c| char_width_with_ctl(c, ctl_arrow))
+                .sum(),
+        ),
         _ => None,
     }
 }
@@ -9172,6 +9186,15 @@ pub(crate) fn char_width(c: char) -> i128 {
     // Characters above the table (0x110000+, unreachable in our
     // UTF-8 text) display one column.
     1
+}
+
+pub(crate) fn char_width_with_ctl(c: char, ctl_arrow: bool) -> i128 {
+    let code = c as u32;
+    if (code < 0x20 || code == 0x7f) && code != b'\n' as u32 {
+        if ctl_arrow { 2 } else { 4 }
+    } else {
+        char_width(c)
+    }
 }
 
 fn rect_char_width(c: char, tab: i128) -> i128 {

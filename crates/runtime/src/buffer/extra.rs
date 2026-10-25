@@ -1707,6 +1707,7 @@ fn f_sort_regexp_fields(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn col_at(i: &Interp, p: usize) -> i128 {
     let b = cur(i);
     let bb = b.borrow();
+    let ctl_arrow = i.symbol_value(i.q_soft("ctl-arrow").unwrap_or(0)).truthy();
     let tab_width = i
         .symbol_value(i.q_soft("tab-width").unwrap_or(0))
         .int()
@@ -1718,7 +1719,7 @@ fn col_at(i: &Interp, p: usize) -> i128 {
     while k < p {
         match bb.text.char_at(k) {
             '\t' => col = (col / tab_width + 1) * tab_width,
-            c => col += crate::buffer::primitives::char_width(c),
+            c => col += crate::buffer::primitives::char_width_with_ctl(c, ctl_arrow),
         }
         k += 1;
     }
@@ -1735,6 +1736,7 @@ fn move_to_col(i: &mut Interp, goal: i128) -> EvalResult {
         .int()
         .unwrap_or(8)
         .max(1);
+    let ctl_arrow = i.symbol_value(i.q_soft("ctl-arrow").unwrap_or(0)).truthy();
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let p = bb.point();
@@ -1745,7 +1747,7 @@ fn move_to_col(i: &mut Interp, goal: i128) -> EvalResult {
     while k < le && col < goal {
         match bb.text.char_at(k) {
             '\t' => col = (col / tab_width + 1) * tab_width,
-            c => col += crate::buffer::primitives::char_width(c),
+            c => col += crate::buffer::primitives::char_width_with_ctl(c, ctl_arrow),
         }
         k += 1;
     }
