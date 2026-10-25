@@ -12103,9 +12103,13 @@ fn f_directory_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // of slashes is already a directory name and stays unchanged
     // (`directory-file-name' of "/" is "/", of "//" is "//").
     if s.chars().all(|c| c == '/') {
-        return Ok(Value::string(s));
+        return Ok(file_name_result_like(i, &a[0], s));
     }
-    Ok(Value::string(s.trim_end_matches('/').to_string()))
+    Ok(file_name_result_like(
+        i,
+        &a[0],
+        s.trim_end_matches('/').to_string(),
+    ))
 }
 
 fn f_file_name_concat(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
