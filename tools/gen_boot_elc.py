@@ -82,6 +82,7 @@ DATA_LIBS = ["shortdoc-doc"]
 # compatibility requires dominate ordinary post-boot load time.  These are
 # still loaded on demand; their twins only replace the same shipped sources.
 POSTBOOT_LIBS = [
+    "info",
     "auth-source",
     "autorevert",
     "comint",

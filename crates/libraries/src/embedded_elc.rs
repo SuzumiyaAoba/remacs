@@ -91,6 +91,7 @@ pub(crate) static EMBEDDED_ELC: &[(&str, &str)] = &[
     ("help-macro", include_str!("../../../lisp-elc/help-macro.elc")),
     ("inline", include_str!("../../../lisp-elc/inline.elc")),
     ("shortdoc-doc", include_str!("../../../lisp-elc/shortdoc-doc.elc")),
+    ("info", include_str!("../../../lisp-elc/info.elc")),
     ("auth-source", include_str!("../../../lisp-elc/auth-source.elc")),
     ("autorevert", include_str!("../../../lisp-elc/autorevert.elc")),
     ("comint", include_str!("../../../lisp-elc/comint.elc")),

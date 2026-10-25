@@ -95,6 +95,10 @@ const POSTBOOT_AOT_LIBRARIES: &[&str] = &[
     "rx",
 ];
 
+/// Libraries whose on-demand GNU byte-compiled twins are safe to use
+/// independently of the Org compilation window.
+const STANDALONE_POSTBOOT_AOT_LIBRARIES: &[&str] = &["info"];
+
 /// GNU command-line-1's load-path splice cursor. Preserve the cons identity:
 /// Lisp can replace load-path between options, leaving this cursor detached.
 #[derive(Default)]
@@ -2069,9 +2073,12 @@ pub(crate) fn load_library_opts_msg(
     let postboot_org_aot = POSTBOOT_AOT_LIBRARIES.contains(&stem)
         && !name.ends_with(".el")
         && (matches!(stem, "org" | "org-element") || org_aot_parent || org_modules_loading);
+    let standalone_postboot_aot = STANDALONE_POSTBOOT_AOT_LIBRARIES.contains(&stem)
+        && !name.ends_with(".el");
     let compiled_twin_allowed = i.boot_loading
         || (stem == "shortdoc-doc" && !name.ends_with(".el"))
-        || postboot_org_aot;
+        || postboot_org_aot
+        || standalone_postboot_aot;
     let found = locate_full(i, name, nosuffix, mustsuffix);
     let bundled = match &found {
         Some(Found::File(path)) => path_is_bundled_source(path) && embedded(path).is_some(),

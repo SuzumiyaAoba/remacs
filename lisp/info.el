@@ -1824,7 +1824,11 @@ escaped (\\\",\\\\)."
 	  (setq Info-history-list
 		(cons new-history (remove new-history Info-history-list)))
 	  (setq Info-history-forward nil))
-	(if (not (eq Info-fontify-maximum-menu-size nil))
+	;; Batch sessions do not render faces, mouse links, or header-line
+	;; annotations.  Avoid scanning the whole node for those transient
+	;; display properties; navigation still uses the same node text.
+	(if (and (not noninteractive)
+	         (not (eq Info-fontify-maximum-menu-size nil)))
             (Info-fontify-node))
         (setq list-buffers-directory (Info-node-description Info-current-file))
 	(Info-display-images-node)
