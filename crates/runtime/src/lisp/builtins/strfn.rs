@@ -2351,6 +2351,40 @@ fn verrevcmp(s1: &[char], s2: &[char]) -> std::cmp::Ordering {
 }
 
 fn filevercmp(s1: &[char], s2: &[char]) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let special_order = |s: &[char]| match s {
+        [] => 0,
+        ['.'] => 1,
+        ['.', '.'] => 2,
+        [..] if s.first() == Some(&'.') => 3,
+        _ => 4,
+    };
+    let special = special_order(s1).cmp(&special_order(s2));
+    if special != Ordering::Equal {
+        return special;
+    }
+
+    // Compare version prefixes before a shared file extension.  This
+    // matches gnulib filevercmp for names such as a.tar.gz/a.1.tar.gz.
+    let mut common_extension = None;
+    'suffix: for i in 0..s1.len() {
+        if s1[i] != '.' {
+            continue;
+        }
+        for j in 0..s2.len() {
+            if s2[j] == '.' && s1[i..] == s2[j..] {
+                common_extension = Some((i, j));
+                break 'suffix;
+            }
+        }
+    }
+    if let Some((i, j)) = common_extension {
+        let prefix = verrevcmp(&s1[..i], &s2[..j]);
+        if prefix != Ordering::Equal {
+            return prefix;
+        }
+        return verrevcmp(&s1[i..], &s2[j..]);
+    }
     verrevcmp(s1, s2)
 }
 fn f_string_distance(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
