@@ -1157,6 +1157,7 @@ fn f_assoc_default(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         match &cur {
             Value::Nil => break,
             Value::Cons(c) => {
+                let cell = c.clone();
                 let (item, rest) = {
                     let b = c.borrow();
                     (b.car.clone(), b.cdr.clone())
@@ -1180,7 +1181,11 @@ fn f_assoc_default(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                     matched = true;
                     break;
                 }
-                cur = rest;
+                cur = if test.is_nil() {
+                    rest
+                } else {
+                    cell.borrow().cdr.clone()
+                };
             }
             other => return Err(i.wrong_type_mut("listp", other)),
         }

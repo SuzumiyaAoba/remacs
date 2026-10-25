@@ -272,6 +272,7 @@ qa!(qa_list, "qa_list.el");
 qa!(qa_lists, "qa_lists.el");
 qa!(qa_last_circular_safe_length, "qa_last_circular_safe_length.el");
 qa!(qa_member_if_live_cdr, "qa_member_if_live_cdr.el");
+qa!(qa_assoc_default_live_cdr, "qa_assoc_default_live_cdr.el");
 qa!(qa_member_if_long_and_cycle, "qa_member_if_long_and_cycle.el");
 qa!(qa_length_functions, "qa_length_functions.el");
 qa!(qa_length_nonsequence, "qa_length_nonsequence.el");
