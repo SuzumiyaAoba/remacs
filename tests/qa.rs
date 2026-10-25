@@ -89,6 +89,7 @@ qa!(qa_charset, "qa_charset.el");
 qa!(qa_character_width_table, "qa_character_width_table.el");
 qa!(qa_ctl_arrow_width, "qa_ctl_arrow_width.el");
 qa!(qa_tab_width_sanitization, "qa_tab_width_sanitization.el");
+qa!(qa_indent_line_tab_width, "qa_indent_line_tab_width.el");
 qa!(
     qa_decomposition_description,
     "qa_decomposition_description.el"
