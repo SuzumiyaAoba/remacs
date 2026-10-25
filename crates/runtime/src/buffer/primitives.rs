@@ -13323,9 +13323,19 @@ fn str_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalResult {
     let Value::Str(s) = a.get(1).unwrap() else {
         return Ok(Value::Nil);
     };
+    if matches!(a.first(), Some(Value::Marker(marker)) if marker.borrow().buffer.is_none()) {
+        return Err(i.error("Marker does not point anywhere"));
+    }
     let len = str_len(s) as i128;
     let ivs = i.str_props(s);
-    let pos_v = a[0].int().unwrap_or(0);
+    let pos_v = match &a[0] {
+        Value::Int(position) => *position,
+        Value::Marker(marker) if marker.borrow().buffer.is_some() => {
+            marker.borrow().position as i128
+        }
+        Value::Marker(_) => return Err(i.error("Marker does not point anywhere")),
+        _ => 0,
+    };
     // GNU validate_interval_range: POSITION is bounds-checked against
     // the STRING (0..=len) before scanning.
     if pos_v < 0 || pos_v > len {
@@ -13443,7 +13453,16 @@ fn single_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalResult 
         None | Some(Value::Nil) | Some(Value::Str(_)) | Some(Value::Buffer(_)) => {}
         Some(other) => return Err(i.wrong_type_mut("buffer-or-string-p", other)),
     }
-    let pos_v = want_int(i, &a[0])?;
+    let pos_v = match &a[0] {
+        Value::Marker(marker) if marker.borrow().buffer.is_none() => {
+            return Err(i.error("Marker does not point anywhere"));
+        }
+        Value::Marker(marker) if matches!(object, Some(Value::Str(_))) => {
+            marker.borrow().position as i128
+        }
+        Value::Marker(marker) => marker.borrow().position as i128 + 1,
+        other => want_int(i, other)?,
+    };
     // GNU does not CHECK_SYMBOL PROP — any eq key is legal (a
     // non-symbol key can never appear in a plist, so lookups miss).
     let prop = if let Value::Sym(_) = a[1] {
@@ -14123,7 +14142,10 @@ fn text_prop_any(i: &mut Interp, a: &[Value], any: bool) -> EvalResult {
             Value::Int(n) => Ok(*n),
             // GNU CHECK_NUMBER_COERCE_MARKER yields the marker's
             // 1-based charpos; Marker.position is the 0-based offset.
-            Value::Marker(m) => Ok(m.borrow().position as i128 + 1),
+            Value::Marker(m) if m.borrow().buffer.is_some() => {
+                Ok(m.borrow().position as i128 + 1)
+            }
+            Value::Marker(_) => Err(i.error("Marker does not point anywhere")),
             other => Err(i.wrong_type_mut("integer-or-marker-p", other)),
         }
     };
