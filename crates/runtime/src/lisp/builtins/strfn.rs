@@ -1708,9 +1708,18 @@ fn f_string_replace(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_string_chop_newline(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let s = want_string(i, &args[0])?;
     // GNU removes only the final newline, not a run of them.
-    Ok(Value::string(
-        s.strip_suffix('\n').unwrap_or(&s).to_string(),
-    ))
+    if !s.ends_with('\n') {
+        return Ok(args[0].clone());
+    }
+    f_substring(
+        i,
+        vec![
+            args[0].clone(),
+            Value::Int(0),
+            Value::Int(s.chars().count() as i128 - 1),
+        ]
+        .into(),
+    )
 }
 /// GNU's sanitized buffer-local TAB width.
 fn display_tab_width(i: &Interp) -> usize {
