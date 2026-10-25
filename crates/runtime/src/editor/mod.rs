@@ -15317,6 +15317,9 @@ fn f_file_equal_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_file_system_info(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let path = want_filename(i, &a[0])?;
+    if let Some((handler, op)) = file_handler(i, "file-system-info", &[&path]) {
+        return i.apply(&handler, vec![op, file_name_argument(&a[0], &path)]);
+    }
     #[cfg(unix)]
     {
         let c = match std::ffi::CString::new(path) {
