@@ -112,6 +112,7 @@ is returned, where each format spec is its own element."
                    (width (match-string 2))
                    (trunc (match-string 3))
                    (char (string-to-char (match-string 4)))
+                   (spec-properties (text-properties-at (1- beg)))
                    (text (let ((res (cdr (assq char specification))))
                            (if (functionp res)
                                (with-current-buffer orig-buffer
@@ -132,7 +133,12 @@ is returned, where each format spec is its own element."
                      ;; Delete the specifier body.
                      (delete-region (point) (+ end (length text)))
                      ;; Delete the percent sign.
-                     (delete-region (1- beg) beg))
+                     (delete-region (1- beg) beg)
+                     ;; The format specifier's properties take precedence
+                     ;; over properties on the substituted text.
+                     (when spec-properties
+                       (add-text-properties (1- beg) (+ (1- beg) (length text))
+                                            spec-properties)))
                     ((eq ignore-missing 'delete)
                      ;; Delete the whole format spec.
                      (delete-region (1- beg) end))

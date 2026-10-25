@@ -340,6 +340,7 @@ qa!(qa_value_lt_mismatch_data, "qa_value_lt_mismatch_data.el");
 qa!(qa_count_lines_invisible, "qa_count_lines_invisible.el");
 qa!(qa_value_lt_lexicographic_ties, "qa_value_lt_lexicographic_ties.el");
 qa!(qa_value_lt_string_char_codes, "qa_value_lt_string_char_codes.el");
+qa!(qa_format_spec_properties, "qa_format_spec_properties.el");
 qa!(qa_url_unhex_bytes, "qa_url_unhex_bytes.el");
 qa!(qa_symbol_with_pos_dynamic_mode, "qa_symbol_with_pos_dynamic_mode.el");
 qa!(qa_value_lt_circular_identity, "qa_value_lt_circular_identity.el");
