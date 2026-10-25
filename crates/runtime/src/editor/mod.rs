@@ -7292,10 +7292,15 @@ fn copy_keymap_map(i: &mut Interp, keymap: &Value, depth: usize) -> Value {
 }
 
 fn f_copy_keymap(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    if !is_keymap(i, &a[0]) {
+    let keymap = if matches!(&a[0], Value::Sym(_)) {
+        crate::lisp::builtins::data::f_indirect_function(i, vec![a[0].clone()].into())?
+    } else {
+        a[0].clone()
+    };
+    if !is_keymap(i, &keymap) {
         return Err(i.wrong_type_mut("keymapp", &a[0]));
     }
-    Ok(copy_keymap_map(i, &a[0], 0))
+    Ok(copy_keymap_map(i, &keymap, 0))
 }
 
 /// The binding spine of KM: everything after the `keymap' head when

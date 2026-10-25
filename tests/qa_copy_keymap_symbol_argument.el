@@ -1,0 +1,15 @@
+;;; -*- lexical-binding: nil; -*-
+;; copy-keymap resolves symbol function cells at the top-level argument (#523).
+(qa (let ((map (make-sparse-keymap)) (symbol (make-symbol "copy-map")))
+      (define-key map "a" 'cmd)
+      (fset symbol map)
+      (lookup-key (copy-keymap symbol) "a"))
+    'cmd)
+(qa (let ((map (make-sparse-keymap)) (symbol (make-symbol "copy-map-alias")))
+      (define-key map "b" 'cmd-b)
+      (fset symbol map)
+      (fset 'copy-map-alias symbol)
+      (lookup-key (copy-keymap 'copy-map-alias) "b"))
+    'cmd-b)
+(qa-err-data (copy-keymap 'not-a-keymap) 'wrong-type-argument '(keymapp not-a-keymap))
+(princ (qa--done))

@@ -264,6 +264,7 @@ qa!(qa_copy_keymap_full_char_table, "qa_copy_keymap_full_char_table.el");
 qa!(qa_copy_keymap_ascii_cache, "qa_copy_keymap_ascii_cache.el");
 qa!(qa_copy_keymap_deep_sparse, "qa_copy_keymap_deep_sparse.el");
 qa!(qa_copy_keymap_shared_definitions, "qa_copy_keymap_shared_definitions.el");
+qa!(qa_copy_keymap_symbol_argument, "qa_copy_keymap_symbol_argument.el");
 qa!(qa_kmacro, "qa_kmacro.el");
 qa!(qa_kbd_macro_repeat, "qa_kbd_macro_repeat.el");
 qa!(qa_list, "qa_list.el");
