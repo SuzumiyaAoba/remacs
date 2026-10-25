@@ -291,6 +291,7 @@ qa!(qa_markers, "qa_markers.el");
 qa!(qa_mark_excursion, "qa_mark_excursion.el");
 qa!(qa_match, "qa_match.el");
 qa!(qa_math, "qa_math.el");
+qa!(qa_internal_run_time, "qa_internal_run_time.el");
 qa!(qa_math_frexp_boundaries, "qa_math_frexp_boundaries.el");
 qa!(qa_logb_pow2_boundary, "qa_logb_pow2_boundary.el");
 qa!(qa_frexp_mantissa_extremes, "qa_frexp_mantissa_extremes.el");

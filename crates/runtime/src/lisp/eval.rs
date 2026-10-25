@@ -368,6 +368,8 @@ pub struct Interp {
     pub combine_after_change_buffer: Option<usize>,
     /// True in `--batch`: `princ` goes to stdout, `message` to stderr.
     pub noninteractive: bool,
+    /// Monotonic process start used by `get-internal-run-time'.
+    pub(crate) runtime_started: std::time::Instant,
     /// The `obarray' variable's record value; its Rc identity marks the
     /// default symbol table, so `intern'/`mapatoms'/completion over
     /// `obarray' route to `self.obarray' instead of a (stub) record vec.
@@ -1004,6 +1006,7 @@ impl Interp {
             // (GNU does the same in its C main), so startup-time Lisp
             // already sees the batch state.
             noninteractive,
+            runtime_started: std::time::Instant::now(),
             default_obarray: None,
             loads_in_progress: Vec::new(),
             load_stream: None,

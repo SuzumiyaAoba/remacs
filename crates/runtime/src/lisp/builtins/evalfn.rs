@@ -372,7 +372,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_format_time_string,
         "Format time per FORMAT."
     ),
-    S!("get-internal-run-time", 0, 0, f_current_time, ""),
+    S!("get-internal-run-time", 0, 0, f_get_internal_run_time, ""),
     S!(
         "garbage-collect",
         0,
@@ -4670,6 +4670,12 @@ fn f_current_time(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {
         return Ok(Value::cons(Value::Int(us * 1000), Value::Int(1_000_000_000)));
     }
     Ok(super::misc::us_to_lisp_time(us))
+}
+
+fn f_get_internal_run_time(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {
+    let elapsed = i.runtime_started.elapsed();
+    let micros = (elapsed.as_secs() as i128) * 1_000_000 + elapsed.subsec_micros() as i128;
+    Ok(super::misc::us_to_lisp_time(micros))
 }
 fn f_current_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let secs = super::misc::lisp_time_seconds(i, &arg(&args, 0))?;
