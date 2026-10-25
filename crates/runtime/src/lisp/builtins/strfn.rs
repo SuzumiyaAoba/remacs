@@ -1796,7 +1796,11 @@ fn f_string_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 /// starting display column (affects tab expansion and leaves room).
 fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let s = want_string(i, &args[0])?;
-    let width = want_int(i, &args[1])?.max(0) as usize;
+    let width = match &args[1] {
+        Value::Int(n) => (*n).max(0) as f64,
+        Value::Float(n) => (**n).max(0.0),
+        other => want_int(i, other)?.max(0) as f64,
+    };
     let start_col = match args.get(2) {
         Some(Value::Int(n)) => (*n).max(0) as usize,
         Some(other) if !other.is_nil() => return Err(i.wrong_type_mut("integerp", other)),
@@ -1853,7 +1857,7 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
         let mut c = col;
         for &ch in &chars[idx..] {
             let cw = gnu_char_width(i, ch);
-            if c + cw > width {
+            if (c + cw) as f64 > width {
                 fits = false;
                 break;
             }
@@ -1864,13 +1868,13 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
         width
     } else {
         // Reserve room for the ellipsis.
-        width.saturating_sub(ell_w)
+        (width - ell_w as f64).max(0.0)
     };
     let mut out = String::new();
     let mut truncated = false;
     for &c in &chars[idx..] {
         let cw = gnu_char_width(i, c);
-        if col >= budget || col + cw > budget {
+        if col as f64 >= budget || (col + cw) as f64 > budget {
             truncated = true;
             break;
         }
@@ -1885,9 +1889,12 @@ fn f_truncate_string_to_width(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
     }
     // PADDING: non-nil pads out to WIDTH with the padding char (or
     // spaces when PADDING isn't a character).
-    if padding.truthy() && col < width {
+    if padding.truthy() && (col as f64) < width {
+        // GNU reaches make-string only after determining that padding is
+        // needed, so a floating END-COLUMN is rejected at this point.
+        let pad_width = want_int(i, &args[1])?.max(0) as usize;
         let pad = truncate_padding_char(i, &padding)?;
-        for _ in col..width {
+        for _ in col..pad_width {
             out.push(pad);
         }
     }
