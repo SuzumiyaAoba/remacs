@@ -11415,7 +11415,21 @@ fn f_file_directory_p_operation(
     if let Some((handler, op)) = file_handler(i, operation, &[&p]) {
         return i.apply(&handler, vec![op, filename]);
     }
-    Ok(Value::from_bool(std::path::Path::new(&p).is_dir()))
+    let path = std::path::Path::new(&p);
+    let is_dir = path.is_dir();
+    if !is_dir || operation == "file-directory-p" {
+        return Ok(Value::from_bool(is_dir));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let accessible = std::ffi::CString::new(path.as_os_str().as_bytes())
+            .ok()
+            .is_some_and(|path| unsafe { libc::access(path.as_ptr(), libc::R_OK | libc::X_OK) == 0 });
+        return Ok(Value::from_bool(accessible));
+    }
+    #[cfg(not(unix))]
+    Ok(Value::from_bool(is_dir))
 }
 
 fn f_file_regular_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
