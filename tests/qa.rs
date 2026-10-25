@@ -506,6 +506,7 @@ qa!(qa_string_lines_nil, "qa_string_lines_nil.el");
 qa!(qa_string_byte_conversion_identity, "qa_string_byte_conversion_identity.el");
 qa!(qa_string_fill_trailing_newlines, "qa_string_fill_trailing_newlines.el");
 qa!(qa_string_fill_tab_width, "qa_string_fill_tab_width.el");
+qa!(qa_string_fill_sentence_spacing, "qa_string_fill_sentence_spacing.el");
 qa!(qa_case_table_fold, "qa_case_table_fold.el");
 qa!(qa_byte_character_conversion, "qa_byte_character_conversion.el");
 qa!(qa_bytecode_errors, "qa_bytecode_errors.el");
