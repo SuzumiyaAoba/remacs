@@ -2073,7 +2073,7 @@ fn f_string_fill(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             // Paragraph separator (or trailing run): verbatim from the
             // first newline on; a trailing run without two newlines is
             // dropped entirely.
-            if let Some(f) = first_nl.filter(|_| nls >= 2) {
+            if let Some(f) = first_nl.filter(|_| nls >= 2 || pos >= n) {
                 for &c in &gap[f..] {
                     col = adv(col, c);
                     out.push(c);

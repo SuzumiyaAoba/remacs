@@ -495,6 +495,7 @@ qa!(qa_string_pad_mule_padding, "qa_string_pad_mule_padding.el");
 qa!(qa_string_fill_character_input, "qa_string_fill_character_input.el");
 qa!(qa_string_replace_element_type, "qa_string_replace_element_type.el");
 qa!(qa_string_replace_invalid_code, "qa_string_replace_invalid_code.el");
+qa!(qa_string_fill_trailing_newline, "qa_string_fill_trailing_newline.el");
 qa!(qa_case_table_fold, "qa_case_table_fold.el");
 qa!(qa_byte_character_conversion, "qa_byte_character_conversion.el");
 qa!(qa_bytecode_errors, "qa_bytecode_errors.el");
