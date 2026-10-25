@@ -713,6 +713,9 @@ fn substring_impl(i: &mut Interp, args: crate::lisp::Argv, copy_props: bool) -> 
     }
     let slice: Vec<Value> = chars[f as usize..t as usize].to_vec();
     if is_vec {
+        if slice.is_empty() {
+            return Ok(i.zero_vector.clone());
+        }
         Ok(Value::vector(slice))
     } else {
         let ns = crate::lisp::Value::string_ref(

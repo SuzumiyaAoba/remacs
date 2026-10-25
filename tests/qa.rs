@@ -472,6 +472,7 @@ qa!(qa_string_pad_properties, "qa_string_pad_properties.el");
 qa!(qa_string_chop_newline_properties, "qa_string_chop_newline_properties.el");
 qa!(qa_string_join_properties, "qa_string_join_properties.el");
 qa!(qa_truncate_width_float, "qa_truncate_width_float.el");
+qa!(qa_zero_vector_identity, "qa_zero_vector_identity.el");
 qa!(qa_case_table_fold, "qa_case_table_fold.el");
 qa!(qa_byte_character_conversion, "qa_byte_character_conversion.el");
 qa!(qa_bytecode_errors, "qa_bytecode_errors.el");

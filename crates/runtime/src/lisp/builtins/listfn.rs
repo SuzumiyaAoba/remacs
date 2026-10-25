@@ -827,6 +827,9 @@ pub(crate) fn f_reverse(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             return Ok(result);
         }
         Value::Vec(v) => {
+            if v.borrow().is_empty() {
+                return Ok(i.zero_vector.clone());
+            }
             return Ok(Value::vector(v.borrow().iter().rev().cloned().collect()));
         }
         Value::Record(_) if crate::lisp::builtins::misc::is_bool_vector(i, &args[0]) => {

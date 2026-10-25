@@ -656,6 +656,7 @@ pub(crate) fn f_copy_sequence(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
         // elements; sharing the backing store would let `aset' mutate
         // the original (CC Mode's `c-find-assignment-for-mode' relies
         // on the copy for its source-position backup).
+        Value::Vec(v) if v.borrow().is_empty() => Ok(i.zero_vector.clone()),
         Value::Vec(v) => Ok(Value::vector(v.borrow().clone())),
         // Hash tables aren't sequences in GNU (`sequencep' is nil):
         // `copy-sequence' signals `wrong-type-argument sequencep'.
