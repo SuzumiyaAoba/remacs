@@ -5457,14 +5457,14 @@ fn f_subst_char_in_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult
                 unreachable!()
             }
             let result = Value::string_ref(replaced);
-            if let (Value::Str(source), Value::Str(output)) = (s_v, &result) {
+            if let Value::Str(source) = s_v {
                 let source_unibyte = i.is_unibyte_str(source)
-                    || (!i.is_multibyte_str(source) && !content_is_multibyte(&s));
+                    || (!i.is_multibyte_str(source) && !multibyte);
                 let replacement_is_byte = matches!(&args[1], Value::Int(n) if (0..=255).contains(n));
                 if source_unibyte && replacement_is_byte {
-                    i.mark_unibyte(output);
+                    i.mark_unibyte(&result);
                 } else if multibyte {
-                    i.mark_multibyte(output);
+                    i.mark_multibyte(&result);
                 }
             }
             Ok(Value::Str(result))
