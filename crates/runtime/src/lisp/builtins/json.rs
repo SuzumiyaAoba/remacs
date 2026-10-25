@@ -215,10 +215,10 @@ impl<'a> Parser<'a> {
         )
     }
 
-    /// A json-family error by name, carrying GNU's (LINE nil POSITION)
-    /// shape — position relative to the parse start like `err'.
+    /// A json-family error after consuming the offending character,
+    /// carrying GNU's (LINE nil POSITION) shape.
     fn err_sym(&mut self, sym: &str) -> PErr {
-        let pos = (self.pos.saturating_sub(self.base) + 1) as i128;
+        let pos = self.pos.saturating_sub(self.base) as i128;
         let id = self.i.intern(sym);
         json_cond_chain(self.i, id);
         self.i.signal_data(
@@ -226,7 +226,7 @@ impl<'a> Parser<'a> {
             vec![
                 Value::Int(self.line as i128),
                 Value::Nil,
-                Value::Int(pos as i128),
+                Value::Int(pos),
             ],
         )
     }
