@@ -4931,6 +4931,56 @@ fn f_format(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(v)
 }
 
+/// Combine overlapping `%s` argument properties and format-string
+/// properties into non-overlapping output intervals.  Argument values
+/// win when both sources set the same property; format properties add
+/// the remaining keys across the emitted replacement text.
+fn merge_format_property_spans(
+    i: &Interp,
+    output_len: usize,
+    spans: &mut Vec<(usize, usize, Vec<Value>)>,
+) {
+    if spans.len() < 2 || output_len == 0 {
+        return;
+    }
+    let source = std::mem::take(spans);
+    let mut cuts = vec![0, output_len];
+    for (start, end, _) in &source {
+        let start = (*start).min(output_len);
+        let end = (*end).min(output_len);
+        if start < end {
+            cuts.push(start);
+            cuts.push(end);
+        }
+    }
+    cuts.sort_unstable();
+    cuts.dedup();
+    for bounds in cuts.windows(2) {
+        let (start, end) = (bounds[0], bounds[1]);
+        if start == end {
+            continue;
+        }
+        let mut props = Vec::new();
+        for (span_start, span_end, span_props) in &source {
+            if *span_start > start || *span_end < end {
+                continue;
+            }
+            for pair in span_props.chunks_exact(2) {
+                let already_set = props
+                    .chunks_exact(2)
+                    .any(|old| crate::lisp::builtins::eq_values_with_interp(i, &old[0], &pair[0]));
+                if !already_set {
+                    props.push(pair[0].clone());
+                    props.push(pair[1].clone());
+                }
+            }
+        }
+        if !props.is_empty() {
+            spans.push((start, end, props));
+        }
+    }
+}
+
 pub(crate) fn f_format_message(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let fmt = want_string(i, &args[0])?;
     let fmt_ivs = match &args[0] {
@@ -5369,6 +5419,7 @@ fn format_impl_spans(
         }
     }
     multibyte |= content_is_multibyte(&out);
+    merge_format_property_spans(i, oc, spans);
     if out.is_empty() {
         return Ok(i.empty_string(multibyte));
     }
