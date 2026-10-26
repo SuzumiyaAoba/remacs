@@ -2,7 +2,7 @@
 name = "remacs-runtime"
 version.workspace = true
 edition.workspace = true
-build = "../../build.rs"
+build = "build.rs"
 
 [dependencies]
 remacs-libraries = { workspace = true }
@@ -31,6 +31,9 @@ unicode_names2 = { workspace = true }
 rustc-hash = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[build-dependencies]
+cc = "1"
 
 [[bin]]
 name = "remacs-lisp"

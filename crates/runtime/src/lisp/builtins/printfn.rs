@@ -267,15 +267,13 @@ fn f_write_char(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             vec![Value::string(format!("Invalid character: {code:x}"))],
         ));
     }
-    // Eight-bit codes emit a sentinel so sinks get GNU's semantics:
-    // function → code, text → the eight-bit char, stdout → overlong.
-    let c = match code {
-        0x3FFF80..=0x3FFFFF => crate::lisp::value::write_char_eight_bit((code - 0x3FFF00) as u8),
-        0x110000..=0x3FFF7F => crate::lisp::value::mule_seq_char(code),
-        _ => crate::lisp::value::lisp_char(code).unwrap(),
-    };
-    let mut s = [0u8; 4];
-    i.write_output_to(c.encode_utf8(&mut s), &stream)?;
+    let mut output = crate::lisp::print_text::PrintText::new();
+    if (0x3fff80..=0x3fffff).contains(&code) {
+        output.push_written_byte((code - 0x3fff00) as u8);
+    } else {
+        output.push(crate::lisp::value::lisp_char(code).unwrap());
+    }
+    i.write_output_to(&output, &stream)?;
     Ok(args[0].clone())
 }
 

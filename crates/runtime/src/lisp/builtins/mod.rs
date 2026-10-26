@@ -136,8 +136,11 @@ pub(crate) fn call_canonical_builtin(interp: &mut Interp, name: &str, args: Vec<
     static SUBRS: std::sync::OnceLock<rustc_hash::FxHashMap<&'static str, &'static Subr>> = std::sync::OnceLock::new();
     let subrs = SUBRS.get_or_init(|| dump_subrs().into_iter().map(|subr| (subr.name, subr)).collect());
     let Some(subr) = subrs.get(name) else { return Err(interp.error(format!("Unknown native primitive: {name}"))); };
+    let mut scope = interp.symbol_position_scope();
     let result = (subr.func)(interp, args.into());
-    interp.offer_flow(result)
+    let result = interp.offer_flow(result);
+    scope.finish(interp.positioned_symbols_enabled());
+    result
 }
 
 /// Intern every subr name and bind its function cell.
@@ -437,7 +440,7 @@ pub(crate) fn want_num(i: &mut Interp, v: &Value) -> Result<f64, Flow> {
     }
 }
 
-pub(crate) fn want_string(i: &mut Interp, v: &Value) -> Result<String, Flow> {
+pub(crate) fn want_string(i: &mut Interp, v: &Value) -> Result<super::text::EmacsText, Flow> {
     match v {
         Value::Str(s) => Ok(s.borrow().clone()),
         _ => Err(i.wrong_type_mut("stringp", v)),
@@ -470,6 +473,14 @@ pub(crate) fn want_list(i: &mut Interp, v: &Value) -> Result<Vec<Value>, Flow> {
 
 /// Object identity without interpreter-dependent symbol-position handling.
 pub fn eq_values(a: &Value, b: &Value) -> bool {
+    if misc::as_sympos(a).is_some() || misc::as_sympos(b).is_some() {
+        return match (misc::as_sympos(a), misc::as_sympos(b)) {
+            (Some((x, _)), Some((y, _))) => x == y,
+            (Some((x, _)), None) => matches!(b, Value::Sym(y) if *y == x) || (x == 0 && b.is_nil()),
+            (None, Some((y, _))) => matches!(a, Value::Sym(x) if *x == y) || (y == 0 && a.is_nil()),
+            (None, None) => unreachable!(),
+        };
+    }
     match (a, b) {
         (Value::Nil, Value::Nil) => true,
         (Value::Nil, Value::Sym(0)) | (Value::Sym(0), Value::Nil) => true,
@@ -543,6 +554,7 @@ pub fn eql_values_with_interp(interp: &Interp, a: &Value, b: &Value) -> bool {
 /// error. Callers must propagate that error rather than treating it as
 /// a failed comparison.
 pub fn equal_values(interp: &Interp, a: &Value, b: &Value) -> Result<bool, Flow> {
+    let _scope = interp.symbol_position_scope();
     let mut seen = None;
     equal_values_1(interp, a, b, 0, &mut seen, false)
 }
@@ -555,6 +567,7 @@ pub(crate) fn equal_values_including_properties(
     a: &Value,
     b: &Value,
 ) -> Result<bool, Flow> {
+    let _scope = interp.symbol_position_scope();
     equal_values_1(interp, a, b, 0, &mut None, true)
 }
 
@@ -641,7 +654,24 @@ fn equal_values_1(
     if eq_values_with_interp(interp, a, b) {
         return Ok(true);
     }
+    let pa = misc::raw_symbol_position(a);
+    let pb = misc::raw_symbol_position(b);
+    if pa.is_some() || pb.is_some() {
+        // Public equal compares the symbol and position when disabled.
+        return Ok(matches!((pa, pb), (Some(a), Some(b)) if a == b));
+    }
     let left_config = crate::editor::window_configuration_object(a);
+    if matches!(a, Value::Record(_))
+        && a.record_kind() == Some(crate::lisp::value::RecordKind::Obarray)
+        || matches!(b, Value::Record(_))
+            && b.record_kind() == Some(crate::lisp::value::RecordKind::Obarray)
+    {
+        return Ok(false); // Equal identity was already handled above.
+    }
+    if matches!((a, b), (Value::Record(_), Value::Record(_))) && a.record_kind() != b.record_kind()
+    {
+        return Ok(false);
+    }
     let right_config = crate::editor::window_configuration_object(b);
     if left_config || right_config {
         // GNU configurations are opaque for equal. Identity was handled
@@ -661,7 +691,7 @@ fn equal_values_1(
     }
     Ok(match (a, b) {
         (Value::Str(x), Value::Str(y)) => {
-            strfn::gnu_sbytes(interp, x) == strfn::gnu_sbytes(interp, y)
+            strfn::string_contents_equal(interp, x, y)
                 && (!with_properties || equal_string_properties(interp, x, y)?)
         }
         (Value::Marker(x), Value::Marker(y)) => {

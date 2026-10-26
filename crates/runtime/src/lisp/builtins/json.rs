@@ -168,8 +168,18 @@ fn json_cond_chain(i: &mut Interp, id: u32) {
 
 // ---------- parser ----------
 
+fn parser_input(text: &crate::lisp::text::EmacsStr, byte_input: bool) -> (Vec<char>, Vec<crate::lisp::text::EmacsChar>) {
+    let original: Vec<_> = text.chars().collect();
+    let syntax = original.iter().map(|c| {
+        if byte_input { c.code() as u8 as char }
+        else { c.unicode().unwrap_or('\u{fffd}') }
+    }).collect();
+    (syntax, original)
+}
+
 struct Parser<'a> {
     s: Vec<char>,
+    original: Vec<crate::lisp::text::EmacsChar>,
     /// Unibyte sources retain one input character per byte so error and
     /// buffer positions use their original units. Decode quoted UTF-8 only.
     byte_input: bool,
@@ -456,7 +466,7 @@ impl<'a> Parser<'a> {
                     self.pos += 1;
                     if self.byte_input && c as u32 >= 0x80 {
                         out.push(self.utf8_char(c as u8)?);
-                    } else if !is_unicode_char(c) {
+                    } else if !is_unicode_char(self.original[self.pos - 1]) {
                         return Err(self.utf8_error());
                     } else {
                         out.push(c);
@@ -652,11 +662,10 @@ fn f_json_parse_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
     let o = parse_opts(i, &a[1..], false)?;
+    let (syntax, original) = parser_input(&src, byte_input);
     let mut p = Parser {
-        s: src
-            .chars()
-            .map(|c| if byte_input { (c as u8) as char } else { c })
-            .collect(),
+        original,
+        s: syntax,
         byte_input,
         pos: 0,
         line: 1,
@@ -695,16 +704,13 @@ fn f_json_parse_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     // Keep absolute character positions, but never give the parser text
     // beyond the accessible end of a narrowed buffer.
-    let chars: Vec<char> = text
-        .chars()
-        .take(end)
-        .map(|c| if byte_input { (c as u8) as char } else { c })
-        .collect();
+    let (chars, original) = parser_input(&text[..end], byte_input);
     let start = point.min(chars.len());
     // GNU `buffer_byte_to_line' counts newlines inside the parsed
     // span only, so error LINE starts at 1 at point like POSITION
     // starts at 0.
     let mut p = Parser {
+        original,
         s: chars,
         byte_input,
         pos: start,
@@ -728,10 +734,8 @@ fn f_json_insert(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 // ---------- serializer ----------
 
-fn is_unicode_char(c: char) -> bool {
-    crate::lisp::value::eight_bit_byte(c).is_none()
-        && crate::lisp::value::surrogate_code(c).is_none()
-        && crate::lisp::value::mule_seq_code(c).is_none()
+fn is_unicode_char(c: impl Into<crate::lisp::text::EmacsChar>) -> bool {
+    c.into().unicode().is_some()
 }
 
 fn check_json_string(i: &mut Interp, value: &Value) -> Result<(), Flow> {
@@ -745,9 +749,12 @@ fn check_json_string(i: &mut Interp, value: &Value) -> Result<(), Flow> {
     Ok(())
 }
 
-fn esc_into(s: &str, out: &mut String) {
+fn esc_into<T: crate::lisp::text::TextSource + ?Sized>(s: &T, out: &mut String) {
+    s.with_text(|s| {
     out.push('"');
     for c in s.chars() {
+        // All call sites validate the original Lisp string first.
+        let c = c.unicode().expect("validated JSON Unicode string");
         match c {
             '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
@@ -761,6 +768,8 @@ fn esc_into(s: &str, out: &mut String) {
         }
     }
     out.push('"');
+
+    })
 }
 
 fn json_value_err(i: &mut Interp, v: &Value) -> Flow {
@@ -966,4 +975,37 @@ fn f_json_serialize(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         i.mark_unibyte(r);
     }
     Ok(v)
+}
+
+#[cfg(test)]
+mod wide_json_text_tests {
+    use super::*;
+    use crate::lisp::text::{EmacsChar, EmacsText};
+    #[test]
+    fn private_use_unicode_is_not_confused_with_extended_codes() {
+        for code in [0xf0080, 0xf0100, 0xf0a80, 0xf0b00, 0xf0c80, 0xf0d80, 0xfffd] {
+            assert!(is_unicode_char(EmacsChar::new(code).unwrap()));
+        }
+        for code in [0xd800, 0x110000, 0x200000, 0x3fff80] {
+            assert!(!is_unicode_char(EmacsChar::new(code).unwrap()));
+        }
+    }
+    #[test]
+    fn syntax_projection_retains_original_validation_and_byte_positions() {
+        let text = EmacsText::from_codes([0xfffd, 0x110000, 0xf0080]).unwrap();
+        let (syntax, original) = parser_input(&text, false);
+        assert_eq!(syntax, ['\u{fffd}', '\u{fffd}', '\u{f0080}']);
+        assert!(is_unicode_char(original[0]));
+        assert!(!is_unicode_char(original[1]));
+        assert_eq!(original[2].code(), 0xf0080);
+        let (syntax, _) = parser_input(&EmacsText::from_codes([0x3fffc2, 0x3fffa0]).unwrap(), true);
+        assert_eq!(syntax, ['\u{c2}', '\u{a0}']);
+    }
+    #[test]
+    fn escaping_preserves_private_use_unicode_and_json_controls() {
+        let text = EmacsText::from("\u{f0080}\"\\\n\u{f0100}");
+        let mut out = String::new();
+        esc_into(&text, &mut out);
+        assert_eq!(out, "\"\u{f0080}\\\"\\\\\\n\u{f0100}\"");
+    }
 }

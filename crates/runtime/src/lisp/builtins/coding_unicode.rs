@@ -1,11 +1,12 @@
 //! Unicode coding systems share their byte representation between string,
 //! region and file conversion. Keep GNU's raw-byte and surrogate behavior.
+use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use crate::lisp::value::{lisp_char, lisp_char_code, mule_seq_char};
 
-fn scalar(code: u32) -> char {
+fn scalar(code: u32) -> EmacsChar {
     lisp_char(code).unwrap_or_else(|| mule_seq_char(code))
 }
-fn raw(byte: u8) -> char {
+fn raw(byte: u8) -> EmacsChar {
     scalar(if byte < 128 {
         byte as u32
     } else {
@@ -13,7 +14,7 @@ fn raw(byte: u8) -> char {
     })
 }
 
-pub(super) fn encode(name: &str, text: &str, default: u32) -> Option<Vec<u8>> {
+pub(super) fn encode(name: &str, text: &EmacsStr, default: u32) -> Option<Vec<u8>> {
     let utf16 = name.starts_with("utf-16");
     if !utf16 && !name.starts_with("utf-8") {
         return None;
@@ -84,7 +85,7 @@ pub(super) fn resolve(name: &str, input: &[i32], multibyte: bool) -> String {
     }
 }
 
-pub(super) fn decode_utf16(name: &str, input: &[i32]) -> String {
+pub(super) fn decode_utf16(name: &str, input: &[i32]) -> EmacsText {
     let little = name.starts_with("utf-16le");
     let signature = name.ends_with("-with-signature");
     let mut at = if signature && input.starts_with(if little { &[255, 254] } else { &[254, 255] }) {
@@ -92,7 +93,7 @@ pub(super) fn decode_utf16(name: &str, input: &[i32]) -> String {
     } else {
         0
     };
-    let mut out = String::new();
+    let mut out = EmacsText::new();
     let mut surrogate = 0u32;
     while at < input.len() {
         let first = input[at];
@@ -148,20 +149,17 @@ pub(super) fn decode_utf16(name: &str, input: &[i32]) -> String {
     out
 }
 
-pub(super) fn normalize_eol(text: &str, fixed: Option<usize>) -> (String, Option<usize>) {
-    let chars: Vec<char> = text.chars().collect();
+pub(super) fn normalize_eol(text: &EmacsStr, fixed: Option<usize>) -> (EmacsText, Option<usize>) {
+    let chars: Vec<EmacsChar> = text.chars().collect();
     let mut seen = [false; 3];
     let mut at = 0;
     while at < chars.len() {
-        match chars[at] {
-            '\r' if chars.get(at + 1) == Some(&'\n') => {
+        if chars[at] == '\r' {
+            if chars.get(at + 1).is_some_and(|c| *c == '\n') {
                 seen[1] = true;
                 at += 1;
-            }
-            '\r' => seen[2] = true,
-            '\n' => seen[0] = true,
-            _ => {}
-        }
+            } else { seen[2] = true; }
+        } else if chars[at] == '\n' { seen[0] = true; }
         at += 1;
     }
     let eol = fixed.or_else(|| match seen.iter().filter(|s| **s).count() {
@@ -169,15 +167,15 @@ pub(super) fn normalize_eol(text: &str, fixed: Option<usize>) -> (String, Option
         1 => seen.iter().position(|s| *s),
         _ => Some(0),
     });
-    let mut out = String::new();
+    let mut out = EmacsText::new();
     at = 0;
     while at < chars.len() {
-        if eol == Some(1) && chars[at..].starts_with(&['\r', '\n']) {
+        if eol == Some(1) && chars[at..].starts_with(&[EmacsChar::from('\r'), EmacsChar::from('\n')]) {
             out.push('\n');
             at += 2;
         } else {
             out.push(if eol == Some(2) && chars[at] == '\r' {
-                '\n'
+                EmacsChar::from('\n')
             } else {
                 chars[at]
             });
@@ -185,4 +183,23 @@ pub(super) fn normalize_eol(text: &str, fixed: Option<usize>) -> (String, Option
         }
     }
     (out, eol)
+}
+
+#[cfg(test)]
+mod wide_character_tests {
+    use super::*;
+
+    #[test]
+    fn utf16_retains_private_use_and_lone_surrogate_codes() {
+        let text = decode_utf16("utf-16be", &[0xdb, 0x80, 0xdc, 0x80, 0xdc, 0x00, -0x3fff80]);
+        assert_eq!(text.codes().collect::<Vec<_>>(), [0xf0080, 0xdc00, 0x3fff80]);
+    }
+
+    #[test]
+    fn eol_conversion_changes_only_line_endings() {
+        let source = EmacsText::from_codes([0xf0080, 13, 10, 0x3fff80, 13, 10, 0xd800, 0x110000]).unwrap();
+        let (normalized, eol) = normalize_eol(&source, None);
+        assert_eq!(eol, Some(1));
+        assert_eq!(normalized.codes().collect::<Vec<_>>(), [0xf0080, 10, 0x3fff80, 10, 0xd800, 0x110000]);
+    }
 }

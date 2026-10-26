@@ -16,16 +16,21 @@ pub(crate) fn system_configuration(target: &str, host: &str, release: Option<&st
 }
 
 #[cfg(not(test))]
-fn main() {
-    use std::env;
-    use std::process::Command;
-
-    let manifest = std::path::PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let root = if manifest.ends_with("crates/runtime") {
+pub(crate) fn source_root() -> std::path::PathBuf {
+    let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    if manifest.ends_with("crates/runtime") {
         manifest.parent().unwrap().parent().unwrap().to_path_buf()
     } else {
         manifest
-    };
+    }
+}
+
+#[cfg(not(test))]
+pub(crate) fn main() {
+    use std::env;
+    use std::process::Command;
+
+    let root = source_root();
     println!("cargo:rustc-env=REMACS_SOURCE_ROOT={}", root.display());
     println!("cargo:rerun-if-changed={}", root.join("build.rs").display());
     let target = env::var("TARGET").expect("Cargo TARGET");

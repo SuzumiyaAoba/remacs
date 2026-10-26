@@ -78,9 +78,9 @@ fn region_text(i: &mut Interp, a: &[Value]) -> Result<String, Flow> {
         ];
         return Err(i.signal_data(sym, data));
     }
-    Ok(bb
+    Ok((bb
         .text
-        .substring(s.min(e) as usize - 1, s.max(e) as usize - 1))
+        .substring(s.min(e) as usize - 1, s.max(e) as usize - 1)).to_unicode_lossy())
 }
 
 /// GNU `parse_region' also CHECK_STRINGs BASE-URL when non-nil (after

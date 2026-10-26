@@ -344,7 +344,7 @@ pub(crate) fn seq_to_vec(i: &mut Interp, v: &Value) -> Result<Vec<Value>, super:
                         Value::Int(
                             crate::lisp::value::eight_bit_byte(c)
                                 .map(|b| b as i128)
-                                .unwrap_or((c as u32) as i128 & 0xFF),
+                                .unwrap_or((c).code() as u32 as i128 & 0xFF),
                         )
                     } else {
                         Value::Int(crate::lisp::value::lisp_char_code(c))
@@ -386,7 +386,7 @@ fn seq_from_like(_i: &mut Interp, like: &Value, items: Vec<Value>) -> Value {
 }
 
 fn f_elt(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    if crate::editor::window_configuration_object(&args[0]) || i.is_overlay(&args[0]) {
+    if super::misc::has_opaque_array_storage(i, &args[0]) {
         return Err(i.wrong_type_mut("sequencep", &args[0]));
     }
     // GNU Felt: cons/nil go through `nthcdr'; every other
@@ -398,7 +398,7 @@ fn f_elt(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         }
         Value::Str(s) => {
             let n = want_fixnum(i, &args[1])?;
-            let chars: Vec<char> = s.borrow().chars().collect();
+            let chars: Vec<crate::lisp::value::EmacsChar> = s.borrow().chars().collect();
             if n < 0 || n as usize >= chars.len() {
                 return Err(i.signal_data(
                     sym::ARGS_OUT_OF_RANGE,
@@ -411,7 +411,7 @@ fn f_elt(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             let code = if i.is_unibyte_str(s) {
                 crate::lisp::value::eight_bit_byte(c)
                     .map(|b| b as i128)
-                    .unwrap_or((c as u32) as i128 & 0xFF)
+                    .unwrap_or((c).code() as u32 as i128 & 0xFF)
             } else {
                 crate::lisp::value::lisp_char_code(c)
             };
@@ -449,8 +449,8 @@ fn f_elt(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             }
             Ok(super::misc::char_table_ref(i, &args[0], n as usize))
         }
-        // Plain records are arrays but not sequences; GNU `elt' rejects
-        // them before checking the index, unlike the `aref' primitive.
+        // GNU elt rejects ordinary records, even though aref accepts
+        // their slots. Only the array types above reach element access.
         Value::Record(_) => Err(i.wrong_type_mut("sequencep", &args[0])),
         other => Err(i.wrong_type_mut("sequencep", other)),
     }
@@ -461,7 +461,7 @@ fn f_aref(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // per-type dispatch on ARRAY — even a non-array argument
     // reports `(fixnump IDX)' when IDX isn't a fixnum.
     want_fixnum(i, &args[1])?;
-    if crate::editor::window_configuration_object(&args[0]) || i.is_overlay(&args[0]) {
+    if super::misc::has_opaque_array_storage(i, &args[0]) {
         return Err(i.wrong_type_mut("arrayp", &args[0]));
     }
     match &args[0] {
@@ -509,7 +509,7 @@ fn f_aset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU `Faset' checks the fixnum index before dispatching on ARRAY.
     // Unlike aref, it rejects closure and byte-code function objects.
     let n = want_fixnum(i, &args[1])?;
-    if crate::editor::window_configuration_object(&args[0]) || i.is_overlay(&args[0]) {
+    if super::misc::has_opaque_array_storage(i, &args[0]) {
         return Err(i.wrong_type_mut("arrayp", &args[0]));
     }
     match &args[0] {
@@ -527,7 +527,7 @@ fn f_aset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Str(s) => {
             // GNU checks the index bounds before NEWCHAR's characterp —
             // `(aset "a" 1 nil)' signals args-out-of-range, not wta.
-            let mut chars: Vec<char> = s.borrow().chars().collect();
+            let mut chars: Vec<crate::lisp::value::EmacsChar> = s.borrow().chars().collect();
             if n < 0 || n as usize >= chars.len() {
                 return Err(i.signal_data(
                     sym::ARGS_OUT_OF_RANGE,
@@ -535,40 +535,31 @@ fn f_aset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                 ));
             }
             let nch = match &args[2] {
-                Value::Int(x) => *x,
+                Value::Int(x) if (0..=0x3fffff).contains(x) => *x,
                 _ => return Err(i.wrong_type_mut("characterp", &args[2])),
             };
-            let c = if (0..=0x3f_ffff).contains(&nch) {
-                let code = nch as u32;
-                crate::lisp::value::lisp_char(code)
-                    .unwrap_or_else(|| crate::lisp::value::mule_seq_char(code))
-            } else {
-                return Err(i.wrong_type_mut("characterp", &args[2]));
-            };
             let unibyte = i.is_unibyte_str(s);
-            let old = chars[n as usize];
             if unibyte {
-                // GNU: a unibyte string only stores byte values; a
-                // 0x80-0xFF byte is the eight-bit char, held as its
-                // PUA proxy internally.
-                if !(0..=0xFF).contains(&nch) {
+                if nch > 0xff {
                     return Err(i.error("Attempt to store non-byte value into unibyte string"));
                 }
-                chars[n as usize] = if nch >= 0x80 {
-                    char::from_u32(crate::lisp::value::EIGHT_BIT_BASE + nch as u32)
-                        .unwrap_or('\u{fffd}')
+                // Store byte values through their raw-eight-bit proxies.
+                chars[n as usize] = crate::lisp::value::lisp_char(if nch >= 0x80 {
+                    0x3fff00 + nch as u32
                 } else {
-                    c
-                };
-            } else if nch >= 0x80 {
-                // GNU's multibyte-string aset path rejects every
-                // non-ASCII replacement, including one with the same
-                // encoded width as the old character.
-                return Err(i.error("Attempt to store non-ASCII char into multibyte string"));
-            } else if (old as u32) >= 0x80 {
-                return Err(i.error("Attempt to replace non-ASCII char in multibyte string"));
+                    nch as u32
+                })
+                .unwrap();
             } else {
-                chars[n as usize] = c;
+                // GNU Faset only changes ASCII bytes in multibyte strings,
+                // even when a non-ASCII replacement would have equal width.
+                if nch > 0x7f {
+                    return Err(i.error("Attempt to store non-ASCII char into multibyte string"));
+                }
+                if crate::lisp::value::lisp_char_code(chars[n as usize]) > 0x7f {
+                    return Err(i.error("Attempt to replace non-ASCII char in multibyte string"));
+                }
+                chars[n as usize] = crate::lisp::text::EmacsChar::new(nch as u32).unwrap();
             }
             *s.borrow_mut() = chars.into_iter().collect();
             i.note_string_data_change();
@@ -624,7 +615,7 @@ fn f_aset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 pub(crate) fn f_copy_sequence(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    if crate::editor::window_configuration_object(&args[0]) || i.is_overlay(&args[0]) {
+    if super::misc::has_opaque_array_storage(i, &args[0]) {
         return Err(i.wrong_type_mut("sequencep", &args[0]));
     }
     match &args[0] {
@@ -637,7 +628,7 @@ pub(crate) fn f_copy_sequence(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
                 return Ok(i.empty_string(super::strfn::string_multibyte_p(i, &args[0])));
             }
             // A real copy: new identity, own copy of prop intervals.
-            let ns = crate::lisp::Value::string_ref(s.borrow().clone());
+            let ns = crate::lisp::Value::string_ref_with_kind(s.borrow().clone(), i.is_multibyte_str(s));
             if i.has_str_props(s) {
                 let ivs = i.str_props(s).to_vec();
                 i.set_str_props(&ns, ivs);
@@ -675,7 +666,7 @@ pub(crate) fn f_copy_sequence(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
             if let Some(bits) = bits {
                 rec[1] = Value::vector(bits);
             }
-            Ok(Value::record(rec))
+            Ok(Value::record_with_kind(rec, crate::lisp::value::RecordKind::BoolVector))
         }
         // Char-tables copy through `copy_char_table' (deep trie copy,
         // shared slot objects); other Records shallow-copy the vec.
@@ -696,6 +687,9 @@ fn map_seq(
     seq: &Value,
     mut f: impl FnMut(&mut Interp, &Value) -> Result<(), super::Flow>,
 ) -> Result<(), super::Flow> {
+    if i.is_overlay(seq) {
+        return Err(i.wrong_type_mut("sequencep", seq));
+    }
     match seq {
         Value::Nil => Ok(()),
         Value::Cons(_) => {
@@ -714,12 +708,12 @@ fn map_seq(
             Ok(())
         }
         Value::Str(s) => {
-            let mut chars: Vec<char> = s.borrow().chars().collect();
+            let mut chars: Vec<crate::lisp::value::EmacsChar> = s.borrow().chars().collect();
             let length = chars.len();
             let mut tick = i.string_data_tick;
             let mut kinds = (i.is_unibyte_str(s), i.is_multibyte_str(s));
             let mut unibyte = !super::strfn::string_multibyte_p(i, seq);
-            let width = |character: char, unibyte: bool| -> usize {
+            let width = |character: crate::lisp::text::EmacsChar, unibyte: bool| -> usize {
                 if unibyte {
                     return 1;
                 }
@@ -760,7 +754,7 @@ fn map_seq(
                 let code = if unibyte {
                     crate::lisp::value::eight_bit_byte(c)
                         .map(|b| b as i128)
-                        .unwrap_or((c as u32) as i128 & 0xFF)
+                        .unwrap_or((c).code() as u32 as i128 & 0xFF)
                 } else {
                     crate::lisp::value::lisp_char_code(c)
                 };
@@ -831,30 +825,25 @@ fn f_mapcan(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         results.push(i.apply(&fun, vec![value.clone()])?);
         Ok(())
     })?;
-    let nconc = Value::Sym(i.q("nconc"));
-    i.apply(&nconc, results)
+    super::listfn::f_nconc(i, results.into())
 }
 
 fn f_mapconcat(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let fun = args[0].clone();
+    let passthrough = matches!(&args[1], Value::Cons(_) | Value::Vec(_))
+        && eq_values(&fun, &Value::Sym(i.q("identity")));
     let sep = args.get(2).cloned().unwrap_or(Value::Nil);
-    // GNU Fmapconcat bypasses the function cell only for the exact
-    // interned `identity' symbol with lists and ordinary vectors.
-    let identity = i.intern_soft("identity");
-    let identity_fast = matches!(&fun, Value::Sym(id) if Some(*id) == identity)
-        && match &args[1] {
-            Value::Cons(_) => true,
-            Value::Vec(_) => !i.is_overlay(&args[1]),
-            _ => false,
-        };
+    let empty_separator = matches!(&sep, Value::Str(text) if text.borrow().is_empty());
     let mut parts = Vec::new();
     map_seq(i, &fun, &args[1], |i, v| {
-        let r = if identity_fast {
+        // GNU recognizes the identity symbol without resolving its cell.
+        let r = if passthrough {
+            i.maybe_quit()?;
             v.clone()
         } else {
             i.apply(&fun, vec![v.clone()])?
         };
-        if !parts.is_empty() && !sep.is_empty_string() {
+        if !parts.is_empty() && !empty_separator {
             parts.push(sep.clone());
         }
         parts.push(r);
@@ -869,26 +858,24 @@ fn f_maphash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let fun = args[0].clone();
     match &args[1] {
         Value::Hash(h) => {
+            // GNU walks live slots. Callbacks can change later values,
+            // delete entries, or reuse slots; never borrow across user code.
             let mut index = 0;
             loop {
-                // Look up each slot only when it is reached. The callback
-                // may update, remove, clear, or reuse any later slot, and
-                // may grow the table while this traversal is in progress.
-                let (pair, len) = {
-                    let hh = h.borrow();
-                    let pair = hh.keys.0.get(index).and_then(Option::as_ref).map(|(hk, key)| {
-                        (key.clone(), hh.map.get(hk).cloned().unwrap_or(Value::Nil))
-                    });
-                    (pair, hh.keys.0.len())
+                let entry = {
+                    let table = h.borrow();
+                    if index >= table.keys.0.len() {
+                        break;
+                    }
+                    table.keys.0[index].as_ref().and_then(|(hash, key)| {
+                        table.map.get(hash).map(|value| (key.clone(), value.clone()))
+                    })
                 };
-                if index >= len {
-                    break;
-                }
                 index += 1;
-                let Some((k, v)) = pair else {
-                    continue;
-                };
-                i.apply(&fun, vec![k, v])?;
+                i.maybe_quit()?;
+                if let Some((key, value)) = entry {
+                    i.apply(&fun, vec![key, value])?;
+                }
             }
             Ok(Value::Nil)
         }
@@ -963,7 +950,7 @@ fn f_sort(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             }
             Ok(args[0].clone())
         }
-        Value::Vec(v) => {
+        Value::Vec(v) if !i.is_overlay(&args[0]) => {
             let items = if in_place {
                 v.clone()
             } else {
@@ -999,6 +986,9 @@ fn f_append_to_list(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_fillarray(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    if i.is_overlay(&args[0]) {
+        return Err(i.wrong_type_mut("arrayp", &args[0]));
+    }
     match &args[0] {
         Value::Vec(v) => {
             for x in v.borrow_mut().iter_mut() {
@@ -1120,6 +1110,9 @@ fn f_purecopy(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 pub(crate) fn f_nreverse_seq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    if i.is_overlay(&args[0]) {
+        return Err(i.wrong_type_mut("arrayp", &args[0]));
+    }
     match &args[0] {
         Value::Cons(_) => {
             // GNU reverses in place, detecting a cycle when the next
@@ -1169,6 +1162,9 @@ pub(crate) fn f_nreverse_seq(i: &mut Interp, args: crate::lisp::Argv) -> EvalRes
 }
 
 fn f_clear_vector(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    if i.is_overlay(&args[0]) {
+        return Err(i.wrong_type_mut("arrayp", &args[0]));
+    }
     match &args[0] {
         Value::Vec(v) => {
             for x in v.borrow_mut().iter_mut() {
@@ -1535,7 +1531,7 @@ fn f_make_char_table(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     };
     let mut rec = vec![Value::Sym(i.q("char-table")), subtype, vec];
     rec.resize(3 + n, Value::Nil);
-    let t = Value::record(rec);
+    let t = Value::record_with_kind(rec, crate::lisp::value::RecordKind::CharTable);
     if !init.is_nil() {
         i.set_char_table_defalt(&t, init);
     }
@@ -1555,7 +1551,7 @@ pub(crate) fn make_char_table_raw(i: &mut Interp, subtype: Value, init: Value) -
         };
     let mut rec = vec![Value::Sym(i.q("char-table")), subtype, vec];
     rec.resize(3 + n, Value::Nil);
-    let t = Value::record(rec);
+    let t = Value::record_with_kind(rec, crate::lisp::value::RecordKind::CharTable);
     if !init.is_nil() {
         i.set_char_table_defalt(&t, init);
     }

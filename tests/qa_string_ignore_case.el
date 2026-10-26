@@ -1,0 +1,38 @@
+;;; -*- lexical-binding: nil; -*-
+;; GNU's live compare-strings wrapper, not Unicode lowercase (#434).
+(qa (string-equal-ignore-case "Σ" "ς") t)
+(qa (string-equal-ignore-case "σ" "ς") t)
+(qa (string-equal-ignore-case "s" "ſ") nil)
+(qa (string-equal-ignore-case "I" "ı") nil)
+(qa (string-equal-ignore-case "ß" "SS") nil)
+(qa (string-equal-ignore-case "İ" "i") nil)
+(qa (string-equal-ignore-case "AbC" "aBc") t)
+(qa (string-equal-ignore-case "ab" "ABC") nil)
+(qa (let ((case-fold-search nil)) (string-equal-ignore-case "Ab" "aB")) t)
+(dotimes (byte 256)
+  (let* ((a (unibyte-string byte)) (b (string-to-multibyte a)))
+    (qa (string-equal-ignore-case a b) t)
+    (qa (string-equal-ignore-case b a) t)))
+(with-temp-buffer
+  (let ((table (make-char-table 'case-table nil)))
+    (aset table #x110001 #x110002)
+    (set-char-table-extra-slot table 0 nil)
+    (set-char-table-extra-slot table 1 nil)
+    (set-char-table-extra-slot table 2 nil)
+    (set-case-table table)
+    (qa (string-equal-ignore-case (string #x110001) (string #x110002)) t)
+    (qa (string-equal-ignore-case "A" "a") nil)))
+(qa (string-equal-ignore-case (string #x110001) (string #x110002)) nil)
+;; Calling the public function is observable, with the exact GNU bounds.
+(let ((saved (symbol-function 'compare-strings)) (calls nil))
+  (unwind-protect
+      (progn
+        (fset 'compare-strings (lambda (&rest args) (setq calls args) t))
+        (qa (string-equal-ignore-case 'left 'right) t)
+        (qa calls '(left 0 nil right 0 nil t))
+        (fset 'compare-strings (lambda (&rest args) 42))
+        (qa (string-equal-ignore-case "a" "a") nil))
+    (fset 'compare-strings saved)))
+(qa-err-data (string-equal-ignore-case 'bad "a") 'wrong-type-argument '(stringp bad))
+(qa-err-data (string-equal-ignore-case "a" 42) 'wrong-type-argument '(stringp 42))
+(princ (qa--done))

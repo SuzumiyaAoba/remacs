@@ -582,3 +582,28 @@ fn arbitrary_precision_arithmetic_survives_native_calls() {
         "(t (\"1361129467683753853853498429727072845825\" \"-1361129467683753853853498429727072845824\" \"1852673427797059126777135760139006525652319754650249024631321344126610074238976\"))"
     );
 }
+
+#[test]
+fn positioned_symbol_views_follow_native_state_changes() {
+    if !avail() { return; }
+    assert_eq!(ev(r#"(let ((directory (make-temp-file "remacs-native-position-" t))
+                          (symbols-with-pos-enabled nil))
+      (unwind-protect
+          (let* ((p (position-symbol 'qa571-native 1))
+                 (first (native-compile
+                         (eval '(lambda (value)
+                                  (setq symbols-with-pos-enabled t)
+                                  (list (symbolp value) (eq value 'qa571-native))) t)
+                         (expand-file-name "setter.eln" directory)))
+                 (second (native-compile
+                          (eval '(lambda (value)
+                                   (list (eq value 'qa571-native)
+                                         (let ((symbols-with-pos-enabled nil))
+                                           (eq value 'qa571-native))
+                                         (eq value 'qa571-native))) t)
+                          (expand-file-name "binder.eln" directory))))
+            (list (native-comp-function-p first) (funcall first p)
+                  (funcall second p) (eq p 'qa571-native)))
+        (delete-directory directory t)))"#),
+      "(t (t t) (t nil t) t)");
+}

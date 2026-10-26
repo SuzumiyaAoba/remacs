@@ -1,0 +1,21 @@
+;;; -*- lexical-binding: nil; -*-
+;; Numeric predicate byte-code instructions must include bignums (#594).
+(let ((predicate (byte-compile '(lambda (value)
+                                 (list (integerp value) (numberp value))))))
+  (dolist (entry '((0 (t t)) (-1 (t t))
+                   (2305843009213693951 (t t))
+                   (2305843009213693952 (t t))
+                   (-2305843009213693952 (t t))
+                   (-2305843009213693953 (t t))
+                   (100000000000000000000000000000000000000000000000000 (t t))
+                   (-100000000000000000000000000000000000000000000000000 (t t))
+                   (1.0 (nil t)) (0.0e+NaN (nil t)) (1.0e+INF (nil t))
+                   (nil (nil nil)) (t (nil nil)) (a (nil nil))
+                   ("1" (nil nil)) ([1] (nil nil)) ((1) (nil nil))))
+    (qa (funcall predicate (car entry)) (cadr entry)))
+  (qa (funcall predicate (point-marker)) '(nil nil))
+  (qa (funcall predicate (bool-vector t)) '(nil nil))
+  ;; The compiler really emitted the primitive instructions under test.
+  (qa (not (null (memq 167 (string-to-list (aref predicate 1))))) t)
+  (qa (not (null (memq 168 (string-to-list (aref predicate 1))))) t))
+(princ (qa--done))

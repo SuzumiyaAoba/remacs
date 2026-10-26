@@ -24,6 +24,11 @@ enum Data {
     Array(Vec<Data>),
     Object(Vec<(Vec<u32>, Data)>),
 }
+fn decode_native_text(codes: &[u32]) -> Result<String> {
+    codes.iter().map(|code| char::from_u32(*code)
+        .ok_or_else(|| "Non-Unicode character in native dump metadata".to_owned())).collect()
+}
+
 impl Data {
     fn encode(value: Json) -> Self {
         match value {
@@ -46,11 +51,11 @@ impl Data {
             Self::Number(v) => {
                 Json::Number(v.parse().map_err(|_| "Invalid runtime number in dump")?)
             }
-            Self::Text(v) => Json::String(decode_text(v)),
+            Self::Text(v) => Json::String(decode_native_text(v)?),
             Self::Array(v) => Json::Array(v.iter().map(Self::decode).collect::<Result<_>>()?),
             Self::Object(v) => Json::Object(
                 v.iter()
-                    .map(|(k, v)| Ok((decode_text(k), v.decode()?)))
+                    .map(|(k, v)| Ok((decode_native_text(k)?, v.decode()?)))
                     .collect::<Result<_>>()?,
             ),
         })
@@ -301,7 +306,7 @@ impl Runtime {
             if let Some(function) = weak.upgrade() {
                 let function = Value::Lambda(function);
                 if e.knows(&function) {
-                    names.push((e.value(&function)?, name.clone()));
+                    names.push((e.value(&function)?, encode_text(name)));
                 }
             }
         }
@@ -515,15 +520,44 @@ impl Runtime {
         tables!(char_table_parents);
         tables!(char_table_defalts);
         *i.compiled_fn_names.borrow_mut() = self
-            .get::<Vec<(Ref, String)>>("compiled_fn_names")?
+            .get::<Vec<(Ref, Vec<u32>)>>("compiled_fn_names")?
             .into_iter()
             .map(|(function, name)| {
                 let Value::Lambda(function) = d.value(i, &function)? else {
                     return Err("Invalid dumped function name".into());
                 };
-                Ok((Rc::downgrade(&function), name))
+                Ok((Rc::downgrade(&function), decode_text(&name)))
             })
             .collect::<Result<_>>()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod wide_metadata_tests {
+    use super::*;
+    #[test]
+    fn native_private_use_strings_and_map_keys_roundtrip_without_aliases() {
+        let original = serde_json::json!({"\u{f0080}": ["\u{f0100}", "\u{f0b00}"]});
+        let data = Data::encode(original.clone());
+        let wire = serde_json::to_vec(&data).unwrap();
+        let restored: Data = serde_json::from_slice(&wire).unwrap();
+        assert_eq!(restored.decode().unwrap(), original);
+    }
+    #[test]
+    fn wide_function_name_rows_use_code_arrays_instead_of_json_strings() {
+        let codes = vec![0xf0080u32, 0x3fff80, 0xd800, 0x110000, 0x200000];
+        let original = vec![(7u32, codes.clone())];
+        let data = Data::encode(serde_json::to_value(&original).unwrap());
+        let restored: Vec<(u32, Vec<u32>)> = serde_json::from_value(data.decode().unwrap()).unwrap();
+        assert_eq!(restored, original);
+        assert_eq!(encode_text(&decode_text(&codes)), codes);
+    }
+    #[test]
+    fn native_metadata_rejects_non_unicode_instead_of_inventing_proxies() {
+        for code in [0xd800, 0x110000, 0x3fff80, 0x400000] {
+            assert!(Data::Text(vec![code]).decode().is_err());
+            assert!(Data::Object(vec![(vec![code], Data::Null)]).decode().is_err());
+        }
     }
 }

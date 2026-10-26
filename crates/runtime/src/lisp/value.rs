@@ -19,8 +19,18 @@ use crate::editor::{Frame, Window};
 pub type SymId = u32;
 
 pub type ConsRef = Rc<RefCell<Cons>>;
-pub type StrRef = Rc<RefCell<String>>;
+pub use super::text::{EmacsChar, EmacsText};
+pub type StrRef = Rc<RefCell<EmacsText>>;
 pub type VecRef = Rc<RefCell<Vec<Value>>>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) enum RecordKind {
+    BoolVector,
+    CharTable,
+    Obarray,
+    FontSpec,
+    SymbolWithPos,
+}
 pub type HashRef = Rc<RefCell<LispHash>>;
 pub type LambdaRef = Rc<Lambda>;
 pub type BufferRef = Rc<RefCell<Buffer>>;
@@ -37,7 +47,7 @@ pub type FinalizerRef = Rc<RefCell<Value>>;
 /// and releases execution at Lisp yield and blocking operations.
 #[derive(Debug)]
 pub struct Thread {
-    pub name: Option<String>,
+    pub name: Option<EmacsText>,
     /// True only while the thread function is running.
     pub alive: bool,
     /// Result of the thread's function, once finished.
@@ -55,7 +65,7 @@ pub struct Thread {
 /// A recursive Lisp mutex (`make-mutex').
 #[derive(Debug)]
 pub struct Mutex {
-    pub name: Option<String>,
+    pub name: Option<EmacsText>,
     /// `Some(thread)` while locked; cooperative model keeps this simple.
     pub owner: Option<Value>,
     pub count: usize,
@@ -64,7 +74,7 @@ pub struct Mutex {
 /// A condition variable (`make-condition-variable').
 #[derive(Debug)]
 pub struct CondVar {
-    pub name: Option<String>,
+    pub name: Option<EmacsText>,
     pub mutex: Value,
     pub waiters: Vec<std::rc::Weak<std::cell::Cell<bool>>>,
 }
@@ -180,8 +190,9 @@ pub struct LispHash {
     pub mutable: bool,
     /// Collision-chain insertion order, rebuilt from slots when resized.
     pub collision_order: Vec<usize>,
-    /// GNU reuses removed collision-checked table slots in last-removed-first order.
+    /// GNU reuses removed table slots in last-removed-first order.
     pub free_slots: Vec<usize>,
+    pub positioned_keys: usize,
 }
 
 impl LispHash {
@@ -200,40 +211,31 @@ impl LispHash {
             mutable: true,
             collision_order: Vec::new(),
             free_slots: Vec::new(),
+            positioned_keys: 0,
         }
     }
 
     /// Record an original key: an already-present normalized key
     /// keeps its original object (as GNU's hash_put); otherwise the
-    /// key takes the first tombstone slot, or appends.
+    /// key takes the most recently freed slot, or appends.
     pub fn put_key(&mut self, hk: HashKey, k: Value) {
         if self.keys.0.iter().flatten().any(|(e, _)| *e == hk) {
             return;
         }
-        let collision_checked = self.user_test.is_some() || self.test == HashTest::Equal;
         if self.keys.0.len() as i128 == self.size && self.keys.0.iter().all(Option::is_some) {
             self.size = if self.size == 0 {
                 6
             } else {
                 self.size.max(6) * if self.size <= 64 { 4 } else { 2 }
             };
-            if collision_checked {
-                // Resizing re-links collision chains in slot order,
-                // without invoking the user comparison/hash functions.
-                self.collision_order = (0..self.keys.0.len()).collect();
-            }
+            // Resizing re-links collision chains in slot order.
+            self.collision_order = (0..self.keys.0.len()).collect();
         }
-        if collision_checked {
-            let slot = self.free_slots.pop().unwrap_or(self.keys.0.len());
-            self.collision_order.push(slot);
-            if slot == self.keys.0.len() {
-                self.keys.0.push(Some((hk, k)));
-            } else {
-                self.keys.0[slot] = Some((hk, k));
-            }
-            return;
+        if matches!(hk, HashKey::Positioned(..)) {
+            self.positioned_keys += 1;
         }
         let slot = self.free_slots.pop().unwrap_or(self.keys.0.len());
+        self.collision_order.push(slot);
         if slot == self.keys.0.len() {
             self.keys.0.push(Some((hk, k)));
         } else {
@@ -249,10 +251,11 @@ impl LispHash {
             .position(|e| matches!(e, Some((h, _)) if h == hk))
         {
             self.keys.0[slot] = None;
-            self.free_slots.push(slot);
-            if self.user_test.is_some() || self.test == HashTest::Equal {
-                self.collision_order.retain(|index| *index != slot);
+            self.collision_order.retain(|index| *index != slot);
+            if matches!(hk, HashKey::Positioned(..)) {
+                self.positioned_keys -= 1;
             }
+            self.free_slots.push(slot);
         }
     }
 }
@@ -288,9 +291,7 @@ pub enum HashKey {
     BigInt(BigInt),
     /// Bit pattern so -0.0/NaN behave deterministically.
     Float(u64),
-    /// GNU string equality/hash use the stored byte representation,
-    /// distinguishing unibyte bytes from multibyte Mule encodings.
-    Str(Vec<u8>),
+    Str(EmacsText, usize),
     /// Identity key for objects where `eq` compares by pointer.
     Ptr(usize),
     /// `equal' markers compare buffer and position, not object identity.
@@ -309,6 +310,8 @@ pub enum HashKey {
     /// User-provided hash code and an entry slot. Equal hash
     /// codes select candidates; only the user's comparator merges keys.
     Custom(u32, usize),
+    /// Stored hash and root identity for keys whose symbol view can change.
+    Positioned(u32, usize),
 }
 
 /// Max argument count for a subr: fixed or unlimited.
@@ -384,11 +387,11 @@ pub struct Lambda {
     pub body: Vec<Value>,
     /// Captured lexical environment (used when `lexical-binding` is t).
     pub env: crate::lisp::LexEnv,
-    pub doc: Option<String>,
+    pub doc: Option<EmacsText>,
     /// Raw `interactive` spec form, if this is a command.
     pub interactive: Option<Value>,
     /// Name for display purposes (from defun or set-name).
-    pub name: Option<String>,
+    pub name: Option<EmacsText>,
     /// Arglist contains extended `(var init)' params — calling it in a
     /// dynamic (non-macro) context signals `invalid-function' like Emacs.
     pub bad_arglist: bool,
@@ -489,79 +492,40 @@ pub struct Marker {
     pub insertion_type: bool,
 }
 
-/// GNU's eight-bit chars (0x3FFF80..=0x3FFFFF) exceed Rust's char
-/// range, so inside strings they are proxied into plane-15 PUA:
-/// byte b (0x80..=0xFF) maps to U+F0000+b.  As `Value::Int` they keep
-/// their real GNU codes.
+/// Historical Unicode proxy bases, retained for source compatibility only.
+/// These values have no special meaning in Lisp text or printer output.
 pub const EIGHT_BIT_BASE: u32 = 0xF_0000;
-
-/// Lone surrogates (0xD800..=0xDFFF) aren't Rust chars but ARE valid
-/// GNU char codes (`characterp' → t, `concat' inserts them, printing
-/// yields U+FFFD).  Proxy them into plane-15 PUA above the eight-bit
-/// block: codepoint c maps to U+F0100+(c-0xD800).
 pub const SURROGATE_BASE: u32 = 0xF_0100;
-
-/// A *raw output byte* marker: codepoints that can't live in a Rust
-/// `char` (GNU mule codes 0x110000..=0x3FFFFF) are emitted into
-/// strings as their mule byte sequence, one marker char per byte —
-/// U+F0A00+b holds literal byte b.  The stdout/file encoders expand
-/// the markers back to raw bytes; nothing else should see them.
 pub const RAW_BYTE_BASE: u32 = 0xF_0A00;
 
-/// Map a GNU char code to a storable Rust char; eight-bit codes and
-/// surrogates become PUA proxies.
-pub fn lisp_char(code: u32) -> Option<char> {
-    match code {
-        0x3FFF80..=0x3FFFFF => char::from_u32(EIGHT_BIT_BASE + (code & 0xFF)),
-        0xD800..=0xDFFF => char::from_u32(SURROGATE_BASE + (code - 0xD800)),
-        _ => char::from_u32(code),
-    }
+/// Validate a GNU character code without remapping Unicode values.
+pub fn lisp_char(code: u32) -> Option<EmacsChar> {
+    EmacsChar::new(code)
 }
 
-/// If `c` is an eight-bit proxy char, return its byte value.
-pub fn eight_bit_byte(c: char) -> Option<u8> {
-    let u = c as u32;
-    (0xF0080..=0xF00FF)
-        .contains(&u)
-        .then(|| (u - EIGHT_BIT_BASE) as u8)
+/// Return the byte represented by a GNU byte8 character.
+pub fn eight_bit_byte(c: impl Into<EmacsChar>) -> Option<u8> {
+    c.into().byte8()
 }
 
-/// If `c` is a surrogate proxy char, return its surrogate code.
-pub fn surrogate_code(c: char) -> Option<u32> {
-    let u = c as u32;
-    (SURROGATE_BASE..SURROGATE_BASE + 0x800)
-        .contains(&u)
-        .then(|| 0xD800 + (u - SURROGATE_BASE))
+/// Return a lone surrogate character code.
+pub fn surrogate_code(c: impl Into<EmacsChar>) -> Option<u32> {
+    let code = c.into().code();
+    (0xd800..=0xdfff).contains(&code).then_some(code)
 }
 
 /// alloc.c's make_string: use multibyte storage only when every byte belongs
 /// to a valid canonical Emacs UTF-8 sequence, including surrogates and Mule.
 /// A single invalid byte makes the entire input unibyte.
-pub(crate) fn auto_string_bytes(bytes: &[u8]) -> (String, bool) {
-    let unibyte = || (bytes.iter().map(|&byte| char::from(byte)).collect(), false);
-    let mut text = String::new();
+pub(crate) fn auto_string_bytes(bytes: &[u8]) -> (EmacsText, bool) {
+    let unibyte = || (EmacsText::from_internal_bytes(bytes, false).unwrap(), false);
+    let mut text = EmacsText::new();
     let mut at = 0;
     let mut multibyte = false;
     while at < bytes.len() {
-        let first = bytes[at];
-        let length = match first {
-            0..=127 => 1,
-            0xc2..=0xdf => 2,
-            0xe0..=0xef => 3,
-            0xf0..=0xf7 => 4,
-            0xf8 => 5,
-            _ => return unibyte(),
+        let Some((code, length)) = canonical_emacs_char(&bytes[at..]) else {
+            return unibyte();
         };
-        if at + length > bytes.len() || bytes[at + 1..at + length].iter().any(|b| b & 0xc0 != 0x80) {
-            return unibyte();
-        }
-        let mut code = u32::from(first & [0, 127, 31, 15, 7, 3][length]);
-        for &byte in &bytes[at + 1..at + length] {
-            code = (code << 6) | u32::from(byte & 63);
-        }
-        if code < [0, 0, 0x80, 0x800, 0x10000, 0x200000][length] || code >= 0x3fff80 {
-            return unibyte();
-        }
         text.push(lisp_char(code).unwrap_or_else(|| mule_seq_char(code)));
         multibyte |= length > 1;
         at += length;
@@ -569,10 +533,48 @@ pub(crate) fn auto_string_bytes(bytes: &[u8]) -> (String, bool) {
     (text, multibyte)
 }
 
+/// Decode one canonical Emacs UTF-8 character, excluding byte8's reserved
+/// representations. Surrogates and extended four/five-byte Mule are valid.
+fn canonical_emacs_char(bytes: &[u8]) -> Option<(u32, usize)> {
+    let first = *bytes.first()?;
+    let length = match first {
+        0..=127 => 1,
+        0xc2..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf7 => 4,
+        0xf8 => 5,
+        _ => return None,
+    };
+    let sequence = bytes.get(..length)?;
+    if sequence[1..].iter().any(|b| b & 0xc0 != 0x80) {
+        return None;
+    }
+    let mut code = u32::from(first & [0, 127, 31, 15, 7, 3][length]);
+    for &byte in &sequence[1..] {
+        code = (code << 6) | u32::from(byte & 63);
+    }
+    (code >= [0, 0, 0x80, 0x800, 0x10000, 0x200000][length] && code < 0x3fff80)
+        .then_some((code, length))
+}
+
+/// string-as-multibyte accepts canonical Emacs UTF-8 sequences while
+/// preserving each invalid byte as a separate byte8 character.
+pub(crate) fn multibyte_string_bytes(bytes: &[u8]) -> EmacsText {
+    let mut text = EmacsText::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        let (code, length) = canonical_emacs_char(&bytes[at..])
+            .unwrap_or((0x3fff00 + u32::from(bytes[at]), 1));
+        text.push(lisp_char(code).unwrap_or_else(|| mule_seq_char(code)));
+        at += length;
+    }
+    text
+}
+
 /// Decode stored Emacs multibyte characters, including byte8, surrogates
 /// and five-byte Mule characters. Invalid octets retain byte8 identity.
-pub(crate) fn emacs_string_bytes(bytes: &[u8]) -> String {
-    let mut result = String::new();
+pub(crate) fn emacs_string_bytes(bytes: &[u8]) -> EmacsText {
+    let mut result = EmacsText::new();
     let mut at = 0;
     while at < bytes.len() {
         let first = bytes[at];
@@ -605,109 +607,92 @@ pub(crate) fn emacs_string_bytes(bytes: &[u8]) -> String {
     result
 }
 
-/// The GNU char code a string char stands for (proxies return their
-/// real code: 0x3FFFxx for eight-bit, 0xD8xx..0xDFxx for surrogates,
-/// 0x110000..=0x3FFF7F for mule-seq proxies).
-pub fn lisp_char_code(c: char) -> i128 {
-    if let Some(b) = eight_bit_byte(c) {
-        return 0x3FFF00 + b as i128;
-    }
-    if let Some(s) = surrogate_code(c) {
-        return s as i128;
-    }
-    if let Some(m) = mule_seq_code(c) {
-        return m as i128;
-    }
-    c as i128
+/// Return the original GNU character code.
+pub fn lisp_char_code(c: impl Into<EmacsChar>) -> i128 {
+    i128::from(c.into().code())
 }
 
-/// If `c` is a raw-byte marker, return the literal byte it carries.
-pub fn raw_byte_marker(c: char) -> Option<u8> {
-    let u = c as u32;
-    (RAW_BYTE_BASE..RAW_BYTE_BASE + 0x100)
-        .contains(&u)
-        .then(|| (u - RAW_BYTE_BASE) as u8)
-}
+pub use super::print_text::OutputToken;
 
-/// Base for printer-sentinel chars: `print`/`prin1` emit these for
-/// unibyte byte-chars ≥0x80 so the *sink* can choose GNU's encoding —
-/// stdout writes the overlong pair, a string/buffer gets `\NNN' text,
-/// a function stream gets the eight-bit Lisp char code (0x3FFF80+b).
-/// Distinct from `eight_bit_byte' proxies, which `princ' sinks treat
-/// as the raw byte value.
+/// Inspect a typed raw-byte instruction. Unicode characters are never markers.
+pub fn raw_byte_marker(c: impl Into<OutputToken>) -> Option<u8> {
+    match c.into() { OutputToken::RawByte(byte) => Some(byte), _ => None }
+}
 pub const PRINT_EIGHT_BIT_BASE: u32 = 0xF_0C00;
-
-/// Sentinel char for a printed eight-bit byte.
-pub fn print_eight_bit_char(b: u8) -> char {
-    char::from_u32(PRINT_EIGHT_BIT_BASE + b as u32).unwrap_or(' ')
+pub fn print_eight_bit_char(byte: u8) -> OutputToken { OutputToken::PrintedByte(byte) }
+pub fn print_eight_bit_byte(c: impl Into<OutputToken>) -> Option<u8> {
+    match c.into() { OutputToken::PrintedByte(byte) => Some(byte), _ => None }
 }
-
-/// If `c` is a printer-sentinel eight-bit char, return its byte.
-pub fn print_eight_bit_byte(c: char) -> Option<u8> {
-    let u = c as u32;
-    (PRINT_EIGHT_BIT_BASE..PRINT_EIGHT_BIT_BASE + 0x100)
-        .contains(&u)
-        .then(|| (u - PRINT_EIGHT_BIT_BASE) as u8)
-}
-
-/// Base for `write-char' sentinels: GNU's printchar(0x3FFF80+code)
-/// emits the eight-bit *character* — function streams get the code,
-/// text sinks store the char itself (not `\NNN' text), stdout writes
-/// the overlong pair.
 pub const WRITE_CHAR_BASE: u32 = 0xF_0D00;
-
-/// Sentinel standing for the eight-bit char of byte `b`.
-pub fn write_char_eight_bit(b: u8) -> char {
-    char::from_u32(WRITE_CHAR_BASE + b as u32).unwrap_or(' ')
+pub fn write_char_eight_bit(byte: u8) -> OutputToken { OutputToken::WrittenByte(byte) }
+pub fn write_char_eight_bit_byte(c: impl Into<OutputToken>) -> Option<u8> {
+    match c.into() { OutputToken::WrittenByte(byte) => Some(byte), _ => None }
 }
-
-/// If `c` is a `write-char' sentinel, return its byte.
-pub fn write_char_eight_bit_byte(c: char) -> Option<u8> {
-    let u = c as u32;
-    (WRITE_CHAR_BASE..WRITE_CHAR_BASE + 0x100)
-        .contains(&u)
-        .then(|| (u - WRITE_CHAR_BASE) as u8)
-}
-
-/// A high-mule sequence proxy: GNU codes 0x110000..=0x3FFF7F can't
-/// sit in a Rust `char`, so each distinct code is registered once and
-/// surfaces in strings as a single U+F0B00+idx char — keeping the
-/// description's column layout (GNU stores the code as one char).
-/// The output encoder expands the proxy back to GNU's 5-byte mule
-/// form 0xF8|(c>>24) + four 0x80|6-bit trails.
-pub const MULE_SEQ_BASE: u32 = 0xF_0B00;
 
 thread_local! {
-    static MULE_SEQS: std::cell::RefCell<std::collections::HashMap<u32, u32>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-    static MULE_SEQ_CODES: std::cell::RefCell<Vec<u32>> =
-        std::cell::RefCell::new(Vec::new());
+    static SYMBOL_POSITION_VIEW: std::cell::Cell<(usize, bool)> = const { std::cell::Cell::new((0, false)) };
 }
 
-/// The proxy char for a mule code 0x110000..=0x3FFF7F.
-pub fn mule_seq_char(code: u32) -> char {
-    let idx = MULE_SEQS.with(|m| {
-        let mut m = m.borrow_mut();
-        if let Some(&i) = m.get(&code) {
-            i
-        } else {
-            let i = m.len() as u32;
-            m.insert(code, i);
-            MULE_SEQ_CODES.with(|c| c.borrow_mut().push(code));
-            i
+pub(crate) fn symbol_positions_enabled() -> bool {
+    SYMBOL_POSITION_VIEW.with(|state| state.get().1)
+}
+
+pub(crate) fn sync_symbol_positions(owner: usize, enabled: bool) {
+    SYMBOL_POSITION_VIEW.with(|state| {
+        let (active, _) = state.get();
+        if active == 0 || active == owner {
+            state.set((active, enabled));
         }
     });
-    char::from_u32(MULE_SEQ_BASE + idx).unwrap_or('?')
 }
 
-/// If `c` is a mule-seq proxy, return its real GNU code.
-pub fn mule_seq_code(c: char) -> Option<u32> {
-    let u = c as u32;
-    if (MULE_SEQ_BASE..MULE_SEQ_BASE + 0x10000).contains(&u) {
-        MULE_SEQ_CODES.with(|codes| codes.borrow().get((u - MULE_SEQ_BASE) as usize).copied())
-    } else {
-        None
+pub(crate) struct SymbolPositionScope {
+    previous: (usize, bool),
+    owner: usize,
+    exit_mode: bool,
+}
+impl SymbolPositionScope {
+    pub(crate) fn enter(owner: usize, enabled: bool) -> Self {
+        let previous = SYMBOL_POSITION_VIEW.with(|state| state.replace((owner, enabled)));
+        Self {
+            previous,
+            owner,
+            exit_mode: enabled,
+        }
     }
+    pub(crate) fn finish(&mut self, enabled: bool) {
+        self.exit_mode = enabled;
+    }
+}
+impl Drop for SymbolPositionScope {
+    fn drop(&mut self) {
+        let next = if self.previous.0 == 0 || self.previous.0 == self.owner {
+            (self.previous.0, self.exit_mode)
+        } else {
+            self.previous
+        };
+        SYMBOL_POSITION_VIEW.with(|state| state.set(next));
+    }
+}
+
+thread_local! {
+    static RECORD_KINDS: RefCell<HashMap<usize, (std::rc::Weak<RefCell<Vec<Value>>>, RecordKind)>> =
+        RefCell::new(HashMap::default());
+    // GNU's zero-vector is shared and permanently live. Keep records on
+    // their own allocation path: their identity is never canonicalized.
+    static ZERO_VECTOR: VecRef = Value::allocate_vector_ref(Vec::new());
+    static EMPTY_UNIBYTE_STRING: StrRef = Value::allocate_string_ref(String::new());
+    static EMPTY_MULTIBYTE_STRING: StrRef = Value::allocate_string_ref(String::new());
+}
+
+/// Preserve an extended GNU character code without a process-local registry.
+pub fn mule_seq_char(code: u32) -> EmacsChar {
+    EmacsChar::new(code).unwrap_or_else(|| '?'.into())
+}
+
+pub fn mule_seq_code(c: impl Into<EmacsChar>) -> Option<u32> {
+    let code = c.into().code();
+    (0x110000..=0x3fff7f).contains(&code).then_some(code)
 }
 
 /// The bytes GNU writes on stdout for a codepoint a Rust `char`
@@ -801,7 +786,7 @@ impl Value {
         Value::Cons(Cons::new(car, cdr))
     }
 
-    pub fn string(s: impl Into<String>) -> Value {
+    pub fn string(s: impl Into<EmacsText>) -> Value {
         Value::Str(Self::string_ref(s))
     }
 
@@ -809,13 +794,54 @@ impl Value {
         matches!(self, Value::Str(text) if text.borrow().is_empty())
     }
 
-    pub fn string_ref(s: impl Into<String>) -> StrRef {
+    pub fn string_ref(s: impl Into<EmacsText>) -> StrRef {
+        Self::string_ref_with_kind(s, false)
+    }
+
+    pub(crate) fn string_with_kind(s: impl Into<EmacsText>, multibyte: bool) -> Value {
+        Value::Str(Self::string_ref_with_kind(s, multibyte))
+    }
+
+    /// Choose the shared empty object before publishing it. Nonempty
+    /// representation metadata remains owned by the interpreter.
+    pub(crate) fn string_ref_with_kind(s: impl Into<EmacsText>, multibyte: bool) -> StrRef {
+        let s = s.into();
+        if s.is_empty() {
+            return if multibyte {
+                EMPTY_MULTIBYTE_STRING.with(Rc::clone)
+            } else {
+                EMPTY_UNIBYTE_STRING.with(Rc::clone)
+            };
+        }
+        Self::allocate_string_ref(s)
+    }
+
+    pub(crate) fn empty_string_kind(string: &StrRef) -> Option<bool> {
+        if EMPTY_UNIBYTE_STRING.with(|empty| Rc::ptr_eq(empty, string)) {
+            Some(false)
+        } else if EMPTY_MULTIBYTE_STRING.with(|empty| Rc::ptr_eq(empty, string)) {
+            Some(true)
+        } else {
+            None
+        }
+    }
+
+    fn allocate_string_ref(s: impl Into<EmacsText>) -> StrRef {
         let string = Rc::new(RefCell::new(s.into()));
         super::memory::allocated(&Value::Str(string.clone()));
         string
     }
 
     pub fn vector_ref(values: Vec<Value>) -> VecRef {
+        if values.is_empty() {
+            return ZERO_VECTOR.with(Rc::clone);
+        }
+        Self::allocate_vector_ref(values)
+    }
+
+    /// Fresh backing storage, also for internal arrays that can grow.
+    /// Lisp vectors use `vector_ref` so empty vectors retain their identity.
+    pub(crate) fn allocate_vector_ref(values: Vec<Value>) -> VecRef {
         let vector = Rc::new(RefCell::new(values));
         super::memory::allocated(&Value::Vec(vector.clone()));
         vector
@@ -826,7 +852,33 @@ impl Value {
     }
 
     pub fn record(values: Vec<Value>) -> Value {
-        Value::Record(Self::vector_ref(values))
+        Value::Record(Self::allocate_vector_ref(values))
+    }
+
+    pub(crate) fn record_with_kind(values: Vec<Value>, kind: RecordKind) -> Value {
+        let value = Self::record(values);
+        value.set_record_kind(kind);
+        value
+    }
+
+    pub(crate) fn set_record_kind(&self, kind: RecordKind) {
+        let (Value::Vec(values) | Value::Record(values)) = self else { return; };
+        RECORD_KINDS.with(|kinds| {
+            let mut kinds = kinds.borrow_mut();
+            if kinds.len() & 255 == 0 {
+                kinds.retain(|_, (object, _)| object.strong_count() != 0);
+            }
+            kinds.insert(Rc::as_ptr(values) as usize, (Rc::downgrade(values), kind));
+        });
+    }
+
+    pub(crate) fn record_kind(&self) -> Option<RecordKind> {
+        let (Value::Vec(values) | Value::Record(values)) = self else { return None; };
+        RECORD_KINDS.with(|kinds| {
+            let kinds = kinds.borrow();
+            let (object, kind) = kinds.get(&(Rc::as_ptr(values) as usize))?;
+            object.upgrade().filter(|object| Rc::ptr_eq(object, values)).map(|_| *kind)
+        })
     }
 
     pub fn tracked(self) -> Value {

@@ -1,6 +1,31 @@
 ;;; -*- lexical-binding: nil; -*-
-;; string-reverse is the obsolete alias of reverse, not a separate subr (#487).
+;; string-reverse is subr-x's obsolete alias for reverse (#487).
 (require 'subr-x)
 (qa (symbol-function 'string-reverse) 'reverse)
-(qa (string-reverse [1 2]) [2 1])
+(qa (string-reverse '(a b c)) '(c b a))
+(qa (string-reverse [a b c]) [c b a])
+(qa (string-reverse (bool-vector t nil nil)) (bool-vector nil nil t))
+(qa (string-reverse nil) nil)
+(qa (string-reverse "abc") "cba")
+(let* ((source (propertize "abc" 'tag 'value)) (result (string-reverse source)))
+  (qa result "cba")
+  (qa (text-properties-at 0 result) nil)
+  (qa (get-text-property 0 'tag source) 'value))
+(let ((source (unibyte-string 255 65)))
+  (qa (string-to-list (string-reverse source)) '(65 255))
+  (qa (multibyte-string-p (string-reverse source)) nil))
+(qa (multibyte-string-p (string-reverse (string-to-multibyte "abc"))) nil)
+(qa (string-to-list (string-reverse (string #x110001 #x3fffff))) '(4194303 1114113))
+(qa (multibyte-string-p (string-reverse (string #x110001 #x3fffff))) t)
+(qa (let ((source "")) (eq source (string-reverse source))) t)
+(qa-err-data (string-reverse 42) 'wrong-type-argument '(sequencep 42))
+(qa-err-data (string-reverse (record 'tag)) 'wrong-type-argument
+             (list 'sequencep (record 'tag)))
+(let ((saved (symbol-function 'reverse)) (seen nil) (argument [a b]) (token (list 'result)))
+  (unwind-protect
+      (progn
+        (fset 'reverse (lambda (value) (setq seen value) token))
+        (qa (eq (string-reverse argument) token) t)
+        (qa (eq seen argument) t))
+    (fset 'reverse saved)))
 (princ (qa--done))

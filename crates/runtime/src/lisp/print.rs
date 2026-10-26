@@ -5,6 +5,8 @@ use std::fmt::Write;
 use std::rc::Rc;
 
 use super::Interp;
+use super::print_text::PrintText;
+use super::text::{EmacsChar, EmacsText, TextSource};
 use super::value::Value;
 
 /// Escape a character inside a printed string. Emacs escapes only
@@ -12,44 +14,30 @@ use super::value::Value;
 /// is set; `print-escape-control-characters` prints C0/DEL as `\N'
 /// (unpadded octal) and `print-escape-multibyte` hex-escapes non-ASCII
 /// as `\xNNNN' (minimum 4 digits).
-fn escape_char_for_string(c: char, out: &mut String, nl: bool, mb: bool, cc: bool) {
-    match c {
-        '"' => out.push_str("\\\""),
-        '\\' => out.push_str("\\\\"),
-        '\n' if nl => out.push_str("\\n"),
-        c if cc && ((c as u32) < 0x20 || c == '\u{7f}') => {
-            let _ = write!(out, "\\{:o}", c as u32);
-        }
-        c if mb && (c as u32) > 0x7f => {
-            let _ = write!(out, "\\x{:04x}", super::value::lisp_char_code(c));
-        }
-        c => out.push(c),
+fn escape_char_for_string(c: EmacsChar, out: &mut PrintText, nl: bool, mb: bool, cc: bool) {
+    match c.unicode() {
+        Some('"') => out.push_str("\\\""),
+        Some('\\') => out.push_str("\\\\"),
+        Some('\n') if nl => out.push_str("\\n"),
+        _ if cc && (c.code() < 0x20 || c == '\u{7f}') => { let _ = write!(out, "\\{:o}", c.code()); }
+        _ if mb && c.code() > 0x7f => { let _ = write!(out, "\\x{:04x}", c.code()); }
+        _ => out.push(c),
     }
 }
 
-/// Does `c` need a backslash escape inside a printed symbol name?
-/// Emacs escapes the chars that would otherwise terminate or
-/// re-interpret the symbol token.
-fn sym_char_needs_escape(c: char) -> bool {
-    matches!(
-        c,
-        '(' | ')' | '[' | ']' | '\'' | '"' | '`' | ',' | ';' | '#' | '\\'
-    ) || c.is_whitespace()
-        || (c as u32) < 0x20
+fn sym_char_needs_escape(c: EmacsChar) -> bool {
+    c.unicode().is_some_and(|c| matches!(c, '(' | ')' | '[' | ']' | '\'' | '"' | '`' | ',' | ';' | '#' | '\\'))
+        || c.is_whitespace() || c.code() < 0x20
 }
 
-/// Print a symbol name, backslash-escaping special chars (`a\ b`, `\,`).
-fn push_sym_name(name: &str, out: &mut String) {
-    if name.is_empty() {
-        out.push_str("##");
-        return;
-    }
-    for c in name.chars() {
-        if sym_char_needs_escape(c) {
-            out.push('\\');
+fn push_sym_name<T: TextSource + ?Sized>(name: &T, out: &mut PrintText) {
+    name.with_text(|name| {
+        if name.is_empty() { out.push_str("##"); return; }
+        for c in name.chars() {
+            if sym_char_needs_escape(c) { out.push('\\'); }
+            out.push(c);
         }
-        out.push(c);
-    }
+    });
 }
 
 thread_local! {
@@ -66,7 +54,7 @@ thread_local! {
     static CIRCLE: RefCell<Option<CircleCtx>> = const { RefCell::new(None) };
     /// `print-unreadable-function' support (GNU print.c
     /// `print_unreadable_flag'): every `#<...>'-style emit records its
-    /// byte span and object here so the `&mut' caller can post-process
+    /// character span and object here so the `&mut' caller can post-process
     /// with a Lisp callback.
     static UNREADABLE_HITS: RefCell<Vec<(usize, usize, Value)>> =
         const { RefCell::new(Vec::new()) };
@@ -109,13 +97,21 @@ fn print_stack_key(v: &Value) -> Option<usize> {
 /// heap pointers: fold them into key space by setting the high bit.
 fn gensym_circle_key(i: &Interp, v: &Value) -> Option<usize> {
     // Cheap shape check first — runs for every printed symbol.
-    let Value::Sym(id) = v else {
-        return None;
-    };
-    if !i.obarray.symbol(*id).uninterned || !i.print_gensym() {
+    let id = i.sym_id(v)?;
+    if !i.obarray.symbol(id).uninterned || !i.print_gensym() {
         return None;
     }
-    Some(*id as usize | (1usize << (usize::BITS - 1)))
+    Some(id as usize | (1usize << (usize::BITS - 1)))
+}
+
+fn print_identity_key(i: &Interp, value: &Value) -> Option<usize> {
+    if circle_active() {
+        gensym_circle_key(i, value).or_else(|| print_stack_key(value))
+    } else if super::builtins::misc::raw_symbol_position(value).is_some() {
+        print_stack_key(value)
+    } else {
+        print_stack_key(value).or_else(|| gensym_circle_key(i, value))
+    }
 }
 
 /// Position symbols use their bare symbol's identity when the dynamic
@@ -142,6 +138,9 @@ fn print_circle_candidate(i: &Interp, v: &Value) -> bool {
         Value::Str(s) => !s.borrow().is_empty(),
         Value::Sym(_) => gensym_circle_key(i, v).is_some(),
         Value::Vec(r) => !r.borrow().is_empty(),
+        Value::Record(_) if super::builtins::misc::raw_symbol_position(v).is_some() => {
+            gensym_circle_key(i, v).is_some()
+        }
         Value::Record(_) | Value::Hash(_) | Value::Lambda(_) => true,
         _ => false,
     }
@@ -159,7 +158,7 @@ fn count_print_refs(i: &Interp, v: &Value, ctx: &mut CircleCtx) {
         if !print_circle_candidate(i, &x) {
             continue;
         }
-        let Some(k) = print_object_key(i, &x) else {
+        let Some(k) = gensym_circle_key(i, &x).or_else(|| print_stack_key(&x)) else {
             continue;
         };
         if !ctx.seen.insert(k) {
@@ -180,7 +179,6 @@ fn count_print_refs(i: &Interp, v: &Value, ctx: &mut CircleCtx) {
                 stack.push(cdr);
                 stack.push(car);
             }
-            Value::Record(_) if crate::lisp::builtins::misc::any_sympos_parts(i, &x).is_some() => {}
             Value::Vec(r) | Value::Record(r) => {
                 stack.extend(r.borrow().iter().rev().cloned());
             }
@@ -236,7 +234,7 @@ enum NtSubst {
     Prefix(String),
     /// Emit this text INSTEAD of the object (a `#N#' back-reference
     /// or a verbatim substitution string).
-    Replace(String),
+    Replace(EmacsText),
 }
 
 /// `print-number-table' substitution for a heap object (GNU's
@@ -270,7 +268,7 @@ fn number_table_subst(i: &Interp, v: &Value) -> Option<NtSubst> {
                 h.borrow_mut().map.insert(key, Value::Int(-n));
                 Some(NtSubst::Prefix(format!("#{}=", -n)))
             } else {
-                Some(NtSubst::Replace(format!("#{n}#")))
+                Some(NtSubst::Replace(format!("#{n}#").into()))
             }
         }
         _ => None,
@@ -279,8 +277,8 @@ fn number_table_subst(i: &Interp, v: &Value) -> Option<NtSubst> {
 
 impl Interp {
     /// `prin1` representation: readable, escaped.
-    pub fn print_to_string(&self, v: &Value) -> String {
-        let mut s = String::new();
+    pub fn print_to_string(&self, v: &Value) -> EmacsText {
+        let mut s = PrintText::new();
         let mark = BEING_PRINTED.with(|bp| bp.borrow().len());
         let prev_circle = self.install_circle_ctx(v);
         self.prin1_inner(v, &mut s, 0, false);
@@ -288,11 +286,11 @@ impl Interp {
         // panic can't poison later prints.
         CIRCLE.with(|c| *c.borrow_mut() = prev_circle);
         BEING_PRINTED.with(|bp| bp.borrow_mut().truncate(mark));
-        Self::sink_text(&s).into_owned()
+        s.to_text(true)
     }
 
     /// Alias for `print_to_string` matching the Lisp name.
-    pub fn prin1_to_string(&self, v: &Value) -> String {
+    pub fn prin1_to_string(&self, v: &Value) -> EmacsText {
         self.print_to_string(v)
     }
 
@@ -300,10 +298,10 @@ impl Interp {
     /// (GNU print.c): each `#<...>' span recorded during the print is
     /// replaced by the callback's return value (must be a string), and
     /// a thrown tag/signal propagates as usual Lisp flow.
-    pub fn print_to_string_cb(&mut self, v: &Value) -> Result<String, crate::lisp::error::Flow> {
+    pub fn print_to_string_cb(&mut self, v: &Value) -> Result<PrintText, crate::lisp::error::Flow> {
         self.reset_print_numbering();
         UNREADABLE_HITS.with(|u| u.borrow_mut().clear());
-        let mut s = String::new();
+        let mut s = PrintText::new();
         let mark = BEING_PRINTED.with(|bp| bp.borrow().len());
         let prev_circle = self.install_circle_ctx(v);
         self.prin1_inner(v, &mut s, 0, false);
@@ -329,10 +327,10 @@ impl Interp {
     }
 
     /// `princ` variant of `print_to_string_cb'.
-    pub fn princ_to_string_cb(&mut self, v: &Value) -> Result<String, crate::lisp::error::Flow> {
+    pub fn princ_to_string_cb(&mut self, v: &Value) -> Result<PrintText, crate::lisp::error::Flow> {
         self.reset_print_numbering();
         UNREADABLE_HITS.with(|u| u.borrow_mut().clear());
-        let mut s = String::new();
+        let mut s = PrintText::new();
         let mark = BEING_PRINTED.with(|bp| bp.borrow().len());
         let prev_circle = self.install_circle_ctx(v);
         self.princ_inner(v, &mut s, 0, false);
@@ -357,14 +355,14 @@ impl Interp {
     }
 
     /// `princ` representation: human-readable (strings unquoted).
-    pub fn princ_to_string(&self, v: &Value) -> String {
-        let mut s = String::new();
+    pub fn princ_to_string(&self, v: &Value) -> EmacsText {
+        let mut s = PrintText::new();
         let mark = BEING_PRINTED.with(|bp| bp.borrow().len());
         let prev_circle = self.install_circle_ctx(v);
         self.princ_inner(v, &mut s, 0, false);
         CIRCLE.with(|c| *c.borrow_mut() = prev_circle);
         BEING_PRINTED.with(|bp| bp.borrow_mut().truncate(mark));
-        Self::sink_text(&s).into_owned()
+        s.to_text(true)
     }
 
     fn call_unreadable_printer(
@@ -423,7 +421,7 @@ impl Interp {
     /// When ITEMS is an `[overlay BID IDX]' handle, produce GNU's
     /// `#<overlay from B to E in NAME>' (or `#<overlay in no buffer>'
     /// once detached/killed).
-    fn overlay_repr(&self, items: &Rc<RefCell<Vec<Value>>>) -> Option<String> {
+    fn overlay_repr(&self, items: &Rc<RefCell<Vec<Value>>>) -> Option<EmacsText> {
         let value = Value::Vec(items.clone());
         if !self.is_overlay(&value) {
             return None;
@@ -437,18 +435,18 @@ impl Interp {
             .buffer
             .and_then(|id| self.buffers.get(id).map(|b| b.borrow().name.clone()))
         {
-            Some(name) => Some(format!(
-                "#<overlay from {} to {} in {}>",
-                ov.start + 1,
-                ov.end + 1,
-                name
-            )),
+            Some(name) => {
+                let mut text = EmacsText::from(format!("#<overlay from {} to {} in ", ov.start + 1, ov.end + 1));
+                text.append(&name);
+                text.push('>');
+                Some(text)
+            }
             None => Some("#<overlay in no buffer>".into()),
         }
     }
 
-    fn prin1_inner(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
-        let key = print_object_key(self, v);
+    fn prin1_inner(&self, v: &Value, out: &mut PrintText, depth: usize, bq: bool) {
+        let key = print_identity_key(self, v);
         if let Some(k) = key {
             if let Some(sub) = number_table_subst(self, v) {
                 match sub {
@@ -493,18 +491,17 @@ impl Interp {
         self.prin1_inner_obj(v, out, depth, bq);
     }
 
-    fn prin1_inner_obj(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
+    fn prin1_inner_obj(&self, v: &Value, out: &mut PrintText, depth: usize, bq: bool) {
         // `print-unreadable-function' hook: any `#<...>' fragment this
         // object emits is recorded for the `&mut' caller to post-process.
         let start = out.len();
         self.prin1_inner_obj_raw(v, out, depth, bq);
-        let piece = &out[start..];
-        if piece.len() > 2 && piece.starts_with("#<") && piece.ends_with('>') {
+        if out.span_is_unreadable(start) {
             UNREADABLE_HITS.with(|u| u.borrow_mut().push((start, out.len(), v.clone())));
         }
     }
 
-    fn prin1_inner_obj_raw(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
+    fn prin1_inner_obj_raw(&self, v: &Value, out: &mut PrintText, depth: usize, bq: bool) {
         if depth > 200 {
             out.push_str("##");
             return;
@@ -533,16 +530,14 @@ impl Interp {
                 if gensym_prefix {
                     out.push_str("#:");
                 }
-                let name = self.symbol_name(*id);
-                if gensym_prefix && name.is_empty() {
-                    return;
-                }
+                let name = self.print_symbol_name(*id);
+                if name.is_empty() && self.obarray.symbol(*id).uninterned && self.print_gensym() { return; }
                 // GNU escapes number-like names, leading question marks,
                 // and a leading dot unless followed by an ASCII letter.
-                if super::reader::parse_number(&name).is_some()
+                if (name.is_ascii() && super::reader::parse_number(&name.to_unicode_lossy()).is_some())
                     || name.starts_with('?')
                     || (name.starts_with('.')
-                        && !name.as_bytes().get(1).is_some_and(u8::is_ascii_alphabetic))
+                        && !name.chars().nth(1).is_some_and(|c| c.is_ascii_alphabetic()))
                 {
                     out.push('\\');
                 }
@@ -594,7 +589,7 @@ impl Interp {
                         "chinese-gb2312",
                     ];
                     let cid = charset_id.unwrap();
-                    let has_non_ascii = s.borrow().chars().any(|c| (c as u32) >= 0x80);
+                    let has_non_ascii = s.borrow().chars().any(|c| c.code() >= 0x80);
                     let mut out: Vec<Value> = Vec::new();
                     let mut k = 0;
                     while k + 1 < pl.len() {
@@ -638,8 +633,7 @@ impl Interp {
                     // string sink stores the eight-bit char).
                     for c in s.borrow().chars() {
                         let byte = crate::lisp::value::eight_bit_byte(c)
-                            .or_else(|| crate::lisp::value::raw_byte_marker(c))
-                            .or_else(|| ((c as u32) >= 0x80).then(|| (c as u32) as u8 & 0xFF));
+                            .or_else(|| (c.code() >= 0x80).then(|| c.code() as u8));
                         match (byte, na) {
                             (Some(b), true) => {
                                 let _ = write!(out, "\\{:03o}", b);
@@ -648,7 +642,7 @@ impl Interp {
                                 // Sink decides: stdout → overlong pair,
                                 // string/buffer → `\NNN', function →
                                 // eight-bit code 0x3FFF80+b.
-                                out.push(crate::lisp::value::print_eight_bit_char(b));
+                                out.push_printed_byte(b);
                             }
                             (None, _) => escape_char_for_string(c, out, nl, mb, cc),
                         }
@@ -712,24 +706,25 @@ impl Interp {
                 // when non-eql, `data' only when non-empty.  A named
                 // test (define-hash-table-test) prints its symbol.
                 let hh = h.borrow();
-                let test: Option<String> = if hh.test_name.truthy() {
+                let test: Option<EmacsText> = if hh.test_name.truthy() {
                     Some(match &hh.test_name {
-                        Value::Sym(id) => self.symbol_name(*id).to_string(),
+                        Value::Sym(id) => self.print_symbol_name(*id),
                         other => self.prin1_to_string(other),
                     })
                 } else {
                     match hh.test {
-                        crate::lisp::value::HashTest::Eq => Some("eq".to_string()),
+                        crate::lisp::value::HashTest::Eq => Some(EmacsText::from("eq")),
                         crate::lisp::value::HashTest::Eql => None,
                         crate::lisp::value::HashTest::Equal => {
-                            Some("equal".to_string())
+                            Some(EmacsText::from("equal"))
                         }
                     }
                 };
                 let empty = hh.keys.is_empty();
                 out.push_str("#s(hash-table");
                 if let Some(t) = test {
-                    let _ = write!(out, " test {}", t);
+                    out.push_str(" test ");
+                    out.push_str(&t);
                 }
                 if let Some(w) = &hh.weakness {
                     out.push_str(" weakness ");
@@ -810,7 +805,9 @@ impl Interp {
             Value::Buffer(b) => {
                 let bb = b.borrow();
                 if bb.live {
-                    let _ = write!(out, "#<buffer {}>", bb.name);
+                    out.push_str("#<buffer ");
+                    out.push_str(&bb.name);
+                    out.push('>');
                 } else {
                     out.push_str("#<killed buffer>");
                 }
@@ -821,15 +818,16 @@ impl Interp {
                     Some(buf) => {
                         let _ = write!(
                             out,
-                            "#<marker {}at {} in {}>",
+                            "#<marker {}at {} in ",
                             if b.insertion_type {
                                 "(moves after insertion) "
                             } else {
                                 ""
                             },
-                            b.position + 1,
-                            self.buffer_name_by_id(buf)
+                            b.position + 1
                         );
+                        out.push_str(&self.buffer_name_by_id(buf));
+                        out.push('>');
                     }
                     None => {
                         // GNU appends the insertion-type annotation
@@ -846,21 +844,21 @@ impl Interp {
                 let b = w.borrow();
                 let _ = write!(
                     out,
-                    "#<window {} on {}>",
-                    b.id,
-                    self.buffer_name_by_id(b.buffer)
+                    "#<window {} on ",
+                    b.id
                 );
+                out.push_str(&self.buffer_name_by_id(b.buffer));
+                out.push('>');
             }
             Value::Frame(f) => {
-                let _ = write!(
-                    out,
-                    "#<frame {} {:#x}>",
-                    f.borrow().name.borrow().as_str(),
-                    Rc::as_ptr(f) as usize
-                );
+                out.push_str("#<frame ");
+                out.push_str(&f.borrow().name.borrow());
+                let _ = write!(out, " {:#x}>", Rc::as_ptr(f) as usize);
             }
             Value::Process(p) => {
-                let _ = write!(out, "#<process {}>", p.borrow().name);
+                out.push_str("#<process ");
+                out.push_str(&p.borrow().name);
+                out.push('>');
             }
             // GNU prints the machine address; any unique pointer works.
             Value::Thread(t) => {
@@ -870,7 +868,7 @@ impl Interp {
                 let mm = m.borrow();
                 match &mm.name {
                     Some(n) => {
-                        let _ = write!(out, "#<mutex {n}>");
+                        out.push_str("#<mutex "); out.push_str(n); out.push('>');
                     }
                     None => out.push_str("#<mutex>"),
                 }
@@ -879,7 +877,7 @@ impl Interp {
                 let cc = c.borrow();
                 match &cc.name {
                     Some(n) => {
-                        let _ = write!(out, "#<condvar {n}>");
+                        out.push_str("#<condvar "); out.push_str(n); out.push('>');
                     }
                     None => out.push_str("#<condvar>"),
                 }
@@ -888,8 +886,8 @@ impl Interp {
         }
     }
 
-    fn princ_inner(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
-        if let Some(k) = print_object_key(self, v) {
+    fn princ_inner(&self, v: &Value, out: &mut PrintText, depth: usize, bq: bool) {
+        if let Some(k) = print_identity_key(self, v) {
             if let Some(sub) = number_table_subst(self, v) {
                 match sub {
                     NtSubst::Replace(t) => {
@@ -929,16 +927,15 @@ impl Interp {
         self.princ_inner_obj(v, out, depth, bq);
     }
 
-    fn princ_inner_obj(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
+    fn princ_inner_obj(&self, v: &Value, out: &mut PrintText, depth: usize, bq: bool) {
         let start = out.len();
         self.princ_inner_obj_raw(v, out, depth, bq);
-        let piece = &out[start..];
-        if piece.len() > 2 && piece.starts_with("#<") && piece.ends_with('>') {
+        if out.span_is_unreadable(start) {
             UNREADABLE_HITS.with(|u| u.borrow_mut().push((start, out.len(), v.clone())));
         }
     }
 
-    fn princ_inner_obj_raw(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
+    fn princ_inner_obj_raw(&self, v: &Value, out: &mut PrintText, depth: usize, bq: bool) {
         if let Some(level) = self.print_level_limit() {
             if depth >= level {
                 if let Value::Cons(_) = v {
@@ -951,21 +948,12 @@ impl Interp {
             Value::Int(i) => self.print_integer(*i, out, false),
             Value::BigInt(i) => { let _ = write!(out, "{i}"); },
             Value::Str(s) => out.push_str(&s.borrow()),
-            // `princ' omits symbol-name escapes, but still marks
-            // uninterned symbols when `print-gensym' is enabled.
+            // princ prints symbol names raw — no backslash escapes.
             Value::Sym(id) => {
-                let gensym_prefix = self.obarray.symbol(*id).uninterned && self.print_gensym();
-                if gensym_prefix {
-                    out.push_str("#:");
-                }
-                let name = self.symbol_name(*id);
-                if name.is_empty() {
-                    if !gensym_prefix {
-                        out.push_str("##");
-                    }
-                } else {
-                    out.push_str(&name);
-                }
+                let prefixed = self.obarray.symbol(*id).uninterned && self.print_gensym();
+                if prefixed { out.push_str("#:"); }
+                let name = self.print_symbol_name(*id);
+                if name.is_empty() && !prefixed { out.push_str("##"); } else { out.push_str(&name); }
             }
             // princ prints live buffers as bare names; a killed buffer
             // prints `#<killed buffer>' like the escaped form.
@@ -1024,7 +1012,7 @@ impl Interp {
     fn print_record(
         &self,
         items: &std::rc::Rc<std::cell::RefCell<Vec<Value>>>,
-        out: &mut String,
+        out: &mut PrintText,
         depth: usize,
         bq: bool,
         princ: bool,
@@ -1042,28 +1030,21 @@ impl Interp {
                 }
             };
         }
-        if let Some((sym, pos)) = crate::lisp::builtins::misc::any_sympos_parts(
-            self,
-            &Value::Record(items.clone()),
-        ) {
-            let value = Value::Sym(sym);
-            if princ {
-                self.princ_inner(&value, out, depth + 1, bq);
-            } else if self.print_var("print-symbols-bare").truthy() {
-                self.prin1_inner(&value, out, depth + 1, bq);
-            } else {
-                out.push_str("#<symbol ");
-                self.prin1_inner(&value, out, depth + 1, bq);
-                let _ = write!(out, " at {}>", pos);
-            }
-            return;
-        }
         {
             let rr = items.borrow();
+            if let Some((symbol, position)) = crate::lisp::builtins::misc::raw_symbol_position(&Value::Record(items.clone())) {
+                let bare = self.sym(symbol);
+                if !self.print_var("print-symbols-bare").truthy() {
+                    out.push_str("#<symbol ");
+                    inner!(&bare);
+                    let _ = write!(out, " at {}>", position);
+                } else { inner!(&bare); }
+                return;
+            }
             if let Some(Value::Sym(t)) = rr.first() {
                 // Obarrays print `#<obarray n=COUNT>' — COUNT is
                 // the number of interned symbols.
-                if self.symbol_name(*t) == "obarray" {
+                if Value::Record(items.clone()).record_kind() == Some(super::value::RecordKind::Obarray) {
                     let n = match rr.get(1) {
                         Some(Value::Vec(syms)) => syms
                             .borrow()
@@ -1078,7 +1059,9 @@ impl Interp {
                 // Terminals print `#<terminal N on NAME>'.
                 if self.symbol_name(*t) == "terminal" {
                     if let [_, Value::Int(n), Value::Str(name)] = rr.as_slice() {
-                        let _ = write!(out, "#<terminal {} on {}>", n, name.borrow());
+                        let _ = write!(out, "#<terminal {} on ", n);
+                        out.push_str(&name.borrow());
+                        out.push('>');
                         return;
                     }
                 }
@@ -1132,7 +1115,7 @@ impl Interp {
                 // record keeps a plist in slot 1 — map the known keys
                 // to their font.c slot positions and put the rest in
                 // the extras list.
-                if self.symbol_name(*t) == "font-spec" {
+                if Value::Record(items.clone()).record_kind() == Some(super::value::RecordKind::FontSpec) {
                     out.push_str("#<font-spec");
                     const SLOT_KEYS: [&str; 12] = [
                         ":type",
@@ -1186,7 +1169,7 @@ impl Interp {
                     out.push('>');
                     return;
                 }
-                if self.symbol_name(*t) == "char-table" {
+                if Value::Record(items.clone()).record_kind() == Some(super::value::RecordKind::CharTable) {
                     if let Some(Value::Vec(slots)) = rr.get(2) {
                         let ptr = std::rc::Rc::as_ptr(items) as usize;
                         let slots = slots.borrow();
@@ -1197,8 +1180,7 @@ impl Interp {
             }
             // Bool vectors print `#&N"bytes"' with bits packed
             // LSB-first per byte.
-            let is_bv = matches!(rr.first(), Some(Value::Sym(t))
-                if self.symbol_name(*t) == "bool-vector");
+            let is_bv = Value::Record(items.clone()).record_kind() == Some(super::value::RecordKind::BoolVector);
             if is_bv {
                 if let Some(Value::Vec(bits)) = rr.get(1) {
                     let bits = bits.borrow();
@@ -1238,7 +1220,7 @@ impl Interp {
         out.push(')');
     }
 
-    fn print_lambda_list(&self, l: &super::value::Lambda, out: &mut String) {
+    fn print_lambda_list(&self, l: &super::value::Lambda, out: &mut PrintText) {
         if let Some(raw) = &l.arglist {
             self.prin1_inner(raw, out, 1, false);
             return;
@@ -1249,20 +1231,20 @@ impl Interp {
         }
         out.push('(');
         let mut first = true;
-        let mut names: Vec<String> = l
+        let mut names: Vec<EmacsText> = l
             .required
             .iter()
-            .map(|s| self.symbol_name(*s).to_string())
+            .map(|s| self.print_symbol_name(*s))
             .collect();
         if !l.optional.is_empty() {
             names.push("&optional".into());
             for o in &l.optional {
-                names.push(self.symbol_name(o.sym).to_string());
+                names.push(self.print_symbol_name(o.sym));
             }
         }
         if let Some(r) = l.rest {
             names.push("&rest".into());
-            names.push(self.symbol_name(r).to_string());
+            names.push(self.print_symbol_name(r));
         }
         for n in names {
             if !first {
@@ -1285,7 +1267,7 @@ impl Interp {
         ptr: usize,
         rr: &[Value],
         slots: &[Value],
-        out: &mut String,
+        out: &mut PrintText,
         depth: usize,
         bq: bool,
     ) {
@@ -1364,7 +1346,7 @@ impl Interp {
     pub(crate) fn format_float_output(&self, value: f64) -> String {
         let format = self.print_var("float-output-format");
         if let Value::Str(s) = format {
-            if let Some(output) = format_float_descriptor(value, &s.borrow()) {
+            if let Some(output) = s.borrow().is_ascii().then(|| format_float_descriptor(value, &s.borrow().to_unicode_lossy())).flatten() {
                 return output;
             }
         }
@@ -1374,7 +1356,7 @@ impl Interp {
     /// GNU print.c: only independent graphic characters and the six
     /// common named escapes use character notation.  `princ' omits the
     /// extra quoting for delimiter characters, but keeps named escapes.
-    fn print_integer(&self, n: i128, out: &mut String, escape: bool) {
+    fn print_integer(&self, n: i128, out: &mut PrintText, escape: bool) {
         if self.print_var("print-integers-as-characters").truthy() && (0..=0x10ffff).contains(&n) {
             let named = match n {
                 8 => Some('b'),
@@ -1478,7 +1460,7 @@ impl Interp {
     }
 
     /// Print a (possibly dotted) list.
-    fn print_list(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
+    fn print_list(&self, v: &Value, out: &mut PrintText, depth: usize, bq: bool) {
         if let Some((prefix, inner, inner_bq)) = self.quote_abbrev(v, bq) {
             out.push_str(prefix);
             self.prin1_inner(&inner, out, depth + 1, inner_bq);
@@ -1560,7 +1542,7 @@ impl Interp {
         }
     }
 
-    fn print_list_princ(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
+    fn print_list_princ(&self, v: &Value, out: &mut PrintText, depth: usize, bq: bool) {
         if let Some((prefix, inner, inner_bq)) = self.quote_abbrev(v, bq) {
             out.push_str(prefix);
             self.princ_inner(&inner, out, depth + 1, inner_bq);
@@ -1635,10 +1617,15 @@ impl Interp {
         }
     }
 
-    fn buffer_name_by_id(&self, id: usize) -> String {
-        self.buffer_name(id)
+    fn print_symbol_name(&self, id: super::value::SymId) -> EmacsText {
+        self.symbol_name_text(id)
+    }
+
+    fn buffer_name_by_id(&self, id: usize) -> EmacsText {
+        self.buffers.get(id).map(|b| b.borrow().name.clone())
             .unwrap_or_else(|| "*killed buffer*".into())
     }
+
 }
 
 /// Return the canonical, shared interpreter-environment alist.

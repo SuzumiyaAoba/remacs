@@ -4733,6 +4733,7 @@ name = "remacs-runtime"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "cc",
  "corosensei",
  "flate2",
  "html5ever",

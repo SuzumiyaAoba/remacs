@@ -234,7 +234,7 @@ mod coverage_tests {
             // Buffer sink captures princ and message output.
             let mut i = Interp::new();
             i.noninteractive = false;
-            let sink = Rc::new(RefCell::new(String::new()));
+            let sink = Rc::new(RefCell::new(crate::lisp::text::EmacsText::new()));
             i.output = Some(OutputSink::Buffer(sink.clone()));
             i.eval_str("(princ \"into-sink\")").unwrap();
             i.message("logged-msg");

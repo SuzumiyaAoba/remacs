@@ -1,5 +1,6 @@
 //! Metadata-driven external charset codecs. Charset maps are shared with
 //! encode-char/decode-char, so runtime-defined and composite charsets work too.
+use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use super::{charset, misc};
 use crate::lisp::{
     Interp,
@@ -46,12 +47,12 @@ fn specs(i: &mut Interp, p: &Value) -> Vec<CharsetSpec> {
         })
         .collect()
 }
-fn scalar(c: u32) -> char {
+fn scalar(c: u32) -> EmacsChar {
     lisp_char(c).unwrap_or_else(|| mule_seq_char(c))
 }
-fn raw(b: u8) -> char {
+fn raw(b: u8) -> EmacsChar {
     if b < 128 {
-        b as char
+        EmacsChar::from(b as char)
     } else {
         scalar(0x3fff00 + b as u32)
     }
@@ -167,7 +168,7 @@ fn encode_with(i: &Interp, sets: &[CharsetSpec], sjis: bool, c: u32) -> Option<V
     }
     None
 }
-pub(crate) fn encode(i: &mut Interp, coding: &Value, text: &str, _finish: bool) -> Option<Vec<u8>> {
+pub(crate) fn encode(i: &mut Interp, coding: &Value, text: &EmacsStr, _finish: bool) -> Option<Vec<u8>> {
     let (n, k, p) = attrs(i, coding)?;
     if n == "utf-8-emacs" {
         return Some(
@@ -235,7 +236,7 @@ pub(crate) fn decode(
     coding: &Value,
     bytes: &[u8],
     force_conversion: bool,
-) -> Option<(String, Spans)> {
+) -> Option<(EmacsText, Spans)> {
     decode_with_native(i, coding, bytes, &[], force_conversion)
 }
 
@@ -245,9 +246,9 @@ pub(super) fn decode_with_native(
     i: &mut Interp,
     coding: &Value,
     bytes: &[u8],
-    native: &[Option<char>],
+    native: &[Option<EmacsChar>],
     force_conversion: bool,
-) -> Option<(String, Spans)> {
+) -> Option<(EmacsText, Spans)> {
     let (n, k, p) = attrs(i, coding)?;
     if n == "utf-8-emacs" {
         return Some((internal_decode(bytes), vec![]));
@@ -266,14 +267,14 @@ pub(super) fn decode_with_native(
             bytes
                 .iter()
                 .enumerate()
-                .map(|(at, b)| native.get(at).copied().flatten().unwrap_or(*b as char))
+                .map(|(at, b)| native.get(at).copied().flatten().unwrap_or(EmacsChar::from(*b as char)))
                 .collect(),
             vec![],
         ));
     }
     let sets = specs(i, &p);
     let sjis = k == "shift-jis";
-    let mut out = String::new();
+    let mut out = EmacsText::new();
     let mut spans: Spans = vec![];
     let mut active: Option<String> = None;
     let mut pos = 0;
@@ -398,8 +399,8 @@ pub(crate) fn internal_encode(c: u32) -> Vec<u8> {
     bs[0] = ([0, 0, 0xc0, 0xe0, 0xf0, 0xf8][n]) | x as u8;
     bs
 }
-pub(crate) fn internal_decode(bs: &[u8]) -> String {
-    let mut out = String::new();
+pub(crate) fn internal_decode(bs: &[u8]) -> EmacsText {
+    let mut out = EmacsText::new();
     let mut at = 0;
     while at < bs.len() {
         let b = bs[at];
@@ -434,12 +435,12 @@ pub(crate) fn internal_decode(bs: &[u8]) -> String {
     out
 }
 const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-fn utf7_encode(s: &str, imap: bool) -> Vec<u8> {
+fn utf7_encode(s: &EmacsStr, imap: bool) -> Vec<u8> {
     let esc = if imap { b'&' } else { b'+' };
-    let chars: Vec<char> = s.chars().collect();
+    let chars: Vec<EmacsChar> = s.chars().collect();
     let mut out = vec![];
     let mut at = 0;
-    let direct = |c: char| {
+    let direct = |c: EmacsChar| {
         c == '\t'
             || c == '\n'
             || c == '\r'
@@ -447,20 +448,20 @@ fn utf7_encode(s: &str, imap: bool) -> Vec<u8> {
     };
     while at < chars.len() {
         let c = chars[at];
-        if c as u32 == esc as u32 {
+        if c.code() == esc as u32 {
             out.extend([esc, b'-']);
             at += 1;
             continue;
         }
         if direct(c) {
-            out.push(c as u8);
+            out.push(c.code() as u8);
             at += 1;
             continue;
         }
         out.push(esc);
         let mut acc = 0u32;
         let mut bits = 0;
-        while at < chars.len() && !direct(chars[at]) && chars[at] as u32 != esc as u32 {
+        while at < chars.len() && !direct(chars[at]) && chars[at].code() != esc as u32 {
             let mut buf = [0u16; 2];
             let code = lisp_char_code(chars[at]) as u32;
             let units: &[u16] = if code >= 0x110000 {
@@ -470,7 +471,7 @@ fn utf7_encode(s: &str, imap: bool) -> Vec<u8> {
                 buf[0] = code as u16;
                 &buf[..1]
             } else {
-                chars[at].encode_utf16(&mut buf)
+                chars[at].unicode().unwrap().encode_utf16(&mut buf)
             };
             for unit in units.iter() {
                 for b in unit.to_be_bytes() {
@@ -495,9 +496,9 @@ fn utf7_encode(s: &str, imap: bool) -> Vec<u8> {
     }
     out
 }
-fn utf7_decode(bs: &[u8], imap: bool) -> String {
+fn utf7_decode(bs: &[u8], imap: bool) -> EmacsText {
     let esc = if imap { b'&' } else { b'+' };
-    let mut out = String::new();
+    let mut out = EmacsText::new();
     let mut at = 0;
     while at < bs.len() {
         if bs[at] != esc {

@@ -1,0 +1,31 @@
+;;; -*- lexical-binding: nil; -*-
+;; byte-to-string validates bytes and preserves raw unibyte storage (#619).
+(dotimes (byte 256)
+  (let ((string (byte-to-string byte)))
+    (qa (length string) 1)
+    (qa (string-bytes string) 1)
+    (qa (multibyte-string-p string) nil)
+    (qa (aref string 0) byte)
+    (qa (string-to-list string) (list byte))
+    (qa (equal string (unibyte-string byte)) t)
+    (qa (string-to-list (concat (string-as-multibyte "x") string))
+        (list ?x (if (< byte 128) byte (+ #x3fff00 byte))))))
+(dolist (byte '(-1 -2305843009213693952 256 55296 #x110000 #x3fff80 #x3fffff 4294967551 2305843009213693951))
+  (qa-err-data (byte-to-string byte) 'error '("Invalid byte")))
+(dolist (value '(nil t "255" 255.0 -0.0 2305843009213693952 100000000000000000000000000000000000000000000000))
+  (qa-err-data (byte-to-string value) 'wrong-type-argument (list 'fixnump value)))
+(let ((marker (point-marker)))
+  (qa-err-data (byte-to-string marker) 'wrong-type-argument (list 'fixnump marker)))
+(let ((string (byte-to-string 255)))
+  (garbage-collect)
+  (qa (list (aref string 0) (multibyte-string-p string) (string-bytes string)) '(255 nil 1)))
+;; The constructor is a primitive: redefining unibyte-string does not affect it.
+(let ((old (symbol-function 'unibyte-string)) result)
+  (unwind-protect
+      (progn
+        (fset 'unibyte-string (lambda (&rest _) 'shadow))
+        (setq result (byte-to-string 255)))
+    (fset 'unibyte-string old))
+  (qa (string-to-list result) '(255))
+  (qa (multibyte-string-p result) nil))
+(princ (qa--done))

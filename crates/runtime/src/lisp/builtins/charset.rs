@@ -5,6 +5,7 @@
 //! by name with plists, char-code property tables (general-category
 //! provided for ASCII), and coding-system type resolution.
 
+use crate::lisp::text::{EmacsChar, EmacsText, TextSource};
 use std::rc::Rc;
 
 use super::misc::{coding_known, is_char_table};
@@ -508,7 +509,7 @@ fn f_charset_after(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     })
 }
 
-fn find_charset_of_chars(i: &mut Interp, chars: impl Iterator<Item = char>) -> Value {
+fn find_charset_of_chars(i: &mut Interp, chars: impl Iterator<Item = EmacsChar>) -> Value {
     // GNU picks, for each char, the highest-priority charset containing
     // it (char-charset on the ordered list), then emits the covering
     // set sorted by charset id — ascii first, then the JIS tables.
@@ -536,6 +537,12 @@ fn f_find_charset_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
         _ => Err(i.wrong_type_mut("stringp", &a[0])),
     }
+}
+
+fn region_charset_character(character: EmacsChar, unibyte: bool) -> EmacsChar {
+    if unibyte && (128..=255).contains(&character.code()) {
+        EmacsChar::new(0x3fff00 + character.code()).unwrap()
+    } else { character }
 }
 
 fn f_find_charset_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -576,8 +583,10 @@ fn f_find_charset_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         ));
     }
     let (lo, hi) = ((lo1 - 1) as usize, (hi1 - 1) as usize);
-    let sub: String = text.chars().skip(lo).take(hi.saturating_sub(lo)).collect();
-    Ok(find_charset_of_chars(i, sub.chars()))
+    let sub: crate::lisp::text::EmacsText = text.chars().skip(lo).take(hi.saturating_sub(lo)).collect();
+    let multibyte = i.q("enable-multibyte-characters");
+    let unibyte = i.symbol_value(multibyte).is_nil();
+    Ok(find_charset_of_chars(i, sub.chars().map(|c| region_charset_character(c, unibyte))))
 }
 
 fn f_char_resolve_modifiers(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -702,11 +711,11 @@ pub(crate) fn uniprop_decode_run_length(tbl: &Value, raw: Value) -> Value {
 /// like `unidata-get-decomposition'.
 fn unidata_word_list_decode(
     i: &mut Interp,
-    s: &str,
+    s: &crate::lisp::text::EmacsStr,
     word_table: &[Value],
     name_mode: bool,
 ) -> Vec<Value> {
-    let chars: Vec<char> = s.chars().collect();
+    let chars: Vec<EmacsChar> = s.chars().collect();
     let mut vec = vec![Value::Nil; 128];
     let mut idx = 0usize;
     let (mut j, mut diff_head) = (1usize, 0usize);
@@ -714,7 +723,7 @@ fn unidata_word_list_decode(
     let mut tail: Vec<Value> = Vec::new();
     let mut last: Vec<Value> = Vec::new();
     while j < chars.len() && idx < 128 {
-        let c = chars[j] as u32;
+        let c = chars[j].code();
         if c < 3 {
             if !word.is_empty() || !tail.is_empty() {
                 word.extend(tail.iter().cloned());
@@ -727,7 +736,7 @@ fn unidata_word_list_decode(
             idx += 1;
             if c > 0 {
                 if c == 1 && j < chars.len() {
-                    diff_head = chars[j] as usize;
+                    diff_head = chars[j].code() as usize;
                     j += 1;
                 }
                 let t = diff_head % 16;
@@ -742,7 +751,7 @@ fn unidata_word_list_decode(
                 Some(v) => {
                     if name_mode {
                         match v {
-                            Value::Sym(sid) => Value::string(i.symbol_name(*sid)),
+                            Value::Sym(sid) => Value::string(i.symbol_name_text(*sid)),
                             other => other.clone(),
                         }
                     } else {
@@ -751,7 +760,7 @@ fn unidata_word_list_decode(
                 }
                 None => {
                     if name_mode {
-                        Value::string(char::from_u32(c).unwrap_or('\0').to_string())
+                        Value::string(EmacsChar::new(c).unwrap().to_string())
                     } else {
                         Value::Int(c as i128)
                     }
@@ -783,7 +792,7 @@ fn unidata_get_decomposition(i: &mut Interp, ch: u32, raw: &Value, tbl: &Value) 
         Value::Nil => Value::list(vec![Value::Int(ch as i128)]),
         Value::Cons(_) => raw.clone(),
         Value::Str(s) => {
-            if s.borrow().chars().next() != Some('\0') {
+            if !s.borrow().chars().next().is_some_and(|c| c == '\0') {
                 return raw.clone();
             }
             let first = (ch >> 7) << 7;
@@ -821,7 +830,7 @@ fn unidata_get_decomposition(i: &mut Interp, ch: u32, raw: &Value, tbl: &Value) 
 fn unidata_get_name(i: &mut Interp, ch: u32, raw: &Value, tbl: &Value) -> Value {
     match raw {
         Value::Str(s) => {
-            if s.borrow().chars().next() != Some('\0') {
+            if !s.borrow().chars().next().is_some_and(|c| c == '\0') {
                 return raw.clone();
             }
             let first = (ch >> 7) << 7;
@@ -838,7 +847,7 @@ fn unidata_get_name(i: &mut Interp, ch: u32, raw: &Value, tbl: &Value) -> Value 
                 let name = match ent {
                     Value::Nil => Value::Nil,
                     l => {
-                        let mut parts: Vec<String> = Vec::new();
+                        let mut parts: Vec<EmacsText> = Vec::new();
                         // GNU `unidata-get-name': " " before each word,
                         // except before "-" and before the word after "-"
                         // (its `cddr' walks past the word after a dash).
@@ -846,20 +855,20 @@ fn unidata_get_name(i: &mut Interp, ch: u32, raw: &Value, tbl: &Value) -> Value 
                         for (n, e) in l.list_to_vec().unwrap_or_default().iter().enumerate() {
                             let w = match e {
                                 Value::Str(w) => w.borrow().clone(),
-                                Value::Sym(sid) => i.symbol_name(*sid),
-                                Value::Int(c) => char::from_u32(*c as u32)
+                                Value::Sym(sid) => i.symbol_name_text(*sid),
+                                Value::Int(c) => crate::lisp::value::lisp_char(*c as u32)
                                     .map(|c| c.to_string())
                                     .unwrap_or_default(),
-                                _ => String::new(),
+                                _ => EmacsText::new(),
                             };
                             let dash = w == "-";
                             if n > 0 && !dash && !after_dash {
-                                parts.push(" ".to_string());
+                                parts.push(EmacsText::from(" "));
                             }
                             after_dash = dash;
                             parts.push(w);
                         }
-                        Value::string(parts.concat())
+                        Value::string(EmacsText::join(&parts, ""))
                     }
                 };
                 misc::ct_set(i, tbl, first + k as u32, name.clone());
@@ -892,26 +901,24 @@ fn unidata_get_name(i: &mut Interp, ch: u32, raw: &Value, tbl: &Value) -> Value 
                     };
                     let c = ch - 0xAC00;
                     let (l, v, t) = ((c / 588) as usize, ((c % 588) / 28) as usize, c % 28);
-                    let jamo_name = |part: usize, k: usize| -> String {
+                    let jamo_name = |part: usize, k: usize| -> EmacsText {
                         match jamo.get(part) {
                             Some(Value::Vec(jv)) => match jv.borrow().get(k) {
-                                Some(Value::Sym(sid)) => i.symbol_name(*sid),
-                                _ => String::new(),
+                                Some(Value::Sym(sid)) => i.symbol_name_text(*sid),
+                                _ => EmacsText::new(),
                             },
-                            _ => String::new(),
+                            _ => EmacsText::new(),
                         }
                     };
                     let tail = if t == 0 {
-                        String::new()
+                        EmacsText::new()
                     } else {
                         jamo_name(2, t as usize - 1)
                     };
-                    Value::string(format!(
-                        "HANGUL SYLLABLE {}{}{}",
-                        jamo_name(0, l),
-                        jamo_name(1, v),
-                        tail
-                    ))
+                    let mut name = EmacsText::from("HANGUL SYLLABLE ");
+                    name.append(&jamo_name(0, l));
+                    name.append(&jamo_name(1, v)); name.append(&tail);
+                    Value::string(name)
                 }
                 "CJK IDEOGRAPH"
                 | "TANGUT IDEOGRAPH"
@@ -1000,7 +1007,7 @@ fn load_file_backed_prop(i: &mut Interp, prop: &str) {
         });
     if let Some(file) = file {
         // GNU uniprop_table loads the table file with NOMESSAGE = t.
-        let _ = crate::lisp::load::load_library_opts_msg(i, &file, false, false, true, true);
+        let _ = crate::lisp::load::load_library_opts_msg(i, &(file).to_unicode_lossy(), false, false, true, true);
     }
 }
 
@@ -1159,7 +1166,7 @@ fn f_put_char_code_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
                 // its memoization can't clobber VAL), then `aset'.
                 let raw = misc::char_table_ref(i, &tbl, ch.max(0) as usize);
                 if let Value::Str(s) = &raw {
-                    if s.borrow().chars().next() == Some('\0') {
+                    if s.borrow().chars().next().is_some_and(|c| c == '\0') {
                         uniprop_lookup(i, &tbl, ch.max(0) as u32, raw);
                     }
                 }
@@ -3290,12 +3297,14 @@ fn charset_map_dirs() -> Vec<std::path::PathBuf> {
 
 /// Load (and cache) `etc/charsets/NAME.map'.  A missing file caches an
 /// empty table so we don't rescan per character.
-fn charset_table(i: &Interp, mapname: &str, name: &str) -> Option<Rc<CharsetTable>> {
+fn charset_table<T: TextSource + ?Sized>(i: &Interp, mapname: &T, name: &str) -> Option<Rc<CharsetTable>> {
+    mapname.with_text(|mapname| {
     let plist = charset_entry(i, name)
         .map(|e| e.1.clone())
         .unwrap_or(Value::Nil);
     let dims = charset_dims(i, &plist);
-    let key = format!("filemap:{mapname}:{dims:?}");
+    let codes: Vec<_> = mapname.chars().map(EmacsChar::code).collect();
+    let key = format!("filemap:{codes:?}:{dims:?}");
     if let Some(t) = i.charset_maps.borrow().get(&key) {
         return if t.dec.is_empty() {
             None
@@ -3304,7 +3313,8 @@ fn charset_table(i: &Interp, mapname: &str, name: &str) -> Option<Rc<CharsetTabl
         };
     }
     for d in charset_map_dirs() {
-        let p = d.join(format!("{mapname}.map"));
+        let mut filename = mapname.to_string(); filename.push_str(".map");
+        let p = d.join(filename.to_os_string().ok()?);
         if let Ok(text) = std::fs::read_to_string(&p) {
             let t = Rc::new(parse_charset_map(&text, dims.as_deref()));
             i.charset_maps.borrow_mut().insert(key.clone(), t.clone());
@@ -3319,6 +3329,8 @@ fn charset_table(i: &Interp, mapname: &str, name: &str) -> Option<Rc<CharsetTabl
         }),
     );
     None
+
+    })
 }
 
 fn charset_prop(i: &Interp, plist: &Value, key: &str) -> Value {
@@ -3886,8 +3898,9 @@ fn dci_aref(i: &mut Interp, v: &Value, idx: usize) -> Result<Value, Flow> {
         }
         Value::Str(s) => {
             let sv = s.borrow();
-            match sv.chars().nth(idx) {
-                Some(c) => Ok(Value::Int(c as i128)),
+            let character = sv.chars().nth(idx);
+            match character {
+                Some(c) => Ok(Value::Int((c).code() as i128)),
                 None => {
                     drop(sv);
                     let s2 = i.q("args-out-of-range");
@@ -4299,4 +4312,20 @@ fn f_define_coding_system_internal(i: &mut Interp, a: crate::lisp::Argv) -> Eval
         }
     }
     Ok(Value::Nil)
+}
+
+#[cfg(test)]
+mod wide_charset_region_tests {
+    use super::*;
+    #[test]
+    fn unibyte_octets_are_classified_as_byte8() {
+        let input = [65u32, 127, 128, 255].map(|code| EmacsChar::new(code).unwrap());
+        assert_eq!(input.map(|c| region_charset_character(c, true).code()), [65, 127, 0x3fff80, 0x3fffff]);
+        assert_eq!(input.map(|c| region_charset_character(c, false).code()), [65, 127, 128, 255]);
+    }
+    #[test]
+    fn multibyte_private_use_and_extended_codes_keep_their_identity() {
+        let input = [0xf0080u32, 0xf0100, 0xd800, 0x110000, 0x3fff80];
+        assert_eq!(input.map(|code| region_charset_character(EmacsChar::new(code).unwrap(), false).code()), input);
+    }
 }

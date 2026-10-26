@@ -9,6 +9,7 @@
 //! `special-event-map' the way GNU's `read_char' does) from
 //! `drain', called by the `sleep_firing_timers' pump and `read-event'.
 
+use crate::lisp::text::{EmacsText, TextSource};
 use std::os::raw::{c_char, c_void};
 use std::sync::OnceLock;
 
@@ -211,7 +212,7 @@ pub struct DbusState {
     /// (bus . connection) — GNU `xd_registered_buses'.
     pub buses: Vec<DbusReg>,
     /// (fd . object-path-or-filename) — GNU `xd_registered_fds'.
-    pub fds: Vec<(i64, String)>,
+    pub fds: Vec<(i64, EmacsText)>,
 }
 
 impl DbusState {
@@ -274,15 +275,28 @@ fn is_keyword(i: &Interp, v: &Value) -> bool {
     }
 }
 
-fn str_of(v: &Value) -> Option<String> {
+fn str_of(v: &Value) -> Option<EmacsText> {
     match v {
         Value::Str(s) => Some(s.borrow().clone()),
         _ => None,
     }
 }
 
-fn cstr(s: &str) -> std::ffi::CString {
-    std::ffi::CString::new(s).unwrap_or_else(|_| std::ffi::CString::new("").unwrap())
+/// D-Bus message strings use GNU SSDATA/SBYTES, not filename encoding.
+/// https://github.com/emacs-mirror/emacs/blob/master/src/dbusbind.c
+fn lisp_string_cstr(i: &Interp, string: &crate::lisp::value::StrRef) -> std::ffi::CString {
+    std::ffi::CString::new(super::strfn::gnu_sbytes(i, string)).unwrap_or_default()
+}
+fn lisp_cstr(i: &Interp, value: &Value) -> std::ffi::CString {
+    match value {
+        Value::Str(string) => lisp_string_cstr(i, string),
+        _ => std::ffi::CString::new("").unwrap(),
+    }
+}
+
+fn cstr<T: TextSource + ?Sized>(text: &T) -> std::ffi::CString {
+    text.with_text(|text| std::ffi::CString::new(text.to_external_bytes())
+        .unwrap_or_else(|_| std::ffi::CString::new("").unwrap()))
 }
 
 fn call_lisp(i: &mut Interp, f: &str, args: Vec<Value>) -> EvalResult {
@@ -499,8 +513,7 @@ fn check_cons(i: &mut Interp, v: &Value) -> Result<(), Flow> {
 fn validate_path(i: &mut Interp, v: &Value) -> Result<(), Flow> {
     check_string(i, v)?;
     if let Some(d) = dbus() {
-        let s = str_of(v).unwrap_or_default();
-        let cs = cstr(&s);
+        let cs = lisp_cstr(i, v);
         let mut err = DBusError {
             name: std::ptr::null(),
             message: std::ptr::null(),
@@ -525,8 +538,7 @@ fn validate_bus_name(i: &mut Interp, v: &Value) -> Result<(), Flow> {
     }
     check_string(i, v)?;
     if let Some(d) = dbus() {
-        let s = str_of(v).unwrap_or_default();
-        let cs = cstr(&s);
+        let cs = lisp_cstr(i, v);
         let mut err = DBusError {
             name: std::ptr::null(),
             message: std::ptr::null(),
@@ -551,8 +563,7 @@ fn validate_interface_member(i: &mut Interp, v: &Value, iface: bool) -> Result<(
     }
     check_string(i, v)?;
     if let Some(d) = dbus() {
-        let s = str_of(v).unwrap_or_default();
-        let cs = cstr(&s);
+        let cs = lisp_cstr(i, v);
         let mut err = DBusError {
             name: std::ptr::null(),
             message: std::ptr::null(),
@@ -601,7 +612,7 @@ fn xd_error(i: &mut Interp, err: *mut DBusError) -> Flow {
 /// (DBUS_TYPE_INVALID at top level) — needed for dict-entry checks.
 fn xd_signature(
     i: &mut Interp,
-    signature: &mut String,
+    signature: &mut EmacsText,
     dtype: i32,
     parent_type: i32,
     object: &Value,
@@ -641,15 +652,15 @@ fn xd_signature(
                 elt = next_value(i, &elt);
             }
             let subtype;
-            let mut subsig: String;
+            let mut subsig: EmacsText;
             if elt.is_nil() {
                 subtype = DBUS_TYPE_STRING;
-                subsig = "s".to_string();
+                subsig = EmacsText::from("s");
             } else {
                 subtype = object_to_dbus_type(i, &car_safe(&elt));
                 let nv = next_value(i, &elt);
                 let nv_car = car_safe(&nv);
-                let mut x = String::new();
+                let mut x = EmacsText::new();
                 xd_signature(i, &mut x, subtype, dtype, &nv_car)?;
                 subsig = x;
             }
@@ -663,7 +674,7 @@ fn xd_signature(
                 }
             }
             while !elt.is_nil() {
-                let mut x = String::new();
+                let mut x = EmacsText::new();
                 let st = object_to_dbus_type(i, &car_safe(&elt));
                 let nv = next_value(i, &elt);
                 let nv_car = car_safe(&nv);
@@ -683,7 +694,7 @@ fn xd_signature(
             let subtype = object_to_dbus_type(i, &car_safe(&elt));
             let nv = next_value(i, &elt);
             let nv_car = car_safe(&nv);
-            let mut x = String::new();
+            let mut x = EmacsText::new();
             xd_signature(i, &mut x, subtype, dtype, &nv_car)?;
             if !cdr_safe(&nv).is_nil() {
                 let bad = car_safe(&cdr_safe(&nv));
@@ -700,7 +711,7 @@ fn xd_signature(
                 let st = object_to_dbus_type(i, &car_safe(&elt));
                 let nv = next_value(i, &elt);
                 let nv_car = car_safe(&nv);
-                let mut x = String::new();
+                let mut x = EmacsText::new();
                 xd_signature(i, &mut x, st, dtype, &nv_car)?;
                 signature.push_str(&x);
                 elt = cdr_safe(&nv);
@@ -718,7 +729,7 @@ fn xd_signature(
             let subtype = object_to_dbus_type(i, &car_safe(&elt));
             let nv = next_value(i, &elt);
             let nv_car = car_safe(&nv);
-            let mut x = String::new();
+            let mut x = EmacsText::new();
             xd_signature(i, &mut x, subtype, dtype, &nv_car)?;
             signature.push_str(&x);
             if !is_basic_dtype(subtype) {
@@ -729,7 +740,7 @@ fn xd_signature(
             let st2 = object_to_dbus_type(i, &car_safe(&elt));
             let nv2 = next_value(i, &elt);
             let nv2_car = car_safe(&nv2);
-            let mut x2 = String::new();
+            let mut x2 = EmacsText::new();
             xd_signature(i, &mut x2, st2, dtype, &nv2_car)?;
             signature.push_str(&x2);
             if !cdr_safe(&nv2).is_nil() {
@@ -740,7 +751,7 @@ fn xd_signature(
         }
         _ => return Err(sig_err(i, object)),
     }
-    if signature.len() > DBUS_MAXIMUM_SIGNATURE_LENGTH {
+    if signature.to_external_bytes().len() > DBUS_MAXIMUM_SIGNATURE_LENGTH {
         return Err(sig_err(i, object));
     }
     Ok(())
@@ -919,8 +930,7 @@ fn xd_append_arg(
                     } else {
                         check_string(i, object)?;
                     }
-                    let s = str_of(object).unwrap_or_default();
-                    let cs = cstr(&s);
+                    let cs = lisp_cstr(i, object);
                     let p = cs.as_ptr();
                     if (d.dbus_message_iter_append_basic)(
                         iter,
@@ -948,11 +958,11 @@ fn xd_append_arg(
     unsafe {
         match dtype {
             DBUS_TYPE_ARRAY => {
-                let signature: String;
+                let signature: EmacsText;
                 if object.is_nil() {
-                    signature = "s".to_string();
+                    signature = EmacsText::from("s");
                 } else {
-                    let mut sig = String::new();
+                    let mut sig = EmacsText::new();
                     // `:signature' sole element supplies the element
                     // signature (GNU quirk).
                     let first = car_safe(&object);
@@ -961,7 +971,7 @@ fn xd_append_arg(
                         if matches!(&val, Value::Cons(c)
                             if matches!(c.borrow().car, Value::Str(_))
                                 && c.borrow().cdr.is_nil()
-                                && str_of(&c.borrow().car).unwrap_or_default().len()
+                                && match &c.borrow().car { Value::Str(text) => super::strfn::gnu_sbytes(i, text).len(), _ => 0 }
                                     < DBUS_MAXIMUM_SIGNATURE_LENGTH)
                         {
                             sig = str_of(&car_safe(&val)).unwrap_or_default();
@@ -987,7 +997,7 @@ fn xd_append_arg(
                 }
             }
             DBUS_TYPE_VARIANT => {
-                let mut sig = String::new();
+                let mut sig = EmacsText::new();
                 let nv = next_value(i, &object);
                 let nv_car = car_safe(&nv);
                 let st = object_to_dbus_type(i, &car_safe(&object));
@@ -1084,12 +1094,9 @@ fn xd_retrieve_arg(i: &mut Interp, dtype: i32, iter: *mut DBusMessageIter) -> Va
             DBUS_TYPE_STRING | DBUS_TYPE_OBJECT_PATH | DBUS_TYPE_SIGNATURE => {
                 let mut val: *mut c_char = std::ptr::null_mut();
                 (d.dbus_message_iter_get_basic)(iter, &mut val as *mut *mut c_char as *mut c_void);
-                let s = if val.is_null() {
-                    String::new()
-                } else {
-                    std::ffi::CStr::from_ptr(val).to_string_lossy().into_owned()
-                };
-                Value::list(vec![sym, Value::string(s)])
+                let bytes = if val.is_null() { &[][..] } else { std::ffi::CStr::from_ptr(val).to_bytes() };
+                let text = i.auto_string_value(bytes);
+                Value::list(vec![sym, text])
             }
             DBUS_TYPE_ARRAY | DBUS_TYPE_VARIANT | DBUS_TYPE_STRUCT | DBUS_TYPE_DICT_ENTRY => {
                 let mut items: Vec<Value> = Vec::new();
@@ -1146,7 +1153,7 @@ fn validate_bus_address(i: &mut Interp, bus: &mut Value) -> Result<(), Flow> {
     if let Value::Str(s) = bus {
         let addr = s.borrow().clone();
         if let Some(d) = dbus() {
-            let cs = cstr(&addr);
+            let cs = lisp_string_cstr(i, s);
             unsafe {
                 let mut err = DBusError {
                     name: std::ptr::null(),
@@ -1167,7 +1174,7 @@ fn validate_bus_address(i: &mut Interp, bus: &mut Value) -> Result<(), Flow> {
                 (d.dbus_error_free)(&mut err);
             }
         }
-        if session_addr.as_deref() == Some(addr.as_str()) {
+        if session_addr.as_ref().is_some_and(|session| addr == *session) {
             *bus = symv(i, ":session");
         }
         return Ok(());
@@ -1269,8 +1276,7 @@ fn f_init_bus(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         };
         (d.dbus_error_init)(&mut err);
         let c = if let Value::Str(s) = &bus {
-            let addr = s.borrow().clone();
-            let cs = cstr(&addr);
+            let cs = lisp_string_cstr(i, s);
             if private.is_nil() {
                 (d.dbus_connection_open)(cs.as_ptr(), &mut err)
             } else {
@@ -1462,8 +1468,7 @@ fn f_message_internal_2(
 ) -> EvalResult {
     unsafe {
         if matches!(service, Value::Str(_)) && mtype != DBUS_MESSAGE_TYPE_INVALID {
-            let svc = str_of(service).unwrap_or_default();
-            let cs = cstr(&svc);
+            let cs = lisp_cstr(i, service);
             if mtype != DBUS_MESSAGE_TYPE_SIGNAL {
                 if (d.dbus_message_set_destination)(dmsg, cs.as_ptr()) == 0 {
                     return Err(dbus_error_val(i, "Unable to set the destination", service));
@@ -1500,9 +1505,9 @@ fn f_message_internal_2(
         }
 
         if mtype == DBUS_MESSAGE_TYPE_METHOD_CALL || mtype == DBUS_MESSAGE_TYPE_SIGNAL {
-            let cp = cstr(&str_of(path).unwrap_or_default());
-            let ci = cstr(&str_of(interface).unwrap_or_default());
-            let cm = cstr(&str_of(member).unwrap_or_default());
+            let cp = lisp_cstr(i, path);
+            let ci = lisp_cstr(i, interface);
+            let cm = lisp_cstr(i, member);
             if (d.dbus_message_set_path)(dmsg, cp.as_ptr()) == 0
                 || (d.dbus_message_set_interface)(dmsg, ci.as_ptr()) == 0
                 || (d.dbus_message_set_member)(dmsg, cm.as_ptr()) == 0
@@ -1514,7 +1519,7 @@ fn f_message_internal_2(
                 return Err(dbus_error(i, "Unable to create a return message"));
             }
             if mtype == DBUS_MESSAGE_TYPE_ERROR {
-                let ce = cstr(&str_of(error_name).unwrap_or_default());
+                let ce = lisp_cstr(i, error_name);
                 if (d.dbus_message_set_error_name)(dmsg, ce.as_ptr()) == 0 {
                     return Err(dbus_error(i, "Unable to create an error message"));
                 }
@@ -1572,7 +1577,7 @@ fn f_message_internal_2(
             if count + 1 < nargs && is_dbus_type_sym(i, &args[count]) {
                 count += 1;
             }
-            let mut sig = String::new();
+            let mut sig = EmacsText::new();
             xd_signature(i, &mut sig, dtype, DBUS_TYPE_INVALID, &args[count])?;
             xd_append_arg(i, dtype, &args[count], &mut iter)?;
             count += 1;
@@ -2077,7 +2082,7 @@ mod tests {
                 let mut i = Interp::new();
                 let maximum = Value::integer(u64::MAX as i128);
                 let minimum = Value::integer(i64::MIN as i128);
-                let mut signature = String::new();
+                let mut signature = EmacsText::new();
                 xd_signature(
                     &mut i,
                     &mut signature,
@@ -2117,5 +2122,16 @@ mod tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod wide_dbus_boundary_tests {
+    use super::*;
+    #[test]
+    fn c_string_boundary_preserves_unicode_and_byte8_octets() {
+        let text = EmacsText::from_codes([0xf0080, 0xf0c80, 0x3fff80]).unwrap();
+        assert_eq!(cstr(&text).to_bytes(), [0xf3, 0xb0, 0x82, 0x80, 0xf3, 0xb0, 0xb2, 0x80, 0x80]);
+        assert_eq!(cstr("/org/example/Endpoint").to_bytes(), b"/org/example/Endpoint");
     }
 }

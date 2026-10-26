@@ -1,6 +1,6 @@
 //! List-manipulation subrs: car, cdr, cons, nth, append, member, etc.
 
-use super::{S, arg, eq_values, equal_values, want_cons, want_int, want_list};
+use super::{S, arg, call_canonical_builtin as primitive, eq_values, equal_values, want_cons, want_int, want_list};
 use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
@@ -300,12 +300,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("car-or-marker-p", 1, 1, f_car_or_marker_p, ""),
 ];
 
-/// Wrap a computed `Value` in `(quote v)` so `call_function`'s
-/// `eval_args` returns it verbatim.
-fn quoted(v: Value) -> Value {
-    Value::list(vec![Value::Sym(sym::QUOTE), v])
-}
-
 fn f_car(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[0] {
         Value::Cons(c) => Ok(c.borrow().car.clone()),
@@ -357,7 +351,7 @@ fn f_make_list(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::list(vec![args[1].clone(); n as usize]))
 }
 fn f_length(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    if crate::editor::window_configuration_object(&args[0]) || i.is_overlay(&args[0]) {
+    if super::misc::has_opaque_array_storage(i, &args[0]) {
         return Err(i.wrong_type_mut("sequencep", &args[0]));
     }
     match &args[0] {
@@ -539,140 +533,52 @@ fn f_nthcdr(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     nthcdr_integer(i, &args[1], &args[0])
 }
 fn f_last(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU subr.el `last':
-    // (if n (and (>= n 0) (let ((m (safe-length list)))
-    //             (if (< n m) (nthcdr (- m n) list) list)))
-    //   (and list (nthcdr (1- (safe-length list)) list)))
-    // `(>= n 0)' on a non-number signals `number-or-marker-p' BEFORE the
-    // safe-length walk; a non-list arg returns itself (0 cells) when n
-    // is absent or nonnegative, nil when n < 0.
-    let n = args.get(1).cloned().unwrap_or(Value::Nil);
-    let safe_length = Value::Sym(i.q("safe-length"));
-    let nthcdr = Value::Sym(i.q("nthcdr"));
-    let greater_equal = Value::Sym(i.q(">="));
-    let less = Value::Sym(i.q("<"));
-    let subtract = Value::Sym(i.q("-"));
-    let one_minus = Value::Sym(i.q("1-"));
-    if !n.is_nil() {
-        if i.apply(&greater_equal, vec![n.clone(), Value::Int(0)])?.is_nil() {
+    // GNU subr.el uses the real safe-length result, including its exact
+    // cycle detection count. Both native calls honor their trampolines.
+    let count = if let Some(n) = args.get(1).filter(|n| !n.is_nil()) {
+        if !primitive(i, ">=", vec![n.clone(), Value::Int(0)])?.truthy() {
             return Ok(Value::Nil);
         }
-        let length = i.apply(&safe_length, vec![args[0].clone()])?;
-        if i.apply(&less, vec![n.clone(), length.clone()])?.truthy() {
-            let index = i.apply(&subtract, vec![length, n])?;
-            i.apply(&nthcdr, vec![index, args[0].clone()])
-        } else {
-            Ok(args[0].clone())
+        let length = super::call_native_builtin(i, "safe-length", vec![args[0].clone()])?;
+        if !primitive(i, "<", vec![n.clone(), length.clone()])?.truthy() {
+            return Ok(args[0].clone());
         }
-    } else if args[0].is_nil() {
-        Ok(Value::Nil)
+        primitive(i, "-", vec![length, n.clone()])?
     } else {
-        let length = i.apply(&safe_length, vec![args[0].clone()])?;
-        let index = i.apply(&one_minus, vec![length])?;
-        i.apply(&nthcdr, vec![index, args[0].clone()])
-    }
-}
-fn number_or_marker_value(i: &mut Interp, value: &Value) -> Result<Value, Flow> {
-    match value {
-        Value::Int(_) | Value::BigInt(_) | Value::Float(_) => Ok(value.clone()),
-        Value::Marker(marker) if marker.borrow().buffer.is_some() => {
-            Ok(Value::Int(marker.borrow().position as i128 + 1))
+        if args[0].is_nil() {
+            return Ok(Value::Nil);
         }
-        Value::Marker(_) => Err(i.error("Marker does not point anywhere")),
-        other => Err(i.wrong_type_mut("number-or-marker-p", other)),
-    }
-}
-
-fn f_butlast(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU subr.el: nonpositive N returns LIST before evaluating LENGTH;
-    // positive N computes (take (- (length LIST) N) LIST), leaving a
-    // fractional result for `take' to reject as integerp.
-    let n = match args.get(1) {
-        None | Some(Value::Nil) => Value::Int(1),
-        Some(v) => number_or_marker_value(i, v)?,
+        let length = super::call_native_builtin(i, "safe-length", vec![args[0].clone()])?;
+        primitive(i, "1-", vec![length])?
     };
-    let zero = Value::Int(0);
-    if crate::lisp::builtins::arith::number_order(&n, &zero)
-        .is_some_and(|order| order != std::cmp::Ordering::Greater)
-    {
+    super::call_native_builtin(i, "nthcdr", vec![count, args[0].clone()])
+}
+fn f_butlast(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    // Follow GNU subr.el's operations without projecting N to a machine
+    // integer: comparisons accept numbers/markers, but take requires the
+    // subtraction result to be an integer (including arbitrary bignums).
+    let n = args.get(1).filter(|n| !n.is_nil()).cloned().unwrap_or(Value::Int(1));
+    if primitive(i, "<=", vec![n.clone(), Value::Int(0)])?.truthy() {
         return Ok(args[0].clone());
     }
-    let len = match &args[0] {
-        Value::Nil => 0usize,
-        Value::Cons(_) => args[0]
-            .list_to_vec()
-            .map_err(|e| match e {
-                crate::lisp::value::ListError::Dotted(tail) => i.wrong_type_mut("listp", &tail),
-                _ => i.wrong_type_mut("listp", &args[0]),
-            })?
-            .len(),
-        Value::Str(s) => s.borrow().chars().count(),
-        Value::Vec(v) => v.borrow().len(),
-        other => return Err(i.wrong_type_mut("sequencep", other)),
-    };
-    let take_count = match n {
-        Value::Int(n) => Value::integer(len as i128 - n),
-        Value::BigInt(n) => Value::from_bigint(num_bigint::BigInt::from(len) - &*n),
-        Value::Float(n) => Value::float(len as f64 - *n),
-        _ => unreachable!(),
-    };
-    f_take(i, vec![take_count, args[0].clone()].into())
+    let length = primitive(i, "length", vec![args[0].clone()])?;
+    let count = primitive(i, "-", vec![length, n])?;
+    super::call_native_builtin(i, "take", vec![count, args[0].clone()])
 }
 fn f_nbutlast(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU subr.el
-    // `nbutlast': (let ((m (length list))) (or n (setq n 1))
-    //   (and (< n m) (progn (if (plusp n)
-    //       (setcdr (nthcdr (- (1- m) n) list) nil)) list)))
-    // `length' first — a non-sequence signals `sequencep' even when n
-    // would itself be invalid.  Non-nil n then needs number-or-marker-p.
-    let m = match &args[0] {
-        Value::Nil => 0i128,
-        Value::Cons(_) => args[0]
-            .list_to_vec()
-            .map_err(|e| match e {
-                crate::lisp::value::ListError::Dotted(tail) => i.wrong_type_mut("listp", &tail),
-                _ => i.wrong_type_mut("listp", &args[0]),
-            })?
-            .len() as i128,
-        Value::Str(s) => s.borrow().chars().count() as i128,
-        Value::Vec(v) => v.borrow().len() as i128,
-        other => return Err(i.wrong_type_mut("sequencep", other)),
-    };
-    let n = match args.get(1) {
-        None | Some(Value::Nil) => Value::Int(1),
-        Some(v) => number_or_marker_value(i, v)?,
-    };
-    if crate::lisp::builtins::arith::number_order(&n, &Value::Int(m))
-        != Some(std::cmp::Ordering::Less)
-    {
+    // Unlike butlast, GNU validates length before inspecting N. Its
+    // length/arithmetic/setcdr operations are inlined; the native nthcdr
+    // call observes its installed trampoline.
+    let length = primitive(i, "length", vec![args[0].clone()])?;
+    let n = args.get(1).filter(|n| !n.is_nil()).cloned().unwrap_or(Value::Int(1));
+    if !primitive(i, "<", vec![n.clone(), length.clone()])?.truthy() {
         return Ok(Value::Nil);
     }
-    if crate::lisp::builtins::arith::number_order(&n, &Value::Int(0))
-        == Some(std::cmp::Ordering::Greater)
-    {
-        let index = match &n {
-            Value::Int(n) => Value::integer(m - 1 - *n),
-            Value::BigInt(n) => Value::from_bigint(num_bigint::BigInt::from(m - 1) - &**n),
-            Value::Float(n) => Value::float((m - 1) as f64 - **n),
-            _ => unreachable!(),
-        };
-        if !matches!(index, Value::Int(_) | Value::BigInt(_)) {
-            return Err(i.wrong_type_mut("integerp", &index));
-        }
-        let index = index
-            .as_bigint()
-            .and_then(|n| n.to_usize())
-            .ok_or_else(|| i.wrong_type_mut("integerp", &index))?;
-        // GNU evaluates `(nthcdr (- (1- m) n) list)' then `setcdr's it:
-        // a non-list sequence reaches Fsetcdr and signals `consp'.
-        match &args[0] {
-            Value::Cons(_) | Value::Nil => {}
-            other => return Err(i.wrong_type_mut("consp", other)),
-        }
-        let tail = nthcdr_of(&args[0], index);
-        if let Value::Cons(c) = tail {
-            c.borrow_mut().cdr = Value::Nil;
-        }
+    if primitive(i, ">", vec![n.clone(), Value::Int(0)])?.truthy() {
+        let last_index = primitive(i, "1-", vec![length])?;
+        let count = primitive(i, "-", vec![last_index, n])?;
+        let tail = super::call_native_builtin(i, "nthcdr", vec![count, args[0].clone()])?;
+        primitive(i, "setcdr", vec![tail, Value::Nil])?;
     }
     Ok(args[0].clone())
 }
@@ -709,24 +615,30 @@ pub(crate) fn f_append(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(result)
 }
 
-fn f_nconc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    if args.is_empty() {
-        return Ok(Value::Nil);
-    }
+pub(crate) fn f_nconc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    if args.is_empty() { return Ok(Value::Nil); }
     let mut result = Value::Nil;
     let mut last_cons: Option<crate::lisp::value::ConsRef> = None;
-    for a in &args[..args.len() - 1] {
+    for (index, a) in args.iter().enumerate() {
+        // The final object is an unrestricted tail, never a list to walk.
+        if index + 1 == args.len() {
+            match &last_cons {
+                Some(c) => c.borrow_mut().cdr = a.clone(),
+                None => result = a.clone(),
+            }
+            break;
+        }
+        if a.is_nil() {
+            continue;
+        }
+        // Connect before validating the new argument. Even a type error
+        // leaves this cdr change observable, as in GNU Fnconc.
+        match &last_cons {
+            Some(c) => c.borrow_mut().cdr = a.clone(),
+            None => result = a.clone(),
+        }
         match a {
-            Value::Nil => continue,
             Value::Cons(_) => {
-                // Link each new non-final list before walking it. GNU's
-                // nconc leaves this connection observable if that list is
-                // circular and the walk signals.
-                match &last_cons {
-                    Some(cell) => cell.borrow_mut().cdr = a.clone(),
-                    None => result = a.clone(),
-                }
-                // find last cons of `a`
                 let mut tail = a.clone();
                 let mut cycle = ListCycle::new(a);
                 let last = loop {
@@ -736,11 +648,9 @@ fn f_nconc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                                 let b = c.borrow();
                                 b.cdr.clone()
                             };
+                            cycle.step(i, &next)?;
                             match next {
-                                Value::Cons(_) => {
-                                    tail = next;
-                                    cycle.step(i, &tail)?;
-                                }
+                                Value::Cons(_) => tail = next,
                                 Value::Nil => break c.clone(),
                                 _ => {
                                     // dotted tail inside arg — attach it
@@ -756,26 +666,16 @@ fn f_nconc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                 last_cons = Some(last);
             }
             // GNU `nconc' CHECK_LIST_CONS's every non-final arg:
-            // non-nil non-cons signals `consp' on that arg, after the
-            // previous cons has already been linked to it.
-            other => {
-                if let Some(cell) = &last_cons {
-                    cell.borrow_mut().cdr = other.clone();
-                }
-                return Err(i.wrong_type_mut("consp", other));
-            }
+            // non-nil non-cons signals `consp' on that arg.
+            other => return Err(i.wrong_type_mut("consp", other)),
         }
-    }
-    // The final argument is the tail itself. In particular, do not walk
-    // it: a circular list is a valid final value and retains its identity.
-    let tail = args.last().unwrap().clone();
-    match &last_cons {
-        Some(cell) => cell.borrow_mut().cdr = tail,
-        None => result = tail,
     }
     Ok(result)
 }
 pub(crate) fn f_reverse(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    if i.is_overlay(&args[0]) {
+        return Err(i.wrong_type_mut("sequencep", &args[0]));
+    }
     // Emacs: reverse works on any sequence, preserving its type.
     match &args[0] {
         Value::Str(s) => {
@@ -785,7 +685,7 @@ pub(crate) fn f_reverse(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             if s.borrow().is_empty() && !super::strfn::string_multibyte_p(i, &args[0]) {
                 return Ok(args[0].clone());
             }
-            let result = Value::string(s.borrow().chars().rev().collect::<String>());
+            let result = Value::string_with_kind(s.borrow().chars().rev().collect::<crate::lisp::text::EmacsText>(), multibyte);
             if let Value::Str(output) = &result {
                 if multibyte {
                     i.mark_multibyte(output);
@@ -831,14 +731,14 @@ fn f_setcdr(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 /// so successful searches can return before inspecting a circular suffix.
 /// Keeping the tortoise as a Value also roots it while an assoc callback
 /// mutates the spine. There is no arbitrary maximum proper-list length.
-struct ListCycle {
+pub(super) struct ListCycle {
     tortoise: Value,
     max: usize,
     n: isize,
     q: u16,
 }
 impl ListCycle {
-    fn new(list: &Value) -> Self {
+    pub(super) fn new(list: &Value) -> Self {
         Self {
             tortoise: list.clone(),
             max: 2,
@@ -846,7 +746,7 @@ impl ListCycle {
             q: 2,
         }
     }
-    fn step(&mut self, i: &mut Interp, tail: &Value) -> Result<(), Flow> {
+    fn advance(&mut self, i: &mut Interp, tail: &Value) -> Result<bool, Flow> {
         self.q = self.q.wrapping_sub(1);
         if self.q == 0 {
             // GNU checks for quit whenever the low counter expires.
@@ -857,10 +757,13 @@ impl ListCycle {
                 self.q = self.max as u16;
                 self.n = (self.max >> 16) as isize;
                 self.tortoise = tail.clone();
-                return Ok(());
+                return Ok(false);
             }
         }
-        if eq_values(tail, &self.tortoise) {
+        Ok(eq_values(tail, &self.tortoise))
+    }
+    pub(super) fn step(&mut self, i: &mut Interp, tail: &Value) -> Result<(), Flow> {
+        if self.advance(i, tail)? {
             return Err(i.signal_data(sym::CIRCULAR_LIST, vec![tail.clone()]));
         }
         Ok(())
@@ -942,22 +845,20 @@ fn f_memql(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 
 fn member_if_impl(i: &mut Interp, pred: &Value, list: &Value, want: bool) -> EvalResult {
     let mut cur = list.clone();
-    let mut quit_count = 0u16;
+    let mut steps = 0usize;
     loop {
         match &cur {
             Value::Cons(c) => {
-                quit_count = quit_count.wrapping_add(1);
-                if quit_count == 0 {
+                steps = steps.wrapping_add(1);
+                if steps & 1023 == 0 {
                     i.maybe_quit()?;
                 }
-                let cell = c.clone();
-                let car = cell.borrow().car.clone();
+                let car = c.borrow().car.clone();
                 if i.apply(pred, vec![car])?.truthy() == want {
                     return Ok(cur);
                 }
-                // PRED may have changed this cell's cdr. Read it only
-                // after returning from user code, like GNU's FOR_EACH_TAIL.
-                cur = cell.borrow().cdr.clone();
+                let next = c.borrow().cdr.clone();
+                cur = next;
             }
             Value::Nil => return Ok(Value::Nil),
             other => return Err(i.wrong_type_mut("listp", other)),
@@ -1012,30 +913,30 @@ fn f_assq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     )
 }
 
-fn delete_all_by(i: &mut Interp, args: crate::lisp::Argv, on_cdr: bool) -> EvalResult {
-    // GNU's Lisp `assq-delete-all'/'rassq-delete-all' (subr.el):
+fn delete_all_by(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    // GNU's Lisp `rassq-delete-all' (subr.el):
     // skip matching head cells, then splice matches out of the list
     // structure in place — non-head deletions mutate the original
     // list and return it.
-    fn matches(i: &Interp, item: &Value, key: &Value, on_cdr: bool) -> bool {
+    let matches = |item: &Value| -> bool {
         match item {
             Value::Cons(ic) => {
                 let part = {
                     let b = ic.borrow();
-                    if on_cdr { b.cdr.clone() } else { b.car.clone() }
+                    b.cdr.clone()
                 };
-                super::eq_values_with_interp(i, &part, key)
+                eq_values(&part, &args[0])
             }
             _ => false,
         }
-    }
+    };
     let mut alist = args[1].clone();
-    let mut quit_count = 0u16;
-    // (while (and (consp (car alist)) (eq (car (car alist)) key))
+    let mut steps = 0usize;
+    // (while (and (consp (car alist)) (eq (cdr (car alist)) value))
     //   (setq alist (cdr alist)))
     loop {
-        quit_count = quit_count.wrapping_add(1);
-        if quit_count == 0 {
+        steps = steps.wrapping_add(1);
+        if steps & 1023 == 0 {
             i.maybe_quit()?;
         }
         let head = match &alist {
@@ -1045,7 +946,7 @@ fn delete_all_by(i: &mut Interp, args: crate::lisp::Argv, on_cdr: bool) -> EvalR
             // tail (dotted list end or non-list arg) signals listp on it.
             other => return Err(i.wrong_type_mut("listp", other)),
         };
-        if matches(i, &head, &args[0], on_cdr) {
+        if matches(&head) {
             let next = match &alist {
                 Value::Cons(c) => c.borrow().cdr.clone(),
                 _ => break,
@@ -1061,8 +962,8 @@ fn delete_all_by(i: &mut Interp, args: crate::lisp::Argv, on_cdr: bool) -> EvalR
     //       (setq tail tail-cdr))))
     let mut tail = alist.clone();
     loop {
-        quit_count = quit_count.wrapping_add(1);
-        if quit_count == 0 {
+        steps = steps.wrapping_add(1);
+        if steps & 1023 == 0 {
             i.maybe_quit()?;
         }
         let next = match &tail {
@@ -1072,7 +973,7 @@ fn delete_all_by(i: &mut Interp, args: crate::lisp::Argv, on_cdr: bool) -> EvalR
         match &next {
             Value::Nil => break,
             Value::Cons(nc) => {
-                if matches(i, &nc.borrow().car.clone(), &args[0], on_cdr) {
+                if matches(&nc.borrow().car.clone()) {
                     let nn = nc.borrow().cdr.clone();
                     if let Value::Cons(tc) = &tail {
                         tc.borrow_mut().cdr = nn;
@@ -1089,15 +990,13 @@ fn delete_all_by(i: &mut Interp, args: crate::lisp::Argv, on_cdr: bool) -> EvalR
 }
 
 fn f_assq_delete_all(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU's Lisp wrapper delegates to the current assoc-delete-all
-    // function cell and passes the `eq' symbol as TEST.
     let function = Value::Sym(i.q("assoc-delete-all"));
-    let eq = Value::Sym(i.q("eq"));
-    i.apply(&function, vec![args[0].clone(), args[1].clone(), eq])
+    let equality = Value::Sym(i.q("eq"));
+    i.apply(&function, vec![args[0].clone(), args[1].clone(), equality])
 }
 
 fn f_rassq_delete_all(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    delete_all_by(i, args, true)
+    delete_all_by(i, args)
 }
 fn f_assoc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // A TESTFN can change the current cell's cdr. Read it after the
@@ -1156,63 +1055,37 @@ fn f_assoc_default(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // version: the tested key is (car ELEMENT) for a cons element but
     // the ELEMENT itself for an atom, so `(assoc-default 'c '(... c)
     // nil DEFAULT)' returns DEFAULT.
-    let test = arg(&args, 2);
+    let test = match arg(&args, 2) {
+        Value::Nil => Value::Sym(i.q("equal")),
+        test => test,
+    };
     let mut cur = args[1].clone();
-    let mut found = Value::Nil;
-    let mut matched = false;
-    let mut quit_count = 0u16;
+    let mut steps = 0usize;
     loop {
-        quit_count = quit_count.wrapping_add(1);
-        if quit_count == 0 {
+        steps = steps.wrapping_add(1);
+        if steps & 1023 == 0 {
             i.maybe_quit()?;
         }
         match &cur {
-            Value::Nil => break,
+            Value::Nil => return Ok(Value::Nil),
             Value::Cons(c) => {
-                let cell = c.clone();
-                let (item, rest) = {
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
-                };
+                let item = c.borrow().car.clone();
                 let key = match &item {
                     Value::Cons(ic) => ic.borrow().car.clone(),
                     v => v.clone(),
                 };
-                let hit = if test.is_nil() {
-                    // GNU's default is `(funcall #'equal KEY ITEM)', so
-                    // advice and live redefinitions remain observable.
-                    let equal = Value::Sym(i.q("equal"));
-                    i.apply(&equal, vec![key.clone(), args[0].clone()])?.truthy()
-                } else {
-                    i.call_function(
-                        &test,
-                        &Value::list(vec![quoted(key), quoted(args[0].clone())]),
-                        None,
-                    )?
-                    .truthy()
-                };
+                let hit = i.apply(&test, vec![key, args[0].clone()])?.truthy();
                 if hit {
-                    found = item;
-                    matched = true;
-                    break;
+                    return Ok(match item {
+                        Value::Cons(c) => c.borrow().cdr.clone(),
+                        _ => arg(&args, 3),
+                    });
                 }
-                cur = if test.is_nil() {
-                    rest
-                } else {
-                    cell.borrow().cdr.clone()
-                };
+                let next = c.borrow().cdr.clone();
+                cur = next;
             }
             other => return Err(i.wrong_type_mut("listp", other)),
         }
-    }
-    if !matched {
-        return Ok(Value::Nil);
-    }
-    match &found {
-        // Matching cons element: return its cdr.
-        Value::Cons(c) => Ok(c.borrow().cdr.clone()),
-        // Atom element matched: return DEFAULT.
-        _ => Ok(arg(&args, 3)),
     }
 }
 
@@ -1258,40 +1131,42 @@ fn f_delq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     del_impl(i, &args[0], &args[1], true)
 }
 fn f_delete(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    if i.is_overlay(&args[1]) {
+        return Err(i.wrong_type_mut("sequencep", &args[1]));
+    }
     match &args[1] {
         Value::Str(s) => {
-            // delete chars equal to ELT from a string
-            let elt = &args[0];
-            let source = s.borrow().clone();
-            let unibyte = i.is_unibyte_str(s)
-                || !crate::lisp::builtins::strfn::string_multibyte_p(i, &args[1]);
-            let mut out = String::new();
-            let mut changed = false;
-            for c in source.chars() {
-                let code = if unibyte {
-                    crate::lisp::value::eight_bit_byte(c)
-                        .map(|byte| byte as i128)
-                        .unwrap_or(c as i128)
-                } else {
+            let multibyte = super::strfn::string_multibyte_p(i, &args[1]);
+            let mut out = crate::lisp::text::EmacsText::default();
+            let mut removed = false;
+            for c in s.borrow().chars() {
+                let code = if multibyte {
                     crate::lisp::value::lisp_char_code(c)
-                };
-                let cv = Value::Int(code);
-                if !equal_values(i, &cv, elt)? {
-                    out.push(c);
                 } else {
-                    changed = true;
+                    crate::lisp::value::eight_bit_byte(c)
+                        .map(|b| b as i128)
+                        .unwrap_or((c).code() as i128 & 0xff)
+                };
+                if matches!(&args[0], Value::Int(n) if *n == code) {
+                    removed = true;
+                } else {
+                    out.push(c);
                 }
             }
-            if !changed {
+            if !removed {
                 return Ok(args[1].clone());
             }
-            let result = crate::lisp::Value::string_ref(out);
-            if unibyte {
-                i.mark_unibyte(&result);
-            } else {
-                i.mark_multibyte(&result);
+            // GNU drops properties when deletion allocates a new string,
+            // but preserves the source's byte representation even if empty.
+            let result = Value::string_with_kind(out, multibyte);
+            if let Value::Str(text) = &result {
+                if multibyte {
+                    i.mark_multibyte(text);
+                } else {
+                    i.mark_unibyte(text);
+                }
             }
-            Ok(Value::Str(result))
+            Ok(result)
         }
         Value::Vec(v) => {
             let mut kept = Vec::new();
@@ -1303,10 +1178,11 @@ fn f_delete(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                     changed = true;
                 }
             }
-            if !changed {
-                return Ok(args[1].clone());
+            if kept.len() == v.borrow().len() {
+                Ok(args[1].clone())
+            } else {
+                Ok(Value::vector(kept))
             }
-            Ok(Value::vector(kept))
         }
         Value::Cons(_) | Value::Nil => del_impl(i, &args[0], &args[1], false),
         other => Err(i.wrong_type_mut("sequencep", other)),
@@ -1327,97 +1203,66 @@ fn f_copy_alist(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::list(copied))
 }
 fn f_copy_tree(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // (copy-tree TREE &optional VECP): only conses are copied; vectors
-    // (and records) are copied recursively too when VECP is non-nil
-    // (GNU fns.c Fcopy_tree).
-    let vecp = arg(&args, 1).truthy();
-    let vecp_arg = args.get(1).cloned().unwrap_or(Value::Nil);
-    let copy_tree_function = Value::Sym(i.q("copy-tree"));
-    fn descend(i: &Interp, value: &Value, vecp: bool) -> bool {
-        match value {
-            Value::Cons(_) => true,
-            Value::Vec(_) => vecp && !i.is_overlay(value),
-            Value::Record(_) => vecp && super::misc::recordp(i, value),
-            _ => false,
-        }
+    let vecp = arg(&args, 1);
+    fn container(i: &Interp, v: &Value, vecp: bool) -> bool {
+        matches!(v, Value::Cons(_))
+            || (vecp
+                && (matches!(v, Value::Vec(_)) && !i.is_overlay(v)
+                    || matches!(v, Value::Record(_)) && super::misc::is_record(i, v)))
     }
-    fn cp(i: &mut Interp, function: &Value, value: &Value, vecp_arg: &Value) -> EvalResult {
-        i.apply(function, vec![value.clone(), vecp_arg.clone()])
+    fn recur(i: &mut Interp, v: &Value, vecp: &Value) -> EvalResult {
+        let function = Value::Sym(i.q("copy-tree"));
+        i.apply(&function, vec![v.clone(), vecp.clone()])
     }
-    fn cp_inner(
-        i: &mut Interp,
-        v: &Value,
-        vecp: bool,
-        vecp_arg: &Value,
-        copy_tree_function: &Value,
-    ) -> EvalResult {
-        match v {
-            Value::Cons(_) => {
-                let mut tail = v.clone();
-                let mut cars = Vec::new();
-                let mut quit_count = 0u16;
-                loop {
-                    let cell = match &tail {
-                        Value::Cons(cell) => cell.clone(),
-                        _ => break,
-                    };
-                    quit_count = quit_count.wrapping_add(1);
-                    if quit_count == 0 {
-                        i.maybe_quit()?;
-                    }
-                    let car = cell.borrow().car.clone();
-                    cars.push(if descend(i, &car, vecp) {
-                        cp(i, copy_tree_function, &car, vecp_arg)?
-                    } else {
-                        car
-                    });
-                    // Recursive copy calls may mutate the source spine;
-                    // read its cdr only after the live function returns.
-                    tail = cell.borrow().cdr.clone();
-                }
-                let mut result = if descend(i, &tail, vecp) {
-                    cp(i, copy_tree_function, &tail, vecp_arg)?
+    fn cp(i: &mut Interp, v: &Value, vecp: &Value) -> EvalResult {
+        if matches!(v, Value::Cons(_)) {
+            // GNU subr.el walks the spine without consuming Lisp depth.
+            let mut tail = v.clone();
+            let mut cars = Vec::new();
+            while let Value::Cons(cell) = &tail {
+                i.maybe_quit()?;
+                let cell = cell.clone();
+                let car = cell.borrow().car.clone();
+                cars.push(if container(i, &car, vecp.truthy()) {
+                    recur(i, &car, vecp)?
                 } else {
-                    tail
-                };
-                for car in cars.into_iter().rev() {
-                    result = Value::cons(car, result);
-                }
-                Ok(result)
+                    car
+                });
+                // Recursive advice may alter the current spine.
+                tail = cell.borrow().cdr.clone();
             }
-            Value::Vec(vec) if vecp => {
-                let mut copied = vec.borrow().clone();
-                let mut quit_count = 0u16;
-                for slot in &mut copied {
-                    quit_count = quit_count.wrapping_add(1);
-                    if quit_count == 0 {
-                        i.maybe_quit()?;
-                    }
-                    if descend(i, slot, vecp) {
-                        *slot = cp(i, copy_tree_function, slot, vecp_arg)?;
-                    }
-                }
-                Ok(Value::vector(copied))
+            if container(i, &tail, vecp.truthy()) {
+                tail = recur(i, &tail, vecp)?;
             }
-            Value::Record(record) if vecp && super::misc::recordp(i, v) => {
-                let mut copied = record.borrow().clone();
-                let mut quit_count = 0u16;
-                for slot in &mut copied {
-                    quit_count = quit_count.wrapping_add(1);
-                    if quit_count == 0 {
-                        i.maybe_quit()?;
-                    }
-                    if descend(i, slot, vecp) {
-                        *slot = cp(i, copy_tree_function, slot, vecp_arg)?;
-                    }
-                }
-                Ok(Value::record(copied))
+            for car in cars.into_iter().rev() {
+                tail = Value::cons(car, tail);
             }
-            other => Ok(other.clone()),
+            return Ok(tail);
+        }
+        let elements = match v {
+            Value::Vec(values) if vecp.truthy() && !i.is_overlay(v) => Some(values.borrow().clone()),
+            Value::Record(values) if vecp.truthy() && super::misc::is_record(i, v) => {
+                Some(values.borrow().clone())
+            }
+            _ => None,
+        };
+        if let Some(mut elements) = elements {
+            // GNU copies array slots from last to first, including atoms.
+            for element in elements.iter_mut().rev() {
+                *element = recur(i, element, vecp)?;
+            }
+            Ok(if matches!(v, Value::Record(_)) {
+                Value::record(elements)
+            } else {
+                Value::vector(elements)
+            })
+        } else {
+            Ok(v.clone())
         }
     }
-    cp_inner(i, &args[0], vecp, &vecp_arg, &copy_tree_function)
+    cp(i, &args[0], &vecp)
 }
+
 fn f_list_tail(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let n = want_int(i, &args[1])?.max(0);
     nthcdr_strict(i, &args[0], n as usize)
@@ -1516,7 +1361,7 @@ fn plist_scan(
     want_pair: bool,
 ) -> Result<Option<Value>, Flow> {
     let mut cur = plist.clone();
-    let mut cycle = PlistCycleDetector::new(plist);
+    let mut cycle = ListCycle::new(plist);
     loop {
         match cur {
             Value::Nil => return Ok(None),
@@ -1531,8 +1376,8 @@ fn plist_scan(
                         (b.car.clone(), b.cdr.clone())
                     }
                     _ => {
-                        // Odd-length plist: treat last key's value as nil.
-                        (Value::Nil, Value::Nil)
+                        // Getters only compare complete key/value pairs.
+                        return Ok(None);
                     }
                 };
                 let matches = if lax {
@@ -1548,9 +1393,7 @@ fn plist_scan(
                     }));
                 }
                 cur = v.1;
-                if matches!(cur, Value::Cons(_)) && cycle.advance(&cur) {
-                    // The default plist-get family is deliberately
-                    // tolerant: an exhausted cyclic search returns nil.
+                if cycle.advance(i, &cur)? {
                     return Ok(None);
                 }
             }
@@ -1571,18 +1414,18 @@ fn f_plist_get(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let pred = arg(&args, 2);
     if !pred.is_nil() {
         let mut cur = args[0].clone();
-        let mut cycle = PlistCycleDetector::new(&cur);
+        let mut cycle = ListCycle::new(&args[0]);
         loop {
             match cur {
                 Value::Nil => return Ok(Value::Nil),
                 Value::Cons(c) => {
-                    let k = c.borrow().car.clone();
-                    if !matches!(&c.borrow().cdr, Value::Cons(_)) {
-                        // plist-get's optional predicate is called only
-                        // for complete property/value pairs. An odd final
-                        // key has an implicit nil value but is not tested.
-                        return Ok(Value::Nil);
-                    }
+                    let k = {
+                        let b = c.borrow();
+                        if !matches!(&b.cdr, Value::Cons(_)) {
+                            return Ok(Value::Nil);
+                        }
+                        b.car.clone()
+                    };
                     // GNU funcalls PREDICATE on the raw values —
                     // `invalid-function' on e.g. 5, not a quoted form.
                     let m = i.apply(&pred, vec![k.clone(), args[1].clone()])?;
@@ -1597,7 +1440,7 @@ fn f_plist_get(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                         Value::Cons(value_cell) => value_cell.borrow().cdr.clone(),
                         _ => Value::Nil,
                     };
-                    if matches!(cur, Value::Cons(_)) && cycle.advance(&cur) {
+                    if cycle.advance(i, &cur)? {
                         return Ok(Value::Nil);
                     }
                 }
@@ -1629,42 +1472,33 @@ fn f_plist_member(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let pred = arg(&args, 2);
     let whole = args[0].clone();
     let mut cur = args[0].clone();
-    let mut cycle = PlistCycleDetector::new(&cur);
+    let mut cycle = ListCycle::new(&args[0]);
     loop {
-        let (cell, k, rest) = match cur.clone() {
-            Value::Cons(c) => {
-                let b = c.borrow();
-                (c.clone(), b.car.clone(), b.cdr.clone())
-            }
+        let key_cell = match &cur {
+            Value::Cons(c) => c.clone(),
             // FOR_EACH_TAIL's `CONSP(tail)' stops on nil; any other
             // atom/dotted tail → `CHECK_TYPE' signals `plistp'.
             Value::Nil => return Ok(Value::Nil),
             _ => return Err(i.wrong_type_mut("plistp", &whole)),
         };
+        let k = key_cell.borrow().car.clone();
         let matches = if pred.is_nil() {
-            super::eq_values_with_interp(i, &k, &args[1])
+            eq_values(&k, &args[1])
         } else {
             i.apply(&pred, vec![k.clone(), args[1].clone()])?.truthy()
         };
         if matches {
             return Ok(cur);
         }
+        let rest = key_cell.borrow().cdr.clone();
         // Advance past the value cell when it exists; GNU stops the
-        // scan when the cdr is not a cons. With a predicate, reread
-        // the live cdr after the callback, which may have changed it.
-        let rest = if pred.is_nil() {
-            rest
-        } else {
-            cell.borrow().cdr.clone()
-        };
+        // scan when the cdr is not a cons.
         cur = if let Value::Cons(c2) = &rest {
             c2.borrow().cdr.clone()
         } else {
             rest
         };
-        if matches!(cur, Value::Cons(_)) && cycle.advance(&cur) {
-            return Err(i.signal_data(sym::CIRCULAR_LIST, vec![whole.clone()]));
-        }
+        cycle.step(i, &cur)?;
     }
 }
 
@@ -1681,7 +1515,7 @@ fn plist_put(i: &mut Interp, args: crate::lisp::Argv, lax: bool) -> EvalResult {
     // in place; else append (prop val) onto the last complete pair so
     // the original list object is mutated. Empty list → new list.
     // Malformed plists signal `plistp' on the WHOLE argument; a 4th
-    // arg is a comparison predicate (subr-x `plist-put').
+    // arg is an optional comparison predicate.
     let pred: Option<Value> = if lax {
         Some(Value::Sym(i.q("equal")))
     } else {
@@ -1700,7 +1534,7 @@ fn plist_put(i: &mut Interp, args: crate::lisp::Argv, lax: bool) -> EvalResult {
     let whole = args[0].clone();
     let mut cur = args[0].clone();
     let mut last_pair_cell: Option<Value> = None;
-    let mut cycle = PlistCycleDetector::new(&cur);
+    let mut cycle = ListCycle::new(&args[0]);
     loop {
         match &cur {
             Value::Nil => {
@@ -1721,26 +1555,22 @@ fn plist_put(i: &mut Interp, args: crate::lisp::Argv, lax: bool) -> EvalResult {
                 ));
             }
             Value::Cons(c) => {
-                let (k, old_rest) = {
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
+                let k = {
+                    let cell = c.borrow();
+                    if !matches!(&cell.cdr, Value::Cons(_)) {
+                        return Err(i.wrong_type_mut("plistp", &whole));
+                    }
+                    cell.car.clone()
                 };
-                if !matches!(&old_rest, Value::Cons(_)) {
-                    return Err(i.wrong_type_mut("plistp", &whole));
-                }
                 let matches = match &pred {
                     Some(p) => i
                         .apply(p, vec![k.clone(), args[1].clone()])
                         .map(|v| v.truthy())?,
-                    None => super::eq_values_with_interp(i, &k, &args[1]),
+                    None => eq_values(&k, &args[1]),
                 };
-                let rest = if pred.is_some() {
-                    // A predicate may replace either the value cell or
-                    // the following plist tail; resume from the live link.
-                    c.borrow().cdr.clone()
-                } else {
-                    old_rest
-                };
+                // Predicate code may replace this key's value cell or
+                // the rest of the plist. Follow its current cdr.
+                let rest = c.borrow().cdr.clone();
                 if matches {
                     if let Value::Cons(cell) = &rest {
                         cell.borrow_mut().car = args[2].clone();
@@ -1753,34 +1583,27 @@ fn plist_put(i: &mut Interp, args: crate::lisp::Argv, lax: bool) -> EvalResult {
                     Value::Cons(c2) => {
                         last_pair_cell = Some(cur.clone());
                         cur = c2.borrow().cdr.clone();
-                        if matches!(cur, Value::Cons(_)) && cycle.advance(&cur) {
-                            return Err(i.signal_data(sym::CIRCULAR_LIST, vec![whole.clone()]));
-                        }
                     }
                     _ => return Err(i.wrong_type_mut("plistp", &whole)),
                 }
             }
             _ => return Err(i.wrong_type_mut("plistp", &whole)),
         }
+        cycle.step(i, &cur)?;
     }
 }
 
 // ---------- take / ntake / flatten ----------
 
 fn f_take(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let mut remaining = match &args[0] {
-        Value::Int(n) => num_bigint::BigInt::from(*n),
-        Value::BigInt(n) => (**n).clone(),
-        other => return Err(i.wrong_type_mut("integerp", other)),
-    };
-    if remaining <= num_bigint::BigInt::zero() {
-        return Ok(Value::Nil);
-    }
+    let mut remaining = args[0]
+        .as_bigint()
+        .ok_or_else(|| i.wrong_type_mut("integerp", &args[0]))?;
     let mut cur = args[1].clone();
     let mut items = Vec::new();
     // Only inspect the requested prefix. A dotted tail is an error only
     // when more elements are requested; nonpositive N never checks LIST.
-    while !remaining.is_zero() {
+    while remaining.sign() == num_bigint::Sign::Plus {
         match cur {
             Value::Cons(cell) => {
                 let cell = cell.borrow();
@@ -1796,14 +1619,12 @@ fn f_take(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_ntake(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let mut remaining = match &args[0] {
-        Value::Int(n) => num_bigint::BigInt::from(*n),
-        Value::BigInt(n) => (**n).clone(),
-        other => return Err(i.wrong_type_mut("integerp", other)),
-    };
+    let mut remaining = args[0]
+        .as_bigint()
+        .ok_or_else(|| i.wrong_type_mut("integerp", &args[0]))?;
     // ntake destructively truncates the list after N elements.
     let mut cur = args[1].clone();
-    if remaining <= num_bigint::BigInt::zero() {
+    if remaining.sign() != num_bigint::Sign::Plus {
         return Ok(Value::Nil);
     }
     loop {
@@ -1811,7 +1632,7 @@ fn f_ntake(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             Value::Cons(c) => {
                 let next = c.borrow().cdr.clone();
                 remaining -= 1;
-                if remaining.is_zero() {
+                if remaining.sign() != num_bigint::Sign::Plus {
                     c.borrow_mut().cdr = Value::Nil;
                     return Ok(args[1].clone());
                 }
@@ -1825,37 +1646,26 @@ fn f_ntake(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_flatten_tree(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    enum Task {
-        Visit(Value),
-        Leave(usize),
-    }
     let mut out = Vec::new();
-    let mut stack = vec![Task::Visit(args[0].clone())];
-    let mut active = std::collections::HashSet::new();
-    while let Some(task) = stack.pop() {
-        match task {
-            Task::Leave(pointer) => {
-                active.remove(&pointer);
-            }
-            Task::Visit(Value::Cons(cell)) => {
-                let pointer = Rc::as_ptr(&cell) as usize;
-                if !active.insert(pointer) {
-                    return Err(i.signal_data(
-                        sym::CIRCULAR_LIST,
-                        vec![Value::Cons(cell.clone())],
-                    ));
-                }
-                let (car, cdr) = {
-                    let cell = cell.borrow();
-                    (cell.car.clone(), cell.cdr.clone())
-                };
-                stack.push(Task::Leave(pointer));
+    let mut stack = vec![args[0].clone()];
+    let mut steps = 0usize;
+    while let Some(v) = stack.pop() {
+        // Shared subtrees must be traversed on every occurrence. Keep
+        // long (including circular) walks interruptible, without silently
+        // returning a prefix at an arbitrary visit count.
+        steps = steps.wrapping_add(1);
+        if steps & 1023 == 0 {
+            i.maybe_quit()?;
+        }
+        match v {
+            Value::Cons(c) => {
+                let b = c.borrow();
                 // Push cdr first so car pops first (depth-first order).
-                stack.push(Task::Visit(cdr));
-                stack.push(Task::Visit(car));
+                stack.push(b.cdr.clone());
+                stack.push(b.car.clone());
             }
-            Task::Visit(Value::Nil) => {}
-            Task::Visit(other) => out.push(other),
+            Value::Nil => {}
+            other => out.push(other),
         }
     }
     Ok(Value::list(out))
@@ -1937,67 +1747,46 @@ fn f_assoc_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // strings/symbols or conses whose car is a string/symbol;
     // anything else is skipped.  GNU stops at a non-cons tail
     // without a type check.
-    // GNU Fassoc_string (fns.c): the key's stringp check happens inside
+    // GNU Fassoc_string (minibuf.c): the key's stringp check happens inside
     // the element loop — only reached when an element (or its car) is a
     // string/symbol to compare against.  Empty or non-string-element
     // lists return nil even for non-string keys.
-    let key_string = match &args[0] {
-        Value::Str(s) => Some(s.clone()),
-        Value::Sym(_) | Value::Nil => Some(super::strfn::ordering_string(i, &args[0])?),
-        _ => None,
-    };
     let fold = arg(&args, 2).truthy();
-    let name_of = |i: &mut Interp, v: &Value| -> Result<Option<crate::lisp::value::StrRef>, Flow> {
-        match v {
-            Value::Str(s) => Ok(Some(s.clone())),
-            Value::Sym(_) | Value::Nil => super::strfn::ordering_string(i, v).map(Some),
-            _ => Ok(None),
-        }
+    let key = match &args[0] {
+        Value::Nil | Value::Sym(_) => Value::Str(super::strfn::ordering_string(i, &args[0])?),
+        key => key.clone(),
     };
     let mut cur = args[1].clone();
-    let mut quit_count = 0u16;
+    let mut steps = 0usize;
     loop {
-        quit_count = quit_count.wrapping_add(1);
-        if quit_count == 0 {
+        steps = steps.wrapping_add(1);
+        if steps & 1023 == 0 {
             i.maybe_quit()?;
         }
         match cur {
             Value::Cons(c) => {
-                let (elem, next) = {
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
+                let elem = c.borrow().car.clone();
+                let candidate = match &elem {
+                    Value::Cons(pair) => pair.borrow().car.clone(),
+                    _ => elem.clone(),
                 };
-                // Key check only fires once a comparable element appears.
-                let check_key = |i: &mut Interp| -> Result<crate::lisp::value::StrRef, Flow> {
-                    match &key_string {
-                        Some(k) => Ok(k.clone()),
-                        None => Err(i.wrong_type_mut("stringp", &args[0])),
-                    }
-                };
-                let try_elem = |i: &mut Interp, v: &Value| -> Result<bool, Flow> {
-                    if let Some(s) = name_of(i, v)? {
-                        let k = check_key(i)?;
-                        if fold {
-                            return Ok(super::strfn::f_string_equal_ignore_case(
-                                i,
-                                vec![Value::Str(s), Value::Str(k)].into(),
-                            )?
-                            .truthy());
-                        }
-                        return Ok(super::strfn::gnu_sbytes(i, &s)
-                            == super::strfn::gnu_sbytes(i, &k));
-                    }
-                    Ok(false)
-                };
-                if try_elem(i, &elem)? {
-                    return Ok(elem);
-                }
-                if let Value::Cons(pair) = &elem {
-                    let k = pair.borrow().car.clone();
-                    if try_elem(i, &k)? {
+                // Symbols (including nil) use their actual name object.
+                // A comparable candidate triggers KEY's lazy string check.
+                if matches!(candidate, Value::Str(_) | Value::Sym(_) | Value::Nil) {
+                    let candidate = Value::Str(super::strfn::ordering_string(i, &candidate)?);
+                    // GNU converts unibyte input and upcases characters
+                    // through the buffer's case table, without expansions.
+                    // This internal call must not observe fset of compare-strings.
+                    let result = primitive(i, "compare-strings", vec![
+                        candidate, Value::Int(0), Value::Nil, key.clone(), Value::Int(0), Value::Nil,
+                        Value::from_bool(fold),
+                    ])?;
+                    if eq_values(&result, &Value::t()) {
                         return Ok(elem);
                     }
+                    i.maybe_quit()?;
                 }
+                let next = c.borrow().cdr.clone();
                 cur = next;
             }
             _ => return Ok(Value::Nil),
@@ -2022,9 +1811,9 @@ fn remove_impl(
 ) -> EvalResult {
     match seq {
         Value::Str(s) => {
-            let mut kept = String::new();
+            let mut kept = crate::lisp::text::EmacsText::default();
             for c in s.borrow().chars() {
-                if !cmp(i, elt, &Value::Int(c as i128))? {
+                if !cmp(i, elt, &Value::Int((c).code() as i128))? {
                     kept.push(c);
                 }
             }

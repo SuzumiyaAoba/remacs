@@ -45,7 +45,7 @@ fn eval(i: &mut Interp, source: &str) -> Value {
 
 fn printed(i: &mut Interp, source: &str) -> String {
     let value = eval(i, source);
-    i.prin1_to_string(&value)
+    i.prin1_to_string(&value).to_unicode_lossy()
 }
 
 fn fd(process: &Value) -> RawFd {
@@ -320,7 +320,7 @@ fn contact_bytes(i: &mut Interp, expression: &str) -> Vec<u8> {
     let bytes = text
         .borrow()
         .chars()
-        .map(|c| u8::try_from(c as u32).unwrap())
+        .map(|c| u8::try_from(c.code()).unwrap())
         .collect();
     bytes
 }

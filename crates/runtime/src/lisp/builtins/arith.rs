@@ -413,11 +413,11 @@ fn f_mod_fn(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         return Ok(Value::from_bigint(x.mod_floor(&y)));
     }
     let (x, y) = (x.float(), y.float());
-    // GNU starts with fmod, then adjusts only a nonzero remainder whose
-    // sign differs from the divisor. rem_euclid would add |y| and then y,
-    // introducing rounding and producing infinity - infinity for y=-inf.
+    // GNU uses fmod and adjusts only remainders of the opposite sign.
+    // rem_euclid followed by subtracting |Y| loses precision for two
+    // negative operands and produces infinity - infinity for Y=-inf.
     let r = x % y;
-    Ok(Value::float(if r != 0.0 && (r < 0.0) != (y < 0.0) {
+    Ok(Value::float(if (r < 0.0 && y > 0.0) || (r > 0.0 && y < 0.0) {
         r + y
     } else {
         r
@@ -751,22 +751,24 @@ fn f_acos(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 fn f_atan(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let y = want_number(i, &args[0])?;
-    match args.get(1) {
-        None | Some(Value::Nil) => Ok(Value::float(y.atan())),
+    match args.get(1).filter(|value| value.truthy()) {
+        None => Ok(Value::float(y.atan())),
         Some(x) => Ok(Value::float(y.atan2(want_number(i, x)?))),
     }
 }
 fn f_log(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let n = want_number(i, &args[0])?;
-    match args.get(1) {
-        Some(b) if !b.is_nil() => {
+    match args.get(1).filter(|value| value.truthy()) {
+        Some(b) => {
             let b = want_number(i, b)?;
-            // GNU's Flog calls log10() directly for base 10, so
-            // (log 1000 10) yields exactly 3.0.
-            Ok(Value::float(match b {
-                10.0 => n.log10(),
-                2.0 => n.log2(),
-                _ => n.log(b),
+            // GNU uses dedicated operations for bases 2 and 10;
+            // dividing rounded natural logarithms can lose an ulp.
+            Ok(Value::float(if b == 2.0 {
+                n.log2()
+            } else if b == 10.0 {
+                n.log10()
+            } else {
+                n.log(b)
             }))
         }
         None | Some(Value::Nil) => Ok(Value::float(n.ln())),
@@ -914,26 +916,19 @@ struct Rand3 {
 impl Rand3 {
     fn seeded(seed: u32) -> Self {
         let mut st = [0i32; 31];
-        // glibc's BSD-compatible random() normalizes a zero seed to one.
-        // Darwin's FreeBSD-derived srandom() keeps state[0] at zero and
-        // substitutes 123459876 only when good_rand advances from zero.
-        #[cfg(target_vendor = "apple")]
-        {
-            st[0] = seed as i32;
-        }
-        #[cfg(not(target_vendor = "apple"))]
-        {
-            st[0] = if seed == 0 { 1 } else { seed as i32 };
-        }
+        st[0] = if seed == 0 && !cfg!(target_os = "macos") {
+            1
+        } else {
+            seed as i32
+        };
         for i in 1..31 {
-            #[cfg(target_vendor = "apple")]
-            let previous = if st[i - 1] == 0 {
-                123_459_876
+            // Darwin retains state[0]=0 and substitutes this value only
+            // inside good_rand; glibc instead normalizes the initial seed.
+            let previous = if cfg!(target_os = "macos") && st[i - 1] == 0 {
+                123459876
             } else {
                 st[i - 1]
             };
-            #[cfg(not(target_vendor = "apple"))]
-            let previous = st[i - 1];
             let hi = previous / 127773;
             let lo = previous % 127773;
             let w = 16807i64 * lo as i64 - 2836i64 * hi as i64;
@@ -1050,8 +1045,7 @@ fn f_random(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         }
         Some(Value::Str(s)) => {
             let mut seed = 0u32;
-            let bytes = super::strfn::gnu_sbytes(i, s);
-            for (index, byte) in bytes.iter().enumerate() {
+            for (index, byte) in super::strfn::gnu_sbytes(i, s).iter().enumerate() {
                 seed ^= u32::from(*byte) << ((index % 4) * 8);
             }
             GEN.with(|g| *g.borrow_mut() = Rand3::seeded(seed));
@@ -1090,13 +1084,28 @@ fn f_eql(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(super::eql_values_with_interp(i, &args[0], &args[1])))
 }
 
+// Decompose with libm rather than log2/powi: rounded logarithms cross
+// power-of-two boundaries, and materialized scale factors can overflow.
+fn float_parts(x: f64) -> (f64, libc::c_int) {
+    if x == 0.0 || !x.is_finite() {
+        return (x, 0);
+    }
+    #[cfg_attr(unix, link(name = "m"))]
+    unsafe extern "C" {
+        fn frexp(x: f64, exponent: *mut libc::c_int) -> f64;
+    }
+    let mut exponent = 0;
+    let mantissa = unsafe { frexp(x, &mut exponent) };
+    (mantissa, exponent)
+}
+
 fn f_frexp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let x = want_number(i, &args[0])?;
-    if x == 0.0 || x.is_nan() || x.is_infinite() {
-        return Ok(Value::cons(Value::float(x), Value::Int(0)));
-    }
-    let (m, e) = frexp_parts(x);
-    Ok(Value::cons(Value::float(m), Value::Int(e)))
+    let (mantissa, exponent) = float_parts(x);
+    Ok(Value::cons(
+        Value::float(mantissa),
+        Value::Int(exponent as i128),
+    ))
 }
 
 /// Exact binary decomposition: X = M * 2^E, with 0.5 <= |M| < 1.
@@ -1198,8 +1207,7 @@ fn f_logb(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     if x.is_infinite() {
         return Ok(Value::float(f64::INFINITY));
     }
-    let (_, exponent) = frexp_parts(x);
-    Ok(Value::Int(exponent - 1))
+    Ok(Value::Int(float_parts(x).1 as i128 - 1))
 }
 
 fn f_isnan(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {

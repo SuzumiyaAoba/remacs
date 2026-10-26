@@ -34,7 +34,7 @@ pub(crate) fn is_load_stream(i: &Interp, source: &Value) -> bool {
 
 pub(crate) fn read_parser_at(
     i: &mut Interp,
-    chars: Rc<Vec<char>>,
+    chars: Rc<Vec<crate::lisp::text::EmacsChar>>,
     position: usize,
     annotate_pos: Option<i128>,
     from_buffer: bool,
@@ -58,12 +58,12 @@ pub(crate) fn read_parser_at(
                 signal.data().list_to_vec().ok().and_then(|v| v.first().cloned())
             {
                 let message = message.borrow();
-                if (message.as_str() == ")" && matches!(chars.get(end), Some(')' | ']')))
-                    || (message.as_str() == "." && chars.get(end) == Some(&'.'))
+                if (message.as_str() == ")" && chars.get(end).is_some_and(|c| *c == ')' || *c == ']'))
+                    || (message.as_str() == "." && chars.get(end).is_some_and(|c| *c == '.'))
                     || (message.starts_with('#')
                         && message.chars().last() == chars.get(end).copied())
                     || (message.as_str() == "nonsensical self-reference"
-                        && chars.get(end) == Some(&'#'))
+                        && chars.get(end).is_some_and(|c| *c == '#'))
                 {
                     end += 1;
                 }
@@ -208,7 +208,7 @@ fn f_read_from_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
-    let chars: Vec<char> = src.chars().collect();
+    let chars: Vec<crate::lisp::value::EmacsChar> = src.chars().collect();
     let len = chars.len() as i128;
     // START/END are character positions; nil END (or omitted) is the
     // string's end. Out-of-range values signal args-out-of-range.
@@ -243,7 +243,7 @@ fn f_read_from_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         ));
     }
     let (start, end) = (s, e);
-    let sub: String = chars[start as usize..end as usize].iter().collect();
+    let sub: crate::lisp::text::EmacsText = chars[start as usize..end as usize].iter().collect();
     let (v, pos) = i.read_from_string_kind(&sub, 0, None, multibyte)?;
     Ok(Value::cons(v, Value::Int(start + pos as i128)))
 }

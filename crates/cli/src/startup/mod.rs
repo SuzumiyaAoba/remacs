@@ -47,7 +47,7 @@ pub fn run(i: &mut Interp, args: &[String]) {
         let Value::Str(token_text) = &token_value else {
             unreachable!()
         };
-        let token = token_text.borrow().clone();
+        let token = token_text.borrow().to_unicode_lossy();
         if parse_options && token == "--" {
             parse_options = false;
             continue;
@@ -92,7 +92,7 @@ pub fn run(i: &mut Interp, args: &[String]) {
                     let Value::Str(text) = &value else {
                         unreachable!()
                     };
-                    args.push(text.borrow().clone());
+                    args.push(text.borrow().to_unicode_lossy());
                     operand = Some(value);
                 }
                 Ok(_) => unreachable!(),
@@ -141,8 +141,8 @@ pub fn run(i: &mut Interp, args: &[String]) {
                                 other => format!("{other:?}"),
                             };
                             eprintln!("eval_str err: {d}; bisecting");
-                            let chars: std::rc::Rc<Vec<char>> =
-                                std::rc::Rc::new(src.chars().collect());
+                            let chars: std::rc::Rc<Vec<remacs_runtime::lisp::value::EmacsChar>> =
+                                std::rc::Rc::new(src.chars().map(Into::into).collect());
                             let mut pos = 0usize;
                             loop {
                                 let next = {

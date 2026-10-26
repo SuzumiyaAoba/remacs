@@ -9,16 +9,12 @@ use crate::lisp::obarray::sym;
 use crate::lisp::value::*;
 use crate::lisp::{Interp, memory};
 
-/// Encode Emacs characters rather than process-local Unicode proxy indices.
-pub(super) fn encode_text(text: &str) -> Vec<u32> {
-    text.chars()
-        .map(|ch| mule_seq_code(ch).unwrap_or(ch as u32))
-        .collect()
+/// Portable text stores the actual Emacs character codes.
+pub(super) fn encode_text<T: crate::lisp::text::TextSource + ?Sized>(text: &T) -> Vec<u32> {
+    text.with_text(|text| text.chars().map(EmacsChar::code).collect())
 }
-pub(super) fn decode_text(text: &[u32]) -> String {
-    text.iter()
-        .map(|code| char::from_u32(*code).unwrap_or_else(|| mule_seq_char(*code)))
-        .collect()
+pub(super) fn decode_text(text: &[u32]) -> EmacsText {
+    text.iter().map(|code| EmacsChar::new(*code).unwrap_or_else(|| EmacsChar::from('?'))).collect()
 }
 
 pub(super) type Result<T> = std::result::Result<T, String>;
@@ -47,6 +43,7 @@ pub(super) enum Node {
     BigInt(String),
     Cons(Ref, Ref),
     Vector(Vec<Ref>),
+    TypedVector(RecordKind, Vec<Ref>),
     OverlayVector(Vec<Ref>),
     Hash(Box<HashData>),
     Lambda(Box<LambdaData>),
@@ -104,7 +101,7 @@ impl Node {
                 add(&mut out, a);
                 add(&mut out, b);
             }
-            Self::Vector(values) | Self::OverlayVector(values) => {
+            Self::Vector(values) | Self::TypedVector(_, values) | Self::OverlayVector(values) => {
                 for r in values {
                     add(&mut out, r);
                 }
@@ -366,7 +363,7 @@ impl<'a> Encoder<'a> {
                 Work::Symbol(id) => {
                     let symbol = self.interp.obarray.symbol(id);
                     let data = SymbolData {
-                        name: encode_text(&symbol.name),
+                        name: match &symbol.name_string { Some(text) => encode_text(&text.borrow()), None => encode_text(&symbol.name) },
                         internment_key: symbol.internment_key.clone(),
                         name_string: symbol
                             .name_string
@@ -438,6 +435,7 @@ impl<'a> Encoder<'a> {
             Value::BigInt(value) => Node::BigInt(value.to_string()),
             Value::Vec(values) | Value::Record(values) => {
                 let overlay = self.interp.is_overlay(&Value::Vec(values.clone()));
+                let kind = value.record_kind();
                 let values = values.borrow();
                 if let Some(Value::Sym(tag)) = values.first() {
                     if matches!(
@@ -454,6 +452,8 @@ impl<'a> Encoder<'a> {
                 let items = self.values(&values)?;
                 if overlay {
                     Node::OverlayVector(items)
+                } else if let Some(kind) = kind {
+                    Node::TypedVector(kind, items)
                 } else {
                     Node::Vector(items)
                 }
@@ -651,14 +651,14 @@ impl<'a> Decoder<'a> {
                                     i.obarray.intern_with_key(&name, key.clone())
                                 }
                             }
-                            None => i.intern(&name),
+                            None => i.obarray.intern_with_key(&name, crate::lisp::obarray::InternKey::from_text(&name)),
                         }
                     };
                     allocated_symbols.insert(id);
                     decoder.symbols[index] = Some(id);
                     Some(i.sym(id))
                 }
-                Node::String { text, .. } => Some(Value::string(decode_text(text))),
+                Node::String { text, representation, .. } => Some(Value::string_with_kind(decode_text(text), *representation == 2)),
                 Node::Float(bits) => Some(Value::float(f64::from_bits(*bits))),
                 Node::BigInt(text) => Some(Value::from_bigint(
                     text.parse().map_err(|_| "Invalid dumped bignum")?,
@@ -666,6 +666,11 @@ impl<'a> Decoder<'a> {
                 Node::Cons(_, _) => Some(Value::cons(Value::Nil, Value::Nil)),
                 Node::Vector(items) | Node::OverlayVector(items) => {
                     Some(Value::vector(vec![Value::Nil; items.len()]))
+                }
+                Node::TypedVector(kind, items) => {
+                    let value = Value::vector(vec![Value::Nil; items.len()]);
+                    value.set_record_kind(*kind);
+                    Some(value)
                 }
                 Node::Hash(data) => {
                     let test = match data.test {
@@ -921,7 +926,7 @@ impl<'a> Decoder<'a> {
                     cell.car = car;
                     cell.cdr = cdr;
                 }
-                (Node::Vector(items) | Node::OverlayVector(items), Some(Value::Vec(vector))) => {
+                (Node::Vector(items) | Node::TypedVector(_, items) | Node::OverlayVector(items), Some(Value::Vec(vector))) => {
                     *vector.borrow_mut() = self.values(i, items)?;
                     if matches!(node, Node::OverlayVector(_)) {
                         i.register_overlay(&Value::Vec(vector));
@@ -979,6 +984,9 @@ impl<'a> Decoder<'a> {
     /// Rehash only after all referents and session-side char-table metadata
     /// have been restored. Object addresses deliberately differ after load.
     pub fn finish(&mut self, i: &mut Interp) -> Result<()> {
+        // Hash equality can depend on current forwarded Lisp variables.
+        // Publish their cells first, then reset callback side effects below.
+        self.restore_symbol_cells(i)?;
         for (index, node) in self.nodes.iter().enumerate() {
             if let Node::Hash(data) = node {
                 let Some(Value::Hash(table)) = self.objects[index].clone() else {
@@ -1006,6 +1014,12 @@ impl<'a> Decoder<'a> {
                 table.borrow_mut().mutable = data.mutable;
             }
         }
+        self.restore_symbol_cells(i)?;
+        i.sync_symbol_position_view();
+        Ok(())
+    }
+
+    fn restore_symbol_cells(&mut self, i: &mut Interp) -> Result<()> {
         for (index, node) in self.nodes.iter().enumerate() {
             if let Node::Symbol(data) = node {
                 let id = self.symbols[index].ok_or("Missing dumped symbol")?;
@@ -1040,6 +1054,9 @@ impl<'a> Decoder<'a> {
                 ] = data.flags;
                 symbol.variable_documentation = data.documentation.as_deref().map(decode_text);
                 symbol.var_alias = alias;
+                if data.flags[5] && decode_text(&data.name) == "symbols-with-pos-enabled" {
+                    i.restore_symbol_position_flag(id);
+                }
             }
         }
         Ok(())

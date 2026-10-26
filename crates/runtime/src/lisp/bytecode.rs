@@ -82,7 +82,7 @@ pub(crate) struct BcProg {
     /// Identity of `items[1]' (byte string) for staleness checks.
     code_key: usize,
     /// Source contents at decode time, including raw-byte proxy scalars.
-    source_text: String,
+    source_text: super::text::EmacsText,
     /// Decoded instruction bytes.
     code: Vec<u8>,
     /// `parse_argdesc' results.
@@ -155,7 +155,7 @@ pub(crate) fn exec(
         let hit = l.bc_prog.borrow().as_ref().is_some_and(|p| {
             p.argdesc_key == key_a
                 && p.code_key == key_c
-                && matches!(&bytestr, Value::Str(s) if s.borrow().as_str() == p.source_text)
+                && matches!(&bytestr, Value::Str(s) if *s.borrow() == p.source_text)
         });
         if hit {
             l.bc_prog.borrow().clone().unwrap()
@@ -493,7 +493,7 @@ fn dispatch_inner(
                 handlers.len(),
                 stack
                     .last()
-                    .map(|v| i.princ_to_string(v).chars().take(30).collect::<String>())
+                    .map(|v| i.princ_to_string(v).chars().take(30).collect::<crate::lisp::text::EmacsText>())
                     .unwrap_or_default()
             );
             // call ops: show the function + args actually passed.
@@ -509,7 +509,7 @@ fn dispatch_inner(
                     stack.get(fpos),
                     Some(Value::Sym(_)) | Some(Value::Subr(_)) | Some(Value::Lambda(_))
                 ) {
-                    let dump: Vec<String> = stack
+                    let dump: Vec<crate::lisp::text::EmacsText> = stack
                         .iter()
                         .map(|v| i.princ_to_string(v).chars().take(24).collect())
                         .collect();
@@ -725,11 +725,11 @@ fn step_op(
                     false
                 };
                 if bad {
-                    let st: Vec<String> = stack
+                    let st: Vec<crate::lisp::text::EmacsText> = stack
                         .iter()
                         .map(|v| i.princ_to_string(v).chars().take(60).collect())
                         .collect();
-                    let cs: Vec<String> = consts
+                    let cs: Vec<crate::lisp::text::EmacsText> = consts
                         .borrow()
                         .iter()
                         .map(|v| i.princ_to_string(v).chars().take(60).collect())
@@ -740,12 +740,12 @@ fn step_op(
                         n,
                         fpos,
                         *pc,
-                        st.join(" "),
+                        crate::lisp::text::EmacsText::join(&st, " "),
                         code.iter()
                             .map(|b| format!("{:02x}", b))
                             .collect::<Vec<_>>()
                             .join(" "),
-                        cs.join(" "),
+                        crate::lisp::text::EmacsText::join(&cs, " "),
                     );
                 }
             }
@@ -1050,14 +1050,11 @@ fn step_op(
         166 => scall!("%", 2),
         167 => {
             let v = pop!();
-            push!(Value::from_bool(matches!(
-                v,
-                Value::Int(_) | Value::BigInt(_) | Value::Float(_)
-            )));
+            push!(Value::from_bool(v.integerp() || matches!(v, Value::Float(_))));
         }
         168 => {
             let v = pop!();
-            push!(Value::from_bool(matches!(v, Value::Int(_) | Value::BigInt(_))));
+            push!(Value::from_bool(v.integerp()));
         }
         175 => {
             let n = fetch!() as usize;

@@ -34,6 +34,26 @@ fn external_debugging_output_emits_high_mule_bytes() {
     assert_eq!(output.stderr, [0xF4, 0x90, 0x80, 0x80]);
 }
 
+#[test]
+fn string_reverse_is_void_until_subrx_installs_the_real_alias() {
+    let code = "(let ((before (fboundp 'string-reverse)) \
+        (call (condition-case e (string-reverse [a b]) (error (car e))))) \
+        (require 'subr-x) \
+        (prin1 (list before call (symbol-function 'string-reverse) (string-reverse [a b]))))";
+    for source in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_remacs"));
+        command.args(["-Q", "--batch", "--eval", code]);
+        if source {
+            command.env("REMACS_NO_ELC", "1");
+        } else {
+            command.env_remove("REMACS_NO_ELC");
+        }
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "source={source}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "(nil void-function reverse [b a])", "source={source}");
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn remacs_before_deadline(args: &[&str]) -> (String, String, i32) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_remacs"))

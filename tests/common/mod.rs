@@ -2,22 +2,23 @@
 //! against expected printed output.
 #![allow(dead_code)]
 
+use remacs::lisp::value::EmacsText;
 use remacs::lisp::{Flow, Interp, OutputSink, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
 /// A fresh interpreter with captured output.
-pub fn interp() -> (Interp, Rc<RefCell<String>>) {
+pub fn interp() -> (Interp, Rc<RefCell<EmacsText>>) {
     capture_output(Interp::new())
 }
 
 /// GNU --batch conditions must be present while startup Lisp is evaluated.
-pub fn batch_interp() -> (Interp, Rc<RefCell<String>>) {
+pub fn batch_interp() -> (Interp, Rc<RefCell<EmacsText>>) {
     capture_output(Interp::new_with_noninteractive(true))
 }
 
-fn capture_output(mut i: Interp) -> (Interp, Rc<RefCell<String>>) {
-    let out = Rc::new(RefCell::new(String::new()));
+fn capture_output(mut i: Interp) -> (Interp, Rc<RefCell<EmacsText>>) {
+    let out = Rc::new(RefCell::new(EmacsText::new()));
     i.output = Some(OutputSink::Buffer(out.clone()));
     (i, out)
 }
@@ -48,7 +49,7 @@ pub fn ev(src: &str) -> String {
     on_big_stack(move || {
         let (mut i, _) = interp();
         match i.eval_str(&src) {
-            Ok(v) => i.prin1_to_string(&v),
+            Ok(v) => i.prin1_to_string(&v).to_unicode_lossy(),
             Err(f) => panic!("eval failed: {} -> {}", src, flow_str(&mut i, &f)),
         }
     })
@@ -60,7 +61,7 @@ pub fn ev_out(src: &str) -> String {
     on_big_stack(move || {
         let (mut i, out) = interp();
         match i.eval_str(&src) {
-            Ok(_) => out.borrow().clone(),
+            Ok(_) => out.borrow().to_unicode_lossy(),
             Err(f) => panic!("eval failed: {} -> {}", src, flow_str(&mut i, &f)),
         }
     })
@@ -90,7 +91,7 @@ pub fn ev_result(src: &str) -> Result<String, String> {
     on_big_stack(move || {
         let (mut i, _) = interp();
         match i.eval_str(&src) {
-            Ok(v) => Ok(i.prin1_to_string(&v)),
+            Ok(v) => Ok(i.prin1_to_string(&v).to_unicode_lossy()),
             Err(Flow::Signal(signal)) => Err(match &signal.symbol() {
                 Value::Sym(id) => i.symbol_name(*id),
                 _ => "non-symbol-signal".into(),

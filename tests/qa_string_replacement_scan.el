@@ -1,0 +1,12 @@
+;;; -*- lexical-binding: nil; -*-
+;; Single-pass replacement preserves observable slow paths (#617/#618).
+(qa (let* ((source (make-string 65536 120)) (result (string-replace "x" "y" source))) (list (equal result (make-string 65536 121)) (eq result source) (multibyte-string-p result) (aref source 0))) '(t nil nil 120))
+(qa (let* ((payload (list 'shared)) (source (propertize (mapconcat (lambda (_) "axb") (make-list 1024 nil) "") 'payload payload)) (result (string-replace "x" "Y" source))) (list (length result) (eq (get-text-property 0 'payload result) payload) (get-text-property 1 'payload result) (eq (get-text-property 2 'payload result) payload) (string-to-list (substring result 0 6)))) '(3072 t nil t (97 89 98 97 89 98)))
+(qa (let ((result (string-replace (string 1114112) "y" (make-string 4096 1114112)))) (list (equal result (make-string 4096 121)) (multibyte-string-p result))) '(t nil))
+(qa (let* ((source (propertize "axbxc" 'face 'bold)) (replacement (propertize "Z" 'face 'italic))) (put-text-property 1 4 'tag 'middle source) (put-text-property 1 3 'explicit-nil nil source) (let ((result (string-replace "x" replacement source))) (list (string-to-list result) (object-intervals result)))) '((97 90 98 90 99) ((0 1 (face bold)) (1 2 (face italic)) (2 3 (explicit-nil nil tag middle face bold)) (3 4 (face italic)) (4 5 (face bold)))))
+(qa (let* ((comp-enable-subr-trampolines t) (old (symbol-function 'string-search)) (source (propertize "axa" 'face 'bold)) calls result) (unwind-protect (progn (fset 'string-search (lambda (pattern text &optional start) (push start calls) (garbage-collect) (when (= start 0) (aset text 0 98)) (funcall old pattern text start))) (setq result (string-replace "x" "Y" source))) (fset 'string-search old)) (list (string-to-list result) (object-intervals result) (string-to-list source) (nreverse calls))) '((98 89 97) ((0 1 (face bold)) (1 2 nil) (2 3 (face bold))) (98 120 97) (0 2)))
+(qa (let ((debug-on-error t)) (string-replace "x" "Y" "axb")) '"aYb")
+(qa (let ((result (concat (vector 1114112) (list 4194176) (propertize "X" 'face 'bold) (unibyte-string 255) (propertize "Y" 'face 'italic)))) (list (string-to-list result) (multibyte-string-p result) (object-intervals result))) '((1114112 4194176 88 4194303 89) t ((0 2 nil) (2 3 (face bold)) (3 4 nil) (4 5 (face italic)))))
+(qa (let ((result (apply #'concat (append (make-list 4096 (string 1114112)) (list (propertize "X" 'end t)))))) (list (length result) (get-text-property 4096 'end result) (multibyte-string-p result))) '(4097 t t))
+
+(princ (qa--done))

@@ -183,7 +183,7 @@ impl Image {
         }
         Ok(())
     }
-    pub fn relocate_source_cache(&mut self, root: &str) {
+    pub fn relocate_source_cache<T: crate::lisp::text::TextSource + ?Sized>(&mut self, root: &T) {
         fn replace(text: &mut Vec<u32>, old: &[u32], new: &[u32]) {
             if text.starts_with(old)
                 && (text.len() == old.len() || text.get(old.len()) == Some(&('/' as u32)))
@@ -776,9 +776,9 @@ impl Image {
         let nodes = encoder.finish()?;
         let mut source_caches = Vec::new();
         if let Some(cache) = crate::lisp::embedded_cache::directory() {
-            source_caches.push(encode_text(&cache.to_string_lossy()));
+            source_caches.push(encode_text(&crate::lisp::text::EmacsText::from_os_str(cache.as_os_str())));
             if let Ok(real) = std::fs::canonicalize(&cache) {
-                let real = encode_text(&real.to_string_lossy());
+                let real = encode_text(&crate::lisp::text::EmacsText::from_os_str(real.as_os_str()));
                 if !source_caches.contains(&real) {
                     source_caches.push(real);
                 }

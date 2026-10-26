@@ -237,7 +237,7 @@ fn interp_with_minibuffer(prompt: &str) -> crate::lisp::Interp {
         bb.locals.insert(km, map);
     }
     i.set_current_buffer(mb);
-    i.minibuf_prompts.push(prompt.to_string());
+    i.minibuf_prompts.push(prompt.into());
     i.minibuf_level = 1;
     i.minibuf_catching_exit = true;
     let exit_sym = Value::Sym(i.q("exit"));
@@ -255,7 +255,7 @@ fn minibuf_loop_reads_text() {
     // pending is a stack — reverse order.
     term.borrow_mut().pending.reverse();
     let mut i = interp_with_minibuffer("P: ");
-    match minibuf_loop(&term, &mut i, "P: ", false) {
+    match minibuf_loop(&term, &mut i, &crate::lisp::text::EmacsText::from("P: "), false) {
         Ok(crate::lisp::eval::MinibufInput::Text(s)) => assert_eq!(s, "ab"),
         other => panic!("expected Text, got {:?}", other.map(|_| ())),
     }
@@ -276,7 +276,7 @@ fn minibuf_loop_del_and_cg() {
     let mut i = interp_with_minibuffer("");
     // GNU: `abort-minibuffers' throws `exit' with a function that
     // signals `minibuffer-quit' after unwind.
-    match minibuf_loop(&term, &mut i, "", false) {
+    match minibuf_loop(&term, &mut i, &crate::lisp::text::EmacsText::from(""), false) {
         Ok(crate::lisp::eval::MinibufInput::Call(f)) => {
             let r = i.apply(&f, vec![]);
             assert!(
@@ -370,10 +370,10 @@ fn minibuf_loop_fido_ret() {
                     t.chars()
                         .rev()
                         .take(800)
-                        .collect::<String>()
+                        .collect::<crate::lisp::text::EmacsText>()
                         .chars()
                         .rev()
-                        .collect::<String>()
+                        .collect::<crate::lisp::text::EmacsText>()
                 })
                 .unwrap_or_default();
             panic!(
@@ -488,7 +488,7 @@ fn minibuf_loop_single_key_mode() {
     let term = Rc::new(RefCell::new(t));
     term.borrow_mut().unread(b'y' as i128);
     let mut i = crate::lisp::Interp::new();
-    match minibuf_loop(&term, &mut i, "y/n ", true) {
+    match minibuf_loop(&term, &mut i, &crate::lisp::text::EmacsText::from("y/n "), true) {
         Ok(crate::lisp::eval::MinibufInput::Key(k)) => assert_eq!(k, b'y' as i128),
         _ => panic!("expected Key"),
     }

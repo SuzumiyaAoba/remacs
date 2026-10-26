@@ -9,6 +9,7 @@
 //! Session primitives (`gnutls-boot' and friends) integrate with
 //! `lisp::process' network streams — see the `Session' plumbing below.
 
+use crate::lisp::text::{EmacsChar, EmacsText, TextSource};
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::sync::OnceLock;
@@ -438,7 +439,8 @@ fn gnutls_make_error(i: &mut Interp, err: i32) -> Value {
 fn extract_data(i: &mut Interp, spec: &Value) -> Result<Vec<u8>, Flow> {
     let mut parts: Vec<Value> = Vec::new();
     let mut cur = spec.clone();
-    loop {
+    // GNU reads only the five fixed fields, including on a cyclic tail.
+    for _ in 0..5 {
         match cur {
             Value::Cons(c) => {
                 let (car, cdr) = {
@@ -455,99 +457,51 @@ fn extract_data(i: &mut Interp, spec: &Value) -> Result<Vec<u8>, Flow> {
         Some(o) => o.clone(),
         None => return Err(i.wrong_type_mut("consp", spec)),
     };
-    // Whole-object bytes: strings via the unibyte/UTF-8 rule shared
-    // with `secure-hash'; buffers via their raw text bytes.
-    let (bytes, nchars): (Vec<u8>, usize) = match &obj {
-        Value::Str(_) => {
-            let b = super::misc::lisp_string_bytes(i, &obj);
-            let n = match &obj {
-                Value::Str(r) => r.borrow().chars().count(),
-                _ => 0,
-            };
-            (b, n)
-        }
-        Value::Buffer(b) => {
-            let bb = b.borrow();
-            let text = bb.text.text();
-            let n = text.chars().count();
-            (text.into_bytes(), n)
+    // TODO: Apply CODING/NOERROR and GNU safe-coding callbacks for buffer inputs.
+    let (text, unibyte, buffer_bounds) = match &obj {
+        Value::Str(text) => (text.borrow().clone(), i.is_unibyte_str(text), None),
+        Value::Buffer(buffer) => {
+            let buffer = buffer.borrow();
+            let text = buffer.text.text();
+            let multibyte = i.q_soft("enable-multibyte-characters");
+            let unibyte = multibyte.and_then(|symbol| buffer.locals.get(&symbol)).is_some_and(Value::is_nil);
+            let bounds = (buffer.begv as i128 + 1, buffer.zv.min(text.len()) as i128 + 1);
+            (text, unibyte, Some(bounds))
         }
         _ => {
-            // GNU signal_error: data = cons(message, OBJECT) — a
-            // LIST object splices, an ATOM becomes the last element
-            // of a proper list.
-            let tail = match &obj {
-                Value::Cons(_) => obj.clone(),
-                other => Value::cons((*other).clone(), Value::Nil),
-            };
-            return Err(i.signal(
-                crate::lisp::obarray::sym::ERROR,
-                Value::cons(Value::string("Invalid object argument"), tail),
-            ));
+            let tail = match &obj { Value::Cons(_) => obj.clone(), other => Value::cons(other.clone(), Value::Nil) };
+            return Err(i.signal(crate::lisp::obarray::sym::ERROR, Value::cons(Value::string("Invalid object argument"), tail)));
         }
     };
-    // START/END are character positions; map to byte offsets by
-    // re-encoding the char slice (exact for unibyte/UTF-8 sources).
-    let start = match parts.get(1) {
-        None | Some(Value::Nil) => 0usize,
-        Some(v) => (want_int(i, v)?).max(0) as usize,
-    };
-    let end = match parts.get(2) {
-        None | Some(Value::Nil) => nchars,
-        Some(v) => (want_int(i, v)?).max(0) as usize,
-    };
-    if start > end || end > nchars {
-        return Err(i.signal_data(
-            crate::lisp::obarray::sym::ARGS_OUT_OF_RANGE,
-            vec![
-                obj.clone(),
-                Value::Int(start as i128),
-                Value::Int(end as i128),
-            ],
-        ));
-    }
-    if start == 0 && end == nchars {
-        return Ok(bytes);
-    }
-    // Byte offsets of char boundaries.
-    let chars: Vec<char> = match &obj {
-        Value::Str(r) => r.borrow().chars().collect(),
-        Value::Buffer(b) => b.borrow().text.text().chars().collect(),
-        _ => Vec::new(),
-    };
-    let unibyte_src = match &obj {
-        Value::Str(r) => i.is_unibyte_str(r),
-        _ => false,
-    };
-    let mut prefix = 0usize;
-    let mut bstart = bytes.len();
-    let mut bend = bytes.len();
-    for (idx, c) in chars.iter().enumerate() {
-        let w = if unibyte_src || crate::lisp::value::eight_bit_byte(*c).is_some() {
-            1
-        } else {
-            c.len_utf8()
-        };
-        if idx == start {
-            bstart = prefix;
+    let (minimum, maximum) = buffer_bounds.unwrap_or((0, text.len() as i128));
+    let mut position = |index: usize, default| -> Result<i128, Flow> {
+        match parts.get(index) {
+            None | Some(Value::Nil) => Ok(default),
+            Some(value) if buffer_bounds.is_some() => super::want_int_or_mark(i, value),
+            Some(value) => Ok(want_int(i, value)?.max(0)),
         }
-        if idx == end {
-            bend = prefix;
-            break;
-        }
-        prefix += w;
-    }
-    if start == nchars {
-        bstart = bytes.len();
-    }
-    if end == nchars {
-        bend = bytes.len();
-    }
-    Ok(bytes[bstart.min(bytes.len())..bend.min(bytes.len())].to_vec())
+    };
+    let start = position(1, minimum)?;
+    let end = position(2, maximum)?;
+    let range = crypto_range(start, end, minimum, maximum, buffer_bounds.is_some())
+        .map_err(|(start, end)| i.signal_data(crate::lisp::obarray::sym::ARGS_OUT_OF_RANGE,
+            vec![obj.clone(), Value::Int(start), Value::Int(end)]))?;
+    let selected = &text[range];
+    Ok(crypto_text_bytes(selected, unibyte))
 }
 
-/// Wrap OBJECT in a one-element list like GNU's `list1' at the top of
-/// each crypto DEFUN; then require a cons spec.
+fn crypto_range(mut start: i128, mut end: i128, minimum: i128, maximum: i128, buffer: bool) -> Result<std::ops::Range<usize>, (i128, i128)> {
+    if buffer && start > end { std::mem::swap(&mut start, &mut end); }
+    if start < minimum || end > maximum || start > end { return Err((start, end)); }
+    let offset = i128::from(buffer);
+    Ok((start - offset) as usize..(end - offset) as usize)
+}
+
+fn crypto_text_bytes(text: &crate::lisp::text::EmacsStr, unibyte: bool) -> Vec<u8> {
+    if unibyte { text.chars().map(|c| c.byte8().unwrap_or(c.code() as u8)).collect() }
+    else { text.to_external_bytes() }
+}
+
 fn specify(obj: &Value) -> Value {
     match obj {
         Value::Str(_) | Value::Buffer(_) => Value::list(vec![obj.clone()]),
@@ -563,7 +517,7 @@ fn wipe_key(key: &Value) {
         if let Value::Str(s) = &c.borrow().car {
             let mut b = s.borrow_mut();
             let n = b.chars().count();
-            *b = "\0".repeat(n);
+            *b = EmacsText::from("\0".repeat(n));
         }
     }
 }
@@ -700,8 +654,8 @@ fn algo_id(
     let mut id: i64 = -1;
     let mut m = method.clone();
     if let Value::Str(s) = &m {
-        let name = s.borrow().clone();
-        m = Value::Sym(intern(i, &name));
+        let _ = s;
+        m = super::data::f_intern(i, vec![m.clone()].into())?;
     }
     match &m {
         Value::Sym(s) => {
@@ -1724,7 +1678,7 @@ fn f_peer_status_warn_desc(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_format_certificate(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let cert = super::want_string(i, &a[0])?;
+    let _cert = super::want_string(i, &a[0])?;
     let Some(g) = gnutls() else {
         return Ok(Value::Nil);
     };
@@ -1746,7 +1700,7 @@ fn f_format_certificate(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             )));
         }
         // GNU uses strlen() on the PEM string — import as PEM only.
-        let bytes = cert.as_bytes();
+        let bytes = match &a[0] { Value::Str(text) => super::strfn::gnu_sbytes(i, text), _ => unreachable!() };
         let d = Datum {
             data: bytes.as_ptr() as *mut u8,
             size: bytes.len() as u32,
@@ -1825,8 +1779,9 @@ fn boot_error(i: &mut Interp, msg: &str) -> Flow {
     i.error(msg)
 }
 
-fn is_ip_literal(host: &str) -> bool {
-    host.parse::<std::net::IpAddr>().is_ok()
+fn is_ip_literal<T: TextSource + ?Sized>(host: &T) -> bool {
+    host.with_text(|host| host.chars().map(EmacsChar::unicode).collect::<Option<String>>()
+        .is_some_and(|host| host.parse::<std::net::IpAddr>().is_ok()))
 }
 
 fn f_boot(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -1953,7 +1908,7 @@ fn f_boot(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             match &file {
                 Value::Str(s) => {
                     let path = crate::editor::expand_file_name_str(i, &s.borrow());
-                    let cpath = std::ffi::CString::new(path).unwrap_or_default();
+                    let cpath = std::ffi::CString::new(path.to_external_bytes()).unwrap_or_default();
                     let Some(f) = g.cert_set_x509_trust_file else {
                         continue;
                     };
@@ -1981,7 +1936,7 @@ fn f_boot(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             match &file {
                 Value::Str(s) => {
                     let path = crate::editor::expand_file_name_str(i, &s.borrow());
-                    let cpath = std::ffi::CString::new(path).unwrap_or_default();
+                    let cpath = std::ffi::CString::new(path.to_external_bytes()).unwrap_or_default();
                     let Some(f) = g.cert_set_x509_crl_file else {
                         continue;
                     };
@@ -2012,12 +1967,12 @@ fn f_boot(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             match (&keyfile, &certfile) {
                 (Value::Str(k), Value::Str(cf)) => {
                     let kp =
-                        std::ffi::CString::new(crate::editor::expand_file_name_str(i, &k.borrow()))
+                        std::ffi::CString::new(crate::editor::expand_file_name_str(i, &k.borrow()).to_external_bytes())
                             .unwrap_or_default();
                     let cp = std::ffi::CString::new(crate::editor::expand_file_name_str(
                         i,
                         &cf.borrow(),
-                    ))
+                    ).to_external_bytes())
                     .unwrap_or_default();
                     let Some(f) = g.cert_set_x509_key_file else {
                         continue;
@@ -2070,9 +2025,10 @@ fn f_boot(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // Priority string.
     let prio = match &priority_string {
         Value::Str(s) => s.borrow().clone(),
-        _ => "NORMAL".to_string(),
+        _ => EmacsText::from("NORMAL"),
     };
-    let cprio = std::ffi::CString::new(prio).unwrap_or_default();
+    let priority_bytes = match &priority_string { Value::Str(text) => super::strfn::gnu_sbytes(i, text), _ => prio.to_external_bytes() };
+    let cprio = std::ffi::CString::new(priority_bytes).unwrap_or_default();
     let Some(pset) = g.priority_set_direct else {
         return Err(boot_error(i, "GnuTLS priority API unavailable"));
     };
@@ -2111,14 +2067,15 @@ fn f_boot(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 
     // SNI.
+    let hostname_bytes = match &hostname { Value::Str(text) => super::strfn::gnu_sbytes(i, text), _ => unreachable!() };
     if !is_ip_literal(&hostname_s) {
         if let Some(sni) = g.server_name_set {
             let ret = unsafe {
                 sni(
                     session,
                     GNUTLS_NAME_DNS,
-                    hostname_s.as_ptr() as *const core::ffi::c_void,
-                    hostname_s.len(),
+                    hostname_bytes.as_ptr() as *const core::ffi::c_void,
+                    hostname_bytes.len(),
                 )
             };
             if std::env::var("GNUTLS_DEBUG").is_ok() {
@@ -2235,6 +2192,7 @@ fn verify_boot(i: &mut Interp, proc: &Value, proplist: &Value, g: &GnutlsFns) ->
             ));
         }
     };
+    let host_bytes = match &hostname { Value::Str(text) => super::strfn::gnu_sbytes(i, text), _ => unreachable!() };
     let mut member = |sym: &str| -> bool {
         let id = intern(i, sym);
         let mut cur = verify_error.clone();
@@ -2331,7 +2289,7 @@ fn verify_boot(i: &mut Interp, proc: &Value, proplist: &Value, g: &GnutlsFns) ->
                             data: certs[0].as_ptr() as *mut u8,
                             size: certs[0].len() as u32,
                         };
-                        let chost = std::ffi::CString::new(hostname_s.clone()).unwrap_or_default();
+                        let chost = std::ffi::CString::new(host_bytes.clone()).unwrap_or_default();
                         let mut matched = false;
                         let ir = import(crt, &d, GNUTLS_X509_FMT_DER);
                         if std::env::var("GNUTLS_DEBUG").is_ok() {
@@ -2617,4 +2575,25 @@ pub(crate) fn install(i: &mut Interp) {
     // Fprovide) — `gnutls-available-p' reports `gnutls' as a capability
     // entry only.  Providing the feature here would make `(require
     // 'gnutls)' short-circuit, skipping gnutls.el's function defs.
+}
+
+#[cfg(test)]
+mod wide_crypto_input_tests {
+    use super::*;
+    #[test]
+    fn unibyte_buffer_data_stays_raw_while_multibyte_text_uses_utf8() {
+        let text = EmacsText::from_codes([128, 255, 65]).unwrap();
+        assert_eq!(crypto_text_bytes(&text, true), [128, 255, 65]);
+        assert_eq!(crypto_text_bytes(&text, false), [194, 128, 195, 191, 65]);
+        let extended = EmacsText::from_codes([0xf0080, 0x3fff80, 0x110000]).unwrap();
+        assert_eq!(crypto_text_bytes(&extended, false), [243, 176, 130, 128, 128, 244, 144, 128, 128]);
+    }
+    #[test]
+    fn buffer_positions_and_reversed_regions_use_emacs_coordinates() {
+        assert_eq!(crypto_range(1, 2, 1, 4, true), Ok(0..1));
+        assert_eq!(crypto_range(3, 1, 1, 4, true), Ok(0..2));
+        assert_eq!(crypto_range(3, 5, 3, 5, true), Ok(2..4));
+        assert_eq!(crypto_range(0, 1, 1, 4, true), Err((0, 1)));
+        assert_eq!(crypto_range(1, 2, 0, 3, false), Ok(1..2));
+    }
 }

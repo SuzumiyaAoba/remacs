@@ -1,0 +1,67 @@
+;;; -*- lexical-binding: nil; -*-
+;; Comparison ties are not structural equality (#561).
+(qa (value< '(1 0) '(1.0 1)) t)
+(qa (value< [1 0] [1.0 1]) t)
+(qa (value< (list [1] 0) (list [1.0] 1)) t)
+(let ((a (make-hash-table)) (b (make-hash-table)))
+  (puthash 'a 1 a) (puthash 'b 2 b)
+  (qa (value< (list a 0) (list b 1)) t)
+  (qa (value< (vector a 0) (vector b 1)) t))
+(let ((a (make-symbol "same")) (b (make-symbol "same")))
+  (qa (value< (list a 0) (list b 1)) t))
+;; Identical circular objects require no traversal (#563).
+(let ((a (list 0)) (b (list 1)))
+  (setcdr a a) (setcdr b b)
+  (unwind-protect
+      (progn
+        (qa (value< a a) nil)
+        (qa (value< a b) t)
+        (qa (value< b a) nil)
+        (setcar b 0)
+        (qa (condition-case e (value< a b)
+              (circular-list (eq (cadr e) b))) t))
+    (setcdr a nil) (setcdr b nil)))
+(let ((a (vector nil)) (b (vector nil)))
+  (aset a 0 a) (aset b 0 b)
+  (unwind-protect
+      (progn
+        (qa (value< a a) nil)
+        (qa-err-data (value< a b) 'error '("Maximum depth exceeded in comparison")))
+    (aset a 0 nil) (aset b 0 nil)))
+;; The independent native comparison budget permits 200 levels (#564).
+(dolist (levels '(0 64 65 199 200 201))
+  (let ((a 0) (b 1) (same 0))
+    (dotimes (_ levels)
+      (setq a (vector a) b (vector b) same (vector same)))
+    (if (<= levels 200)
+        (progn (qa (value< a b) t) (qa (value< a same) nil))
+      (qa-err-data (value< a b) 'error '("Maximum depth exceeded in comparison"))
+      (qa-err-data (value< a same) 'error '("Maximum depth exceeded in comparison")))
+    (qa (value< a a) nil)))
+;; A long cdr spine consumes no recursive comparison budget (#568).
+(let ((a (make-list 2000 0)) (b (make-list 2000 0)))
+  (setcar (last b) 1)
+  (qa (value< a b) t))
+(qa (value< '(0 . bad) '(1 . bad)) t)
+(qa (value< '(1 . 2) '(1 . 3)) t)
+(qa (sort '((1.0 1) (1 0))) '((1 0) (1.0 1)))
+(qa (sort '(z nil a)) '(a nil z))
+;; Positioned symbols compare by name regardless of positions or creation mode.
+(dolist (creation '(nil t))
+  (let* ((symbols-with-pos-enabled creation)
+         (a (position-symbol 'alpha 1)) (b (position-symbol 'alpha 2))
+         (c (position-symbol 'beta 1)) (pn (position-symbol nil 1)))
+    (dolist (enabled '(nil t))
+      (let ((symbols-with-pos-enabled enabled))
+        (qa (value< a b) nil)
+        (qa (value< a c) t)
+        (qa (value< a pn) t)
+        (if enabled
+            (progn
+              (qa (value< a 'beta) t) (qa (value< 'alpha c) t)
+              (qa (value< pn '(1)) t) (qa (value< nil pn) nil))
+          (qa-err (value< a 'beta) 'type-mismatch)
+          (qa-err (value< 'alpha c) 'type-mismatch)
+          (qa-err (value< pn '(1)) 'type-mismatch)
+          (qa-err (value< nil pn) 'type-mismatch))))))
+(princ (qa--done))

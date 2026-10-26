@@ -36,6 +36,11 @@ GNU Emacs の Lisp API はこれらの状態を直接扱うため、処理系の
 `qa_variable_watchers`、`qa_local_dynamic_unwind`、`qa_signal_*`、`qa_plists` を使い、
 通常起動と `REMACS_NO_ELC=1` のソース起動の両方で確認する。
 
+macOS のプロセス属性取得と列挙は `lisp/process/macos.rs` と `macos.c` が所有する。
+SDK の `kinfo_proc` などの構造体は C 側で扱い、固定幅のデータを Rust へ渡す。
+`crates/runtime/build.rs` は build dependency の `cc` でこの橋渡しをコンパイルし、
+source root とビルド情報の設定はルートの `build.rs` と共有する。
+
 `frontend/` はフロントエンド共通の部分を持つ。
 
 - `mod.rs`: `KeyIo` 入出力契約と公開 API。

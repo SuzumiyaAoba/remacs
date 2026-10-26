@@ -223,7 +223,8 @@ unsafe extern "C-unwind" fn api_string_constant_kind(
     kind: i64,
 ) -> EmObj {
     native_constant(ConstantKey::StringKind(p as usize, n, kind), || {
-        let handle = api_str(e, p, n);
+        let bytes = unsafe { std::slice::from_raw_parts(p as *const u8, n) };
+        let handle = reg(Value::string_with_kind(String::from_utf8_lossy(bytes), kind & 2 != 0));
         if let Value::Str(string) = obj(handle) {
             let i = host(e);
             if kind & 1 != 0 {
@@ -803,7 +804,7 @@ struct Emitter<'a> {
 
 impl<'a> Emitter<'a> {
     fn constant(&self, value: &Value) -> String {
-        format!("KDC({})", c_str(&self.i.prin1_to_string(value)))
+        format!("KDC({})", c_str(&(self.i.prin1_to_string(value)).to_unicode_lossy()))
     }
 
     fn lookup(&self, id: SymId) -> Option<String> {
@@ -853,7 +854,7 @@ impl<'a> Emitter<'a> {
                 let s = s.borrow();
                 format!(
                     "(A->string_constant_kind)(E,{},{},{kind})",
-                    c_str(&s),
+                    c_str(&(s).to_unicode_lossy()),
                     s.len()
                 )
             }
@@ -1281,7 +1282,7 @@ fn emit_fn(
         head.extend(l.body.iter().cloned());
         i.prin1_to_string(&Value::list(head))
     } else {
-        String::new()
+        (String::new()).into()
     };
     let desc = format!(
         "static const struct em_fn_desc D{cn}={{\"{name}\",{nl},{min},{mx},{cn},{dstr},{dl},{astr},{al},{istr},{il},{sstr},{sl}}};",
@@ -1292,13 +1293,13 @@ fn emit_fn(
         } else {
             max.to_string()
         },
-        dstr = c_str(&doc_s),
+        dstr = c_str(&(doc_s).to_unicode_lossy()),
         dl = doc_s.len(),
-        astr = c_str(&args_s),
+        astr = c_str(&(args_s).to_unicode_lossy()),
         al = args_s.len(),
-        istr = c_str(&iform_s),
+        istr = c_str(&(iform_s).to_unicode_lossy()),
         il = iform_s.len(),
-        sstr = c_str(&sexp_s),
+        sstr = c_str(&sexp_s.to_unicode_lossy()),
         sl = sexp_s.len(),
     );
     Ok((entry, desc))
@@ -1514,7 +1515,7 @@ fn eln_rel_filename(i: &mut Interp, path: &str) -> Result<String, Flow> {
             .to_string_lossy()
             .into_owned()
     };
-    if !std::path::Path::new(&path).exists() {
+    if !crate::editor::native_path(i, &path)?.exists() {
         return Err(i.signal_data(sym::FILE_MISSING, vec![Value::string(path)]));
     }
     let true_name = std::fs::canonicalize(&path).map_err(|e| i.error(format!("{path}: {e}")))?;
@@ -1727,7 +1728,7 @@ impl FileEmitter {
             return self.form(i, &expanded);
         }
         let expanded = self.expand(i, &expanded)?;
-        let literal = c_str(&i.prin1_to_string(&expanded));
+        let literal = c_str(&(i.prin1_to_string(&expanded)).to_unicode_lossy());
         // CHECK returns zero for native *functions*. Unit init uses zero for
         // success, so check each callback explicitly and return one on error.
         self.init.push_str(&format!(
@@ -1808,7 +1809,7 @@ fn compile_file_to(i: &mut Interp, path: &str, out: &str) -> Result<bool, Flow> 
         // from an incomplete form. read_from_string turns both into an
         // end-of-file signal, so swallowing its errors loses malformed tails.
         // Share the characters and keep offsets in characters, not UTF-8 bytes.
-        let chars: Rc<Vec<char>> = Rc::new(data.chars().collect());
+        let chars: Rc<Vec<crate::lisp::text::EmacsChar>> = Rc::new(data.chars().map(Into::into).collect());
         let mut off = 0;
         let mut any_form = false;
         loop {
@@ -1981,14 +1982,14 @@ fn f_native_elisp_load(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // dlopen: a missing file signals `native-lisp-load-failed' with
     // data ("file does not exists" FILE) — sic, GNU's typo — while a
     // dlopen failure carries (FILE dlerror-string).
-    if !std::path::Path::new(&path).exists() {
+    if !crate::editor::native_path(i, &path)?.exists() {
         let s = i.q("native-lisp-load-failed");
         return Err(i.signal_data(
             s,
             vec![Value::string("file does not exists"), Value::string(path)],
         ));
     }
-    match load_eln(i, &path) {
+    match load_eln(i, &(path).to_unicode_lossy()) {
         Ok(idx) => Ok(unit_value(i, idx)),
         Err(LoadError::Lisp(flow)) => Err(flow),
         Err(LoadError::Open(e)) => {
@@ -2003,7 +2004,7 @@ fn f_comp_el_to_eln_rel_filename(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", &other)),
     };
-    match eln_rel_filename(i, &path) {
+    match eln_rel_filename(i, &(path).to_unicode_lossy()) {
         Ok(p) => Ok(Value::string(p)),
         Err(e) => Err(e),
     }
@@ -2014,18 +2015,18 @@ fn f_comp_el_to_eln_filename(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", &other)),
     };
-    let rel = match eln_rel_filename(i, &path) {
+    let rel = match eln_rel_filename(i, &(path).to_unicode_lossy()) {
         Ok(p) => p,
         Err(e) => return Err(e),
     };
     let base = match a.get(1) {
         Some(Value::Str(s)) => s.borrow().clone(),
-        _ => format!("{}/", eln_cache_dir()),
+        _ => format!("{}/", eln_cache_dir()).into(),
     };
     let base = if base.ends_with('/') {
         base
     } else {
-        format!("{base}/")
+        format!("{base}/").into()
     };
     Ok(Value::string(format!("{base}{rel}")))
 }
@@ -2055,7 +2056,7 @@ fn f_native_compile(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 Value::Str(s) => s.borrow().clone(),
                 _ => path.clone(),
             };
-            let read_err = match std::fs::metadata(&abs_path) {
+            let read_err = match std::fs::metadata(crate::editor::native_path(i, &abs_path)?) {
                 Err(_) => Some((
                     sym::FILE_MISSING,
                     "Opening input file",
@@ -2073,14 +2074,14 @@ fn f_native_compile(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             let out = match a.get(1) {
                 Some(Value::Str(o)) => o.borrow().clone(),
                 _ => {
-                    let rel = match eln_rel_filename(i, &path) {
+                    let rel = match eln_rel_filename(i, &(path).to_unicode_lossy()) {
                         Ok(r) => r,
                         Err(e) => return Err(e),
                     };
-                    format!("{}/{rel}", eln_cache_dir())
+                    format!("{}/{rel}", eln_cache_dir()).into()
                 }
             };
-            if !compile_file_to(i, &path, &out)? {
+            if !compile_file_to(i, &(path).to_unicode_lossy(), &out.to_unicode_lossy())? {
                 return Err(i.error(format!("No defuns to compile in {path}")));
             }
             Ok(Value::string(out))
@@ -2093,7 +2094,7 @@ fn f_native_compile(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Lambda(l) => {
             let l = l.clone();
             let name = l.name.clone().unwrap_or_else(|| "anonymous".into());
-            compile_one_lambda(i, &name, &l, a.get(1))
+            compile_one_lambda(i, &(name).to_unicode_lossy(), &l, a.get(1))
         }
         // A `(lambda ...)' FORM — evaluate to a closure and compile.
         Value::Cons(_) => match i.eval(&a[0]) {
@@ -2129,11 +2130,11 @@ fn compile_one_lambda(
             eln_cache_dir(),
             sanitize(name),
             unit_serial()
-        ),
+        ).into(),
     };
     let fns = vec![(name.to_string(), l.clone())];
-    match compile_fns_to(i, &fns, &out_path) {
-        Ok(()) => match load_eln(i, &out_path) {
+    match compile_fns_to(i, &fns, &out_path.to_unicode_lossy()) {
+        Ok(()) => match load_eln(i, &out_path.to_unicode_lossy()) {
             Ok(_) => {
                 let id = i.intern(name);
                 let v = i.symbol_function(id);
@@ -2162,7 +2163,7 @@ fn unit_serial() -> u64 {
 
 fn f_native_compile_async(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let files: Vec<String> = match &a[0] {
-        Value::Str(s) => vec![s.borrow().clone()],
+        Value::Str(s) => vec![(s.borrow().clone()).to_unicode_lossy()],
         Value::Nil => Vec::new(),
         other => other
             .list_to_vec()
@@ -2170,7 +2171,7 @@ fn f_native_compile_async(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             .iter()
             .filter_map(|v| {
                 if let Value::Str(s) = v {
-                    Some(s.borrow().clone())
+                    Some(s.borrow().to_unicode_lossy())
                 } else {
                     None
                 }
@@ -2286,7 +2287,7 @@ fn f_native_comp_unit_set_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     };
     UNITS.with(|u| {
         if let Some(u) = u.borrow_mut().get_mut(idx) {
-            u.path = p;
+            u.path = (p).to_unicode_lossy();
         }
     });
     Ok(Value::Nil)
@@ -2309,7 +2310,7 @@ fn f_comp_subr_signature(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         // they get a signature here too.  Macros and `#[...]' objects
         // are not subrs.
         Value::Lambda(l) if l.compiled && !l.is_macro => (
-            i.lambda_name(l).unwrap_or_else(|| "anonymous".to_string()),
+            i.lambda_name(l).map(|s| s.to_unicode_lossy()).unwrap_or_else(|| "anonymous".to_string()),
             signature_lambda_arity(i, l),
         ),
         other => return Err(i.wrong_type_mut("subrp", other)),
@@ -2399,7 +2400,7 @@ fn f_comp_compile_ctxt_to_file0(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
     if src.is_empty() {
         return Err(i.error("Nothing in compilation context to emit"));
     }
-    match run_cc(&src, &path) {
+    match run_cc(&src, &(path).to_unicode_lossy()) {
         Ok(()) => Ok(Value::string(path)),
         Err(e) => Err(i.error(e)),
     }
@@ -2411,14 +2412,14 @@ fn f_comp_compile_ctxt_to_file0(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
 fn f_comp_install_trampoline(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let name = match &a[0] {
         Value::Sym(id) => i.symbol_name(*id),
-        Value::Str(s) => s.borrow().clone(),
+        Value::Str(s) => (s.borrow().clone()).to_unicode_lossy(),
         other => return Err(i.wrong_type_mut("symbolp", &other)),
     };
     let file = match &a[1] {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", &other)),
     };
-    let lib = match unsafe { libloading::Library::new(&file) } {
+    let lib = match unsafe { libloading::Library::new(crate::editor::native_path(i, &file)?) } {
         Ok(l) => l,
         Err(e) => return Err(i.error(format!("Cannot load trampoline: {e}"))),
     };
@@ -2443,7 +2444,7 @@ fn f_comp_register_subr(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn register_subr_common(i: &mut Interp, a: &[Value]) -> EvalResult {
     let name = match &a[0] {
         Value::Sym(id) => i.symbol_name(*id),
-        Value::Str(s) => s.borrow().clone(),
+        Value::Str(s) => (s.borrow().clone()).to_unicode_lossy(),
         other => return Err(i.wrong_type_mut("symbolp", &other)),
     };
     let cname = match &a[1] {
@@ -2533,14 +2534,14 @@ fn f_comp_register_lambda(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     META.with(|m| {
         m.borrow_mut().push(NativeMeta {
             constants: HashMap::new(),
-            name: cname.clone(),
+            name: (cname.clone()).to_unicode_lossy(),
             unit: unit_idx as i64,
             arglist: Value::Nil,
             iform: Value::Nil,
         })
     });
     let s: &'static Subr = Box::leak(Box::new(Subr {
-        name: Box::leak(cname.into_boxed_str()),
+        name: Box::leak(cname.to_unicode_lossy().into_boxed_str()),
         arity: if max == u32::MAX {
             Arity::Many { min: min as u16 }
         } else {

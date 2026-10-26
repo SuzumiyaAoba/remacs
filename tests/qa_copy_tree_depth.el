@@ -1,0 +1,31 @@
+;;; -*- lexical-binding: nil; -*-
+;; GNU 31.1: logical recursion consumes depth; flat spines do not (#533).
+(dolist (kind '(cons vector record dotted-vector dotted-record))
+  (let ((tree 'leaf))
+    (dotimes (_ 300)
+      (setq tree (cond ((eq kind 'cons) (list tree))
+                       ((eq kind 'vector) (vector tree))
+                       ((eq kind 'record) (record 'node tree))
+                       ((eq kind 'dotted-vector) (cons 'head (vector tree)))
+                       (t (cons 'head (record 'node tree))))))
+    (let ((max-lisp-eval-depth 100))
+      (qa (condition-case e (progn (copy-tree tree t) 'copied)
+            (error (car e)))
+          'excessive-lisp-nesting))
+    ;; A failed recursive copy must restore the interpreter depth.
+    (qa (copy-tree '(a (b) . c)) '(a (b) . c))))
+(let* ((source (make-list 100000 'leaf))
+       (end (last source))
+       copy copy-end)
+  (unwind-protect
+      (let ((max-lisp-eval-depth 100))
+        (setq copy (copy-tree source) copy-end (last copy))
+        (qa (length copy) 100000)
+        (qa (eq source copy) nil)
+        (qa (eq end copy-end) nil)
+        (qa (car copy-end) 'leaf))
+    ;; Avoid recursive destruction of these long Rc cons chains.
+    (setcdr end source)
+    (when copy-end (setcdr copy-end copy))))
+(garbage-collect)
+(princ (qa--done))

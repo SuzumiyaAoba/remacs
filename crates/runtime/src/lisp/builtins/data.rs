@@ -408,13 +408,13 @@ fn equalp_values(i: &Interp, down: &Value, a: &Value, b: &Value) -> Result<bool,
         _ if numberp(a) => numberp(b) && num_eq(a, b),
         (Value::Str(x), Value::Str(y)) => {
             let (xs, ys) = (x.borrow(), y.borrow());
-            let xc: Vec<char> = xs.chars().collect();
-            let yc: Vec<char> = ys.chars().collect();
+            let xc: Vec<crate::lisp::value::EmacsChar> = xs.chars().collect();
+            let yc: Vec<crate::lisp::value::EmacsChar> = ys.chars().collect();
             xc.len() == yc.len()
                 && xc
                     .iter()
                     .zip(yc.iter())
-                    .all(|(a, b)| down1(*a as i128) == down1(*b as i128))
+                    .all(|(a, b)| down1((*a).code() as i128) == down1((*b).code() as i128))
         }
         (Value::Str(_), _) => false,
         (Value::Cons(_), Value::Cons(_)) => {
@@ -493,7 +493,11 @@ fn f_nlistp(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     )))
 }
 fn f_symbolp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::from_bool(i.sym_id(&args[0]).is_some()))
+    Ok(Value::from_bool(match &args[0] {
+        Value::Sym(_) | Value::Nil => true,
+        // `symbols-with-pos-enabled' objects are real symbols in GNU.
+        v => crate::lisp::builtins::misc::symbol_position_for(i, v).is_some(),
+    }))
 }
 fn f_stringp(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(matches!(&args[0], Value::Str(_))))
@@ -699,10 +703,10 @@ fn f_type_of(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Vec(_) if i.is_overlay(&args[0]) => "overlay",
         Value::Vec(_) => "vector",
         Value::Record(r) => {
-            // `symbol-with-pos' is dynamically classified as a symbol
-            // when `symbols-with-pos-enabled' is non-nil.
-            if crate::lisp::builtins::misc::active_sympos_parts(i, &args[0]).is_some() {
-                return Ok(Value::Sym(i.q("symbol")));
+            // `symbols-with-pos-enabled' objects are `symbol'.
+            if crate::lisp::builtins::misc::raw_symbol_position(&args[0]).is_some() {
+                let name = if i.positioned_symbols_enabled() { "symbol" } else { "symbol-with-pos" };
+                return Ok(Value::Sym(i.q(name)));
             }
             // GNU reports an obarray as `obarray', not its tag-record
             // slot — obarrays are a distinct pseudovec type there.
@@ -1196,26 +1200,29 @@ fn f_obarray_buckets(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::list(vec![Value::list(names)]))
 }
 
+/// GNU allocate_record's pseudovector size includes the type slot.
+pub(crate) fn check_record_slots(i: &Interp, slots: i128) -> Result<(), Flow> {
+    const MAX_SLOTS: i128 = 4095;
+    if slots > MAX_SLOTS {
+        return Err(i.error(format!(
+            "Attempt to allocate a record of {slots} slots; max is {MAX_SLOTS}"
+        )));
+    }
+    Ok(())
+}
+
 fn f_make_record(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // (make-record TYPE LENGTH INITVAL)
     // GNU Fmake_record: LENGTH is CHECK_FIXNAT → `wholenump'.
     let n = match &args[1] {
-        Value::Int(n) if *n >= 0 => {
-            let total = *n + 1; // include the record type slot
-            if total > crate::lisp::value::MAX_RECORD_SLOTS as i128 {
-                return Err(i.error(&format!(
-                    "Attempt to allocate a record of {} slots; max is {}",
-                    total,
-                    crate::lisp::value::MAX_RECORD_SLOTS
-                )));
-            }
-            *n as usize
-        }
+        Value::Int(n) if args[1].fixnump() && *n >= 0 => *n,
         _ => {
             let wholenump = Value::Sym(i.q("wholenump"));
             return Err(i.signal_data(sym::WRONG_TYPE_ARGUMENT, vec![wholenump, args[1].clone()]));
         }
     };
+    check_record_slots(i, n + 1)?;
+    let n = n as usize;
     let mut v = Vec::with_capacity(n + 1);
     v.push(args[0].clone());
     v.extend(std::iter::repeat_n(args[2].clone(), n));
@@ -1353,7 +1360,7 @@ pub(crate) fn expand_symbol_shorthand(
                                    expanded.into_iter().take(characters.max(0) as usize)
                                        .map(char::from).collect()
                                };
-                    let string = Value::string_ref(text);
+                    let string = Value::string_ref_with_kind(text, multibyte);
                     if multibyte { i.mark_multibyte(&string); } else { i.mark_unibyte(&string); }
                     return Some(string);
                 }
@@ -1434,17 +1441,8 @@ fn obarray_tag(i: &Interp) -> Value {
         .unwrap_or_else(|| Value::Sym(i.q_soft("obarray").unwrap_or(0)))
 }
 
-pub(crate) fn is_obarray(i: &Interp, v: &Value) -> bool {
-    match v {
-        Value::Record(r) => {
-            i.default_obarray.as_ref().is_some_and(|d| std::rc::Rc::ptr_eq(d, r))
-                || i.special_records.iter().any(|(weak, kind)| {
-                    *kind == crate::lisp::eval::SpecialRecordKind::Obarray
-                        && weak.upgrade().is_some_and(|known| std::rc::Rc::ptr_eq(&known, r))
-                })
-        }
-        _ => false,
-    }
+pub(crate) fn is_obarray(_i: &Interp, v: &Value) -> bool {
+    matches!(v, Value::Record(_)) && v.record_kind() == Some(crate::lisp::value::RecordKind::Obarray)
 }
 
 /// The value of the `obarray' variable denotes the default symbol
@@ -1539,10 +1537,18 @@ fn obarray_push(i: &Interp, ob: &Value, sym: &Value) {
         },
         _ => None,
     };
-    let Some(vrc) = vrc else {
+    let Some(mut vrc) = vrc else {
         let _ = i;
         return;
     };
+    // Image decoding canonicalizes empty Lisp vectors. Detach an empty
+    // internal bucket array before growing it, including restored obarrays.
+    if vrc.borrow().is_empty() {
+        vrc = Value::allocate_vector_ref(Vec::new());
+        if let Value::Record(record) = ob {
+            record.borrow_mut()[1] = Value::Vec(vrc.clone());
+        }
+    }
     let mut v = vrc.borrow_mut();
     if v.iter().any(|x| eq_values(x, sym)) {
         return;
@@ -1646,12 +1652,12 @@ fn check_obarray(i: &mut Interp, value: &Value) -> Result<Value, Flow> {
                     return Ok(v0);
                 }
                 if matches!(v0, Value::Int(0)) {
-                    let rec = Value::record(vec![
+                    let rec = Value::record_with_kind(vec![
                         obarray_tag(i),
-                        Value::vector(Vec::new()),
+                        Value::Vec(Value::allocate_vector_ref(Vec::new())),
                         // GNU uses make_obarray(0): one bucket.
                         Value::Int(0),
-                    ]);
+                    ], crate::lisp::value::RecordKind::Obarray);
                     vec.borrow_mut()[0] = rec.clone();
                     return Ok(rec);
                 }
@@ -1990,20 +1996,11 @@ fn f_obarray_make(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         }
         Some(v) => return Err(i.wrong_type_mut("wholenump", v)),
     };
-    let obarray = Value::record(vec![
+    Ok(Value::record_with_kind(vec![
         obarray_tag(i),
-        Value::vector(Vec::new()),
+        Value::Vec(Value::allocate_vector_ref(Vec::new())),
         Value::Int(bits as i128),
-    ]);
-    if let Value::Record(record) = &obarray {
-        i.special_records
-            .retain(|(known, _)| known.strong_count() > 0);
-        i.special_records.push((
-            std::rc::Rc::downgrade(record),
-            crate::lisp::eval::SpecialRecordKind::Obarray,
-        ));
-    }
-    Ok(obarray)
+    ], crate::lisp::value::RecordKind::Obarray))
 }
 fn f_obarrayp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(is_obarray(i, &args[0])))

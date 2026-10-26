@@ -17,7 +17,7 @@ impl Interp {
     pub fn signal(&self, sym_id: SymId, data: Value) -> Flow {
         *self.last_error_stack.borrow_mut() = self.backtrace_snapshot();
         if std::env::var_os("QUITDBG").is_some() && sym_id == sym::QUIT {
-            let names: Vec<String> = self
+            let names: Vec<crate::lisp::text::EmacsText> = self
                 .lisp_stack
                 .iter()
                 .rev()
@@ -34,7 +34,7 @@ impl Interp {
     pub fn signal_data(&self, sym_id: SymId, data: Vec<Value>) -> Flow {
         *self.last_error_stack.borrow_mut() = self.backtrace_snapshot();
         if std::env::var_os("QUITDBG").is_some() && sym_id == sym::QUIT {
-            let names: Vec<String> = self
+            let names: Vec<crate::lisp::text::EmacsText> = self
                 .lisp_stack
                 .iter()
                 .rev()
@@ -51,18 +51,18 @@ impl Interp {
                 .prin1_to_string(&Value::list(data.clone()))
                 .chars()
                 .take(160)
-                .collect::<String>();
+                .collect::<crate::lisp::text::EmacsText>();
             let shown = format!("{} {}", self.symbol_name(sym_id), rendered);
             if filter == "1" || shown.contains(&filter) {
                 eprintln!("=== SIGNAL {shown} ===");
                 for (f, a) in self.lisp_stack.iter().rev().take(30).rev() {
                     eprintln!(
                         "  {} {}",
-                        self.princ_to_string(f).chars().take(80).collect::<String>(),
+                        self.princ_to_string(f).chars().take(80).collect::<crate::lisp::text::EmacsText>(),
                         self.princ_to_string(&Value::list(a.as_slice().to_vec()))
                             .chars()
                             .take(100)
-                            .collect::<String>()
+                            .collect::<crate::lisp::text::EmacsText>()
                     );
                 }
                 if self.lisp_stack.is_empty() {
@@ -82,20 +82,26 @@ impl Interp {
     }
 
     /// `(error "fmt" args...)` — signals `error` with a formatted message.
-    pub fn error(&self, msg: impl Into<String>) -> Flow {
-        self.signal_data(sym::ERROR, vec![Value::string(msg.into())])
+    pub fn error(&self, msg: impl Into<crate::lisp::text::EmacsText>) -> Flow {
+        let msg: crate::lisp::text::EmacsText = msg.into();
+        self.signal_data(sym::ERROR, vec![Value::string(msg)])
     }
 
     /// GNU C `error (FMT, ...)': doprnt translates FMT's `like this'
     /// quotes per `text-quoting-style' — never the `%s' arguments.
-    pub fn error_q(&self, fmt: &str, args: &[&str]) -> Flow {
+    pub fn error_q<T: crate::lisp::text::TextSource + ?Sized>(&self, fmt: &str, args: &[&T]) -> Flow {
+        let args: Vec<crate::lisp::text::EmacsText> = args.iter().map(|s| s.with_text(|s| s.to_owned())).collect();
+        self.error_q_text(fmt, &args)
+    }
+
+    pub(crate) fn error_q_text(&self, fmt: &str, args: &[crate::lisp::text::EmacsText]) -> Flow {
         let fmt = crate::lisp::builtins::evalfn::translate_message_quotes(self, fmt);
         let mut args = args.iter();
-        let mut out = String::with_capacity(fmt.len());
+        let mut out = crate::lisp::text::EmacsText::with_capacity(fmt.len());
         let mut rest = fmt.as_str();
         while let Some(p) = rest.find("%s") {
             out.push_str(&rest[..p]);
-            out.push_str(args.next().copied().unwrap_or_default());
+            if let Some(argument) = args.next() { out.push_str(argument); }
             rest = &rest[p + 2..];
         }
         out.push_str(rest);
@@ -113,11 +119,11 @@ impl Interp {
                 .map(|(f, a)| {
                     format!(
                         "{}({})",
-                        self.princ_to_string(f).chars().take(60).collect::<String>(),
+                        self.princ_to_string(f).chars().take(60).collect::<crate::lisp::text::EmacsText>(),
                         self.princ_to_string(&Value::list(a.as_slice().to_vec()))
                             .chars()
                             .take(80)
-                            .collect::<String>()
+                            .collect::<crate::lisp::text::EmacsText>()
                     )
                 })
                 .collect();

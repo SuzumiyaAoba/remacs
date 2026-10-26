@@ -236,7 +236,7 @@ mod tests {
                             decoder.decode(&mut i, &name, chunk, false, false).unwrap();
                         name = used;
                         if let Value::Str(text) = value {
-                            output.push_str(&text.borrow());
+                            output.push_str(&text.borrow().to_unicode_lossy());
                         }
                         assert!(
                             decoder.pending.len() <= 8,
@@ -245,7 +245,7 @@ mod tests {
                     }
                     let (value, _) = decoder.decode(&mut i, &name, &[], true, false).unwrap();
                     if let Value::Str(text) = value {
-                        output.push_str(&text.borrow());
+                        output.push_str(&text.borrow().to_unicode_lossy());
                     }
                     assert_eq!(output, expected, "{coding}, chunk size {size}");
                     assert!(!decoder.has_pending());

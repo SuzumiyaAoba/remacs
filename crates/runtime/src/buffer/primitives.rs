@@ -5,6 +5,7 @@
 //! Position convention: Emacs positions are 1-based; internally the
 //! `Buffer` uses 0-based char indices. `pt` = `bb.point + 1`.
 
+use crate::lisp::text::{EmacsChar, EmacsText, TextSource};
 use crate::buffer::{Buffer, TextProp, file_truename, lock_file_name, lock_owner_string};
 use crate::lisp::Interp;
 use crate::lisp::builtins::{want_int_or_mark, want_string};
@@ -1410,14 +1411,17 @@ fn f_nil(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 }
 
 /// Stat mtime of PATH as nanoseconds since the epoch.
-fn file_mtime_ns(path: &str) -> Option<(i128, i128)> {
-    let m = std::fs::metadata(path).ok()?;
+fn file_mtime_ns<T: TextSource + ?Sized>(path: &T) -> Option<(i128, i128)> {
+    path.with_text(|path| {
+    let m = std::fs::metadata(path.to_os_string().ok()?).ok()?;
     let t = m.modified().ok()?;
     let d = t.duration_since(std::time::UNIX_EPOCH).ok()?;
     Some((
         d.as_secs() as i128 * 1_000_000_000 + d.subsec_nanos() as i128,
         m.len() as i128,
     ))
+
+    })
 }
 
 pub(crate) fn f_verify_visited_file_modtime(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -1531,16 +1535,46 @@ fn f_set_visited_file_modtime(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
 /// Parse a lock-file target `USER@HOST.PID[:BOOT]' into
 /// (user, host, pid, boot); None if malformed.  A missing `:BOOT'
 /// suffix parses as 0 (GNU filelock.c `current_lock_owner').
-fn parse_lock_target(target: &str) -> Option<(String, String, u32, i64)> {
+fn parse_lock_target(target: &str) -> Option<(String, String, i64, i64, String)> {
     let (user, rest) = target.rsplit_once('@')?;
-    let (host, pid) = rest.rsplit_once('.')?;
-    let (pid, boot) = match pid.split_once(':') {
-        Some((pid, boot)) => (pid, boot.parse().ok()?),
-        None => (pid, 0),
+    let (host, suffix) = rest.rsplit_once('.')?;
+    // CIFS can transliterate ':' to U+F022; GNU accepts either separator.
+    let separator = suffix
+        .char_indices()
+        .find(|(_, c)| matches!(c, ':' | '\u{f022}'));
+    let (pid_text, boot_text) = match separator {
+        Some((at, separator)) => (&suffix[..at], Some(&suffix[at + separator.len_utf8()..])),
+        None => (suffix, None),
     };
-    let pid = pid.parse().ok()?;
-    Some((user.to_string(), host.to_string(), pid, boot))
+    let decimal = |text: &str| {
+        let digits = text.strip_prefix('-').unwrap_or(text);
+        !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+    };
+    if !decimal(pid_text) {
+        return None;
+    }
+    // strtoimax overflow makes a PID invalid; boot timestamps saturate.
+    let pid = pid_text.parse().unwrap_or(-1);
+    let boot = match boot_text {
+        None => 0,
+        Some(text) if decimal(text) => text.parse().unwrap_or_else(|_| {
+            if text.starts_with('-') {
+                i64::MIN
+            } else {
+                i64::MAX
+            }
+        }),
+        Some(_) => return None,
+    };
+    Some((
+        user.to_owned(),
+        host.to_owned(),
+        pid,
+        boot,
+        pid_text.to_owned(),
+    ))
 }
+
 
 fn lock_boot_times_match(a: i64, b: i64) -> bool {
     a.checked_sub(b)
@@ -1567,13 +1601,16 @@ enum LockOwnerError {
 /// stale (dead pid on this host, a boot-time mismatch meaning the
 /// lock predates the last reboot, or an unparseable target).
 fn lock_owner(target: &str) -> Result<LockOwner, LockOwnerError> {
-    let (user, host, pid, boot) =
+    let (user, host, pid, boot, pid_text) =
         parse_lock_target(target).ok_or(LockOwnerError::Malformed)?;
-    let same_host = host == crate::buffer::our_host_name();
-    if same_host && pid == std::process::id() {
+    let same_host = host == crate::buffer::our_host_name().replace('@', "-");
+    if same_host && pid == i64::from(std::process::id()) {
         return Ok(LockOwner::Ours);
     }
     if same_host {
+        if pid <= 0 || pid > i64::from(libc::pid_t::MAX) {
+            return Err(LockOwnerError::Stale);
+        }
         // GNU current_lock_owner: the lock is stale when its recorded
         // boot time differs from the system's (the lock was left by a
         // process from a previous boot), or when the pid is dead. A
@@ -1584,13 +1621,13 @@ fn lock_owner(target: &str) -> Result<LockOwner, LockOwnerError> {
         }
         #[cfg(unix)]
         unsafe {
-            if libc::kill(pid as i32, 0) != 0 && *libc::__error() == libc::ESRCH {
-                return Err(LockOwnerError::Stale);
+            if libc::kill(pid as i32, 0) != 0 && *libc::__error() != libc::EPERM {
+                return Err(LockOwnerError::Stale); // stale lock
             }
         }
     }
     Ok(LockOwner::Foreign {
-        info: format!("{}@{} (pid {})", user, host, pid),
+        info: format!("{}@{} (pid {})", user, host, pid_text),
         user,
     })
 }
@@ -1633,16 +1670,9 @@ pub(crate) fn barf_if_file_locked(i: &mut Interp) -> EvalResult {
         None => return Ok(Value::Nil),
     };
     let f = file_truename(&f);
-    if let Ok(target) = std::fs::read_link(&lock_file_name(&f)) {
-        let lock_path = lock_file_name(&f);
-        match lock_owner(&target.to_string_lossy()) {
-            Ok(LockOwner::Foreign { info, .. }) => {
-                return Err(signal_file_locked(i, Value::string(f), Value::string(info)));
-            }
-            Err(LockOwnerError::Stale) => {
-                let _ = std::fs::remove_file(lock_path);
-            }
-            Ok(LockOwner::Ours) | Err(LockOwnerError::Malformed) => {}
+    if let Ok(target) = std::fs::read_link(crate::editor::native_path(i, &lock_file_name(&f))?) {
+        if let Ok(LockOwner::Foreign { info, .. }) = lock_owner(&target.to_string_lossy()) {
+            return Err(signal_file_locked(i, Value::string(f), Value::string(info)));
         }
     }
     Ok(Value::Nil)
@@ -1679,7 +1709,7 @@ fn f_lock_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let lname = lock_file_name(&file);
     let owner = lock_owner_string();
     #[cfg(unix)]
-    match std::os::unix::fs::symlink(&owner, &lname) {
+    match std::os::unix::fs::symlink(&owner, crate::editor::native_path(i, &lname)?) {
         Ok(()) => {
             cur(i).borrow_mut().file_lock_name = Some(lname);
             Ok(Value::Nil)
@@ -1688,7 +1718,7 @@ fn f_lock_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             // Lock exists: a lock we own is a no-op; a foreign lock
             // goes through ask-user-about-lock, which signals
             // `file-locked' in batch.
-            match std::fs::read_link(&lname) {
+            match std::fs::read_link(crate::editor::native_path(i, &lname)?) {
                 Ok(target) => match lock_owner(&target.to_string_lossy()) {
                     Ok(LockOwner::Ours) => {
                         cur(i).borrow_mut().file_lock_name = Some(lname);
@@ -1699,9 +1729,10 @@ fn f_lock_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                         Value::string(file),
                         Value::string(info),
                     )),
+                    // Only recognized stale locks can be replaced.
                     Err(LockOwnerError::Stale) => {
-                        let _ = std::fs::remove_file(&lname);
-                        match std::os::unix::fs::symlink(&owner, &lname) {
+                        let _ = std::fs::remove_file(crate::editor::native_path(i, &lname)?);
+                        match std::os::unix::fs::symlink(&owner, crate::editor::native_path(i, &lname)?) {
                             Ok(()) => {
                                 cur(i).borrow_mut().file_lock_name = Some(lname);
                                 Ok(Value::Nil)
@@ -1715,10 +1746,7 @@ fn f_lock_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                             )),
                         }
                     }
-                    Err(LockOwnerError::Malformed) => Err(i.signal_data(
-                        sym::FILE_ERROR,
-                        vec![Value::string("Locking file"), Value::string(file)],
-                    )),
+                    Err(LockOwnerError::Malformed) => Ok(Value::Nil),
                 },
                 Err(_) => Err(i.signal_data(
                     sym::FILE_ERROR,
@@ -1742,42 +1770,61 @@ fn f_unlock_buffer(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     let b = cur(i);
     let recorded = b.borrow_mut().file_lock_name.take();
     if let Some(l) = recorded {
-        let _ = std::fs::remove_file(&l);
+        let _ = std::fs::remove_file(crate::editor::native_path(i, &l)?);
         return Ok(Value::Nil);
     }
     // No lock recorded: GNU removes `.#FILE' only if we own it.
     let file = b.borrow().file_name.clone();
     if let Some(f) = file {
         let l = lock_file_name(&file_truename(&f));
-        if let Ok(target) = std::fs::read_link(&l) {
-            match lock_owner(&target.to_string_lossy()) {
-                Ok(LockOwner::Ours) | Err(LockOwnerError::Stale) => {
-                    let _ = std::fs::remove_file(&l);
-                }
-                Ok(LockOwner::Foreign { .. }) | Err(LockOwnerError::Malformed) => {}
+        if let Ok(target) = std::fs::read_link(crate::editor::native_path(i, &l)?) {
+            if matches!(lock_owner(&target.to_string_lossy()), Ok(LockOwner::Ours)) {
+                let _ = std::fs::remove_file(crate::editor::native_path(i, &l)?);
             }
         }
     }
     Ok(Value::Nil)
 }
 
+fn file_lock_error(i: &mut Interp, operation: &str, file: &Value, error: std::io::Error) -> Flow {
+    let message = error
+        .raw_os_error()
+        .map(|code| unsafe {
+            std::ffi::CStr::from_ptr(libc::strerror(code))
+                .to_string_lossy()
+                .into_owned()
+        })
+        .unwrap_or_else(|| error.to_string());
+    i.signal_data(
+        sym::FILE_ERROR,
+        vec![
+            Value::string(operation),
+            Value::string(message),
+            file.clone(),
+        ],
+    )
+}
+
 fn f_file_locked_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let file = want_string(i, &a[0])?;
     let lname = lock_file_name(&file_truename(&file));
-    match std::fs::read_link(&lname) {
+    match std::fs::read_link(crate::editor::native_path(i, &lname)?) {
         Err(_) => Ok(Value::Nil),
         Ok(target) => match lock_owner(&target.to_string_lossy()) {
             // GNU returns t for our own lock, else the owner's
             // user name.
             Ok(LockOwner::Ours) => Ok(Value::t()),
             Ok(LockOwner::Foreign { user, .. }) => Ok(Value::string(user)),
-            Err(LockOwnerError::Stale) => {
-                let _ = std::fs::remove_file(&lname);
-                Ok(Value::Nil)
-            }
-            Err(LockOwnerError::Malformed) => Err(i.signal_data(
-                sym::FILE_ERROR,
-                vec![Value::string("Invalid lock file"), Value::string(lname)],
+            Err(LockOwnerError::Stale) => match std::fs::remove_file(crate::editor::native_path(i, &lname)?) {
+                Ok(()) => Ok(Value::Nil),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Value::Nil),
+                Err(error) => Err(file_lock_error(i, "Testing file lock", &a[0], error)),
+            },
+            Err(LockOwnerError::Malformed) => Err(file_lock_error(
+                i,
+                "Testing file lock",
+                &a[0],
+                std::io::Error::from_raw_os_error(libc::EINVAL),
             )),
         },
     }
@@ -1798,22 +1845,22 @@ fn f_lock_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let lname = lock_file_name(&file);
     let owner = lock_owner_string();
     #[cfg(unix)]
-    match std::os::unix::fs::symlink(&owner, &lname) {
+    match std::os::unix::fs::symlink(&owner, crate::editor::native_path(i, &lname)?) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            match std::fs::read_link(&lname) {
+            match std::fs::read_link(crate::editor::native_path(i, &lname)?) {
                 Ok(target) => match lock_owner(&target.to_string_lossy()) {
                     Ok(LockOwner::Ours) => {}
                     Ok(LockOwner::Foreign { info, .. }) => {
                         return Err(signal_file_locked(
                             i,
-                            file_arg,
+                            a[0].clone(),
                             Value::string(info),
                         ));
                     }
                     Err(LockOwnerError::Stale) => {
-                        let _ = std::fs::remove_file(&lname);
-                        let _ = std::os::unix::fs::symlink(&owner, &lname);
+                        let _ = std::fs::remove_file(crate::editor::native_path(i, &lname)?);
+                        let _ = std::os::unix::fs::symlink(&owner, crate::editor::native_path(i, &lname)?);
                     }
                     Err(LockOwnerError::Malformed) => {}
                 },
@@ -1829,13 +1876,39 @@ fn f_lock_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_unlock_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let file = want_string(i, &a[0])?;
     let lname = lock_file_name(&file_truename(&file));
-    if let Ok(target) = std::fs::read_link(&lname) {
+    if let Ok(target) = std::fs::read_link(crate::editor::native_path(i, &lname)?) {
         match lock_owner(&target.to_string_lossy()) {
             Ok(LockOwner::Ours) | Err(LockOwnerError::Stale) => {
-                let _ = std::fs::remove_file(&lname);
+                let _ = std::fs::remove_file(crate::editor::native_path(i, &lname)?);
             }
-            // GNU unlock-file silently leaves live foreign locks alone.
-            Ok(LockOwner::Foreign { .. }) | Err(LockOwnerError::Malformed) => {}
+            Ok(LockOwner::Foreign { .. }) => {}
+            Err(LockOwnerError::Malformed) => {
+                let error = file_lock_error(
+                    i,
+                    "Unlocking file",
+                    &a[0],
+                    std::io::Error::from_raw_os_error(libc::EINVAL),
+                );
+                let depth = i.case_handlers.len();
+                i.case_handlers
+                    .push(crate::lisp::error::CaseHandler::single(Value::Sym(
+                        sym::FILE_ERROR,
+                    )));
+                let result = i.offer_flow(Err(error));
+                i.case_handlers.truncate(depth);
+                match result {
+                    Err(Flow::Signal(signal)) if signal.claims_frame(depth) => {
+                        i.finish_quit_unwind();
+                        let handler = Value::Sym(i.q("userlock--handle-unlock-error"));
+                        i.apply(&handler, vec![signal.condition])?;
+                    }
+                    Err(flow) => {
+                        i.rebase_quit_unwind();
+                        return Err(flow);
+                    }
+                    Ok(_) => {}
+                }
+            }
         }
     }
     Ok(Value::Nil)
@@ -1856,7 +1929,8 @@ fn f_file_acl(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// ACL text for PATH in GNU's `acl_to_text' format; None when the
 /// file carries no extended ACL or ACLs are unsupported.
 #[cfg(target_os = "macos")]
-fn acl_text(path: &str) -> Option<String> {
+fn acl_text<T: TextSource + ?Sized>(path: &T) -> Option<String> {
+    path.with_text(|path| {
     use std::ffi::{CStr, CString};
     unsafe extern "C" {
         fn acl_get_file(path: *const std::os::raw::c_char, kind: u32) -> *mut std::os::raw::c_void;
@@ -1868,7 +1942,7 @@ fn acl_text(path: &str) -> Option<String> {
     }
     // macOS <sys/acl.h>: ACL_TYPE_EXTENDED.
     const ACL_TYPE_EXTENDED: u32 = 0x00000100;
-    let cpath = CString::new(path).ok()?;
+    let cpath = CString::new(path.to_external_bytes()).ok()?;
     unsafe {
         let acl = acl_get_file(cpath.as_ptr(), ACL_TYPE_EXTENDED);
         if acl.is_null() {
@@ -1889,10 +1963,12 @@ fn acl_text(path: &str) -> Option<String> {
         acl_free(acl);
         out
     }
+
+    })
 }
 
 #[cfg(not(target_os = "macos"))]
-fn acl_text(_path: &str) -> Option<String> {
+fn acl_text<T: TextSource + ?Sized>(_path: &T) -> Option<String> {
     None
 }
 
@@ -1971,7 +2047,7 @@ fn f_compare_buffer_substrings(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
         let b = second.borrow();
         (b.text.substring(lo, hi), transfer_buffer_multibyte(i, &b))
     };
-    let code = |c: char, multibyte: bool| {
+    let code = |c: EmacsChar, multibyte: bool| {
         let raw = crate::lisp::value::lisp_char_code(c) as u32;
         let raw = if !multibyte && (128..=255).contains(&raw) {
             0x3fff00 + raw
@@ -2079,7 +2155,7 @@ fn f_accept_change_group(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_undo_outer_limit_truncate(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let size = match &a[0] {
         Value::Int(n) => *n,
-        _ => return Err(i.error_q("Format specifier doesn't match argument type", &[])),
+        _ => return Err(i.error_q::<str>("Format specifier doesn't match argument type", &[])),
     };
     let buf_name = cur(i).borrow().name.clone();
     let ask = {
@@ -2279,7 +2355,8 @@ pub(crate) fn cur(i: &Interp) -> Rc<RefCell<crate::buffer::Buffer>> {
 use crate::lisp::builtins::evalfn::{call_hook, signal_after_change, signal_before_change};
 
 /// `insert_at' (POS 0-based) with before/after-change signals.
-pub(crate) fn chg_insert(i: &mut Interp, pos: usize, s: &str) -> EvalResult {
+pub(crate) fn chg_insert<T: TextSource + ?Sized>(i: &mut Interp, pos: usize, s: &T) -> EvalResult {
+    s.with_text(|s| {
     let n = s.chars().count();
     if n == 0 {
         return Ok(Value::Nil);
@@ -2287,19 +2364,27 @@ pub(crate) fn chg_insert(i: &mut Interp, pos: usize, s: &str) -> EvalResult {
     signal_before_change(i, pos + 1, pos + 1)?;
     cur(i).borrow_mut().insert_at(pos, s);
     signal_after_change(i, pos + 1, pos + 1 + n, 0)
+
+    })
 }
 
 /// `insert'/`insert-before-markers' at point (advances point).
-pub(crate) fn chg_insert_pt(i: &mut Interp, s: &str, before_markers: bool) -> EvalResult {
+pub(crate) fn chg_insert_pt<T: TextSource + ?Sized>(i: &mut Interp, s: &T, before_markers: bool) -> EvalResult {
+    s.with_text(|s| {
     chg_insert_pt_props(i, s, before_markers, None, false, false)
+
+    })
 }
 
-pub(crate) fn chg_insert_and_inherit_pt(i: &mut Interp, s: &str) -> EvalResult {
+pub(crate) fn chg_insert_and_inherit_pt<T: TextSource + ?Sized>(i: &mut Interp, s: &T) -> EvalResult {
+    s.with_text(|s| {
     if !s.is_empty() {
         check_writable(i)?;
         barf_if_file_locked(i)?;
     }
     chg_insert_pt_props(i, s, false, None, false, true)
+
+    })
 }
 
 /// Insert Unicode JSON text as characters or UTF-8 bytes according to the
@@ -2308,14 +2393,15 @@ pub(crate) fn chg_insert_utf8_pt(i: &mut Interp, s: &str) -> EvalResult {
     chg_insert_pt_props(i, s, false, None, true, false)
 }
 
-fn chg_insert_pt_props(
+fn chg_insert_pt_props<T: TextSource + ?Sized>(
     i: &mut Interp,
-    s: &str,
+    s: &T,
     before_markers: bool,
     properties: Option<&crate::lisp::value::StrRef>,
     utf8_bytes: bool,
     inherit: bool,
 ) -> EvalResult {
+    s.with_text(|s| {
     if s.is_empty() {
         return Ok(Value::Nil);
     }
@@ -2343,7 +2429,7 @@ fn chg_insert_pt_props(
         i.symbol_value(multibyte).is_nil()
     };
     let text = if unibyte {
-        std::borrow::Cow::Owned(s.bytes().map(char::from).collect::<String>())
+        std::borrow::Cow::Owned(s.to_external_bytes().into_iter().map(|b| EmacsChar::from(b as char)).collect::<EmacsText>())
     } else {
         std::borrow::Cow::Borrowed(s)
     };
@@ -2379,6 +2465,8 @@ fn chg_insert_pt_props(
         copy_str_props(i, properties, q - n);
     }
     signal_after_change(i, q + 1 - n, q + 1, 0)
+
+    })
 }
 
 fn refresh_overlay_evaporation(i: &mut Interp, buffer: &mut Buffer) {
@@ -2405,7 +2493,7 @@ pub(crate) fn delete_preserving_undo(
     start: usize,
     end: usize,
     raw: bool,
-) -> String {
+) -> EmacsText {
     if end > start {
         refresh_overlay_evaporation(i, buffer);
     }
@@ -2435,13 +2523,13 @@ pub(crate) fn delete_preserving_undo(
 
 /// `delete_region' over [S0,E0) (0-based) with signals; returns the
 /// removed text.
-pub(crate) fn chg_delete(i: &mut Interp, s0: usize, e0: usize) -> Result<String, Flow> {
+pub(crate) fn chg_delete(i: &mut Interp, s0: usize, e0: usize) -> Result<EmacsText, Flow> {
     chg_delete_inner(i, s0, e0, false).map(|deleted| deleted.text)
 }
 
 #[derive(Default)]
 struct DeletedText {
-    text: String,
+    text: EmacsText,
     properties: Vec<(usize, usize, Vec<Value>)>,
     multibyte: bool,
 }
@@ -2503,13 +2591,14 @@ fn chg_delete_inner(
 /// elogb(del+ins)+1 — `replace-match', not the two pairs a
 /// delete+insert would produce.  Signals (S0+1, E0+1) before and
 /// (S0+1, S0+1+N_INS, N_DEL) after.
-pub(crate) fn chg_replace(
+pub(crate) fn chg_replace<T: TextSource + ?Sized>(
     i: &mut Interp,
     s0: usize,
     e0: usize,
-    s: &str,
+    s: &T,
     properties: &[(usize, usize, Vec<Value>)],
 ) -> EvalResult {
+    s.with_text(|s| {
     let n_ins = s.chars().count();
     if s0 < e0 {
         text_ro_range(i, s0, e0)?;
@@ -2532,18 +2621,21 @@ pub(crate) fn chg_replace(
         d
     };
     signal_after_change(i, s0 + 1, s0 + 1 + n_ins, n_del as i128)
+
+    })
 }
 
 /// One diff run of replace-region-contents, including source properties.
 /// The caller can inhibit hooks while applying a complete edit script.
-pub(crate) fn chg_replace_contents(
+pub(crate) fn chg_replace_contents<T: TextSource + ?Sized>(
     i: &mut Interp,
     start: usize,
     end: usize,
-    text: &str,
+    text: &T,
     properties: &[(usize, usize, Vec<Value>)],
     adjust_match_data: bool,
 ) -> EvalResult {
+    text.with_text(|text| {
     if start == end && text.is_empty() {
         return Ok(Value::Nil);
     }
@@ -2604,6 +2696,8 @@ pub(crate) fn chg_replace_contents(
         }
     }
     signal_after_change(i, start + 1, start + inserted + 1, (end - start) as i128)
+
+    })
 }
 
 /// GNU transpose-regions is one in-place edit. Neither overlays nor the
@@ -2712,7 +2806,9 @@ pub(crate) fn chg_transpose_regions(
         if !leave_markers {
             b.transpose_markers(regions);
         }
-        let replacement = second + &middle + &first;
+        let mut replacement = second;
+        replacement.append(&middle);
+        replacement.append(&first);
         b.text.replace_same_length(start1, end2, &replacement);
     }
     signal_after_change(i, start1 + 1, end2 + 1, (end2 - start1) as i128)
@@ -2721,16 +2817,17 @@ pub(crate) fn chg_transpose_regions(
 /// `code_convert_region' signals one replacement with the GNU
 /// encode/decode point timing. Both original endpoint markers remain
 /// at the corresponding endpoints, including after post-read edits.
-pub(crate) fn chg_coding_region(
+pub(crate) fn chg_coding_region<T: TextSource + ?Sized>(
     i: &mut Interp,
     start: usize,
     end: usize,
-    text: &str,
+    text: &T,
     properties: &Value,
     replace: bool,
     encode: bool,
     after: impl FnOnce(&mut Interp) -> EvalResult,
 ) -> EvalResult {
+    text.with_text(|text| {
     check_writable(i)?;
     barf_if_file_locked(i)?;
     text_ro_range(i, start, end)?;
@@ -2802,6 +2899,8 @@ pub(crate) fn chg_coding_region(
     buffer.borrow_mut().set_point(restored);
     let _ = i.set_symbol(deactivate, old_deactivate);
     result
+
+    })
 }
 
 /// Run F with BUF_IDX temporarily current — GNU change hooks fire in
@@ -3368,11 +3467,12 @@ fn f_generate_new_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// ordinary names go straight to the NAME<N> sequence.  Shared by
 /// `generate-new-buffer-name', `clone-buffer' and
 /// `make-indirect-buffer'.
-pub(crate) fn gen_unique_buffer_name(
+pub(crate) fn gen_unique_buffer_name<T: TextSource + ?Sized>(
     i: &mut Interp,
-    name: &str,
+    name: &T,
     ignore: Option<&Value>,
-) -> Result<String, Flow> {
+) -> Result<EmacsText, Flow> {
+    name.with_text(|name| {
     // GNU: !NILP(ignore) routes through Fstring_equal, whose
     // CHECK_STRING signals on a non-string ignore before any buffer
     // lookup happens.
@@ -3381,8 +3481,8 @@ pub(crate) fn gen_unique_buffer_name(
             return Err(i.wrong_type_mut("stringp", ig));
         }
     }
-    let is_ignored = |cand: &str| match ignore {
-        Some(Value::Str(s)) => *s.borrow() == cand,
+    let is_ignored = |cand: &crate::lisp::text::EmacsStr| match ignore {
+        Some(Value::Str(s)) => s.borrow().as_str() == cand,
         _ => false,
     };
     if is_ignored(name) || i.buffers.by_name(name).is_none() {
@@ -3390,7 +3490,7 @@ pub(crate) fn gen_unique_buffer_name(
     }
     let genbase = if name.starts_with(' ') {
         let r = crate::lisp::builtins::arith::get_random();
-        let cand = format!("{}-{}", name, r % 1000000);
+        let mut cand = name.to_string(); cand.push_str(format!("-{}", r % 1000000));
         if is_ignored(&cand) || i.buffers.by_name(&cand).is_none() {
             return Ok(cand);
         }
@@ -3400,12 +3500,14 @@ pub(crate) fn gen_unique_buffer_name(
     };
     let mut n: i64 = 2;
     loop {
-        let cand = format!("{}<{}>", genbase, n);
+        let mut cand = genbase.clone(); cand.push_str(format!("<{n}>"));
         if is_ignored(&cand) || i.buffers.by_name(&cand).is_none() {
             return Ok(cand);
         }
         n += 1;
     }
+
+    })
 }
 
 fn f_generate_new_buffer_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -3854,7 +3956,7 @@ fn f_rename_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         // check excludes the buffer itself.
         match i.buffers.by_name(&name) {
             Some(other) if other != i.current_buffer => {
-                return Err(i.error_q("Buffer name `%s' is in use", &[&name]));
+                return Err(i.error_q_text("Buffer name `%s' is in use", &[name.clone()]));
             }
             _ => {}
         }
@@ -3985,7 +4087,7 @@ fn f_make_indirect_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
     if i.buffers.by_name(&name).is_some() {
-        return Err(i.error_q("Buffer name `%s' is in use", &[&name]));
+        return Err(i.error_q_text("Buffer name `%s' is in use", &[name.clone()]));
     }
     let base = match &a[0] {
         Value::Buffer(b) => b.clone(),
@@ -3997,7 +4099,7 @@ fn f_make_indirect_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             .and_then(|id| i.buffers.get(id))
         {
             Some(b) => b,
-            None => return Err(i.error_q("No such buffer: `%s'", &[s.borrow().as_str()])),
+            None => return Err(i.error_q_text("No such buffer: `%s'", &[s.borrow().clone()])),
         },
         // GNU resolves base through Fget_buffer: a non-buffer/non-name
         // errors `stringp' there.
@@ -4098,7 +4200,8 @@ fn reset_cloned_indirect_slots(i: &mut Interp, buffer: &mut crate::buffer::Buffe
         .insert(i.q("buffer-display-count"), Value::Int(0));
 }
 
-fn clone_buffer(i: &mut Interp, name: &str, share: bool) -> Result<Value, Flow> {
+fn clone_buffer<T: TextSource + ?Sized>(i: &mut Interp, name: &T, share: bool) -> Result<Value, Flow> {
+    name.with_text(|name| {
     // GNU clone_indirect_buffer → Fmake_indirect_buffer(BASE of the
     // current buffer, NAME, CLONE=t): when the current buffer is
     // itself indirect, per-buffer values are cloned from its BASE,
@@ -4162,6 +4265,8 @@ fn clone_buffer(i: &mut Interp, name: &str, share: bool) -> Result<Value, Flow> 
     }
     run_buffer_list_update(i, id);
     Ok(i.buffer_value(id).unwrap_or(Value::Nil))
+
+    })
 }
 
 fn f_clone_indirect_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -4791,7 +4896,10 @@ fn f_goto_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             Ok(a[0].clone())
         }
         v => {
-            let p = want_int(i, v)?;
+            if !v.fixnump() {
+                return Err(i.wrong_type_mut("integer-or-marker-p", v));
+            }
+            let p = v.int().unwrap();
             let b = cur(i);
             let mut bb = b.borrow_mut();
             let idx = pos_idx(bb.text.len(), p);
@@ -4835,7 +4943,7 @@ fn f_forward_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // buffer's syntax table.  Fetch the chain before borrowing the
     // buffer (the lookup itself touches the buffer).
     let syn = crate::editor::syntax_table_entries(i);
-    let wordp = |c: char| crate::editor::syntax_entry_code(syn.as_ref(), c) == b'w';
+    let wordp = |c: EmacsChar| crate::editor::syntax_entry_code(syn.as_ref(), c) == b'w';
     let b = cur(i);
     let (chars, begv, start) = {
         let bb = b.borrow();
@@ -5398,7 +5506,7 @@ fn f_current_column(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     let mut k = ls;
     while k < p {
         match bb.text.char_at(k) {
-            '\t' => col = (col / tab_width + 1) * tab_width,
+            c if c == '\t' => col = (col / tab_width + 1) * tab_width,
             c => {
                 col += text_display_width(&bb, k, display, ctl_arrow)
                     .unwrap_or_else(|| char_width_with_ctl(c, ctl_arrow));
@@ -5441,7 +5549,7 @@ fn f_move_to_column(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let mut split_tab = None;
     while k < le && col < goal {
         match bb.text.char_at(k) {
-            '\t' => {
+            c if c == '\t' => {
                 let next = (col / tab_width + 1) * tab_width;
                 if force && goal < next {
                     split_tab = Some((k, (next - col) as usize, (goal - col) as usize));
@@ -5554,7 +5662,7 @@ use sclass::*;
 
 /// `SYNTAX_WITH_FLAGS' of TEXT[IDX].
 #[inline]
-fn wf(syn: &crate::editor::Syn, text: &[char], idx: usize) -> i128 {
+fn wf(syn: &crate::editor::Syn, text: &[EmacsChar], idx: usize) -> i128 {
     syn.with_flags_at(idx, text[idx])
 }
 #[inline]
@@ -5588,7 +5696,7 @@ fn fl_style(syntax: i128, other: i128) -> i128 {
 
 /// GNU `char_quoted': is the char at index POS escaped by an odd run
 /// of `\\' or `/'-class characters ending just before it?
-fn char_quoted(syn: &crate::editor::Syn, text: &[char], pos: usize, beg: usize) -> bool {
+fn char_quoted(syn: &crate::editor::Syn, text: &[EmacsChar], pos: usize, beg: usize) -> bool {
     let mut q = pos;
     let mut quoted = false;
     while q > beg {
@@ -5614,7 +5722,7 @@ fn char_quoted(syn: &crate::editor::Syn, text: &[char], pos: usize, beg: usize) 
 #[allow(unused_assignments)]
 fn forw_comment(
     syn: &crate::editor::Syn,
-    text: &[char],
+    text: &[EmacsChar],
     mut from: usize,
     stop: usize,
     nesting: i64,
@@ -5723,7 +5831,7 @@ fn forw_comment(
 /// start of the innermost enclosing comment/string per a fresh
 /// `parse-partial-sexp' scan; else the last col-0 open paren when
 /// `open-paren-in-column-0-is-defun-start'; else BEGV (STOP).
-fn find_defun_start(syn: &crate::editor::Syn, text: &[char], stop: usize, pos: usize) -> usize {
+fn find_defun_start(syn: &crate::editor::Syn, text: &[EmacsChar], stop: usize, pos: usize) -> usize {
     if syn.comment_use_ppss {
         let mut st = ParseState::fresh();
         scan_sexps_fwd(syn, text, stop, stop, pos, &mut st, i128::MIN, false, 0);
@@ -5757,7 +5865,7 @@ fn find_defun_start(syn: &crate::editor::Syn, text: &[char], stop: usize, pos: u
 
 fn back_comment(
     syn: &crate::editor::Syn,
-    text: &[char],
+    text: &[EmacsChar],
     mut from: usize,
     stop: usize,
     comnested: bool,
@@ -5835,8 +5943,8 @@ fn back_comment(
             }
             STRING => {
                 if string_style == -1 {
-                    string_style = c as i128;
-                } else if string_style == c as i128 {
+                    string_style = c.code() as i128;
+                } else if string_style == c.code() as i128 {
                     string_style = -1;
                 } else {
                     string_lossage = true;
@@ -5951,7 +6059,7 @@ enum ScanErr {
 /// boundary is reached between objects (COUNT not used up).
 fn scan_lists_gnu(
     syn: &crate::editor::Syn,
-    text: &[char],
+    text: &[EmacsChar],
     beg: usize,
     stop: usize,
     from0: usize,
@@ -6305,8 +6413,9 @@ struct SkipChars {
 }
 
 impl SkipChars {
-    fn parse(spec: &str) -> Result<Self, &'static str> {
-        let chars: Vec<char> = spec.chars().collect();
+    fn parse(spec: &crate::lisp::text::EmacsStr) -> Result<Self, &'static str> {
+        let original: Vec<EmacsChar> = spec.chars().collect();
+        let chars: Vec<char> = original.iter().map(|c| c.unicode().unwrap_or('\u{fffd}')).collect();
         let mut set = Self {
             ranges: Vec::new(),
             singles: Vec::new(),
@@ -6347,40 +6456,67 @@ impl SkipChars {
                     continue;
                 }
             }
-            let mut c = chars[k];
+            let mut c = original[k];
             k += 1;
             if c == '\\' {
                 if k == chars.len() {
                     break;
                 }
-                c = chars[k];
+                c = original[k];
                 k += 1;
             }
             if k + 1 < chars.len() && chars[k] == '-' {
                 k += 1;
-                let mut end = chars[k];
+                let mut end = original[k];
                 k += 1;
                 if end == '\\' && k < chars.len() {
-                    end = chars[k];
+                    end = original[k];
                     k += 1;
                 }
                 set.ranges.push((
-                    crate::lisp::value::lisp_char_code(c),
-                    crate::lisp::value::lisp_char_code(end),
+                    c.code() as i128,
+                    end.code() as i128,
                 ));
             } else {
-                set.singles.push(crate::lisp::value::lisp_char_code(c));
+                set.singles.push(c.code() as i128);
             }
         }
         Ok(set)
     }
 
-    fn contains(&self, i: &Interp, context: &SkipClassContext, c: char) -> bool {
+    fn contains(&self, i: &Interp, context: &SkipClassContext, c: EmacsChar) -> bool {
         let cp = crate::lisp::value::lisp_char_code(c);
         let member = self.singles.contains(&cp)
             || self.ranges.iter().any(|&(lo, hi)| lo <= cp && cp <= hi)
             || self.classes.iter().any(|name| context.matches(i, name, c));
         member != self.negate
+    }
+}
+
+#[cfg(test)]
+mod wide_edit_text_tests {
+    use super::*;
+    #[test]
+    fn skip_sets_keep_private_use_byte8_and_surrogate_ranges_separate() {
+        let spec = EmacsText::from_codes([0xf0080, 0x3fff80, 0xd800, b'-' as u32, 0xd802]).unwrap();
+        let set = SkipChars::parse(&spec).unwrap();
+        assert_eq!(set.singles, [0xf0080, 0x3fff80]);
+        assert_eq!(set.ranges, [(0xd800, 0xd802)]);
+        assert!(!set.negate);
+    }
+    #[test]
+    fn skip_set_grammar_does_not_reinterpret_extended_literals() {
+        let mut spec = EmacsText::from("^\\");
+        spec.push(EmacsChar::new(0x110000).unwrap()); spec.push_str("[:digit:]");
+        let set = SkipChars::parse(&spec).unwrap();
+        assert!(set.negate);
+        assert_eq!(set.singles, [0x110000]);
+        assert_eq!(set.classes, ["digit"]);
+    }
+    #[test]
+    fn unibyte_insert_keeps_gnu_byte_values_for_extended_input() {
+        let text = EmacsText::from_codes([0xf0080, 0x3fffff, 0xd800, 0x110000, b'Z' as u32]).unwrap();
+        assert_eq!(unibyte_insert_text(&text).codes().collect::<Vec<_>>(), [128, 255, 0, 0, 90]);
     }
 }
 
@@ -6427,7 +6563,7 @@ impl SkipClassContext {
         }
     }
 
-    fn matches(&self, i: &Interp, name: &str, c: char) -> bool {
+    fn matches(&self, i: &Interp, name: &str, c: EmacsChar) -> bool {
         use crate::lisp::builtins::misc;
         let cp = crate::lisp::value::lisp_char_code(c) as usize;
         let syntax = || {
@@ -6613,7 +6749,7 @@ impl ParseState {
 /// comment fields like GNU's `in_2char_comment_start'.
 fn in_2char_comment_start(
     syn: &crate::editor::Syn,
-    text: &[char],
+    text: &[EmacsChar],
     st: &mut ParseState,
     prev_from_syntax: i128,
     prev_from: usize,
@@ -6643,7 +6779,7 @@ fn in_2char_comment_start(
 #[allow(unused_assignments)]
 pub(crate) fn scan_sexps_fwd(
     syn: &crate::editor::Syn,
-    text: &[char],
+    text: &[EmacsChar],
     beg: usize,
     from0: usize,
     end: usize,
@@ -6834,7 +6970,7 @@ pub(crate) fn scan_sexps_fwd(
             }
             let c = text[from];
             let c_code = wf(syn, text, from) & 0xff;
-            if nofence && c as i128 == st.instring && c_code == STRING {
+            if nofence && c.code() as i128 == st.instring && c_code == STRING {
                 break;
             }
             match c_code {
@@ -6961,7 +7097,7 @@ pub(crate) fn scan_sexps_fwd(
                 }
                 levels[cur].last = prev_from as i64;
                 st.instring = if prev_from_syntax & 0xff == STRING {
-                    text[prev_from] as i128
+                    text[prev_from].code() as i128
                 } else {
                     ST_STRING
                 };
@@ -6976,7 +7112,7 @@ pub(crate) fn scan_sexps_fwd(
                     }
                     let c = text[from];
                     let c_code = wf(syn, text, from) & 0xff;
-                    if nofence && c as i128 == st.instring && c_code == STRING {
+                    if nofence && c.code() as i128 == st.instring && c_code == STRING {
                         break;
                     }
                     match c_code {
@@ -7069,7 +7205,8 @@ fn f_skip_syntax_forward(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // `-` is an alias for the whitespace class, like in regexps.
     let codes: Vec<u8> = spec
         .trim_start_matches('^')
-        .bytes()
+        .to_external_bytes()
+        .into_iter()
         .map(|c| if c == b'-' { b' ' } else { c })
         .collect();
     let mut p = bb.point();
@@ -7103,7 +7240,8 @@ fn f_skip_syntax_backward(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let neg = spec.starts_with('^');
     let codes: Vec<u8> = spec
         .trim_start_matches('^')
-        .bytes()
+        .to_external_bytes()
+        .into_iter()
         .map(|c| if c == b'-' { b' ' } else { c })
         .collect();
     let mut p = bb.point();
@@ -7145,7 +7283,7 @@ fn scan_err_flow(i: &mut Interp, e: ScanErr) -> Flow {
 /// `parse-sexp-ignore-comments').
 fn forward_comment_scan(
     syn: &crate::editor::Syn,
-    text: &[char],
+    text: &[EmacsChar],
     beg: usize,
     stop: usize,
     mut from: usize,
@@ -7281,7 +7419,7 @@ fn forward_comment_scan(
 /// syntax is expression-prefix (`'') or carries the `p' flag.
 pub(crate) fn backward_prefix_chars(
     syn: &crate::editor::Syn,
-    text: &[char],
+    text: &[EmacsChar],
     beg: usize,
     mut pos: usize,
 ) -> usize {
@@ -7406,7 +7544,7 @@ fn f_looking_back(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             bb.text
                 .substring(bb.begv, bb.text_len())
                 .chars()
-                .collect::<Vec<char>>(),
+                .collect::<Vec<crate::lisp::value::EmacsChar>>(),
             bb.point() - bb.begv,
             bb.begv,
         )
@@ -7448,11 +7586,14 @@ fn f_looking_back(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 // ---------- insertion & deletion ----------
 
-fn insert_str_at_point(i: &mut Interp, s: &str, before_markers: bool) -> Result<(), Flow> {
+fn insert_str_at_point<T: TextSource + ?Sized>(i: &mut Interp, s: &T, before_markers: bool) -> Result<(), Flow> {
+    s.with_text(|s| {
     check_writable(i)?;
     barf_if_file_locked(i)?;
     chg_insert_pt(i, s, before_markers)?;
     Ok(())
+
+    })
 }
 
 /// Copy a string arg's own text properties into the buffer for the
@@ -7485,16 +7626,11 @@ fn copy_str_props_inherit(
 /// Text to insert as it lands in a unibyte buffer: raw bytes stay
 /// chars ≤0xFF, eight-bit proxies decode to their byte, and anything
 /// wider truncates to a byte (GNU `(insert 300)' → char 44).
-fn unibyte_insert_text(s: &str) -> String {
-    s.chars()
-        .map(|c| {
-            if let Some(b) = crate::lisp::value::eight_bit_byte(c) {
-                char::from_u32(b as u32).unwrap()
-            } else {
-                char::from_u32((c as u32) & 0xFF).unwrap_or('\u{FFFD}')
-            }
-        })
-        .collect()
+fn unibyte_insert_text<T: TextSource + ?Sized>(text: &T) -> EmacsText {
+    text.with_text(|text| text.chars().map(|c| {
+        let byte = c.byte8().unwrap_or(c.code() as u8);
+        EmacsChar::from(byte as char)
+    }).collect())
 }
 
 /// Does `front-sticky' at POS cover PROP?  `t' covers every property;
@@ -7741,7 +7877,7 @@ fn f_insert_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         return Err(i.error("Maximum buffer size exceeded"));
     }
     check_writable(i)?;
-    let s: String = std::iter::repeat(c).take(count as usize).collect();
+    let s: crate::lisp::text::EmacsText = std::iter::repeat(c).take(count as usize).collect();
     if arg(&a, 2).truthy() {
         chg_insert_and_inherit_pt(i, &s)?;
     } else {
@@ -7777,7 +7913,7 @@ fn f_insert_buffer_substring(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     // graft them as part of the insertion, before any after-change hook.
     let value = {
         let buffer = source.borrow();
-        let value = Value::string(buffer.text.substring(lo, hi));
+        let value = Value::string_with_kind(buffer.text.substring(lo, hi), transfer_buffer_multibyte(i, &buffer));
         if let Value::Str(r) = &value {
             i.set_str_props(r, buffer.text.props.borrow().slice(lo, hi));
             if transfer_buffer_multibyte(i, &buffer) {
@@ -7835,7 +7971,7 @@ fn f_self_insert_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         if n > 0 && self_insert_expand_abbrev(i, c)? {
             return Ok(Value::Nil);
         }
-        let s: String = std::iter::repeat(c).take(n as usize).collect();
+        let s: crate::lisp::text::EmacsText = std::iter::repeat(c).take(n as usize).collect();
         insert_str_at_point(i, &s, false)?;
         // GNU `internal_self_insert': when `auto-fill-function' is
         // non-nil and the `auto-fill-chars' table maps the inserted
@@ -7851,7 +7987,7 @@ fn f_self_insert_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 .map(|id| i.symbol_value(id))
                 .unwrap_or(Value::Nil);
             let trigger = if crate::lisp::builtins::misc::is_char_table(i, &chars) {
-                crate::lisp::builtins::misc::char_table_ref(i, &chars, c as usize).truthy()
+                crate::lisp::builtins::misc::char_table_ref(i, &chars, (c).code() as usize).truthy()
             } else {
                 c == ' ' || c == '\n'
             };
@@ -7886,7 +8022,7 @@ fn f_self_insert_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// the char being inserted has non-word syntax and the previous char
 /// has word syntax, call `expand-abbrev'.  Returns true when the
 /// inserted char should be suppressed.
-fn self_insert_expand_abbrev(i: &mut Interp, c: char) -> Result<bool, Flow> {
+fn self_insert_expand_abbrev(i: &mut Interp, c: EmacsChar) -> Result<bool, Flow> {
     let amode = match i.q_soft("abbrev-mode") {
         Some(id) => i.symbol_value(id),
         None => return Ok(false),
@@ -8134,7 +8270,7 @@ fn f_delete_and_extract_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     barf_if_file_locked(i)?;
     let (s, e) = ((s1 - 1) as usize, (e1 - 1) as usize);
     let deleted = chg_delete_inner(i, s, e, true)?;
-    let v = Value::string(deleted.text);
+    let v = Value::string_with_kind(deleted.text, deleted.multibyte);
     if let Value::Str(string) = &v {
         if deleted.multibyte {
             i.mark_multibyte(string);
@@ -8187,7 +8323,8 @@ fn num_or_mark_less(i: &mut Interp, end: &Value, beg: &Value) -> Result<bool, Fl
 /// GNU kill-append: prepend/append STRING to the kill-ring head
 /// (pushing a fresh entry when the ring is empty), then feed the
 /// merged head to `interprogram-cut-function'.
-fn kill_append(i: &mut Interp, s: &str, before: bool) -> EvalResult {
+fn kill_append<T: TextSource + ?Sized>(i: &mut Interp, s: &T, before: bool) -> EvalResult {
+    s.with_text(|s| {
     let kr = i.q("kill-ring");
     let cur = i.symbol_value(kr);
     let mut items = cur.list_to_vec().unwrap_or_default();
@@ -8196,7 +8333,7 @@ fn kill_append(i: &mut Interp, s: &str, before: bool) -> EvalResult {
             let mut t = top.borrow_mut();
             if before {
                 let mut joined = s.to_string();
-                joined.push_str(&t);
+                joined.push_str(&*t);
                 *t = joined;
             } else {
                 t.push_str(s);
@@ -8211,6 +8348,8 @@ fn kill_append(i: &mut Interp, s: &str, before: bool) -> EvalResult {
         _ => Value::Nil,
     };
     interprogram_cut(i, head)
+
+    })
 }
 
 /// The `last-command'-driven part of GNU's `kill-region'/
@@ -8219,13 +8358,14 @@ fn kill_append(i: &mut Interp, s: &str, before: bool) -> EvalResult {
 /// prepend vs append, evaluating END first); otherwise `kill-new'.
 /// `word_kill' mirrors GNU's `(memq region '(unix-word emacs-word))'
 /// exemption, which never merges.
-pub(crate) fn kill_or_append(
+pub(crate) fn kill_or_append<T: TextSource + ?Sized>(
     i: &mut Interp,
-    s: &str,
+    s: &T,
     beg: &Value,
     end: &Value,
     word_kill: bool,
 ) -> EvalResult {
+    s.with_text(|s| {
     let kr_sym = i.q("kill-region");
     let lc = i.q("last-command");
     let merging = !word_kill && matches!(&i.symbol_value(lc), Value::Sym(s) if *s == kr_sym);
@@ -8235,6 +8375,8 @@ pub(crate) fn kill_or_append(
     } else {
         push_kill_ring(i, s.to_string())
     }
+
+    })
 }
 
 /// GNU sets `this-command' to `kill-region' after a real kill when the
@@ -8316,7 +8458,7 @@ pub(crate) fn interprogram_cut(i: &mut Interp, text: Value) -> EvalResult {
 /// callers' business (`kill-region'/`copy-region-as-kill' call
 /// `kill-append' when `last-command' is `kill-region'; the obsolete
 /// `append-next-kill' command arranges the same via `last-command').
-pub(crate) fn push_kill_ring(i: &mut Interp, s: String) -> EvalResult {
+pub(crate) fn push_kill_ring(i: &mut Interp, s: impl Into<EmacsText>) -> EvalResult {
     push_kill_ring_value(i, Value::string(s))
 }
 
@@ -8431,7 +8573,7 @@ fn buffer_substring_impl(i: &mut Interp, a: &[Value], with_props: bool) -> EvalR
         Vec::new()
     };
     drop(bb);
-    let v = Value::string(text);
+    let v = Value::string_with_kind(text, !unibyte);
     if let Value::Str(sr) = &v {
         if unibyte {
             i.mark_unibyte(sr);
@@ -8527,7 +8669,7 @@ fn f_buffer_substring_with_bidi_context(i: &mut Interp, a: crate::lisp::Argv) ->
     Ok(v)
 }
 
-fn thing_bounds(i: &mut Interp, pred: impl Fn(char) -> bool) -> Option<(usize, usize)> {
+fn thing_bounds(i: &mut Interp, pred: impl Fn(EmacsChar) -> bool) -> Option<(usize, usize)> {
     let b = i.current_buffer_ref()?;
     let bb = b.borrow();
     let p = bb.point();
@@ -9041,7 +9183,7 @@ fn f_increment_register(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     let prefix = match &val {
         Value::Str(s) => s.borrow().clone(),
-        Value::Nil => String::new(),
+        Value::Nil => EmacsText::new(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
     reg_set(i, reg, Value::string(format!("{prefix}{text}")))?;
@@ -9248,8 +9390,9 @@ enum RectForce {
 /// else comes from `char-width-table' (CHAR_WIDTH_RANGES), which also
 /// covers zero-width (tag) chars and East-Asian double-width chars.
 /// TAB and newline are handled by the caller.
-pub(crate) fn char_width(c: char) -> i128 {
-    // PUA proxies stand in for chars a Rust `char' can't hold:
+pub(crate) fn char_width(c: impl Into<EmacsChar>) -> i128 {
+    let c = c.into();
+    // GNU byte8 and non-Unicode characters keep their own codes:
     // eight-bit codes and ISO control chars render 4 columns
     // (GNU's default char-width-table), surrogates/high-mule 1.
     if crate::lisp::value::eight_bit_byte(c).is_some() {
@@ -9257,11 +9400,10 @@ pub(crate) fn char_width(c: char) -> i128 {
     }
     if crate::lisp::value::surrogate_code(c).is_some()
         || crate::lisp::value::mule_seq_code(c).is_some()
-        || crate::lisp::value::raw_byte_marker(c).is_some()
     {
         return 1;
     }
-    let n = c as u32;
+    let n = c.code();
     if n < 0x20 || n == 0x7f {
         return 2;
     }
@@ -9287,8 +9429,8 @@ pub(crate) fn char_width(c: char) -> i128 {
     1
 }
 
-pub(crate) fn char_width_with_ctl(c: char, ctl_arrow: bool) -> i128 {
-    let code = c as u32;
+pub(crate) fn char_width_with_ctl(c: EmacsChar, ctl_arrow: bool) -> i128 {
+    let code = c.code();
     if (code < 0x20 || code == 0x7f) && code != b'\n' as u32 {
         if ctl_arrow { 2 } else { 4 }
     } else {
@@ -9305,7 +9447,7 @@ pub(crate) fn sane_tab_width(i: &Interp) -> i128 {
     }
 }
 
-fn rect_char_width(c: char, tab: i128) -> i128 {
+fn rect_char_width(c: EmacsChar, tab: i128) -> i128 {
     let _ = tab;
     char_width(c)
 }
@@ -9494,7 +9636,7 @@ fn rect_extract_delete_line(
     ec: i128,
     fill: bool,
     tab: i128,
-) -> String {
+) -> EmacsText {
     let (p0, reached) = rect_move_to(
         bb,
         ls,
@@ -9510,7 +9652,7 @@ fn rect_extract_delete_line(
     if reached < sc {
         // Line ends before the rectangle's left edge: GNU stores blanks
         // and leaves the line untouched.
-        return " ".repeat((ec - sc).max(0) as usize);
+        return EmacsText::from(" ".repeat((ec - sc).max(0) as usize));
     }
     let le2 = bb.text.line_end(ls);
     let (p1, _) = rect_move_to(bb, ls, le2, ec, tab, RectForce::T);
@@ -9525,7 +9667,7 @@ fn rect_extract_line(
     sc: i128,
     ec: i128,
     tab: i128,
-) -> String {
+) -> EmacsText {
     // move-to-column without force: no pad, no split.
     let reach = |col: i128| -> (usize, i128) {
         let mut c = 0i128;
@@ -9548,7 +9690,7 @@ fn rect_extract_line(
     let (p0, r0) = reach(sc);
     let (p1, r1) = reach(ec);
     // Tabs inside the span expand to their display width.
-    let mut seg = String::new();
+    let mut seg = EmacsText::new();
     let mut col = rect_col_at(text, ls, p0, tab);
     for k in p0..p1.min(le) {
         let ch = text.char_at(k);
@@ -9570,15 +9712,13 @@ fn rect_extract_line(
     if endextra < 0 {
         endextra = 0;
     }
-    format!(
-        "{}{}{}",
-        " ".repeat(begextra as usize),
-        seg,
-        " ".repeat(endextra as usize)
-    )
+    let mut result = EmacsText::from(" ".repeat(begextra as usize));
+    result.append(&seg);
+    result.push_str(" ".repeat(endextra as usize));
+    result
 }
 
-fn rect_set_killed(i: &mut Interp, segs: Vec<String>) {
+fn rect_set_killed(i: &mut Interp, segs: Vec<EmacsText>) {
     let sym = i.q("killed-rectangle");
     let _ = i.set_symbol(
         sym,
@@ -9591,7 +9731,7 @@ fn rect_extract_span(
     a: &[Value],
     delete: bool,
     fill: bool,
-) -> Result<Vec<String>, Flow> {
+) -> Result<Vec<EmacsText>, Flow> {
     let (sl, hi, c0, c1, tab) = rect_line_range(i, a)?;
     let b = cur(i);
     let mut segs = Vec::new();
@@ -9732,7 +9872,7 @@ fn f_delete_whitespace_rectangle(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
         );
         if reached == c0 && p0 != bb.text.line_end(ls) {
             let mut p1 = p0;
-            while p1 < le && matches!(bb.text.char_at(p1), ' ' | '\t') {
+            while p1 < le && (bb.text.char_at(p1) == ' ' || bb.text.char_at(p1) == '\t') {
                 p1 += 1;
             }
             if p1 > p0 {
@@ -9744,7 +9884,8 @@ fn f_delete_whitespace_rectangle(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
     })
 }
 
-fn rect_string_lines(i: &mut Interp, a: &[Value], s: &str, delete: bool) -> EvalResult {
+fn rect_string_lines<T: TextSource + ?Sized>(i: &mut Interp, a: &[Value], s: &T, delete: bool) -> EvalResult {
+    s.with_text(|s| {
     rect_apply(i, a, |i, bb, ls, le, c0, c1, tab| {
         // GNU string-rectangle-line.
         rect_move_to(bb, ls, le, c0, tab, RectForce::T);
@@ -9758,14 +9899,16 @@ fn rect_string_lines(i: &mut Interp, a: &[Value], s: &str, delete: bool) -> Eval
         bb.set_point(p0 + s.chars().count());
         Ok(())
     })
+
+    })
 }
 
 /// GNU accepts a char-or-string for the rectangle text (insert handles
 /// both): an integer inserts as that character.
-fn rect_string_arg(i: &mut Interp, v: &Value) -> Result<String, Flow> {
+fn rect_string_arg(i: &mut Interp, v: &Value) -> Result<EmacsText, Flow> {
     match v {
         Value::Str(s) => Ok(s.borrow().clone()),
-        Value::Int(n) => char::from_u32(*n as u32)
+        Value::Int(n) => crate::lisp::value::lisp_char(*n as u32)
             .map(|c| c.to_string())
             .ok_or_else(|| i.wrong_type_mut("char-or-string-p", v)),
         other => Err(i.wrong_type_mut("char-or-string-p", other)),
@@ -9785,7 +9928,7 @@ fn f_string_insert_rectangle(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
 /// Shared body of yank-rectangle / insert-rectangle: GNU's
 /// insert-rectangle — first line at point, following lines at the same
 /// column (coerced with `t`), creating lines at EOF.
-fn rect_insert_segs(i: &mut Interp, segs: Vec<String>) -> EvalResult {
+fn rect_insert_segs(i: &mut Interp, segs: Vec<EmacsText>) -> EvalResult {
     check_writable(i)?;
     // GNU pushes the mark at the upper-left corner unconditionally.
     f_push_mark(i, vec![].into())?;
@@ -9834,7 +9977,7 @@ fn rect_insert_segs(i: &mut Interp, segs: Vec<String>) -> EvalResult {
 fn f_yank_rectangle(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     let sym = i.q("killed-rectangle");
     let kr = i.symbol_value(sym);
-    let segs: Vec<String> = kr
+    let segs: Vec<EmacsText> = kr
         .list_to_vec()
         .unwrap_or_default()
         .iter()
@@ -9847,7 +9990,7 @@ fn f_yank_rectangle(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_insert_rectangle(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let segs: Vec<String> = a[0]
+    let segs: Vec<EmacsText> = a[0]
         .list_to_vec()
         .unwrap_or_default()
         .iter()
@@ -9860,12 +10003,12 @@ fn f_insert_rectangle(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 /// Minimal %d / %Nd formatter for rectangle-number-lines.
-fn rect_format(fmt: &str, n: i128) -> String {
-    let mut out = String::new();
+fn rect_format(fmt: &crate::lisp::text::EmacsStr, n: i128) -> EmacsText {
+    let mut out = EmacsText::new();
     let mut it = fmt.chars().peekable();
     while let Some(c) = it.next() {
         if c == '%' {
-            let mut w = String::new();
+            let mut w = EmacsText::new();
             while let Some(&d) = it.peek() {
                 if d.is_ascii_digit() {
                     w.push(d);
@@ -9875,7 +10018,7 @@ fn rect_format(fmt: &str, n: i128) -> String {
                 }
             }
             match it.next() {
-                Some('d') => {
+                Some(c) if c == 'd' => {
                     let s = n.to_string();
                     let width: usize = w.parse().unwrap_or(0);
                     if s.len() < width {
@@ -9883,7 +10026,7 @@ fn rect_format(fmt: &str, n: i128) -> String {
                     }
                     out.push_str(&s);
                 }
-                Some('%') => out.push('%'),
+                Some(c) if c == '%' => out.push('%'),
                 Some(other) => {
                     out.push('%');
                     out.push_str(&w);
@@ -9916,7 +10059,7 @@ fn f_rectangle_number_lines(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
                 _ => 0,
             };
             let w = (nlines + start_at).to_string().len();
-            format!("%{}d ", w)
+            EmacsText::from(format!("%{}d ", w))
         }
     };
     let _ = (sl, hi);
@@ -10548,14 +10691,14 @@ pub(crate) fn regexp_compile(
 }
 /// GNU regexp/search compares raw bytes through BYTE8_TO_CHAR, even
 /// when the underlying buffer stores single-byte character positions.
-fn buffer_search_chars(chars: &[char], unibyte: bool) -> std::borrow::Cow<'_, [char]> {
+fn buffer_search_chars(chars: &[EmacsChar], unibyte: bool) -> std::borrow::Cow<'_, [EmacsChar]> {
     if unibyte {
         std::borrow::Cow::Owned(
             chars
                 .iter()
                 .map(|c| {
-                    if (128..=255).contains(&(*c as u32)) {
-                        crate::lisp::value::lisp_char(0x3fff00 + *c as u32).unwrap()
+                    if (128..=255).contains(&c.code()) {
+                        crate::lisp::value::lisp_char(0x3fff00 + c.code()).unwrap()
                     } else {
                         *c
                     }
@@ -10637,7 +10780,7 @@ fn f_string_match_impl(i: &mut Interp, a: crate::lisp::Argv, posix: bool) -> Eva
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
-    let chars: Vec<char> = text.chars().collect();
+    let chars: Vec<crate::lisp::value::EmacsChar> = text.chars().collect();
     // GNU: negative START counts back from the end of STRING
     // (search.c: `if (start < 0) start += SCHARS(string)`); out of
     // range signals args-out-of-range with the ORIGINAL value.
@@ -10716,7 +10859,7 @@ pub(crate) fn search_common(
     i: &mut Interp,
     a: &[Value],
     re: Option<&crate::lisp::regexp::Regex>,
-    needle: Option<&str>,
+    needle: Option<&crate::lisp::text::EmacsStr>,
     backward: bool,
     posix: bool,
 ) -> EvalResult {
@@ -10912,14 +11055,14 @@ pub(crate) fn search_common(
 
 /// Literal search shares the regexp caller's installed case table.
 pub(crate) fn literal_search(
-    text: &[char],
-    needle: &str,
+    text: &[EmacsChar],
+    needle: &crate::lisp::text::EmacsStr,
     from: usize,
     backward: bool,
     case_fold: bool,
     syntax: crate::lisp::regexp::SynFn,
 ) -> Option<crate::lisp::regexp::Regs> {
-    let n: Vec<char> = needle.chars().collect();
+    let n: Vec<EmacsChar> = needle.chars().collect();
     if n.is_empty() {
         return Some(vec![Some(from.min(text.len())), Some(from.min(text.len()))]);
     }
@@ -10982,42 +11125,30 @@ fn f_posix_search_backward(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// GNU `word-search-regexp' (isearch.el): quote each word, join with
 /// `\W+', bracket with `\<…\>' unless LAX (which drops the trailing
 /// `\>'); leading/trailing whitespace in STRING becomes `\W+'.
-fn word_search_regexp(i: &Interp, string: &str, lax: bool) -> String {
-    if string.is_empty() {
-        return String::new();
-    }
-    let is_word = |c: char| crate::editor::syntax_code_buf(i, c) == b'w';
-    if string.chars().all(|c| !is_word(c)) {
-        return "\\W+".to_string();
-    }
-    let mut out = String::new();
-    let lead = string.chars().next().map(|c| !is_word(c)).unwrap_or(false);
-    let trail = string.chars().last().map(|c| !is_word(c)).unwrap_or(false);
-    out.push_str(if lead { "\\W+" } else { "\\<" });
-    let quote = |w: &str| -> String {
-        let mut q = String::with_capacity(w.len());
-        for c in w.chars() {
-            if ".*+?[^$\\".contains(c) {
-                q.push('\\');
+fn word_search_regexp<T: TextSource + ?Sized>(i: &Interp, string: &T, lax: bool) -> EmacsText {
+    string.with_text(|string| {
+        if string.is_empty() { return EmacsText::new(); }
+        let chars: Vec<EmacsChar> = string.chars().collect();
+        let is_word = |c: EmacsChar| crate::editor::syntax_code_buf(i, c) == b'w';
+        if chars.iter().all(|c| !is_word(*c)) { return EmacsText::from("\\W+"); }
+        let lead = !is_word(chars[0]);
+        let trail = !is_word(*chars.last().unwrap());
+        let mut out = EmacsText::from(if lead { "\\W+" } else { "\\<" });
+        let mut position = 0;
+        let mut first = true;
+        while position < chars.len() {
+            while position < chars.len() && !is_word(chars[position]) { position += 1; }
+            if position == chars.len() { break; }
+            if !first { out.push_str("\\W+"); }
+            first = false;
+            while position < chars.len() && is_word(chars[position]) {
+                push_regexp_quoted(chars[position], &mut out);
+                position += 1;
             }
-            q.push(c);
         }
-        q
-    };
-    let words: Vec<String> = string
-        .split(|c: char| !is_word(c))
-        .filter(|w| !w.is_empty())
-        .map(|w| quote(w))
-        .collect();
-    out.push_str(&words.join("\\W+"));
-    out.push_str(if trail {
-        "\\W+"
-    } else if lax {
-        ""
-    } else {
-        "\\>"
-    });
-    out
+        out.push_str(if trail { "\\W+" } else if lax { "" } else { "\\>" });
+        out
+    })
 }
 
 fn word_search(i: &mut Interp, a: &[Value], backward: bool, lax: bool) -> EvalResult {
@@ -11326,11 +11457,11 @@ fn f_match_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     } else {
         match a.get(1) {
             Some(Value::Str(text)) => {
-                let chars: Vec<char> = text.borrow().chars().collect();
+                let chars: Vec<crate::lisp::value::EmacsChar> = text.borrow().chars().collect();
                 Ok(Value::string(
                     chars[s.min(chars.len())..e.min(chars.len())]
                         .iter()
-                        .collect::<String>(),
+                        .collect::<crate::lisp::text::EmacsText>(),
                 ))
             }
             // GNU requires STRING when the match data came from a
@@ -11357,22 +11488,22 @@ fn f_match_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// indexed into `src` (a char-indexed source text).
 fn expand_replacement(
     i: &mut Interp,
-    rep: &str,
+    rep: &crate::lisp::text::EmacsStr,
     literal: bool,
     md: &MatchData,
-    src: &[char],
-) -> Result<String, Flow> {
+    src: &[EmacsChar],
+) -> Result<EmacsText, Flow> {
     if literal {
         return Ok(rep.to_string());
     }
-    let mut out = String::new();
+    let mut out = EmacsText::new();
     let mut it = rep.chars().peekable();
     while let Some(c) = it.next() {
         if c != '\\' {
             out.push(c);
             continue;
         }
-        match it.next() {
+        match it.next().and_then(|c| c.unicode()) {
             Some('\\') => out.push('\\'),
             Some('&') => {
                 out.push_str(&group_text(i, md, src, 0)?);
@@ -11402,7 +11533,7 @@ fn expand_replacement(
     Ok(out)
 }
 
-fn group_text(i: &mut Interp, md: &MatchData, src: &[char], n: usize) -> Result<String, Flow> {
+fn group_text(i: &mut Interp, md: &MatchData, src: &[EmacsChar], n: usize) -> Result<EmacsText, Flow> {
     match (
         md.regs.get(2 * n).copied().flatten(),
         md.regs.get(2 * n + 1).copied().flatten(),
@@ -11453,16 +11584,16 @@ fn expand_replacement_string(
             return Err(i.error("Invalid use of `\\' in replacement text"));
         };
         pos += 1;
-        let group = match escaped {
-            '&' => Some(subexp),
-            '1'..='9' => Some(escaped as usize - '0' as usize),
-            '\\' => {
+        let group = match escaped.unicode() {
+            Some('&') => Some(subexp),
+            Some('1'..='9') => Some((escaped).code() as usize - '0' as usize),
+            Some('\\') => {
                 // GNU keeps the first slash's properties and deletes the second.
                 parts.push(replacement_slice(i, replacement, last, pos - 1)?);
                 last = pos;
                 None
             }
-            '?' => None,
+            Some('?') => None,
             _ => return Err(i.error("Invalid use of `\\' in replacement text")),
         };
         if let Some(group) = group {
@@ -11532,7 +11663,7 @@ fn f_replace_match(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let Value::Str(source) = &text else {
             unreachable!()
         };
-        let src: Vec<char> = source.borrow().chars().collect();
+        let src: Vec<crate::lisp::value::EmacsChar> = source.borrow().chars().collect();
         // GNU applyes case transference (`case_action') in the string
         // path too: FIXEDCASE skips it, and the casing is taken from
         // the replaced group's text.
@@ -11562,7 +11693,7 @@ fn f_replace_match(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
         let mut rep = expand_replacement_string(i, &a[0], literal, &md, &text, subexp)?;
         if !fixedcase {
-            let old: String = src[s.min(src.len())..e.min(src.len())].iter().collect();
+            let old: crate::lisp::text::EmacsText = src[s.min(src.len())..e.min(src.len())].iter().collect();
             if let Some(op) = replacement_case_action(i, &old) {
                 rep = crate::lisp::builtins::strfn::casify(i, &rep, op)?;
             }
@@ -11620,7 +11751,7 @@ fn f_replace_match(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // Registers remain relative to the restriction used by the search,
     // even when the caller subsequently widens or narrows the buffer.
     let source_base = if md.in_buffer { md.base } else { bb.begv };
-    let src: Vec<char> = bb
+    let src: Vec<EmacsChar> = bb
         .text
         .substring(source_base, bb.text.len())
         .chars()
@@ -11672,7 +11803,7 @@ fn f_match_substitute_replacement(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
     };
     let fixedcase = a.get(1).map(|v| v.truthy()).unwrap_or(false);
     let literal = a.get(2).map(|v| v.truthy()).unwrap_or(false);
-    let src: Vec<char> = match a.get(3) {
+    let src: Vec<EmacsChar> = match a.get(3) {
         Some(Value::Str(s)) => s.borrow().chars().collect(),
         _ => {
             let b = cur(i);
@@ -11716,7 +11847,7 @@ fn f_match_substitute_replacement(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
             md.regs.first().copied().flatten(),
             md.regs.get(1).copied().flatten(),
         ) {
-            let old: String = src[s.min(src.len())..e.min(src.len())].iter().collect();
+            let old: EmacsText = src[s.min(src.len())..e.min(src.len())].iter().collect();
             rep = match_case(i, &old, &rep);
         }
     }
@@ -11725,10 +11856,11 @@ fn f_match_substitute_replacement(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
 
 /// GNU Freplace_match case_action: inspect word initials using the current
 /// syntax and case tables, then apply upcase or upcase-initials to NEW.
-fn replacement_case_action(
+fn replacement_case_action<T: TextSource + ?Sized>(
     i: &mut Interp,
-    old: &str,
+    old: &T,
 ) -> Option<crate::lisp::builtins::strfn::CaseOp> {
+    old.with_text(|old| {
     use crate::lisp::builtins::strfn::{CaseOp, case_extra, ct_case};
 
     let syntax = crate::editor::syntax_table_entries(i);
@@ -11737,7 +11869,7 @@ fn replacement_case_action(
     let symbols_as_words = i
         .intern_soft("case-symbols-as-words")
         .is_some_and(|id| i.symbol_value(id).truthy());
-    let mut previous = '\n';
+    let mut previous = EmacsChar::from('\n');
     let (mut multi, mut lower, mut nonuppercase_initial, mut upper) = (false, false, false, false);
     for ch in old.chars() {
         let code = crate::lisp::value::lisp_char_code(ch) as u32;
@@ -11770,9 +11902,12 @@ fn replacement_case_action(
         return None;
     };
     Some(op)
+
+    })
 }
 
-pub(crate) fn match_case(i: &mut Interp, old: &str, new: &str) -> String {
+pub(crate) fn match_case<O: TextSource + ?Sized, N: TextSource + ?Sized>(i: &mut Interp, old: &O, new: &N) -> EmacsText {
+    old.with_text(|old| new.with_text(|new| {
     use crate::lisp::builtins::strfn::{CaseOp, case_extra, case_str};
     let Some(op) = replacement_case_action(i, old) else {
         return new.to_string();
@@ -11785,6 +11920,8 @@ pub(crate) fn match_case(i: &mut Interp, old: &str, new: &str) -> String {
         Value::Nil
     };
     case_str(i, new, op, &down, &up, &title)
+
+    }))
 }
 
 fn f_regexp_quote(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -11792,10 +11929,10 @@ fn f_regexp_quote(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
-    let mut out = String::with_capacity(s.len() * 2);
+    let mut out = EmacsText::with_capacity(s.len() * 2);
     for c in s.chars() {
         // Emacs does not escape ']' (an unmatched ] is already literal).
-        if ".*+?[^$\\".contains(c) {
+        if c.unicode().is_some_and(|c| ".*+?[^$\\".contains(c)) {
             out.push('\\');
         }
         out.push(c);
@@ -11805,15 +11942,28 @@ fn f_regexp_quote(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 // ---------- regexp-opt ----------
 
+fn wrap_regexp_text(prefix: &str, text: &crate::lisp::text::EmacsStr, suffix: &str) -> EmacsText {
+    let mut result = EmacsText::from(prefix);
+    result.push_str(text); result.push_str(suffix); result
+}
+fn join_regexp_parts(parts: &[EmacsText], separator: &str) -> EmacsText {
+    let mut result = EmacsText::new();
+    for (index, part) in parts.iter().enumerate() {
+        if index != 0 { result.push_str(separator); }
+        result.append(part);
+    }
+    result
+}
+
 /// Trie node for `regexp-opt`.
 #[derive(Default)]
 struct OptTrie {
     terminal: bool,
-    children: Vec<(char, OptTrie)>,
+    children: Vec<(EmacsChar, OptTrie)>,
 }
 
 impl OptTrie {
-    fn insert(&mut self, s: &[char]) {
+    fn insert(&mut self, s: &[EmacsChar]) {
         if s.is_empty() {
             self.terminal = true;
             return;
@@ -11839,23 +11989,23 @@ impl OptTrie {
                 .all(|(_, t)| t.terminal && t.children.is_empty())
     }
 
-    fn emit(&self) -> String {
-        let mut parts: Vec<String> = Vec::new();
+    fn emit(&self) -> EmacsText {
+        let mut parts: Vec<EmacsText> = Vec::new();
         for (c, t) in &self.children {
-            let mut p = String::new();
+            let mut p = EmacsText::new();
             push_regexp_quoted(*c, &mut p);
             p.push_str(&t.emit());
             parts.push(p);
         }
         if parts.is_empty() {
-            return String::new();
+            return EmacsText::new();
         }
         if self.all_char_leaves() {
-            let mut s = String::from("[");
+            let mut s = EmacsText::from("[");
             for (c, _) in &self.children {
                 // Emacs sorts charset contents; escape class specials.
-                match c {
-                    ']' | '\\' | '^' | '-' => {
+                match c.unicode() {
+                    Some(']' | '\\' | '^' | '-') => {
                         s.push('\\');
                         s.push(*c);
                     }
@@ -11868,14 +12018,14 @@ impl OptTrie {
         let inner = if parts.len() == 1 {
             parts.into_iter().next().unwrap()
         } else {
-            format!("\\(?:{}\\)", parts.join("\\|"))
+            wrap_regexp_text("\\(?:", &join_regexp_parts(&parts, "\\|"), "\\)")
         };
         if self.terminal {
             // This node also ends a string → the whole remainder is optional.
             if parts_single_char(&inner) || inner.starts_with("\\(?") {
-                format!("{}?", inner)
+                wrap_regexp_text("", &inner, "?")
             } else {
-                format!("\\(?:{}\\)?", inner)
+                wrap_regexp_text("\\(?:", &inner, "\\)?")
             }
         } else {
             inner
@@ -11883,19 +12033,19 @@ impl OptTrie {
     }
 }
 
-fn parts_single_char(s: &str) -> bool {
+fn parts_single_char(s: &crate::lisp::text::EmacsStr) -> bool {
     s.chars().count() == 1 || (s.len() == 2 && s.starts_with('\\'))
 }
 
-fn push_regexp_quoted(c: char, out: &mut String) {
-    if ".*+?[^$\\".contains(c) {
+fn push_regexp_quoted(c: EmacsChar, out: &mut EmacsText) {
+    if c.unicode().is_some_and(|c| ".*+?[^$\\".contains(c)) {
         out.push('\\');
     }
     out.push(c);
 }
 
 fn f_regexp_opt(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let strings: Vec<String> = match a[0].list_to_vec() {
+    let strings: Vec<EmacsText> = match a[0].list_to_vec() {
         Ok(items) => {
             let mut v = Vec::new();
             for it in items {
@@ -11925,16 +12075,16 @@ fn f_regexp_opt(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let body = if trie.all_char_leaves() {
         trie.emit()
     } else {
-        let mut parts: Vec<String> = Vec::new();
+        let mut parts: Vec<EmacsText> = Vec::new();
         for (c, t) in &trie.children {
-            let mut p = String::new();
+            let mut p = EmacsText::new();
             push_regexp_quoted(*c, &mut p);
             p.push_str(&t.emit());
             parts.push(p);
         }
-        let inner = parts.join("\\|");
+        let inner = join_regexp_parts(&parts, "\\|");
         if trie.terminal {
-            format!("\\(?:{}\\)?", inner)
+            wrap_regexp_text("\\(?:", &inner, "\\)?")
         } else {
             inner
         }
@@ -11948,9 +12098,9 @@ fn f_regexp_opt(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // when parens were explicitly requested.
     let need_wrap = paren.truthy() || body.contains("\\|") || body.contains("\\(?");
     let out = if need_wrap && !body.starts_with("\\(?") {
-        format!("{}{}{}", open, body, close)
+        wrap_regexp_text(open, &body, close)
     } else if need_wrap && paren.truthy() {
-        format!("{}{}{}", open, body, close)
+        wrap_regexp_text(open, &body, close)
     } else {
         body
     };
@@ -11962,7 +12112,7 @@ fn f_regexp_opt_depth(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
-    let chars: Vec<char> = pat.chars().collect();
+    let chars: Vec<crate::lisp::value::EmacsChar> = pat.chars().collect();
     let mut depth = 0i128;
     let mut k = 0;
     while k + 1 < chars.len() {
@@ -11975,6 +12125,41 @@ fn f_regexp_opt_depth(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         k += if chars[k] == '\\' { 2 } else { 1 };
     }
     Ok(Value::Int(depth))
+}
+
+#[cfg(test)]
+mod wide_regexp_build_tests {
+    use super::*;
+    fn matches(pattern: &EmacsText, codes: &[u32]) -> bool {
+        let regex = crate::lisp::regexp::compile(pattern).unwrap();
+        let text: Vec<EmacsChar> = codes.iter().map(|code| EmacsChar::new(*code).unwrap()).collect();
+        crate::lisp::regexp::search(&regex, &text, 0, &crate::lisp::regexp::std_syntax, &crate::lisp::regexp::no_cat, 0) == Some((0, codes.len()))
+    }
+    #[test]
+    fn emitted_character_class_distinguishes_private_use_and_extensions() {
+        let codes = [0xd800, 0xf0080, 0x110000, 0x3fff80];
+        let mut trie = OptTrie::default();
+        // The public regexp-opt inserts sorted strings.
+        for code in codes { trie.insert(&[EmacsChar::new(code).unwrap()]); }
+        let pattern = trie.emit();
+        for code in codes { assert!(matches(&pattern, &[code]), "{code:x}"); }
+        assert!(!matches(&pattern, &[0xf0100]));
+        assert!(!matches(&pattern, &[0xf0b00]));
+    }
+    #[test]
+    fn factored_alternatives_preserve_the_original_character_codes() {
+        let mut trie = OptTrie::default();
+        let words = [[0xf0080, b'a' as u32], [0xf0080, b'b' as u32], [0x3fff80, b'a' as u32]];
+        for word in words { trie.insert(&word.map(|code| EmacsChar::new(code).unwrap())); }
+        let pattern = trie.emit();
+        for word in words { assert!(matches(&pattern, &word)); }
+        assert!(!matches(&pattern, &[0xf0b00, b'a' as u32]));
+    }
+    #[test]
+    fn rectangle_number_format_preserves_non_unicode_literals() {
+        let format = EmacsText::from_codes([0xf0080, 37, 52, 100, 0x3fff80, 0xd800]).unwrap();
+        assert_eq!(rect_format(&format, 7).codes().collect::<Vec<_>>(), [0xf0080, 32, 32, 32, 55, 0x3fff80, 0xd800]);
+    }
 }
 
 // ---------- text properties ----------
@@ -12363,7 +12548,7 @@ fn iv_set(ivs: &mut StrIvs, s: usize, e: usize, plist: Vec<Value>) {
 }
 
 /// Char length of a string object.
-fn str_len(s: &std::rc::Rc<std::cell::RefCell<String>>) -> usize {
+fn str_len(s: &crate::lisp::value::StrRef) -> usize {
     s.borrow().chars().count()
 }
 
@@ -14510,7 +14695,7 @@ fn f_propertize(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             // GNU copies the string (with its intervals) and adds the
             // arg plist props over the whole length.
             let len = str_len(s);
-            let ns = crate::lisp::Value::string_ref(s.borrow().clone());
+            let ns = crate::lisp::Value::string_ref_with_kind(s.borrow().clone(), i.is_multibyte_str(s));
             if i.is_unibyte_str(s) {
                 i.mark_unibyte(&ns);
             } else if i.is_multibyte_str(s) {
@@ -14879,12 +15064,14 @@ fn f_gap_size(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     let b2 = buf2.borrow();
     Ok(Value::Int(b2.text.gap_size() as i128))
 }
-/// UTF-8 byte length of a buffer char: eight-bit proxy chars occupy
-/// GNU's 2-byte internal encoding; everything else is its UTF-8 len.
-fn buf_char_byte_len(c: char) -> usize {
-    match crate::lisp::value::eight_bit_byte(c) {
-        Some(_) => 2,
-        None => c.len_utf8(),
+/// Emacs storage width, using original codes rather than Rust proxy widths.
+fn buf_char_byte_len(c: EmacsChar) -> usize {
+    match crate::lisp::value::lisp_char_code(c) {
+        0..=0x7f => 1,
+        0x80..=0x7ff | 0x3fff80..=0x3fffff => 2,
+        0x800..=0xffff => 3,
+        0x10000..=0x1fffff => 4,
+        _ => 5,
     }
 }
 
@@ -14894,6 +15081,7 @@ fn f_position_bytes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // a valid char position (accepts markers).
     let pos = match &a[0] {
         Value::Int(n) => *n,
+        Value::BigInt(_) => return Ok(Value::Nil),
         Value::Marker(m) if m.borrow().buffer.is_some() => m.borrow().position as i128 + 1,
         Value::Marker(_) => return Err(i.error("Marker does not point anywhere")),
         other => return Err(i.wrong_type_mut("integer-or-marker-p", other)),
@@ -14901,8 +15089,8 @@ fn f_position_bytes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let sym = i.q("enable-multibyte-characters");
     let unibyte = !i.symbol_value(sym).truthy();
     let text = cur(i).borrow().text.text();
-    let chars: Vec<char> = text.chars().collect();
-    if pos < 1 || pos as usize > chars.len() + 1 {
+    let chars: Vec<crate::lisp::value::EmacsChar> = text.chars().collect();
+    if !(1..=chars.len() as i128 + 1).contains(&pos) {
         return Ok(Value::Nil);
     }
     let n = pos as usize - 1;
@@ -14916,7 +15104,7 @@ fn f_byte_to_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU: char position holding byte position BYTEPOS; a byte inside
     // a multibyte char yields that char's position; nil out of range.
     let n = match &a[0] {
-        Value::Int(n) => *n,
+        Value::Int(n) if a[0].fixnump() => *n,
         other => return Err(i.wrong_type_mut("fixnump", other)),
     };
     let sym = i.q("enable-multibyte-characters");

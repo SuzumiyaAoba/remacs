@@ -86,7 +86,7 @@ pub(super) fn replace_region_contents(i: &mut Interp, args: &[Value]) -> EvalRes
                 region_text(i, &bounds)?
             } else {
                 let buffer = buffer.borrow();
-                (buffer.begv, buffer.zv, String::new())
+                (buffer.begv, buffer.zv, crate::lisp::text::EmacsText::default())
             };
             f_buffer_substring(
                 i,
@@ -108,9 +108,9 @@ pub(super) fn replace_region_contents(i: &mut Interp, args: &[Value]) -> EvalRes
         .is_some_and(|v| !v.truthy());
     // GNU compares unibyte bytes as eight-bit characters, rather than
     // confusing byte 0xff with the multibyte character U+00FF.
-    let as_multibyte = |c: char| {
-        if (0x80..=0xff).contains(&(c as u32)) {
-            crate::lisp::value::lisp_char(0x3fff00 + c as u32).unwrap()
+    let as_multibyte = |c: crate::lisp::text::EmacsChar| {
+        if (0x80..=0xff).contains(&(c.code())) {
+            crate::lisp::value::lisp_char(0x3fff00 + c.code()).unwrap()
         } else {
             c
         }
@@ -201,7 +201,7 @@ pub(super) fn replace_region_contents(i: &mut Interp, args: &[Value]) -> EvalRes
                 while y > 0 && diff.inserted[y - 1] {
                     y -= 1;
                 }
-                let text: String = new[y..ye].iter().collect();
+                let text: crate::lisp::text::EmacsText = new[y..ye].iter().collect();
                 let intervals: Vec<_> = properties
                     .iter()
                     .filter_map(|(a, b, plist)| {
@@ -228,8 +228,8 @@ pub(super) fn replace_region_contents(i: &mut Interp, args: &[Value]) -> EvalRes
 }
 
 struct Diff<'a> {
-    old: &'a [char],
-    new: &'a [char],
+    old: &'a [crate::lisp::text::EmacsChar],
+    new: &'a [crate::lisp::text::EmacsChar],
     deleted: Vec<bool>,
     inserted: Vec<bool>,
     forward: Vec<isize>,
@@ -242,8 +242,8 @@ struct Diff<'a> {
 
 impl<'a> Diff<'a> {
     fn new(
-        old: &'a [char],
-        new: &'a [char],
+        old: &'a [crate::lisp::text::EmacsChar],
+        new: &'a [crate::lisp::text::EmacsChar],
         max_cost: isize,
         deadline: Option<(Instant, i128)>,
     ) -> Self {
@@ -484,5 +484,23 @@ impl<'a> Diff<'a> {
             }
         }
         unreachable!()
+    }
+}
+
+#[cfg(test)]
+mod wide_diff_tests {
+    use super::*;
+    use crate::lisp::text::EmacsChar;
+
+    #[test]
+    fn distinct_private_use_and_extended_codes_are_not_equal() {
+        let old: Vec<_> = [0xf0080, 0xd800, 0x1a0000, 65].into_iter()
+            .map(|code| EmacsChar::new(code).unwrap()).collect();
+        let new: Vec<_> = [0x3fff80, 0xd800, 0x1a0000, 66].into_iter()
+            .map(|code| EmacsChar::new(code).unwrap()).collect();
+        let mut diff = Diff::new(&old, &new, 100, None);
+        assert!(diff.compare());
+        assert_eq!(diff.deleted, vec![true, false, false, true]);
+        assert_eq!(diff.inserted, vec![true, false, false, true]);
     }
 }

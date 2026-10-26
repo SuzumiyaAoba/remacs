@@ -37,11 +37,12 @@ impl Sources {
             let Value::Str(text) = value else {
                 return Ok(());
             };
-            let text = text.borrow().to_string();
+            let text = text.borrow().clone();
             let Some(key) = crate::lisp::load::dump_source_identity(&text) else {
                 return Ok(());
             };
-            if let Some(parent) = Path::new(&text).parent() {
+            let native = text.to_os_string().map_err(|_| "Cannot encode image source path")?;
+            if let Some(parent) = Path::new(&native).parent() {
                 if let Ok(parent) = std::fs::canonicalize(parent) {
                     roots.insert(parent);
                 }
@@ -96,8 +97,8 @@ impl Sources {
             let Value::Str(text) = value else {
                 return Ok(());
             };
-            let text = text.borrow().to_string();
-            if std::fs::canonicalize(&text).is_ok_and(|root| roots.contains(&root)) {
+            let text = text.borrow().clone();
+            if text.to_os_string().ok().and_then(|path| std::fs::canonicalize(path).ok()).is_some_and(|root| roots.contains(&root)) {
                 if let Ref::Object(id) = encoder.value(value)? {
                     sources.directories.push(Directory {
                         old: encode_text(&text),
@@ -140,8 +141,8 @@ impl Sources {
                 .map_err(|error| format!("Publishing image source: {error}"))?;
             directory = path
                 .parent()
-                .map(|path| path.to_string_lossy().into_owned());
-            let text = encode_text(&path.to_string_lossy());
+                .map(|path| crate::lisp::text::EmacsText::from_os_str(path.as_os_str()));
+            let text = encode_text(&crate::lisp::text::EmacsText::from_os_str(path.as_os_str()));
             Self::replace(nodes, &source.objects, &text)?;
             files.insert(source.old.clone(), text);
         }
@@ -149,11 +150,11 @@ impl Sources {
             for entry in &self.directories {
                 // An existing source tree may contain user edits. Keep
                 // its search/default directory while it remains usable.
-                if Path::new(&decode_text(&entry.old)).is_dir() {
+                if decode_text(&entry.old).to_os_string().ok().is_some_and(|path| Path::new(&path).is_dir()) {
                     continue;
                 }
                 let text = if entry.trailing_slash {
-                    format!("{directory}/")
+                    { let mut path = directory.clone(); path.push('/'); path }
                 } else {
                     directory.clone()
                 };

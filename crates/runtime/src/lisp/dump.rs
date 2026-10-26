@@ -25,7 +25,7 @@ static EXECUTABLE: OnceLock<[u8; 32]> = OnceLock::new();
 
 #[derive(Clone)]
 pub(crate) struct LoadedDump {
-    pub file_name: String,
+    pub file_name: super::text::EmacsText,
     pub load_time: f64,
 }
 
@@ -71,7 +71,8 @@ fn executable_fingerprint() -> std::result::Result<[u8; 32], String> {
     Ok(hash)
 }
 
-fn io_error(i: &mut Interp, label: &str, path: &str, error: std::io::Error) -> Flow {
+fn io_error<T: super::text::TextSource + ?Sized>(i: &mut Interp, label: &str, path: &T, error: std::io::Error) -> Flow {
+    path.with_text(|path| {
     let name = match error.kind() {
         std::io::ErrorKind::NotFound => "file-missing",
         std::io::ErrorKind::PermissionDenied => "permission-denied",
@@ -86,6 +87,8 @@ fn io_error(i: &mut Interp, label: &str, path: &str, error: std::io::Error) -> F
             Value::string(path),
         ],
     )
+
+    })
 }
 
 pub(crate) fn save(i: &mut Interp, args: Argv) -> super::EvalResult {
@@ -121,7 +124,7 @@ pub(crate) fn save(i: &mut Interp, args: Argv) -> super::EvalResult {
             options.mode(0o666);
         }
         let mut file = options
-            .open(&path)
+            .open(crate::editor::native_path(i, &path)?)
             .map_err(|e| io_error(i, "Opening dump output", &path, e))?;
         let image = Image::capture(i).map_err(|e| i.error(e))?;
         let track_referrers = args.get(1).is_some_and(Value::truthy);
@@ -135,7 +138,7 @@ pub(crate) fn save(i: &mut Interp, args: Argv) -> super::EvalResult {
             reverse
         });
         let archive = Archive {
-            version: 1,
+            version: 3,
             image,
             track_referrers,
             referrers,
@@ -253,14 +256,14 @@ pub fn load_with_arguments(
     let decompressor = flate2::read::ZlibDecoder::new(body.as_slice());
     let mut archive: Archive = serde_json::from_reader(decompressor)
         .map_err(|e| fail(format!("Invalid portable dump data: {e}")))?;
-    if archive.version != 1 {
+    if archive.version != 3 {
         return Err(fail("Unsupported portable dump version".into()));
     }
     let mut i = Interp::new();
     let load_path = i.q("load-path");
     let fresh_path = i.symbol_value(load_path);
     let current_cache = super::embedded_cache::directory()
-        .map(|p| p.to_string_lossy().into_owned())
+        .map(|p| super::text::EmacsText::from_os_str(p.as_os_str()))
         .or_else(|| {
             fresh_path
                 .list_to_vec()
@@ -268,11 +271,11 @@ pub fn load_with_arguments(
                 .into_iter()
                 .find_map(|v| match v {
                     Value::Str(s) => {
-                        let path = std::path::PathBuf::from(s.borrow().as_str());
+                        let path = std::path::PathBuf::from(s.borrow().to_os_string().ok()?);
                         ["simple.el", "simple.elc", "simple.el.gz"]
                             .iter()
                             .any(|name| path.join(name).is_file())
-                            .then(|| path.to_string_lossy().into_owned())
+                            .then(|| super::text::EmacsText::from_os_str(path.as_os_str()))
                     }
                     _ => None,
                 })
@@ -288,7 +291,7 @@ pub fn load_with_arguments(
                 .map(|id| ((*name).to_owned(), i.obarray.symbol(id).value.clone()))
         })
         .collect();
-    let file_name = crate::editor::expand_file_name_str(&mut i, &path.to_string_lossy());
+    let file_name = crate::editor::expand_file_name_str(&mut i, &super::text::EmacsText::from_os_str(path.as_os_str()));
     i.reset_dump_execution();
     archive.image.restore(&mut i).map_err(&fail)?;
     for (name, value) in fresh {

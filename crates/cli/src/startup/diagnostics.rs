@@ -7,14 +7,14 @@ pub(super) fn print_batch_backtrace(i: &mut Interp) {
     for frame in i.last_error_stack.borrow().iter().rev() {
         let name = match &frame.function {
             Value::Sym(id) => i.symbol_name(*id),
-            other => i.prin1_to_string(other),
+            other => i.prin1_to_string(other).to_unicode_lossy(),
         };
         let args = frame
             .arguments
             .list_to_vec()
             .unwrap_or_default()
             .iter()
-            .map(|value| i.prin1_to_string(value))
+            .map(|value| i.prin1_to_string(value).to_unicode_lossy())
             .collect::<Vec<_>>()
             .join(" ");
         eprintln!("  {}({})", name, args);
@@ -39,7 +39,7 @@ pub(super) fn report_flow(i: &mut Interp, flow: Flow) {
                 .list_to_vec()
                 .unwrap_or_default()
                 .iter()
-                .map(|v| i.prin1_to_string(v))
+                .map(|v| i.prin1_to_string(v).to_unicode_lossy())
                 .collect::<Vec<_>>()
                 .join(" ");
             eprintln!("{}\n\nError: {} ({})", msg, name, args);

@@ -1,4 +1,5 @@
 //! Shared editor command dispatch and nested minibuffer input loops.
+use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use super::KeyIo;
 #[cfg(test)]
 use super::render_grid;
@@ -313,20 +314,7 @@ fn dispatch_key_core_inner(
                             };
                             let sym = signal.symbol();
                             let data = signal.data();
-                            let name = match &sym {
-                                Value::Sym(id) => i.symbol_name(*id),
-                                _ => "error".into(),
-                            };
-                            let msg = format!(
-                                "{}: {}",
-                                name,
-                                data.list_to_vec()
-                                    .unwrap_or_default()
-                                    .iter()
-                                    .map(|v| i.princ_to_string(v))
-                                    .collect::<Vec<_>>()
-                                    .join(" ")
-                            );
+                            let msg = signal_text(i, &sym, &data);
                             i.message(&msg);
                         }
                     }
@@ -369,7 +357,9 @@ fn dispatch_key_core_inner(
                             i.macro_replay.clear();
                             i.macro_pending_flow = Some(crate::lisp::error::Flow::Throw(tag, v));
                         } else {
-                            i.message(&format!("No catch for tag: {}", i.princ_to_string(&tag)));
+                            let mut message = EmacsText::from("No catch for tag: ");
+            message.append(&i.princ_to_string(&tag));
+            i.message(&message);
                         }
                     }
                     Err(crate::lisp::error::Flow::Exit(_)) => {
@@ -518,24 +508,13 @@ fn report_flow(i: &mut Interp, f: crate::lisp::error::Flow) {
             }
             let sym = signal.symbol();
             let data = signal.data();
-            let name = match &sym {
-                Value::Sym(id) => i.symbol_name(*id),
-                _ => "error".into(),
-            };
-            let msg = format!(
-                "{}: {}",
-                name,
-                data.list_to_vec()
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|v| i.princ_to_string(v))
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            );
+            let msg = signal_text(i, &sym, &data);
             i.message(&msg);
         }
         crate::lisp::error::Flow::Throw(tag, _) => {
-            i.message(&format!("No catch for tag: {}", i.princ_to_string(&tag)));
+            let mut message = EmacsText::from("No catch for tag: ");
+            message.append(&i.princ_to_string(&tag));
+            i.message(&message);
         }
         crate::lisp::error::Flow::Exit(_) => i.quit_editor = true,
     }
@@ -634,7 +613,7 @@ pub fn nonblocking_sleep(i: &mut Interp, dur: Duration) -> io::Result<()> {
 fn minibuf_loop<T: KeyIo>(
     term: &std::rc::Rc<std::cell::RefCell<T>>,
     i: &mut Interp,
-    prompt: &str,
+    prompt: &EmacsStr,
     single: bool,
 ) -> Result<crate::lisp::eval::MinibufInput, crate::lisp::error::Flow> {
     use crate::lisp::eval::MinibufInput;
@@ -658,7 +637,7 @@ fn minibuf_loop<T: KeyIo>(
             } else {
                 minibuf_echo_text(i, prompt)
             };
-            let _ = t.draw_echo(&shown);
+            let _ = t.draw_echo(&shown.to_unicode_lossy());
         }
         // Propagate io errors — swallowing them as None spins an
         // infinite poll loop on a dead input source.
@@ -689,7 +668,15 @@ fn minibuf_loop<T: KeyIo>(
 /// overlay `before-string'/`after-string' contributions, like GNU's
 /// redisplay (icomplete shows its prospects through an `after-string'
 /// on `icomplete-overlay').
-fn minibuf_echo_text(i: &mut Interp, prompt: &str) -> String {
+fn signal_text(i: &Interp, symbol: &Value, data: &Value) -> EmacsText {
+    let mut text = match symbol { Value::Sym(id) => i.symbol_name_text(*id), _ => EmacsText::from("error") };
+    text.push_str(": ");
+    let parts: Vec<_> = data.list_to_vec().unwrap_or_default().iter().map(|value| i.princ_to_string(value)).collect();
+    text.append(&EmacsText::join(&parts, " "));
+    text
+}
+
+fn minibuf_echo_text(i: &mut Interp, prompt: &EmacsStr) -> EmacsText {
     let Some(b) = i.buffers.get(i.current_buffer) else {
         return prompt.to_string();
     };
@@ -699,7 +686,7 @@ fn minibuf_echo_text(i: &mut Interp, prompt: &str) -> String {
     // overlay's end, before-string at its start.
     let before_sym = i.q("before-string");
     let after_sym = i.q("after-string");
-    let mut splices: Vec<(usize, usize, String)> = Vec::new();
+    let mut splices: Vec<(usize, usize, EmacsText)> = Vec::new();
     for ov in &bb.overlays {
         if ov.buffer.is_none() {
             continue;
@@ -713,16 +700,20 @@ fn minibuf_echo_text(i: &mut Interp, prompt: &str) -> String {
             }
         }
     }
+    splice_echo_text(text, splices)
+}
+
+fn splice_echo_text(text: EmacsText, mut splices: Vec<(usize, usize, EmacsText)>) -> EmacsText {
     if splices.is_empty() {
         return text;
     }
     // Splice right-to-left so positions stay valid; later-positioned
     // strings at the same spot come after earlier ones.
     splices.sort_by_key(|&(pos, is_after, ref _s)| (pos, is_after));
-    let mut chars: Vec<char> = text.chars().collect();
+    let mut chars: Vec<EmacsChar> = text.chars().collect();
     for (pos, _, s) in splices.into_iter().rev() {
         let p = pos.min(chars.len());
-        let tail: Vec<char> = chars.split_off(p);
+        let tail: Vec<EmacsChar> = chars.split_off(p);
         chars.extend(s.chars());
         chars.extend(tail);
     }
@@ -732,3 +723,23 @@ fn minibuf_echo_text(i: &mut Interp, prompt: &str) -> String {
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod wide_echo_text_tests {
+    use super::*;
+    #[test]
+    fn overlay_splices_use_character_offsets_and_preserve_order() {
+        let text = EmacsText::from_codes([0xf0080, 0x110000]).unwrap();
+        let before = EmacsText::from_codes([0xd800]).unwrap();
+        let after = EmacsText::from_codes([0x3fff80]).unwrap();
+        let rendered = splice_echo_text(text, vec![(1, 1, after), (1, 0, before)]);
+        assert_eq!(rendered.codes().collect::<Vec<_>>(), [0xf0080, 0xd800, 0x3fff80, 0x110000]);
+    }
+    #[test]
+    fn presentation_conversion_does_not_change_logical_echo_text() {
+        let text = EmacsText::from_codes([0xf0100, 0x110000]).unwrap();
+        let logical = splice_echo_text(text.clone(), Vec::new());
+        assert_eq!(logical.to_unicode_lossy(), "\u{f0100}\u{fffd}");
+        assert_eq!(logical, text);
+    }
+}

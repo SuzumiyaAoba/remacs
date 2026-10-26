@@ -3,6 +3,7 @@
 //! and all buffer primitives installed into the interpreter.
 
 pub mod extra;
+mod base64_data;
 mod gapbuf;
 pub mod primitives;
 mod replace;
@@ -16,6 +17,7 @@ use std::cmp::Ordering;
 use std::rc::{Rc, Weak};
 
 use crate::lisp::value::{BufferRef, Marker, MarkerRef, SymId, Value};
+use crate::lisp::text::{EmacsText, TextSource};
 
 pub use gapbuf::{EditObserver, EditSubscription, GapBuffer, SharedText, TextChange};
 
@@ -27,7 +29,7 @@ pub type BufferLocals =
 pub struct Buffer {
     /// Unique id in the BufferSet.
     pub id: usize,
-    pub name: String,
+    pub name: EmacsText,
     /// Buffer text. Indirect buffers share the base buffer's storage
     /// via `SharedText` (`Rc<RefCell<GapBuffer>>`), so edits made in
     /// any buffer of the chain are visible in all of them.
@@ -54,7 +56,7 @@ pub struct Buffer {
     /// Markers pointing into this buffer.
     pub markers: Vec<Weak<RefCell<Marker>>>,
     /// Visited file name (or nil).
-    pub file_name: Option<String>,
+    pub file_name: Option<EmacsText>,
     /// SymId of `buffer-undo-list'.  The undo list itself is the
     /// buffer-local variable binding (`locals[undo_sym]'), a Lisp list
     /// in GNU's format: (BEG . END) insertions, (TEXT . POS) deletions,
@@ -111,7 +113,7 @@ pub struct Buffer {
     /// modtime_size); verified by `verify-visited-file-modtime'.
     pub file_modtime_size: i128,
     /// Name of the lock file (`.#FILE') created by `lock-buffer'.
-    pub file_lock_name: Option<String>,
+    pub file_lock_name: Option<EmacsText>,
     /// Cached snapshot of the `create-lockfiles' Lisp variable, taken
     /// when the file is visited (Buffer methods cannot see Lisp state).
     pub create_lockfiles: bool,
@@ -121,7 +123,7 @@ pub struct Buffer {
     pub suspended_mode: Option<crate::lisp::value::Value>,
     /// Name before the last rename or kill (GNU `b->last_name'),
     /// reported by `buffer-last-name'.
-    pub last_name: Option<String>,
+    pub last_name: Option<EmacsText>,
     /// GNU `b->inhibit_buffer_hooks': set by make-indirect-buffer's
     /// INHIBIT-BUFFER-HOOKS arg; such buffers skip `kill-buffer-hook'
     /// and `kill-buffer-query-functions' when killed.
@@ -131,79 +133,94 @@ pub struct Buffer {
 /// Resolve path components in GNU file-truename order. Missing components
 /// remain usable names; a later `..' can cancel one and expose a real link.
 /// Relative links preserve the root, while absolute links replace it.
-pub fn file_truename(path: &str) -> String {
-    use std::collections::VecDeque;
+pub fn file_truename<T: TextSource + ?Sized>(path: &T) -> EmacsText {
+    path.with_text(|path| {
+        use std::collections::VecDeque;
+        let absolute = if path.starts_with('/') { path.to_owned() } else {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+            let mut absolute = EmacsText::from_os_str(cwd.as_os_str());
+            if !absolute.ends_with('/') { absolute.push('/'); }
+            absolute.push_str(path);
+            absolute
+        };
+        let root = |name: &crate::lisp::text::EmacsStr| {
+            if name.starts_with("//") && !name.starts_with("///") { "//" } else { "/" }
+        };
+        let mut out = EmacsText::from(root(&absolute));
+        let mut root_len = out.len();
+        let mut pending: VecDeque<EmacsText> = absolute.split('/').map(ToOwned::to_owned).collect();
+        let mut dirlike = path.ends_with('/');
+        let mut links = 0;
+        while let Some(component) = pending.pop_front() {
+            if component.is_empty() || component == "." { continue; }
+            if component == ".." {
+                if out.len() > root_len { out.truncate(out.rfind('/').unwrap().max(root_len)); }
+                continue;
+            }
+            let mut candidate = out.clone();
+            if !candidate.ends_with('/') { candidate.push('/'); }
+            candidate.append(&component);
+            if links < 100 {
+                let target = candidate.to_os_string().ok().and_then(|path| std::fs::read_link(path).ok());
+                if let Some(target) = target {
+                    links += 1;
+                    let target = EmacsText::from_os_str(target.as_os_str());
+                    dirlike |= pending.iter().all(EmacsText::is_empty) && target.ends_with('/');
+                    if target.starts_with('/') { out = EmacsText::from(root(&target)); root_len = out.len(); }
+                    for part in target.split('/').rev() { pending.push_front(part.to_owned()); }
+                    continue;
+                }
+            }
+            out = candidate;
+        }
+        if dirlike && !out.ends_with('/') { out.push('/'); }
+        out
+    })
+}
 
-    let absolute = if path.starts_with('/') {
-        path.to_owned()
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("/"))
-            .join(path)
-            .to_string_lossy()
-            .into_owned()
-    };
-    let root = |name: &str| {
-        if name.starts_with("//") && !name.starts_with("///") {
-            "//"
-        } else {
-            "/"
-        }
-    };
-    let mut out = root(&absolute).to_owned();
-    let mut root_len = out.len();
-    let mut pending: VecDeque<String> = absolute.split('/').map(str::to_owned).collect();
-    let mut dirlike = path.ends_with('/');
-    let mut links = 0;
-    while let Some(component) = pending.pop_front() {
-        match component.as_str() {
-            "" | "." => continue,
-            ".." => {
-                if out.len() > root_len {
-                    out.truncate(out.rfind('/').unwrap().max(root_len));
-                }
-                continue;
-            }
-            _ => {}
-        }
-        let candidate = format!(
-            "{}{}{}",
-            out,
-            if out.ends_with('/') { "" } else { "/" },
-            component
-        );
-        if links < 100 {
-            if let Ok(target) = std::fs::read_link(&candidate) {
-                links += 1;
-                let target = target.to_string_lossy();
-                dirlike |= pending.iter().all(String::is_empty) && target.ends_with('/');
-                if target.starts_with('/') {
-                    out = root(&target).to_owned();
-                    root_len = out.len();
-                }
-                for part in target.split('/').rev() {
-                    pending.push_front(part.to_owned());
-                }
-                continue;
-            }
-        }
-        out = candidate;
+#[cfg(test)]
+mod wide_truename_tests {
+    use super::*;
+    #[test]
+    fn root_and_lock_names_preserve_extended_characters() {
+        assert_eq!(file_truename("//.."), "//");
+        assert_eq!(file_truename("///.."), "/");
+        let name = EmacsText::from_codes([47, 0xf0080, 47, 0x3fff80, 0xd800, 0x110000]).unwrap();
+        assert_eq!(lock_file_name(&name).codes().collect::<Vec<_>>(), [47, 0xf0080, 47, 46, 35, 0x3fff80, 0xd800, 0x110000]);
     }
-    if dirlike && !out.ends_with('/') {
-        out.push('/');
+    #[cfg(unix)]
+    #[test]
+    fn physical_symlinks_and_missing_components_retain_character_identity() {
+        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let directory = std::env::temp_dir().join(format!("remacs-wide-truename-{}-{unique}", std::process::id()));
+        std::fs::create_dir(&directory).unwrap();
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+        let _cleanup = Cleanup(directory.clone());
+        let child = EmacsText::from_codes([0xf0080, 0xf0100]).unwrap();
+        std::fs::create_dir(directory.join(child.to_os_string().unwrap())).unwrap();
+        std::os::unix::fs::symlink(child.to_os_string().unwrap(), directory.join("alias")).unwrap();
+        let mut input = EmacsText::from_os_str(directory.as_os_str());
+        input.push_str("/alias/"); input.push(crate::lisp::text::EmacsChar::new(0x110000).unwrap());
+        input.push_str("/../"); input.push(crate::lisp::text::EmacsChar::new(0xd800).unwrap());
+        let mut expected = EmacsText::from_os_str(std::fs::canonicalize(&directory).unwrap().as_os_str());
+        expected.push('/'); expected.append(&child); expected.push('/');
+        expected.push(crate::lisp::text::EmacsChar::new(0xd800).unwrap());
+        assert_eq!(file_truename(&input), expected);
     }
-    out
 }
 
 /// GNU file-lock path: `.#NAME' in FILE's directory.
-pub(crate) fn lock_file_name(file: &str) -> String {
-    match file.rfind('/') {
-        Some(pos) => format!("{}/.#{}", &file[..pos], &file[pos + 1..]),
-        None => format!(".#{}", file),
-    }
+pub(crate) fn lock_file_name<T: TextSource + ?Sized>(file: &T) -> EmacsText {
+    file.with_text(|file| {
+        let result = match file.rfind('/') {
+            Some(position) => { let mut directory = file[..=position].to_owned(); directory.push_str(".#"); directory.push_str(&file[position + 1..]); directory }
+            None => { let mut name = EmacsText::from(".#"); name.push_str(file); name }
+        };
+        result
+    })
 }
 
-/// Our hostname as GNU records it in lock files (`system-name').
 pub(crate) fn our_host_name() -> String {
     let mut host = String::new();
     #[cfg(unix)]
@@ -226,12 +243,12 @@ pub(crate) fn our_host_name() -> String {
 pub(crate) fn boot_time() -> i64 {
     #[cfg(target_os = "macos")]
     unsafe {
-        // GNU's gnulib get_boot_time checks utmpx first.  The system may
-        // deny kern.boottime sysctl access while still exposing its BOOT_TIME
-        // accounting record (common in restricted macOS environments).
-        static UTMPX_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        if let Ok(_guard) = UTMPX_LOCK.lock() {
-            let mut boot = 0i64;
+        // gnulib get_boot_time consults utmpx first. This remains readable
+        // in environments that deny kern.boottime through sysctl.
+        let recorded_boot = {
+            static UTMP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            let _guard = UTMP_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+            let mut recorded_boot = 0;
             libc::setutxent();
             loop {
                 let entry = libc::getutxent();
@@ -239,13 +256,14 @@ pub(crate) fn boot_time() -> i64 {
                     break;
                 }
                 if (*entry).ut_type == libc::BOOT_TIME {
-                    boot = (*entry).ut_tv.tv_sec as i64;
+                    recorded_boot = (*entry).ut_tv.tv_sec as i64;
                 }
             }
             libc::endutxent();
-            if boot != 0 {
-                return boot;
-            }
+            recorded_boot
+        };
+        if recorded_boot != 0 {
+            return recorded_boot;
         }
         let name = std::ffi::CString::new("kern.boottime").unwrap();
         let mut tv: libc::timeval = std::mem::zeroed();
@@ -285,7 +303,12 @@ pub(crate) fn lock_owner_string() -> String {
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("LOGNAME"))
         .unwrap_or_else(|_| "unknown".into());
-    let base = format!("{}@{}.{}", user, our_host_name(), std::process::id());
+    let base = format!(
+        "{}@{}.{}",
+        user,
+        our_host_name().replace('@', "-"),
+        std::process::id()
+    );
     match boot_time() {
         0 => base,
         bt => format!("{}:{}", base, bt),
@@ -497,10 +520,11 @@ pub(crate) fn sort_overlays_by_priority(
 impl Buffer {
     pub fn new(
         id: usize,
-        name: String,
+        name: impl Into<EmacsText>,
         undo_sym: SymId,
         undo_inhibit: Rc<std::cell::Cell<bool>>,
     ) -> Buffer {
+        let name: EmacsText = name.into();
         let mut locals = indexmap::IndexMap::default();
         // Buffers with space-prefixed (internal) names start with undo
         // disabled, like GNU get-buffer-create (undo_list = Qt).
@@ -630,7 +654,8 @@ impl Buffer {
         {
             // GNU locks the visited file's truename.
             let lname = lock_file_name(&file_truename(&file));
-            if std::os::unix::fs::symlink(&lock_owner_string(), &lname).is_ok() {
+            let Ok(native) = lname.to_os_string() else { return; };
+            if std::os::unix::fs::symlink(&lock_owner_string(), native).is_ok() {
                 self.file_lock_name = Some(lname);
             }
         }
@@ -639,7 +664,7 @@ impl Buffer {
     /// Remove the lock file this buffer created, if any.
     pub fn release_lock_file(&mut self) {
         if let Some(lname) = self.file_lock_name.take() {
-            let _ = std::fs::remove_file(&lname);
+            if let Ok(native) = lname.to_os_string() { let _ = std::fs::remove_file(native); }
         }
     }
 
@@ -664,18 +689,22 @@ impl Buffer {
 
     /// Insert text at `pos`, adjusting point/mark/markers.
     /// `before_markers`: text goes before markers at pos (insert-before-markers).
-    pub fn insert_at(&mut self, pos: usize, s: &str) {
+    pub fn insert_at<T: TextSource + ?Sized>(&mut self, pos: usize, s: &T) {
+        s.with_text(|s| {
         let n = s.chars().count();
         if n == 0 {
             return;
         }
         self.raw_insert_at(pos, s);
         self.note_text_change(n);
+
+        })
     }
 
     /// `insert_at' without the MODIFF bump — for ops that report a
     /// composite change (`replace_range', casify) with a single tick.
-    pub fn raw_insert_at(&mut self, pos: usize, s: &str) {
+    pub fn raw_insert_at<T: TextSource + ?Sized>(&mut self, pos: usize, s: &T) {
+        s.with_text(|s| {
         let pos = pos.min(self.text.len());
         let n = s.chars().count();
         if n == 0 {
@@ -694,22 +723,28 @@ impl Buffer {
             }
             sib.adjust_markers_insert(pos, n, false)
         });
+
+        })
     }
 
     /// Like Emacs's `insert`: inserted text goes *before* point when
     /// inserting at point — i.e. point ends up after the new text.
     /// (Emacs `insert` inserts before point, advancing it.)
-    pub fn insert(&mut self, s: &str) {
+    pub fn insert<T: TextSource + ?Sized>(&mut self, s: &T) {
+        s.with_text(|s| {
         let n = s.chars().count();
         if n == 0 {
             return;
         }
         self.raw_insert(s);
         self.note_text_change(n);
+
+        })
     }
 
     /// `insert' without the MODIFF bump.
-    pub fn raw_insert(&mut self, s: &str) {
+    pub fn raw_insert<T: TextSource + ?Sized>(&mut self, s: &T) {
+        s.with_text(|s| {
         let p = self.point();
         let n = s.chars().count();
         if n == 0 {
@@ -727,20 +762,26 @@ impl Buffer {
             }
             sib.adjust_markers_insert(p, n, false)
         });
+
+        })
     }
 
     /// `insert-before-markers`.
-    pub fn insert_before_markers(&mut self, s: &str) {
+    pub fn insert_before_markers<T: TextSource + ?Sized>(&mut self, s: &T) {
+        s.with_text(|s| {
         let n = s.chars().count();
         if n == 0 {
             return;
         }
         self.raw_insert_before_markers(s);
         self.note_text_change(n);
+
+        })
     }
 
     /// `insert_before_markers' without the MODIFF bump.
-    pub fn raw_insert_before_markers(&mut self, s: &str) {
+    pub fn raw_insert_before_markers<T: TextSource + ?Sized>(&mut self, s: &T) {
+        s.with_text(|s| {
         let p = self.point();
         let n = s.chars().count();
         if n == 0 {
@@ -762,6 +803,8 @@ impl Buffer {
             }
             sib.adjust_markers_insert(p, n, true)
         });
+
+        })
     }
 
     /// Point adjustment for `insert_at` (non-point-aware variant).
@@ -882,7 +925,7 @@ impl Buffer {
     }
 
     /// Delete `[start, end)`, adjusting everything.
-    pub fn delete_region(&mut self, start: usize, end: usize) -> String {
+    pub fn delete_region(&mut self, start: usize, end: usize) -> EmacsText {
         let n = end.saturating_sub(start);
         let removed = self.raw_delete_region(start, end);
         if n > 0 {
@@ -892,7 +935,7 @@ impl Buffer {
     }
 
     /// `delete_region' without the MODIFF bump.
-    pub fn raw_delete_region(&mut self, start: usize, end: usize) -> String {
+    pub fn raw_delete_region(&mut self, start: usize, end: usize) -> EmacsText {
         self.raw_delete_region_with_undo(start, end).0
     }
 
@@ -902,11 +945,11 @@ impl Buffer {
         &mut self,
         start: usize,
         end: usize,
-    ) -> (String, Option<crate::lisp::value::StrRef>) {
+    ) -> (EmacsText, Option<crate::lisp::value::StrRef>) {
         let start = start.min(self.text.len());
         let end = end.min(self.text.len());
         if start >= end {
-            return (String::new(), None);
+            return (EmacsText::new(), None);
         }
         let removed = self.text.substring(start, end);
         let undo = self.record_delete(start, removed.clone());
@@ -936,12 +979,13 @@ impl Buffer {
 
     /// GNU replace_range: record insertion before deletion, and keep the
     /// two endpoints distinct even when markers have opposite insertion types.
-    pub(crate) fn raw_replace_region_with_undo(
+    pub(crate) fn raw_replace_region_with_undo<T: TextSource + ?Sized>(
         &mut self,
         start: usize,
         end: usize,
-        replacement: &str,
+        replacement: &T,
     ) -> Option<crate::lisp::value::StrRef> {
+        replacement.with_text(|replacement| {
         let inserted = replacement.chars().count();
         let deleted = end - start;
         if inserted == 0 && deleted == 0 {
@@ -1002,6 +1046,8 @@ impl Buffer {
             .each_sibling(self.id, |sibling| adjust(sibling, false));
         self.note_text_change(deleted + inserted);
         undo
+
+        })
     }
 
     /// GNU editfns.c transpose_markers. Overlays keep their coordinates,
@@ -1197,7 +1243,7 @@ impl Buffer {
     pub fn record_delete(
         &mut self,
         beg: usize,
-        text: String,
+        text: EmacsText,
     ) -> Option<crate::lisp::value::StrRef> {
         self.record_delete_with_markers(beg, text, true)
     }
@@ -1205,7 +1251,7 @@ impl Buffer {
     fn record_delete_with_markers(
         &mut self,
         beg: usize,
-        text: String,
+        text: EmacsText,
         record_markers: bool,
     ) -> Option<crate::lisp::value::StrRef> {
         if self.undo_disabled() {
@@ -1228,12 +1274,13 @@ impl Buffer {
 
     /// Record an in-place replacement without relocating markers or
     /// adding deletion's marker-adjustment records.
-    pub(crate) fn record_change(
+    pub(crate) fn record_change<T: TextSource + ?Sized>(
         &mut self,
         start: usize,
-        old: &str,
+        old: &T,
         new_len: usize,
     ) -> Option<crate::lisp::value::StrRef> {
+        old.with_text(|old| {
         if self.undo_disabled() {
             return None;
         }
@@ -1247,6 +1294,8 @@ impl Buffer {
         self.push_undo(Value::cons(Value::Str(text.clone()), Value::Int(position)));
         self.record_insert(start, new_len);
         Some(text)
+
+        })
     }
 
     /// The effective value of PROP (last write wins) at 0-based POS,
@@ -1386,7 +1435,7 @@ pub struct BufferSet {
     bufs: Vec<Option<BufferRef>>,
     /// Buffer ids in LRU order (index 0 = most recent).
     order: Vec<usize>,
-    name_map: HashMap<String, usize>,
+    name_map: HashMap<EmacsText, usize>,
     counter: u64,
     /// SymId of `buffer-undo-list', stamped onto new buffers (set by
     /// the interpreter once the obarray exists).
@@ -1406,7 +1455,7 @@ impl BufferSet {
         )
     }
 
-    pub(crate) fn prepare_dump_slots(names: &[Option<String>]) -> Self {
+    pub(crate) fn prepare_dump_slots(names: &[Option<EmacsText>]) -> Self {
         let mut set = Self::new();
         for (id, name) in names.iter().enumerate() {
             let buffer = name.as_ref().map(|name| {
@@ -1491,11 +1540,13 @@ impl BufferSet {
     }
 
     /// Create a buffer; if the name exists, uniquify with `<N>`.
-    pub fn create(&mut self, name: &str) -> usize {
+    pub fn create<T: TextSource + ?Sized>(&mut self, name: &T) -> usize {
+        name.with_text(|name| {
         let mut final_name = name.to_string();
         let mut n = 2;
         while self.name_map.contains_key(&final_name) {
-            final_name = format!("{}<{}>", name, n);
+            final_name = name.to_string();
+            final_name.push_str(format!("<{n}>"));
             n += 1;
         }
         let id = self.bufs.len();
@@ -1512,21 +1563,30 @@ impl BufferSet {
         self.order.push(id);
         self.counter += 1;
         id
+
+        })
     }
 
     /// Create a buffer with exactly this name (kills none; used at init).
     /// `last_name' is the creation name (GNU get-buffer-create).
-    pub fn create_exact(&mut self, name: &str) -> usize {
+    pub fn create_exact<T: TextSource + ?Sized>(&mut self, name: &T) -> usize {
+        name.with_text(|name| {
         self.create_exact_named(name, true)
+
+        })
     }
 
     /// Boot-time `*scratch*'-only variant: GNU `init_buffer' leaves
     /// `b->last_name' nil, so `(buffer-last-name " *scratch*")' is nil.
-    pub fn create_exact_nolast(&mut self, name: &str) -> usize {
+    pub fn create_exact_nolast<T: TextSource + ?Sized>(&mut self, name: &T) -> usize {
+        name.with_text(|name| {
         self.create_exact_named(name, false)
+
+        })
     }
 
-    fn create_exact_named(&mut self, name: &str, with_last: bool) -> usize {
+    fn create_exact_named<T: TextSource + ?Sized>(&mut self, name: &T, with_last: bool) -> usize {
+        name.with_text(|name| {
         let id = self.bufs.len();
         let mut buf = Buffer::new(
             id,
@@ -1543,14 +1603,19 @@ impl BufferSet {
         self.name_map.insert(name.to_string(), id);
         self.order.push(id);
         id
+
+        })
     }
 
     pub fn get(&self, id: usize) -> Option<BufferRef> {
         self.bufs.get(id).and_then(|o| o.as_ref()).cloned()
     }
 
-    pub fn by_name(&self, name: &str) -> Option<usize> {
+    pub fn by_name<T: TextSource + ?Sized>(&self, name: &T) -> Option<usize> {
+        name.with_text(|name| {
         self.name_map.get(name).copied()
+
+        })
     }
 
     /// Kill buffer `id`.  `always_local` identifies DEFVAR_PER_BUFFER
@@ -1607,16 +1672,18 @@ impl BufferSet {
     }
 
     /// Rename buffer `id`; returns the actual (possibly uniquified) name.
-    pub fn rename(&mut self, id: usize, new_name: &str) -> String {
+    pub fn rename<T: TextSource + ?Sized>(&mut self, id: usize, new_name: &T) -> EmacsText {
+        new_name.with_text(|new_name| {
         let old_name = match self.get(id) {
             Some(b) => b.borrow().name.clone(),
-            None => return String::new(),
+            None => return EmacsText::new(),
         };
         self.name_map.remove(&old_name);
         let mut final_name = new_name.to_string();
         let mut n = 2;
         while self.name_map.contains_key(&final_name) {
-            final_name = format!("{}<{}>", new_name, n);
+            final_name = new_name.to_string();
+            final_name.push_str(format!("<{n}>"));
             n += 1;
         }
         if let Some(b) = self.get(id) {
@@ -1627,6 +1694,8 @@ impl BufferSet {
         }
         self.name_map.insert(final_name.clone(), id);
         final_name
+
+        })
     }
 
     /// Move `id` to the front of the LRU order.
@@ -1693,17 +1762,21 @@ impl BufferSet {
         }
         self.other(exclude)
     }
-    pub fn unique_name(&self, base: &str) -> String {
+    pub fn unique_name<T: TextSource + ?Sized>(&self, base: &T) -> EmacsText {
+        base.with_text(|base| {
         if !self.name_map.contains_key(base) {
             return base.to_string();
         }
         for n in 2.. {
-            let cand = format!("{}<{}>", base, n);
+            let mut cand = base.to_string();
+            cand.push_str(format!("<{n}>"));
             if !self.name_map.contains_key(&cand) {
                 return cand;
             }
         }
         unreachable!()
+
+        })
     }
 }
 

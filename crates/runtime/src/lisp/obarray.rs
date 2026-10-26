@@ -17,29 +17,22 @@ pub(crate) struct InternKey {
 }
 
 impl InternKey {
-    pub(crate) fn from_text(text: &str) -> Self {
-        if text.is_ascii() {
-            return Self { bytes: text.as_bytes().to_vec(), characters: text.len() };
-        }
-        let multibyte = text.chars().any(|c| c as u32 >= 128
-            && super::value::eight_bit_byte(c).is_none());
-        Self::from_text_kind(text, multibyte)
+    pub(crate) fn from_text<T: super::text::TextSource + ?Sized>(text: &T) -> Self {
+        text.with_text(|text| {
+            let multibyte = text.chars().any(|c| c.code() >= 128 && c.byte8().is_none());
+            Self::from_text_kind(text, multibyte)
+        })
     }
 
-    pub(crate) fn from_text_kind(text: &str, multibyte: bool) -> Self {
-        if text.is_ascii() {
-            return Self { bytes: text.as_bytes().to_vec(), characters: text.len() };
-        }
-        let mut bytes = Vec::with_capacity(text.len());
-        for c in text.chars() {
-            if !multibyte {
-                bytes.push(super::value::eight_bit_byte(c).unwrap_or(c as u8));
-            } else {
-                bytes.extend(super::builtins::coding_legacy::internal_encode(
-                    super::value::lisp_char_code(c) as u32));
+    pub(crate) fn from_text_kind<T: super::text::TextSource + ?Sized>(text: &T, multibyte: bool) -> Self {
+        text.with_text(|text| {
+            let mut bytes = Vec::with_capacity(text.len());
+            for c in text.chars() {
+                if multibyte { c.encode_internal(&mut bytes); }
+                else { bytes.push(c.byte8().unwrap_or(c.code() as u8)); }
             }
-        }
-        Self { bytes, characters: text.chars().count() }
+            Self { bytes, characters: text.len() }
+        })
     }
 }
 
@@ -76,7 +69,7 @@ pub struct Symbol {
     /// has become SYMBOL_LOCALIZED. `defvaralias' rejects each differently.
     pub forwarded_variable: bool,
     /// Whether this symbol names a defined variable (boundp / defvar'd).
-    pub variable_documentation: Option<String>,
+    pub variable_documentation: Option<super::text::EmacsText>,
     /// Uninterned symbols (make-symbol/gensym) print with a `#:' prefix.
     pub uninterned: bool,
     /// Cached `variable-alias' property target (set by
@@ -314,21 +307,22 @@ impl Obarray {
         self.intern_with_key(name, InternKey::from_text(name))
     }
 
-    pub(crate) fn intern_with_key(&mut self, name: &str, key: InternKey) -> SymId {
+    pub(crate) fn intern_with_key<T: super::text::TextSource + ?Sized>(&mut self, name: &T, key: InternKey) -> SymId {
         if let Some(id) = self.lookup_key(&key) {
             return id;
         }
         self.intern_new_with_key(name, key)
     }
 
-    pub(crate) fn intern_new_with_key(&mut self, name: &str, key: InternKey) -> SymId {
+    pub(crate) fn intern_new_with_key<T: super::text::TextSource + ?Sized>(&mut self, name: &T, key: InternKey) -> SymId {
+        name.with_text(|name| {
         let id = self.symbols.len() as SymId;
         self.map.entry(key.clone()).or_default().push(id);
         self.refresh_ascii(&key);
         let old_capacity = self.symbols.capacity();
         self.symbols.push(Symbol {
-            name: name.to_string(),
-            name_string: None,
+            name: format!("{name}"),
+            name_string: (!name.is_ascii()).then(|| Value::string_ref(name)),
             internment_key: Some(key),
             value: Value::Sym(sym::UNBOUND),
             function: Value::Sym(sym::UNBOUND),
@@ -349,6 +343,8 @@ impl Obarray {
             self.symbols[id as usize].value = Value::Sym(id);
         }
         id
+
+        })
     }
 
     /// Look up a symbol without interning.
@@ -377,13 +373,14 @@ impl Obarray {
     }
 
     /// Fresh uninterned symbol (for `make-symbol`/`gensym`).
-    pub fn make_symbol(&mut self, name: &str) -> SymId {
+    pub fn make_symbol<T: super::text::TextSource + ?Sized>(&mut self, name: &T) -> SymId {
+        name.with_text(|name| {
         self.gensym_counter += 1;
         let id = self.symbols.len() as SymId;
         let old_capacity = self.symbols.capacity();
         self.symbols.push(Symbol {
-            name: name.to_string(),
-            name_string: None,
+            name: format!("{name}"),
+            name_string: (!name.is_ascii()).then(|| Value::string_ref(name)),
             internment_key: None,
             value: Value::Sym(sym::UNBOUND),
             function: Value::Sym(sym::UNBOUND),
@@ -401,6 +398,8 @@ impl Obarray {
         super::memory::symbol_allocated();
         super::memory::symbol_capacity(old_capacity, self.symbols.capacity());
         id
+
+        })
     }
 
     pub fn symbol(&self, id: SymId) -> &Symbol {

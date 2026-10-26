@@ -102,28 +102,52 @@ pub(crate) static SUBRS: &[Subr] = &[
 ];
 
 /// Normalize a key for the table's test.
-pub(crate) fn hash_key_for(interp: &Interp, v: &Value, test: HashTest) -> HashKey {
-    match test {
-        HashTest::Eq => eq_key(interp, v),
-        HashTest::Eql => eql_key(interp, v),
-        HashTest::Equal => {
-            let mut ancestors = std::collections::HashSet::new();
-            // Keep compact acyclic keys, but a cycle or a large unfolding
-            // needs a hash bucket whose original objects are compared.
-            equal_key(interp, v, &mut ancestors, &mut 4096, 0).unwrap_or_else(|| {
-                let HashKey::Ptr(identity) = eq_key(interp, v) else {
-                    unreachable!("only compound equal keys can need a fallback")
-                };
-                HashKey::EqualFallback(super::strfn::equal_hash_code(interp, v), identity)
-            })
-        }
+fn key_identity(value: &Value) -> usize {
+    match value {
+        Value::Cons(value) => Rc::as_ptr(value) as usize,
+        Value::Vec(value) | Value::Record(value) => Rc::as_ptr(value) as usize,
+        Value::Lambda(value) => Rc::as_ptr(value) as usize,
+        _ => unreachable!("a positioned key has a heap root"),
     }
 }
 
-fn eq_key(interp: &Interp, v: &Value) -> HashKey {
-    // Enabled position symbols hash with their underlying symbol, as GNU EQ does.
-    if let Some((s, _)) = super::misc::active_sympos_parts(interp, v) {
-        return HashKey::Sym(s);
+pub(crate) fn hash_key_for(interp: &Interp, v: &Value, test: HashTest) -> HashKey {
+    let _scope = interp.symbol_position_scope();
+    let mut positioned = super::misc::raw_symbol_position(v).is_some();
+    let normalized = match test {
+        HashTest::Eq => eq_key(v),
+        HashTest::Eql => eql_key(v),
+        HashTest::Equal => {
+            let mut ancestors = std::collections::HashSet::new();
+            equal_key(interp, v, &mut ancestors, &mut 4096, 0, &mut positioned).unwrap_or_else(
+                || {
+                    HashKey::EqualFallback(
+                        super::strfn::equal_hash_code(interp, v),
+                        key_identity(v),
+                    )
+                },
+            )
+        }
+    };
+    if positioned {
+        HashKey::Positioned(
+            super::strfn::builtin_hash_code(interp, v, test),
+            key_identity(v),
+        )
+    } else {
+        normalized
+    }
+}
+
+fn eq_key(v: &Value) -> HashKey {
+    // `symbols-with-pos-enabled' objects hash as their bare symbol
+    // (they are `eq' to it, so the hash must agree).
+    if let Some((s, _)) = super::misc::as_sympos(v) {
+        return if s == 0 {
+            HashKey::Nil
+        } else {
+            HashKey::Sym(s)
+        };
     }
     match v {
         Value::Nil => HashKey::Nil,
@@ -152,7 +176,7 @@ fn eq_key(interp: &Interp, v: &Value) -> HashKey {
     }
 }
 
-fn eql_key(interp: &Interp, v: &Value) -> HashKey {
+fn eql_key(v: &Value) -> HashKey {
     // eql: numbers compare by value, everything else like eq.
     match v {
         Value::Int(n) => HashKey::Int(*n),
@@ -161,7 +185,7 @@ fn eql_key(interp: &Interp, v: &Value) -> HashKey {
             None => HashKey::BigInt((**n).clone()),
         },
         Value::Float(f) => HashKey::Float(f.to_bits()),
-        _ => eq_key(interp, v),
+        _ => eq_key(v),
     }
 }
 
@@ -171,6 +195,7 @@ fn equal_key(
     ancestors: &mut std::collections::HashSet<usize>,
     budget: &mut usize,
     depth: usize,
+    positioned: &mut bool,
 ) -> Option<HashKey> {
     // Normalization is only a fast path, never proof that cyclic keys
     // differ. Bound both recursion and repeated expansion of shared DAGs.
@@ -179,6 +204,10 @@ fn equal_key(
         return None;
     }
     *budget -= 1;
+    if super::misc::raw_symbol_position(v).is_some() {
+        *positioned = true;
+        return Some(eq_key(v));
+    }
     let ptr = match v {
         Value::Cons(c) => Some(Rc::as_ptr(c) as usize),
         Value::Vec(c) => Some(Rc::as_ptr(c) as usize),
@@ -201,7 +230,10 @@ fn equal_key(
         return Some(HashKey::Tagged(4, vec![HashKey::Ptr(identity)]));
     }
     let out = match v {
-        Value::Str(s) => HashKey::Str(super::strfn::gnu_sbytes(interp, s)),
+        Value::Str(s) => HashKey::Str(
+            s.borrow().clone(),
+            super::strfn::string_storage_bytes(interp, s),
+        ),
         Value::Marker(m) => {
             let m = m.borrow();
             // Match equal_values, including detached markers. Insertion
@@ -217,23 +249,47 @@ fn equal_key(
         Value::Cons(c) => {
             let b = c.borrow();
             HashKey::Cons(
-                Box::new(equal_key(interp, &b.car, ancestors, budget, depth + 1)?),
-                Box::new(equal_key(interp, &b.cdr, ancestors, budget, depth + 1)?),
+                Box::new(equal_key(
+                    interp,
+                    &b.car,
+                    ancestors,
+                    budget,
+                    depth + 1,
+                    positioned,
+                )?),
+                Box::new(equal_key(
+                    interp,
+                    &b.cdr,
+                    ancestors,
+                    budget,
+                    depth + 1,
+                    positioned,
+                )?),
             )
         }
         Value::Vec(vec) => HashKey::Vec(
             vec.borrow()
                 .iter()
-                .map(|x| equal_key(interp, x, ancestors, budget, depth + 1))
+                .map(|x| equal_key(interp, x, ancestors, budget, depth + 1, positioned))
                 .collect::<Option<Vec<_>>>()?,
         ),
         // `equal' compares records elementwise — hash contents too,
         // tagged so records never collide with plain vectors.
+        Value::Record(_) if v.record_kind() == Some(crate::lisp::value::RecordKind::Obarray) => {
+            eq_key(v)
+        }
         Value::Record(r) => HashKey::Tagged(
-            1,
+            match v.record_kind() {
+                Some(crate::lisp::value::RecordKind::BoolVector) => 4,
+                Some(crate::lisp::value::RecordKind::CharTable) => 5,
+                Some(crate::lisp::value::RecordKind::Obarray) => 6,
+                Some(crate::lisp::value::RecordKind::FontSpec) => 7,
+                Some(crate::lisp::value::RecordKind::SymbolWithPos) => 8,
+                None => 1,
+            },
             r.borrow()
                 .iter()
-                .map(|x| equal_key(interp, x, ancestors, budget, depth + 1))
+                .map(|x| equal_key(interp, x, ancestors, budget, depth + 1, positioned))
                 .collect::<Option<Vec<_>>>()?,
         ),
         Value::Lambda(l) => {
@@ -243,7 +299,7 @@ fn equal_key(
                     items
                         .borrow()
                         .iter()
-                        .map(|x| equal_key(interp, x, ancestors, budget, depth + 1))
+                        .map(|x| equal_key(interp, x, ancestors, budget, depth + 1, positioned))
                         .collect::<Option<Vec<_>>>()?,
                 );
                 HashKey::Tagged(2, keys)
@@ -267,7 +323,14 @@ fn equal_key(
                                     None => HashKey::Nil,
                                 },
                                 match &p.default {
-                                    Some(d) => equal_key(interp, d, ancestors, budget, depth + 1)?,
+                                    Some(d) => equal_key(
+                                        interp,
+                                        d,
+                                        ancestors,
+                                        budget,
+                                        depth + 1,
+                                        positioned,
+                                    )?,
                                     None => HashKey::Nil,
                                 },
                             ]))
@@ -277,13 +340,13 @@ fn equal_key(
                 keys.extend(
                     l.body
                         .iter()
-                        .map(|x| equal_key(interp, x, ancestors, budget, depth + 1))
+                        .map(|x| equal_key(interp, x, ancestors, budget, depth + 1, positioned))
                         .collect::<Option<Vec<_>>>()?,
                 );
                 HashKey::Tagged(3, keys)
             }
         }
-        _ => eql_key(interp, v),
+        _ => eql_key(v),
     };
     if let Some(p) = ptr {
         ancestors.remove(&p);
@@ -443,12 +506,67 @@ fn check_mutable(i: &mut Interp, h: &HashRef) -> Result<(), Flow> {
 /// A normalized key is sufficient for small acyclic built-in keys.
 /// Larger/cyclic equal keys and custom tests need collision checking.
 pub(crate) fn table_key(i: &mut Interp, h: &HashRef, key: &Value) -> Result<HashKey, Flow> {
+    let mut scope = i.symbol_position_scope();
+    let result = table_key_inner(i, h, key);
+    scope.finish(i.positioned_symbols_enabled());
+    result
+}
+
+fn hash_bucket(hash: u32, capacity: i128) -> u32 {
+    let bits = ((capacity.max(0) as u128 + 1)
+        .next_power_of_two()
+        .trailing_zeros())
+    .min(32);
+    ((hash.wrapping_mul(2_654_435_769) as u64) >> (32 - bits)) as u32
+}
+
+fn table_key_inner(i: &mut Interp, h: &HashRef, key: &Value) -> Result<HashKey, Flow> {
     let (test, user_test) = {
         let table = h.borrow();
         (table.test, table.user_test.clone())
     };
     let Some((compare, hash_function)) = user_test else {
         let normalized = hash_key_for(i, key, test);
+        if matches!(normalized, HashKey::Positioned(..)) || h.borrow().positioned_keys != 0 {
+            let hash = super::strfn::builtin_hash_code(i, key, test);
+            let capacity = h.borrow().size;
+            let bucket = hash_bucket(hash, capacity);
+            let candidates: Vec<(HashKey, Value)> = {
+                let table = h.borrow();
+                table
+                    .collision_order
+                    .iter()
+                    .rev()
+                    .filter_map(|slot| table.keys.0[*slot].as_ref())
+                    .cloned()
+                    .collect()
+            };
+            for (stored_key, original) in candidates {
+                let stored_hash = match &stored_key {
+                    HashKey::Positioned(hash, _) | HashKey::EqualFallback(hash, _) => *hash,
+                    _ => super::strfn::builtin_hash_code(i, &original, test),
+                };
+                if hash_bucket(stored_hash, capacity) != bucket {
+                    continue;
+                }
+                // GNU tests EQ before requiring identical full hashes.
+                if super::eq_values(key, &original) {
+                    return Ok(stored_key);
+                }
+                if stored_hash != hash {
+                    continue;
+                }
+                let matches = match test {
+                    HashTest::Eq => false,
+                    HashTest::Eql => super::eql_values(key, &original),
+                    HashTest::Equal => super::equal_values(i, key, &original)?,
+                };
+                if matches {
+                    return Ok(stored_key);
+                }
+            }
+            return Ok(normalized);
+        }
         if let HashKey::EqualFallback(hash, _) = &normalized {
             let candidates: Vec<(HashKey, Value)> = {
                 let table = h.borrow();
@@ -457,12 +575,20 @@ pub(crate) fn table_key(i: &mut Interp, h: &HashRef, key: &Value) -> Result<Hash
                     .iter()
                     .rev()
                     .filter_map(|slot| table.keys.0[*slot].as_ref())
-                    .filter(|(k, _)| matches!(k, HashKey::EqualFallback(code, _) if code == hash))
+                    .filter(|(k, _)| {
+                        matches!(k, HashKey::EqualFallback(code, _)
+                        if hash_bucket(*code, table.size) == hash_bucket(*hash, table.size))
+                    })
                     .cloned()
                     .collect()
             };
             for (stored_key, original) in candidates {
-                if super::equal_values(i, key, &original)? {
+                let HashKey::EqualFallback(stored_hash, _) = &stored_key else {
+                    unreachable!()
+                };
+                if super::eq_values(key, &original)
+                    || (*stored_hash == *hash && super::equal_values(i, key, &original)?)
+                {
                     return Ok(stored_key);
                 }
             }
@@ -478,13 +604,20 @@ pub(crate) fn table_key(i: &mut Interp, h: &HashRef, key: &Value) -> Result<Hash
             .iter()
             .rev()
             .filter_map(|slot| table.keys.0[*slot].as_ref())
-            .filter(|(k, _)| matches!(k, HashKey::Custom(code, _) if *code == hash))
+            .filter(|(k, _)| {
+                matches!(k, HashKey::Custom(code, _)
+                if hash_bucket(*code, table.size) == hash_bucket(hash, table.size))
+            })
             .cloned()
             .collect()
     };
     for (stored_key, original) in candidates {
-        if super::eq_values_with_interp(i, key, &original)
-            || user_call(i, h, &compare, vec![key.clone(), original])?.truthy()
+        let HashKey::Custom(stored_hash, _) = &stored_key else {
+            unreachable!()
+        };
+        if super::eq_values(key, &original)
+            || (*stored_hash == hash
+                && user_call(i, h, &compare, vec![key.clone(), original])?.truthy())
         {
             return Ok(stored_key);
         }
@@ -550,6 +683,7 @@ fn f_clrhash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             hh.keys.clear();
             hh.collision_order.clear();
             hh.free_slots.clear();
+            hh.positioned_keys = 0;
             Ok(args[0].clone())
         }
         other => Err(i.wrong_type_mut("hash-table-p", other)),
@@ -677,19 +811,11 @@ fn f_hash_table_buckets(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_hash_table_index_size(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[0] {
         Value::Hash(h) => {
-            // GNU sizes the index from allocated entry capacity, not current
-            // occupancy: it is the smallest power of two strictly greater
-            // than hash-table-size. A zero-capacity table starts at one;
-            // its first insertion allocates capacity six (index size eight).
-            let capacity = h.borrow().size;
-            if capacity == 0 {
-                return Ok(Value::Int(1));
-            }
-            let mut index_size = 1i128;
-            while index_size <= capacity {
-                index_size *= 2;
-            }
-            Ok(Value::Int(index_size))
+            // GNU chooses the smallest power-of-two index strictly larger
+            // than entry capacity, which survives remhash and clrhash.
+            let capacity = h.borrow().size as u128;
+            let minimum = capacity + 1;
+            Ok(Value::Int(minimum.next_power_of_two() as i128))
         }
         other => Err(i.wrong_type_mut("hash-table-p", other)),
     }

@@ -1,5 +1,6 @@
 //! ISO-2022 designation/invocation codec.  The coding and charset plists
 //! supply the repertoires, initial graphic sets, dimensions and final bytes.
+use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use super::{charset, misc};
 use crate::lisp::{
     Interp,
@@ -124,7 +125,7 @@ fn reset(out: &mut Vec<u8>, sp: &Spec, state: &mut [Option<String>; 4], gl: &mut
 pub(super) fn encode_with_preferences(
     i: &mut Interp,
     coding: &Value,
-    text: &str,
+    text: &EmacsStr,
     finish: bool,
     preferred: &[Option<String>],
 ) -> Option<Vec<u8>> {
@@ -147,7 +148,7 @@ pub(crate) struct EncoderState {
 pub(super) fn encode_stream(
     i: &mut Interp,
     coding: &Value,
-    text: &str,
+    text: &EmacsStr,
     finish: bool,
     preferred: &[Option<String>],
     stream: &mut EncoderState,
@@ -265,14 +266,14 @@ pub(super) fn encode_stream(
     Some(out)
 }
 
-fn push_raw(out: &mut String, b: u8) {
+fn push_raw(out: &mut EmacsText, b: u8) {
     out.push(if b < 128 {
-        b as char
+        EmacsChar::from(b as char)
     } else {
         lisp_char(0x3fff00 + b as u32).unwrap()
     });
 }
-fn push_char(out: &mut String, n: i64) {
+fn push_char(out: &mut EmacsText, n: i64) {
     out.push(lisp_char(n as u32).unwrap_or_else(|| mule_seq_char(n as u32)));
 }
 
@@ -280,7 +281,7 @@ pub(super) fn decode(
     i: &mut Interp,
     coding: &Value,
     bytes: &[u8],
-) -> Option<(String, Vec<(usize, usize, String)>)> {
+) -> Option<(EmacsText, Vec<(usize, usize, String)>)> {
     decode_with_native(i, coding, bytes, &[], bytes.len())
 }
 
@@ -288,9 +289,9 @@ pub(super) fn decode_with_native(
     i: &mut Interp,
     coding: &Value,
     bytes: &[u8],
-    native: &[Option<char>],
+    native: &[Option<EmacsChar>],
     storage_bytes: usize,
-) -> Option<(String, Vec<(usize, usize, String)>)> {
+) -> Option<(EmacsText, Vec<(usize, usize, String)>)> {
     decode_inner(
         i,
         coding,
@@ -320,7 +321,7 @@ pub(super) fn decode_stream(
     bytes: &[u8],
     stream: &mut DecoderState,
     finish: bool,
-) -> Option<(String, Vec<(usize, usize, String)>)> {
+) -> Option<(EmacsText, Vec<(usize, usize, String)>)> {
     // Check the codec before consuming pending input: other codec families
     // use their own stream state.
     spec(i, coding)?;
@@ -333,11 +334,11 @@ fn decode_inner(
     i: &mut Interp,
     coding: &Value,
     bytes: &[u8],
-    native: &[Option<char>],
+    native: &[Option<EmacsChar>],
     storage_bytes: usize,
     stream: &mut DecoderState,
     finish: bool,
-) -> Option<(String, Vec<(usize, usize, String)>)> {
+) -> Option<(EmacsText, Vec<(usize, usize, String)>)> {
     let sp = spec(i, coding)?;
     let mut state = stream
         .registers
@@ -346,7 +347,7 @@ fn decode_inner(
     let mut gl = stream.gl;
     let mut gr = stream.gr.unwrap_or(1);
     let mut p = 0;
-    let mut out = String::new();
+    let mut out = EmacsText::new();
     let mut spans: Vec<(usize, usize, String)> = Vec::new();
     let mut chars = 0;
     // GNU records charset runs in its bounded integer charbuf. ASCII

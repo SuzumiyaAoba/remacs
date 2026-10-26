@@ -32,10 +32,10 @@ pub(super) fn run_action(i: &mut Interp, source: &Value, cli_rest: Value, funcal
 pub(super) fn cli_truename(i: &mut Interp, path: &str, regular_only: bool) -> String {
     let ex = remacs_runtime::editor::expand_file_name_str(i, path);
     let real = remacs_runtime::buffer::file_truename(&ex);
-    let ok = std::fs::metadata(&real)
+    let ok = real.to_os_string().ok().and_then(|path| std::fs::metadata(path).ok())
         .map(|m| !regular_only || m.is_file())
         .unwrap_or(false);
-    if ok { real } else { ex }
+    if ok { real.to_unicode_lossy() } else { ex.to_unicode_lossy() }
 }
 
 pub(super) fn load_file(i: &mut Interp, path: &str, cli_rest: Value) -> bool {

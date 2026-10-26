@@ -21,7 +21,7 @@ fn eval(i: &mut Interp, source: &str) -> Value {
 
 fn printed(i: &mut Interp, source: &str) -> String {
     let value = eval(i, source);
-    i.prin1_to_string(&value)
+    i.prin1_to_string(&value).to_unicode_lossy()
 }
 
 fn setup(i: &mut Interp) {

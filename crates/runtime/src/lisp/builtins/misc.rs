@@ -2343,7 +2343,7 @@ fn f_accessible_keymaps(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let prefix_elems: Vec<Value> = match arg(&args, 1) {
         Value::Nil => Vec::new(),
         Value::Vec(v) => v.borrow().clone(),
-        Value::Str(s) => s.borrow().chars().map(|c| Value::Int(c as i128)).collect(),
+        Value::Str(s) => s.borrow().chars().map(|c| Value::Int((c).code() as i128)).collect(),
         Value::Cons(_) => match arg(&args, 1).list_to_vec() {
             Ok(v) => v,
             Err(_) => return Err(i.wrong_type_mut("sequencep", &args[1])),
@@ -2762,7 +2762,7 @@ fn f_error_message_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult
 
 /// Format an error object `(SYMBOL . DATA)` the way Emacs's
 /// `print_error_message` does.
-pub fn error_message(i: &mut Interp, obj: &Value) -> String {
+pub fn error_message(i: &mut Interp, obj: &Value) -> crate::lisp::text::EmacsText {
     // GNU print.c's FOR_EACH_TAIL prints every cons in the data, then
     // ignores a dotted atom tail.  Keep the existing cycle guard: only
     // use each_car after list_to_vec has proved the list is acyclic.
@@ -2835,7 +2835,7 @@ pub fn error_message(i: &mut Interp, obj: &Value) -> String {
         Value::Str(s) => Some(s.borrow().clone()),
         _ => None,
     };
-    let mut out = String::new();
+    let mut out = crate::lisp::text::EmacsText::default();
     let mut sep: Option<&str> = Some(": ");
     match &msg_text {
         None => out.push_str("peculiar error"),
@@ -2878,26 +2878,12 @@ fn f_external_debugging_output(i: &mut Interp, args: crate::lisp::Argv) -> EvalR
     if stripped > 0x3FFFFF {
         return Err(i.error(&format!("Invalid character: {:x}", stripped)));
     }
-    let ch = crate::lisp::value::lisp_char(stripped)
-        .unwrap_or_else(|| crate::lisp::value::mule_seq_char(stripped));
-    let mut bytes = Vec::new();
-    if let Some(byte) = crate::lisp::value::raw_byte_marker(ch) {
-        bytes.push(byte);
-    } else if let Some(code) = crate::lisp::value::mule_seq_code(ch) {
-        bytes.extend_from_slice(&crate::lisp::value::mule_high_bytes(code));
-    } else if let Some(code) = crate::lisp::value::surrogate_code(ch) {
-        bytes.extend_from_slice(&crate::lisp::builtins::coding_legacy::internal_encode(code));
-    } else if let Some(byte) = crate::lisp::value::eight_bit_byte(ch)
-        .or_else(|| crate::lisp::value::print_eight_bit_byte(ch))
-        .or_else(|| crate::lisp::value::write_char_eight_bit_byte(ch))
     {
-        bytes.push(0xC0 + ((byte >> 6) & 1));
-        bytes.push(0x80 + (byte & 0x3F));
-    } else {
-        let mut encoded = [0; 4];
-        bytes.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
+        use std::io::Write;
+        let character = crate::lisp::text::EmacsChar::new(stripped).unwrap();
+        let bytes = character.to_string().to_external_bytes();
+        let _ = std::io::stderr().write_all(&bytes);
     }
-    crate::stdio::write_stderr(&bytes);
     Ok(args[0].clone())
 }
 
@@ -2910,8 +2896,10 @@ fn f_open_termscript(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_send_string_to_terminal(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let s = want_string(i, &args[0])?;
-    crate::stdio::write(s.as_bytes());
+    let Value::Str(text) = &args[0] else {
+        return Err(i.wrong_type_mut("stringp", &args[0]));
+    };
+    crate::stdio::write(&super::strfn::gnu_sbytes(i, text));
     crate::stdio::flush();
     Ok(Value::Nil)
 }
@@ -3016,7 +3004,7 @@ fn describe_vector(
             }
         }};
     }
-    let fontify = |i: &mut Interp, k: i128| -> Result<String, Flow> {
+    let fontify = |i: &mut Interp, k: i128| -> Result<crate::lisp::text::EmacsText, Flow> {
         // describe_key_maybe_fontify: key-description + font-lock-face
         // `help-key-binding' when inside a keymap.
         let d = match i.apply(&key_desc, vec![kludge(k), prefix.clone()])? {
@@ -3270,7 +3258,7 @@ fn f_internal_describe_syntax_value(i: &mut Interp, a: crate::lisp::Argv) -> Eva
         "string fence",
     ];
     let value = a[0].clone();
-    let mut out = String::new();
+    let mut out = crate::lisp::text::EmacsText::default();
     if value.is_nil() {
         out.push_str("default");
     } else if is_char_table(i, &value) {
@@ -3340,10 +3328,7 @@ fn f_internal_describe_syntax_value(i: &mut Interp, a: crate::lisp::Argv) -> Eva
                 out.push_str(NAMES[code]);
                 if let Some(m) = match_char {
                     out.push_str(", matches ");
-                    out.push(
-                        crate::lisp::value::lisp_char(m)
-                            .unwrap_or_else(|| crate::lisp::value::mule_seq_char(m)),
-                    );
+                    out.push(crate::lisp::text::EmacsChar::new(m).unwrap());
                 }
                 if start1 {
                     out.push_str(",\n\t  is the first character of a comment-start sequence");
@@ -3402,7 +3387,7 @@ fn want_opt_frame(i: &mut Interp, v: &Value) -> Result<(), Flow> {
 fn face_exists(i: &Interp, v: &Value) -> bool {
     let mut name = match v {
         Value::Sym(s) => i.symbol_name(*s),
-        Value::Str(s) => s.borrow().clone(),
+        Value::Str(s) => (s.borrow().clone()).to_unicode_lossy(),
         _ => return false,
     };
     // GNU: `face-alias' chains resolve to the target face.
@@ -3455,7 +3440,7 @@ fn f_invert_face(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // stays unspecified on both sides).
     let name = match &a[0] {
         Value::Sym(s) => i.symbol_name(*s),
-        Value::Str(s) => s.borrow().clone(),
+        Value::Str(s) => (s.borrow().clone()).to_unicode_lossy(),
         _ => unreachable!(),
     };
     let fg_kw = i.q(":foreground");
@@ -3728,87 +3713,70 @@ fn f_false(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Nil)
 }
 
-/// `symbol-with-pos' objects print `#<symbol NAME at POS>' in GNU.
-/// Ours are records `#s(symbol-with-pos BARE POS)'; identity metadata
-/// distinguishes these from user-created records with the same tag.
-pub(crate) fn sym_pos_parts(i: &Interp, v: &Value) -> Option<(SymId, i128)> {
-    if let Value::Record(r) = v {
-        let is_positioned_symbol = i.special_records.iter().any(|(weak, kind)| {
-            *kind == crate::lisp::eval::SpecialRecordKind::SymbolWithPos
-                && weak.upgrade().is_some_and(|known| std::rc::Rc::ptr_eq(&known, r))
-        });
-        if !is_positioned_symbol {
-            return None;
-        }
-        let rr = r.borrow();
-        if let [Value::Sym(tag), Value::Sym(s), Value::Int(p)] = rr.as_slice() {
-            if i.symbol_name(*tag) == "symbol-with-pos" {
-                return Some((*s, *p));
-            }
-        }
+/// Decode the immutable payload of an actual positioned symbol.
+/// Ordinary records with the same slots remain ordinary records.
+pub(crate) fn raw_symbol_position(value: &Value) -> Option<(SymId, i128)> {
+    if value.record_kind() != Some(crate::lisp::value::RecordKind::SymbolWithPos) {
+        return None;
     }
-    None
+    let Value::Record(record) = value else {
+        return None;
+    };
+    let slots = record.borrow();
+    match slots.as_slice() {
+        [_, Value::Sym(symbol), Value::Int(position)] => Some((*symbol, *position)),
+        [_, Value::Nil, Value::Int(position)] => Some((0, *position)),
+        _ => None,
+    }
 }
 
-/// Decode the legacy magic-tag encoding used by earlier Remacs snapshots.
+pub(crate) fn sym_pos_parts(_i: &Interp, value: &Value) -> Option<(SymId, i128)> {
+    raw_symbol_position(value)
+}
+
+/// The current Lisp view is independent of when the object was made.
+pub(crate) fn as_sympos(value: &Value) -> Option<(SymId, i128)> {
+    crate::lisp::value::symbol_positions_enabled()
+        .then(|| raw_symbol_position(value))
+        .flatten()
+}
+
+pub(crate) fn symbol_position_for(i: &Interp, value: &Value) -> Option<(SymId, i128)> {
+    i.positioned_symbols_enabled()
+        .then(|| raw_symbol_position(value))
+        .flatten()
+}
+
 pub(crate) const SYMPOS_MAGIC: i128 = 0x5EED_CAFE_1;
 
-/// `symbols-with-pos-enabled' parts: (bare symbol, position).
-pub(crate) fn as_sympos(v: &Value) -> Option<(SymId, i128)> {
-    if let Value::Record(r) = v {
-        let rr = r.borrow();
-        if let [Value::Int(tag), Value::Sym(s), Value::Int(p)] = rr.as_slice() {
-            if *tag == SYMPOS_MAGIC {
-                return Some((*s, *p));
-            }
-        }
-    }
-    None
+pub(crate) fn make_sympos(bare: SymId, pos: i128) -> Value {
+    Value::record_with_kind(
+        vec![Value::Int(SYMPOS_MAGIC), Value::Sym(bare), Value::Int(pos)],
+        crate::lisp::value::RecordKind::SymbolWithPos,
+    )
 }
 
-pub(crate) fn any_sympos_parts(i: &Interp, v: &Value) -> Option<(SymId, i128)> {
-    sym_pos_parts(i, v).or_else(|| as_sympos(v))
-}
-
-pub(crate) fn active_sympos_parts(i: &Interp, v: &Value) -> Option<(SymId, i128)> {
-    sympos_enabled_p(i).then(|| any_sympos_parts(i, v)).flatten()
-}
-
-/// Strip an enabled sympos to its bare symbol; everything else is
-/// returned unchanged.  Cheap because `as_sympos' borrows only when V
-/// is a record.
-pub(crate) fn unpos(i: &Interp, v: &Value) -> Value {
-    match active_sympos_parts(i, v) {
-        Some((s, _)) => Value::Sym(s),
-        None => v.clone(),
+pub(crate) fn unpos(i: &Interp, value: &Value) -> Value {
+    match symbol_position_for(i, value) {
+        Some((0, _)) => Value::Nil,
+        Some((symbol, _)) => Value::Sym(symbol),
+        None => value.clone(),
     }
 }
 
-/// Is `symbols-with-pos-enabled' dynamically bound to a non-nil value?
 pub(crate) fn sympos_enabled_p(i: &Interp) -> bool {
-    let Some(id) = i.q_soft("symbols-with-pos-enabled") else {
-        return false;
-    };
-    let v = i.symbol_value(id);
-    !matches!(v, Value::Nil) && !matches!(v, Value::Sym(s) if s == crate::lisp::sym::UNBOUND)
+    i.positioned_symbols_enabled()
 }
 
-/// Build a `symbol-with-pos' object for SYM at POS.
 pub(crate) fn make_symbol_with_pos(i: &mut Interp, sym: SymId, pos: i128) -> Value {
-    let value = Value::record(vec![
-        Value::Sym(i.q("symbol-with-pos")),
-        Value::Sym(sym),
-        Value::Int(pos),
-    ]);
-    if let Value::Record(record) = &value {
-        i.special_records
-            .retain(|(known, _)| known.strong_count() > 0);
-        i.special_records.push((
-            std::rc::Rc::downgrade(record),
-            crate::lisp::eval::SpecialRecordKind::SymbolWithPos,
-        ));
-    }
-    value
+    Value::record_with_kind(
+        vec![
+            Value::Sym(i.q("symbol-with-pos")),
+            Value::Sym(sym),
+            Value::Int(pos),
+        ],
+        crate::lisp::value::RecordKind::SymbolWithPos,
+    )
 }
 
 fn f_bare_symbol(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -3880,8 +3848,8 @@ fn f_remove_pos_from_symbol(i: &mut Interp, args: crate::lisp::Argv) -> EvalResu
     // GNU `remove-pos-from-symbol' unwraps a positioned
     // symbol; any other object passes through unchanged (unlike
     // `bare-symbol' which type-checks).
-    if let Some((s, _)) = any_sympos_parts(i, &args[0]) {
-        return Ok(Value::Sym(s));
+    if let Some((s, _)) = sym_pos_parts(i, &args[0]).or_else(|| as_sympos(&args[0])) {
+        return Ok(i.sym(s));
     }
     Ok(args[0].clone())
 }
@@ -4361,7 +4329,7 @@ pub(crate) fn checked_time_zone_cons(
     if !end.is_nil() || !valid_fixed_zone_offset(offset) {
         return Err(invalid_time_zone(i, zone));
     }
-    Ok((offset, name.borrow().clone()))
+    Ok((offset, (name.borrow().clone()).to_unicode_lossy()))
 }
 
 fn decode_zone(i: &mut Interp, zone: &Value) -> Result<ZoneKind, Flow> {
@@ -4382,7 +4350,7 @@ fn decode_zone(i: &mut Interp, zone: &Value) -> Result<ZoneKind, Flow> {
             if z == "UTC" || z == "t" {
                 ZoneKind::Fixed(0)
             } else {
-                ZoneKind::Named(z)
+                ZoneKind::Named((z).to_unicode_lossy())
             }
         }
         Value::Cons(_) => ZoneKind::Fixed(checked_time_zone_cons(i, zone)?.0),
@@ -4603,7 +4571,7 @@ fn f_decode_time(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             if z == "UTC" || z == "t" {
                 (gmt_tm(secs), 0)
             } else {
-                let (t, _zone_name) = tz_local_tm(secs, &z);
+                let (t, _zone_name) = tz_local_tm(secs, &(z).to_unicode_lossy());
                 let off = t.tm_gmtoff as i128;
                 (t, off)
             }
@@ -5168,7 +5136,7 @@ fn f_set_time_zone(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         format!("<{}>{}", name, posix_off(off))
     }
     let spec: Option<String> = match &a[0] {
-        Value::Str(z) => Some(z.borrow().clone()),
+        Value::Str(z) => Some((z.borrow().clone()).to_unicode_lossy()),
         Value::Sym(s) if *s == t_sym => Some("UTC0".to_string()),
         Value::Sym(s) if *s == wall_sym => None,
         Value::Int(off) => Some(fixed_spec("", *off as i64)),
@@ -5182,14 +5150,14 @@ fn f_set_time_zone(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 let name = match &b.cdr {
                     Value::Cons(c2) => match &c2.borrow().car {
                         Value::Str(s) => s.borrow().clone(),
-                        _ => String::new(),
+                        _ => String::new().into(),
                     },
                     Value::Str(s) => s.borrow().clone(),
-                    _ => String::new(),
+                    _ => (String::new()).into(),
                 };
                 (off, name)
             };
-            Some(fixed_spec(&name, off))
+            Some(fixed_spec(&(name).to_unicode_lossy(), off))
         }
         Value::Nil => None,
         v => {
@@ -5257,8 +5225,7 @@ fn secure_hash_bytes(i: &mut Interp, args: &[Value]) -> Result<Vec<u8>, Flow> {
                 if let Some(byte) = crate::lisp::value::eight_bit_byte(c) {
                     out.push(byte);
                 } else {
-                    let mut buf = [0u8; 4];
-                    out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+                    c.encode_internal(&mut out);
                 }
             }
             out
@@ -5350,28 +5317,13 @@ fn f_md5(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 /// The byte sequence a Lisp string stands for: unibyte strings use
 /// their chars' values directly; multibyte strings encode each char
 /// as UTF-8 (eight-bit chars emit their raw byte).
-pub(crate) fn lisp_string_bytes(i: &Interp, v: &Value) -> Vec<u8> {
-    let unibyte = match v {
-        Value::Str(r) => i.is_unibyte_str(r),
-        _ => false,
-    };
-    let s = match v {
-        Value::Str(r) => r.borrow().clone(),
-        _ => String::new(),
-    };
+pub(crate) fn lisp_string_bytes(i: &Interp, value: &Value) -> Vec<u8> {
+    let Value::Str(reference) = value else { return Vec::new(); };
+    let unibyte = i.is_unibyte_str(reference);
+    let text = reference.borrow();
     if unibyte {
-        return s.chars().map(|c| c as u8).collect();
-    }
-    let mut out = Vec::new();
-    for c in s.chars() {
-        if let Some(b) = crate::lisp::value::eight_bit_byte(c) {
-            out.push(b);
-        } else {
-            let mut buf = [0u8; 4];
-            out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
-        }
-    }
-    out
+        text.chars().map(|c| c.byte8().unwrap_or(c.code() as u8)).collect()
+    } else { text.to_external_bytes() }
 }
 
 fn f_b64_encode_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -5435,7 +5387,7 @@ fn f_b64_decode_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let invalid =
         || -> Flow { i.signal_data(sym::ERROR, vec![Value::string("Invalid base64 data")]) };
     let mut pad_await = false; // '=' seen at quad pos 2: await closing '='
-    for &c in s.as_bytes() {
+    for c in s.to_external_bytes() {
         // Whitespace is always ignored.
         if matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c) {
             continue;
@@ -5530,7 +5482,7 @@ fn f_buffer_hash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Some(other) => return Err(i.wrong_type_mut("stringp", other)),
     };
     let text = b.borrow().text.text();
-    match hash_hex("sha1", text.as_bytes()) {
+    match hash_hex("sha1", &text.to_external_bytes()) {
         Ok(h) => Ok(Value::string(h)),
         Err(_) => unreachable!(),
     }
@@ -5674,11 +5626,13 @@ fn f_make_symbolic_link(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             .rsplit('/')
             .find(|s| !s.is_empty())
             .unwrap_or(&target);
-        crate::editor::expand_file_name_str(i, &format!("{}{}", name_raw, base))
+        { let mut joined = name_raw.clone(); joined.push_str(base); crate::editor::expand_file_name_str(i, &joined) }
     } else {
         crate::editor::expand_file_name_str(i, &name_raw)
     };
-    match std::os::unix::fs::symlink(&target, &name) {
+    let native_target = crate::editor::native_path(i, &target)?;
+    let native_name = crate::editor::native_path(i, &name)?;
+    match std::os::unix::fs::symlink(&native_target, &native_name) {
         Ok(()) => Ok(Value::Nil),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
             match &ok_if_exists {
@@ -5697,8 +5651,8 @@ fn f_make_symbolic_link(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                 }
                 // Other non-nil: unlink and retry, like GNU.
                 _ => {
-                    let _ = std::fs::remove_file(&name);
-                    match std::os::unix::fs::symlink(&target, &name) {
+                    let _ = std::fs::remove_file(&native_name);
+                    match std::os::unix::fs::symlink(&native_target, &native_name) {
                         Ok(()) => Ok(Value::Nil),
                         Err(e2) => Err(crate::editor::report_file_errno(
                             i,
@@ -5746,15 +5700,15 @@ pub(crate) fn f_file_name_case_insensitive_p(
     let dir = {
         let t = expanded.trim_end_matches('/');
         match t.rfind('/') {
-            Some(0) => "/".to_string(),
+            Some(0) => crate::lisp::text::EmacsText::from("/"),
             Some(k) => t[..k].to_string(),
-            None => ".".to_string(),
+            None => crate::lisp::text::EmacsText::from("."),
         }
     };
     #[cfg(unix)]
     {
         use std::ffi::CString;
-        let mut probe = std::path::PathBuf::from(&dir);
+        let mut probe = crate::editor::native_path(i, &dir)?;
         loop {
             if let Ok(c) = CString::new(probe.to_string_lossy().as_bytes()) {
             // _PC_CASE_SENSITIVE (11): 0 → case-insensitive FS → t;
@@ -5778,7 +5732,7 @@ pub(crate) fn f_file_name_case_insensitive_p(
         }
     }
     // Fallback (or non-unix): probe by statting a case-flipped name.
-    let flipped: String = path
+    let flipped: crate::lisp::text::EmacsText = path
         .chars()
         .map(|c| {
             if c.is_lowercase() {
@@ -5794,7 +5748,7 @@ pub(crate) fn f_file_name_case_insensitive_p(
         return Ok(Value::Nil);
     }
     Ok(Value::from_bool(
-        std::path::Path::new(&flipped).exists() && std::path::Path::new(&path).exists(),
+        crate::editor::native_path(i, &flipped)?.exists() && crate::editor::native_path(i, &path)?.exists(),
     ))
 }
 
@@ -5846,7 +5800,7 @@ fn f_set_file_times(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let nsec = ns.rem_euclid(1_000_000_000) as i64;
     #[cfg(unix)]
     {
-        let c = std::ffi::CString::new(name.clone())
+        let c = std::ffi::CString::new(name.to_external_bytes())
             .map_err(|_| i.signal_data(sym::FILE_ERROR, vec![Value::string("bad filename")]))?;
         let ts = libc::timespec {
             tv_sec: secs as libc::time_t,
@@ -6272,7 +6226,7 @@ fn f_user_full_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         },
         Value::Str(s) => {
             let name = s.borrow().clone();
-            match gecos_full_name_by_login(&name) {
+            match gecos_full_name_by_login(&(name).to_unicode_lossy()) {
                 Some(n) => return Ok(Value::string(n)),
                 None => return Ok(Value::Nil),
             }
@@ -6378,16 +6332,16 @@ fn f_unencodable_char_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
             _ => None,
         })
         .collect();
-    let unencodable = |i: &Interp, ch: char| {
+    let unencodable = |i: &Interp, ch: crate::lisp::text::EmacsChar| {
         !csnames.is_empty()
             && !csnames
                 .iter()
-                .any(|n| super::charset::charset_encode(i, n, ch as i64).is_some())
+                .any(|n| super::charset::charset_encode(i, n, ch.code() as i64).is_some())
     };
     let mut hits: Vec<i128> = Vec::new();
     match a.get(4) {
         Some(Value::Str(s)) => {
-            let sv: Vec<char> = s.borrow().chars().collect();
+            let sv: Vec<crate::lisp::value::EmacsChar> = s.borrow().chars().collect();
             let (pos, end) = super::strfn::validate_subarray(i, &a[4], &a[0], &a[1], sv.len())?;
             if i.is_unibyte_str(s) {
                 return Ok(Value::Nil);
@@ -6635,18 +6589,18 @@ fn f_zlib_decompress_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
             return Err(i.signal_data(sym::ARGS_OUT_OF_RANGE, vec![a[0].clone(), a[1].clone()]));
         }
         let t = bb.text.text();
-        let chars: Vec<char> = t.chars().collect();
+        let chars: Vec<crate::lisp::value::EmacsChar> = t.chars().collect();
         let lo = (start - 1).max(0) as usize;
         let hi = (end - 1).min(chars.len() as i128) as usize;
         // Approximate unibyte storage: Latin-1 chars encode as their
         // single byte; anything else uses UTF-8.
         let mut bytes = Vec::new();
-        let mut tmp = [0u8; 4];
+
         for &c in &chars[lo..hi] {
-            if (c as u32) < 256 {
-                bytes.push(c as u8);
+            if c.code() < 256 {
+                bytes.push((c).code() as u8);
             } else {
-                bytes.extend_from_slice(c.encode_utf8(&mut tmp).as_bytes());
+                c.encode_internal(&mut bytes);
             }
         }
         bytes
@@ -6728,8 +6682,8 @@ fn f_insert_byte(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     } else {
         byte as u32
     };
-    let ch = crate::lisp::value::lisp_char(code).unwrap_or('\u{fffd}');
-    let s: String = std::iter::repeat_n(ch, count.max(0) as usize).collect();
+    let ch = crate::lisp::value::lisp_char(code).unwrap_or('\u{fffd}'.into());
+    let s: crate::lisp::text::EmacsText = std::iter::repeat_n(ch, count.max(0) as usize).collect();
     if a.get(2).is_some_and(Value::truthy) {
         crate::buffer::primitives::chg_insert_and_inherit_pt(i, &s)?;
     } else {
@@ -6849,8 +6803,8 @@ fn f_buffer_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         .map(|id| i.obarray.symbol(id).value.clone())
         .filter(|t| is_char_table(i, t));
     let thin_space = i.q_soft("thin-space");
-    let glyph_width = |c: char| -> usize {
-        let u = c as u32;
+    let glyph_width = |c: crate::lisp::text::EmacsChar| -> usize {
+        let u = c.code();
         if crate::lisp::value::eight_bit_byte(c).is_some() || (0x80..=0x9F).contains(&u) {
             return 4;
         }
@@ -6872,7 +6826,7 @@ fn f_buffer_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         cw
     };
     let (mut width, mut lines) = (0usize, 0usize);
-    let segs: Vec<&str> = text.split('\n').collect();
+    let segs: Vec<&crate::lisp::text::EmacsStr> = text.split('\n').collect();
     // The empty line after a final newline takes no screen line.
     let n_logical = segs.len() - usize::from(segs.last().map_or(true, |s| s.is_empty()));
     'lines: for seg in &segs[..n_logical] {
@@ -7826,7 +7780,7 @@ fn f_make_category_set(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let Value::Str(sref) = &a[0] else {
         return Err(i.wrong_type_mut("stringp", &a[0]));
     };
-    let chars: Vec<char> = sref.borrow().chars().collect();
+    let chars: Vec<crate::lisp::value::EmacsChar> = sref.borrow().chars().collect();
     let multibyte = if i.is_unibyte_str(sref) {
         false
     } else if i.is_multibyte_str(sref) {
@@ -7838,16 +7792,16 @@ fn f_make_category_set(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         // bytes, not multibyte chars.
         chars
             .iter()
-            .any(|&c| (c as u32) > 0xFF && crate::lisp::value::eight_bit_byte(c).is_none())
+            .any(|&c| (c).code() as u32 > 0xFF && crate::lisp::value::eight_bit_byte(c).is_none())
     };
     if multibyte {
-        return Err(i.error_q("Multibyte string in `make-category-set'", &[]));
+        return Err(i.error_q::<str>("Multibyte string in `make-category-set'", &[]));
     }
     let mut bits = vec![false; 128];
     for c in chars {
         let k = crate::lisp::value::eight_bit_byte(c)
             .map(|b| b as usize)
-            .unwrap_or(c as usize);
+            .unwrap_or((c).code() as usize);
         if !(32..=126).contains(&k) {
             return Err(i.wrong_type_mut("categoryp", &Value::Int(k as i128)));
         }
@@ -7888,11 +7842,11 @@ fn version_list_of(i: &mut Interp, v: &Value) -> Result<Vec<BigInt>, Flow> {
                 other => return Err(i.wrong_type_mut("stringp", &other)),
             }
         } else {
-            ".".to_string()
+            crate::lisp::text::EmacsText::from(".")
         };
         let mut version = s.clone();
         if !separator.is_empty() && version.starts_with(&separator) {
-            version.insert(0, '0');
+            let mut prefixed = crate::lisp::text::EmacsText::from("0"); prefixed.push_str(&version); version = prefixed;
         }
         let invalid_start = || {
             i.error_q(
@@ -7912,7 +7866,7 @@ fn version_list_of(i: &mut Interp, v: &Value) -> Result<Vec<BigInt>, Flow> {
         let mut out = Vec::new();
         let mut pos = 0usize;
         loop {
-            let chars: Vec<char> = version.chars().collect();
+            let chars: Vec<crate::lisp::text::EmacsChar> = version.chars().collect();
             if pos >= chars.len() || !chars[pos].is_ascii_digit() {
                 break;
             }
@@ -7920,8 +7874,8 @@ fn version_list_of(i: &mut Interp, v: &Value) -> Result<Vec<BigInt>, Flow> {
             while pos < chars.len() && chars[pos].is_ascii_digit() {
                 pos += 1;
             }
-            let number: String = chars[number_start..pos].iter().collect();
-            out.push(BigInt::parse_bytes(number.as_bytes(), 10).unwrap_or_default());
+            let number: crate::lisp::text::EmacsText = chars[number_start..pos].iter().collect();
+            out.push(BigInt::parse_bytes(number.to_external_bytes().as_slice(), 10).unwrap_or_default());
 
             let suffix_start = pos;
             while pos < chars.len() && !chars[pos].is_ascii_digit() {
@@ -7930,7 +7884,7 @@ fn version_list_of(i: &mut Interp, v: &Value) -> Result<Vec<BigInt>, Flow> {
             if suffix_start == pos {
                 continue;
             }
-            let suffix: String = chars[suffix_start..pos].iter().collect();
+            let suffix: String = chars[suffix_start..pos].iter().filter_map(|c| c.unicode()).collect();
             if suffix == separator {
                 continue;
             }
@@ -8008,6 +7962,7 @@ fn version_list_of(i: &mut Interp, v: &Value) -> Result<Vec<BigInt>, Flow> {
     let _ = i.unbind_to(bind_depth);
     i.match_data = saved_match;
     result
+
 }
 
 fn f_version_to_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -8355,10 +8310,8 @@ fn condition_mutex_held(i: &Interp, c: &crate::lisp::value::CondVarRef) -> bool 
 fn f_condition_wait(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let c = want_condvar(i, &a[0])?;
     if !condition_mutex_held(i, &c) {
-        return Err(i.error_q(
-            "Condition variable's mutex is not held by current thread",
-            &[],
-        ));
+        return Err(i.error_q::<str>(
+            "Condition variable's mutex is not held by current thread", &[]));
     }
     let mutex = c.borrow().mutex.clone();
     let Value::Mutex(m) = &mutex else {
@@ -8394,10 +8347,9 @@ fn f_condition_wait(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_condition_notify(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let c = want_condvar(i, &a[0])?;
     if !condition_mutex_held(i, &c) {
-        return Err(i.error_q(
+        return Err(i.error_q::<str>(
             "Condition variable's mutex is not held by current thread",
-            &[],
-        ));
+            &[]));
     }
     let all = arg(&a, 1).truthy();
     let mut notified = false;
@@ -8444,15 +8396,9 @@ fn f_make_finalizer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_byte_to_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let n = crate::lisp::builtins::want_fixnum(i, &a[0])?;
     if !(0..=255).contains(&n) {
-        return Err(i.signal_data(sym::ARGS_OUT_OF_RANGE, vec![a[0].clone()]));
+        return Err(i.error("Invalid byte"));
     }
-    let code = if n < 128 { n as u32 } else { n as u32 + 0x3fff00 };
-    let c = crate::lisp::value::lisp_char(code).unwrap_or_else(|| {
-        crate::lisp::value::mule_seq_char(code)
-    });
-    let result = crate::lisp::Value::string_ref(c.to_string());
-    i.mark_unibyte(&result);
-    Ok(Value::Str(result))
+    super::call_canonical_builtin(i, "unibyte-string", vec![a[0].clone()])
 }
 
 fn f_get_load_suffixes(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
@@ -8553,15 +8499,8 @@ fn quoted(v: Value) -> Value {
 // Represented as a Record `#s(bool-vector [bits])' so `bool-vector-p'
 // is exact while element access stays cheap.
 
-pub(crate) fn is_bool_vector(i: &Interp, v: &Value) -> bool {
-    match v {
-        Value::Record(r) => {
-            let rr = r.borrow();
-            matches!(rr.first(), Some(Value::Sym(t)) if i.symbol_name(*t) == "bool-vector")
-                && matches!(rr.get(1), Some(Value::Vec(_)))
-        }
-        _ => false,
-    }
+pub(crate) fn is_bool_vector(_i: &Interp, v: &Value) -> bool {
+    matches!(v, Value::Record(_)) && v.record_kind() == Some(crate::lisp::value::RecordKind::BoolVector)
 }
 
 pub(crate) fn bool_vec_of(i: &mut Interp, v: &Value) -> Result<Vec<bool>, Flow> {
@@ -8587,7 +8526,7 @@ pub(crate) fn make_bool_vector(i: &mut Interp, bits: Vec<bool>) -> Value {
             .map(|b| Value::Int(if b { 1 } else { 0 }))
             .collect(),
     );
-    Value::record(vec![Value::Sym(i.q("bool-vector")), data])
+    Value::record_with_kind(vec![Value::Sym(i.q("bool-vector")), data], crate::lisp::value::RecordKind::BoolVector)
 }
 
 fn f_bool_vector_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -8752,19 +8691,19 @@ use crate::editor::{
 };
 
 fn f_eventp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    if matches!(a[0], Value::Int(_) | Value::BigInt(_)) {
+    // GNU subr.el accepts every integer as a scalar event. A cons must
+    // instead have a non-nil, non-keyword symbol as its head.
+    if matches!(&a[0], Value::Int(_) | Value::BigInt(_)) {
         return Ok(Value::t());
     }
     let object = match &a[0] {
-        Value::Cons(c) => c.borrow().car.clone(),
-        other => other.clone(),
+        Value::Cons(cell) => cell.borrow().car.clone(),
+        value => value.clone(),
     };
-    // GNU subr.el's `(and object (symbolp object) (not (keywordp object)))'
-    // makes nil false and excludes keywords while accepting uninterned
-    // symbols.  sym_id supplies the active positioned-symbol view.
     let ok = !object.is_nil()
         && i.sym_id(&object).is_some_and(|id| {
-            i.obarray.symbol(id).uninterned || !i.symbol_name(id).starts_with(':')
+            let symbol = i.obarray.symbol(id);
+            symbol.uninterned || !i.symbol_name(id).starts_with(':')
         });
     Ok(Value::from_bool(ok))
 }
@@ -9130,7 +9069,7 @@ fn apply_event_modifiers(i: &mut Interp, modifiers: i128, base: Value) -> EvalRe
         }
     }
     name.push_str(&i.symbol_name(symbol));
-    let name = Value::string(name);
+    let name = Value::string_with_kind(name, true);
     if let Value::Str(string) = &name { i.mark_multibyte(string); }
     let converted = super::data::f_intern(i, vec![name].into())?;
     let entry = Value::cons(Value::Int(index), converted.clone());
@@ -9182,11 +9121,11 @@ fn f_key_valid_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 rest = r;
             }
         }
-        let chs: Vec<char> = rest.chars().collect();
+        let chs: Vec<crate::lisp::value::EmacsChar> = rest.chars().collect();
         let ok = if chs.len() == 1 {
             // Single char: printable only (GNU rejects control chars
             // and unibyte 128..255 high bytes).
-            let c = chs[0] as u32;
+            let c = (chs[0]).code() as u32;
             c >= 32 && !(128..=255).contains(&c)
         } else if rest.starts_with('<') && rest.ends_with('>') {
             // <NAME>: NAME is [-_A-Za-z0-9]+ with NO inner modifier
@@ -9194,8 +9133,8 @@ fn f_key_valid_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             let inner = &rest[1..rest.len() - 1];
             !inner.is_empty()
                 && inner
-                    .bytes()
-                    .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
                 && !["A-", "C-", "H-", "M-", "S-", "s-"]
                     .iter()
                     .any(|m| inner.starts_with(m))
@@ -9208,7 +9147,7 @@ fn f_key_valid_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     rest == *n
                         || (rest.ends_with(n)
                             && rest.len() > n.len()
-                            && rest.as_bytes()[rest.len() - n.len() - 1] == b'-')
+                            && rest.chars().nth(rest.len() - n.len() - 1) == Some('-'.into()))
                 })
         };
         if !ok {
@@ -9237,7 +9176,7 @@ fn parse_date_ymd(s: &str) -> Option<(i64, i64, i64)> {
 fn f_days_between(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let s1 = want_string(i, &a[0])?;
     let s2 = want_string(i, &a[1])?;
-    match (parse_date_ymd(&s1), parse_date_ymd(&s2)) {
+    match (parse_date_ymd(&(s1).to_unicode_lossy()), parse_date_ymd(&(s2).to_unicode_lossy())) {
         (Some((y1, m1, d1)), Some((y2, m2, d2))) => Ok(Value::Int(
             (days_from_civil(y1 as i128, m1 as i128, d1 as i128)
                 - days_from_civil(y2 as i128, m2 as i128, d2 as i128)) as i128,
@@ -9356,7 +9295,7 @@ fn parse_date_hms(s: &str) -> Option<(i64, i64, i64, i64, i64, i64, Option<i64>)
 
 fn f_date_to_time(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let s = want_string(i, &a[0])?;
-    if let Some((y, m, d, hh, mm, ss, zone)) = parse_date_hms(&s) {
+    if let Some((y, m, d, hh, mm, ss, zone)) = parse_date_hms(&(s).to_unicode_lossy()) {
         let mut secs = days_from_civil(y as i128, m as i128, d as i128) * 86400
             + hh as i128 * 3600
             + mm as i128 * 60
@@ -11751,7 +11690,7 @@ fn f_font_info(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// matching two arbitrary specs is trivially true for us.
 fn f_font_match_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     for v in &a[..2] {
-        if !matches!(v, Value::Record(_)) {
+        if v.record_kind() != Some(crate::lisp::value::RecordKind::FontSpec) {
             return Err(i.wrong_type_mut("font-spec", v));
         }
     }
@@ -11789,8 +11728,7 @@ fn f_font_face_attributes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Record(r) => {
             let fields = r.borrow().clone();
             // Our font-spec stores its property plist in slot 1.
-            let spec = i.q("font-spec");
-            let is_spec = matches!(fields.first(), Some(Value::Sym(s)) if *s == spec);
+            let is_spec = a[0].record_kind() == Some(crate::lisp::value::RecordKind::FontSpec);
             if !is_spec {
                 return Err(invalid_font_object(i, &a[0]));
             }
@@ -11895,7 +11833,7 @@ fn f_detect_coding_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             if let Some(b) = crate::lisp::value::eight_bit_byte(c) {
                 b as i32
             } else if unibyte || c.is_ascii() {
-                c as i32
+                c.code() as i32
             } else {
                 -(crate::lisp::value::lisp_char_code(c) as i32)
             }
@@ -11938,10 +11876,10 @@ fn f_image_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         return Err(i.error_q("Invalid image file name `%s'", &[&shown]));
     };
     let name = s.borrow().clone();
-    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    let ext = name.rsplit('.').next().unwrap_or_default().to_lowercase();
     let has_dot = name.contains('.');
     let ty = if has_dot {
-        match ext.as_str() {
+        match ext.to_unicode_lossy().as_str() {
             "png" => Some("png"),
             "gif" => Some("gif"),
             "jpg" | "jpeg" => Some("jpeg"),
@@ -12733,21 +12671,23 @@ fn f_command_error_default(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let minibuffer_quit = Value::Sym(i.q("minibuffer-quit"));
         if i.signal_matches(&condition.borrow().car, &minibuffer_quit) {
             super::evalfn::f_ding(i, vec![Value::t()].into())?;
-            let msg = error_message(i, &a[0]);
+            let mut msg = context.clone();
+            msg.push_str(error_message(i, &a[0]));
             if i.noninteractive {
-                i.write_output_to(&format!("{context}{msg}"), &Value::t())?;
+                i.write_output_to(&msg, &Value::t())?;
             } else {
-                i.message(&format!("{context}{msg}"));
+                i.message(&msg);
             }
             return Ok(Value::Nil);
         }
     }
-    let msg = error_message(i, &a[0]);
+    let mut msg = context;
+    msg.push_str(error_message(i, &a[0]));
     if i.noninteractive {
-        eprintln!("{context}{msg}");
+        eprintln!("{msg}");
         return super::evalfn::f_kill_emacs(i, vec![Value::Int(-1)].into());
     }
-    i.message(&format!("{context}{msg}"));
+    i.message(&msg);
     Ok(Value::Nil)
 }
 
@@ -12915,7 +12855,7 @@ pub(crate) fn encode_process_text(
     };
     let charset = i.q("charset");
     let mut preferred = Vec::new();
-    let mut input = String::new();
+    let mut input = crate::lisp::text::EmacsText::default();
     for (pos, ch) in text.chars().enumerate() {
         let preference = intervals
             .iter()
@@ -12936,8 +12876,8 @@ pub(crate) fn encode_process_text(
                 input.push('\n');
                 preferred.push(preference);
             }
-        } else if unibyte && (128..=255).contains(&(ch as u32)) {
-            input.push(crate::lisp::value::lisp_char(0x3fff00 + ch as u32).unwrap());
+        } else if unibyte && (128..=255).contains(&ch.code()) {
+            input.push(crate::lisp::value::lisp_char(0x3fff00 + (ch).code() as u32).unwrap());
         } else {
             input.push(ch);
         }
@@ -12980,7 +12920,7 @@ pub(crate) fn encode_process_text(
                 if let Some(b) = crate::lisp::value::eight_bit_byte(ch) {
                     vec![b]
                 } else {
-                    encode_one_char(&canonical, ch as u32).unwrap_or_else(|| vec![default])
+                    encode_one_char(&canonical, ch.code()).unwrap_or_else(|| vec![default])
                 }
             })
             .collect()
@@ -12992,7 +12932,7 @@ pub(crate) fn encode_process_text(
     Ok(value)
 }
 
-fn encode_hz(i: &Interp, text: &str) -> Vec<u8> {
+fn encode_hz(i: &Interp, text: &crate::lisp::text::EmacsStr) -> Vec<u8> {
     let mut out = Vec::new();
     let mut shifted = false;
     for ch in text.chars() {
@@ -13036,13 +12976,13 @@ fn encode_hz(i: &Interp, text: &str) -> Vec<u8> {
     out
 }
 
-fn decode_hz(i: &mut Interp, bytes: &[u8]) -> Result<(String, Vec<(usize, usize, String)>), Flow> {
+fn decode_hz(i: &mut Interp, bytes: &[u8]) -> Result<(crate::lisp::text::EmacsText, Vec<(usize, usize, String)>), Flow> {
     // HZ's Lisp post-read conversion operates after UTF-8 decoding, and
     // only converts complete contiguous GB pairs following a ~{ marker.
-    let chars: Vec<char> = super::coding_legacy::internal_decode(bytes)
+    let chars: Vec<crate::lisp::text::EmacsChar> = super::coding_legacy::internal_decode(bytes)
         .chars()
         .collect();
-    let mut out = String::new();
+    let mut out = crate::lisp::text::EmacsText::default();
     let mut spans = Vec::new();
     let mut pos = 0;
     let mut at = 0;
@@ -13054,15 +12994,15 @@ fn decode_hz(i: &mut Interp, bytes: &[u8]) -> Result<(String, Vec<(usize, usize,
             return Err(i.wrong_type_mut("wholenump", &Value::Nil));
         }
         if chars[at] == '~' && at + 1 < chars.len() {
-            match chars[at + 1] {
-                '{' => {
+            match chars[at + 1].code() {
+                123 => {
                     at += 2;
                     let start = pos;
                     while at + 1 < chars.len()
-                        && ('!'..='}').contains(&chars[at])
-                        && ('!'..='~').contains(&chars[at + 1])
+                        && (33..=125).contains(&chars[at].code())
+                        && (33..=126).contains(&chars[at + 1].code())
                     {
-                        let code = ((chars[at] as i64) << 8) | chars[at + 1] as i64;
+                        let code = ((chars[at].code() as i64) << 8) | chars[at + 1].code() as i64;
                         if let Some(c) = super::charset::charset_decode(i, "chinese-gb2312", code) {
                             out.push(
                                 crate::lisp::value::lisp_char(c as u32)
@@ -13077,18 +13017,18 @@ fn decode_hz(i: &mut Interp, bytes: &[u8]) -> Result<(String, Vec<(usize, usize,
                     if pos > start {
                         spans.push((start, pos, "chinese-gb2312".to_string()));
                     }
-                    if chars.get(at) == Some(&'~') && chars.get(at + 1) == Some(&'}') {
+                    if chars.get(at).is_some_and(|c| *c == '~') && chars.get(at + 1).is_some_and(|c| *c == '}') {
                         at += 2;
                     }
                     continue;
                 }
-                '~' => {
+                126 => {
                     out.push('~');
                     pos += 1;
                     at += 2;
                     continue;
                 }
-                '\n' if continuation => {
+                10 if continuation => {
                     at += 2;
                     continue;
                 }
@@ -13134,13 +13074,13 @@ fn decode_coding_bytes(
             if matches!(canonical, "utf-8" | "utf-8-auto" | "undecided") {
                 decode_file_utf8(bytes)
             } else {
-                decode_bytes(canonical, bytes)
+                decode_bytes(canonical, bytes).into()
             },
             Vec::new(),
             false,
         ),
     };
-    let value = Value::string(text);
+    let value = Value::string_with_kind(text, true);
     if let Value::Str(r) = &value {
         i.mark_multibyte(r);
         if metadata {
@@ -13302,8 +13242,8 @@ fn attach_decode_charset_props(i: &mut Interp, r: &StrRef, canonical: &str) {
         "chinese-iso-8bit" | "chinese-gbk" => Mode::Multi(&["ascii", "chinese-gb2312"]),
         _ => return,
     };
-    let chars: Vec<char> = r.borrow().chars().collect();
-    if !chars.iter().any(|&c| (c as u32) >= 0x80) {
+    let chars: Vec<crate::lisp::value::EmacsChar> = r.borrow().chars().collect();
+    if !chars.iter().any(|&c| (c).code() as u32 >= 0x80) {
         return;
     }
     let charset_id = i.q("charset");
@@ -13320,7 +13260,7 @@ fn attach_decode_charset_props(i: &mut Interp, r: &StrRef, canonical: &str) {
             let mut runs: Vec<(usize, usize, &'static str)> = Vec::new();
             let mut cur: Option<&'static str> = None;
             for (ix, &c) in chars.iter().enumerate() {
-                let u = c as u32;
+                let u = (c).code() as u32;
                 if u >= 0x80 {
                     if let Some(name) =
                         crate::lisp::builtins::strfn::char_charset_in(u as i128, restriction)
@@ -13351,8 +13291,8 @@ fn attach_decode_charset_props(i: &mut Interp, r: &StrRef, canonical: &str) {
 
 /// File decoding keeps invalid input bytes as GNU eight-bit characters.
 /// Rust's lossy UTF-8 conversion would replace them irreversibly with U+FFFD.
-fn decode_file_utf8(mut bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len());
+fn decode_file_utf8(mut bytes: &[u8]) -> crate::lisp::text::EmacsText {
+    let mut out = crate::lisp::text::EmacsText::default();
     while !bytes.is_empty() {
         match std::str::from_utf8(bytes) {
             Ok(text) => {
@@ -13373,9 +13313,23 @@ fn decode_file_utf8(mut bytes: &[u8]) -> String {
     out
 }
 
+
+#[cfg(test)] mod wide_file_utf8_tests {
+ use super::*;
+ #[test] fn private_use_and_invalid_octets_stay_distinct() {
+  let decoded=decode_file_utf8(&[0xf3,0xb0,0x82,0x80,0x80,0xff,65]);
+  assert_eq!(decoded.chars().map(|c|c.code()).collect::<Vec<_>>(),vec![0xf0080,0x3fff80,0x3fffff,65]);
+ }
+ #[test] fn truncated_sequences_preserve_every_octet() {
+  let decoded=decode_file_utf8(&[65,0xe3,0x81]);
+  assert_eq!(decoded.chars().map(|c|c.code()).collect::<Vec<_>>(),vec![65,0x3fffe3,0x3fff81]);
+ }
+}
+
 /// Apply the user's file coding detector to a raw, unibyte sample. GNU
 /// samples the first KiB and last three KiB without modifying the target.
-pub(crate) fn auto_file_coding(i: &mut Interp, path: &str, bytes: &[u8]) -> EvalResult {
+pub(crate) fn auto_file_coding<T: crate::lisp::text::TextSource + ?Sized>(i: &mut Interp, path: &T, bytes: &[u8]) -> EvalResult {
+    path.with_text(|path| {
     let function = i.q("set-auto-coding-function");
     let function = i.symbol_value(function);
     if function.is_nil() {
@@ -13403,6 +13357,8 @@ pub(crate) fn auto_file_coding(i: &mut Interp, path: &str, bytes: &[u8]) -> Eval
     });
     i.match_data = saved_match;
     result
+
+    })
 }
 
 pub(crate) fn coding_inherit_file_eol(
@@ -13662,8 +13618,8 @@ fn decode_region_text_stream(
     let mut storage_bytes = 0;
     for c in text.chars() {
         let raw = crate::lisp::value::eight_bit_byte(c);
-        let decoded = !unibyte && raw.is_none() && c as u32 >= 128;
-        bytes.push(if decoded { 0 } else { raw.unwrap_or(c as u8) });
+        let decoded = !unibyte && raw.is_none() && (c).code() as u32 >= 128;
+        bytes.push(if decoded { 0 } else { raw.unwrap_or((c).code() as u8) });
         native.push(decoded.then_some(c));
         storage_bytes += if unibyte || c.is_ascii() {
             1
@@ -13713,7 +13669,7 @@ fn decode_region_text_stream(
                 None => canonical,
             }))
         };
-        let value = Value::string(text);
+        let value = Value::string_with_kind(text, true);
         if let Value::Str(r) = &value {
             i.mark_multibyte(r);
         }
@@ -13776,7 +13732,7 @@ fn decode_region_text_stream(
                 .map(|(p, b)| {
                     native[p].unwrap_or_else(|| {
                         if *b < 128 {
-                            *b as char
+                            crate::lisp::text::EmacsChar::from(*b as char)
                         } else {
                             crate::lisp::value::lisp_char(0x3fff00 + *b as u32).unwrap()
                         }
@@ -13799,7 +13755,7 @@ fn decode_region_text_stream(
         None
     };
     let value = if let Some((text, spans)) = converted {
-        let value = Value::string(text);
+        let value = Value::string_with_kind(text, true);
         if let Value::Str(r) = &value {
             i.mark_multibyte(r);
             let charset = i.q("charset");
@@ -13813,7 +13769,7 @@ fn decode_region_text_stream(
     } else {
         // Byte decoders restart at native characters; these are never
         // reinterpreted using the external coding system.
-        let mut out = String::new();
+        let mut out = crate::lisp::text::EmacsText::default();
         let mut props = Vec::new();
         let mut offset = 0;
         at = 0;
@@ -13847,7 +13803,7 @@ fn decode_region_text_stream(
                 out.push_str(&r.borrow());
             }
         }
-        let value = Value::string(out);
+        let value = Value::string_with_kind(out, true);
         if let Value::Str(r) = &value {
             i.mark_multibyte(r);
             i.set_str_props(r, props);
@@ -13898,7 +13854,8 @@ fn with_coding_buffer(
 fn coding_buffer_string(i: &mut Interp) -> EvalResult {
     let buffer = crate::buffer::primitives::cur(i);
     let b = buffer.borrow();
-    let value = Value::string(b.text.substring(0, b.text_len()));
+    let multibyte = i.q("enable-multibyte-characters");
+    let value = Value::string_with_kind(b.text.substring(0, b.text_len()), i.symbol_value(multibyte).truthy());
     if let Value::Str(r) = &value {
         i.set_str_props(r, b.text.props.borrow().slice(0, b.text_len()));
         let multibyte = i.q("enable-multibyte-characters");
@@ -13994,7 +13951,7 @@ fn coding_storage_text(
     converted: &Value,
     encode: bool,
     raw: bool,
-) -> Result<String, Flow> {
+) -> Result<crate::lisp::text::EmacsText, Flow> {
     let text = want_string(i, converted)?;
     let unibyte_id = i.q("enable-multibyte-characters");
     let unibyte = !i.symbol_value(unibyte_id).truthy();
@@ -14003,12 +13960,12 @@ fn coding_storage_text(
             .into_iter()
             .map(|b| {
                 if b < 128 || unibyte {
-                    b as char
+                    crate::lisp::text::EmacsChar::from(b as char)
                 } else {
                     crate::lisp::value::lisp_char(0x3fff00 + b as u32).unwrap()
                 }
             })
-            .collect::<String>()
+            .collect::<crate::lisp::text::EmacsText>()
     } else if unibyte {
         text.chars()
             .flat_map(|c| {
@@ -14039,7 +13996,7 @@ fn coding_string_result(i: &mut Interp, converted: &Value, raw: bool) -> Result<
             .map(|c| {
                 crate::lisp::value::eight_bit_byte(c).unwrap_or_else(|| {
                     if c.is_ascii() {
-                        c as u8
+                        (c).code() as u8
                     } else {
                         (-crate::lisp::value::lisp_char_code(c)) as u8
                     }
@@ -14057,7 +14014,7 @@ fn copy_coding_string(i: &mut Interp, source: &Value) -> EvalResult {
     let Value::Str(r) = source else {
         unreachable!()
     };
-    let value = Value::string(r.borrow().clone());
+    let value = Value::string_with_kind(r.borrow().clone(), i.is_multibyte_str(r));
     if let Value::Str(copy) = &value {
         i.set_str_props(copy, i.str_props(r).to_vec());
         if i.is_unibyte_str(r) {
@@ -14107,7 +14064,7 @@ fn code_convert_string(i: &mut Interp, a: crate::lisp::Argv, encode: bool) -> Ev
         if arg(&a, 2).truthy() {
             return Ok(a[0].clone());
         }
-        let value = Value::string(text);
+        let value = Value::string_with_kind(text, !encode);
         if let Value::Str(r) = &value {
             if encode {
                 i.mark_unibyte(r);
@@ -14446,7 +14403,7 @@ fn f_color_defined_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     let frame_v = arg(&a, 1);
     let _ = crate::editor::frame_any(i, &frame_v)?;
-    Ok(Value::from_bool(tty_color_supported(i, &s, &frame_v)?))
+    Ok(Value::from_bool(tty_color_supported(i, &(s).to_unicode_lossy(), &frame_v)?))
 }
 
 /// `color-gray-p' — GNU xfaces.c `face_color_gray_p': CHECK_STRING,
@@ -15035,7 +14992,7 @@ fn f_make_composed_keymap(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                         into.push(Value::Int(
                             crate::lisp::value::eight_bit_byte(ch)
                                 .map(|b| b as i128)
-                                .unwrap_or_else(|| ch as i128),
+                                .unwrap_or_else(|| (ch).code() as i128),
                         ));
                     }
                 } else {
@@ -15182,15 +15139,8 @@ pub(crate) fn char_table_vec(v: &Value) -> Option<Rc<RefCell<Vec<Value>>>> {
     }
 }
 
-pub(crate) fn is_char_table(i: &Interp, v: &Value) -> bool {
-    match v {
-        Value::Record(r) => {
-            let rr = r.borrow();
-            matches!(rr.first(), Some(Value::Sym(s)) if i.symbol_name(*s) == "char-table")
-                && matches!(rr.get(2), Some(Value::Vec(_)))
-        }
-        _ => false,
-    }
+pub(crate) fn is_char_table(_i: &Interp, v: &Value) -> bool {
+    matches!(v, Value::Record(_)) && v.record_kind() == Some(crate::lisp::value::RecordKind::CharTable)
 }
 
 /// Build a char-table: Record [char-table SUBTYPE CONTENTS65 EXTRAS..]
@@ -15201,7 +15151,7 @@ pub(crate) fn make_ct(i: &mut Interp, subtype: Value, init: Value, extras: Vec<V
     let vec = Value::vector(vec![init.clone(); 65]);
     let mut rec = vec![Value::Sym(i.q("char-table")), subtype, vec];
     rec.extend(extras);
-    let t = Value::record(rec);
+    let t = Value::record_with_kind(rec, crate::lisp::value::RecordKind::CharTable);
     if !init.is_nil() {
         i.set_char_table_defalt(&t, init);
     }
@@ -15282,7 +15232,7 @@ pub(crate) fn is_uniprop_table(i: &Interp, v: &Value) -> bool {
 /// 1 or 2 encodes 128 per-character values in a depth-2 leaf slot.
 fn uniprop_compressed(v: &Value) -> bool {
     match v {
-        Value::Str(s) => matches!(s.borrow().chars().next(), Some('\u{1}') | Some('\u{2}')),
+        Value::Str(s) => matches!(s.borrow().chars().next().and_then(|c| c.unicode()), Some('\u{1}') | Some('\u{2}')),
         _ => false,
     }
 }
@@ -15299,10 +15249,10 @@ fn uniprop_uncompress(tag: SymId, vec: &Rc<RefCell<Vec<Value>>>, slot: usize, mi
     rec.push(Value::Int(min3 as i128));
     rec.extend(std::iter::repeat_n(Value::Nil, 128));
     if let Value::Str(s) = &val {
-        let chars: Vec<char> = s.borrow().chars().collect();
-        match chars.first() {
+        let chars: Vec<crate::lisp::value::EmacsChar> = s.borrow().chars().collect();
+        match chars.first().and_then(|c| c.unicode()) {
             Some('\u{1}') => {
-                let mut k = chars.get(1).map(|c| *c as usize).unwrap_or(0);
+                let mut k = chars.get(1).map(|c| (*c).code() as usize).unwrap_or(0);
                 for c in chars.iter().skip(2) {
                     if k >= 128 {
                         break;
@@ -15310,7 +15260,7 @@ fn uniprop_uncompress(tag: SymId, vec: &Rc<RefCell<Vec<Value>>>, slot: usize, mi
                     rec[3 + k] = if *c == '\0' {
                         Value::Nil
                     } else {
-                        Value::Int(*c as i128)
+                        Value::Int((*c).code() as i128)
                     };
                     k += 1;
                 }
@@ -15318,11 +15268,11 @@ fn uniprop_uncompress(tag: SymId, vec: &Rc<RefCell<Vec<Value>>>, slot: usize, mi
             Some('\u{2}') => {
                 let (mut k, mut j) = (0usize, 1usize);
                 while j < chars.len() && k < 128 {
-                    let v = chars[j] as u32;
+                    let v = (chars[j]).code() as u32;
                     j += 1;
                     let mut count = 1usize;
-                    if j < chars.len() && (chars[j] as u32) >= 128 {
-                        count = chars[j] as usize - 128;
+                    if j < chars.len() && (chars[j]).code() as u32 >= 128 {
+                        count = (chars[j]).code() as usize - 128;
                         j += 1;
                     }
                     for _ in 0..count {
@@ -15649,7 +15599,7 @@ pub(crate) fn ct_copy(i: &mut Interp, table: &Value) -> Value {
         Value::Vec(contents_rc),
     ];
     rec.extend(extras);
-    let t = Value::record(rec);
+    let t = Value::record_with_kind(rec, crate::lisp::value::RecordKind::CharTable);
     let defalt = i.char_table_defalt(table);
     if !defalt.is_nil() {
         i.set_char_table_defalt(&t, defalt);
@@ -15929,7 +15879,7 @@ fn f_char_table_range(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             // GNU: an out-of-character-range fixnum falls through to
             // the generic "Invalid RANGE" error, not `characterp'.
             if !(0..=CT_MAX_CHAR as i128).contains(n) {
-                return Err(i.error_q("Invalid RANGE argument to `char-table-range'", &[]));
+                return Err(i.error_q::<str>("Invalid RANGE argument to `char-table-range'", &[]));
             }
             Ok(char_table_ref(i, &a[0], *n as usize))
         }
@@ -15948,7 +15898,7 @@ fn f_char_table_range(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
             Ok(ct_ref_defalt(i, &a[0], from))
         }
-        _ => Err(i.error_q("Invalid RANGE argument to `char-table-range'", &[])),
+        _ => Err(i.error_q::<str>("Invalid RANGE argument to `char-table-range'", &[])),
     }
 }
 
@@ -16004,7 +15954,7 @@ fn f_set_char_table_range(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
         Value::Int(n) => {
             if !(0..=CT_MAX_CHAR as i128).contains(n) {
-                return Err(i.error_q("Invalid RANGE argument to `set-char-table-range'", &[]));
+                return Err(i.error_q::<str>("Invalid RANGE argument to `set-char-table-range'", &[]));
             }
             ct_set(i, &a[0], *n as u32, val.clone());
         }
@@ -16026,7 +15976,7 @@ fn f_set_char_table_range(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 ct_set_range(i, &a[0], from, to, val.clone());
             }
         }
-        _ => return Err(i.error_q("Invalid RANGE argument to `set-char-table-range'", &[])),
+        _ => return Err(i.error_q::<str>("Invalid RANGE argument to `set-char-table-range'", &[])),
     }
     Ok(val)
 }
@@ -16178,7 +16128,7 @@ fn merge_runs(spans: Vec<(u32, u32, Value)>) -> Vec<(u32, u32, Value)> {
 /// Effective (raw → defalt) runs of TABLE; nil-value regions are
 /// spliced with the parent's own runs when `with_parent' — GNU's
 /// `map_char_table' semantics (the parent's own parent is excluded).
-fn ct_effective_runs(i: &Interp, table: &Value, with_parent: bool) -> Vec<(u32, u32, Value)> {
+pub(crate) fn ct_effective_runs(i: &Interp, table: &Value, with_parent: bool) -> Vec<(u32, u32, Value)> {
     let defalt = i.char_table_defalt(table);
     let spans = ct_spans(i, table, is_uniprop_table(i, table))
         .into_iter()
@@ -16504,21 +16454,15 @@ fn f_set_char_table_extra_slot(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
 }
 
 fn f_record(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    if a.len() > crate::lisp::value::MAX_RECORD_SLOTS {
-        return Err(i.error(&format!(
-            "Attempt to allocate a record of {} slots; max is {}",
-            a.len(),
-            crate::lisp::value::MAX_RECORD_SLOTS
-        )));
-    }
+    super::data::check_record_slots(i, a.len() as i128)?;
     Ok(Value::record(a.as_slice().to_vec()))
 }
 
 fn f_recordp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::from_bool(recordp(i, &a[0])))
+    Ok(Value::from_bool(is_record(i, &a[0])))
 }
 
-pub(crate) fn recordp(i: &Interp, value: &Value) -> bool {
+pub(crate) fn is_record(i: &Interp, value: &Value) -> bool {
     // `symbols-with-pos-enabled' objects are symbols, not records;
     // obarrays are their own pseudovec type in GNU (PVEC_OBARRAY,
     // distinct from PVEC_RECORD) so `recordp' is nil on them.
@@ -16526,26 +16470,22 @@ pub(crate) fn recordp(i: &Interp, value: &Value) -> bool {
     // pseudovector (PVEC_FONT), not a record, in GNU — `recordp' is
     // nil on it (type-of reports `font-spec').
     matches!(value, Value::Record(_))
-            && !crate::editor::window_configuration_object(value)
-            && !is_opaque_record(i, value)
-            && any_sympos_parts(i, value).is_none()
-            && !crate::lisp::builtins::data::is_obarray(i, value)
-            && !is_bool_vector(i, value)
-            && !is_char_table(i, value)
+        && !crate::editor::window_configuration_object(value)
+        && value.record_kind().is_none()
+        && as_sympos(value).is_none()
+        && !crate::lisp::builtins::data::is_obarray(i, value)
 }
 
-/// True for record-backed pseudovectors whose slots are not Lisp-visible.
-pub(crate) fn is_opaque_record(i: &Interp, value: &Value) -> bool {
-    match value {
-        Value::Record(r) => {
-            crate::lisp::builtins::data::is_obarray(i, value)
-                || i.special_records.iter().any(|(weak, _)| {
-                    weak.upgrade()
-                        .is_some_and(|known| std::rc::Rc::ptr_eq(&known, r))
-                })
-        }
-        _ => false,
-    }
+/// Record-backed objects accepted by GNU's length/element operations.
+/// This is broader than the public sequencep predicate (ordinary records
+/// are permitted here) but excludes opaque pseudovectors and symbols.
+pub(crate) fn record_array_accessible(i: &Interp, value: &Value) -> bool {
+    is_record(i, value) || is_bool_vector(i, value) || is_char_table(i, value)
+}
+
+pub(crate) fn has_opaque_array_storage(i: &Interp, value: &Value) -> bool {
+    i.is_overlay(value)
+        || matches!(value, Value::Record(_)) && !record_array_accessible(i, value)
 }
 
 // ---------- added GNU compat subrs ----------
@@ -16580,7 +16520,7 @@ fn cons_seq_len(v: &Value) -> i128 {
 }
 
 fn seq_len(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
-    if crate::editor::window_configuration_object(v) || i.is_overlay(v) {
+    if has_opaque_array_storage(i, v) {
         return Err(i.wrong_type_mut("sequencep", v));
     }
     Ok(match v {
@@ -16636,249 +16576,248 @@ fn f_length_eq(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// conses/vectors elementwise; any type mismatch signals
 /// (error 'type-mismatch), and otherwise-comparable pairs with no
 /// ordering answer yield nil.
-fn value_cmp_impl(
+// GNU fns.c value_cmp: ordering-equivalence is distinct from `equal'.
+fn value_order_sympos(i: &Interp, value: &Value) -> Option<(SymId, i128)> {
+    sym_pos_parts(i, value).or_else(|| as_sympos(value))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ValueOrderKind {
+    Vector,
+    Record,
+    BoolVector,
+    CharTable,
+    Obarray,
+    Font,
+    WindowConfiguration,
+    Overlay,
+    Hash,
+    Buffer,
+    Marker,
+    Window,
+    Frame,
+    Process,
+    Thread,
+    Mutex,
+    CondVar,
+    Finalizer,
+    Subr,
+    Closure,
+    BigInt,
+    SymbolWithPos,
+}
+
+fn value_order_kind(i: &Interp, value: &Value) -> Option<ValueOrderKind> {
+    use crate::lisp::value::RecordKind;
+    use ValueOrderKind as K;
+    if crate::editor::window_configuration_object(value) {
+        return Some(K::WindowConfiguration);
+    }
+    if i.is_overlay(value) {
+        return Some(K::Overlay);
+    }
+    if value_order_sympos(i, value).is_some() {
+        return Some(K::SymbolWithPos);
+    }
+    Some(match value {
+        Value::Vec(_) => K::Vector,
+        Value::Record(_) => match value.record_kind() {
+            Some(RecordKind::BoolVector) => K::BoolVector,
+            Some(RecordKind::CharTable) => K::CharTable,
+            Some(RecordKind::Obarray) => K::Obarray,
+            Some(RecordKind::FontSpec) => K::Font,
+            Some(RecordKind::SymbolWithPos) => K::SymbolWithPos,
+            None => K::Record,
+        },
+        Value::Hash(_) => K::Hash,
+        Value::Buffer(_) => K::Buffer,
+        Value::Marker(_) => K::Marker,
+        Value::Window(_) => K::Window,
+        Value::Frame(_) => K::Frame,
+        Value::Process(_) => K::Process,
+        Value::Thread(_) => K::Thread,
+        Value::Mutex(_) => K::Mutex,
+        Value::CondVar(_) => K::CondVar,
+        Value::Finalizer(_) => K::Finalizer,
+        Value::Subr(_) => K::Subr,
+        Value::Lambda(function) if function.compiled && !function.is_macro => K::Subr,
+        Value::Lambda(_) => K::Closure,
+        Value::BigInt(_) => K::BigInt,
+        _ => return None,
+    })
+}
+
+fn value_mismatch(i: &mut Interp, x: &Value, y: &Value) -> Flow {
+    let (a, b) = if matches!(x, Value::BigInt(_))
+        && matches!(
+            y,
+            Value::Nil | Value::Sym(_) | Value::Str(_) | Value::Cons(_)
+        ) {
+        (y, x)
+    } else {
+        (x, y)
+    };
+    let condition = i.q("type-mismatch");
+    i.signal_data(condition, vec![a.clone(), b.clone()])
+}
+
+fn value_array_cmp(
     i: &mut Interp,
-    x: &Value,
-    y: &Value,
+    x: &crate::lisp::value::VecRef,
+    y: &crate::lisp::value::VecRef,
     depth: u32,
 ) -> Result<std::cmp::Ordering, Flow> {
+    let (nx, ny) = (x.borrow().len(), y.borrow().len());
+    for index in 0..nx.min(ny) {
+        let a = x.borrow()[index].clone();
+        let b = y.borrow()[index].clone();
+        let order = value_cmp(i, &a, &b, depth + 1)?;
+        if order != std::cmp::Ordering::Equal {
+            return Ok(order);
+        }
+    }
+    Ok(nx.cmp(&ny))
+}
+
+fn value_cmp(i: &mut Interp, x: &Value, y: &Value, depth: u32) -> Result<std::cmp::Ordering, Flow> {
+    use ValueOrderKind as K;
     use std::cmp::Ordering::{Equal, Greater, Less};
     if depth > 200 {
         return Err(i.error("Maximum depth exceeded in comparison"));
     }
-    if crate::lisp::builtins::eq_values(x, y) {
+    let (px, py) = (value_order_sympos(i, x), value_order_sympos(i, y));
+    // BASE_EQ does not normalize symbol-with-pos objects when disabled.
+    if px.is_none() && py.is_none() && eq_values(x, y) {
         return Ok(Equal);
     }
-    fn mism(i: &mut Interp, x: &Value, y: &Value) -> Flow {
-        let s = i.q("type-mismatch");
-        i.signal_data(s, vec![x.clone(), y.clone()])
-    }
-    if sympos_enabled_p(i)
-        && (any_sympos_parts(i, x).is_some() || any_sympos_parts(i, y).is_some())
+    if matches!(x, Value::Int(_) | Value::BigInt(_) | Value::Float(_))
+        && matches!(y, Value::Int(_) | Value::BigInt(_) | Value::Float(_))
     {
-        return match (i.sym_id(x), i.sym_id(y)) {
-            (Some(a), Some(b)) => {
-                let a = Value::Sym(a);
-                let b = Value::Sym(b);
-                value_cmp_impl(i, &a, &b, depth)
-            }
-            _ => Err(mism(i, x, y)),
-        };
+        return Ok(super::arith::number_order(x, y).unwrap_or(Equal));
     }
-    Ok(match (x, y) {
-        (
-            Value::Int(_) | Value::BigInt(_) | Value::Float(_),
-            Value::Int(_) | Value::BigInt(_) | Value::Float(_),
-        ) => crate::lisp::builtins::arith::number_order(x, y).unwrap_or(Equal),
-        (Value::BigInt(_), Value::Nil | Value::Sym(_) | Value::Str(_) | Value::Cons(_)) => {
-            return Err(mism(i, y, x));
+    if let (Some((a, _)), Some((b, _))) = (px, py) {
+        let a = i.sym(a);
+        let b = i.sym(b);
+        return value_cmp(i, &a, &b, depth);
+    }
+    if let Some((a, _)) = px {
+        if value_order_kind(i, y).is_none() && sympos_enabled_p(i) {
+            let bare = i.sym(a);
+            return value_cmp(i, &bare, y, depth);
         }
-        (Value::Int(_) | Value::BigInt(_) | Value::Float(_), _) => return Err(mism(i, x, y)),
-        (Value::Nil, Value::Nil) => Equal,
-        (Value::Nil, Value::Cons(_)) => Less,
-        (Value::Cons(_), Value::Nil) => Greater,
-        (Value::Nil | Value::Sym(_), Value::Nil | Value::Sym(_)) => {
+    }
+    match x {
+        Value::Nil | Value::Sym(_) => {
+            let right = match y {
+                Value::Nil | Value::Sym(_) => y.clone(),
+                Value::Cons(_) if x.is_nil() => return Ok(Less),
+                _ => match py {
+                    Some((symbol, _)) if sympos_enabled_p(i) => i.sym(symbol),
+                    _ => return Err(value_mismatch(i, x, y)),
+                },
+            };
             let a = super::data::f_symbol_name(i, vec![x.clone()].into())?;
-            let b = super::data::f_symbol_name(i, vec![y.clone()].into())?;
+            let b = super::data::f_symbol_name(i, vec![right].into())?;
             let (Value::Str(a), Value::Str(b)) = (a, b) else {
                 unreachable!()
             };
-            crate::lisp::builtins::strfn::gnu_string_order(i, &a, &b)
+            return Ok(super::strfn::compare_string_contents(i, &a, &b));
         }
-        (Value::Sym(_), _) => return Err(mism(i, x, y)),
-        (Value::Str(p), Value::Str(q)) =>
-            crate::lisp::builtins::strfn::gnu_string_order(i, p, q),
-        (Value::Str(_), _) => return Err(mism(i, x, y)),
-        (Value::Cons(_), Value::Cons(_)) => {
-            // GNU walks the right spine incrementally, comparing each car
-            // before inspecting later cdrs. A dotted tail therefore gets
-            // compared as a value, and an unreachable malformed tail does
-            // not override an earlier ordering result.
-            let mut left = x.clone();
-            let mut right = y.clone();
-            let mut seen = std::collections::HashSet::new();
+        Value::Str(a) => {
+            return if let Value::Str(b) = y {
+                Ok(super::strfn::compare_string_contents(i, a, b))
+            } else {
+                Err(value_mismatch(i, x, y))
+            };
+        }
+        Value::Cons(_) => {
+            let (mut left, mut right) = (x.clone(), y.clone());
+            let mut cycle = super::listfn::ListCycle::new(&right);
             loop {
-                let (Value::Cons(left_cell), Value::Cons(right_cell)) = (&left, &right) else {
-                    break;
+                let Value::Cons(b) = &right else {
+                    return if right.is_nil() {
+                        Ok(Greater)
+                    } else {
+                        Err(value_mismatch(i, &left, &right))
+                    };
                 };
-                if !seen.insert(std::rc::Rc::as_ptr(right_cell) as usize) {
-                    return Err(i.signal_data(sym::CIRCULAR_LIST, vec![right.clone()]));
-                }
-                let (left_car, left_cdr) = {
-                    let cell = left_cell.borrow();
-                    (cell.car.clone(), cell.cdr.clone())
+                let Value::Cons(a) = &left else {
+                    unreachable!()
                 };
-                let (right_car, right_cdr) = {
-                    let cell = right_cell.borrow();
-                    (cell.car.clone(), cell.cdr.clone())
-                };
-                let order = value_cmp_impl(i, &left_car, &right_car, depth + 1)?;
+                let (a, b) = (a.clone(), b.clone());
+                let ac = a.borrow().car.clone();
+                let bc = b.borrow().car.clone();
+                let order = value_cmp(i, &ac, &bc, depth + 1)?;
                 if order != Equal {
                     return Ok(order);
                 }
-                left = left_cdr;
-                right = right_cdr;
+                left = a.borrow().cdr.clone();
+                right = b.borrow().cdr.clone();
                 if !matches!(left, Value::Cons(_)) {
-                    return value_cmp_impl(i, &left, &right, depth);
+                    return value_cmp(i, &left, &right, depth);
                 }
-            }
-            if right.is_nil() {
-                Greater
-            } else {
-                return Err(mism(i, &left, &right));
+                cycle.step(i, &right)?;
             }
         }
-        (Value::Cons(_), _) => return Err(mism(i, x, y)),
-        (Value::Vec(p), Value::Vec(q)) => {
-            let xs = p.borrow().clone();
-            let ys = q.borrow().clone();
-            let mut order = Equal;
-            for k in 0..xs.len().max(ys.len()) {
-                match (xs.get(k), ys.get(k)) {
-                    (None, Some(_)) => {
-                        order = Less;
-                        break;
-                    }
-                    (None, None) => break,
-                    (Some(_), None) => {
-                        order = Greater;
-                        break;
-                    }
-                    (Some(a), Some(b)) => {
-                        order = value_cmp_impl(i, a, b, depth + 1)?;
-                        if order != Equal {
-                            break;
-                        }
-                    }
-                }
-            }
-            order
-        }
-        (Value::Record(p), Value::Record(q)) => {
-            let left_bool = super::misc::is_bool_vector(i, x);
-            let right_bool = super::misc::is_bool_vector(i, y);
-            if left_bool || right_bool {
-                if !(left_bool && right_bool) {
-                    return Err(mism(i, x, y));
-                }
-                let left = super::misc::bool_vec_of(i, x)?;
-                let right = super::misc::bool_vec_of(i, y)?;
-                let mut order = Equal;
-                for (a, b) in left.iter().zip(right.iter()) {
-                    if a != b {
-                        order = if *a { Greater } else { Less };
-                        break;
-                    }
-                }
-                if order == Equal {
-                    order = left.len().cmp(&right.len());
-                }
-                order
-            } else {
-                let left_record = super::misc::recordp(i, x);
-                let right_record = super::misc::recordp(i, y);
-                if left_record != right_record {
-                    return Err(mism(i, x, y));
-                }
-                if left_record {
-                    let xs = p.borrow().clone();
-                    let ys = q.borrow().clone();
-                    let mut order = Equal;
-                    for k in 0..xs.len().max(ys.len()) {
-                        match (xs.get(k), ys.get(k)) {
-                            (None, Some(_)) => {
-                                order = Less;
-                                break;
-                            }
-                            (Some(_), None) => {
-                                order = Greater;
-                                break;
-                            }
-                            (Some(a), Some(b)) => {
-                                order = value_cmp_impl(i, a, b, depth + 1)?;
-                                if order != Equal {
-                                    break;
-                                }
-                            }
-                            (None, None) => break,
-                        }
-                    }
-                    order
-                } else {
-                    let same_tag = match (p.borrow().first(), q.borrow().first()) {
-                        (Some(a), Some(b)) => crate::lisp::builtins::eq_values(a, b),
-                        _ => false,
-                    };
-                    if same_tag { Equal } else { return Err(mism(i, x, y)); }
-                }
-            }
-        }
-        (Value::Marker(a), Value::Marker(b)) => {
-            fn buffer_name(
-                i: &Interp,
-                buffer: Option<usize>,
-            ) -> Option<String> {
-                let buffer = i.buffers.get(buffer?)?;
-                let buffer = buffer.borrow();
-                buffer.live.then(|| buffer.name.clone())
-            }
-            let (buffer_a, pos_a) = {
-                let marker = a.borrow();
-                (marker.buffer, marker.position)
+        _ => {}
+    }
+    let (Some(a), Some(b)) = (value_order_kind(i, x), value_order_kind(i, y)) else {
+        return Err(value_mismatch(i, x, y));
+    };
+    if a != b {
+        return Err(value_mismatch(i, x, y));
+    }
+    match a {
+        K::Vector | K::Record => {
+            let (Value::Vec(a) | Value::Record(a), Value::Vec(b) | Value::Record(b)) = (x, y)
+            else {
+                unreachable!()
             };
-            let (buffer_b, pos_b) = {
-                let marker = b.borrow();
-                (marker.buffer, marker.position)
-            };
-            let name_a = buffer_name(i, buffer_a);
-            let name_b = buffer_name(i, buffer_b);
-            let by_buffer = match (&name_a, &name_b) {
-                (None, None) => Equal,
-                (None, Some(_)) => Less,
-                (Some(_), None) => Greater,
-                (Some(a), Some(b)) => a.cmp(b),
-            };
-            if by_buffer != Equal || name_a.is_none() {
-                by_buffer
+            value_array_cmp(i, a, b, depth)
+        }
+        K::BoolVector => Ok(bool_vec_of(i, x)?.cmp(&bool_vec_of(i, y)?)),
+        K::Marker => {
+            let a = super::call_canonical_builtin(i, "marker-buffer", vec![x.clone()])?;
+            let b = super::call_canonical_builtin(i, "marker-buffer", vec![y.clone()])?;
+            if a.is_nil() {
+                return Ok(if b.is_nil() { Equal } else { Less });
+            }
+            if b.is_nil() {
+                return Ok(Greater);
+            }
+            let order = value_cmp(i, &a, &b, depth + 1)?;
+            if order != Equal {
+                return Ok(order);
+            }
+            let a = super::call_canonical_builtin(i, "marker-position", vec![x.clone()])?;
+            let b = super::call_canonical_builtin(i, "marker-position", vec![y.clone()])?;
+            Ok(super::arith::number_order(&a, &b).unwrap_or(Equal))
+        }
+        K::Buffer | K::Process => {
+            let operation = if a == K::Buffer {
+                "buffer-name"
             } else {
-                pos_a.cmp(&pos_b)
+                "process-name"
+            };
+            let a = super::call_canonical_builtin(i, operation, vec![x.clone()])?;
+            let b = super::call_canonical_builtin(i, operation, vec![y.clone()])?;
+            if a.is_nil() {
+                return Ok(if b.is_nil() { Equal } else { Less });
             }
-        }
-        (Value::Buffer(a), Value::Buffer(b)) => {
-            fn name(buffer: &crate::lisp::value::BufferRef) -> Option<String> {
-                let buffer = buffer.borrow();
-                buffer.live.then(|| buffer.name.clone())
+            if b.is_nil() {
+                return Ok(Greater);
             }
-            match (name(a), name(b)) {
-                (None, None) => Equal,
-                (None, Some(_)) => Less,
-                (Some(_), None) => Greater,
-                (Some(a), Some(b)) => a.cmp(&b),
-            }
+            value_cmp(i, &a, &b, depth)
         }
-        (Value::Process(a), Value::Process(b)) => {
-            a.borrow().name.cmp(&b.borrow().name)
-        }
-        (Value::Vec(_), _) => return Err(mism(i, x, y)),
-        // Remaining same-type pairs (hash tables, buffers, subrs,
-        // markers...) are unorderable → nil; mismatched types → error.
-        _ => {
-            if std::mem::discriminant(x) == std::mem::discriminant(y) {
-                Equal
-            } else {
-                return Err(mism(i, x, y));
-            }
-        }
-    })
-}
-
-fn value_lt_impl(i: &mut Interp, x: &Value, y: &Value, depth: u32) -> Result<bool, Flow> {
-    Ok(value_cmp_impl(i, x, y, depth)? == std::cmp::Ordering::Less)
+        // Other matching pseudovector types have no standard ordering.
+        _ => Ok(Equal),
+    }
 }
 
 pub(super) fn f_value_lt(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let (x, y) = (&a[0], &a[1]);
-    Ok(Value::from_bool(value_lt_impl(i, x, y, 0)?))
+    Ok(Value::from_bool(
+        value_cmp(i, &a[0], &a[1], 0)? == std::cmp::Ordering::Less,
+    ))
 }
 
 fn f_seconds_to_time(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -17045,10 +16984,9 @@ fn f_set_buffer_multibyte(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // multibyte flag belongs to the shared text's owner (base).
     if let Some(b) = i.current_buffer_ref() {
         if b.borrow().base_buffer.is_some() {
-            return Err(i.error_q(
+            return Err(i.error_q::<str>(
                 "Cannot do `set-buffer-multibyte' on an indirect buffer",
-                &[],
-            ));
+                &[]));
         }
     }
     // GNU Fset_buffer_multibyte flips the current buffer's
@@ -17094,7 +17032,7 @@ fn f_read_expression(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // string from the minibuffer, then `read' one form from it.
     let prompt = match a.get(0) {
         Some(Value::Str(s)) => s.borrow().clone(),
-        _ => String::new(),
+        _ => crate::lisp::text::EmacsText::default(),
     };
     let input = if i.minibuf_reader.is_some() {
         // GNU read--expression → read-from-minibuffer with
@@ -17125,14 +17063,38 @@ fn f_one(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 
 /// Parse a color to 16-bit (0-65535) RGB like GNU: "#rgb"/"#rrggbb"
 /// strings, the 8 standard color names, or a (R G B) list.
+fn color_hex_value(text: &crate::lisp::text::EmacsStr) -> Option<i64> {
+    if text.is_empty() { return None; }
+    text.chars().try_fold(0i64, |value, character| {
+        if !character.is_ascii_hexdigit() { return None; }
+        value.checked_mul(16)?.checked_add(character.to_digit(16)? as i64)
+    })
+}
+
+#[cfg(test)]
+mod wide_color_hex_tests {
+    use super::*;
+    use crate::lisp::text::{EmacsChar, EmacsText};
+    #[test]
+    fn ascii_hex_is_checked_without_narrowing_character_codes() {
+        assert_eq!(color_hex_value(&EmacsText::from("aF09")), Some(0xaf09));
+        assert_eq!(color_hex_value(&EmacsText::from("")), None);
+        for code in [0xf0080, 0xd800, 0x1a0000, 0x3fff80, 0xff11] {
+            let character = EmacsChar::new(code).unwrap();
+            assert_eq!(color_hex_value(&character.to_string()), None);
+        }
+        assert_eq!(color_hex_value(&EmacsText::from("ffffffffffffffffffff")), None);
+    }
+}
+
 pub(crate) fn parse_color_16(v: &Value) -> Option<(i64, i64, i64)> {
     if let Value::Str(s) = v {
         let t = s.borrow().clone();
         let h = t.trim_start_matches('#');
         if t.starts_with('#') && h.len() == 6 {
-            let r = i64::from_str_radix(&h[0..2], 16).ok()? * 257;
-            let g = i64::from_str_radix(&h[2..4], 16).ok()? * 257;
-            let b = i64::from_str_radix(&h[4..6], 16).ok()? * 257;
+            let r = color_hex_value(&h[0..2])? * 257;
+            let g = color_hex_value(&h[2..4])? * 257;
+            let b = color_hex_value(&h[4..6])? * 257;
             return Some((r, g, b));
         }
         if t.starts_with('#') && h.len() == 3 {
@@ -17151,15 +17113,15 @@ pub(crate) fn parse_color_16(v: &Value) -> Option<(i64, i64, i64)> {
         if t.starts_with('\0') {
             return Some((0, 0, 0));
         }
-        let rgb = match t.as_str() {
-            "black" => (0, 0, 0),
-            "red" => (65535, 0, 0),
-            "green" => (0, 65535, 0),
-            "yellow" => (65535, 65535, 0),
-            "blue" => (0, 0, 65535),
-            "magenta" => (65535, 0, 65535),
-            "cyan" => (0, 65535, 65535),
-            "white" => (65535, 65535, 65535),
+        let rgb = match () {
+            _ if t == "black" => (0, 0, 0),
+            _ if t == "red" => (65535, 0, 0),
+            _ if t == "green" => (0, 65535, 0),
+            _ if t == "yellow" => (65535, 65535, 0),
+            _ if t == "blue" => (0, 0, 65535),
+            _ if t == "magenta" => (65535, 0, 65535),
+            _ if t == "cyan" => (0, 65535, 65535),
+            _ if t == "white" => (65535, 65535, 65535),
             _ => return None,
         };
         return Some(rgb);
@@ -17348,18 +17310,44 @@ fn f_frame_outer_dim(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Err(i.wrong_type_mut("number-or-marker-p", &Value::Nil))
 }
 
+/// Parse coordinate fields with guaranteed progress, rejecting malformed tails.
+fn geometry_offsets(pos: &crate::lisp::text::EmacsStr) -> Option<[Option<i32>; 2]> {
+    let chars: Vec<_> = pos.chars().collect();
+    let mut result = [None, None];
+    let mut at = 0;
+    let mut field = 0;
+    while at < chars.len() {
+        if field == result.len() { return None; }
+        let negative = match chars[at].code() {
+            43 => false,
+            45 => true,
+            _ => return None,
+        };
+        at += 1;
+        let start = at;
+        let limit = if negative { i32::MAX as u64 + 1 } else { i32::MAX as u64 };
+        let mut magnitude = 0u64;
+        while at < chars.len() && chars[at].is_ascii_digit() {
+            magnitude = (magnitude * 10 + (chars[at].code() - 48) as u64).min(limit);
+            at += 1;
+        }
+        if at == start { return None; }
+        result[field] = Some(if negative { -(magnitude as i64) as i32 } else { magnitude as i32 });
+        field += 1;
+    }
+    Some(result)
+}
+
 fn f_x_parse_geometry(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU returns an alist ((height . H) (width . W) (top . Y) (left . X)).
     let s = match &a[0] {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
-    let mut left = None;
-    let mut top = None;
     let mut w = None;
     let mut h = None;
     // The first sign starts the position part; sizes are digits and 'x'.
-    let split_at = s.find(['+', '-']).unwrap_or(s.len());
+    let split_at = s.chars().position(|c| c == '+' || c == '-').unwrap_or(s.len());
     let (size, pos) = s.split_at(split_at);
     let mut it = size.split('x');
     if let Some(t) = it.next() {
@@ -17368,31 +17356,11 @@ fn f_x_parse_geometry(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if let Some(t) = it.next() {
         h = t.parse().ok();
     }
-    // Position part is [+-]N[+-]N — left then top.
-    let bytes = pos.as_bytes();
-    let mut idx = 0;
-    let mut k = 0;
-    while idx < bytes.len() && k < 2 {
-        let sign = match bytes[idx] {
-            b'-' => -1i32,
-            _ => 1i32,
-        };
-        if matches!(bytes[idx], b'+' | b'-') {
-            idx += 1;
-        }
-        let start = idx;
-        while idx < bytes.len() && bytes[idx].is_ascii_digit() {
-            idx += 1;
-        }
-        if let Ok(n) = pos[start..idx].parse::<i32>() {
-            if k == 0 {
-                left = Some(sign * n);
-            } else {
-                top = Some(sign * n);
-            }
-            k += 1;
-        }
-    }
+    let Some([parsed_left, parsed_top]) = geometry_offsets(pos) else {
+        return Ok(Value::Nil);
+    };
+    let left = parsed_left;
+    let top = parsed_top;
     let mut items: Vec<Value> = Vec::new();
     for (name, v) in [("height", h), ("width", w), ("top", top), ("left", left)] {
         if let Some(n) = v {
@@ -17433,7 +17401,7 @@ fn f_bidi_string_mark_left_to_right(i: &mut Interp, a: crate::lisp::Argv) -> Eva
     // bidi type, return STR followed by U+200E LEFT-TO-RIGHT MARK so
     // subsequent text resolves LTR; otherwise return STR unchanged.
     let rtl = s.chars().any(|ch| {
-        let u = ch as u32;
+        let u = (ch).code() as u32;
         super::bidi_table::BIDI_CLASS_TABLE
             .binary_search_by(|&(lo, hi, _)| {
                 if u < lo {
@@ -17487,8 +17455,7 @@ fn f_read_non_nil_coding_system(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
         )?;
         match &val {
             Value::Str(s) if !s.borrow().is_empty() => {
-                let name = s.borrow().clone();
-                return Ok(Value::Sym(i.intern(&name)));
+                return super::data::f_intern(i, vec![val.clone()].into());
             }
             _ => {}
         }
@@ -17560,7 +17527,7 @@ fn f_find_operation_coding_system(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
             (Value::Str(pat), Value::Str(t)) => {
                 // fast_string_match: case-sensitive; a bad regexp just
                 // misses the element.
-                let chars: Vec<char> = t.borrow().chars().collect();
+                let chars: Vec<crate::lisp::value::EmacsChar> = t.borrow().chars().collect();
                 crate::lisp::regexp::compile_case(&pat.borrow(), false)
                     .ok()
                     .map(|re| {
@@ -17846,19 +17813,10 @@ fn f_font_spec(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
         idx += 2;
     }
-    let font_spec = Value::record(vec![
+    Ok(Value::record_with_kind(vec![
         Value::Sym(i.q("font-spec")),
         Value::list(a.as_slice().to_vec()),
-    ]);
-    if let Value::Record(record) = &font_spec {
-        i.special_records
-            .retain(|(known, _)| known.strong_count() > 0);
-        i.special_records.push((
-            std::rc::Rc::downgrade(record),
-            crate::lisp::eval::SpecialRecordKind::FontSpec,
-        ));
-    }
-    Ok(font_spec)
+    ], crate::lisp::value::RecordKind::FontSpec))
 }
 
 /// `put-image` — GNU requires an image spec (list headed `image') and
@@ -18038,8 +17996,10 @@ fn f_move_file_to_trash(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
     let mut name = raw.clone();
-    let meta = std::fs::metadata(&crate::editor::expand_file_name_str(i, &name)).ok();
-    let is_link = std::fs::symlink_metadata(&crate::editor::expand_file_name_str(i, &name))
+    let expanded = crate::editor::expand_file_name_str(i, &name);
+    let native_expanded = crate::editor::native_path(i, &expanded)?;
+    let meta = std::fs::metadata(&native_expanded).ok();
+    let is_link = std::fs::symlink_metadata(&native_expanded)
         .map(|m| m.file_type().is_symlink())
         .unwrap_or(false);
     if meta.as_ref().map(|m| m.is_dir()).unwrap_or(false) && !is_link {
@@ -18049,7 +18009,8 @@ fn f_move_file_to_trash(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
     }
     let path = crate::editor::expand_file_name_str(i, &name);
-    let src = std::path::Path::new(&path);
+    let native_src = crate::editor::native_path(i, &path)?;
+    let src = native_src.as_path();
     // GNU's NS trash call fails on a missing path with ENOENT →
     // (file-missing "Removing old name" strerror ABSNAME).
     if let Err(e) = std::fs::symlink_metadata(src) {
@@ -18141,11 +18102,17 @@ fn f_network_lookup_address_info(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
             }
         }
     }
-    use std::net::ToSocketAddrs;
-    let addrs: Vec<std::net::SocketAddr> = (host.as_str(), 0u16)
-        .to_socket_addrs()
-        .map(|it| it.collect())
-        .unwrap_or_default();
+    let hint = arg(&a, 2);
+    let numeric_symbol = i.q("numeric");
+    let numeric = i.sym_id(&hint) == Some(numeric_symbol);
+    if hint.truthy() && !numeric { return Err(i.error("Unsupported hints value")); }
+    crate::lisp::process::validate_hostname(i, &a[0])?;
+    let resolved = if numeric {
+        crate::lisp::process::address::numeric(&host, 0)
+    } else {
+        crate::lisp::process::address::resolve(&host, 0)
+    };
+    let addrs: Vec<std::net::SocketAddr> = resolved.map(Iterator::collect).unwrap_or_default();
     // GNU dedupes; keep first occurrences in order.
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
@@ -18185,7 +18152,7 @@ fn f_network_lookup_address_info(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
 /// display (nil in batch), non-strings get stringp.
 fn f_color_values_from_color_spec(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let s = want_string(i, &a[0])?;
-    let hex = s.strip_prefix('#').unwrap_or("");
+    let hex = s.strip_prefix('#').unwrap_or_default();
     if !s.starts_with('#')
         || ![3, 4, 6, 9, 12].contains(&hex.len())
         || !hex.chars().all(|c| c.is_ascii_hexdigit())
@@ -18193,8 +18160,8 @@ fn f_color_values_from_color_spec(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
         return Ok(Value::Nil);
     }
     let n = hex.len() / 3;
-    let scale = |chunk: &str| -> i128 {
-        let v = i128::from_str_radix(chunk, 16).unwrap_or(0);
+    let scale = |chunk: &crate::lisp::text::EmacsStr| -> i128 {
+        let v = color_hex_value(chunk).unwrap_or(0) as i128;
         // Scale N-digit channel to 16 bits: v * 65535 / (16^n - 1).
         v * 65535 / ((1i128 << (4 * n)) - 1)
     };
@@ -18423,7 +18390,7 @@ fn f_composition_get_gstring(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     // against BEGV..ZV of the current buffer.
     let chars: Vec<u32> = match &a[3] {
         Value::Str(s) => {
-            let v: Vec<u32> = s.borrow().chars().map(|c| c as u32).collect();
+            let v: Vec<u32> = s.borrow().chars().map(|c| (c).code() as u32).collect();
             if from < 0 || to as usize > v.len() || from as usize > v.len() {
                 return Err(crate::buffer::primitives::err_sym(
                     i,
@@ -18450,7 +18417,7 @@ fn f_composition_get_gstring(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
             text.chars()
                 .skip((from - 1) as usize)
                 .take((to - from) as usize)
-                .map(|c| c as u32)
+                .map(|c| (c).code() as u32)
                 .collect()
         }
     };
@@ -18766,7 +18733,7 @@ fn f_flex_cost_gotoh(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if needle.is_empty() || hay.is_empty() {
         return Ok(Value::Nil);
     }
-    let hc: Vec<char> = hay.chars().collect();
+    let hc: Vec<crate::lisp::value::EmacsChar> = hay.chars().collect();
     let mut pos: Vec<usize> = Vec::new();
     let mut from = 0usize;
     for nc in needle.chars() {
@@ -19013,4 +18980,12 @@ fn f_subr_native_elisp_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_bitmap_spec_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU treats a string as a bitmap spec (file name / data form).
     Ok(Value::from_bool(matches!(&a[0], Value::Str(_))))
+}
+
+// Compatibility names for interpreter callers during the representation migration.
+pub(crate) fn any_sympos_parts(i: &Interp, value: &Value) -> Option<(SymId, i128)> { sym_pos_parts(i, value) }
+pub(crate) fn active_sympos_parts(i: &Interp, value: &Value) -> Option<(SymId, i128)> { symbol_position_for(i, value) }
+pub(crate) fn recordp(i: &Interp, value: &Value) -> bool { is_record(i, value) }
+pub(crate) fn is_opaque_record(_i: &Interp, value: &Value) -> bool {
+    matches!(value.record_kind(), Some(crate::lisp::value::RecordKind::Obarray | crate::lisp::value::RecordKind::FontSpec))
 }

@@ -8,16 +8,20 @@
 //! it drains pending output into filters or process buffers and runs
 //! sentinels on status transitions.
 
+use crate::lisp::text::{EmacsChar, EmacsText, TextSource};
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::rc::Rc;
 use num_traits::ToPrimitive;
 
+pub(crate) mod address;
 mod child;
 mod coding;
 pub(crate) mod environment;
 mod wait;
+#[cfg(target_os = "macos")]
+mod macos;
 
 use super::builtins::evalfn::timer_check;
 use super::builtins::{S, arg};
@@ -62,7 +66,7 @@ pub enum ProcIo {
     LocalNet(std::os::unix::net::UnixStream),
     /// A listening local socket and its filesystem path (unlinked on
     /// owner drop; explicit deletion preserves GNU's socket pathname).
-    LocalListen(std::os::unix::net::UnixListener, String),
+    LocalListen(std::os::unix::net::UnixListener, std::path::PathBuf),
     /// A serial port (file-backed).
     Serial(std::fs::File),
     /// No backend — GNU allows `make-process` without :command.
@@ -233,7 +237,7 @@ impl TcpConnect {
 #[derive(Clone)]
 enum DatagramAddress {
     Inet(std::net::SocketAddr),
-    Local(String),
+    Local(EmacsText),
 }
 
 pub enum DatagramSocket {
@@ -250,7 +254,7 @@ pub struct DatagramIo {
     read_max: usize,
     /// UTF-8 decoders retain incomplete characters across receive calls.
     /// Only unlink a pathname this process successfully bound itself.
-    bound_path: Option<String>,
+    bound_path: Option<std::path::PathBuf>,
     /// Whole messages survive nonblocking retries; GNU uses the current peer.
     pending: VecDeque<Vec<u8>>,
 }
@@ -264,10 +268,10 @@ impl Drop for DatagramIo {
 }
 
 impl DatagramAddress {
-    fn value(&self) -> Value {
+    fn value(&self, i: &mut Interp) -> Value {
         match self {
             Self::Inet(addr) => socket_addr_value(*addr),
-            Self::Local(path) => Value::string(path.clone()),
+            Self::Local(path) => unix_address_value(i, &path.to_external_bytes()),
         }
     }
 
@@ -319,10 +323,10 @@ impl DatagramAddress {
 }
 
 impl DatagramIo {
-    fn remote_value(&self) -> Value {
+    fn remote_value(&self, i: &mut Interp) -> Value {
         self.remote
             .as_ref()
-            .map(DatagramAddress::value)
+            .map(|address| address.value(i))
             .unwrap_or_else(|| {
                 // GNU's server starts with an all-zero sockaddr (AF_UNSPEC), not
                 // its own listening address. Account for BSD's leading sa_len.
@@ -345,7 +349,7 @@ impl DatagramIo {
                     n,
                     DatagramAddress::Local(
                         addr.as_pathname()
-                            .map(|p| p.to_string_lossy().into_owned())
+                            .map(|p| EmacsText::from_os_str(p.as_os_str()))
                             .unwrap_or_default(),
                     ),
                 )
@@ -357,7 +361,7 @@ impl DatagramIo {
         match (&self.socket, remote) {
             (DatagramSocket::Inet(s), Some(DatagramAddress::Inet(addr))) => s.send_to(bytes, addr),
             (DatagramSocket::Local(s), Some(DatagramAddress::Local(path))) => {
-                s.send_to(bytes, path)
+                s.send_to(bytes, path.to_os_string().map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "Cannot encode socket path"))?)
             }
             _ => Err(std::io::Error::from_raw_os_error(libc::EINVAL)),
         }
@@ -515,7 +519,7 @@ impl Drop for ProcIo {
                 }
             }
             ProcIo::LocalListen(_, path) => {
-                if !path.is_empty() {
+                if !path.as_os_str().is_empty() {
                     let _ = std::fs::remove_file(path);
                 }
             }
@@ -526,7 +530,7 @@ impl Drop for ProcIo {
 
 /// A live (or finished) process object.
 pub struct Proc {
-    pub name: String,
+    pub name: crate::lisp::text::EmacsText,
     /// `process-type`: "real" for children, "pipe", "network", "serial".
     pub kind: &'static str,
     /// Original :command list (or the contact description).
@@ -597,7 +601,7 @@ pub struct GnutlsState {
     /// `gnutls_certificate_client_credentials' (x509 or anon).
     pub cred: *mut core::ffi::c_void,
     /// Hostname used for SNI + certificate verification.
-    pub hostname: String,
+    pub hostname: EmacsText,
     /// Raw status bits from the last `gnutls_certificate_verify_peers2'.
     pub verify_status: u32,
     /// Peer certificate chain as imported DER blobs.
@@ -636,7 +640,7 @@ impl Proc {
         self.gnutls.as_ref().map(|s| s.session)
     }
 
-    pub fn gnutls_hostname(&self) -> Option<String> {
+    pub fn gnutls_hostname(&self) -> Option<EmacsText> {
         self.gnutls.as_ref().map(|s| s.hostname.clone())
     }
 }
@@ -684,7 +688,7 @@ fn nonblock_fd(fd: i32) {
     }
 }
 
-fn str_value(v: &Value) -> Option<String> {
+fn str_value(v: &Value) -> Option<EmacsText> {
     match v {
         Value::Str(s) => Some(s.borrow().clone()),
         Value::Sym(_) => None,
@@ -782,14 +786,14 @@ fn insert_coded_into_buffer(i: &mut Interp, buffer: usize, position: Option<usiz
     let Value::Str(source) = value else { return };
     let multi = buffer_multibyte(i, buffer);
     let unibyte = i.is_unibyte_str(source);
-    let text: String = source
+    let text: EmacsText = source
         .borrow()
         .chars()
         .map(|c| {
             if !multi {
-                super::value::eight_bit_byte(c).unwrap_or(c as u8) as char
-            } else if unibyte && (128..=255).contains(&(c as u32)) {
-                super::value::lisp_char(0x3fff00 + c as u32).unwrap()
+                EmacsChar::from(super::value::eight_bit_byte(c).unwrap_or(c.code() as u8) as char)
+            } else if unibyte && (128..=255).contains(&c.code()) {
+                super::value::lisp_char(0x3fff00 + (c).code() as u32).unwrap()
             } else {
                 c
             }
@@ -1717,18 +1721,17 @@ fn poll_all_except(i: &mut Interp, except: Option<&ProcessRef>) -> Result<bool, 
 // ---------- constructors ----------
 
 /// Use the first available suffix, considering every registered process.
-fn unique_process_name(i: &Interp, requested: &str) -> String {
-    let used = |name: &str| i.processes.iter().any(|p| p.borrow().name == name);
-    if !used(requested) {
-        return requested.to_string();
-    }
-    for suffix in 1usize.. {
-        let candidate = format!("{requested}<{suffix}>");
-        if !used(&candidate) {
-            return candidate;
+fn unique_process_name<T: crate::lisp::text::TextSource + ?Sized>(i: &Interp, requested: &T) -> crate::lisp::text::EmacsText {
+    requested.with_text(|requested| {
+        let used = |name: &crate::lisp::text::EmacsStr| i.processes.iter().any(|p| &*p.borrow().name == name);
+        if !used(requested) { return requested.to_string(); }
+        for suffix in 1usize.. {
+            let mut candidate = requested.to_string();
+            candidate.push_str(format!("<{suffix}>"));
+            if !used(&candidate) { return candidate; }
         }
-    }
-    unreachable!()
+        unreachable!()
+    })
 }
 
 fn free_process_marker() -> MarkerRef {
@@ -1761,7 +1764,7 @@ fn update_process_marker(i: &Interp, p: &mut Proc) {
     }
 }
 
-fn base_proc(name: String, kind: &'static str, io: ProcIo) -> Proc {
+fn base_proc(name: crate::lisp::text::EmacsText, kind: &'static str, io: ProcIo) -> Proc {
     Proc {
         name,
         kind,
@@ -1937,7 +1940,7 @@ fn f_make_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         (pty, pty)
     };
     let command = kw(i, &args, ":command");
-    let cmd: Vec<String> = match &command {
+    let cmd: Vec<EmacsText> = match &command {
         // GNU: non-list :command → (wrong-type-argument listp VALUE),
         // not a generic error; nil stays a no-command process.
         Value::Cons(_) | Value::Nil => {
@@ -1982,9 +1985,9 @@ fn f_make_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // Resolve against Lisp exec-path before installing the child's PATH.
     let directory = crate::editor::process_directory(i)?;
     let resolved = crate::editor::dif_resolve_program(i, &cmd[0], &directory, true)?;
-    let mut child_command = std::process::Command::new(resolved);
-    child_command.current_dir(directory);
-    child_command.args(&cmd[1..]);
+    let mut child_command = std::process::Command::new(crate::editor::native_path(i, &resolved)?);
+    child_command.current_dir(crate::editor::native_path(i, &directory)?);
+    child_command.args(command_arguments(&cmd[1..]).map_err(|error| i.error(error.to_string()))?);
     environment::apply(i, &mut child_command);
     // Transfer an explicitly supplied pipe's writer to the child, as GNU
     // does. Other :stderr destinations are drained through a separate pipe.
@@ -2092,6 +2095,15 @@ fn f_make_pipe_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Process(pref))
 }
 
+pub(crate) fn validate_hostname(i: &Interp, value: &Value) -> Result<(), Flow> {
+    if let Value::Str(text) = value {
+        if super::builtins::strfn::string_multibyte_p(i, value) && !text.borrow().is_ascii() {
+            return Err(i.error_q_text("Non-ASCII hostname %s detected, please use `puny-encode-domain'", &[text.borrow().clone()]));
+        }
+    }
+    Ok(())
+}
+
 fn service_port(i: &mut Interp, v: &Value) -> Result<u16, Flow> {
     match v {
         Value::Int(n) => Ok((*n).clamp(0, 65535) as u16),
@@ -2100,20 +2112,15 @@ fn service_port(i: &mut Interp, v: &Value) -> Result<u16, Flow> {
             if let Ok(n) = t.parse::<u16>() {
                 return Ok(n);
             }
-            let port = match t.as_str() {
-                "http" => 80,
-                "https" => 443,
-                "ftp" => 21,
-                "ssh" => 22,
-                "telnet" => 23,
-                "smtp" => 25,
-                "domain" => 53,
-                "imap" => 143,
-                "imaps" => 993,
-                "pop3" => 110,
-                "pop3s" => 995,
-                _ => return Err(i.error(format!("Unknown service: {t}"))),
-            };
+            const SERVICES: &[(&str, u16)] = &[
+                ("http", 80), ("https", 443), ("ftp", 21), ("ssh", 22),
+                ("telnet", 23), ("smtp", 25), ("domain", 53), ("imap", 143),
+                ("imaps", 993), ("pop3", 110), ("pop3s", 995),
+            ];
+            let port = SERVICES.iter().find(|(name, _)| t == *name).map(|(_, port)| *port)
+                .ok_or_else(|| {
+                    let mut message = EmacsText::from("Unknown service: "); message.append(&t); i.error(message)
+                })?;
             Ok(port)
         }
         // GNU accepts integers or strings; anything else gets a
@@ -2161,11 +2168,10 @@ fn datagram_error(i: &mut Interp, operation: &str, error: std::io::Error) -> Flo
     )
 }
 
-fn make_datagram_process(i: &mut Interp, name: String, args: &Value) -> EvalResult {
-    use std::net::ToSocketAddrs;
+fn make_datagram_process(i: &mut Interp, name: crate::lisp::text::EmacsText, args: &Value) -> EvalResult {
     let server = kw(i, args, ":server").truthy();
     if server && kw(i, args, ":nowait").truthy() {
-        return Err(i.error_q("`:server' is incompatible with `:nowait'", &[]));
+        return Err(i.error_q::<str>("`:server' is incompatible with `:nowait'", &[]));
     }
     let explicit = kw(i, args, if server { ":local" } else { ":remote" });
     let address = if explicit.truthy() {
@@ -2192,6 +2198,7 @@ fn make_datagram_process(i: &mut Interp, name: String, args: &Value) -> EvalResu
                 service_port(i, &service)?
             };
             let host = kw(i, args, ":host");
+            validate_hostname(i, &host)?;
             let host = match host {
                 Value::Nil => {
                     if family.as_deref() == Some("ipv6") {
@@ -2203,8 +2210,7 @@ fn make_datagram_process(i: &mut Interp, name: String, args: &Value) -> EvalResu
                 Value::Str(s) => s.borrow().clone(),
                 other => return Err(i.wrong_type_mut("stringp", &other)),
             };
-            let address = (host.as_str(), port)
-                .to_socket_addrs()
+            let address = address::resolve(&host, port)
                 .map_err(|e| datagram_error(i, "make network process failed", e))?
                 .find(|addr| match family.as_deref() {
                     Some("ipv4") => addr.is_ipv4(),
@@ -2231,7 +2237,7 @@ fn make_datagram_process(i: &mut Interp, name: String, args: &Value) -> EvalResu
         ),
         DatagramAddress::Local(path) => DatagramSocket::Local(
             if server {
-                std::os::unix::net::UnixDatagram::bind(path)
+                std::os::unix::net::UnixDatagram::bind(crate::editor::native_path(i, path)?)
             } else {
                 std::os::unix::net::UnixDatagram::unbound()
             }
@@ -2264,7 +2270,7 @@ fn make_datagram_process(i: &mut Interp, name: String, args: &Value) -> EvalResu
         },
         bound_path: if server {
             match &address {
-                DatagramAddress::Local(p) => Some(p.clone()),
+                DatagramAddress::Local(p) => Some(crate::editor::native_path(i, p)?),
                 _ => None,
             }
         } else {
@@ -2288,7 +2294,7 @@ fn make_datagram_process(i: &mut Interp, name: String, args: &Value) -> EvalResu
                 .map(|a| {
                     Value::string(
                         a.as_pathname()
-                            .map(|p| p.to_string_lossy().into_owned())
+                            .map(|p| EmacsText::from_os_str(p.as_os_str()))
                             .unwrap_or_default(),
                     )
                 })
@@ -2306,7 +2312,7 @@ fn make_datagram_process(i: &mut Interp, name: String, args: &Value) -> EvalResu
     }
     contact = super::eval::plist_put(&contact, i.q(":local"), local);
     if !server {
-        contact = super::eval::plist_put(&contact, i.q(":remote"), address.value());
+        contact = super::eval::plist_put(&contact, i.q(":remote"), address.value(i));
     }
     let mut p = base_proc(name, "network", ProcIo::Datagram(io));
     p.status = "open";
@@ -2405,7 +2411,7 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let name_v = kw(i, &args, ":name");
     let name = match &name_v {
         Value::Str(s) => s.borrow().clone(),
-        Value::Sym(id) if name_v.truthy() => i.symbol_name(*id),
+        Value::Sym(id) if name_v.truthy() => i.symbol_name_text(*id),
         _ => return Err(i.error("Network process name not given")),
     };
     coding::constructor(i, &args, false)?;
@@ -2421,8 +2427,8 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let host_v = kw(i, &args, ":host");
     let host = match &host_v {
         Value::Str(s) => s.borrow().clone(),
-        Value::Sym(id) if host_v.truthy() => i.symbol_name(*id),
-        _ => "127.0.0.1".to_string(),
+        Value::Sym(id) if host_v.truthy() => i.symbol_name_text(*id),
+        _ => EmacsText::from("127.0.0.1"),
     };
     // GNU's `process-contact' returns the creation plist with :service
     // resolved, plus :local (and :remote for clients) address vectors.
@@ -2461,9 +2467,9 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         };
         if server {
             if kw(i, &args, ":nowait").truthy() {
-                return Err(i.error_q("`:server' is incompatible with `:nowait'", &[]));
+                return Err(i.error_q::<str>("`:server' is incompatible with `:nowait'", &[]));
             }
-            let listener = std::os::unix::net::UnixListener::bind(&path).map_err(|e| {
+            let listener = std::os::unix::net::UnixListener::bind(crate::editor::native_path(i, &path)?).map_err(|e| {
                 let sig = i.intern(if e.kind() == std::io::ErrorKind::PermissionDenied {
                     "permission-denied"
                 } else {
@@ -2481,14 +2487,14 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             })?;
             let _ = listener.set_nonblocking(true);
             let local = unix_local_addr(i, listener.as_raw_fd()).unwrap_or(Value::Nil);
-            let mut p = base_proc(name, "network", ProcIo::LocalListen(listener, path.clone()));
+            let mut p = base_proc(name, "network", ProcIo::LocalListen(listener, crate::editor::native_path(i, &path)?));
             p.status = "listen";
             p.contact = super::eval::plist_put(&args, i.q(":local"), local);
             let pref = finish_setup(i, p, &args, false)?;
             i.processes.push(pref.clone());
             return Ok(Value::Process(pref));
         }
-        let stream = match std::os::unix::net::UnixStream::connect(&path) {
+        let stream = match std::os::unix::net::UnixStream::connect(crate::editor::native_path(i, &path)?) {
             Ok(s) => s,
             Err(e) => {
                 // GNU: (file-error "make client process failed" <errno> <plist>)
@@ -2505,7 +2511,7 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let local = unix_local_addr(i, stream.as_raw_fd()).unwrap_or(Value::Nil);
         // GNU reports the address passed to connect, preserving symlink
         // spelling and remaining valid if the remote end immediately closes.
-        let remote = unix_address_value(i, path.as_bytes());
+        let remote = unix_address_value(i, &path.to_external_bytes());
         let mut p = base_proc(name, "network", ProcIo::LocalNet(stream));
         p.status = "open";
         p.contact = super::eval::plist_put(&args, i.q(":local"), local);
@@ -2516,7 +2522,7 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     if server {
         if kw(i, &args, ":nowait").truthy() {
-            return Err(i.error_q("`:server' is incompatible with `:nowait'", &[]));
+            return Err(i.error_q::<str>("`:server' is incompatible with `:nowait'", &[]));
         }
         // GNU's :service t asks the kernel to choose an ephemeral port for
         // an Internet server, just like port zero. This server-only case
@@ -2529,7 +2535,8 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         // An address family does not replace the requested host.  In
         // particular, :family ipv4 must not broaden a loopback bind to
         // every interface (issue #232).
-        let listener = std::net::TcpListener::bind((host.as_str(), port)).map_err(|e| {
+        validate_hostname(i, &host_v)?;
+        let listener = address::resolve(&host, port).and_then(|addresses| std::net::TcpListener::bind(&addresses.collect::<Vec<_>>()[..])).map_err(|e| {
             // GNU reports bind failures via the errno-derived condition:
             // EACCES → permission-denied, others → file-error, with data
             // ("Cannot bind server socket" <strerror>).
@@ -2562,12 +2569,12 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     let port = service_port(i, &service)?;
     let nowait = kw(i, &args, ":nowait").truthy();
-    use std::net::ToSocketAddrs;
     let family = match family_v {
         Value::Sym(s) => i.symbol_name(s),
         _ => String::new(),
     };
-    let connection = (host.as_str(), port).to_socket_addrs().and_then(|addresses| {
+    validate_hostname(i, &host_v)?;
+    let connection = address::resolve(&host, port).and_then(|addresses| {
         let addresses: Vec<_> = addresses.filter(|address| match family.as_str() {
             "ipv4" => address.is_ipv4(),
             "ipv6" => address.is_ipv6(),
@@ -2654,8 +2661,8 @@ fn f_make_serial_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let name_v = kw(i, &args, ":name");
     let name = match &name_v {
         Value::Str(s) => s.borrow().clone(),
-        Value::Sym(id) if name_v.truthy() => i.symbol_name(*id),
-        _ => "serial".to_string(),
+        Value::Sym(id) if name_v.truthy() => i.symbol_name_text(*id),
+        _ => EmacsText::from("serial"),
     };
     let port_v = kw(i, &args, ":port");
     if !port_v.truthy() {
@@ -2670,7 +2677,7 @@ fn f_make_serial_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
-        .open(&path)
+        .open(crate::editor::native_path(i, &path)?)
         .map_err(|e| {
             // GNU: (file-missing "Opening serial port" <errno> <path>)
             let fm = i.q("file-missing");
@@ -2952,7 +2959,7 @@ fn f_process_contact(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let key = arg(&a, 1);
     if matches!(&key, Value::Sym(id) if *id == sym::T || i.symbol_name(*id) == ":remote") {
         if let ProcIo::Datagram(io) = &p.borrow().io {
-            c = super::eval::plist_put(&c, i.q(":remote"), io.remote_value());
+            c = super::eval::plist_put(&c, i.q(":remote"), io.remote_value(i));
         }
     }
     if kind == "real" {
@@ -3178,7 +3185,7 @@ fn f_set_process_window_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
 fn f_process_datagram_address(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let p = want_proc(i, &a[0])?;
     Ok(match &p.borrow().io {
-        ProcIo::Datagram(io) => io.remote_value(),
+        ProcIo::Datagram(io) => io.remote_value(i),
         _ => Value::Nil,
     })
 }
@@ -3405,12 +3412,13 @@ fn prepare_process_write(i: &mut Interp, p: &ProcessRef) -> Result<(), Flow> {
         let code = if pb.connect_error.truthy() {
             i.princ_to_string(&pb.connect_error)
         } else {
-            pb.exit_status.to_string()
+            EmacsText::from(pb.exit_status.to_string())
         };
-        return Err(i.error(format!(
-            "Process {} not running: failed with code {code}\n",
-            pb.name
-        )));
+        let mut message = EmacsText::from("Process ");
+        message.append(&pb.name);
+        message.push_str(" not running: failed with code ");
+        message.append(&code); message.push('\n');
+        return Err(i.error(message));
     }
     if !pb.alive() {
         if pb.kind == "network" && pb.dead {
@@ -3644,7 +3652,11 @@ fn abbr_to_signal(i: &Interp, id: SymId) -> Option<i32> {
 /// the GNU reader's `e+INF'/`e+NaN' — followed by junk.  Returns
 /// (VALUE, consumed-len); None when the syntax is invalid (no leading
 /// digits and not float syntax).
-fn string_to_number10(s: &str) -> Option<(Value, usize)> {
+fn string_to_number10<T: TextSource + ?Sized>(s: &T) -> Option<(Value, usize)> {
+    s.with_text(|text| {
+    // Only the numeric prefix is consumed; extended characters terminate it.
+    let native = text.to_unicode_lossy();
+    let s = native.as_str();
     let bytes = s.as_bytes();
     let mut cp = 0;
     let negative = bytes.first() == Some(&b'-');
@@ -3707,6 +3719,8 @@ fn string_to_number10(s: &str) -> Option<(Value, usize)> {
         .parse()
         .unwrap_or(if negative { i128::MIN } else { i128::MAX });
     Some((Value::Int(n), cp))
+
+    })
 }
 
 /// GNU `run-hook-with-args-until-success' over `signal-process-functions'
@@ -4139,14 +4153,20 @@ fn f_internal_default_process_filter(i: &mut Interp, a: crate::lisp::Argv) -> Ev
 
 // ---------- synchronous helpers ----------
 
-fn run_lines(i: &mut Interp, prog: &str, args: &[String], ignore_status: bool) -> EvalResult {
+fn command_arguments(arguments: &[EmacsText]) -> std::io::Result<Vec<std::ffi::OsString>> {
+    arguments.iter().map(|text| text.to_os_string()
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "Cannot encode process argument"))).collect()
+}
+
+fn run_lines<T: TextSource + ?Sized>(i: &mut Interp, prog: &T, args: &[EmacsText], ignore_status: bool) -> EvalResult {
+    prog.with_text(|prog| {
     let directory = crate::editor::process_directory(i)?;
     let resolved = crate::editor::dif_resolve_program(i, prog, &directory, false)?;
-    let mut command = std::process::Command::new(resolved);
-    command.current_dir(directory);
+    let mut command = std::process::Command::new(crate::editor::native_path(i, &resolved)?);
+    command.current_dir(crate::editor::native_path(i, &directory)?);
     environment::apply(i, &mut command);
     let out = command
-        .args(args)
+        .args(command_arguments(args).map_err(|error| i.error(error.to_string()))?)
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .output();
@@ -4175,6 +4195,8 @@ fn run_lines(i: &mut Interp, prog: &str, args: &[String], ignore_status: bool) -
         )),
         Err(e) => Err(i.error(format!("{prog}: {e}"))),
     }
+
+    })
 }
 
 fn process_lines(i: &mut Interp, a: &[Value], ignore: bool) -> EvalResult {
@@ -4186,7 +4208,7 @@ fn process_lines(i: &mut Interp, a: &[Value], ignore: bool) -> EvalResult {
     for v in &a[1..] {
         match v {
             Value::Str(s) => rest.push(s.borrow().clone()),
-            Value::Int(n) => rest.push(n.to_string()),
+            Value::Int(n) => rest.push(EmacsText::from(n.to_string())),
             _ => return Err(i.wrong_type_mut("stringp", v)),
         }
     }
@@ -4205,71 +4227,19 @@ fn f_process_lines_ignore_status(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
 fn f_list_system_processes(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     #[cfg(target_os = "macos")]
     {
-        return Ok(list_system_processes_macos());
+        macos::list_system_processes()
     }
     #[cfg(not(target_os = "macos"))]
     {
-    let mut pids = Vec::new();
-    for pid in 1..=99999i32 {
-        let r = unsafe { libc::kill(pid, 0) };
-        if r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM) {
-            pids.push(Value::Int(pid as i128));
+        let mut pids = Vec::new();
+        for pid in 1..=99999i32 {
+            let r = unsafe { libc::kill(pid, 0) };
+            if r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM) {
+                pids.push(Value::Int(pid as i128));
+            }
         }
+        Ok(Value::list(pids))
     }
-    Ok(Value::list(pids))
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn list_system_processes_macos() -> Value {
-    // Match GNU's sysctl(KERN_PROC_ALL) availability contract. Some
-    // sandboxes deny this operation even though single-PID queries work;
-    // GNU returns nil in that case rather than guessing a PID range.
-    let mut mib = [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_ALL];
-    let mut needed = 0usize;
-    let status = unsafe {
-        libc::sysctl(
-            mib.as_mut_ptr(),
-            mib.len() as libc::c_uint,
-            std::ptr::null_mut(),
-            &mut needed,
-            std::ptr::null_mut(),
-            0,
-        )
-    };
-    if status != 0 || needed == 0 {
-        return Value::Nil;
-    }
-
-    // libproc returns the same native process enumeration in a simpler
-    // pid_t array. Reverse it like GNU's Fcons loop over KERN_PROC_ALL.
-    let count = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
-    let Ok(capacity) = usize::try_from(count) else {
-        return Value::Nil;
-    };
-    if capacity == 0 {
-        return Value::Nil;
-    }
-    let Some(buffer_bytes) = capacity.checked_mul(std::mem::size_of::<libc::pid_t>()) else {
-        return Value::Nil;
-    };
-    let Ok(buffer_bytes) = libc::c_int::try_from(buffer_bytes) else {
-        return Value::Nil;
-    };
-    let mut pids = vec![0 as libc::pid_t; capacity];
-    let returned = unsafe {
-        libc::proc_listallpids(pids.as_mut_ptr().cast(), buffer_bytes)
-    };
-    if returned <= 0 {
-        return Value::Nil;
-    }
-    pids.truncate((returned as usize).min(pids.len()));
-    Value::list(
-        pids.into_iter()
-            .rev()
-            .map(|pid| Value::Int(pid as i128))
-            .collect(),
-    )
 }
 
 fn f_process_attributes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -4280,23 +4250,26 @@ fn f_process_attributes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let pid = match &a[0] {
         Value::Int(n) => i32::try_from(*n).ok(),
         Value::BigInt(n) => n.to_i32(),
-        Value::Float(f) => {
-            let f = **f;
-            (f.is_finite()
-                && f >= i32::MIN as f64
-                && f < i32::MAX as f64 + 1.0
-                && f.trunc() == f)
-                .then_some(f as i32)
+        Value::Float(n) => {
+            let n = **n;
+            (n.is_finite() && n.fract() == 0.0 && n >= i32::MIN as f64 && n <= i32::MAX as f64)
+                .then_some(n as i32)
         }
         _ => return Err(i.wrong_type_mut("numberp", &a[0])),
     }
     .ok_or_else(|| i.error("Not an in-range integer, integral float, or cons of integers"))?;
     #[cfg(target_os = "macos")]
     {
-        return process_attributes_macos(i, pid);
+        macos::process_attributes(i, pid)
     }
     #[cfg(not(target_os = "macos"))]
     {
+        process_attributes_ps(i, pid)
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn process_attributes_ps(i: &mut Interp, pid: i32) -> EvalResult {
     // GNU's alist via ps(1): fixed key set in fixed order, time fields
     // as (hi lo usec psec) lists.
     // args goes last so all space-free fields split cleanly. macOS ps
@@ -4369,159 +4342,9 @@ fn f_process_attributes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         pair(i, "euid", num(f[12])),
     ];
     Ok(Value::list(items))
-    }
 }
 
-#[cfg(target_os = "macos")]
-fn process_attributes_macos(i: &mut Interp, pid: i32) -> EvalResult {
-    use std::mem::{MaybeUninit, size_of};
-
-    let mut info = MaybeUninit::<libc::proc_taskallinfo>::zeroed();
-    let info_size = size_of::<libc::proc_taskallinfo>() as i32;
-    let read = unsafe {
-        libc::proc_pidinfo(
-            pid,
-            libc::PROC_PIDTASKALLINFO,
-            0,
-            info.as_mut_ptr().cast(),
-            info_size,
-        )
-    };
-    if read < info_size {
-        return Ok(Value::Nil);
-    }
-    let info = unsafe { info.assume_init() };
-    let bsd = info.pbsd;
-    let task = info.ptinfo;
-    let now_us = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_micros() as i128)
-        .unwrap_or(0);
-    let start_us = (bsd.pbi_start_tvsec as i128) * 1_000_000
-        + bsd.pbi_start_tvusec as i128;
-    let etime_us = now_us.saturating_sub(start_us).max(0);
-    let utime_us = (task.pti_total_user / 1_000) as i128;
-    let stime_us = (task.pti_total_system / 1_000) as i128;
-    let comm = darwin_cchars(&bsd.pbi_comm);
-    let args = darwin_process_args(pid).unwrap_or_else(|| comm.clone());
-    let uid = bsd.pbi_uid;
-    let gid = bsd.pbi_gid;
-    let user = unsafe {
-        let passwd = libc::getpwuid(uid);
-        if passwd.is_null() {
-            uid.to_string()
-        } else {
-            std::ffi::CStr::from_ptr((*passwd).pw_name)
-                .to_string_lossy()
-                .into_owned()
-        }
-    };
-    let group = unsafe {
-        let group = libc::getgrgid(gid);
-        if group.is_null() {
-            gid.to_string()
-        } else {
-            std::ffi::CStr::from_ptr((*group).gr_name)
-                .to_string_lossy()
-                .into_owned()
-        }
-    };
-    let state = match bsd.pbi_status {
-        libc::SRUN => "R",
-        libc::SSLEEP => "S",
-        libc::SSTOP => "T",
-        libc::SZOMB => "Z",
-        libc::SIDL => "I",
-        _ => "?",
-    };
-    let pair = |i: &mut Interp, key: &str, value: Value| {
-        Value::cons(symv(i, key), value)
-    };
-    let items = vec![
-        pair(i, "args", Value::string(args)),
-        pair(i, "thcount", Value::Int(task.pti_threadnum as i128)),
-        pair(i, "rss", Value::Int((task.pti_resident_size / 1024) as i128)),
-        pair(i, "vsize", Value::Int((task.pti_virtual_size / 1024) as i128)),
-        pair(i, "etime", time_list(etime_us)),
-        pair(i, "start", time_list(start_us)),
-        pair(i, "nice", Value::Int(bsd.pbi_nice as i128)),
-        pair(i, "majflt", Value::Int(task.pti_pageins as i128)),
-        pair(i, "time", time_list(utime_us + stime_us)),
-        pair(i, "stime", time_list(stime_us)),
-        pair(i, "utime", time_list(utime_us)),
-        pair(i, "tpgid", Value::Int(bsd.e_tpgid as i32 as i128)),
-        pair(i, "pgrp", Value::Int(bsd.pbi_pgid as i128)),
-        pair(i, "ppid", Value::Int(bsd.pbi_ppid as i128)),
-        pair(i, "state", Value::string(state)),
-        pair(i, "comm", Value::string(comm)),
-        pair(i, "group", Value::string(group)),
-        pair(i, "egid", Value::Int(gid as i128)),
-        pair(i, "user", Value::string(user)),
-        pair(i, "euid", Value::Int(uid as i128)),
-    ];
-    Ok(Value::list(items))
-}
-
-#[cfg(target_os = "macos")]
-fn darwin_cchars(chars: &[libc::c_char]) -> String {
-    let bytes = chars
-        .iter()
-        .take_while(|c| **c != 0)
-        .map(|c| *c as u8)
-        .collect::<Vec<_>>();
-    String::from_utf8_lossy(&bytes).into_owned()
-}
-
-#[cfg(target_os = "macos")]
-fn darwin_process_args(pid: i32) -> Option<String> {
-    const ARG_BUFFER_MAX: usize = 256 * 1024;
-    let mut bytes = vec![0u8; ARG_BUFFER_MAX];
-    let mut length = bytes.len();
-    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
-    let result = unsafe {
-        libc::sysctl(
-            mib.as_mut_ptr(),
-            mib.len() as libc::c_uint,
-            bytes.as_mut_ptr().cast(),
-            &mut length,
-            std::ptr::null_mut(),
-            0,
-        )
-    };
-    if result != 0 || length < std::mem::size_of::<i32>() {
-        let mut path = vec![0 as libc::c_char; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
-        let len = unsafe {
-            libc::proc_pidpath(
-                pid,
-                path.as_mut_ptr().cast(),
-                path.len() as u32,
-            )
-        };
-        return (len > 0).then(|| darwin_cchars(&path));
-    }
-    bytes.truncate(length);
-    let argc = i32::from_ne_bytes(bytes[..std::mem::size_of::<i32>()].try_into().ok()?)
-        .max(0) as usize;
-    let mut pos = std::mem::size_of::<i32>();
-    while pos < bytes.len() && bytes[pos] != 0 {
-        pos += 1; // executable path
-    }
-    while pos < bytes.len() && bytes[pos] == 0 {
-        pos += 1; // padding before argv
-    }
-    let mut argv = Vec::with_capacity(argc);
-    for _ in 0..argc {
-        if pos >= bytes.len() {
-            break;
-        }
-        let end = bytes[pos..].iter().position(|b| *b == 0)? + pos;
-        argv.push(String::from_utf8_lossy(&bytes[pos..end]).into_owned());
-        pos = end + 1;
-    }
-    Some(argv.join(" "))
-}
-
-/// GNU time list (HIGH LOW MICRO PICO) from total microseconds.
+#[cfg(not(target_os = "macos"))]
 fn time_list(usec: i128) -> Value {
     let secs = usec.div_euclid(1_000_000);
     let micro = usec.rem_euclid(1_000_000);
@@ -4681,7 +4504,7 @@ fn f_format_network_address(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
             let items = a[0].list_to_vec().unwrap_or_default();
             match items.first().and_then(|v| v.int()) {
                 Some(fam) => Ok(Value::string(format!("<Family {fam}>"))),
-                None => Err(i.error_q("Format specifier doesn't match argument type", &[])),
+                None => Err(i.error_q::<str>("Format specifier doesn't match argument type", &[])),
             }
         }
         // AF_LOCAL socket paths are plain strings.
@@ -5295,5 +5118,57 @@ mod send_tests {
             );
             assert_eq!(pending, original);
         }
+    }
+}
+
+#[cfg(test)]
+mod wide_process_argument_tests {
+    use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn native_child_receives_original_unicode_extended_and_raw_bytes() {
+        let input = EmacsText::from_codes([0xf0080, 0xd800, 0x110000, 0x3fff80]).unwrap();
+        let arguments = command_arguments(&[EmacsText::from("%s"), input.clone()]).unwrap();
+        let output = std::process::Command::new("/usr/bin/printf").args(arguments).output().unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, input.to_external_bytes());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn argument_boundaries_survive_spaces_and_non_ascii_text() {
+        let arguments = [EmacsText::from("[%s][%s]"), EmacsText::from("one two"), EmacsText::from("\u{f0100}")];
+        let output = std::process::Command::new("/usr/bin/printf").args(command_arguments(&arguments).unwrap()).output().unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"[one two][\xf3\xb0\x84\x80]");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod wide_local_datagram_tests {
+    use super::*;
+    #[test]
+    fn local_datagrams_preserve_private_use_peer_paths() {
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let directory = std::path::PathBuf::from("/tmp").join(format!("rm-dg-{}-{nonce:x}", std::process::id()));
+        std::fs::create_dir(&directory).unwrap();
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+        let _cleanup = Cleanup(directory.clone());
+        let mut server_path = EmacsText::from_os_str(directory.as_os_str()); server_path.push_str("/\u{f0080}");
+        let mut client_path = EmacsText::from_os_str(directory.as_os_str()); client_path.push_str("/\u{f0100}");
+        let make = |path: &EmacsText| {
+            let native = std::path::PathBuf::from(path.to_os_string().unwrap());
+            let socket = std::os::unix::net::UnixDatagram::bind(&native).unwrap();
+            socket.set_read_timeout(Some(std::time::Duration::from_secs(1))).unwrap();
+            DatagramIo { socket: DatagramSocket::Local(socket), remote: None,
+                address_size: std::mem::size_of::<libc::sockaddr_un>(), read_max: 1024,
+                bound_path: Some(native), pending: VecDeque::new() }
+        };
+        let server = make(&server_path); let client = make(&client_path);
+        assert_eq!(client.send(b"bytes", &Some(DatagramAddress::Local(server_path))).unwrap(), 5);
+        let mut bytes = [0u8; 16];
+        let (count, peer) = server.recv(&mut bytes).unwrap();
+        assert_eq!(&bytes[..count], b"bytes");
+        match peer { DatagramAddress::Local(path) => assert_eq!(path, client_path), _ => panic!("unexpected family") }
     }
 }

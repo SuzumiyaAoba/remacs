@@ -1,4 +1,5 @@
 //! Resolve faces and render editor state into a frontend-neutral grid.
+use crate::lisp::text::{EmacsStr, EmacsText};
 use crate::{
     buffer::Buffer,
     lisp::{Interp, Value},
@@ -135,7 +136,7 @@ struct FaceCtx {
     mark_active: u32,
     inherit: u32,
     /// `color-name-rgb-alist' folded into (canonical name -> rgb).
-    colors: HashMap<String, (u8, u8, u8)>,
+    colors: HashMap<EmacsText, (u8, u8, u8)>,
     /// Resolved face name -> merged StyleMix.
     cache: HashMap<String, StyleMix>,
 }
@@ -143,7 +144,7 @@ struct FaceCtx {
 impl FaceCtx {
     fn new(i: &Interp) -> FaceCtx {
         let sym = |n: &str| i.intern_soft(n).unwrap_or(u32::MAX);
-        let mut colors: HashMap<String, (u8, u8, u8)> = HashMap::new();
+        let mut colors: HashMap<EmacsText, (u8, u8, u8)> = HashMap::new();
         // The eight standard colors come from tty-standard-colors so
         // they resolve even if color-name-rgb-alist never loads.
         for (n, r, g, b) in [
@@ -157,7 +158,7 @@ impl FaceCtx {
             ("white", 65535, 65535, 65535),
         ] {
             colors.insert(
-                n.to_string(),
+                EmacsText::from(n),
                 ((r / 256) as u8, (g / 256) as u8, (b / 256) as u8),
             );
         }
@@ -213,7 +214,9 @@ impl FaceCtx {
         };
         let t = s.borrow();
         if let Some(hex) = t.strip_prefix('#') {
-            let parse = |h: &str| u8::from_str_radix(h, 16).ok();
+            let parse = |h: &EmacsStr| {
+                h.chars().try_fold(0u8, |value, c| c.to_digit(16).map(|digit| value * 16 + digit as u8))
+            };
             return match hex.len() {
                 6 => Some(CellColor(
                     parse(&hex[0..2])?,
@@ -328,7 +331,7 @@ impl FaceCtx {
             }
             Value::Str(s) => {
                 let name = s.borrow().clone();
-                match crate::editor::face_resolve(i, &name) {
+                match crate::editor::face_resolve(i, &(name).to_unicode_lossy()) {
                     Some(t) => self.named(i, &t, depth + 1),
                     None => StyleMix::default(),
                 }
@@ -721,14 +724,15 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
                     };
                     (bb.text.substring(ls, le), ls, row_end)
                 }
-                None => (String::new(), 0, 0),
+                None => (EmacsText::new(), 0, 0),
             };
             visible_end = row_end;
             let nvis = line.chars().count().saturating_sub(hscroll).min(width);
             let mut vis = String::with_capacity(nvis);
             // Characters visible in this row and their cells' styles.
             for (x, ch) in line.chars().skip(hscroll).take(width).enumerate() {
-                vis.push(ch);
+                // Grid is a Unicode presentation surface; Lisp text stays intact.
+                vis.push(ch.unicode().unwrap_or('\u{fffd}'));
                 let pos = line_pos + hscroll + x;
                 if let Some(wf) = &wf {
                     attrs[y][x] = style_at_pos(i, &mut fctx, wf, pos);
@@ -845,7 +849,7 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
         .and_then(|w| i.buffers.get(w.borrow().buffer));
     let mini_text = match &mini_buf {
         Some(b) => b.borrow().text.text(),
-        None => String::new(),
+        None => EmacsText::new(),
     };
     let (msg, styled) = if mini_text.is_empty() {
         (i.echo_message.clone(), None)
@@ -853,7 +857,7 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
         (mini_text, mini_buf.as_ref())
     };
     if let Some(y) = rows.len().checked_sub(1) {
-        let vis: String = msg.chars().take(width).collect();
+        let vis: String = msg.chars().take(width).map(|c| c.unicode().unwrap_or('\u{fffd}')).collect();
         rows[y] = format!("{vis:<width$}", width = width);
         if let Some(b) = styled {
             let wf = window_faces(i, &fctx, &b, &Value::Nil);

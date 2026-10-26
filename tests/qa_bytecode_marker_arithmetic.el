@@ -1,15 +1,60 @@
 ;;; -*- lexical-binding: nil; -*-
-;; Byte-code add1/sub1/unary-minus preserve marker arithmetic semantics (#595).
-(qa
- (with-temp-buffer
-   (list (funcall (byte-compile '(lambda (value) (1+ value))) (point-marker))
-         (funcall (byte-compile '(lambda (value) (1- value))) (point-marker))
-         (funcall (byte-compile '(lambda (value) (- value))) (point-marker))))
- '(2 0 -1))
-(qa
- (let ((m (make-marker)))
-   (condition-case err
-       (funcall (byte-compile '(lambda (value) (1+ value))) m)
-     (error (error-message-string err))))
- "Marker does not point anywhere")
+;; Arithmetic byte-code must coerce markers just like the primitives (#595).
+(let ((plus (byte-compile '(lambda (value) (1+ value))))
+      (minus (byte-compile '(lambda (value) (1- value))))
+      (negate (byte-compile '(lambda (value) (- value)))))
+  (with-temp-buffer
+    (insert "αβγ")
+    (goto-char 3)
+    (let ((marker (point-marker)))
+      (qa (funcall plus marker) 4)
+      (qa (funcall minus marker) 2)
+      (qa (funcall negate marker) -3)
+      (qa (marker-position marker) 3)
+      (set-marker marker 1)
+      (narrow-to-region 3 4)
+      (qa (funcall plus marker) 2)
+      (qa (funcall minus marker) 0)
+      (qa (funcall negate marker) -1)
+      (with-temp-buffer
+        (insert "longer buffer")
+        (qa (funcall plus marker) 2)
+        (qa (funcall minus marker) 0)
+        (qa (funcall negate marker) -1))))
+  (dolist (function (list plus minus negate))
+    (qa-err-data (funcall function (make-marker)) 'error '("Marker does not point anywhere"))
+    (let ((buffer (generate-new-buffer " *qa595*")) marker)
+      (with-current-buffer buffer (setq marker (point-marker)))
+      (kill-buffer buffer)
+      (qa-err-data (funcall function marker) 'error '("Marker does not point anywhere")))
+    (qa-err-data (funcall function nil) 'wrong-type-argument '(number-or-marker-p nil))
+    (qa-err-data (funcall function "1") 'wrong-type-argument '(number-or-marker-p "1")))
+  (dolist (entry '((0 (1 -1 0)) (1 (2 0 -1)) (-1 (0 -2 1))
+                   (2305843009213693951 (2305843009213693952 2305843009213693950 -2305843009213693951))
+                   (-2305843009213693952 (-2305843009213693951 -2305843009213693953 2305843009213693952))
+                   (100000000000000000000000000000000000000000000000000
+                    (100000000000000000000000000000000000000000000000001
+                     99999999999999999999999999999999999999999999999999
+                     -100000000000000000000000000000000000000000000000000))
+                   (1.5 (2.5 0.5 -1.5))))
+    (qa (mapcar (lambda (function) (funcall function (car entry)))
+                (list plus minus negate)) (cadr entry)))
+  (qa (not (null (memq 84 (string-to-list (aref plus 1))))) t)
+  (qa (not (null (memq 83 (string-to-list (aref minus 1))))) t)
+  (qa (not (null (memq 91 (string-to-list (aref negate 1))))) t)
+  ;; Primitive opcodes bypass redefinitions of the corresponding functions.
+  (let ((old-plus (symbol-function '1+))
+        (old-minus (symbol-function '1-))
+        (old-negate (symbol-function '-)) result)
+    (unwind-protect
+        (progn
+          (fset '1+ (lambda (_) 'shadow))
+          (fset '1- (lambda (_) 'shadow))
+          (fset '- (lambda (&rest _) 'shadow))
+          (setq result (list (funcall plus 2) (funcall minus 2)
+                             (funcall negate 2))))
+      (fset '1+ old-plus)
+      (fset '1- old-minus)
+      (fset '- old-negate))
+    (qa result '(3 1 -2))))
 (princ (qa--done))

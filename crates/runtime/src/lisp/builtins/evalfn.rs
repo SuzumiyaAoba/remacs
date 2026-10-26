@@ -2025,26 +2025,23 @@ pub(crate) fn text_quoting_style(i: &Interp) -> QuoteStyle {
 /// grave leaves `` `' `` and `'` verbatim, straight maps both to ASCII
 /// `'', curve turns them into U+2018/U+2019.  Only the format string
 /// is translated, never the substituted arguments.
-pub(crate) fn translate_message_quotes(i: &Interp, fmt: &str) -> String {
-    let mut out = String::with_capacity(fmt.len());
-    match text_quoting_style(i) {
-        QuoteStyle::Grave => out.push_str(fmt),
-        QuoteStyle::Straight => {
-            for c in fmt.chars() {
-                out.push(if c == '`' { '\'' } else { c });
-            }
+pub(crate) fn translate_message_quotes<T: crate::lisp::text::TextSource + ?Sized>(i: &Interp, fmt: &T) -> crate::lisp::text::EmacsText {
+    use crate::lisp::text::{EmacsChar, EmacsText};
+    fmt.with_text(|fmt| {
+        let mut out = EmacsText::with_capacity(fmt.len());
+        let style = text_quoting_style(i);
+        for c in fmt.chars() {
+            let replacement = match style {
+                QuoteStyle::Grave => c,
+                QuoteStyle::Straight if c == '`' => EmacsChar::from('\''),
+                QuoteStyle::Curve if c == '`' => EmacsChar::from('\u{2018}'),
+                QuoteStyle::Curve if c == '\'' => EmacsChar::from('\u{2019}'),
+                _ => c,
+            };
+            out.push(replacement);
         }
-        QuoteStyle::Curve => {
-            for c in fmt.chars() {
-                match c {
-                    '`' => out.push('\u{2018}'),
-                    '\'' => out.push('\u{2019}'),
-                    _ => out.push(c),
-                }
-            }
-        }
-    }
-    out
+        out
+    })
 }
 
 pub(crate) fn f_throw(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -2273,11 +2270,11 @@ fn f_require(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // Try to load feature file from load-path.
     let name = match args.get(1) {
         Some(Value::Str(s)) => s.borrow().clone(),
-        _ => i.symbol_name(id),
+        _ => i.symbol_name_text(id),
     };
     let noerror = args.get(2).map(|v| v.truthy()).unwrap_or(false);
     // GNU Frequire loads with NOMESSAGE = t: no `Loading FILE...' echo.
-    match crate::lisp::load::load_library_opts_msg(i, &name, false, false, true, true) {
+    match crate::lisp::load::load_library_opts_msg(i, &(name).to_unicode_lossy(), false, false, true, true) {
         Ok(crate::lisp::load::LoadOutcome::Loaded(found)) => {
             // GNU's `require': after loading FILE, FEATURE must be
             // provided — a file that loads without `(provide FEATURE)'
@@ -2888,7 +2885,7 @@ fn signal_before_change_inner(i: &mut Interp, beg1: usize, end1: usize) -> EvalR
     }
      Ok(Value::Nil)
  }
- 
+
  /// GNU `report_after_change': `after-change-functions' with
  /// (BEG END LEN); LEN is the char length of the replaced text.
 /// Handles the `combine-after-change-calls' deferral, replays the
@@ -3441,7 +3438,7 @@ fn f_load(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let nosuffix = arg(&args, 3).truthy();
     let mustsuffix = arg(&args, 4).truthy();
     let outcome =
-        crate::lisp::load::load_library_opts_msg(i, &name, nosuffix, mustsuffix, true, nomessage)?;
+        crate::lisp::load::load_library_opts_msg(i, &(name).to_unicode_lossy(), nosuffix, mustsuffix, true, nomessage)?;
     match outcome {
         crate::lisp::load::LoadOutcome::Loaded(_) => Ok(Value::t()),
         crate::lisp::load::LoadOutcome::Missing | crate::lisp::load::LoadOutcome::Dir(_)
@@ -3486,7 +3483,7 @@ fn f_load_file(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Str(s) => s.borrow().clone(),
         _ => name,
     };
-    let outcome = crate::lisp::load::load_library_opts(i, &name, true, false, true)?;
+    let outcome = crate::lisp::load::load_library_opts(i, &(name).to_unicode_lossy(), true, false, true)?;
     match outcome {
         crate::lisp::load::LoadOutcome::Loaded(_) => Ok(Value::t()),
         crate::lisp::load::LoadOutcome::Dir(d) => Err(i.signal_data(
@@ -3529,13 +3526,13 @@ fn f_locate_library(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     } else {
         path
     };
-    let mut file = locate_library_in(i, &name, nosuffix, &search_path)?;
+    let mut file = locate_library_in(i, &(name).to_unicode_lossy(), nosuffix, &search_path)?;
     if default_path {
         file = match file {
-            Some(path) => Some(crate::lisp::load::located_source(i, &name, path)?),
+            Some(path) => Some(crate::lisp::load::located_source(i, &(name).to_unicode_lossy(), path)?),
             None => {
                 let suffixes = locate_library_suffixes(i, nosuffix);
-                crate::lisp::load::locate_bundled_source(i, &name, &suffixes)?
+                crate::lisp::load::locate_bundled_source(i, &(name).to_unicode_lossy(), &suffixes)?
             }
         };
     }
@@ -3587,7 +3584,7 @@ fn locate_library_in(
             Value::Nil => crate::editor::expand_file_name_str(i, ""),
             _ => continue,
         };
-        let base = std::path::Path::new(&directory)
+        let base = &crate::editor::native_path(i, &directory)?
             .join(name)
             .to_string_lossy()
             .into_owned();
@@ -3599,7 +3596,7 @@ fn locate_library_in(
             }
         }
         if let Some(path) = crate::lisp::load::locate_cache_source(
-            i, std::path::Path::new(&directory), name, &suffixes,
+            i, &crate::editor::native_path(i, &directory)?, name, &suffixes,
         )? {
             return Ok(Some(path));
         }
@@ -3617,7 +3614,7 @@ fn locate_library_suffixes(i: &mut Interp, nosuffix: bool) -> Vec<String> {
             .unwrap_or_default()
             .iter()
             .filter_map(|v| match v {
-                Value::Str(s) => Some(s.borrow().clone()),
+                Value::Str(s) => Some(s.borrow().to_unicode_lossy()),
                 _ => None,
             })
             .collect()
@@ -3777,7 +3774,7 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
     // embedded libraries and disk `found' paths otherwise, so resolve
     // the target to the same key space (`load_key' normalizes
     // bundled-dir hits to their `builtin:<stem>').
-    let resolved_key = match crate::lisp::load::locate_full(i, &name, false, false) {
+    let resolved_key = match crate::lisp::load::locate_full(i, &(name).to_unicode_lossy(), false, false) {
         Some(crate::lisp::load::Found::File(p)) => crate::lisp::load::load_key(&p),
         Some(crate::lisp::load::Found::Dir(_)) => String::new(),
         None => crate::lisp::load::load_key(&format!("builtin:{name}")),
@@ -3815,11 +3812,11 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
                 for (f, a) in i.lisp_stack.iter().rev().take(30).rev() {
                     eprintln!(
                         "  {} {}",
-                        i.princ_to_string(f).chars().take(80).collect::<String>(),
+                        i.princ_to_string(f).chars().take(80).collect::<crate::lisp::text::EmacsText>(),
                         i.princ_to_string(&Value::list(a.as_slice().to_vec()))
                             .chars()
                             .take(120)
-                            .collect::<String>()
+                            .collect::<crate::lisp::text::EmacsText>()
                     );
                 }
             }
@@ -3846,7 +3843,7 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
     // autoload cell — loading it again would just re-evaluate the
     // file.  The dump-time stash holds the definition GNU's .elc
     // would have installed; resolve through it directly.
-    let feat = i.intern(&stem(&name));
+    let feat = i.intern(&stem(&(name).to_unicode_lossy()));
     if feature_present(i, feat) {
         if let Some(id) = owner {
             let pk = i.q("remacs--dump-fn");
@@ -3862,7 +3859,7 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
     // GNU autoload_do_load → load_with_autoload_queue passes
     // nomessage=t to Fload: autoload-triggered loads don't echo
     // "Loading ..." (stderr or *Messages*).
-    match crate::lisp::load::load_library_opts_msg(i, &name, false, false, true, true)? {
+    match crate::lisp::load::load_library_opts_msg(i, &(name).to_unicode_lossy(), false, false, true, true)? {
         crate::lisp::load::LoadOutcome::Missing => {
             return Err(i.signal_data(
                 crate::lisp::sym::FILE_MISSING,
@@ -3973,7 +3970,7 @@ fn f_access_file(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             ],
         );
     }
-    match std::fs::File::open(&expanded) {
+    match std::fs::File::open(crate::editor::native_path(i, &expanded)?) {
         Ok(_) => Ok(Value::Nil),
         Err(e) => {
             let estr = e.to_string();
@@ -4079,7 +4076,7 @@ fn eval_buffer_source(
 ) -> EvalResult {
     let filename = if let Value::Str(text) = &filename {
         let text = text.borrow().clone();
-        if std::path::Path::new(&text).is_absolute() || text.starts_with('~') {
+        if crate::editor::native_path(i, &text)?.is_absolute() || text.starts_with('~') {
             Value::string(crate::editor::expand_file_name_str(i, &text))
         } else {
             filename
@@ -4239,7 +4236,7 @@ fn eval_buffer_source(
                 // reader, so whitespace-only input never calls READ-FUNCTION.
                 loop {
                     while pos < chars.len()
-                        && matches!(chars[pos], ' ' | '\t' | '\n' | '\x0c' | '\r' | '\u{a0}')
+                        && chars[pos].unicode().is_some_and(|c| matches!(c, ' ' | '\t' | '\n' | '\x0c' | '\r' | '\u{a0}'))
                     {
                         pos += 1;
                     }
@@ -4740,7 +4737,7 @@ fn f_current_time_zone(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             if z == "UTC" || z == "t" {
                 (0, "UTC".to_string())
             } else {
-                let (tm, name) = super::misc::tz_local_tm(secs, &z);
+                let (tm, name) = super::misc::tz_local_tm(secs, &(z).to_unicode_lossy());
                 (tm.tm_gmtoff, name)
             }
         }
@@ -4876,7 +4873,7 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                 // %Z prints the resolved tm_zone abbreviation (e.g.
                 // "UTC0" → "UTC"), not the spec text.  The name is
                 // copied by tz_local_tm before TZ is restored.
-                let (tm, name) = super::misc::tz_local_tm(secs, &z);
+                let (tm, name) = super::misc::tz_local_tm(secs, &(z).to_unicode_lossy());
                 (tm, ZoneLabel::Named(name))
             }
         }
@@ -4928,7 +4925,7 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         .intern_soft("system-time-locale")
         .filter(|id| i.bound_p(*id))
         .and_then(|id| match i.symbol_value(id) {
-            Value::Str(s) => Some(s.borrow().clone()),
+            Value::Str(s) => Some(s.borrow().to_unicode_lossy()),
             _ => None,
         });
     // Own the zone name before any locale/TZ operation can invalidate libc's
@@ -4963,7 +4960,7 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let mut tm = tm;
     tm.tm_zone = czone.as_ptr().cast();
     let out = super::timefmt::format_time(
-        &fmt,
+        &(fmt).to_unicode_lossy(),
         &tm,
         secs,
         (frac12 / 1000) as u32,
@@ -4991,8 +4988,8 @@ pub(crate) fn f_kill_emacs(i: &mut Interp, args: crate::lisp::Argv) -> EvalResul
     if restart {
         use crate::lifecycle::RestartError;
         crate::lifecycle::validate_restart().map_err(|error| match error {
-            RestartError::NoArguments => i.error_q("No command line arguments known; unable to re-execute Emacs", &[]),
-            RestartError::UnknownExecutable => i.error_q("Unknown Emacs executable", &[]),
+            RestartError::NoArguments => i.error_q::<str>("No command line arguments known; unable to re-execute Emacs", &[]),
+            RestartError::UnknownExecutable => i.error_q::<str>("Unknown Emacs executable", &[]),
             RestartError::MissingExecutable(name) => i.error_q(
                 "Emacs executable \"%s\" can't be found", &[&name.to_string_lossy()]),
         })?;
@@ -5204,7 +5201,7 @@ fn f_make_byte_code(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         return Err(_i.error("Invalid byte-code object"));
     }
     let doc = args.get(4).and_then(|v| match v {
-        Value::Str(s) => Some(s.borrow().clone()),
+        Value::Str(s) => Some(s.borrow().to_unicode_lossy()),
         _ => None,
     });
     let interactive = args.get(5).map(|spec| {
@@ -5220,7 +5217,7 @@ fn f_make_byte_code(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         rest: None,
         body: Vec::new(),
         env: None,
-        doc,
+        doc: doc.map(Into::into),
         interactive,
         name: None,
         bad_arglist: false,

@@ -2569,9 +2569,9 @@ fn f_tty_find_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             other => return Err(i.wrong_type_mut("stringp", other)),
         };
         let cut = s
-            .rfind(|c| c == '-' || c == '_' || c == '.')
+            .chars().enumerate().filter(|(_, c)| *c == '-' || *c == '_' || *c == '.').map(|(index, _)| index).last()
             .map(|p| &s[..p])
-            .unwrap_or("");
+            .unwrap_or_default();
         if cut.is_empty() {
             return Ok(Value::Nil);
         }
@@ -3106,7 +3106,7 @@ fn f_redirect_debugging_output(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
         .create(true)
         .append(append)
         .truncate(!append)
-        .open(&path)
+        .open(crate::editor::native_path(i, &path)?)
     {
         Ok(f) => {
             #[cfg(unix)]

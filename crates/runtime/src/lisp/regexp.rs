@@ -7,6 +7,8 @@
 //!   `^` `$` `` \` `` `\'` `\b` `\B` `\<` `\>` `\_<` `\_>` `\w` `\W` `\sX` `\SX`
 //!   `\(...\)` `\(?:...\)` `\|` `\1`–`\9` backrefs
 
+use super::text::{CharSequence, EmacsChar, EmacsText, TextSource};
+
 /// A compiled regexp: instruction list + group count.
 pub struct Regex {
     prog: Vec<Inst>,
@@ -16,13 +18,13 @@ pub struct Regex {
     extra_regs: usize,
     pub case_fold: bool,
     /// Source pattern (for error messages).
-    pub source: String,
+    pub source: EmacsText,
 }
 
 #[derive(Debug, Clone)]
 enum Inst {
     /// Match exact char `c` at `pos` (post-fold if case_fold).
-    Char(char),
+    Char(EmacsChar),
     /// Any char except newline.
     Any,
     /// Char in set.
@@ -61,15 +63,15 @@ enum Inst {
 #[derive(Debug, Clone)]
 struct CharSet {
     negated: bool,
-    ranges: Vec<(char, char)>,
-    singles: Vec<char>,
+    ranges: Vec<(EmacsChar, EmacsChar)>,
+    singles: Vec<EmacsChar>,
     posix: Vec<(String, bool)>, // (class-name, negated?)
     syntax: Vec<(u8, bool)>,    // (syntax code, negated?)
     cats: Vec<(u8, bool)>,      // (category bit, negated?) — \cX / \CX
 }
 
 impl CharSet {
-    fn base_match(&self, c: char, syn: SynFn, cat: CatFn, pos: usize) -> bool {
+    fn base_match(&self, c: EmacsChar, syn: SynFn, cat: CatFn, pos: usize) -> bool {
         self.singles.contains(&c)
             || self.ranges.iter().any(|(lo, hi)| c >= *lo && c <= *hi)
             || self
@@ -79,7 +81,7 @@ impl CharSet {
             || self.cats.iter().any(|(bit, neg)| cat(c, *bit) != *neg)
     }
 
-    fn contains(&self, c: char, case_fold: bool, syn: SynFn, cat: CatFn, pos: usize) -> bool {
+    fn contains(&self, c: EmacsChar, case_fold: bool, syn: SynFn, cat: CatFn, pos: usize) -> bool {
         let mut found = self.base_match(c, syn, cat, pos)
             || self
                 .posix
@@ -95,7 +97,10 @@ impl CharSet {
 /// GNU `char-syntax` values for the *standard* syntax table (dumped from
 /// GNU Emacs: `;` is punctuation there, `\n` is whitespace, `$`/`%` word,
 /// `&` `*` `+` `-` `/` `<` `=` `>` `|` `_` symbol, `{[`/`]}` paren).
-pub fn syntax_code(c: char) -> u8 {
+pub fn syntax_code(c: impl Into<EmacsChar>) -> u8 {
+    let Some(c) = c.into().unicode() else {
+        return b'.';
+    };
     match c {
         ' ' | '\t' | '\n' | '\x0c' | '\r' => b' ',
         '(' | '[' | '{' => b'(',
@@ -111,7 +116,7 @@ pub fn syntax_code(c: char) -> u8 {
     }
 }
 
-fn syntax_match(code: u8, c: char, syn: SynFn, pos: usize) -> bool {
+fn syntax_match(code: u8, c: EmacsChar, syn: SynFn, pos: usize) -> bool {
     let sc = syn.code_at(c, pos);
     // GNU accepts `-` as an alias for the whitespace class.
     sc == code || (code == b'-' && sc == b' ')
@@ -119,7 +124,7 @@ fn syntax_match(code: u8, c: char, syn: SynFn, pos: usize) -> bool {
 
 /// Table-free fallback for standalone syntax callbacks and early loadup.
 /// The interpreter overrides this with its GNU character tables.
-fn posix_match(name: &str, c: char, syn: &dyn Fn(char) -> u8, fold: bool) -> bool {
+fn posix_match(name: &str, c: EmacsChar, syn: &dyn Fn(EmacsChar) -> u8, fold: bool) -> bool {
     match name {
         "alnum" => c.is_alphanumeric(),
         "alpha" => c.is_alphabetic(),
@@ -139,14 +144,14 @@ fn posix_match(name: &str, c: char, syn: &dyn Fn(char) -> u8, fold: bool) -> boo
         "print" => !c.is_control(),
         // GNU regex.c ISCNTRL: `(c) < \' \'` — ASCII controls only;
         // DEL (0x7f) and C1 are NOT in the class.
-        "cntrl" => (c as u32) < 0x20,
+        "cntrl" => c.code() < 0x20,
         "blank" => c == ' ' || c == '\t',
         "word" => syn(c) == b'w',
         // GNU's nonstandard extras (regex.c `RE_CHAR_CLASSES').
         "ascii" => c.is_ascii(),
         "nonascii" => !c.is_ascii(),
-        "unibyte" => (c as u32) <= 0xFF,
-        "multibyte" => (c as u32) > 0xFF,
+        "unibyte" => c.code() <= 0xFF,
+        "multibyte" => c.code() > 0xFF,
         _ => false,
     }
 }
@@ -176,30 +181,30 @@ const KNOWN_POSIX: &[&str] = &[
 /// syntax callbacks remain usable by standalone engine clients; the editor
 /// supplies its live GNU syntax, case and Unicode category tables.
 pub trait Syntax {
-    fn code(&self, c: char) -> u8;
+    fn code(&self, c: EmacsChar) -> u8;
 
-    fn code_at(&self, c: char, _pos: usize) -> u8 {
+    fn code_at(&self, c: EmacsChar, _pos: usize) -> u8 {
         self.code(c)
     }
 
-    fn case_eq(&self, a: char, b: char) -> bool {
+    fn case_eq(&self, a: EmacsChar, b: EmacsChar) -> bool {
         char_eq(a, b, true)
     }
 
-    fn case_match(&self, c: char, test: &mut dyn FnMut(char) -> bool) -> bool {
+    fn case_match(&self, c: EmacsChar, test: &mut dyn FnMut(EmacsChar) -> bool) -> bool {
         c.to_lowercase()
             .chain(c.to_uppercase())
             .any(|variant| variant != c && test(variant))
     }
 
-    fn posix(&self, name: &str, c: char, fold: bool) -> bool {
+    fn posix(&self, name: &str, c: EmacsChar, fold: bool) -> bool {
         posix_match(name, c, &|ch| self.code(ch), fold)
     }
 }
 
 impl<F: Fn(char) -> u8 + ?Sized> Syntax for F {
-    fn code(&self, c: char) -> u8 {
-        self(c)
+    fn code(&self, c: EmacsChar) -> u8 {
+        self(c.unicode().unwrap_or('\u{fffd}'))
     }
 }
 
@@ -209,13 +214,13 @@ pub type SynFn<'a> = &'a dyn Syntax;
 /// general-category enum; UPPER/LOWER come from the current case table.
 pub(crate) fn class_matches(
     name: &str,
-    c: char,
+    c: EmacsChar,
     syntax: u8,
     category: Option<i128>,
     upper: bool,
     lower: bool,
 ) -> bool {
-    let cp = crate::lisp::value::lisp_char_code(c);
+    let cp = i128::from(c.code());
     match name {
         "ascii" => cp < 128,
         "nonascii" => cp >= 128,
@@ -237,7 +242,7 @@ pub(crate) fn class_matches(
         "lower" => lower,
         "blank" => {
             if c.is_ascii() {
-                matches!(c, ' ' | '\t')
+                (c == ' ' || c == '\t')
             } else {
                 category == Some(23)
             }
@@ -269,10 +274,10 @@ pub(crate) fn class_matches(
 
 /// Category-table lookup for `\cX'/`\CX': `(c, BIT)' where BIT is the
 /// category character's code (e.g. `j' = 106 for Japanese).
-pub type CatFn<'a> = &'a dyn Fn(char, u8) -> bool;
+pub type CatFn<'a> = &'a dyn Fn(EmacsChar, u8) -> bool;
 
 /// No-categories fallback for callers without a category table.
-pub fn no_cat(_: char, _: u8) -> bool {
+pub fn no_cat(_: EmacsChar, _: u8) -> bool {
     false
 }
 
@@ -282,11 +287,11 @@ pub fn std_syntax(c: char) -> u8 {
     syntax_code(c)
 }
 
-fn is_word_char(c: char, syn: SynFn, pos: usize) -> bool {
+fn is_word_char(c: EmacsChar, syn: SynFn, pos: usize) -> bool {
     syn.code_at(c, pos) == b'w'
 }
 
-fn is_sym_char(c: char, syn: SynFn, pos: usize) -> bool {
+fn is_sym_char(c: EmacsChar, syn: SynFn, pos: usize) -> bool {
     matches!(syn.code_at(c, pos), b'w' | b'_')
 }
 
@@ -297,6 +302,7 @@ pub struct RegexError(pub String);
 
 struct Parser {
     chars: Vec<char>,
+    originals: Vec<EmacsChar>,
     pos: usize,
     n_groups: usize,
     open_groups: Vec<usize>,
@@ -305,7 +311,7 @@ struct Parser {
 #[derive(Debug, Clone)]
 enum Ast {
     Empty,
-    Char(char),
+    Char(EmacsChar),
     Any,
     Class(CharSet),
     Group(usize, Box<Ast>),
@@ -325,6 +331,9 @@ enum Ast {
 }
 
 impl Parser {
+    fn last_character(&self) -> EmacsChar {
+        self.originals[self.pos - 1]
+    }
     fn peek(&self) -> Option<char> {
         self.chars.get(self.pos).copied()
     }
@@ -469,9 +478,9 @@ impl Parser {
             Some('$') => Ok(Ast::Anchor('$')),
             Some('[') => self.parse_class(),
             // Emacs syntax: bare parens are literal; groups use \( \).
-            Some('(') | Some(')') => Ok(Ast::Char(self.chars[self.pos - 1])),
+            Some('(') | Some(')') => Ok(Ast::Char(self.last_character())),
             Some('\\') => self.parse_escape(),
-            Some(c) => Ok(Ast::Char(c)),
+            Some(_) => Ok(Ast::Char(self.last_character())),
         }
     }
 
@@ -563,7 +572,7 @@ impl Parser {
                 let start = self.pos;
                 self.parse_interval()?;
                 self.pos = start;
-                Ok(Ast::Char('{'))
+                Ok(Ast::Char('{'.into()))
             }
             Some('w') => Ok(Ast::SyntaxClass(b'w', false)),
             Some('W') => Ok(Ast::SyntaxClass(b'w', true)),
@@ -602,15 +611,15 @@ impl Parser {
                 }
                 Ok(Ast::Backref(group))
             }
-            Some('n') => Ok(Ast::Char('\n')),
-            Some('t') => Ok(Ast::Char('\t')),
-            Some('r') => Ok(Ast::Char('\r')),
-            Some('f') => Ok(Ast::Char('\x0c')),
-            Some('v') => Ok(Ast::Char('\x0b')),
-            Some('a') => Ok(Ast::Char('\x07')),
-            Some('e') => Ok(Ast::Char('\x1b')),
-            Some('d') => Ok(Ast::Char('\x7f')),
-            Some(c) => Ok(Ast::Char(c)), // \. \* \+ \\ etc — literal
+            Some('n') => Ok(Ast::Char('\n'.into())),
+            Some('t') => Ok(Ast::Char('\t'.into())),
+            Some('r') => Ok(Ast::Char('\r'.into())),
+            Some('f') => Ok(Ast::Char('\x0c'.into())),
+            Some('v') => Ok(Ast::Char('\x0b'.into())),
+            Some('a') => Ok(Ast::Char('\x07'.into())),
+            Some('e') => Ok(Ast::Char('\x1b'.into())),
+            Some('d') => Ok(Ast::Char('\x7f'.into())),
+            Some(_) => Ok(Ast::Char(self.last_character())), // \. \* \+ \\ etc — literal
         }
     }
 
@@ -656,7 +665,7 @@ impl Parser {
         // `]` as first char is literal.
         let mut first = true;
         let mut no_posix_retry = false;
-        let mut prev_char: Option<char> = None;
+        let mut prev_char: Option<EmacsChar> = None;
         loop {
             match self.peek() {
                 None => return Err(RegexError("Unmatched [ or [^".into())),
@@ -721,7 +730,7 @@ impl Parser {
                     // `no_posix_retry' keeps the same `[' from
                     // re-entering this branch forever.
                     self.pos = save;
-                    prev_char = Some('[');
+                    prev_char = Some('['.into());
                     no_posix_retry = true;
                 }
                 continue;
@@ -738,8 +747,9 @@ impl Parser {
 
     /// One char inside a class.  GNU: `\' is an ordinary character
     /// inside [...] (POSIX class names are handled by the caller).
-    fn class_char(&mut self) -> Result<char, RegexError> {
-        self.next().ok_or(RegexError("Unmatched [ or [^".into()))
+    fn class_char(&mut self) -> Result<EmacsChar, RegexError> {
+        self.next().ok_or(RegexError("Unmatched [ or [^".into()))?;
+        Ok(self.last_character())
     }
 }
 
@@ -915,13 +925,22 @@ impl Codegen {
 }
 
 /// Compile a pattern.
-pub fn compile(pattern: &str) -> Result<Regex, RegexError> {
+pub fn compile<T: TextSource + ?Sized>(pattern: &T) -> Result<Regex, RegexError> {
     compile_case(pattern, true)
 }
 
-pub fn compile_case(pattern: &str, case_fold: bool) -> Result<Regex, RegexError> {
+pub fn compile_case<T: TextSource + ?Sized>(
+    pattern: &T,
+    case_fold: bool,
+) -> Result<Regex, RegexError> {
+    let pattern = pattern.with_text(|text| text.to_owned());
+    let originals = pattern.chars().collect::<Vec<_>>();
     let mut p = Parser {
-        chars: pattern.chars().collect(),
+        chars: originals
+            .iter()
+            .map(|c| c.unicode().unwrap_or('\u{fffd}'))
+            .collect(),
+        originals,
         pos: 0,
         n_groups: 0,
         open_groups: Vec::new(),
@@ -970,7 +989,7 @@ pub struct MatchState {
 
 pub type Regs = Vec<Option<usize>>;
 
-fn char_eq(a: char, b: char, fold: bool) -> bool {
+fn char_eq(a: EmacsChar, b: EmacsChar, fold: bool) -> bool {
     if a == b {
         return true;
     }
@@ -989,7 +1008,7 @@ fn char_eq(a: char, b: char, fold: bool) -> bool {
 /// there (POSIX longest-match and `looking-back' probing).
 fn run(
     re: &Regex,
-    text: &[char],
+    text: &[EmacsChar],
     mut pc: usize,
     mut sp: usize,
     mut regs: Regs,
@@ -1179,28 +1198,28 @@ fn run(
 pub const NO_POINT: usize = usize::MAX;
 
 /// Try to match at exactly `pos`. Returns regs on success.
-pub fn match_at(
+fn match_at_wide(
     re: &Regex,
-    text: &[char],
+    text: &[EmacsChar],
     pos: usize,
     syn: SynFn,
     cat: CatFn,
     point: usize,
 ) -> Option<Regs> {
-    match_at_end(re, text, pos, usize::MAX, syn, cat, point)
+    match_at_end_wide(re, text, pos, usize::MAX, syn, cat, point)
 }
 
 /// Try to match at `pos` requiring the match to end exactly at `end`.
-pub fn match_at_end(
+fn match_at_end_wide(
     re: &Regex,
-    text: &[char],
+    text: &[EmacsChar],
     pos: usize,
     end: usize,
     syn: SynFn,
     cat: CatFn,
     point: usize,
 ) -> Option<Regs> {
-    match_at_within(re, text, pos, usize::MAX, end, syn, cat, point)
+    match_at_within_wide(re, text, pos, usize::MAX, end, syn, cat, point)
 }
 
 /// Try to match at `pos` on the truncated text `text[..limit]`
@@ -1208,9 +1227,9 @@ pub fn match_at_end(
 /// `limit` — GNU `re_match' with STOP, used for backward searches.
 /// `end_cap`, when not usize::MAX, additionally requires the match to
 /// end exactly there.
-pub fn match_at_within(
+fn match_at_within_wide(
     re: &Regex,
-    text: &[char],
+    text: &[EmacsChar],
     pos: usize,
     limit: usize,
     end_cap: usize,
@@ -1238,9 +1257,9 @@ pub fn match_at_within(
 
 /// POSIX match at `pos`: the LONGEST match whose end is <= `limit`
 /// (usize::MAX = no limit). Group/subexp tie-breaks stay first-match.
-pub fn posix_match_at(
+fn posix_match_at_wide(
     re: &Regex,
-    text: &[char],
+    text: &[EmacsChar],
     pos: usize,
     limit: usize,
     syn: SynFn,
@@ -1249,7 +1268,7 @@ pub fn posix_match_at(
 ) -> Option<Regs> {
     let mut e = limit.min(text.len());
     while e >= pos {
-        if let Some(regs) = match_at_end(re, text, pos, e, syn, cat, point) {
+        if let Some(regs) = match_at_end_wide(re, text, pos, e, syn, cat, point) {
             return Some(regs);
         }
         if e == 0 {
@@ -1261,9 +1280,9 @@ pub fn posix_match_at(
 }
 
 /// Search forward from `pos`; returns (match_start, match_end) of group 0.
-pub fn search(
+fn search_wide(
     re: &Regex,
-    text: &[char],
+    text: &[EmacsChar],
     pos: usize,
     syn: SynFn,
     cat: CatFn,
@@ -1271,7 +1290,7 @@ pub fn search(
 ) -> Option<(usize, usize)> {
     let mut p = pos;
     while p <= text.len() {
-        if let Some(regs) = match_at(re, text, p, syn, cat, point) {
+        if let Some(regs) = match_at_wide(re, text, p, syn, cat, point) {
             let s = regs[0].unwrap_or(p);
             let e = regs[1].unwrap_or(p);
             return Some((s, e));
@@ -1284,9 +1303,9 @@ pub fn search(
 /// Search backward from `pos`: GNU `re_search_backward' scans the
 /// start position downward and takes the first hit — the match is
 /// tried with STOP = pos, so it never consumes past `pos`.
-pub fn search_backward(
+fn search_backward_wide(
     re: &Regex,
-    text: &[char],
+    text: &[EmacsChar],
     pos: usize,
     syn: SynFn,
     cat: CatFn,
@@ -1294,7 +1313,7 @@ pub fn search_backward(
 ) -> Option<(usize, usize)> {
     let mut p = pos.min(text.len());
     loop {
-        if let Some(regs) = match_at_within(re, text, p, pos, usize::MAX, syn, cat, point) {
+        if let Some(regs) = match_at_within_wide(re, text, p, pos, usize::MAX, syn, cat, point) {
             let s = regs[0].unwrap_or(p);
             let e = regs[1].unwrap_or(p);
             return Some((s, e));
@@ -1308,9 +1327,9 @@ pub fn search_backward(
 
 /// Search with full register info; `posix` selects GNU's leftmost-
 /// longest (`re_search` posix mode) instead of first-match.
-pub fn search_full(
+fn search_full_wide(
     re: &Regex,
-    text: &[char],
+    text: &[EmacsChar],
     pos: usize,
     syn: SynFn,
     cat: CatFn,
@@ -1320,9 +1339,9 @@ pub fn search_full(
     let mut p = pos;
     while p <= text.len() {
         let hit = if posix {
-            posix_match_at(re, text, p, usize::MAX, syn, cat, point)
+            posix_match_at_wide(re, text, p, usize::MAX, syn, cat, point)
         } else {
-            match_at(re, text, p, syn, cat, point)
+            match_at_wide(re, text, p, syn, cat, point)
         };
         if let Some(regs) = hit {
             return Some(regs);
@@ -1334,9 +1353,9 @@ pub fn search_full(
 
 /// Backward search returning full regs: the match with the greatest
 /// start whose end is at or before `pos` (GNU semantics).
-pub fn search_backward_full(
+fn search_backward_full_wide(
     re: &Regex,
-    text: &[char],
+    text: &[EmacsChar],
     pos: usize,
     syn: SynFn,
     cat: CatFn,
@@ -1349,9 +1368,9 @@ pub fn search_backward_full(
         // STOP = pos — the match is cut off at `pos` rather than being
         // allowed to extend past it and then rejected.
         let hit = if posix {
-            posix_match_at(re, text, p, pos, syn, cat, point)
+            posix_match_at_wide(re, text, p, pos, syn, cat, point)
         } else {
-            match_at_within(re, text, p, pos, usize::MAX, syn, cat, point)
+            match_at_within_wide(re, text, p, pos, usize::MAX, syn, cat, point)
         };
         if let Some(regs) = hit {
             return Some(regs);
@@ -1367,9 +1386,9 @@ pub fn search_backward_full(
 /// convert buffer substrings are in the caller.
 
 /// Simple `looking-at` helper: match at pos.
-pub fn looking_at(
+fn looking_at_wide(
     re: &Regex,
-    text: &[char],
+    text: &[EmacsChar],
     pos: usize,
     syn: SynFn,
     cat: CatFn,
@@ -1377,8 +1396,146 @@ pub fn looking_at(
     posix: bool,
 ) -> Option<Regs> {
     if posix {
-        posix_match_at(re, text, pos, usize::MAX, syn, cat, point)
+        posix_match_at_wide(re, text, pos, usize::MAX, syn, cat, point)
     } else {
-        match_at(re, text, pos, syn, cat, point)
+        match_at_wide(re, text, pos, syn, cat, point)
+    }
+}
+
+pub fn match_at<T: CharSequence + ?Sized>(
+    re: &Regex,
+    text: &T,
+    pos: usize,
+    syn: SynFn,
+    cat: CatFn,
+    point: usize,
+) -> Option<Regs> {
+    text.with_chars(|text| match_at_wide(re, text, pos, syn, cat, point))
+}
+
+pub fn match_at_end<T: CharSequence + ?Sized>(
+    re: &Regex,
+    text: &T,
+    pos: usize,
+    end: usize,
+    syn: SynFn,
+    cat: CatFn,
+    point: usize,
+) -> Option<Regs> {
+    text.with_chars(|text| match_at_end_wide(re, text, pos, end, syn, cat, point))
+}
+
+pub fn match_at_within<T: CharSequence + ?Sized>(
+    re: &Regex,
+    text: &T,
+    pos: usize,
+    limit: usize,
+    end_cap: usize,
+    syn: SynFn,
+    cat: CatFn,
+    point: usize,
+) -> Option<Regs> {
+    text.with_chars(|text| match_at_within_wide(re, text, pos, limit, end_cap, syn, cat, point))
+}
+
+pub fn posix_match_at<T: CharSequence + ?Sized>(
+    re: &Regex,
+    text: &T,
+    pos: usize,
+    limit: usize,
+    syn: SynFn,
+    cat: CatFn,
+    point: usize,
+) -> Option<Regs> {
+    text.with_chars(|text| posix_match_at_wide(re, text, pos, limit, syn, cat, point))
+}
+
+pub fn search<T: CharSequence + ?Sized>(
+    re: &Regex,
+    text: &T,
+    pos: usize,
+    syn: SynFn,
+    cat: CatFn,
+    point: usize,
+) -> Option<(usize, usize)> {
+    text.with_chars(|text| search_wide(re, text, pos, syn, cat, point))
+}
+
+pub fn search_backward<T: CharSequence + ?Sized>(
+    re: &Regex,
+    text: &T,
+    pos: usize,
+    syn: SynFn,
+    cat: CatFn,
+    point: usize,
+) -> Option<(usize, usize)> {
+    text.with_chars(|text| search_backward_wide(re, text, pos, syn, cat, point))
+}
+
+pub fn search_full<T: CharSequence + ?Sized>(
+    re: &Regex,
+    text: &T,
+    pos: usize,
+    syn: SynFn,
+    cat: CatFn,
+    point: usize,
+    posix: bool,
+) -> Option<Regs> {
+    text.with_chars(|text| search_full_wide(re, text, pos, syn, cat, point, posix))
+}
+
+pub fn search_backward_full<T: CharSequence + ?Sized>(
+    re: &Regex,
+    text: &T,
+    pos: usize,
+    syn: SynFn,
+    cat: CatFn,
+    point: usize,
+    posix: bool,
+) -> Option<Regs> {
+    text.with_chars(|text| search_backward_full_wide(re, text, pos, syn, cat, point, posix))
+}
+
+pub fn looking_at<T: CharSequence + ?Sized>(
+    re: &Regex,
+    text: &T,
+    pos: usize,
+    syn: SynFn,
+    cat: CatFn,
+    point: usize,
+    posix: bool,
+) -> Option<Regs> {
+    text.with_chars(|text| looking_at_wide(re, text, pos, syn, cat, point, posix))
+}
+
+#[cfg(test)]
+mod wide_character_tests {
+    use super::*;
+
+    #[test]
+    fn literals_and_classes_distinguish_unicode_from_extended_characters() {
+        let codes = [0xf0080, 0x3fff80, 0xf0100, 0xd800, 0xfffd, 0x110000, 0x200000];
+        let text: Vec<EmacsChar> = codes.into_iter().map(|c| EmacsChar::new(c).unwrap()).collect();
+        for (position, code) in codes.into_iter().enumerate() {
+            let literal = EmacsText::from_codes([code]).unwrap();
+            let regex = compile(&literal).unwrap();
+            assert_eq!(search(&regex, &text, 0, &std_syntax, &no_cat, 0), Some((position, position + 1)), "literal {code:x}");
+            let mut class = EmacsText::from("[");
+            class.append(&literal);
+            class.push(']');
+            let regex = compile(&class).unwrap();
+            assert_eq!(search(&regex, &text, 0, &std_syntax, &no_cat, 0), Some((position, position + 1)), "class {code:x}");
+        }
+    }
+
+    #[test]
+    fn legacy_unicode_callers_and_wide_ranges_share_the_engine() {
+        let regex = compile("a+\\(b\\)").unwrap();
+        let unicode: Vec<char> = "aab".chars().collect();
+        assert_eq!(search(&regex, &unicode, 0, &std_syntax, &no_cat, 0), Some((0, 3)));
+        let range = EmacsText::from_codes([b'[' as u32, 0x110000, b'-' as u32, 0x110002, b']' as u32]).unwrap();
+        let regex = compile(&range).unwrap();
+        let text: Vec<EmacsChar> = [0xf0b00, 0x110001].into_iter().map(|c| EmacsChar::new(c).unwrap()).collect();
+        assert_eq!(search(&regex, &text, 0, &std_syntax, &no_cat, 0), Some((1, 2)));
     }
 }

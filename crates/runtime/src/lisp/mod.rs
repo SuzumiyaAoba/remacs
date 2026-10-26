@@ -26,6 +26,8 @@ pub mod reader;
 pub mod regexp;
 pub mod special;
 pub mod value;
+pub(crate) mod text;
+pub(crate) mod print_text;
 
 pub use builtins::eq_values;
 pub use error::{EvalResult, Flow};

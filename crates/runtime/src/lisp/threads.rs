@@ -183,6 +183,7 @@ fn exchange_bindings(i: &mut Interp, outgoing: bool) {
         }
     }
     i.specbind = bindings;
+    i.sync_symbol_position_view();
 }
 
 pub(crate) fn spawn(i: &mut Interp, function: Value, thread: ThreadRef) -> Result<(), Flow> {
@@ -196,6 +197,7 @@ pub(crate) fn spawn(i: &mut Interp, function: Value, thread: ThreadRef) -> Resul
     let fiber = Coroutine::with_stack(stack, move |yielder, mut runtime: Box<Interp>| {
         runtime.current_thread = index;
         runtime.current_buffer = buffer;
+        runtime.sync_symbol_position_view();
         runtime.thread_yielder = Some(NonNull::from(yielder));
         // Restore the runtime even if a Rust primitive panics. The resumer
         // propagates that panic only after reinstalling its own context.

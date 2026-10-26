@@ -249,6 +249,7 @@ qa!(qa_indentcmds, "qa_indentcmds.el");
 qa!(qa_indentfill, "qa_indentfill.el");
 qa!(qa_input, "qa_input.el");
 qa!(qa_event_conversion, "qa_event_conversion.el");
+qa!(qa_event_predicate, "qa_event_predicate.el");
 qa!(qa_char_resolve, "qa_char_resolve.el");
 qa!(qa_read_events, "qa_read_events.el");
 qa!(qa_crm, "qa_crm.el");
@@ -285,6 +286,35 @@ qa!(qa_assoc_string_long_list, "qa_assoc_string_long_list.el");
 qa!(qa_member_if_long_and_cycle, "qa_member_if_long_and_cycle.el");
 qa!(qa_length_functions, "qa_length_functions.el");
 qa!(qa_length_nonsequence, "qa_length_nonsequence.el");
+qa!(qa_empty_vector_identity, "qa_empty_vector_identity.el");
+qa!(qa_delete_sequences, "qa_delete_sequences.el");
+qa!(qa_string_byte_equality, "qa_string_byte_equality.el");
+qa!(qa_version_filename_order, "qa_version_filename_order.el");
+qa!(qa_string_conversion_identity, "qa_string_conversion_identity.el");
+qa!(qa_string_as_multibyte_emacs, "qa_string_as_multibyte_emacs.el");
+qa!(qa_string_ignore_case, "qa_string_ignore_case.el");
+qa!(qa_case_extended_codes, "qa_case_extended_codes.el");
+qa!(qa_string_number_radix, "qa_string_number_radix.el");
+qa!(qa_take_bignum, "qa_take_bignum.el");
+qa!(qa_flatten_shared_tree, "qa_flatten_shared_tree.el");
+qa!(qa_copy_tree_records, "qa_copy_tree_records.el");
+qa!(qa_copy_tree_depth, "qa_copy_tree_depth.el");
+qa!(qa_copy_tree_live, "qa_copy_tree_live.el");
+qa!(qa_record_opaque_tags, "qa_record_opaque_tags.el");
+qa!(qa_opaque_array_access, "qa_opaque_array_access.el");
+qa!(qa_overlay_sequence_types, "qa_overlay_sequence_types.el");
+qa!(qa_string_reverse_alias, "qa_string_reverse_alias.el");
+qa!(qa_butlast_numeric, "qa_butlast_numeric.el");
+qa!(qa_last_cycles, "qa_last_cycles.el");
+qa!(qa_nconc_traversal, "qa_nconc_traversal.el");
+qa!(qa_plist_cycles, "qa_plist_cycles.el");
+qa!(qa_plist_put_cycles, "qa_plist_put_cycles.el");
+qa!(qa_member_if_live, "qa_member_if_live.el");
+qa!(qa_copy_keymap_char_type, "qa_copy_keymap_char_type.el");
+qa!(qa_copy_keymap_protocol, "qa_copy_keymap_protocol.el");
+qa!(qa_assoc_default_live, "qa_assoc_default_live.el");
+qa!(qa_alist_delete_all, "qa_alist_delete_all.el");
+qa!(qa_assoc_string_cases, "qa_assoc_string_cases.el");
 qa!(qa_lists2, "qa_lists2.el");
 qa!(qa_butlast_bignum, "qa_butlast_bignum.el");
 qa!(qa_butlast_float_counts, "qa_butlast_float_counts.el");
@@ -614,7 +644,7 @@ qa!(qa_string_replace_invalid_code, "qa_string_replace_invalid_code.el");
 qa!(qa_string_fill_trailing_newline, "qa_string_fill_trailing_newline.el");
 qa!(qa_string_fill_empty_width, "qa_string_fill_empty_width.el");
 qa!(qa_string_reverse_sequences, "qa_string_reverse_sequences.el");
-qa!(qa_string_reverse_alias, "qa_string_reverse_alias.el");
+
 qa!(qa_string_lines_properties, "qa_string_lines_properties.el");
 qa!(qa_string_lines_byte_kind, "qa_string_lines_byte_kind.el");
 qa!(qa_string_lines_bool_vector_error, "qa_string_lines_bool_vector_error.el");
@@ -717,7 +747,7 @@ qa!(qa_decode_time_offset_range, "qa_decode_time_offset_range.el");
 qa!(qa_timer, "qa_timer.el");
 qa!(qa_types2, "qa_types2.el");
 qa!(qa_recordp_opaque_vectors, "qa_recordp_opaque_vectors.el");
-qa!(qa_copy_tree_records, "qa_copy_tree_records.el");
+
 qa!(qa_copy_tree_eval_depth, "qa_copy_tree_eval_depth.el");
 qa!(qa_copy_tree_advice, "qa_copy_tree_advice.el");
 qa!(qa_copy_sequence_opaque_types, "qa_copy_sequence_opaque_types.el");
@@ -924,11 +954,11 @@ fn qa_output_stream_state() {
             for capture in [false, true] {
                 i.capture_output = capture;
                 i.output_buffer = "unchanged\n".into();
-                i.out_last_char = Some('\n');
+                i.out_last_char = Some('\n'.into());
                 let old_output = output.borrow().clone();
                 assert!(i.write_output_to("payload", &stream).is_err());
                 assert_eq!(i.output_buffer, "unchanged\n");
-                assert_eq!(i.out_last_char, Some('\n'));
+                assert_eq!(i.out_last_char, Some('\n'.into()));
                 assert_eq!(*output.borrow(), old_output);
                 let terpri = i.intern("terpri");
                 assert!(
@@ -939,7 +969,7 @@ fn qa_output_stream_state() {
                     .is_err()
                 );
                 assert_eq!(i.output_buffer, "unchanged\n");
-                assert_eq!(i.out_last_char, Some('\n'));
+                assert_eq!(i.out_last_char, Some('\n'.into()));
                 assert_eq!(*output.borrow(), old_output);
                 i.capture_output = false;
             }
@@ -962,3 +992,99 @@ qa!(qa_html_head, "qa_html_head.el");
 qa!(qa_html_tbody, "qa_html_tbody.el");
 
 qa!(qa_html_repair, "qa_html_repair.el");
+
+qa!(qa_mapcan_nconc, "qa_mapcan_nconc.el");
+
+qa!(qa_maphash_live, "qa_maphash_live.el");
+
+qa!(qa_hash_free_slots, "qa_hash_free_slots.el");
+
+qa!(qa_hash_index_size, "qa_hash_index_size.el");
+
+qa!(qa_float_decomposition, "qa_float_decomposition.el");
+
+qa!(qa_math_optional_nil, "qa_math_optional_nil.el");
+
+qa!(qa_log_base_two, "qa_log_base_two.el");
+
+qa!(qa_float_mod, "qa_float_mod.el");
+
+qa!(qa_substring_indices, "qa_substring_indices.el");
+
+qa!(qa_concat_characters, "qa_concat_characters.el");
+
+
+
+qa!(qa_string_join_metadata, "qa_string_join_metadata.el");
+
+qa!(qa_mapconcat_identity, "qa_mapconcat_identity.el");
+
+qa!(qa_value_numeric_order, "qa_value_numeric_order.el");
+
+qa!(qa_value_mismatch_data, "qa_value_mismatch_data.el");
+
+qa!(qa_value_object_order, "qa_value_object_order.el");
+
+qa!(qa_value_order_recursion, "qa_value_order_recursion.el");
+
+qa!(qa_symbol_position_view, "qa_symbol_position_view.el");
+
+qa!(qa_symbol_position_hash, "qa_symbol_position_hash.el");
+
+qa!(qa_symbol_position_scopes, "qa_symbol_position_scopes.el");
+
+qa!(qa_symbol_position_print, "qa_symbol_position_print.el");
+
+qa!(qa_aset_string_characters, "qa_aset_string_characters.el");
+
+qa!(qa_bytecode_numeric_predicates, "qa_bytecode_numeric_predicates.el");
+
+
+
+qa!(qa_bytecode_primitive_identity, "qa_bytecode_primitive_identity.el");
+
+qa!(qa_record_size_limits, "qa_record_size_limits.el");
+
+qa!(qa_random_seed_bytes, "qa_random_seed_bytes.el");
+
+qa!(qa_lock_boot_timestamps, "qa_lock_boot_timestamps.el");
+
+qa!(qa_lock_target_protocol, "qa_lock_target_protocol.el");
+
+qa!(qa_process_attributes_native, "qa_process_attributes_native.el");
+
+qa!(qa_system_process_enumeration, "qa_system_process_enumeration.el");
+
+qa!(qa_subst_string_protocol, "qa_subst_string_protocol.el");
+
+qa!(qa_string_trim_protocol, "qa_string_trim_protocol.el");
+
+qa!(qa_string_replace_protocol, "qa_string_replace_protocol.el");
+
+qa!(qa_string_replacement_scan, "qa_string_replacement_scan.el");
+
+qa!(qa_byte_to_string, "qa_byte_to_string.el");
+
+qa!(qa_position_integer_protocol, "qa_position_integer_protocol.el");
+
+qa!(qa_position_storage_bytes, "qa_position_storage_bytes.el");
+
+qa!(qa_base64_region_bytes, "qa_base64_region_bytes.el");
+
+qa!(qa_sqlite_wide_text, "qa_sqlite_wide_text.el");
+
+qa!(qa_json_private_characters, "qa_json_private_characters.el");
+
+qa!(qa_charset_wide_characters, "qa_charset_wide_characters.el");
+
+qa!(qa_local_socket_wide_paths, "qa_local_socket_wide_paths.el");
+
+qa!(qa_network_lookup_validation, "qa_network_lookup_validation.el");
+
+qa!(qa_gnutls_crypto_buffer_bytes, "qa_gnutls_crypto_buffer_bytes.el");
+
+qa!(qa_geometry_invalid, "qa_geometry_invalid.el");
+
+
+
+qa!(qa_nconc_empty, "qa_nconc_empty.el");

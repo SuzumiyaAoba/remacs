@@ -1,16 +1,32 @@
 //! Gap buffer: Emacs's classic text storage. Contiguous text with a
 //! movable gap so insert/delete near point is O(gap move + insert size).
 
+use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText, TextSource};
 use std::cell::{RefCell, RefMut};
 use std::rc::{Rc, Weak};
 
 #[derive(Clone, Copy)]
 pub enum TextChange<'a> {
-    Insert { at: usize, text: &'a str },
-    Delete { start: usize, end: usize },
-    Character { at: usize, character: char },
-    Replace { start: usize, end: usize, text: &'a str },
-    Reset { text: &'a str },
+    Insert {
+        at: usize,
+        text: &'a EmacsStr,
+    },
+    Delete {
+        start: usize,
+        end: usize,
+    },
+    Character {
+        at: usize,
+        character: EmacsChar,
+    },
+    Replace {
+        start: usize,
+        end: usize,
+        text: &'a EmacsStr,
+    },
+    Reset {
+        text: &'a EmacsStr,
+    },
 }
 
 pub type EditObserver = Rc<RefCell<dyn for<'a> FnMut(TextChange<'a>)>>;
@@ -42,7 +58,7 @@ impl Drop for EditSubscription {
 /// A buffer of `char`s with a gap at the editing position.
 #[derive(Clone)]
 pub struct GapBuffer {
-    buf: Vec<char>,
+    buf: Vec<EmacsChar>,
     gap_start: usize,
     gap_end: usize, // exclusive
     /// Live text's Emacs byte count. The vector length budgets byte
@@ -50,7 +66,7 @@ pub struct GapBuffer {
     text_bytes: usize,
     multibyte: bool,
     /// Contiguous read projection for a gap in the middle of the text.
-    flat: Option<Vec<char>>,
+    flat: Option<Vec<EmacsChar>>,
     /// Bumped by every content mutation; the newline cache below is
     /// valid only while it matches.  (`as_slice_mut' callers must not
     /// write — they don't today; mutating there would bypass this.)
@@ -66,7 +82,7 @@ pub struct GapBuffer {
 // gap. Storage is char-indexed; allocation headroom is budgeted in bytes.
 const GAP_INIT: usize = 20;
 
-pub(super) fn storage_bytes(c: char, multibyte: bool) -> usize {
+pub(super) fn storage_bytes(c: EmacsChar, multibyte: bool) -> usize {
     if !multibyte {
         return 1;
     }
@@ -80,39 +96,44 @@ pub(super) fn storage_bytes(c: char, multibyte: bool) -> usize {
 }
 
 impl GapBuffer {
-    fn from_dump(text: &str, gap: (usize, usize, u64, bool)) -> Result<Self, String> {
-        let chars: Vec<_> = text.chars().collect();
-        if gap.0 > chars.len() {
-            return Err("Invalid dumped gap position".into());
-        }
-        let total = chars
-            .len()
-            .checked_add(gap.1)
-            .ok_or("Dumped gap size overflow")?;
-        let mut buf = Vec::new();
-        buf.try_reserve_exact(total)
-            .map_err(|_| "Cannot allocate dumped buffer gap")?;
-        buf.extend_from_slice(&chars[..gap.0]);
-        buf.resize(gap.0 + gap.1, '\0');
-        buf.extend_from_slice(&chars[gap.0..]);
-        let text_bytes = text.chars().map(|c| storage_bytes(c, gap.3)).sum();
-        if text_bytes > total {
-            return Err("Invalid dumped byte capacity".into());
-        }
-        Ok(Self {
-            buf,
-            gap_start: gap.0,
-            gap_end: gap.0 + gap.1,
-            text_bytes,
-            multibyte: gap.3,
-            flat: None,
-            mod_count: gap.2,
-            lines: RefCell::new(None),
+    fn from_dump<T: TextSource + ?Sized>(
+        text: &T,
+        gap: (usize, usize, u64, bool),
+    ) -> Result<Self, String> {
+        text.with_text(|text| {
+            let chars: Vec<_> = text.chars().collect();
+            if gap.0 > chars.len() {
+                return Err("Invalid dumped gap position".into());
+            }
+            let total = chars
+                .len()
+                .checked_add(gap.1)
+                .ok_or("Dumped gap size overflow")?;
+            let mut buf = Vec::new();
+            buf.try_reserve_exact(total)
+                .map_err(|_| "Cannot allocate dumped buffer gap")?;
+            buf.extend_from_slice(&chars[..gap.0]);
+            buf.resize(gap.0 + gap.1, EmacsChar::from('\0'));
+            buf.extend_from_slice(&chars[gap.0..]);
+            let text_bytes = text.chars().map(|c| storage_bytes(c, gap.3)).sum();
+            if text_bytes > total {
+                return Err("Invalid dumped byte capacity".into());
+            }
+            Ok(Self {
+                buf,
+                gap_start: gap.0,
+                gap_end: gap.0 + gap.1,
+                text_bytes,
+                multibyte: gap.3,
+                flat: None,
+                mod_count: gap.2,
+                lines: RefCell::new(None),
+            })
         })
     }
     pub fn new() -> Self {
         GapBuffer {
-            buf: vec![0 as char; GAP_INIT],
+            buf: vec![EmacsChar::from('\0'); GAP_INIT],
             gap_start: 0,
             gap_end: GAP_INIT,
             text_bytes: 0,
@@ -129,7 +150,7 @@ impl GapBuffer {
     }
 
     /// Char at logical index `i` (0-based).
-    pub fn char_at(&self, i: usize) -> char {
+    pub fn char_at(&self, i: usize) -> EmacsChar {
         debug_assert!(i < self.len());
         if i < self.gap_start {
             self.buf[i]
@@ -182,7 +203,7 @@ impl GapBuffer {
         const GAP_BYTES_DFL: usize = 2000;
         let grow = (need - self.gap_size()).max(self.len() / 64) + GAP_BYTES_DFL;
         let old_len = self.buf.len();
-        self.buf.resize(old_len + grow, 0 as char);
+        self.buf.resize(old_len + grow, EmacsChar::from('\0'));
         // Move post-gap text to the new end.
         self.buf
             .copy_within(self.gap_end..old_len, self.gap_end + grow);
@@ -190,15 +211,15 @@ impl GapBuffer {
     }
 
     /// The logical text as one contiguous slice without moving the gap.
-    /// Used by scan/regexp paths that need random `&[char]` access
-    /// without allocating a `Vec<char>` copy per call.
-    pub fn as_slice(&mut self) -> &[char] {
+    /// Used by scan/regexp paths that need random `&[EmacsChar]` access
+    /// without allocating a `Vec<EmacsChar>` copy per call.
+    pub fn as_slice(&mut self) -> &[EmacsChar] {
         self.as_slice_mut()
     }
 
     /// Mutable variant used to project a `RefCell<GapBuffer>` borrow
-    /// into `&mut [char]` (`SharedText::as_slice`).
-    fn as_slice_mut(&mut self) -> &mut [char] {
+    /// into `&mut [EmacsChar]` (`SharedText::as_slice`).
+    fn as_slice_mut(&mut self) -> &mut [EmacsChar] {
         if self.gap_end == self.buf.len() {
             return &mut self.buf[..self.gap_start];
         }
@@ -215,20 +236,22 @@ impl GapBuffer {
     }
 
     /// Insert `text` at logical position `pos`.
-    pub fn insert(&mut self, pos: usize, text: &str) {
-        if text.is_empty() {
-            return;
-        }
-        self.mod_count = self.mod_count.wrapping_add(1);
-        self.flat = None;
-        self.move_gap(pos);
-        let bytes = text.chars().map(|c| storage_bytes(c, self.multibyte)).sum();
-        self.ensure_gap(bytes);
-        for c in text.chars() {
-            self.buf[self.gap_start] = c;
-            self.gap_start += 1;
-        }
-        self.text_bytes += bytes;
+    pub fn insert<T: TextSource + ?Sized>(&mut self, pos: usize, text: &T) {
+        text.with_text(|text| {
+            if text.is_empty() {
+                return;
+            }
+            self.mod_count = self.mod_count.wrapping_add(1);
+            self.flat = None;
+            self.move_gap(pos);
+            let bytes = text.chars().map(|c| storage_bytes(c, self.multibyte)).sum();
+            self.ensure_gap(bytes);
+            for c in text.chars() {
+                self.buf[self.gap_start] = c;
+                self.gap_start += 1;
+            }
+            self.text_bytes += bytes;
+        })
     }
 
     /// Delete `[start, end)`.
@@ -250,7 +273,8 @@ impl GapBuffer {
     /// Overwrite the char at logical index `i` in place. Unlike
     /// delete+insert this does not move the gap, so markers and
     /// point are undisturbed (GNU's `subst-char-in-region` semantics).
-    pub fn set_char_at(&mut self, i: usize, c: char) {
+    pub fn set_char_at(&mut self, i: usize, c: impl Into<EmacsChar>) {
+        let c = c.into();
         debug_assert!(i < self.len());
         self.mod_count = self.mod_count.wrapping_add(1);
         self.flat = None;
@@ -268,10 +292,10 @@ impl GapBuffer {
     }
 
     /// Extract `[start, end)` as a String.
-    pub fn substring(&self, start: usize, end: usize) -> String {
+    pub fn substring(&self, start: usize, end: usize) -> EmacsText {
         let end = end.min(self.len());
         let start = start.min(end);
-        let mut s = String::with_capacity(end - start);
+        let mut s = EmacsText::with_capacity(end - start);
         for i in start..end {
             s.push(self.char_at(i));
         }
@@ -279,14 +303,16 @@ impl GapBuffer {
     }
 
     /// Whole contents.
-    pub fn text(&self) -> String {
+    pub fn text(&self) -> EmacsText {
         self.substring(0, self.len())
     }
 
     /// Replace whole contents.
-    pub fn set_text(&mut self, s: &str) {
-        self.delete(0, self.len());
-        self.insert(0, s);
+    pub fn set_text<T: TextSource + ?Sized>(&mut self, s: &T) {
+        s.with_text(|s| {
+            self.delete(0, self.len());
+            self.insert(0, s);
+        })
     }
 
     pub fn set_multibyte(&mut self, multibyte: bool) {
@@ -407,22 +433,26 @@ impl SharedText {
         )
     }
 
-    pub(crate) fn from_dump(
-        text: &str,
+    pub(crate) fn from_dump<T: TextSource + ?Sized>(
+        text: &T,
         intervals: Vec<(usize, usize, Vec<crate::lisp::Value>)>,
         ticks: [u64; 3],
         had_intervals: bool,
         gap: (usize, usize, u64, bool),
     ) -> Result<Self, String> {
-        let shared = Self::new();
-        *shared.inner.borrow_mut() = GapBuffer::from_dump(text, gap)?;
-        *shared.props.borrow_mut() =
-            crate::buffer::textprops::TextProperties::from_dump(text.chars().count(), intervals)?;
-        shared.mod_tick.set(ticks[0]);
-        shared.chars_mod_tick.set(ticks[1]);
-        shared.save_tick.set(ticks[2]);
-        shared.had_intervals.set(had_intervals);
-        Ok(shared)
+        text.with_text(|text| {
+            let shared = Self::new();
+            *shared.inner.borrow_mut() = GapBuffer::from_dump(text, gap)?;
+            *shared.props.borrow_mut() = crate::buffer::textprops::TextProperties::from_dump(
+                text.chars().count(),
+                intervals,
+            )?;
+            shared.mod_tick.set(ticks[0]);
+            shared.chars_mod_tick.set(ticks[1]);
+            shared.save_tick.set(ticks[2]);
+            shared.had_intervals.set(had_intervals);
+            Ok(shared)
+        })
     }
 
     pub fn new() -> Self {
@@ -550,14 +580,14 @@ impl SharedText {
         self.inner.borrow().gap_position()
     }
     /// Char at logical index `i` (0-based).
-    pub fn char_at(&self, i: usize) -> char {
+    pub fn char_at(&self, i: usize) -> EmacsChar {
         self.inner.borrow().char_at(i)
     }
 
     /// The logical text as one contiguous slice (see `GapBuffer::as_slice`).
     /// Returns a mapped mutable borrow; do not touch this `SharedText`
     /// again while the result is alive.
-    pub fn as_slice(&self) -> RefMut<'_, [char]> {
+    pub fn as_slice(&self) -> RefMut<'_, [EmacsChar]> {
         RefMut::map(self.inner.borrow_mut(), |g| g.as_slice_mut())
     }
 
@@ -573,16 +603,18 @@ impl SharedText {
     }
 
     /// Insert `text` at logical position `pos`.
-    pub fn insert(&self, pos: usize, text: &str) {
-        let pos = pos.min(self.len());
-        let n = text.chars().count();
-        self.inner.borrow_mut().insert(pos, text);
-        // Props live in the shared text (GNU buffer_text intervals):
-        // adjust once here so every viewer sees the same shift.
-        self.adjust_props_insert(pos, n);
-        if n != 0 {
-            self.notify_edit(TextChange::Insert { at: pos, text });
-        }
+    pub fn insert<T: TextSource + ?Sized>(&self, pos: usize, text: &T) {
+        text.with_text(|text| {
+            let pos = pos.min(self.len());
+            let n = text.chars().count();
+            self.inner.borrow_mut().insert(pos, text);
+            // Props live in the shared text (GNU buffer_text intervals):
+            // adjust once here so every viewer sees the same shift.
+            self.adjust_props_insert(pos, n);
+            if n != 0 {
+                self.notify_edit(TextChange::Insert { at: pos, text });
+            }
+        })
     }
 
     /// Delete `[start, end)`.
@@ -596,7 +628,8 @@ impl SharedText {
     }
 
     /// Overwrite the char at logical index `i` in place.
-    pub fn set_char_at(&self, i: usize, c: char) {
+    pub fn set_char_at(&self, i: usize, c: impl Into<EmacsChar>) {
+        let c = c.into();
         self.inner.borrow_mut().set_char_at(i, c);
         self.notify_edit(TextChange::Character {
             at: i,
@@ -606,59 +639,68 @@ impl SharedText {
 
     /// Replace characters without moving positions or property intervals.
     /// A single edit reaches observers after the complete text is installed.
-    pub(crate) fn replace_same_length(&self, start: usize, end: usize, text: &str) {
-        assert_eq!(end - start, text.chars().count());
-        {
-            let mut buffer = self.inner.borrow_mut();
-            let before: usize = (start..end)
-                .map(|position| storage_bytes(buffer.char_at(position), buffer.multibyte))
-                .sum();
-            let after: usize = text
-                .chars()
-                .map(|c| storage_bytes(c, buffer.multibyte))
-                .sum();
-            if after > before {
-                buffer.ensure_gap(after - before);
+    pub(crate) fn replace_same_length<T: TextSource + ?Sized>(
+        &self,
+        start: usize,
+        end: usize,
+        text: &T,
+    ) {
+        text.with_text(|text| {
+            assert_eq!(end - start, text.chars().count());
+            {
+                let mut buffer = self.inner.borrow_mut();
+                let before: usize = (start..end)
+                    .map(|position| storage_bytes(buffer.char_at(position), buffer.multibyte))
+                    .sum();
+                let after: usize = text
+                    .chars()
+                    .map(|c| storage_bytes(c, buffer.multibyte))
+                    .sum();
+                if after > before {
+                    buffer.ensure_gap(after - before);
+                }
+                // GNU transpose-regions moves an interfering gap to the nearer
+                // boundary, choosing the end on a tie. An outside gap stays put.
+                let gap = buffer.gap_position();
+                if start < gap && gap < end {
+                    buffer.move_gap(if gap - start < end - gap { start } else { end });
+                }
+                let slots = buffer.gap_slots();
+                for (position, character) in (start..end).zip(text.chars()) {
+                    let physical = if position < buffer.gap_start {
+                        position
+                    } else {
+                        position + slots
+                    };
+                    buffer.buf[physical] = character;
+                }
+                buffer.text_bytes = buffer.text_bytes - before + after;
+                buffer.mod_count = buffer.mod_count.wrapping_add(1);
+                buffer.flat = None;
             }
-            // GNU transpose-regions moves an interfering gap to the nearer
-            // boundary, choosing the end on a tie. An outside gap stays put.
-            let gap = buffer.gap_position();
-            if start < gap && gap < end {
-                buffer.move_gap(if gap - start < end - gap { start } else { end });
-            }
-            let slots = buffer.gap_slots();
-            for (position, character) in (start..end).zip(text.chars()) {
-                let physical = if position < buffer.gap_start {
-                    position
-                } else {
-                    position + slots
-                };
-                buffer.buf[physical] = character;
-            }
-            buffer.text_bytes = buffer.text_bytes - before + after;
-            buffer.mod_count = buffer.mod_count.wrapping_add(1);
-            buffer.flat = None;
-        }
-        self.notify_edit(TextChange::Replace { start, end, text });
+            self.notify_edit(TextChange::Replace { start, end, text });
+        })
     }
 
     /// Extract `[start, end)` as a String.
-    pub fn substring(&self, start: usize, end: usize) -> String {
+    pub fn substring(&self, start: usize, end: usize) -> EmacsText {
         self.inner.borrow().substring(start, end)
     }
 
     /// Whole contents.
-    pub fn text(&self) -> String {
+    pub fn text(&self) -> EmacsText {
         self.inner.borrow().text()
     }
 
     /// Replace whole contents.
-    pub fn set_text(&self, s: &str) {
-        self.inner.borrow_mut().set_text(s);
-        let mut props = crate::buffer::textprops::TextProperties::new();
-        props.insert(0, s.chars().count());
-        *self.props.borrow_mut() = props;
-        self.notify_edit(TextChange::Reset { text: s });
+    pub fn set_text<T: TextSource + ?Sized>(&self, s: &T) {
+        s.with_text(|s| {
+            self.inner.borrow_mut().set_text(s);
+            let mut props = crate::buffer::textprops::TextProperties::new();
+            props.insert(0, s.chars().count());
+            *self.props.borrow_mut() = props;
+            self.notify_edit(TextChange::Reset { text: s });
+        })
     }
 
     /// Which line `pos` is on (0-based).
@@ -709,13 +751,13 @@ mod tests {
         text.replace_same_length(0, 7, "日本語--ab");
         assert_eq!(
             &*seen.borrow(),
-            &[(0, 7, "日本語--ab".to_owned(), "日本語--ab".to_owned())]
+            &[(0, 7, EmacsText::from("日本語--ab"), EmacsText::from("日本語--ab"))]
         );
         assert_eq!(text.len(), 7);
         assert_eq!(text.inner.borrow().text_bytes, "日本語--ab".len());
         assert_eq!(text.gap_size(), capacity);
         assert_eq!(text.gap_position(), 0);
-        assert_eq!(text.as_slice().iter().collect::<String>(), "日本語--ab");
+        assert_eq!(text.as_slice().iter().collect::<EmacsText>(), "日本語--ab");
     }
 
     #[test]
@@ -790,13 +832,13 @@ mod tests {
         let mut gap = GapBuffer::new();
         gap.insert(0, "abcdef");
         gap.insert(2, "X");
-        assert_eq!(gap.as_slice().iter().collect::<String>(), "abXcdef");
+        assert_eq!(gap.as_slice().iter().collect::<EmacsText>(), "abXcdef");
         assert_eq!(gap.gap_position(), 3);
         gap.set_char_at(0, 'Z');
-        assert_eq!(gap.as_slice().iter().collect::<String>(), "ZbXcdef");
+        assert_eq!(gap.as_slice().iter().collect::<EmacsText>(), "ZbXcdef");
         assert_eq!(gap.gap_position(), 3);
         gap.delete(1, 4);
-        assert_eq!(gap.as_slice().iter().collect::<String>(), "Zdef");
+        assert_eq!(gap.as_slice().iter().collect::<EmacsText>(), "Zdef");
         assert_eq!(gap.gap_position(), 1);
         let before = (gap.gap_position(), gap.gap_size());
         gap.insert(4, "");

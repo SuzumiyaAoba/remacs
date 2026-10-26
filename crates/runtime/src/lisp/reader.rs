@@ -6,6 +6,7 @@
 //! records (`#s(...)`), `#N=`/`#N#` labels, quote/backquote/comma, `#'`,
 //! `;` comments, `#!` shebang comments, `#_` and `#@` char skipping.
 
+use super::text::{EmacsChar, EmacsText, TextSource};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::rc::Rc;
 
@@ -23,7 +24,7 @@ pub const CHAR_CTL: i128 = 0x0400_0000;
 pub const CHAR_META: i128 = 0x0800_0000;
 
 pub struct Reader<'a> {
-    chars: Rc<Vec<char>>,
+    chars: Rc<Vec<EmacsChar>>,
     pos: usize,
     /// A functional character source, filled only when parsing needs input.
     function_source: Option<Value>,
@@ -86,13 +87,13 @@ fn non_unicode_err(interp: &mut Interp, n: i128) -> Flow {
 }
 
 impl<'a> Reader<'a> {
-    pub fn new(interp: &'a mut Interp, src: &str) -> Reader<'a> {
-        Reader::with_chars(interp, Rc::new(src.chars().collect()))
+    pub fn new<T: TextSource + ?Sized>(interp: &'a mut Interp, src: &T) -> Reader<'a> {
+        src.with_text(|text| Reader::with_chars(interp, Rc::new(text.chars().collect())))
     }
 
     /// A reader over pre-collected chars — callers that re-read the
     /// same source in a loop share one buffer instead of re-collecting.
-    pub fn with_chars(interp: &'a mut Interp, chars: Rc<Vec<char>>) -> Reader<'a> {
+    pub fn with_chars(interp: &'a mut Interp, chars: Rc<Vec<EmacsChar>>) -> Reader<'a> {
         Reader {
             chars,
             pos: 0,
@@ -149,14 +150,17 @@ impl<'a> Reader<'a> {
     fn peek_at(&mut self, n: usize) -> Result<Option<char>, Flow> {
         let index = self.pos + n;
         self.fill_to(index)?;
-        Ok(self.chars.get(index).copied().map(|c| {
-            if !self.source_multibyte && (0x80..=0xff).contains(&(c as u32)) {
-                super::value::lisp_char(0x3fff00 + c as u32).unwrap()
-            } else {
-                c
-            }
-        }))
+        Ok(self.chars.get(index).map(|c| c.unicode().unwrap_or('\u{fffd}')))
     }
+
+    fn original_at(&self, position: usize) -> EmacsChar {
+        let c = self.chars[position];
+        if !self.source_multibyte && (0x80..=0xff).contains(&c.code()) {
+            EmacsChar::new(0x3fff00 + c.code()).unwrap()
+        } else { c }
+    }
+
+    fn last_character(&self) -> EmacsChar { self.original_at(self.pos - 1) }
 
     fn next(&mut self) -> Result<Option<char>, Flow> {
         let c = self.peek()?;
@@ -172,7 +176,7 @@ impl<'a> Reader<'a> {
         let Some(source) = &self.function_source else {
             return Ok(());
         };
-        let pending: Vec<char> = self.chars[position.min(self.chars.len())..].to_vec();
+        let pending: Vec<EmacsChar> = self.chars[position.min(self.chars.len())..].to_vec();
         for character in pending.iter().rev() {
             self.interp.apply(
                 source,
@@ -331,9 +335,10 @@ impl<'a> Reader<'a> {
                         self.check_char_delim()?;
                         v
                     }
-                    Some(c) => {
+                    Some(_) => {
+                        let character = self.last_character();
                         self.check_char_delim()?;
-                        super::value::lisp_char_code(c)
+                        super::value::lisp_char_code(character)
                     }
                 };
                 // GNU folds byte8 chars (0x3FFF80..0x3FFFFF) back to
@@ -463,7 +468,7 @@ impl<'a> Reader<'a> {
     }
 
     fn read_string(&mut self) -> Result<Value, Flow> {
-        let mut out = String::new();
+        let mut out = EmacsText::new();
         let mut multibyte = false;
         loop {
             match self.next()? {
@@ -472,7 +477,7 @@ impl<'a> Reader<'a> {
                     if out.is_empty() {
                         return Ok(self.interp.empty_string(multibyte));
                     }
-                    let v = Value::string(out);
+                    let v = Value::string_with_kind(out, multibyte);
                     // GNU: only real non-ASCII characters force multibyte
                     // storage. Byte8 characters alone remain raw bytes,
                     // independently of the source's representation.
@@ -487,7 +492,7 @@ impl<'a> Reader<'a> {
                 }
                 Some('\\') => {
                     if let Some(c) = self.read_string_escape()? {
-                        if (c as u32) >= 0x80
+                        if c.code() >= 0x80
                             && crate::lisp::value::eight_bit_byte(c).is_none()
                         {
                             multibyte = true;
@@ -495,8 +500,9 @@ impl<'a> Reader<'a> {
                         out.push(c);
                     }
                 }
-                Some(c) => {
-                    if (c as u32) >= 0x80
+                Some(_) => {
+                    let c = self.last_character();
+                    if c.code() >= 0x80
                         && crate::lisp::value::eight_bit_byte(c).is_none()
                     {
                         multibyte = true;
@@ -508,7 +514,7 @@ impl<'a> Reader<'a> {
     }
 
     /// String-specific rules around GNU's shared character-escape parser.
-    fn read_string_escape(&mut self) -> Result<Option<char>, Flow> {
+    fn read_string_escape(&mut self) -> Result<Option<EmacsChar>, Flow> {
         match self.peek()? {
             Some(' ' | '\n') => {
                 self.pos += 1;
@@ -516,7 +522,7 @@ impl<'a> Reader<'a> {
             }
             Some('s') => {
                 self.pos += 1;
-                return Ok(Some(' '));
+                return Ok(Some(' '.into()));
             }
             _ => {}
         }
@@ -556,7 +562,7 @@ impl<'a> Reader<'a> {
         match self.next()? {
             None => Err(eof_err(self.interp)),
             Some('\\') => self.read_char_escape(),
-            Some(c) => Ok(super::value::lisp_char_code(c)),
+            Some(_) => Ok(super::value::lisp_char_code(self.last_character())),
         }
     }
 
@@ -758,7 +764,7 @@ impl<'a> Reader<'a> {
                 let inner = match self.next()? {
                     None => return Err(eof_err(self.interp)),
                     Some('\\') => self.read_char_escape()?,
-                    Some(c) => super::value::lisp_char_code(c),
+                    Some(_) => super::value::lisp_char_code(self.last_character()),
                 };
                 const ALL_MODS: i128 =
                     CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT;
@@ -792,7 +798,7 @@ impl<'a> Reader<'a> {
                 self.unread_from(self.pos)?;
                 Ok(n)
             }
-            Some(c) => Ok(super::value::lisp_char_code(c)),
+            Some(_) => Ok(super::value::lisp_char_code(self.last_character())),
         }
     }
 
@@ -851,7 +857,7 @@ impl<'a> Reader<'a> {
                         for c in s.borrow().chars() {
                             match crate::lisp::value::eight_bit_byte(c) {
                                 Some(b) => v.push(b as u32),
-                                None if (c as u32) < 0x80 => v.push(c as u32),
+                                None if c.code() < 0x80 => v.push((c).code() as u32),
                                 None => {
                                     return Err(read_err(self.interp, "#&..."));
                                 }
@@ -1003,7 +1009,7 @@ impl<'a> Reader<'a> {
                     Value::vector(slots),
                 ];
                 rec.extend(items.iter().skip(68).cloned());
-                let t = Value::record(rec);
+                let t = Value::record_with_kind(rec, crate::lisp::value::RecordKind::CharTable);
                 if !defalt.is_nil() {
                     self.interp.set_char_table_defalt(&t, defalt);
                 }
@@ -1084,6 +1090,7 @@ impl<'a> Reader<'a> {
                         }
                     }
                 }
+                super::builtins::data::check_record_slots(self.interp, items.len() as i128)?;
                 Ok(Value::record(items))
             }
             Some('_') => {
@@ -1234,9 +1241,9 @@ impl<'a> Reader<'a> {
     }
 
     fn hash_number_error(&mut self, start: usize) -> Flow {
-        let token: String = self.chars[start..self.pos].iter().collect();
+        let token: EmacsText = self.chars[start..self.pos].iter().collect();
         self.pos = self.pos.saturating_sub(1);
-        read_err_sym(self.interp, &token)
+        read_err_sym(self.interp, &format!("{token}"))
     }
 
     fn read_radix_int(&mut self, radix: u32) -> Result<num_bigint::BigInt, Flow> {
@@ -1291,8 +1298,8 @@ impl<'a> Reader<'a> {
     /// Read a raw token (symbol constituent chars, `\` escapes included).
     /// The returned bool reports whether any `\` escape was consumed, so
     /// `read_atom' can tell `.' (dotting token) apart from `\.' (symbol).
-    fn read_symbol_token(&mut self) -> Result<(String, bool), Flow> {
-        let mut tok = String::new();
+    fn read_symbol_token(&mut self) -> Result<(EmacsText, bool), Flow> {
+        let mut tok = EmacsText::new();
         let mut escaped = false;
         while let Some(c) = self.peek()? {
             if Self::is_terminator(c) {
@@ -1300,14 +1307,14 @@ impl<'a> Reader<'a> {
             }
             if c == '\\' {
                 self.pos += 1;
-                if let Some(e) = self.next()? {
-                    tok.push(e);
+                if self.next()?.is_some() {
+                    tok.push(self.last_character());
                     escaped = true;
                     continue;
                 }
                 break;
             }
-            tok.push(c);
+            tok.push(self.original_at(self.pos));
             self.pos += 1;
         }
         self.unread_from(self.pos)?;
@@ -1324,11 +1331,11 @@ impl<'a> Reader<'a> {
         // GNU read0: a token that contains a `\` escape is never a
         // number — `3\.5' reads as the symbol `3.5', not the float.
         if !escaped {
-            if let Some(v) = parse_number(&tok) {
+            if tok.is_ascii() { if let Some(v) = parse_number(&tok.to_unicode_lossy()) {
                 return Ok(v);
-            }
+            } }
         }
-        match tok.as_str() {
+        match tok.to_unicode_lossy().as_str() {
             // `.' is only a symbol when `)' or `]' follows directly;
             // `\.' is always the symbol `.' (GNU reads (a \. b) as a
             // 3-element list whose middle element is the `.' symbol).
@@ -1353,11 +1360,12 @@ impl<'a> Reader<'a> {
         Value::Sym(symbol)
     }
 
-    fn symbol_token(&mut self, token: &str, uninterned: bool, shorthand: bool) -> Result<super::value::SymId, Flow> {
+    fn symbol_token<T: TextSource + ?Sized>(&mut self, token: &T, uninterned: bool, shorthand: bool) -> Result<super::value::SymId, Flow> {
+        token.with_text(|token| {
         let obarray = if !uninterned && !token.is_empty() {
             super::builtins::data::resolve_obarray(self.interp, None)?
         } else { None };
-        let core = token.bytes().all(|byte| b"^*+-/<=>_|".contains(&byte));
+        let core = token.chars().all(|c| c.code() < 128 && b"^*+-/<=>_|".contains(&(c.code() as u8)));
         let expanding = shorthand && !core && self.interp.q_soft("read-symbol-shorthands")
             .is_some_and(|symbol| matches!(self.interp.symbol_value(symbol), Value::Cons(_)));
         if !uninterned && !token.is_empty() && !expanding {
@@ -1394,6 +1402,8 @@ impl<'a> Reader<'a> {
                 .unwrap_or(string)
         } else { string };
         Ok(super::builtins::data::intern_in_obarray(self.interp, &string, &obarray))
+
+        })
     }
 }
 

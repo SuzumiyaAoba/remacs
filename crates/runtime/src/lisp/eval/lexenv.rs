@@ -3,13 +3,14 @@
 //! Lookup stops at the first match; malformed tails are checked only when
 //! reached. Keep these rules shared by eval, closures, and explicit environments.
 
+use std::{cell::RefCell, rc::Rc};
+
 use super::Interp;
 use crate::lisp::{
     error::Flow,
     obarray::sym,
     value::{SymId, Value},
 };
-use std::{cell::RefCell, rc::Rc};
 
 /// A lexical environment head. Its alist spine is persistent while each
 /// `(symbol . value)' cell is shared. Capturing the head preserves lexical

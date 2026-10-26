@@ -28,6 +28,13 @@ impl Interp {
     /// Push a dynamic binding for `sym` to `val`.
     #[track_caller]
     pub fn specbind(&mut self, id: SymId, val: Value) -> Result<(), Flow> {
+        let result = self.specbind_position_inner(id, val);
+        self.sync_symbol_position_view();
+        result
+    }
+
+    #[track_caller]
+    fn specbind_position_inner(&mut self, id: SymId, val: Value) -> Result<(), Flow> {
         // GNU specbind follows variable indirection before saving or
         // replacing the value cell, including a base's buffer-local slot.
         // Binding the alias's unused cell is invisible to symbol_value.
@@ -41,7 +48,7 @@ impl Interp {
                     self.princ_to_string(&self.cur_head_form)
                         .chars()
                         .take(400)
-                        .collect::<String>(),
+                        .collect::<crate::lisp::text::EmacsText>(),
                     std::panic::Location::caller()
                 );
                 for (f, a) in self.lisp_stack.iter().rev().take(20).rev() {
@@ -50,11 +57,11 @@ impl Interp {
                         self.princ_to_string(f)
                             .chars()
                             .take(100)
-                            .collect::<String>(),
+                            .collect::<crate::lisp::text::EmacsText>(),
                         self.princ_to_string(&Value::list(a.as_slice().to_vec()))
                             .chars()
                             .take(160)
-                            .collect::<String>()
+                            .collect::<crate::lisp::text::EmacsText>()
                     );
                 }
             }
@@ -166,6 +173,13 @@ impl Interp {
     }
 
     pub(crate) fn unbind_bindings(&mut self, n: usize) -> Result<(), Flow> {
+        let result = self.unbind_bindings_position_inner(n);
+        self.sync_symbol_position_view();
+        result
+    }
+
+    #[track_caller]
+    fn unbind_bindings_position_inner(&mut self, n: usize) -> Result<(), Flow> {
         for _ in 0..n {
             let Some(sb) = self.specbind.pop() else {
                 return Ok(());

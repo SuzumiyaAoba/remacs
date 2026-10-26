@@ -1,0 +1,55 @@
+;;; -*- lexical-binding: nil; -*-
+;; Pair-wise cycle detection, tolerant getters and live callbacks (#503-#506).
+(dolist (row '((1 0 1) (2 0 1) (3 1 5) (4 0 4)
+               (5 2 11) (6 4 5) (7 5 13) (8 4 10)))
+  (let ((source (number-sequence 0 (1- (car row)))) (calls 0))
+    (setcdr (last source) source)
+    (qa (plist-get source 'missing) nil)
+    (qa (lax-plist-get source 'missing) nil)
+    (qa (plist-get source 'missing (lambda (a b) (setq calls (1+ calls)) nil)) nil)
+    (qa calls (nth 2 row))
+    (setq calls 0)
+    (qa (condition-case e (plist-member source 'missing)
+          (circular-list (car (cadr e)))) (cadr row))
+    (qa (condition-case e
+            (plist-member source 'missing (lambda (a b) (setq calls (1+ calls)) nil))
+          (circular-list (car (cadr e)))) (cadr row))
+    (qa calls (nth 2 row))
+    ;; Matches return before inspecting a circular suffix.
+    (qa (plist-get source 0) (if (= (car row) 1) 0 1))
+    (qa (eq (plist-member source 0) source) t)))
+(dolist (source '(atom (a) (a . tail)))
+  (let ((calls 0))
+    (qa (plist-get source 'a (lambda (&rest args) (setq calls (1+ calls)) t)) nil)
+    (qa calls 0)))
+(qa (plist-get '(a) 'a 5) nil)
+(qa-err (plist-get '(a 1) 'a 5) 'invalid-function)
+(let ((source (list 'a)) (calls 0))
+  (qa (eq (plist-member source 'a (lambda (&rest args) (setq calls (1+ calls)) t)) source) t)
+  (qa calls 1))
+(let ((source (list 'a 'old)))
+  (qa (plist-get source 'a (lambda (&rest args) (setcdr source (list 'new)) t)) 'new))
+(dolist (op '(plist-get plist-member))
+  (let ((source (list 'a 'old)) (calls 0))
+    (qa (let ((result (funcall op source 'target
+                      (lambda (key prop)
+                        (setq calls (1+ calls))
+                        (when (= calls 1) (setcdr source (list 'new 'target 'found)))
+                        (eq key prop)))))
+          (if (eq op 'plist-member) (car result) result))
+        (if (eq op 'plist-member) 'target 'found))
+    (qa calls 2)))
+;; More than 500000 pairs: no fixed iteration limit on finite plists.
+(let* ((source (make-list 1000000 nil)) (end (last source)) (tail (list 'target 42)))
+  (setcdr end tail)
+  (unwind-protect
+      (progn
+        (qa (plist-get source 'target) 42)
+        (qa (plist-get source 'target #'eq) 42)
+        (qa (lax-plist-get source 'target) 42)
+        (qa (eq (plist-member source 'target) tail) t))
+    ;; Close the original spine before dropping it, then collect the cycle
+    ;; iteratively instead of recursively releasing a million Rc conses.
+    (setcdr end source)))
+(garbage-collect)
+(princ (qa--done))

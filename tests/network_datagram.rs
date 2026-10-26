@@ -12,7 +12,7 @@ fn eval(i: &mut Interp, code: &str) -> Value {
 }
 fn printed(i: &mut Interp, code: &str) -> String {
     let value = eval(i, code);
-    i.prin1_to_string(&value)
+    i.prin1_to_string(&value).to_unicode_lossy()
 }
 fn address(process: &Value) -> SocketAddr {
     let Value::Process(p) = process else {

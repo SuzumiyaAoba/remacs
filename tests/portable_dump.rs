@@ -61,6 +61,154 @@ fn literal(path: &Path) -> String {
 }
 
 #[test]
+fn image_preserves_copied_full_keymap_type_and_ascii_aliasing() {
+    let fixture = Fixture::new();
+    let producer = format!(
+        "(progn (setq keymap518-source (make-keymap)) \
+         (define-key keymap518-source \"v\" (vector 97 98)) \
+         (set-keymap-parent keymap518-source (make-sparse-keymap)) \
+         (let ((child (make-sparse-keymap))) (define-key child \"x\" 'original) \
+         (define-key keymap518-source \"p\" child)) \
+         (setq keymap518-copy (copy-keymap keymap518-source)) \
+         (define-key keymap518-copy \"py\" 'extra) \
+         (define-key keymap518-copy (vector (cons 65 90)) 'upper) \
+         (dump-emacs-portable {} t))",
+        literal(&fixture.image())
+    );
+    Fixture::ok(fixture.eval("producer-cache", &[], &producer));
+    let result = Fixture::ok(fixture.eval(
+        "consumer-cache",
+        &["--dump-file", fixture.image().to_str().unwrap()],
+        "(let ((before (lookup-key keymap518-copy \"py\"))) \
+         (define-key keymap518-copy (vector (cons 48 57)) 'digits) \
+         (prin1 (list (char-table-p (cadr keymap518-copy)) before \
+         (lookup-key keymap518-source \"py\") (lookup-key keymap518-copy \"py\") \
+         (lookup-key keymap518-copy \"A\") (lookup-key keymap518-copy \"0\") \
+         (eq (lookup-key keymap518-copy \"v\") (lookup-key keymap518-source \"v\")) \
+         (eq (keymap-parent keymap518-copy) (keymap-parent keymap518-source)))))",
+    ));
+    assert_eq!(result, "(t extra nil extra upper digits t t)");
+}
+
+#[test]
+fn image_preserves_overlay_opacity_for_sequence_operations() {
+    let fixture = Fixture::new();
+    let producer = format!(
+        "(progn (with-current-buffer (get-buffer-create \"overlay484\") \
+         (insert \"abc\") (setq overlay484-live (make-overlay 1 3)) \
+         (overlay-put overlay484-live 'tag 'value) \
+         (setq overlay484-dead (copy-overlay overlay484-live)) (delete-overlay overlay484-dead) \
+         (delete-overlay overlay484-live)) \
+         (dump-emacs-portable {} t))",
+        literal(&fixture.image())
+    );
+    Fixture::ok(fixture.eval("producer-cache", &[], &producer));
+    let result = Fixture::ok(fixture.eval(
+        "consumer-cache",
+        &["--dump-file", fixture.image().to_str().unwrap()],
+        "(prin1 (list (overlayp overlay484-live) (vectorp overlay484-live) \
+         (arrayp overlay484-live) (sequencep overlay484-live) \
+         (eq (copy-tree overlay484-live t) overlay484-live) (vectorp overlay484-dead) \
+         (overlay-get overlay484-live 'tag) \
+         (condition-case e (length overlay484-live) (error (cadr e))) \
+         (condition-case e (aref overlay484-live 0) (error (cadr e)))))",
+    ));
+    assert_eq!(result, "(t nil nil nil t nil value sequencep arrayp)");
+}
+
+#[test]
+fn image_preserves_font_and_obarray_kinds_without_confusing_record_tags() {
+    let fixture = Fixture::new();
+    let producer = format!(
+        "(progn (setq tags477-font (font-spec :family \"Monospace\") \
+         tags477-table (obarray-make) \
+         tags477-records (list (record 'font-spec (list 'payload)) (record 'obarray [] 3))) \
+         (intern \"saved-key\" tags477-table) \
+         (setq tags479-a (obarray-make) tags479-b (obarray-make) \
+         tags479-keys (make-hash-table :test 'equal)) \
+         (puthash tags479-a 'first tags479-keys) (puthash tags479-b 'second tags479-keys) \
+         (dump-emacs-portable {} t))",
+        literal(&fixture.image())
+    );
+    Fixture::ok(fixture.eval("producer-cache", &[], &producer));
+    let result = Fixture::ok(fixture.eval(
+        "consumer-cache",
+        &["--dump-file", fixture.image().to_str().unwrap()],
+        "(prin1 (list (fontp tags477-font) (recordp tags477-font) \
+         (font-get tags477-font :family) (obarrayp tags477-table) \
+         (symbol-name (intern-soft \"saved-key\" tags477-table)) \
+         (mapcar #'recordp tags477-records) \
+         (mapcar (lambda (r) (eq r (copy-tree r t))) tags477-records) \
+         (hash-table-count tags479-keys) (gethash tags479-a tags479-keys) \
+         (gethash tags479-b tags479-keys) (gethash (obarray-make) tags479-keys 'missing)))",
+    ));
+    assert_eq!(result, "(t nil Monospace t \"saved-key\" (t t) (nil nil) 2 first second missing)");
+}
+
+#[test]
+fn image_preserves_opaque_vector_kinds_and_ordinary_records_with_matching_tags() {
+    let fixture = Fixture::new();
+    let producer = format!(
+        "(progn (setq kinds469-bits (bool-vector t nil) \
+         kinds469-table (make-char-table 'test) \
+         kinds469-record-bits (record 'bool-vector [1 0]) \
+         kinds469-record-table (record 'char-table 'test (make-vector 65 nil))) \
+         (aset kinds469-table 65 'cell) (dump-emacs-portable {} t))",
+        literal(&fixture.image())
+    );
+    Fixture::ok(fixture.eval("producer-cache", &[], &producer));
+    let result = Fixture::ok(fixture.eval(
+        "consumer-cache",
+        &["--dump-file", fixture.image().to_str().unwrap()],
+        "(let ((values (list kinds469-bits kinds469-table kinds469-record-bits kinds469-record-table))) \
+         (prin1 (list (mapcar #'recordp values) (mapcar #'bool-vector-p values) \
+         (mapcar #'char-table-p values) (aref kinds469-bits 0) (aref kinds469-table 65))))",
+    ));
+    assert_eq!(result, "((nil nil t t) (t nil nil nil) (nil t nil nil) t cell)");
+}
+
+#[test]
+fn image_preserves_distinct_raw_byte_string_keys() {
+    let fixture = Fixture::new();
+    let producer = format!(
+        "(progn (setq bytes400-table (make-hash-table :test 'equal)) \
+         (puthash (unibyte-string 255) 'unibyte bytes400-table) \
+         (puthash (string #x3fffff) 'multibyte bytes400-table) \
+         (dump-emacs-portable {} t))",
+        literal(&fixture.image())
+    );
+    Fixture::ok(fixture.eval("producer-cache", &[], &producer));
+    let result = Fixture::ok(fixture.eval(
+        "consumer-cache",
+        &["--dump-file", fixture.image().to_str().unwrap()],
+        "(prin1 (list (hash-table-count bytes400-table) \
+         (gethash (unibyte-string 255) bytes400-table) \
+         (gethash (string #x3fffff) bytes400-table)))",
+    ));
+    assert_eq!(result, "(2 unibyte multibyte)");
+}
+
+#[test]
+fn image_preserves_the_global_empty_vector_identity_and_eq_keys() {
+    let fixture = Fixture::new();
+    let producer = format!(
+        "(progn (setq empty368-vector (vector) empty368-table (make-hash-table :test 'eq) \
+         empty368-obarray (obarray-make)) \
+         (puthash empty368-vector 'found empty368-table) (dump-emacs-portable {} t))",
+        literal(&fixture.image())
+    );
+    Fixture::ok(fixture.eval("producer-cache", &[], &producer));
+    let result = Fixture::ok(fixture.eval(
+        "consumer-cache",
+        &["--dump-file", fixture.image().to_str().unwrap()],
+        "(progn (intern \"new-after-restore\" empty368-obarray) \
+         (prin1 (list (eq empty368-vector (vector)) (eq empty368-vector []) \
+         (gethash [] empty368-table) (length []))))",
+    ));
+    assert_eq!(result, "(t t found 0)");
+}
+
+#[test]
 fn image_restores_shared_lisp_state_buffers_and_reports_actual_startup() {
     let fixture = Fixture::new();
     let code = format!(
@@ -404,4 +552,99 @@ fn image_restores_recursive_mutex_ownership() {
         )),
         "(t 42)"
     );
+}
+
+#[test]
+fn image_preserves_shared_empty_string_kinds_and_eq_keys() {
+    let fixture = Fixture::new();
+    let producer = format!(
+        "(progn (setq empty552-u (make-string 0 65) empty552-m (make-string 0 65 t) \
+         empty552-table (make-hash-table :test 'eq)) \
+         (puthash empty552-u 'unibyte empty552-table) \
+         (puthash empty552-m 'multibyte empty552-table) \
+         (dump-emacs-portable {} t))",
+        literal(&fixture.image())
+    );
+    Fixture::ok(fixture.eval("producer-cache", &[], &producer));
+    let result = Fixture::ok(fixture.eval(
+        "consumer-cache",
+        &["--dump-file", fixture.image().to_str().unwrap()],
+        "(progn (garbage-collect) \
+         (prin1 (list (eq empty552-u (make-string 0 65)) \
+         (eq empty552-m (make-string 0 65 t)) (eq empty552-u empty552-m) \
+         (gethash (make-string 0 65) empty552-table) \
+         (gethash (make-string 0 65 t) empty552-table) \
+         (multibyte-string-p empty552-u) (multibyte-string-p empty552-m))))",
+    ));
+    assert_eq!(result, "(t t nil unibyte multibyte nil t)");
+}
+
+#[test]
+fn image_restores_positioned_symbol_kinds_views_and_hash_keys() {
+    let fixture = Fixture::new();
+    let producer = format!(
+        "(progn (setq symbols-with-pos-enabled nil dump571-value 18 \
+         dump571-p (position-symbol 'dump571-value 9) \
+         dump571-nil (position-symbol nil 7) \
+         dump571-fake (record 'symbol-with-pos 'dump571-value 9) \
+         dump571-hash (make-hash-table :test 'eq) \
+         dump571-equal (make-hash-table :test 'equal) \
+         dump571-nils (make-hash-table :test 'eq)) \
+         (setq symbols-with-pos-enabled t) \
+         (puthash dump571-p 'found dump571-hash) \
+         (puthash (list dump571-p) 'nested dump571-equal) \
+         (puthash dump571-nil 'nil-found dump571-nils) \
+         (dump-emacs-portable {} t))",
+        literal(&fixture.image())
+    );
+    Fixture::ok(fixture.eval("producer-cache", &[], &producer));
+    let result = Fixture::ok(fixture.eval(
+        "consumer-cache",
+        &["--dump-file", fixture.image().to_str().unwrap()],
+        "(progn (garbage-collect) (prin1 (list \
+         symbols-with-pos-enabled (type-of dump571-p) (symbolp dump571-p) \
+         (symbol-with-pos-pos dump571-p) (eq dump571-p 'dump571-value) \
+         (gethash 'dump571-value dump571-hash) \
+         (gethash (list 'dump571-value) dump571-equal) \
+         (gethash nil dump571-nils) (eq (bare-symbol dump571-nil) nil) \
+         (recordp dump571-fake) (symbol-with-pos-p dump571-fake) \
+         (let ((symbols-with-pos-enabled nil)) \
+          (list (type-of dump571-p) (symbolp dump571-p) \
+                (eq dump571-p 'dump571-value)))))))",
+    ));
+    assert_eq!(result, "(t symbol t 9 t found nested nil-found t t nil (symbol-with-pos nil nil))");
+}
+
+#[test]
+fn image_preserves_wide_characters_in_names_buffers_and_hash_keys() {
+    let fixture = Fixture::new();
+    let producer = format!(
+        "(progn \
+         (setq dump624-text (string #xf0080 #x3fff80 #xd800 #xf0100 #x110000 #x200000)) \
+         (setq dump624-name (concat \"wide-name-\" dump624-text)) \
+         (setq dump624-symbol (intern dump624-name)) \
+         (set dump624-symbol dump624-text) \
+         (setq dump624-hash (make-hash-table :test 'equal)) \
+         (puthash dump624-text 'preserved dump624-hash) \
+         (setq dump624-buffer (get-buffer-create (concat \"wide-buffer-\" dump624-text))) \
+         (with-current-buffer dump624-buffer (insert dump624-text)) \
+         (dump-emacs-portable {} t))",
+        literal(&fixture.image())
+    );
+    Fixture::ok(fixture.eval("producer-cache", &[], &producer));
+    let result = Fixture::ok(fixture.eval(
+        "consumer-cache",
+        &["--dump-file", fixture.image().to_str().unwrap()],
+        "(progn (garbage-collect) \
+         (let ((codes '(983168 4194176 55296 983296 1114112 2097152))) \
+          (prin1 (list \
+           (equal (string-to-list dump624-text) codes) \
+           (eq (symbol-name dump624-symbol) dump624-name) \
+           (eq (intern dump624-name) dump624-symbol) \
+           (eq (symbol-value dump624-symbol) dump624-text) \
+           (gethash (apply #'string codes) dump624-hash) \
+           (with-current-buffer dump624-buffer \
+            (equal (string-to-list (buffer-string)) codes))))))",
+    ));
+    assert_eq!(result, "(t t t t preserved t)");
 }

@@ -234,7 +234,7 @@ fn tui_session_find_file_mx_switch_save_quit() {
             .buffers
             .get(i.current_buffer)
             .map(|b| b.borrow().name.clone());
-        assert_eq!(bn.as_deref(), Some("*scratch*"));
+        assert_eq!(bn.as_ref().map(|s| s.to_unicode_lossy()).as_deref(), Some("*scratch*"));
         assert!(i.quit_editor);
         // The minibuffer showed "Find file: " with the default directory
         // pre-inserted (rfn-eshadow's {} marker or the dir text itself).
@@ -286,7 +286,7 @@ fn tui_find_file_tab_completion_runs() {
             .get(i.current_buffer)
             .map(|b| b.borrow().name.clone());
         // The read finished and the file was visited.
-        assert_eq!(bn.as_deref(), Some("zz_tui_tab.txt"));
+        assert_eq!(bn.as_ref().map(|s| s.to_unicode_lossy()).as_deref(), Some("zz_tui_tab.txt"));
         let _ = std::fs::remove_file(std::env::temp_dir().join("zz_tui_tab.txt"));
     })
 }
@@ -307,7 +307,7 @@ fn tui_find_file_quit_aborts_read() {
             .get(i.current_buffer)
             .map(|b| b.borrow().name.clone());
         // No file buffer was visited; we're back at the startup buffer.
-        assert_ne!(bn.as_deref(), Some("nope-xyz"));
+        assert_ne!(bn.as_ref().map(|s| s.to_unicode_lossy()).as_deref(), Some("nope-xyz"));
         assert!(i.quit_editor);
     })
 }
@@ -332,7 +332,7 @@ fn tui_find_file_directory_opens_dired() {
             .buffers
             .get(i.current_buffer)
             .map(|b| b.borrow().name.clone());
-        assert_eq!(bn.as_deref(), Some("tmp"));
+        assert_eq!(bn.as_ref().map(|s| s.to_unicode_lossy()).as_deref(), Some("tmp"));
         let mode = i
             .eval_str("(buffer-local-value 'major-mode (current-buffer))")
             .expect("major-mode eval");

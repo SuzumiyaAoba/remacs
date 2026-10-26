@@ -92,7 +92,7 @@ fn pipe_eof_keeps_output_readable_and_all_descriptors_close() {
         let Value::Str(text) = text else {
             panic!("string")
         };
-        assert_eq!(text.borrow().as_bytes(), b"A\x04B\r\0\n");
+        assert_eq!(text.borrow().to_external_bytes(), b"A\x04B\r\0\n");
         closed(output);
 
         let process = eval(

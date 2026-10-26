@@ -168,7 +168,7 @@ impl CommandLineLoadPath {
 /// Consuming input for direct/compiled loads, exposed as GNU's private
 /// `get-file-char' stream symbol. Source loads use their real buffer.
 pub(crate) struct LoadStream {
-    pub chars: Rc<Vec<char>>,
+    pub chars: Rc<Vec<super::text::EmacsChar>>,
     pub position: usize,
 }
 
@@ -268,11 +268,11 @@ pub(crate) fn locate_full(
     let expanded;
     let name = if name.starts_with('~') {
         expanded = crate::editor::expand_file_name_str(i, name);
-        expanded.as_str()
+        expanded.to_unicode_lossy()
     } else {
-        name
+        name.to_owned()
     };
-    let p = Path::new(name);
+    let p = Path::new(&name);
     let source_suffixes = if nosuffix
         || name.ends_with(".el") || name.ends_with(".elc") || name.ends_with(".eln")
     {
@@ -282,7 +282,7 @@ pub(crate) fn locate_full(
     };
     if p.is_absolute() || name.contains('/') || name.contains(std::path::MAIN_SEPARATOR) {
         if let Some(hit) = pick_existing(
-            candidates(Path::new(""), name, nosuffix, mustsuffix),
+            candidates(Path::new(""), &name, nosuffix, mustsuffix),
             prefer_newer,
         ) {
             return Some(hit);
@@ -296,11 +296,11 @@ pub(crate) fn locate_full(
         // same against every search dir.
         for dir in search_dirs(i) {
             if let Some(hit) =
-                pick_existing(candidates(&dir, name, nosuffix, mustsuffix), prefer_newer)
+                pick_existing(candidates(&dir, &name, nosuffix, mustsuffix), prefer_newer)
             {
                 return Some(hit);
             }
-            if let Ok(Some(path)) = locate_cache_source(i, &dir, name, &source_suffixes) {
+            if let Ok(Some(path)) = locate_cache_source(i, &dir, &name, &source_suffixes) {
                 return Some(Found::File(path));
             }
         }
@@ -308,7 +308,7 @@ pub(crate) fn locate_full(
         // basenames renamed to SUBDIR-BASE.el; also try that spelling,
         // then the bare basename (unique basenames like "arabic").
         let flat = name.replace('/', "-");
-        let base = name.rsplit('/').next().unwrap_or(name);
+        let base = name.rsplit('/').next().unwrap_or(&name);
         for dir_s in builtin_dirs() {
             let dir = PathBuf::from(dir_s);
             for n in [&flat, base] {
@@ -323,11 +323,11 @@ pub(crate) fn locate_full(
     }
     // Search load-path (a list of strings).
     for dir in search_dirs(i) {
-        if let Some(hit) = pick_existing(candidates(&dir, name, nosuffix, mustsuffix), prefer_newer)
+        if let Some(hit) = pick_existing(candidates(&dir, &name, nosuffix, mustsuffix), prefer_newer)
         {
             return Some(hit);
         }
-        if let Ok(Some(path)) = locate_cache_source(i, &dir, name, &source_suffixes) {
+        if let Ok(Some(path)) = locate_cache_source(i, &dir, &name, &source_suffixes) {
             return Some(Found::File(path));
         }
     }
@@ -343,7 +343,7 @@ fn search_dirs(i: &mut Interp) -> Vec<PathBuf> {
         .unwrap_or_default()
         .iter()
         .filter_map(|d| match d {
-            Value::Str(s) => Some(PathBuf::from(s.borrow().as_str())),
+            Value::Str(s) => s.borrow().to_os_string().ok().map(PathBuf::from),
             _ => None,
         })
         .collect();
@@ -391,7 +391,7 @@ pub(crate) fn finish_load_path(i: &mut Interp) {
             for directory in &mut defaults {
                 if let Value::Str(path) = directory {
                     if canonical.is_some()
-                        && std::fs::canonicalize(path.borrow().as_str()).ok() == canonical
+                        && path.borrow().to_os_string().ok().and_then(|path| std::fs::canonicalize(path).ok()) == canonical
                     {
                         *directory = Value::string(cache.to_string_lossy().into_owned());
                     }
@@ -448,8 +448,9 @@ fn installed_library_dirs() -> Vec<String> {
 
 /// Distinguish shipped sources from user overrides, including a user's
 /// cwd/lisp directory. All roots are compared after canonicalization.
-fn path_is_bundled_source(path: &str) -> bool {
-    let Ok(p) = std::fs::canonicalize(path) else {
+fn path_is_bundled_source<T: super::text::TextSource + ?Sized>(path: &T) -> bool {
+    path.with_text(|path| {
+    let Some(p) = path.to_os_string().ok().and_then(|path| std::fs::canonicalize(path).ok()) else {
         return false;
     };
     let mut roots = installed_library_dirs();
@@ -465,6 +466,8 @@ fn path_is_bundled_source(path: &str) -> bool {
         std::fs::canonicalize(d)
             .map(|cd| p.starts_with(&cd))
             .unwrap_or(false)
+    })
+
     })
 }
 
@@ -651,17 +654,20 @@ pub(crate) fn bundled_history_path(file: &str) -> bool {
 }
 
 /// Only unchanged shipped sources can be republished by a portable image.
-pub(crate) fn dump_source_identity(file: &str) -> Option<&'static str> {
-    let prelude = concat!(env!("REMACS_SOURCE_ROOT"), "/crates/runtime/src/lisp/prelude.el");
-    let (key, source) = if file == prelude {
-        ("remacs-prelude", super::prelude::PRELUDE)
-    } else {
-        if !path_is_bundled_source(file) {
-            return None;
-        }
-        embedded_entry(file)?
-    };
-    (std::fs::read(file).ok()?.as_slice() == source.as_bytes()).then_some(key)
+pub(crate) fn dump_source_identity<T: super::text::TextSource + ?Sized>(file: &T) -> Option<&'static str> {
+    file.with_text(|file| {
+        let path = std::path::PathBuf::from(file.to_os_string().ok()?);
+        let prelude = concat!(env!("REMACS_SOURCE_ROOT"), "/crates/runtime/src/lisp/prelude.el");
+        let (key, source) = if file == prelude {
+            ("remacs-prelude", super::prelude::PRELUDE)
+        } else {
+            if !path_is_bundled_source(file) { return None; }
+            // Bundled basenames are Unicode registry keys; the directory
+            // itself can contain arbitrary native path bytes.
+            embedded_entry(path.file_name()?.to_str()?)?
+        };
+        (std::fs::read(path).ok()?.as_slice() == source.as_bytes()).then_some(key)
+    })
 }
 
 fn materialized_source_file(
@@ -1009,7 +1015,7 @@ fn eval_src_in_context(
                 i.load_stream_symbol = Some(symbol);
             }
             i.load_stream = Some(Rc::new(RefCell::new(LoadStream {
-                chars: Rc::new(src.chars().collect()),
+                chars: Rc::new(src.chars().map(Into::into).collect()),
                 position: 0,
             })));
         }
@@ -1337,10 +1343,10 @@ fn eval_str_for_load(
     } else {
         None
     };
-    let mut chars: Rc<Vec<char>> = stream
+    let mut chars: Rc<Vec<super::text::EmacsChar>> = stream
         .as_ref()
         .map(|stream| stream.borrow().chars.clone())
-        .unwrap_or_else(|| Rc::new(src.chars().collect()));
+        .unwrap_or_else(|| Rc::new(src.chars().map(Into::into).collect()));
     // Refresh from the live buffer even before the first form: binding
     // watchers may already have changed or narrowed the source.
     let mut source_version = None;
@@ -1426,7 +1432,7 @@ fn eval_str_for_load(
                 let mut p = pos;
                 loop {
                     while p < chars.len()
-                        && matches!(chars[p], ' ' | '\t' | '\n' | '\x0C' | '\r' | '\u{A0}')
+                        && chars[p].unicode().is_some_and(|c| matches!(c, ' ' | '\t' | '\n' | '\x0C' | '\r' | '\u{A0}'))
                     {
                         p += 1;
                     }
@@ -1454,7 +1460,7 @@ fn eval_str_for_load(
                 let mut p = stream.borrow().position;
                 loop {
                     while p < chars.len()
-                        && matches!(chars[p], ' ' | '\t' | '\n' | '\x0C' | '\r' | '\u{A0}')
+                        && chars[p].unicode().is_some_and(|c| matches!(c, ' ' | '\t' | '\n' | '\x0C' | '\r' | '\u{A0}'))
                     {
                         p += 1;
                     }
@@ -1487,7 +1493,7 @@ fn eval_str_for_load(
                     pos,
                     end,
                     chars.len(),
-                    i.princ_to_string(form).chars().take(60).collect::<String>()
+                    i.princ_to_string(form).chars().take(60).collect::<crate::lisp::text::EmacsText>()
                 );
             }
         }
@@ -1526,7 +1532,7 @@ fn eval_str_for_load(
                                     i.princ_to_string(&form)
                                         .chars()
                                         .take(90)
-                                        .collect::<String>()
+                                        .collect::<crate::lisp::text::EmacsText>()
                                 );
                             }
                         }
@@ -1537,7 +1543,7 @@ fn eval_str_for_load(
                                 crate::lisp::Flow::Signal(signal) => format!(
                                     "signal {} {}",
                                     i.prin1_to_string(&signal.symbol()),
-                                    i.prin1_to_string(&signal.data()).chars().take(120).collect::<String>()
+                                    i.prin1_to_string(&signal.data()).chars().take(120).collect::<crate::lisp::text::EmacsText>()
                                 ),
                                 other => format!("{:?}", other),
                             };
@@ -1547,7 +1553,7 @@ fn eval_str_for_load(
                                 i.princ_to_string(&form)
                                     .chars()
                                     .take(120)
-                                    .collect::<String>(),
+                                    .collect::<crate::lisp::text::EmacsText>(),
                                 fdesc
                             );
                         }
@@ -1657,7 +1663,7 @@ pub(crate) fn record_prelude_load_history(i: &mut Interp, file: &str, src: &str)
     if i.specbind(cll, Value::Nil).is_err() {
         return;
     }
-    let chars: Rc<Vec<char>> = Rc::new(src.chars().collect());
+    let chars: Rc<Vec<super::text::EmacsChar>> = Rc::new(src.chars().map(Into::into).collect());
     let mut pos = 0usize;
     loop {
         let next = {
@@ -1798,8 +1804,9 @@ fn progn_children(i: &mut Interp, form: &Value) -> Option<Vec<Value>> {
 /// Parse GNU lread.c's first-line cookie, including its 99-byte fields
 /// and non-overlapping marker state machine. The consumed position is in
 /// characters and includes the comment line and any initial shebang.
-pub(crate) fn lexical_cookie(source: &str) -> (Option<bool>, usize) {
-    fn marker(ch: char, state: &mut u8) -> bool {
+pub(crate) fn lexical_cookie<T: super::text::TextSource + ?Sized>(source: &T) -> (Option<bool>, usize) {
+    source.with_text(|source| {
+    fn marker(ch: super::text::EmacsChar, state: &mut u8) -> bool {
         match *state {
             0 => *state = u8::from(ch == '-'),
             1 => *state = if ch == '*' { 2 } else { 0 },
@@ -1841,7 +1848,7 @@ pub(crate) fn lexical_cookie(source: &str) -> (Option<bool>, usize) {
     }
     while in_variables {
         let mut ch = chars.next();
-        while matches!(ch, Some(' ' | '\t')) {
+        while ch.is_some_and(|c| c == ' ' || c == '\t') {
             ch = chars.next();
         }
         let mut name = Vec::new();
@@ -1851,7 +1858,7 @@ pub(crate) fn lexical_cookie(source: &str) -> (Option<bool>, usize) {
                 break;
             }
             if name.len() < 99 {
-                name.push(character as u8);
+                name.push(character.code() as u8);
             }
             if marker(character, &mut state) {
                 in_variables = false;
@@ -1863,7 +1870,7 @@ pub(crate) fn lexical_cookie(source: &str) -> (Option<bool>, usize) {
         }
         trim(&mut name);
         ch = chars.next();
-        while matches!(ch, Some(' ' | '\t')) {
+        while ch.is_some_and(|c| c == ' ' || c == '\t') {
             ch = chars.next();
         }
         let mut value = Vec::new();
@@ -1873,7 +1880,7 @@ pub(crate) fn lexical_cookie(source: &str) -> (Option<bool>, usize) {
                 break;
             }
             if value.len() < 99 {
-                value.push(character as u8);
+                value.push(character.code() as u8);
             }
             if marker(character, &mut state) {
                 in_variables = false;
@@ -1889,6 +1896,32 @@ pub(crate) fn lexical_cookie(source: &str) -> (Option<bool>, usize) {
         }
     }
     (None, consumed)
+    })
+}
+
+#[cfg(test)]
+mod wide_cookie_tests {
+    use super::*;
+    use crate::lisp::text::EmacsText;
+    #[test]
+    fn consumed_positions_count_extended_characters_once() {
+        let mut source = EmacsText::from(";");
+        source.append(&EmacsText::from_codes([0xf0080, 0x3fff80, 0xd800, 0x110000]).unwrap());
+        source.push_str(" -*- lexical-binding: nil; -*-\n");
+        let consumed = source.len();
+        source.push_str("(+ 1 2)");
+        assert_eq!(lexical_cookie(&source), (Some(false), consumed));
+    }
+    #[test]
+    fn shebang_and_first_declaration_rules_survive_wide_input() {
+        let mut source = EmacsText::from("#! /bin/");
+        source.append(&EmacsText::from_codes([0x200000]).unwrap());
+        source.push_str("\n; -*- lexical-binding: t; lexical-binding: nil; -*-\n");
+        let consumed = source.len();
+        source.push_str("(message \"done\")");
+        assert_eq!(lexical_cookie(&source), (Some(true), consumed));
+        assert_eq!(lexical_cookie("(+ 1 2) ; -*- lexical-binding: t -*-"), (None, 0));
+    }
 }
 
 /// Resolve a scanned cookie through GNU's observable default callback.
@@ -2184,7 +2217,7 @@ pub(crate) fn load_library_opts_msg(
                                 i.princ_to_string(&i.cur_head_form)
                                     .chars()
                                     .take(160)
-                                    .collect::<String>()
+                                    .collect::<crate::lisp::text::EmacsText>()
                             );
                         }
                         announce(i, &path);

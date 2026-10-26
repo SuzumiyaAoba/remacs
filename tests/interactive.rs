@@ -28,7 +28,7 @@ fn cmd(i: &mut Interp, name: &str) -> remacs::lisp::EvalResult {
 /// `prin1` of the value of `src` in `i`.
 fn pev(i: &mut Interp, src: &str) -> String {
     let v = ev_in(i, src);
-    i.prin1_to_string(&v)
+    i.prin1_to_string(&v).to_unicode_lossy()
 }
 
 fn ev_in(i: &mut Interp, src: &str) -> Value {
@@ -57,7 +57,7 @@ fn set(i: &mut Interp, name: &str, v: Value) {
 
 fn buffer_string(i: &mut Interp) -> String {
     match ev_in(i, "(buffer-string)") {
-        Value::Str(s) => s.borrow().clone(),
+        Value::Str(s) => s.borrow().to_unicode_lossy(),
         v => panic!("buffer-string -> {}", i.prin1_to_string(&v)),
     }
 }
@@ -203,7 +203,7 @@ fn y_or_n_p_via_hook() {
 fn interactive_b_defaults_current_buffer() {
     common::on_big_stack(move || {
         let (mut i, _) = interp();
-        canned(&mut i, vec![MinibufInput::Text(String::new())]);
+        canned(&mut i, vec![MinibufInput::Text(Default::default())]);
         let v = ev_in(
             &mut i,
             "(defun f (b) (interactive \"bBuf: \") b) (call-interactively 'f)",
@@ -465,7 +465,7 @@ fn completing_read_paths() {
         let v = ev_in(&mut i, "(completing-read \"P: \" '(\"alpha\" \"beta\"))");
         assert_eq!(i.prin1_to_string(&v), "\"alp\"");
         // Empty input → default (4th arg position: INITIAL-INPUT then DEF).
-        canned(&mut i, vec![MinibufInput::Text(String::new())]);
+        canned(&mut i, vec![MinibufInput::Text(Default::default())]);
         let v = ev_in(
             &mut i,
             "(completing-read \"P: \" '(\"alpha\" \"beta\") nil nil nil nil \"DEF\")",
@@ -652,7 +652,7 @@ fn interactive_spec_codes_batch() {
         );
         assert_eq!(i.prin1_to_string(&v), "3");
         // 'B' existing buffer name.
-        canned(&mut i, vec![MinibufInput::Text(String::new())]);
+        canned(&mut i, vec![MinibufInput::Text(Default::default())]);
         let v = ev_in(
             &mut i,
             "(defun f (b) (interactive \"BBuf: \") b) (call-interactively 'f)",

@@ -91,7 +91,7 @@ enum Object {
     Cons(Weak<RefCell<Cons>>),
     Float(Weak<f64>),
     BigInt(Weak<num_bigint::BigInt>),
-    String(Weak<RefCell<String>>),
+    String(Weak<RefCell<super::text::EmacsText>>),
     Vector(Weak<RefCell<Vec<Value>>>),
     Hash(Weak<RefCell<LispHash>>),
     Lambda(Weak<Lambda>),

@@ -230,11 +230,11 @@ fn f_ns_font_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     // `-%*[^-]-%179[^-]-' (or `--' prefixed): family = 2nd field.
     let body = name.trim_start_matches('-');
-    let family = body.split('-').nth(1).unwrap_or("");
+    let family = body.split('-').nth(1).unwrap_or_default();
     let mut fam: String = if family.is_empty() {
         "Monaco".to_string()
     } else {
-        family.chars().take(179).collect()
+        family.chars().take(179).filter_map(|c| c.unicode()).collect()
     };
     // Uppercase the first char.
     fam = {
@@ -325,7 +325,7 @@ fn f_ns_badge(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     with_pool(o, |o| unsafe {
         let dock = (o.id0)(ns_app(o), sel(o, "dockTile"));
         let label = match &a[0] {
-            Value::Str(s) => ns_str(o, &s.borrow()),
+            Value::Str(s) => ns_str(o, &(s.borrow()).to_unicode_lossy()),
             _ => 0,
         };
         (o.void1)(dock, sel(o, "setBadgeLabel:"), label);
@@ -391,7 +391,7 @@ fn f_ns_block_system_sleep(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         if a[1].is_nil() {
             opts |= 1u64 << 46;
         }
-        let reason = ns_str(o, why.as_deref().unwrap_or("Emacs"));
+        let reason = ns_str(o, &why.as_deref().map(|s| s.to_unicode_lossy()).unwrap_or_else(|| "Emacs".into()));
         let act = (o.u64_2)(pi, sel(o, "beginActivityWithOptions:reason:"), opts, reason);
         // The activity object is autoreleased; keep it alive past the
         // pool pop so `endActivity:' can use it later.
