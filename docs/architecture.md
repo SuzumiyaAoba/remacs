@@ -20,6 +20,22 @@ remacs（統合実行ファイル・既存 API）
 GNU Emacs の Lisp API はこれらの状態を直接扱うため、処理系の互換実行環境に含める。
 この整理ではそれらを削った別の Lisp 方言や、不完全な最小ブートを導入しない。
 
+### Lisp 評価器の内部構成
+
+`lisp/eval.rs` は `Interp` の状態、初期化、評価・関数呼び出しのディスパッチを保持する。
+補助処理は `lisp/eval/` の非公開モジュールに分け、既存の `eval::*` 公開パスを再公開で維持する。
+
+- `lexenv.rs`: 字句環境の永続的なリスト構造、共有束縛セル、検索・代入・動的宣言。
+- `bindings.rs`: 動的束縛スタック、バッファローカル／デフォルト値の保存と復元、巻き戻し。
+- `conditions.rs`: signal の生成、診断、条件名の照合。signal の配送は評価器に残す。
+- `plist.rs`: シンボルプロパティで使う property list の検索と変更。
+
+最適化時も、字句環境のセル共有と最初の一致で検索を止める規則、watcher の通知順、
+巻き戻し中に発生した signal の配送順を維持する。状態を複製した別の実行経路は作らない。
+束縛と条件の変更には `qa_eval`、`qa_eval_lexenv`、`qa_closure_constructor`、
+`qa_variable_watchers`、`qa_local_dynamic_unwind`、`qa_signal_*`、`qa_plists` を使い、
+通常起動と `REMACS_NO_ELC=1` のソース起動の両方で確認する。
+
 `frontend/` はフロントエンド共通の部分を持つ。
 
 - `mod.rs`: `KeyIo` 入出力契約と公開 API。
