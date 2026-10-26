@@ -1750,7 +1750,7 @@ pub(crate) fn f_interactive_form(i: &mut Interp, args: crate::lisp::Argv) -> Eva
             // GNU returns `(interactive SPEC)' for primitives whose
             // intspec is non-nil.  Specs beginning with `(' are forms
             // read from the string rather than callint letter codes.
-            match crate::lisp::eval::subr_interactive_form(i, s.name) {
+            match crate::lisp::eval::subr_interactive_form(i, s) {
                 Some(spec) => Ok(spec),
                 None => Ok(Value::Nil),
             }
@@ -1909,7 +1909,10 @@ fn f_variable_binding_locus(i: &mut Interp, args: crate::lisp::Argv) -> EvalResu
 }
 fn f_subr_name(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[0] {
-        Value::Subr(s) => Ok(Value::string(s.name)),
+        Value::Subr(s) => Ok(match super::comp::native_name(s) {
+            Some(bytes) => i.auto_string_value(&bytes),
+            None => Value::string(s.name),
+        }),
         // Compiled lambdas print as `#<subr NAME>' like GNU's native
         // functions; `subr-name' must serve the same name.
         Value::Lambda(l) if l.compiled => match i.lambda_name(l) {

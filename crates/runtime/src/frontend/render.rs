@@ -138,7 +138,7 @@ struct FaceCtx {
     /// `color-name-rgb-alist' folded into (canonical name -> rgb).
     colors: HashMap<EmacsText, (u8, u8, u8)>,
     /// Resolved face name -> merged StyleMix.
-    cache: HashMap<String, StyleMix>,
+    cache: HashMap<crate::lisp::value::SymId, StyleMix>,
 }
 
 impl FaceCtx {
@@ -238,20 +238,27 @@ impl FaceCtx {
     /// Merge one named face's attributes (spec layer first, then the
     /// new-frame defaults layer like GNU's realize_default_face, then
     /// the compiled-in basic-face fallbacks).
-    fn named(&mut self, i: &Interp, name: &str, depth: u32) -> StyleMix {
+    fn builtin(&mut self, i: &Interp, name: &str, depth: u32) -> StyleMix {
+        match i.q_soft(name) {
+            Some(face) => self.named(i, &face, depth),
+            None => builtin_face_defaults(i, name),
+        }
+    }
+
+    fn named(&mut self, i: &Interp, name: &crate::lisp::value::SymId, depth: u32) -> StyleMix {
         if let Some(s) = self.cache.get(name) {
             return *s;
         }
         // The realized value: face_table plist (defface/theme layer)
         // over the new-frame defaults layer over built-in defaults.
-        let mut mix = builtin_face_defaults(i, name);
+        let mut mix = builtin_face_defaults(i, crate::editor::builtin_face_name(i, *name).unwrap_or(""));
         if let Some((_, plist)) = i.face_t_table.iter().find(|(n, _)| n == name) {
             mix.merge(&self.face_plist(i, plist, depth));
         }
         if let Some((_, plist)) = i.face_table.iter().find(|(n, _)| n == name) {
             mix.merge(&self.face_plist(i, plist, depth));
         }
-        self.cache.insert(name.to_string(), mix);
+        self.cache.insert(*name, mix);
         mix
     }
 
@@ -323,15 +330,13 @@ impl FaceCtx {
         }
         match v {
             Value::Sym(s) => {
-                let name = i.symbol_name(*s);
-                match crate::editor::face_resolve(i, &name) {
+                match crate::editor::face_resolve(i, s) {
                     Some(t) => self.named(i, &t, depth + 1),
                     None => StyleMix::default(),
                 }
             }
             Value::Str(s) => {
-                let name = s.borrow().clone();
-                match crate::editor::face_resolve(i, &(name).to_unicode_lossy()) {
+                match crate::editor::face_symbol(i, v).and_then(|face| crate::editor::face_resolve(i, &face)) {
                     Some(t) => self.named(i, &t, depth + 1),
                     None => StyleMix::default(),
                 }
@@ -544,10 +549,10 @@ fn window_faces(
 /// face, then text-property faces (insertion order — last write
 /// wins), then overlays in ascending priority.
 fn style_at_pos(i: &Interp, ctx: &mut FaceCtx, wf: &WindowFaces, pos: usize) -> CellStyle {
-    let mut mix = ctx.named(i, "default", 0);
+    let mut mix = ctx.builtin(i, "default", 0);
     if let Some((rs, re)) = wf.region {
         if pos >= rs && pos < re {
-            mix.merge(&ctx.named(i, "region", 0));
+            mix.merge(&ctx.builtin(i, "region", 0));
         }
     }
     for (s, e, v, _) in &wf.prop_faces {
@@ -805,7 +810,7 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
             } else {
                 "mode-line-inactive"
             };
-            let mut ml = fctx.named(i, ml_name, 0).finish();
+            let mut ml = fctx.builtin(i, ml_name, 0).finish();
             if ml == CellStyle::default() {
                 ml.inverse = true;
             }

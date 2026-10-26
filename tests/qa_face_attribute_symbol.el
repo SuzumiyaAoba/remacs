@@ -1,0 +1,15 @@
+;;; Face attribute getter validates the original face object. -*- lexical-binding: nil; -*-
+;; #677: frame validation and invalid-face resolution precede the symbol check.
+(qa-err-data (internal-get-lisp-face-attribute "default" :foreground nil)
+             'wrong-type-argument '(symbolp "default"))
+(qa-err-data (face-attribute "default" :foreground nil t)
+             'wrong-type-argument '(symbolp "default"))
+(qa-err-data (internal-get-lisp-face-attribute "default" :foreground 'qa677-bad-frame)
+             'wrong-type-argument '(frame-live-p qa677-bad-frame))
+(qa-err-data (internal-get-lisp-face-attribute "qa677-missing-face" :foreground nil)
+             'error '("Invalid face" qa677-missing-face))
+(qa-err-data (internal-get-lisp-face-attribute 42 :foreground nil)
+             'error '("Invalid face" 42))
+(qa-err (internal-get-lisp-face-attribute nil :foreground nil) 'error)
+(qa (stringp (face-attribute 'default :foreground nil t)) t)
+(princ (qa--done))

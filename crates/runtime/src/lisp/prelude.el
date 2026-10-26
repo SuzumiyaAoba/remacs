@@ -1,5 +1,32 @@
 ;; -*- lexical-binding: t -*-
 
+;; GNU subr.el string-lines, with when/push expanded for early bootstrap.
+;; Keep this available before the first boot libraries need line splitting.
+;; The real subr.el definition replaces it later in bootstrap (#678).
+(defun string-lines (string &optional omit-empty keep-newlines)
+  "Split STRING into a list of lines.
+If OMIT-EMPTY, empty lines will be removed from the results.
+If KEEP-NEWLINES, don't strip trailing newlines from the result
+lines."
+  (if (equal string "")
+      (if omit-empty nil (list ""))
+    (let ((lines nil) (start 0))
+      (while (< start (length string))
+        (let ((newline (string-search "\n" string start)))
+          (if newline
+              (progn
+                (if (or (not omit-empty) (not (= start newline)))
+                    (let ((line (substring string start
+                                           (if keep-newlines (1+ newline) newline))))
+                      (if (not (and keep-newlines omit-empty (equal line "\n")))
+                          (setq lines (cons line lines)))))
+                (setq start (1+ newline)))
+            (if (zerop start)
+                (setq lines (cons string lines))
+              (setq lines (cons (substring string start) lines)))
+            (setq start (length string)))))
+      (nreverse lines))))
+
 ;; ---------- control-flow macros ----------
 
 (defmacro when (cond &rest body)

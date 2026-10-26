@@ -1,4 +1,7 @@
 ;;; -*- lexical-binding: nil; -*-
-;; string-lines includes an empty vector as its one empty sequence field (#414).
-(qa (string-lines []) '([]))
+;; #678: the length-zero loop also skips empty vectors and bool-vectors.
+(qa (string-lines []) nil)
+(qa (string-lines (make-bool-vector 0 nil)) nil)
+(qa (string-lines "") '(""))
+(qa (string-lines "" t) nil)
 (princ (qa--done))

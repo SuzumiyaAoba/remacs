@@ -2685,13 +2685,10 @@ fn f_frame_face_hash_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         ":distant-foreground",
         ":extend",
     ];
-    let names: Vec<String> = crate::editor::KNOWN_FACES
-        .iter()
-        .map(|s| s.to_string())
-        .chain(i.face_table.iter().map(|(n, _)| n.clone()))
-        .collect();
+    let mut names: Vec<_> = crate::editor::KNOWN_FACES.iter().map(|name| i.q(name)).collect();
+    names.extend(i.face_table.iter().map(|(face, _)| *face));
     for n in names {
-        let sym = Value::Sym(i.intern(&n));
+        let sym = Value::Sym(n);
         let key = crate::lisp::builtins::hashfn::hash_key_for(i, &sym, HashTest::Eq);
         let mut v = Vec::with_capacity(20);
         v.push(Value::Sym(i.q("face")));

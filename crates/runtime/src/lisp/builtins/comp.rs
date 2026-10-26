@@ -155,6 +155,8 @@ struct EmApi {
     bind: unsafe extern "C-unwind" fn(EmEnv, EmObj, EmObj) -> EmObj,
     unbind: unsafe extern "C-unwind" fn(EmEnv, usize) -> EmObj,
     sym_value: unsafe extern "C-unwind" fn(EmEnv, EmObj) -> EmObj,
+    /// Appended for symbol-name representation fidelity without shifting old ABI fields.
+    intern_kind: unsafe extern "C-unwind" fn(EmEnv, *const c_char, usize, i64) -> EmObj,
 }
 
 unsafe extern "C-unwind" fn api_nil(_e: EmEnv) -> EmObj {
@@ -174,15 +176,39 @@ unsafe extern "C-unwind" fn api_str(_e: EmEnv, p: *const c_char, n: usize) -> Em
     reg(Value::string(String::from_utf8_lossy(b)))
 }
 unsafe extern "C-unwind" fn api_intern(e: EmEnv, p: *const c_char, n: usize) -> EmObj {
-    let b = unsafe { std::slice::from_raw_parts(p as *const u8, n) };
+    api_intern_kind(e, p, n, 0)
+}
+unsafe extern "C-unwind" fn api_intern_kind(e: EmEnv, p: *const c_char, n: usize, kind: i64) -> EmObj {
+    let bytes = unsafe { std::slice::from_raw_parts(p as *const u8, n) };
     let i = host(e);
-    let s = String::from_utf8_lossy(b);
-    reg(Value::Sym(i.intern(&s)))
+    let text = match crate::lisp::text::EmacsText::from_internal_bytes(bytes, true) {
+        Ok(text) => text,
+        Err(_) => return outcome(e, Err(i.error("Invalid native symbol name encoding"))),
+    };
+    let key = if kind & 1 != 0 {
+        crate::lisp::obarray::InternKey::from_text_kind(&text, false)
+    } else if kind & 2 != 0 {
+        crate::lisp::obarray::InternKey::from_text_kind(&text, true)
+    } else {
+        crate::lisp::obarray::InternKey::from_text(&text)
+    };
+    let existing = i.obarray.lookup_key(&key).is_some();
+    let symbol = i.obarray.intern_with_key(&text, key);
+    if !existing && kind != 0 {
+        let reference = Value::string_ref(&text);
+        if kind & 1 != 0 { i.mark_unibyte(&reference); }
+        if kind & 2 != 0 { i.mark_multibyte(&reference); }
+        i.obarray.symbol_mut(symbol).name_string = Some(reference);
+    }
+    reg(i.sym(symbol))
 }
 unsafe extern "C-unwind" fn api_read(e: EmEnv, p: *const c_char, n: usize) -> EmObj {
     let b = unsafe { std::slice::from_raw_parts(p as *const u8, n) };
     let i = host(e);
-    let s = String::from_utf8_lossy(b).into_owned();
+    let s = match crate::lisp::text::EmacsText::from_internal_bytes(b, true) {
+        Ok(text) => text,
+        Err(_) => return outcome(e, Err(i.error("Invalid native Lisp constant encoding"))),
+    };
     outcome(e, i.read_from_string(&s, 0).map(|(v, _)| v))
 }
 #[derive(Hash, PartialEq, Eq)]
@@ -224,7 +250,14 @@ unsafe extern "C-unwind" fn api_string_constant_kind(
 ) -> EmObj {
     native_constant(ConstantKey::StringKind(p as usize, n, kind), || {
         let bytes = unsafe { std::slice::from_raw_parts(p as *const u8, n) };
-        let handle = reg(Value::string_with_kind(String::from_utf8_lossy(bytes), kind & 2 != 0));
+        let text = match crate::lisp::text::EmacsText::from_internal_bytes(bytes, true) {
+            Ok(text) => text,
+            Err(_) => {
+                let i = host(e);
+                return outcome(e, Err(i.error("Invalid native string constant encoding")));
+            }
+        };
+        let handle = reg(Value::string_with_kind(text, kind & 2 != 0));
         if let Value::Str(string) = obj(handle) {
             let i = host(e);
             if kind & 1 != 0 {
@@ -341,27 +374,31 @@ unsafe extern "C-unwind" fn api_defsubr(
 ) -> i64 {
     let d = unsafe { &*(desc as *const EmFnDesc) };
     let i = host(e);
-    let name = unsafe { cstr(d.name, d.name_len) };
-    let doc = if d.doc.is_null() {
-        String::new()
-    } else {
-        unsafe { cstr(d.doc, d.doc_len) }
-    };
-    let mut read = |p: *const c_char, n: usize| -> Value {
-        if p.is_null() || n == 0 {
-            return Value::Nil;
+    let name_bytes = unsafe { std::slice::from_raw_parts(d.name as *const u8, d.name_len) };
+    let name = match crate::lisp::text::EmacsText::from_internal_bytes(name_bytes, true) {
+        Ok(name) => name,
+        Err(_) => {
+            PENDING.with(|pending| *pending.borrow_mut() = Some(i.error("Invalid native function name encoding")));
+            return 1;
         }
-        let s = unsafe { cstr(p, n) };
-        i.read_from_string(&s, 0)
-            .map(|(v, _)| v)
-            .unwrap_or(Value::Nil)
+    };
+    let doc = if d.doc.is_null() {
+        crate::lisp::text::EmacsText::default()
+    } else {
+        let bytes = unsafe { std::slice::from_raw_parts(d.doc as *const u8, d.doc_len) };
+        match crate::lisp::text::EmacsText::from_internal_bytes(bytes, true) {
+            Ok(text) => text,
+            Err(_) => {
+                PENDING.with(|pending| *pending.borrow_mut() = Some(i.error("Invalid native documentation encoding")));
+                return 1;
+            }
+        }
     };
     // `defmacro': evaluate the recorded `(defmacro …)' form — a
     // macro's meaning is its expander, not a callable subr.
     if !d.sexp.is_null() && d.sexp_len > 0 {
-        let s = unsafe { cstr(d.sexp, d.sexp_len) };
-        return match i.read_from_string(&s, 0) {
-            Ok((form, _)) => match i.eval(&form) {
+        return match unsafe { read_native_descriptor(i, d.sexp, d.sexp_len) } {
+            Ok(form) => match i.eval(&form) {
                 Ok(_) => 0,
                 Err(Flow::Signal(signal)) => {
                     if std::env::var_os("REMACS_ELN_DBG").is_some() {
@@ -388,8 +425,16 @@ unsafe extern "C-unwind" fn api_defsubr(
             }
         };
     }
-    let arglist = read(d.arglist, d.arglist_len);
-    let iform = read(d.iform, d.iform_len);
+    let metadata = unsafe { read_native_descriptor(i, d.arglist, d.arglist_len) }
+        .and_then(|arglist| unsafe { read_native_descriptor(i, d.iform, d.iform_len) }
+            .map(|iform| (arglist, iform)));
+    let (arglist, iform) = match metadata {
+        Ok(metadata) => metadata,
+        Err(flow) => {
+            PENDING.with(|pending| *pending.borrow_mut() = Some(flow));
+            return 1;
+        }
+    };
     match install_native_subr(i, unit, &name, d.min, d.max, d.entry, &doc) {
         Ok(v) => {
             META.with(|m| {
@@ -403,6 +448,14 @@ unsafe extern "C-unwind" fn api_defsubr(
         }
         Err(()) => 1,
     }
+}
+
+unsafe fn read_native_descriptor(i: &mut Interp, pointer: *const c_char, length: usize) -> Result<Value, Flow> {
+    if pointer.is_null() || length == 0 { return Ok(Value::Nil); }
+    let bytes = unsafe { std::slice::from_raw_parts(pointer as *const u8, length) };
+    let text = crate::lisp::text::EmacsText::from_internal_bytes(bytes, true)
+        .map_err(|_| i.error("Invalid native descriptor text encoding"))?;
+    i.read_from_string(&text, 0).map(|(value, _)| value)
 }
 
 unsafe fn cstr(p: *const c_char, n: usize) -> String {
@@ -437,6 +490,7 @@ static API: EmApi = EmApi {
     bind: api_bind,
     unbind: api_unbind,
     sym_value: api_sym_value,
+    intern_kind: api_intern_kind,
 };
 
 /// Mirrors the generated descriptor (repr(C), must match codegen).
@@ -466,7 +520,9 @@ struct EmFnDesc {
 // ---------------------------------------------------------------------------
 
 struct NativeMeta {
-    name: String,
+    name: crate::lisp::text::EmacsText,
+    documentation: crate::lisp::text::EmacsText,
+    subr: Option<&'static Subr>,
     unit: i64,
     arglist: Value,
     iform: Value,
@@ -510,7 +566,7 @@ macro_rules! tramps {
 // ---------------------------------------------------------------------------
 
 struct Unit {
-    path: String,
+    path: crate::lisp::text::EmacsText,
     /// Kept loaded for the life of the process (like GNU's units).
     _lib: libloading::Library,
 }
@@ -529,7 +585,9 @@ impl From<String> for LoadError {
 }
 
 /// dlopen an .eln and run its ordered top-level initialization.
-fn load_eln(i: &mut Interp, path: &str) -> Result<usize, LoadError> {
+fn load_eln<P: crate::lisp::text::TextSource + ?Sized>(i: &mut Interp, path: &P) -> Result<usize, LoadError> {
+    let path = path.with_text(|text| crate::editor::expand_file_name_str(i, text));
+    let native = crate::editor::native_path(i, &path).map_err(LoadError::Lisp)?;
     // libloading's error is the raw dlopen(3) message — GNU stores
     // exactly that string as the second datum of
     // `native-lisp-load-failed'.
@@ -538,7 +596,7 @@ fn load_eln(i: &mut Interp, path: &str) -> Result<usize, LoadError> {
     // `native-lisp-load-failed' reports, so match the flags exactly.
     let lib = unsafe {
         libloading::os::unix::Library::open(
-            Some(path),
+            Some(&native),
             libloading::os::unix::RTLD_LAZY,
         )
         .map(libloading::Library::from)
@@ -627,27 +685,46 @@ pub(crate) fn is_native(s: &'static Subr) -> Option<usize> {
         .filter(|k| *k < NATIVES.with(|n| n.borrow().len()))
 }
 
-/// `subr_interactive_form' hook: stored `(interactive ...)' for a
-/// native subr by function name.
-pub(crate) fn native_iform_by_name(name: &str) -> Option<Value> {
-    META.with(|m| {
-        m.borrow()
-            .iter()
-            .find(|m| m.name == name)
-            .map(|m| m.iform.clone())
-            .filter(|v| !v.is_nil())
+pub(crate) fn native_name(subr: &'static Subr) -> Option<Vec<u8>> {
+    let index = is_native(subr)?;
+    META.with(|metadata| metadata.borrow().get(index)
+        .map(|entry| entry.name.to_internal_bytes(true).unwrap()))
+}
+
+fn native_function_in_unit(unit: usize) -> Option<Value> {
+    META.with(|metadata| metadata.borrow().iter().rev()
+        .find(|entry| entry.unit == unit as i64)
+        .and_then(|entry| entry.subr).map(Value::Subr))
+}
+
+/// Native documentation belongs to the function slot, not its diagnostic name.
+pub(crate) fn native_documentation(subr: &'static Subr) -> Option<Value> {
+    let index = is_native(subr)?;
+    META.with(|metadata| {
+        metadata.borrow().get(index).map(|entry| {
+            if entry.documentation.is_empty() { Value::Nil }
+            else { Value::string(entry.documentation.clone()) }
+        })
     })
 }
 
-fn install_native_subr(
+/// Interactive metadata is tied to a native trampoline slot, including nil.
+pub(crate) fn native_interactive_form(subr: &'static Subr) -> Option<Value> {
+    let index = is_native(subr)?;
+    META.with(|metadata| metadata.borrow().get(index).map(|entry| entry.iform.clone()))
+}
+
+fn install_native_subr<T: crate::lisp::text::TextSource + ?Sized, N: crate::lisp::text::TextSource + ?Sized>(
     i: &mut Interp,
     unit: i64,
-    name: &str,
+    name: &N,
     min: u32,
     max: u32,
     entry: EmEntry,
-    doc: &str,
+    doc: &T,
 ) -> Result<Value, ()> {
+    let name = name.with_text(|text| text.to_owned());
+    let documentation = doc.with_text(|text| text.to_owned());
     let func = NATIVES.with(|n| {
         let mut n = n.borrow_mut();
         if n.len() >= TRAMPS.len() {
@@ -659,6 +736,8 @@ fn install_native_subr(
     META.with(|m| {
         m.borrow_mut().push(NativeMeta {
             name: name.to_string(),
+            documentation,
+            subr: None,
             unit,
             constants: HashMap::new(),
             arglist: Value::Nil,
@@ -674,12 +753,13 @@ fn install_native_subr(
         }
     };
     let s: &'static Subr = Box::leak(Box::new(Subr {
-        name: Box::leak(name.to_string().into_boxed_str()),
+        name: Box::leak(format!("{name}").into_boxed_str()),
         arity,
         func,
-        doc: Box::leak(doc.to_string().into_boxed_str()),
+        doc: "",
     }));
-    let id = i.intern(name);
+    META.with(|metadata| metadata.borrow_mut().last_mut().unwrap().subr = Some(s));
+    let id = i.intern(&name);
     let v = Value::Subr(s);
     i.fset(id, v.clone());
     Ok(v)
@@ -728,6 +808,7 @@ struct em_api {
     em_obj (*bind)(em_env, em_obj, em_obj);
     em_obj (*unbind)(em_env, unsigned long);
     em_obj (*sym_value)(em_env, em_obj);
+    em_obj (*intern_kind)(em_env, const char *, unsigned long, long);
 };
 typedef const struct em_api *A_t;
 #define NIL (A->nil)(E)
@@ -751,10 +832,11 @@ typedef const struct em_api *A_t;
 "#;
 
 /// Sanitize a Lisp symbol name to a C identifier.
-fn c_name(name: &str, k: usize) -> String {
+fn c_name<N: crate::lisp::text::TextSource + ?Sized>(name: &N, k: usize) -> String {
+    name.with_text(|name| {
     let mut s = String::new();
     for c in name.chars() {
-        s.push(match c {
+        s.push(match c.unicode().unwrap_or('u') {
             '-' => '_',
             '*' => 'X',
             '/' => 'F',
@@ -772,12 +854,39 @@ fn c_name(name: &str, k: usize) -> String {
         s.insert(0, 'F');
     }
     format!("F{k}_{s}")
+    })
 }
 
 /// Escape a string into a C string literal (with quotes).
 fn c_str(s: &str) -> String {
+    c_bytes(s.as_bytes())
+}
+
+/// GNU escapes the UTF-8 octets of surrogate names as internal byte8 text.
+fn native_name_bytes(name: &crate::lisp::text::EmacsText) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for character in name.chars() {
+        if (0xd800..=0xdfff).contains(&character.code()) {
+            let mut encoded = Vec::new();
+            character.encode_internal(&mut encoded);
+            for byte in encoded {
+                crate::lisp::text::EmacsChar::new(0x3fff00 + byte as u32).unwrap()
+                    .encode_internal(&mut bytes);
+            }
+        } else {
+            character.encode_internal(&mut bytes);
+        }
+    }
+    bytes
+}
+
+fn c_text(text: &crate::lisp::text::EmacsText) -> String {
+    c_bytes(&text.to_internal_bytes(true).unwrap())
+}
+
+fn c_bytes(bytes: &[u8]) -> String {
     let mut o = String::from("\"");
-    for b in s.bytes() {
+    for &b in bytes {
         match b {
             b'"' => o.push_str("\\\""),
             b'\\' => o.push_str("\\\\"),
@@ -803,8 +912,24 @@ struct Emitter<'a> {
 }
 
 impl<'a> Emitter<'a> {
+    fn symbol(&self, symbol: SymId) -> String {
+        let original = self.i.symbol_name_text(symbol);
+        let (text, kind) = if original.chars().any(|character| (0xd800..=0xdfff).contains(&character.code())) {
+            // GNU's native symbol relocation exposes the same C spelling as subr names.
+            let (text, multibyte) = crate::lisp::value::auto_string_bytes(&native_name_bytes(&original));
+            (text, if multibyte { 2 } else { 1 })
+        } else {
+            let kind = self.i.obarray.symbol(symbol).name_string.as_ref().map_or(0, |name| {
+                i64::from(self.i.is_unibyte_str(name)) | (i64::from(self.i.is_multibyte_str(name)) << 1)
+            });
+            (original, kind)
+        };
+        let bytes = text.to_internal_bytes(true).unwrap();
+        format!("CHECK((A->intern_kind)(E,{},{},{kind}))", c_bytes(&bytes), bytes.len())
+    }
+
     fn constant(&self, value: &Value) -> String {
-        format!("KDC({})", c_str(&(self.i.prin1_to_string(value)).to_unicode_lossy()))
+        format!("KDC({})", c_text(&self.i.prin1_to_string(value)))
     }
 
     fn lookup(&self, id: SymId) -> Option<String> {
@@ -825,7 +950,7 @@ impl<'a> Emitter<'a> {
         // their names also designate globally special variables.
         if !self.lexical {
             self.scopes.last_mut().unwrap().push((id, None));
-            format!("BIND(SDC({}),{value});", c_str(&self.i.symbol_name(id)))
+            format!("BIND({},{value});", self.symbol(id))
         } else {
             self.scopes.last_mut().unwrap().push((id, Some(value.to_string())));
             String::new()
@@ -852,10 +977,11 @@ impl<'a> Emitter<'a> {
                 let kind = i64::from(self.i.is_unibyte_str(s))
                     | (i64::from(self.i.is_multibyte_str(s)) << 1);
                 let s = s.borrow();
+                let bytes = s.to_internal_bytes(true).unwrap();
                 format!(
                     "(A->string_constant_kind)(E,{},{},{kind})",
-                    c_str(&(s).to_unicode_lossy()),
-                    s.len()
+                    c_bytes(&bytes),
+                    bytes.len()
                 )
             }
             Value::Sym(id) => {
@@ -865,14 +991,14 @@ impl<'a> Emitter<'a> {
                 if let Some(n) = self.lookup(*id) {
                     return n;
                 }
-                let name = self.i.symbol_name(*id);
+                let name = self.i.symbol_name_text(*id);
                 if name.starts_with(':') {
-                    return format!("SDC({})", c_str(&name));
+                    return self.symbol(*id);
                 }
                 // A free variable reads its current dynamic/buffer-local value,
                 // not the symbol itself or the caller's lexical environment.
                 // Like GNU native code, honor symbol-value's function cell.
-                format!("SYMVAL(SDC({}))", c_str(&name))
+                format!("SYMVAL({})", self.symbol(*id))
             }
             Value::Cons(c) => {
                 let car = c.borrow().car.clone();
@@ -988,8 +1114,7 @@ impl<'a> Emitter<'a> {
                         Value::Sym(id) => match self.lookup(*id) {
                             Some(cn) => out.push_str(&format!("r={cn}={v};")),
                             None => {
-                                let sn = self.i.symbol_name(*id);
-                                out.push_str(&format!("r=SYMSET(SDC({}),{v});", c_str(&sn)));
+                                out.push_str(&format!("r=SYMSET({},{v});", self.symbol(*id)));
                             }
                         },
                         _ => self.unsupported = true,
@@ -1002,8 +1127,7 @@ impl<'a> Emitter<'a> {
                 let a = self.args_of(whole);
                 match a.first() {
                     Some(Value::Sym(id)) => {
-                        let n = self.i.symbol_name(*id);
-                        format!("SDC({})", c_str(&n))
+                        self.symbol(*id)
                     }
                     _ => {
                         // C locals are not visible to interpreter eval.  Run
@@ -1049,7 +1173,7 @@ impl<'a> Emitter<'a> {
                         }
                     }
                 }
-                let fexpr = format!("SDC({})", c_str(&name));
+                let fexpr = self.symbol(head);
                 self.call_expr(&fexpr, whole)
             }
         }
@@ -1180,7 +1304,7 @@ impl<'a> Emitter<'a> {
             let iv = self.form(&init);
             decls.push_str(&format!("em_obj {cn}={iv};"));
             let binding = if dynamic {
-                format!("BIND(SDC({}),{cn});", c_str(&self.i.symbol_name(id)))
+                format!("BIND({},{cn});", self.symbol(id))
             } else {
                 String::new()
             };
@@ -1235,7 +1359,7 @@ fn arglist_syms(i: &mut Interp, l: &crate::lisp::value::Lambda) -> Vec<Value> {
 /// cannot be represented at all (its caller decides the fallback).
 fn emit_fn(
     i: &mut Interp,
-    name: &str,
+    name: &crate::lisp::text::EmacsText,
     l: &Rc<crate::lisp::value::Lambda>,
     k: usize,
     force_fallback: bool,
@@ -1284,23 +1408,24 @@ fn emit_fn(
     } else {
         (String::new()).into()
     };
+    let name_bytes = native_name_bytes(name);
     let desc = format!(
-        "static const struct em_fn_desc D{cn}={{\"{name}\",{nl},{min},{mx},{cn},{dstr},{dl},{astr},{al},{istr},{il},{sstr},{sl}}};",
-        name = name,
-        nl = name.len(),
+        "static const struct em_fn_desc D{cn}={{{name},{nl},{min},{mx},{cn},{dstr},{dl},{astr},{al},{istr},{il},{sstr},{sl}}};",
+        name = c_bytes(&name_bytes),
+        nl = name_bytes.len(),
         mx = if max == u32::MAX {
             "0xffffffffu".to_string()
         } else {
             max.to_string()
         },
-        dstr = c_str(&(doc_s).to_unicode_lossy()),
-        dl = doc_s.len(),
-        astr = c_str(&(args_s).to_unicode_lossy()),
-        al = args_s.len(),
-        istr = c_str(&(iform_s).to_unicode_lossy()),
-        il = iform_s.len(),
-        sstr = c_str(&sexp_s.to_unicode_lossy()),
-        sl = sexp_s.len(),
+        dstr = c_text(&doc_s),
+        dl = doc_s.to_internal_bytes(true).unwrap().len(),
+        astr = c_text(&args_s),
+        al = args_s.to_internal_bytes(true).unwrap().len(),
+        istr = c_text(&iform_s),
+        il = iform_s.to_internal_bytes(true).unwrap().len(),
+        sstr = c_text(&sexp_s),
+        sl = sexp_s.to_internal_bytes(true).unwrap().len(),
     );
     Ok((entry, desc))
 }
@@ -1417,7 +1542,7 @@ fn same_form(a: &Value, b: &Value) -> bool {
 /// via `make-interpreted-closure' and calls it.
 fn emit_fallback(
     i: &mut Interp,
-    _name: &str,
+    _name: &crate::lisp::text::EmacsText,
     l: &Rc<crate::lisp::value::Lambda>,
     cn: &str,
 ) -> String {
@@ -1435,21 +1560,24 @@ fn emit_fallback(
         .unwrap_or_else(|| Value::list(arglist_syms(i, l)));
     let args_s = i.prin1_to_string(&arglist);
     let body_s = i.prin1_to_string(&Value::list(l.body.clone()));
-    let form = format!(
-        "(make-interpreted-closure (quote {}) (quote {}) (quote {}))",
-        args_s, body_s, env_s
-    );
+    let mut form = crate::lisp::text::EmacsText::from("(make-interpreted-closure (quote ");
+    form.push_str(&args_s);
+    form.push_str(") (quote ");
+    form.push_str(&body_s);
+    form.push_str(") (quote ");
+    form.push_str(&env_s);
+    form.push_str("))");
     format!(
         "em_obj {cn}(const void *A_, em_env E, const em_obj *args, long n){{\
            A_t A=(A_t)A_;\
            em_obj cl=EVAL(KDC({form}));\
            return (A->call_lambda)(E,cl,args,n);}}",
-        form = c_str(&form)
+        form = c_text(&form)
     )
 }
 
 /// Emit a whole unit (several functions) to C source text.
-fn emit_unit(i: &mut Interp, fns: &[(String, Rc<crate::lisp::value::Lambda>)]) -> Result<String, Flow> {
+fn emit_unit(i: &mut Interp, fns: &[(crate::lisp::text::EmacsText, Rc<crate::lisp::value::Lambda>)]) -> Result<String, Flow> {
     let mut out = String::from(C_PRELUDE);
     let mut inits = String::from(
         "\nint remacs_eln_init_v2(const void *api_, em_env E, long U){A_t A=(A_t)api_;(void)A;int rc=0;",
@@ -1503,38 +1631,29 @@ fn eln_cache_dir() -> String {
 }
 
 /// `<base>-<md5(truename)>-<md5(contents)>.eln' — GNU's naming.
-fn eln_rel_filename(i: &mut Interp, path: &str) -> Result<String, Flow> {
-    // GNU `comp-el-to-eln-rel-filename' expands the filename and
-    // signals `file-missing' (data: the absolute name) up front.
-    let path = if std::path::Path::new(path).is_absolute() {
-        path.to_string()
-    } else {
-        std::env::current_dir()
-            .unwrap_or_default()
-            .join(path)
-            .to_string_lossy()
-            .into_owned()
-    };
-    if !crate::editor::native_path(i, &path)?.exists() {
+fn eln_rel_filename<P: crate::lisp::text::TextSource + ?Sized>(i: &mut Interp, path: &P) -> Result<crate::lisp::text::EmacsText, Flow> {
+    let path = path.with_text(|text| crate::editor::expand_file_name_str(i, text));
+    let native = crate::editor::native_path(i, &path)?;
+    if !native.exists() {
         return Err(i.signal_data(sym::FILE_MISSING, vec![Value::string(path)]));
     }
-    let true_name = std::fs::canonicalize(&path).map_err(|e| i.error(format!("{path}: {e}")))?;
-    let data = std::fs::read(&path).map_err(|e| i.error(format!("Cannot read {path}: {e}")))?;
-    let base = std::path::Path::new(&path)
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned();
-    // Strip a possible second extension like GNU (.el.gz → base).
-    let base = base
-        .strip_suffix(".el")
-        .map(|b| b.to_string())
-        .unwrap_or(base);
-    Ok(format!(
-        "{base}-{}-{}.eln",
-        md5_hex(true_name.to_string_lossy().as_bytes()),
-        md5_hex(&data)
-    ))
+    let true_name = std::fs::canonicalize(&native).map_err(|error| crate::editor::report_file_errno(
+        i, "Resolving input file", vec![Value::string(path.clone())], &error))?;
+    let data = std::fs::read(&native).map_err(|error| crate::editor::report_file_errno(
+        i, "Opening input file", vec![Value::string(path.clone())], &error))?;
+    let base = crate::lisp::text::EmacsText::from_os_str(true_name.file_stem().unwrap_or_default());
+    // A compressed .el.gz name has a second suffix in its stem.
+    let mut result = base.strip_suffix(".el").unwrap_or(&base).to_owned();
+    let physical = crate::lisp::text::EmacsText::from_os_str(true_name.as_os_str()).to_external_bytes();
+    result.push_str(format!("-{}-{}.eln", md5_hex(&physical), md5_hex(&data)));
+    Ok(result)
+}
+
+fn cached_eln_filename(relative: &crate::lisp::text::EmacsText) -> crate::lisp::text::EmacsText {
+    let mut path = crate::lisp::text::EmacsText::from(eln_cache_dir());
+    path.push('/');
+    path.push_str(relative);
+    path
 }
 
 fn md5_hex(data: &[u8]) -> String {
@@ -1607,43 +1726,52 @@ fn md5(msg: &[u8]) -> [u8; 16] {
 }
 
 /// Compile C source text to an .eln shared object.
-fn run_cc(c_src: &str, out_path: &str) -> Result<(), String> {
-    let cc = cc().ok_or("No C compiler found (set REMACS_CC)")?;
-    let mut child = std::process::Command::new(cc)
-        .args([
-            "-O1",
-            "-fPIC",
-            "-fexceptions",
-            "-funwind-tables",
-            "-shared",
-            "-Wno-unused",
-            "-x",
-            "c",
-            "-",
-            "-o",
-            out_path,
-        ])
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("cc failed to start: {e}"))?;
-    child
-        .stdin
-        .as_mut()
-        .unwrap()
-        .write_all(c_src.as_bytes())
-        .map_err(|e| format!("cc stdin: {e}"))?;
-    let st = child
-        .wait_with_output()
-        .map_err(|e| format!("cc wait: {e}"))?;
-    if st.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "cc exited {}: {}",
-            st.status,
-            String::from_utf8_lossy(&st.stderr)
-        ))
-    }
+enum NativeBuildError {
+    Compiler(String),
+    File { operation: &'static str, path: std::path::PathBuf, error: std::io::Error },
+}
+impl From<String> for NativeBuildError {
+    fn from(message: String) -> Self { Self::Compiler(message) }
+}
+
+struct NativeSourceFile(std::path::PathBuf);
+impl Drop for NativeSourceFile {
+    fn drop(&mut self) { let _ = std::fs::remove_file(&self.0); }
+}
+
+fn run_cc(c_src: &str, out_path: &std::path::Path) -> Result<(), NativeBuildError> {
+    let cc = cc().ok_or_else(|| NativeBuildError::Compiler("No C compiler found (set REMACS_CC)".into()))?;
+    // GNU's intermediate source names include the output basename. Preserve its
+    // native spelling so an unsupported name fails at the real filesystem path.
+    static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let (source, mut file) = loop {
+        let mut name = std::ffi::OsString::from("emacs-int-comp-");
+        name.push(out_path.file_stem().unwrap_or(std::ffi::OsStr::new("remacs")));
+        name.push(format!("-{}-{}.c", std::process::id(), SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+        let path = std::env::temp_dir().join(name);
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)] {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&path) {
+            Ok(file) => break (NativeSourceFile(path), file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(NativeBuildError::File { operation: "Creating file with prefix", path, error }),
+        }
+    };
+    file.write_all(c_src.as_bytes()).map_err(|error| NativeBuildError::File {
+        operation: "Writing native compilation source", path: source.0.clone(), error,
+    })?;
+    drop(file);
+    let child = std::process::Command::new(cc)
+        .args(["-O1", "-fPIC", "-fexceptions", "-funwind-tables", "-shared", "-Wno-unused", "-x", "c"])
+        .arg(&source.0).arg("-o").arg(out_path)
+        .spawn().map_err(|error| format!("cc failed to start: {error}"))?;
+    let status = child.wait_with_output().map_err(|error| format!("cc wait: {error}"))?;
+    if status.status.success() { Ok(()) }
+    else { Err(NativeBuildError::Compiler(format!("cc exited {}: {}", status.status, String::from_utf8_lossy(&status.stderr)))) }
 }
 
 // ---------------------------------------------------------------------------
@@ -1687,7 +1815,7 @@ impl FileEmitter {
                     lambda.env = i.lexenv.clone();
                     let lambda = Rc::new(lambda);
                     crate::lisp::memory::allocated(&Value::Lambda(lambda.clone()));
-                    let name = i.symbol_name(id);
+                    let name = i.symbol_name_text(id);
                     let (entry, desc) =
                         emit_fn(i, &name, &lambda, self.serial, self.has_declarations)?;
                     self.code.push_str(&entry);
@@ -1728,7 +1856,7 @@ impl FileEmitter {
             return self.form(i, &expanded);
         }
         let expanded = self.expand(i, &expanded)?;
-        let literal = c_str(&(i.prin1_to_string(&expanded)).to_unicode_lossy());
+        let literal = c_text(&i.prin1_to_string(&expanded));
         // CHECK returns zero for native *functions*. Unit init uses zero for
         // success, so check each callback explicitly and return one on error.
         self.init.push_str(&format!(
@@ -1746,16 +1874,14 @@ impl FileEmitter {
     }
 }
 
-fn compile_file_to(i: &mut Interp, path: &str, out: &str) -> Result<bool, Flow> {
-    let data =
-        std::fs::read_to_string(path).map_err(|e| i.error(format!("Cannot read {path}: {e}")))?;
-    // byte-compile-file uses normal-mode and safe local variables, not
-    // lread.c's first-cookie rule. This distinguishes duplicate cookies,
-    // non-boolean values and local-variable blocks at the end of a file.
+fn compile_file_to<P: crate::lisp::text::TextSource + ?Sized, O: crate::lisp::text::TextSource + ?Sized>(i: &mut Interp, path: &P, out: &O) -> Result<bool, Flow> {
+    let path = path.with_text(|text| crate::editor::expand_file_name_str(i, text));
+    // Read through the shared file/coding path before applying native
+    // compilation's normal-mode/safe-local-variable lexical protocol.
     let (form, _) = i.read_from_string(
-        r#"(lambda (file source)
+        r#"(lambda (file)
              (with-temp-buffer
-               (insert source)
+               (insert-file-contents file)
                (let ((buffer-file-name file)
                      (dmm (default-value 'major-mode))
                      (enable-local-variables :safe)
@@ -1765,11 +1891,21 @@ fn compile_file_to(i: &mut Interp, path: &str, out: &str) -> Result<bool, Flow> 
                        (setq-default major-mode 'emacs-lisp-mode)
                        (delay-mode-hooks (normal-mode t)))
                    (setq-default major-mode dmm)))
-               (and (local-variable-p 'lexical-binding) lexical-binding)))"#,
+               (cons (buffer-string)
+                     (and (local-variable-p 'lexical-binding) lexical-binding))))"#,
         0,
     )?;
     let function = i.eval(&form)?;
-    let lexical = i.apply(&function, vec![Value::string(path), Value::string(&data)])?.truthy();
+    let loaded = i.apply(&function, vec![Value::string(path)])?;
+    let (data, lexical) = match &loaded {
+        Value::Cons(cell) => {
+            let cell = cell.borrow();
+            let Value::Str(data) = &cell.car else { return Err(i.wrong_type_mut("stringp", &cell.car)); };
+            (data.clone(), cell.cdr.truthy())
+        }
+        other => return Err(i.wrong_type_mut("consp", other)),
+    };
+    let source_multibyte = !i.is_unibyte_str(&data);
     let mark = i.specbind_depth();
     let lb = i.q("lexical-binding");
     i.specbind(lb, Value::from_bool(lexical))?;
@@ -1809,12 +1945,13 @@ fn compile_file_to(i: &mut Interp, path: &str, out: &str) -> Result<bool, Flow> 
         // from an incomplete form. read_from_string turns both into an
         // end-of-file signal, so swallowing its errors loses malformed tails.
         // Share the characters and keep offsets in characters, not UTF-8 bytes.
-        let chars: Rc<Vec<crate::lisp::text::EmacsChar>> = Rc::new(data.chars().map(Into::into).collect());
+        let chars: Rc<Vec<crate::lisp::text::EmacsChar>> = Rc::new(data.borrow().chars().collect());
         let mut off = 0;
         let mut any_form = false;
         loop {
             let mut reader = crate::lisp::reader::Reader::with_chars(i, chars.clone());
             reader.set_position(off);
+            reader.source_multibyte = source_multibyte;
             let Some(form) = reader.read()? else { break };
             off = reader.position();
             any_form = true;
@@ -1825,7 +1962,7 @@ fn compile_file_to(i: &mut Interp, path: &str, out: &str) -> Result<bool, Flow> 
         }
         emitter.init.push_str("return 0;}\n");
         emitter.code.push_str(&emitter.init);
-        compile_source_to(&emitter.code, out).map_err(|e| i.error(e))?;
+        compile_source_to(i, &emitter.code, out)?;
         Ok(true)
     });
     for (id, definition) in emitter.saved_macros.into_iter().rev() {
@@ -1940,20 +2077,27 @@ fn form_to_lambda(
     }
 }
 
-fn compile_fns_to(
+fn compile_fns_to<O: crate::lisp::text::TextSource + ?Sized>(
     i: &mut Interp,
-    fns: &[(String, Rc<crate::lisp::value::Lambda>)],
-    out: &str,
+    fns: &[(crate::lisp::text::EmacsText, Rc<crate::lisp::value::Lambda>)],
+    out: &O,
 ) -> Result<(), Flow> {
     let src = emit_unit(i, fns)?;
-    compile_source_to(&src, out).map_err(|message| i.error(message))
+    compile_source_to(i, &src, out)
 }
 
-fn compile_source_to(src: &str, out: &str) -> Result<(), String> {
-    if let Ok(p) = std::env::var("REMACS_COMP_DUMP_C") {
-        let _ = std::fs::write(format!("{p}.c"), &src);
+fn compile_source_to<O: crate::lisp::text::TextSource + ?Sized>(i: &mut Interp, src: &str, out: &O) -> Result<(), Flow> {
+    if let Some(path) = std::env::var_os("REMACS_COMP_DUMP_C") {
+        let mut path = path; path.push(".c");
+        let _ = std::fs::write(path, src);
     }
-    run_cc(&src, out)
+    let expanded = out.with_text(|text| crate::editor::expand_file_name_str(i, text));
+    let native = crate::editor::native_path(i, &expanded)?;
+    run_cc(src, &native).map_err(|error| match error {
+        NativeBuildError::Compiler(message) => i.error(message),
+        NativeBuildError::File { operation, path, error } => crate::editor::report_file_errno(
+            i, operation, vec![Value::string(crate::lisp::text::EmacsText::from_os_str(path.as_os_str()))], &error),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1965,8 +2109,9 @@ fn f_native_comp_available_p(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResu
 }
 
 /// `(load "x.eln")' entry: dlopen a native unit file.
-pub(crate) fn native_load_file(i: &mut Interp, path: &str) -> EvalResult {
-    match load_eln(i, path) {
+pub(crate) fn native_load_file<P: crate::lisp::text::TextSource + ?Sized>(i: &mut Interp, path: &P) -> EvalResult {
+    let path = path.with_text(|p| p.to_string());
+    match load_eln(i, &path) {
         Ok(idx) => Ok(unit_value(i, idx)),
         Err(LoadError::Open(e)) => Err(i.error(format!("Cannot open {path}: {e}"))),
         Err(LoadError::Lisp(flow)) => Err(flow),
@@ -1989,7 +2134,7 @@ fn f_native_elisp_load(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             vec![Value::string("file does not exists"), Value::string(path)],
         ));
     }
-    match load_eln(i, &(path).to_unicode_lossy()) {
+    match load_eln(i, &path) {
         Ok(idx) => Ok(unit_value(i, idx)),
         Err(LoadError::Lisp(flow)) => Err(flow),
         Err(LoadError::Open(e)) => {
@@ -2004,7 +2149,7 @@ fn f_comp_el_to_eln_rel_filename(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", &other)),
     };
-    match eln_rel_filename(i, &(path).to_unicode_lossy()) {
+    match eln_rel_filename(i, &path) {
         Ok(p) => Ok(Value::string(p)),
         Err(e) => Err(e),
     }
@@ -2015,7 +2160,7 @@ fn f_comp_el_to_eln_filename(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", &other)),
     };
-    let rel = match eln_rel_filename(i, &(path).to_unicode_lossy()) {
+    let rel = match eln_rel_filename(i, &path) {
         Ok(p) => p,
         Err(e) => return Err(e),
     };
@@ -2023,12 +2168,10 @@ fn f_comp_el_to_eln_filename(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
         Some(Value::Str(s)) => s.borrow().clone(),
         _ => format!("{}/", eln_cache_dir()).into(),
     };
-    let base = if base.ends_with('/') {
-        base
-    } else {
-        format!("{base}/").into()
-    };
-    Ok(Value::string(format!("{base}{rel}")))
+    let mut result = base;
+    if !result.ends_with('/') { result.push('/'); }
+    result.push_str(&rel);
+    Ok(Value::string(result))
 }
 
 fn f_native_compile(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -2074,27 +2217,27 @@ fn f_native_compile(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             let out = match a.get(1) {
                 Some(Value::Str(o)) => o.borrow().clone(),
                 _ => {
-                    let rel = match eln_rel_filename(i, &(path).to_unicode_lossy()) {
+                    let rel = match eln_rel_filename(i, &path) {
                         Ok(r) => r,
                         Err(e) => return Err(e),
                     };
-                    format!("{}/{rel}", eln_cache_dir()).into()
+                    cached_eln_filename(&rel)
                 }
             };
-            if !compile_file_to(i, &(path).to_unicode_lossy(), &out.to_unicode_lossy())? {
+            if !compile_file_to(i, &path, &out)? {
                 return Err(i.error(format!("No defuns to compile in {path}")));
             }
             Ok(Value::string(out))
         }
         Value::Sym(id) => {
             let f = i.symbol_function(*id);
-            let name = i.symbol_name(*id);
+            let name = i.symbol_name_text(*id);
             compile_one(i, &name, &f, a.get(1))
         }
         Value::Lambda(l) => {
             let l = l.clone();
             let name = l.name.clone().unwrap_or_else(|| "anonymous".into());
-            compile_one_lambda(i, &(name).to_unicode_lossy(), &l, a.get(1))
+            compile_one_lambda(i, &name, &l, a.get(1))
         }
         // A `(lambda ...)' FORM — evaluate to a closure and compile.
         Value::Cons(_) => match i.eval(&a[0]) {
@@ -2105,11 +2248,12 @@ fn f_native_compile(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 }
 
-fn compile_one(i: &mut Interp, name: &str, f: &Value, out: Option<&Value>) -> EvalResult {
+fn compile_one<N: crate::lisp::text::TextSource + ?Sized>(i: &mut Interp, name: &N, f: &Value, out: Option<&Value>) -> EvalResult {
+    let name = name.with_text(|text| text.to_owned());
     match f {
         Value::Lambda(l) => {
             let l = l.clone();
-            compile_one_lambda(i, name, &l, out)
+            compile_one_lambda(i, &name, &l, out)
         }
         // Already compiled — idempotent, like GNU re-using the unit.
         Value::Subr(s) if is_native(s).is_some() => Ok(f.clone()),
@@ -2119,7 +2263,7 @@ fn compile_one(i: &mut Interp, name: &str, f: &Value, out: Option<&Value>) -> Ev
 
 fn compile_one_lambda(
     i: &mut Interp,
-    name: &str,
+    name: &crate::lisp::text::EmacsText,
     l: &Rc<crate::lisp::value::Lambda>,
     out: Option<&Value>,
 ) -> EvalResult {
@@ -2133,16 +2277,10 @@ fn compile_one_lambda(
         ).into(),
     };
     let fns = vec![(name.to_string(), l.clone())];
-    match compile_fns_to(i, &fns, &out_path.to_unicode_lossy()) {
-        Ok(()) => match load_eln(i, &out_path.to_unicode_lossy()) {
-            Ok(_) => {
-                let id = i.intern(name);
-                let v = i.symbol_function(id);
-                match v {
-                    Value::Subr(_) => Ok(v),
-                    _ => Ok(Value::string(out_path)),
-                }
-            }
+    match compile_fns_to(i, &fns, &out_path) {
+        Ok(()) => match load_eln(i, &out_path) {
+            Ok(unit) => Ok(native_function_in_unit(unit)
+                .unwrap_or_else(|| Value::string(out_path))),
             Err(LoadError::Open(e)) => Err(i.error(e)),
             Err(LoadError::Lisp(flow)) => Err(flow),
         },
@@ -2150,7 +2288,7 @@ fn compile_one_lambda(
     }
 }
 
-fn sanitize(n: &str) -> String {
+fn sanitize<N: crate::lisp::text::TextSource + ?Sized>(n: &N) -> String {
     c_name(n, 0)
 }
 
@@ -2193,7 +2331,7 @@ fn f_native_compile_async(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 Ok(r) => r,
                 Err(e) => return Err(e),
             };
-            let out = format!("{}/{rel}", eln_cache_dir());
+            let out = cached_eln_filename(&rel);
             if !compile_file_to(i, &p, &out)? {
                 continue;
             }
@@ -2287,7 +2425,7 @@ fn f_native_comp_unit_set_file(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     };
     UNITS.with(|u| {
         if let Some(u) = u.borrow_mut().get_mut(idx) {
-            u.path = (p).to_unicode_lossy();
+            u.path = p;
         }
     });
     Ok(Value::Nil)
@@ -2400,9 +2538,9 @@ fn f_comp_compile_ctxt_to_file0(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
     if src.is_empty() {
         return Err(i.error("Nothing in compilation context to emit"));
     }
-    match run_cc(&src, &(path).to_unicode_lossy()) {
+    match compile_source_to(i, &src, &path) {
         Ok(()) => Ok(Value::string(path)),
-        Err(e) => Err(i.error(e)),
+        Err(flow) => Err(flow),
     }
 }
 
@@ -2534,7 +2672,9 @@ fn f_comp_register_lambda(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     META.with(|m| {
         m.borrow_mut().push(NativeMeta {
             constants: HashMap::new(),
-            name: (cname.clone()).to_unicode_lossy(),
+            name: cname.clone(),
+            documentation: crate::lisp::text::EmacsText::default(),
+            subr: None,
             unit: unit_idx as i64,
             arglist: Value::Nil,
             iform: Value::Nil,
@@ -2553,6 +2693,7 @@ fn f_comp_register_lambda(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         func,
         doc: "",
     }));
+    META.with(|metadata| metadata.borrow_mut().last_mut().unwrap().subr = Some(s));
     Ok(Value::Subr(s))
 }
 

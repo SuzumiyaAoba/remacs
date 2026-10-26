@@ -179,13 +179,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_string_fill,
         "Placeholder: return STRING."
     ),
-    S!(
-        "string-lines",
-        1,
-        3,
-        f_string_lines,
-        "Split STRING on newlines."
-    ),
+    // string-lines uses the GNU subr.el definition loaded during bootstrap.
     S!("upcase-initials-region", 2, 3, f_upcase_initials_region, ""),
     S!(
         "string-to-multibyte",
@@ -2168,88 +2162,6 @@ fn f_string_fill(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         }
     }
     Ok(result)
-}
-fn f_string_lines(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU's final-field path retains STRING when it is not equal to "".
-    if args[0].is_nil() {
-        return Ok(Value::list(vec![Value::Nil]));
-    }
-    if misc::is_bool_vector(i, &args[0]) {
-        let length_fn = i.q("length");
-        let _ = i.apply(&Value::Sym(length_fn), vec![args[0].clone()])?;
-        return Err(i.wrong_type_mut("stringp", &args[0]));
-    }
-    if matches!(&args[0], Value::Vec(vector) if vector.borrow().is_empty()) {
-        return Ok(Value::list(vec![args[0].clone()]));
-    }
-    // `(length STRING)' evals first — atoms signal `sequencep';
-    // conses/vectors pass length then fail `stringp' at string-search.
-    let s = match &args[0] {
-        Value::Str(s) => s.borrow().clone(),
-        Value::Cons(_) => {
-            return Err(i.wrong_type_mut("stringp", &args[0]));
-        }
-        Value::Vec(_) if !i.is_overlay(&args[0]) => {
-            return Err(i.wrong_type_mut("stringp", &args[0]));
-        }
-        other => return Err(i.wrong_type_mut("sequencep", other)),
-    };
-    let omit = arg(&args, 1).truthy();
-    let keep = arg(&args, 2).truthy();
-    // (string-lines STRING &optional OMIT-EMPTY KEEP-NEWLINES) —
-    // GNU's subr.el loop walks `string-search' hits, so a trailing
-    // newline never yields a final empty element, and a `""' input
-    // splits to `(""' (nil when OMIT-EMPTY).
-    if s.is_empty() {
-        return Ok(if omit {
-            Value::Nil
-        } else {
-            Value::list(vec![Value::string("")])
-        });
-    }
-    let characters: Vec<EmacsChar> = s.chars().collect();
-    let mut lines: Vec<&EmacsStr> = Vec::new();
-    let mut start = 0usize;
-    while start < characters.len() {
-        match characters[start..].iter().position(|c| *c == '\n') {
-            Some(off) => {
-                let nl = start + off;
-                if !omit || start != nl {
-                    let end = if keep { nl + 1 } else { nl };
-                    let line = &s[start..end];
-                    if !(keep && omit && line.chars().eq([EmacsChar::from('\n')])) {
-                        lines.push(line);
-                    }
-                }
-                start = nl + 1;
-            }
-            None => {
-                lines.push(&s[start..]);
-                break;
-            }
-        }
-    }
-    let mut result = Vec::with_capacity(lines.len());
-    for line in lines {
-        if line.len() == s.len() && line.as_ptr() == s.as_ptr() {
-            result.push(args[0].clone());
-            continue;
-        }
-        let start_byte = (line.as_ptr() as usize - s.as_ptr() as usize) / std::mem::size_of::<EmacsChar>();
-        let end_byte = start_byte + line.len();
-        let start = s[..start_byte].chars().count();
-        let end = s[..end_byte].chars().count();
-        result.push(f_substring(
-            i,
-            vec![
-                args[0].clone(),
-                Value::Int(start as i128),
-                Value::Int(end as i128),
-            ]
-            .into(),
-        )?);
-    }
-    Ok(Value::list(result))
 }
 fn f_string_equal_ignore_case(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU's wrapper calls the live compare-strings function, including

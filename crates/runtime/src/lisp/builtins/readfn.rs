@@ -40,9 +40,30 @@ pub(crate) fn read_parser_at(
     from_buffer: bool,
     multibyte: bool,
 ) -> (Result<Option<Value>, Flow>, usize) {
+    read_parser_at_with_codes(
+        i,
+        chars,
+        position,
+        annotate_pos,
+        from_buffer,
+        multibyte,
+        None,
+    )
+}
+
+pub(crate) fn read_parser_at_with_codes(
+    i: &mut Interp,
+    chars: Rc<Vec<crate::lisp::text::EmacsChar>>,
+    position: usize,
+    annotate_pos: Option<i128>,
+    from_buffer: bool,
+    multibyte: bool,
+    oversized_codes: Option<crate::lisp::reader::OversizedCodes>,
+) -> (Result<Option<Value>, Flow>, usize) {
     let invalid_syntax = i.q("invalid-read-syntax");
     let (result, mut end) = {
         let mut reader = crate::lisp::reader::Reader::with_chars(i, chars.clone());
+        reader.oversized_codes = oversized_codes.clone();
         reader.set_position(position);
         reader.from_buffer = from_buffer;
         reader.source_multibyte = multibyte;
@@ -53,12 +74,20 @@ pub(crate) fn read_parser_at(
     // Diagnostic positions identify a consumed delimiter/hash token.
     // A consuming stream advances past it even when parsing signals.
     if let Err(Flow::Signal(signal)) = &result {
-        if signal.is_symbol(invalid_syntax) {
-            if let Some(Value::Str(message)) =
-                signal.data().list_to_vec().ok().and_then(|v| v.first().cloned())
+        if signal.is_symbol(invalid_syntax)
+            && !oversized_codes
+                .as_ref()
+                .is_some_and(|codes| codes.contains_key(&end))
+        {
+            if let Some(Value::Str(message)) = signal
+                .data()
+                .list_to_vec()
+                .ok()
+                .and_then(|v| v.first().cloned())
             {
                 let message = message.borrow();
-                if (message.as_str() == ")" && chars.get(end).is_some_and(|c| *c == ')' || *c == ']'))
+                if (message.as_str() == ")"
+                    && chars.get(end).is_some_and(|c| *c == ')' || *c == ']'))
                     || (message.as_str() == "." && chars.get(end).is_some_and(|c| *c == '.'))
                     || (message.starts_with('#')
                         && message.chars().last() == chars.get(end).copied())
@@ -144,17 +173,22 @@ pub(crate) fn read_load_stream(i: &mut Interp, positioning: bool) -> EvalResult 
     let Some(stream) = i.load_stream.clone() else {
         return Err(i.signal_data(sym::END_OF_FILE, vec![]));
     };
-    let (chars, position) = {
+    let (chars, position, oversized_codes) = {
         let stream = stream.borrow();
-        (stream.chars.clone(), stream.position)
+        (
+            stream.chars.clone(),
+            stream.position,
+            stream.oversized_codes.clone(),
+        )
     };
-    let (result, end) = read_parser_at(
+    let (result, end) = read_parser_at_with_codes(
         i,
         chars,
         position,
         positioning.then_some(-(position as i128)),
         false,
         true,
+        oversized_codes,
     );
     stream.borrow_mut().position = end;
     let filename = i.q("load-true-file-name");
@@ -248,8 +282,15 @@ fn f_read_from_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::cons(v, Value::Int(start + pos as i128)))
 }
 
-pub(crate) fn buffer_source_multibyte(i: &mut Interp, buffer: &crate::lisp::value::BufferRef) -> bool {
+pub(crate) fn buffer_source_multibyte(
+    i: &mut Interp,
+    buffer: &crate::lisp::value::BufferRef,
+) -> bool {
     let variable = i.q("enable-multibyte-characters");
-    buffer.borrow().locals.get(&variable)
-        .unwrap_or(&i.obarray.symbol(variable).value).truthy()
+    buffer
+        .borrow()
+        .locals
+        .get(&variable)
+        .unwrap_or(&i.obarray.symbol(variable).value)
+        .truthy()
 }

@@ -174,7 +174,13 @@ impl Runtime {
         macro_rules! named { ($($field:ident),* $(,)?) => { $(
             saved.put(stringify!($field), i.$field.iter().map(|(name, value)| Ok((name.clone(), e.value(value)?))).collect::<Result<Vec<_>>>()?)?;
         )* }; }
-        named!(face_table, face_t_table, charsets, char_code_prop_tables);
+        named!(charsets, char_code_prop_tables);
+        macro_rules! faces { ($($field:ident),* $(,)?) => { $(
+            saved.put(stringify!($field), i.$field.iter().map(|(face, value)| {
+                Ok((e.value(&Value::Sym(*face))?, e.value(value)?))
+            }).collect::<Result<Vec<_>>>()?)?;
+        )* }; }
+        faces!(face_table, face_t_table);
         saved.put(
             "char_code_props",
             i.char_code_props
@@ -410,7 +416,15 @@ impl Runtime {
         macro_rules! named { ($($field:ident),* $(,)?) => { $(
             i.$field = self.get::<Vec<(String,Ref)>>(stringify!($field))?.into_iter().map(|(name,r)| Ok((name,d.value(i,&r)?))).collect::<Result<_>>()?;
         )* }; }
-        named!(face_table, face_t_table, charsets, char_code_prop_tables);
+        named!(charsets, char_code_prop_tables);
+        macro_rules! faces { ($($field:ident),* $(,)?) => { $(
+            i.$field = self.get::<Vec<(Ref,Ref)>>(stringify!($field))?.into_iter().map(|(face,r)| {
+                let symbol = d.value(i, &face)?;
+                let face = i.sym_id(&symbol).ok_or_else(|| "Invalid dumped face symbol".to_owned())?;
+                Ok((face, d.value(i, &r)?))
+            }).collect::<Result<_>>()?;
+        )* }; }
+        faces!(face_table, face_t_table);
         i.char_code_props = self
             .get::<Vec<(String, Vec<(i64, Ref)>)>>("char_code_props")?
             .into_iter()

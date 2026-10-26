@@ -1,0 +1,27 @@
+;;; Native cache keys use the canonical source basename. -*- lexical-binding: nil; -*-
+;; #668: alias basenames must not create duplicate native cache identities.
+(let* ((directory (make-temp-file "qa-native-cache-canonical-" t))
+       (real (expand-file-name "real" directory))
+       (target (expand-file-name "target.el" real))
+       (absolute-alias (expand-file-name "alias.el" directory))
+       (relative-alias (expand-file-name "relative.el" directory))
+       (directory-alias (expand-file-name "linked" directory))
+       (other (expand-file-name "other.el" directory)))
+  (unwind-protect
+      (progn
+        (make-directory real)
+        (with-temp-file target (insert "(defun qa-cache-canonical-source () 42)\n"))
+        (make-symbolic-link target absolute-alias)
+        (make-symbolic-link "real/target.el" relative-alias)
+        (make-symbolic-link real directory-alias)
+        (copy-file target other)
+        (let ((key (comp-el-to-eln-rel-filename target)))
+          (qa (comp-el-to-eln-rel-filename absolute-alias) key)
+          (qa (comp-el-to-eln-rel-filename relative-alias) key)
+          (qa (comp-el-to-eln-rel-filename (expand-file-name "target.el" directory-alias)) key)
+          (qa (comp-el-to-eln-rel-filename (concat "/" target)) key)
+          (qa (string-prefix-p "target-" (file-name-nondirectory (comp-el-to-eln-rel-filename absolute-alias))) t)
+          (qa (equal key (comp-el-to-eln-rel-filename other)) nil)
+          (qa (string-prefix-p "other-" (file-name-nondirectory (comp-el-to-eln-rel-filename other))) t)))
+    (delete-directory directory t)))
+(princ (qa--done))

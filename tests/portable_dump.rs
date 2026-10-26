@@ -648,3 +648,51 @@ fn image_preserves_wide_characters_in_names_buffers_and_hash_keys() {
     ));
     assert_eq!(result, "(t t t t preserved t)");
 }
+
+#[test]
+fn image_restores_face_symbol_identity_and_default_layers() {
+    let fixture = Fixture::new();
+    let producer = format!(
+        r#"(progn
+          (setq dump674-wide (intern (concat "image-face-" (string #x1a0000))))
+          (setq dump674-literal (intern (concat "image-face-" (string 92) "x{{1a0000}}")))
+          (setq dump674-first (make-symbol "image-uninterned-face"))
+          (setq dump674-second (make-symbol "image-uninterned-face"))
+          (setq dump674-byte (intern (concat "image-byte-face-" (unibyte-string 128))))
+          (setq dump674-unicode (intern (concat "image-byte-face-" (string 128))))
+          (setq dump674-name (symbol-name dump674-wide))
+          (dolist (pair (list (cons dump674-wide "red") (cons dump674-literal "blue")
+                             (cons dump674-first "red") (cons dump674-second "blue")
+                             (cons dump674-byte "red") (cons dump674-unicode "blue")))
+            (make-face (car pair))
+            (set-face-attribute (car pair) nil :foreground (cdr pair)))
+          (set-face-attribute dump674-wide t :background "green")
+          (set-face-attribute dump674-literal t :background "yellow")
+          (setq dump674-alias (make-symbol "image-face-alias"))
+          (put dump674-alias 'face-alias dump674-wide)
+          (dump-emacs-portable {} t))"#,
+        literal(&fixture.image())
+    );
+    Fixture::ok(fixture.eval("producer-cache", &[], &producer));
+    let result = Fixture::ok(fixture.eval(
+        "consumer-cache",
+        &["--dump-file", fixture.image().to_str().unwrap()],
+        r#"(progn (garbage-collect)
+          (prin1 (list
+            (face-attribute dump674-wide :foreground nil t)
+            (face-attribute dump674-literal :foreground nil t)
+            (face-attribute dump674-first :foreground nil t)
+            (face-attribute dump674-second :foreground nil t)
+            (face-attribute dump674-byte :foreground nil t)
+            (face-attribute dump674-unicode :foreground nil t)
+            (face-attribute dump674-wide :background t)
+            (face-attribute dump674-literal :background t)
+            (face-attribute dump674-alias :foreground nil t)
+            (eq (face-name dump674-wide) dump674-name)
+            (eq dump674-first dump674-second))))"#,
+    ));
+    assert_eq!(
+        result,
+        r#"("red" "blue" "red" "blue" "red" "blue" "green" "yellow" "red" t nil)"#
+    );
+}

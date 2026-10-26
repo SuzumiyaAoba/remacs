@@ -1085,6 +1085,38 @@ qa!(qa_gnutls_crypto_buffer_bytes, "qa_gnutls_crypto_buffer_bytes.el");
 
 qa!(qa_geometry_invalid, "qa_geometry_invalid.el");
 
+qa!(qa_native_wide_constants, "qa_native_wide_constants.el");
 
+qa!(qa_wide_character_identity, "qa_wide_character_identity.el");
 
 qa!(qa_nconc_empty, "qa_nconc_empty.el");
+
+qa!(qa_native_wide_documentation, "qa_native_wide_documentation.el");
+
+qa!(qa_native_wide_interactive, "qa_native_wide_interactive.el");
+
+qa!(qa_native_interactive_identity, "qa_native_interactive_identity.el");
+
+qa!(qa_native_wide_names, "qa_native_wide_names.el");
+
+qa!(qa_native_wide_symbol_references, "qa_native_wide_symbol_references.el");
+
+qa!(qa_native_output_paths, "qa_native_output_paths.el");
+
+qa!(qa_native_relative_output, "qa_native_relative_output.el");
+
+qa!(qa_native_cache_input_names, "qa_native_cache_input_names.el");
+
+qa!(qa_native_cache_canonical, "qa_native_cache_canonical.el");
+
+qa!(qa_native_source_coding, "qa_native_source_coding.el");
+
+qa!(qa_face_attribute_symbol, "qa_face_attribute_symbol.el");
+
+qa!(qa_face_identity, "qa_face_identity.el");
+
+qa!(qa_load_filename_identity, "qa_load_filename_identity.el");
+
+qa!(qa_load_source_characters, "qa_load_source_characters.el");
+
+qa!(qa_load_oversized_codes, "qa_load_oversized_codes.el");

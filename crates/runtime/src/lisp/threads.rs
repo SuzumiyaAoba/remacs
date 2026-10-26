@@ -128,7 +128,7 @@ thread_context! {
     pending_overlay_hooks: Vec<(Value, Value)> = Vec::new(),
     combine_after_change_list: Vec<(usize, usize, i128)> = Vec::new(),
     combine_after_change_buffer: Option<usize> = None,
-    loads_in_progress: Vec<String> = Vec::new(),
+    loads_in_progress: Vec<crate::lisp::text::EmacsText> = Vec::new(),
     load_stream: Option<Rc<RefCell<crate::lisp::load::LoadStream>>> = None,
     load_stream_symbol: Option<SymId> = None,
     loading_dumped: bool = false,

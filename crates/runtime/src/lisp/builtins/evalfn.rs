@@ -2269,12 +2269,12 @@ fn f_require(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     // Try to load feature file from load-path.
     let name = match args.get(1) {
-        Some(Value::Str(s)) => s.borrow().clone(),
+        Some(value @ Value::Str(_)) => crate::lisp::load::filename_text(i, value).unwrap(),
         _ => i.symbol_name_text(id),
     };
     let noerror = args.get(2).map(|v| v.truthy()).unwrap_or(false);
     // GNU Frequire loads with NOMESSAGE = t: no `Loading FILE...' echo.
-    match crate::lisp::load::load_library_opts_msg(i, &(name).to_unicode_lossy(), false, false, true, true) {
+    match crate::lisp::load::load_library_opts_msg(i, &name, false, false, true, true) {
         Ok(crate::lisp::load::LoadOutcome::Loaded(found)) => {
             // GNU's `require': after loading FILE, FEATURE must be
             // provided — a file that loads without `(provide FEATURE)'
@@ -3430,7 +3430,7 @@ fn f_eval_expression(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_load(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // (load FILE &optional NOERROR NOMESSAGE NOSUFFIX MUST-SUFFIX)
     let name = match &args[0] {
-        Value::Str(s) => s.borrow().clone(),
+        Value::Str(_) => crate::lisp::load::filename_text(i, &args[0]).unwrap(),
         _ => return Err(i.wrong_type_mut("stringp", &args[0])),
     };
     let noerror = arg(&args, 1).truthy();
@@ -3438,7 +3438,7 @@ fn f_load(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let nosuffix = arg(&args, 3).truthy();
     let mustsuffix = arg(&args, 4).truthy();
     let outcome =
-        crate::lisp::load::load_library_opts_msg(i, &(name).to_unicode_lossy(), nosuffix, mustsuffix, true, nomessage)?;
+        crate::lisp::load::load_library_opts_msg(i, &name, nosuffix, mustsuffix, true, nomessage)?;
     match outcome {
         crate::lisp::load::LoadOutcome::Loaded(_) => Ok(Value::t()),
         crate::lisp::load::LoadOutcome::Missing | crate::lisp::load::LoadOutcome::Dir(_)
@@ -3474,16 +3474,16 @@ fn f_load_file(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU's `load-file': (load (expand-file-name FILE) nil nil t) —
     // NOSUFFIX, so the literal name is opened (or fails).
     let name = match &args[0] {
-        Value::Str(s) => s.borrow().clone(),
+        Value::Str(_) => crate::lisp::load::filename_text(i, &args[0]).unwrap(),
         _ => return Err(i.wrong_type_mut("stringp", &args[0])),
     };
     let efn = i.q("expand-file-name");
     let expanded = i.apply(&Value::Sym(efn), vec![args[0].clone()])?;
     let name = match &expanded {
-        Value::Str(s) => s.borrow().clone(),
+        Value::Str(_) => crate::lisp::load::filename_text(i, &expanded).unwrap(),
         _ => name,
     };
-    let outcome = crate::lisp::load::load_library_opts(i, &(name).to_unicode_lossy(), true, false, true)?;
+    let outcome = crate::lisp::load::load_library_opts(i, &name, true, false, true)?;
     match outcome {
         crate::lisp::load::LoadOutcome::Loaded(_) => Ok(Value::t()),
         crate::lisp::load::LoadOutcome::Dir(d) => Err(i.signal_data(
@@ -3513,7 +3513,7 @@ fn f_locate_library(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // suffixes (get-load-suffixes) ∪ load-file-rep-suffixes when
     // NOSUFFIX is nil, else just load-file-rep-suffixes.
     let name = match &args[0] {
-        Value::Str(s) => s.borrow().clone(),
+        Value::Str(_) => crate::lisp::load::filename_text(i, &args[0]).unwrap(),
         _ => return Err(i.wrong_type_mut("stringp", &args[0])),
     };
     let nosuffix = arg(&args, 1).truthy();
@@ -3526,13 +3526,13 @@ fn f_locate_library(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     } else {
         path
     };
-    let mut file = locate_library_in(i, &(name).to_unicode_lossy(), nosuffix, &search_path)?;
+    let mut file = locate_library_in(i, &name, nosuffix, &search_path)?;
     if default_path {
         file = match file {
-            Some(path) => Some(crate::lisp::load::located_source(i, &(name).to_unicode_lossy(), path)?),
+            Some(path) => Some(crate::lisp::load::located_source(i, &name, path)?),
             None => {
                 let suffixes = locate_library_suffixes(i, nosuffix);
-                crate::lisp::load::locate_bundled_source(i, &(name).to_unicode_lossy(), &suffixes)?
+                crate::lisp::load::locate_bundled_source(i, &name, &suffixes)?
             }
         };
     }
@@ -3559,20 +3559,21 @@ fn f_locate_library(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 /// bogus dir list yields nil like GNU's `locate-file').
 fn locate_library_in(
     i: &mut Interp,
-    name: &str,
+    name: &crate::lisp::text::EmacsStr,
     nosuffix: bool,
     path: &Value,
-) -> Result<Option<String>, Flow> {
+) -> Result<Option<crate::lisp::text::EmacsText>, Flow> {
     // GNU `locate-file' iterates PATH as a list; a non-list PATH
     // contributes no directories (returns nil, no error).
     let dirs = path.list_to_vec().unwrap_or_default();
     let suffixes = locate_library_suffixes(i, nosuffix);
-    if std::path::Path::new(name).is_absolute() || name.starts_with('~') {
+    if crate::editor::native_path(i, name)?.is_absolute() || name.starts_with('~') {
         // GNU `locate-file': absolute names only get suffix variants.
         let name = crate::editor::expand_file_name_str(i, name);
         for suf in &suffixes {
-            let cand = format!("{name}{suf}");
-            if std::path::Path::new(&cand).is_file() {
+            let mut cand = name.clone();
+            cand.push_str(suf);
+            if crate::editor::native_path(i, &cand)?.is_file() {
                 return Ok(Some(cand));
             }
         }
@@ -3580,18 +3581,20 @@ fn locate_library_in(
     }
     for dir_v in &dirs {
         let directory = match dir_v {
-            Value::Str(value) => crate::editor::expand_file_name_str(i, &value.borrow()),
+            Value::Str(_) => crate::editor::expand_file_name_str(i, &crate::lisp::load::filename_text(i, dir_v).unwrap()),
             Value::Nil => crate::editor::expand_file_name_str(i, ""),
             _ => continue,
         };
-        let base = &crate::editor::native_path(i, &directory)?
-            .join(name)
-            .to_string_lossy()
-            .into_owned();
+        let mut base = directory.clone();
+        if !base.ends_with('/') {
+            base.push('/');
+        }
+        base.push_str(name);
         let base = crate::editor::expand_file_name_str(i, &base);
         for suffix in &suffixes {
-            let candidate = format!("{base}{suffix}");
-            if std::path::Path::new(&candidate).is_file() {
+            let mut candidate = base.clone();
+            candidate.push_str(suffix);
+            if crate::editor::native_path(i, &candidate)?.is_file() {
                 return Ok(Some(candidate));
             }
         }
@@ -3722,7 +3725,7 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
     }
     let file = super::listfn::f_nth(i, vec![Value::Int(1), fundef.clone()].into())?;
     let name = match &file {
-        Value::Str(s) => s.borrow().clone(),
+        Value::Str(_) => crate::lisp::load::filename_text(i, &file).unwrap(),
         _ => return Err(i.wrong_type_mut("stringp", &file)),
     };
     // Find the symbol whose function cell is this autoload object.
@@ -3774,20 +3777,24 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
     // embedded libraries and disk `found' paths otherwise, so resolve
     // the target to the same key space (`load_key' normalizes
     // bundled-dir hits to their `builtin:<stem>').
-    let resolved_key = match crate::lisp::load::locate_full(i, &(name).to_unicode_lossy(), false, false) {
+    let resolved_key = match crate::lisp::load::locate_full(i, &name, false, false) {
         Some(crate::lisp::load::Found::File(p)) => crate::lisp::load::load_key(&p),
-        Some(crate::lisp::load::Found::Dir(_)) => String::new(),
-        None => crate::lisp::load::load_key(&format!("builtin:{name}")),
+        Some(crate::lisp::load::Found::Dir(_)) => crate::lisp::text::EmacsText::new(),
+        None => {
+            let mut key = crate::lisp::text::EmacsText::from("builtin:");
+            key.push_str(&name);
+            crate::lisp::load::load_key(&key)
+        }
     };
     let loading_same = i
         .loads_in_progress
         .iter()
         .any(|f| crate::lisp::load::load_key(f) == resolved_key);
-    let stem = |s: &str| {
+    let stem = |s: &crate::lisp::text::EmacsStr| {
         let s = s.strip_prefix("builtin:").unwrap_or(s);
-        let base = s.rsplit('/').next().unwrap_or(s);
-        let base = base.strip_suffix(".el").unwrap_or(base);
-        base.strip_suffix(".elc").unwrap_or(base).to_string()
+        let base = s.rsplit('/').next().unwrap_or(&s);
+        let base = base.strip_suffix(".el").unwrap_or(&base);
+        base.strip_suffix(".elc").unwrap_or(&base).to_string()
     };
     if let Some(id) = owner {
         let pk = i.q("remacs--dump-fn");
@@ -3843,7 +3850,7 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
     // autoload cell — loading it again would just re-evaluate the
     // file.  The dump-time stash holds the definition GNU's .elc
     // would have installed; resolve through it directly.
-    let feat = i.intern(&stem(&(name).to_unicode_lossy()));
+    let feat = i.intern(&stem(&name));
     if feature_present(i, feat) {
         if let Some(id) = owner {
             let pk = i.q("remacs--dump-fn");
@@ -3859,7 +3866,7 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
     // GNU autoload_do_load → load_with_autoload_queue passes
     // nomessage=t to Fload: autoload-triggered loads don't echo
     // "Loading ..." (stderr or *Messages*).
-    match crate::lisp::load::load_library_opts_msg(i, &(name).to_unicode_lossy(), false, false, true, true)? {
+    match crate::lisp::load::load_library_opts_msg(i, &name, false, false, true, true)? {
         crate::lisp::load::LoadOutcome::Missing => {
             return Err(i.signal_data(
                 crate::lisp::sym::FILE_MISSING,

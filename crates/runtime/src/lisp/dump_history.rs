@@ -99,11 +99,11 @@ pub(crate) fn restore(i: &mut Interp) -> EvalResult {
             continue;
         }
         let file = if file == prelude {
-            prelude_source(i, &file)?
+            crate::lisp::text::EmacsText::from(prelude_source(i, &file)?)
         } else if let Some(key) = file.strip_prefix("builtin:") {
             super::load::dump_source_file(i, key)?
         } else {
-            file
+            file.into()
         };
         private.push((file, definitions));
     }

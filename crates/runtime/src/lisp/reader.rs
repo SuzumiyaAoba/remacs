@@ -7,13 +7,19 @@
 //! `;` comments, `#!` shebang comments, `#_` and `#@` char skipping.
 
 use super::text::{EmacsChar, EmacsText, TextSource};
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use rustc_hash::FxHashMap as HashMap;
 use std::rc::Rc;
 
 use super::Interp;
 use super::error::Flow;
 use super::obarray::sym;
 use super::value::Value;
+
+mod circles;
+mod dispatch;
+mod numbers;
+mod quoted;
+pub use numbers::parse_number;
 
 // Emacs modifier bits for char literals (from src/character.h).
 pub const CHAR_ALT: i128 = 0x0040_0000;
@@ -23,12 +29,15 @@ pub const CHAR_SHIFT: i128 = 0x0200_0000;
 pub const CHAR_CTL: i128 = 0x0400_0000;
 pub const CHAR_META: i128 = 0x0800_0000;
 
+/// Direct-file codes outside the stored character range, indexed by character position.
+pub(crate) type OversizedCodes = Rc<HashMap<usize, u32>>;
+
 pub struct Reader<'a> {
     chars: Rc<Vec<EmacsChar>>,
+    pub(crate) oversized_codes: Option<OversizedCodes>,
     pos: usize,
-    /// A functional character source, filled only when parsing needs input.
-    function_source: Option<Value>,
-    source_eof: bool,
+    /// Functional input is fetched only when parsing needs another character.
+    source: ReadSource,
     interp: &'a mut Interp,
     /// `#N=` labels seen so far (shared structure refs via `#N#`).
     labels: HashMap<u64, Value>,
@@ -49,10 +58,9 @@ fn read_err(interp: &mut Interp, msg: &str) -> Flow {
     interp.signal_data(sym_id, vec![Value::string(msg)])
 }
 
-/// `invalid-read-syntax' with a symbol argument, like Emacs's `#|', `#z'.
+/// `invalid-read-syntax' for an invalid reader token, like `#|' or `#z'.
 fn read_err_sym(interp: &mut Interp, name: &str) -> Flow {
-    let sym_id = interp.q("invalid-read-syntax");
-    interp.signal_data(sym_id, vec![Value::string(name)])
+    read_err(interp, name)
 }
 
 /// `invalid-read-syntax' for radix integers: `(integer, radix N)'.
@@ -96,9 +104,9 @@ impl<'a> Reader<'a> {
     pub fn with_chars(interp: &'a mut Interp, chars: Rc<Vec<EmacsChar>>) -> Reader<'a> {
         Reader {
             chars,
+            oversized_codes: None,
             pos: 0,
-            function_source: None,
-            source_eof: false,
+            source: ReadSource::Characters,
             interp,
             labels: HashMap::default(),
             annotate_pos: None,
@@ -117,16 +125,23 @@ impl<'a> Reader<'a> {
 
     pub fn with_function(interp: &'a mut Interp, source: Value) -> Reader<'a> {
         let mut reader = Self::with_chars(interp, Rc::new(Vec::new()));
-        reader.function_source = Some(source);
+        reader.source = ReadSource::Function {
+            function: source,
+            eof: false,
+        };
         reader
     }
 
     fn fill_to(&mut self, index: usize) -> Result<(), Flow> {
-        while index >= self.chars.len() && !self.source_eof {
-            let Some(source) = &self.function_source else {
+        while index >= self.chars.len() {
+            let ReadSource::Function {
+                function,
+                eof: false,
+            } = &self.source
+            else {
                 break;
             };
-            let value = self.interp.apply(source, vec![])?;
+            let value = self.interp.apply(function, vec![])?;
             let character = match value {
                 Value::Int(code) if (0..=0x3fffff).contains(&code) => {
                     super::value::lisp_char(code as u32)
@@ -134,7 +149,9 @@ impl<'a> Reader<'a> {
                 }
                 // GNU source_function_get treats every non-character as EOF.
                 _ => {
-                    self.source_eof = true;
+                    if let ReadSource::Function { eof, .. } = &mut self.source {
+                        *eof = true;
+                    }
                     break;
                 }
             };
@@ -150,17 +167,39 @@ impl<'a> Reader<'a> {
     fn peek_at(&mut self, n: usize) -> Result<Option<char>, Flow> {
         let index = self.pos + n;
         self.fill_to(index)?;
-        Ok(self.chars.get(index).map(|c| c.unicode().unwrap_or('\u{fffd}')))
+        Ok(self.chars.get(index).map(|c| {
+            if self
+                .oversized_codes
+                .as_ref()
+                .is_some_and(|codes| codes.contains_key(&index))
+            {
+                '\u{fffd}'
+            } else {
+                c.unicode().unwrap_or('\u{fffd}')
+            }
+        }))
     }
 
     fn original_at(&self, position: usize) -> EmacsChar {
         let c = self.chars[position];
         if !self.source_multibyte && (0x80..=0xff).contains(&c.code()) {
             EmacsChar::new(0x3fff00 + c.code()).unwrap()
-        } else { c }
+        } else {
+            c
+        }
     }
 
-    fn last_character(&self) -> EmacsChar { self.original_at(self.pos - 1) }
+    fn last_character(&self) -> EmacsChar {
+        self.original_at(self.pos - 1)
+    }
+
+    fn last_character_code(&self) -> i128 {
+        self.oversized_codes
+            .as_ref()
+            .and_then(|codes| codes.get(&(self.pos - 1)))
+            .map(|code| i128::from(*code))
+            .unwrap_or_else(|| super::value::lisp_char_code(self.last_character()))
+    }
 
     fn next(&mut self) -> Result<Option<char>, Flow> {
         let c = self.peek()?;
@@ -173,7 +212,10 @@ impl<'a> Reader<'a> {
     /// Return lookahead through the source's one-argument unread protocol.
     /// Static source cursors are already positioned before that character.
     fn unread_from(&mut self, position: usize) -> Result<(), Flow> {
-        let Some(source) = &self.function_source else {
+        let ReadSource::Function {
+            function: source, ..
+        } = &self.source
+        else {
             return Ok(());
         };
         let pending: Vec<EmacsChar> = self.chars[position.min(self.chars.len())..].to_vec();
@@ -185,7 +227,9 @@ impl<'a> Reader<'a> {
         }
         if !pending.is_empty() {
             Rc::make_mut(&mut self.chars).truncate(position);
-            self.source_eof = false;
+            if let ReadSource::Function { eof, .. } = &mut self.source {
+                *eof = false;
+            }
         }
         Ok(())
     }
@@ -336,9 +380,9 @@ impl<'a> Reader<'a> {
                         v
                     }
                     Some(_) => {
-                        let character = self.last_character();
+                        let code = self.last_character_code();
                         self.check_char_delim()?;
-                        super::value::lisp_char_code(character)
+                        code
                     }
                 };
                 // GNU folds byte8 chars (0x3FFF80..0x3FFFFF) back to
@@ -467,823 +511,6 @@ impl<'a> Reader<'a> {
         items
     }
 
-    fn read_string(&mut self) -> Result<Value, Flow> {
-        let mut out = EmacsText::new();
-        let mut multibyte = false;
-        loop {
-            match self.next()? {
-                None => return Err(eof_err(self.interp)),
-                Some('"') => {
-                    if out.is_empty() {
-                        return Ok(self.interp.empty_string(multibyte));
-                    }
-                    let v = Value::string_with_kind(out, multibyte);
-                    // GNU: only real non-ASCII characters force multibyte
-                    // storage. Byte8 characters alone remain raw bytes,
-                    // independently of the source's representation.
-                    if multibyte {
-                        if let Value::Str(r) = &v {
-                            self.interp.mark_multibyte(r);
-                        }
-                    } else if let Value::Str(r) = &v {
-                        self.interp.mark_unibyte(r);
-                    }
-                    return Ok(v);
-                }
-                Some('\\') => {
-                    if let Some(c) = self.read_string_escape()? {
-                        if c.code() >= 0x80
-                            && crate::lisp::value::eight_bit_byte(c).is_none()
-                        {
-                            multibyte = true;
-                        }
-                        out.push(c);
-                    }
-                }
-                Some(_) => {
-                    let c = self.last_character();
-                    if c.code() >= 0x80
-                        && crate::lisp::value::eight_bit_byte(c).is_none()
-                    {
-                        multibyte = true;
-                    }
-                    out.push(c);
-                }
-            }
-        }
-    }
-
-    /// String-specific rules around GNU's shared character-escape parser.
-    fn read_string_escape(&mut self) -> Result<Option<EmacsChar>, Flow> {
-        match self.peek()? {
-            Some(' ' | '\n') => {
-                self.pos += 1;
-                return Ok(None);
-            }
-            Some('s') => {
-                self.pos += 1;
-                return Ok(Some(' '.into()));
-            }
-            _ => {}
-        }
-        let escaped = self.read_char_escape()?;
-        const MODIFIERS: i128 =
-            CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT;
-        let mut modifiers = escaped & MODIFIERS;
-        let mut character = escaped & !MODIFIERS;
-        if modifiers == CHAR_CTL && character == 32 {
-            character = 0;
-            modifiers = 0;
-        }
-        if character < 128 {
-            if modifiers & CHAR_SHIFT != 0 {
-                if (b'A' as i128..=b'Z' as i128).contains(&character) {
-                    modifiers &= !CHAR_SHIFT;
-                } else if (b'a' as i128..=b'z' as i128).contains(&character) {
-                    character -= 32;
-                    modifiers &= !CHAR_SHIFT;
-                }
-            }
-            if modifiers & CHAR_META != 0 {
-                modifiers &= !CHAR_META;
-                character = 0x3fff00 + (character | 0x80);
-            }
-        }
-        if modifiers != 0 {
-            return Err(read_err(self.interp, "Invalid modifier in string"));
-        }
-        Ok(Some(super::value::lisp_char(character as u32)
-            .unwrap_or_else(|| super::value::mule_seq_char(character as u32))))
-    }
-
-    /// Read a char literal after `?` or `\` inside a string modifier.
-    /// Returns the char code with modifier bits.
-    fn read_char_literal(&mut self) -> Result<i128, Flow> {
-        match self.next()? {
-            None => Err(eof_err(self.interp)),
-            Some('\\') => self.read_char_escape(),
-            Some(_) => Ok(super::value::lisp_char_code(self.last_character())),
-        }
-    }
-
-    /// GNU requires the char after a `?' literal to terminate it:
-    /// EOF, a control/space char (code ≤ 32), or one of
-    /// `"' ; ( ) [ ] # ? ` , .'.
-    fn check_char_delim(&mut self) -> Result<(), Flow> {
-        let delimiter = self.peek()?;
-        // GNU returns this character even when it makes the literal invalid.
-        self.unread_from(self.pos)?;
-        match delimiter {
-            None => Ok(()),
-            Some(c) if (c as u32) <= 32 => Ok(()),
-            Some('"' | '\'' | ';' | '(' | ')' | '[' | ']' | '#' | '?' | '`' | ',' | '.') => Ok(()),
-            _ => Err(read_err(self.interp, "?")),
-        }
-    }
-
-    /// GNU `\x' escape: one or more hex digits. With 1–2 digits,
-    /// values ≥ 0x80 become byte8 chars (BYTE8_TO_CHAR → 0x3FFFxx).
-    /// Larger values may carry modifier bits.
-    fn read_hex_char_escape(&mut self) -> Result<(i128, usize), Flow> {
-        let mut val: i128 = 0;
-        let mut count = 0usize;
-        while let Some(c) = self.peek()? {
-            match c.to_digit(16) {
-                Some(d) => {
-                    val = val
-                        .checked_mul(16)
-                        .and_then(|v| v.checked_add(d as i128))
-                        .unwrap_or(0x1000_0000);
-                    // GNU caps at CHAR_META | (CHAR_META - 1) = 0xFFFFFFF.
-                    if val > CHAR_META | (CHAR_META - 1) {
-                        return Err(plain_err(
-                            self.interp,
-                            &format!("Hex character out of range: \\x{val:x}"),
-                        ));
-                    }
-                    self.pos += 1;
-                    if count < 3 {
-                        count += 1;
-                    }
-                }
-                None => break,
-            }
-        }
-        self.unread_from(self.pos)?;
-        if count == 0 {
-            return Err(plain_err(
-                self.interp,
-                "Invalid escape char syntax: \\x not followed by hex digit",
-            ));
-        }
-        if count < 3 && val >= 0x80 {
-            val = 0x3F_FF00 + val;
-        }
-        Ok((val, count))
-    }
-
-    /// GNU `\u'/`\U' escapes need exactly N hex digits; a non-hex
-    /// character or EOF is an error.
-    fn read_exact_hex(&mut self, n: usize) -> Result<i128, Flow> {
-        let mut v: i128 = 0;
-        for _ in 0..n {
-            match self.next()? {
-                None => {
-                    return Err(plain_err(
-                        self.interp,
-                        &format!("Malformed Unicode escape: \\u{v:x}"),
-                    ));
-                }
-                Some(c) => match c.to_digit(16) {
-                    Some(d) => v = v * 16 + d as i128,
-                    None => {
-                        return Err(plain_err(
-                            self.interp,
-                            &format!(
-                                "Non-hex character used for Unicode escape: {c} ({})",
-                                c as u32
-                            ),
-                        ));
-                    }
-                },
-            }
-        }
-        Ok(v)
-    }
-
-    /// GNU `\N{name}' — Unicode char name (whitespace normalized to a
-    /// single space) or `U+XXXX'.
-    fn read_named_char(&mut self) -> Result<i128, Flow> {
-        if self.next()? != Some('{') {
-            return Err(read_err(self.interp, "Expected opening brace after \\N"));
-        }
-        let mut name = String::new();
-        let mut ws = false;
-        loop {
-            match self.next()? {
-                None => return Err(eof_err(self.interp)),
-                Some('}') => break,
-                Some(c) if (c as u32) >= 0x80 => {
-                    return Err(read_err(
-                        self.interp,
-                        &format!("Invalid character U+{:04X} in character name", c as u32),
-                    ));
-                }
-                Some(c) if matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c') => {
-                    if !ws {
-                        name.push(' ');
-                    }
-                    ws = true;
-                }
-                Some(c) => {
-                    ws = false;
-                    name.push(c);
-                }
-            }
-        }
-        if name.is_empty() {
-            return Err(read_err(self.interp, "Empty character name"));
-        }
-        let code: Option<i128> = if name.len() > 2 && name[..2].eq_ignore_ascii_case("u+") {
-            i128::from_str_radix(&name[2..], 16).ok()
-        } else {
-            unicode_names2::character(&name).map(|c| c as i128)
-        };
-        match code {
-            Some(n) if (0..=0x10_ffff).contains(&n) && !(0xd800..0xe000).contains(&n) => Ok(n),
-            _ => Err(read_err(self.interp, &format!("\\N{{{name}}}"))),
-        }
-    }
-
-    /// Char literal after `?\`.
-    fn read_char_escape(&mut self) -> Result<i128, Flow> {
-        match self.next()? {
-            None => Err(eof_err(self.interp)),
-            // Modifier prefixes must come first: `?\C-a`, `?\M-x`, `?\s-k`.
-            Some(c @ ('C' | 'M' | 'S' | 'H' | 'A' | 's')) if self.peek()? == Some('-') => {
-                self.pos += 1;
-                let bit = match c {
-                    'C' => CHAR_CTL,
-                    'M' => CHAR_META,
-                    'S' => CHAR_SHIFT,
-                    'H' => CHAR_HYPER,
-                    'A' => CHAR_ALT,
-                    's' => CHAR_SUPER,
-                    _ => unreachable!(),
-                };
-                let inner = self.read_char_literal()?;
-                // `C-' folds the base char to a control character when
-                // possible instead of setting the control bit:
-                // ?\C-a == 1, ?\C-@ == 0, ?\C-? == 127. Chars that can't
-                // fold (e.g. digits, multibyte) keep CHAR_CTL.
-                if bit == CHAR_CTL {
-                    const ALL_MODS: i128 =
-                        CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT;
-                    let base = inner & !ALL_MODS;
-                    let mods = inner & (ALL_MODS & !CHAR_CTL);
-                    return Ok(match ctrl_fold(base) {
-                        Some(c) => mods | c,
-                        None => mods | CHAR_CTL | base,
-                    });
-                }
-                Ok(inner | bit)
-            }
-            Some('a') => Ok(7),
-            Some('b') => Ok(8),
-            Some('d') => Ok(127),
-            Some('e') => Ok(27),
-            Some('f') => Ok(12),
-            Some('n') => Ok(10),
-            Some('r') => Ok(13),
-            // `\s' not followed by `-' is just a space (GNU).
-            Some('s') => {
-                self.unread_from(self.pos)?;
-                Ok(32)
-            }
-            Some('t') => Ok(9),
-            Some('v') => Ok(11),
-            Some('x') => self.read_hex_char_escape().map(|(n, _)| n),
-            Some('u') => {
-                let n = self.read_exact_hex(4)?;
-                if n > 0x10_ffff {
-                    return Err(non_unicode_err(self.interp, n));
-                }
-                self.unread_from(self.pos)?;
-                Ok(n)
-            }
-            Some('U') => {
-                let n = self.read_exact_hex(8)?;
-                if n > 0x10_ffff {
-                    return Err(non_unicode_err(self.interp, n));
-                }
-                self.unread_from(self.pos)?;
-                Ok(n)
-            }
-            Some('N') => self.read_named_char(),
-            Some('^') => {
-                let inner = match self.next()? {
-                    None => return Err(eof_err(self.interp)),
-                    Some('\\') => self.read_char_escape()?,
-                    Some(_) => super::value::lisp_char_code(self.last_character()),
-                };
-                const ALL_MODS: i128 =
-                    CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT;
-                let mods = inner & (ALL_MODS & !CHAR_CTL);
-                let base = inner & !ALL_MODS;
-                Ok(mods | ctrl_fold(base).unwrap_or(CHAR_CTL | base))
-            }
-            Some('\n') => Err(plain_err(
-                self.interp,
-                "Invalid escape char syntax: \\<newline>",
-            )),
-            Some(c @ ('C' | 'M' | 'S' | 'H' | 'A')) => Err(plain_err(
-                self.interp,
-                &format!("Invalid escape char syntax: \\{c} not followed by -"),
-            )),
-            Some(c) if c.is_digit(8) => {
-                let mut n = (c as i128) - ('0' as i128);
-                for _ in 0..2 {
-                    match self.peek()? {
-                        Some(d) if d.is_digit(8) => {
-                            n = n * 8 + (d as i128 - '0' as i128);
-                            self.pos += 1;
-                        }
-                        _ => break,
-                    }
-                }
-                // GNU: octal escapes in 0x80..0xFF are raw bytes.
-                if (0x80..0x100).contains(&n) {
-                    n = 0x3F_FF00 + n;
-                }
-                self.unread_from(self.pos)?;
-                Ok(n)
-            }
-            Some(_) => Ok(super::value::lisp_char_code(self.last_character())),
-        }
-    }
-
-    /// `#`-dispatch read.
-    fn read_dispatch(&mut self) -> Result<Value, Flow> {
-        debug_assert_eq!(self.peek()?, Some('#'));
-        match self.peek_at(1)? {
-            Some('\'') => {
-                self.pos += 2;
-                if self.skip_layout()? {
-                    return Err(eof_err(self.interp));
-                }
-                let obj = self.read_object()?;
-                Ok(Value::list(vec![Value::Sym(sym::FUNCTION), obj]))
-            }
-            Some(':') => {
-                self.pos += 2;
-                let start = self.pos;
-                // Uninterned symbol; GNU accepts an empty name (`#:'),
-                // which reads back as `##'.
-                let (tok, _) = self.read_symbol_token()?;
-                let symbol = self.symbol_token(&tok, true, false)?;
-                Ok(if tok.is_empty() { self.interp.sym(symbol) }
-                   else { self.located_symbol(symbol, start) })
-            }
-            Some('#') => {
-                // `##' — the interned empty-name symbol (this is its
-                // print representation), used e.g. in `declare-function'
-                // arglists to mean "unknown signature".
-                self.pos += 2;
-                let symbol = self.symbol_token("", false, true)?;
-                Ok(self.interp.sym(symbol))
-            }
-            Some('&') => {
-                // `#&N"..."' — bool vector literal: N bits packed
-                // LSB-first within each string byte.
-                self.pos += 2;
-                let mut n: u32 = 0;
-                while let Some(d) = self.peek()? {
-                    if d.is_ascii_digit() {
-                        n = n * 10 + d.to_digit(10).unwrap();
-                        self.pos += 1;
-                    } else {
-                        break;
-                    }
-                }
-                if self.next()? != Some('"') {
-                    return Err(read_err(self.interp, "#&"));
-                }
-                let s = self.read_string()?;
-                let bytes: Vec<u32> = match &s {
-                    Value::Str(s) => {
-                        // GNU rejects multibyte strings; raw bytes
-                        // (eight-bit proxies) count as their byte value.
-                        let mut v: Vec<u32> = Vec::new();
-                        for c in s.borrow().chars() {
-                            match crate::lisp::value::eight_bit_byte(c) {
-                                Some(b) => v.push(b as u32),
-                                None if c.code() < 0x80 => v.push((c).code() as u32),
-                                None => {
-                                    return Err(read_err(self.interp, "#&..."));
-                                }
-                            }
-                        }
-                        v
-                    }
-                    _ => vec![],
-                };
-                // GNU requires SCHARS == ceil(N/8); it also accepts the
-                // Emacs 19 form where N counts the string's total bits
-                // minus the last byte: N == (SCHARS-1)*8.
-                let schars = bytes.len();
-                if !(schars == (n as usize + 7) / 8
-                    || (schars >= 1 && n as usize == (schars - 1) * 8))
-                {
-                    return Err(read_err(self.interp, "#&..."));
-                }
-                let mut bits = Vec::with_capacity(n as usize);
-                for k in 0..n as usize {
-                    let byte = bytes.get(k / 8).copied().unwrap_or(0);
-                    bits.push(byte >> (k % 8) & 1 != 0);
-                }
-                Ok(crate::lisp::builtins::misc::make_bool_vector(
-                    self.interp,
-                    bits,
-                ))
-            }
-            Some('@') => {
-                // `#@NNN' — used by .elc files to skip lazy doc
-                // strings/byte-code.  For non-file sources GNU skips
-                // to the next \037 byte (or EOF), then re-reads.
-                // `#@00' skips to EOF and yields nil.
-                self.pos += 2;
-                let mut n: usize = 0;
-                let mut digits = 0;
-                while let Some(c) = self.peek()? {
-                    if c.is_ascii_digit() {
-                        n = n * 10 + (c as usize - '0' as usize);
-                        self.pos += 1;
-                        digits += 1;
-                    } else {
-                        break;
-                    }
-                }
-                if digits == 2 && n == 0 {
-                    if self.function_source.is_some() {
-                        while self.next()?.is_some() {}
-                    } else {
-                        self.pos = self.chars.len();
-                    }
-                    return Ok(Value::Nil);
-                }
-                while let Some(c) = self.peek()? {
-                    self.pos += 1;
-                    if c == '\u{1f}' {
-                        break;
-                    }
-                }
-                if self.skip_layout()? {
-                    return Err(eof_err(self.interp));
-                }
-                self.read_object()
-            }
-            Some('(') => {
-                // `#("str" BEG END (plist) ...)' — propertized string
-                // literal; after the string each (beg end plist)
-                // triple attaches properties to that char range.
-                self.pos += 2;
-                let items = self.read_seq_unannotated(')')?;
-                match items.first() {
-                    Some(Value::Str(s)) => {
-                        let s = s.clone();
-                        let mut ivs: Vec<(usize, usize, Vec<Value>)> = Vec::new();
-                        let rest = &items[1..];
-                        if rest.len() % 3 != 0 {
-                            return Err(read_err_sym(self.interp, "#"));
-                        }
-                        for t in rest.chunks(3) {
-                            let (Value::Int(b0), Value::Int(e0)) = (&t[0], &t[1]) else {
-                                return Err(read_err_sym(self.interp, "#"));
-                            };
-                            let pl = t[2].list_to_vec().unwrap_or_default();
-                            ivs.push((*b0 as usize, *e0 as usize, pl));
-                        }
-                        if !ivs.is_empty() {
-                            self.interp.set_str_props(&s, ivs);
-                        }
-                        Ok(Value::Str(s))
-                    }
-                    _ => Err(read_err_sym(self.interp, "#")),
-                }
-            }
-            Some('^') => {
-                // `#^[DEFALT PARENT PURPOSE ASCII S1..S64 EXTRAS...]'
-                // — char-table literal (the inverse of the printer's
-                // `#^' format); `#^^[DEPTH MIN-CHAR S0..SN]' is a
-                // sub char-table.  Both land in the Record layout
-                // used by misc::char_table_vec.
-                self.pos += 2;
-                let sub = self.peek()? == Some('^');
-                if sub {
-                    self.pos += 1;
-                }
-                if self.next()? != Some('[') {
-                    return Err(read_err_sym(self.interp, "#^"));
-                }
-                let items = self.read_seq_unannotated(']')?;
-                if sub {
-                    // GNU validates the complete sub-table header and
-                    // depth-specific slot count before constructing a trie
-                    // node.  Short records cannot safely reach its printer.
-                    if items.len() < 2 {
-                        return Err(plain_err(self.interp, "Invalid size of sub-char-table"));
-                    }
-                    let slots = match items[0] {
-                        Value::Int(1) => 16,
-                        Value::Int(2) => 32,
-                        Value::Int(3) => 128,
-                        _ => return Err(plain_err(self.interp, "Invalid depth in sub-char-table")),
-                    };
-                    if items.len() != slots + 2 {
-                        return Err(plain_err(self.interp, "Invalid size in sub-char-table"));
-                    }
-                    if !matches!(items[1], Value::Int(n)
-                        if (0..=super::builtins::misc::CT_MAX_CHAR as i128).contains(&n))
-                    {
-                        return Err(plain_err(
-                            self.interp,
-                            "Invalid minimum character in sub-char-table",
-                        ));
-                    }
-                    let mut rec = Vec::with_capacity(items.len() + 1);
-                    rec.push(Value::Sym(self.interp.q("sub-char-table")));
-                    rec.extend(items);
-                    return Ok(Value::record(rec));
-                }
-                if items.len() < 68 {
-                    return Err(read_err(self.interp, "Invalid size char-table"));
-                }
-                let defalt = items[0].clone();
-                let parent = items[1].clone();
-                let purpose = items[2].clone();
-                let mut slots: Vec<Value> = items.iter().skip(3).take(65).cloned().collect();
-                slots.resize(65, Value::Nil);
-                let mut rec = vec![
-                    Value::Sym(self.interp.q("char-table")),
-                    purpose,
-                    Value::vector(slots),
-                ];
-                rec.extend(items.iter().skip(68).cloned());
-                let t = Value::record_with_kind(rec, crate::lisp::value::RecordKind::CharTable);
-                if !defalt.is_nil() {
-                    self.interp.set_char_table_defalt(&t, defalt);
-                }
-                if !parent.is_nil() {
-                    self.interp.set_char_table_parent(&t, parent);
-                }
-                Ok(t)
-            }
-            Some('[') => {
-                // `#[...]' — a compiled/interpreted function object.
-                // GNU read_bytecode() enforces the closure layout:
-                // size in CLOSURE_STACK_DEPTH..=CLOSURE_INTERACTIVE+1
-                // (3..=6), arglist a fixnum/cons/nil, and either
-                //   (STRING code && VECTOR constants && size>3
-                //    && FIXNATP stack-depth)   — byte-code, or
-                //   (CONS code && (CONS||NIL) constants) — interpreted.
-                self.pos += 2;
-                let mut items = self.read_seq_unannotated(']')?;
-                let size = items.len();
-                let arglist = items.first().cloned().unwrap_or(Value::Nil);
-                let arglist_ok =
-                    matches!(arglist, Value::Nil | Value::Cons(_)) || arglist.fixnump();
-                let code_ok = match items.get(1) {
-                    Some(Value::Str(_)) => {
-                        // Byte-code: constants must be a vector and
-                        // STACK_DEPTH (slot 3) a natural fixnum.
-                        size > 3
-                            && crate::lisp::builtins::evalfn::valid_byte_code_fields(
-                                &items[1], &items[2], &items[3],
-                            )
-                    }
-                    Some(Value::Cons(_)) => {
-                        // Interpreted: constants (env) cons or nil.
-                        size > 2 && matches!(items.get(2), Some(Value::Nil) | Some(Value::Cons(_)))
-                    }
-                    _ => false,
-                };
-                if !(size >= 3 && size <= 6 && arglist_ok && code_ok) {
-                    return Err(read_err_sym(self.interp, "Invalid byte-code object"));
-                }
-                if crate::lisp::builtins::strfn::string_multibyte_p(self.interp, &items[1]) {
-                    items[1] = crate::lisp::builtins::strfn::f_string_as_unibyte(
-                        self.interp,
-                        vec![items[1].clone()].into(),
-                    )?;
-                }
-                let body = items.get(1).cloned().unwrap_or(Value::Nil);
-                let env = items.get(2).cloned().unwrap_or(Value::Nil);
-                // `#[... nil]' prints with a `nil' env (plain lambda);
-                // `#[... (t)]' is a top-level dynamic function.
-                let plain = env.is_nil();
-                Ok(crate::lisp::builtins::misc::make_interpreted_closure(
-                    self.interp,
-                    &arglist,
-                    &body,
-                    &env,
-                    plain,
-                    Some(items),
-                ))
-            }
-            Some('s') => {
-                // `#s(...)' — record object; `#s(hash-table ...)' reads
-                // a real hash table (GNU's printed-hash-table format).
-                self.pos += 2;
-                if self.peek()? != Some('(') {
-                    return Err(read_err_sym(self.interp, "#s "));
-                }
-                self.pos += 1;
-                let items = self.read_seq_unannotated(')')?;
-                // `#s(TYPE ...)' — the type symbol is required.
-                if items.is_empty() {
-                    return Err(read_err_sym(self.interp, "#s"));
-                }
-                if let Value::Sym(t) = &items[0] {
-                    if self.interp.symbol_name(*t) == "hash-table" {
-                        if let Some(h) = read_hash_literal(self.interp, &items[1..])? {
-                            return Ok(h);
-                        }
-                    }
-                }
-                super::builtins::data::check_record_slots(self.interp, items.len() as i128)?;
-                Ok(Value::record(items))
-            }
-            Some('_') => {
-                // `#_' forces a symbol and suppresses shorthand expansion.
-                self.pos += 2;
-                let start = self.pos;
-                let (tok, _) = self.read_symbol_token()?;
-                let symbol = self.symbol_token(&tok, false, false)?;
-                Ok(if tok.is_empty() { self.interp.sym(symbol) }
-                   else { self.located_symbol(symbol, start) })
-            }
-            Some('|') | Some('<') => {
-                // GNU's read point is past `#' when these signal.
-                self.pos += 1;
-                let c = if matches!(self.peek()?, Some('|')) {
-                    "|"
-                } else {
-                    "<"
-                };
-                Err(read_err_sym(self.interp, &format!("#{c}")))
-            }
-            Some('$') => {
-                // #$ — the name of the file being loaded
-                // (Emacs substitutes load-file-name, nil outside load).
-                self.pos += 2;
-                let name = self
-                    .interp
-                    .intern_soft("load-file-name")
-                    .filter(|id| self.interp.bound_p(*id))
-                    .map(|id| self.interp.symbol_value(id));
-                match name {
-                    Some(Value::Str(_)) => Ok(name.unwrap()),
-                    _ => Ok(Value::Nil),
-                }
-            }
-            Some('x') | Some('X') => {
-                self.pos += 2;
-                let n = self.read_radix_int(16)?;
-                Ok(Value::from_bigint(n))
-            }
-            Some('o') | Some('O') => {
-                self.pos += 2;
-                let n = self.read_radix_int(8)?;
-                Ok(Value::from_bigint(n))
-            }
-            Some('b') | Some('B') => {
-                self.pos += 2;
-                let n = self.read_radix_int(2)?;
-                Ok(Value::from_bigint(n))
-            }
-            Some(c) if c.is_ascii_digit() => {
-                // #Nr radix, #N= label, #N# label reference.
-                let start = self.pos;
-                self.pos += 1;
-                let mut n: u64 = 0;
-                while let Some(d) = self.peek()? {
-                    if d.is_ascii_digit() {
-                        self.pos += 1;
-                        n = match n
-                            .checked_mul(10)
-                            .and_then(|n| n.checked_add(d.to_digit(10).unwrap() as u64))
-                        {
-                            Some(n) if n <= i64::MAX as u64 => n,
-                            _ => return Err(self.hash_number_error(start)),
-                        };
-                    } else {
-                        break;
-                    }
-                }
-                match self.next()? {
-                    Some('r') | Some('R') => {
-                        if n > u32::MAX as u64 {
-                            return Err(read_err(self.interp, &format!("integer, radix {n}")));
-                        }
-                        let v = self.read_radix_int(n as u32)?;
-                        Ok(Value::from_bigint(v))
-                    }
-                    Some('=') | Some('#')
-                        if n > ((1u64 << 61) - 1)
-                            || self
-                                .interp
-                                .intern_soft("read-circle")
-                                .is_some_and(|id| self.interp.symbol_value(id).is_nil()) =>
-                    {
-                        Err(self.hash_number_error(start))
-                    }
-                    Some('=') => {
-                        // GNU registers a cons placeholder before reading
-                        // the object, replacing any previous definition.
-                        let placeholder = Value::cons(Value::Nil, Value::Nil);
-                        self.labels.insert(n, placeholder.clone());
-                        if self.skip_layout()? {
-                            return Err(eof_err(self.interp));
-                        }
-                        let obj = self.read_object()?;
-                        if let Value::Cons(pair) = &obj {
-                            let Value::Cons(stub) = &placeholder else {
-                                unreachable!()
-                            };
-                            if Rc::ptr_eq(pair, stub) {
-                                self.pos = self.pos.saturating_sub(1);
-                                return Err(read_err(self.interp, "nonsensical self-reference"));
-                            }
-                            // Reuse the placeholder as the actual cons.
-                            // Nested/redefined labels keep GNU's identity
-                            // behavior, rather than aliasing the read pair.
-                            let (car, cdr) = {
-                                let pair = pair.borrow();
-                                (pair.car.clone(), pair.cdr.clone())
-                            };
-                            let mut stub = stub.borrow_mut();
-                            stub.car = car;
-                            stub.cdr = cdr;
-                            drop(stub);
-                            Ok(placeholder)
-                        } else {
-                            let mut seen = HashSet::default();
-                            patch_in(&obj, &placeholder, &obj, &mut seen);
-                            self.labels.insert(n, obj.clone());
-                            Ok(obj)
-                        }
-                    }
-                    Some('#') => {
-                        let object = self.labels.get(&n).cloned();
-                        object.ok_or_else(|| self.hash_number_error(start))
-                    }
-                    _ => {
-                        // GNU signals with point on the consumed char
-                        // (or the stream tail at EOF) — error_pos
-                        // counts through pos.  At EOF the datum is
-                        // just "#N" — no phantom char.
-                        Err(self.hash_number_error(start))
-                    }
-                }
-            }
-            other => {
-                // GNU's read point is already past `#' when the error
-                // surfaces — buffer-source errors then report the
-                // column one past ours.  Advance before signalling.
-                // At EOF GNU prints just "#" — no phantom char.
-                self.pos += 1;
-                match other {
-                    Some(c) => Err(read_err_sym(self.interp, &format!("#{c}"))),
-                    None => Err(read_err_sym(self.interp, "#")),
-                }
-            }
-        }
-    }
-
-    fn hash_number_error(&mut self, start: usize) -> Flow {
-        let token: EmacsText = self.chars[start..self.pos].iter().collect();
-        self.pos = self.pos.saturating_sub(1);
-        read_err_sym(self.interp, &format!("{token}"))
-    }
-
-    fn read_radix_int(&mut self, radix: u32) -> Result<num_bigint::BigInt, Flow> {
-        if !(2..=36).contains(&radix) {
-            return Err(read_err_radix(self.interp, radix));
-        }
-        let neg = match self.peek()? {
-            Some('-') => {
-                self.pos += 1;
-                true
-            }
-            Some('+') => {
-                self.pos += 1;
-                false
-            }
-            _ => false,
-        };
-        let mut n = num_bigint::BigInt::from(0);
-        let mut any = false;
-        while let Some(c) = self.peek()? {
-            if c.is_alphanumeric() {
-                match c.to_digit(radix) {
-                    Some(d) => {
-                        n = n * radix + d;
-                        any = true;
-                        self.pos += 1;
-                    }
-                    None => return Err(read_err_radix(self.interp, radix)),
-                }
-            } else {
-                break;
-            }
-        }
-        if !any {
-            return Err(read_err_radix(self.interp, radix));
-        }
-        self.unread_from(self.pos)?;
-        Ok(if neg { -n } else { n })
-    }
-
     /// Chars that terminate a symbol/number token.
     /// `#` terminates (expression-prefix syntax); `?` does not
     /// (it's a symbol constituent in elisp).
@@ -1331,15 +558,21 @@ impl<'a> Reader<'a> {
         // GNU read0: a token that contains a `\` escape is never a
         // number — `3\.5' reads as the symbol `3.5', not the float.
         if !escaped {
-            if tok.is_ascii() { if let Some(v) = parse_number(&tok.to_unicode_lossy()) {
-                return Ok(v);
-            } }
+            if tok.is_ascii() {
+                if let Some(v) = parse_number(&tok.to_unicode_lossy()) {
+                    return Ok(v);
+                }
+            }
         }
         match tok.to_unicode_lossy().as_str() {
             // `.' is only a symbol when `)' or `]' follows directly;
             // `\.' is always the symbol `.' (GNU reads (a \. b) as a
             // 3-element list whose middle element is the `.' symbol).
-            "." if escaped => {}
+            "." if escaped
+                || self
+                    .oversized_codes
+                    .as_ref()
+                    .is_some_and(|codes| codes.contains_key(&start)) => {}
             "." if matches!(self.peek()?, Some(')') | Some(']')) => {}
             "." => return Err(read_err(self.interp, ".")),
             _ => {}
@@ -1349,7 +582,9 @@ impl<'a> Reader<'a> {
     }
 
     fn located_symbol(&mut self, symbol: super::value::SymId, start: usize) -> Value {
-        if symbol == sym::NIL { return Value::Nil; }
+        if symbol == sym::NIL {
+            return Value::Nil;
+        }
         if let Some(base) = self.annotate_pos {
             return crate::lisp::builtins::misc::make_symbol_with_pos(
                 self.interp,
@@ -1360,371 +595,85 @@ impl<'a> Reader<'a> {
         Value::Sym(symbol)
     }
 
-    fn symbol_token<T: TextSource + ?Sized>(&mut self, token: &T, uninterned: bool, shorthand: bool) -> Result<super::value::SymId, Flow> {
+    fn symbol_token<T: TextSource + ?Sized>(
+        &mut self,
+        token: &T,
+        uninterned: bool,
+        shorthand: bool,
+    ) -> Result<super::value::SymId, Flow> {
         token.with_text(|token| {
-        let obarray = if !uninterned && !token.is_empty() {
-            super::builtins::data::resolve_obarray(self.interp, None)?
-        } else { None };
-        let core = token.chars().all(|c| c.code() < 128 && b"^*+-/<=>_|".contains(&(c.code() as u8)));
-        let expanding = shorthand && !core && self.interp.q_soft("read-symbol-shorthands")
-            .is_some_and(|symbol| matches!(self.interp.symbol_value(symbol), Value::Cons(_)));
-        if !uninterned && !token.is_empty() && !expanding {
-            let key = super::obarray::InternKey::from_text_kind(token, self.source_multibyte);
-            if let Some(symbol) = super::builtins::data::lookup_in_obarray(self.interp, &obarray, &key) {
+            let obarray = if !uninterned && !token.is_empty() {
+                super::builtins::data::resolve_obarray(self.interp, None)?
+            } else {
+                None
+            };
+            let core = token
+                .chars()
+                .all(|c| c.code() < 128 && b"^*+-/<=>_|".contains(&(c.code() as u8)));
+            let expanding = shorthand
+                && !core
+                && self
+                    .interp
+                    .q_soft("read-symbol-shorthands")
+                    .is_some_and(|symbol| {
+                        matches!(self.interp.symbol_value(symbol), Value::Cons(_))
+                    });
+            if !uninterned && !token.is_empty() && !expanding {
+                let key = super::obarray::InternKey::from_text_kind(token, self.source_multibyte);
+                if let Some(symbol) =
+                    super::builtins::data::lookup_in_obarray(self.interp, &obarray, &key)
+                {
+                    return Ok(symbol);
+                }
+            }
+            // Unibyte sources expose high bytes as byte8 characters while reading,
+            // but their symbol names retain the original one-byte representation.
+            let name = Value::string(token);
+            if let Value::Str(string) = &name {
+                if self.source_multibyte && !token.is_empty() {
+                    self.interp.mark_multibyte(string);
+                } else {
+                    self.interp.mark_unibyte(string);
+                }
+            }
+            let Value::Str(string) = name else {
+                unreachable!()
+            };
+            if uninterned {
+                let symbol = self.interp.make_symbol(token);
+                self.interp.obarray.symbol_mut(symbol).name_string = Some(string);
                 return Ok(symbol);
             }
-        }
-        // Unibyte sources expose high bytes as byte8 characters while reading,
-        // but their symbol names retain the original one-byte representation.
-        let name = Value::string(token);
-        if let Value::Str(string) = &name {
-            if self.source_multibyte && !token.is_empty() {
-                self.interp.mark_multibyte(string);
-            } else {
-                self.interp.mark_unibyte(string);
+            // GNU's empty #_ / ## paths call Fintern directly, including
+            // shorthand expansion and the shared empty unibyte representation.
+            if token.is_empty() {
+                let value =
+                    super::builtins::data::f_intern(self.interp, vec![Value::Str(string)].into())?;
+                return Ok(self.interp.sym_id(&value).unwrap());
             }
-        }
-        let Value::Str(string) = name else { unreachable!() };
-        if uninterned {
-            let symbol = self.interp.make_symbol(token);
-            self.interp.obarray.symbol_mut(symbol).name_string = Some(string);
-            return Ok(symbol);
-        }
-        // GNU's empty #_ / ## paths call Fintern directly, including
-        // shorthand expansion and the shared empty unibyte representation.
-        if token.is_empty() {
-            let value = super::builtins::data::f_intern(self.interp, vec![Value::Str(string)].into())?;
-            return Ok(self.interp.sym_id(&value).unwrap());
-        }
-        // Core punctuation-only names are exempt from reader shorthands.
-        let string = if expanding {
-            super::builtins::data::expand_symbol_shorthand(self.interp, &string, self.source_multibyte)
+            // Core punctuation-only names are exempt from reader shorthands.
+            let string = if expanding {
+                super::builtins::data::expand_symbol_shorthand(
+                    self.interp,
+                    &string,
+                    self.source_multibyte,
+                )
                 .unwrap_or(string)
-        } else { string };
-        Ok(super::builtins::data::intern_in_obarray(self.interp, &string, &obarray))
-
+            } else {
+                string
+            };
+            Ok(super::builtins::data::intern_in_obarray(
+                self.interp,
+                &string,
+                &obarray,
+            ))
         })
     }
 }
 
-/// GNU's control-char fold: `@'..`_' and `a'..'z' fold to &0x1f,
-/// `?' folds to 127. Anything else keeps the CHAR_CTL modifier.
-fn ctrl_fold(base: i128) -> Option<i128> {
-    match base {
-        63 => Some(127),
-        b if (64..96).contains(&b) || (97..123).contains(&b) => Some(b & 0x1f),
-        _ => None,
-    }
-}
-
-/// Try parsing a token as a number (int or float).
-/// Returns `Some(value)` if it parses fully as a number.
-///
-/// Emacs quirk: `1.` reads as *integer* 1, while `1.e3`, `1.5`, `.5`,
-/// `1e3` are floats.
-pub fn parse_number(tok: &str) -> Option<Value> {
-    if tok.is_empty() {
-        return None;
-    }
-    if let Ok(i) = tok.parse::<i128>() {
-        return Some(Value::integer(i));
-    }
-    let digits = tok.strip_prefix(['+', '-']).unwrap_or(tok);
-    if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
-        if let Ok(i) = tok.parse::<num_bigint::BigInt>() {
-            return Some(Value::from_bigint(i));
-        }
-    }
-    if let Some(f) = parse_float(tok) {
-        return Some(Value::float(f));
-    }
-    // `123.` (digits + trailing dot, no exponent) => integer.
-    if let Some(head) = tok.strip_suffix('.') {
-        if !head.is_empty()
-            && head
-                .bytes()
-                .all(|b| b.is_ascii_digit() || b == b'+' || b == b'-')
-        {
-            if let Ok(i) = head.parse::<num_bigint::BigInt>() {
-                return Some(Value::from_bigint(i));
-            }
-        }
-    }
-    None
-}
-
-/// Build a real `Value::Hash' from GNU's `#s(hash-table ...)' printed
-/// literal: fields are a flat list (`test SYM data (K V ...) size N
-/// weakness SYM rehash-size F rehash-threshold F purecopy B').
-/// Returns None when the shape doesn't match (caller falls back to a
-/// plain record).
-fn read_hash_literal(i: &mut Interp, fields: &[Value]) -> Result<Option<Value>, Flow> {
-    use crate::lisp::builtins::hashfn::table_key;
-    use crate::lisp::value::{HashTest, LispHash};
-    // GNU's printed custom tables use the first occurrence of each plist
-    // field, ignore size/unknown fields, and size storage from the data.
-    // Built-in literal metadata uses the existing path below.
-    let property = |name: &str| {
-        fields
-            .chunks(2)
-            .find(|pair| matches!(&pair[0], Value::Sym(id) if i.symbol_name(*id) == name))
-            .and_then(|pair| pair.get(1))
-            .cloned()
-            .unwrap_or(Value::Nil)
-    };
-    let test_arg = property("test");
-    if let Value::Sym(id) = &test_arg
-        && !matches!(i.symbol_name(*id).as_str(), "eq" | "eql" | "equal" | "nil")
-    {
-        let data = property("data");
-        let weakness = property("weakness");
-        if !matches!(data, Value::Nil | Value::Cons(_)) {
-            return Err(i.error("Hash table data is not a list"));
-        }
-        let pairs = crate::lisp::builtins::want_list(i, &data)?;
-        if pairs.len() % 2 != 0 {
-            return Err(i.error("Hash table data length is odd"));
-        }
-        let test_kw = Value::Sym(i.q(":test"));
-        let size_kw = Value::Sym(i.q(":size"));
-        let weakness_kw = Value::Sym(i.q(":weakness"));
-        let table = crate::lisp::builtins::hashfn::f_make_hash_table(
-            i,
-            vec![
-                test_kw,
-                test_arg,
-                size_kw,
-                Value::Int((pairs.len() / 2) as i128),
-                weakness_kw,
-                weakness,
-            ]
-            .into(),
-        )?;
-        for pair in pairs.chunks_exact(2) {
-            crate::lisp::builtins::hashfn::f_puthash(
-                i,
-                vec![pair[0].clone(), pair[1].clone(), table.clone()].into(),
-            )?;
-        }
-        return Ok(Some(table));
-    }
-    let mut test = HashTest::Eql;
-    let mut data: Option<Vec<Value>> = None;
-    let mut weakness: Option<Value> = None;
-    let mut k = 0;
-    while k + 1 < fields.len() {
-        let Value::Sym(name_id) = &fields[k] else {
-            return Ok(None);
-        };
-        let name = i.symbol_name(*name_id).to_string();
-        let val = &fields[k + 1];
-        match name.as_str() {
-            "test" => {
-                let Value::Sym(tid) = val else {
-                    return Ok(None);
-                };
-                test = match i.symbol_name(*tid).as_str() {
-                    "eq" => HashTest::Eq,
-                    "eql" => HashTest::Eql,
-                    "equal" => HashTest::Equal,
-                    _ => return Ok(None),
-                };
-            }
-            "data" => {
-                data = val.list_to_vec().ok();
-                if data.is_none() && !val.is_nil() {
-                    return Ok(None);
-                }
-            }
-            // GNU ignores the legacy hint in printed tables.
-            "size" => {}
-            "weakness" => {
-                if matches!(val, Value::Sym(_) | Value::Nil) {
-                    weakness = if val.is_nil() {
-                        None
-                    } else {
-                        Some(val.clone())
-                    };
-                }
-            }
-            // rehash-size/rehash-threshold/purecopy are accepted and
-            // ignored like `make-hash-table'.
-            "rehash-size" | "rehash-threshold" | "purecopy" => {}
-            _ => return Ok(None),
-        }
-        k += 2;
-    }
-    if k != fields.len() {
-        return Ok(None);
-    }
-    let mut h = LispHash::new(test);
-    // Literal data reserves one slot per pair before equivalent keys
-    // coalesce, unlike lazy default construction via make-hash-table.
-    h.size = data.as_ref().map_or(0, |pairs| pairs.len() / 2) as i128;
-    h.gc_weakness = crate::lisp::value::HashWeakness::from_value(i, &weakness);
-    h.weakness = weakness;
-    let h = crate::lisp::memory::allocate(h, crate::lisp::Value::Hash);
-    if let Some(pairs) = data {
-        let mut it = pairs.into_iter();
-        while let (Some(ky), Some(vl)) = (it.next(), it.next()) {
-            let key = table_key(i, &h, &ky)?;
-            let mut table = h.borrow_mut();
-            table.map.insert(key.clone(), vl);
-            table.put_key(key, ky);
-        }
-    }
-    Ok(Some(Value::Hash(h)))
-}
-
-fn parse_float(tok: &str) -> Option<f64> {
-    let bytes = tok.as_bytes();
-    let mut i = 0usize;
-    if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
-        i += 1;
-    }
-    let start_digits = i;
-    while i < bytes.len() && bytes[i].is_ascii_digit() {
-        i += 1;
-    }
-    let int_digits = i - start_digits;
-    let mut frac_digits = 0usize;
-    let mut saw_dot = false;
-    if i < bytes.len() && bytes[i] == b'.' {
-        saw_dot = true;
-        i += 1;
-        let fs = i;
-        while i < bytes.len() && bytes[i].is_ascii_digit() {
-            i += 1;
-        }
-        frac_digits = i - fs;
-    }
-    if int_digits + frac_digits == 0 {
-        return None;
-    }
-    let mut saw_exp = false;
-    if i < bytes.len() && (bytes[i] == b'e' || bytes[i] == b'E') {
-        saw_exp = true;
-        i += 1;
-        let mut exp_sign = None;
-        if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
-            exp_sign = Some(bytes[i]);
-            i += 1;
-        }
-        // GNU's special literals: `[eE]+NaN' and `[eE]+INF' — the
-        // exponent sign must be `+', the suffix is case-sensitive.
-        // `float_error' semantics: the mantissa's truncated value
-        // becomes the NaN payload (quiet bit excluded) and the
-        // literal's sign the NaN's sign, so `3.5e+NaN' prints back
-        // as `3.0e+NaN'.
-        if exp_sign == Some(b'+') {
-            let rest = &tok[i..];
-            if rest == "NaN" || rest == "INF" {
-                let neg = tok.starts_with('-');
-                return Some(if rest == "NaN" {
-                    let mantissa: f64 = tok[..i - 2].parse().unwrap_or(0.0);
-                    let payload = (mantissa.abs() as u64) & ((1u64 << 51) - 1);
-                    f64::from_bits(0x7ff8_0000_0000_0000 | (neg as u64) << 63 | payload)
-                } else if neg {
-                    f64::NEG_INFINITY
-                } else {
-                    f64::INFINITY
-                });
-            }
-        }
-        let es = i;
-        while i < bytes.len() && bytes[i].is_ascii_digit() {
-            i += 1;
-        }
-        if i == es {
-            return None; // `1e` with no exponent digits isn't a number
-        }
-    }
-    if i != bytes.len() {
-        return None;
-    }
-    // `1.` (dot but no fraction digits and no exponent) is an integer in
-    // elisp — handled by parse_number's integer fallback.
-    if saw_dot && frac_digits == 0 && !saw_exp {
-        return None;
-    }
-    tok.parse::<f64>().ok()
-}
-
-fn placeholder_eq(value: &Value, placeholder: &Value) -> bool {
-    matches!((value, placeholder), (Value::Cons(value), Value::Cons(placeholder))
-        if Rc::ptr_eq(value, placeholder))
-}
-
-/// Replace placeholder cons references inside `v` with `target`.
-/// Track visited conses/vectors/records since they may already be cyclic.
-fn patch_in(v: &Value, placeholder: &Value, target: &Value, seen: &mut HashSet<usize>) {
-    match v {
-        Value::Cons(c) => {
-            let ptr = Rc::as_ptr(c) as usize;
-            if !seen.insert(ptr) {
-                return;
-            }
-            let (car, cdr) = {
-                let b = c.borrow();
-                (b.car.clone(), b.cdr.clone())
-            };
-            if placeholder_eq(&car, placeholder) {
-                c.borrow_mut().car = target.clone();
-            } else {
-                patch_in(&car, placeholder, target, seen);
-            }
-            if placeholder_eq(&cdr, placeholder) {
-                c.borrow_mut().cdr = target.clone();
-            } else {
-                patch_in(&cdr, placeholder, target, seen);
-            }
-        }
-        Value::Vec(vec) => {
-            let ptr = Rc::as_ptr(vec) as usize;
-            if !seen.insert(ptr) {
-                return;
-            }
-            let items: Vec<Value> = vec.borrow().clone();
-            let mut touched = false;
-            let items: Vec<Value> = items
-                .into_iter()
-                .map(|it| {
-                    if placeholder_eq(&it, placeholder) {
-                        touched = true;
-                        target.clone()
-                    } else {
-                        patch_in(&it, placeholder, target, seen);
-                        it
-                    }
-                })
-                .collect();
-            if touched {
-                *vec.borrow_mut() = items;
-            }
-        }
-        Value::Record(rec) => {
-            let ptr = Rc::as_ptr(rec) as usize;
-            if !seen.insert(ptr) {
-                return;
-            }
-            let items: Vec<Value> = rec.borrow().clone();
-            let mut touched = false;
-            let items: Vec<Value> = items
-                .into_iter()
-                .map(|it| {
-                    if placeholder_eq(&it, placeholder) {
-                        touched = true;
-                        target.clone()
-                    } else {
-                        patch_in(&it, placeholder, target, seen);
-                        it
-                    }
-                })
-                .collect();
-            if touched {
-                *rec.borrow_mut() = items;
-            }
-        }
-        _ => {}
-    }
+/// Only functional input has an unread callback and cached EOF. Keeping them
+/// together prevents static character input from acquiring stream-only state.
+enum ReadSource {
+    Characters,
+    Function { function: Value, eof: bool },
 }

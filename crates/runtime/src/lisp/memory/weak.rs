@@ -230,13 +230,11 @@ impl Graph {
                 self.root(value);
             }
         }
-        for (_, value) in i
-            .face_table
-            .iter()
-            .chain(i.face_t_table.iter())
-            .chain(i.charsets.iter())
-            .chain(i.char_code_prop_tables.iter())
-        {
+        for (face, value) in i.face_table.iter().chain(i.face_t_table.iter()) {
+            self.root(&Value::Sym(*face));
+            self.root(value);
+        }
+        for (_, value) in i.charsets.iter().chain(i.char_code_prop_tables.iter()) {
             self.root(value);
         }
         for (_, values) in &i.char_code_props {

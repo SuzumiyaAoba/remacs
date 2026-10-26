@@ -138,7 +138,7 @@ pub(crate) fn save(i: &mut Interp, args: Argv) -> super::EvalResult {
             reverse
         });
         let archive = Archive {
-            version: 3,
+            version: 4,
             image,
             track_referrers,
             referrers,
@@ -256,7 +256,7 @@ pub fn load_with_arguments(
     let decompressor = flate2::read::ZlibDecoder::new(body.as_slice());
     let mut archive: Archive = serde_json::from_reader(decompressor)
         .map_err(|e| fail(format!("Invalid portable dump data: {e}")))?;
-    if archive.version != 3 {
+    if archive.version != 4 {
         return Err(fail("Unsupported portable dump version".into()));
     }
     let mut i = Interp::new();

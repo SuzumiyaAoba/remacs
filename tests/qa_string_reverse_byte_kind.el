@@ -1,4 +1,5 @@
 ;;; -*- lexical-binding: nil; -*-
+(require 'subr-x)
 ;; string-reverse preserves unibyte representation for high bytes (#384).
 (let* ((s (unibyte-string 233 255))
        (r (string-reverse s)))

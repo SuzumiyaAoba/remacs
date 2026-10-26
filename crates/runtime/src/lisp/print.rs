@@ -1,6 +1,5 @@
 //! Printing Lisp objects (`prin1`-style readable syntax).
 
-use std::cell::RefCell;
 use std::fmt::Write;
 use std::rc::Rc;
 
@@ -8,6 +7,15 @@ use super::Interp;
 use super::print_text::PrintText;
 use super::text::{EmacsChar, EmacsText, TextSource};
 use super::value::Value;
+
+mod circle;
+mod lists;
+mod numbers;
+mod objects;
+mod render;
+use render::PrintMode;
+pub use circle::f_print_preprocess;
+pub use numbers::format_float;
 
 /// Escape a character inside a printed string. Emacs escapes only
 /// `"` and `\` — newlines print literally unless `print-escape-newlines`
@@ -19,488 +27,42 @@ fn escape_char_for_string(c: EmacsChar, out: &mut PrintText, nl: bool, mb: bool,
         Some('"') => out.push_str("\\\""),
         Some('\\') => out.push_str("\\\\"),
         Some('\n') if nl => out.push_str("\\n"),
-        _ if cc && (c.code() < 0x20 || c == '\u{7f}') => { let _ = write!(out, "\\{:o}", c.code()); }
-        _ if mb && c.code() > 0x7f => { let _ = write!(out, "\\x{:04x}", c.code()); }
+        _ if cc && (c.code() < 0x20 || c == '\u{7f}') => {
+            let _ = write!(out, "\\{:o}", c.code());
+        }
+        _ if mb && c.code() > 0x7f => {
+            let _ = write!(out, "\\x{:04x}", c.code());
+        }
         _ => out.push(c),
     }
 }
 
 fn sym_char_needs_escape(c: EmacsChar) -> bool {
-    c.unicode().is_some_and(|c| matches!(c, '(' | ')' | '[' | ']' | '\'' | '"' | '`' | ',' | ';' | '#' | '\\'))
-        || c.is_whitespace() || c.code() < 0x20
+    c.unicode().is_some_and(|c| {
+        matches!(
+            c,
+            '(' | ')' | '[' | ']' | '\'' | '"' | '`' | ',' | ';' | '#' | '\\'
+        )
+    }) || c.is_whitespace()
+        || c.code() < 0x20
 }
 
 fn push_sym_name<T: TextSource + ?Sized>(name: &T, out: &mut PrintText) {
     name.with_text(|name| {
-        if name.is_empty() { out.push_str("##"); return; }
+        if name.is_empty() {
+            out.push_str("##");
+            return;
+        }
         for c in name.chars() {
-            if sym_char_needs_escape(c) { out.push('\\'); }
+            if sym_char_needs_escape(c) {
+                out.push('\\');
+            }
             out.push(c);
         }
     });
 }
 
-thread_local! {
-    /// GNU print.c's `being_printed' stack (used when print-circle
-    /// is nil): every object printing at depth D sits in slot D, and
-    /// an object that reoccurs while still on the stack prints as
-    /// `#N' where N is its stack index.  Only containers can be
-    /// ancestors, so only they are tracked.
-    static BEING_PRINTED: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
-    /// `print-circle' state for the current top-level print call:
-    /// objects seen by the pre-scan, labels numbered at each shared
-    /// object's second encounter (GNU's `print_number_index' order),
-    /// and which labeled objects have already printed.
-    static CIRCLE: RefCell<Option<CircleCtx>> = const { RefCell::new(None) };
-    /// `print-unreadable-function' support (GNU print.c
-    /// `print_unreadable_flag'): every `#<...>'-style emit records its
-    /// character span and object here so the `&mut' caller can post-process
-    /// with a Lisp callback.
-    static UNREADABLE_HITS: RefCell<Vec<(usize, usize, Value)>> =
-        const { RefCell::new(Vec::new()) };
-}
-
-/// Per-print state for `print-circle'.
-struct CircleCtx {
-    /// Objects already seen by the pre-scan.
-    seen: rustc_hash::FxHashSet<usize>,
-    /// ptr -> label number, assigned at second encounter.
-    labels: rustc_hash::FxHashMap<usize, usize>,
-    /// Objects whose `#N=' form has already printed.
-    printed: rustc_hash::FxHashSet<usize>,
-    /// Next label index (GNU's print_number_index starts at 1).
-    next: usize,
-}
-
-/// Identity key for objects that can appear in the print stack —
-/// containers by `eq' identity (Rc pointer), like GNU's BASE_EQ.
-fn print_stack_key(v: &Value) -> Option<usize> {
-    match v {
-        Value::Cons(r) => Some(std::rc::Rc::as_ptr(r) as usize),
-        Value::Str(r) => Some(std::rc::Rc::as_ptr(r) as usize),
-        Value::Vec(r) => Some(std::rc::Rc::as_ptr(r) as usize),
-        Value::Record(r) => Some(std::rc::Rc::as_ptr(r) as usize),
-        Value::Hash(r) => Some(std::rc::Rc::as_ptr(r) as usize),
-        // Lambdas print their `[ARGS BODY ENV ...]' slots — a closure
-        // whose env captures a `let' binding referencing the closure
-        // itself (gv-ref's setter: `(ref . (getter . SETTER))')
-        // recurses forever without the being-printed check.
-        Value::Lambda(r) => Some(std::rc::Rc::as_ptr(r) as usize),
-        _ => None,
-    }
-}
-
-/// `print-circle' key for an uninterned symbol.  GNU print.c numbers
-/// every non-atom reachable object in `print_preprocess' — including
-/// symbols when `print-gensym' is on — so a shared `#:test' prints
-/// `#1=#:test' … `#1#'.  SymIds live in a different namespace than
-/// heap pointers: fold them into key space by setting the high bit.
-fn gensym_circle_key(i: &Interp, v: &Value) -> Option<usize> {
-    // Cheap shape check first — runs for every printed symbol.
-    let id = i.sym_id(v)?;
-    if !i.obarray.symbol(id).uninterned || !i.print_gensym() {
-        return None;
-    }
-    Some(id as usize | (1usize << (usize::BITS - 1)))
-}
-
-fn print_identity_key(i: &Interp, value: &Value) -> Option<usize> {
-    if circle_active() {
-        gensym_circle_key(i, value).or_else(|| print_stack_key(value))
-    } else if super::builtins::misc::raw_symbol_position(value).is_some() {
-        print_stack_key(value)
-    } else {
-        print_stack_key(value).or_else(|| gensym_circle_key(i, value))
-    }
-}
-
-/// Position symbols use their bare symbol's identity when the dynamic
-/// symbol view is enabled. When disabled they are opaque records and do
-/// not participate in circle numbering.
-fn print_object_key(i: &Interp, v: &Value) -> Option<usize> {
-    if crate::lisp::builtins::misc::any_sympos_parts(i, v).is_some() {
-        return crate::lisp::builtins::misc::active_sympos_parts(i, v)
-            .and_then(|(sym, _)| gensym_circle_key(i, &Value::Sym(sym)));
-    }
-    print_stack_key(v).or_else(|| gensym_circle_key(i, v))
-}
-
-/// GNU `print_circle_candidate_p' (print.c): only these object kinds
-/// participate in `print-circle' numbering — notably EMPTY strings and
-/// EMPTY vectors are excluded, which keeps literal `""'s from
-/// sprouting `#N=' labels.
-fn print_circle_candidate(i: &Interp, v: &Value) -> bool {
-    if crate::lisp::builtins::misc::any_sympos_parts(i, v).is_some() {
-        return print_object_key(i, v).is_some();
-    }
-    match v {
-        Value::Cons(_) => true,
-        Value::Str(s) => !s.borrow().is_empty(),
-        Value::Sym(_) => gensym_circle_key(i, v).is_some(),
-        Value::Vec(r) => !r.borrow().is_empty(),
-        Value::Record(_) if super::builtins::misc::raw_symbol_position(v).is_some() => {
-            gensym_circle_key(i, v).is_some()
-        }
-        Value::Record(_) | Value::Hash(_) | Value::Lambda(_) => true,
-        _ => false,
-    }
-}
-
-/// GNU's `print_preprocess' pass: depth-first walk of the object
-/// graph (car before cdr, like GNU's recursion), numbering each
-/// shared/cyclic object when it is encountered a second time.
-/// Already-seen objects are not descended into, so cycles terminate.
-fn count_print_refs(i: &Interp, v: &Value, ctx: &mut CircleCtx) {
-    let mut stack = vec![v.clone()];
-    while let Some(x) = stack.pop() {
-        // GNU's print_circle_candidate_p gate: empty strings/vectors
-        // never participate in print-circle numbering.
-        if !print_circle_candidate(i, &x) {
-            continue;
-        }
-        let Some(k) = gensym_circle_key(i, &x).or_else(|| print_stack_key(&x)) else {
-            continue;
-        };
-        if !ctx.seen.insert(k) {
-            // Second encounter: GNU assigns `print_number_index'
-            // here, not at print time.
-            if !ctx.labels.contains_key(&k) {
-                ctx.labels.insert(k, ctx.next);
-                ctx.next += 1;
-            }
-            continue;
-        }
-        match &x {
-            Value::Cons(c) => {
-                let (car, cdr) = {
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
-                };
-                stack.push(cdr);
-                stack.push(car);
-            }
-            Value::Vec(r) | Value::Record(r) => {
-                stack.extend(r.borrow().iter().rev().cloned());
-            }
-            Value::Hash(h) => {
-                let hh = h.borrow();
-                for (_, orig) in hh.keys.iter() {
-                    stack.push(orig.clone());
-                }
-                stack.extend(hh.map.values().cloned());
-            }
-            _ => {}
-        }
-    }
-}
-
-/// Is `print-circle' handling active for the current print?
-fn circle_active() -> bool {
-    CIRCLE.with(|c| c.borrow().is_some())
-}
-
-/// In `print-circle' mode: if K's object was numbered by the
-/// pre-scan, return Some((label, true-if-first-occurrence)).
-/// None for singly referenced objects.
-fn circle_label(k: usize) -> Option<(usize, bool)> {
-    CIRCLE.with(|c| {
-        let mut binding = c.borrow_mut();
-        let ctx = binding.as_mut()?;
-        let n = ctx.labels.get(&k).copied()?;
-        Some((n, ctx.printed.insert(k)))
-    })
-}
-
-/// Does K's object need a `print-circle' label (shared/cyclic)?
-fn circle_counted(k: usize) -> bool {
-    CIRCLE.with(|c| {
-        c.borrow()
-            .as_ref()
-            .map(|ctx| ctx.labels.contains_key(&k))
-            .unwrap_or(false)
-    })
-}
-thread_local! {
-    /// GNU print.c's `print_number_index': persists across print
-    /// calls while `print-continuous-numbering' is non-nil.
-    static PRINT_NUMBER_INDEX: std::cell::Cell<i64> =
-        const { std::cell::Cell::new(0) };
-}
-
-/// `print-number-table' outcome for a heap object under print-circle.
-enum NtSubst {
-    /// Emit this text and print the object's contents after it
-    /// (GNU's negative-index `#N=' prefix).
-    Prefix(String),
-    /// Emit this text INSTEAD of the object (a `#N#' back-reference
-    /// or a verbatim substitution string).
-    Replace(EmacsText),
-}
-
-/// `print-number-table' substitution for a heap object (GNU's
-/// `Fgethash' in `print_object' under `print-circle'): a string
-/// prints verbatim, a negative index prints `#N=' then flips to its
-/// positive, a positive index prints `#N#' and consumes the object.
-/// The caller uses Some(_) to suppress the ctx labels too — the
-/// table is authoritative for objects it contains.
-fn number_table_subst(i: &Interp, v: &Value) -> Option<NtSubst> {
-    if !i.print_var("print-circle").truthy() {
-        return None;
-    }
-    // Without `print-continuous-numbering' GNU resets the table at
-    // every top-level print — a user-bound table is ignored.
-    if !i.print_var("print-continuous-numbering").truthy() {
-        return None;
-    }
-    let nt = i.print_var("print-number-table");
-    let Value::Hash(h) = nt else {
-        return None;
-    };
-    let key = crate::lisp::builtins::hashfn::hash_key_for(i, v, crate::lisp::value::HashTest::Eq);
-    let found = h.borrow().map.get(&key).cloned()?;
-    match &found {
-        Value::Str(s) => Some(NtSubst::Replace(s.borrow().clone())),
-        Value::Int(n) => {
-            let n = *n;
-            if n < 0 {
-                // First print of a labeled object: emit the prefix
-                // and mark it printed (GNU stores the positive).
-                h.borrow_mut().map.insert(key, Value::Int(-n));
-                Some(NtSubst::Prefix(format!("#{}=", -n)))
-            } else {
-                Some(NtSubst::Replace(format!("#{n}#").into()))
-            }
-        }
-        _ => None,
-    }
-}
-
 impl Interp {
-    /// `prin1` representation: readable, escaped.
-    pub fn print_to_string(&self, v: &Value) -> EmacsText {
-        let mut s = PrintText::new();
-        let mark = BEING_PRINTED.with(|bp| bp.borrow().len());
-        let prev_circle = self.install_circle_ctx(v);
-        self.prin1_inner(v, &mut s, 0, false);
-        // Unwinding safety: restore the stack mark so a mid-print
-        // panic can't poison later prints.
-        CIRCLE.with(|c| *c.borrow_mut() = prev_circle);
-        BEING_PRINTED.with(|bp| bp.borrow_mut().truncate(mark));
-        s.to_text(true)
-    }
-
-    /// Alias for `print_to_string` matching the Lisp name.
-    pub fn prin1_to_string(&self, v: &Value) -> EmacsText {
-        self.print_to_string(v)
-    }
-
-    /// `prin1` representation honoring `print-unreadable-function'
-    /// (GNU print.c): each `#<...>' span recorded during the print is
-    /// replaced by the callback's return value (must be a string), and
-    /// a thrown tag/signal propagates as usual Lisp flow.
-    pub fn print_to_string_cb(&mut self, v: &Value) -> Result<PrintText, crate::lisp::error::Flow> {
-        self.reset_print_numbering();
-        UNREADABLE_HITS.with(|u| u.borrow_mut().clear());
-        let mut s = PrintText::new();
-        let mark = BEING_PRINTED.with(|bp| bp.borrow().len());
-        let prev_circle = self.install_circle_ctx(v);
-        self.prin1_inner(v, &mut s, 0, false);
-        CIRCLE.with(|c| *c.borrow_mut() = prev_circle);
-        BEING_PRINTED.with(|bp| bp.borrow_mut().truncate(mark));
-        let hits = UNREADABLE_HITS.with(|u| std::mem::take(&mut *u.borrow_mut()));
-        if hits.is_empty() {
-            return Ok(s);
-        }
-        let puf = self.q("print-unreadable-function");
-        let f = self.symbol_value(puf);
-        if !super::builtins::data::functionp_val(self, &f) {
-            return Ok(s);
-        }
-        // Splice right-to-left so recorded offsets stay valid.
-        for (lo, hi, obj) in hits.into_iter().rev() {
-            let r = self.call_unreadable_printer(&f, obj, true)?;
-            if let Value::Str(rep) = r {
-                s.replace_range(lo..hi, &rep.borrow());
-            }
-        }
-        Ok(s)
-    }
-
-    /// `princ` variant of `print_to_string_cb'.
-    pub fn princ_to_string_cb(&mut self, v: &Value) -> Result<PrintText, crate::lisp::error::Flow> {
-        self.reset_print_numbering();
-        UNREADABLE_HITS.with(|u| u.borrow_mut().clear());
-        let mut s = PrintText::new();
-        let mark = BEING_PRINTED.with(|bp| bp.borrow().len());
-        let prev_circle = self.install_circle_ctx(v);
-        self.princ_inner(v, &mut s, 0, false);
-        CIRCLE.with(|c| *c.borrow_mut() = prev_circle);
-        BEING_PRINTED.with(|bp| bp.borrow_mut().truncate(mark));
-        let hits = UNREADABLE_HITS.with(|u| std::mem::take(&mut *u.borrow_mut()));
-        if hits.is_empty() {
-            return Ok(s);
-        }
-        let puf = self.q("print-unreadable-function");
-        let f = self.symbol_value(puf);
-        if !super::builtins::data::functionp_val(self, &f) {
-            return Ok(s);
-        }
-        for (lo, hi, obj) in hits.into_iter().rev() {
-            let r = self.call_unreadable_printer(&f, obj, false)?;
-            if let Value::Str(rep) = r {
-                s.replace_range(lo..hi, &rep.borrow());
-            }
-        }
-        Ok(s)
-    }
-
-    /// `princ` representation: human-readable (strings unquoted).
-    pub fn princ_to_string(&self, v: &Value) -> EmacsText {
-        let mut s = PrintText::new();
-        let mark = BEING_PRINTED.with(|bp| bp.borrow().len());
-        let prev_circle = self.install_circle_ctx(v);
-        self.princ_inner(v, &mut s, 0, false);
-        CIRCLE.with(|c| *c.borrow_mut() = prev_circle);
-        BEING_PRINTED.with(|bp| bp.borrow_mut().truncate(mark));
-        s.to_text(true)
-    }
-
-    fn call_unreadable_printer(
-        &mut self,
-        callback: &Value,
-        object: Value,
-        escape: bool,
-    ) -> Result<Value, crate::lisp::error::Flow> {
-        let mark = self.specbind_depth();
-        let result = (|| {
-            // GNU suppresses recursive use of the same unreadable printer.
-            let variable = self.q("print-unreadable-function");
-            self.specbind(variable, Value::Nil)?;
-            self.apply(callback, vec![object, Value::from_bool(escape)])
-        })();
-        self.unbind_to(mark)?;
-        result
-    }
-
-    /// GNU print's direct C assignment resets numbering without notifying
-    /// Lisp variable watchers, including when print-circle is nil.
-    fn reset_print_numbering(&mut self) {
-        if self.print_var("print-continuous-numbering").truthy()
-            && !self.print_var("print-number-table").is_nil()
-        {
-            return;
-        }
-        PRINT_NUMBER_INDEX.with(|index| index.set(0));
-        let symbol = self.q("print-number-table");
-        if let Some(buffer) = self.current_buffer_ref() {
-            if let Some(value) = buffer.borrow_mut().locals.get_mut(&symbol) {
-                *value = Value::Nil;
-                return;
-            }
-        }
-        self.obarray.symbol_mut(symbol).value = Value::Nil;
-    }
-
-    /// When `print-circle' is non-nil, pre-scan V for shared/cyclic
-    /// objects and install the per-print state.  Returns the previous
-    /// state so callers can restore it (nested print calls).
-    fn install_circle_ctx(&self, v: &Value) -> Option<CircleCtx> {
-        if !self.print_var("print-circle").truthy() {
-            return None;
-        }
-        let mut ctx = CircleCtx {
-            seen: rustc_hash::FxHashSet::default(),
-            labels: rustc_hash::FxHashMap::default(),
-            printed: rustc_hash::FxHashSet::default(),
-            next: 1,
-        };
-        count_print_refs(self, v, &mut ctx);
-        CIRCLE.with(|c| c.borrow_mut().replace(ctx))
-    }
-
-    /// When ITEMS is an `[overlay BID IDX]' handle, produce GNU's
-    /// `#<overlay from B to E in NAME>' (or `#<overlay in no buffer>'
-    /// once detached/killed).
-    fn overlay_repr(&self, items: &Rc<RefCell<Vec<Value>>>) -> Option<EmacsText> {
-        let value = Value::Vec(items.clone());
-        if !self.is_overlay(&value) {
-            return None;
-        }
-        let ov = match self.overlay_state(&value) {
-            Some(o) => o,
-            // Detached/killed handles still print as overlays.
-            None => return Some("#<overlay in no buffer>".into()),
-        };
-        match ov
-            .buffer
-            .and_then(|id| self.buffers.get(id).map(|b| b.borrow().name.clone()))
-        {
-            Some(name) => {
-                let mut text = EmacsText::from(format!("#<overlay from {} to {} in ", ov.start + 1, ov.end + 1));
-                text.append(&name);
-                text.push('>');
-                Some(text)
-            }
-            None => Some("#<overlay in no buffer>".into()),
-        }
-    }
-
-    fn prin1_inner(&self, v: &Value, out: &mut PrintText, depth: usize, bq: bool) {
-        let key = print_identity_key(self, v);
-        if let Some(k) = key {
-            if let Some(sub) = number_table_subst(self, v) {
-                match sub {
-                    NtSubst::Replace(t) => {
-                        out.push_str(&t);
-                        return;
-                    }
-                    // `#N=' prefix, then print the object body.
-                    NtSubst::Prefix(t) => out.push_str(&t),
-                }
-            }
-            if circle_active() {
-                // `print-circle': shared/cyclic objects print `#N='
-                // at first occurrence and `#N#' afterwards.
-                match circle_label(k) {
-                    Some((n, false)) => {
-                        let _ = write!(out, "#{n}#");
-                        return;
-                    }
-                    Some((n, true)) => {
-                        let _ = write!(out, "#{n}=");
-                    }
-                    None => {}
-                }
-                self.prin1_inner_obj(v, out, depth, bq);
-                return;
-            }
-            // GNU's being-printed check: an object still on the print
-            // stack prints as `#N' (its stack index).
-            let hit = BEING_PRINTED.with(|bp| bp.borrow().iter().position(|&x| x == k));
-            if let Some(i) = hit {
-                let _ = write!(out, "#{i}");
-                return;
-            }
-            BEING_PRINTED.with(|bp| bp.borrow_mut().push(k));
-            self.prin1_inner_obj(v, out, depth, bq);
-            BEING_PRINTED.with(|bp| {
-                bp.borrow_mut().pop();
-            });
-            return;
-        }
-        self.prin1_inner_obj(v, out, depth, bq);
-    }
-
-    fn prin1_inner_obj(&self, v: &Value, out: &mut PrintText, depth: usize, bq: bool) {
-        // `print-unreadable-function' hook: any `#<...>' fragment this
-        // object emits is recorded for the `&mut' caller to post-process.
-        let start = out.len();
-        self.prin1_inner_obj_raw(v, out, depth, bq);
-        if out.span_is_unreadable(start) {
-            UNREADABLE_HITS.with(|u| u.borrow_mut().push((start, out.len(), v.clone())));
-        }
-    }
-
     fn prin1_inner_obj_raw(&self, v: &Value, out: &mut PrintText, depth: usize, bq: bool) {
         if depth > 200 {
             out.push_str("##");
@@ -520,8 +82,10 @@ impl Interp {
         }
         match v {
             Value::Nil => out.push_str("nil"),
-            Value::Int(i) => self.print_integer(*i, out, true),
-            Value::BigInt(i) => { let _ = write!(out, "{i}"); },
+            Value::Int(i) => self.print_integer(*i, out, PrintMode::Readable),
+            Value::BigInt(i) => {
+                let _ = write!(out, "{i}");
+            }
             Value::Float(f) => {
                 let _ = write!(out, "{}", self.format_float_output(**f));
             }
@@ -531,10 +95,13 @@ impl Interp {
                     out.push_str("#:");
                 }
                 let name = self.print_symbol_name(*id);
-                if name.is_empty() && self.obarray.symbol(*id).uninterned && self.print_gensym() { return; }
+                if name.is_empty() && self.obarray.symbol(*id).uninterned && self.print_gensym() {
+                    return;
+                }
                 // GNU escapes number-like names, leading question marks,
                 // and a leading dot unless followed by an ASCII letter.
-                if (name.is_ascii() && super::reader::parse_number(&name.to_unicode_lossy()).is_some())
+                if (name.is_ascii()
+                    && super::reader::parse_number(&name.to_unicode_lossy()).is_some())
                     || name.starts_with('?')
                     || (name.starts_with('.')
                         && !name.chars().nth(1).is_some_and(|c| c.is_ascii_alphabetic()))
@@ -699,7 +266,7 @@ impl Interp {
                 out.push(']');
             }
             Value::Record(items) => {
-                self.print_record(items, out, depth, bq, false);
+                self.print_record(items, out, depth, bq, PrintMode::Readable);
             }
             Value::Hash(h) => {
                 // GNU: #s(hash-table) for defaults; `test' appears only
@@ -715,9 +282,7 @@ impl Interp {
                     match hh.test {
                         crate::lisp::value::HashTest::Eq => Some(EmacsText::from("eq")),
                         crate::lisp::value::HashTest::Eql => None,
-                        crate::lisp::value::HashTest::Equal => {
-                            Some(EmacsText::from("equal"))
-                        }
+                        crate::lisp::value::HashTest::Equal => Some(EmacsText::from("equal")),
                     }
                 };
                 let empty = hh.keys.is_empty();
@@ -842,11 +407,7 @@ impl Interp {
             }
             Value::Window(w) => {
                 let b = w.borrow();
-                let _ = write!(
-                    out,
-                    "#<window {} on ",
-                    b.id
-                );
+                let _ = write!(out, "#<window {} on ", b.id);
                 out.push_str(&self.buffer_name_by_id(b.buffer));
                 out.push('>');
             }
@@ -868,7 +429,9 @@ impl Interp {
                 let mm = m.borrow();
                 match &mm.name {
                     Some(n) => {
-                        out.push_str("#<mutex "); out.push_str(n); out.push('>');
+                        out.push_str("#<mutex ");
+                        out.push_str(n);
+                        out.push('>');
                     }
                     None => out.push_str("#<mutex>"),
                 }
@@ -877,61 +440,14 @@ impl Interp {
                 let cc = c.borrow();
                 match &cc.name {
                     Some(n) => {
-                        out.push_str("#<condvar "); out.push_str(n); out.push('>');
+                        out.push_str("#<condvar ");
+                        out.push_str(n);
+                        out.push('>');
                     }
                     None => out.push_str("#<condvar>"),
                 }
             }
             Value::Finalizer(_) => out.push_str("#<finalizer>"),
-        }
-    }
-
-    fn princ_inner(&self, v: &Value, out: &mut PrintText, depth: usize, bq: bool) {
-        if let Some(k) = print_identity_key(self, v) {
-            if let Some(sub) = number_table_subst(self, v) {
-                match sub {
-                    NtSubst::Replace(t) => {
-                        out.push_str(&t);
-                        return;
-                    }
-                    NtSubst::Prefix(t) => out.push_str(&t),
-                }
-            }
-            if circle_active() {
-                match circle_label(k) {
-                    Some((n, false)) => {
-                        let _ = write!(out, "#{n}#");
-                        return;
-                    }
-                    Some((n, true)) => {
-                        let _ = write!(out, "#{n}=");
-                    }
-                    None => {}
-                }
-                self.princ_inner_obj(v, out, depth, bq);
-                return;
-            }
-            // Same being-printed circularity check as prin1.
-            let hit = BEING_PRINTED.with(|bp| bp.borrow().iter().position(|&x| x == k));
-            if let Some(i) = hit {
-                let _ = write!(out, "#{i}");
-                return;
-            }
-            BEING_PRINTED.with(|bp| bp.borrow_mut().push(k));
-            self.princ_inner_obj(v, out, depth, bq);
-            BEING_PRINTED.with(|bp| {
-                bp.borrow_mut().pop();
-            });
-            return;
-        }
-        self.princ_inner_obj(v, out, depth, bq);
-    }
-
-    fn princ_inner_obj(&self, v: &Value, out: &mut PrintText, depth: usize, bq: bool) {
-        let start = out.len();
-        self.princ_inner_obj_raw(v, out, depth, bq);
-        if out.span_is_unreadable(start) {
-            UNREADABLE_HITS.with(|u| u.borrow_mut().push((start, out.len(), v.clone())));
         }
     }
 
@@ -945,15 +461,23 @@ impl Interp {
             }
         }
         match v {
-            Value::Int(i) => self.print_integer(*i, out, false),
-            Value::BigInt(i) => { let _ = write!(out, "{i}"); },
+            Value::Int(i) => self.print_integer(*i, out, PrintMode::Display),
+            Value::BigInt(i) => {
+                let _ = write!(out, "{i}");
+            }
             Value::Str(s) => out.push_str(&s.borrow()),
             // princ prints symbol names raw — no backslash escapes.
             Value::Sym(id) => {
                 let prefixed = self.obarray.symbol(*id).uninterned && self.print_gensym();
-                if prefixed { out.push_str("#:"); }
+                if prefixed {
+                    out.push_str("#:");
+                }
                 let name = self.print_symbol_name(*id);
-                if name.is_empty() && !prefixed { out.push_str("##"); } else { out.push_str(&name); }
+                if name.is_empty() && !prefixed {
+                    out.push_str("##");
+                } else {
+                    out.push_str(&name);
+                }
             }
             // princ prints live buffers as bare names; a killed buffer
             // prints `#<killed buffer>' like the escaped form.
@@ -998,323 +522,13 @@ impl Interp {
             // to `prin1_inner' would re-hit the being-printed check and
             // emit `#N' for the pushed object itself.
             Value::Record(items) => {
-                self.print_record(items, out, depth, bq, true);
+                self.print_record(items, out, depth, bq, PrintMode::Display);
             }
             // Lambdas/subrs would re-hit the being-printed check in
             // `prin1_inner' (the outer `princ_inner' already pushed
             // this object) and emit `#N' — call the raw printer.
             _ => self.prin1_inner_obj_raw(v, out, depth, bq),
         }
-    }
-
-    /// Print a record value. `princ' selects the unescaped inner
-    /// printer for record slots (`#s(foo x)' vs `#s(foo "x")').
-    fn print_record(
-        &self,
-        items: &std::rc::Rc<std::cell::RefCell<Vec<Value>>>,
-        out: &mut PrintText,
-        depth: usize,
-        bq: bool,
-        princ: bool,
-    ) {
-        if crate::editor::window_configuration_object(&Value::Record(items.clone())) {
-            out.push_str("#<window-configuration>");
-            return;
-        }
-        macro_rules! inner {
-            ($v:expr) => {
-                if princ {
-                    self.princ_inner($v, out, depth + 1, bq)
-                } else {
-                    self.prin1_inner($v, out, depth + 1, bq)
-                }
-            };
-        }
-        {
-            let rr = items.borrow();
-            if let Some((symbol, position)) = crate::lisp::builtins::misc::raw_symbol_position(&Value::Record(items.clone())) {
-                let bare = self.sym(symbol);
-                if !self.print_var("print-symbols-bare").truthy() {
-                    out.push_str("#<symbol ");
-                    inner!(&bare);
-                    let _ = write!(out, " at {}>", position);
-                } else { inner!(&bare); }
-                return;
-            }
-            if let Some(Value::Sym(t)) = rr.first() {
-                // Obarrays print `#<obarray n=COUNT>' — COUNT is
-                // the number of interned symbols.
-                if Value::Record(items.clone()).record_kind() == Some(super::value::RecordKind::Obarray) {
-                    let n = match rr.get(1) {
-                        Some(Value::Vec(syms)) => syms
-                            .borrow()
-                            .iter()
-                            .filter(|x| matches!(x, Value::Sym(_)))
-                            .count(),
-                        _ => 0,
-                    };
-                    let _ = write!(out, "#<obarray n={}>", n);
-                    return;
-                }
-                // Terminals print `#<terminal N on NAME>'.
-                if self.symbol_name(*t) == "terminal" {
-                    if let [_, Value::Int(n), Value::Str(name)] = rr.as_slice() {
-                        let _ = write!(out, "#<terminal {} on ", n);
-                        out.push_str(&name.borrow());
-                        out.push('>');
-                        return;
-                    }
-                }
-                // Tree-sitter objects print `#<treesit-parser in
-                // BUF for LANG>' / `#<treesit-node TYPE in B-E>'.
-                if let Some(s) = crate::lisp::builtins::treesit::treesit_repr(self, rr.as_slice()) {
-                    out.push_str(&s);
-                    return;
-                }
-                // Sub char tables print `#^^[DEPTH MIN-CHAR
-                // SLOTS...]' — GNU's trie nodes.
-                if self.symbol_name(*t) == "sub-char-table" && rr.len() >= 3 {
-                    out.push_str("#^^[");
-                    if let Some(d) = rr.get(1) {
-                        inner!(d);
-                    }
-                    out.push(' ');
-                    if let Some(m) = rr.get(2) {
-                        inner!(m);
-                    }
-                    // GNU's `print_stack_push_vector' measures
-                    // `print-length' against the pseudovector SIZE
-                    // (depth+min_char header + slots) but starts
-                    // printing at SUB_CHAR_TABLE_OFFSET: a truncated
-                    // sub-table emits `print-length - 1' slots.
-                    let limit = self.print_length_limit().map(|l| l.saturating_sub(1));
-                    let mut n = 0usize;
-                    let mut truncated = false;
-                    for s in &rr[3..] {
-                        if let Some(l) = limit {
-                            if n >= l {
-                                truncated = true;
-                                break;
-                            }
-                        }
-                        out.push(' ');
-                        inner!(s);
-                        n += 1;
-                    }
-                    if truncated {
-                        out.push_str(" ...");
-                    }
-                    out.push(']');
-                    return;
-                }
-                // Char tables print `#^[defalt parent purpose
-                // ascii contents[64] extras...]' — GNU's
-                // pseudovector layout.
-                // Font objects are GNU `font' pseudovectors and print
-                // `#<font-spec SLOTS...>' (13 property slots); our
-                // record keeps a plist in slot 1 — map the known keys
-                // to their font.c slot positions and put the rest in
-                // the extras list.
-                if Value::Record(items.clone()).record_kind() == Some(super::value::RecordKind::FontSpec) {
-                    out.push_str("#<font-spec");
-                    const SLOT_KEYS: [&str; 12] = [
-                        ":type",
-                        ":foundry",
-                        ":family",
-                        ":adstyle",
-                        ":registry",
-                        ":weight",
-                        ":slant",
-                        ":width",
-                        ":size",
-                        ":dpi",
-                        ":spacing",
-                        ":avgwidth",
-                    ];
-                    let mut slots: Vec<Option<Value>> = vec![None; 13];
-                    let mut extras: Vec<Value> = Vec::new();
-                    let mut cur = rr.get(1).cloned().unwrap_or(Value::Nil);
-                    while let Value::Cons(c) = cur {
-                        let (car, cdr) = {
-                            let b = c.borrow();
-                            (b.car.clone(), b.cdr.clone())
-                        };
-                        if let Value::Cons(c2) = cdr {
-                            let (val, next) = {
-                                let b = c2.borrow();
-                                (b.car.clone(), b.cdr.clone())
-                            };
-                            let key: String = match &car {
-                                Value::Sym(s) => self.symbol_name(*s).to_string(),
-                                _ => String::new(),
-                            };
-                            match SLOT_KEYS.iter().position(|k| *k == key) {
-                                Some(idx) => slots[idx] = Some(val),
-                                None if matches!(car, Value::Sym(_)) => {
-                                    extras.push(Value::cons(car, val))
-                                }
-                                None => {}
-                            }
-                            cur = next;
-                        } else {
-                            break;
-                        }
-                    }
-                    for slot in slots.iter_mut().take(12) {
-                        out.push(' ');
-                        inner!(slot.as_ref().unwrap_or(&Value::Nil));
-                    }
-                    out.push(' ');
-                    inner!(&Value::list(extras));
-                    out.push('>');
-                    return;
-                }
-                if Value::Record(items.clone()).record_kind() == Some(super::value::RecordKind::CharTable) {
-                    if let Some(Value::Vec(slots)) = rr.get(2) {
-                        let ptr = std::rc::Rc::as_ptr(items) as usize;
-                        let slots = slots.borrow();
-                        self.print_char_table(ptr, rr.as_slice(), slots.as_slice(), out, depth, bq);
-                        return;
-                    }
-                }
-            }
-            // Bool vectors print `#&N"bytes"' with bits packed
-            // LSB-first per byte.
-            let is_bv = Value::Record(items.clone()).record_kind() == Some(super::value::RecordKind::BoolVector);
-            if is_bv {
-                if let Some(Value::Vec(bits)) = rr.get(1) {
-                    let bits = bits.borrow();
-                    let n = bits.len();
-                    let _ = write!(out, "#&{}\"", n);
-                    for k in 0..n.div_ceil(8) {
-                        let mut byte: u32 = 0;
-                        for j in 0..8 {
-                            if let Some(Value::Int(b)) = bits.get(k * 8 + j) {
-                                if *b != 0 {
-                                    byte |= 1 << j;
-                                }
-                            }
-                        }
-                        match byte {
-                            34 => out.push_str("\\\""),
-                            92 => out.push_str("\\\\"),
-                            0..=127 => out.push(byte as u8 as char),
-                            _ => {
-                                let _ = write!(out, "\\{:03o}", byte);
-                            }
-                        }
-                    }
-                    out.push('"');
-                    return;
-                }
-            }
-        }
-        let rr = items.borrow();
-        out.push_str("#s(");
-        for (i, item) in rr.iter().enumerate() {
-            if i > 0 {
-                out.push(' ');
-            }
-            inner!(item);
-        }
-        out.push(')');
-    }
-
-    fn print_lambda_list(&self, l: &super::value::Lambda, out: &mut PrintText) {
-        if let Some(raw) = &l.arglist {
-            self.prin1_inner(raw, out, 1, false);
-            return;
-        }
-        if l.required.is_empty() && l.optional.is_empty() && l.rest.is_none() {
-            out.push_str("nil");
-            return;
-        }
-        out.push('(');
-        let mut first = true;
-        let mut names: Vec<EmacsText> = l
-            .required
-            .iter()
-            .map(|s| self.print_symbol_name(*s))
-            .collect();
-        if !l.optional.is_empty() {
-            names.push("&optional".into());
-            for o in &l.optional {
-                names.push(self.print_symbol_name(o.sym));
-            }
-        }
-        if let Some(r) = l.rest {
-            names.push("&rest".into());
-            names.push(self.print_symbol_name(r));
-        }
-        for n in names {
-            if !first {
-                out.push(' ');
-            }
-            first = false;
-            out.push_str(&n);
-        }
-        out.push(')');
-    }
-
-    /// GNU char-table printing: `#^[DEFALT PARENT PURPOSE ASCII
-    /// CONTENTS[64] EXTRAS...]'.  Our Record layout is
-    /// `[char-table SUBTYPE VEC65 EXTRAS...]' where VEC65 is the trie
-    /// root: slot 0 = ASCII cache (scalar or the `#^^[3 0' leaf),
-    /// slots 1-64 = top-level blocks.  Sub-char-tables print through
-    /// `prin1_inner's `sub-char-table' Record branch as `#^^[...]'.
-    fn print_char_table(
-        &self,
-        ptr: usize,
-        rr: &[Value],
-        slots: &[Value],
-        out: &mut PrintText,
-        depth: usize,
-        bq: bool,
-    ) {
-        out.push_str("#^[");
-        // defalt/parent (side-tables keyed on the Record pointer;
-        // Weak guards against address reuse by a different live
-        // char-table)
-        let defalt = self
-            .char_table_defalts
-            .iter()
-            .find(|(k, w, _)| *k == ptr && w.upgrade().is_some())
-            .map(|(_, _, v)| v.clone())
-            .unwrap_or(Value::Nil);
-        let parent = self
-            .char_table_parents
-            .iter()
-            .find(|(k, w, _)| *k == ptr && w.upgrade().is_some())
-            .map(|(_, _, v)| v.clone())
-            .unwrap_or(Value::Nil);
-        let purpose = rr.get(1).cloned().unwrap_or(Value::Nil);
-        // GNU `print_stack_push_vector' applies `print-length' to the
-        // whole pseudovector: defalt, parent, purpose, ascii cache,
-        // contents[64] and extras all count toward the limit.
-        let limit = self.print_length_limit();
-        let mut n = 0usize;
-        let mut truncated = false;
-        for s in [defalt, parent, purpose]
-            .iter()
-            .chain(slots.iter())
-            .chain(rr[3..].iter())
-        {
-            if let Some(l) = limit {
-                if n >= l {
-                    truncated = true;
-                    break;
-                }
-            }
-            if n > 0 {
-                out.push(' ');
-            }
-            self.prin1_inner(s, out, depth + 1, bq);
-            n += 1;
-        }
-        if truncated {
-            out.push_str(" ...");
-        }
-        out.push(']');
     }
 
     /// `print-gensym` variable (default nil): print uninterned
@@ -1340,61 +554,6 @@ impl Interp {
             .filter(|id| self.bound_p(*id))
             .map(|id| self.symbol_value(id))
             .unwrap_or(Value::Nil)
-    }
-
-    /// Print a number using the dynamically bound GNU output descriptor.
-    pub(crate) fn format_float_output(&self, value: f64) -> String {
-        let format = self.print_var("float-output-format");
-        if let Value::Str(s) = format {
-            if let Some(output) = s.borrow().is_ascii().then(|| format_float_descriptor(value, &s.borrow().to_unicode_lossy())).flatten() {
-                return output;
-            }
-        }
-        format_float(value)
-    }
-
-    /// GNU print.c: only independent graphic characters and the six
-    /// common named escapes use character notation.  `princ' omits the
-    /// extra quoting for delimiter characters, but keeps named escapes.
-    fn print_integer(&self, n: i128, out: &mut PrintText, escape: bool) {
-        if self.print_var("print-integers-as-characters").truthy() && (0..=0x10ffff).contains(&n) {
-            let named = match n {
-                8 => Some('b'),
-                9 => Some('t'),
-                10 => Some('n'),
-                12 => Some('f'),
-                13 => Some('r'),
-                32 => Some('s'),
-                _ => None,
-            };
-            let table = self.print_var("unicode-category-table");
-            let category = super::builtins::misc::char_table_ref(self, &table, n as usize);
-            let graphic = matches!(category, Value::Int(cat)
-                if (super::value::FIXNUM_MIN..=super::value::FIXNUM_MAX).contains(&cat)
-                    && !matches!(cat, 6..=8 | 23..=28 | 30));
-            if let Some(named) = named {
-                out.push('?');
-                out.push('\\');
-                out.push(named);
-                return;
-            }
-            if graphic {
-                if let Some(c) = char::from_u32(n as u32) {
-                    out.push('?');
-                    if escape
-                        && matches!(
-                            c,
-                            ';' | '"' | '\'' | '\\' | '(' | ')' | '{' | '}' | '[' | ']'
-                        )
-                    {
-                        out.push('\\');
-                    }
-                    out.push(c);
-                    return;
-                }
-            }
-        }
-        let _ = write!(out, "{n}");
     }
 
     /// `print-length` (default nil): max elements printed per sequence.
@@ -1459,431 +618,19 @@ impl Interp {
         None
     }
 
-    /// Print a (possibly dotted) list.
-    fn print_list(&self, v: &Value, out: &mut PrintText, depth: usize, bq: bool) {
-        if let Some((prefix, inner, inner_bq)) = self.quote_abbrev(v, bq) {
-            out.push_str(prefix);
-            self.prin1_inner(&inner, out, depth + 1, inner_bq);
-            return;
-        }
-        let limit = self.print_length_limit();
-        out.push('(');
-        // GNU print.c: `(' ELEM, then ` ' ELEM per continuation cell;
-        // a Brent-style tortoise walking the cdr chain detects a cdr
-        // cycle and prints `. #N)' with the tortoise's list index.
-        let Value::Cons(head) = v else { return };
-        let mut cur = {
-            let b = head.borrow();
-            let car = b.car.clone();
-            let next = b.cdr.clone();
-            drop(b);
-            if limit == Some(0) {
-                // GNU prints `(...)' when print-length is 0.
-                out.push_str("...)");
-                return;
-            }
-            self.prin1_inner(&car, out, depth + 1, bq);
-            next
-        };
-        let mut tortoise = v.clone();
-        let (mut n, mut m, mut idx) = (2usize, 2usize, 0usize);
-        let mut printed = 1usize;
-        loop {
-            match cur {
-                Value::Cons(_) => {
-                    // `print-circle': a shared/cyclic tail prints as
-                    // `. #N=(...)' (first occurrence) or `. #N#';
-                    // GNU checks this before `print-length'.
-                    if circle_active() && print_stack_key(&cur).map(circle_counted).unwrap_or(false)
-                    {
-                        out.push_str(" . ");
-                        self.prin1_inner(&cur, out, depth + 1, bq);
-                        out.push(')');
-                        return;
-                    }
-                    if let Some(l) = limit {
-                        if printed >= l {
-                            out.push_str(" ...");
-                            out.push(')');
-                            return;
-                        }
-                    }
-                    out.push(' ');
-                    n -= 1;
-                    if n == 0 {
-                        idx += m;
-                        m <<= 1;
-                        n = m;
-                        tortoise = cur.clone();
-                    } else if super::builtins::eq_values(&cur, &tortoise) {
-                        let _ = write!(out, ". #{idx})");
-                        return;
-                    }
-                    let Value::Cons(c) = &cur else { unreachable!() };
-                    let (car, next) = {
-                        let b = c.borrow();
-                        (b.car.clone(), b.cdr.clone())
-                    };
-                    printed += 1;
-                    self.prin1_inner(&car, out, depth + 1, bq);
-                    cur = next;
-                }
-                Value::Nil => {
-                    out.push(')');
-                    return;
-                }
-                other => {
-                    out.push_str(" . ");
-                    self.prin1_inner(&other, out, depth + 1, bq);
-                    out.push(')');
-                    return;
-                }
-            }
-        }
-    }
-
-    fn print_list_princ(&self, v: &Value, out: &mut PrintText, depth: usize, bq: bool) {
-        if let Some((prefix, inner, inner_bq)) = self.quote_abbrev(v, bq) {
-            out.push_str(prefix);
-            self.princ_inner(&inner, out, depth + 1, inner_bq);
-            return;
-        }
-        let limit = self.print_length_limit();
-        out.push('(');
-        let Value::Cons(head) = v else { return };
-        let mut cur = {
-            let b = head.borrow();
-            let car = b.car.clone();
-            let next = b.cdr.clone();
-            drop(b);
-            if limit == Some(0) {
-                out.push_str("...)");
-                return;
-            }
-            self.princ_inner(&car, out, depth + 1, bq);
-            next
-        };
-        let mut tortoise = v.clone();
-        let (mut n, mut m, mut idx) = (2usize, 2usize, 0usize);
-        let mut printed = 1usize;
-        loop {
-            match cur {
-                Value::Cons(_) => {
-                    if circle_active() && print_stack_key(&cur).map(circle_counted).unwrap_or(false)
-                    {
-                        out.push_str(" . ");
-                        self.princ_inner(&cur, out, depth + 1, bq);
-                        out.push(')');
-                        return;
-                    }
-                    if let Some(l) = limit {
-                        if printed >= l {
-                            out.push_str(" ...");
-                            out.push(')');
-                            return;
-                        }
-                    }
-                    out.push(' ');
-                    n -= 1;
-                    if n == 0 {
-                        idx += m;
-                        m <<= 1;
-                        n = m;
-                        tortoise = cur.clone();
-                    } else if super::builtins::eq_values(&cur, &tortoise) {
-                        let _ = write!(out, ". #{idx})");
-                        return;
-                    }
-                    let Value::Cons(c) = &cur else { unreachable!() };
-                    let (car, next) = {
-                        let b = c.borrow();
-                        (b.car.clone(), b.cdr.clone())
-                    };
-                    printed += 1;
-                    self.princ_inner(&car, out, depth + 1, bq);
-                    cur = next;
-                }
-                Value::Nil => {
-                    out.push(')');
-                    return;
-                }
-                other => {
-                    out.push_str(" . ");
-                    self.princ_inner(&other, out, depth + 1, bq);
-                    out.push(')');
-                    return;
-                }
-            }
-        }
-    }
-
     fn print_symbol_name(&self, id: super::value::SymId) -> EmacsText {
         self.symbol_name_text(id)
     }
 
     fn buffer_name_by_id(&self, id: usize) -> EmacsText {
-        self.buffers.get(id).map(|b| b.borrow().name.clone())
+        self.buffers
+            .get(id)
+            .map(|b| b.borrow().name.clone())
             .unwrap_or_else(|| "*killed buffer*".into())
     }
-
 }
 
 /// Return the canonical, shared interpreter-environment alist.
 fn lex_frame_to_value(_i: &Interp, frame: &Rc<crate::lisp::eval::LexFrame>) -> Value {
     crate::lisp::eval::lexenv_as_value(&Some(frame.clone()))
-}
-
-/// C `%.{prec}g` formatting: `prec` significant digits, scientific
-/// notation when the decimal exponent is < -4 or >= prec, trailing
-/// zeros stripped.
-fn format_g(x: f64, prec: usize) -> String {
-    // Get `prec` significant digits plus the decimal exponent.
-    let sci = format!("{:.*e}", prec - 1, x); // "-d.ddde-12"
-    let epos = sci.find('e').unwrap();
-    let exp: i32 = sci[epos + 1..].parse().unwrap();
-    let mant = &sci[..epos];
-    let neg = mant.starts_with('-');
-    let digits: String = mant.chars().filter(|c| c.is_ascii_digit()).collect();
-
-    let mut out = String::new();
-    if neg {
-        out.push('-');
-    }
-    if exp < -4 || exp >= prec as i32 {
-        // Scientific: d.ddde±XX (exponent at least two digits).
-        out.push(digits.as_bytes()[0] as char);
-        let frac: String = digits[1..].trim_end_matches('0').into();
-        if !frac.is_empty() {
-            out.push('.');
-            out.push_str(&frac);
-        }
-        out.push('e');
-        out.push(if exp < 0 { '-' } else { '+' });
-        let _ = write!(out, "{:02}", exp.abs());
-    } else if exp >= 0 {
-        // Fixed: digits with decimal point inside (exp < prec).
-        let ip = exp as usize + 1;
-        let (int_part, frac_part) = if digits.len() > ip {
-            (&digits[..ip], &digits[ip..])
-        } else {
-            (digits.as_str(), "")
-        };
-        out.push_str(int_part);
-        for _ in digits.len()..ip {
-            out.push('0');
-        }
-        let frac: String = frac_part.trim_end_matches('0').into();
-        if !frac.is_empty() {
-            out.push('.');
-            out.push_str(&frac);
-        }
-    } else {
-        // 0.000ddd
-        out.push_str("0.");
-        for _ in 0..(-exp - 1) {
-            out.push('0');
-        }
-        let frac: String = digits.trim_end_matches('0').into();
-        out.push_str(&frac);
-    }
-    out
-}
-
-/// GNU accepts only %.PRECISION followed by e, f or g, at most DBL_DIG
-/// digits of precision.  An absent precision is accepted too, as in C printf.
-fn format_float_descriptor(value: f64, descriptor: &str) -> Option<String> {
-    if !value.is_finite() {
-        return None;
-    }
-    // GNU validates the C string, so text after a NUL is not part of the spec.
-    let spec = descriptor.split('\0').next()?.as_bytes();
-    if !spec.starts_with(b"%.") {
-        return None;
-    }
-    let mut pos = 2;
-    let mut precision = None;
-    while let Some(digit @ b'0'..=b'9') = spec.get(pos) {
-        let n = precision.unwrap_or(0) * 10 + usize::from(*digit - b'0');
-        if n > 15 {
-            return None;
-        }
-        precision = Some(n);
-        pos += 1;
-    }
-    let kind = *spec.get(pos)?;
-    if pos + 1 != spec.len() || !matches!(kind, b'e' | b'f' | b'g') {
-        return None;
-    }
-    if precision == Some(0) && kind != b'f' {
-        return None;
-    }
-    let digits = precision.unwrap_or(0);
-    let mut output = match kind {
-        b'f' => format!("{:.*}", digits, value),
-        b'e' => {
-            let scientific = format!("{:.*e}", digits, value);
-            let (mantissa, exponent) = scientific.split_once('e')?;
-            let exponent: i32 = exponent.parse().ok()?;
-            format!(
-                "{}e{}{:02}",
-                mantissa,
-                if exponent < 0 { '-' } else { '+' },
-                exponent.abs()
-            )
-        }
-        b'g' => format_g(value, digits.max(1)),
-        _ => unreachable!(),
-    };
-    // Only an explicitly zero precision with f may print an integer token.
-    if precision != Some(0) && !output.contains('.') && !output.contains('e') {
-        output.push_str(".0");
-    }
-    Some(output)
-}
-
-/// Emacs-style float printing (`float_to_string`): shortest of
-/// `%.15g`–`%.17g` that reads back to the same double.  Subnormals
-/// start at one significant digit, as in gnulib's dtoastr.
-/// `1.5`, `1.0`, `1e+20`, `1.0e+INF`, `-1.0e+INF`, `0.0e+NaN`.
-/// NaNs print the numeric mantissa GNU derives from the NaN payload
-/// (`float_error' notation): `get_nan_payload' strips the quiet bit,
-/// and the payload value truncates to the printed integer — literals
-/// like `3.5e+NaN' read back as payload 3 and print `3.0e+NaN'.
-pub fn format_float(f: f64) -> String {
-    if f.is_nan() {
-        let payload = f.to_bits() & ((1u64 << 51) - 1);
-        let sign = if f.is_sign_negative() { "-" } else { "" };
-        // f64 prints payloads ≥2^53 exactly enough for the integral
-        // mantissa GNU emits.
-        return format!("{}{}.0e+NaN", sign, payload);
-    }
-    if f.is_infinite() {
-        return if f > 0.0 { "1.0e+INF" } else { "-1.0e+INF" }.into();
-    }
-    if f == 0.0 {
-        return if f.is_sign_negative() { "-0.0" } else { "0.0" }.into();
-    }
-    let mut s = String::new();
-    let first_precision = if f.is_subnormal() { 1 } else { 15 };
-    for prec in first_precision..=17 {
-        s = format_g(f, prec);
-        if s.parse::<f64>().ok() == Some(f) {
-            break;
-        }
-    }
-    // A float must always print with a decimal point or exponent.
-    if !s.contains('.') && !s.contains('e') {
-        s.push_str(".0");
-    }
-    s
-}
-
-/// A user-supplied print-number-table can use a custom test. Route its
-/// writes through puthash so callbacks and their mutation guard apply.
-fn preprocess_put(
-    i: &mut Interp,
-    h: &crate::lisp::value::HashRef,
-    key: crate::lisp::value::HashKey,
-    original: &Value,
-    value: Value,
-) -> Result<(), crate::lisp::error::Flow> {
-    if h.borrow().user_test.is_some() {
-        crate::lisp::builtins::hashfn::f_puthash(
-            i,
-            vec![original.clone(), value, Value::Hash(h.clone())].into(),
-        )?;
-    } else {
-        h.borrow_mut().map.insert(key, value);
-    }
-    Ok(())
-}
-
-/// GNU print.c `Fprint_preprocess': when `print-circle' is non-nil,
-/// fill `print-number-table' — each `print-circle-candidate' gets t
-/// at its first encounter and `-N' (bumping `print_number_index') at
-/// the second; the `t' singles are left in (the top-level `print'
-/// removes them for its own pass).  No-op when print-circle is nil.
-pub fn f_print_preprocess(i: &mut Interp, a: crate::lisp::Argv) -> crate::lisp::error::EvalResult {
-    if !i.print_var("print-circle").truthy() {
-        return Ok(Value::Nil);
-    }
-    PRINT_NUMBER_INDEX.with(|c| c.set(0));
-    let nt_id = i.q("print-number-table");
-    let mut nt = i.symbol_value(nt_id);
-    if !matches!(nt, Value::Hash(_)) {
-        nt = Value::Hash(crate::lisp::memory::allocate(
-            crate::lisp::value::LispHash::new(crate::lisp::value::HashTest::Eq),
-            crate::lisp::Value::Hash,
-        ))
-        .tracked();
-        let _ = i.set_symbol(nt_id, nt.clone());
-    }
-    let Value::Hash(h) = nt else {
-        return Ok(Value::Nil);
-    };
-    let mut stack = vec![a[0].clone()];
-    while let Some(x) = stack.pop() {
-        if !print_circle_candidate(i, &x) {
-            continue;
-        }
-        let custom = h.borrow().user_test.is_some();
-        let key = if custom {
-            crate::lisp::builtins::hashfn::table_key(i, &h, &x)?
-        } else {
-            crate::lisp::builtins::hashfn::hash_key_for(i, &x, crate::lisp::value::HashTest::Eq)
-        };
-        let cur = h.borrow().map.get(&key).cloned();
-        match cur {
-            Some(Value::Sym(s)) if s == crate::lisp::sym::T => {
-                let n = PRINT_NUMBER_INDEX.with(|c| {
-                    c.set(c.get() + 1);
-                    c.get()
-                });
-                preprocess_put(i, &h, key, &x, Value::Int(-(n as i128)))?;
-            }
-            // Under `print-continuous-numbering' an uninterned symbol
-            // always gets a number (GNU's byte-compile-output-docform
-            // special).
-            None => {
-                let gensym = crate::lisp::builtins::misc::active_sympos_parts(i, &x)
-                    .map(|(sym, _)| gensym_circle_key(i, &Value::Sym(sym)).is_some())
-                    .unwrap_or_else(|| gensym_circle_key(i, &x).is_some());
-                if gensym && i.print_var("print-continuous-numbering").truthy() {
-                    let n = PRINT_NUMBER_INDEX.with(|c| {
-                        c.set(c.get() + 1);
-                        c.get()
-                    });
-                    preprocess_put(i, &h, key, &x, Value::Int(-(n as i128)))?;
-                } else {
-                    preprocess_put(i, &h, key, &x, Value::Sym(crate::lisp::sym::T))?;
-                }
-                if crate::lisp::builtins::misc::any_sympos_parts(i, &x).is_some() {
-                    continue;
-                }
-                match &x {
-                    Value::Cons(c) => {
-                        let (car, cdr) = {
-                            let b = c.borrow();
-                            (b.car.clone(), b.cdr.clone())
-                        };
-                        stack.push(cdr);
-                        stack.push(car);
-                    }
-                    Value::Vec(r) | Value::Record(r) => {
-                        stack.extend(r.borrow().iter().rev().cloned());
-                    }
-                    Value::Hash(hh) => {
-                        let h2 = hh.borrow();
-                        for (_, orig) in h2.keys.iter() {
-                            stack.push(orig.clone());
-                        }
-                        stack.extend(h2.map.values().cloned());
-                    }
-                    _ => {}
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(Value::Nil)
 }

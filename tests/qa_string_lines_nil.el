@@ -1,4 +1,6 @@
 ;;; -*- lexical-binding: nil; -*-
-;; string-lines nil returns its one retained final field (#419).
-(qa (string-lines nil) '(nil))
+;; #678: GNU's zero-length non-string input leaves its result list empty.
+(dolist (omit '(nil t))
+  (dolist (keep '(nil t))
+    (qa (string-lines nil omit keep) nil)))
 (princ (qa--done))

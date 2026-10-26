@@ -1,4 +1,5 @@
 ;;; -*- lexical-binding: nil; -*-
+(require 'subr-x)
 ;; string-reverse follows reverse's supported sequence types (#408).
 (qa (string-reverse [97 98]) [98 97])
 (qa (string-reverse '(a b)) '(b a))

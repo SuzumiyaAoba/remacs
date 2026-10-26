@@ -6654,14 +6654,7 @@ fn f_internal_char_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// attr slots).  Unknown faces signal "Invalid face".
 fn f_lisp_face_check_nil(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let _ = face_frame_live(i, &arg(&a, 1))?;
-    let name = match &a[0] {
-        Value::Sym(s) => i.symbol_name(*s).to_string(),
-        Value::Str(s) => (s.borrow().clone()).to_unicode_lossy(),
-        other => return Err(invalid_face(i, other)),
-    };
-    if !face_known(i, &name) {
-        return Err(invalid_face(i, &a[0]));
-    }
+    let name = face_name_of(i, &a[0])?;
     // FRAME=t reads the new-frame defaults layer (GNU LFACE t): a face
     // with no t-defaults yet is empty even when its realized spec is set.
     let t_layer = matches!(arg(&a, 1), Value::Sym(s) if s == sym::T);
@@ -6732,7 +6725,7 @@ fn f_internal_merge_in_global_face(i: &mut Interp, a: crate::lisp::Argv) -> Eval
     }
     match &a[0] {
         Value::Sym(s) => {
-            let name = i.symbol_name(*s).to_string();
+            let name = *s;
             if !face_known(i, &name) {
                 return Err(invalid_face(i, &a[0]));
             }
@@ -12093,7 +12086,7 @@ fn f_locate_file_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if matches!(pred, Value::Nil | Value::Int(_)) {
         for dir in crate::lisp::load::builtin_dirs() {
             for suf in &suffixes {
-                let mut cand = directory_join(&EmacsText::from(&dir), &name); cand.append(suf);
+                let mut cand = directory_join(&EmacsText::from_os_str(dir.as_os_str()), &name); cand.append(suf);
                 if accept(i, &cand)? {
                     return Ok(Value::string(cand));
                 }
@@ -19289,8 +19282,10 @@ fn f_commandp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
         }
         Value::Subr(s) => {
-            crate::lisp::eval::subr_interactive(s.name).is_some()
-                || crate::lisp::builtins::comp::native_iform_by_name(s.name).is_some()
+            match crate::lisp::builtins::comp::native_interactive_form(s) {
+                Some(form) => !form.is_nil(),
+                None => crate::lisp::eval::subr_interactive(s.name).is_some(),
+            }
         }
         // strings and vectors are keyboard macros — commands, but
         // FOR-CALL-INTERACTIVELY=t rejects them (GNU Fcommandp).
@@ -21752,6 +21747,9 @@ fn f_documentation(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         },
         None => match &f {
             Value::Subr(s) => {
+                if let Some(documentation) = crate::lisp::builtins::comp::native_documentation(s) {
+                    return Ok(documentation);
+                }
                 if let Some(t) = crate::lisp::builtins::misc::doc_text(i, &format!("F{}", s.name)) {
                     // `documentation' applies substitute-quotes:
                     // `...' -> ‘...’ unless text-quoting-style is
@@ -22063,8 +22061,24 @@ pub(crate) const KNOWN_FACES: &[&str] = &[
     "tooltip",
 ];
 
-pub(crate) fn face_known(i: &Interp, name: &str) -> bool {
-    KNOWN_FACES.contains(&name) || i.face_table.iter().any(|(n, _)| n == name)
+pub(crate) fn builtin_face_name(i: &Interp, face: SymId) -> Option<&'static str> {
+    KNOWN_FACES.iter().copied().find(|name| i.q_soft(name) == Some(face))
+}
+
+pub(crate) fn face_symbol(i: &Interp, value: &Value) -> Option<SymId> {
+    if let Some(face) = i.sym_id(value) { return Some(face); }
+    let Value::Str(name) = value else { return None; };
+    let text = name.borrow();
+    let key = if i.is_unibyte_str(name) {
+        crate::lisp::obarray::InternKey::from_text_kind(&*text, false)
+    } else if i.is_multibyte_str(name) {
+        crate::lisp::obarray::InternKey::from_text_kind(&*text, true)
+    } else { crate::lisp::obarray::InternKey::from_text(&*text) };
+    i.obarray.lookup_key(&key)
+}
+
+pub(crate) fn face_known(i: &Interp, face: &SymId) -> bool {
+    i.face_table.iter().any(|(key, _)| key == face) || builtin_face_name(i, *face).is_some()
 }
 /// GNU face attributes accepted by the internal setter. The legacy
 /// :bold/:italic aliases are write-only; the getter rejects them.
@@ -22083,24 +22097,20 @@ pub(crate) fn face_known_attr(attr: &str) -> bool {
 /// first definition like xfaces.c's next_lface_id), the lface is the
 /// canonical 20-slot [face ATTR...] vector (slot order per GNU's
 /// lface_attribute_index).
-pub(crate) fn face_register_global(i: &mut Interp, name: &str) {
-    let sym = match i.intern_soft(name) {
-        Some(s) => s,
-        None => i.intern(name),
-    };
+pub(crate) fn face_register_global(i: &mut Interp, name: &SymId) {
+    let sym = *name;
     let face_prop = i.q("face");
     if i.get_prop(sym, face_prop).is_nil() {
         // IDs: built-ins keep GNU's fixed small ids; user faces grow
         // past them like GNU's next_lface_id.
-        let id = if let Some(p) = KNOWN_FACES.iter().position(|n| *n == name) {
+        let id = if let Some(p) = KNOWN_FACES.iter().position(|n| i.q_soft(n) == Some(sym)) {
             p as i128
         } else {
             let taken: i128 = i
                 .face_table
                 .iter()
                 .filter_map(|(n, _)| {
-                    i.intern_soft(n)
-                        .map(|s| i.get_prop(s, face_prop))
+                    Some(i.get_prop(*n, face_prop))
                         .and_then(|v| match v {
                             Value::Int(n) => Some(n),
                             _ => None,
@@ -22136,7 +22146,7 @@ pub(crate) fn face_register_global(i: &mut Interp, name: &str) {
 /// directly; our canonical text attrs live in `face_t_table' — this
 /// mirrors them into the vector so `frame-face-alist'/dumped-face
 /// readers see the same values).
-pub(crate) fn face_global_update(i: &mut Interp, name: &str, attr: &str, val: Value) {
+pub(crate) fn face_global_update(i: &mut Interp, name: &SymId, attr: &str, val: Value) {
     const SLOTS: &[&str] = &[
         ":family",
         ":foundry",
@@ -22162,10 +22172,7 @@ pub(crate) fn face_global_update(i: &mut Interp, name: &str, attr: &str, val: Va
         Some(p) => p + 1,
         None => return,
     };
-    let sym = match i.intern_soft(name) {
-        Some(s) => s,
-        None => return,
-    };
+    let sym = *name;
     let defaults = match i.q_soft("face--new-frame-defaults") {
         Some(d) => d,
         None => return,
@@ -22195,51 +22202,21 @@ pub(crate) fn face_global_update(i: &mut Interp, name: &str, attr: &str, val: Va
 
 /// GNU `face-alias' chains resolve to the target face's name
 /// (nil when the name never resolves to a known face).
-pub(crate) fn face_resolve(i: &Interp, name: &str) -> Option<String> {
-    let mut cur = name.to_string();
+pub(crate) fn face_resolve(i: &Interp, face: &SymId) -> Option<SymId> {
+    let mut face = *face;
     for _ in 0..16 {
-        if face_known(i, &cur) {
-            return Some(cur);
-        }
-        let alias = i.get_prop(
-            i.intern_soft(&cur).unwrap_or(u32::MAX),
-            i.q_soft("face-alias").unwrap_or(u32::MAX),
-        );
-        match i.sym_id(&alias).map(|s| i.symbol_name(s)) {
-            Some(t) => cur = t,
-            None => return None,
-        }
+        if face_known(i, &face) { return Some(face); }
+        let alias = i.get_prop(face, i.q_soft("face-alias").unwrap_or(u32::MAX));
+        face = i.sym_id(&alias)?;
     }
     None
 }
 
-fn face_name_of(i: &mut Interp, v: &Value) -> Result<String, Flow> {
-    let mut name = match i.sym_id(v) {
-        Some(s) => i.symbol_name(s),
-        None => (match v {
-            Value::Str(s) => s.borrow().clone(),
-            other => return Err(invalid_face(i, other)),
-        }).to_unicode_lossy(),
-    };
-    // GNU: `face-alias' resolves to the target face for callers
-    // needing the underlying face (lface_from_face_name honors it).
-    for _ in 0..16 {
-        if face_known(i, &name) {
-            return Ok(name);
-        }
-        let alias = i.get_prop(
-            i.intern_soft(&name).unwrap_or(u32::MAX),
-            i.q_soft("face-alias").unwrap_or(u32::MAX),
-        );
-        match i.sym_id(&alias).map(|s| i.symbol_name(s)) {
-            Some(t) => name = t,
-            None => break,
-        }
+fn face_name_of(i: &mut Interp, value: &Value) -> Result<SymId, Flow> {
+    if let Some(face) = face_symbol(i, value).and_then(|face| face_resolve(i, &face)) {
+        return Ok(face);
     }
-    if !face_known(i, &name) {
-        return Err(invalid_face(i, v));
-    }
-    Ok(name)
+    Err(invalid_face(i, value))
 }
 
 /// GNU `Fcheck_face' failure: the signal's data is
@@ -22273,12 +22250,12 @@ pub(crate) fn invalid_face(i: &mut Interp, v: &Value) -> Flow {
 /// by `(set-face-attribute FACE t ...)', NOT by the defface spec — so
 /// it reports `unspecified' for spec-only faces; a real frame or nil
 /// reads the realized value (defface specs land in `face_table').
-fn face_attr(i: &mut Interp, name: &str, attr: &str, frame_is_t: bool) -> Value {
+fn face_attr(i: &mut Interp, name: &SymId, attr: &str, frame_is_t: bool) -> Value {
     if frame_is_t {
         // New-frame defaults: only `(set-face-attribute FACE t ...)'
         // writes here — defface specs don't.
-        if let Some((_, Value::Cons(_))) = i.face_t_table.iter().find(|(n, _)| *n == name) {
-            let (_, plist) = i.face_t_table.iter().find(|(n, _)| *n == name).unwrap();
+        if let Some((_, Value::Cons(_))) = i.face_t_table.iter().find(|(n, _)| n == name) {
+            let (_, plist) = i.face_t_table.iter().find(|(n, _)| n == name).unwrap();
             if let Some(v) = plist.list_to_vec().ok().and_then(|items| {
                 items.chunks(2).find_map(|kv| match (&kv[0], kv.get(1)) {
                     (Value::Sym(k), Some(v)) if i.symbol_name(*k) == attr => Some(v.clone()),
@@ -22302,7 +22279,7 @@ fn face_attr(i: &mut Interp, name: &str, attr: &str, frame_is_t: bool) -> Value 
             }
         }
     }
-    match (name, attr) {
+    match (builtin_face_name(i, *name).unwrap_or(""), attr) {
         ("default", ":weight") | ("default", ":slant") | ("default", ":width") => {
             Value::Sym(i.q("normal"))
         }
@@ -22334,6 +22311,8 @@ fn f_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         other => return Err(i.wrong_type_mut("frame-live-p", other)),
     }
     let name = face_name_of(i, &a[0])?;
+    // GNU resolves the name first, then requires the original FACE to be a symbol.
+    let _ = want_sym(i, &a[0])?;
     let attr = match &a[1] {
         Value::Sym(s) => i.symbol_name(*s),
         other => return Err(i.wrong_type_mut("symbolp", other)),
@@ -22361,15 +22340,7 @@ fn f_facep(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Frame(f) if !f.borrow().dead => {}
         other => return Err(i.wrong_type_mut("frame-live-p", &other)),
     }
-    let name = match i.sym_id(&a[0]) {
-        Some(s) => i.symbol_name(s),
-        None => (match &a[0] {
-            Value::Str(s) => s.borrow().clone(),
-            _ => return Ok(Value::Nil),
-        }).to_unicode_lossy(),
-    };
-    // GNU lface_from_face_name resolves `face-alias' chains.
-    if face_resolve(i, &name).is_none() {
+    if face_symbol(i, &a[0]).and_then(|face| face_resolve(i, &face)).is_none() {
         return Ok(Value::Nil);
     }
     let mut v = Vec::with_capacity(20);
@@ -22380,19 +22351,10 @@ fn f_facep(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_face_list(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    // GNU lists faces newest-first: user-created faces (in reverse
-    // creation order), then the built-ins back-to-front.
-    let mut names: Vec<String> = i
-        .face_table
-        .iter()
-        .rev()
-        .map(|(n, _)| n.clone())
-        .filter(|n| !KNOWN_FACES.contains(&n.as_str()))
-        .collect();
-    names.extend(KNOWN_FACES.iter().rev().map(|s| s.to_string()));
-    Ok(Value::list(
-        names.iter().map(|n| Value::Sym(i.intern(n))).collect(),
-    ))
+    let mut faces: Vec<SymId> = i.face_table.iter().rev().map(|(face, _)| *face)
+        .filter(|face| builtin_face_name(i, *face).is_none()).collect();
+    faces.extend(KNOWN_FACES.iter().rev().map(|name| i.q(name)));
+    Ok(Value::list(faces.into_iter().map(Value::Sym).collect()))
 }
 
 fn f_face_id(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -22407,11 +22369,7 @@ fn f_face_id(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     for _ in 0..16 {
         // check-face → internal-lisp-face-p → lface_from_face_name:
         // a `face-alias' chain resolves, so aliases pass check-face.
-        let known = match &face {
-            Value::Str(s) => face_resolve(i, &(s.borrow().clone()).to_unicode_lossy()).is_some(),
-            Value::Sym(s) => face_resolve(i, &i.symbol_name(*s)).is_some(),
-            _ => false,
-        };
+        let known = face_symbol(i, &face).and_then(|symbol| face_resolve(i, &symbol)).is_some();
         if !known {
             let sym = i.q("error");
             let shown = i.princ_to_string(&face);
@@ -22484,13 +22442,13 @@ fn f_face_equal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::t())
 }
 
-fn set_face_attr(i: &mut Interp, name: &str, attr: &str, val: Value) {
+fn set_face_attr(i: &mut Interp, name: &SymId, attr: &str, val: Value) {
     let kw = i.intern(attr);
     // Built-in faces in KNOWN_FACES satisfy face_known without a
     // face_table row — a write must still land, so key the row on
     // the table itself, not on face_known.
     if !i.face_table.iter().any(|(n, _)| n == name) {
-        i.face_table.push((name.to_string(), Value::Nil));
+        i.face_table.push((*name, Value::Nil));
     }
     face_register_global(i, name);
     if let Some((_, plist)) = i.face_table.iter_mut().find(|(n, _)| n == name) {
@@ -22500,7 +22458,7 @@ fn set_face_attr(i: &mut Interp, name: &str, attr: &str, val: Value) {
 
 fn f_make_face(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let name = match &a[0] {
-        Value::Sym(s) => i.symbol_name(*s),
+        Value::Sym(s) => *s,
         other => return Err(i.wrong_type_mut("symbolp", other)),
     };
     if !face_known(i, &name) {
@@ -22515,11 +22473,11 @@ fn f_copy_face(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU Fcopy_face: both args are CHECK_SYMBOL, NEW_NAME
     // checked before OLD_FACE.
     let to = match &a[1] {
-        Value::Sym(s) => i.symbol_name(*s),
+        Value::Sym(s) => *s,
         other => return Err(i.wrong_type_mut("symbolp", other)),
     };
     let from = match i.sym_id(&a[0]) {
-        Some(s) => i.symbol_name(s),
+        Some(s) => s,
         None => return Err(i.wrong_type_mut("symbolp", &a[0])),
     };
     // check_face: an unknown OLD_FACE signals `Invalid face'.
@@ -22582,7 +22540,7 @@ fn f_internal_set_lisp_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> E
             _ => break,
         }
     }
-    let name = i.symbol_name(face);
+    let name = face;
     face_frame_live(i, &arg(&a, 3))?;
     // FRAME=t (4th arg) → new-frame defaults (face_t_table), mirrored
     // into the global lface inside `face--new-frame-defaults' like
@@ -22661,7 +22619,7 @@ fn f_set_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         return Ok(Value::Nil);
     }
     let name = match i.sym_id(&a[0]) {
-        Some(s) => i.symbol_name(s),
+        Some(s) => s,
         None => return Err(i.wrong_type_mut("symbolp", &a[0])),
     };
     // GNU Fset_face_attribute1 decodes FRAME (arg 2) after CHECK_SYMBOL
@@ -22726,7 +22684,7 @@ fn f_set_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// performed by `set-face-attribute' / `internal-set-lisp-face-attribute'
 /// when the pair is stored.  `unspecified' and `undefined' are
 /// accepted for every attribute.
-fn check_face_value(i: &mut Interp, name: &str, attr: &str, v: &Value) -> Result<(), Flow> {
+fn check_face_value(i: &mut Interp, name: &SymId, attr: &str, v: &Value) -> Result<(), Flow> {
     if let Value::Sym(s) = v {
         let n = i.symbol_name(*s);
         // GNU xfaces.c treats `unspecified'/`reset'/`:ignore-defface'
@@ -22816,7 +22774,7 @@ fn check_face_value(i: &mut Interp, name: &str, attr: &str, v: &Value) -> Result
             // test-merged against 10 — ints/floats >0, a symbol naming
             // a real face, or a function/list producing a positive
             // number pass (merge_face_heights).
-            let is_default = name == "default";
+            let is_default = builtin_face_name(i, *name) == Some("default");
             // GNU merge_face_heights against a base of 10: fixnum
             // passes through absolute; float scales; FUNCTIONP is
             // safe_calln'd (symbol w/o function → invalid → error);

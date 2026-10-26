@@ -1,6 +1,6 @@
 //! Signal construction, diagnostics, and condition matching.
 //!
-//! Delivery and unwinding remain in the evaluator; this module constructs
+//! Delivery and unwinding live in `control`; this module constructs
 //! conditions and preserves their matching-list identity before cleanup.
 
 use super::Interp;
@@ -11,6 +11,13 @@ use crate::lisp::{
 };
 
 impl Interp {
+    /// `(error "MSG" DATA)' — GNU signal2(Qerror, build_string(MSG),
+    /// DATA): the object travels as error data, NOT concatenated into
+    /// the message string.
+    pub fn error_obj(&self, msg: &str, v: &Value) -> Flow {
+        self.signal_data(sym::ERROR, vec![Value::string(msg), v.clone()])
+    }
+
     // ---------- errors ----------
 
     /// `(signal sym (data...))` where data is already a list.
@@ -58,7 +65,10 @@ impl Interp {
                 for (f, a) in self.lisp_stack.iter().rev().take(30).rev() {
                     eprintln!(
                         "  {} {}",
-                        self.princ_to_string(f).chars().take(80).collect::<crate::lisp::text::EmacsText>(),
+                        self.princ_to_string(f)
+                            .chars()
+                            .take(80)
+                            .collect::<crate::lisp::text::EmacsText>(),
                         self.princ_to_string(&Value::list(a.as_slice().to_vec()))
                             .chars()
                             .take(100)
@@ -89,8 +99,13 @@ impl Interp {
 
     /// GNU C `error (FMT, ...)': doprnt translates FMT's `like this'
     /// quotes per `text-quoting-style' — never the `%s' arguments.
-    pub fn error_q<T: crate::lisp::text::TextSource + ?Sized>(&self, fmt: &str, args: &[&T]) -> Flow {
-        let args: Vec<crate::lisp::text::EmacsText> = args.iter().map(|s| s.with_text(|s| s.to_owned())).collect();
+    pub fn error_q<T: crate::lisp::text::TextSource + ?Sized>(
+        &self,
+        fmt: &str,
+        args: &[&T],
+    ) -> Flow {
+        let args: Vec<crate::lisp::text::EmacsText> =
+            args.iter().map(|s| s.with_text(|s| s.to_owned())).collect();
         self.error_q_text(fmt, &args)
     }
 
@@ -101,7 +116,9 @@ impl Interp {
         let mut rest = fmt.as_str();
         while let Some(p) = rest.find("%s") {
             out.push_str(&rest[..p]);
-            if let Some(argument) = args.next() { out.push_str(argument); }
+            if let Some(argument) = args.next() {
+                out.push_str(argument);
+            }
             rest = &rest[p + 2..];
         }
         out.push_str(rest);
@@ -119,7 +136,10 @@ impl Interp {
                 .map(|(f, a)| {
                     format!(
                         "{}({})",
-                        self.princ_to_string(f).chars().take(60).collect::<crate::lisp::text::EmacsText>(),
+                        self.princ_to_string(f)
+                            .chars()
+                            .take(60)
+                            .collect::<crate::lisp::text::EmacsText>(),
                         self.princ_to_string(&Value::list(a.as_slice().to_vec()))
                             .chars()
                             .take(80)
