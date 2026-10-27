@@ -346,7 +346,7 @@ impl Interp {
             ("mode-name", Value::Nil),
             ("header-line-format", Value::Nil),
             ("tab-line-format", Value::Nil),
-            ("truncate-partial-width-windows", Value::t()),
+            ("truncate-partial-width-windows", Value::Int(50)),
             ("word-wrap", Value::Nil),
             ("scroll-step", Value::Int(0)),
             ("scroll-error-top-bottom", Value::Nil),
