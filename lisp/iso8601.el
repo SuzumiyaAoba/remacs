@@ -316,13 +316,25 @@ Return the number of minutes."
          ;; Retain the combined match data for `iso8601-parse'.
          (save-match-data
            (let ((date (match-string 1 string)))
-             (or (not (iso8601--match iso8601--week-date-match date))
-                 (let* ((year (string-to-number (match-string 1 date)))
-                        (week (string-to-number (match-string 2 date)))
-                        (day (match-string 3 date)))
-                   (and (<= 1 week (iso8601--weeks-in-year year))
-                        (or (null day)
-                            (<= 1 (string-to-number day) 7)))))))))
+             (cond
+              ((iso8601--match iso8601--week-date-match date)
+               (let* ((year (string-to-number (match-string 1 date)))
+                      (week (string-to-number (match-string 2 date)))
+                      (day (match-string 3 date)))
+                 (and (<= 1 week (iso8601--weeks-in-year year))
+                      (or (null day)
+                          (<= 1 (string-to-number day) 7)))))
+              ((iso8601--match iso8601--full-date-match date)
+               ;;Remacs: validate month/day combinations, including leap days.
+               (let ((year (string-to-number (match-string 1 date)))
+                     (month (string-to-number (match-string 2 date)))
+                     (day (string-to-number (match-string 3 date))))
+                 (and (<= 1 month 12)
+                      (<= 1 day (date-days-in-month year month))))
+              ((iso8601--match iso8601--without-day-match date)
+               (let ((month (string-to-number (match-string 2 date))))
+                 (<= 1 month 12)))
+              (t t)))))))
 
 (defun iso8601-parse-duration (string)
   "Parse ISO 8601 durations on the form P3Y6M4DT12H30M5S."
