@@ -1169,16 +1169,27 @@ The length of STRING need not be the same as the rectangle width."
 (defvar cua--rectangle-seq-format "%d"
   "Last format used by `cua-sequence-rectangle'.")
 
+(defun cua--read-sequence-integer (prompt default)
+  "Read an integer using PROMPT and DEFAULT, rejecting invalid input."
+  (let* ((input (read-string prompt nil nil default))
+         (digits (if (and (> (length input) 0)
+                          (memq (aref input 0) '(?+ ?-)))
+                     (substring input 1)
+                   input)))
+    (unless (and (> (length digits) 0)
+                 (not (string-match-p "[^0-9]" digits)))
+      (user-error "Please enter an integer"))
+    (string-to-number input)))
+
 (defun cua-sequence-rectangle (first incr format)
   "Resequence each line of CUA rectangle starting from FIRST.
 The numbers are formatted according to the FORMAT string."
   (interactive
    (list (if current-prefix-arg
              (prefix-numeric-value current-prefix-arg)
-           (string-to-number
-            (read-string (format-prompt "Start value" 0) nil nil "0")))
-         (string-to-number
-          (read-string (format-prompt "Increment" 1) nil nil "1"))
+           (cua--read-sequence-integer
+            (format-prompt "Start value" 0) "0"))
+         (cua--read-sequence-integer (format-prompt "Increment" 1) "1")
          (read-string (concat "Format: (" cua--rectangle-seq-format ") "))))
   (if (= (length format) 0)
       (setq format cua--rectangle-seq-format)
