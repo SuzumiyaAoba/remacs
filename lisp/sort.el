@@ -278,8 +278,9 @@ the sort order."
   "Sort lines in region numerically by the ARGth field of each line.
 Fields are separated by whitespace and numbered from 1 up.
 Specified field must contain a number in each line of the region,
-which may begin with \"0x\" or \"0\" for hexadecimal and octal values.
-Otherwise, the number is interpreted according to sort-numeric-base.
+which may begin with an optional sign followed by \"0x\" or \"0\" for
+hexadecimal and octal values.  Otherwise, the number is interpreted
+according to sort-numeric-base.
 With a negative arg, sorts by the ARGth field counted from the right.
 Called from a program, there are three arguments:
 FIELD, BEG and END.  BEG and END specify region to sort."
@@ -295,19 +296,21 @@ FIELD, BEG and END.  BEG and END specify region to sort."
            0
 	 (sort-skip-fields field)
 	 (let* ((case-fold-search t)
+		(sign (and (memq (char-after) '(?+ ?-)) (char-after)))
+		(number-start (if sign (1+ (point)) (point)))
 		(base
-		 (if (looking-at "\\(0x\\)[0-9a-f]\\|\\(0\\)[0-7]")
-		     (cond ((match-beginning 1)
-			    (goto-char (match-end 1))
-			    16)
-			   ((match-beginning 2)
-			    (goto-char (match-end 2))
-			    8)
-			   (t nil)))))
-	   (string-to-number (buffer-substring (point)
-					       (save-excursion
-						 (forward-sexp 1)
-						 (point)))
+		 (save-excursion
+		   (goto-char number-start)
+		   (cond ((looking-at "0x[0-9a-f]") 16)
+			 ((looking-at "0[0-7]") 8))))
+		(number-end (save-excursion
+			     (forward-sexp 1)
+			     (point)))
+		(number (buffer-substring number-start number-end))
+		(digits (if base
+			    (substring number (if (= base 16) 2 1))
+			  number)))
+	   (string-to-number (concat (and sign (char-to-string sign)) digits)
 			     (or base sort-numeric-base)))))
      nil)))
 
