@@ -390,6 +390,8 @@ Also store it in `eldoc-last-message' and return that value."
 ;; request for documentation.
 (defvar eldoc--last-request-state nil
   "Tuple containing information about last ElDoc request.")
+(defvar eldoc--request-id 0
+  "Identifier of the most recently started ElDoc request.")
 (defun eldoc--request-state ()
   "Compute information to store in `eldoc--last-request-state'."
   (list (current-buffer) (buffer-modified-tick) (point)))
@@ -908,7 +910,9 @@ the docstrings eventually produced, using
          ;; The doc strings and corresponding options registered so
          ;; far.
          (docs-registered '())
-         (orig-buffer (current-buffer)))
+         (orig-buffer (current-buffer))
+         (request-id (setq eldoc--request-id (1+ eldoc--request-id)))
+         (request-state (eldoc--request-state)))
     (cl-labels
         ((register-doc
           (pos string plist origin)
@@ -917,7 +921,10 @@ the docstrings eventually produced, using
                   docs-registered)))
          (display-doc
            ()
-           (when (buffer-live-p orig-buffer)
+           (when (and (buffer-live-p orig-buffer)
+                      (= request-id eldoc--request-id)
+                      (with-current-buffer orig-buffer
+                        (equal request-state (eldoc--request-state))))
              (with-current-buffer orig-buffer
                (run-hook-with-args
                 'eldoc-display-functions (mapcar #'cdr
