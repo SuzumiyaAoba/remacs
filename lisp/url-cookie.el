@@ -82,6 +82,10 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
   (let ((n 0))
     (with-temp-buffer
       (insert-file-contents-literally filename)
+      ;; Netscape cookie files are commonly written with CRLF line endings.
+      (goto-char (point-min))
+      (while (search-forward "\r\n" nil t)
+	(replace-match "\n" t t))
       (goto-char (point-min))
       (when (not (looking-at-p "# Netscape HTTP Cookie File\n"))
 	(error (format "File %s doesn't look like a netscape cookie file" filename)))
