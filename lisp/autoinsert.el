@@ -444,8 +444,10 @@ or if CONDITION had no actions, after all other CONDITIONs."
 			     (if (vectorp action) action (vector action))
 			     (if after () (cdr elt)))
 		  (if after
-		      (vector (cdr elt) action)
-		    (vector action (cdr elt)))))
+			   (vconcat (vector (cdr elt))
+				    (if (vectorp action) action (vector action)))
+			 (vconcat (if (vectorp action) action (vector action))
+				  (vector (cdr elt)))))
       (if after
 	  (nconc auto-insert-alist (list (cons condition action)))
         (push (cons condition action) auto-insert-alist)))))
