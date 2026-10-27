@@ -279,7 +279,8 @@ a list of address strings."
                               (buffer-substring beg (point)) rawp)
                            (error nil))))
               (if (listp address)
-                  (setq pairs (append address pairs))
+                  ;;Remacs: PAIRS is reversed until the final nreverse.
+                  (setq pairs (append (reverse address) pairs))
                 (push address pairs)))
             (condition-case nil
 	        (forward-char 1)
