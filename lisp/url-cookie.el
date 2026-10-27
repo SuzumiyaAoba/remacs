@@ -329,9 +329,13 @@ When INCLUDE-SUBDOMAINS is non-nil, require a DNS-label boundary."
   (let* ((args (nreverse (url-parse-args str t)))
 	 (case-fold-search t)
 	 (secure (and (assoc-string "secure" args t) t))
-	 (domain-attribute (assoc-string "domain" args t))
+	 (domain-attribute
+	  (let* ((attribute (assoc-string "domain" args t))
+		 (value (cdr-safe attribute)))
+	    (and attribute (stringp value) (> (length value) 0) attribute)))
+	 ;;Remacs: RFC 6265 ignores an empty Domain attribute, leaving the cookie host-only.
 	 (domain (if domain-attribute
-		      (or (cdr-safe domain-attribute) "")
+		      (cdr-safe domain-attribute)
 		    (url-host url-current-object)))
 	 ;; A leading dot records a Domain attribute; no dot means host-only.
 	 (stored-domain (if (and domain-attribute
