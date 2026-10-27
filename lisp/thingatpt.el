@@ -523,11 +523,18 @@ the bounds of a possible ill-formed URI (one lacking a scheme)."
 		    (skip-chars-backward allowed-chars)
 		    (skip-chars-forward skip-before pt)
 		    (point)))
-	     (end (save-excursion
-		    (skip-chars-forward allowed-chars)
-		    (skip-chars-backward skip-after pt)
-		    (point))))
-	(or (thing-at-point--bounds-of-well-formed-url beg end pt)
+	     (raw-end (save-excursion
+			(skip-chars-forward allowed-chars)
+			(point)))
+	     (delimited (and (eq (char-before beg) ?<)
+			     (eq (char-after raw-end) ?>)))
+	     (end (if delimited
+		      raw-end
+		    (save-excursion
+		      (goto-char raw-end)
+		      (skip-chars-backward skip-after pt)
+		      (point)))))
+	(or (thing-at-point--bounds-of-well-formed-url beg end pt delimited)
 	    (if lax (cons beg end))))))
 
 (defun thing-at-point--bounds-of-markedup-url ()
@@ -567,7 +574,7 @@ the bounds of a possible ill-formed URI (one lacking a scheme)."
             unmatched (cdr unmatched)))
     end))
 
-(defun thing-at-point--bounds-of-well-formed-url (beg end pt)
+(defun thing-at-point--bounds-of-well-formed-url (beg end pt &optional delimited)
   (save-excursion
     (goto-char beg)
     (let (url-beg paren-end regexp)
@@ -596,8 +603,9 @@ the bounds of a possible ill-formed URI (one lacking a scheme)."
                                    (scan-lists (1- url-beg) 1 0)))))
 	     (not (blink-matching-check-mismatch (1- url-beg) paren-end))
 	     (setq end (1- paren-end)))
-	(setq end (thing-at-point--trim-unmatched-closing-parentheses
-		    url-beg end))
+	(unless delimited
+	  (setq end (thing-at-point--trim-unmatched-closing-parentheses
+		      url-beg end)))
 	;; Ensure PT is actually within BOUNDARY. Check the following
 	;; example with point on the beginning of the line:
 	;;
