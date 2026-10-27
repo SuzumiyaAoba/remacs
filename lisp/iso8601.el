@@ -562,7 +562,8 @@ UNIT-SECONDS is the nominal length of the component."
 			   (or (decoded-time-zone end) 0) t)))))
 
 (defun iso8601--match (regexp string)
-  (string-match (concat "\\`" regexp "\\'") string))
+  (let ((case-fold-search t))
+    (string-match (concat "\\`" regexp "\\'") string)))
 
 (defun iso8601--value (elem &optional default)
   (if (stringp elem)
