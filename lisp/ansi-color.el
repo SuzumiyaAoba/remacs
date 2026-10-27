@@ -115,6 +115,12 @@ as a PDF file."
   :group 'ansi-colors
   :version "28.1")
 
+(defface ansi-color-double-underline
+  '((t :underline (:style double)))
+  "Face used to render doubly underlined text."
+  :group 'ansi-colors
+  :version "31.1")
+
 (defface ansi-color-slow-blink
   '((t :box (:line-width -1)))
   "Face used to render slowly blinking text."
@@ -274,10 +280,11 @@ control sequences differently), use `ansi-color-normal-colors-vector'."
    ansi-color-underline
    ansi-color-slow-blink
    ansi-color-fast-blink
-   ansi-color-inverse]
+   ansi-color-inverse
+   ansi-color-double-underline]
   "Faces used for SGR control sequences determining a face.
 This vector holds the faces used for SGR control sequence parameters 0
-to 7.
+to 7, plus a slot for SGR 21 double underline.")
 
 Parameter  Description
   0        default
@@ -287,7 +294,8 @@ Parameter  Description
   4        underlined
   5        slowly blinking
   6        rapidly blinking
-  7        negative image")
+  7        negative image
+  8        double underline (SGR 21)")
 
 (defvar ansi-color-normal-colors-vector
   [ansi-color-black
@@ -605,7 +613,7 @@ number POSITION, if non-nil."
               context)
           context)
       (set context-sym
-           (list (list (make-bool-vector 8 nil)
+           (list (list (make-bool-vector 9 nil)
                        nil nil)
                  (if position
                      (copy-marker position)
@@ -644,7 +652,8 @@ code.  It is usually stored as the car of the variable
                nil 'default)))
        faces))
 
-    (let ((i 8))
+    (let ((i (min (length basic-faces)
+                  (length ansi-color-basic-faces-vector))))
       (while (> i 0)
         (setq i (1- i))
         (when (aref basic-faces i)
@@ -951,9 +960,9 @@ the next ANSI code in the current sequence as a number or nil if
 there are no more ANSI codes left.
 
 For each new code, the following happens: if it is 1-7, set the
-corresponding properties; if it is 21-25 or 27, unset appropriate
-properties; if it is 30-37 (or 90-97) or resp. 39, set the
-foreground color or resp. unset it; if it is 40-47 (or 100-107)
+corresponding properties; 21 sets double underline; 22-27 unset
+appropriate properties; if it is 30-37 (or 90-97) or resp. 39, set
+the foreground color or resp. unset it; if it is 40-47 (or 100-107)
 resp. 49, set the background color or resp. unset it; if it is 38
 or 48, the following codes are used to set the foreground or
 background color and the correct color mode; any other code will
@@ -967,16 +976,24 @@ unset all properties and colors."
         (0 (cond ((= new 0)
                   (setq do-clear t))
                  ((memq new '(8 9)))
-                 (t (aset basic-faces new t))))
+                 (t
+                  (when (= new 4)
+                    (aset basic-faces 8 nil))
+                  (aset basic-faces new t))))
         ;; SGR 10-19 selects fonts; ignore unsupported font changes.
         (1 nil)
-        (2 (if (memq new '(20 26 28 29))
-               nil
-             ;; The standard says `21 doubly underlined' while
-             ;; https://en.wikipedia.org/wiki/ANSI_escape_code claims
-             ;; `21 Bright/Bold: off or Underline: Double'.
-             (aset basic-faces (- new 20) nil)
-             (aset basic-faces (pcase new (22 1) (25 6) (_ 0)) nil)))
+        (2 (pcase new
+             ((or 20 26 28 29) nil)
+             (21 (aset basic-faces 4 nil)
+                 (aset basic-faces 8 t))
+             (22 (aset basic-faces 1 nil)
+                 (aset basic-faces 2 nil))
+             (23 (aset basic-faces 3 nil))
+             (24 (aset basic-faces 4 nil)
+                 (aset basic-faces 8 nil))
+             (25 (aset basic-faces 5 nil)
+                 (aset basic-faces 6 nil))
+             (27 (aset basic-faces 7 nil))))
         ((or 3 4 9 10)
          (let ((r (mod new 10))
                (cell (if (memq q '(3 9)) colors (cdr colors))))
@@ -1006,7 +1023,7 @@ unset all properties and colors."
       (when do-clear
         (setq do-clear nil)
         ;; Zero out our bool vector without any allocation.
-        (bool-vector-intersection basic-faces #&8"\0" basic-faces)
+        (bool-vector-intersection basic-faces #&9"\0\0" basic-faces)
         (setcar colors nil)
         (setcar (cdr colors) nil)))))
 
