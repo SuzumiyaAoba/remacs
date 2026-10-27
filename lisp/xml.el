@@ -445,6 +445,10 @@ Both features can be combined by providing a cons cell
      ((string= prefix "xml")
       (unless (string= uri xml-uri)
         (error "XML: (Not Well-Formed) The `xml' prefix has a reserved binding")))
+     ((and (not (string= prefix ""))
+           (string= uri ""))
+      (error "XML: (Not Well-Formed) Cannot undeclare namespace prefix `%s'"
+             prefix))
      ((string= uri xml-uri)
       (error "XML: (Not Well-Formed) The XML namespace is reserved for `xml'")))))
 
