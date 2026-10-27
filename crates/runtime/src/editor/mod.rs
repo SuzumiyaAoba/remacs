@@ -8652,11 +8652,11 @@ fn f_key_binding(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             // sequence — no binding in this map, try the next map.
             if n + 1 == keys.len() && raw.truthy() {
                 // GNU Fkey_binding: a command's [remap CMD] entry
-                // applies unless NO-REMAP or POSITION was passed.
+                // applies unless NO-REMAP was passed; POSITION only
+                // selects which buffer's keymaps are consulted.
                 if let Value::Sym(cmd) = &raw {
                     let noremap = a.get(2).map(|v| v.truthy()).unwrap_or(false);
-                    let pos = a.get(3).cloned().unwrap_or(Value::Nil);
-                    if !noremap && pos.is_nil() {
+                    if !noremap {
                         let r = f_command_remapping(
                             i,
                             vec![Value::Sym(*cmd), Value::Nil, Value::Nil].into(),
