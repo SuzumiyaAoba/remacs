@@ -2386,7 +2386,8 @@ Similarly for Soar, Scheme, etc."
 		       (ring-empty-p term-input-ring)
 		       (not (string-equal (ring-ref term-input-ring 0)
 					  history))))
-	  (ring-insert term-input-ring history))
+	  (when (> (ring-size term-input-ring) 0)
+	    (ring-insert term-input-ring history)))
         (run-hook-with-args 'term-input-filter-functions (concat input "\n"))
 	(setq term-input-ring-index nil)
 
