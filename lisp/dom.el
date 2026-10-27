@@ -281,6 +281,15 @@ white-space."
           shadowrootclonable shadowrootdelegatesfocus
           shadowrootserializable)))
 
+(defconst dom--html-void-elements
+  '("area" "base" "br" "col" "embed" "hr" "img" "input" "link"
+    "meta" "source" "track" "wbr")
+  "HTML elements that do not have end tags.")
+
+(defun dom--html-void-element-p (tag)
+  "Return non-nil if TAG names an HTML void element."
+  (member (downcase (format "%s" tag)) dom--html-void-elements))
+
 (defun dom--insert-entities (string)
   "Escape &, <, > and double quotes in STRING for HTML/XML output."
   (mapconcat
@@ -316,7 +325,9 @@ If XML, generate XML instead of HTML."
 	   (non-text nil)
            (indent (+ column 2)))
       (if (null children)
-	  (insert " />")
+	  (if (or xml (dom--html-void-element-p (dom-tag dom)))
+	      (insert " />")
+	    (insert (format "></%s>" (dom-tag dom))))
 	(insert ">")
         (dolist (child children)
 	  (if (stringp child)
