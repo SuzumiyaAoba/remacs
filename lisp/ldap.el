@@ -425,15 +425,33 @@ RFC2798 Section 9.1.1")
 (defun ldap-encode-string (str)
   (encode-coding-string str ldap-coding-system))
 
+(defun ldap--encode-address-line (line)
+  (let ((encoded (ldap-encode-string line)))
+    (setq encoded
+          (replace-regexp-in-string
+           (regexp-quote "\\") (concat "\\" "5C") encoded t t))
+    (replace-regexp-in-string
+     (regexp-quote "$") (concat "\\" "24") encoded t t)))
+
+(defun ldap--decode-address-line (line)
+  (let ((case-fold-search t))
+    ;; Decode dollar before backslash: an encoded literal backslash
+    ;; followed by "24" must remain the text "\\24".
+    (setq line (replace-regexp-in-string
+                (regexp-quote (concat "\\" "24")) "$" line t t))
+    (setq line (replace-regexp-in-string
+                (regexp-quote (concat "\\" "5C")) "\\" line t t)))
+  (ldap-decode-string line))
+
 (defun ldap-decode-address (str)
-  (mapconcat #'ldap-decode-string
-	     (split-string str "\\$")
-	     "\n"))
+  (mapconcat #'ldap--decode-address-line
+             (split-string str "\\$")
+             "\n"))
 
 (defun ldap-encode-address (str)
-  (mapconcat #'ldap-encode-string
-	     (split-string str "\n")
-	     "$"))
+  (mapconcat #'ldap--encode-address-line
+             (split-string str "\n")
+             "$"))
 
 
 ;; LDAP protocol functions
