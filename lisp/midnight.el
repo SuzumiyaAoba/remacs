@@ -186,7 +186,7 @@ lifetime, i.e., its \"age\" when it will be purged."
 ;;; midnight hook
 
 (defvar midnight-period (* 24 60 60)
-  "The number of seconds in a day--the delta for `midnight-timer'.")
+  "The repeat interval used when `midnight-delay' is a string.")
 
 (defcustom midnight-hook '(clean-buffer-list)
   "The hook run `midnight-delay' seconds after midnight every day.
@@ -197,6 +197,33 @@ The default value is `clean-buffer-list'."
   "Return the number of whole or partial seconds till the next midnight."
   (pcase-let ((`(,sec ,min ,hrs) (decode-time nil nil 'integer)))
     (- (* 24 60 60) (* 60 60 hrs) (* 60 min) sec)))
+
+(defun midnight--next-midnight-time ()
+  "Return the time value for the next local midnight."
+  (let* ((decoded (decode-time nil nil 'integer))
+         (day (nth 3 decoded))
+         (month (nth 4 decoded))
+         (year (nth 5 decoded)))
+    (encode-time 0 0 0 (1+ day) month year)))
+
+(defun midnight--schedule ()
+  "Schedule the next run of `midnight-hook'."
+  (setq midnight-timer
+        (if (numberp midnight-delay)
+            (run-at-time
+             (time-add (midnight--next-midnight-time)
+                       (seconds-to-time midnight-delay))
+             nil #'midnight--run)
+          (run-at-time midnight-delay midnight-period
+                       #'run-hooks 'midnight-hook))))
+
+(defun midnight--run ()
+  "Run `midnight-hook' and schedule it for the next local midnight."
+  (when midnight-mode
+    ;; Schedule before running user hooks so errors or changes to
+    ;; `midnight-delay' in a hook do not leave the timer stopped.
+    (midnight--schedule)
+    (run-hooks 'midnight-hook)))
 
 ;;;###autoload
 (defun midnight-delay-set (symb tm)
@@ -209,9 +236,7 @@ to its second argument TM."
   (when (timerp midnight-timer) (cancel-timer midnight-timer))
   ;; Only start the timer if the mode is turned on.
   (when midnight-mode
-    (setq midnight-timer
-          (run-at-time (if (numberp tm) (+ (midnight-next) tm) tm)
-                       midnight-period #'run-hooks 'midnight-hook))))
+    (midnight--schedule)))
 
 (defcustom midnight-delay 3600
   "The number of seconds after the midnight when the `midnight-timer' is run.
