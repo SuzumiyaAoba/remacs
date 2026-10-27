@@ -541,15 +541,43 @@ which RSS 2.0 allows."
 		      nnrss-file-coding-system))
       (gnus-prin1 `(setq nnrss-group-data ',nnrss-group-data)))))
 
+(defun nnrss--cache-key-needs-encoding-p (component)
+  "Return non-nil when COMPONENT is ambiguous in the legacy cache name."
+  (and component
+       (or (string-match-p "[-'%]" component)
+           (seq-some (lambda (char)
+                       (assq char nnheader-file-name-translation-alist))
+                     (string-to-list component)))))
+
+(defun nnrss--encode-cache-key-component (component)
+  "Encode COMPONENT for a versioned cache filename."
+  (if (null component)
+      "n"
+    (concat
+     "s"
+     (mapconcat
+      (lambda (char)
+        (if (or (<= ?0 char ?9)
+                (<= ?A char ?Z)
+                (<= ?a char ?z)
+                (memq char '(?. ?/)))
+            (char-to-string char)
+          (format "%%%02X" char)))
+      (string-to-list component) ""))))
+
 (defun nnrss-make-filename (name server)
   (expand-file-name
-   (nnrss-translate-file-chars
-    (concat name
-	    (and server
-		 (not (equal server ""))
-		 "-")
-	    server
-	    ".el"))
+   (if (or (equal server "")
+           (nnrss--cache-key-needs-encoding-p name)
+           (nnrss--cache-key-needs-encoding-p server))
+       (concat "%v2-"
+               (nnrss--encode-cache-key-component name) "-"
+               (nnrss--encode-cache-key-component server) ".el")
+     (nnrss-translate-file-chars
+      (concat name
+              (and server "-")
+              server
+              ".el")))
    nnrss-directory))
 
 (gnus-add-shutdown 'nnrss-close 'gnus)
