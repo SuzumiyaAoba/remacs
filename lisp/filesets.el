@@ -1656,33 +1656,41 @@ Assume MODE (see `filesets-entry-mode'), if provided."
                   (not (filesets-filetype-property file event)))
                 fl)))
 
-(defun filesets-files-under (level depth entry dir patt &optional relativep)
+(defun filesets-files-under (level depth entry dir patt &optional relativep visited)
   "Files under DIR that match PATT.
 LEVEL is the current level under DIR.
 DEPTH is the maximal tree scanning depth for ENTRY.
 ENTRY is a fileset.
 DIR is a directory.
 PATT is a regexp that included file names must match.
-RELATIVEP non-nil means use relative file names."
+RELATIVEP non-nil means use relative file names.
+VISITED is a hash table of canonical directories already scanned."
   (and (or (= depth 0) (< level depth))
        (let* ((dir         (file-name-as-directory dir))
+              (visited     (or visited (make-hash-table :test #'equal)))
               (files-here  (filesets-directory-files
                             dir patt nil (not relativep)
                             (filesets-entry-get-filter-dirs-flag entry)))
-              (subdirs     (filesets-filter-dir-names files-here))
-              (files
-               (filesets-filter-dir-names
-                (apply #'append
-                       files-here
-                       (mapcar
-                        (lambda (subdir)
-                          (let* ((subdir (file-name-as-directory subdir))
-                                 (full-subdir  (concat dir subdir)))
-                            (filesets-files-under (+ level 1) depth entry
-                                                  full-subdir patt)))
-                        subdirs))
-                t)))
-         files)))
+              (truename (and files-here
+                             (condition-case nil
+                                 (file-name-as-directory (file-truename dir))
+                               (file-error nil)))))
+         (when (and truename (not (gethash truename visited)))
+           (puthash truename t visited)
+           (let* ((subdirs (filesets-filter-dir-names files-here))
+                  (files
+                   (filesets-filter-dir-names
+                    (apply #'append
+                           files-here
+                           (mapcar
+                            (lambda (subdir)
+                              (let* ((subdir (file-name-as-directory subdir))
+                                     (full-subdir (concat dir subdir)))
+                                (filesets-files-under (+ level 1) depth entry
+                                                      full-subdir patt nil visited)))
+                            subdirs))
+                    t)))
+             files)))))
 
 (defun filesets-open (&optional mode name lookup-name)
   "Open the fileset called NAME.
