@@ -2324,7 +2324,8 @@ happens interactively)."
          (keep-index (if (integerp tab-number)
                          (1- (max 1 (min tab-number (length tabs))))
                        current-index))
-         (index 0))
+         (index 0)
+         closed-tabs)
 
     (when (nth keep-index tabs)
       (unless (eq keep-index current-index)
@@ -2341,10 +2342,12 @@ happens interactively)."
           (push `((frame . ,(selected-frame))
                   (index . ,index)
                   (tab . ,tab))
-                tab-bar-closed-tabs)
+                closed-tabs)
           (run-hook-with-args 'tab-bar-tab-pre-close-functions tab nil)
           (setq tabs (delq tab tabs)))
         (setq index (1+ index)))
+      (setq tab-bar-closed-tabs
+            (nconc (nreverse closed-tabs) tab-bar-closed-tabs))
       (tab-bar-tabs-set tabs)
 
       ;; Recalculate tab-bar-lines and update frames
