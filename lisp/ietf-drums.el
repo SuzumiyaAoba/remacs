@@ -230,6 +230,10 @@ If DECODE, the DISPLAY-NAME will have RFC2047 decoding performed
 	  (push (buffer-substring
 		 (1+ (point)) (progn (forward-sexp 1) (1- (point))))
 		display-name))
+	 ((eq c ?[)
+	  ;;Remacs: retain the brackets and contents of a domain-literal.
+	  (push (buffer-substring (point) (progn (forward-sexp 1) (point)))
+		display-name))
 	 ((looking-at (concat "[" ietf-drums-atext-token "@" "]"))
 	  (push (buffer-substring (point) (progn (forward-sexp 1) (point)))
 		display-name))
@@ -286,7 +290,7 @@ a list of address strings."
 	        (forward-char 1)
               (error nil))
 	    (setq beg (point)))
-	   ((memq c '(?\" ?< ?\())
+	   ((memq c '(?\" ?< ?\( ?[))
 	    (condition-case nil
 		(forward-sexp 1)
 	      (error
