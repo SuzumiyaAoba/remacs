@@ -255,7 +255,10 @@ this rationalization.  DIRNAME is untransformed; this function applies
   ;; Make sure we don't get confused by outdated uniquify-managed info in
   ;; this buffer.
   (with-current-buffer newbuf (setq uniquify-managed nil))
-  (when dirname
+  (when (and dirname
+             (not (and uniquify-ignore-buffers-re
+                       (string-match uniquify-ignore-buffers-re
+                                     (buffer-name newbuf)))))
     (setq dirname (funcall uniquify-dirname-transform
                            (expand-file-name (directory-file-name dirname))))
     (let ((fix-list (list (uniquify-make-item base dirname newbuf
