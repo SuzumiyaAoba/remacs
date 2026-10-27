@@ -617,7 +617,7 @@ It is nil if the abbrev has already been unexpanded.")
 
 (defun define-abbrev (table abbrev expansion &optional hook &rest props)
   "Define ABBREV in TABLE, to expand into EXPANSION and optionally call HOOK.
-ABBREV must be a string, and should be lower-case.
+ABBREV must be a non-empty string, and should be lower-case.
 EXPANSION should usually be a string.
 To undefine an abbrev, define it with EXPANSION = nil.
 If HOOK is non-nil, it should be a function of no arguments;
@@ -648,6 +648,8 @@ An obsolete but still supported calling form is:
 
 \(define-abbrev TABLE NAME EXPANSION &optional HOOK COUNT SYSTEM)."
   (declare (indent defun))
+  (when (and (stringp abbrev) (zerop (length abbrev)))
+    (error "Abbrev name must not be empty"))
   (when (and (consp props) (or (null (car props)) (numberp (car props))))
     ;; Old-style calling convention.
     (setq props `(:count ,(car props)
