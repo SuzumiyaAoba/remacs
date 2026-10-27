@@ -788,19 +788,28 @@ Export subscriptions to a buffer in OPML Format."
   (pop-to-buffer "*OPML Export*")
   (sgml-mode))
 
+(defun nnrss--shell-quote-argument (string)
+  "Return STRING as one safely quoted POSIX shell word."
+  (concat "'"
+          (replace-regexp-in-string
+           "'" (concat "'" "\\" "'" "'") string t t)
+          "'"))
+
 (defun nnrss-generate-download-script ()
   "Generate a download script in the current buffer.
 It is useful when `(setq nnrss-use-local t)'."
   (interactive)
   (insert "#!/bin/sh\n")
   (insert "WGET=wget\n")
-  (insert "RSSDIR='" (expand-file-name nnrss-directory) "'\n")
+  (insert "RSSDIR=" (nnrss--shell-quote-argument
+                      (expand-file-name nnrss-directory)) "\n")
   (dolist (elem nnrss-server-data)
     (let ((url (or (nth 2 elem)
 		   (cadr (assoc-string (car elem) nnrss-group-alist)))))
-      (insert "$WGET -q -O \"$RSSDIR\"/'"
-	      (nnrss-translate-file-chars (concat (car elem) ".xml"))
-	      "' '" url "'\n"))))
+      (insert "$WGET -q -O \"$RSSDIR\"/"
+              (nnrss--shell-quote-argument
+               (nnrss-translate-file-chars (concat (car elem) ".xml")))
+              " " (nnrss--shell-quote-argument url) "\n"))))
 
 (defun nnrss-translate-file-chars (name)
   (let ((nnheader-file-name-translation-alist
