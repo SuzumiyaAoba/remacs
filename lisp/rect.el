@@ -220,6 +220,29 @@ The returned value has the form of (WIDTH . HEIGHT)."
 		   (progn (move-to-column endcol 'coerce)
 			  (point)))))
 
+(defun rectangle--tab-widths-in-region (start end)
+  "Return tab widths between START and END, in display-column order."
+  (let (widths)
+    (save-excursion
+      (goto-char start)
+      (while (search-forward "\t" end t)
+        (push (- (current-column)
+                 (save-excursion
+                   (forward-char -1)
+                   (current-column)))
+              widths)))
+    (nreverse widths)))
+
+(defun rectangle--expand-tabs-in-string (string widths)
+  "Expand tabs in STRING using the corresponding display WIDTHS."
+  (let ((start 0) pieces)
+    (while (string-match "\t" string start)
+      (push (substring string start (match-beginning 0)) pieces)
+      (push (make-string (or (pop widths) tab-width) ?\s) pieces)
+      (setq start (match-end 0)))
+    (push (substring string start) pieces)
+    (apply #'concat (nreverse pieces))))
+
 (defun delete-extract-rectangle-line (startcol endcol lines fill)
   (let ((pt (line-end-position)))
     (if (< (move-to-column startcol (if fill t 'coerce)) startcol)
@@ -227,9 +250,23 @@ The returned value has the form of (WIDTH . HEIGHT)."
 			    (cdr lines)))
       ;; else
       (setq pt (point))
-      (move-to-column endcol t)
-      (setcdr lines (cons (filter-buffer-substring pt (point) t) (cdr lines))))
-    ))
+      (let ((begextra (- (current-column) startcol)))
+        (move-to-column endcol t)
+        (let* ((end (point))
+               (endextra (- endcol (current-column)))
+               (widths (rectangle--tab-widths-in-region pt end))
+               (line (filter-buffer-substring pt end t)))
+          (when (< begextra 0)
+            (setq endextra (+ endextra begextra)
+                  begextra 0))
+          (when (< endextra 0)
+            (setq endextra 0))
+          (setq line (rectangle--expand-tabs-in-string line widths))
+          (when (or (> begextra 0) (> endextra 0))
+            (setq line (concat (spaces-string begextra)
+                               line
+                               (spaces-string endextra))))
+          (setcdr lines (cons line (cdr lines))))))))
 
 ;; This is actually the only function that needs to do complicated
 ;; stuff like what's happening in `operate-on-rectangle', because the
