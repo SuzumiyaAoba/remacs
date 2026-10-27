@@ -477,6 +477,26 @@ Return one of:
            (buffer-substring-no-properties content-start (- (point) 2)))
       (error "XML: (Not Well-Formed) Double hyphen in comment"))))
 
+(defun xml--parse-processing-instruction ()
+  "Skip a processing instruction at point and validate its target."
+  (let ((start (point)))
+    (forward-char 2)
+    (unless (looking-at xml-name-re)
+      (error "XML: (Not Well-Formed) Invalid processing instruction target"))
+    (let ((target (match-string-no-properties 0)))
+      (goto-char (match-end 0))
+      (unless (or (looking-at-p "[ \t\n\r]")
+                  (looking-at-p "\\?>"))
+        (error "XML: (Not Well-Formed) Invalid processing instruction target"))
+      (when (and (string-equal (downcase target) "xml")
+                 (not (and (= start (point-min))
+                           (string= target "xml")
+                           (looking-at-p "[ \t\n\r]+version[ \t\n\r]*=")))
+        (error "XML: (Not Well-Formed) Reserved processing instruction target `%s'"
+               target))
+      (unless (search-forward "?>" nil t)
+        (error "XML: (Not Well-Formed) Unterminated processing instruction"))))
+
 (defun xml-parse-tag-1 (&optional parse-dtd parse-ns)
   "Like `xml-parse-tag', but possibly modify the buffer while working."
   (let* ((xml-validating-parser (or parse-dtd xml-validating-parser))
@@ -490,9 +510,9 @@ Return one of:
 		(parse-ns
 		 xml-default-ns))))
     (cond
-     ;; Processing instructions, like <?xml version="1.0"?>.
+     ;; XML declaration or processing instruction.
      ((looking-at-p "<\\?")
-      (search-forward "?>")
+      (xml--parse-processing-instruction)
       (skip-syntax-forward " ")
       (xml-parse-tag-1 parse-dtd xml-ns))
      ;; Character data (CDATA) sections, in which no tag should be interpreted
