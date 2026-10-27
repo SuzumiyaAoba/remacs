@@ -1097,13 +1097,15 @@ S should be a match against rx `icalendar-dur-value'."
            (sign (when (< sum 0) "-"))
            (time-sep (unless (and (zerop hours) (zerop minutes) (zerop seconds))
                        "T")))
-      (concat sign
-              "P"
-              (unless (zerop days) (format "%dD" days))
-              time-sep
-              (unless (zerop hours) (format "%dH" hours))
-              (unless (zerop minutes) (format "%dM" minutes))
-              (unless (zerop seconds) (format "%dS" seconds))))))
+      (if (zerop sum)
+          "PT0S"
+        (concat sign
+                "P"
+                (unless (zerop days) (format "%dD" days))
+                time-sep
+                (unless (zerop hours) (format "%dH" hours))
+                (unless (zerop minutes) (format "%dM" minutes))
+                (unless (zerop seconds) (format "%dS" seconds)))))))
 
 (defun icalendar--time-delta-p (val)
   (and (listp val)
@@ -1115,7 +1117,11 @@ S should be a match against rx `icalendar-dur-value'."
          (or (and (integerp seconds) (not (zerop seconds)))
              (and (integerp minutes) (not (zerop minutes)))
              (and (integerp hours) (not (zerop hours)))
-             (and (integerp days) (not (zerop days)))))))
+             (and (integerp days) (not (zerop days)))
+             (and (integerp seconds) (zerop seconds)
+                  (integerp minutes) (zerop minutes)
+                  (integerp hours) (zerop hours)
+                  (integerp days) (zerop days))))))
 
 (icalendar-define-type icalendar-dur-value "DURATION"
   "Type for Duration values.
