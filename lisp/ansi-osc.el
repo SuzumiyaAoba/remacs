@@ -57,7 +57,7 @@ pointed by `ansi-osc--marker'."
       (while (re-search-forward "\e]" end-marker t)
         (let ((pos0 (match-beginning 0)))
           (if (re-search-forward
-               "\\=[\x08-\x0D]*[\x20-\x7E]*\\(\a\\|\e\\\\\\)"
+               "\\=[\x08-\x0D]*[[:print:]]*\\(\a\\|\e\\\\\\)"
                end-marker t)
               (delete-region pos0 (point))
             (setq ansi-osc--marker (copy-marker pos0))))))))
