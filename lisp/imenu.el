@@ -346,10 +346,11 @@ position."
   "Support function to calculate relative position in buffer.
 Beginning of buffer is 0 and end of buffer is 100
 If REVERSE is non-nil then the beginning is 100 and the end is 0."
-  (let ((pos (point))
-	(total (buffer-size)))
-    (and reverse (setq pos (- total pos)))
-    (floor (* 100.0 (1- pos)) (max total 1))))
+  (let* ((total (max (buffer-size) 1))
+	 (offset (1- (point))))
+    (when reverse
+      (setq offset (- total offset)))
+    (floor (* 100.0 offset) total)))
 
 (defun imenu--split (list n)
   "Split LIST into sublists of max length N.
