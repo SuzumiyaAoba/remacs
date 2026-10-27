@@ -289,10 +289,18 @@ fn dispatch_key_core_inner(
                 // the command, `post-command-hook' after it — even on
                 // error (both via safe_run_hooks).
                 let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "pre-command-hook");
+                let ignore_command = i.q("ignore");
+                let skip_command =
+                    matches!(i.symbol_value(this_cmd), Value::Sym(id) if id == ignore_command);
                 let mut boundary = false;
-                match i.command_execute(&cmd) {
+                let result = if skip_command {
+                    Ok(Value::Nil)
+                } else {
+                    i.command_execute(&cmd)
+                };
+                match result {
                     Ok(_) => {
-                        boundary = true;
+                        boundary = !skip_command;
                     }
                     Err(flow) if command_flow.is_some() => {
                         **command_flow.as_mut().unwrap() = Some(flow);
@@ -405,33 +413,40 @@ fn dispatch_key_core_inner(
                             None
                         };
                         if let Some(n) = name {
-                            let _ = crate::lisp::builtins::evalfn::safe_call_hook(
-                                i,
-                                "pre-command-hook",
-                            );
                             let this_cmd = i.q("this-command");
                             let prev = i.symbol_value(this_cmd);
                             let lc = i.q("last-command");
                             let _ = i.set_symbol(lc, prev);
                             let cmd_sym = Value::Sym(i.intern(n));
                             let _ = i.set_symbol(this_cmd, cmd_sym);
-                            if k == 127 {
-                                if let Some(b) = i.current_buffer_ref() {
-                                    let p = b.borrow().point();
-                                    if p > 0 {
-                                        let _ = crate::buffer::primitives::chg_delete(i, p - 1, p);
+                            let _ = crate::lisp::builtins::evalfn::safe_call_hook(
+                                i,
+                                "pre-command-hook",
+                            );
+                            let ignore_command = i.q("ignore");
+                            let skip_command = matches!(
+                                i.symbol_value(this_cmd),
+                                Value::Sym(id) if id == ignore_command
+                            );
+                            if !skip_command {
+                                if k == 127 {
+                                    if let Some(b) = i.current_buffer_ref() {
+                                        let p = b.borrow().point();
+                                        if p > 0 {
+                                            let _ = crate::buffer::primitives::chg_delete(i, p - 1, p);
+                                        }
                                     }
+                                } else if i.current_buffer_ref().is_some() {
+                                    let s = if k == b'\r' as i128 {
+                                        "\n".to_string()
+                                    } else {
+                                        char::from_u32(k as u32).unwrap_or('?').to_string()
+                                    };
+                                    let _ = crate::buffer::primitives::chg_insert_pt(i, &s, false);
                                 }
-                            } else if i.current_buffer_ref().is_some() {
-                                let s = if k == b'\r' as i128 {
-                                    "\n".to_string()
-                                } else {
-                                    char::from_u32(k as u32).unwrap_or('?').to_string()
-                                };
-                                let _ = crate::buffer::primitives::chg_insert_pt(i, &s, false);
+                                post_command_undo_boundary(i);
                             }
                             keys.clear();
-                            post_command_undo_boundary(i);
                             let _ = crate::lisp::builtins::evalfn::safe_call_hook(
                                 i,
                                 "post-command-hook",

@@ -247,14 +247,14 @@ so it does not work when `delete-selection-save-to-register' is nil."
      ;; by issuing a simple message.  Note, however, that we do not
      ;; handle all related problems: When read-only text ends before
      ;; the end of the region, the latter is not deleted but any
-     ;; subsequent insertion will succeed.  We could avoid this case
-     ;; by doing a (setq this-command 'ignore) here.  This would,
-     ;; however, still not handle the case where read-only text ends
-     ;; precisely where the region starts: In that case the deletion
-     ;; would succeed but the subsequent insertion would fail with a
+     ;; subsequent insertion would succeed.  Stop the command to prevent
+     ;; that insertion.  This still does not handle the case where
+     ;; read-only text ends precisely where the region starts: Deletion
+     ;; may succeed but the subsequent insertion would fail with a
      ;; text-read-only error.  To handle that case we would have to
      ;; investigate text properties at both ends of the region and
      ;; skip the deletion when inserting text is forbidden there.
+     (setq this-command 'ignore)
      (message "Text is read-only") (ding))))
 
 (defun delete-selection-pre-hook ()
