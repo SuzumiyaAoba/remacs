@@ -312,7 +312,7 @@ When INCLUDE-SUBDOMAINS is non-nil, require a DNS-label boundary."
 				  (length (url-cookie-localpart y)))))))
     (dolist (cur cookies)
       (setq chunk (format "%s=%s" (url-cookie-name cur) (url-cookie-value cur))
-	    retval (if (and url-cookie-multiple-line
+	    retval (if (and retval url-cookie-multiple-line
 			    (< 80 (+ (length retval) (length chunk) 4)))
 		       (concat retval "\r\nCookie: " chunk)
 		     (if retval
