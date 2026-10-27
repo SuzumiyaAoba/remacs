@@ -1907,7 +1907,8 @@ Ignore duplicates if `comint-input-ignoredups' is non-nil."
 	   (< size comint-input-ring-size)
 	   (ring-extend comint-input-ring
 			(min size (- comint-input-ring-size size)))))
-    (ring-insert comint-input-ring cmd)))
+    (when (> size 0)
+      (ring-insert comint-input-ring cmd))))
 
 (defconst comint--prompt-rear-nonsticky
   '( field inhibit-line-move-field-capture read-only font-lock-face
