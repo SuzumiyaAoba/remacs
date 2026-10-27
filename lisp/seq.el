@@ -157,6 +157,17 @@ the sequence, and its index within the sequence."
   "Return a shallow copy of SEQUENCE."
   (copy-sequence sequence))
 
+(defun seq--subseq-bounds (sequence start end)
+  "Return normalized START and END bounds for SEQUENCE."
+  (let* ((length (seq-length sequence))
+         (start (if (< start 0) (+ start length) start))
+         (end (if (null end)
+                  length
+                (if (< end 0) (+ end length) end))))
+    (unless (<= 0 start end length)
+      (signal 'args-out-of-range (list sequence start end)))
+    (cons start end)))
+
 ;;;###autoload
 (cl-defgeneric seq-subseq (sequence start &optional end)
   "Return the sequence of elements of SEQUENCE from START to END.
@@ -168,6 +179,22 @@ error if START or END are outside of the sequence (i.e too large
 if positive or too small if negative)."
   (cond
    ((or (stringp sequence) (vectorp sequence)) (substring sequence start end))
+   ((bool-vector-p sequence)
+    (let* ((bounds (seq--subseq-bounds sequence start end))
+           (start (car bounds))
+           (end (cdr bounds))
+           (subsequence (make-bool-vector (- end start) nil)))
+      (dotimes (index (- end start))
+        (aset subsequence index (seq-elt sequence (+ start index))))
+      subsequence))
+   ((char-table-p sequence)
+    (let* ((bounds (seq--subseq-bounds sequence start end))
+           (start (car bounds))
+           (end (cdr bounds))
+           (subsequence (make-vector (- end start) nil)))
+      (dotimes (index (- end start))
+        (aset subsequence index (seq-elt sequence (+ start index))))
+      subsequence))
    ((listp sequence)
     (let (len
           (orig-start start)
@@ -309,13 +336,23 @@ This does not modify SEQUENCE."
 
 (cl-defgeneric seq-concatenate (type &rest sequences)
   "Concatenate SEQUENCES into a single sequence of type TYPE.
-TYPE must be one of following symbols: `vector', `string' or `list'.
+TYPE must be one of following symbols: `vector', `string', `list', or
+`bool-vector'.
 This does not modify any of the SEQUENCES."
   (setq sequences (mapcar #'seq-into-sequence sequences))
   (pcase type
     ('vector (apply #'vconcat sequences))
     ('string (apply #'concat sequences))
     ('list (apply #'append (append sequences '(nil))))
+    ('bool-vector
+     (let* ((length (apply #'+ (mapcar #'seq-length sequences)))
+            (result (make-bool-vector length nil))
+            (offset 0))
+       (dolist (sequence sequences)
+         (dotimes (index (seq-length sequence))
+           (aset result offset (seq-elt sequence index))
+           (setq offset (1+ offset))))
+       result))
     (_ (error "Not a sequence type name: %S" type))))
 
 (cl-defgeneric seq-into-sequence (sequence)
@@ -368,7 +405,10 @@ the result.
 The result is a sequence of the same type as SEQUENCE.
 This does not modify SEQUENCE."
   (seq-concatenate
-   (if (listp sequence) 'list (type-of sequence))
+   (cond ((listp sequence) 'list)
+         ((bool-vector-p sequence) 'bool-vector)
+         ((char-table-p sequence) 'vector)
+         (t (type-of sequence)))
    (seq-subseq sequence 0 n)
    (seq-subseq sequence (1+ n))))
 
