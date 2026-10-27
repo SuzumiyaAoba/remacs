@@ -111,13 +111,15 @@ If COL is nil, return a region for the whole line."
     (save-excursion
       (save-restriction
         (widen)
-        (goto-char (point-min))
-        (forward-line (1- line))
-        (if col
-            (let ((beg (+ (point) (1- col)))
-                  (end (line-end-position)))
-              (and (<= beg end) (cons beg end)))
-          (cons (point) (line-end-position)))))))
+        (let ((line (min (max line 1)
+                         (line-number-at-pos (point-max) 'absolute))))
+          (goto-char (point-min))
+          (forward-line (1- line))
+          (if col
+              (let ((beg (+ (point) (1- col)))
+                    (end (line-end-position)))
+                (and (<= beg end) (cons beg end)))
+            (cons (point) (line-end-position))))))))
 
 (defun flymake-diagnostics (&optional beg end)
   "Get Flymake diagnostics in the current buffer.
