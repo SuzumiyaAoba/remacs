@@ -136,6 +136,8 @@ documentation."
     ;; non-read-only buffer
     (let ((rstart           (min start end))
 	  (rend             (copy-marker (max start end)))
+	  (region-ends-at-eob (= (max start end)
+				  (without-restriction (point-max))))
 	  overwrite-mode		; enforce no overwrite
 	  tmp)
       (save-excursion
@@ -210,6 +212,7 @@ documentation."
            whitespace-space-before-tab-regexp 2)))
         ;; PROBLEM 5: missing newline at end of file
         (and (memq 'missing-newline-at-eof whitespace-style)
+             region-ends-at-eob
              (> (point-max) (point-min))
              (= (point-max) (without-restriction (point-max)))
              (/= (char-before (point-max)) ?\n)
