@@ -421,18 +421,20 @@ You can use \\[hexl-find-file] to visit a file in Hexl mode.
                (start (point-min))
                (end (point-max))
                modified)
-           (with-current-buffer buf
-             (insert-buffer-substring name start end)
-             (set-buffer name)
-             (dehexlify-buffer)
-             ;; Prevent infinite recursion.
-             (let ((hexl-in-save-buffer t))
-               (save-buffer))
-             (setq modified (buffer-modified-p))
-             (delete-region (point-min) (point-max))
-             (insert-buffer-substring buf start end)
-             (kill-buffer buf)
-             modified))
+           (unwind-protect
+               (with-current-buffer buf
+                 (insert-buffer-substring name start end)
+                 (set-buffer name)
+                 (dehexlify-buffer)
+                 ;; Prevent infinite recursion.
+                 (let ((hexl-in-save-buffer t))
+                   (save-buffer))
+                 (setq modified (buffer-modified-p))
+                 (delete-region (point-min) (point-max))
+                 (insert-buffer-substring buf start end)
+                 modified)
+             (when (buffer-live-p buf)
+               (kill-buffer buf))))
        (message "(No changes need to be saved)")
        nil))
     ;; Return t to indicate we have saved t
