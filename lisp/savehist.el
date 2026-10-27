@@ -335,8 +335,12 @@ If AUTO-SAVE is non-nil, compare the saved contents to the one last saved,
                   (when (and (consp elem)
                              (listp value)
                              (length> value (cdr elem)))
-                    (setq value (copy-sequence value))
-                    (setcdr (nthcdr (cdr elem) value) nil))
+                    (setq value
+                          (if (zerop (cdr elem))
+                              nil
+                            (let ((copy (copy-sequence value)))
+                              (setcdr (nthcdr (cdr elem) copy) nil)
+                              copy))))
 	          (prin1 `(setq ,symbol ',value) (current-buffer))
 	          (insert ?\n))))))))
     ;; If autosaving, avoid writing if nothing has changed since the
