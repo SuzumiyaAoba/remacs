@@ -185,6 +185,11 @@ See also `xml-get-attribute-or-nil'."
 ;; [5] Name     ::= NameStartChar (NameChar)*
 (defconst xml-name-re (concat xml-name-start-char-re xml-name-char-re "*"))
 
+;; Namespaces in XML [4] NCName ::= Name - (Char* ':' Char*).
+(defconst xml-ncname-re
+  (concat "[[:word:]_]"
+          "[[:word:]_.0-9\\u00B7\\u0300-\\u036F\\u203F\\u2040-]*"))
+
 ;; [6] Names    ::= Name (#x20 Name)*
 (defconst xml-names-re (concat xml-name-re "\\(?: " xml-name-re "\\)*"))
 
@@ -458,6 +463,19 @@ Both features can be combined by providing a cons cell
       (cons 'symbol-qnames (cons (cons prefix uri) (cdr xml-ns)))
     (cons (cons prefix uri) xml-ns)))
 
+(defun xml--valid-qname-p (name)
+  "Return non-nil if NAME has the Namespaces in XML QName structure."
+  (let ((colon (string-match ":" name)))
+    (if colon
+        (and (> colon 0)
+             (< (1+ colon) (length name))
+             (not (string-match ":" name (1+ colon)))
+             (string-match-p (concat "\\`" xml-ncname-re "\\'")
+                             (substring name 0 colon))
+             (string-match-p (concat "\\`" xml-ncname-re "\\'")
+                             (substring name (1+ colon))))
+      (string-match-p (concat "\\`" xml-ncname-re "\\'") name))))
+
 (defun xml-maybe-do-ns (name default xml-ns)
   "Perform any namespace expansion.
 NAME is the name to perform the expansion on.
@@ -475,7 +493,10 @@ would like to get plain symbols instead, provide a cons cell
 
 in the XML-NS argument."
   (if (consp xml-ns)
-      (let* ((symbol-qnames (eq (car-safe xml-ns) 'symbol-qnames))
+      (progn
+	(unless (xml--valid-qname-p name)
+	  (error "XML: (Not Well-Formed) Invalid qualified name `%s'" name))
+	(let* ((symbol-qnames (eq (car-safe xml-ns) 'symbol-qnames))
 	     (mapping (if symbol-qnames (cdr xml-ns) xml-ns))
 	     (nsp (string-match ":" name))
 	     (lname (if nsp (substring name (match-end 0)) name))
@@ -496,7 +517,7 @@ in the XML-NS argument."
                  (not special)
 		 (not (string= prefix "xmlns")))
 	    (intern (concat ns lname))
-	  (cons ns (if special "" lname))))
+	  (cons ns (if special "" lname)))))
     (intern name)))
 
 (defun xml-parse-tag (&optional parse-dtd parse-ns)
