@@ -907,6 +907,14 @@ installed package."
                 (or (and (derived-mode-p 'dired-mode)
                          (dired-get-marked-files nil 'marked))
                     (directory-files-recursively default-directory "" nil))))
+           ;; Validate every destination before copying any package files.
+           (dolist (source-file file-list)
+             (let ((target (expand-file-name
+                            (file-relative-name source-file default-directory)
+                            unpack-dir)))
+               (unless (file-in-directory-p target unpack-dir)
+                 (error "Package file escapes installation directory: %s"
+                        source-file))))
            (dolist (source-file file-list)
              (let ((target (expand-file-name
                             (file-relative-name source-file default-directory)
