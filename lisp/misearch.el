@@ -312,13 +312,17 @@ of files is defined by the variable `multi-isearch-file-list' set in
 `multi-isearch-files' or `multi-isearch-files-regexp'.
 Every next/previous file in the defined sequence is visited by
 `find-file-noselect' that returns the corresponding file buffer."
-  (let ((files (if isearch-forward
-		   multi-isearch-file-list
-		 (reverse multi-isearch-file-list))))
-    (find-file-noselect
-     (if wrap
-	 (car files)
-       (cadr (member (buffer-file-name buffer) files))))))
+  (let* ((files (if isearch-forward
+		    multi-isearch-file-list
+		  (reverse multi-isearch-file-list)))
+	 (current-file (buffer-file-name buffer))
+	 (index (and current-file
+		     (cl-position-if
+		      (lambda (file) (file-equal-p file current-file))
+		      files)))
+	 (next-file (if wrap (car files)
+		       (and index (nth (1+ index) files)))))
+    (and next-file (find-file-noselect next-file))))
 
 (defun multi-isearch-read-files ()
   "Return a list of files specified interactively, one by one."
