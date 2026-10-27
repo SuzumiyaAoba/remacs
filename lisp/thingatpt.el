@@ -551,6 +551,7 @@ the bounds of a possible ill-formed URI (one lacking a scheme)."
 		    (< (point) end))
 	  (and (re-search-forward thing-at-point-markedup-url-regexp
 				  end 1)
+	       (<= (match-beginning 0) pt)
 	       (> (point) pt)
 	       (setq found t))))
       (if found
