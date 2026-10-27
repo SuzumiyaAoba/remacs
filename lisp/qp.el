@@ -161,14 +161,15 @@ encode lines starting with \"From\"."
 		(end-of-line))
 	      (forward-line))))))))
 
-(defun quoted-printable-encode-string (string)
-  "Encode the STRING as quoted-printable and return the result."
+(defun quoted-printable-encode-string (string &optional fold)
+  "Encode STRING as quoted-printable and return the result.
+If FOLD is non-nil, fold lines at 76 characters as required by RFC 2045."
   (with-temp-buffer
     (if (multibyte-string-p string)
 	(set-buffer-multibyte 'to)
       (set-buffer-multibyte nil))
     (insert string)
-    (quoted-printable-encode-region (point-min) (point-max))
+    (quoted-printable-encode-region (point-min) (point-max) fold)
     (buffer-string)))
 
 (provide 'qp)
