@@ -54,10 +54,14 @@ pointed by `ansi-osc--marker'."
     (save-excursion
       (goto-char (or ansi-osc--marker begin))
       (when (eq (char-before) ?\e) (backward-char))
-      (while (re-search-forward "\e]" end-marker t)
+      (while (re-search-forward
+              (concat "\e]\\|" (regexp-quote (string #x9d)))
+              end-marker t)
         (let ((pos0 (match-beginning 0)))
           (if (re-search-forward
-               "\\=[\x08-\x0D]*[[:print:]]*\\(\a\\|\e\\\\\\)"
+               (concat "\\=[\x08-\x0D]*[[:print:]]*\\(\a\\|"
+                       (regexp-quote (concat "\e\\"))
+                       "\\|" (regexp-quote (string #x9c)) "\\)")
                end-marker t)
               (delete-region pos0 (point))
             (setq ansi-osc--marker (copy-marker pos0))))))))
@@ -75,6 +79,7 @@ This function searches for escape sequences of the forms
 
     ESC ] command ; text BEL
     ESC ] command ; text ESC \\
+    C1 OSC command ; text C1 ST
 
 Every occurrence of such escape sequences is removed from the buffer.
 Then, if `command' is a key in the alist that is the value of the local
@@ -88,13 +93,19 @@ pointed by `ansi-osc--marker'."
     (save-excursion
       (goto-char (or ansi-osc--marker begin))
       (when (eq (char-before) ?\e) (backward-char))
-      (while (re-search-forward "\e]" end-marker t)
+      (while (re-search-forward
+              (concat "\e]\\|" (regexp-quote (string #x9d)))
+              end-marker t)
         (let ((pos0 (match-beginning 0))
               (code (and
                      (re-search-forward "\\=\\([0-9A-Za-z]*\\);" end-marker t)
                      (match-string 1)))
               (pos1 (point)))
-          (if (re-search-forward "\a\\|\e\\\\" end-marker t)
+          (if (re-search-forward
+               (concat "\a\\|"
+                       (regexp-quote (concat "\e\\"))
+                       "\\|" (regexp-quote (string #x9c)))
+               end-marker t)
               (let ((text (buffer-substring-no-properties
                            pos1 (match-beginning 0))))
                 (setq ansi-osc--marker nil)
