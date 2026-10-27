@@ -293,8 +293,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_mode_line_height,
         ""
     ),
-    S!("window-header-line-height", 0, 1, f_zero_winlive, ""),
-    S!("window-tab-line-height", 0, 1, f_zero_winlive, ""),
+    S!("window-header-line-height", 0, 1, f_window_header_line_height, ""),
+    S!("window-tab-line-height", 0, 1, f_window_tab_line_height, ""),
     S!("window-bottom-divider-width", 0, 1, f_zero_winlive, ""),
     S!("window-right-divider-width", 0, 1, f_zero_winlive, ""),
     S!("window-divider-width-valid-p", 1, 1, f_false, ""),
@@ -2352,6 +2352,34 @@ fn f_window_mode_line_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
         }
         other => Err(i.wrong_type_mut("window-live-p", other)),
     }
+}
+
+pub(crate) fn window_format_line_height(
+    i: &mut Interp,
+    window: &WindowRef,
+    variable: &str,
+) -> Result<usize, Flow> {
+    let buffer = i
+        .buffer_value(window.borrow().buffer)
+        .unwrap_or(Value::Nil);
+    let variable = Value::Sym(i.q(variable));
+    let buffer_local_value = Value::Sym(i.q("buffer-local-value"));
+    let value = i.apply(&buffer_local_value, vec![variable, buffer])?;
+    Ok(usize::from(value.truthy()))
+}
+
+fn f_window_header_line_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let window = win_live(i, &arg(&a, 0))?;
+    Ok(Value::Int(
+        window_format_line_height(i, &window, "header-line-format")? as i128,
+    ))
+}
+
+fn f_window_tab_line_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let window = win_live(i, &arg(&a, 0))?;
+    Ok(Value::Int(
+        window_format_line_height(i, &window, "tab-line-format")? as i128,
+    ))
 }
 
 /// `frame-ancestor-p' — both args must be live frames; our single

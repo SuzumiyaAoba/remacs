@@ -5067,10 +5067,15 @@ fn f_window_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 fn f_window_body_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live(i, &arg(&a, 0))?;
+    let header = winxtra::window_format_line_height(i, &w, "header-line-format")?;
+    let tab = winxtra::window_format_line_height(i, &w, "tab-line-format")?;
     let wb = w.borrow();
-    // Body excludes the mode line; the minibuffer window has none.
+    // Body excludes the header, tab, and mode lines.
     let ml = usize::from(!wb.minibuffer && wb.horiz.is_none());
-    Ok(Value::Int(wb.height.saturating_sub(ml) as i128))
+    Ok(Value::Int(
+        wb.height
+            .saturating_sub(ml.saturating_add(header).saturating_add(tab)) as i128,
+    ))
 }
 /// Body width excludes margins and the one-column window divider that
 /// separates horizontally adjacent windows on a tty.
@@ -5144,6 +5149,14 @@ fn f_window_edges(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     } else {
         0
     };
+    let (header, tab) = if body {
+        (
+            winxtra::window_format_line_height(i, &w, "header-line-format")?,
+            winxtra::window_format_line_height(i, &w, "tab-line-format")?,
+        )
+    } else {
+        (0, 0)
+    };
     let ww = w.borrow();
     let ml = usize::from(body && !ww.minibuffer && ww.horiz.is_none());
     let left = if body {
@@ -5164,7 +5177,12 @@ fn f_window_edges(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     Ok(Value::list(vec![
         Value::Int(left as i128),
-        Value::Int((ww.top).saturating_sub(shift) as i128),
+        Value::Int(
+            ww.top
+                .saturating_add(header)
+                .saturating_add(tab)
+                .saturating_sub(shift) as i128,
+        ),
         Value::Int(right as i128),
         Value::Int((ww.top + ww.height).saturating_sub(shift + ml) as i128),
     ]))
