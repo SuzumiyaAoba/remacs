@@ -492,9 +492,13 @@ float less than 1.0, round to that value."
              (concat (format "%.2f" (/ delay (car (cddr here)))) (cadr here))))))
 
 (defun date-days-in-month (year month)
-  "The number of days in MONTH in YEAR."
-  (unless (and (numberp month) (<= 1 month 12))
+  "The number of days in MONTH in YEAR.
+MONTH must be an integer-valued number from 1 through 12."
+  (unless (and (numberp month)
+	       (<= 1 month 12)
+	       (= month (truncate month)))
     (error "Month %s is invalid" month))
+  (setq month (truncate month))
   (if (= month 2)
       (if (date-leap-year-p year)
           29
