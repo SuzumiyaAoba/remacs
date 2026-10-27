@@ -142,6 +142,11 @@ Gregorian date Sunday, December 31, 1 BC."
          (month (aref [9 10 11 12 1 2 3 4 7 7 7 8]
                       (1- (calendar-extract-month greg-date))))
          (length (progn
+                   ;;Remacs: the Gregorian-year estimate can overshoot for
+                   ;;distant dates, so correct in both directions.
+                   (while (< date (calendar-hebrew-to-absolute
+                                   (list 7 1 year)))
+                     (setq year (1- year)))
                    (while (>= date (calendar-hebrew-to-absolute
                                     (list 7 1 (1+ year))))
                      (setq year (1+ year)))
