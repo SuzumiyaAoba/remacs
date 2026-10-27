@@ -2368,27 +2368,38 @@ This doesn't recover lost files, it just undoes changes in the buffer itself."
 ;; -------------------------------------------------------------------------
 ;;; Section `ar' archives.
 
-;; TODO: we currently only handle the basic format of ar archives,
-;; not the GNU nor the BSD extensions.  As it turns out, this is sufficient
-;; for .deb packages.
+;; TODO: we handle GNU/SVR4 long-name tables, but not the other GNU or BSD
+;; extensions.  The supported format is sufficient for .deb packages.
 
 (defconst archive-ar-file-header-re
   "\\(.\\{16\\}\\)\\([ 0-9]\\{12\\}\\)\\([ 0-9]\\{6\\}\\)\\([ 0-9]\\{6\\}\\)\\([ 0-7]\\{8\\}\\)\\([ 0-9]\\{10\\}\\)`\n")
 
-(defun archive-ar--name (name)
+(defun archive-ar--name (name &optional long-name-table)
   "Return the external name represented by the entry NAME.
-NAME is expected to be the 16-bytes part of an ar record."
+NAME is expected to be the 16-bytes part of an ar record.
+LONG-NAME-TABLE is the data from the archive's extended name table."
   (cond ((equal name "//              ")
          (propertize ".<ExtNamesTable>." 'face 'italic))
         ((equal name "/               ")
          (propertize ".<LookupTable>." 'face 'italic))
+        ((string-match "^/\\([0-9]+\\) *$" name)
+         (let* ((offset (string-to-number (match-string 1 name)))
+                (token (concat "/" (match-string 1 name)))
+                (end (and long-name-table
+                          (string-match "/\n" long-name-table offset))))
+           (if end
+               (decode-coding-string
+                (substring long-name-table offset (match-beginning 0))
+                (or archive-file-name-coding-system 'no-conversion))
+             token)))
         ((string-match "/? *\\'" name)
          ;; FIXME: Decode?  Add support for longer names?
          (substring name 0 (match-beginning 0)))))
 
 (defun archive-ar-summarize ()
   ;; File is used internally for `archive-rar-exe-summarize'.
-  (let* ((files ()))
+  (let ((files ())
+        long-name-table)
     (goto-char (point-min))
     (search-forward "!<arch>\n")
     (while (looking-at archive-ar-file-header-re)
@@ -2402,8 +2413,11 @@ NAME is expected to be the 16-bytes part of an ar record."
              (size (string-to-number sizestr)))
         ;; Move to the beginning of the data.
         (goto-char (match-end 0))
+        (when (equal name "//              ")
+          (setq long-name-table
+                (buffer-substring-no-properties (point) (+ (point) size))))
         (setq time (format-time-string "%Y-%m-%d %H:%M" time))
-        (setq extname (archive-ar--name name))
+        (setq extname (archive-ar--name name long-name-table))
         (setq user (substring user 0 (string-match " +\\'" user)))
         (setq group (substring group 0 (string-match " +\\'" group)))
         ;; Move to the end of the data.
@@ -2416,7 +2430,7 @@ NAME is expected to be the 16-bytes part of an ar record."
 (defun archive-ar-extract (archive name)
   (let ((destbuf (current-buffer))
         (archivebuf (find-file-noselect archive))
-        (from nil) size)
+        (from nil) size long-name-table)
     (with-current-buffer archivebuf
       (save-restriction
         ;; We may be in archive-mode or not, so either with or without
@@ -2428,7 +2442,11 @@ NAME is expected to be the 16-bytes part of an ar record."
             (let ((this (match-string 1)))
               (setq size (string-to-number (match-string 6)))
               (goto-char (match-end 0))
-              (if (equal name (archive-ar--name this))
+              (when (equal this "//              ")
+                (setq long-name-table
+                      (buffer-substring-no-properties
+                       (point) (+ (point) size))))
+              (if (equal name (archive-ar--name this long-name-table))
                   (setq from (point))
                 ;; Move to the end of the data.
                 (forward-char size)
