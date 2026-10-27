@@ -123,6 +123,33 @@ pub(crate) fn tz_lock() -> std::sync::MutexGuard<'static, ()> {
     static L: std::sync::Mutex<()> = std::sync::Mutex::new(());
     L.lock().unwrap_or_else(|p| p.into_inner())
 }
+
+/// Run a time conversion with TZ temporarily set.  The caller must hold
+/// `tz_lock` while using this helper.
+fn with_tz<R>(zone: Option<&str>, f: impl FnOnce() -> R) -> R {
+    if let Some(zone) = zone {
+        // NUL inside the spec would panic std::env::set_var; a NUL
+        // string never names a real zone — fall back to UTC like tzset.
+        let zone = if zone.contains('\0') { "UTC0" } else { zone };
+        let saved = std::env::var_os("TZ");
+        unsafe {
+            std::env::set_var("TZ", zone);
+            tzset();
+        }
+        let result = f();
+        unsafe {
+            match saved {
+                Some(value) => std::env::set_var("TZ", value),
+                None => std::env::remove_var("TZ"),
+            }
+            tzset();
+        }
+        result
+    } else {
+        f()
+    }
+}
+
 /// Local-time breakdown for a unix-second timestamp.
 pub(crate) fn local_tm(secs: i64) -> Tm {
     let _g = tz_lock();
@@ -276,6 +303,52 @@ pub(super) fn days_from_civil(y: i128, m: i128, d: i128) -> i128 {
     era * 146097 + doe - 719468
 }
 
+/// Resolve a local wall-clock time by iterating the UTC offset around
+/// its naive UTC equivalent.  Caller must hold `tz_lock`.
+fn fallback_local_mktime(
+    result: i64,
+    sec: i32,
+    min: i32,
+    hour: i32,
+    day: i32,
+    mon: i32,
+    year: i32,
+    isdst: i32,
+) -> Option<i64> {
+    let total_m = (year as i128 + 1900) * 12 + mon as i128;
+    let (year, month) = (total_m.div_euclid(12), total_m.rem_euclid(12) + 1);
+    let wall_seconds = days_from_civil(year, month, day as i128)
+        .checked_mul(86400)?
+        .checked_add(hour as i128 * 3600)?
+        .checked_add(min as i128 * 60)?
+        .checked_add(sec as i128)?;
+    let wall_seconds = i64::try_from(wall_seconds).ok()?;
+    let expected = gmt_tm(wall_seconds);
+    let matches = |tm: &Tm| {
+        tm.tm_year == expected.tm_year
+            && tm.tm_mon == expected.tm_mon
+            && tm.tm_mday == expected.tm_mday
+            && tm.tm_hour == expected.tm_hour
+            && tm.tm_min == expected.tm_min
+            && tm.tm_sec == expected.tm_sec
+            && (isdst < 0 || (tm.tm_isdst > 0) == (isdst > 0))
+    };
+    if matches(&local_tm_locked(&result)) {
+        return None;
+    }
+
+    let mut candidate = wall_seconds;
+    for _ in 0..4 {
+        let offset = local_tm_locked(&candidate).tm_gmtoff;
+        let adjusted = wall_seconds.checked_sub(offset)?;
+        if adjusted == candidate {
+            break;
+        }
+        candidate = adjusted;
+    }
+    matches(&local_tm_locked(&candidate)).then_some(candidate)
+}
+
 fn time_tm_field(i: &mut Interp, value: i128) -> Result<i32, Flow> {
     i32::try_from(value).map_err(|_| i.error("Specified time is not representable"))
 }
@@ -311,30 +384,6 @@ fn mktime_secs(
     // Run `f' with TZ=Z (restored after).  Named-zone mktime and the
     // roundtrip's localtime must share the same zone, so the TZ flip
     // brackets both passes.
-    let with_tz = |z: Option<&str>, f: &mut dyn FnMut() -> i64| -> i64 {
-        if let Some(z) = z {
-            // NUL inside the spec would panic std::env::set_var; a NUL
-            // string never names a real zone — fall back to UTC like
-            // tzset does for unparseable specs.
-            let z = if z.contains('\0') { "UTC0" } else { z };
-            let saved = std::env::var_os("TZ");
-            unsafe {
-                std::env::set_var("TZ", z);
-                tzset();
-            }
-            let r = f();
-            unsafe {
-                match saved {
-                    Some(v) => std::env::set_var("TZ", v),
-                    None => std::env::remove_var("TZ"),
-                }
-                tzset();
-            }
-            r
-        } else {
-            f()
-        }
-    };
     // GNU's gnulib mktime (lib/mktime.c): libc mktime on a forced
     // isdst=1 blind-shifts -1h even when the zone never observes DST
     // (e.g. Asia/Tokyo).  GNU resolves the request by probing
@@ -345,7 +394,7 @@ fn mktime_secs(
     // then a localtime roundtrip normalizes fields under the resolved
     // flag; when the request is still unmet and the zone never shows
     // DST at the probed instants, the resolved result stands.
-    let r = with_tz(tz, &mut || unsafe { mktime(&mut tm) });
+    let r = with_tz(tz, || unsafe { mktime(&mut tm) });
     if isdst >= 0 && (tm.tm_isdst > 0) != (isdst > 0) {
         // Resolved flag disagrees with the request.  Find a nearby
         // instant (gnulib probes ±1yr, stride 601200s) whose resolved
@@ -357,7 +406,7 @@ fn mktime_secs(
         for delta in (601200i64..366 * 86400 + 601200).step_by(601200) {
             for dir in [-1i64, 1] {
                 let ot = r.saturating_add(delta.saturating_mul(dir));
-                let resolved = with_tz(tz, &mut || {
+                let resolved = with_tz(tz, || {
                     let mut otm: Tm = unsafe { std::mem::zeroed() };
                     unsafe { localtime_r(&ot, &mut otm) };
                     otm.tm_isdst as i64
@@ -384,8 +433,13 @@ fn mktime_secs(
             tm2.tm_mon = mon;
             tm2.tm_year = year;
             tm2.tm_isdst = if tm.tm_isdst > 0 { 1 } else { 0 };
-            return with_tz(tz, &mut || unsafe { mktime(&mut tm2) });
+            return with_tz(tz, || unsafe { mktime(&mut tm2) });
         }
+    }
+    if let Some(fallback) = with_tz(tz, || {
+        fallback_local_mktime(r, sec, min, hour, day, mon, year, isdst)
+    }) {
+        return fallback;
     }
     r
 }
