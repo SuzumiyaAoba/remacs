@@ -391,8 +391,7 @@ interface to be used from `write-region-annotation-functions', which
 see."
   ;; start may be nil or a string; see `write-region'
   (if (stringp start)
-      (let ((buf (generate-new-buffer " *icalendar-folded*")))
-        (set-buffer buf)
+      (with-temp-buffer
         (insert start)
         (icalendar-fold-region (point-min) (point-max) t))
 
