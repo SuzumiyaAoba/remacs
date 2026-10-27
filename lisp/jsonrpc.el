@@ -272,18 +272,19 @@ dispatcher in CONN."
   (let* ((whole (jsonrpc-convert-from-endpoint conn foreign-message))
          (method (plist-get whole :method))
          (id (plist-get whole :id))
+         (id-present-p (plist-member whole :id))
          (error (plist-get whole :error))
          (params (plist-get whole :params))
          (result (plist-get whole :result))
          (_jsonrpc (plist-get whole :jsonrpc)))
     (unwind-protect
         (let* ((log-plist (list :json (plist-get foreign-message :jsonrpc-json)
-                                :kind (cond ((and method id) 'request)
+                                :kind (cond ((and method id-present-p) 'request)
                                             (method          'notification)
-                                            (id              'reply))
+                                            (id-present-p    'reply))
                                 :message whole
                                 :foreign-message foreign-message))
-               (response-p (and (null method) id))
+               (response-p (and (null method) id-present-p))
                (cont (and response-p (jsonrpc--remove conn id))))
           (cl-remf foreign-message :jsonrpc-json)
           ;; Do this pre-processing of the response so we can always
@@ -335,7 +336,7 @@ dispatcher in CONN."
               response-p
               (jsonrpc--continue conn `(:local ,id) cont result error))
              (;; A remote request
-              (and method id)
+              (and method id-present-p)
               (let* ((debug-on-error (and debug-on-error
                                           (not jsonrpc-inhibit-debug-on-error)))
                      reply)
