@@ -461,41 +461,9 @@ fn html_tag_end(text: &str, mut position: usize) -> usize {
 fn html_boolean_attribute(name: &str) -> bool {
     matches!(
         name,
-        "allowfullscreen"
-            | "allowpaymentrequest"
-            | "async"
-            | "autofocus"
-            | "autoplay"
-            | "checked"
-            | "compact"
-            | "controls"
-            | "default"
-            | "defer"
-            | "declare"
-            | "disabled"
-            | "formnovalidate"
-            | "hidden"
-            | "inert"
-            | "ismap"
-            | "itemscope"
-            | "loop"
-            | "multiple"
-            | "muted"
-            | "nohref"
-            | "noresize"
-            | "noshade"
-            | "novalidate"
-            | "nowrap"
-            | "open"
-            | "playsinline"
-            | "readonly"
-            | "required"
-            | "reversed"
-            | "scoped"
-            | "seamless"
-            | "selected"
-            | "truespeed"
-            | "typemustmatch"
+        "checked" | "compact" | "declare" | "defer" | "disabled" | "ismap"
+            | "multiple" | "nohref" | "noresize" | "noshade" | "nowrap"
+            | "readonly" | "selected"
     )
 }
 
@@ -647,8 +615,12 @@ fn normalize_html_boolean_attributes(text: &str) -> String {
                     output.push_str("=\"");
                     output.push_str(&normalized_name);
                     output.push('"');
-                    copied = name_end;
+                } else {
+                    // GNU's libxml HTML parser omits unsupported valueless
+                    // attributes; explicit empty values take the '=' path.
+                    output.push_str(&text[copied..name_start]);
                 }
+                copied = name_end;
                 attribute = name_end;
             }
         }
