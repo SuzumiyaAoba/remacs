@@ -17868,8 +17868,8 @@ fn win_state_materialize(
 }
 
 /// `window-state-put' — GNU's window.el protocol: a `leaf' state is
-/// applied onto WINDOW in place; a `vc'/`hc' state replaces WINDOW
-/// with a fresh subtree (the old window becomes invalid).
+/// applied onto a leaf WINDOW in place; a composite state, or a leaf
+/// state replacing an internal WINDOW, installs a fresh subtree.
 fn f_window_state_put(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU window.el order:
     // `(window-live-p window)' gate first — nil WINDOW resolves to the
@@ -17903,7 +17903,8 @@ fn f_window_state_put(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         .sym_id(&items[1])
         .map(|s| i.symbol_name(s))
         .unwrap_or_default();
-    if tag == "leaf" {
+    let target_is_internal = w.borrow().horiz.is_some();
+    if tag == "leaf" && !target_is_internal {
         // Apply the leaf spec onto W in place: display its buffer,
         // restore point/start/params.
         if let Some(bs) = state_assq(i, &items[2..], "buffer").cloned() {
@@ -17969,10 +17970,10 @@ fn f_window_state_put(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
         return Ok(Value::Nil);
     }
-    if tag != "vc" && tag != "hc" {
+    if tag != "leaf" && tag != "vc" && tag != "hc" {
         return Err(i.error("Invalid window state"));
     }
-    // Rebuild: replace W with a fresh internal subtree.
+    // Rebuild: replace W with a fresh leaf or internal subtree.
     let Some(f) = frame_of_window(i, &w).or_else(|| sel_frame(i)) else {
         return Err(i.error("No frame"));
     };
