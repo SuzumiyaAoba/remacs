@@ -642,6 +642,19 @@ VALUE will be the `car' and `cdr' of the association cons cell."
       (cons key (cons value map))
     (cons (cons key value) map)))
 
+(cl-defmethod map-insert ((map vector) key value)
+  "Implementation of `map-insert' for vector maps.
+If KEY is beyond the end of MAP, extend the returned vector with nil slots."
+  (if (and (integerp key) (>= key (length map)))
+      (let ((new (make-vector (1+ key) nil)))
+        (dotimes (index (length map))
+          (aset new index (aref map index)))
+        (aset new key value)
+        new)
+    (let ((copy (copy-sequence map)))
+      (map-put! copy key value)
+      copy)))
+
 (cl-defmethod map-apply (function (map list))
   "Implementation of `map-apply' for maps that are plists or alists.
 In a map that is a plist, property names are the keys, and the

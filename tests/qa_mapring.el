@@ -282,8 +282,9 @@
 (let ((v (vector 'a 'b)))
   (qa (map-insert v 1 'z) '[a z])
   (qa v '[a b])
-  ;; can't grow an array; index out of range is an error.
-  (qa-err-data (map-insert v 2 'z) 'args-out-of-range '([a b] 2)))
+  ;; map-insert extends an array when KEY is beyond its current length.
+  (qa (map-insert v 2 'z) '[a b z])
+  (qa v '[a b]))
 (let ((h (make-hash-table)))
   (puthash 'a 1 h)
   (let ((h2 (map-insert h 'b 2)))
