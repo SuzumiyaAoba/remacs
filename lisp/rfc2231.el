@@ -50,7 +50,7 @@ must never cause a Lisp error."
     (let ((ttoken (ietf-drums-token-to-list ietf-drums-text-token))
 	  (stoken (ietf-drums-token-to-list ietf-drums-tspecials))
 	  (ntoken (ietf-drums-token-to-list "0-9"))
-	  c type attribute encoded number parameters value)
+	 c type attribute encoded number parameters value part-string)
       (ietf-drums-init
        (condition-case nil
 	   (mail-header-remove-whitespace
@@ -112,6 +112,7 @@ must never cause a Lisp error."
 		;; since elm generates invalid headers on this form,
 		;; we allow it.
 		(when (setq c (char-after))
+		  (setq part-string nil)
 		  (if (and (memq c ttoken)
 			   (not (memq c stoken)))
 		      (setq attribute
@@ -128,17 +129,18 @@ must never cause a Lisp error."
 			(if (not (memq c ntoken))
 			    (setq encoded t
 				  number nil)
-			  (setq number
-				(string-to-number
-				 (buffer-substring
-				  (point) (progn (forward-sexp 1) (point)))))
+			  (setq part-string
+				(buffer-substring
+				 (point) (progn (forward-sexp 1) (point)))
+				number (string-to-number part-string))
 			  (setq c (char-after))
 			  (when (eq c ?*)
 			    (setq encoded t)
 			    (forward-char 1)
 			    (setq c (char-after)))))
 		    (setq number nil
-			  encoded nil))
+			  encoded nil
+			  part-string nil))
 		  (unless (eq c ?=)
 		    (error "Invalid header: %s" string))
 		  (forward-char 1)
@@ -171,17 +173,37 @@ must never cause a Lisp error."
 			     (point)))))
 		   (t
 		    (error "Invalid header: %s" string)))
-		  (push (list attribute value number encoded)
+		  (push (list attribute value number encoded part-string)
 			parameters))))
 	  (error
 	   (setq parameters nil)
 	   (when signal-error
 	     (signal err))))
 
+	(when signal-error
+	  (dolist (attribute (delete-dups (mapcar #'car parameters)))
+	    (let ((parts
+		   (sort
+		    (delq nil
+			  (mapcar (lambda (parameter)
+				    (and (eq (car parameter) attribute)
+					 (numberp (nth 2 parameter))
+					 (cons (nth 2 parameter) (nth 4 parameter))))
+				  parameters))
+		    (lambda (a b) (< (car a) (car b)))))
+		  (expected 0))
+	      (dolist (part parts)
+		(unless (and (= (car part) expected)
+			     (string= (cdr part)
+				      (number-to-string (car part))))
+		  (error "Invalid RFC 2231 continuation numbering for %s"
+			 attribute))
+		(setq expected (1+ expected)))))
+
 	;; Now collect and concatenate continuation parameters.
 	(let ((cparams nil)
 	      elem)
-	  (cl-loop for (attribute value part encoded)
+	  (cl-loop for (attribute value part encoded _part-string)
 		in (sort parameters (lambda (e1 e2)
 				      (< (or (caddr e1) 0)
 					 (or (caddr e2) 0))))
