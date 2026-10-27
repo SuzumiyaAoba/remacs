@@ -414,6 +414,8 @@ the result.
 
 The result is a sequence of the same type as SEQUENCE.
 This does not modify SEQUENCE."
+  (when (< n 0)
+    (signal 'args-out-of-range (list sequence n)))
   (seq-concatenate
    (cond ((listp sequence) 'list)
          ((bool-vector-p sequence) 'bool-vector)
