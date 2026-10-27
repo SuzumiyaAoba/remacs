@@ -5072,10 +5072,8 @@ fn f_window_body_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let ml = usize::from(!wb.minibuffer && wb.horiz.is_none());
     Ok(Value::Int(wb.height.saturating_sub(ml) as i128))
 }
-/// Body width = total width minus the one-column window divider that
-/// separates horizontally adjacent windows on a tty.  GNU: a window
-/// whose right edge is not the frame's right edge shows a divider
-/// column inside its rectangle.
+/// Body width excludes margins and the one-column window divider that
+/// separates horizontally adjacent windows on a tty.
 fn win_body_width(i: &Interp, w: &WindowRef) -> usize {
     let ww = w.borrow();
     let frame_w = i
@@ -5083,10 +5081,9 @@ fn win_body_width(i: &Interp, w: &WindowRef) -> usize {
         .iter()
         .find(|f| f.borrow().windows.iter().any(|x| Rc::ptr_eq(x, w)))
         .map(|f| f.borrow().width);
-    match frame_w {
-        Some(fw) if ww.left + ww.width < fw => ww.width.saturating_sub(1),
-        _ => ww.width,
-    }
+    let margins = ww.margins.0.saturating_add(ww.margins.1);
+    let divider = usize::from(frame_w.is_some_and(|fw| ww.left + ww.width < fw));
+    ww.width.saturating_sub(margins).saturating_sub(divider)
 }
 
 fn f_window_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -5149,14 +5146,26 @@ fn f_window_edges(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     let ww = w.borrow();
     let ml = usize::from(body && !ww.minibuffer && ww.horiz.is_none());
+    let left = if body {
+        ww.left.saturating_add(ww.margins.0)
+    } else {
+        ww.left
+    };
+    let right = if body {
+        ww.left
+            .saturating_add(ww.width)
+            .saturating_sub(ww.margins.1)
+    } else {
+        ww.left.saturating_add(ww.width)
+    };
     if a.get(2).map(|v| v.truthy()).unwrap_or(false) {
         drop(ww);
         return Err(i.wrong_type_mut("number-or-marker-p", &Value::Nil));
     }
     Ok(Value::list(vec![
-        Value::Int(ww.left as i128),
+        Value::Int(left as i128),
         Value::Int((ww.top).saturating_sub(shift) as i128),
-        Value::Int((ww.left + ww.width) as i128),
+        Value::Int(right as i128),
         Value::Int((ww.top + ww.height).saturating_sub(shift + ml) as i128),
     ]))
 }
