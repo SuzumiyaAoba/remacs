@@ -211,6 +211,7 @@ as that will override any bit grouping options set here."
 (defvar hl-line-mode)
 (defvar hl-line-range-function)
 (defvar hl-line-face)
+(defvar revert-buffer-preserve-modes)
 
 ;; Variables where the original values are stored to.
 (defvar-local hexl-mode--old-var-vals ())
@@ -457,24 +458,34 @@ no-conversion, unlike if you visit it normally and then invoke `hexl-mode'."
       (hexl-mode)))
 
 (defun hexl-revert-buffer-function (_ignore-auto noconfirm)
-  ;; FIXME: We don't obey revert-buffer-preserve-modes!
-  (let ((coding-system-for-read 'no-conversion)
-	revert-buffer-function)
-    ;; Call the original `revert-buffer' without code conversion; also
-    ;; prevent it from changing the major mode to normal-mode, which
-    ;; calls `set-auto-mode'.
-    (revert-buffer nil noconfirm t)
-    ;; A couple of hacks are necessary here:
-    ;; 1. change the major-mode to one other than hexl-mode since the
-    ;; function `hexl-mode' does nothing if the current major-mode is
-    ;; already hexl-mode.
-    ;; 2. reset change-major-mode-hook in case that `hexl-mode'
-    ;; previously added hexl-maybe-dehexlify-buffer to it.
-    (remove-hook 'change-major-mode-hook #'hexl-maybe-dehexlify-buffer t)
-    (remove-hook 'eldoc-documentation-functions
-                 #'hexl-print-current-point-info t)
-    (setq major-mode 'fundamental-mode)
-    (hexl-mode)))
+  (let ((preserve-modes revert-buffer-preserve-modes)
+        (coding-system-for-read 'no-conversion))
+    (if preserve-modes
+        (let (revert-buffer-function)
+          ;; Revert without code conversion, but keep Hexl mode active.
+          (revert-buffer nil noconfirm t))
+      (let ((change-major-mode-hook
+             (delq #'hexl-maybe-dehexlify-buffer
+                   (copy-sequence change-major-mode-hook))))
+        (setq-local revert-buffer-function nil)
+        (unwind-protect
+            (revert-buffer nil noconfirm nil)
+          (when (eq major-mode 'hexl-mode)
+            (setq-local revert-buffer-function
+                        #'hexl-revert-buffer-function)))))
+    (when preserve-modes
+      ;; A couple of hacks are necessary here:
+      ;; 1. change the major-mode to one other than hexl-mode since the
+      ;; function `hexl-mode' does nothing if the current major-mode is
+      ;; already hexl-mode.
+      ;; 2. reset change-major-mode-hook in case that `hexl-mode'
+      ;; previously added hexl-maybe-dehexlify-buffer to it.
+      (remove-hook 'change-major-mode-hook
+                   #'hexl-maybe-dehexlify-buffer t)
+      (remove-hook 'eldoc-documentation-functions
+                   #'hexl-print-current-point-info t)
+      (setq major-mode 'fundamental-mode)
+      (hexl-mode))))
 
 (defun hexl-mode-exit (&optional arg)
   "Exit Hexl mode, returning to previous mode.
