@@ -568,7 +568,7 @@ order, or descending order if REVERSE is non-nil."
 			       (avl-tree--node-data node))
 		      avl-tree-mapf--accumulate)))
      (avl-tree--root tree)
-     (if reverse 0 1))
+     (if reverse 1 0))
     (nreverse avl-tree-mapf--accumulate)))
 
 
@@ -582,10 +582,10 @@ Note that if you don't care about the order in which FUN is
 applied, just that the resulting list is in the correct order,
 then
 
-  (avl-tree-mapf function \\='cons tree (not reverse))
+  (avl-tree-mapf function \\='cons tree reverse)
 
 is more efficient."
-  (nreverse (avl-tree-mapf fun 'cons tree reverse)))
+  (avl-tree-mapf fun 'cons tree reverse))
 
 
 (defun avl-tree-first (tree)
