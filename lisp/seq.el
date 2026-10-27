@@ -573,9 +573,7 @@ This does not modify SEQUENCE."
               (pop sequence))))
       ;; Slower path.
       (while sequence
-        (unless (seq-find (lambda (elem)
-                            (funcall testfn elem (car sequence)))
-                          result)
+        (unless (seq-position result (car sequence) testfn)
           (push (car sequence) result))
         (pop sequence)))
     (nreverse result)))
