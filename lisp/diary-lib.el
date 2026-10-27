@@ -661,7 +661,7 @@ any entries were found."
               (regexp (format "^%s?%s\\(%s\\)" (regexp-quote mark)
                               (if symbol (regexp-quote symbol) "")
                               (mapconcat #'eval date-form "\\)\\(?:")))
-              entry-start date-start temp)
+              entry-start date-start specifier-start temp)
           (goto-char (point-min))
           (while (re-search-forward regexp nil t)
             (if backup (re-search-backward "\\<" nil t))
@@ -672,7 +672,8 @@ any entries were found."
                 (backward-char 1)
               ;; Found a nonempty diary entry--make it
               ;; visible and add it to the list.
-                (setq date-start (line-end-position 0))
+                (setq date-start (line-end-position 0)
+                      specifier-start (line-beginning-position))
                 ;; Actual entry starts on the next-line?
                 (if (looking-at "[ \t]*\n[ \t]") (forward-line 1))
                 (setq entry-found t
@@ -691,7 +692,7 @@ any entries were found."
                 (diary-add-to-list
                  (or gdate date) (car temp)
                  (buffer-substring-no-properties
-                  (1+ date-start) (1- entry-start))
+                  specifier-start (1- entry-start))
                  (copy-marker entry-start) (cadr temp))))))
       entry-found)))
 
