@@ -61,8 +61,8 @@ them into characters should be done separately."
 	(goto-char (point-min))
 	(while (and (skip-chars-forward "^=")
 		    (not (eobp)))
-	  (cond ((eq (char-after (1+ (point))) ?\n)
-		 (delete-char 2))
+	  (cond ((looking-at "=\r?\n")
+		 (delete-region (point) (match-end 0)))
 		((looking-at "\\(=[0-9A-F][0-9A-F]\\)+")
 		 ;; Decode this sequence at once; i.e. by a single
 		 ;; deletion and insertion.
