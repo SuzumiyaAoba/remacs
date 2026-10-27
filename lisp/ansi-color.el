@@ -957,12 +957,13 @@ unset all properties and colors."
                        (green (funcall iterator))
                        (blue (funcall iterator)))
                    (if (and red green blue
-                            (progn
-                              (setq new (+ (* #x010000 red)
-                                           (* #x000100 green)
-                                           (* #x000001 blue)))
-                              (<= new #xFFFFFF)))
-                       (setcar cell (+ 256 new))
+                            ;;Remacs: validate channels before packing to RGB.
+                            (integerp red) (<= 0 red 255)
+                            (integerp green) (<= 0 green 255)
+                            (integerp blue) (<= 0 blue 255))
+                       (setcar cell
+                               (+ 256 (* #x010000 red)
+                                  (* #x000100 green) blue))
                      (setq do-clear t))))
                 (_ (setq do-clear t))))
              (9 (setcar cell nil))
