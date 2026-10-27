@@ -252,7 +252,7 @@ Only attributes that `tar-mode' can grok are mentioned.")
 (defsubst pax-header-uid (attr-vec)
   (aref attr-vec pax-uid-index))
 (defsubst pax-header-uname (attr-vec)
-  (aref attr-vec pax-uid-index))
+  (aref attr-vec pax-uname-index))
 
 (defsubst pax-decode-string (str coding)
   (if str
