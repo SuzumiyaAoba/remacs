@@ -630,14 +630,18 @@ Handles recognizing TOML section names, like [section],
                         (scan-error
                          (end-of-line)
                          (point))))))
-        ;; If there is a comma in the text, then we assume this is
-        ;; an array and not a section.  (This could be refined to
-        ;; look only for unquoted commas if necessary.)
+        ;; An unquoted comma indicates an array, but commas inside
+        ;; quoted keys are part of the key.
         (save-excursion
           (goto-char start)
-          (unless (search-forward "," end t)
-            (set-match-data (list start end))
-            t))))))
+          (let (unquoted-comma)
+            (while (and (not unquoted-comma)
+                        (search-forward "," end t))
+              (unless (nth 3 (syntax-ppss (1- (point))))
+                (setq unquoted-comma t)))
+            (unless unquoted-comma
+              (set-match-data (list start end))
+              t)))))))
 
 ;;;###autoload
 (define-derived-mode conf-toml-mode conf-mode "Conf[TOML]"
