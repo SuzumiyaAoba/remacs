@@ -777,12 +777,22 @@ you will get the following structure returned:
 
 ;;;; Encoder
 
+(defun json--finite-float-p (number)
+  "Return non-nil if NUMBER is a finite floating-point number."
+  (let ((significand (car (frexp number))))
+    (and (not (isnan significand))
+         (< (abs significand) 1.0))))
+
 (defun json--print (object)
   "Like `json-encode', but insert or print the JSON at point."
   (cond ((json--print-keyword object))
         ((listp object)         (json--print-list object))
         ((json--print-stringlike object))
-        ((numberp object)       (prin1 object))
+        ((numberp object)
+         (when (and (floatp object)
+                    (not (json--finite-float-p object)))
+           (signal 'json-error (list "Non-finite number" object)))
+         (prin1 object))
         ((arrayp object)        (json--print-array object))
         ((hash-table-p object)  (json--print-unordered-map object))
         ((signal 'json-error (list object)))))
