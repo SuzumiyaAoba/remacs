@@ -1055,9 +1055,9 @@ other than `\"' and `\\' in quoted strings."
 	(eword-regexp
 	 (if rfc2047-allow-irregular-q-encoded-words
 	     (eval-when-compile
-	       (concat "[\n\t ]*\\(" rfc2047-encoded-word-regexp-loose "\\)"))
+	       (concat "[\r\n\t ]*\\(" rfc2047-encoded-word-regexp-loose "\\)"))
 	   (eval-when-compile
-	     (concat "[\n\t ]*\\(" rfc2047-encoded-word-regexp "\\)"))))
+	     (concat "[\r\n\t ]*\\(" rfc2047-encoded-word-regexp "\\)"))))
 	b e match words)
     (save-excursion
       (save-restriction
