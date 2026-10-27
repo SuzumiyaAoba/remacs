@@ -53,6 +53,9 @@ pointed by `ansi-osc--marker'."
   (let ((end-marker (copy-marker end)))
     (save-excursion
       (goto-char (or ansi-osc--marker begin))
+      ;; Re-establish the marker only if this scan finds another
+      ;; incomplete sequence.
+      (setq ansi-osc--marker nil)
       (when (eq (char-before) ?\e) (backward-char))
       (while (re-search-forward
               (concat "\e]\\|" (regexp-quote (string #x9d)))
