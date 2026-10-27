@@ -101,7 +101,9 @@ letters, digits, plus or minus signs or colons."
   `(((6) parse-time-weekdays)
     ((3) (1 31))
     ((4) parse-time-months)
-    ((5) (100))
+    ((5) (1000))
+    ;;Remacs: RFC 5322 obsolete three-digit years add 1900.
+    ((5) (100 999) ,(lambda () (+ 1900 parse-time-elt)))
     ((2 1 0)
      ,(lambda () (and (stringp parse-time-elt)
                       (= (length parse-time-elt) 8)
