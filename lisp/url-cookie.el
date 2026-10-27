@@ -224,12 +224,22 @@ When INCLUDE-SUBDOMAINS is non-nil, require a DNS-label boundary."
 	(and include-subdomains
 	     (string-suffix-p (concat "." domain) host)))))
 
+(defun url-cookie--path-match-p (cookie-path request-path)
+  ;;Remacs: a matching path prefix must end at a directory boundary.
+  "Return non-nil if COOKIE-PATH matches REQUEST-PATH."
+  (let ((path-length (length cookie-path)))
+    (and (string-prefix-p cookie-path request-path)
+	 (or (= path-length (length request-path))
+	     (and (> path-length 0)
+		  (eq (aref cookie-path (1- path-length)) ?/))
+	     (and (< path-length (length request-path))
+		  (eq (aref request-path path-length) ?/))))))
+
 (defun url-cookie-retrieve (host &optional localpart secure)
   "Retrieve all cookies for a specified HOST and LOCALPART."
   (let ((storage (if secure
                      (append url-cookie-secure-storage url-cookie-storage)
                    url-cookie-storage))
-        (case-fold-search t)
         cookies retval localpart-match)
     (dolist (cur storage)
       (let* ((stored-domain (car cur))
@@ -251,8 +261,7 @@ When INCLUDE-SUBDOMAINS is non-nil, require a DNS-label boundary."
                            (setq localpart-match
                                  (url-cookie-localpart cur)))
                           (stringp localpart))
-                     (string-match
-                      (concat "^" (regexp-quote localpart-match)) localpart)
+                     (url-cookie--path-match-p localpart-match localpart)
                    (equal localpart localpart-match))
                  (not (url-cookie-expired-p cur))
                  (setq retval (cons cur retval)))))))
