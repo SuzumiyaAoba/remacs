@@ -139,10 +139,14 @@ fn version_list_of(i: &mut Interp, v: &Value) -> Result<Vec<BigInt>, Flow> {
                 && suffix
                     .strip_prefix(['-', '.', '_', '+', ' '])
                     .unwrap_or(&suffix)
-                    .filter(|tail| tail.len() == 1)
-                    .and_then(|tail| tail.chars().next())
-                    .filter(|c| c.is_ascii_alphabetic())
-                    .is_some()
+                    .len()
+                    == 1
+                && suffix
+                    .strip_prefix(['-', '.', '_', '+', ' '])
+                    .unwrap_or(&suffix)
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic())
             {
                 let letter = suffix.chars().last().unwrap().to_ascii_lowercase() as i128;
                 out.push(BigInt::from(letter - 'a' as i128 + 1));
