@@ -458,15 +458,15 @@ Return the number of minutes."
        ((and (string-match "\\`P" (car bits))
              (iso8601-valid-p (cadr bits)))
         (setq duration (iso8601-parse-duration (car bits))
-              end (iso8601-parse (cadr bits))))
+              end (iso8601-parse (cadr bits) t)))
        ((and (string-match "\\`P" (cadr bits))
              (iso8601-valid-p (car bits)))
         (setq duration (iso8601-parse-duration (cadr bits))
-              start (iso8601-parse (car bits))))
+              start (iso8601-parse (car bits) t)))
        ((and (iso8601-valid-p (car bits))
              (iso8601-valid-p (cadr bits)))
-        (setq start (iso8601-parse (car bits))
-              end (iso8601-parse (cadr bits))))
+        (setq start (iso8601-parse (car bits) t)
+              end (iso8601-parse (cadr bits) t)))
        (t
         (signal 'wrong-type-argument (list string)))))
     (unless end
@@ -488,7 +488,7 @@ Return the number of minutes."
 	      ;; any other time zone for that matter.
               (decode-time (time-subtract (iso8601--encode-time end)
                                           (iso8601--encode-time start))
-			   (or (decoded-time-zone end) 0) 'integer)))))
+			   (or (decoded-time-zone end) 0) t)))))
 
 (defun iso8601--match (regexp string)
   (string-match (concat "\\`" regexp "\\'") string))
