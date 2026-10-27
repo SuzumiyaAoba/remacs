@@ -230,13 +230,35 @@ See `decode-time' for the meaning of FORM."
    (t
     (signal 'wrong-type-argument (list string)))))
 
+(defun iso8601--time-in-range-p (string)
+  ;;Remacs: validate clock fields and ISO's end-of-day 24:00 form.
+  (and (iso8601--match iso8601--time-match string)
+       (let* ((hour (string-to-number (match-string 1 string)))
+              (minute (if (match-string 2 string)
+                          (string-to-number (match-string 2 string))
+                        0))
+              (second (if (match-string 3 string)
+                          (string-to-number (match-string 3 string))
+                        0))
+              (fraction (match-string 4 string)))
+         (and (<= 0 hour 24)
+              (<= 0 minute 59)
+              (<= 0 second 60)
+              (or (< hour 24)
+                  (and (zerop minute)
+                       (zerop second)
+                       (or (null fraction)
+                           (zerop (string-to-number fraction))))))))
+
 (defun iso8601-parse-time (string &optional form)
   "Parse STRING, which should be an ISO 8601 time string.
 The return value will be a `decode-time' structure with just the
 hour/minute/seconds/zone fields filled in.
 
 See `decode-time' for the meaning of FORM."
-  (if (not (iso8601--match iso8601--full-time-match string))
+  (if (not (and (iso8601--match iso8601--full-time-match string)
+                (save-match-data
+                  (iso8601--time-in-range-p (match-string 1 string)))))
       (signal 'wrong-type-argument (list string))
     (let ((time (match-string 1 string))
           (zone (match-string 2 string)))
@@ -315,31 +337,34 @@ Return the number of minutes."
     (and valid
          ;; Retain the combined match data for `iso8601-parse'.
          (save-match-data
-           (let ((date (match-string 1 string)))
-             (cond
-              ((iso8601--match iso8601--week-date-match date)
-               (let* ((year (string-to-number (match-string 1 date)))
-                      (week (string-to-number (match-string 2 date)))
-                      (day (match-string 3 date)))
-                 (and (<= 1 week (iso8601--weeks-in-year year))
-                      (or (null day)
-                          (<= 1 (string-to-number day) 7)))))
-              ((iso8601--match iso8601--full-date-match date)
-               ;;Remacs: validate month/day combinations, including leap days.
-               (let ((year (string-to-number (match-string 1 date)))
-                     (month (string-to-number (match-string 2 date)))
-                     (day (string-to-number (match-string 3 date))))
-                 (and (<= 1 month 12)
-                      (<= 1 day (date-days-in-month year month))))
-              ((iso8601--match iso8601--without-day-match date)
-               (let ((month (string-to-number (match-string 2 date))))
-                 (<= 1 month 12)))
-              ((iso8601--match iso8601--ordinal-date-match date)
-               ;;Remacs: day-of-year is bounded by leap-year status.
-               (let ((year (string-to-number (match-string 1 date)))
-                     (ordinal (string-to-number (match-string 2 date))))
-                 (<= 1 ordinal (if (date-leap-year-p year) 366 365))))
-              (t t)))))))
+           (let ((date (match-string 1 string))
+                 (time (match-string 2 string)))
+             (and (or (null time)
+                      (save-match-data (iso8601--time-in-range-p time)))
+                  (cond
+                    ((iso8601--match iso8601--week-date-match date)
+                     (let* ((year (string-to-number (match-string 1 date)))
+                            (week (string-to-number (match-string 2 date)))
+                            (day (match-string 3 date)))
+                       (and (<= 1 week (iso8601--weeks-in-year year))
+                            (or (null day)
+                                (<= 1 (string-to-number day) 7)))))
+                    ((iso8601--match iso8601--full-date-match date)
+                     ;;Remacs: validate month/day combinations, including leap days.
+                     (let ((year (string-to-number (match-string 1 date)))
+                           (month (string-to-number (match-string 2 date)))
+                           (day (string-to-number (match-string 3 date))))
+                       (and (<= 1 month 12)
+                            (<= 1 day (date-days-in-month year month))))
+                    ((iso8601--match iso8601--without-day-match date)
+                     (let ((month (string-to-number (match-string 2 date))))
+                       (<= 1 month 12)))
+                    ((iso8601--match iso8601--ordinal-date-match date)
+                     ;;Remacs: day-of-year is bounded by leap-year status.
+                     (let ((year (string-to-number (match-string 1 date)))
+                           (ordinal (string-to-number (match-string 2 date))))
+                       (<= 1 ordinal (if (date-leap-year-p year) 366 365))))
+                    (t t))))))))
 
 (defun iso8601-parse-duration (string)
   "Parse ISO 8601 durations on the form P3Y6M4DT12H30M5S."
