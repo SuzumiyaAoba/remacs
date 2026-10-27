@@ -756,7 +756,11 @@ you will get the following structure returned:
   (with-temp-buffer
     (insert string)
     (goto-char (point-min))
-    (json-read)))
+    (prog1 (json-read)
+      (json-skip-whitespace)
+      (unless (eobp)
+        ;;Remacs: this whole-string API must reject trailing JSON data.
+        (signal 'json-error (list "Trailing data" (point))))))
 
 (defun json-read-file (file)
   "Read the first JSON object contained in FILE and return it."
