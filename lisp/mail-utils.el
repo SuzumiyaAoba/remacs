@@ -276,6 +276,37 @@ Return a modified address list."
                                        nil 'literal address 2)))
         address))))
 
+(defun mail-dont-reply-to--next-separator (string start)
+  "Find the next unquoted, uncommented comma in STRING after START.
+Return (comma . POSITION), or (unmatched-quote . POSITION) if a quoted
+string is not closed."
+  (let ((pos start)
+	quote-start
+	(comment-depth 0)
+	escaped
+	separator)
+    (while (and (< pos (length string)) (not separator))
+      (let ((char (aref string pos)))
+	(cond
+	 (escaped
+	  (setq escaped nil))
+	 ((> comment-depth 0)
+	  (cond ((= char ?\\) (setq escaped t))
+		((= char ?\() (setq comment-depth (1+ comment-depth)))
+		((= char ?\)) (setq comment-depth (1- comment-depth)))))
+	 (quote-start
+	  (cond ((= char ?\\) (setq escaped t))
+		((= char ?\") (setq quote-start nil))))
+	 ((= char ?\")
+	  (setq quote-start pos))
+	 ((= char ?\()
+	  (setq comment-depth 1))
+	 ((= char ?,)
+	  (setq separator (cons 'comma pos))))
+	(setq pos (1+ pos))))
+    (or separator
+	(and quote-start (cons 'unmatched-quote quote-start)))))
+
 (defun mail-dont-reply-to (destinations)
   "Prune addresses from DESTINATIONS, a list of recipient addresses.
 Remove all addresses matching `mail-dont-reply-to-names' from the
@@ -292,19 +323,17 @@ comma-separated list, and return the pruned list."
   (let ((start-pos 0) (cur-pos 0)
 	(case-fold-search t))
     (while start-pos
-      (setq cur-pos (string-match "[,\"]" destinations cur-pos))
-      (if (and cur-pos (equal (match-string 0 destinations) "\""))
-	  ;; Search for matching quote.
-	  (let ((next-pos (string-search "\"" destinations (1+ cur-pos))))
-	    (if next-pos
-		(setq cur-pos (1+ next-pos))
-	      ;; If the open-quote has no close-quote,
-	      ;; delete the open-quote to get something well-defined.
-	      ;; This case is not valid, but it can happen if things
-	      ;; are weird elsewhere.
-	      (setq destinations (concat (substring destinations 0 cur-pos)
-				    (substring destinations (1+ cur-pos))))
-	      (setq cur-pos start-pos)))
+	(let ((separator (mail-dont-reply-to--next-separator
+			  destinations cur-pos)))
+	  (while (eq (car-safe separator) 'unmatched-quote)
+	    ;; If the open-quote has no close-quote, delete it to get
+	    ;; something well-defined, as for other malformed addresses.
+	    (let ((quote-pos (cdr separator)))
+	      (setq destinations (concat (substring destinations 0 quote-pos)
+				 (substring destinations (1+ quote-pos)))))
+	    (setq separator (mail-dont-reply-to--next-separator
+			     destinations start-pos)))
+	  (setq cur-pos (cdr separator))
 	(let* ((address (substring destinations start-pos cur-pos))
 	       (naked-address (mail-strip-quoted-names address)))
 	  (if (and mail-dont-reply-to-names
