@@ -715,7 +715,7 @@ and all `time-stamp-format' compatibility."
                       (time-stamp--conv-warn "%:y" "%Y")
                       (string-to-number (time-stamp--format "%Y" time))))
 	           ((eq cur-char ?Y)    ;4-digit year
-	            (string-to-number (time-stamp--format "%Y" time)))
+	            (time-stamp--format "%Y" time))
 	           ((eq cur-char ?z)    ;time zone offset
                     (let ((field-width-num (string-to-number field-width))
                           ;; Handle numeric time zone ourselves, because
