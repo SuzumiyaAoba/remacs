@@ -319,8 +319,8 @@ If XML, generate XML instead of HTML."
            ;; represents the false value.
            (if (and (not xml) (dom--html-boolean-attribute-p attr))
                (format " %s" attr)
-             (format " %s=%S" attr (dom--insert-entities
-                                    (format "%s" value))))))))
+             (format " %s=\"%s\"" attr (dom--insert-entities
+                                         (format "%s" value))))))))
     (let* ((children (dom-children dom))
 	   (non-text nil)
            (indent (+ column 2)))
