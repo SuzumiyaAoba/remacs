@@ -329,14 +329,17 @@ Restrictions on Quality of Protection scheme: The qop value
 \"auth-int\" or algorithm any other than \"MD5\" are not
 implemented."
 
-  (when key
-    (let ((user (nth 1 key))
-          (ha1 (nth 2 key))
-          (ha2 (nth 3 key))
-          (digest-uri (url-filename url))
-          (qop (cdr-safe (assoc "qop" attrs)))
-          (nonce (cdr-safe (assoc "nonce" attrs)))
-          (opaque (cdr-safe (assoc "opaque" attrs))))
+  (let* ((algorithm-entry (assoc "algorithm" attrs))
+         (algorithm (if algorithm-entry (cdr algorithm-entry) "MD5")))
+    (when (and key (stringp algorithm)
+               (string-equal-ignore-case algorithm "MD5"))
+      (let ((user (nth 1 key))
+            (ha1 (nth 2 key))
+            (ha2 (nth 3 key))
+            (digest-uri (url-filename url))
+            (qop (cdr-safe (assoc "qop" attrs)))
+            (nonce (cdr-safe (assoc "nonce" attrs)))
+            (opaque (cdr-safe (assoc "opaque" attrs))))
 
       (concat
        "Digest "
@@ -363,7 +366,7 @@ implemented."
                     nil))
 
 
-                (if opaque (list (cons 'opaque opaque)))))))))
+                (if opaque (list (cons 'opaque opaque))))))))))
 
 (defun url-digest-find-creds (url prompt &optional realm)
   "Find or ask credentials for URL.
