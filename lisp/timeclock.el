@@ -770,7 +770,7 @@ This is only provided for coherency when used by
 
 (defsubst timeclock-day-projects (day)
   "Return a list of all the projects in DAY."
-  (timeclock-entry-list-projects (cddr day)))
+  (timeclock-entry-list-projects (cdr day)))
 
 (defun timeclock-day-list-template (func day-list)
   "Template for summing the result of FUNC on each element of DAY-LIST."
