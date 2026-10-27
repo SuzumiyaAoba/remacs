@@ -1669,7 +1669,7 @@ if there is no existing buffer for TARGET, otherwise return nil."
   (with-rcirc-process-buffer process
     (if (null target)
         (current-buffer)
-      (let ((buffer (cdr (assoc-string target rcirc-buffer-alist t))))
+      (let ((buffer (cdr (rcirc--case-assoc process target rcirc-buffer-alist))))
         (or buffer (when server (current-buffer)))))))
 
 (defun rcirc-get-buffer-create (process target)
@@ -1921,7 +1921,7 @@ communication."
                  (save-match-data
                    (with-syntax-table rcirc-nick-syntax-table
                      (rcirc-facify sender
-                                   (cond ((string= sender my-nick)
+                                   (cond ((rcirc--case-equal-p process sender my-nick)
                                           'rcirc-my-nick)
                                          ((and rcirc-bright-nicks
                                                (string-match
@@ -1957,9 +1957,11 @@ PROCESS is the process object for the current connection."
            ;; message from another user
            (if (or (string= response "PRIVMSG")
                    (string= response "ACTION"))
-               (rcirc-get-buffer-create process (if (string= sender rcirc-nick)
-                                                    target
-                                                  sender))
+               (rcirc-get-buffer-create process
+                                        (if (rcirc--case-equal-p
+                                             process sender rcirc-nick)
+                                             target
+                                           sender))
              (rcirc-get-buffer process target t)))
           ((or (rcirc-get-buffer process target)
                (rcirc-any-buffer process))))))
@@ -1983,16 +1985,19 @@ Returns nil if the information is not recorded.
 PROCESS is the process object for the current connection."
   (let ((chanbuf (rcirc-get-buffer process target)))
     (when chanbuf
-      (cdr (assoc-string nick (buffer-local-value
-                               'rcirc-recent-quit-alist
-                               chanbuf))))))
+      (cdr (rcirc--case-assoc
+            process nick
+            (buffer-local-value 'rcirc-recent-quit-alist chanbuf))))))
 
 (defun rcirc-last-line (process nick target)
   "Return the line from the last activity from NICK in TARGET.
 PROCESS is the process object for the current connection."
-  (let ((line (or (cdr (assoc-string target
-                                     (gethash nick (with-rcirc-server-buffer
-                                                     rcirc-nick-table)) t))
+  (let ((line (or (with-rcirc-process-buffer process
+                    (let ((nick-key (rcirc--find-nick-key process nick)))
+                      (and nick-key
+                           (cdr (rcirc--case-assoc
+                                 process target
+                                 (gethash nick-key rcirc-nick-table))))))
                   (rcirc-last-quit-line process nick target))))
     (if line
         line
@@ -2052,13 +2057,15 @@ Format based on SENDER and RESPONSE.  If ACTIVITY is non-nil,
 record activity.  PROCESS is the process object for the current
 connection."
   (or text (setq text ""))
-  (unless (and (or (member sender rcirc-ignore-list)
-                   (member (with-syntax-table rcirc-nick-syntax-table
-                             (when (string-match "^\\([^/]\\w*\\)[:,]" text)
-                               (match-string 1 text)))
-                           rcirc-ignore-list))
+  (unless (and (or (rcirc--nick-list-member-p process sender rcirc-ignore-list)
+                   (rcirc--nick-list-member-p
+                    process
+                    (with-syntax-table rcirc-nick-syntax-table
+                      (when (string-match "^\\([^/]\\w*\\)[:,]" text)
+                        (match-string 1 text)))
+                    rcirc-ignore-list))
                ;; do not ignore if we sent the message
-               (not (string= sender (rcirc-nick process))))
+               (not (rcirc--case-equal-p process sender (rcirc-nick process))))
     (let* (preinsert-prompt-end-position
            (buffer (rcirc-target-buffer process sender response target text))
            (time (if-let* ((time (rcirc-get-tag "time")))
@@ -2072,7 +2079,7 @@ connection."
               (old-point (point-marker)))
 
           (setq text (decode-coding-string text rcirc-decode-coding-system))
-          (unless (string= sender (rcirc-nick process))
+          (unless (rcirc--case-equal-p process sender (rcirc-nick process))
             ;; mark the line with overlay arrow
             (unless (or (marker-position overlay-arrow-position)
                         (get-buffer-window (current-buffer))
@@ -2123,7 +2130,8 @@ connection."
 
               ;; make text omittable
               (let ((last-activity-lines (rcirc-elapsed-lines process sender target)))
-                (if (and (not (string= (rcirc-nick process) sender))
+                (if (and (not (rcirc--case-equal-p
+                               process (rcirc-nick process) sender))
                          (or (member response rcirc-omit-responses)
                              (and (member response rcirc-omit-unless-requested)
                                   (if (member response rcirc-pending-requests)
@@ -2299,11 +2307,93 @@ PROCESS is the process object for the current connection."
         (match-string 1 user)
       user)))
 
+(defun rcirc--case-mapping (process)
+  "Return PROCESS's advertised IRC CASEMAPPING, or the RFC1459 default."
+  (with-rcirc-process-buffer process
+    (let ((parameters (reverse rcirc-server-parameters)) mapping done)
+      (while (and parameters (not done))
+        (let* ((parameter (pop parameters))
+               (parts (split-string parameter "=")))
+          (cond
+           ((string-equal-ignore-case parameter "-CASEMAPPING")
+            (setq mapping "rfc1459" done t))
+           ((and (= (length parts) 2)
+                 (string-equal-ignore-case (car parts) "CASEMAPPING"))
+            (setq mapping (downcase (cadr parts)) done t)))))
+      (cond ((member mapping
+                     '("ascii" "strict-rfc1459" "rfc1459-strict" "rfc1459"))
+             mapping)
+            ((or (null mapping) (equal mapping "")) "rfc1459")
+            (t "ascii")))))
+
+(defun rcirc--casefold-string (process string)
+  "Fold STRING according to PROCESS's advertised CASEMAPPING."
+  (let ((mapping (rcirc--case-mapping process)))
+    (mapconcat
+     (lambda (char)
+       (string
+        (cond
+         ((and (<= ?A char) (<= char ?Z)) (+ char 32))
+         ((and (member mapping '("strict-rfc1459" "rfc1459-strict" "rfc1459"))
+               (memq char '(123 124 125)))
+          (- char 32))
+         ((and (equal mapping "rfc1459") (= char 94)) 126)
+         (t char))))
+     (string-to-list string) "")))
+
+(defun rcirc--case-equal-p (process first second)
+  (if (and (stringp first) (stringp second))
+      (string= (rcirc--casefold-string process first)
+               (rcirc--casefold-string process second))
+    (equal first second)))
+
+(defun rcirc--case-assoc (process key alist)
+  (let (match)
+    (while (and alist (not match))
+      (when (rcirc--case-equal-p process key (caar alist))
+        (setq match (car alist)))
+      (setq alist (cdr alist)))
+    match))
+
+(defun rcirc--find-nick-key (process nick)
+  "Return the original nick-table key equivalent to NICK, if any."
+  (when (stringp nick)
+    (let ((folded (rcirc--casefold-string process nick)) found)
+      (maphash (lambda (key _channels)
+                 (when (and (not found)
+                            (string= folded
+                                     (rcirc--casefold-string process key)))
+                   (setq found key)))
+               rcirc-nick-table)
+      found)))
+
+(defun rcirc--nick-list-member-p (process nick list)
+  (let (found)
+    (while (and list (not found))
+      (setq found (rcirc--case-equal-p process nick (car list))
+            list (cdr list)))
+    found))
+
+(defun rcirc--add-nick-to-list (process nick list)
+  (if (rcirc--nick-list-member-p process nick list) list (cons nick list)))
+
+(defun rcirc--remove-nick-from-list (process nick list)
+  (let (result)
+    (dolist (candidate list (nreverse result))
+      (unless (rcirc--case-equal-p process nick candidate)
+        (push candidate result)))))
+
+(defun rcirc--toggle-nick-in-list (process nick list)
+  (if (rcirc--nick-list-member-p process nick list)
+      (rcirc--remove-nick-from-list process nick list)
+    (cons nick list)))
+
 (defun rcirc-nick-channels (process nick)
   "Return list of channels for NICK.
 PROCESS is the process object for the current connection."
   (with-rcirc-process-buffer process
-    (mapcar #'car (gethash nick rcirc-nick-table))))
+    (let ((key (rcirc--find-nick-key process nick)))
+      (mapcar #'car (and key (gethash key rcirc-nick-table))))))
 
 (defun rcirc-put-nick-channel (process nick channel &optional line)
   "Add CHANNEL to list associated with NICK.
@@ -2313,34 +2403,34 @@ If the record doesn't exist, and LINE is nil, set the linestamp
 to zero.  PROCESS is the process object for the current connection."
   (let ((nick (rcirc-user-nick nick)))
     (with-rcirc-process-buffer process
-      (let* ((chans (gethash nick rcirc-nick-table))
-             (record (assoc-string channel chans t)))
+      (let* ((nick-key (or (rcirc--find-nick-key process nick) nick))
+             (chans (gethash nick-key rcirc-nick-table))
+             (record (rcirc--case-assoc process channel chans)))
         (if record
             (when line (setcdr record line))
-          (puthash nick (cons (cons channel (or line 0))
-                              chans)
+          (puthash nick-key (cons (cons channel (or line 0))
+                                  chans)
                    rcirc-nick-table))))))
 
 (defun rcirc-nick-remove (process nick)
   "Remove NICK from table.
 PROCESS is the process object for the current connection."
   (with-rcirc-process-buffer process
-    (remhash nick rcirc-nick-table)))
+    (let ((key (rcirc--find-nick-key process nick)))
+      (when key (remhash key rcirc-nick-table)))))
 
 (defun rcirc-remove-nick-channel (process nick channel)
   "Remove the CHANNEL from list associated with NICK.
 PROCESS is the process object for the current connection."
   (with-rcirc-process-buffer process
-    (let* ((chans (gethash nick rcirc-nick-table))
-           (newchans
-            ;; instead of assoc-string-delete-all:
-            (let ((record (assoc-string channel chans t)))
-              (when record
-                (setcar record 'delete)
-                (assq-delete-all 'delete chans)))))
-      (if newchans
-          (puthash nick newchans rcirc-nick-table)
-        (remhash nick rcirc-nick-table)))))
+    (let* ((nick-key (rcirc--find-nick-key process nick))
+           (chans (and nick-key (gethash nick-key rcirc-nick-table)))
+           (record (rcirc--case-assoc process channel chans))
+           (newchans (and record (delq record chans))))
+      (when nick-key
+        (if newchans
+            (puthash nick-key newchans rcirc-nick-table)
+          (remhash nick-key rcirc-nick-table))))))
 
 (defvar rcirc-pseudo-nicks)
 (defun rcirc-channel-nicks (process target)
@@ -2353,7 +2443,7 @@ PROCESS is the process object for the current connection."
             (let (nicks)
               (maphash
                (lambda (k v)
-                 (let ((record (assoc-string target v t)))
+                 (let ((record (rcirc--case-assoc process target v)))
                    (if record
                        (setq nicks (cons (cons k (cdr record)) nicks)))))
                rcirc-nick-table)
@@ -2365,15 +2455,15 @@ PROCESS is the process object for the current connection."
                                 (< ly lx))))))))
       (list target))))
 
-(defun rcirc-ignore-update-automatic (nick)
+(defun rcirc-ignore-update-automatic (process nick)
   "Check if NICK is in `rcirc-ignore-list-automatic'.
 If so, remove from `rcirc-ignore-list'.  PROCESS is the process
 object for the current connection."
-  (when (member nick rcirc-ignore-list-automatic)
+  (when (rcirc--nick-list-member-p process nick rcirc-ignore-list-automatic)
     (setq rcirc-ignore-list-automatic
-          (delete nick rcirc-ignore-list-automatic)
+          (rcirc--remove-nick-from-list process nick rcirc-ignore-list-automatic)
           rcirc-ignore-list
-          (delete nick rcirc-ignore-list))))
+          (rcirc--remove-nick-from-list process nick rcirc-ignore-list))))
 
 (defun rcirc-nickname< (s1 s2)
   "Return non-nil if IRC nickname S1 is less than S2, and nil otherwise.
@@ -2959,14 +3049,15 @@ Ignore NICK, unignore NICK if already ignored, or list ignored
 nicks when no NICK is given.  When listing ignored nicks, the
 ones added to the list automatically are marked with an asterisk."
   (interactive "sToggle ignoring of nick: ")
-  (setq rcirc-ignore-list
-        (apply #'rcirc-add-or-remove rcirc-ignore-list
-               (split-string nick nil t)))
+  (dolist (nick (split-string nick nil t))
+    (setq rcirc-ignore-list
+          (rcirc--toggle-nick-in-list process nick rcirc-ignore-list)))
   (rcirc-print process nil "IGNORE" target
                (mapconcat
                 (lambda (nick)
                   (concat nick
-                          (if (member nick rcirc-ignore-list-automatic)
+                          (if (rcirc--nick-list-member-p
+                               process nick rcirc-ignore-list-automatic)
                               "*" "")))
                 rcirc-ignore-list " ")))
 
@@ -3233,7 +3324,9 @@ Keywords are only highlighted in messages (as indicated by
 RESPONSE) when they were not written by the user (as indicated by
 SENDER)."
   (when (and (string= response "PRIVMSG")
-             (not (string= sender (rcirc-nick (rcirc-buffer-process)))))
+             (not (rcirc--case-equal-p
+                   (rcirc-buffer-process) sender
+                   (rcirc-nick (rcirc-buffer-process)))))
     (let* ((target (or rcirc-target ""))
            (keywords (delq nil (mapcar (lambda (keyword)
                                          (when (not (string-match keyword
@@ -3363,8 +3456,8 @@ is the process object for the current connection."
             (message (cadr args)))
         (when (or
                (and ;; nickserv
-                (string= sender "NickServ")
-                (string= target rcirc-nick)
+                (rcirc--case-equal-p process sender "NickServ")
+                (rcirc--case-equal-p process target rcirc-nick)
                 (cl-member
                  message
                  (list
@@ -3376,8 +3469,8 @@ is the process object for the current connection."
                  ;; case-insensitively (Bug#39345).
                  :test #'cl-equalp))
                (and ;; quakenet
-                (string= sender "Q")
-                (string= target rcirc-nick)
+                (rcirc--case-equal-p process sender "Q")
+                (rcirc--case-equal-p process target rcirc-nick)
                 (string-match "\\`You are now logged in as .+\\.\\'" message)))
           (setq rcirc-user-authenticated t)
           (run-hook-with-args 'rcirc-authenticated-hook process)
@@ -3418,8 +3511,8 @@ connection."
 (defun rcirc-handler-PART-or-KICK (process _response channel _sender nick _args)
   "Remove NICK from CHANNEL.
 PROCESS is the process object for the current connection."
-  (rcirc-ignore-update-automatic nick)
-  (if (not (string= nick (rcirc-nick process)))
+  (rcirc-ignore-update-automatic process nick)
+  (if (not (rcirc--case-equal-p process nick (rcirc-nick process)))
       ;; this is someone else leaving
       (progn
         (rcirc-maybe-remember-nick-quit process nick channel)
@@ -3472,7 +3565,7 @@ PROCESS is the process object for the current connection."
       (let ((buffer (rcirc-get-buffer process channel)))
         (when buffer
           (with-current-buffer buffer
-            (let ((record (assoc-string nick rcirc-recent-quit-alist t))
+            (let ((record (rcirc--case-assoc process nick rcirc-recent-quit-alist))
                   (line (rcirc-last-line process nick channel)))
               (if record
                   (setcdr record line)
@@ -3483,7 +3576,7 @@ PROCESS is the process object for the current connection."
 (defun rcirc-handler-QUIT (process sender args _text)
   "Handle QUIT message from SENDER.
 PROCESS is the process object for the current connection."
-  (rcirc-ignore-update-automatic sender)
+  (rcirc-ignore-update-automatic process sender)
   (mapc (lambda (channel)
           ;; broadcast quit message each channel
           (rcirc-print process sender "QUIT" (funcall rcirc-channel-filter channel) (apply 'concat args))
@@ -3500,10 +3593,13 @@ PROCESS is the process object for the current connection."
          (new-nick (car args))
          (channels (rcirc-nick-channels process old-nick)))
     ;; update list of ignored nicks
-    (rcirc-ignore-update-automatic old-nick)
-    (when (member old-nick rcirc-ignore-list)
-      (add-to-list 'rcirc-ignore-list new-nick)
-      (add-to-list 'rcirc-ignore-list-automatic new-nick))
+    (rcirc-ignore-update-automatic process old-nick)
+    (when (rcirc--nick-list-member-p process old-nick rcirc-ignore-list)
+      (setq rcirc-ignore-list
+            (rcirc--add-nick-to-list process new-nick rcirc-ignore-list)
+            rcirc-ignore-list-automatic
+            (rcirc--add-nick-to-list
+             process new-nick rcirc-ignore-list-automatic)))
     ;; print message to nick's channels
     (dolist (target channels)
       (rcirc-print process sender "NICK" target new-nick))
@@ -3515,15 +3611,16 @@ PROCESS is the process object for the current connection."
         (rename-buffer (rcirc-generate-new-buffer-name process new-nick) t))
       (setf rcirc-buffer-alist
             (cons (cons new-nick chat-buffer)
-                  (delq (assoc-string old-nick rcirc-buffer-alist t)
+                  (delq (rcirc--case-assoc process old-nick rcirc-buffer-alist)
                         rcirc-buffer-alist))))
     ;; remove old nick and add new one
     (with-rcirc-process-buffer process
-      (let ((v (gethash old-nick rcirc-nick-table)))
-        (remhash old-nick rcirc-nick-table)
+      (let* ((old-key (rcirc--find-nick-key process old-nick))
+             (v (and old-key (gethash old-key rcirc-nick-table))))
+        (when old-key (remhash old-key rcirc-nick-table))
         (puthash new-nick v rcirc-nick-table))
       ;; if this is our nick...
-      (when (string= old-nick rcirc-nick)
+      (when (rcirc--case-equal-p process old-nick rcirc-nick)
         (setq rcirc-nick new-nick)
         (rcirc-update-prompt t)
         ;; reauthenticate
@@ -3555,7 +3652,7 @@ PROCESS is the process object for the current connection."
 ARGS should have the form (NICK AWAY-MESSAGE).
 PROCESS is the process object for the current connection."
   (let* ((nick (cadr args))
-         (rec (assoc-string nick rcirc-nick-away-alist))
+         (rec (rcirc--case-assoc process nick rcirc-nick-away-alist))
          (away-message (nth 2 args)))
     (when (or (not rec)
               (not (string= (cdr rec) away-message)))
@@ -3618,7 +3715,7 @@ PROCESS is the process object for the current connection."
   (let ((target (car args))
         (msg (mapconcat 'identity (cdr args) " ")))
     (rcirc-print process sender "MODE"
-                 (if (string= target (rcirc-nick process))
+                 (if (rcirc--case-equal-p process target (rcirc-nick process))
                      nil
                    target)
                  msg)
