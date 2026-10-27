@@ -999,15 +999,17 @@ which means to truncate VAR's value to at most MAX-SIZE elements
 	(setq var (car varspec) size (cdr varspec))
       (setq var varspec))
     (when (boundp var)
-      (when (and (integerp size)
-		 (> size 0)
-		 (listp (symbol-value var)))
-	(desktop-truncate (symbol-value var) size))
-      (insert "(setq "
-	      (symbol-name var)
-	      " "
-	      (desktop-value-to-string (symbol-value var))
-	      ")\n"))))
+      (let ((value (symbol-value var)))
+	(when (and (integerp size)
+		   (> size 0)
+		   (listp value))
+	  (setq value (copy-sequence value))
+	  (desktop-truncate value size))
+	(insert "(setq "
+		(symbol-name var)
+		" "
+		(desktop-value-to-string value)
+		")\n")))))
 
 ;; ----------------------------------------------------------------------------
 (defvar desktop-buffers-not-to-save-function nil
