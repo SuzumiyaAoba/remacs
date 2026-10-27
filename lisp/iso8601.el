@@ -416,7 +416,12 @@ Return the number of minutes."
    ((and (iso8601--match iso8601--duration-full-match string)
          ;; Just a "P" isn't valid; there has to be at least one
          ;; element, like P1M.
-         (> (length (match-string 0 string)) 2))
+         (> (length (match-string 0 string)) 2)
+         ;;Remacs: a T designator must be followed by a time component.
+         (or (not (match-string 4 string))
+             (match-string 5 string)
+             (match-string 6 string)
+             (match-string 7 string)))
     (let* ((year (or (match-string 1 string) 0))
            (month (or (match-string 2 string) 0))
            (day (or (match-string 3 string) 0))
