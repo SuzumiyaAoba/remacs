@@ -265,6 +265,27 @@ If DATE is malformed, return a time value of zero."
     (error 0)))
 
 
+(defun format-seconds--escaped-percent-p (string position)
+  "Return non-nil if the percent at POSITION is escaped in STRING."
+  (let ((count 0))
+    (while (and (> position 0)
+		(= (aref string (1- position)) ?%))
+      (setq position (1- position)
+	    count (1+ count)))
+    (= (% count 2) 1)))
+
+(defun format-seconds--strip-control-specifiers (string)
+  "Remove unescaped %z and %x controls from STRING."
+  (let ((start 0)
+	    match-start)
+    (while (string-match "%[zx]" string start)
+      (setq match-start (match-beginning 0))
+      (if (format-seconds--escaped-percent-p string match-start)
+	  (setq start (match-end 0))
+	(setq string (replace-match "" t t string)
+	      start match-start)))
+    string))
+
 ;;;###autoload
 (defun format-seconds (string seconds)
   "Use format control STRING to format the number SECONDS.
@@ -336,10 +357,17 @@ right of \"%x\", trailing zero units are not output."
       (setq spec (car u)
             name (cadr u)
             unit (nth 2 u))
-      (when (string-match
-             (format "%%\\(\\.?[0-9]+\\)?\\(,[0-9]+\\)?\\(%s\\)" spec)
-             string)
-        (cond
+      (let ((regexp
+             (format "%%\\(\\.?[0-9]+\\)?\\(,[0-9]+\\)?\\(%s\\)"
+                     spec))
+            (start 0)
+            found)
+        (while (and (not found) (string-match regexp string start))
+          (if (format-seconds--escaped-percent-p string (match-beginning 0))
+              (setq start (match-end 0))
+            (setq found t)))
+        (when found
+          (cond
          ((string-equal spec "z")
           (setq chop-leading
                 (if leading-zeropos
@@ -385,7 +413,7 @@ right of \"%x\", trailing zero units are not output."
                              ""         ; lower-case, no unit-name
                            (format " %s%s" name
                                    (if (= num 1) "" "s"))))
-                 t t string))))))
+                 t t string)))))))
     (let ((pre string))
       (when (and chop-trailing trailing-zeropos)
         (setq string (substring string 0 trailing-zeropos)))
@@ -395,7 +423,7 @@ right of \"%x\", trailing zero units are not output."
       ;; string in full.
       (when (equal string "")
         (setq string pre)))
-    (setq string (replace-regexp-in-string "%[zx]" "" string))
+    (setq string (format-seconds--strip-control-specifiers string))
     (concat minus (string-trim (string-replace "%%" "%" string)))))
 
 (defvar seconds-to-string
