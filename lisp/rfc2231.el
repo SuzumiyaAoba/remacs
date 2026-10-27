@@ -190,22 +190,38 @@ must never cause a Lisp error."
 		    ((or (not (setq elem (assq attribute cparams)))
 			 (and (numberp part)
 			      (zerop part)))
-		     (push (list attribute value encoded) cparams))
+		     (push (list attribute (list (cons value encoded)) encoded)
+			   cparams))
 		    ;; Repetition of a part; do nothing.
 		    ((and elem
 			  (null part))
 		     )
 		    ;; Concatenate continuation parts.
 		    (t
-		     (setcar (cdr elem) (concat (cadr elem) value)))))
+		     ;; Keep each encoding flag until percent decoding.
+		     (setcar (cdr elem)
+			     (nconc (cadr elem) (list (cons value encoded))))
+		     (setcar (cddr elem) (or (nth 2 elem) encoded)))))
 	  ;; Finally decode encoded values.
 	  (cons type (mapcar
 		      (lambda (elem)
-			(cons (car elem)
-			      (if (nth 2 elem)
-				  (rfc2231-decode-encoded-string (nth 1 elem))
-				(nth 1 elem))))
-		      (nreverse cparams))))))))
+			(let* ((segments (nth 1 elem))
+			       (encoded (nth 2 elem))
+			       ;;Remacs: escape percent signs in raw segments so the
+			       ;;decoder only interprets encoded segments' octets.
+			       (value (mapconcat
+				       (lambda (segment)
+					 (let ((value (car segment)))
+					   (if (or (cdr segment) (not encoded))
+					       value
+					     (replace-regexp-in-string
+					      "%" "%25" value t t))))
+				       segments "")))
+			  (cons (car elem)
+				(if encoded
+				    (rfc2231-decode-encoded-string value)
+				  value))))
+		      (nreverse cparams)))))))
 
 (defun rfc2231-decode-encoded-string (string)
   "Decode an RFC2231-encoded string.
