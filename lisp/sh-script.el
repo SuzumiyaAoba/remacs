@@ -921,15 +921,15 @@ See `sh-feature'.")
   "Determine the syntax of the \\n after a <<EOF.
 START is the position of <<.
 STRING is the actual word used as delimiter (e.g. \"EOF\").
-INDENTED is non-nil if the here document's content (and the EOF mark) can
-be indented (i.e. a <<- was used rather than just <<).
-Point is at the beginning of the next line."
+Whether <<- was used is recorded with the delimiter, so only tabs are
+ignored before that delimiter.  Point is at the beginning of the next line."
   (unless (or (memq (char-before start) '(?< ?>))
 	      (sh-in-comment-or-string start)
               (sh--inside-noncommand-expression start))
     ;; We're looking at <<STRING, so we add "^STRING$" to the syntactic
     ;; font-lock keywords to detect the end of this here document.
     (let ((str (replace-regexp-in-string "['\"]" "" string))
+          (tabs-only (eq ?- (char-after (+ start 2))))
           (ppss (save-excursion (syntax-ppss eol))))
       (if (nth 4 ppss)
           ;; The \n not only starts the heredoc but also closes a comment.
@@ -944,19 +944,23 @@ Point is at the beginning of the next line."
           ;; that when jit-lock-context-* refontifies the rest of the
           ;; buffer, it also refontifies the current line with it.
           (put-text-property start (1+ eol) 'syntax-multiline t))
-      (put-text-property eol (1+ eol) 'sh-here-doc-marker str)
+      (put-text-property eol (1+ eol) 'sh-here-doc-marker
+                         (cons str tabs-only))
       (prog1 sh-here-doc-syntax
         (goto-char (+ 2 start))))))
 
 (defun sh-syntax-propertize-here-doc (end)
   (let ((ppss (syntax-ppss)))
     (when (eq t (nth 3 ppss))
-      (let ((key (get-text-property (nth 8 ppss) 'sh-here-doc-marker))
+      (let* ((marker (get-text-property (nth 8 ppss) 'sh-here-doc-marker))
+             (key (if (consp marker) (car marker) marker))
+             (tabs-only (and (consp marker) (cdr marker)))
             (case-fold-search nil))
         (when (re-search-forward
-               (concat "^\\([ \t]*\\)" (regexp-quote key) "\\(\n\\)")
+               (concat "^" (if tabs-only "[\t]*" "")
+                       (regexp-quote key) "\\(\n\\)")
                end 'move)
-          (let ((eol (match-beginning 2)))
+          (let ((eol (match-beginning 1)))
             (put-text-property eol (1+ eol)
                                'syntax-table sh-here-doc-syntax)))))))
 
