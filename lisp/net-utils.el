@@ -536,7 +536,7 @@ This command uses `nslookup-program' to look up DNS records."
   (let* ((args `(,nslookup-program "-type=AAAA" ,host ,name-server))
          (output (shell-command-to-string
                   (string-join (cl-remove nil args) " ")))
-         (ip-regex "\\([0-9a-fA-F:]+\\)")
+         (ip-regex "\\([0-9a-fA-F:.]+\\)")
          (ip (or (and (string-match
                        (if (eq system-type 'windows-nt)
                            (concat "Name:.*\nAddress: *" ip-regex)
@@ -554,9 +554,35 @@ This command uses `nslookup-program' to look up DNS records."
                                 (split-string left ":")))
                   (right-parts (if (and right (not (equal right "")))
                                    (split-string right ":")))
-                  (parts (append left-parts
-                                 (and compression (list nil))
-                                 right-parts))
+                  (text-parts (append left-parts
+                                      (and compression (list nil))
+                                      right-parts))
+                  (ipv4-tail (and text-parts
+                                  (string-match-p "\\."
+                                                  (car (last text-parts)))))
+                  (ipv4-octets (and ipv4-tail
+                                    (split-string
+                                     (car (last text-parts)) "\\.")))
+                  (hextet-parts
+                   (if ipv4-tail
+                       (progn
+                         (unless
+                             (and (= (length ipv4-octets) 4)
+                                  (cl-every
+                                   (lambda (octet)
+                                     (and (<= 1 (length octet) 3)
+                                          (string-match-p "^[0-9]+$" octet)
+                                          (<= (string-to-number octet) 255)))
+                                   ipv4-octets))
+                           (error "Invalid IPv4 address: %s" ip))
+                         (let ((octets (mapcar #'string-to-number ipv4-octets)))
+                           (append
+                            (butlast text-parts)
+                            (list (format "%x" (+ (* 256 (nth 0 octets))
+                                                  (nth 1 octets)))
+                                  (format "%x" (+ (* 256 (nth 2 octets))
+                                                  (nth 3 octets)))))))
+                     text-parts))
                   (values
                    (mapcar
                     (lambda (part)
@@ -566,7 +592,7 @@ This command uses `nslookup-program' to look up DNS records."
                                       "^[0-9a-fA-F]+$" part))
                           (error "Invalid IPv6 address: %s" ip))
                         (string-to-number part 16)))
-                    parts)))
+                    hextet-parts)))
              (nslookup--ipv6-expand (vconcat values))))
           (t (error "Invalid format: %s" format)))))
 
