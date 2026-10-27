@@ -148,7 +148,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("prog1", raw, f_prog1_raw, ""),
     S!("or", raw, f_or_raw, ""),
     S!("and", raw, f_and_raw, ""),
-    S!("values", many 0, f_values, "Return the list of arguments (multiple values stub)."),
     S!(
         "eval-expression",
         1,
@@ -476,7 +475,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     // GNU macroexp.el: non-nil inside byte compilation; remacs
     // always interprets, so it's nil.  `rx' et al. consult it.
     S!("macroexp-compiling-p", 0, 0, f_noop, ""),
-    S!("declare-functionp", 1, 1, f_declare_functionp, ""),
     S!(
         "error-type",
         1,
@@ -3407,9 +3405,6 @@ fn f_or_raw(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {
 fn f_and_raw(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {
     f_special_form_via_apply(i, Vec::new().into())
 }
-fn f_values(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::list(args.as_slice().to_vec()))
-}
 fn f_eval_expression(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU (simple.el): the value is consed onto `values'; INSERT-VALUE
     // non-nil inserts the printed value into the buffer instead of
@@ -5248,10 +5243,6 @@ fn f_subr_native_lambda_list(i: &mut Interp, args: crate::lisp::Argv) -> EvalRes
         other => Err(i.wrong_type_mut("subrp", other)),
     }
 }
-fn f_declare_functionp(_i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::Nil)
-}
-
 /// `internal--track-mouse` — GNU enters mouse-tracking mode then calls
 /// BODYFN; tracking is a no-op without a window system, so just apply.
 fn f_internal_track_mouse(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
