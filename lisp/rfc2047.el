@@ -1046,6 +1046,12 @@ ENCODED-WORD)."
                (memq after '(?\s ?\t ?\r ?\n))
                (and address-mime (eq after ?\))))))))
 
+(defun rfc2047--encoded-word-has-text-p ()
+  ;;Remacs: RFC 2047 requires at least one encoded-text character.
+  (let ((encoded-word (match-string 3)))
+    (and (stringp encoded-word)
+         (> (length encoded-word) 2))))
+
 (defun rfc2047-decode-region (start end &optional address-mime)
   "Decode MIME-encoded words in region between START and END.
 If ADDRESS-MIME is non-nil, strip backslashes which precede characters
@@ -1070,7 +1076,8 @@ other than `\"' and `\\' in quoted strings."
 	(while (progn
 		 (setq match (re-search-forward eword-regexp nil t))
 		 (while (and match
-			     (or (> (- (match-end 1) (match-beginning 1)) 75)
+			     (or (not (rfc2047--encoded-word-has-text-p))
+				 (> (- (match-end 1) (match-beginning 1)) 75)
 				 (not (rfc2047--encoded-word-bounded-p
 				       (match-beginning 1) (match-end 1) address-mime))
 				 (and address-mime
@@ -1089,6 +1096,7 @@ other than `\"' and `\\' in quoted strings."
 		  words)
 	    ;; Look for the subsequent encoded-words.
 	    (when (and (setq match (looking-at eword-regexp))
+		       (rfc2047--encoded-word-has-text-p)
 		       (<= (- (match-end 1) (match-beginning 1)) 75)
 		       (rfc2047--encoded-word-bounded-p
 			(match-beginning 1) (match-end 1) address-mime)
