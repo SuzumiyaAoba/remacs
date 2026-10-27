@@ -105,7 +105,8 @@ is returned, where each format spec is its own element."
            ((looking-at (rx (? (group (+ (in " 0<>^_-"))))
                             (? (group (+ digit)))
                             (? (group ?. (+ digit)))
-                            (group alpha)))
+                            ;;Remacs: the final placeholder is any character.
+                            (group anychar)))
             (let* ((beg (point))
                    (end (match-end 0))
                    (flags (match-string 1))
