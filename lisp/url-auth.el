@@ -94,18 +94,18 @@ instead of the filename inheritance method."
 		  (url-do-auth-source-search server type :secret user)
                   (and (url-interactive-p)
 		       (read-passwd "Password: " nil (or pass "")))))
-      (set url-basic-auth-storage
-	   (cons (list serverport
-		       (cons file
-			     (setq retval
-				   (base64-encode-string
-				    (format "%s:%s" user
-                                            (if pass
-					        (encode-coding-string pass
-                                                                      'utf-8)
-                                              ""))
-                                    t))))
-		 (symbol-value url-basic-auth-storage))))
+      (when user
+	(set url-basic-auth-storage
+	     (cons (list serverport
+			 (cons file
+			       (setq retval
+				     (base64-encode-string
+				      (format "%s:%s" user
+					      (if pass
+						  (encode-coding-string pass 'utf-8)
+						""))
+				      t))))
+		   (symbol-value url-basic-auth-storage)))))
      (byserv
       (setq retval (cdr-safe (assoc file byserv)))
       (if (and (not retval)
@@ -127,12 +127,13 @@ instead of the filename inheritance method."
 				          (user-real-login-name))))
 		  pass (or
 			(url-do-auth-source-search server type :secret user)
-                        (and (url-interactive-p)
-			     (read-passwd "Password: ")))
-		  retval (base64-encode-string (format "%s:%s" user pass) t)
-		  byserv (assoc serverport (symbol-value url-basic-auth-storage)))
-	    (setcdr byserv
-		    (cons (cons file retval) (cdr byserv))))))
+			(and (url-interactive-p)
+			     (read-passwd "Password: "))))
+	    (when user
+	      (setq retval (base64-encode-string (format "%s:%s" user pass) t)
+		    byserv (assoc serverport (symbol-value url-basic-auth-storage)))
+	      (setcdr byserv
+		      (cons (cons file retval) (cdr byserv)))))))
      (t (setq retval nil)))
     (if retval (setq retval (concat "Basic " retval)))
     retval))
