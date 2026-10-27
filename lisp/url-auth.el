@@ -315,6 +315,15 @@ object."
              (url-digest-auth-make-ha2 method (cond ((stringp uri) uri)
                                                     (t (url-filename uri)))))))
 
+(defun url-digest-auth-supported-qop (qop)
+  "Return a supported token from the server's QOP list, or nil."
+  (and (stringp qop)
+       (let ((case-fold-search t))
+         (when (string-match
+                "\\(?:\\`\\|,\\)[ \t]*auth[ \t]*\\(?:,\\|\\'\\)"
+                qop)
+           "auth"))))
+
 (defun url-digest-auth-build-response (key url realm attrs)
   "Compute authorization string for the given challenge using KEY.
 
@@ -338,43 +347,41 @@ Restrictions on Quality of Protection scheme: The qop value
 implemented."
 
   (let* ((algorithm-entry (assoc "algorithm" attrs))
-         (algorithm (if algorithm-entry (cdr algorithm-entry) "MD5")))
-    (when (and key (stringp algorithm)
-               (string-equal-ignore-case algorithm "MD5"))
+         (algorithm (if algorithm-entry (cdr algorithm-entry) "MD5"))
+         (qop-entry (assoc "qop" attrs))
+         (qop (and qop-entry
+                   (url-digest-auth-supported-qop (cdr qop-entry)))))
+    (when (and key
+               (stringp algorithm)
+               (string-equal-ignore-case algorithm "MD5")
+               (or (null qop-entry) qop))
       (let ((user (nth 1 key))
             (ha1 (nth 2 key))
             (ha2 (nth 3 key))
             (digest-uri (url-filename url))
-            (qop (cdr-safe (assoc "qop" attrs)))
             (nonce (cdr-safe (assoc "nonce" attrs)))
             (opaque (cdr-safe (assoc "opaque" attrs))))
 
-      (concat
-       "Digest "
-       (url-digest-auth-name-value-string
-        (append (list (cons 'username user)
-                      (cons 'realm realm)
-                      (cons 'nonce nonce)
-                      (cons 'uri digest-uri))
-
-                (cond
-                 ((null qop)
-                  (list (cons 'response (url-digest-auth-make-request-digest
-                                         ha1 ha2 nonce))))
-                 ((string= qop "auth")
-                  (let ((nc (url-digest-auth-nonce-count nonce))
-                        (cnonce (url-digest-auth-make-cnonce)))
-                    (list (cons 'qop qop)
-                          (cons 'nc nc)
-                          (cons 'cnonce cnonce)
-                          (cons 'response
-                                (url-digest-auth-make-request-digest-qop
-                                 qop ha1 ha2 nonce nc cnonce)))))
-                 (t (message "Quality of protection \"%s\" is not implemented." qop)
-                    nil))
-
-
-                (if opaque (list (cons 'opaque opaque))))))))))
+        (concat
+         "Digest "
+         (url-digest-auth-name-value-string
+          (append (list (cons 'username user)
+                        (cons 'realm realm)
+                        (cons 'nonce nonce)
+                        (cons 'uri digest-uri))
+                  (if qop
+                      (let ((nc (url-digest-auth-nonce-count nonce))
+                            (cnonce (url-digest-auth-make-cnonce)))
+                        (list (cons 'qop qop)
+                              (cons 'nc nc)
+                              (cons 'cnonce cnonce)
+                              (cons 'response
+                                    (url-digest-auth-make-request-digest-qop
+                                     qop ha1 ha2 nonce nc cnonce))))
+                    (list (cons 'response
+                                (url-digest-auth-make-request-digest
+                                 ha1 ha2 nonce))))
+                  (if opaque (list (cons 'opaque opaque))))))))))
 
 (defun url-digest-find-creds (url prompt &optional realm)
   "Find or ask credentials for URL.
