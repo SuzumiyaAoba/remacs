@@ -724,8 +724,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_body_width,
         "Body width of WINDOW."
     ),
-    S!("window-total-width", 0, 2, f_window_width, ""),
-    S!("window-text-width", 0, 2, f_window_body_width, ""),
+    S!("window-total-width", 0, 2, f_window_total_width, ""),
+    S!("window-text-width", 0, 2, f_window_text_width, ""),
     S!(
         "window-hscroll",
         0,
@@ -5093,9 +5093,19 @@ fn f_window_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
     Ok(Value::Int(win_body_width(i, &w) as i128))
 }
+fn f_window_total_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let w = win_of(i, &arg(&a, 0))?;
+    Ok(Value::Int(w.borrow().width as i128))
+}
 fn f_window_body_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live(i, &arg(&a, 0))?;
     Ok(Value::Int(win_body_width(i, &w) as i128))
+}
+fn f_window_text_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let w = win_live(i, &arg(&a, 0))?;
+    let wb = w.borrow();
+    let margins = wb.margins.0.saturating_add(wb.margins.1);
+    Ok(Value::Int(wb.width.saturating_sub(margins) as i128))
 }
 fn f_window_hscroll(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live(i, &arg(&a, 0))?;
