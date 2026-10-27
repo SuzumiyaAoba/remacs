@@ -202,8 +202,7 @@ decode it afterward."
   ;; TODO: also make this a command so it can be run manually?
   (with-current-buffer (or buffer (current-buffer))
     (let ((was-multibyte enable-multibyte-characters)
-          (start-char (position-bytes start))
-          (end-char (position-bytes end))
+          (start-marker (copy-marker start))
           (end-marker (make-marker)))
       ;; set a marker at the original end position so we can return
       ;; the updated position later:
@@ -213,7 +212,7 @@ decode it afterward."
       ;; any multibyte characters where line folds broke up their
       ;; bytes can be reinterpreted:
       (set-buffer-multibyte nil)
-      (with-restriction start-char end-char
+      (with-restriction start-marker end-marker
         (run-hooks 'icalendar-pre-unfolding-hook)
         (goto-char (point-min))
         ;; since we can't be sure that line folds have a leading CR
