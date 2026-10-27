@@ -1025,6 +1025,27 @@ ENCODED-WORD)."
                           "@" (buffer-substring-no-properties
                                start (point))))))))))))
 
+(defun rfc2047--field-body-start-p (position)
+  "Return non-nil if POSITION immediately follows a header field name."
+  (save-excursion
+    (goto-char position)
+    (string-match-p
+     "\\`[!-9;-~]+:[ \t]*\\'"
+     (buffer-substring-no-properties (line-beginning-position) position))))
+
+(defun rfc2047--encoded-word-bounded-p (beg end address-mime)
+  "Return non-nil if the word between BEG and END has valid text boundaries."
+  (save-match-data
+    (let ((before (char-before beg))
+          (after (char-after end)))
+      (and (or (= beg (point-min))
+               (memq before '(?\s ?\t ?\r ?\n))
+               (rfc2047--field-body-start-p beg)
+               (and address-mime (eq before ?\())))
+           (or (= end (point-max))
+               (memq after '(?\s ?\t ?\r ?\n))
+               (and address-mime (eq after ?\))))))))
+
 (defun rfc2047-decode-region (start end &optional address-mime)
   "Decode MIME-encoded words in region between START and END.
 If ADDRESS-MIME is non-nil, strip backslashes which precede characters
@@ -1050,6 +1071,8 @@ other than `\"' and `\\' in quoted strings."
 		 (setq match (re-search-forward eword-regexp nil t))
 		 (while (and match
 			     (or (> (- (match-end 1) (match-beginning 1)) 75)
+				 (not (rfc2047--encoded-word-bounded-p
+				       (match-beginning 1) (match-end 1) address-mime))
 				 (and address-mime
 				      (rfc2047--address-encoded-word-forbidden-p
 				       (match-beginning 1)))))
@@ -1067,6 +1090,8 @@ other than `\"' and `\\' in quoted strings."
 	    ;; Look for the subsequent encoded-words.
 	    (when (and (setq match (looking-at eword-regexp))
 		       (<= (- (match-end 1) (match-beginning 1)) 75)
+		       (rfc2047--encoded-word-bounded-p
+			(match-beginning 1) (match-end 1) address-mime)
 		       (or (not address-mime)
 			   (not (rfc2047--address-encoded-word-forbidden-p
 				 (match-beginning 1)))))
