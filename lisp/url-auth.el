@@ -217,20 +217,23 @@ Value returned is in string format with leading zeroes, such as
 (defun url-digest-auth-name-value-string (pairs)
   "Concatenate name-value pairs in association list PAIRS.
 
-Output is formatted as \"name1=\\\"value1\\\", name2=\\\"value2\\\", ...\""
+Quoted-string values escape double quotes and backslashes.  The
+`algorithm', `qop', and `nc' parameters are emitted as bare tokens."
   (mapconcat (lambda (pair)
-               (let ((value (format "%s" (cdr pair))))
-                 ;; Quote and backslash are quoted-pairs inside Digest values.
-                 (setq value
-                       (replace-regexp-in-string
-                        (regexp-quote "\\") (concat "\\" "\\")
-                        value t t))
-                 (setq value
-                       (replace-regexp-in-string
-                        (regexp-quote "\"") (concat "\\" "\"")
-                        value t t))
-                 (format "%s=\"%s\"" (symbol-name (car pair)) value)))
+               (let ((name (symbol-name (car pair)))
+                     (value (format "%s" (cdr pair))))
+                 (if (memq (car pair) '(algorithm qop nc))
+                     (format "%s=%s" name value)
+                   (format "%s=\"%s\"" name
+                           (url-digest-auth-escape-quoted-string value)))))
              pairs ", "))
+
+(defun url-digest-auth-escape-quoted-string (string)
+  "Escape quote and backslash characters in Digest quoted STRING."
+  (setq string (replace-regexp-in-string
+                (regexp-quote "\\") (concat "\\" "\\") string t t))
+  (replace-regexp-in-string
+   (regexp-quote "\"") (concat "\\" "\"") string t t))
 
 (defun url-digest-auth-source-creds (url)
   "Find credentials for URL object from the Emacs auth-source.
