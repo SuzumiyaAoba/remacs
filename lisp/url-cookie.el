@@ -170,8 +170,25 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
 (defun url-cookie-store (name value &optional expires domain localpart secure)
   "Store a cookie."
   (when (> (length name) 0)
-    (let ((storage (if secure url-cookie-secure-storage url-cookie-storage))
-          tmp found-domain)
+    (let* ((storage-var (if secure 'url-cookie-secure-storage
+                          'url-cookie-storage))
+           (other-var (if secure 'url-cookie-storage
+                        'url-cookie-secure-storage))
+           (storage (symbol-value storage-var))
+           (other-storage (symbol-value other-var))
+           (other-domain (assoc domain other-storage))
+	   tmp found-domain)
+      ;; Secure is not part of the replacement key.  Remove a matching cookie
+      ;; from the other store before adding or updating this one.
+      (when other-domain
+        (setcdr other-domain
+                (cl-delete-if
+                 (lambda (cookie)
+                   (and (equal localpart (url-cookie-localpart cookie))
+                        (equal name (url-cookie-name cookie))))
+                 (cdr other-domain)))
+        (unless (cdr other-domain)
+          (set other-var (delq other-domain other-storage))))
       ;; First, look for a matching domain.
       (if (setq found-domain (assoc domain storage))
           ;; Need to either stick the new cookie in existing domain storage
@@ -182,6 +199,7 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
                          (progn
                            (setf (url-cookie-expires cur) expires)
                            (setf (url-cookie-value cur) value)
+                           (setf (url-cookie-secure cur) secure)
                            (setq tmp t))))
             ;; New cookie.
             (setcdr found-domain (cons
