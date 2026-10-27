@@ -465,6 +465,18 @@ Return one of:
 	(goto-char (point-min))
 	(xml-parse-tag-1 parse-dtd parse-ns)))))
 
+(defun xml--parse-comment ()
+  "Skip an XML comment at point, rejecting invalid comment text."
+  (let ((content-start (+ (point) 4)))
+    (unless (search-forward "-->" nil t)
+      (error "XML: (Not Well-Formed) Unterminated comment"))
+    ;; Include the first hyphen of the closing delimiter, so a comment
+    ;; body ending in `-' is rejected along with `--' within the body.
+    (when (string-match-p
+           "--"
+           (buffer-substring-no-properties content-start (- (point) 2)))
+      (error "XML: (Not Well-Formed) Double hyphen in comment"))))
+
 (defun xml-parse-tag-1 (&optional parse-dtd parse-ns)
   "Like `xml-parse-tag', but possibly modify the buffer while working."
   (let* ((xml-validating-parser (or parse-dtd xml-validating-parser))
@@ -500,7 +512,7 @@ Return one of:
 	  (xml-parse-tag-1 nil xml-ns))))
      ;; skip comments
      ((looking-at-p "<!--")
-      (search-forward "-->")
+      (xml--parse-comment)
       ;; FIXME: This loses the skipped-over spaces.
       (skip-syntax-forward " ")
       (unless (eobp)
@@ -831,7 +843,7 @@ This follows the rule [28] in the XML specifications."
 
 	 ;; Comments (skip to end, ignoring parameter entity):
 	 ((looking-at-p "<!--")
-	  (search-forward "-->")
+	  (xml--parse-comment)
 	  (and next-parameter-entity
 	       (> (point) next-parameter-entity)
 	       (setq next-parameter-entity
