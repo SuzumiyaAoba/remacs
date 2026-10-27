@@ -186,10 +186,11 @@ depends on value of QOP."
 
 (defsubst url-digest-auth-directory-id (url realm)
   "Make an identifier for selecting a key in key cache.
-The identifier is made either from URL or REALM.  It represents a
-protection space within a server so that one server can have
-multiple authorizations."
-  (or realm (or (url-file-directory (url-filename url)) "/")))
+The identifier is tagged as either a REALM or a URL directory.  Realm
+values match exactly; URL directory values can inherit from ancestors."
+  (if realm
+      (cons 'realm realm)
+    (cons 'directory (or (url-file-directory (url-filename url)) "/"))))
 
 (defsubst url-digest-auth-server-id (url)
   "Make an identifier for selecting a server in key cache.
@@ -266,28 +267,18 @@ CREDS is a plist that may have properties `:user' and `:secret'."
 (defun url-digest-auth-directory-id-assoc (dirkey keylist)
   "Find the best match for DIRKEY in key alist KEYLIST.
 
-The string DIRKEY should be obtained using
-`url-digest-auth-directory-id'.  The key list to search through
-is the alist KEYLIST where car of each element may match DIRKEY.
-If DIRKEY represents a realm, the list is searched only for an
-exact match.  For directory names, an ancestor is sufficient for
-a match."
-  (or
-   ;; Check exact match first.
-   (assoc dirkey keylist)
-   ;; No exact match found.  Continue to look for partial match if
-   ;; dirkey is not a realm.
-   (and (string-search "/" dirkey)
-        (let (match)
-          (while (and (null match) keylist)
-            (if (or
-                 ;; Any realm candidate matches.  Why?
-                 (not (string-search "/" (caar keylist)))
-                 ;; Parent directory matches.
-                 (string-prefix-p (caar keylist) dirkey))
-                (setq match (car keylist))
-              (setq keylist (cdr keylist))))
-          match))))
+DIRKEY should be obtained using `url-digest-auth-directory-id'.
+Realm keys match exactly; URL directory keys may inherit from ancestors."
+  (or (assoc dirkey keylist)
+      (and (eq (car-safe dirkey) 'directory)
+           (let ((directory (cdr dirkey)) match)
+             (while (and (null match) keylist)
+               (let ((cached-key (caar keylist)))
+                 (when (and (eq (car-safe cached-key) 'directory)
+                            (string-prefix-p (cdr cached-key) directory))
+                   (setq match (car keylist))))
+               (setq keylist (cdr keylist)))
+             match))))
 
 (defun url-digest-cached-key (url realm)
   "Find best match for URL and REALM from `url-digest-auth-storage'.
