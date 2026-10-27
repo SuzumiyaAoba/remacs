@@ -433,6 +433,21 @@ Both features can be combined by providing a cons cell
 	  (cons dtd (nreverse xml))
 	(nreverse xml)))))
 
+(defun xml--validate-namespace-binding (prefix uri)
+  "Signal an error if PREFIX and URI violate reserved namespace bindings."
+  (let ((xml-uri (cdr (assoc "xml" xml-default-ns)))
+        (xmlns-uri (cdr (assoc "xmlns" xml-default-ns))))
+    (cond
+     ((string= prefix "xmlns")
+      (error "XML: (Not Well-Formed) The `xmlns' prefix is reserved"))
+     ((string= uri xmlns-uri)
+      (error "XML: (Not Well-Formed) The xmlns namespace cannot be declared"))
+     ((string= prefix "xml")
+      (unless (string= uri xml-uri)
+        (error "XML: (Not Well-Formed) The `xml' prefix has a reserved binding")))
+     ((string= uri xml-uri)
+      (error "XML: (Not Well-Formed) The XML namespace is reserved for `xml'")))))
+
 (defun xml--namespace-add-binding (xml-ns prefix uri)
   "Return a copy of XML-NS with PREFIX bound to URI at its head."
   (if (eq (car-safe xml-ns) 'symbol-qnames)
@@ -595,12 +610,20 @@ Return one of:
 	    (let ((raw-name (car attr)))
 	      (cond
 	       ((string= raw-name "xmlns")
+		(xml--validate-namespace-binding "" (cdr attr))
 		(setq namespace-scope
 		      (xml--namespace-add-binding namespace-scope "" (cdr attr))))
-	       ((string-match "\\`xmlns:\\(.+\\)\\'" raw-name)
-		(setq namespace-scope
-		      (xml--namespace-add-binding
-		       namespace-scope (match-string 1 raw-name) (cdr attr)))))))
+	       ((string-match "\\`xmlns:\\(.*\\)\\'" raw-name)
+		(let ((prefix (match-string 1 raw-name)))
+		  (when (string= prefix "")
+		    (error "XML: (Not Well-Formed) Empty namespace prefix"))
+		  (xml--validate-namespace-binding prefix (cdr attr))
+		  (setq namespace-scope
+			(xml--namespace-add-binding
+			 namespace-scope prefix (cdr attr))))))))
+	(when (and (consp namespace-scope)
+		   (string-match "\\`xmlns:" node-name))
+	  (error "XML: (Not Well-Formed) The `xmlns' prefix is reserved for attributes"))
 	(let ((seen nil))
 	  (setq attrs
 		(mapcar (lambda (attr)
