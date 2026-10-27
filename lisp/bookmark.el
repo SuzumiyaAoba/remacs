@@ -1753,15 +1753,24 @@ they conflict with existing bookmark names."
     (setq bookmark-alist (nconc (nreverse imported) bookmark-alist))))
 
 
+(defun bookmark--name-member-p (name names)
+  "Return non-nil if NAME matches an entry in NAMES for lookup purposes."
+  (catch 'found
+    (dolist (candidate names)
+      (when (eq t (compare-strings name nil nil candidate nil nil
+                                   bookmark-completion-ignore-case))
+        (throw 'found t)))
+    nil))
+
 (defun bookmark-maybe-rename (full-record names)
   "Rename bookmark FULL-RECORD if its current name is already used.
 This is a helper for `bookmark-import-new-list'."
   (let ((found-name (bookmark-name-from-full-record full-record)))
-    (if (member found-name names)
+    (if (bookmark--name-member-p found-name names)
         ;; We've got a conflict, so generate a new name
         (let ((count 2)
               (new-name found-name))
-          (while (member new-name names)
+          (while (bookmark--name-member-p new-name names)
             (setq new-name (concat found-name (format "<%d>" count)))
             (setq count (1+ count)))
           (bookmark-set-name full-record new-name)))))
