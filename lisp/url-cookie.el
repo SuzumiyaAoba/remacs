@@ -228,12 +228,42 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
               (t
                (setq url-cookie-storage (list (list domain tmp)))))))))
 
+(defun url-cookie--expires-date-to-time (date)
+  "Parse cookie DATE with RFC 6265's two-digit year rule."
+  (let* ((date-without-time
+          (replace-regexp-in-string
+           "[0-9]+:[0-9]+:[0-9]+"
+           (lambda (match) (make-string (length match) 32))
+           date t t))
+         (date-without-zone
+          (replace-regexp-in-string
+           "[+-][0-9][0-9]:?[0-9][0-9]"
+           (lambda (match) (make-string (length match) 32))
+           date-without-time t t))
+         (start 0)
+         year-range)
+    (while (and (not year-range)
+                (string-match
+                 "\\(?:^\\|[^0-9]\\)\\([0-9][0-9]\\)\\(?:$\\|[^0-9]\\)"
+                 date-without-zone start))
+      (let ((year (string-to-number (match-string 1 date-without-zone))))
+        (if (<= 50 year 69)
+            (setq year-range
+                  (list (match-beginning 1) (match-end 1) year))
+          (setq start (match-end 1)))))
+    (date-to-time
+     (if year-range
+         (concat (substring date 0 (nth 0 year-range))
+                 (number-to-string (+ 2000 (nth 2 year-range)))
+                 (substring date (nth 1 year-range)))
+       date))))
+
 (defun url-cookie-expired-p (cookie)
   "Return non-nil if COOKIE is expired."
   (let ((exp (url-cookie-expires cookie)))
     (and (> (length exp) 0)
 	 (condition-case ()
-	     (time-less-p (date-to-time exp) nil)
+	     (time-less-p (url-cookie--expires-date-to-time exp) nil)
 	   (error nil)))))
 
 (defun url-cookie--domain-match-p (host domain &optional include-subdomains)
