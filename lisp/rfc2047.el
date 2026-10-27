@@ -611,7 +611,9 @@ should not change this value.")
 					   (substring string 0 (1+ index))))
 				"?=")
 		   len (+ column (length next)))
-	     (if (> len rfc2047-encode-max-chars)
+	     ;;Remacs: encoded-words have a 75-character limit, separate from lines.
+	     (if (or (> len rfc2047-encode-max-chars)
+		     (> (length next) 75))
 		 (setq next prev
 		       prev nil)
 	       (if (or (< index limit)
