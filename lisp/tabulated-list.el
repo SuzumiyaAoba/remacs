@@ -720,6 +720,7 @@ With a numeric prefix argument N, sort the Nth column.
 If the numeric prefix is -1, restore order the list was
 originally displayed in."
   (interactive "P")
+  (when n (setq n (prefix-numeric-value n)))
   (when (and n
              (or (>= n (length tabulated-list-format))
                  (< n -1)))
