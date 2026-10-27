@@ -1045,11 +1045,14 @@ other than `\"' and `\\' in quoted strings."
 	  (rfc2047-strip-backslashes-in-quoted-strings))
 	(goto-char (setq b start))
 	;; Look for the encoded-words.
+	;;Remacs: RFC 2047 limits each encoded-word to 75 characters.
 	(while (progn
 		 (setq match (re-search-forward eword-regexp nil t))
-		 (while (and match address-mime
-			     (rfc2047--address-encoded-word-forbidden-p
-			      (match-beginning 1)))
+		 (while (and match
+			     (or (> (- (match-end 1) (match-beginning 1)) 75)
+				 (and address-mime
+				      (rfc2047--address-encoded-word-forbidden-p
+				       (match-beginning 1)))))
 		   (setq match (re-search-forward eword-regexp nil t)))
 		 match)
 	  (setq e (match-beginning 1)
@@ -1063,6 +1066,7 @@ other than `\"' and `\\' in quoted strings."
 		  words)
 	    ;; Look for the subsequent encoded-words.
 	    (when (and (setq match (looking-at eword-regexp))
+		       (<= (- (match-end 1) (match-beginning 1)) 75)
 		       (or (not address-mime)
 			   (not (rfc2047--address-encoded-word-forbidden-p
 				 (match-beginning 1)))))
