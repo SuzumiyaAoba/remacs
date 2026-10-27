@@ -950,18 +950,22 @@ Includes expansions from parent abbrev tables."
 		  table))
       expansions))
 
+(defun abbrev--suggest-normalize-whitespace (string)
+  "Return STRING with each run of whitespace replaced by one space."
+  (replace-regexp-in-string "\\s +" " " string))
+
 (defun abbrev--suggest-count-words (expansion)
   "Return the number of words in EXPANSION.
 Expansion is a string of one or more words."
-    (length (split-string expansion " " t)))
+    (length (split-string (abbrev--suggest-normalize-whitespace expansion)
+			  " " t)))
 
 (defun abbrev--suggest-get-previous-words (n)
   "Return the N words before point, spaces included."
     (let ((end (point)))
       (save-excursion
 	(backward-word n)
-	(replace-regexp-in-string
-	 "\\s " " "
+	(abbrev--suggest-normalize-whitespace
 	 (buffer-substring-no-properties (point) end)))))
 
 (defun abbrev--suggest-above-threshold (expansion)
@@ -1011,8 +1015,10 @@ informed about the existing abbrev."
 	(setq word-count (abbrev--suggest-count-words (car expansion))
 	      words (abbrev--suggest-get-previous-words word-count))
 	(when (and (> word-count 0)
-		   (eq t (compare-strings (car expansion) nil nil
-					 words nil nil t))
+		   (eq t (compare-strings
+			  (abbrev--suggest-normalize-whitespace
+			   (car expansion))
+			  nil nil words nil nil t))
 		   (abbrev--suggest-above-threshold expansion))
 	  (setq abbrev-found (abbrev--suggest-shortest-abbrev
 			      expansion abbrev-found))))
