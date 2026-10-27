@@ -136,6 +136,12 @@ Presumably, FUNCTION has useful side effects.
 Return SEQUENCE."
   (mapc function sequence))
 
+(cl-defmethod seq-do (function (sequence char-table))
+  "Apply FUNCTION to each element of the character table SEQUENCE."
+  (dotimes (index (seq-length sequence))
+    (funcall function (seq-elt sequence index)))
+  sequence)
+
 (defalias 'seq-each #'seq-do)
 
 (defun seq-do-indexed (function sequence)
