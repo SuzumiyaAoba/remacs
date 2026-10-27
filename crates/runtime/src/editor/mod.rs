@@ -8629,7 +8629,7 @@ fn f_key_binding(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let keys = key_seq(i, &a[0])?;
     let t_ok = a.get(1).map(|v| v.truthy()).unwrap_or(false);
     let am_id = i.q("current-active-maps");
-    let maps = i.apply(&Value::Sym(am_id), vec![Value::t()])?;
+    let maps = i.apply(&Value::Sym(am_id), vec![Value::t(), arg(&a, 3)])?;
     let mut list = maps;
     while let Value::Cons(c) = list.clone() {
         let (km, next) = {
@@ -8659,7 +8659,7 @@ fn f_key_binding(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     if !noremap {
                         let r = f_command_remapping(
                             i,
-                            vec![Value::Sym(*cmd), Value::Nil, Value::Nil].into(),
+                            vec![Value::Sym(*cmd), arg(&a, 3), Value::Nil].into(),
                         )?;
                         if r.truthy() {
                             return Ok(r);

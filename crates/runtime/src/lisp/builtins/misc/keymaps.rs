@@ -579,6 +579,7 @@ pub(super) fn f_current_active_maps(i: &mut Interp, a: crate::lisp::Argv) -> Eva
     // current buffer — out of range signals
     // (args-out-of-range BUFFER POSITION); other objects use PT.
     let olp = a.first().map(|v| v.truthy()).unwrap_or(false);
+    let mut position = crate::editor::cur(i).borrow().point() as i128 + 1;
     if let Some(pos) = a.get(1) {
         let pt: Option<i128> = match pos {
             Value::Int(n) => Some(*n),
@@ -592,6 +593,7 @@ pub(super) fn f_current_active_maps(i: &mut Interp, a: crate::lisp::Argv) -> Eva
             _ => None,
         };
         if let Some(p) = pt {
+            position = p;
             let cur = crate::editor::cur(i);
             let bb = cur.borrow();
             if p < bb.begv as i128 + 1 || p > bb.zv as i128 + 1 {
@@ -617,7 +619,11 @@ pub(super) fn f_current_active_maps(i: &mut Interp, a: crate::lisp::Argv) -> Eva
         return Ok(Value::list(maps));
     }
 
-    let local = {
+    let local_property = map_property_at(i, position, "local-map")?;
+    let local_property = crate::editor::keymap_def_noautoload(i, &local_property);
+    let local = if is_keymap(i, &local_property) {
+        local_property
+    } else {
         let b = crate::editor::cur(i);
         let lb = b.borrow();
         lb.locals
@@ -637,10 +643,29 @@ pub(super) fn f_current_active_maps(i: &mut Interp, a: crate::lisp::Argv) -> Eva
     for m in minors.into_iter().rev() {
         maps.insert(0, m);
     }
+    let keymap_property = map_property_at(i, position, "keymap")?;
+    let keymap_property = crate::editor::keymap_def_noautoload(i, &keymap_property);
+    if is_keymap(i, &keymap_property) {
+        maps.insert(0, keymap_property);
+    }
     if olp && is_keymap(i, &otlp) {
         maps.insert(0, otlp);
     }
     Ok(Value::list(maps))
+}
+
+fn map_property_at(i: &mut Interp, position: i128, name: &str) -> Result<Value, Flow> {
+    let position = Value::Int(position);
+    let property = Value::Sym(i.q(name));
+    let value = crate::buffer::primitives::f_get_char_property(
+        i,
+        vec![position.clone(), property.clone()].into(),
+    )?;
+    if value.is_nil() {
+        crate::buffer::primitives::f_get_pos_property(i, vec![position, property].into())
+    } else {
+        Ok(value)
+    }
 }
 
 pub(super) fn f_suppress_keymap(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
