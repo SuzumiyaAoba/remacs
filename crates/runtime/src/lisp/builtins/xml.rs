@@ -410,7 +410,13 @@ fn html_node(
                 .iter()
                 // HTML names are ASCII-case-insensitive, including foreign
                 // attributes that HTML5 adjusts back to e.g. SVG viewBox.
-                .map(|a| attr_cons(i, &a.name.local.as_ref().to_ascii_lowercase(), &a.value))
+                .map(|a| {
+                    let local = a.name.local.as_ref().to_ascii_lowercase();
+                    let name = a.name.prefix.as_ref().map_or(local.clone(), |prefix| {
+                        format!("{}:{local}", prefix.as_ref().to_ascii_lowercase())
+                    });
+                    attr_cons(i, &name, &a.value)
+                })
                 .collect();
             let mut node = vec![
                 Value::Sym(i.intern(name.local.as_ref())),
