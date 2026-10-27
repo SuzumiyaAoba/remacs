@@ -531,15 +531,19 @@ be of the same type as START.  The returned value is an
     (icalendar-date-time
      (let* ((start-abs (time-convert (encode-time start) 'integer))
             (end-abs (time-convert (encode-time end) 'integer))
-            (dur-secs (- end-abs start-abs))
-            (days (/ dur-secs (* 60 60 24)))
-            (dur-nodays (mod dur-secs (* 60 60 24)))
+            (delta-secs (- end-abs start-abs))
+            (sign (if (< delta-secs 0) -1 1))
+            (magnitude (abs delta-secs))
+            (days (/ magnitude (* 60 60 24)))
+            (dur-nodays (mod magnitude (* 60 60 24)))
             (hours (/ dur-nodays (* 60 60)))
             (dur-nohours (mod dur-nodays (* 60 60)))
             (minutes (/ dur-nohours 60))
             (seconds (mod dur-nohours 60)))
-       (make-decoded-time :day days
-                          :hour hours :minute minutes :second seconds)))))
+       (make-decoded-time :day (* sign days)
+                          :hour (* sign hours)
+                          :minute (* sign minutes)
+                          :second (* sign seconds))))))
 
 (defun icalendar-date/time-to-local (dt)
   "Reinterpret DT in Emacs local time if necessary.
