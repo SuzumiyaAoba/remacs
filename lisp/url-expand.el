@@ -94,9 +94,24 @@ path components followed by `..' are removed, along with the `..' itself."
   (cond
    ((= (length url) 0)			; nil or empty string
     (url-recreate-url default))
-   ((string-match url-nonrelative-link url) ; Fully-qualified URL,
-                                            ; return it immediately
-    url)
+   ((string-match url-nonrelative-link url) ; Fully-qualified URL
+    (let* ((urlobj (url-generic-parse-url url))
+           (path-query (url-path-and-query urlobj))
+           (path (car path-query))
+           (query (cdr path-query))
+           (normalized-path
+            (and (stringp path)
+                 (> (length path) 0)
+                 (eq (aref path 0) ?/)
+                 (not (string= (url-type urlobj) "data"))
+                 (url-expander-remove-relative-links path))))
+      (if (and normalized-path (not (string= path normalized-path)))
+          (progn
+            ;;Remacs: absolute URIs also need dot-segment removal.
+            (setf (url-filename urlobj)
+                  (concat normalized-path (if query (concat "?" query) "")))
+            (url-recreate-url urlobj))
+        url)))
    (t
     (let* ((urlobj (url-generic-parse-url url))
 	   (inhibit-file-name-handlers t)
