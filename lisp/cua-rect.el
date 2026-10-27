@@ -1191,9 +1191,11 @@ The numbers are formatted according to the FORMAT string."
             (format-prompt "Start value" 0) "0"))
          (cua--read-sequence-integer (format-prompt "Increment" 1) "1")
          (read-string (concat "Format: (" cua--rectangle-seq-format ") "))))
-  (if (= (length format) 0)
-      (setq format cua--rectangle-seq-format)
-    (setq cua--rectangle-seq-format format))
+  (when (= (length format) 0)
+    (setq format cua--rectangle-seq-format))
+  ;; Validate the format before modifying any rectangle contents.
+  (format format first)
+  (setq cua--rectangle-seq-format format)
   (cua--rectangle-operation 'clear nil t 1 nil
      (lambda (s e _l _r)
          (delete-region s e)
