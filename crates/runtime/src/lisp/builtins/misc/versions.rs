@@ -138,6 +138,7 @@ fn version_list_of(i: &mut Interp, v: &Value) -> Result<Vec<BigInt>, Flow> {
             } else if pos == chars.len()
                 && suffix
                     .strip_prefix(['-', '.', '_', '+', ' '])
+                    .unwrap_or(&suffix)
                     .filter(|tail| tail.len() == 1)
                     .and_then(|tail| tail.chars().next())
                     .filter(|c| c.is_ascii_alphabetic())
