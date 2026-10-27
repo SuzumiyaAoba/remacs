@@ -547,12 +547,24 @@ Return the number of characters removed."
   (goto-char (point-min))
   (skip-chars-forward " \t\n")		; Skip any blank crap
   (skip-chars-forward "/HPT")		; Skip HTTP Version "HTTP/".
-  (setq url-http-response-version
-	(buffer-substring (point)
-			  (progn
-			    (skip-chars-forward "0-9.")
-			    (point))))
-  (setq url-http-response-status (read (current-buffer))))
+  (let ((version (buffer-substring (point)
+				  (progn
+				    (skip-chars-forward "0-9.")
+				    (point))))
+	status status-start)
+    (skip-chars-forward " \t")
+    (setq status-start (point))
+    (skip-chars-forward "0-9")
+    (let ((status-string (buffer-substring status-start (point))))
+      ;;Remacs: require RFC 9110's three digits, separator, and range.
+      (unless (and (= (length status-string) 3)
+		   (eq (char-after) ?\s))
+	(error "Malformed HTTP response status code: %s" status-string))
+      (setq status (string-to-number status-string))
+      (unless (<= 100 status 599)
+	(error "Invalid HTTP response status code: %s" status-string)))
+    (setq url-http-response-version version
+	  url-http-response-status status)))
 
 (defun url-http-handle-cookies ()
   "Handle all set-cookie / set-cookie2 headers in an HTTP response.
