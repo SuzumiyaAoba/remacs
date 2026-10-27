@@ -1741,12 +1741,13 @@ pub(super) fn f_zlib_decompress_region(i: &mut Interp, a: crate::lisp::Argv) -> 
         let chars: Vec<crate::lisp::value::EmacsChar> = t.chars().collect();
         let lo = (start - 1).max(0) as usize;
         let hi = (end - 1).min(chars.len() as i128) as usize;
-        // Approximate unibyte storage: Latin-1 chars encode as their
-        // single byte; anything else uses UTF-8.
+        // Unibyte buffers represent bytes above ASCII as byte8 proxy chars.
         let mut bytes = Vec::new();
 
         for &c in &chars[lo..hi] {
-            if c.code() < 256 {
+            if let Some(byte) = c.byte8() {
+                bytes.push(byte);
+            } else if c.code() < 256 {
                 bytes.push((c).code() as u8);
             } else {
                 c.encode_internal(&mut bytes);

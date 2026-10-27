@@ -423,6 +423,9 @@ There should be no more than seven characters after the final `/'."
                   ;; If we don't have the uncompression program, then use the
                   ;; internal uncompression function (if we have one).
                   (let ((buf (current-buffer)))
+                    (when replace
+                      (goto-char (point-min)))
+                    (setq start (point))
                     (with-temp-buffer
                       (set-buffer-multibyte nil)
                       (insert-file-contents-literally file)
@@ -433,7 +436,9 @@ There should be no more than seven characters after the final `/'."
                         (delete-region (point-min) beg))
                       (setq size (buffer-size))
                       (insert-into-buffer buf))
-                    (goto-char (point-min)))
+                    (when replace
+                      (delete-region (point) (point-max)))
+                    (goto-char start))
                 ;; Use the external uncompression program.
                 (condition-case error-code
 
