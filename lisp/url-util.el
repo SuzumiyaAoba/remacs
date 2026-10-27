@@ -240,7 +240,7 @@ Will not do anything if `url-show-status' is nil."
             (setq key (downcase key)))
         (setq cur (assoc key retval))
         (if cur
-            (setcdr cur (cons val (cdr cur)))
+            (setcdr cur (append (cdr cur) (list val)))
           (setq retval (cons (list key val) retval)))))
     retval))
 
