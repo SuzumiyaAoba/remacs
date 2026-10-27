@@ -520,7 +520,9 @@ in the XML-NS argument."
 	(if (and symbol-qnames
                  (not special)
 		 (not (string= prefix "xmlns")))
-	    (intern (concat ns lname))
+	    ;; NCName local parts cannot contain `:', so this separator keeps
+	    ;; the namespace/local-name pair injective.
+	    (intern (if (string= ns "") lname (concat ns ":" lname)))
 	  (cons ns (if special "" lname)))))
     (intern name)))
 
