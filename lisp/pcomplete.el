@@ -805,7 +805,8 @@ this is `comint-dynamic-complete-functions'."
 (declare-function comint-bol "comint" (&optional arg))
 
 (defun pcomplete-parse-comint-arguments ()
-  "Parse whitespace separated arguments in the current region."
+  "Parse shell arguments in the current region.
+Whitespace inside single- or double-quoted arguments does not separate them."
   (declare (obsolete comint-parse-pcomplete-arguments "24.1"))
   (let ((begin (save-excursion (comint-bol nil) (point)))
 	(end (point))
@@ -813,16 +814,39 @@ this is `comint-dynamic-complete-functions'."
     (save-excursion
       (goto-char begin)
       (while (< (point) end)
-	(skip-chars-forward " \t\n")
+	(skip-chars-forward " \t\n" end)
 	(push (point) begins)
-        (while
-            (progn
-              (skip-chars-forward "^ \t\n\\\\")
-              (when (eq (char-after) ?\\)
-                (forward-char 1)
-                (unless (eolp)
-                  (forward-char 1)
-                  t))))
+	(let ((quote-char nil)
+	      escaped)
+	  (while (and (< (point) end)
+		      (let ((char (char-after)))
+			(cond
+			 (escaped
+			  (setq escaped nil)
+			  (forward-char 1)
+			  t)
+			 (quote-char
+			  (cond
+			   ((eq char quote-char)
+			    (setq quote-char nil)
+			    (forward-char 1))
+			   ((and (eq quote-char ?\") (eq char ?\\))
+			    (setq escaped t)
+			    (forward-char 1))
+			   (t (forward-char 1)))
+			  t)
+			 ((eq char ?\\)
+			  (setq escaped t)
+			  (forward-char 1)
+			  t)
+			 ((memq char '(?\s ?\t ?\n)) nil)
+			 ((memq char '(?' ?\"))
+			  (setq quote-char char)
+			  (forward-char 1)
+			  t)
+			 (t
+			  (forward-char 1)
+			  t)))))
 	(push (buffer-substring-no-properties (car begins) (point))
               args))
       (cons (nreverse args) (nreverse begins)))))
