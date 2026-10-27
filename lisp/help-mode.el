@@ -718,19 +718,21 @@ variable `help-clean-buttons' is non-nil."
   ;; Don't mung properties we've added specially in some instances.
   (let ((beg (match-beginning match-number))
         (end (match-end match-number)))
-    (unless (button-at beg)
-      (make-text-button beg end 'type type 'help-args args)
-      (when (and help-clean-buttons
-                 (> beg (point-min))
-                 (save-excursion
-                   (goto-char (1- beg))
-                   (looking-at "['`‘]"))
-                 (< end (point-max))
-                 (save-excursion
-                   (goto-char end)
-                   (looking-at "['’]")))
-        (delete-region end (1+ end))
-        (delete-region (1- beg) beg)))))
+    ;; Remacs: a regexp subexpression can be unset during cross-reference scans.
+    (when (and beg end)
+      (unless (button-at beg)
+        (make-text-button beg end 'type type 'help-args args)
+        (when (and help-clean-buttons
+                   (> beg (point-min))
+                   (save-excursion
+                     (goto-char (1- beg))
+                     (looking-at "['`‘]"))
+                   (< end (point-max))
+                   (save-excursion
+                     (goto-char end)
+                     (looking-at "['’]")))
+          (delete-region end (1+ end))
+          (delete-region (1- beg) beg))))))
 
 ;;;###autoload
 (defun help-insert-xref-button (string type &rest args)
