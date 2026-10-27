@@ -433,6 +433,12 @@ Both features can be combined by providing a cons cell
 	  (cons dtd (nreverse xml))
 	(nreverse xml)))))
 
+(defun xml--namespace-add-binding (xml-ns prefix uri)
+  "Return a copy of XML-NS with PREFIX bound to URI at its head."
+  (if (eq (car-safe xml-ns) 'symbol-qnames)
+      (cons 'symbol-qnames (cons (cons prefix uri) (cdr xml-ns)))
+    (cons (cons prefix uri) xml-ns)))
+
 (defun xml-maybe-do-ns (name default xml-ns)
   "Perform any namespace expansion.
 NAME is the name to perform the expansion on.
@@ -451,15 +457,22 @@ would like to get plain symbols instead, provide a cons cell
 in the XML-NS argument."
   (if (consp xml-ns)
       (let* ((symbol-qnames (eq (car-safe xml-ns) 'symbol-qnames))
+	     (mapping (if symbol-qnames (cdr xml-ns) xml-ns))
 	     (nsp (string-match ":" name))
 	     (lname (if nsp (substring name (match-end 0)) name))
 	     (prefix (if nsp (substring name 0 (match-beginning 0)) default))
 	     (special (and (string-equal lname "xmlns") (not prefix)))
-             ;; Setting default to nil will insure that there is not
-             ;; matching cons in xml-ns.  In which case we
-	     (ns (or (cdr (assoc (if special "xmlns" prefix)
-                                 (if symbol-qnames (cdr xml-ns) xml-ns)))
-                     "")))
+	     (namespace-prefix (if special "xmlns" prefix))
+	     (binding (assoc namespace-prefix mapping))
+	     (ns (cond (binding (or (cdr binding) ""))
+	       ((equal namespace-prefix "xml")
+			(cdr (assoc "xml" xml-default-ns)))
+	       ((equal namespace-prefix "xmlns")
+			(cdr (assoc "xmlns" xml-default-ns)))
+		       (nsp
+			(error "XML: (Not Well-Formed) Undeclared namespace prefix `%s'"
+			       prefix))
+		       (t ""))))
 	(if (and symbol-qnames
                  (not special)
 		 (not (string= prefix "xmlns")))
@@ -573,18 +586,33 @@ Return one of:
       (let* ((node-name (match-string-no-properties 1))
 	     ;; Parse the attribute list.
 	     (attrs (xml-parse-attlist xml-ns))
+	     (namespace-scope (if (consp xml-ns) (copy-tree xml-ns) xml-ns))
 	     children)
-	;; add the xmlns:* attrs to our cache
-	(when (consp xml-ns)
+	;; Namespace declarations apply to all names in this start-tag, even
+	;; when the declaration appears after a prefixed attribute.
+	(when (consp namespace-scope)
 	  (dolist (attr attrs)
-	    (when (and (consp (car attr))
-		       (equal "http://www.w3.org/2000/xmlns/"
-			      (caar attr)))
-	      (push (cons (cdar attr) (cdr attr))
-		    (if (symbolp (car xml-ns))
-			(cdr xml-ns)
-		      xml-ns)))))
-	(setq children (list attrs (xml-maybe-do-ns node-name "" xml-ns)))
+	    (let ((raw-name (car attr)))
+	      (cond
+	       ((string= raw-name "xmlns")
+		(setq namespace-scope
+		      (xml--namespace-add-binding namespace-scope "" (cdr attr))))
+	       ((string-match "\\`xmlns:\\(.+\\)\\'" raw-name)
+		(setq namespace-scope
+		      (xml--namespace-add-binding
+		       namespace-scope (match-string 1 raw-name) (cdr attr)))))))
+	(let ((seen nil))
+	  (setq attrs
+		(mapcar (lambda (attr)
+			  (let ((expanded (xml-maybe-do-ns
+					   (car attr) nil namespace-scope)))
+			    (when (member expanded seen)
+			      (error "XML: (Not Well-Formed) Duplicate expanded attribute name"))
+			    (push expanded seen)
+			    (cons expanded (cdr attr))))
+			attrs)))
+	(setq children
+	      (list attrs (xml-maybe-do-ns node-name "" namespace-scope)))
 	(cond
 	 ;; is this an empty element ?
 	 ((looking-at-p "/>")
@@ -610,7 +638,7 @@ Return one of:
 		       node-name))
 	       ;; Read a sub-element and push it onto CHILDREN.
 	       ((= (char-after) ?<)
-		(let ((tag (xml-parse-tag-1 nil xml-ns)))
+		(let ((tag (xml-parse-tag-1 nil namespace-scope)))
 		  (when tag
 		    (push tag children))))
 	       ;; Read some character data.
@@ -735,7 +763,7 @@ Leave point at the first non-blank character after the tag."
     (while (looking-at (eval-when-compile
 			 (concat "\\(" xml-name-re "\\)\\s-*=\\s-*")))
       (setq end-pos (match-end 0))
-      (setq name (xml-maybe-do-ns (match-string-no-properties 1) nil xml-ns))
+      (setq name (match-string-no-properties 1))
       (goto-char end-pos)
 
       ;; See also: https://www.w3.org/TR/2000/REC-xml-20001006#AVNormalize
