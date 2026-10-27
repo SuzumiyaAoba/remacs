@@ -256,13 +256,19 @@ DST is returned as -1)."
                   (signal 'date-parse-error
                           (list "Expected a time" time)))
                 (push time tokens))
-              ((string-match
-                "^\\([0-9][0-9]?\\):\\([0-9][0-9]\\):\\([0-9][0-9]\\)$"
-                time)
+              ;;Remacs: RFC 5322 requires a two-digit hour.
+              ((and (string-match
+                     "^\\([0-9][0-9]?\\):\\([0-9][0-9]\\):\\([0-9][0-9]\\)$"
+                     time)
+                    (or (not no-822)
+                        (= (length (match-string 1 time)) 2)))
                 (set-matched-slot 2 1 time)
                 (set-matched-slot 1 2 time)
                 (set-matched-slot 0 3 time))
-              ((string-match "^\\([0-9][0-9]?\\):\\([0-9][0-9]\\)$" time)
+              ((and (string-match
+                     "^\\([0-9][0-9]?\\):\\([0-9][0-9]\\)$" time)
+                    (or (not no-822)
+                        (= (length (match-string 1 time)) 2)))
                 ;; Time without seconds.
                 (set-matched-slot 2 1 time)
                 (set-matched-slot 1 2 time)
