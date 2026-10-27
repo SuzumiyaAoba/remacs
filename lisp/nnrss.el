@@ -826,10 +826,10 @@ Careful with this on large documents!"
 (defun nnrss-rsslink-p (el)
   "Test if the element we are handed is an RSS autodiscovery link."
   (and (eq (car-safe el) 'link)
-       (string-equal (cdr (assoc 'rel (cadr el))) "alternate")
-       (or (string-equal (cdr (assoc 'type (cadr el)))
-			 "application/rss+xml")
-	   (string-equal (cdr (assoc 'type (cadr el))) "text/xml"))))
+       (string-equal (downcase (cdr (assoc 'rel (cadr el)))) "alternate")
+       (let ((type (downcase (cdr (assoc 'type (cadr el))))))
+         (or (string-equal type "application/rss+xml")
+             (string-equal type "text/xml")))))
 
 (defun nnrss-get-rsslinks (data)
   "Extract the <link> elements that are links to RSS from the parsed data."
