@@ -309,6 +309,11 @@ When ATTRIBUTE is non-nil, preserve tabs and line breaks with references."
   "Print DOM at point as HTML/XML.
 If PRETTY, indent the HTML/XML logically.
 If XML, generate XML instead of HTML."
+  (if (eq (dom-tag dom) 'comment)
+      (insert "<!--" (mapconcat #'identity (dom-children dom) "") "-->")
+    (dom--print-element dom pretty xml)))
+
+(defun dom--print-element (dom pretty xml)
   (let ((column (current-column))
         (indent-tabs-mode nil)) ;; Indent with spaces
     (insert (format "<%s" (dom-tag dom)))
