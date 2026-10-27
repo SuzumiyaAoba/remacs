@@ -260,9 +260,9 @@ Only attributes that `tar-mode' can grok are mentioned.")
     str))
 
 (defvar tar-attr-vector (make-vector 8 nil))
-(defun tar-parse-pax-extended-header (pos)
-  "Parse a pax external header of a Posix-format tar file."
-  (let ((end (+ pos 512))
+(defun tar-parse-pax-extended-header (pos size)
+  "Parse a SIZE-byte pax extended header at POS."
+  (let ((end (+ pos size))
         (result tar-attr-vector)
         (coding 'utf-8-unix)
         attr value record-len value-len)
@@ -409,7 +409,11 @@ of the file header.  This is used for \"old GNU\" Tar format."
           (if (and (eq link-p (- ?x ?0))
                    (member magic-str '("ustar " "ustar\0")))
               ;;      Get whatever attributes are in the extended header,
-              (let* ((pax-attrs (tar-parse-pax-extended-header pos))
+              (let* ((extended-header-size
+                      (tar-parse-octal-integer
+                       string tar-size-offset tar-time-offset))
+                     (pax-attrs (tar-parse-pax-extended-header
+                                 pos extended-header-size))
                      (gid (pax-header-gid pax-attrs))
                      (gname (pax-header-gname pax-attrs))
                      (linkpath (pax-header-linkpath pax-attrs))
@@ -419,10 +423,11 @@ of the file header.  This is used for \"old GNU\" Tar format."
                      (uid (pax-header-uid pax-attrs))
                      (uname (pax-header-uname pax-attrs))
                      ;; Tokenize the header of the _real_ file entry,
-                     ;; which is further 512 bytes into the archive.
+                     ;; which follows the padded extended header data.
                      (descriptor
-                      (tar-header-block-tokenize (+ pos 512) coding
-                                                 'ignore-trailing-slash)))
+                      (tar-header-block-tokenize
+                       (+ pos (tar-roundup-512 extended-header-size))
+                       coding 'ignore-trailing-slash)))
                 ;; Fix the descriptor of the real file entry by
                 ;; overriding some of the fields with the information
                 ;; from the extended header.
