@@ -161,8 +161,14 @@ is returned, where each format spec is its own element."
 FLAGS is a list of keywords as returned by
 `format-spec--parse-flags'.  WIDTH and TRUNC are either nil or
 string widths corresponding to `format-spec' specifiers."
+  ;;Remacs: measure and truncate the case-converted text.
+  (setq str (cond ((memq :upcase flags)
+                   (upcase str))
+                  ((memq :downcase flags)
+                   (downcase str))
+                  (str)))
   (let (diff str-width)
-    ;; Truncate original string first, like `format' does.
+    ;; Truncate the string first, like `format' does.
     (when trunc
       (setq str-width (string-width str))
       (when (> (setq diff (- str-width trunc)) 0)
@@ -184,13 +190,8 @@ string widths corresponding to `format-spec' specifiers."
             ((memq :chop-left flags)
              (setq str (truncate-string-to-width str str-width (- diff))))
             ((memq :chop-right flags)
-             (setq str (format (format "%%.%ds" width) str))))))
-  ;; Fiddle case.
-  (cond ((memq :upcase flags)
-         (upcase str))
-        ((memq :downcase flags)
-         (downcase str))
-        (str)))
+             (setq str (format (format "%%.%ds" width) str)))))
+    str))
 
 (defun format-spec--parse-flags (flags)
   "Convert sequence of FLAGS to list of human-readable keywords."
