@@ -137,9 +137,13 @@ See the documentation for `list-load-path-shadows' for further information."
 		  (if (not (and load-path-shadows-compare-text
 				(load-path-shadows-same-file-or-nonexistent
 				 (concat base1 ".el") (concat base2 ".el"))
+				(load-path-shadows-same-file-or-nonexistent
+				 (concat base1 ".el.gz") (concat base2 ".el.gz"))
 				;; This is a bit strict, but safe.
 				(load-path-shadows-same-file-or-nonexistent
-				 (concat base1 ".elc") (concat base2 ".elc"))))
+				 (concat base1 ".elc") (concat base2 ".elc"))
+				(load-path-shadows-same-file-or-nonexistent
+				 (concat base1 ".elc.gz") (concat base2 ".elc.gz"))))
 		      (setq shadows
 			    (append shadows (list base1 base2)))))
 
