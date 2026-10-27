@@ -421,7 +421,11 @@ template, and where in the file it can occur."
                  (setq search-limit (point-marker)))
                 ((< line-limit 0)
                  (goto-char (setq search-limit (point-max-marker)))
-                 (forward-line line-limit)
+                 ;; Point-max after a final newline is on the empty line
+                 ;; after the last line; count the last actual line instead.
+                 (when (and (> (point) (point-min)) (bolp))
+                   (backward-char))
+                 (forward-line (1+ line-limit))
                  (setq start (point)))
                 (t                      ;0 => no limit (use with care!)
                  (setq start (point-min))
