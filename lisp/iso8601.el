@@ -250,6 +250,17 @@ See `decode-time' for the meaning of FORM."
                        (or (null fraction)
                            (zerop (string-to-number fraction))))))))
 
+(defun iso8601--zone-in-range-p (string)
+  ;;Remacs: RFC 3339 offsets use hours 00-23 and minutes 00-59.
+  (and (iso8601--match iso8601--zone-match string)
+       (or (string= string "Z")
+           (let ((hour (string-to-number (match-string 3 string)))
+                 (minute (if (match-string 4 string)
+                             (string-to-number (match-string 4 string))
+                           0)))
+             (and (<= 0 hour 23)
+                  (<= 0 minute 59)))))
+
 (defun iso8601-parse-time (string &optional form)
   "Parse STRING, which should be an ISO 8601 time string.
 The return value will be a `decode-time' structure with just the
@@ -258,7 +269,11 @@ hour/minute/seconds/zone fields filled in.
 See `decode-time' for the meaning of FORM."
   (if (not (and (iso8601--match iso8601--full-time-match string)
                 (save-match-data
-                  (iso8601--time-in-range-p (match-string 1 string)))))
+                  (iso8601--time-in-range-p (match-string 1 string)))
+                (save-match-data
+                  (let ((zone (match-string 2 string)))
+                    (or (null zone)
+                        (iso8601--zone-in-range-p zone)))))
       (signal 'wrong-type-argument (list string))
     (let ((time (match-string 1 string))
           (zone (match-string 2 string)))
@@ -306,7 +321,8 @@ See `decode-time' for the meaning of FORM."
 (defun iso8601-parse-zone (string)
   "Parse STRING, which should be an ISO 8601 time zone.
 Return the number of minutes."
-  (if (not (iso8601--match iso8601--zone-match string))
+  (if (not (and (iso8601--match iso8601--zone-match string)
+                (save-match-data (iso8601--zone-in-range-p string))))
       (signal 'wrong-type-argument (list string))
     (if (match-string 2 string)
         ;; HH:MM-ish.
@@ -338,9 +354,12 @@ Return the number of minutes."
          ;; Retain the combined match data for `iso8601-parse'.
          (save-match-data
            (let ((date (match-string 1 string))
-                 (time (match-string 2 string)))
+                 (time (match-string 2 string))
+                 (zone (match-string 3 string)))
              (and (or (null time)
                       (save-match-data (iso8601--time-in-range-p time)))
+                  (or (null zone)
+                      (save-match-data (iso8601--zone-in-range-p zone)))
                   (cond
                     ((iso8601--match iso8601--week-date-match date)
                      (let* ((year (string-to-number (match-string 1 date)))
