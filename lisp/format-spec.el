@@ -113,7 +113,18 @@ is returned, where each format spec is its own element."
                    (width (match-string 2))
                    (trunc (match-string 3))
                    (char (string-to-char (match-string 4)))
-                   (spec-properties (text-properties-at (1- beg)))
+                   (spec-properties
+                    (let ((position (1- beg)) properties plist)
+                      (while (< position end)
+                        (setq plist (text-properties-at position))
+                        (while plist
+                          (unless (plist-member properties (car plist))
+                            (setq properties
+                                  (plist-put properties (car plist)
+                                             (cadr plist))))
+                          (setq plist (cddr plist)))
+                        (setq position (1+ position)))
+                      properties))
                    (text (let ((res (cdr (assq char specification))))
                            (if (functionp res)
                                (with-current-buffer orig-buffer
