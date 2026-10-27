@@ -530,7 +530,8 @@ With a prefix (or a FILL) argument, also fill too short lines."
                    (overlay-put ol 'display str)
                    (if as (overlay-put ol 'after-string as))))))
            (nth 1 rectangle--string-preview-state)
-           (nth 2 rectangle--string-preview-state)))))))
+           (nth 2 rectangle--string-preview-state))
+          (setcar rectangle--string-preview-state str))))))
 
 ;; FIXME: Should this be turned into inhibit-region-highlight and made to apply
 ;; to non-rectangular regions as well?
