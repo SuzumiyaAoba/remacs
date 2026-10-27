@@ -103,7 +103,7 @@
           "\\(" iso8601--zone-match "\\)?\\)?"))
 
 (defconst iso8601--duration-full-match
-  "P\\([0-9]+Y\\)?\\([0-9]+M\\)?\\([0-9]+D\\)?\\(T\\([0-9]+H\\)?\\([0-9]+M\\)?\\([0-9]+S\\)?\\)?")
+  "P\\([0-9]+Y\\)?\\([0-9]+M\\)?\\([0-9]+D\\)?\\(T\\([0-9]+H\\)?\\([0-9]+M\\)?\\([0-9]+\\(?:[.,][0-9]+\\)?S\\)?\\)?")
 (defconst iso8601--duration-week-match
   "P\\([0-9]+\\)W")
 (defconst iso8601--duration-combined-match
@@ -395,6 +395,21 @@ Return the number of minutes."
                        (<= 1 ordinal (if (date-leap-year-p year) 366 365))))
                     (t t))))))))
 
+(defun iso8601--parse-duration-seconds (value)
+  ;;Remacs: preserve decimal seconds exactly as a time ratio.
+  (if (not value)
+      0
+    (let* ((number (substring value 0 -1))
+           (decimal (string-match "[.,]" number)))
+      (if decimal
+          (let* ((fraction (substring number (1+ decimal)))
+                 (scale (expt 10 (length fraction))))
+            (iso8601--fractional-value
+             (+ (* (string-to-number (substring number 0 decimal)) scale)
+                (string-to-number fraction))
+             scale))
+        (string-to-number number))))
+
 (defun iso8601-parse-duration (string)
   "Parse ISO 8601 durations on the form P3Y6M4DT12H30M5S."
   (cond
@@ -402,12 +417,19 @@ Return the number of minutes."
          ;; Just a "P" isn't valid; there has to be at least one
          ;; element, like P1M.
          (> (length (match-string 0 string)) 2))
-    (iso8601--decoded-time :year (or (match-string 1 string) 0)
-                           :month (or (match-string 2 string) 0)
-                           :day (or (match-string 3 string) 0)
-                           :hour (or (match-string 5 string) 0)
-                           :minute (or (match-string 6 string) 0)
-                           :second (or (match-string 7 string) 0)))
+    (let* ((year (or (match-string 1 string) 0))
+           (month (or (match-string 2 string) 0))
+           (day (or (match-string 3 string) 0))
+           (hour (or (match-string 5 string) 0))
+           (minute (or (match-string 6 string) 0))
+           (seconds (iso8601--parse-duration-seconds
+                     (match-string 7 string))))
+      (iso8601--decoded-time :year year
+                             :month month
+                             :day day
+                             :hour hour
+                             :minute minute
+                             :second seconds)))
    ;; PnW: Weeks.
    ((iso8601--match iso8601--duration-week-match string)
     (let ((weeks (string-to-number (match-string 1 string))))
