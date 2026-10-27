@@ -282,7 +282,8 @@ DST is returned as -1)."
         ;;Remacs: alphabetic zones are obsolete RFC 822 syntax.
         (cond ((and match (not no-822))
                 (set-matched-slot 8 nil (cadr match))
-                (set-matched-slot 7 nil (caddr match)))
+                (set-matched-slot 7 nil (if (string= zone "z") -1
+                                          (caddr match))))
               ((and (stringp zone)
                     (string-match "^[-+][0-9][0-9][0-9][0-9]$" zone))
                 ;; Numeric time zone.
@@ -298,6 +299,12 @@ DST is returned as -1)."
                       (+ minutes
                          (* 60 (cl-parse-integer zone :start 1 :end 3)))
                       (if (= (aref zone 0) ?-) -1 1))))))
+              ((and (not no-822)
+                    (stringp zone)
+                    (string-match-p "\\`[a-z]+\\'" zone))
+                ;;Remacs: obsolete and unknown alphabetic zones mean -0000.
+                (set-matched-slot 8 nil 0)
+                (set-matched-slot 7 nil -1))
               ;;Remacs: NO-822 requires a timezone token to be present.
               ((and error (or zone no-822))
                 (signal 'date-parse-error
