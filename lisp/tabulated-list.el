@@ -730,11 +730,12 @@ originally displayed in."
       (progn
         (unless tabulated-list--original-order
           (error "Order is already in original order"))
-        (setq tabulated-list-entries
-              (sort tabulated-list-entries
-                    (lambda (e1 e2)
-                      (< (gethash e1 tabulated-list--original-order)
-                         (gethash e2 tabulated-list--original-order)))))
+        (unless (functionp tabulated-list-entries)
+          (setq tabulated-list-entries
+                (sort tabulated-list-entries
+                      (lambda (e1 e2)
+                        (< (gethash e1 tabulated-list--original-order)
+                           (gethash e2 tabulated-list--original-order))))))
         (setq tabulated-list-sort-key nil)
         (tabulated-list-init-header)
         (tabulated-list-print t))
@@ -751,10 +752,13 @@ originally displayed in."
   (when (and name (derived-mode-p 'tabulated-list-mode))
     (unless tabulated-list--original-order
       ;; Store the original order so that we can restore it later.
-      (setq tabulated-list--original-order (make-hash-table))
-      (cl-loop for elem in tabulated-list-entries
-               for i from 0
-               do (setf (gethash elem tabulated-list--original-order) i)))
+      (let ((entries (if (functionp tabulated-list-entries)
+                         (funcall tabulated-list-entries)
+                       tabulated-list-entries)))
+        (setq tabulated-list--original-order (make-hash-table))
+        (cl-loop for elem in entries
+                 for i from 0
+                 do (setf (gethash elem tabulated-list--original-order) i))))
     ;; Flip the sort order on a second click.
     (if (equal name (car tabulated-list-sort-key))
 	(setcdr tabulated-list-sort-key
