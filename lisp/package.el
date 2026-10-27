@@ -697,14 +697,16 @@ untar into a directory named DIR; otherwise, signal an error."
   (unwind-protect
       (progn
         ;; Make sure everything extracts into DIR.
-        (let ((regexp (concat "\\`" (regexp-quote (expand-file-name dir)) "/"))
+        (let* ((directory (expand-file-name dir))
+               (regexp (concat "\\`" (regexp-quote directory) "/"))
               (case-fold-search (file-name-case-insensitive-p dir)))
           (dolist (tar-data tar-parse-info)
             (let ((name (expand-file-name (tar-header-name tar-data))))
-              (or (string-match regexp name)
+              (or (and (string-match regexp name)
+                       (file-in-directory-p name directory))
                   ;; Tarballs created by some utilities don't list
                   ;; directories with a trailing slash (Bug#13136).
-                  (and (string-equal (expand-file-name dir) name)
+                  (and (string-equal directory name)
                        (eq (tar-header-link-type tar-data) 5))
                   (error "Package does not untar cleanly into directory %s/"
                          dir)))))
