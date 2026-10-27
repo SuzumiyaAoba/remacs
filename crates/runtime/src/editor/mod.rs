@@ -5069,12 +5069,11 @@ fn f_window_body_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live(i, &arg(&a, 0))?;
     let header = winxtra::window_format_line_height(i, &w, "header-line-format")?;
     let tab = winxtra::window_format_line_height(i, &w, "tab-line-format")?;
-    let wb = w.borrow();
     // Body excludes the header, tab, and mode lines.
-    let ml = usize::from(!wb.minibuffer && wb.horiz.is_none());
+    let mode_line = winxtra::window_mode_line_height(i, &w)?;
+    let height = w.borrow().height;
     Ok(Value::Int(
-        wb.height
-            .saturating_sub(ml.saturating_add(header).saturating_add(tab)) as i128,
+        height.saturating_sub(mode_line.saturating_add(header).saturating_add(tab)) as i128,
     ))
 }
 /// Body width excludes margins and the one-column window divider that
@@ -5149,16 +5148,16 @@ fn f_window_edges(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     } else {
         0
     };
-    let (header, tab) = if body {
+    let (header, tab, mode_line) = if body {
         (
             winxtra::window_format_line_height(i, &w, "header-line-format")?,
             winxtra::window_format_line_height(i, &w, "tab-line-format")?,
+            winxtra::window_mode_line_height(i, &w)?,
         )
     } else {
-        (0, 0)
+        (0, 0, 0)
     };
     let ww = w.borrow();
-    let ml = usize::from(body && !ww.minibuffer && ww.horiz.is_none());
     let left = if body {
         ww.left.saturating_add(ww.margins.0)
     } else {
@@ -5184,7 +5183,7 @@ fn f_window_edges(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 .saturating_sub(shift) as i128,
         ),
         Value::Int(right as i128),
-        Value::Int((ww.top + ww.height).saturating_sub(shift + ml) as i128),
+        Value::Int((ww.top + ww.height).saturating_sub(shift + mode_line) as i128),
     ]))
 }
 fn f_window_at(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

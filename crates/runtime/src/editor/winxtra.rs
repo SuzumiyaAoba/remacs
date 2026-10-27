@@ -2336,22 +2336,11 @@ fn f_truncated_partial_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     }
 }
 
-/// `window-mode-line-height' — 1 on tty; GNU uses a typed
-/// `window-live-p' check here (unlike the predicates above).
+/// `window-mode-line-height' follows the window buffer's mode-line-format;
+/// GNU uses a typed `window-live-p' check here.
 fn f_window_mode_line_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match &arg(&a, 0) {
-        Value::Nil => Ok(Value::Int(1)),
-        Value::Window(w) => {
-            // The minibuffer window has no mode line.
-            let wb = w.borrow();
-            Ok(Value::Int(if wb.minibuffer || wb.horiz.is_some() {
-                0
-            } else {
-                1
-            }))
-        }
-        other => Err(i.wrong_type_mut("window-live-p", other)),
-    }
+    let window = win_live(i, &arg(&a, 0))?;
+    Ok(Value::Int(window_mode_line_height(i, &window)? as i128))
 }
 
 pub(crate) fn window_format_line_height(
@@ -2366,6 +2355,21 @@ pub(crate) fn window_format_line_height(
     let buffer_local_value = Value::Sym(i.q("buffer-local-value"));
     let value = i.apply(&buffer_local_value, vec![variable, buffer])?;
     Ok(usize::from(value.truthy()))
+}
+
+pub(crate) fn window_mode_line_height(
+    i: &mut Interp,
+    window: &WindowRef,
+) -> Result<usize, Flow> {
+    let has_mode_line = {
+        let window = window.borrow();
+        !window.minibuffer && window.horiz.is_none()
+    };
+    if has_mode_line {
+        window_format_line_height(i, window, "mode-line-format")
+    } else {
+        Ok(0)
+    }
 }
 
 fn f_window_header_line_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
