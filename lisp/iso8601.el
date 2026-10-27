@@ -334,6 +334,11 @@ Return the number of minutes."
               ((iso8601--match iso8601--without-day-match date)
                (let ((month (string-to-number (match-string 2 date))))
                  (<= 1 month 12)))
+              ((iso8601--match iso8601--ordinal-date-match date)
+               ;;Remacs: day-of-year is bounded by leap-year status.
+               (let ((year (string-to-number (match-string 1 date)))
+                     (ordinal (string-to-number (match-string 2 date))))
+                 (<= 1 ordinal (if (date-leap-year-p year) 366 365))))
               (t t)))))))
 
 (defun iso8601-parse-duration (string)
