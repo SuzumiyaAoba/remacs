@@ -93,6 +93,19 @@ value of `version-control'."
   :type '(choice (integer :tag "Entries" :value 1)
 		 (const :tag "No Limit" nil)))
 
+(defun save-place--truncate-alist ()
+  "Truncate `save-place-alist' according to `save-place-limit'."
+  (when save-place-limit
+    (if (<= save-place-limit 0)
+        (setq save-place-alist nil)
+      (let ((tail save-place-alist)
+            (count 1))
+        (while tail
+          (if (>= count save-place-limit)
+              (setcdr tail nil)
+            (setq count (1+ count)))
+          (setq tail (cdr tail)))))))
+
 (defcustom save-place-forget-unreadable-files t
   "Non-nil means forget place in unreadable files.
 
@@ -128,22 +141,7 @@ this happens automatically before saving `save-place-alist' to
                   (car (read-from-string
                         (buffer-substring (point-min) (point-max))))))
 
-          ;; If there is a limit, and we're over it, then we'll
-          ;; have to truncate the end of the list:
-          (if save-place-limit
-              (if (<= save-place-limit 0)
-                  ;; Zero gets special cased.  I'm not thrilled
-                  ;; with this, but the loop for >= 1 is tight.
-                  (setq save-place-alist nil)
-                ;; Else the limit is >= 1, so enforce it by
-                ;; counting and then `setcdr'ing.
-                (let ((s save-place-alist)
-                      (count 1))
-                  (while s
-                    (if (>= count save-place-limit)
-                        (setcdr s nil)
-                      (setq count (1+ count)))
-                    (setq s (cdr s))))))))
+          (save-place--truncate-alist)))
       (save-place--normalize-alist))))
 
 (defcustom save-place-abbreviate-file-names nil
@@ -357,7 +355,8 @@ file names."
 			   (= position 1)))) ;; Optimize out the degenerate case.
             (setq save-place-alist
                   (cons (cons item position)
-                        save-place-alist)))))))
+                        save-place-alist)))))
+    (save-place--truncate-alist)))
 
 (defun save-place-forget-unreadable-files ()
   "Remove unreadable files from `save-place-alist'.
