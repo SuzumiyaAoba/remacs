@@ -415,7 +415,7 @@ the full list."
   (let ((value (symbol-value variable)))
     (if (atom value)
         (insert (format "\n(setq %S '%S)\n" variable value))
-      (when (and (integerp limit) (> limit 0))
+      (when (and (integerp limit) (>= limit 0))
         (setq value (seq-take value limit)))
       (insert (format "\n(setq %S\n      '(" variable))
       (dolist (e value)
