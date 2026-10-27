@@ -290,11 +290,15 @@ white-space."
   "Return non-nil if TAG names an HTML void element."
   (member (downcase (format "%s" tag)) dom--html-void-elements))
 
-(defun dom--insert-entities (string)
-  "Escape &, <, > and double quotes in STRING for HTML/XML output."
+(defun dom--insert-entities (string &optional attribute)
+  "Escape markup characters in STRING for HTML/XML output.
+When ATTRIBUTE is non-nil, preserve tabs and line breaks with references."
   (mapconcat
    (lambda (c)
-     (cond ((eq c ?&) "&amp;")
+     (cond ((and attribute (eq c ?\t)) "&#9;")
+           ((and attribute (eq c ?\n)) "&#10;")
+           ((and attribute (eq c ?\r)) "&#13;")
+           ((eq c ?&) "&amp;")
            ((eq c ?<) "&lt;")
            ((eq c ?>) "&gt;")
            ((eq c ?\") "&quot;")
@@ -320,7 +324,7 @@ If XML, generate XML instead of HTML."
            (if (and (not xml) (dom--html-boolean-attribute-p attr))
                (format " %s" attr)
              (format " %s=\"%s\"" attr (dom--insert-entities
-                                         (format "%s" value))))))))
+                                         (format "%s" value) t)))))))
     (let* ((children (dom-children dom))
 	   (non-text nil)
            (indent (+ column 2)))
