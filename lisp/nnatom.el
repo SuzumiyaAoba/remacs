@@ -200,7 +200,8 @@ return the subject.  Otherwise, return nil."
                       ((not (string-blank-p uri))))
             `(((("text/plain") . ,(format "%s: %s\n" name uri))
                (("text/html") . ,(format "<a href=\"%s\">[%s]</a> "
-                                         (xml-escape-string uri) name)))))
+                                         (xml-escape-string uri)
+                                         (xml-escape-string name)))))
           (when-let* (((eq l 'link))
                       (attrs (dom-attributes link))
                       (label (or (cdr (assq 'title attrs))
@@ -231,7 +232,8 @@ return the subject.  Otherwise, return nil."
                       (link (cdr (assq 'href attrs))))
             `(((("text/plain") . ,(format "%s: %s\n" label link))
                (("text/html") . ,(format "<a href=\"%s\">[%s]</a> "
-                                         (xml-escape-string link) label))))))))
+                                         (xml-escape-string link)
+                                         (xml-escape-string label))))))))
      (dom-children (dom-child-by-tag article 'links)))))
 (defvoo nnatom-read-links-function #'nnatom--read-links
   nil nnfeed-read-links-function)
