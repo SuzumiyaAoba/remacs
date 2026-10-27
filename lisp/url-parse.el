@@ -102,6 +102,28 @@ If the specified port number is the default, return nil."
 	    (or file "/")
 	    (if frag (concat "#" frag)))))
 
+(defun url-parse--unreserved-byte-p (byte)
+  (or (and (<= ?A byte) (<= byte ?Z))
+      (and (<= ?a byte) (<= byte ?z))
+      (and (<= ?0 byte) (<= byte ?9))
+      (memq byte '(?- ?. ?_ ?~))))
+
+(defun url-parse--decode-unreserved (string)
+  "Decode percent-encoded unreserved octets in STRING only."
+  (let ((start 0)
+	(result ""))
+    (while (string-match "%[0-9A-Fa-f][0-9A-Fa-f]" string start)
+      (let* ((begin (match-beginning 0))
+	     (finish (match-end 0))
+	     (byte (string-to-number (substring string (1+ begin) finish) 16)))
+	(setq result (concat result
+			     (substring string start begin)
+			     (if (url-parse--unreserved-byte-p byte)
+				 (string byte)
+			       (substring string begin finish)))
+	      start finish)))
+    (concat result (substring string start))))
+
 ;;;###autoload
 (defun url-generic-parse-url (url)
   "Return an URL-struct of the parts of URL.
@@ -223,8 +245,8 @@ parses to
 	      (setq fragment (buffer-substring (point) (point-max)))
 	      (delete-region opoint (point-max))))
 
-          (if (and host (string-match "%[0-9][0-9]" host))
-              (setq host (url-unhex-string host)))
+          (when host
+            (setq host (url-parse--decode-unreserved host)))
 
           (url-parse-make-urlobj scheme user pass host port file
 				 fragment nil full))))))
