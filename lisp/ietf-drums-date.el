@@ -273,7 +273,18 @@ DST is returned as -1)."
                         (list "Expected a timezone" zone)))))
       (when (and tokens error)
         (signal 'date-parse-error
-                (list "Extra token(s)" (car tokens)))))
+                (list "Extra token(s)" (car tokens))))
+      ;;Remacs: RFC 5322's optional weekday must agree with the date.
+      (when (and error (nth 6 time))
+        (let* ((date (encode-time 0 0 0 (nth 3 time) (nth 4 time)
+                                  (nth 5 time) t))
+               (actual-weekday
+                (decoded-time-weekday (decode-time date t)))
+               (given-weekday (nth 6 time)))
+          (unless (= given-weekday actual-weekday)
+            (signal 'date-parse-error
+                    (list "Weekday does not match date"
+                          given-weekday actual-weekday)))))
     time))
 
 (provide 'ietf-drums-date)
