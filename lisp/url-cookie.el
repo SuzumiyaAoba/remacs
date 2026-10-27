@@ -235,6 +235,18 @@ When INCLUDE-SUBDOMAINS is non-nil, require a DNS-label boundary."
 	     (and (< path-length (length request-path))
 		  (eq (aref request-path path-length) ?/))))))
 
+(defun url-cookie--default-path (request-path)
+  ;;Remacs: apply RFC 6265's default-path rule to the request path.
+  "Return the default cookie path for REQUEST-PATH."
+  (if (or (not (stringp request-path))
+	  (zerop (length request-path))
+	  (not (eq (aref request-path 0) ?/)))
+      "/"
+    (let ((last-slash (string-match "/[^/]*\\'" request-path)))
+      (if (or (null last-slash) (zerop last-slash))
+	  "/"
+	(substring request-path 0 last-slash)))))
+
 (defun url-cookie-retrieve (host &optional localpart secure)
   "Retrieve all cookies for a specified HOST and LOCALPART."
   (let ((storage (if secure
@@ -331,9 +343,14 @@ When INCLUDE-SUBDOMAINS is non-nil, require a DNS-label boundary."
 	 (trusted url-cookie-trusted-urls)
 	 (untrusted url-cookie-untrusted-urls)
 	 (max-age (cdr-safe (assoc-string "max-age" args t)))
-	 (localpart (or (cdr-safe (assoc-string "path" args t))
-			(file-name-directory
-			 (url-filename url-current-object))))
+	 (path-attribute (cdr-safe (assoc-string "path" args t)))
+	 (localpart
+	  (if (and (stringp path-attribute)
+		   (> (length path-attribute) 0)
+		   (eq (aref path-attribute 0) ?/))
+	      path-attribute
+	    (url-cookie--default-path
+	     (car (url-path-and-query url-current-object)))))
 	 (expires nil))
     (if (and max-age (string-match "\\`-?[0-9]+\\'" max-age))
 	(setq expires (ignore-errors
