@@ -214,6 +214,9 @@ DST is returned as -1)."
                 (push year tokens))
               ((>= year 1000)
                 (set-numeric 5 year))
+              ((and (>= year 100) (not no-822))
+                ;;Remacs: RFC 5322 obsolete dates add 1900 to 3-digit years.
+                (set-numeric 5 (+ 1900 year)))
               ((or no-822
                    (>= year 100))
                 (when error
