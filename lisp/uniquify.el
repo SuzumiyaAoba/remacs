@@ -34,7 +34,7 @@
     (dolist (buffer (buffer-list))
       (set-buffer buffer)
       (when uniquify-managed
-        (rename-buffer (uniquify-buffer-base-name) 'unique))))
+        (rename-buffer (uniquify-buffer-base-name) 'unique)))))
 
 (defun uniquify--set-option (variable value)
   "Call in `defcustom' :set keyword when `uniquify--buffer-refresh' is needed.
@@ -245,11 +245,12 @@ Return nil if the buffer is not managed by uniquify."
 If `uniquify-min-dir-content' > 0, always pulls that many
 file name elements.
 Arguments BASE, DIRNAME, and NEWBUF specify the new buffer that causes
-this rationalization."
+this rationalization.  DIRNAME is untransformed; this function applies
+`uniquify-dirname-transform'."
   (interactive
    (list (if uniquify-managed
 	     (uniquify-item-base (car uniquify-managed)) (buffer-name))
-	 (uniquify-buffer-file-name (current-buffer))
+	 (uniquify-buffer-file-directory (current-buffer))
 	 (current-buffer)))
   ;; Make sure we don't get confused by outdated uniquify-managed info in
   ;; this buffer.
@@ -305,21 +306,27 @@ this rationalization."
       (uniquify-rationalize fix-list))))
 
 ;; uniquify's version of buffer-file-name; result never contains trailing slash
-(defun uniquify-buffer-file-name (buffer)
-  "Return name of directory, file BUFFER is visiting, or nil if none.
-Works on ordinary file-visiting buffers and buffers whose mode is mentioned
-in `uniquify-list-buffers-directory-modes', otherwise returns nil."
+(defun uniquify-buffer-file-directory (buffer)
+  "Return the untransformed directory name of the file visited by BUFFER.
+Return nil if BUFFER is not visiting a file or a listed directory."
   (with-current-buffer buffer
     (let ((filename
 	   (or buffer-file-name
 	       (if (memq major-mode uniquify-list-buffers-directory-modes)
 		   list-buffers-directory))))
       (when filename
-	 (funcall uniquify-dirname-transform
-	          (directory-file-name
-	          (file-name-directory
-	           (expand-file-name
-	            (directory-file-name filename)))))))))
+	(directory-file-name
+	 (file-name-directory
+	  (expand-file-name (directory-file-name filename))))))))
+
+(defun uniquify-buffer-file-name (buffer)
+  "Return the transformed directory name of the file visited by BUFFER.
+Works on ordinary file-visiting buffers and buffers whose mode is mentioned
+in `uniquify-list-buffers-directory-modes', otherwise returns nil."
+  (with-current-buffer buffer
+    (let ((dirname (uniquify-buffer-file-directory buffer)))
+      (when dirname
+	(funcall uniquify-dirname-transform dirname)))))
 
 (defun uniquify-rerationalize-w/o-cb (fix-list)
   "Re-rationalize the buffers in FIX-LIST, but ignoring `current-buffer'."
@@ -573,7 +580,7 @@ For use on `kill-buffer-hook'."
       ;; Rerationalize w.r.t the new name.
       (uniquify-rationalize-file-buffer-names
        newname
-       (uniquify-buffer-file-name (current-buffer))
+       (uniquify-buffer-file-directory (current-buffer))
        (current-buffer)))))
 
 
