@@ -567,7 +567,7 @@ impl Interp {
                 Value::string("\\`[ \t]*\\'"),
             ),
             ("kill-do-not-save-duplicates", Value::Nil),
-            ("kill-read-only-ok", Value::Sym(sym::T)),
+            ("kill-read-only-ok", Value::Nil),
             ("kill-transform-function", Value::Nil),
             ("yank-handled-properties", Value::Nil),
             ("set-mark-command-repeat-pop", Value::Nil),
