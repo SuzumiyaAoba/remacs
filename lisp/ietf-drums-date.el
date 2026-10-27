@@ -272,7 +272,8 @@ DST is returned as -1)."
                       (+ minutes
                          (* 60 (cl-parse-integer zone :start 1 :end 3)))
                       (if (= (aref zone 0) ?-) -1 1))))))
-              ((and zone error)
+              ;;Remacs: NO-822 requires a timezone token to be present.
+              ((and error (or zone no-822))
                 (signal 'date-parse-error
                         (list "Expected a timezone" zone)))))
       (when (and tokens error)
