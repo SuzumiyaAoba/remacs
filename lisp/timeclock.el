@@ -1072,12 +1072,14 @@ discrepancy, today's discrepancy, and the time worked today."
 	    (goto-char (point-min)))
 	  (while (setq event (timeclock-read-moment))
 	    (cond ((equal (car event) "b")
-		   (setq accum (string-to-number (nth 2 event))))
+		   (setq accum (string-to-number (nth 2 event))
+			 timeclock-last-event-workday timeclock-workday))
 		  ((equal (car event) "h")
 		   (setq last-date-limited
 			 (timeclock-time-to-date (cadr event))
 			 last-date-seconds
-			 (* (string-to-number (nth 2 event)) 3600.0)))
+			 (* (string-to-number (nth 2 event)) 3600.0)
+			 timeclock-last-event-workday last-date-seconds))
 		  ((equal (car event) "i")
 		   (when (and (nth 2 event)
 			      (> (length (nth 2 event)) 0))
@@ -1091,7 +1093,11 @@ discrepancy, today's discrepancy, and the time worked today."
 			       accum (- accum (if last-date-limited
 						  last-date-seconds
 						timeclock-workday))))
-		     (setq last-date date
+		     (setq timeclock-last-event-workday
+			   (if (equal date last-date-limited)
+			       last-date-seconds
+			     timeclock-workday)
+			   last-date date
 			   last-date-limited nil)
 		     (if beg
 			 (error "Error in format of timelog file!")
@@ -1109,11 +1115,7 @@ discrepancy, today's discrepancy, and the time worked today."
 		   (if (equal last-date todays-date)
 		       (setq timeclock-elapsed
 			     (+ timeclock-last-period timeclock-elapsed)))))
-	    (setq timeclock-last-event event
-		  timeclock-last-event-workday
-		  (if (equal todays-date last-date-limited)
-		      last-date-seconds
-		    timeclock-workday))
+	    (setq timeclock-last-event event)
 	    (forward-line))
 	  (setq timeclock-discrepancy accum
                 timeclock--previous-workday timeclock-workday))))
