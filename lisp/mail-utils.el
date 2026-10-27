@@ -97,11 +97,17 @@ from START (inclusive) to END (exclusive)."
     (concat (substring string 0 start)
 	    (substring string end nil))))
 
+(defun mail-quote-printable--check-char (char)
+  (when (> char #xff)
+    (error "Character %c cannot be represented in ISO-8859-1" char)))
+
 ;;;###autoload
 (defun mail-quote-printable (string &optional wrapper)
   "Convert a string to the \"quoted printable\" Q encoding if necessary.
 If the string contains only ASCII characters and no troublesome ones,
 we return it unconverted.
+
+Characters not representable in ISO-8859-1 cause an error.
 
 If the optional argument WRAPPER is non-nil,
 we add the wrapper characters =?ISO-8859-1?Q?....?=."
@@ -111,8 +117,9 @@ we add the wrapper characters =?ISO-8859-1?Q?....?=."
 		 (string-match "[^\000-\177]" string i))
 	(setq result
 	      (concat result (substring string i (match-beginning 0))
-		      (upcase (format "=%02x"
-				      (aref string (match-beginning 0))))))
+		      (let ((char (aref string (match-beginning 0))))
+			(mail-quote-printable--check-char char)
+			(upcase (format "=%02x" char)))))
 	(setq i (match-end 0)))
       (if wrapper
 	  (concat "=?ISO-8859-1?Q?"
@@ -123,6 +130,9 @@ we add the wrapper characters =?ISO-8859-1?Q?....?=."
 ;;;###autoload
 (defun mail-quote-printable-region (beg end &optional wrapper)
   "Convert the region to the \"quoted printable\" Q encoding.
+
+Characters not representable in ISO-8859-1 cause an error.
+
 If the optional argument WRAPPER is non-nil,
 we add the wrapper characters =?ISO-8859-1?Q?....?=."
   (interactive "r\nP")
@@ -131,6 +141,10 @@ we add the wrapper characters =?ISO-8859-1?Q?....?=."
       (goto-char beg)
       (save-restriction
 	(narrow-to-region beg end)
+	(while (< (point) (point-max))
+	  (mail-quote-printable--check-char (char-after))
+	  (forward-char))
+	(goto-char (point-min))
 	(while (re-search-forward "[?=\"\200-\377]" nil t)
 	  (replace-match (upcase (format "=%02x" (preceding-char)))
 			 t t))
