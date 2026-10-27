@@ -54,13 +54,15 @@ Note that RFC5322 explicitly requires that seconds go up to 60,
 to allow for leap seconds (see Mills, D., \"Network Time
 Protocol\", STD 12, RFC 1119, September 1989).")
 
-(defsubst ietf-drums-date--ignore-char-p (char)
-  ;; Ignore whitespace and commas.
-  (memq char '(?\s ?\t ?\r ?\n ?,)))
+(defsubst ietf-drums-date--ignore-char-p (char &optional preserve-commas)
+  ;; Ignore whitespace and, unless requested otherwise, commas.
+  (or (memq char '(?\s ?\t ?\r ?\n))
+      (and (not preserve-commas) (eq char ?,))))
 
 (defun ietf-drums-date--tokenize-string (string &optional comment-eof)
   "Turn STRING into tokens, separated only by whitespace and commas.
-Multiple commas are ignored.  Pure digit sequences are turned
+Multiple commas are ignored unless COMMENT-EOF is true, in which
+case commas are returned as tokens.  Pure digit sequences are turned
 into integers.  If COMMENT-EOF is true, then a comment as
 defined by RFC5322 (strictly, the CFWS production that also
 accepts comments) is treated as an end-of-file, and no further
@@ -78,7 +80,8 @@ treat them as whitespace (per RFC822)."
                   (while (and (< index end)
                               (setq char (aref string index))
                               (or (> nest 0)
-                                  (ietf-drums-date--ignore-char-p char)
+                                  (ietf-drums-date--ignore-char-p
+                                   char comment-eof)
                                   (and (not comment-eof) (eql char ?\())))
                     (incf index)
                     ;; FWS bookkeeping.
@@ -92,36 +95,42 @@ treat them as whitespace (per RFC822)."
       (skip-ignored)		;; Skip leading whitespace.
       (while (and (< index end)
                   (not (and comment-eof
-                            (eq (aref string index) ?\())))
-        (let* ((start index)
-               (char (aref string index))
-               (all-digits (<= ?0 char ?9)))
-          ;; char is valid; look for more valid characters.
-          (when (and (eq char ?\\)
-                     (< (1+ index) end))
-            ;; Escaped character, which might be a "(".  If so, we are
-            ;; correct to include it in the token, even though the
-            ;; caller is sure to barf.  If not, we violate RFC2?822 by
-            ;; not removing the backslash, but no characters in valid
-            ;; RFC2?822 dates need escaping anyway, so it shouldn't
-            ;; matter that this is not done strictly correctly.  --
-            ;; rgr, 24-Dec-21.
-            (incf index))
-          (while (and (< (incf index) end)
-                      (setq char (aref string index))
-                      (not (or (ietf-drums-date--ignore-char-p char)
-                               (eq char ?\())))
-            (unless (<= ?0 char ?9)
-              (setq all-digits nil))
+                            (eq (aref string index) ?\()))
+        (if (and comment-eof (eq (aref string index) ?,))
+            (progn
+              (push (aref string index) list)
+              (incf index))
+          (let* ((start index)
+                 (char (aref string index))
+                 (all-digits (<= ?0 char ?9)))
+            ;; char is valid; look for more valid characters.
             (when (and (eq char ?\\)
                        (< (1+ index) end))
-              ;; Escaped character, see above.
-              (incf index)))
-          (push (if all-digits
-                    (cl-parse-integer string :start start :end index)
-                  (substring string start index))
-                list)
-          (skip-ignored)))
+              ;; Escaped character, which might be a "(".  If so, we are
+              ;; correct to include it in the token, even though the
+              ;; caller is sure to barf.  If not, we violate RFC2?822 by
+              ;; not removing the backslash, but no characters in valid
+              ;; RFC2?822 dates need escaping anyway, so it shouldn't
+              ;; matter that this is not done strictly correctly.  --
+              ;; rgr, 24-Dec-21.
+              (incf index))
+            (while (and (< (incf index) end)
+                        (setq char (aref string index))
+                        (not (or (ietf-drums-date--ignore-char-p
+                                  char comment-eof)
+                                 (eq char ?,)
+                                 (eq char ?\\())))
+              (unless (<= ?0 char ?9)
+                (setq all-digits nil))
+              (when (and (eq char ?\\)
+                         (< (1+ index) end))
+                ;; Escaped character, see above.
+                (incf index)))
+            (push (if all-digits
+                      (cl-parse-integer string :start start :end index)
+                    (substring string start index))
+                  list)))
+        (skip-ignored))
       (nreverse list))))
 
 (defun ietf-drums-parse-date-string (time-string &optional error no-822)
@@ -191,7 +200,15 @@ DST is returned as -1)."
         (when dow
           ;; Day of the week.
           (set-matched-slot 6 nil (cdr dow))
-          (pop tokens)))
+          (pop tokens)
+          (if (eq (car tokens) ?,)
+              (pop tokens)
+            (when (and no-822 error)
+              (signal 'date-parse-error
+                      (list "Expected comma after weekday" dow)))))
+        (when (and no-822 error (memq ?, tokens))
+          (signal 'date-parse-error
+                  (list "Unexpected comma" (car tokens)))))
       ;; Day.
       (set-numeric 3 (pop tokens))
       ;; Alphabetic month.
