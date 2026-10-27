@@ -226,10 +226,13 @@ portion dim, invisible, or otherwise less visually noticeable."
       (add-hook 'minibuffer-setup-hook 'rfn-eshadow-setup-minibuffer)
     ;; Disable the mode
     (remove-hook 'minibuffer-setup-hook 'rfn-eshadow-setup-minibuffer)
-    ;; Remove our entry from any post-command-hook variable's it's still in
+    ;; Remove our entry from any local post-command-hook where it is still present.
     (dolist (minibuf rfn-eshadow-frobbed-minibufs)
       (with-current-buffer minibuf
-	(remove-hook 'post-command-hook #'rfn-eshadow-update-overlay t)))
+	(remove-hook 'post-command-hook #'rfn-eshadow-update-overlay t)
+	(when (overlayp rfn-eshadow-overlay)
+	  (delete-overlay rfn-eshadow-overlay))
+	(setq rfn-eshadow-overlay nil)))
     (setq rfn-eshadow-frobbed-minibufs nil)))
 
 
