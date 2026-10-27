@@ -202,12 +202,16 @@ See also `xml-get-attribute-or-nil'."
 ;; [66] CharRef ::= '&#' [0-9]+ ';' | '&#x' [[:xdigit:]]+ ';'
 (defconst xml-char-ref-re  "\\(?:&#[0-9]+;\\|&#x[[:xdigit:]]+;\\)")
 
+(defun xml--valid-xml-character-p (code)
+  "Return non-nil if CODE is in XML 1.0's `Char' production."
+  (or (= code #x9) (= code #xA) (= code #xD)
+      (<= #x20 code #xD7FF)
+      (<= #xE000 code #xFFFD)
+      (<= #x10000 code #x10FFFF)))
+
 (defun xml--character-reference-string (code reference)
   "Return CODE as a string, signaling if REFERENCE is not an XML Char."
-  (unless (or (= code #x9) (= code #xA) (= code #xD)
-              (<= #x20 code #xD7FF)
-              (<= #xE000 code #xFFFD)
-              (<= #x10000 code #x10FFFF))
+  (unless (xml--valid-xml-character-p code)
     (error "XML: (Not Well-Formed) Invalid character reference `%s'"
            reference))
   (string code))
@@ -755,9 +759,17 @@ references."
 		(not (looking-at-p "<")))
       ;; Find the next < or & character.
       (let ((segment-start (point))
-            segment-end)
+            segment-end
+            position)
         (skip-chars-forward "^<&")
-        (setq segment-end (point))
+        (setq segment-end (point)
+              position segment-start)
+        (while (< position segment-end)
+          (let ((character (char-after position)))
+            (unless (xml--valid-xml-character-p character)
+              (error "XML: (Not Well-Formed) Invalid character U+%x in XML data"
+                     character)))
+          (setq position (1+ position)))
         (when (save-excursion
                 (goto-char segment-start)
                 (search-forward "]]>" segment-end t))
