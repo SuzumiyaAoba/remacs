@@ -407,9 +407,9 @@ RFC2798 Section 9.1.1")
 
 (defun ldap-decode-boolean (str)
   (cond
-   ((string-equal str "TRUE")
+   ((string-equal-ignore-case str "TRUE")
     t)
-   ((string-equal str "FALSE")
+   ((string-equal-ignore-case str "FALSE")
     nil)
    (t
     (error "Wrong LDAP boolean string: %s" str))))
