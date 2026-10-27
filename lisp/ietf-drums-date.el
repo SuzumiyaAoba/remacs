@@ -48,8 +48,9 @@
 See the decoded-time defstruct.")
 
 (defconst ietf-drums-date--slot-ranges
-  '((0 60) (0 59) (0 23) (1 31) (1 12) (1900 9999))
+  '((0 60) (0 59) (0 23) (1 31) (1 12) (1900 nil))
   "Numeric slot ranges, for bounds checking.
+An upper bound of nil means that the slot has no maximum.
 Note that RFC5322 explicitly requires that seconds go up to 60,
 to allow for leap seconds (see Mills, D., \"Network Time
 Protocol\", STD 12, RFC 1119, September 1989).")
@@ -180,7 +181,9 @@ DST is returned as -1)."
                     (when error
                       (let ((range (nth slot ietf-drums-date--slot-ranges)))
                         (when (and range
-                                   (not (<= (car range) value (cadr range))))
+                                   (not (and (<= (car range) value)
+                                             (or (null (cadr range))
+                                                 (<= value (cadr range)))))
                           (signal 'date-parse-error
                                   (list "Slot out of range"
                                         (nth slot ietf-drums-date--slot-names)
