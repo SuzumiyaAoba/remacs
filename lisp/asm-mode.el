@@ -168,7 +168,7 @@ Special commands:
 (defun asm-calculate-indentation ()
   (or
    ;; Flush labels to the left margin.
-   (and (looking-at "\\(\\sw\\|\\s_\\)+:") 0)
+   (and (looking-at "\\(?:\\.\\)?\\(?:\\sw\\|\\s_\\)+:") 0)
    ;; Same thing for `;;;' comments.
    (and (looking-at "\\s<\\s<\\s<") 0)
    ;; Simple `;' comments go to the comment-column.
@@ -182,6 +182,7 @@ Special commands:
   (let ((labelp nil))
     (save-excursion
       (skip-syntax-backward "w_")
+      (when (eq (char-before) ?.) (backward-char))
       (skip-syntax-backward " ")
       (if (setq labelp (bolp)) (delete-horizontal-space)))
     (call-interactively 'self-insert-command)
