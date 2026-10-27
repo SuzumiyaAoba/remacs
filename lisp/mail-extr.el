@@ -670,6 +670,56 @@ Unless NO-REPLACE is true, at each of the positions in LIST-SYMBOL
 (defvar mailextr-cend)			; dynamic assignment
 (defvar mail-extr-all-top-level-domains) ; Defined below.
 
+(defun mail-extr--address-has-group-p (string)
+  "Return non-nil if STRING contains a top-level RFC address group."
+  (let ((position 0)
+	quote
+	(comment-depth 0)
+	(domain-literal nil)
+	(angle-depth 0)
+	escaped
+	group-colon
+	found)
+    (while (and (< position (length string)) (not found))
+      (let ((char (aref string position)))
+	(cond
+	 (escaped
+	  (setq escaped nil))
+	 ((> comment-depth 0)
+	  (cond ((= char ?\\) (setq escaped t))
+		((= char ?\() (setq comment-depth (1+ comment-depth)))
+		((= char ?\)) (setq comment-depth (1- comment-depth)))))
+	 (domain-literal
+	  (cond ((= char ?\\) (setq escaped t))
+		((= char ?\]) (setq domain-literal nil))))
+	 (quote
+	  (cond ((= char ?\\) (setq escaped t))
+		((= char ?\") (setq quote nil))))
+	 ((= char ?\") (setq quote t))
+	 ((= char ?\() (setq comment-depth 1))
+	 ((= char ?\[) (setq domain-literal t))
+	 ((= char ?<) (setq angle-depth (1+ angle-depth)))
+	 ((= char ?>) (setq angle-depth (max 0 (1- angle-depth))))
+	 ((and (zerop angle-depth) (= char ?:))
+	  (setq group-colon t))
+	 ((and group-colon (zerop angle-depth) (= char ?;))
+	  (setq found t)))
+	(setq position (1+ position))))
+    found))
+
+(defun mail-extr--group-addresses (address)
+  "Return (t . ADDRESSES) if ADDRESS contains a group.
+ADDRESSES contains a string for each mailbox in the group."
+  (let ((string (cond ((stringp address) address)
+		      ((bufferp address)
+		       (with-current-buffer address
+			 (buffer-substring-no-properties (point-min) (point-max)))))))
+    (when (and string (mail-extr--address-has-group-p string))
+      (require 'ietf-drums)
+      (condition-case nil
+	  (cons t (ietf-drums-parse-addresses string t))
+	(error nil)))))
+
 ;;;###autoload
 (defun mail-extract-address-components (address &optional all)
   "Extract full name and canonical address from ADDRESS.
@@ -698,6 +748,9 @@ non-display use, you should probably use
 `mail-header-parse-address-lax' for a function that's less strict
 than `mail-header-parse-address', but does less post-processing
 to the results."
+  (let ((group-addresses (mail-extr--group-addresses address)))
+    (when group-addresses
+      (setq address (mapconcat #'identity (cdr group-addresses) ", "))))
   (let ((canonicalization-buffer (get-buffer-create " *canonical address*"))
 	(extraction-buffer (get-buffer-create " *extract address components*"))
 	value-list)
