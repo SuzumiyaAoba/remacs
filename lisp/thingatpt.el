@@ -586,7 +586,8 @@ the bounds of a possible ill-formed URI (one lacking a scheme)."
 			     (or thing-at-point-beginning-of-url-regexp
 				 (regexp-opt thing-at-point-uri-schemes))
 			     "\\)"))
-	(and (re-search-forward regexp end t)
+	(and (let ((case-fold-search t))
+	       (re-search-forward regexp end t))
 	     ;; URI must have non-empty contents.
 	     (< (point) end)
 	     (setq url-beg (match-beginning 1))))
