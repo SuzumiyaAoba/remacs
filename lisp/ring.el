@@ -167,7 +167,9 @@ discarded."
     (let ((length (ring-length ring))
 	  (new-vec (make-vector size nil)))
       (if (= length 0)
-          (setcdr ring (cons 0 new-vec))
+          (progn
+            (setcar ring 0)
+            (setcdr ring (cons 0 new-vec)))
         (let* ((hd (car ring))
 	       (old-size (ring-size ring))
 	       (old-vec (cddr ring))
