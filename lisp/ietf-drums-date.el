@@ -256,12 +256,18 @@ DST is returned as -1)."
               ((and (stringp zone)
                     (string-match "^[-+][0-9][0-9][0-9][0-9]$" zone))
                 ;; Numeric time zone.
-                (set-matched-slot
-                  8 nil
-                  (* 60
-                     (+ (cl-parse-integer zone :start 3 :end 5)
-                        (* 60 (cl-parse-integer zone :start 1 :end 3)))
-                     (if (= (aref zone 0) ?-) -1 1))))
+                (let ((minutes (cl-parse-integer zone :start 3 :end 5)))
+                  ;;Remacs: RFC 5322 requires the minute component to be 00-59.
+                  (when (and error (> minutes 59))
+                    (signal 'date-parse-error
+                            (list "Timezone minute component out of range"
+                                  zone 0 59)))
+                  (set-matched-slot
+                   8 nil
+                   (* 60
+                      (+ minutes
+                         (* 60 (cl-parse-integer zone :start 1 :end 3)))
+                      (if (= (aref zone 0) ?-) -1 1))))))
               ((and zone error)
                 (signal 'date-parse-error
                         (list "Expected a timezone" zone)))))
