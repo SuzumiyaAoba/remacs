@@ -434,6 +434,245 @@ fn html_node(
     }
 }
 
+fn html_space(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\n' | b'\r' | 0x0c)
+}
+
+fn html_tag_end(text: &str, mut position: usize) -> usize {
+    let mut quote = None;
+    while position < text.len() {
+        let character = text[position..].chars().next().unwrap();
+        if let Some(delimiter) = quote {
+            if character == delimiter {
+                quote = None;
+            }
+        } else {
+            match character {
+                '\'' | '"' => quote = Some(character),
+                '>' => return position + 1,
+                _ => {}
+            }
+        }
+        position += character.len_utf8();
+    }
+    text.len()
+}
+
+fn html_boolean_attribute(name: &str) -> bool {
+    matches!(
+        name,
+        "allowfullscreen"
+            | "allowpaymentrequest"
+            | "async"
+            | "autofocus"
+            | "autoplay"
+            | "checked"
+            | "compact"
+            | "controls"
+            | "default"
+            | "defer"
+            | "declare"
+            | "disabled"
+            | "formnovalidate"
+            | "hidden"
+            | "inert"
+            | "ismap"
+            | "itemscope"
+            | "loop"
+            | "multiple"
+            | "muted"
+            | "nohref"
+            | "noresize"
+            | "noshade"
+            | "novalidate"
+            | "nowrap"
+            | "open"
+            | "playsinline"
+            | "readonly"
+            | "required"
+            | "reversed"
+            | "scoped"
+            | "seamless"
+            | "selected"
+            | "truespeed"
+            | "typemustmatch"
+    )
+}
+
+fn html_raw_text_end(text: &str, tag: &str, start: usize) -> Option<usize> {
+    let needle = format!("</{tag}");
+    let bytes = text.as_bytes();
+    if needle.len() > bytes.len() || start > bytes.len() - needle.len() {
+        return None;
+    }
+    for position in start..=bytes.len() - needle.len() {
+        if bytes[position] != b'<' {
+            continue;
+        }
+        let end = position + needle.len();
+        if text[position..end].eq_ignore_ascii_case(&needle)
+            && (end == bytes.len()
+                || html_space(bytes[end])
+                || matches!(bytes[end], b'/' | b'>'))
+        {
+            return Some(position);
+        }
+    }
+    None
+}
+
+// Remacs: html5ever erases whether an HTML attribute's empty value was
+// explicit. GNU libxml reports the name for a bare boolean attribute, so
+// normalize only that source form before building the DOM.
+fn normalize_html_boolean_attributes(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut output = String::with_capacity(text.len());
+    let mut position = 0;
+    while position < text.len() {
+        let Some(relative) = text[position..].find('<') else {
+            output.push_str(&text[position..]);
+            break;
+        };
+        let open = position + relative;
+        output.push_str(&text[position..open]);
+
+        if text[open..].starts_with("<!--") {
+            if let Some(close) = text[open + 4..].find("-->") {
+                let end = open + 4 + close + 3;
+                output.push_str(&text[open..end]);
+                position = end;
+            } else {
+                output.push_str(&text[open..]);
+                break;
+            }
+            continue;
+        }
+        if text[open..].starts_with("<![CDATA[") {
+            if let Some(close) = text[open + 9..].find("]]>") {
+                let end = open + 9 + close + 3;
+                output.push_str(&text[open..end]);
+                position = end;
+            } else {
+                output.push_str(&text[open..]);
+                break;
+            }
+            continue;
+        }
+        if open + 1 >= bytes.len()
+            || matches!(bytes[open + 1], b'!' | b'?' | b'/')
+            || !bytes[open + 1].is_ascii_alphabetic()
+        {
+            let end = if open + 1 < bytes.len()
+                && matches!(bytes[open + 1], b'!' | b'?' | b'/')
+            {
+                html_tag_end(text, open + 2)
+            } else {
+                open + 1
+            };
+            output.push_str(&text[open..end]);
+            position = end;
+            continue;
+        }
+
+        let mut tag_end_name = open + 1;
+        while tag_end_name < text.len()
+            && !html_space(bytes[tag_end_name])
+            && !matches!(bytes[tag_end_name], b'/' | b'>')
+        {
+            let character = text[tag_end_name..].chars().next().unwrap();
+            tag_end_name += character.len_utf8();
+        }
+        let tag_name = text[open + 1..tag_end_name].to_ascii_lowercase();
+        let end = html_tag_end(text, tag_end_name);
+        let body_end = if end > open && bytes[end - 1] == b'>' {
+            end - 1
+        } else {
+            end
+        };
+        let mut attribute = tag_end_name;
+        let mut copied = open;
+        while attribute < body_end {
+            while attribute < body_end && html_space(bytes[attribute]) {
+                attribute += 1;
+            }
+            if attribute >= body_end || bytes[attribute] == b'/' {
+                break;
+            }
+            let name_start = attribute;
+            while attribute < body_end
+                && !html_space(bytes[attribute])
+                && !matches!(bytes[attribute], b'=' | b'/' | b'>')
+            {
+                let character = text[attribute..].chars().next().unwrap();
+                attribute += character.len_utf8();
+            }
+            if attribute == name_start {
+                let character = text[attribute..].chars().next().unwrap();
+                attribute += character.len_utf8();
+                continue;
+            }
+            let name_end = attribute;
+            let normalized_name = text[name_start..name_end].to_ascii_lowercase();
+            let mut value_start = attribute;
+            while value_start < body_end && html_space(bytes[value_start]) {
+                value_start += 1;
+            }
+            if value_start < body_end && bytes[value_start] == b'=' {
+                attribute = value_start + 1;
+                while attribute < body_end && html_space(bytes[attribute]) {
+                    attribute += 1;
+                }
+                if attribute < body_end && matches!(bytes[attribute], b'\'' | b'"') {
+                    let quote = bytes[attribute];
+                    attribute += 1;
+                    while attribute < body_end && bytes[attribute] != quote {
+                        let character = text[attribute..].chars().next().unwrap();
+                        attribute += character.len_utf8();
+                    }
+                    if attribute < body_end {
+                        attribute += 1;
+                    }
+                } else {
+                    while attribute < body_end
+                        && !html_space(bytes[attribute])
+                        && bytes[attribute] != b'>'
+                    {
+                        let character = text[attribute..].chars().next().unwrap();
+                        attribute += character.len_utf8();
+                    }
+                }
+            } else {
+                if html_boolean_attribute(&normalized_name) {
+                    output.push_str(&text[copied..name_end]);
+                    output.push_str("=\"");
+                    output.push_str(&normalized_name);
+                    output.push('"');
+                    copied = name_end;
+                }
+                attribute = name_end;
+            }
+        }
+        output.push_str(&text[copied..end]);
+        position = end;
+
+        if matches!(tag_name.as_str(), "script" | "style" | "textarea" | "title"
+            | "xmp" | "iframe" | "noembed" | "noframes")
+        {
+            if let Some(close) = html_raw_text_end(text, &tag_name, position) {
+                output.push_str(&text[position..close]);
+                position = close;
+            } else {
+                output.push_str(&text[position..]);
+                break;
+            }
+        } else if tag_name == "plaintext" {
+            output.push_str(&text[position..]);
+            break;
+        }
+    }
+    output
+}
+
 fn parse_html(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
     let tracker = HtmlTokenTracker {
         tree: html5ever::tree_builder::TreeBuilder::new(HtmlDom::default(), Default::default()),
@@ -442,7 +681,8 @@ fn parse_html(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
     };
     let tokenizer = html5ever::tokenizer::Tokenizer::new(tracker, Default::default());
     let input = html5ever::buffer_queue::BufferQueue::default();
-    input.push_back(text.into());
+    let normalized = normalize_html_boolean_attributes(text);
+    input.push_back(normalized.as_str().into());
     // As in html5ever's Parser, resume after script/encoding indicators.
     while !matches!(tokenizer.feed(&input), html5ever::TokenizerResult::Done) {}
     tokenizer.end();
