@@ -397,7 +397,7 @@ matches may be returned from the message body."
                 (if delete
                     (delete-region field-start field-end))))
 	    (if list
-		value
+		(nreverse value)
 	      (and (not (string= value "")) value)))
 	(if (re-search-forward name nil t)
 	    (progn
