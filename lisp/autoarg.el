@@ -63,6 +63,9 @@
   (mapcar (lambda (i) (cons (intern (format "kp-%d" i)) i))
           (reverse (number-sequence 0 9))))
 
+(defvar autoarg-kp--saved-bindings nil
+  "Keypad bindings in `universal-argument-map' saved by `autoarg-kp-mode'.")
+
 (defun autoarg-kp-digit-argument (arg)
   "Part of the numeric argument for the next command, like `digit-argument'."
   (interactive "P")
@@ -121,13 +124,23 @@ This is similar to `autoarg-mode' but rebinds the keypad keys
 \\{autoarg-kp-mode-map}"
   :lighter " Aakp" :global t :group 'keyboard
   (if autoarg-kp-mode
-      (dotimes (i 10)
-	(let ((sym (intern (format "kp-%d" i))))
-	  (define-key universal-argument-map (vector sym)
-	    'autoarg-kp-digit-argument)))
-    (dotimes (i 10)
-      (let ((sym (intern (format "kp-%d" i))))
-	(define-key universal-argument-map (vector sym) nil)))))
+      (progn
+        (unless autoarg-kp--saved-bindings
+          (setq autoarg-kp--saved-bindings
+                (mapcar (lambda (digit)
+                          (let ((key (car digit)))
+                            (cons key
+                                  (lookup-key universal-argument-map
+                                              (vector key)))))
+                        autoarg-kp-digits)))
+        (dolist (digit autoarg-kp-digits)
+          (define-key universal-argument-map (vector (car digit))
+            'autoarg-kp-digit-argument)))
+    (progn
+      (dolist (binding autoarg-kp--saved-bindings)
+        (define-key universal-argument-map (vector (car binding))
+          (cdr binding)))
+      (setq autoarg-kp--saved-bindings nil))))
 
 (defun autoarg-terminate (n)
   "Maybe terminate a digit prefix sequence.
