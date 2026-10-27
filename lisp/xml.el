@@ -707,10 +707,9 @@ references."
 	  (setq ref (match-string 3)
 		val (assoc ref xml-entity-alist))
 	  (xml--check-entity-recursion ref)
-	  (and (null val)
-	       xml-validating-parser
-	       (error "XML: (Validity) Undefined entity `%s'" ref))
-	  (replace-match (or (cdr val) xml-undefined-entity) t t)
+	  (unless val
+	    (error "XML: (Not Well-Formed) Undefined entity `%s'" ref))
+	  (replace-match (cdr val) t t)
 	  (goto-char (match-beginning 0)))
 	;; Check for XML bombs.
 	(and xml-entity-expansion-limit
@@ -1072,15 +1071,14 @@ references and parameter-entity references."
 	  ;; quotes as normal data characters.
 	  (setq ref (match-string 3 string)) ; entity name
 	  (xml--check-entity-recursion ref)
-	  (let ((val (or (cdr (assoc ref xml-entity-alist))
-			 (if xml-validating-parser
-			     (error "XML: (Validity) Undefined entity `%s'" ref)
-			   xml-undefined-entity))))
-    (when (string-search "<" val)
-      (error "XML: (Not Well-Formed) Entity `%s' expands to `<` in attribute value"
-             ref))
-    (setq string (concat (xml--normalize-attribute-whitespace val)
-                         remainder)))
+	  (let ((val (cdr (assoc ref xml-entity-alist))))
+	    (unless val
+	      (error "XML: (Not Well-Formed) Undefined entity `%s'" ref))
+	    (when (string-search "<" val)
+	      (error "XML: (Not Well-Formed) Entity `%s' expands to `<` in attribute value"
+		     ref))
+	    (setq string (concat (xml--normalize-attribute-whitespace val)
+			 remainder)))
 	  (and xml-entity-expansion-limit
 	       (> (length string) (+ strlen xml-entity-expansion-limit))
 	       (error "XML: Passed `xml-entity-expansion-limit' while expanding `&%s;'"
