@@ -110,10 +110,13 @@ we return it unconverted.
 Characters not representable in ISO-8859-1 cause an error.
 
 If the optional argument WRAPPER is non-nil,
-we add the wrapper characters =?ISO-8859-1?Q?....?=."
-  (let ((i 0) (result ""))
+we add the wrapper characters =?ISO-8859-1?Q?....?= and encode spaces
+and tabs inside it."
+  (let ((i 0)
+	(result "")
+	(special-chars (if wrapper "[?=\" \t]" "[?=\"]")))
     (save-match-data
-      (while (or (string-match "[?=\"]" string i)
+	(while (or (string-match special-chars string i)
 		 (string-match "[^\000-\177]" string i))
 	(setq result
 	      (concat result (substring string i (match-beginning 0))
@@ -134,7 +137,8 @@ we add the wrapper characters =?ISO-8859-1?Q?....?=."
 Characters not representable in ISO-8859-1 cause an error.
 
 If the optional argument WRAPPER is non-nil,
-we add the wrapper characters =?ISO-8859-1?Q?....?=."
+we add the wrapper characters =?ISO-8859-1?Q?....?= and encode spaces
+and tabs inside it."
   (interactive "r\nP")
   (save-match-data
     (save-excursion
@@ -145,13 +149,15 @@ we add the wrapper characters =?ISO-8859-1?Q?....?=."
 	  (mail-quote-printable--check-char (char-after))
 	  (forward-char))
 	(goto-char (point-min))
-	(while (re-search-forward "[?=\"\200-\377]" nil t)
+	(while (re-search-forward
+		(if wrapper "[?=\" \t\200-\377]" "[?=\"\200-\377]")
+		nil t)
 	  (replace-match (upcase (format "=%02x" (preceding-char)))
 			 t t))
 	(when wrapper
 	  (goto-char beg)
 	  (insert "=?ISO-8859-1?Q?")
-	  (goto-char end)
+	  (goto-char (point-max))
 	  (insert "?="))))))
 
 (defun mail-unquote-printable-hexdigit (char)
