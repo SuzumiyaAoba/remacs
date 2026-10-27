@@ -796,6 +796,18 @@ Return COLUMN."
 
 (put 'array-mode 'mode-class 'special)
 
+(defun array--read-positive-integer (prompt &optional maximum)
+  "Read a positive integer using PROMPT, optionally bounded by MAXIMUM."
+  (let ((value (read-number prompt)))
+    (unless (and (integerp value)
+                 (> value 0)
+                 (or (null maximum) (<= value maximum)))
+      (if maximum
+          (user-error "Array columns per line must be between 1 and %d"
+                      maximum)
+        (user-error "Array dimensions must be positive integers")))
+    value))
+
 ;;;###autoload
 (define-derived-mode array-mode fundamental-mode "Array"
   "Major mode for editing arrays.
@@ -870,13 +882,14 @@ Entering array mode calls the function `array-mode-hook'."
   (make-local-variable 'array-copy-string)
   (setq-local array-respect-tabs nil)
   (setq-local array-max-row
-              (read-number "Number of array rows: "))
+              (array--read-positive-integer "Number of array rows: "))
   (setq-local array-max-column
-              (read-number "Number of array columns: "))
+              (array--read-positive-integer "Number of array columns: "))
   (setq-local array-columns-per-line
-              (read-number "Array columns per line: "))
+              (array--read-positive-integer "Array columns per line: "
+                                            array-max-column))
   (setq-local array-field-width
-              (read-number "Field width: "))
+              (array--read-positive-integer "Field width: "))
   (setq-local array-rows-numbered
               (y-or-n-p "Rows numbered? "))
   (setq-local array-line-length
