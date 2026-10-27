@@ -597,6 +597,7 @@ Looks at `ffap-ftp-default-user', returns \"\" for \"localhost\"."
 	 (filename (car (url-path-and-query obj))))
     (when (and (member (url-type obj) '("ftp" "file"))
 	       (member host `("" "localhost" ,(system-name))))
+      (setq filename (url-unhex-string filename))
       ;; On Windows, "file:///C:/foo" should unwrap to "C:/foo"
       (if (and (memq system-type '(ms-dos windows-nt cygwin))
 	       (string-match "\\`/[a-zA-Z]:" filename))
@@ -621,7 +622,7 @@ Looks at `ffap-ftp-default-user', returns \"\" for \"localhost\"."
 	      (if user (concat user "@"))
 	      host
 	      (if port (concat "#" (number-to-string port)))
-	      ":" filename))))
+	      ":" (url-unhex-string filename)))))
 
 (defun ffap-fixup-url (url)
   "Clean up URL and return it, maybe as a file name."
