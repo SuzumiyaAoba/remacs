@@ -950,7 +950,7 @@ Includes expansions from parent abbrev tables."
              (lambda (e)
                (let* ((value (symbol-value (abbrev--symbol e table)))
                       (enable-function (abbrev-get e :enable-function)))
-                 (when (and value
+                 (when (and (stringp value)
                             (or (null enable-function)
                                 (funcall enable-function)))
                    (push (cons value (symbol-name e)) expansions))))
