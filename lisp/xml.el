@@ -678,7 +678,14 @@ references."
     (while (and (not (eobp))
 		(not (looking-at-p "<")))
       ;; Find the next < or & character.
-      (skip-chars-forward "^<&")
+      (let ((segment-start (point))
+            segment-end)
+        (skip-chars-forward "^<&")
+        (setq segment-end (point))
+        (when (save-excursion
+                (goto-char segment-start)
+                (search-forward "]]>" segment-end t))
+          (error "XML: (Not Well-Formed) `]]>' is not allowed in character data")))
       (when (eq (char-after) ?&)
 	;; If we find an entity or character reference, expand it.
 	(unless (looking-at xml-entity-or-char-ref-re)
