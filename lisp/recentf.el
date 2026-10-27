@@ -394,6 +394,19 @@ Ignore case if `recentf-case-fold-search' is non-nil."
     (setq list (cdr list)))
   list)
 
+(defun recentf-remove-string (string list)
+  "Remove all strings equal to STRING from LIST.
+Equality follows `recentf-string-equal'."
+  (let ((tail list) previous)
+    (while tail
+      (if (recentf-string-equal string (car tail))
+          (if previous
+              (setcdr previous (cdr tail))
+            (setq list (cdr tail)))
+        (setq previous tail))
+      (setq tail (cdr tail)))
+    list))
+
 (defun recentf-dump-variable (variable &optional limit)
   "Insert a \"(setq VARIABLE value)\" in the current buffer.
 When the value of VARIABLE is a list, optional argument LIMIT
@@ -441,9 +454,8 @@ See also the option `recentf-auto-cleanup'.")
 If it is there yet, move it at the beginning of the list.
 If `recentf-case-fold-search' is non-nil, ignore case when comparing
 filenames."
-  (let ((m (recentf-string-member filename recentf-list)))
-    (and m (setq recentf-list (delq (car m) recentf-list)))
-    (push filename recentf-list)))
+  (setq recentf-list (recentf-remove-string filename recentf-list))
+  (push filename recentf-list))
 
 (defun recentf-apply-filename-handlers (name)
   "Apply `recentf-filename-handlers' to file NAME.
@@ -513,9 +525,10 @@ regexps or predicates."
   "Remove FILENAME from the recent list, if file is not kept.
 Return non-nil if FILENAME has been removed."
   (unless (recentf-keep-p filename)
-    (let ((m (recentf-string-member
-              (recentf-expand-file-name filename) recentf-list)))
-      (and m (setq recentf-list (delq (car m) recentf-list))))))
+    (let ((filename (recentf-expand-file-name filename)))
+      (when (recentf-string-member filename recentf-list)
+        (setq recentf-list (recentf-remove-string filename recentf-list))
+        t))))
 
 (defsubst recentf-directory-compare (f1 f2)
   "Compare absolute filenames F1 and F2.
