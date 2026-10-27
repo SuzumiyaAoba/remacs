@@ -360,6 +360,7 @@ by default."
   :version "25.1")
 
 (defvar eww-data nil)
+(defvar eww--restore-point nil)
 (defvar eww-history nil)
 (defvar eww-history-position 0
   "The 1-indexed position in `eww-history'.
@@ -844,7 +845,7 @@ This replaces the region with the preprocessed HTML."
 	  (shr-insert-document document))
 	(cond
 	 (point
-	  (goto-char point))
+	  (goto-char (max (point-min) (min point (point-max)))))
 	 (shr-target-id
 	  (goto-char (point-min))
           (let ((match (text-property-search-forward
@@ -1590,7 +1591,11 @@ instead of `browse-url-new-window-flag'."
 	(text (plist-get elem :text)))
     (setq eww-data elem)
     (if (null text)
-	(eww-reload)			; FIXME: restore :point?
+	(let ((eww--restore-point (plist-get elem :point)))
+	  (when (and (integerp eww--restore-point)
+		     (<= (point-min) eww--restore-point (point-max)))
+	    (goto-char eww--restore-point))
+	  (eww-reload))
       (erase-buffer)
       (insert text)
       (goto-char (plist-get elem :point))
@@ -1650,17 +1655,19 @@ just re-display the HTML already fetched."
     (if local
 	(if (null (plist-get eww-data :dom))
 	    (error "No current HTML data")
-	  (eww-display-document (plist-get eww-data :dom) (point)))
+          (eww-display-document (plist-get eww-data :dom)
+                                (or eww--restore-point (point))))
       (let ((parsed (url-generic-parse-url url)))
         (if (equal (url-type parsed) "file")
             ;; Use Tramp instead of url.el for files (since url.el
             ;; doesn't work well with Tramp files).
             (let ((eww-buffer (current-buffer)))
               (with-current-buffer (eww--file-buffer (url-filename parsed))
-                (eww-render nil url nil eww-buffer)))
+                (eww-render nil url eww--restore-point eww-buffer)))
           (let ((url-mime-accept-string eww-accept-content-types))
             (eww-retrieve url #'eww-render
-		          (list url (point) (current-buffer) encode))))))))
+		          (list url (or eww--restore-point (point))
+                        (current-buffer) encode))))))))
 
 ;; Form support.
 
