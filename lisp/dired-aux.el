@@ -2326,7 +2326,8 @@ renamed to `new_name'."
     (error "Cannot copy `%s' into its subdirectory `%s'" from to))
   (let ((attrs (file-attributes from)))
     (if (and recursive
-	     (eq t (file-attribute-type attrs))
+	     (or (eq t (file-attribute-type attrs))
+		 (and dereference (file-directory-p from)))
 	     (or (eq recursive 'always)
 		 (yes-or-no-p (format "Copy %s recursively? " from))))
 	(copy-directory from to preserve-time)
