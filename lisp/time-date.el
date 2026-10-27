@@ -438,7 +438,7 @@ whole number, round the value associated with the smallest displayed
 unit to that many digits after the decimal.  If it is a non-negative
 float less than 1.0, round to that value."
   (cond ((< delay 0)
-	 (concat "-" (seconds-to-string (- delay) readable precision)))
+	 (concat "-" (seconds-to-string (- delay) readable abbrev precision)))
         (readable
          (let* ((stsa seconds-to-string-readable)
 		(expanded (eq readable 'expanded))
