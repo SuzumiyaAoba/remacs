@@ -108,11 +108,9 @@ Both ranges must be in ascending order."
           range2 (cdr range2))
     (while (and min1 min2)
       (cond ((< max1 min2)              ; range1 precedes range2
-             (setq range1 (cdr range1)
-                   min1 nil))
+             (setq min1 nil))
             ((< max2 min1)              ; range2 precedes range1
-             (setq range2 (cdr range2)
-                   min2 nil))
+             (setq min2 nil))
             (t                     ; some sort of overlap is occurring
              (let ((min (max min1 min2))
                    (max (min max1 max2)))
