@@ -1401,6 +1401,35 @@ fn window_resize_impl(i: &mut Interp, a: crate::lisp::Argv, no_error: bool) -> E
             }
         }
     }
+    // GNU updates normal sizes after a successful resize.  Keep each
+    // child's share relative to its parent's normal size, using the new
+    // geometry so later space redistribution honors this resize.
+    let (parent_extent, parent_normal) = {
+        let pb = p.borrow();
+        if horizontal {
+            (pb.width as f64, pb.normal_size.1)
+        } else {
+            (pb.height as f64, pb.normal_size.0)
+        }
+    };
+    if parent_extent > 0.0 {
+        for child in &kids {
+            let mut child = child.borrow_mut();
+            if child.dead {
+                continue;
+            }
+            let extent = if horizontal {
+                child.width as f64
+            } else {
+                child.height as f64
+            };
+            if horizontal {
+                child.normal_size.1 = parent_normal * extent / parent_extent;
+            } else {
+                child.normal_size.0 = parent_normal * extent / parent_extent;
+            }
+        }
+    }
     relay_children(&p);
     if no_error {
         return Ok(Value::Nil);
