@@ -365,7 +365,7 @@ all such overlays in all buffers except the current one."
                  (new (redisplay--highlight-overlay-function
                        (car bounds) (cdr bounds) window rol
                        (if (eq window (selected-window))
-                           'hl-line 'hl-line-nonselected))))
+                           hl-line-face 'hl-line-nonselected))))
             (unless (equal new rol)
               (set-window-parameter window 'hl-line-overlay new)))
         (redisplay--unhighlight-overlay-function rol)))))
