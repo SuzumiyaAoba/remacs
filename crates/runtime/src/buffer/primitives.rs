@@ -8405,14 +8405,43 @@ fn f_kill_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Sym(s) => *s == uw || *s == ew,
         _ => false,
     };
-    let text = if region.truthy() {
+    let extracted = if region.truthy() {
         let (lo, hi) = mark_region_bounds(i)?;
         f_delete_and_extract_region(
             i,
             vec![Value::Int(lo as i128 + 1), Value::Int(hi as i128 + 1)].into(),
-        )?
+        )
     } else {
-        f_delete_and_extract_region(i, a.clone())?
+        f_delete_and_extract_region(i, a.clone())
+    };
+    let text = match extracted {
+        Ok(text) => text,
+        Err(error) => {
+            let read_only = match &error {
+                crate::lisp::error::Flow::Signal(signal) => {
+                    signal.is_symbol(i.q("buffer-read-only"))
+                        || signal.is_symbol(i.q("text-read-only"))
+                }
+                _ => false,
+            };
+            if !read_only {
+                return Err(error);
+            }
+            // GNU kill-region copies the requested text before reporting a
+            // read-only failure. The supported option turns that failure
+            // into a successful copy-only operation.
+            let copy = Value::Sym(i.q("copy-region-as-kill"));
+            i.apply(&copy, a.as_slice().to_vec())?;
+            let this_command = i.q("this-command");
+            let kill_region = i.q("kill-region");
+            i.set_symbol(this_command, Value::Sym(kill_region))?;
+            let allow_copy = i.q("kill-read-only-ok");
+            if i.symbol_value(allow_copy).truthy() {
+                i.message("Read only text copied to kill ring");
+                return Ok(Value::Nil);
+            }
+            return Err(error);
+        }
     };
     // GNU: `(when string (merge-or-kill-new))' — the extracted string is
     // "nil if BEG = END"; ours is Some("") there, which still counts as a
