@@ -585,6 +585,7 @@ If omitted or nil, SUBEXP defaults to zero, i.e. the entire
 REGEXP is highlighted.  LIGHTER is a human-readable string to
 display instead of a regexp.  Non-nil CASE-FOLD ignores case.
 SPACES-REGEXP is a regexp to substitute spaces in font-lock search."
+  (setq regexp (hi-lock-regexp-okay regexp))
   ;; Hashcons the regexp, so it can be passed to remove-overlays later.
   (setq regexp (hi-lock--hashcons regexp))
   (setq subexp (or subexp 0))
