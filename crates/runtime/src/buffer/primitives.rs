@@ -8320,38 +8320,6 @@ fn num_or_mark_less(i: &mut Interp, end: &Value, beg: &Value) -> Result<bool, Fl
     Ok(e < b)
 }
 
-/// GNU kill-append: prepend/append STRING to the kill-ring head
-/// (pushing a fresh entry when the ring is empty), then feed the
-/// merged head to `interprogram-cut-function'.
-fn kill_append<T: TextSource + ?Sized>(i: &mut Interp, s: &T, before: bool) -> EvalResult {
-    s.with_text(|s| {
-    let kr = i.q("kill-ring");
-    let cur = i.symbol_value(kr);
-    let mut items = cur.list_to_vec().unwrap_or_default();
-    match items.first_mut() {
-        Some(Value::Str(top)) => {
-            let mut t = top.borrow_mut();
-            if before {
-                let mut joined = s.to_string();
-                joined.push_str(&*t);
-                *t = joined;
-            } else {
-                t.push_str(s);
-            }
-        }
-        _ => items.insert(0, Value::string(s)),
-    }
-    i.obarray.symbol_mut(kr).value = Value::list(items);
-    let ring = i.symbol_value(kr);
-    let head = match &ring {
-        Value::Cons(c) => c.borrow().car.clone(),
-        _ => Value::Nil,
-    };
-    interprogram_cut(i, head)
-
-    })
-}
-
 /// The `last-command'-driven part of GNU's `kill-region'/
 /// `copy-region-as-kill' bodies: when the previous command was also a
 /// kill, the new STRING merges into the ring head (`< end beg' picks
@@ -8365,7 +8333,7 @@ pub(crate) fn kill_or_append(
     end: &Value,
     word_kill: bool,
 ) -> EvalResult {
-    let Value::Str(string) = text else {
+    let Value::Str(_) = text else {
         return Err(i.wrong_type_mut("stringp", text));
     };
     let kr_sym = i.q("kill-region");
@@ -8373,8 +8341,8 @@ pub(crate) fn kill_or_append(
     let merging = !word_kill && matches!(&i.symbol_value(lc), Value::Sym(s) if *s == kr_sym);
     if merging {
         let before = num_or_mark_less(i, end, beg)?;
-        let text = string.borrow().clone();
-        kill_append(i, &text, before)
+        let append = Value::Sym(i.q("kill-append"));
+        i.apply(&append, vec![text.clone(), Value::from_bool(before)])
     } else {
         push_kill_ring_value(i, text.clone())
     }
