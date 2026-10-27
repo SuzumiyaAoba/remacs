@@ -117,9 +117,9 @@
           "\\(" iso8601--zone-match "\\)?\\)?"))
 
 (defconst iso8601--duration-full-match
-  "P\\([0-9]+Y\\)?\\([0-9]+M\\)?\\([0-9]+D\\)?\\(T\\([0-9]+H\\)?\\([0-9]+M\\)?\\([0-9]+\\(?:[.,][0-9]+\\)?S\\)?\\)?")
+  "P\\([0-9]+\\(?:[.,][0-9]+\\)?Y\\)?\\([0-9]+\\(?:[.,][0-9]+\\)?M\\)?\\([0-9]+\\(?:[.,][0-9]+\\)?D\\)?\\(T\\([0-9]+\\(?:[.,][0-9]+\\)?H\\)?\\([0-9]+\\(?:[.,][0-9]+\\)?M\\)?\\([0-9]+\\(?:[.,][0-9]+\\)?S\\)?\\)?")
 (defconst iso8601--duration-week-match
-  "P\\([0-9]+\\)W")
+  "P\\([0-9]+\\(?:[.,][0-9]+\\)?\\)W")
 (defconst iso8601--duration-combined-match
   (concat "P" iso8601--combined-match))
 (defconst iso8601--duration-match
@@ -439,6 +439,24 @@ Return the number of minutes."
              scale))
         (string-to-number number))))
 
+(defun iso8601--parse-duration-component (value unit-seconds)
+  "Parse VALUE as a duration component.
+Return its integer part and its fractional part converted to seconds.
+UNIT-SECONDS is the nominal length of the component."
+  (if value
+      (let* ((number (substring value 0 -1))
+             (decimal (string-match "[.,]" number))
+             (whole (string-to-number
+                     (if decimal (substring number 0 decimal) number)))
+             (fraction (and decimal (substring number (1+ decimal)))))
+        (cons whole
+              (if fraction
+                  (iso8601--fractional-value
+                   (* (string-to-number fraction) unit-seconds)
+                   (expt 10 (length fraction)))
+                0)))
+    (cons 0 0)))
+
 (defun iso8601-parse-duration (string)
   "Parse ISO 8601 durations on the form P3Y6M4DT12H30M5S."
   (cond
@@ -451,24 +469,48 @@ Return the number of minutes."
              (match-string 5 string)
              (match-string 6 string)
              (match-string 7 string)))
-    (let* ((year (or (match-string 1 string) 0))
-           (month (or (match-string 2 string) 0))
-           (day (or (match-string 3 string) 0))
-           (hour (or (match-string 5 string) 0))
-           (minute (or (match-string 6 string) 0))
-           (seconds (iso8601--parse-duration-seconds
-                     (match-string 7 string))))
-      (iso8601--decoded-time :year year
-                             :month month
-                             :day day
-                             :hour hour
-                             :minute minute
-                             :second seconds)))
+    (let* ((values (list (match-string 1 string)
+                         (match-string 2 string)
+                         (match-string 3 string)
+                         (match-string 5 string)
+                         (match-string 6 string)
+                         (match-string 7 string)))
+           (fraction-index
+            (cl-position-if (lambda (value)
+                              (and value (string-match-p "[.,]" value)))
+                            values)))
+      ;; A fractional component is only valid when it is the lowest-order
+      ;; component present.
+      (when (and fraction-index
+                 (cl-some #'identity (nthcdr (1+ fraction-index) values)))
+        (signal 'wrong-type-argument (list string)))
+      (let* ((components
+              (list
+               (iso8601--parse-duration-component (nth 0 values)
+                                                  (* 365 24 60 60))
+               (iso8601--parse-duration-component (nth 1 values)
+                                                  (* 30 24 60 60))
+               (iso8601--parse-duration-component (nth 2 values) (* 24 60 60))
+               (iso8601--parse-duration-component (nth 3 values) (* 60 60))
+               (iso8601--parse-duration-component (nth 4 values) 60)
+               (iso8601--parse-duration-component (nth 5 values) 1)))
+             (seconds
+              (if (and fraction-index (< fraction-index 5))
+                  (cdr (nth fraction-index components))
+                (iso8601--parse-duration-seconds (nth 5 values)))))
+        (iso8601--decoded-time :year (car (nth 0 components))
+                               :month (car (nth 1 components))
+                               :day (car (nth 2 components))
+                               :hour (car (nth 3 components))
+                               :minute (car (nth 4 components))
+                               :second seconds))))
    ;; PnW: Weeks.
    ((iso8601--match iso8601--duration-week-match string)
-    (let ((weeks (string-to-number (match-string 1 string))))
+    (let ((weeks (iso8601--parse-duration-component
+                  (concat (match-string 1 string) "W") (* 7 24 60 60))))
       ;; Does this make sense?  Hm...
-      (iso8601--decoded-time :day (* weeks 7))))
+      (iso8601--decoded-time :day (* (car weeks) 7)
+                             :second (cdr weeks))))
    ;; P<date>T<time>
    ((iso8601--match iso8601--duration-combined-match string)
     (iso8601-parse (substring string 1)))
