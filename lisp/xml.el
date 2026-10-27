@@ -969,9 +969,20 @@ references and parameter-entity references."
 
 ;;; Substituting special XML sequences
 
+(defun xml--normalize-attribute-whitespace (string)
+  "Normalize literal XML attribute whitespace in STRING."
+  ;; XML first folds CRLF and CR to LF, then turns literal tab/LF/CR into
+  ;; spaces.  Character references are expanded separately and bypass this.
+  (replace-regexp-in-string
+   "[\t\n\r]" " "
+   (replace-regexp-in-string "\r\n?" "\n" string t t)
+   t t))
+
 (defun xml-substitute-special (string)
-  "Return STRING, after substituting entity and character references.
-STRING is assumed to occur in an XML attribute value."
+  "Return STRING with XML attribute references and whitespace normalized."
+  ;; Do this while character references are still encoded in STRING, so
+  ;; their referenced tab, LF, and CR characters remain unchanged.
+  (setq string (xml--normalize-attribute-whitespace string))
   (let ((strlen (length string))
 	children)
     (while (string-match xml-entity-or-char-ref-re string)
@@ -999,7 +1010,8 @@ STRING is assumed to occur in an XML attribute value."
 			 (if xml-validating-parser
 			     (error "XML: (Validity) Undefined entity `%s'" ref)
 			   xml-undefined-entity))))
-	    (setq string (concat val remainder)))
+    (setq string (concat (xml--normalize-attribute-whitespace val)
+                         remainder)))
 	  (and xml-entity-expansion-limit
 	       (> (length string) (+ strlen xml-entity-expansion-limit))
 	       (error "XML: Passed `xml-entity-expansion-limit' while expanding `&%s;'"
