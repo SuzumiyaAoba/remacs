@@ -502,6 +502,8 @@ Optional args BEG and END specify a region of the buffer on which to operate."
       (while alist
 	(let ((from (if reverse (cdr (car alist)) (car (car alist))))
 	      (to   (if reverse (car (car alist)) (cdr (car alist)))))
+	  (when (and (stringp from) (zerop (length from)))
+	    (error "Empty FROM string in format-replace-strings"))
 	  (goto-char beg)
 	  (while (search-forward from nil t)
 	    (goto-char (match-beginning 0))
