@@ -131,16 +131,22 @@ Possibilities include `symbol', `list', `sexp', `defun', `number',
           (dotimes (_ (abs n))
             ;; Find the provider that moves point the smallest non-zero
             ;; amount, and use that to update point.
-            (let ((new-point (seq-reduce
-                              (lambda (value elt)
-                                (if (eq (car elt) thing)
-                                    (save-excursion
-                                      (funcall (cdr elt) backward)
-                                      (if value
-                                          (funcall reducer value (point))
-                                        (point)))
-                                  value))
-                              forward-thing-provider-alist nil)))
+            (let* ((start (point))
+                   (new-point
+                    (seq-reduce
+                     (lambda (value elt)
+                       (if (eq (car elt) thing)
+                           (let ((candidate
+                                  (save-excursion
+                                    (funcall (cdr elt) backward)
+                                    (point))))
+                             (if (= candidate start)
+                                 value
+                               (if value
+                                   (funcall reducer value candidate)
+                                 candidate)))
+                         value))
+                     forward-thing-provider-alist nil)))
             (if (and new-point (/= new-point (point)))
                 (goto-char new-point)
               ;; If we didn't move point, move to our limit (min or max
