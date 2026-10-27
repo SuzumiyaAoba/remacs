@@ -1597,6 +1597,10 @@ confirmation."
     (setq bookmark-alist-modification-count
           (+ bookmark-alist-modification-count (length bookmark-alist)))
     (setq bookmark-alist nil)
+    (dolist (buffer (buffer-list))
+      (with-current-buffer buffer
+        (when (local-variable-p 'bookmark-current-bookmark)
+          (kill-local-variable 'bookmark-current-bookmark))))
     (bookmark-bmenu-surreptitiously-rebuild-list)
     (when (bookmark-time-to-save-p)
       (bookmark-save))))
