@@ -70,6 +70,7 @@ Whether passwords are cached at all is controlled by `password-cache'."
 		 (integer :tag "Seconds")))
 
 (defvar password-data (make-hash-table :test #'equal))
+(defvar password-cache--expiry-tokens (make-hash-table :test #'equal))
 
 (defun password-read-from-cache (key)
   "Obtain passphrase for KEY from time-limited passphrase cache.
@@ -102,25 +103,34 @@ but can be invoked at any time to forcefully remove passwords
 from the cache.  This may be useful when it has been detected
 that a password is invalid, so that `password-read' query the
 user again."
+  (remhash key password-cache--expiry-tokens)
   (let ((password (gethash key password-data)))
     (when (stringp password)
       (clear-string password))
     (remhash key password-data)))
+
+(defun password-cache--expire (key token)
+  "Remove KEY from the cache if TOKEN is its current expiry token."
+  (when (eq token (gethash key password-cache--expiry-tokens))
+    (remhash key password-cache--expiry-tokens)
+    (password-cache-remove key)))
 
 (defun password-cache-add (key password)
   "Add password to cache.
 The password is removed by a timer after `password-cache-expiry' seconds."
   (when (and password-cache-expiry
              (not (hash-table-contains-p key password-data)))
-    (run-at-time password-cache-expiry nil
-		 #'password-cache-remove
-		 key))
+    (let ((token (make-symbol "password-cache-expiry")))
+      (puthash key token password-cache--expiry-tokens)
+      (run-at-time password-cache-expiry nil
+		   #'password-cache--expire key token)))
   (puthash key password password-data)
   nil)
 
 (defun password-reset ()
   "Clear the password cache."
   (interactive)
+  (clrhash password-cache--expiry-tokens)
   (clrhash password-data))
 
 (provide 'password-cache)
