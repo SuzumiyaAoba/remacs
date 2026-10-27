@@ -546,13 +546,16 @@ Return the number of characters removed."
   (url-http-debug "url-http-parse-response called in (%s)" (buffer-name))
   (goto-char (point-min))
   (skip-chars-forward " \t\n")		; Skip any blank crap
-  (skip-chars-forward "/HPT")		; Skip HTTP Version "HTTP/".
-  (let ((version (buffer-substring (point)
-				  (progn
-				    (skip-chars-forward "0-9.")
-				    (point))))
-	status status-start)
-    (skip-chars-forward " \t")
+  (let* ((case-fold-search nil)
+	 (version-end nil)
+	 (version (progn
+		     ;;Remacs: require the case-sensitive RFC 9112 HTTP-version token.
+		     (unless (looking-at "HTTP/\\([0-9]\\.[0-9]\\) ")
+		       (error "Malformed HTTP response version"))
+		     (setq version-end (match-end 0))
+		     (match-string 1)))
+	 status status-start)
+    (goto-char version-end)
     (setq status-start (point))
     (skip-chars-forward "0-9")
     (let ((status-string (buffer-substring status-start (point))))
