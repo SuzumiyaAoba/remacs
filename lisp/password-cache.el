@@ -130,6 +130,10 @@ The password is removed by a timer after `password-cache-expiry' seconds."
 (defun password-reset ()
   "Clear the password cache."
   (interactive)
+  (maphash (lambda (_key password)
+             (when (stringp password)
+               (clear-string password)))
+           password-data)
   (clrhash password-cache--expiry-tokens)
   (clrhash password-data))
 
