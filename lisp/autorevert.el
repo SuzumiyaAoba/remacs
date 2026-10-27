@@ -294,7 +294,9 @@ You should set this variable through Custom."
 	   (dolist (buf (buffer-list))
 	     (with-current-buffer buf
 	       (when (symbol-value 'auto-revert-notify-watch-descriptor)
-		 (auto-revert-notify-rm-watch))))))
+		 (auto-revert-notify-rm-watch)))))
+	 (when (fboundp 'auto-revert-set-timer)
+	   (auto-revert-set-timer)))
   :initialize 'custom-initialize-default
   :version "24.4")
 
@@ -522,7 +524,6 @@ This function calls the hook `global-auto-revert-mode-hook'.
 It displays the text that `global-auto-revert-mode-text'
 specifies in the mode line."
   :global t :group 'auto-revert :lighter global-auto-revert-mode-text
-  (auto-revert-set-timer)
   (if global-auto-revert-mode
       ;; Turn global-auto-revert-mode ON.
       (progn
@@ -547,7 +548,8 @@ specifies in the mode line."
           (setq auto-revert--global-mode nil)
           (when (and auto-revert-notify-watch-descriptor
                      (not (or auto-revert-mode auto-revert-tail-mode)))
-	    (auto-revert-notify-rm-watch)))))))
+	    (auto-revert-notify-rm-watch))))))
+  (auto-revert-set-timer))
 
 (defun auto-revert--global-add-current-buffer ()
   "Set current buffer to be tracked by Global Auto-Revert if appropriate."
