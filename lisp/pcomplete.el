@@ -412,15 +412,16 @@ trailing slash after a completion:
 
 (defun pcomplete--common-suffix (s1 s2)
   ;; Since S2 is expected to be the "unquoted/expanded" version of S1,
-  ;; there shouldn't be any case difference, even if the completion is
-  ;; case-insensitive.
-  (let ((case-fold-search nil))
-    (string-match
-     ;; \x3FFF7F is just an arbitrary char among the ones Emacs accepts
-     ;; that hopefully will never appear in normal text.
-     "\\(?:.\\|\n\\)*?\\(\\(?:.\\|\n\\)*\\)\x3FFF7F\\(?:.\\|\n\\)*\\1\\'"
-     (concat s1 "\x3FFF7F" s2))
-    (- (match-end 1) (match-beginning 1))))
+  ;; compare characters exactly even if the caller's search is case-folded.
+  (let* ((s1-length (length s1))
+         (s2-length (length s2))
+         (common 0))
+    (while (and (< common s1-length)
+                (< common s2-length)
+                (= (aref s1 (- s1-length common 1))
+                   (aref s2 (- s2-length common 1))))
+      (setq common (1+ common)))
+    common))
 
 (defun pcomplete-completions-at-point ()
   "Provide standard completion using pcomplete's completion tables.
