@@ -511,12 +511,13 @@ candidates or if there are multiple matching completions and
          (prefix (substring string base)))
     (when last
       (setcdr last nil)
-      (when-let* ((sorted (funcall sort-fn
-                                   (delete prefix (all-completions prefix all))))
+      (when-let* ((matches (all-completions prefix all))
+                  (match-count (length matches))
+                  (sorted (funcall sort-fn (delete prefix matches)))
                   (common (try-completion prefix sorted))
                   (lencom (length common))
                   (suffixes sorted))
-        (unless (and (cdr suffixes) completion-preview-exact-match-only)
+        (unless (and (> match-count 1) completion-preview-exact-match-only)
           ;; Remove the common prefix from each candidate.
           (while sorted
             (setcar sorted (substring (car sorted) lencom))
