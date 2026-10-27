@@ -174,7 +174,7 @@ discarded."
 	       (old-size (ring-size ring))
 	       (old-vec (cddr ring))
                (copy-length (min size length))
-               (copy-hd (mod (+ hd (- length copy-length)) length)))
+               (copy-hd (mod (+ hd (- length copy-length)) old-size)))
           (setcdr ring (cons copy-length new-vec))
           ;; If the ring is wrapped, the existing elements must be written
           ;; out in the right order.
