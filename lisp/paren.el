@@ -165,9 +165,10 @@ use `show-paren-local-mode'."
   (when show-paren--idle-timer
     (cancel-timer show-paren--idle-timer)
     (setq show-paren--idle-timer nil))
-  (setq show-paren--idle-timer (run-with-idle-timer
-                                show-paren-delay t
-                                #'show-paren-function))
+  (when show-paren-mode
+    (setq show-paren--idle-timer (run-with-idle-timer
+                                  show-paren-delay t
+                                  #'show-paren-function)))
   (unless show-paren-mode
     (show-paren--delete-overlays)))
 
