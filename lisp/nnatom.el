@@ -31,6 +31,7 @@
 (require 'nnfeed)
 (require 'mm-url)
 (require 'dom)
+(require 'xml)
 
 (defgroup nnatom nil
   "Atom backend for Gnus."
@@ -187,7 +188,7 @@ return the subject.  Otherwise, return nil."
                                           (format " %s" alt)))))
             `(((("text/plain") . ,(format "%s: %s\n" label src))
                (("text/html") . ,(format "<a href=\"%s\">[%s]</a> "
-                                         src label)))))
+                                         (xml-escape-string src) label)))))
           (when-let* (((or (eq l 'author) (eq l 'contributor)))
                       (name (nnatom--dom-line (dom-child-by-tag link 'name)))
                       (name (if (string-blank-p name)
@@ -199,7 +200,7 @@ return the subject.  Otherwise, return nil."
                       ((not (string-blank-p uri))))
             `(((("text/plain") . ,(format "%s: %s\n" name uri))
                (("text/html") . ,(format "<a href=\"%s\">[%s]</a> "
-                                         uri name)))))
+                                         (xml-escape-string uri) name)))))
           (when-let* (((eq l 'link))
                       (attrs (dom-attributes link))
                       (label (or (cdr (assq 'title attrs))
@@ -230,7 +231,7 @@ return the subject.  Otherwise, return nil."
                       (link (cdr (assq 'href attrs))))
             `(((("text/plain") . ,(format "%s: %s\n" label link))
                (("text/html") . ,(format "<a href=\"%s\">[%s]</a> "
-                                         link label))))))))
+                                         (xml-escape-string link) label))))))))
      (dom-children (dom-child-by-tag article 'links)))))
 (defvoo nnatom-read-links-function #'nnatom--read-links
   nil nnfeed-read-links-function)
