@@ -1256,7 +1256,10 @@ external program defined by `sendmail-program'."
 					  (while (looking-at "^[ \t]")
 					    (forward-line 1))
 					  (point)))
-		      (append (mail-parse-comma-list)
+		      (append (mapcar #'car
+			      (ietf-drums-parse-addresses
+			       (buffer-substring-no-properties
+				(point-min) (point-max))))
 			      resend-to-addresses)))
 	      ;; Delete Resent-Bcc ourselves
 	      (if (save-excursion (beginning-of-line)
