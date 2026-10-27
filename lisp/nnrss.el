@@ -776,13 +776,16 @@ Export subscriptions to a buffer in OPML Format."
 	    "    <title>mySubscriptions</title>\n"
 	    "    <dateCreated>" (format-time-string "%a, %d %b %Y %T %z")
 	    "</dateCreated>\n"
-	    "    <ownerEmail>" user-mail-address "</ownerEmail>\n"
-	    "    <ownerName>" (user-full-name) "</ownerName>\n"
+	    "    <ownerEmail>" (xml-escape-string (or user-mail-address ""))
+	    "</ownerEmail>\n"
+	    "    <ownerName>" (xml-escape-string (or (user-full-name) ""))
+	    "</ownerName>\n"
 	    "  </head>\n"
 	    "  <body>\n")
     (dolist (sub nnrss-group-alist)
-      (insert "    <outline text=\"" (car sub)
-	      "\" xmlUrl=\"" (cadr sub) "\"/>\n"))
+      (insert "    <outline text=\"" (xml-escape-string (car sub))
+	      "\" xmlUrl=\"" (xml-escape-string (or (cadr sub) ""))
+	      "\"/>\n"))
     (insert "  </body>\n"
 	    "</opml>\n"))
   (pop-to-buffer "*OPML Export*")
