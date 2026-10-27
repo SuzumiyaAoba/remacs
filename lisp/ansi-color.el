@@ -915,16 +915,19 @@ old codes.  Finally, the so changed list of codes is returned."
 	     (q (/ new 10)))
 	(setq codes
 	      (pcase q
-		(0 (unless (memq new '(0 8 9))
-		     (cons new (remq new codes))))
-		(2 (unless (memq new '(20 26 28 29))
+		(0 (cond ((= new 0) nil)
+			 ((memq new '(8 9)) codes)
+			 (t (cons new (remq new codes)))))
+		(1 codes)
+		(2 (if (memq new '(20 26 28 29))
+		       codes
 		     ;; The standard says `21 doubly underlined' while
                      ;; https://en.wikipedia.org/wiki/ANSI_escape_code claims
 		     ;; `21 Bright/Bold: off or Underline: Double'.
 		     (remq (- new 20) (pcase new
 					(22 (remq 1 codes))
 					(25 (remq 6 codes))
-					(_ codes)))))
+					(_ codes))))
 		((or 3 4 9 10) (let ((r (mod new 10)))
 			    (unless (= r 8)
 			      (let (beg)
@@ -961,11 +964,14 @@ unset all properties and colors."
     (while (setq new (funcall iterator))
       (setq q (/ new 10))
       (pcase q
-        (0 (if (memq new '(0 8 9))
-               (setq do-clear t)
-             (aset basic-faces new t)))
+        (0 (cond ((= new 0)
+                  (setq do-clear t))
+                 ((memq new '(8 9)))
+                 (t (aset basic-faces new t))))
+        ;; SGR 10-19 selects fonts; ignore unsupported font changes.
+        (1 nil)
         (2 (if (memq new '(20 26 28 29))
-               (setq do-clear t)
+               nil
              ;; The standard says `21 doubly underlined' while
              ;; https://en.wikipedia.org/wiki/ANSI_escape_code claims
              ;; `21 Bright/Bold: off or Underline: Double'.
