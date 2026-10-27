@@ -342,9 +342,12 @@ matches may be returned from the message body."
       (if (or all list)
 	  (let ((value (if all "")))
 	    (while (re-search-forward name nil t)
-	      (let ((opoint (point)))
+	      (let ((field-start (match-beginning 0))
+		    (opoint (point))
+		    field-end)
 		(while (progn (forward-line 1)
 			      (looking-at "[ \t]")))
+		(setq field-end (point))
 		;; Back up over newline, then trailing spaces or tabs
 		(forward-char -1)
 		(skip-chars-backward " \t" opoint)
@@ -357,24 +360,26 @@ matches may be returned from the message body."
 				      (buffer-substring-no-properties
 				       opoint (point)))))
                 (if delete
-                    (delete-region (line-beginning-position) (point)))))
+                    (delete-region field-start field-end))))
 	    (if list
 		value
 	      (and (not (string= value "")) value)))
 	(if (re-search-forward name nil t)
 	    (progn
 	      (if last (while (re-search-forward name nil t)))
-	      (let ((opoint (point)))
+	      (let ((field-start (match-beginning 0))
+		    (opoint (point))
+		    field-end)
 		(while (progn (forward-line 1)
 			      (looking-at "[ \t]")))
+		(setq field-end (point))
 		;; Back up over newline, then trailing spaces or tabs
 		(forward-char -1)
 		(skip-chars-backward " \t" opoint)
                 (prog1
                     (buffer-substring-no-properties opoint (point))
                   (if delete
-                      (delete-region (line-beginning-position)
-                                     (1+ (point))))))))))))
+                      (delete-region field-start field-end))))))))))
 
 ;; Parse a list of tokens separated by commas.
 ;; It runs from point to the end of the visible part of the buffer.
