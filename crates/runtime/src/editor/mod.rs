@@ -17955,6 +17955,18 @@ fn f_window_state_put(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
         }
         restore_window_state_parameters(i, &w, &items[2..])?;
+        if sel_window(i)
+            .as_ref()
+            .is_some_and(|selected| Rc::ptr_eq(selected, &w))
+        {
+            let (buffer_id, point) = {
+                let window = w.borrow();
+                (window.buffer, window.point)
+            };
+            if let Some(buffer) = i.buffers.get(buffer_id) {
+                buffer.borrow_mut().set_point(point);
+            }
+        }
         return Ok(Value::Nil);
     }
     if tag != "vc" && tag != "hc" {
