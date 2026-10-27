@@ -192,7 +192,7 @@ parses to
             (skip-chars-forward "^/?#")
             (setq host (buffer-substring save-pos (point)))
 	    ;; 3.2.1 User Information
-            (if (string-match "^\\([^@]+\\)@" host)
+            (if (string-match "^\\([^@]*\\)@" host)
                 (setq user (match-string 1 host)
                       host (substring host (match-end 0))))
             (if (and user (string-match "\\`\\([^:]*\\):\\(.*\\)" user))
