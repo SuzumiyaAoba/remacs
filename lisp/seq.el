@@ -370,11 +370,12 @@ This does not modify SEQUENCE."
 (cl-defgeneric seq-into (sequence type)
   "Concatenate the elements of SEQUENCE into a sequence of type TYPE.
 TYPE can be one of the following symbols: `vector', `string' or
-`list'.  This does not modify SEQUENCE."
+`list', or `bool-vector'.  This does not modify SEQUENCE."
   (pcase type
     (`vector (seq--into-vector sequence))
     (`string (seq--into-string sequence))
     (`list (seq--into-list sequence))
+    (`bool-vector (seq-concatenate 'bool-vector sequence))
     (_ (error "Not a sequence type name: %S" type))))
 
 ;;;###autoload
