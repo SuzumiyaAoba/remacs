@@ -678,8 +678,10 @@ a null element stored in the AVL tree.)"
 Returns nil if the stack is empty, or NILFLAG if specified.
 \(The latter allows an empty stack to be distinguished from
 a null element stored in the AVL tree.)"
-  (or (car (avl-tree--stack-store avl-tree-stack))
-      nilflag))
+  (let ((node (car (avl-tree--stack-store avl-tree-stack))))
+    (if node
+        (avl-tree--node-data node)
+      nilflag)))
 
 
 (defun avl-tree-stack-empty-p (avl-tree-stack)
