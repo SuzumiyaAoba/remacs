@@ -10823,30 +10823,33 @@ fn f_current_kill(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_copy_region_as_kill(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let b = cur(i);
     let region = a.get(2).cloned().unwrap_or(Value::Nil);
-    let text = {
+    // GNU simple.el: a non-nil REGION ignores BEG/END and extracts the
+    // marked region via `region-extract-function'. Buffer substring keeps
+    // the text properties on the value copied into the kill ring.
+    let (start, end) = if region.truthy() {
+        let (lo, hi) = crate::buffer::primitives::mark_region_bounds(i)?;
+        (lo as i128 + 1, hi as i128 + 1)
+    } else {
+        // GNU `validate_region': out-of-[BEGV,ZV] args signal
+        // args-out-of-range (buffer beg end), never clamped.
+        let s0 = want_int(i, &a[0])?;
+        let e0 = want_int(i, &a[1])?;
+        let (s1, e1) = (s0.min(e0), s0.max(e0));
         let bb = b.borrow();
-        // GNU simple.el: a non-nil REGION ignores BEG/END and extracts
-        // the marked region via `region-extract-function'.
-        let (s, e) = if region.truthy() {
-            crate::buffer::primitives::mark_region_bounds(i)?
-        } else {
-            // GNU `validate_region': out-of-[BEGV,ZV] args signal
-            // args-out-of-range (buffer beg end), never clamped.
-            let s0 = want_int(i, &a[0])?;
-            let e0 = want_int(i, &a[1])?;
-            let (s1, e1) = (s0.min(e0), s0.max(e0));
-            if s1 < bb.begv as i128 + 1 || e1 > bb.zv as i128 + 1 {
-                let bufv = i.buffer_value(i.current_buffer).unwrap_or(Value::Nil);
-                return Err(err_sym(
-                    i,
-                    "args-out-of-range",
-                    vec![bufv, a[0].clone(), a[1].clone()],
-                ));
-            }
-            ((s1 - 1) as usize, (e1 - 1) as usize)
-        };
-        bb.text.substring(s, e)
+        if s1 < bb.begv as i128 + 1 || e1 > bb.zv as i128 + 1 {
+            let bufv = i.buffer_value(i.current_buffer).unwrap_or(Value::Nil);
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![bufv, a[0].clone(), a[1].clone()],
+            ));
+        }
+        (s1, e1)
     };
+    let text = crate::buffer::primitives::f_buffer_substring(
+        i,
+        vec![Value::Int(start), Value::Int(end)].into(),
+    )?;
     // GNU: `(if (eq last-command 'kill-region) (kill-append str (< end
     // beg)) (kill-new str))' — the `<' evaluates END first, so junk
     // BEG/END under a non-nil REGION still signals number-or-marker-p.

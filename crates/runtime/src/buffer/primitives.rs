@@ -8358,25 +8358,26 @@ fn kill_append<T: TextSource + ?Sized>(i: &mut Interp, s: &T, before: bool) -> E
 /// prepend vs append, evaluating END first); otherwise `kill-new'.
 /// `word_kill' mirrors GNU's `(memq region '(unix-word emacs-word))'
 /// exemption, which never merges.
-pub(crate) fn kill_or_append<T: TextSource + ?Sized>(
+pub(crate) fn kill_or_append(
     i: &mut Interp,
-    s: &T,
+    text: &Value,
     beg: &Value,
     end: &Value,
     word_kill: bool,
 ) -> EvalResult {
-    s.with_text(|s| {
+    let Value::Str(string) = text else {
+        return Err(i.wrong_type_mut("stringp", text));
+    };
     let kr_sym = i.q("kill-region");
     let lc = i.q("last-command");
     let merging = !word_kill && matches!(&i.symbol_value(lc), Value::Sym(s) if *s == kr_sym);
     if merging {
         let before = num_or_mark_less(i, end, beg)?;
-        kill_append(i, s, before)
+        let text = string.borrow().clone();
+        kill_append(i, &text, before)
     } else {
-        push_kill_ring(i, s.to_string())
+        push_kill_ring_value(i, text.clone())
     }
-
-    })
 }
 
 /// GNU sets `this-command' to `kill-region' after a real kill when the
@@ -8446,11 +8447,10 @@ fn f_kill_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU: `(when string (merge-or-kill-new))' — the extracted string is
     // "nil if BEG = END"; ours is Some("") there, which still counts as a
     // killed string for GNU's `(< end beg)' evaluation.
-    if let Value::Str(s) = &text {
-        let s = s.borrow().clone();
+    if matches!(&text, Value::Str(_)) {
         kill_or_append(
             i,
-            &s,
+            &text,
             a.get(0).unwrap_or(&Value::Nil),
             a.get(1).unwrap_or(&Value::Nil),
             word_kill,
@@ -8479,16 +8479,6 @@ pub(crate) fn interprogram_cut(i: &mut Interp, text: Value) -> EvalResult {
         }
     }
     Ok(Value::Nil)
-}
-
-/// Push a string onto the kill-ring (a plain list var).
-///
-/// GNU never merges inside `kill-new': consecutive-kill merging is the
-/// callers' business (`kill-region'/`copy-region-as-kill' call
-/// `kill-append' when `last-command' is `kill-region'; the obsolete
-/// `append-next-kill' command arranges the same via `last-command').
-pub(crate) fn push_kill_ring(i: &mut Interp, s: impl Into<EmacsText>) -> EvalResult {
-    push_kill_ring_value(i, Value::string(s))
 }
 
 /// Preserve a supplied kill string's properties, representation and identity.
