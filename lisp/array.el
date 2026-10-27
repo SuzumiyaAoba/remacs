@@ -46,7 +46,7 @@
 (defvar array-buffer-line nil "Current line number of point in the buffer.")
 (defvar array-lines-per-row nil "Number of lines per array row.")
 (defvar array-max-row nil "Number of rows in the array.")
-(defvar array-field-width nil "Width of a field in the array.")
+(defvar array-field-width nil "Display-column width of a field in the array.")
 (defvar array-row nil "Current array row location of point.")
 (defvar array-column nil "Current array column location of point.")
 (defvar array-rows-numbered nil "Are rows numbered in the buffer?")
@@ -605,7 +605,7 @@ If optional ARG is given, copy through ARG rows up."
         init-field)
     (while check
       (setq init-field (read-string "Initial field value: "))
-      (setq len (length init-field))
+      (setq len (string-width init-field))
       (when (zerop len)
 	(user-error "Initial field value must not be empty"))
       (if (/= len array-field-width)
@@ -834,7 +834,7 @@ Variables you assign:
      `array-max-column':       The number of columns in the array.
      `array-columns-per-line': The number of columns in the array
                              per line of buffer.
-     `array-field-width':      The width of each field, in characters.
+     `array-field-width':      The width of each field, in display columns.
      `array-rows-numbered':    A logical variable describing whether to ignore
                              row numbers in the buffer.
 
