@@ -1194,7 +1194,8 @@ Return the filtered process list."
              (eq (car filter) 'function)
              (dolist (process process-alist)
                (if (funcall (cdr filter) (cdr process))
-                   (push process new-alist))))
+                   (push process new-alist)))
+             (setq new-alist (nreverse new-alist)))
             (t ;; apply predicate to specified attribute
              (let* ((cdrfilter (cdr filter))
                     (fun (if (stringp cdrfilter)
@@ -1205,7 +1206,8 @@ Return the filtered process list."
                (dolist (process process-alist)
                  (setq value (cdr (assq (car filter) (cdr process))))
                  (if (and value (funcall fun value))
-                     (push process new-alist))))))
+                   (push process new-alist)))
+               (setq new-alist (nreverse new-alist)))))
       (setq process-alist new-alist)))
   process-alist)
 
