@@ -588,6 +588,27 @@ Return one of:
                   (point) (min (+ (point) 10) (point-max)))))
         s)))))
 
+(defun xml--check-entity-recursion (name &optional stack seen)
+  "Signal an error if entity NAME recursively references itself."
+  (save-match-data
+    (when (member name stack)
+      (error "XML: (Not Well-Formed) Recursive entity reference `%s'" name))
+    (if (member name seen)
+        seen
+      (let ((seen (cons name seen))
+            (value (cdr (assoc name xml-entity-alist))))
+        (when value
+          (let ((start 0))
+            (while (string-match xml-entity-or-char-ref-re value start)
+              (let ((reference (match-string 3 value))
+                    (next (match-end 0)))
+                (when reference
+                  (setq seen
+                        (xml--check-entity-recursion
+                         reference (cons name stack) seen)))
+                (setq start next))))
+        seen))))
+
 (defun xml-parse-string ()
   "Parse character data at point, and return it as a string.
 Leave point at the start of the next thing to parse.  This
@@ -624,6 +645,7 @@ references."
 	  ;; entity or character references, or markup.
 	  (setq ref (match-string 3)
 		val (assoc ref xml-entity-alist))
+	  (xml--check-entity-recursion ref)
 	  (and (null val)
 	       xml-validating-parser
 	       (error "XML: (Validity) Undefined entity `%s'" ref))
@@ -972,6 +994,7 @@ STRING is assumed to occur in an XML attribute value."
 	  ;; Note that we don't need do anything special to treat
 	  ;; quotes as normal data characters.
 	  (setq ref (match-string 3 string)) ; entity name
+	  (xml--check-entity-recursion ref)
 	  (let ((val (or (cdr (assoc ref xml-entity-alist))
 			 (if xml-validating-parser
 			     (error "XML: (Validity) Undefined entity `%s'" ref)
