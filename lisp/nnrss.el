@@ -849,7 +849,10 @@ DATA should be the output of `xml-parse-region'."
 	  (nnrss-find-el 'a data)))
 
 (defmacro nnrss-match-macro (base-uri item onsite-list offsite-list)
-  `(cond ((or (string-match (concat "^" ,base-uri) ,item)
+  `(cond ((or (string-match
+	       (concat "\\`" (regexp-quote ,base-uri)
+		       "\\(?:/\\|[?#]\\|\\'\\)")
+	       ,item)
 	      (not (string-search "://" ,item)))
 	  (setq ,onsite-list (append ,onsite-list (list ,item))))
 	 (t (setq ,offsite-list (append ,offsite-list (list ,item))))))
@@ -864,8 +867,9 @@ DATA should be the output of `xml-parse-region'."
 
 BASE-URL is used to resolve relative links and determine whether they
 are `offsite' or `onsite'."
-  (let ((base-uri (progn (string-match "\\`.*://[^/]+/?" base-url)
-			 (match-string 0 base-url)))
+  (let ((base-uri (if (string-match "\\`.*://[^/]+" base-url)
+		      (match-string 0 base-url)
+		    ""))
 	rss-onsite-end  rdf-onsite-end  xml-onsite-end
 	rss-onsite-in   rdf-onsite-in   xml-onsite-in
 	rss-offsite-end rdf-offsite-end xml-offsite-end
