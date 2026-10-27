@@ -132,7 +132,7 @@ pub(super) fn f_window_at_side_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
     // frame minus the echo area.
     let w = match arg(&a, 0) {
         Value::Nil => crate::editor::sel_window(i).ok_or_else(|| i.error("no selected window"))?,
-        Value::Window(w) => w,
+        Value::Window(w) if !w.borrow().dead => w,
         other => {
             let shown = i.princ_to_string(&other);
             return Err(i.error(format!("{shown} is not a valid window")));
