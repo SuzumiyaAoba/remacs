@@ -1137,7 +1137,7 @@ actual characters."
   "Insert hexadecimal string STR at point ARG times.
 Embedded whitespace, dashes, and periods in the string are ignored."
   (interactive "sHex string: \np")
-  (setq str (replace-regexp-in-string "[- \t.]" "" str))
+  (setq str (replace-regexp-in-string "[-.[:space:]]" "" str))
   (let ((chars '()))
     (let ((len (length str))
 	  (idx 0))
