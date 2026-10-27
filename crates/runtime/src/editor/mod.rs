@@ -4559,6 +4559,23 @@ pub(crate) fn mark_tree_dead(i: &Interp, w: &WindowRef) {
     }
 }
 
+fn materialize_menu_bar_after_root_collapse(frame: &mut Frame) {
+    if frame.menu_shift {
+        return;
+    }
+    let Some(root) = frame.root.clone() else {
+        return;
+    };
+    if root.borrow().horiz.is_some() {
+        return;
+    }
+    root.borrow_mut().top += 1;
+    if let Some(minibuffer) = &frame.minibuffer {
+        minibuffer.borrow_mut().top += 1;
+    }
+    frame.menu_shift = true;
+}
+
 fn f_delete_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_err_valid(i, &arg(&a, 0))?;
     {
@@ -4580,6 +4597,10 @@ fn f_delete_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if ff.windows.len() <= 1 {
         return Err(i.error("Attempt to delete minibuffer or sole ordinary window"));
     }
+    let root_was_internal = ff
+        .root
+        .as_ref()
+        .is_some_and(|root| root.borrow().horiz.is_some());
     let del_idx = ff
         .windows
         .iter()
@@ -4700,6 +4721,9 @@ fn f_delete_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let idx = del_idx % ff.windows.len().max(1);
         ff.selected = ff.windows[idx].clone();
     }
+    if root_was_internal && ff.windows.len() == 1 {
+        materialize_menu_bar_after_root_collapse(&mut ff);
+    }
     Ok(Value::Nil)
 }
 
@@ -4709,6 +4733,10 @@ fn f_delete_other_windows(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let old_buffer = w.borrow().old_buffer.clone();
     let f = sel_frame(i).unwrap();
     let mut ff = f.borrow_mut();
+    let root_was_internal = ff
+        .root
+        .as_ref()
+        .is_some_and(|root| root.borrow().horiz.is_some());
     // GNU expands the kept window over the whole root area: the
     // frame's root window extent.
     let (rl, rt, rw, rh) = ff
@@ -4759,6 +4787,9 @@ fn f_delete_other_windows(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     ff.root = Some(w.clone());
     ff.selected = w.clone();
+    if root_was_internal {
+        materialize_menu_bar_after_root_collapse(&mut ff);
+    }
     Ok(Value::Nil)
 }
 
