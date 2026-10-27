@@ -2357,8 +2357,7 @@ In effect it sets the `fill-prefix' when inside comments and then calls
     (setq oldp (point))
     (if (re-search-forward str nil t)
         ;; Multiple matches, ask user
-        (let ((max 2)
-              n)
+        (let ((max 2))
           ;; Count matches
           (while (re-search-forward str nil t)
             (setq max (1+ max)))
@@ -2366,9 +2365,14 @@ In effect it sets the `fill-prefix' when inside comments and then calls
           (goto-char oldp)
           (re-search-backward "[^ /]" nil t)
           (recenter 0)
-          (setq n (read-string  ;; was read-input, which is obsolete
-                   (format "Several matches, choose (1-%d): " max) "1"))
-          (forward-line (- (string-to-number n) 1)))
+          (let* ((choice (read-string
+                          (format "Several matches, choose (1-%d): " max) "1"))
+                 (n (and (> (length choice) 0)
+                         (not (string-match-p "[^0-9]" choice))
+                         (string-to-number choice))))
+            (unless (and n (<= 1 n max))
+              (user-error "Choice must be an integer between 1 and %d" max))
+            (forward-line (1- n))))
       ;; Single match
       (re-search-backward "[^ /]" nil t))
 
