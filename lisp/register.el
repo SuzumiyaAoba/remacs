@@ -923,7 +923,11 @@ this case."
 		     current-prefix-arg
 		     t))
   (set-register register (if region
-			     (funcall region-extract-function delete-flag)
+			     (save-mark-and-excursion
+			       (goto-char start)
+			       (set-mark end)
+			       (setq mark-active t)
+			       (funcall region-extract-function delete-flag))
 			   (prog1 (filter-buffer-substring start end)
 			     (if delete-flag (delete-region start end)))))
   (setq deactivate-mark t)
