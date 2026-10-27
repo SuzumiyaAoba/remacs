@@ -173,18 +173,19 @@ Shown when `appt-display-mode-line' is non-nil."
 ;; It may just inherit from diary-entries-list, where we have
 ;; ((MONTH DAY YEAR) ENTRY)
 (defvar appt-time-msg-list nil
-  "The list of appointments for today.
+  "The list of appointments for today and tomorrow.
 Use `appt-add' and `appt-delete' to add and delete appointments.
 The original list is generated from today's `diary-entries-list', and
 can be regenerated using the function `appt-check'.
 Each element of the generated list has the form
-\((MINUTES) STRING [FLAG] [WARNTIME])
+\((MINUTES) STRING [FLAG] [WARNTIME] [DAY-OFFSET])
 where MINUTES is the time in minutes of the appointment after midnight,
 and STRING is the description of the appointment.
-FLAG and WARNTIME are not always present.  A non-nil FLAG
-indicates that the element was made with `appt-add', so calling
-`appt-make-list' again should preserve it.  If WARNTIME is non-nil,
-it is an integer to use in place of `appt-message-warning-time'.")
+FLAG, WARNTIME, and DAY-OFFSET are not always present.  A non-nil
+FLAG indicates that the element was made with `appt-add', so calling
+`appt-make-list' again should preserve it.  If WARNTIME is non-nil, it
+is an integer to use in place of `appt-message-warning-time'.  DAY-OFFSET
+is 0 for today and 1 for the following day.")
 
 (defconst appt-max-time (1- (* 24 60))
   "11:59pm in minutes - number of minutes in a day minus 1.")
@@ -355,25 +356,14 @@ displayed in a window:
         ;; FIXME how can there be any such entries, given that this
         ;; function removes entries when they hit zero minutes,
         ;; and appt-make-list doesn't add any in the past in the first place?
-        (if (< (setq appt-mins (caar appt)) now-mins)
-            (setq appt-time-msg-list (cdr appt-time-msg-list))
+        (if (and (< (setq appt-mins (caar appt)) now-mins)
+                 (not (equal (nth 4 appt) 1)))
+            (setq appt-time-msg-list (delq appt appt-time-msg-list))
           (setq appt-warn-time (or (nth 3 appt) appt-message-warning-time)
-                min-to-app (- appt-mins now-mins))
-          ;; If we have an appointment between midnight and
-          ;; `appt-warn-time' minutes after midnight, we
-          ;; must begin to issue a message before midnight.  Midnight
-          ;; is considered 0 minutes and 11:59pm is 1439
-          ;; minutes.  Therefore we must recalculate the minutes to
-          ;; appointment variable.  It is equal to the number of
-          ;; minutes before midnight plus the number of minutes after
-          ;; midnight our appointment is.
-          ;; FIXME but appt-make-list constructs appt-time-msg-list to only
-          ;; contain entries with today's date, so this cannot work?
-          ;; Also above we just removed anything with appt-mins < now-mins.
-          (if (and (< appt-mins appt-warn-time)
-                   (> (+ now-mins appt-warn-time) appt-max-time))
-              (setq min-to-app (+ (- (1+ appt-max-time) now-mins)
-                                  appt-mins)))
+                min-to-app (if (equal (nth 4 appt) 1)
+                               (+ (- (1+ appt-max-time) now-mins)
+                                  appt-mins)
+                             (- appt-mins now-mins)))
           ;; Issue warning if the appointment time is within the warning time.
           (when (and (<= min-to-app appt-warn-time)
                      (>= min-to-app 0))
@@ -549,7 +539,7 @@ The default is `appt-message-warning-time'."
 (defvar diary-entries-list)
 
 (defun appt-make-list ()
-  "Update the appointments list from today's diary buffer.
+  "Update the appointments list from today's and tomorrow's diary entries.
 The time must be at the beginning of a line for it to be
 put in the appointments list (see examples in documentation of
 the function `appt-check').  We assume that the variables `original-date' and
@@ -575,13 +565,26 @@ Any appointments made with `appt-add' are not affected by this function."
           (unless (nth 2 elt)
             (setq appt-time-msg-list
                   (delq elt appt-time-msg-list))))
-        (if diary-entries-list
-            ;; Cycle through the entry-list (diary-entries-list)
-            ;; looking for entries beginning with a time.  If the
-            ;; entry begins with a time, add it to the
-            ;; appt-time-msg-list.  Then sort the list.
-            (let ((entry-list diary-entries-list)
-                  time-string literal)
+        ;; Cycle through the diary entries, including tomorrow's entries
+        ;; so early appointments can be warned about before midnight.
+        (let* ((today (calendar-current-date))
+                   (tomorrow
+                    (calendar-gregorian-from-absolute
+                     (1+ (calendar-absolute-from-gregorian today))))
+                   (entry-list diary-entries-list)
+                   time-string literal tomorrow-present)
+              (let ((entries entry-list))
+                (while (and entries (not tomorrow-present))
+                  (when (calendar-date-equal tomorrow (caar entries))
+                    (setq tomorrow-present t))
+                  (setq entries (cdr entries))))
+              (unless tomorrow-present
+                (setq entry-list
+                      (append entry-list
+                              (let ((diary-hook
+                                     (delq #'appt-make-list
+                                           (copy-sequence diary-hook))))
+                                (diary-list-entries tomorrow 1 t)))))
               ;; Below, we assume diary-entries-list was in date
               ;; order.  It is, unless something on
               ;; diary-list-entries-hook has changed it, eg
@@ -595,13 +598,12 @@ Any appointments made with `appt-add' are not affected by this function."
                    (setq entry-list (sort entry-list #'diary-entry-compare)))
               ;; Skip diary entries for dates before today.
               (while (and entry-list
-                          (calendar-date-compare
-                           (car entry-list) (list (calendar-current-date))))
+                          (calendar-date-compare (car entry-list) (list today)))
                 (setq entry-list (cdr entry-list)))
-              ;; Parse the entries for today.
+              ;; Parse the entries for today and tomorrow.
               (while (and entry-list
-                          (calendar-date-equal
-                           (calendar-current-date) (caar entry-list)))
+                          (or (calendar-date-equal today (caar entry-list))
+                              (calendar-date-equal tomorrow (caar entry-list))))
                 (setq time-string (cadr (car entry-list))
                       ;; Including any comments.
                       literal (or (nth 2 (nth 3 (car entry-list)))
@@ -625,9 +627,11 @@ Any appointments made with `appt-add' are not affected by this function."
                          ;; FIXME why the list?  It makes the first
                          ;; element (MINUTES) rather than MINUTES.
                          (appt-time (list (appt-convert-time only-time)))
-                         (time-msg (append
-                                    (list appt-time appt-time-string)
-                                    (if warntime (list nil warntime)))))
+                         (day-offset
+                          (if (calendar-date-equal tomorrow (caar entry-list))
+                              1 0))
+                         (time-msg (list appt-time appt-time-string
+                                         nil warntime day-offset)))
                     ;; Add this appointment to appt-time-msg-list.
                     (setq appt-time-msg-list
                           (nconc appt-time-msg-list (list time-msg))
@@ -642,16 +646,19 @@ Any appointments made with `appt-add' are not affected by this function."
                                     (concat "\n[ \t]*" appt-time-regexp)
                                     literal (match-end 0)))
                          (setq literal (substring literal end)))))
-                (setq entry-list (cdr entry-list)))))
+                (setq entry-list (cdr entry-list))))
         (setq appt-time-msg-list (appt-sort-list appt-time-msg-list))
         ;; Convert current time to minutes after midnight (12:01am = 1),
         ;; and remove elements in the list that are in the past.
         (let* ((now (decode-time))
                (now-mins (+ (* 60 (decoded-time-hour now))
                             (decoded-time-minute now))))
-          (while (and appt-time-msg-list
-                      (< (caar (car appt-time-msg-list)) now-mins))
-            (setq appt-time-msg-list (cdr appt-time-msg-list)))))))
+          (setq appt-time-msg-list
+                (let (remaining)
+                  (dolist (appt appt-time-msg-list (nreverse remaining))
+                    (unless (and (not (equal (nth 4 appt) 1))
+                                 (< (caar appt) now-mins))
+                      (push appt remaining)))))))))
 
 
 (defun appt-sort-list (appt-list)
