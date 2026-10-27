@@ -760,7 +760,7 @@ which may be shorter.  This does not modify SEQUENCE."
   (when (< length 1)
     (error "Sub-sequence length must be larger than zero"))
   (let ((result nil)
-        (seq-length (length sequence))
+        (seq-length (seq-length sequence))
         (start 0))
     (while (< start seq-length)
       (push (seq-subseq sequence start
