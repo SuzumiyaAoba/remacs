@@ -1047,6 +1047,8 @@ references and parameter-entity references."
 
 (defun xml-substitute-special (string)
   "Return STRING with XML attribute references and whitespace normalized."
+  (when (string-search "<" string)
+    (error "XML: (Not Well-Formed) `<` in attribute value"))
   ;; Do this while character references are still encoded in STRING, so
   ;; their referenced tab, LF, and CR characters remain unchanged.
   (setq string (xml--normalize-attribute-whitespace string))
@@ -1074,6 +1076,9 @@ references and parameter-entity references."
 			 (if xml-validating-parser
 			     (error "XML: (Validity) Undefined entity `%s'" ref)
 			   xml-undefined-entity))))
+    (when (string-search "<" val)
+      (error "XML: (Not Well-Formed) Entity `%s' expands to `<` in attribute value"
+             ref))
     (setq string (concat (xml--normalize-attribute-whitespace val)
                          remainder)))
 	  (and xml-entity-expansion-limit
