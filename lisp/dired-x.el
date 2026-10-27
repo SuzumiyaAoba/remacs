@@ -339,7 +339,7 @@ Prefixed with two \\[universal-argument]'s, prompt for MARKER-CHAR and mark file
   "In Dired, flag all files with a certain EXTENSION for deletion.
 A `.' is *not* automatically prepended to the string entered."
   (interactive "sFlagging extension: " dired-mode)
-  (dired-mark-extension extension dired-del-marker))
+  (dired-mark-suffix extension dired-del-marker))
 
 ;; Define some unpopular file extensions.  Used for cleaning and omitting.
 
