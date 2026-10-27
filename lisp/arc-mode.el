@@ -864,16 +864,16 @@ when parsing the archive."
 
 (cl-defstruct (archive--file-summary
                (:constructor nil)
-               (:constructor archive--file-summary (text name-start name-end)))
-  text name-start name-end)
+               (:constructor archive--file-summary
+                             (text name-start name-end name-column)))
+  text name-start name-end name-column)
 
 (defun archive-summarize-files (files)
   "Insert a description of a list of files annotated with proper mouse face."
   (setq archive-file-list-start (point-marker))
   ;; Here we assume that they all start at the same column.
   (setq archive-file-name-indent
-        ;; FIXME: We assume chars=columns (no double-wide chars and such).
-        (if files (archive--file-summary-name-start (car files)) 0))
+        (if files (archive--file-summary-name-column (car files)) 0))
   ;; We don't want to do an insert for each element since that takes too
   ;; long when the archive -- which has to be moved in memory -- is large.
   (insert
@@ -1548,7 +1548,7 @@ Use \\[archive-unmark-all-files] to remove all marks."
   (interactive "p" archive-mode)
   (forward-line p)
   (or (eobp)
-      (forward-char archive-file-name-indent)))
+      (move-to-column archive-file-name-indent)))
 
 (defun archive-previous-line (p)
   (interactive "p" archive-mode)
@@ -1751,7 +1751,7 @@ This doesn't recover lost files, it just undoes changes in the buffer itself."
          (mapcar (lambda (desc)
                    (let* ((size (number-to-string
                                  (archive--file-desc-size desc)))
-                          (text
+                          (prefix
                            (concat "  "
                                    (when (> modelen 0)
                                      (concat (file-modes-number-to-symbolic
@@ -1771,10 +1771,12 @@ This doesn't recover lost files, it just undoes changes in the buffer itself."
                                    " "
                                    (when times
                                      (concat (archive--file-desc-time desc)
-                                             "  "))
-                                   (archive--file-desc-int-file-name desc))))
+                                             "  "))))
+                          (filename
+                           (archive--file-desc-int-file-name desc))
+                          (text (concat prefix filename)))
                      (archive--file-summary
-                      text startcol (length text))))
+                      text (length prefix) (length text) startcol)))
                  descs))
         (insert dash)
         (insert (format (format "%%%dd %%s %%d files\n"
