@@ -352,8 +352,31 @@ version of that color."
   "\e\\[[\x30-\x3F]*[\x20-\x2F]*\\|\e"
   "Regexp matching a partial ANSI control sequence.")
 
-(defconst ansi-color-parameter-regexp "\\([0-9]*\\)[m;]"
+(defconst ansi-color-parameter-regexp "\\([0-9]*\\)\\([;:]\\|m\\)"
   "Regexp that matches SGR control sequence parameters.")
+
+(defun ansi-color--parameter-value (parameter separator)
+  ;; Empty semicolon parameters mean zero; empty colon subparameters such as
+  ;; the color-space identifier in `38:2::R:G:B' are omitted.
+  (unless (and (string= separator ":") (string= parameter ""))
+    (if (string= parameter "")
+        0
+      (string-to-number parameter 10))))
+
+(defun ansi-color--next-parameter (string start &optional end)
+  "Return the next SGR parameter and end position in STRING from START.
+If END is non-nil, stop before a match that extends past END."
+  (let (parameter separator result)
+    (while (and (not result)
+                (string-match ansi-color-parameter-regexp string start)
+                (or (null end) (<= (match-end 0) end)))
+      (setq start (match-end 0)
+            parameter (match-string 1 string)
+            separator (match-string 2 string))
+      (let ((number (ansi-color--parameter-value parameter separator)))
+        (when number
+          (setq result (cons number start)))))
+    result))
 
 ;; Convenience functions for comint modes (eg. shell-mode)
 
@@ -545,11 +568,11 @@ This function can be added to `comint-preoutput-filter-functions'."
             (ansi-color--update-face-vec
              face-vec
              (lambda ()
-               (when (string-match ansi-color-parameter-regexp
-                                   string cur-pos)
-                 (setq cur-pos (match-end 0))
-                 (when (<= cur-pos esc-end)
-                   (string-to-number (match-string 1 string))))))))))
+               (let ((parameter
+                      (ansi-color--next-parameter string cur-pos esc-end)))
+                 (when parameter
+                   (setq cur-pos (cdr parameter))
+                   (car parameter))))))))
     ;; if the rest of the string should have a face, put it there
     (when-let* ((face (ansi-color--face-vec-face face-vec)))
       (put-text-property start (length string)
@@ -742,10 +765,16 @@ being deleted."
           (when (eq (char-before esc-end) ?m)
             (goto-char esc-beg)
             (ansi-color--update-face-vec
-             face-vec (lambda ()
-                        (when (re-search-forward ansi-color-parameter-regexp
-                                                 esc-end t)
-                          (string-to-number (match-string 1))))))
+             face-vec
+             (lambda ()
+               (let (number)
+                 (while (and (not number)
+                             (re-search-forward ansi-color-parameter-regexp
+                                                esc-end t))
+                   (setq number
+                         (ansi-color--parameter-value
+                          (match-string 1) (match-string 2))))
+                 number))))
 
           (if preserve-sequences
               ;; Make the escape sequence transparent.
@@ -860,12 +889,10 @@ ESCAPE-SEQ is a SGR control sequences such as \\033[34m.  The parameter
 
 Returns nil only if there's no match for `ansi-color-parameter-regexp'."
   (let ((i 0)
-	codes val)
-    (while (string-match ansi-color-parameter-regexp escape-seq i)
-      (setq i (match-end 0)
-	    val (string-to-number (match-string 1 escape-seq) 10))
-      ;; It so happens that (string-to-number "") => 0.
-      (push val codes))
+	codes parameter)
+    (while (setq parameter (ansi-color--next-parameter escape-seq i))
+      (setq i (cdr parameter))
+      (push (car parameter) codes))
     (nreverse codes)))
 
 (defun ansi-color-apply-sequence (escape-sequence codes)
