@@ -720,7 +720,8 @@ element itself."
 KEYWORD-ARGS are forwarded to `make-hash-table'."
   (let ((ht (apply #'make-hash-table keyword-args)))
     (map-do (lambda (key value)
-              (puthash key value ht))
+              (unless (map-contains-key ht key)
+                (puthash key value ht)))
             map)
     ht))
 
