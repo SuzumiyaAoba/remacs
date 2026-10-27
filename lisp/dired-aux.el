@@ -2508,7 +2508,7 @@ or with the current marker character if MARKER-CHAR is t."
                          (downcase operation) from)))
         (if (not to)
             (setq skipped (cons (dired-make-relative from) skipped))
-          (let* ((overwrite (file-exists-p to))
+          (let* ((overwrite (or (file-exists-p to) (file-symlink-p to)))
                  (dired-overwrite-confirmed ; for dired-handle-overwrite
                   (and overwrite
                        (let ((help-form (format-message
