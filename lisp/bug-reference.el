@@ -190,8 +190,8 @@ subexpression 10."
                              (overlay-put ov 'button ov)
                              ov))))
             ;; Don't put a link if format is undefined.
-            (when bug-reference-url-format
-              (overlay-put overlay 'bug-reference-url
+            (overlay-put overlay 'bug-reference-url
+                         (when bug-reference-url-format
                            (if (stringp bug-reference-url-format)
                                (format bug-reference-url-format
                                        (match-string-no-properties 2))
