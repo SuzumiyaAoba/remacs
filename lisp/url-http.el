@@ -1141,8 +1141,8 @@ the end of the document."
 	  (url-http-debug "Reading chunk %d (%d %d %d)"
 			  url-http-chunked-counter st nd length)
 	  (setq regexp (if no-initial-crlf
-			   "\\([0-9a-z]+\\).*\r?\n"
-		         "\r?\n\\([0-9a-z]+\\).*\r?\n"))
+			   "\\([0-9a-f]+\\)\\(?:[ \t]*;[^\r\n]*\\)?\r?\n"
+		         "\r?\n\\([0-9a-f]+\\)\\(?:[ \t]*;[^\r\n]*\\)?\r?\n"))
 
 	  (if url-http-chunked-start
 	      ;; We know how long the chunk is supposed to be, skip over
@@ -1162,7 +1162,8 @@ the end of the document."
 	      (url-http-debug "Still spinning for next chunk...")
 	    (if no-initial-crlf (skip-chars-forward "\r\n"))
 	    (if (not (looking-at regexp))
-	        (progn
+	        (if (search-forward "\n" nil t)
+	            (error "Malformed HTTP chunk-size line")
 	          ;; Must not have received the entirety of the chunk header,
 		  ;; need to spin some more.
 		  (url-http-debug "Did not see start of chunk @ %d!" (point))
