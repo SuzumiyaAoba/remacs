@@ -1366,7 +1366,7 @@ return an empty string, and set `ffap-string-at-point-region' to `(1 1)'."
             (setq beg (point))))))
 
     (if (and (natnump ffap-max-region-length)
-             (< region-len ffap-max-region-length)) ; Bug#25243.
+             (<= region-len ffap-max-region-length)) ; Bug#25243.
         (setf ffap-string-at-point-region (list beg end)
               ffap-string-at-point
               (buffer-substring-no-properties beg end))
