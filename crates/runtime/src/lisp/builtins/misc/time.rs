@@ -1466,12 +1466,16 @@ pub(super) fn f_time_since(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 pub(super) fn f_time_to_days(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let secs = lisp_time_seconds(i, &a[0])?;
     let tm = interp_local_tm(i, secs);
-    // GNU time-date.el uses the local calendar date and truncating
-    // division in its pseudo-Gregorian day-number formula.
+    // Use floor division for the pseudo-Gregorian year offsets so
+    // negative years count leap days before the year-zero boundary.
     let previous_year = tm.tm_year as i128 + 1899;
     Ok(Value::Int(
-        tm.tm_yday as i128 + 1 + 365 * previous_year + previous_year / 4 - previous_year / 100
-            + previous_year / 400,
+        tm.tm_yday as i128
+            + 1
+            + 365 * previous_year
+            + previous_year.div_euclid(4)
+            - previous_year.div_euclid(100)
+            + previous_year.div_euclid(400),
     ))
 }
 
