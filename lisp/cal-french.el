@@ -276,14 +276,18 @@ The absolute date is the number of days elapsed since the
 \(imaginary) Gregorian date Sunday, December 31, 1 BC."
   (if (< date calendar-french-epoch)
       (list 0 0 0)                     ; pre-French Revolutionary date
-    (let* ((approx                     ; approximation from below
-            (/ (- date calendar-french-epoch) 366))
-           (year               ; search forward from the approximation
-            (+ approx
-               (calendar-sum y approx
-                             (>= date (calendar-french-to-absolute
-                                       (list 1 1 (1+ y))))
-                             1)))
+    (let* ((year
+            ;;Remacs: binary-search year starts; a 366-day estimate drifts
+            ;;linearly for distant years.
+            (let ((low 1)
+                  (high (+ 2 (/ (- date calendar-french-epoch) 365))))
+              (while (< low high)
+                (let ((middle (/ (+ low high) 2)))
+                  (if (>= date
+                          (calendar-french-to-absolute (list 1 1 middle)))
+                      (setq low (1+ middle))
+                    (setq high middle))))
+              (1- low)))
            (month                    ; search forward from Vendemiaire
             (1+ (calendar-sum m 1
                               (> date
