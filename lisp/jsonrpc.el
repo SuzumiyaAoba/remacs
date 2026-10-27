@@ -271,6 +271,10 @@ Plists, alists, hash tables, and vectors are the representations used by
       (and (vectorp params) (not (stringp params)))
       (hash-table-p params)))
 
+(defun jsonrpc--error-object-p (error)
+  "Return non-nil if ERROR has a non-empty object representation."
+  (or (consp error) (hash-table-p error)))
+
 (defun jsonrpc-connection-receive (conn foreign-message)
   "Process FOREIGN-MESSAGE just received from CONN.
 This function will destructure MESSAGE and call the appropriate
@@ -282,6 +286,8 @@ dispatcher in CONN."
          (id (plist-get whole :id))
          (id-present-p (plist-member whole :id))
          (params-present-p (plist-member whole :params))
+         (result-present-p (plist-member whole :result))
+         (error-present-p (plist-member whole :error))
          (error (plist-get whole :error))
          (params (plist-get whole :params))
          (result (plist-get whole :result))
@@ -297,7 +303,13 @@ dispatcher in CONN."
                                 :foreign-message foreign-message))
                (response-p (and jsonrpc-version-valid-p
                                 (null method) id-present-p))
-               (cont (and response-p (jsonrpc--remove conn id))))
+               (response-valid-p
+                (and (or result-present-p error-present-p)
+                     (not (and result-present-p error-present-p))
+                     (or (not error-present-p)
+                         (jsonrpc--error-object-p error))))
+               (cont (and response-p response-valid-p
+                          (jsonrpc--remove conn id))))
           (cl-remf foreign-message :jsonrpc-json)
           ;; Do this pre-processing of the response so we can always
           ;; log richer information _before_ any non-local calls
@@ -319,6 +331,11 @@ dispatcher in CONN."
               conn
             (setf last-error error)
             (cond
+             (;; A malformed remote response
+              (and response-p (not response-valid-p))
+              (jsonrpc--event conn 'internal
+                              :log-text "Malformed response"
+                              :id id))
              (;; A remote response whose request has been canceled
               ;; (i.e. timeout or C-g)
               ;;
