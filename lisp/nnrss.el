@@ -542,12 +542,14 @@ which RSS 2.0 allows."
       (gnus-prin1 `(setq nnrss-group-data ',nnrss-group-data)))))
 
 (defun nnrss--cache-key-needs-encoding-p (component)
-  "Return non-nil when COMPONENT is ambiguous in the legacy cache name."
+  "Return non-nil when COMPONENT is ambiguous or unsafe in a legacy name."
   (and component
-       (or (string-match-p "[-'%]" component)
-           (seq-some (lambda (char)
-                       (assq char nnheader-file-name-translation-alist))
-                     (string-to-list component)))))
+       (seq-some (lambda (char)
+                   (or (memq char '(?- ?% ?/))
+                       (= char 39)
+                       (= char 92)
+                       (assq char nnheader-file-name-translation-alist)))
+                 (string-to-list component))))
 
 (defun nnrss--encode-cache-key-component (component)
   "Encode COMPONENT for a versioned cache filename."
@@ -560,7 +562,7 @@ which RSS 2.0 allows."
         (if (or (<= ?0 char ?9)
                 (<= ?A char ?Z)
                 (<= ?a char ?z)
-                (memq char '(?. ?/)))
+                (eq char ?.))
             (char-to-string char)
           (format "%%%02X" char)))
       (string-to-list component) ""))))
