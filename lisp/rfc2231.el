@@ -231,7 +231,8 @@ These look like:
  \"\\='en-us\\='This%20is%20%2A%2A%2Afun%2A%2A%2A\",
  \"\\='\\='This%20is%20%2A%2A%2Afun%2A%2A%2A\", or
  \"This is ***fun***\"."
-  (if (not (string-match "\\`\\(?:\\([^']+\\)?'\\([^']+\\)?'\\)?\\(.+\\)\\'"
+  ;;Remacs: an extended value may have an empty data portion.
+  (if (not (string-match "\\`\\(?:\\([^']+\\)?'\\([^']+\\)?'\\)?\\(.*\\)\\'"
                          string))
       (error "Unrecognized RFC2231 format: %S" string)
     (let ((value (match-string 3 string))
