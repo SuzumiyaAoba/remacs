@@ -462,16 +462,21 @@ in `uniquify-list-buffers-directory-modes', otherwise returns nil."
 	    ;; existing buffer.
 	    (let ((buf (funcall get-buffer-fn old-name)))
 	      (and buf (not (eq buf (uniquify-item-buffer (car conf-list)))))))
-	(when uniquify-possibly-resolvable
-	  (setq uniquify-possibly-resolvable nil
-		depth (1+ depth))
-	  (dolist (item conf-list)
-	    (setf (uniquify-item-proposed item)
-		  (uniquify-get-proposed-name
-		   (uniquify-item-base item)
-		   (uniquify-item-dirname item)
-		   depth)))
-	  (uniquify-rationalize-a-list conf-list depth rename-buffer-fn get-buffer-fn))
+	;; The resolvability flag belongs to this conflict group, not the
+	;; previous group processed by `uniquify-rationalize-a-list'.
+	(let* ((depth (1+ depth))
+	       (uniquify-possibly-resolvable nil)
+	       (proposed-names
+		(mapcar (lambda (item)
+			  (uniquify-get-proposed-name
+			   (uniquify-item-base item)
+			   (uniquify-item-dirname item)
+			   depth))
+			conf-list)))
+	  (when uniquify-possibly-resolvable
+	    (dolist (item conf-list)
+	      (setf (uniquify-item-proposed item) (pop proposed-names)))
+	    (uniquify-rationalize-a-list conf-list depth rename-buffer-fn get-buffer-fn)))
       (unless (string= old-name "")
 	(funcall rename-buffer-fn (car conf-list) old-name)))))
 
