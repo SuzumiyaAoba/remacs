@@ -94,14 +94,18 @@ The absolute date is the number of days elapsed since the (imaginary)
 Gregorian date Sunday, December 31, 1 BC."
   (if (< date calendar-islamic-epoch)
       (list 0 0 0)                      ; pre-Islamic date
-    (let* ((approx (/ (- date calendar-islamic-epoch)
-                      355))  ; approximation from below
-           (year             ; search forward from the approximation
-            (+ approx
-               (calendar-sum y approx
-                             (>= date (calendar-islamic-to-absolute
-                                       (list 1 1 (1+ y))))
-                             1)))
+    (let* ((year
+            ;;Remacs: binary-search year starts; a 355-day estimate drifts
+            ;;linearly for distant years.
+            (let ((low 1)
+                  (high (+ 2 (/ (- date calendar-islamic-epoch) 354))))
+              (while (< low high)
+                (let ((middle (/ (+ low high) 2)))
+                  (if (>= date
+                          (calendar-islamic-to-absolute (list 1 1 middle)))
+                      (setq low (1+ middle))
+                    (setq high middle))))
+              (1- low)))
            (month                       ; search forward from Muharram
             (1+ (calendar-sum m 1
                               (> date
