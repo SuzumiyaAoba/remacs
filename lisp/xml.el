@@ -636,7 +636,8 @@ references."
 	     (error "XML: Entity reference expansion \
 surpassed `xml-entity-expansion-limit'"))))
     ;; [2.11] Clean up line breaks.
-    (let ((end-marker (point-marker)))
+    ;;Remacs: include replacements made at the final character-data position.
+    (let ((end-marker (copy-marker (point) t)))
       (goto-char start)
       (while (re-search-forward "\r\n?" end-marker t)
 	(replace-match "\n" t t))
