@@ -113,7 +113,8 @@ If a list, it is a list of the types of messages to be logged."
 				      (point)))))))
 	(setq results (cons (cons name value) results))
 	(skip-chars-forward "; \n\t"))
-      results)))
+      ;;Remacs: return parameters in the order they appeared in the query.
+      (nreverse results))))
 
 ;;;###autoload
 (defun url-insert-entities-in-string (string)

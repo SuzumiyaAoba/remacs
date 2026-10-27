@@ -326,7 +326,7 @@ When INCLUDE-SUBDOMAINS is non-nil, require a DNS-label boundary."
 
 (defun url-cookie-handle-set-cookie (str)
   (setq url-cookies-changed-since-last-save t)
-  (let* ((args (nreverse (url-parse-args str t)))
+  (let* ((args (url-parse-args str t))
 	 (case-fold-search t)
 	 (secure (and (assoc-string "secure" args t) t))
 	 (domain-attribute
