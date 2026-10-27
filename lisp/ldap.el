@@ -416,8 +416,9 @@ RFC2798 Section 9.1.1")
 
 (defun ldap-encode-country-string (str)
   ;; We should do something useful here...
-  (if (not (= 2 (length str)))
-      (error "Invalid country string: %s" str)))
+  (unless (= 2 (length str))
+    (error "Invalid country string: %s" str))
+  (ldap-encode-string str))
 
 (defun ldap-decode-string (str)
   (decode-coding-string str ldap-coding-system))
