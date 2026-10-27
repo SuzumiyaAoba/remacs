@@ -1371,7 +1371,7 @@ normally *buffer-selection*."
 (defun bs--format-aux (string align len)
   "Pad STRING to length LEN with alignment ALIGN.
 ALIGN is one of the symbols `left', `middle', or `right'."
-  (let* ((width (length string))
+  (let* ((width (string-width string))
          (len (max len width)))
     (format (format "%%%s%ds" (if (eq align 'right) "" "-") len)
             (if (eq align 'middle)
