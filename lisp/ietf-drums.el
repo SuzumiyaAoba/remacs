@@ -38,7 +38,9 @@
 (defvar ietf-drums-wsp-token " \t"
   "White space.")
 (defvar ietf-drums-fws-regexp
-  (concat "[" ietf-drums-wsp-token "]*\n[" ietf-drums-wsp-token "]+")
+  ;;Remacs: consume CRLF as well as bare LF when unfolding.
+  (concat "[" ietf-drums-wsp-token "]*\\(?:\r\n\\|\n\\)["
+          ietf-drums-wsp-token "]+")
   "Folding white space.")
 (defvar ietf-drums-atext-token "-^a-zA-Z0-9!#$%&'*+/=?_`{|}~"
   "Textual token.")
