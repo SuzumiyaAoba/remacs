@@ -274,6 +274,13 @@ DST is returned as -1)."
       (when (and tokens error)
         (signal 'date-parse-error
                 (list "Extra token(s)" (car tokens))))
+      ;;Remacs: validate day-of-month against the selected calendar month.
+      (when (and error (nth 3 time) (nth 4 time) (nth 5 time)
+                 (> (nth 3 time)
+                    (date-days-in-month (nth 5 time) (nth 4 time))))
+        (signal 'date-parse-error
+                (list "Day of month out of range"
+                      (nth 3 time) (nth 4 time) (nth 5 time))))
       ;;Remacs: RFC 5322's optional weekday must agree with the date.
       (when (and error (nth 6 time))
         (let* ((date (encode-time 0 0 0 (nth 3 time) (nth 4 time)
