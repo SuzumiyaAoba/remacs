@@ -1010,12 +1010,12 @@ informed about the existing abbrev."
       (dolist (expansion (abbrev--suggest-get-active-abbrev-expansions))
 	(setq word-count (abbrev--suggest-count-words (car expansion))
 	      words (abbrev--suggest-get-previous-words word-count))
-	(let ((case-fold-search t))
-	  (when (and (> word-count 0)
-		     (string-match (car expansion) words)
-		     (abbrev--suggest-above-threshold expansion))
-	    (setq abbrev-found (abbrev--suggest-shortest-abbrev
-				expansion abbrev-found)))))
+	(when (and (> word-count 0)
+		   (eq t (compare-strings (car expansion) nil nil
+					 words nil nil t))
+		   (abbrev--suggest-above-threshold expansion))
+	  (setq abbrev-found (abbrev--suggest-shortest-abbrev
+			      expansion abbrev-found))))
       (when abbrev-found
 	(abbrev--suggest-inform-user abbrev-found))))
 
