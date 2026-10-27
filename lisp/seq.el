@@ -363,19 +363,22 @@ sequence, specific functions should be implemented for new types
 of sequence.
 
 This does not modify SEQUENCE."
-  (unless (sequencep sequence)
+  (unless (seqp sequence)
     (error "Cannot convert %S into a sequence" sequence))
-  sequence)
+  (if (char-table-p sequence)
+      (seq-subseq sequence 0 (seq-length sequence))
+    sequence))
 
 (cl-defgeneric seq-into (sequence type)
   "Concatenate the elements of SEQUENCE into a sequence of type TYPE.
 TYPE can be one of the following symbols: `vector', `string' or
 `list', or `bool-vector'.  This does not modify SEQUENCE."
   (pcase type
-    (`vector (seq--into-vector sequence))
-    (`string (seq--into-string sequence))
-    (`list (seq--into-list sequence))
-    (`bool-vector (seq-concatenate 'bool-vector sequence))
+    (`vector (seq--into-vector (seq-into-sequence sequence)))
+    (`string (seq--into-string (seq-into-sequence sequence)))
+    (`list (seq--into-list (seq-into-sequence sequence)))
+    (`bool-vector
+     (seq-concatenate 'bool-vector (seq-into-sequence sequence)))
     (_ (error "Not a sequence type name: %S" type))))
 
 ;;;###autoload
