@@ -986,6 +986,8 @@ Returns an error if the server cannot be contacted."
 	(response-strings nil)
 	(response-continue t)
 	(return-value '(nil ()))
+	(response-code nil)
+	(response-code-mismatch nil)
 	match-end)
     (catch 'done
       (while response-continue
@@ -1002,11 +1004,15 @@ Returns an error if the server cannot be contacted."
 		    response-strings))
 
 	(goto-char smtpmail-read-point)
-	(if (looking-at "[0-9]+ ")
-	    (let ((begin (match-beginning 0))
-		  (end (match-end 0)))
+	(if (looking-at "\\([0-9]+\\) ")
+	    (let ((line-code (string-to-number (match-string 1))))
 	      (if smtpmail-debug-info
 		  (message "%s" (car response-strings)))
+
+	      (if response-code
+		  (unless (= response-code line-code)
+		    (setq response-code-mismatch t))
+		(setq response-code line-code))
 
 	      (setq smtpmail-read-point match-end)
 
@@ -1015,15 +1021,19 @@ Returns an error if the server cannot be contacted."
 		  nil
 		(setq response-continue nil)
 		(setq return-value
-		      (cons (string-to-number
-			     (buffer-substring begin end))
+		      (cons (unless response-code-mismatch line-code)
 			    (nreverse response-strings)))))
 
-	  (if (looking-at "[0-9]+-")
-	      (progn (if smtpmail-debug-info
-			 (message "%s" (car response-strings)))
-		     (setq smtpmail-read-point match-end)
-		     (setq response-continue t))
+	  (if (looking-at "\\([0-9]+\\)-")
+	      (let ((line-code (string-to-number (match-string 1))))
+		(if response-code
+		    (unless (= response-code line-code)
+		      (setq response-code-mismatch t))
+		  (setq response-code line-code))
+		(if smtpmail-debug-info
+		    (message "%s" (car response-strings)))
+		(setq smtpmail-read-point match-end)
+		(setq response-continue t))
 	    (progn
 	      (setq smtpmail-read-point match-end)
 	      (setq response-continue nil)
