@@ -445,6 +445,7 @@ nnrss: %s: Not valid XML %s and libxml-parse-html-region doesn't work %s"
     (setq nnrss-group group)))
 
 (autoload 'timezone-parse-date "timezone")
+(autoload 'url-expand-file-name "url-expand")
 
 (defun nnrss-normalize-date (date)
   "Return a date string of DATE in the style of RFC 822 and its successors.
@@ -853,7 +854,7 @@ DATA should be the output of `xml-parse-region'."
 	  (setq ,onsite-list (append ,onsite-list (list ,item))))
 	 (t (setq ,offsite-list (append ,offsite-list (list ,item))))))
 
-(defun nnrss-order-hrefs (base-uri hrefs)
+(defun nnrss-order-hrefs (base-url hrefs)
   "Given a list of hrefs, sort them using the following priorities:
   1. links ending in .rss
   2. links ending in .rdf
@@ -861,42 +862,54 @@ DATA should be the output of `xml-parse-region'."
   4. links containing the above
   5. offsite links
 
-BASE-URI is used to determine the location of the links and
-whether they are `offsite' or `onsite'."
-  (let (rss-onsite-end  rdf-onsite-end  xml-onsite-end
+BASE-URL is used to resolve relative links and determine whether they
+are `offsite' or `onsite'."
+  (let ((base-uri (progn (string-match "\\`.*://[^/]+/?" base-url)
+			 (match-string 0 base-url)))
+	rss-onsite-end  rdf-onsite-end  xml-onsite-end
 	rss-onsite-in   rdf-onsite-in   xml-onsite-in
 	rss-offsite-end rdf-offsite-end xml-offsite-end
 	rss-offsite-in rdf-offsite-in xml-offsite-in)
     (dolist (href hrefs)
-      (cond ((null href))
-	    ((string-match "\\.rss$" href)
-	     (nnrss-match-macro
-	      base-uri href rss-onsite-end rss-offsite-end))
-	    ((string-match "\\.rdf$" href)
-	     (nnrss-match-macro
-	      base-uri href rdf-onsite-end rdf-offsite-end))
-	    ((string-match "\\.xml$" href)
-	     (nnrss-match-macro
-	      base-uri href xml-onsite-end xml-offsite-end))
-	    ((string-match "rss" href)
-	     (nnrss-match-macro
-	      base-uri href rss-onsite-in rss-offsite-in))
-	    ((string-match "rdf" href)
-	     (nnrss-match-macro
-	      base-uri href rdf-onsite-in rdf-offsite-in))
-	    ((string-match "xml" href)
-	     (nnrss-match-macro
-	      base-uri href xml-onsite-in xml-offsite-in))))
+	(when href
+	  (setq href (url-expand-file-name href base-url))
+	  (cond ((string-match "\\.rss$" href)
+		 (nnrss-match-macro
+		  base-uri href rss-onsite-end rss-offsite-end))
+		((string-match "\\.rdf$" href)
+		 (nnrss-match-macro
+		  base-uri href rdf-onsite-end rdf-offsite-end))
+		((string-match "\\.xml$" href)
+		 (nnrss-match-macro
+		  base-uri href xml-onsite-end xml-offsite-end))
+		((string-match "rss" href)
+		 (nnrss-match-macro
+		  base-uri href rss-onsite-in rss-offsite-in))
+		((string-match "rdf" href)
+		 (nnrss-match-macro
+		  base-uri href rdf-onsite-in rdf-offsite-in))
+		((string-match "xml" href)
+		 (nnrss-match-macro
+		  base-uri href xml-onsite-in xml-offsite-in)))))
     (append
      rss-onsite-end  rdf-onsite-end  xml-onsite-end
      rss-onsite-in   rdf-onsite-in   xml-onsite-in
      rss-offsite-end rdf-offsite-end xml-offsite-end
      rss-offsite-in rdf-offsite-in xml-offsite-in)))
 
+(defun nnrss--document-base-url (document url)
+  "Return DOCUMENT's effective base URL, falling back to URL."
+  (let ((href (seq-some (lambda (base)
+			 (cdr (assoc 'href (cadr base))))
+		       (nnrss-find-el 'base document))))
+    (or (and href (ignore-errors (url-expand-file-name href url)))
+	url)))
+
 (defun nnrss-discover-feed (url)
   "Given a page, find an RSS feed.
 Use Mark Pilgrim's `ultra-liberal rss locator'."
-  (let ((parsed-page (nnrss-fetch url)))
+  (let* ((parsed-page (nnrss-fetch url))
+	 (base-url (nnrss--document-base-url parsed-page url)))
     ;;    1. if this url is the rss, use it.
     (if (nnrss-rss-p parsed-page)
 	(let ((rss-ns (nnrss-get-namespace-prefix parsed-page "http://purl.org/rss/1.0/")))
@@ -906,22 +919,20 @@ Use Mark Pilgrim's `ultra-liberal rss locator'."
       ;;    type="application/rss+xml" and use that if it is there.
       (let ((links (nnrss-get-rsslinks parsed-page)))
 	(if links
-	    (let* ((xml (nnrss-fetch
-			 (cdr (assoc 'href (cadar links)))))
+	    (let* ((href (url-expand-file-name
+			  (cdr (assoc 'href (cadar links))) base-url))
+		   (xml (nnrss-fetch href))
 		   (rss-ns (nnrss-get-namespace-prefix
 			    xml "http://purl.org/rss/1.0/")))
-	      (nnrss-rss-title-description
-	       rss-ns xml (cdr (assoc 'href (cadar links)))))
+	      (nnrss-rss-title-description rss-ns xml href))
 
 	  ;;    3. look for links on the site in the following order:
 	  ;;       - onsite links ending in .rss, .rdf, or .xml
 	  ;;       - onsite links containing any of the above
 	  ;;       - offsite links ending in .rss, .rdf, or .xml
 	  ;;       - offsite links containing any of the above
-	  (let* ((base-uri (progn (string-match ".*://[^/]+/?" url)
-				  (match-string 0 url)))
-		 (hrefs (nnrss-order-hrefs
-			 base-uri (nnrss-extract-hrefs parsed-page)))
+	  (let* ((hrefs (nnrss-order-hrefs
+			 base-url (nnrss-extract-hrefs parsed-page)))
 		 (rss-link nil))
 	    (while (and (eq rss-link nil) (not (eq hrefs nil)))
 	      (let ((href-data (nnrss-fetch (car hrefs))))
