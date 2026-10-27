@@ -546,7 +546,7 @@ impl Interp {
             ),
             ("electric-indent-mode", Value::Sym(sym::T)),
             ("comment-multi-line", Value::Nil),
-            ("comment-empty-lines", Value::Sym(sym::T)),
+            ("comment-empty-lines", Value::Nil),
             ("comment-fill-column", Value::Nil),
             ("comment-use-syntax", Value::Sym(self.q("undecided"))),
             ("fill-nospace-between-words", Value::Sym(sym::T)),
