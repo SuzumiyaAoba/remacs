@@ -67,7 +67,7 @@ instead of the filename inheritance method."
 	 (server (url-host href))
 	 (type (url-type href))
 	 (port (url-port href))
-	 (file (url-filename href))
+	 (file (car (url-path-and-query href)))
 	 (user (url-user href))
 	 (pass (url-password href))
 	 (enable-recursive-minibuffers t) ; for url-handler-mode (bug#10298)
