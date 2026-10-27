@@ -325,6 +325,31 @@ result can be passed as the second arg to `url-hexify-string'."
       (ignore-errors (aset vec byte t)))
     vec))
 
+(defun url--encode-invalid-percent-escapes (string)
+  "Escape percent signs in STRING that are not followed by two hex digits."
+  (let ((index 0)
+	(end (length string))
+	(multibyte (multibyte-string-p string))
+	parts)
+    (while (< index end)
+      (let ((char (aref string index)))
+	(if (and (= char ?%)
+		 (or (>= (+ index 2) end)
+		     (not (or (<= ?0 (aref string (1+ index)) ?9)
+			      (<= ?A (aref string (1+ index)) ?F)
+			      (<= ?a (aref string (1+ index)) ?f)))
+		     (not (or (<= ?0 (aref string (+ index 2)) ?9)
+			      (<= ?A (aref string (+ index 2)) ?F)
+			      (<= ?a (aref string (+ index 2)) ?f)))))
+	    (progn
+	      (push "%25" parts)
+	      (setq index (1+ index)))
+	  (let ((next (+ index (if (= char ?%) 3 1))))
+	    (push (substring string index next) parts)
+	    (setq index next)))))
+    (let ((result (apply #'concat (nreverse parts))))
+      (if multibyte result (string-as-unibyte result)))))
+
 ;;;###autoload
 (defun url-hexify-string (string &optional allowed-chars)
   "URI-encode STRING and return the result.
@@ -337,11 +362,14 @@ The allowed characters are specified by ALLOWED-CHARS.  If this
 argument is nil, the list `url-unreserved-chars' determines the
 allowed characters.  Otherwise, ALLOWED-CHARS should be either a
 list of allowed chars, or a vector whose Nth element is non-nil
-if character N is allowed."
+if character N is allowed.  A percent sign is preserved only as a
+valid `%HH' escape."
   (if allowed-chars
       (unless (vectorp allowed-chars)
         (setq allowed-chars (url--allowed-chars allowed-chars)))
     (setq allowed-chars (url--allowed-chars url-unreserved-chars)))
+  (when (aref allowed-chars ?%)
+    (setq string (url--encode-invalid-percent-escapes string)))
   (mapconcat (lambda (byte)
 	       (if (aref allowed-chars byte)
 		   (char-to-string byte)
