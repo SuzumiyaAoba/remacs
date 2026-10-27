@@ -48,7 +48,7 @@
 See the decoded-time defstruct.")
 
 (defconst ietf-drums-date--slot-ranges
-  '((0 60) (0 59) (0 23) (1 31) (1 12) (1 9999))
+  '((0 60) (0 59) (0 23) (1 31) (1 12) (1900 9999))
   "Numeric slot ranges, for bounds checking.
 Note that RFC5322 explicitly requires that seconds go up to 60,
 to allow for leap seconds (see Mills, D., \"Network Time
