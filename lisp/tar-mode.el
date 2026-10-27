@@ -507,16 +507,38 @@ of the file header.  This is used for \"old GNU\" Tar format."
          0))))
 
 (defun tar-parse-octal-integer (string &optional start end)
+  "Parse an octal or GNU base-256 integer from STRING between START and END."
   (if (null start) (setq start 0))
   (if (null end) (setq end (length string)))
-  (if (= (aref string start) 0)
-      0
-    (let ((n 0))
-      (while (< start end)
-	(setq n (if (< (aref string start) ?0) n
-		  (+ (* n 8) (- (aref string start) ?0)))
-	      start (1+ start)))
-      n)))
+  (let ((first (aref string start)))
+    (cond
+     ((= first 0)
+      0)
+     ;; GNU tar uses 0x80 for nonnegative base-256 values; the
+     ;; remaining bytes form an unsigned big-endian integer.
+     ((= first #x80)
+      (let ((n 0))
+        (setq start (1+ start))
+        (while (< start end)
+          (setq n (+ (* n 256) (aref string start))
+                start (1+ start)))
+        n))
+     ;; 0xff marks a signed, two's-complement value including the
+     ;; leading byte.
+     ((= first #xff)
+      (let ((n 0)
+            (bits (* 8 (- end start))))
+        (while (< start end)
+          (setq n (+ (* n 256) (aref string start))
+                start (1+ start)))
+        (- n (ash 1 bits))))
+     (t
+      (let ((n 0))
+        (while (< start end)
+          (setq n (if (< (aref string start) ?0) n
+                    (+ (* n 8) (- (aref string start) ?0)))
+                start (1+ start)))
+        n)))))
 
 (define-obsolete-function-alias 'tar-parse-octal-long-integer
   #'tar-parse-octal-integer "27.1")
