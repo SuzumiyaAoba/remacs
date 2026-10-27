@@ -290,6 +290,13 @@ white-space."
   "Return non-nil if TAG names an HTML void element."
   (member (downcase (format "%s" tag)) dom--html-void-elements))
 
+(defconst dom--html-raw-text-elements '("script" "style")
+  "HTML elements whose contents are parsed as raw text.")
+
+(defun dom--html-raw-text-element-p (tag)
+  "Return non-nil if TAG names an HTML raw-text element."
+  (member (downcase (format "%s" tag)) dom--html-raw-text-elements))
+
 (defun dom--insert-entities (string &optional attribute)
   "Escape markup characters in STRING for HTML/XML output.
 When ATTRIBUTE is non-nil, preserve tabs and line breaks with references."
@@ -331,6 +338,8 @@ If XML, generate XML instead of HTML."
              (format " %s=\"%s\"" attr (dom--insert-entities
                                          (format "%s" value) t)))))))
     (let* ((children (dom-children dom))
+	   (raw-text (and (not xml)
+			  (dom--html-raw-text-element-p (dom-tag dom))))
 	   (non-text nil)
            (indent (+ column 2)))
       (if (null children)
@@ -340,7 +349,7 @@ If XML, generate XML instead of HTML."
 	(insert ">")
         (dolist (child children)
 	  (if (stringp child)
-	      (insert (dom--insert-entities child))
+	      (insert (if raw-text child (dom--insert-entities child)))
 	    (setq non-text t)
 	    (when pretty
               (insert "\n")
