@@ -559,8 +559,11 @@ Signal error if HEX-ADDRESS is out of range."
   (hexl-goto-address (hexl-hex-string-to-integer hex-address)))
 
 (defun hexl-hex-string-to-integer (hex-string)
-  "Return decimal integer for HEX-STRING."
+  "Return decimal integer for HEX-STRING.
+Signal an error if HEX-STRING is empty."
   (interactive "sHex number: ")
+  (when (zerop (length hex-string))
+    (error "Empty hexadecimal number"))
   (let ((hex-num 0))
     (while (not (equal hex-string ""))
       (setq hex-num (+ (* hex-num 16)
@@ -569,8 +572,11 @@ Signal error if HEX-ADDRESS is out of range."
     hex-num))
 
 (defun hexl-octal-string-to-integer (octal-string)
-  "Return decimal integer for OCTAL-STRING."
+  "Return decimal integer for OCTAL-STRING.
+Signal an error if OCTAL-STRING is empty."
   (interactive "sOctal number: ")
+  (when (zerop (length octal-string))
+    (error "Empty octal number"))
   (let ((oct-num 0))
     (while (not (equal octal-string ""))
       (setq oct-num (+ (* oct-num 8)
@@ -1158,7 +1164,10 @@ in ISO-2022 encodings should preferably inserted byte by byte, to
 avoid problems caused by the designation sequences before the
 actual characters."
   (interactive "p")
-  (let ((num (string-to-number (read-string "Decimal Number: "))))
+  (let* ((input (read-string "Decimal Number: "))
+         (num (if (string-match-p "^[ \t]*[+-]?[0-9]+[ \t]*$" input)
+                  (string-to-number input)
+                (error "Invalid decimal number"))))
     (if (< num 0)
 	(error "Decimal number out of range")
       (hexl-insert-multibyte-char num arg))))
