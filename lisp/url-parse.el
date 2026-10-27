@@ -203,8 +203,10 @@ parses to
             (forward-char)
             (setq save-pos (point)))
           (if (string= "data" scheme)
-	      ;; For the "data" URI scheme, all the rest is the FILE.
-	      (setq file (buffer-substring save-pos (point-max)))
+	      (progn
+		;;Remacs: RFC 3986 fragments are scheme-independent.
+		(skip-chars-forward "^#")
+		(setq file (buffer-substring save-pos (point))))
 	    ;; For hysterical raisins, our data structure returns the
 	    ;; path and query components together in one slot.
 	    ;; 3.3. Path
@@ -212,13 +214,14 @@ parses to
 	    ;; 3.4. Query
 	    (when (looking-at "\\?")
 	      (skip-chars-forward "^#"))
-	    (setq file (buffer-substring save-pos (point)))
-	    ;; 3.5 Fragment
-	    (when (looking-at "#")
-	      (let ((opoint (point)))
-		(forward-char 1)
-                (setq fragment (buffer-substring (point) (point-max)))
-		(delete-region opoint (point-max)))))
+	    (setq file (buffer-substring save-pos (point))))
+
+	  ;; 3.5 Fragment, including for the data URI scheme.
+	  (when (looking-at "#")
+	    (let ((opoint (point)))
+	      (forward-char 1)
+	      (setq fragment (buffer-substring (point) (point-max)))
+	      (delete-region opoint (point-max))))
 
           (if (and host (string-match "%[0-9][0-9]" host))
               (setq host (url-unhex-string host)))
