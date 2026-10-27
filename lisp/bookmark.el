@@ -1745,11 +1745,12 @@ for a file, defaulting to the file defined by variable
   "Add NEW-LIST of bookmarks to `bookmark-alist'.
 Rename new bookmarks as needed using suffix \"<N>\" (N=1,2,3...), when
 they conflict with existing bookmark names."
-  (let ((names (bookmark-all-names)))
+  (let ((names (bookmark-all-names)) imported)
     (dolist (full-record new-list)
       (bookmark-maybe-rename full-record names)
-      (setq bookmark-alist (nconc bookmark-alist (list full-record)))
-      (push (bookmark-name-from-full-record full-record) names))))
+      (push full-record imported)
+      (push (bookmark-name-from-full-record full-record) names))
+    (setq bookmark-alist (nconc (nreverse imported) bookmark-alist))))
 
 
 (defun bookmark-maybe-rename (full-record names)
