@@ -1983,6 +1983,14 @@ Return nil if no complete line has arrived."
 (defsubst imap-forward ()
   (or (eobp) (forward-char)))
 
+(defun imap--read-protocol-atom ()
+  "Read an IMAP atom from the current buffer, normalizing ASCII case."
+  (let ((atom (read (current-buffer))))
+    (if (and (symbolp atom)
+             (string-match-p "\\`[!-~]+\\'" (symbol-name atom)))
+        (intern (upcase (symbol-name atom)))
+      atom)))
+
 ;;   number          = 1*DIGIT
 ;;                       ; Unsigned 32-bit integer
 ;;                       ; (0 <= n < 4,294,967,296)
@@ -2035,8 +2043,9 @@ Return nil if no complete line has arrived."
 ;;   nil             = "NIL"
 
 (defsubst imap-parse-nil ()
-  (if (looking-at "NIL")
-      (goto-char (match-end 0))))
+  (let ((case-fold-search t))
+    (if (looking-at "NIL")
+        (goto-char (match-end 0)))))
 
 ;;   nstring         = string / nil
 
@@ -2148,12 +2157,13 @@ Return nil if no complete line has arrived."
 
 (defun imap-parse-greeting ()
   "Parse an IMAP greeting."
-  (cond ((looking-at "\\* OK ")
-	 (setq imap-state 'nonauth))
-	((looking-at "\\* PREAUTH ")
-	 (setq imap-state 'auth))
-	((looking-at "\\* BYE ")
-	 (setq imap-state 'closed))))
+  (let ((case-fold-search t))
+    (cond ((looking-at "\\* OK ")
+	   (setq imap-state 'nonauth))
+	  ((looking-at "\\* PREAUTH ")
+	   (setq imap-state 'auth))
+	  ((looking-at "\\* BYE ")
+	   (setq imap-state 'closed)))))
 
 ;;   response        = *(continue-req / response-data) response-done
 ;;
@@ -2194,12 +2204,12 @@ Return nil if no complete line has arrived."
 (defun imap-parse-response ()
   "Parse an IMAP command response."
   (let (token)
-    (pcase (setq token (read (current-buffer)))
+    (pcase (setq token (imap--read-protocol-atom))
       ('+ (setq imap-continuation
 	        (or (buffer-substring (min (point-max) (1+ (point)))
 				      (point-max))
 		    t)))
-      ('* (pcase (prog1 (setq token (read (current-buffer)))
+      ('* (pcase (prog1 (setq token (imap--read-protocol-atom))
 		   (imap-forward))
 	    ('OK         (imap-parse-resp-text))
 	    ('NO         (imap-parse-resp-text))
@@ -2219,7 +2229,7 @@ Return nil if no complete line has arrived."
 	    ('ID	       (setq imap-id (read (buffer-substring (point)
 							             (point-max)))))
 	    ('ACL        (imap-parse-acl))
-	    (_       (pcase (prog1 (read (current-buffer))
+	    (_       (pcase (prog1 (imap--read-protocol-atom)
 			      (imap-forward))
 		       ('EXISTS  (imap-mailbox-put 'exists token))
 		       ('RECENT  (imap-mailbox-put 'recent token))
@@ -2229,7 +2239,7 @@ Return nil if no complete line has arrived."
       (_ (let (status)
 	   (if (not (integerp token))
 	       (message "Garbage: %s" (buffer-string))
-	     (pcase (prog1 (setq status (read (current-buffer)))
+	     (pcase (prog1 (setq status (imap--read-protocol-atom))
 		      (imap-forward))
 	       ('OK  (progn
 		       (setq imap-reached-tag (max imap-reached-tag token))
@@ -2329,6 +2339,7 @@ Return nil if no complete line has arrived."
 ;;   resp-text-atom  = 1*<any ATOM-CHAR except "]">
 
 (defun imap-parse-resp-text-code ()
+  (let ((case-fold-search t))
   ;; xxx next line for stalker communigate pro 3.3.1 bug
   (when (looking-at " \\[")
     (imap-forward))
@@ -2364,7 +2375,7 @@ Return nil if no complete line has arrived."
 			     imap-current-target-mailbox))
 	  ((search-forward "ALERT] " nil t)
 	   (message "Imap server %s information: %s" imap-server
-		    (buffer-substring (point) (point-max)))))))
+		    (buffer-substring (point) (point-max))))))))
 
 ;;   mailbox-list    = "(" [mbx-list-flags] ")" SP
 ;;                      (DQUOTE QUOTED-CHAR DQUOTE / nil) SP mailbox
@@ -2387,7 +2398,8 @@ Return nil if no complete line has arrived."
 (defun imap-parse-data-list (type)
   (let (flags delimiter mailbox)
     (setq flags (imap-parse-flag-list))
-    (when (looking-at " NIL\\| \"\\\\?\\(.\\)\"")
+    (when (let ((case-fold-search t))
+            (looking-at " NIL\\| \"\\\\?\\(.\\)\""))
       (setq delimiter (match-string 1))
       (goto-char (1+ (match-end 0)))
       (when (setq mailbox (imap-parse-mailbox))
@@ -2445,7 +2457,7 @@ Return nil if no complete line has arrived."
 	       (prog1 (not (eq (char-after) ?\)))
 		 (unless (= moved 0) (backward-char))))
 	(imap-forward)
-	(let ((token (read (current-buffer))))
+	(let ((token (imap--read-protocol-atom)))
 	  (imap-forward)
 	  (cond ((eq token 'UID)
 		 (setq uid (condition-case ()
