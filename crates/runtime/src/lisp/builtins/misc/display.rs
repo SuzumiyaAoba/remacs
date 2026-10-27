@@ -1247,31 +1247,24 @@ pub(super) fn f_move_to_window_line(i: &mut Interp, _a: crate::lisp::Argv) -> Ev
 
 /// `window-child' — first child of an internal window; nil on leaves.
 pub(super) fn f_window_child(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil => {
-            let w = sel_window(i).ok_or_else(|| i.error("No window"))?;
-            Ok(w.borrow()
-                .children
-                .first()
-                .map(|k| Value::Window(k.clone()))
-                .unwrap_or(Value::Nil))
-        }
-        Value::Window(w) => Ok(w
-            .borrow()
-            .children
-            .first()
-            .map(|k| Value::Window(k.clone()))
-            .unwrap_or(Value::Nil)),
-        ref other => Err(i.wrong_type_mut("window-valid-p", other)),
-    }
+    let window = crate::editor::win_valid(i, &arg(&a, 0))?;
+    Ok(window
+        .borrow()
+        .children
+        .first()
+        .map(|child| Value::Window(child.clone()))
+        .unwrap_or(Value::Nil))
 }
 
 /// `window-child-count' — GNU window.el: `(and (windowp window)
 /// (window-child window))' walk — non-window args yield 0, not an
 /// error.  Children only exist on internal windows.
-pub(super) fn f_window_child_count(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+pub(super) fn f_window_child_count(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     match arg(&a, 0) {
-        Value::Window(w) => Ok(Value::Int(w.borrow().children.len() as i128)),
+        Value::Window(_) => {
+            let window = crate::editor::win_valid(i, &arg(&a, 0))?;
+            Ok(Value::Int(window.borrow().children.len() as i128))
+        }
         _ => Ok(Value::Int(0)),
     }
 }
