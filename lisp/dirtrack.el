@@ -168,9 +168,10 @@ and ends with a forward slash."
 
 (defun dirtrack-cygwin-directory-function (dir)
   "Return a canonical directory taken from a Cygwin path for comparison purposes."
-  (if (string-match "/cygdrive/\\([A-Z]\\)\\(.*\\)" dir)
-      (concat (match-string 1 dir) ":" (match-string 2 dir))
-    dir))
+  (let ((case-fold-search t))
+    (if (string-match "/cygdrive/\\([A-Z]\\)\\(.*\\)" dir)
+        (concat (match-string 1 dir) ":" (match-string 2 dir))
+      dir)))
 
 
 ;;;###autoload
