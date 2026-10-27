@@ -1014,11 +1014,23 @@ EXTRA is the possible non-standard header."
 
 ;; All score code written by Per Abrahamsen <abraham@iesd.auc.dk>.
 
+(defun gnus-score--read-integer (prompt)
+  "Read an integer with PROMPT, rejecting incomplete or invalid input."
+  (let* ((input (read-string prompt))
+         (start (if (and (> (length input) 0)
+                         (memq (aref input 0) '(?+ ?-)))
+                    1
+                  0)))
+    (unless (and (< start (length input))
+                 (not (string-match-p "[^0-9]" (substring input start))))
+      (user-error "Please enter an integer"))
+    (string-to-number input)))
+
 (defun gnus-score-set-mark-below (score)
   "Automatically mark articles with score below SCORE as read."
   (interactive
    (list (or (and current-prefix-arg (prefix-numeric-value current-prefix-arg))
-	     (string-to-number (read-string "Mark below: "))))
+	     (gnus-score--read-integer "Mark below: ")))
    gnus-article-mode gnus-summary-mode)
   (setq score (or score gnus-summary-default-score 0))
   (gnus-score-set 'mark (list score))
@@ -1053,7 +1065,7 @@ EXTRA is the possible non-standard header."
   "Automatically expunge articles with score below SCORE."
   (interactive
    (list (or (and current-prefix-arg (prefix-numeric-value current-prefix-arg))
-	     (string-to-number (read-string "Set expunge below: "))))
+	     (gnus-score--read-integer "Set expunge below: ")))
    gnus-article-mode gnus-summary-mode)
   (setq score (or score gnus-summary-default-score 0))
   (gnus-score-set 'expunge (list score))
