@@ -294,18 +294,26 @@ See `decode-time' for the meaning of FORM."
                     fraction-precision (length frac-string))))
           (when (and fraction
                      (eq form t))
-            (cond
-             ;; Sub-second time.
-             (second
-              (setq second (cons (+ (* second (expt 10 fraction-precision))
-                                    fraction)
-                                 (expt 10 fraction-precision))))
-             ;; Fractional minute.
-             (minute
-              (setq second (iso8601--decimalize fraction 60)))
-             (hour
-              ;; Fractional hour.
-              (setq minute (iso8601--decimalize fraction 60)))))
+            (let ((scale (expt 10 fraction-precision)))
+              (cond
+               ;; Sub-second time.
+               (second
+                (setq second
+                      (iso8601--fractional-value
+                       (+ (* second scale) fraction) scale)))
+               ;; Fractional minute.
+               (minute
+                (setq second
+                      (iso8601--fractional-value (* fraction 60) scale)))
+               (hour
+                ;; Fractional hour: split out whole minutes and residual seconds.
+                (let ((fractional-minute (/ (* fraction 60) scale)))
+                  (setq minute fractional-minute
+                        second
+                        (iso8601--fractional-value
+                         (- (* fraction 3600)
+                            (* fractional-minute 60 scale))
+                         scale)))))))
           (iso8601--decoded-time :hour hour
                                  :minute (or minute 0)
                                  :second (or second 0)
@@ -314,9 +322,11 @@ See `decode-time' for the meaning of FORM."
                                             (* 60 (iso8601-parse-zone
                                                    zone)))))))))
 
-(defun iso8601--decimalize (fraction base)
-  (round (* base (/ (float fraction)
-                    (expt 10 (1+ (truncate (log fraction 10))))))))
+(defun iso8601--fractional-value (numerator denominator)
+  "Return NUMERATOR / DENOMINATOR exactly, as an integer or ratio."
+  (if (zerop (% numerator denominator))
+      (/ numerator denominator)
+    (cons numerator denominator)))
 
 (defun iso8601-parse-zone (string)
   "Parse STRING, which should be an ISO 8601 time zone.
