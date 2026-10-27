@@ -197,6 +197,16 @@ See also `xml-get-attribute-or-nil'."
 ;; [66] CharRef ::= '&#' [0-9]+ ';' | '&#x' [[:xdigit:]]+ ';'
 (defconst xml-char-ref-re  "\\(?:&#[0-9]+;\\|&#x[[:xdigit:]]+;\\)")
 
+(defun xml--character-reference-string (code reference)
+  "Return CODE as a string, signaling if REFERENCE is not an XML Char."
+  (unless (or (= code #x9) (= code #xA) (= code #xD)
+              (<= #x20 code #xD7FF)
+              (<= #xE000 code #xFFFD)
+              (<= #x10000 code #x10FFFF))
+    (error "XML: (Not Well-Formed) Invalid character reference `%s'"
+           reference))
+  (string code))
+
 ;; [68] EntityRef   ::= '&' Name ';'
 (defconst xml-entity-ref (concat "&" xml-name-re ";"))
 
@@ -682,11 +692,8 @@ references."
 	      (setq val (save-match-data
                           (string-to-number
                            ref (if (match-string 1) 16))))
-	      (and (null val)
-		   xml-validating-parser
-		   (error "XML: (Validity) Invalid character reference `%s'"
-			  (match-string 0)))
-	      (replace-match (if val (string val) xml-undefined-entity) t t))
+	      (replace-match (xml--character-reference-string val (match-string 0))
+	                     t t))
 	  ;; For an entity reference, search again from the start of
 	  ;; the replaced text, since the replacement can contain
 	  ;; entity or character references, or markup.
@@ -966,11 +973,17 @@ references and parameter-entity references."
 	(cond ((setq ref (match-string 1 string))
 	       ;; Decimal character reference
                (setq val (string-to-number ref))
-	       (if val (push (string val) children)))
+	       (if val
+		   (push (xml--character-reference-string
+			  val (match-string 0 string))
+			 children)))
 	      ;; Hexadecimal character reference
 	      ((setq ref (match-string 2 string))
                (setq val (string-to-number ref 16))
-	       (if val (push (string val) children)))
+	       (if val
+		   (push (xml--character-reference-string
+			  val (match-string 0 string))
+			 children)))
 	      ;; Parameter entity reference
 	      ((setq ref (match-string 3 string))
 	       (setq val (assoc ref xml-parameter-entity-alist))
@@ -1040,11 +1053,8 @@ references and parameter-entity references."
 	(if ref
 	    ;; [4.6] Character references are included as
 	    ;; character data.
-            (let ((val (string-to-number ref (if is-hex 16))))
-	      (push (cond (val (string val))
-			  (xml-validating-parser
-			   (error "XML: (Validity) Undefined character `x%s'" ref))
-			  (t xml-undefined-entity))
+	    (let ((val (string-to-number ref (if is-hex 16))))
+	      (push (xml--character-reference-string val (match-string 0 string))
 		    children)
 	      (setq string remainder
 		    strlen (length string)))
