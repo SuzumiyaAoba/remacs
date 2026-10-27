@@ -412,21 +412,26 @@ Return nil if KEYWORD is not recognized as a JSON keyword."
   (let ((char (json-pop)))
     (cond
      ((cdr (assq char json-special-chars)))
-     ((/= char ?u) char)
-     ;; Special-case UTF-16 surrogate pairs,
-     ;; cf. <https://tools.ietf.org/html/rfc7159#section-7>.  Note that
-     ;; this clause overlaps with the next one and therefore has to
-     ;; come first.
-     ((looking-at
-       (rx (group (any "Dd") (any "89ABab") (= 2 xdigit))
-           "\\u" (group (any "Dd") (any "C-Fc-f") (= 2 xdigit))))
-      (json-advance 10)
-      (json--decode-utf-16-surrogates
-       (string-to-number (match-string 1) 16)
-       (string-to-number (match-string 2) 16)))
-     ((looking-at (rx (= 4 xdigit)))
-      (json-advance 4)
-      (string-to-number (match-string 0) 16))
+     ;;Remacs: RFC 8259 also permits an escaped solidus.
+     ((eq char ?/) ?/)
+     ((eq char ?u)
+      (cond
+       ;; Special-case UTF-16 surrogate pairs,
+       ;; cf. <https://tools.ietf.org/html/rfc7159#section-7>.  Note that
+       ;; this clause overlaps with the next one and therefore has to
+       ;; come first.
+       ((looking-at
+         (rx (group (any "Dd") (any "89ABab") (= 2 xdigit))
+             "\\u" (group (any "Dd") (any "C-Fc-f") (= 2 xdigit))))
+        (json-advance 10)
+        (json--decode-utf-16-surrogates
+         (string-to-number (match-string 1) 16)
+         (string-to-number (match-string 2) 16)))
+       ((looking-at (rx (= 4 xdigit)))
+        (json-advance 4)
+        (string-to-number (match-string 0) 16))
+       (t
+        (signal 'json-string-escape (list (point)))))
      (t
       (signal 'json-string-escape (list (point)))))))
 
