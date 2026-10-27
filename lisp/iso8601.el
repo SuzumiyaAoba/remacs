@@ -299,9 +299,30 @@ Return the number of minutes."
       ;; "Z".
       0)))
 
+;;Remacs: validate ISO week 53 against the calendar year.
+(defun iso8601--weeks-in-year (year)
+  "Return the number of ISO weeks in YEAR."
+  (let ((jan1 (decoded-time-weekday
+               (decode-time (encode-time 0 0 0 1 1 year t) t))))
+    (if (or (= jan1 4)
+            (and (= jan1 3) (date-leap-year-p year)))
+        53
+      52)))
+
 (defun iso8601-valid-p (string)
   "Say whether STRING is a valid ISO 8601 representation."
-  (iso8601--match iso8601--combined-match string))
+  (let ((valid (iso8601--match iso8601--combined-match string)))
+    (and valid
+         ;; Retain the combined match data for `iso8601-parse'.
+         (save-match-data
+           (let ((date (match-string 1 string)))
+             (or (not (iso8601--match iso8601--week-date-match date))
+                 (let* ((year (string-to-number (match-string 1 date)))
+                        (week (string-to-number (match-string 2 date)))
+                        (day (match-string 3 date)))
+                   (and (<= 1 week (iso8601--weeks-in-year year))
+                        (or (null day)
+                            (<= 1 (string-to-number day) 7)))))))))
 
 (defun iso8601-parse-duration (string)
   "Parse ISO 8601 durations on the form P3Y6M4DT12H30M5S."
