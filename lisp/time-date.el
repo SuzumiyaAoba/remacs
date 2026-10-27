@@ -247,9 +247,9 @@ Gregorian date Sunday, December 31, 1 BC."
 	 (year (decoded-time-year tim)))
     (+ (time-date--day-in-year tim)	;	Days this year
        (* 365 (1- year))		;	+ Days in prior years
-       (/ (1- year) 4)			;	+ Julian leap years
-       (- (/ (1- year) 100))		;	- century years
-       (/ (1- year) 400))))		;	+ Gregorian leap years
+	(floor (1- year) 4)			;	+ Julian leap years
+	(- (floor (1- year) 100))		;	- century years
+	(floor (1- year) 400))))		;	+ Gregorian leap years
 
 (defun time-to-number-of-days (time)
   "Return the number of days represented by TIME.
