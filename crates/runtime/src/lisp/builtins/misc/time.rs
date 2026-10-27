@@ -333,20 +333,20 @@ fn fallback_local_mktime(
             && tm.tm_sec == expected.tm_sec
             && (isdst < 0 || (tm.tm_isdst > 0) == (isdst > 0))
     };
-    if matches(&local_tm_locked(&result)) {
+    if matches(&local_tm_locked(result)) {
         return None;
     }
 
     let mut candidate = wall_seconds;
     for _ in 0..4 {
-        let offset = local_tm_locked(&candidate).tm_gmtoff;
+        let offset = local_tm_locked(candidate).tm_gmtoff;
         let adjusted = wall_seconds.checked_sub(offset)?;
         if adjusted == candidate {
             break;
         }
         candidate = adjusted;
     }
-    matches(&local_tm_locked(&candidate)).then_some(candidate)
+    matches(&local_tm_locked(candidate)).then_some(candidate)
 }
 
 fn time_tm_field(i: &mut Interp, value: i128) -> Result<i32, Flow> {
