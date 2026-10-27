@@ -384,26 +384,41 @@ Both features can be combined by providing a cons cell
  	  xml result dtd)
       (goto-char (point-min))
       (while (not (eobp))
-	(if (search-forward "<" nil t)
+	(let ((text-start (point)))
+	  (if (search-forward "<" nil t)
+	      (let ((tag-start (1- (point))))
+		(unless (string-match-p
+			 "\\`[ \t\n\r]*\\'"
+			 (buffer-substring-no-properties text-start tag-start))
+		  (error "XML: (Not Well-Formed) Character data outside document element"))
+		(goto-char tag-start)
+		(let ((tag-position (point)))
+		  (setq result (xml-parse-tag-1 parse-dtd parse-ns))
+		  (cond
+		   ((null result)
+		    ;; End tags are only valid while parsing an element.
+		    (when (= (point) tag-position)
+		      (error "XML: (Not Well-Formed) Unexpected end tag")))
+		   ((stringp result)
+		    (error "XML: (Not Well-Formed) Character data outside document element"))
+		   ((and xml (not xml-sub-parser))
+		    ;; Translation of rule [1] of XML specifications
+		    (error "XML: (Not Well-Formed) Only one root tag allowed"))
+		   ((and (listp (car result))
+			 parse-dtd)
+		    (setq dtd (car result))
+		    (if (cdr result)	; possible leading comment
+			(push (cdr result) xml)))
+		   (t
+		    (push result xml))))
 	    (progn
-	      (forward-char -1)
-	      (setq result (xml-parse-tag-1 parse-dtd parse-ns))
-	      (cond
-	       ((null result)
-		;; Not looking at an xml start tag.
-		(unless (eobp)
-		  (forward-char 1)))
-	       ((and xml (not xml-sub-parser))
-		;; Translation of rule [1] of XML specifications
-		(error "XML: (Not Well-Formed) Only one root tag allowed"))
-	       ((and (listp (car result))
-		     parse-dtd)
-		(setq dtd (car result))
-		(if (cdr result)	; possible leading comment
-		    (push (cdr result) xml)))
-	       (t
-		(push result xml))))
-	  (goto-char (point-max))))
+	      (unless (string-match-p
+		       "\\`[ \t\n\r]*\\'"
+		       (buffer-substring-no-properties text-start (point-max)))
+		(error "XML: (Not Well-Formed) Character data outside document element"))
+	      (goto-char (point-max)))))
+      (unless xml
+	(error "XML: (Not Well-Formed) Missing document element"))
       (if parse-dtd
 	  (cons dtd (nreverse xml))
 	(nreverse xml)))))
