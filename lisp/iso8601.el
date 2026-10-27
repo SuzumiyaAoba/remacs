@@ -251,15 +251,16 @@ See `decode-time' for the meaning of FORM."
                            (zerop (string-to-number fraction))))))))
 
 (defun iso8601--zone-in-range-p (string)
-  ;;Remacs: RFC 3339 offsets use hours 00-23 and minutes 00-59.
+  ;;Remacs: require complete numeric offsets within the RFC 3339 field ranges.
   (and (iso8601--match iso8601--zone-match string)
        (or (string= string "Z")
-           (let ((hour (string-to-number (match-string 3 string)))
-                 (minute (if (match-string 4 string)
-                             (string-to-number (match-string 4 string))
-                           0)))
-             (and (<= 0 hour 23)
-                  (<= 0 minute 59)))))
+           (and (not (eq (aref string (1- (length string))) ?:))
+                (let ((hour (string-to-number (match-string 3 string)))
+                      (minute (if (match-string 4 string)
+                                  (string-to-number (match-string 4 string))
+                                0)))
+                  (and (<= 0 hour 23)
+                       (<= 0 minute 59)))))))
 
 (defun iso8601-parse-time (string &optional form)
   "Parse STRING, which should be an ISO 8601 time string.
