@@ -1,6 +1,6 @@
 //! Byte-preserving digest/base64 primitives.
 
-use crate::lisp::builtins::{arg, want_string};
+use crate::lisp::builtins::{arg, want_int_or_mark, want_string};
 use crate::lisp::{
     Interp,
     error::{EvalResult, Flow},
@@ -49,13 +49,49 @@ fn secure_hash_bytes(i: &mut Interp, args: &[Value]) -> Result<Vec<u8>, Flow> {
     // hash their raw bytes, multibyte their internal multibyte form
     // (eight-bit chars as single 0x80–0xFF bytes).  Raw UTF-8 of the
     // PUA proxy is WRONG — `lisp_string_bytes' knows the mapping.
+    let buffer_object = matches!(obj, Value::Buffer(_));
     let mut bytes: Vec<u8> = match obj {
         Value::Str(_) => lisp_string_bytes(i, obj),
         Value::Buffer(b) => {
-            // Same byte mapping as lisp_string_bytes but over buffer
-            // text (buffer may hold eight-bit proxy chars).
+            let (begv, zv, text) = {
+                let buffer = b.borrow();
+                (
+                    buffer.begv,
+                    buffer.zv,
+                    buffer.text.text().to_owned(),
+                )
+            };
+            let start_arg = args.get(2).cloned().unwrap_or(Value::Nil);
+            let end_arg = args.get(3).cloned().unwrap_or(Value::Nil);
+            // Buffer positions are 1-based and default to the accessible
+            // region, unlike the 0-based string subarray offsets below.
+            let mut start = if start_arg.is_nil() {
+                begv as i128 + 1
+            } else {
+                want_int_or_mark(i, &start_arg)?
+            };
+            let mut end = if end_arg.is_nil() {
+                zv as i128 + 1
+            } else {
+                want_int_or_mark(i, &end_arg)?
+            };
+            if start > end {
+                std::mem::swap(&mut start, &mut end);
+            }
+            if start < begv as i128 + 1 || end > zv as i128 + 1 {
+                return Err(i.signal_data(
+                    sym::ARGS_OUT_OF_RANGE,
+                    vec![start_arg, end_arg],
+                ));
+            }
+            let start = (start - 1) as usize;
+            let end = (end - 1) as usize;
+
+            // Hash the selected characters using the same internal byte
+            // mapping as lisp_string_bytes; buffer text may contain Mule
+            // eight-bit proxy characters.
             let mut out = Vec::new();
-            for c in b.borrow().text.text().chars() {
+            for c in text.chars().skip(start).take(end - start) {
                 if let Some(byte) = crate::lisp::value::eight_bit_byte(c) {
                     out.push(byte);
                 } else {
@@ -92,32 +128,34 @@ fn secure_hash_bytes(i: &mut Interp, args: &[Value]) -> Result<Vec<u8>, Flow> {
             ));
         }
     };
-    // GNU: (secure-hash ALGORITHM OBJECT &optional START END BINARY) —
-    // hash only OBJECT[START..END] (byte offsets); nil means default.
-    if let Some(st) = args.get(2) {
-        // GNU validate_subarray uses CHECK_INTEGER on START/END —
-        // `integerp' (floats, conses all rejected).
-        let start = match st {
-            Value::Nil => 0usize,
-            Value::Int(n) => (*n).max(0) as usize,
-            other => return Err(i.wrong_type_mut("integerp", other)),
-        };
-        let end = match args.get(3) {
-            Some(Value::Nil) | None => bytes.len(),
-            Some(Value::Int(n)) => (*n).max(0) as usize,
-            Some(v) => return Err(i.wrong_type_mut("integerp", v)),
-        };
-        if start > bytes.len() || end > bytes.len() || start > end {
-            return Err(i.signal_data(
-                sym::ARGS_OUT_OF_RANGE,
-                vec![
-                    obj.clone(),
-                    Value::Int(start as i128),
-                    Value::Int(end as i128),
-                ],
-            ));
+    // Strings use zero-based subarray offsets.  Buffer ranges were already
+    // resolved above as 1-based positions within the accessible region.
+    if !buffer_object {
+        if let Some(st) = args.get(2) {
+            // GNU validate_subarray uses CHECK_INTEGER on START/END —
+            // `integerp' (floats, conses all rejected).
+            let start = match st {
+                Value::Nil => 0usize,
+                Value::Int(n) => (*n).max(0) as usize,
+                other => return Err(i.wrong_type_mut("integerp", other)),
+            };
+            let end = match args.get(3) {
+                Some(Value::Nil) | None => bytes.len(),
+                Some(Value::Int(n)) => (*n).max(0) as usize,
+                Some(v) => return Err(i.wrong_type_mut("integerp", v)),
+            };
+            if start > bytes.len() || end > bytes.len() || start > end {
+                return Err(i.signal_data(
+                    sym::ARGS_OUT_OF_RANGE,
+                    vec![
+                        obj.clone(),
+                        Value::Int(start as i128),
+                        Value::Int(end as i128),
+                    ],
+                ));
+            }
+            bytes = bytes[start..end].to_vec();
         }
-        bytes = bytes[start..end].to_vec();
     }
     hash_bytes(&algo, &bytes).map_err(|_| {
         i.signal_data(
