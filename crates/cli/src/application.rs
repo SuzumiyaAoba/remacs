@@ -46,11 +46,12 @@ pub type GuiRunner = fn(&[String], Option<&str>, &[String]) -> std::io::Result<(
 pub fn run(gui: Option<GuiRunner>) {
     remacs_runtime::lifecycle::initialize();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let startup = cli::StartupOptions::scan(&args);
     // GNU sets its `noninteractive' flag during main()'s argv scan —
     // before the interpreter is initialized — so init-time code like
     // `global-font-lock-mode''s `:init-value (not noninteractive)'
     // already sees the batch state.  Carry it to `Interp::new'.
-    if cli::options(&args).any(|a| matches!(a, "--batch" | "-batch" | "--script")) {
+    if startup.batch {
         // SAFETY: set before Interp::new spawns work; the value is
         // only read during startup on this same thread anyway.
         unsafe { std::env::set_var("REMACS_NONINTERACTIVE", "1") };
@@ -61,25 +62,11 @@ pub fn run(gui: Option<GuiRunner>) {
     // the interpreter on a worker with a generous stack.  The AppKit
     // GUI must stay on the main thread, so only the headless path is
     // moved; gui.rs enlarges its logic thread separately.
-    let headless = gui.is_none()
-        || cli::options(&args).any(|a| {
-            matches!(
-                a,
-                "--batch"
-                    | "-batch"
-                    | "--script"
-                    | "--ieval"
-                    | "-nw"
-                    | "--no-window-system"
-                    | "--version"
-                    | "--help"
-            )
-        });
-    if headless {
-        run_headless(move || real_main(args, gui));
+    if gui.is_none() || startup.headless {
+        run_headless(move || real_main(args, gui, startup));
         remacs_runtime::lifecycle::exit(0);
     }
-    real_main(args, gui);
+    real_main(args, gui, startup);
     remacs_runtime::lifecycle::exit(0);
 }
 
@@ -137,15 +124,14 @@ mod headless_tests {
     }
 }
 
-fn real_main(args: Vec<String>, gui: Option<GuiRunner>) {
+fn real_main(args: Vec<String>, gui: Option<GuiRunner>, startup: cli::StartupOptions) {
     // GNU prints the version without booting the interpreter.
-    if cli::options(&args).any(|a| a == "--version") {
+    if startup.version {
         remacs_runtime::stdio::write(b"remacs 0.1 (Emacs-compatible editor in Rust)\n");
         return;
     }
     // Version has GNU's priority; help still respects explicit/sidecar image
     // validation, but can skip Lisp bootstrap when there is no image.
-    let help_requested = cli::options(&args).any(|a| a == "--help");
     let (args, dump_file) = match cli::dump_file(&args) {
         Ok(values) => values,
         Err(error) => {
@@ -160,7 +146,7 @@ fn real_main(args: Vec<String>, gui: Option<GuiRunner>) {
             .filter(|p| p.is_file())
             .map(|p| p.to_string_lossy().into_owned())
     });
-    if help_requested && dump_file.is_none() {
+    if startup.help && dump_file.is_none() {
         remacs_runtime::stdio::write(HELP.as_bytes());
         return;
     }
@@ -169,10 +155,7 @@ fn real_main(args: Vec<String>, gui: Option<GuiRunner>) {
     // interpreter on the logic thread, so building one here would be
     // a thrown-away ~30s prelude — and any arg that forces batch or
     // the terminal front-end keeps this process headless.
-    let batch_arg = help_requested
-        || cli::options(&args).any(|a| matches!(a, "--batch" | "-batch" | "--script" | "--ieval"));
-    let no_window_arg = cli::options(&args).any(|a| matches!(a, "-nw" | "--no-window-system"));
-    if let Some(gui) = gui.filter(|_| !batch_arg && !no_window_arg) {
+    if let Some(gui) = gui.filter(|_| !startup.headless) {
         let files: Vec<String> = cli::arguments(&args)
             .filter_map(|arg| match arg {
                 cli::Argument::File(name) => Some(name.to_string()),
@@ -206,7 +189,7 @@ fn real_main(args: Vec<String>, gui: Option<GuiRunner>) {
             }
         }
     };
-    if help_requested {
+    if startup.help {
         remacs_runtime::stdio::write(HELP.as_bytes());
         return;
     }

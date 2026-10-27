@@ -1,5 +1,7 @@
 //! Batch shutdown, cleanup, and command-loop handoff.
-use super::*;
+use super::diagnostics::report_flow;
+use remacs_runtime::host;
+use remacs_runtime::lisp::{Flow, Interp, Value};
 
 /// Run `kill-emacs-hook' (reporting but ignoring its errors) and exit
 /// with CODE — GNU's `kill-emacs' on every batch exit path.

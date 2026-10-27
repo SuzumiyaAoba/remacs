@@ -146,14 +146,20 @@ GNU 互換の CLI オプションや端末初期化に依存しない。評価�
 ## CLI: crates/cli
 
 `arguments.rs` がオプションと引数の境界を定義する。
+`StartupOptions` は同じ境界で初期モードを集計し、起動先と batch 状態の判定を共有する。
 `application.rs` が起動モード、イメージ復元、実行スレッドとフロントエンドを選ぶ。
 GUI の起動関数は外側から渡し、このクレートから GUI には依存しない。
 
-`startup/mod.rs` は Lisp 側の変更を反映する引数キューを順番に処理する。
-`actions.rs` は評価とロード、`shutdown.rs` は終了・cleanup、`diagnostics.rs` は
-エラー・バックトレースを担当する。評価順、Lisp の entry frame、終了フックを維持する。
+`startup/mod.rs` は引数に応じたアクションを順番に実行する。
+`queue.rs` は Lisp 側の変更を反映する引数キューを所有し、各アクションの直前に
+live な値を取り出す。operand の Lisp 文字列と処理前のキューを保持する。
+`actions.rs` は評価・関数呼び出し・ロード・ファイル訪問、`shutdown.rs` は終了・cleanup、
+`diagnostics.rs` はエラー・バックトレースと `--ieval` の診断を担当する。
+評価順、Lisp の entry frame、終了フックを維持する。
 
 `terminal.rs` が crossterm と ANSI 出力を所有する。
+セッションと `KeyIo` の接続を入口に残し、キー変換を `terminal/keys.rs`、
+画面グリッドと echo-area の ANSI 出力を `terminal/render.rs` に置く。
 `terminal` feature を無効にすれば端末アダプターをリンクせずに起動処理を利用できる。
 `remacs-cli` バイナリはこの feature を必要とする。
 

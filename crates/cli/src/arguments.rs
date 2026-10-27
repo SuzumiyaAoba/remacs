@@ -134,6 +134,32 @@ pub fn options(args: &[String]) -> impl Iterator<Item = &str> {
     })
 }
 
+/// Initial mode selection uses the same operand boundaries as execution.
+#[derive(Default)]
+pub(crate) struct StartupOptions {
+    pub batch: bool,
+    pub headless: bool,
+    pub version: bool,
+    pub help: bool,
+}
+
+impl StartupOptions {
+    pub(crate) fn scan(args: &[String]) -> Self {
+        let mut startup = Self::default();
+        for option in options(args) {
+            match option {
+                "--batch" | "--script" => startup.batch = true,
+                "--version" => startup.version = true,
+                "--help" => startup.help = true,
+                "--ieval" | "-nw" => startup.headless = true,
+                _ => {}
+            }
+        }
+        startup.headless |= startup.batch || startup.version || startup.help;
+        startup
+    }
+}
+
 /// Initial image options are consumed before Lisp command-line actions.
 /// Operands and filenames following `--' retain their ordinary meaning.
 pub fn dump_file(args: &[String]) -> Result<(Vec<String>, Option<String>), String> {
@@ -171,6 +197,25 @@ mod tests {
 
     fn strings(args: &[&str]) -> Vec<String> {
         args.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn startup_modes_share_aliases_and_respect_operands_and_separator() {
+        for flag in ["--batch", "-batch", "--script", "-script"] {
+            let mode = StartupOptions::scan(&strings(&[flag, "file"]));
+            assert!(mode.batch && mode.headless, "{flag}");
+            for args in [vec!["--load", flag], vec!["--", flag]] {
+                let mode = StartupOptions::scan(&strings(&args));
+                assert!(!mode.batch && !mode.headless, "{args:?}");
+            }
+        }
+        for flag in ["--ieval", "-nw", "--no-window-system", "--help", "-version"] {
+            let mode = StartupOptions::scan(&strings(&[flag]));
+            assert!(mode.headless && !mode.batch, "{flag}");
+        }
+        for flag in ["-Q", "-q", "--quick", "--no-init-file", "--no-x-resources"] {
+            assert!(!StartupOptions::scan(&strings(&[flag])).headless, "{flag}");
+        }
     }
 
     #[test]
