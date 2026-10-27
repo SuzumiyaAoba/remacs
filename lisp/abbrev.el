@@ -943,11 +943,18 @@ This setting only applies if `abbrev-suggest' is non-nil."
 Includes expansions from parent abbrev tables."
     (let (expansions)
       (dolist (table (abbrev--suggest-get-active-tables-including-parents))
-	(mapatoms (lambda (e)
-		    (let ((value (symbol-value (abbrev--symbol e table))))
-		      (when value
-                        (push (cons value (symbol-name e)) expansions))))
-		  table))
+        (let ((table-enable-function (abbrev-table-get table :enable-function)))
+          (when (or (null table-enable-function)
+                    (funcall table-enable-function))
+            (mapatoms
+             (lambda (e)
+               (let* ((value (symbol-value (abbrev--symbol e table)))
+                      (enable-function (abbrev-get e :enable-function)))
+                 (when (and value
+                            (or (null enable-function)
+                                (funcall enable-function)))
+                   (push (cons value (symbol-name e)) expansions))))
+             table))))
       expansions))
 
 (defun abbrev--suggest-normalize-whitespace (string)
