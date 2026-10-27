@@ -221,7 +221,7 @@ return the subject.  Otherwise, return nil."
                                             (and (< 1 (incf via))
                                                  (format " %s" via))))
                                    (_ (if-let*
-                                          ((lang (cdr (assq 'hreflang link))))
+                                          ((lang (cdr (assq 'hreflang attrs))))
                                           (format "Link (%s)" lang)
                                         (concat
                                          "Link"
