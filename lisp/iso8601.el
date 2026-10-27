@@ -64,7 +64,8 @@
 (defconst iso8601--year-match
   "\\([+-]?[0-9][0-9][0-9][0-9]\\)")
 (defconst iso8601--full-date-match
-  "\\([+-]?[0-9][0-9][0-9][0-9]\\)-?\\([0-9][0-9]\\)-?\\([0-9][0-9]\\)")
+  ;;Remacs: require either both extended separators or neither.
+  "\\([+-]?[0-9][0-9][0-9][0-9]\\)\\(-\\([0-9][0-9]\\)-\\([0-9][0-9]\\)\\|\\([0-9][0-9]\\)\\([0-9][0-9]\\)\\)")
 (defconst iso8601--without-day-match
   "\\([+-]?[0-9][0-9][0-9][0-9]\\)-\\([0-9][0-9]\\)")
 (defconst iso8601--outdated-date-match
@@ -170,8 +171,8 @@ See `decode-time' for the meaning of FORM."
    ((iso8601--match iso8601--full-date-match string)
     (iso8601--decoded-time
      :year (string-to-number (match-string 1 string))
-     :month (match-string 2 string)
-     :day (match-string 3 string)))
+     :month (or (match-string 3 string) (match-string 5 string))
+     :day (or (match-string 4 string) (match-string 6 string))))
    ;; Calendar date without day: YYYY-MM.
    ((iso8601--match iso8601--without-day-match string)
     (iso8601--decoded-time
@@ -382,8 +383,12 @@ Return the number of minutes."
                     ((iso8601--match iso8601--full-date-match date)
                      ;;Remacs: validate month/day combinations, including leap days.
                      (let ((year (string-to-number (match-string 1 date)))
-                           (month (string-to-number (match-string 2 date)))
-                           (day (string-to-number (match-string 3 date))))
+                           (month (string-to-number
+                                   (or (match-string 3 date)
+                                       (match-string 5 date))))
+                           (day (string-to-number
+                                 (or (match-string 4 date)
+                                     (match-string 6 date)))))
                        (and (<= 1 month 12)
                             (<= 1 day (date-days-in-month year month))))
                     ((iso8601--match iso8601--without-day-match date)
