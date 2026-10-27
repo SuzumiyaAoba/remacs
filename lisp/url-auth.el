@@ -291,8 +291,8 @@ a match."
 
 (defun url-digest-cached-key (url realm)
   "Find best match for URL and REALM from `url-digest-auth-storage'.
-The return value is a list consisting of a realm (or a directory)
-a user name, and hashed authentication tokens HA1 and HA2.
+The return value is a list consisting of a realm (or a directory),
+a user name, and the method-independent HA1 token.
 Modifying the contents of the returned list will modify the cache
 variable `url-digest-auth-storage' itself."
   (url-digest-auth-directory-id-assoc
@@ -305,7 +305,8 @@ KEY has the same format as returned by `url-digest-cached-key'.
 The key is added to cache hierarchy under server id, deduced from
 URL."
   (let ((serverid (url-digest-auth-server-id url)))
-    (push (list serverid key) url-digest-auth-storage)))
+    (push (list serverid (list (nth 0 key) (nth 1 key) (nth 2 key)))
+          url-digest-auth-storage)))
 
 (defun url-digest-auth-create-key (username password realm method uri)
   "Create a key for digest authentication method.
@@ -339,7 +340,8 @@ Realm\", ...\"
 
 Part of the challenge is already solved in a pre-computed KEY
 which is list of a realm (or a directory), user name, and hash
-tokens HA1 and HA2.
+token HA1.  HA2 is computed for each request because it depends on
+that request's method and URI.
 
 Some fields are filled as is from the given URL, REALM, and
 using the contents of alist ATTRS.
@@ -364,7 +366,8 @@ implemented."
                (or (null qop-entry) qop))
       (let ((user (nth 1 key))
             (ha1 (nth 2 key))
-            (ha2 (nth 3 key))
+            (ha2 (url-digest-auth-make-ha2
+                  (or url-request-method "GET") (url-filename url)))
             (digest-uri (url-filename url))
             (nonce (cdr-safe (assoc "nonce" attrs)))
             (opaque (cdr-safe (assoc "opaque" attrs))))
@@ -436,13 +439,11 @@ via minibuffer."
     (unwind-protect
         (if (setq creds (url-digest-find-creds url prompt realm))
             (cons (url-digest-auth-directory-id url realm)
-                  (cons (plist-get creds :user)
-                        (url-digest-auth-create-key
+                  (list (plist-get creds :user)
+                        (url-digest-auth-make-ha1
                          (plist-get creds :user)
-                         (plist-get creds :secret)
                          realm
-                         (or url-request-method "GET")
-                         (url-filename url)))))
+                         (plist-get creds :secret))))
       (if (and creds
                ;; Don't clear secret for `authsource' since it will
                ;; corrupt any future fetches for it.
