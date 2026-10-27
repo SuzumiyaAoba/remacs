@@ -94,7 +94,7 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
 	     ;; (message "skipping empty line"))
 	     ((= (length fields) 7)
 	      (let ((dom (nth 0 fields))
-		    ;; (match (nth 1 fields))
+		    (include-subdomains (string= (nth 1 fields) "TRUE"))
 		    (path (nth 2 fields))
 		    (secure (string= (nth 3 fields) "TRUE"))
 		    ;; session cookies (expire time = 0) are supposed
@@ -112,8 +112,12 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
 		    (key (nth 5 fields))
 		    (val (nth 6 fields)))
                 (incf n)
-		;;(message "adding <%s>=<%s> exp=<%s> dom=<%s> path=<%s> sec=%S" key val expires dom path secure)
-		(url-cookie-store key val expires dom path secure)
+		;; Netscape files encode include-subdomains separately; retain
+		;; that distinction using a leading dot in the stored domain.
+		(let ((domain (if (string-prefix-p "." dom) (substring dom 1) dom)))
+		  (url-cookie-store key val expires
+				    (if include-subdomains (concat "." domain) domain)
+				    path secure))
 		))
 	     (t
 	      (message "ignoring malformed cookie line <%s>" line)))))
@@ -210,35 +214,48 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
 	     (time-less-p (date-to-time exp) nil)
 	   (error nil)))))
 
+(defun url-cookie--domain-match-p (host domain &optional include-subdomains)
+  ;;Remacs: enforce DNS-label boundaries and preserve host-only semantics.
+  "Return non-nil if HOST matches DOMAIN.
+When INCLUDE-SUBDOMAINS is non-nil, require a DNS-label boundary."
+  (let ((host (downcase host))
+	(domain (downcase domain)))
+    (or (string= host domain)
+	(and include-subdomains
+	     (string-suffix-p (concat "." domain) host)))))
+
 (defun url-cookie-retrieve (host &optional localpart secure)
   "Retrieve all cookies for a specified HOST and LOCALPART."
   (let ((storage (if secure
-		     (append url-cookie-secure-storage url-cookie-storage)
-		   url-cookie-storage))
-	(case-fold-search t)
-	cookies retval localpart-match)
+                     (append url-cookie-secure-storage url-cookie-storage)
+                   url-cookie-storage))
+        (case-fold-search t)
+        cookies retval localpart-match)
     (dolist (cur storage)
-      (setq cookies (cdr cur))
-      (if (and (car cur)
-	       (string-match
-                (concat "^.*"
-                        (regexp-quote
-                         ;; Remove the dot from wildcard domains
-                         ;; before matching.
-			 (if (eq ?. (aref (car cur) 0))
-                             (substring (car cur) 1)
-                           (car cur)))
-                        "$") host))
-	  ;; The domains match - a possible hit!
-	  (dolist (cur cookies)
-	    (and (if (and (stringp
-			   (setq localpart-match (url-cookie-localpart cur)))
-			  (stringp localpart))
-		     (string-match (concat "^" (regexp-quote localpart-match))
-				   localpart)
-		   (equal localpart localpart-match))
-		 (not (url-cookie-expired-p cur))
-		 (setq retval (cons cur retval))))))
+      (let* ((stored-domain (car cur))
+             (include-subdomains
+              (and (stringp stored-domain)
+                   (> (length stored-domain) 0)
+                   (eq ?. (aref stored-domain 0))))
+             (domain (if include-subdomains
+                         (substring stored-domain 1)
+                       stored-domain)))
+        (setq cookies (cdr cur))
+        (when (and (stringp domain)
+                   (> (length domain) 0)
+                   (url-cookie--domain-match-p
+                    host domain include-subdomains))
+          ;; The domains match - a possible hit!
+          (dolist (cur cookies)
+            (and (if (and (stringp
+                           (setq localpart-match
+                                 (url-cookie-localpart cur)))
+                          (stringp localpart))
+                     (string-match
+                      (concat "^" (regexp-quote localpart-match)) localpart)
+                   (equal localpart localpart-match))
+                 (not (url-cookie-expired-p cur))
+                 (setq retval (cons cur retval)))))))
     retval))
 
 (defun url-cookie-generate-header-lines (host localpart secure)
@@ -271,25 +288,36 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
   :type '(repeat regexp))
 
 (defun url-cookie-host-can-set-p (host domain)
-  (cond
-   ((string= host domain)	; Apparently netscape lets you do this
-    t)
-   ((zerop (length domain))
-    nil)
-   (t
-    ;; Remove the dot from wildcard domains before matching.
-    (when (eq ?. (aref domain 0))
-      (setq domain (substring domain 1)))
-    (and (url-domsuf-cookie-allowed-p domain)
-         (string-suffix-p domain host 'ignore-case)))))
+  (let ((domain (if (and (> (length domain) 0)
+			 (eq ?. (aref domain 0)))
+		    (substring domain 1)
+		  domain)))
+    (cond
+     ((and (> (length domain) 0)
+	   (url-cookie--domain-match-p host domain))
+      ;; Apparently netscape lets cookies be set for the exact host.
+      t)
+     ((zerop (length domain))
+      nil)
+     (t
+      (and (url-domsuf-cookie-allowed-p domain)
+	   (url-cookie--domain-match-p host domain t))))))
 
 (defun url-cookie-handle-set-cookie (str)
   (setq url-cookies-changed-since-last-save t)
   (let* ((args (nreverse (url-parse-args str t)))
 	 (case-fold-search t)
 	 (secure (and (assoc-string "secure" args t) t))
-	 (domain (or (cdr-safe (assoc-string "domain" args t))
-		     (url-host url-current-object)))
+	 (domain-attribute (assoc-string "domain" args t))
+	 (domain (if domain-attribute
+		      (or (cdr-safe domain-attribute) "")
+		    (url-host url-current-object)))
+	 ;; A leading dot records a Domain attribute; no dot means host-only.
+	 (stored-domain (if (and domain-attribute
+			  (> (length domain) 0)
+			  (not (eq ?. (aref domain 0))))
+		     (concat "." domain)
+		   domain))
 	 (current-url (url-view-url t))
 	 (trusted url-cookie-trusted-urls)
 	 (untrusted url-cookie-untrusted-urls)
@@ -341,7 +369,7 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
      ((url-cookie-host-can-set-p (url-host url-current-object) domain)
       ;; Cookie is accepted by the user, and passes our security checks.
       (url-cookie-store (caar args) (cdar args)
-			expires domain localpart secure))
+			expires stored-domain localpart secure))
      (t
       (url-lazy-message "%s tried to set a cookie for domain %s - rejected."
 			(url-host url-current-object) domain)))))
