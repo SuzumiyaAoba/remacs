@@ -194,6 +194,9 @@ Set it to nil if you don't want limits here."
   "Last regexp used by RE Builder before processing it.
 Except for Lisp syntax this is the same as `reb-regexp'.")
 
+(defvar-local reb-next-match--last-zero-width nil
+  "Regexp, position, and text tick of the last zero-width match selected.")
+
 (defvar-local reb-overlays nil
   "List of overlays of the RE Builder.")
 
@@ -408,11 +411,23 @@ provided in the Commentary section of this library."
   (interactive)
   (reb-assert-buffer-in-window)
   (with-selected-window reb-target-window
-    (if (not (re-search-forward reb-regexp (point-max) t))
-	(message "No more matches")
-      (reb-show-subexp
-       (or (and reb-subexp-mode reb-subexp-displayed) 0)
-       t))))
+    (let ((repeat-zero-width
+           (equal reb-next-match--last-zero-width
+                  (list reb-regexp (point) (buffer-chars-modified-tick)))))
+      (if (and repeat-zero-width (eobp))
+	  (message "No more matches")
+	(progn
+	  (when repeat-zero-width
+	    (forward-char 1))
+	  (if (not (re-search-forward reb-regexp (point-max) t))
+	      (message "No more matches")
+	    (let ((zero-width (= (match-beginning 0) (match-end 0))))
+	      (reb-show-subexp
+	       (or (and reb-subexp-mode reb-subexp-displayed) 0)
+	       t)
+	      (setq reb-next-match--last-zero-width
+		    (and zero-width
+			 (list reb-regexp (point) (buffer-chars-modified-tick)))))))))))
 
 (defun reb-prev-match ()
   "Go to previous match in the RE Builder target window."
