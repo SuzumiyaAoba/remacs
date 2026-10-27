@@ -2628,6 +2628,9 @@ fn f_window_live_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_window_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_any(i, &arg(&a, 0))?;
+    if w.borrow().dead {
+        return Ok(Value::Nil);
+    }
     Ok(i.buffer_value(w.borrow().buffer).unwrap_or(Value::Nil))
 }
 
