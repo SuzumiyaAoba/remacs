@@ -254,6 +254,7 @@
 (defconst socks-state-authenticated 2)
 (defconst socks-state-waiting 3)
 (defconst socks-state-connected 4)
+(defconst socks-state-failed 5)
 
 (defun socks-wait-for-state-change (proc cur-state)
   (while (and (= (process-get proc 'socks-state) cur-state)
@@ -286,9 +287,16 @@
        ((equal version 'http)
 	(if (not (string-search "\r\n\r\n" string))
 	    nil			; Need to spin some more
-	  (process-put proc 'socks-state socks-state-connected)
-	  (process-put proc 'socks-reply 0)
-	  (process-put proc 'socks-response string)))
+	  (let* ((status
+		  (and (string-match
+			"\\`HTTP/[0-9]+\\.[0-9]+[ \t]+\\([0-9][0-9][0-9]\\)[ \t\r\n]"
+			string)
+		       (string-to-number (match-string 1 string))))
+		 (success (and status (<= 200 status) (< status 300))))
+	    (process-put proc 'socks-state
+			 (if success socks-state-connected socks-state-failed))
+	    (process-put proc 'socks-reply (if success 0 (or status 1)))
+	    (process-put proc 'socks-response string))))
        ((equal version 4)
 	(if (< (length string) 2)
 	    nil			; Can't know how much to read yet
@@ -462,12 +470,17 @@ When ATYPE indicates an IP, param ADDRESS must be given as raw bytes."
       (delete-process proc)
       (error "SOCKS: %s"
              (let ((err (process-get proc 'socks-reply)))
-               (if (eql version 5)
-                   (nth (or err 1) socks-errors)
+               (cond
+                ((eq version 'http)
+                 (format "HTTP CONNECT rejected with status %s"
+                         (or err "unknown")))
+                ((eql version 5)
+                 (nth (or err 1) socks-errors))
+                (t
                  ;; The defined error codes for v4 range from
                  ;; 90-93, but we store them in a simple list.
                  (nth (pcase err (90 0) (92 2) (93 3) (_ 1))
-                      socks--errors-4)))))
+                      socks--errors-4))))))
     proc))
 
 
