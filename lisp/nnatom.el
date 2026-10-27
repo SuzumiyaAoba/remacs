@@ -32,6 +32,8 @@
 (require 'mm-url)
 (require 'dom)
 (require 'xml)
+(autoload 'url-expand-file-name "url-expand")
+(autoload 'url-encode-url "url-util")
 
 (defgroup nnatom nil
   "Atom backend for Gnus."
@@ -44,6 +46,30 @@
 ;;;; Atom feed parser:
 
 (declare-function libxml-parse-xml-region "xml.c")
+(defun nnatom--feed-base-url (feed)
+  "Return the URL used to fetch FEED, suitable as an IRI base."
+  (url-encode-url
+   (if (file-name-absolute-p feed)
+       (concat "file://" (expand-file-name feed))
+     (concat "https://" feed))))
+
+(defun nnatom--resolve-iri (iri base-url)
+  "Resolve IRI relative to BASE-URL, preserving it if resolution fails."
+  (or (and iri base-url
+           (ignore-errors (url-expand-file-name iri base-url)))
+      iri))
+
+(defun nnatom--annotate-base-urls (node base-url)
+  "Annotate link-bearing descendants of NODE with their effective base URL."
+  (when (consp node)
+    (let ((base-url (nnatom--resolve-iri (dom-attr node 'xml:base) base-url)))
+      (when (memq (car-safe node) '(feed entry source author contributor link content))
+        (dom-set-attribute node 'nnatom-base-url base-url))
+      (dolist (child (dom-children node))
+        (unless (stringp child)
+          (nnatom--annotate-base-urls child base-url)))))
+  node)
+
 (defun nnatom--read-feed (feed _)
   "Return a list structure representing FEED, or nil."
   (if (string-match-p "\\`https?://" feed)
@@ -64,6 +90,8 @@
                               (authors (list 'authors)))
                     (when (eq (car data) 'top)
                       (setq data (assq 'feed data)))
+                    (nnatom--annotate-base-urls
+                     data (nnatom--feed-base-url feed))
                     (dom-add-child-before data authors)
                     (let ((all (dom-children data)))
                       (while-let ((rest (cdr all))
@@ -213,7 +241,9 @@ return the subject.  Otherwise, return nil."
        (when-let* ((l (car-safe link)))
          (or
           (when-let* (((eq l 'content))
-                      (src (dom-attr link 'src))
+                      (src (nnatom--resolve-iri
+                            (dom-attr link 'src)
+                            (dom-attr link 'nnatom-base-url)))
                       (label (concat "Link"
                                      (and (< 1 (incf alt))
                                           (format " %s" alt)))))
@@ -227,7 +257,9 @@ return the subject.  Otherwise, return nil."
                                         (and (< 1 (incf aut))
                                              (format " %s" aut)))
                               name))
-                      (uri (nnatom--dom-line (dom-child-by-tag link 'uri)))
+                      (uri (nnatom--resolve-iri
+                            (nnatom--dom-line (dom-child-by-tag link 'uri))
+                            (dom-attr link 'nnatom-base-url)))
                       ((not (string-blank-p uri))))
             `(((("text/plain") . ,(format "%s: %s\n" name uri))
                (("text/html") . ,(format "<a href=\"%s\">[%s]</a> "
@@ -260,7 +292,9 @@ return the subject.  Otherwise, return nil."
                                          "Link"
                                          (and (< 1 (incf alt))
                                               (format " %s" alt))))))))
-                      (link (cdr (assq 'href attrs))))
+                      (link (nnatom--resolve-iri
+                             (cdr (assq 'href attrs))
+                             (cdr (assq 'nnatom-base-url attrs)))))
             `(((("text/plain") . ,(format "%s: %s\n" label link))
                (("text/html") . ,(format "<a href=\"%s\">[%s]</a> "
                                          (xml-escape-string link)
