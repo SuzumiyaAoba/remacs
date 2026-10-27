@@ -550,13 +550,12 @@ WIDGET's :node sub-widget."
              (widget-put arg :node (widget-get child :node))
              ;; Save :open property.
              (widget-put arg :open (widget-get child :open))
-             ;; The node is open.
+             ;; Save the widget value and properties even if it is closed;
+             ;; collapsing the parent removes the child widget either way.
+             (widget-put arg :value (widget-value child))
+             (tree-widget-keep arg child)
+             ;; Save children of expanded nodes.
              (when (widget-get child :open)
-               ;; Save the widget value.
-               (widget-put arg :value (widget-value child))
-               ;; Save properties specified in :keep.
-               (tree-widget-keep arg child)
-               ;; Save children.
                (tree-widget-children-value-save
                 child (widget-get arg :args) (widget-get arg :node))))
 ;;;; Another non tree node.
