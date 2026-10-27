@@ -943,7 +943,7 @@ using `make-temp-file', and the generated name is returned."
 	      "am"
 	    "arc-mode.")
 	  dir)))
-    (if (or alien (file-exists-p fullname))
+    (if (or alien (file-exists-p fullname) (file-symlink-p fullname))
 	(progn
 	  ;; Make sure all the leading directories in
 	  ;; archive-local-name exist under archive-tmpdir, so that
