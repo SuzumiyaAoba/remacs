@@ -796,6 +796,109 @@ to produce the command line options to pass to the hexl command."
       (setq opts (format "%s -group-by-%d-bits " opts hexl-bits)) )
     opts))
 
+;;Remacs: the GNU hexl filter is not shipped as a separate executable.
+;;Use the external program when available, and otherwise provide the same
+;;hex dump format in Lisp for the default `hexl-program'.
+(defun hexl--remacs-filter-program ()
+  (let ((path (expand-file-name hexl-program exec-directory)))
+    (or (and (file-executable-p path) (not (file-directory-p path)) path)
+        (and (fboundp 'executable-find) (executable-find hexl-program))
+        (unless (equal hexl-program hexl-program-name) path))))
+
+(defun hexl--remacs-group-size (options)
+  (cond ((member "-group-by-8-bits" options) 1)
+        ((member "-group-by-32-bits" options) 4)
+        ((member "-group-by-64-bits" options) 8)
+        (t 2)))
+
+(defun hexl--remacs-hexlify-bytes (bytes group-size iso)
+  (let ((offset 0)
+        (length (length bytes))
+        lines)
+    (while (< offset length)
+      (let ((hex (list (string-as-unibyte (format "%08x: " offset))))
+            (ascii (list (unibyte-string ?\s))))
+        (dotimes (index 16)
+          (let ((position (+ offset index)))
+            (if (< position length)
+                (let ((byte (aref bytes position)))
+                  (push (string-as-unibyte (format "%02x" byte)) hex)
+                  (push (unibyte-string
+                         (if (or (< byte #x20)
+                                 (and (>= byte #x7f)
+                                      (or (not iso) (< byte #xa0))))
+                             ?. byte))
+                        ascii))
+              ;; The C filter pads the hex column to 16 bytes.
+              (push (unibyte-string ?\s ?\s) hex))
+            (when (= (% (1+ index) group-size) 0)
+              (push (unibyte-string ?\s) hex)))
+        (push (concat (apply #'concat (nreverse hex))
+                      (apply #'concat (nreverse ascii))
+                      (unibyte-string ?\n))
+              lines))
+      (setq offset (+ offset 16)))
+    (apply #'concat (nreverse lines))))
+
+(defun hexl--remacs-hex-digit (char)
+  (cond ((and (>= char ?0) (<= char ?9)) (- char ?0))
+        ((and (>= char ?a) (<= char ?f)) (+ 10 (- char ?a)))
+        ((and (>= char ?A) (<= char ?F)) (+ 10 (- char ?A)))
+        (t nil)))
+
+(defun hexl--remacs-dehexlify-bytes (text group-size)
+  (let ((line-start 0)
+        (length (length text))
+        bytes)
+    (save-match-data
+      (while (< line-start length)
+        (let* ((line-end (or (string-match "\n" text line-start) length))
+               (colon (string-match ":" text line-start)))
+          (when (and colon (< colon line-end)
+                     (< (1+ colon) line-end)
+                     (= (aref text (1+ colon)) ?\s))
+            (let ((position (+ colon 2))
+                  (index 0)
+                  done)
+              (while (and (< index 16) (not done))
+                (if (>= (1+ position) line-end)
+                    (setq done t)
+                  (let ((high (hexl--remacs-hex-digit
+                               (aref text position)))
+                        (low (hexl--remacs-hex-digit
+                              (aref text (1+ position)))))
+                    (if (and high low)
+                        (progn
+                          (push (+ (* high 16) low) bytes)
+                          (setq position (+ position 2)
+                                index (1+ index))
+                          (when (and (= (% index group-size) 0)
+                                     (< position line-end)
+                                     (= (aref text position) ?\s))
+                            (setq position (1+ position))))
+                      (setq done t)))))))
+          (setq line-start (if (< line-end length) (1+ line-end) length))))
+    (mapconcat #'unibyte-string (nreverse bytes) "")))
+
+(defun hexl--remacs-convert-buffer (dehex)
+  (let* ((options (split-string (hexl-options)))
+         (group-size (hexl--remacs-group-size options))
+         (text (buffer-substring-no-properties (point-min) (point-max)))
+         (output
+          (if dehex
+              (decode-coding-string
+               (hexl--remacs-dehexlify-bytes text group-size)
+               (or coding-system-for-read 'no-conversion))
+            (decode-coding-string
+             (hexl--remacs-hexlify-bytes
+              (encode-coding-string
+               text (or coding-system-for-write 'no-conversion))
+              group-size (member "-iso" options))
+             (or coding-system-for-read 'raw-text)))))
+    (delete-region (point-min) (point-max))
+    (insert output)
+    0))
+
 ;;;###autoload
 (defun hexlify-buffer ()
   "Convert a binary buffer to hexl format.
@@ -808,17 +911,19 @@ This discards the buffer's undo information."
   ;; Don't decode text in the ASCII part of `hexl' program output.
   (let ((coding-system-for-read 'raw-text)
 	(coding-system-for-write buffer-file-coding-system)
-	(buffer-undo-list t))
-    (apply 'call-process-region (point-min) (point-max)
-	   (expand-file-name hexl-program exec-directory)
-	   t t nil
-           ;; Manually encode the args, otherwise they're encoded using
-           ;; coding-system-for-write (i.e. buffer-file-coding-system) which
-           ;; may not be what we want (e.g. utf-16 on a non-utf-16 system).
-           (mapcar (lambda (s)
-                     (if (not (multibyte-string-p s)) s
-                       (encode-coding-string s locale-coding-system)))
-                   (split-string (hexl-options))))
+        (buffer-undo-list t)
+        (program (hexl--remacs-filter-program)))
+    (if program
+	(apply 'call-process-region (point-min) (point-max)
+	       program t t nil
+	       ;; Manually encode the args, otherwise they're encoded using
+	       ;; coding-system-for-write (i.e. buffer-file-coding-system) which
+	       ;; may not be what we want (e.g. utf-16 on a non-utf-16 system).
+	       (mapcar (lambda (s)
+			 (if (not (multibyte-string-p s)) s
+			   (encode-coding-string s locale-coding-system)))
+		       (split-string (hexl-options))))
+      (hexl--remacs-convert-buffer nil))
     (if (> (point) (hexl-address-to-marker hexl-max-address))
 	(hexl-goto-address hexl-max-address))))
 
@@ -832,10 +937,12 @@ This discards the buffer's undo information."
        (setq buffer-undo-list nil))
   (let ((coding-system-for-write 'raw-text)
 	(coding-system-for-read buffer-file-coding-system)
-	(buffer-undo-list t))
-    (apply 'call-process-region (point-min) (point-max)
-	   (expand-file-name hexl-program exec-directory)
-	   t t nil "-de" (split-string (hexl-options)))))
+        (buffer-undo-list t)
+        (program (hexl--remacs-filter-program)))
+    (if program
+	(apply 'call-process-region (point-min) (point-max)
+	       program t t nil "-de" (split-string (hexl-options)))
+      (hexl--remacs-convert-buffer t))))
 
 (defun hexl-char-after-point ()
   "Return char for ASCII hex digits at point."
