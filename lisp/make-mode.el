@@ -1700,8 +1700,9 @@ matched in a rule action."
 		  (goto-char deps-end)
 		  (skip-chars-backward " \t")
 		  (setq deps-end (point))
-		  (beginning-of-line)
-		  (skip-chars-forward " \t")
+		  (goto-char (nth 2 match-data))
+		  (while (memq (char-after) '(?\s ?\t))
+		    (forward-char))
 		  ;; Alter the bounds recorded for subexp 1,
 		  ;; which is what is supposed to match the targets.
 		  (setcar (nthcdr 2 match-data) (point))
