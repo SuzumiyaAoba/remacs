@@ -386,6 +386,12 @@ valid `%HH' escape."
   "Allowed-character byte mask for the host segment of a URI.
 These characters are specified in RFC 3986, Appendix A.")
 
+(defconst url-userinfo-allowed-chars
+  (let ((vec (copy-sequence url-host-allowed-chars)))
+    (aset vec ?: t)
+    vec)
+  "Allowed-character byte mask for the userinfo component of a URI.")
+
 (defconst url-path-allowed-chars
   (let ((vec (copy-sequence url-host-allowed-chars)))
     (aset vec ?/ t)
@@ -426,9 +432,11 @@ should return it unchanged."
 	 (query (cdr path-and-query))
 	 (frag (url-target obj)))
     (if user
-	(setf (url-user obj) (url-hexify-string user)))
+	(setf (url-user obj)
+	      (url-hexify-string user url-userinfo-allowed-chars)))
     (if pass
-	(setf (url-password obj) (url-hexify-string pass)))
+	(setf (url-password obj)
+	      (url-hexify-string pass url-userinfo-allowed-chars)))
     (if path
 	(setq path (url-hexify-string path url-path-allowed-chars)))
     (if query
