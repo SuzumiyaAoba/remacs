@@ -361,8 +361,9 @@ dispatcher in CONN."
                 ;; of the cleanup below.
                 (push `((:remote ,id)) (jsonrpc--scontrol conn))
                 (unwind-protect
-                    (if (and params-present-p
-                             (not (jsonrpc--structured-params-p params)))
+                    (if (or (not (stringp method))
+                            (and params-present-p
+                                 (not (jsonrpc--structured-params-p params))))
                         (setq reply
                               '(:error (:code -32600 :message "Invalid Request")))
                       (setq
