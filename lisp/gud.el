@@ -688,11 +688,9 @@ The option \"--fullname\" must be included in this value."
    :type 'string)
 
 (defvar gud-gdb-marker-regexp
-  ;; This used to use path-separator instead of ":";
-  ;; however, we found that on both Windows 32 and MSDOS
-  ;; a colon is correct here.
-  (concat "\032\032\\(.:?[^" ":" "\n]*\\)" ":"
-	  "\\([0-9]*\\)" ":" ".*\n"))
+  ;; GDB separates the filename from line and column with the final two
+  ;; numeric fields, so filenames themselves may contain colons.
+  "\032\032\\(.*\\):\\([0-9]+\\):[0-9]+:.*\n")
 
 ;; There's no guarantee that Emacs will hand the filter the entire
 ;; marker at once; it could be broken up across several strings.  We
