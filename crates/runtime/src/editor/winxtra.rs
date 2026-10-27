@@ -2266,18 +2266,20 @@ fn f_frame_parent(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 }
 
-/// `window-size-fixed-p' — nil on our model (nothing is size-fixed).
 fn f_window_size_fixed_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU window.el
-    // `window-size-fixed-1': signals `"%s is not a valid window"'
-    // (plain error, not a type check) on non-window args.
-    match &arg(&a, 0) {
-        Value::Nil | Value::Window(_) => Ok(Value::Nil),
-        other => Err(i.error(format!(
-            "{} is not a valid window",
-            i.princ_to_string(other)
-        ))),
+    // GNU calls the Lisp helper after accepting only a window, nil, or
+    // the `preserved' sentinel for IGNORE.
+    let ignore = arg(&a, 2);
+    let windowp = Value::Sym(i.q("windowp"));
+    let ignore_window = i.apply(&windowp, vec![ignore.clone()])?.truthy();
+    let preserved = i.q("preserved");
+    if !(ignore_window || ignore.is_nil() || matches!(ignore, Value::Sym(s) if s == preserved)) {
+        return Ok(Value::Nil);
     }
+    let normalize = Value::Sym(i.q("window-normalize-window"));
+    let window = i.apply(&normalize, vec![arg(&a, 0)])?;
+    let fixed = Value::Sym(i.q("window--size-fixed-1"));
+    i.apply(&fixed, vec![window, arg(&a, 1), ignore])
 }
 
 fn f_truncated_partial_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
