@@ -99,9 +99,11 @@
     (dom-add-child-before article auths)
     (dolist (child (cddddr article) `(,article . ,(cdr data)))
       (pcase (car-safe child)                ; Authors and links can appear
-        ((or 'author 'contributor)           ; anywhere in the entry so we
+        ('author                             ; anywhere in the entry so we
          (dom-add-child-before auths child)  ; collect them all here to
          (dom-add-child-before links child)) ; avoid looping over the
+        ('contributor
+         (dom-add-child-before links child))
         ((or 'link                           ; entry multiple times later.
              (and 'content (guard (assq 'src (dom-attributes child)))))
          (dom-add-child-before links child))))))
