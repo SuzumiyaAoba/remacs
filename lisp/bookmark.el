@@ -1652,19 +1652,17 @@ for a file, defaulting to the file defined by variable
                                         default)
                                 (file-name-directory default) default)
               default))))
-  (bookmark-write-file file)
-  ;; Signal that we have synced the bookmark file by setting this to 0.
-  ;; If there was an error at any point before, it will not get set,
-  ;; which is what we want.
-  (setq bookmark-alist-modification-count 0)
-  (if make-default
-      (let ((default (expand-file-name file)))
-        (setq bookmark-bookmarks-timestamp
-              (cons default (nth 5 (file-attributes default)))))
-    (let ((default (car bookmark-bookmarks-timestamp)))
-      (if (string= default (expand-file-name file))
+  (when (bookmark-write-file file)
+    ;; Signal that we have synced the bookmark file by setting this to 0.
+    (setq bookmark-alist-modification-count 0)
+    (if make-default
+        (let ((default (expand-file-name file)))
           (setq bookmark-bookmarks-timestamp
-                (cons default (nth 5 (file-attributes default))))))))
+                (cons default (nth 5 (file-attributes default)))))
+      (let ((default (car bookmark-bookmarks-timestamp)))
+        (if (string= default (expand-file-name file))
+            (setq bookmark-bookmarks-timestamp
+                  (cons default (nth 5 (file-attributes default)))))))))
 
 
 (defun bookmark-write-file (file)
@@ -1704,7 +1702,8 @@ for a file, defaulting to the file defined by variable
 		((null bookmark-version-control) nil)
 		((eq 'never bookmark-version-control) 'never)
 		((eq 'nospecial bookmark-version-control) version-control)
-		(t t))))
+		(t t)))
+	      write-success)
 	  (condition-case nil
               ;; There was a stretch of time (about 15 years) when we
               ;; used `write-region' below instead of `write-file',
@@ -1731,11 +1730,15 @@ for a file, defaulting to the file defined by variable
               ;; bookmark.el.  Therefore we reverted to `write-file',
               ;; which means numbered backups may now be created,
               ;; depending on `bookmark-version-control' as per above.
-	      (write-file file)
-	    (file-error (message "Can't write %s" file)))
-	  (setq bookmark-file-coding-system coding-system-for-write)
+	      (setq write-success
+		    (progn (write-file file) t))
+	    (file-error (message "Can't write %s" file)
+			(setq write-success nil)))
+	  (when write-success
+	    (setq bookmark-file-coding-system coding-system-for-write))
 	  (kill-buffer (current-buffer))
-	  (progress-reporter-done reporter))))))
+	  (progress-reporter-done reporter)
+	  write-success)))))
 
 
 (defun bookmark-import-new-list (new-list)
