@@ -241,11 +241,26 @@ must never cause a Lisp error."
 				       segments "")))
 			  (cons (car elem)
 				(if encoded
-				    (rfc2231-decode-encoded-string value)
+				    (rfc2231-decode-encoded-string value signal-error)
 				  value))))
 		      (nreverse cparams)))))))
 
-(defun rfc2231-decode-encoded-string (string)
+(defun rfc2231--valid-percent-escapes-p (string)
+  "Return non-nil if every percent sign in STRING starts a hex octet."
+  (let ((index 0)
+	(end (length string))
+	(valid t))
+    (while (and valid (setq index (string-match "%" string index)))
+      (if (and (< (+ index 2) end)
+	       (let ((first (aref string (1+ index)))
+		     (second (aref string (+ index 2))))
+		 (and (or (<= ?0 first ?9) (<= ?A first ?F) (<= ?a first ?f))
+		      (or (<= ?0 second ?9) (<= ?A second ?F) (<= ?a second ?f))))
+	  (setq index (+ index 3))
+	(setq valid nil)))
+    valid))
+
+(defun rfc2231-decode-encoded-string (string &optional signal-error)
   "Decode an RFC2231-encoded string.
 These look like:
  \"us-ascii\\='en-us\\='This%20is%20%2A%2A%2Afun%2A%2A%2A\",
@@ -261,6 +276,9 @@ These look like:
 	  ;;(language (match-string 2 string))
 	  (coding-system (mm-charset-to-coding-system
 			  (match-string 1 string) nil t)))
+      (when (and signal-error
+		 (not (rfc2231--valid-percent-escapes-p value)))
+	(error "Malformed percent escape in RFC 2231 value: %s" value))
       (mm-with-unibyte-buffer
         (insert value)
         (goto-char (point-min))
