@@ -244,16 +244,17 @@ some major modes from being locked under some circumstances."
 (defun emacs-lock-unload-function ()
   "Unload the Emacs Lock library.
 This is called from `unload-feature', which see."
-  (catch :continue
-    (dolist (buffer (buffer-list))
-      (set-buffer buffer)
-      (when emacs-lock-mode
-        (if (y-or-n-p (format "Buffer %S is locked, unlock it? " (buffer-name)))
-            (emacs-lock-mode -1)
-          (message "Unloading of feature `emacs-lock' aborted.")
-          (throw :continue t))))
-    ;; continue standard unloading
-    nil))
+  (save-current-buffer
+    (catch :continue
+      (dolist (buffer (buffer-list))
+        (set-buffer buffer)
+        (when emacs-lock-mode
+          (if (y-or-n-p (format "Buffer %S is locked, unlock it? " (buffer-name)))
+              (emacs-lock-mode -1)
+            (message "Unloading of feature `emacs-lock' aborted.")
+            (throw :continue t))))
+      ;; continue standard unloading
+      nil)))
 
 (provide 'emacs-lock)
 
