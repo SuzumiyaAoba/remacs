@@ -2096,7 +2096,8 @@ See also `multi-occur'."
 	      (save-excursion
                 ;; begin searching in the buffer
 		(goto-char (if (overlayp boo) (overlay-start boo) (point-min)))
-                (forward-line 0)
+                (unless (overlayp boo)
+                  (forward-line 0))
 	        (let* ((limit (if (overlayp boo) (overlay-end boo) (point-max)))
                        (start-line (line-number-at-pos))
 		       (curr-line start-line) ; line count
