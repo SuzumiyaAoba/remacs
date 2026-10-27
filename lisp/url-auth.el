@@ -204,15 +204,19 @@ key cache `url-digest-auth-storage'."
    (format "%016x%016x" (random) (car (time-convert nil t)))
    t))
 
-(defun url-digest-auth-nonce-count (_nonce)
+(defvar url-digest-auth-nonce-counts (make-hash-table :test 'equal)
+  "Nonce counts used by `url-digest-auth-nonce-count'.")
+
+(defun url-digest-auth-nonce-count (nonce &optional server)
   "The number requests sent to server with the given NONCE.
 This count includes the request we're preparing here.
 
-Currently, this is not implemented and will always return 1.
-
 Value returned is in string format with leading zeroes, such as
-\"00000001\"."
-  (format "%08x" 1))
+\"00000001\".  SERVER scopes identical nonce values to their origin."
+  (let* ((key (list server nonce))
+         (count (1+ (gethash key url-digest-auth-nonce-counts 0))))
+    (puthash key count url-digest-auth-nonce-counts)
+    (format "%08x" count)))
 
 (defun url-digest-auth-name-value-string (pairs)
   "Concatenate name-value pairs in association list PAIRS.
@@ -373,7 +377,8 @@ implemented."
                         (cons 'nonce nonce)
                         (cons 'uri digest-uri))
                   (if qop
-                      (let ((nc (url-digest-auth-nonce-count nonce))
+                      (let ((nc (url-digest-auth-nonce-count
+                                 nonce (url-digest-auth-server-id url)))
                             (cnonce (url-digest-auth-make-cnonce)))
                         (list (cons 'qop qop)
                               (cons 'nc nc)
