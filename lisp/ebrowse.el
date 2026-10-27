@@ -1315,14 +1315,41 @@ Pop to member buffer if no prefix ARG, to tree buffer otherwise."
 ;;; Functions to hide/unhide text
 
 (defun ebrowse--hidden-p (&optional pos)
-  (eq (get-char-property (or pos (point)) 'invisible) 'ebrowse))
+  (let ((invisible (get-char-property (or pos (point)) 'invisible)))
+    (or (eq invisible 'ebrowse)
+        (and (consp invisible) (memq 'ebrowse invisible)))))
 
 (defun ebrowse--hide (start end)
-  (put-text-property start end 'invisible 'ebrowse))
+  (let ((pos start))
+    (while (< pos end)
+      (let* ((next (or (next-single-property-change pos 'invisible nil end)
+                       end))
+             (invisible (get-text-property pos 'invisible)))
+        (unless (or (eq invisible t)
+                    (eq invisible 'ebrowse)
+                    (and (consp invisible) (memq 'ebrowse invisible)))
+          (put-text-property
+           pos next 'invisible
+           (cond ((null invisible) 'ebrowse)
+                 ((listp invisible) (cons 'ebrowse invisible))
+                 (t (list 'ebrowse invisible)))))
+        (setq pos next)))))
 
 (defun ebrowse--unhide (start end)
-  ;; FIXME: This also removes other invisible properties!
-  (remove-text-properties start end '(invisible nil)))
+  (let ((pos start))
+    (while (< pos end)
+      (let* ((next (or (next-single-property-change pos 'invisible nil end)
+                       end))
+             (invisible (get-text-property pos 'invisible)))
+        (cond
+         ((eq invisible 'ebrowse)
+          (remove-text-properties pos next '(invisible nil)))
+         ((and (consp invisible) (memq 'ebrowse invisible))
+          (let ((remaining (delq 'ebrowse (copy-sequence invisible))))
+            (if remaining
+                (put-text-property pos next 'invisible remaining)
+              (remove-text-properties pos next '(invisible nil))))))
+        (setq pos next)))))
 
 ;;; Misc tree buffer commands
 
