@@ -1053,23 +1053,23 @@ When read, a date-time is a decoded time, i.e. a list in the format
 (defun icalendar-read-dur-value (s)
   "Read an `icalendar-dur-value' from a string S.
 S should be a match against rx `icalendar-dur-value'."
-  ;; TODO: this smells like a design flaw.  Silence the byte compiler for now.
-  (ignore s)
-  (let ((sign (if (equal (match-string 20) "-") -1 1)))
-    (if (match-string 15)
-        ;; dur-value specified in weeks, so just return an integer:
-        (* sign (string-to-number (match-string 15)))
-      ;; otherwise, make a time delta from the other units:
-      (let* ((days (match-string 16))
-             (ndays (* sign (if days (string-to-number days) 0)))
-             (hours (match-string 17))
-             (nhours (* sign (if hours (string-to-number hours) 0)))
-             (minutes (match-string 18))
-             (nminutes (* sign (if minutes (string-to-number minutes) 0)))
-             (seconds (match-string 19))
-             (nseconds (* sign (if seconds (string-to-number seconds) 0))))
-        (make-decoded-time :second nseconds :minute nminutes :hour nhours
-                           :day ndays)))))
+  (save-match-data
+    (string-match (rx icalendar-dur-value) s)
+    (let ((sign (if (equal (match-string 20) "-") -1 1)))
+      (if (match-string 15)
+          ;; dur-value specified in weeks, so just return an integer:
+          (* sign (string-to-number (match-string 15)))
+        ;; otherwise, make a time delta from the other units:
+        (let* ((days (match-string 16))
+               (ndays (* sign (if days (string-to-number days) 0)))
+               (hours (match-string 17))
+               (nhours (* sign (if hours (string-to-number hours) 0)))
+               (minutes (match-string 18))
+               (nminutes (* sign (if minutes (string-to-number minutes) 0)))
+               (seconds (match-string 19))
+               (nseconds (* sign (if seconds (string-to-number seconds) 0))))
+          (make-decoded-time :second nseconds :minute nminutes :hour nhours
+                             :day ndays)))))
 
 (defun icalendar-print-dur-value (dur)
   "Serialize an `icalendar-dur-value' to a string."
