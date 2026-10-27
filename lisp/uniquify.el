@@ -29,12 +29,12 @@
 
 (defun uniquify--buffer-refresh ()
   "Refreshes all `uniquify'-managed buffers with current options."
-  (when uniquify-buffer-name-style
-    (save-current-buffer
-      (dolist (buffer (buffer-list))
-        (set-buffer buffer)
-        (when uniquify-managed
-          (rename-buffer (uniquify-buffer-base-name) 'unique))))))
+  ;;Remacs: style nil restores the traditional numeric suffix names.
+  (save-current-buffer
+    (dolist (buffer (buffer-list))
+      (set-buffer buffer)
+      (when uniquify-managed
+        (rename-buffer (uniquify-buffer-base-name) 'unique))))
 
 (defun uniquify--set-option (variable value)
   "Call in `defcustom' :set keyword when `uniquify--buffer-refresh' is needed.
