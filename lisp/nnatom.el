@@ -160,17 +160,39 @@ return the subject.  Otherwise, return nil."
 (defvoo nnatom-read-id-function #'nnatom--read-id
   nil nnfeed-read-id-function)
 
+(defun nnatom--valid-rfc3339-date-p (string)
+  "Return non-nil if STRING starts with a valid RFC 3339 calendar date."
+  (when (string-match
+         "\\`\\([0-9][0-9][0-9][0-9]\\)-\\([0-9][0-9]\\)-\\([0-9][0-9]\\)[Tt]"
+         string)
+    (let* ((year (string-to-number (match-string 1 string)))
+           (month (string-to-number (match-string 2 string)))
+           (day (string-to-number (match-string 3 string)))
+           (max-day
+            (cond
+             ((memq month '(1 3 5 7 8 10 12)) 31)
+             ((memq month '(4 6 9 11)) 30)
+             ((= month 2)
+              (if (and (= (% year 4) 0)
+                       (or (/= (% year 100) 0) (= (% year 400) 0)))
+                  29
+                28)))))
+      (and max-day (<= 1 day max-day)))))
+
+(defun nnatom--read-date-time (article tag)
+  (when-let* ((date (nnatom--dom-line (dom-child-by-tag article tag)))
+              ((nnatom--valid-rfc3339-date-p date)))
+    (date-to-time date)))
+
 (defun nnatom--read-publish (article)
   "Return the date and time ARTICLE was published, or nil."
-  (when-let* ((d (dom-child-by-tag article 'published)))
-    (date-to-time (nnatom--dom-line d))))
+  (nnatom--read-date-time article 'published))
 (defvoo nnatom-read-publish-date-function #'nnatom--read-publish
   nil nnfeed-read-publish-date-function)
 
 (defun nnatom--read-update (article)
   "Return the date and time of the last update to ARTICLE, or nil."
-  (when-let* ((d (dom-child-by-tag article 'updated)))
-    (date-to-time (nnatom--dom-line d))))
+  (nnatom--read-date-time article 'updated))
 (defvoo nnatom-read-update-date-function #'nnatom--read-update
   nil nnfeed-read-update-date-function)
 
