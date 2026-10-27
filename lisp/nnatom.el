@@ -97,7 +97,7 @@
               (auths (list 'authors)) (links (list 'links)))
     (dom-add-child-before article links)
     (dom-add-child-before article auths)
-    (dolist (child (cddddr article) `(,article . ,(cdr data)))
+    (dolist (child (cddddr article))
       (pcase (car-safe child)                ; Authors and links can appear
         ('author                             ; anywhere in the entry so we
          (dom-add-child-before auths child)  ; collect them all here to
@@ -106,7 +106,14 @@
          (dom-add-child-before links child))
         ((or 'link                           ; entry multiple times later.
              (and 'content (guard (assq 'src (dom-attributes child)))))
-         (dom-add-child-before links child))))))
+         (dom-add-child-before links child))))
+    (unless (dom-children auths)
+      (when-let* ((source (dom-child-by-tag article 'source)))
+        (dolist (child (dom-children source))
+          (when (eq (car-safe child) 'author)
+            (dom-append-child auths child)
+            (dom-append-child links child)))))
+    `(,article . ,(cdr data))))
 (defvoo nnatom-read-article-function #'nnatom--read-article
   nil nnfeed-read-article-function)
 
