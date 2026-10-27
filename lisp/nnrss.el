@@ -826,7 +826,9 @@ Careful with this on large documents!"
 (defun nnrss-rsslink-p (el)
   "Test if the element we are handed is an RSS autodiscovery link."
   (and (eq (car-safe el) 'link)
-       (string-equal (downcase (cdr (assoc 'rel (cadr el)))) "alternate")
+       (member "alternate"
+               (split-string (downcase (cdr (assoc 'rel (cadr el))))
+                             "[ \t\n\f\r]+" t))
        (let ((type (downcase (cdr (assoc 'type (cadr el))))))
          (or (string-equal type "application/rss+xml")
              (string-equal type "text/xml")))))
