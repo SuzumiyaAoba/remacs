@@ -62,20 +62,20 @@
              regexps "\\|"))
 
 (defconst iso8601--year-match
-  "\\([+-]?[0-9][0-9][0-9][0-9]\\)")
+  "\\([+-]?[0-9][0-9][0-9][0-9][0-9]*\\)")
 (defconst iso8601--full-date-match
   ;;Remacs: require either both extended separators or neither.
-  "\\([+-]?[0-9][0-9][0-9][0-9]\\)\\(-\\([0-9][0-9]\\)-\\([0-9][0-9]\\)\\|\\([0-9][0-9]\\)\\([0-9][0-9]\\)\\)")
+  "\\([+-]?[0-9][0-9][0-9][0-9][0-9]*\\)\\(-\\([0-9][0-9]\\)-\\([0-9][0-9]\\)\\|\\([0-9][0-9]\\)\\([0-9][0-9]\\)\\)")
 (defconst iso8601--without-day-match
-  "\\([+-]?[0-9][0-9][0-9][0-9]\\)-\\([0-9][0-9]\\)")
+  "\\([+-]?[0-9][0-9][0-9][0-9][0-9]*\\)-\\([0-9][0-9]\\)")
 (defconst iso8601--outdated-date-match
   "--\\([0-9][0-9]\\)-?\\([0-9][0-9]\\)")
 (defconst iso8601--outdated-reduced-precision-date-match
   "---?\\([0-9][0-9]\\)")
 (defconst iso8601--week-date-match
-  "\\([+-]?[0-9][0-9][0-9][0-9]\\)-?W\\([0-9][0-9]\\)-?\\([0-9]\\)?")
+  "\\([+-]?[0-9][0-9][0-9][0-9][0-9]*\\)-?W\\([0-9][0-9]\\)-?\\([0-9]\\)?")
 (defconst iso8601--ordinal-date-match
-  "\\([+-]?[0-9][0-9][0-9][0-9]\\)-?\\([0-9][0-9][0-9]\\)")
+  "\\([+-]?[0-9][0-9][0-9][0-9][0-9]*\\)-?\\([0-9][0-9][0-9]\\)")
 (defconst iso8601--date-match
   (iso8601--concat-regexps
    (list iso8601--year-match
@@ -85,6 +85,19 @@
          iso8601--outdated-reduced-precision-date-match
          iso8601--week-date-match
          iso8601--ordinal-date-match)))
+
+(defun iso8601--valid-year-string-p (year)
+  ;;Remacs: unsigned years use four digits; expanded years are signed.
+  (or (and (= (length year) 4)
+           (string-match-p "\\`[0-9][0-9][0-9][0-9]\\'" year))
+      (and (>= (length year) 6)
+           (memq (aref year 0) '(?+ ?-))
+           (string-match-p "\\`[+-][0-9]+\\'" year))))
+
+(defun iso8601--parse-year-string (year whole-string)
+  (unless (iso8601--valid-year-string-p year)
+    (signal 'wrong-type-argument (list whole-string)))
+  (string-to-number year))
 
 (defconst iso8601--time-match
   "\\([0-9][0-9]\\):?\\([0-9][0-9]\\)?:?\\([0-9][0-9]\\)?[.,]?\\([0-9]*\\)")
@@ -163,20 +176,20 @@ See `decode-time' for the meaning of FORM."
 (defun iso8601-parse-date (string)
   "Parse STRING (in ISO 8601 format) and return a `decode-time' value."
   (cond
-   ;; Just a year: [+-]YYYY.
+   ;; Just a basic year or signed expanded year.
    ((iso8601--match iso8601--year-match string)
     (iso8601--decoded-time
-     :year (string-to-number string)))
+     :year (iso8601--parse-year-string (match-string 1 string) string)))
    ;; Calendar dates: YYYY-MM-DD and variants.
    ((iso8601--match iso8601--full-date-match string)
     (iso8601--decoded-time
-     :year (string-to-number (match-string 1 string))
+     :year (iso8601--parse-year-string (match-string 1 string) string)
      :month (or (match-string 3 string) (match-string 5 string))
      :day (or (match-string 4 string) (match-string 6 string))))
    ;; Calendar date without day: YYYY-MM.
    ((iso8601--match iso8601--without-day-match string)
     (iso8601--decoded-time
-     :year (string-to-number string)
+     :year (iso8601--parse-year-string (match-string 1 string) string)
      :month (match-string 2 string)))
    ;; Outdated date without year: --MM-DD
    ((iso8601--match iso8601--outdated-date-match string)
@@ -185,7 +198,7 @@ See `decode-time' for the meaning of FORM."
      :day (match-string 2 string)))
    ;; Week dates: YYYY-Www-D
    ((iso8601--match iso8601--week-date-match string)
-    (let* ((year (string-to-number string))
+    (let* ((year (iso8601--parse-year-string (match-string 1 string) string))
            (week (string-to-number (match-string 2 string)))
            (day-of-week (and (match-string 3 string)
                              (string-to-number (match-string 3 string))))
@@ -216,7 +229,7 @@ See `decode-time' for the meaning of FORM."
                                :day (decoded-time-day month-day)))))
    ;; Ordinal dates: YYYY-DDD
    ((iso8601--match iso8601--ordinal-date-match string)
-    (let* ((year (string-to-number (match-string 1 string)))
+    (let* ((year (iso8601--parse-year-string (match-string 1 string) string))
            (ordinal (string-to-number (match-string 2 string)))
            (month-day (date-ordinal-to-time year ordinal)))
       (iso8601--decoded-time :year year
@@ -373,32 +386,42 @@ Return the number of minutes."
                   (or (null zone)
                       (save-match-data (iso8601--zone-in-range-p zone)))
                   (cond
+                    ((iso8601--match iso8601--year-match date)
+                     (iso8601--valid-year-string-p (match-string 1 date)))
                     ((iso8601--match iso8601--week-date-match date)
-                     (let* ((year (string-to-number (match-string 1 date)))
+                     (let* ((year-string (match-string 1 date))
+                            (year (string-to-number year-string))
                             (week (string-to-number (match-string 2 date)))
                             (day (match-string 3 date)))
-                       (and (<= 1 week (iso8601--weeks-in-year year))
+                       (and (iso8601--valid-year-string-p year-string)
+                            (<= 1 week (iso8601--weeks-in-year year))
                             (or (null day)
                                 (<= 1 (string-to-number day) 7)))))
                     ((iso8601--match iso8601--full-date-match date)
                      ;;Remacs: validate month/day combinations, including leap days.
-                     (let ((year (string-to-number (match-string 1 date)))
-                           (month (string-to-number
+                     (let* ((year-string (match-string 1 date))
+                            (year (string-to-number year-string))
+                            (month (string-to-number
                                    (or (match-string 3 date)
                                        (match-string 5 date))))
                            (day (string-to-number
                                  (or (match-string 4 date)
                                      (match-string 6 date)))))
-                       (and (<= 1 month 12)
+                       (and (iso8601--valid-year-string-p year-string)
+                            (<= 1 month 12)
                             (<= 1 day (date-days-in-month year month))))
                     ((iso8601--match iso8601--without-day-match date)
-                     (let ((month (string-to-number (match-string 2 date))))
-                       (<= 1 month 12)))
+                     (let ((year (match-string 1 date))
+                           (month (string-to-number (match-string 2 date))))
+                       (and (iso8601--valid-year-string-p year)
+                            (<= 1 month 12))))
                     ((iso8601--match iso8601--ordinal-date-match date)
                      ;;Remacs: day-of-year is bounded by leap-year status.
-                     (let ((year (string-to-number (match-string 1 date)))
-                           (ordinal (string-to-number (match-string 2 date))))
-                       (<= 1 ordinal (if (date-leap-year-p year) 366 365))))
+                     (let* ((year-string (match-string 1 date))
+                            (year (string-to-number year-string))
+                            (ordinal (string-to-number (match-string 2 date))))
+                       (and (iso8601--valid-year-string-p year-string)
+                            (<= 1 ordinal (if (date-leap-year-p year) 366 365)))))
                     (t t))))))))
 
 (defun iso8601--parse-duration-seconds (value)
