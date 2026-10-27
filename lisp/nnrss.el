@@ -992,8 +992,25 @@ Use Mark Pilgrim's `ultra-liberal rss locator'."
 (defun nnrss-rss-p (data)
   "Test if DATA is an RSS feed.
 Simply ensures that the first element is rss or rdf."
-  (or (eq (caar data) 'rss)
-      (eq (caar data) 'rdf:RDF)))
+  (let* ((root (car-safe data))
+         (root (if (eq (car-safe root) 'top)
+                   (car-safe (cddr root))
+                 root))
+         (tag (car-safe root))
+         (tag-name (and (symbolp tag) (symbol-name tag))))
+    (or (eq tag 'rss)
+        (when tag-name
+          (let* ((colon (string-match ":" tag-name))
+                 (local-name (if colon
+                                 (substring tag-name (1+ colon))
+                               tag-name))
+                 (prefix (and colon (substring tag-name 0 colon)))
+                 (xmlns (if prefix
+                            (intern (concat "xmlns:" prefix))
+                          'xmlns)))
+            (and (string= local-name "RDF")
+                 (equal (cdr (assq xmlns (cadr root)))
+                        "http://www.w3.org/1999/02/22-rdf-syntax-ns#")))))))
 
 (defun nnrss-rss-title-description (rss-namespace data url)
   "Return the title of an RSS feed."
