@@ -549,6 +549,24 @@ the bounds of a possible ill-formed URI (one lacking a scheme)."
       (if found
 	  (cons (match-beginning 1) (match-end 1))))))
 
+(defun thing-at-point--trim-unmatched-closing-parentheses (beg end)
+  "Trim trailing unmatched `)' characters from the URI between BEG and END."
+  (let ((position beg)
+        (depth 0)
+        unmatched)
+    (while (< position end)
+      (let ((character (char-after position)))
+        (cond ((= character ?\() (setq depth (1+ depth)))
+              ((= character ?\))
+               (if (> depth 0)
+                   (setq depth (1- depth))
+                 (push position unmatched)))))
+      (setq position (1+ position)))
+    (while (and unmatched (= (car unmatched) (1- end)))
+      (setq end (1- end)
+            unmatched (cdr unmatched)))
+    end))
+
 (defun thing-at-point--bounds-of-well-formed-url (beg end pt)
   (save-excursion
     (goto-char beg)
@@ -578,6 +596,8 @@ the bounds of a possible ill-formed URI (one lacking a scheme)."
                                    (scan-lists (1- url-beg) 1 0)))))
 	     (not (blink-matching-check-mismatch (1- url-beg) paren-end))
 	     (setq end (1- paren-end)))
+	(setq end (thing-at-point--trim-unmatched-closing-parentheses
+		    url-beg end))
 	;; Ensure PT is actually within BOUNDARY. Check the following
 	;; example with point on the beginning of the line:
 	;;
