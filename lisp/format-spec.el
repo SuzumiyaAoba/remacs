@@ -99,8 +99,9 @@ is returned, where each format spec is its own element."
           (cond
            ;; Quoted percent sign.
            ((= (following-char) ?%)
-            (when (memq ignore-missing '(nil ignore delete))
-              (delete-char 1)))
+            (if (memq ignore-missing '(nil ignore delete))
+                (delete-char 1)
+              (forward-char 1)))
            ;; Valid format spec.
            ((looking-at (rx (? (group (+ (in " 0<>^_-"))))
                             (? (group (+ digit)))
