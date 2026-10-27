@@ -2280,12 +2280,28 @@ fn f_window_size_fixed_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 }
 
-/// `truncated-partial-width-window-p' — nil; GNU checks the window
-/// is live with the plain "not a live window" error.
 fn f_truncated_partial_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Window(_) => Ok(Value::Nil),
-        other => Err(err_not_live_window(i, &other)),
+    // Match window.el: normalize with LIVE-ONLY, then check the width
+    // against the buffer-local truncate-partial-width-windows setting.
+    let normalize = Value::Sym(i.q("window-normalize-window"));
+    let window = i.apply(&normalize, vec![arg(&a, 0), Value::t()])?;
+    let full_width = Value::Sym(i.q("window-full-width-p"));
+    if i.apply(&full_width, vec![window.clone()])?.truthy() {
+        return Ok(Value::Nil);
+    }
+    let window_buffer = Value::Sym(i.q("window-buffer"));
+    let buffer = i.apply(&window_buffer, vec![window.clone()])?;
+    let option = Value::Sym(i.q("truncate-partial-width-windows"));
+    let setting = Value::Sym(i.q("buffer-local-value"));
+    let setting = i.apply(&setting, vec![option, buffer])?;
+    match setting {
+        integer @ (Value::Int(_) | Value::BigInt(_)) => {
+            let total_width = Value::Sym(i.q("window-total-width"));
+            let width = i.apply(&total_width, vec![window])?;
+            let less = Value::Sym(i.q("<"));
+            i.apply(&less, vec![width, integer])
+        }
+        other => Ok(other),
     }
 }
 
