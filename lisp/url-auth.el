@@ -219,9 +219,17 @@ Value returned is in string format with leading zeroes, such as
 
 Output is formatted as \"name1=\\\"value1\\\", name2=\\\"value2\\\", ...\""
   (mapconcat (lambda (pair)
-               (format "%s=\"%s\""
-                       (symbol-name (car pair))
-                       (cdr pair)))
+               (let ((value (format "%s" (cdr pair))))
+                 ;; Quote and backslash are quoted-pairs inside Digest values.
+                 (setq value
+                       (replace-regexp-in-string
+                        (regexp-quote "\\") (concat "\\" "\\")
+                        value t t))
+                 (setq value
+                       (replace-regexp-in-string
+                        (regexp-quote "\"") (concat "\\" "\"")
+                        value t t))
+                 (format "%s=\"%s\"" (symbol-name (car pair)) value)))
              pairs ", "))
 
 (defun url-digest-auth-source-creds (url)
