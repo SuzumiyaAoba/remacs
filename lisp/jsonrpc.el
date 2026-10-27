@@ -263,6 +263,14 @@ error and replying to the endpoint with an JSONRPC-error.  This
 variable can be set around calls like `jsonrpc-request' to
 circumvent that.")
 
+(defun jsonrpc--structured-params-p (params)
+  "Return non-nil if PARAMS has a JSON-RPC array or object representation.
+Plists, alists, hash tables, and vectors are the representations used by
+`jsonrpc.el'.  Nil is also accepted because an empty plist object is nil."
+  (or (listp params)
+      (and (vectorp params) (not (stringp params)))
+      (hash-table-p params)))
+
 (defun jsonrpc-connection-receive (conn foreign-message)
   "Process FOREIGN-MESSAGE just received from CONN.
 This function will destructure MESSAGE and call the appropriate
@@ -273,6 +281,7 @@ dispatcher in CONN."
          (method (plist-get whole :method))
          (id (plist-get whole :id))
          (id-present-p (plist-member whole :id))
+         (params-present-p (plist-member whole :params))
          (error (plist-get whole :error))
          (params (plist-get whole :params))
          (result (plist-get whole :result))
@@ -352,23 +361,27 @@ dispatcher in CONN."
                 ;; of the cleanup below.
                 (push `((:remote ,id)) (jsonrpc--scontrol conn))
                 (unwind-protect
-                    (setq
-                     reply
-                     (condition-case oops
-                         `(:result
-                           ,(funcall rdispatcher conn (intern method) params))
-                       (jsonrpc-error
-                        (let* ((data (cdr oops))
-                               (code (alist-get 'jsonrpc-error-code data))
-                               (msg (alist-get 'jsonrpc-error-message
-                                               (cdr oops))))
-                          (if (eq code 32000) ;; This means 'no error'
-                              (when-let* ((d (alist-get 'jsonrpc-error-data
-                                                        data)))
-                                `(:result ,d))
-                            `(:error
-                              (:code ,(or code -32603)
-                                     :message ,(or msg "Internal error"))))))))
+                    (if (and params-present-p
+                             (not (jsonrpc--structured-params-p params)))
+                        (setq reply
+                              '(:error (:code -32600 :message "Invalid Request")))
+                      (setq
+                       reply
+                       (condition-case oops
+                           `(:result
+                             ,(funcall rdispatcher conn (intern method) params))
+                         (jsonrpc-error
+                          (let* ((data (cdr oops))
+                                 (code (alist-get 'jsonrpc-error-code data))
+                                 (msg (alist-get 'jsonrpc-error-message
+                                                 (cdr oops))))
+                            (if (eq code 32000) ;; This means 'no error'
+                                (when-let* ((d (alist-get 'jsonrpc-error-data
+                                                          data)))
+                                  `(:result ,d))
+                              `(:error
+                                (:code ,(or code -32603)
+                                       :message ,(or msg "Internal error")))))))))
                   (unless reply
                     (setq reply
                           `(:error (:code -32603 :message "Internal error"))))
