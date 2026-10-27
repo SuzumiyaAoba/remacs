@@ -253,7 +253,8 @@ DST is returned as -1)."
       ;; Timezone.
       (let* ((zone (pop tokens))
              (match (assoc zone parse-time-zoneinfo)))
-        (cond (match
+        ;;Remacs: alphabetic zones are obsolete RFC 822 syntax.
+        (cond ((and match (not no-822))
                 (set-matched-slot 8 nil (cadr match))
                 (set-matched-slot 7 nil (caddr match)))
               ((and (stringp zone)
