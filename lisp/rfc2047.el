@@ -997,6 +997,34 @@ ENCODED-WORD)."
 ;; and worthwhile (is it more correct or not?), e.g. something like
 ;; `=?iso-8859-1?q?foo?=@'.
 
+(defun rfc2047--address-encoded-word-forbidden-p (position)
+  "Return non-nil if an encoded-word at POSITION is in a forbidden address context."
+  (save-excursion
+    (save-match-data
+      (let ((table (copy-syntax-table rfc2047-syntax-table)))
+        ;; RFC comments may contain encoded-words; address and domain
+        ;; literals must not.
+        (modify-syntax-entry ?\( "<" table)
+        (modify-syntax-entry ?\) ">" table)
+        (modify-syntax-entry ?< "(" table)
+        (modify-syntax-entry ?> ")" table)
+        (modify-syntax-entry ?\[ "(" table)
+        (modify-syntax-entry ?\] ")" table)
+        (with-syntax-table table
+          (let ((state (parse-partial-sexp (point-min) position)))
+            (or (nth 3 state)
+                (> (nth 1 state) 0)
+                (and (not (nth 4 state))
+                     (save-excursion
+                       (goto-char position)
+                       (skip-chars-backward "^ \t\n,;<>:\"()[]")
+                       (let ((start (point)))
+                         (goto-char position)
+                         (skip-chars-forward "^ \t\n,;<>:\"()[]")
+                         (string-match-p
+                          "@" (buffer-substring-no-properties
+                               start (point))))))))))))
+
 (defun rfc2047-decode-region (start end &optional address-mime)
   "Decode MIME-encoded words in region between START and END.
 If ADDRESS-MIME is non-nil, strip backslashes which precede characters
@@ -1017,7 +1045,13 @@ other than `\"' and `\\' in quoted strings."
 	  (rfc2047-strip-backslashes-in-quoted-strings))
 	(goto-char (setq b start))
 	;; Look for the encoded-words.
-	(while (setq match (re-search-forward eword-regexp nil t))
+	(while (progn
+		 (setq match (re-search-forward eword-regexp nil t))
+		 (while (and match address-mime
+			     (rfc2047--address-encoded-word-forbidden-p
+			      (match-beginning 1)))
+		   (setq match (re-search-forward eword-regexp nil t)))
+		 match)
 	  (setq e (match-beginning 1)
 		end (match-end 0)
 		words nil)
@@ -1028,7 +1062,10 @@ other than `\"' and `\\' in quoted strings."
 			(match-string 1)) ;; encoded-word
 		  words)
 	    ;; Look for the subsequent encoded-words.
-	    (when (setq match (looking-at eword-regexp))
+	    (when (and (setq match (looking-at eword-regexp))
+		       (or (not address-mime)
+			   (not (rfc2047--address-encoded-word-forbidden-p
+				 (match-beginning 1)))))
 	      (goto-char (setq end (match-end 0)))))
 	  ;; Replace the encoded-words with the decoded one.
 	  (delete-region e end)
