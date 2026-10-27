@@ -276,15 +276,18 @@ dispatcher in CONN."
          (error (plist-get whole :error))
          (params (plist-get whole :params))
          (result (plist-get whole :result))
-         (_jsonrpc (plist-get whole :jsonrpc)))
+         (jsonrpc-version (plist-get whole :jsonrpc))
+         (jsonrpc-version-valid-p (equal jsonrpc-version "2.0")))
     (unwind-protect
         (let* ((log-plist (list :json (plist-get foreign-message :jsonrpc-json)
-                                :kind (cond ((and method id-present-p) 'request)
+                                :kind (cond ((not jsonrpc-version-valid-p) 'malformed)
+                                            ((and method id-present-p) 'request)
                                             (method          'notification)
                                             (id-present-p    'reply))
                                 :message whole
                                 :foreign-message foreign-message))
-               (response-p (and (null method) id-present-p))
+               (response-p (and jsonrpc-version-valid-p
+                                (null method) id-present-p))
                (cont (and response-p (jsonrpc--remove conn id))))
           (cl-remf foreign-message :jsonrpc-json)
           ;; Do this pre-processing of the response so we can always
@@ -336,7 +339,7 @@ dispatcher in CONN."
               response-p
               (jsonrpc--continue conn `(:local ,id) cont result error))
              (;; A remote request
-              (and method id-present-p)
+              (and jsonrpc-version-valid-p method id-present-p)
               (let* ((debug-on-error (and debug-on-error
                                           (not jsonrpc-inhibit-debug-on-error)))
                      reply)
@@ -372,7 +375,7 @@ dispatcher in CONN."
                   (apply #'jsonrpc--reply conn id method reply)
                   (jsonrpc--continue conn `(:remote ,id)))))
              (;; A remote notification
-              method
+              (and jsonrpc-version-valid-p method)
               (funcall ndispatcher conn (intern method) params))
              (t
               (jsonrpc--event conn 'internal
