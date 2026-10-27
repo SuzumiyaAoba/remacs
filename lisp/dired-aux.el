@@ -2332,12 +2332,13 @@ renamed to `new_name'."
 	(copy-directory from to preserve-time)
       (or top (dired-handle-overwrite to))
       (condition-case err
-	  (if (and (not dereference)
-                   (stringp (file-attribute-type attrs)))
-	      ;; It is a symlink
-	      (make-symbolic-link (file-attribute-type attrs) to ok-flag)
-            (dired-maybe-create-dirs (file-name-directory to))
-	    (copy-file from to ok-flag preserve-time))
+	  (progn
+	    (dired-maybe-create-dirs (file-name-directory to))
+	    (if (and (not dereference)
+	             (stringp (file-attribute-type attrs)))
+		;; It is a symlink
+		(make-symbolic-link (file-attribute-type attrs) to ok-flag)
+	      (copy-file from to ok-flag preserve-time)))
 	(file-date-error
 	 (push (dired-make-relative from)
 	       dired-create-files-failures)
