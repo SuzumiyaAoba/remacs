@@ -558,7 +558,13 @@ Please see the documentation of `json-object-type' and `json-key-type'."
       (json-skip-whitespace)
       (when (/= (json-peek) ?\})
         (if (= (json-peek) ?,)
-            (json-advance)
+            (progn
+              (json-advance)
+              (json-skip-whitespace)
+              (when (= (json-peek) ?\})
+                ;;Remacs: JSON requires a member after each comma.
+                (signal 'json-object-format
+                        (list "object member after comma" ?\}))))
           (signal 'json-object-format (list "," (json-peek))))))
     ;; Skip over the '}'.
     (json-advance)
@@ -663,7 +669,13 @@ simple lists become JSON arrays."
       (json-skip-whitespace)
       (when (/= (json-peek) ?\])
         (if (= (json-peek) ?,)
-            (json-advance)
+            (progn
+              (json-advance)
+              (json-skip-whitespace)
+              (when (= (json-peek) ?\])
+                ;;Remacs: JSON requires a value after each comma.
+                (signal 'json-array-format
+                        (list "array element after comma" ?\]))))
           (signal 'json-array-format (list "," (json-peek))))))
     ;; Skip over the ']'.
     (json-advance)
