@@ -255,7 +255,8 @@ The returned range is always a list.  RANGE2 can also be a unsorted
 list of numbers.  RANGE1 is modified by side effects, RANGE2 is not
 modified."
   (if (or (null range1) (null range2))
-      range1
+      ;;Remacs: keep single-range shorthand normalized even on no-op.
+      (range-normalize range1)
     (let (out r1 r2 r1-min r1-max r2-min r2-max
 	      (range2 (copy-tree range2)))
       (setq range1 (if (listp (cdr range1)) range1 (list range1))
