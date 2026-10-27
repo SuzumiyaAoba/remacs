@@ -509,13 +509,18 @@ This command uses `nslookup-program' to look up DNS records."
           (t (error "Invalid format: %s" format)))))
 
 (defun nslookup--ipv6-expand (ipv6-vector)
-  (let ((len (length ipv6-vector)))
-    (if (< len 8)
-        (let* ((pivot (cl-position 0 ipv6-vector))
-               (head (cl-subseq ipv6-vector 0 pivot))
-               (tail (cl-subseq ipv6-vector (1+ pivot) len)))
-          (vconcat head (make-vector (- 8 (1- len)) 0) tail))
-      ipv6-vector)))
+  (let* ((len (length ipv6-vector))
+         (pivot (cl-position nil ipv6-vector)))
+    (if pivot
+        (let* ((head (cl-subseq ipv6-vector 0 pivot))
+               (tail (cl-subseq ipv6-vector (1+ pivot) len))
+               (zero-count (- 8 (length head) (length tail))))
+          (unless (> zero-count 0)
+            (error "Invalid IPv6 address"))
+          (vconcat head (make-vector zero-count 0) tail))
+      (if (= len 8)
+          ipv6-vector
+        (error "Invalid IPv6 address")))))
 
 ;;;###autoload
 (defun nslookup-host-ipv6 (host &optional name-server format)
@@ -531,8 +536,7 @@ This command uses `nslookup-program' to look up DNS records."
   (let* ((args `(,nslookup-program "-type=AAAA" ,host ,name-server))
          (output (shell-command-to-string
                   (string-join (cl-remove nil args) " ")))
-         (hextet "[0-9a-fA-F]\\{1,4\\}")
-         (ip-regex (concat "\\(\\(" hextet "[:]\\)\\{1,6\\}\\([:]?\\(" hextet "\\)\\{1,6\\}\\)\\)"))
+         (ip-regex "\\([0-9a-fA-F:]+\\)")
          (ip (or (and (string-match
                        (if (eq system-type 'windows-nt)
                            (concat "Name:.*\nAddress: *" ip-regex)
@@ -543,10 +547,27 @@ This command uses `nslookup-program' to look up DNS records."
     (cond ((memq format '(string nil))
            ip)
           ((eq format 'vector)
-           (nslookup--ipv6-expand
-            (apply #'vector
-                   (cl-loop for hextet in (split-string ip "[:]")
-                            collect (string-to-number hextet 16)))))
+           (let* ((compression (string-match "::" ip))
+                  (left (if compression (substring ip 0 compression) ip))
+                  (right (and compression (substring ip (+ compression 2))))
+                  (left-parts (if (equal left "") nil
+                                (split-string left ":")))
+                  (right-parts (if (and right (not (equal right "")))
+                                   (split-string right ":")))
+                  (parts (append left-parts
+                                 (and compression (list nil))
+                                 right-parts))
+                  (values
+                   (mapcar
+                    (lambda (part)
+                      (when part
+                        (unless (and (<= 1 (length part) 4)
+                                     (string-match-p
+                                      "^[0-9a-fA-F]+$" part))
+                          (error "Invalid IPv6 address: %s" ip))
+                        (string-to-number part 16)))
+                    parts)))
+             (nslookup--ipv6-expand (vconcat values))))
           (t (error "Invalid format: %s" format)))))
 
 ;;;###autoload
