@@ -529,18 +529,39 @@ be of the same type as START.  The returned value is an
      (make-decoded-time :day (- (calendar-absolute-from-gregorian end)
                                 (calendar-absolute-from-gregorian start))))
     (icalendar-date-time
-     (let* ((start-abs (time-convert (encode-time start) 'integer))
-            (end-abs (time-convert (encode-time end) 'integer))
-            (delta-secs (- end-abs start-abs))
-            (sign (if (< delta-secs 0) -1 1))
-            (magnitude (abs delta-secs))
-            (days (/ magnitude (* 60 60 24)))
-            (dur-nodays (mod magnitude (* 60 60 24)))
-            (hours (/ dur-nodays (* 60 60)))
-            (dur-nohours (mod dur-nodays (* 60 60)))
-            (minutes (/ dur-nohours 60))
-            (seconds (mod dur-nohours 60)))
-       (make-decoded-time :day (* sign days)
+     (let* ((calendar-days
+             (- (calendar-absolute-from-gregorian
+                 (icalendar-date-time-to-date end))
+                (calendar-absolute-from-gregorian
+                 (icalendar-date-time-to-date start))))
+            (wall-delta
+             (- (+ (* 3600 (decoded-time-hour end))
+                   (* 60 (decoded-time-minute end))
+                   (decoded-time-second end))
+                (+ (* 3600 (decoded-time-hour start))
+                   (* 60 (decoded-time-minute start))
+                   (decoded-time-second start))))
+            ;; Use calendar days rather than 86400-second blocks so DST
+            ;; transitions do not change a same-clock-time day interval.
+            ;; Normalize the clock-time difference so all duration
+            ;; components have the same sign, as required by RFC 5545.
+            (days (cond ((and (> calendar-days 0) (< wall-delta 0))
+                         (1- calendar-days))
+                        ((and (< calendar-days 0) (> wall-delta 0))
+                         (1+ calendar-days))
+                        (t calendar-days)))
+            (time-delta (cond ((and (> calendar-days 0) (< wall-delta 0))
+                               (+ wall-delta (* 60 60 24)))
+                              ((and (< calendar-days 0) (> wall-delta 0))
+                               (- wall-delta (* 60 60 24)))
+                              (t wall-delta)))
+            (sign (if (< time-delta 0) -1 1))
+            (magnitude (abs time-delta))
+            (hours (/ magnitude (* 60 60)))
+            (remainder (mod magnitude (* 60 60)))
+            (minutes (/ remainder 60))
+            (seconds (mod remainder 60)))
+       (make-decoded-time :day days
                           :hour (* sign hours)
                           :minute (* sign minutes)
                           :second (* sign seconds))))))
