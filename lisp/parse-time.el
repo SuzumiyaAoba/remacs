@@ -215,8 +215,9 @@ Fall back on parsing something resembling an RFC 822 (or later) date-time.
 This function is like `parse-time-string' except that it returns
 a Lisp timestamp when successful.
 
-See `decode-time' for the meaning of FORM."
-  (when-let* ((time (parse-time-string date-string form)))
+If FORM is nil, preserve fractional seconds in DATE-STRING.  Otherwise,
+see `decode-time' for the meaning of FORM."
+  (when-let* ((time (parse-time-string date-string (or form t))))
     (encode-time time)))
 
 (provide 'parse-time)
