@@ -1,9 +1,10 @@
 //! Frontend-independent rendering, input protocol, and editor command loop.
 //!
-//! Non-blocking design: the loop always `poll`s input with a timeout,
-//! renders the frame, and executes commands. Long Lisp operations can
-//! interleave with repaints because `sit-for`/`sleep-for` hand control
-//! back to this loop rather than blocking inside the evaluator.
+//! Non-blocking design: the loop polls input with a timeout, redraws
+//! after input or runtime activity, and executes commands. Front-ends
+//! can request periodic idle renders when they need them. Long Lisp
+//! operations can interleave with repaints because `sit-for`/`sleep-for`
+//! hand control back to this loop rather than blocking inside the evaluator.
 
 use std::io;
 use std::ops::Range;
@@ -35,6 +36,16 @@ pub trait KeyIo {
     fn unread(&mut self, k: i128);
     /// Repaint the whole frame.
     fn render(&mut self, i: &Interp) -> io::Result<()>;
+    /// Whether this front-end needs periodic renders without input or
+    /// runtime activity (for example, a terminal cursor animation).
+    fn render_on_idle(&self) -> bool {
+        true
+    }
+    /// Consume a front-end event that requires redisplay without being
+    /// represented as a key or text input, such as a resize.
+    fn take_render_request(&mut self) -> bool {
+        false
+    }
     /// Show TEXT in the echo area (minibuffer prompt/status).
     fn draw_echo(&mut self, text: &str) -> io::Result<()>;
     /// Show minibuffer text while retaining front-end style information.

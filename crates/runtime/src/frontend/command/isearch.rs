@@ -392,21 +392,34 @@ pub(super) fn isearch_loop<T: KeyIo>(
     regexp: bool,
 ) -> io::Result<()> {
     let mut st = Isearch::new(i, backward, regexp);
+    let mut render_needed = true;
     loop {
-        if let Err(flow) = crate::lisp::eval::threads::yield_now(i)
-            .and_then(|_| crate::lisp::builtins::evalfn::thread_wait_events(i))
-        {
-            report_flow(i, flow);
-            st.clear(i);
-            break;
-        }
-        {
-            if let Err(flow) = crate::editor::changes::run(i) {
+        let event_activity = match crate::lisp::eval::threads::yield_now(i).and_then(|ran_thread| {
+            crate::lisp::builtins::evalfn::thread_wait_events(i)
+                .map(|ran_events| ran_thread || ran_events)
+        }) {
+            Ok(activity) => activity,
+            Err(flow) => {
                 report_flow(i, flow);
+                st.clear(i);
+                break;
             }
+        };
+        let window_activity = match crate::editor::changes::run(i) {
+            Ok(activity) => activity,
+            Err(flow) => {
+                report_flow(i, flow);
+                true
+            }
+        };
+        let render_on_idle = term.borrow().render_on_idle();
+        let render_requested = term.borrow_mut().take_render_request();
+        render_needed |= event_activity || window_activity || render_on_idle || render_requested;
+        if render_needed {
             let mut t = term.borrow_mut();
             let _ = t.render(i);
             let _ = t.draw_echo(&st.label());
+            render_needed = false;
         }
         let Some(key) = term.borrow_mut().poll_key(Duration::from_millis(50))? else {
             continue;
@@ -416,6 +429,7 @@ pub(super) fn isearch_loop<T: KeyIo>(
         // render paints the matches (GNU: isearch-update →
         // isearch-highlight + lazy-highlight).
         st.refresh_overlays(i);
+        render_needed = true;
         match action {
             IsearchAction::Continue => {}
             IsearchAction::Abort | IsearchAction::Done => break,

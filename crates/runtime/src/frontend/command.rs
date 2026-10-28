@@ -134,19 +134,35 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
     // digits, `-', and further C-u keep building `prefix-arg' (Emacs's
     // `universal-argument' continuation behavior).
     let mut arg_mode = false;
+    let mut render_needed = true;
     loop {
-        if let Err(flow) = crate::lisp::eval::threads::yield_now(i)
-            .and_then(|_| crate::lisp::builtins::evalfn::thread_wait_events(i))
-        {
-            report_flow(i, flow);
-        }
+        let event_activity = match crate::lisp::eval::threads::yield_now(i).and_then(|ran_thread| {
+            crate::lisp::builtins::evalfn::thread_wait_events(i)
+                .map(|ran_events| ran_thread || ran_events)
+        }) {
+            Ok(activity) => activity,
+            Err(flow) => {
+                report_flow(i, flow);
+                true
+            }
+        };
         if i.quit_editor {
             break;
         }
-        if let Err(flow) = crate::editor::changes::run(i) {
-            report_flow(i, flow);
+        let window_activity = match crate::editor::changes::run(i) {
+            Ok(activity) => activity,
+            Err(flow) => {
+                report_flow(i, flow);
+                true
+            }
+        };
+        let render_on_idle = term.borrow().render_on_idle();
+        let render_requested = term.borrow_mut().take_render_request();
+        render_needed |= event_activity || window_activity || render_on_idle || render_requested;
+        if render_needed {
+            term.borrow_mut().render(i)?;
+            render_needed = false;
         }
-        term.borrow_mut().render(i)?;
         // Replayed macro events take priority over real input;
         // `executing-kbd-macro` clears once the queue drains.
         let input = match i.macro_replay.pop_front() {
@@ -174,6 +190,7 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
                 dispatch_text_range(i, &range, &text, &mut keys, &mut arg_mode)
             }
         }
+        render_needed = true;
         i.macro_replaying = false;
         // A command error while replaying a macro aborts the rest of
         // the replay; the queue was already cleared.
@@ -768,11 +785,19 @@ fn minibuf_loop<T: KeyIo>(
     // `exit' to end the read.
     let mut keys: Vec<i128> = Vec::new();
     let mut arg_mode = false;
+    let mut render_needed = true;
     loop {
-        crate::lisp::eval::threads::yield_now(i)?;
-        crate::lisp::builtins::evalfn::thread_wait_events(i)?;
-        crate::editor::changes::run(i)?;
-        {
+        let thread_activity = crate::lisp::eval::threads::yield_now(i)?;
+        let event_activity = crate::lisp::builtins::evalfn::thread_wait_events(i)?;
+        let window_activity = crate::editor::changes::run(i)?;
+        let render_on_idle = term.borrow().render_on_idle();
+        let render_requested = term.borrow_mut().take_render_request();
+        render_needed |= thread_activity
+            || event_activity
+            || window_activity
+            || render_on_idle
+            || render_requested;
+        if render_needed {
             let mut t = term.borrow_mut();
             let shown = if single {
                 prompt.to_string()
@@ -784,6 +809,7 @@ fn minibuf_loop<T: KeyIo>(
             } else {
                 let _ = t.draw_echo_with_state(i, &shown.to_unicode_lossy());
             }
+            render_needed = false;
         }
         // Propagate io errors — swallowing them as None spins an
         // infinite poll loop on a dead input source.
@@ -812,6 +838,7 @@ fn minibuf_loop<T: KeyIo>(
                 dispatch_text_range(i, &range, &text, &mut keys, &mut arg_mode)
             }
         }
+        render_needed = true;
         if let Some(f) = i.minibuf_exit_fn.take() {
             return Ok(MinibufInput::Call(f));
         }

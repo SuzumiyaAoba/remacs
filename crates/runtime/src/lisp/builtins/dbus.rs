@@ -1911,9 +1911,10 @@ fn monitor(
 /// `xd_read_message' for one bus — read_write(0) + pop until the
 /// dispatch queue is empty.  GNU catches `dbus-error' around this
 /// (internal_catch); do the same.
-fn read_bus(i: &mut Interp, bus: &Value) -> Result<(), Flow> {
+fn read_bus(i: &mut Interp, bus: &Value) -> Result<bool, Flow> {
     let conn = get_connection(i, bus)?;
     let d = dbus().unwrap();
+    let mut did_work = false;
     unsafe {
         (d.dbus_connection_read_write)(conn, 0);
         loop {
@@ -1921,31 +1922,36 @@ fn read_bus(i: &mut Interp, bus: &Value) -> Result<(), Flow> {
                 break;
             }
             read_message_1(i, conn, bus)?;
+            did_work = true;
         }
     }
-    Ok(())
+    Ok(did_work)
 }
 
 /// `xd_read_queued_messages' — drain every registered bus, dispatching
 /// `dbus-event's synchronously.  Called from the
 /// `sleep_firing_timers' wait pump and `read-event'.
-pub fn drain(i: &mut Interp) -> EvalResult {
+pub fn drain(i: &mut Interp) -> Result<bool, Flow> {
     if i.dbus.buses.is_empty() || dbus().is_none() {
-        return Ok(Value::Nil);
+        return Ok(false);
     }
     let buses: Vec<Value> = i.dbus.buses.iter().map(|r| r.bus.clone()).collect();
     let dbe = intern(i, "dbus-error");
+    let mut did_work = false;
     for bus in buses {
-        if let Err(f) = read_bus(i, &bus) {
-            // GNU: internal_catch (Qdbus_error, ...) — only D-Bus
-            // errors are swallowed; everything else propagates.
-            match f {
-                Flow::Signal(ref signal) if signal.is_symbol(dbe) => {}
-                _ => return Err(f),
+        match read_bus(i, &bus) {
+            Ok(bus_work) => did_work |= bus_work,
+            Err(f) => {
+                // GNU: internal_catch (Qdbus_error, ...) — only D-Bus
+                // errors are swallowed; everything else propagates.
+                match f {
+                    Flow::Signal(ref signal) if signal.is_symbol(dbe) => {}
+                    _ => return Err(f),
+                }
             }
         }
     }
-    Ok(Value::Nil)
+    Ok(did_work)
 }
 
 // ---------------------------------------------------------------------------

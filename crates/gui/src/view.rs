@@ -452,8 +452,10 @@ pub(super) fn build_editor_view(
         while let Ok(grid) = grid_rx.recv().await {
             if this
                 .update(cx, |v, cx| {
-                    v.grid = grid;
-                    cx.notify();
+                    if v.grid != grid || grid.blink_cursor {
+                        v.grid = grid;
+                        cx.notify();
+                    }
                 })
                 .is_err()
             {

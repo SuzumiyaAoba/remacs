@@ -237,6 +237,7 @@ fn chan_pair() -> (ChanIo, Sender<GuiEvent>, smol::channel::Receiver<Grid>) {
             cols: 80,
             rows: 24,
             last: None,
+            render_requested: false,
         },
         etx,
         grx,

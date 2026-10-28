@@ -64,15 +64,17 @@ pub(crate) fn signal_main(i: &mut Interp, symbol: Value, data: Value) {
         .push(Value::list(vec![Value::Sym(event), sender, symbol, data]));
 }
 
-pub(crate) fn drain_main_events(i: &mut Interp) -> Result<(), Flow> {
+pub(crate) fn drain_main_events(i: &mut Interp) -> Result<bool, Flow> {
+    let mut did_work = false;
     if i.current_thread == 0 {
         let events = std::mem::take(&mut i.thread_scheduler.main_events);
+        did_work = !events.is_empty();
         for event in events {
             let handler = i.q("thread-handle-event");
             i.apply(&Value::Sym(handler), vec![event])?;
         }
     }
-    Ok(())
+    Ok(did_work)
 }
 
 // These fields describe the active Rust/Lisp call stack, rather than the
@@ -336,12 +338,12 @@ fn suspend(i: &mut Interp, wait: Wait) -> Result<(), Flow> {
     check_signal(i)
 }
 
-pub(crate) fn yield_now(i: &mut Interp) -> Result<(), Flow> {
+pub(crate) fn yield_now(i: &mut Interp) -> Result<bool, Flow> {
     if i.thread_yielder.is_some() {
-        suspend(i, Wait::Runnable)
+        suspend(i, Wait::Runnable)?;
+        Ok(true)
     } else {
-        run_one(i)?;
-        check_signal(i)
+        run_one(i)
     }
 }
 

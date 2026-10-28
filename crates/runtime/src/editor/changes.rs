@@ -171,10 +171,10 @@ fn record(i: &Interp) {
 
 /// Called from a mutable, non-recursive redisplay boundary. Batch evaluation
 /// does not call this, just as GNU's batch frames do not run change functions.
-pub fn run(i: &mut Interp) -> Result<(), Flow> {
+pub fn run(i: &mut Interp) -> Result<bool, Flow> {
     let inhibit = i.q("inhibit-redisplay");
     if i.symbol_value(inhibit).truthy() {
-        return Ok(());
+        return Ok(false);
     }
     let mark = i.specbind_depth();
     i.specbind(inhibit, Value::t())?;
@@ -271,7 +271,7 @@ pub fn run(i: &mut Interp) -> Result<(), Flow> {
         record(i);
     }
     let _ = i.unbind_to(mark);
-    result
+    result.map(|()| changed)
 }
 
 #[cfg(test)]

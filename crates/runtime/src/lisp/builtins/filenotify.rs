@@ -675,17 +675,19 @@ fn dispatch_kevent(
 
 // Pop before calling Lisp: an error consumes only the current event, and a
 // nested read can deliver the older notifications still waiting in this queue.
-fn dispatch_pending(i: &mut crate::lisp::eval::Interp) -> EvalResult {
+fn dispatch_pending(i: &mut crate::lisp::eval::Interp) -> Result<bool, Flow> {
+    let mut did_work = false;
     while let Some(event) = i.filenotify.pending_notifications.pop_front() {
         dispatch_special_event(i, &event)?;
+        did_work = true;
     }
-    Ok(Value::Nil)
+    Ok(did_work)
 }
 
 /// Drain kernel events into Lisp callbacks — called from the
 /// `sleep_firing_timers' wait pump (and `accept-process-output').
-pub fn drain(i: &mut crate::lisp::eval::Interp) -> EvalResult {
-    dispatch_pending(i)?;
+pub fn drain(i: &mut crate::lisp::eval::Interp) -> Result<bool, Flow> {
+    let mut did_work = dispatch_pending(i)?;
     let raw: Vec<(i32, u32)> = {
         let mut p = PENDING.lock().unwrap();
         std::mem::take(&mut *p)
@@ -697,11 +699,13 @@ pub fn drain(i: &mut crate::lisp::eval::Interp) -> EvalResult {
     // Finish directory comparisons and watch bookkeeping first: callbacks
     // may remove or replace any watch, or create another directory entry.
     let mut notifications = Vec::new();
+    did_work |= !raw.is_empty();
     for (fd, fflags) in raw {
         dispatch_kevent(i, fd, fflags, &mut notifications)?;
     }
     i.filenotify.pending_notifications.extend(notifications);
-    dispatch_pending(i)
+    did_work |= dispatch_pending(i)?;
+    Ok(did_work)
 }
 
 // ---------------------------------------------------------------------------

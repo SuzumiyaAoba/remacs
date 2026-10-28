@@ -4509,21 +4509,22 @@ pub(crate) fn f_ding(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {
 /// repeat timers and swallows handler errors itself).  GNU never
 /// fires idle timers without an input loop, so `timer-idle-list' is
 /// intentionally not consulted here.
-pub(crate) fn timer_check(i: &mut Interp) -> EvalResult {
+pub(crate) fn timer_check(i: &mut Interp) -> Result<bool, Flow> {
     let tl = i.q("timer-list");
     let list = i.symbol_value(tl);
     // Snapshot: the handler mutates `timer-list' while running.
     let timers = list.list_to_vec().unwrap_or_default();
     if timers.is_empty() {
-        return Ok(Value::Nil);
+        return Ok(false);
     }
     let handler = i.q("timer-event-handler");
     if let Value::Sym(s) = i.symbol_function(handler) {
         if s == crate::lisp::sym::UNBOUND {
-            return Ok(Value::Nil);
+            return Ok(false);
         }
     }
     let now = super::misc::lisp_time_to_ns(i, &Value::Nil)?;
+    let mut did_work = false;
     for timer in timers {
         // Slots: [triggered high low usec repeat function args idle psec
         //         integral-multiple]
@@ -4556,9 +4557,10 @@ pub(crate) fn timer_check(i: &mut Interp) -> EvalResult {
                 v.borrow_mut()[0] = Value::t();
             }
             i.apply(&Value::Sym(handler), vec![timer])?;
+            did_work = true;
         }
     }
-    Ok(Value::Nil)
+    Ok(did_work)
 }
 
 /// The next active ordinary timer bounds wait_reading_process_output's
@@ -4593,13 +4595,13 @@ pub(crate) fn next_timer_delay(i: &mut Interp) -> Option<f64> {
 
 /// Sleep for SECS seconds, firing due timers during the wait like
 /// GNU's `wait_reading_process_output'.
-pub(crate) fn thread_wait_events(i: &mut Interp) -> Result<(), Flow> {
-    crate::lisp::eval::threads::drain_main_events(i)?;
-    timer_check(i)?;
-    crate::lisp::process::poll_all(i)?;
-    crate::lisp::builtins::filenotify::drain(i)?;
-    crate::lisp::builtins::dbus::drain(i)?;
-    Ok(())
+pub(crate) fn thread_wait_events(i: &mut Interp) -> Result<bool, Flow> {
+    let mut did_work = crate::lisp::eval::threads::drain_main_events(i)?;
+    did_work |= timer_check(i)?;
+    did_work |= crate::lisp::process::poll_all(i)?;
+    did_work |= crate::lisp::builtins::filenotify::drain(i)?;
+    did_work |= crate::lisp::builtins::dbus::drain(i)?;
+    Ok(did_work)
 }
 
 fn sleep_firing_timers(i: &mut Interp, secs: f64) -> EvalResult {

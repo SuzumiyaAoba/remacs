@@ -117,7 +117,7 @@ impl PartialEq for StyleMix {
 /// A text-mode screen snapshot produced by `render_grid`: one string
 /// per row, face attributes by display cell and by character, mode-line
 /// rows, and cursor positions for terminals and shaped GUI text.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Grid {
     pub rows: Vec<String>,
     /// Cell styles, one entry for each display column in a row.
@@ -138,13 +138,13 @@ pub struct Grid {
     pub input: Option<GridInput>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct GridInputSelection {
     pub range: Range<usize>,
     pub reversed: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct GridInputRow {
     pub row: usize,
     /// Character offset in `GridInput::text` of the first source character.
@@ -153,7 +153,7 @@ pub struct GridInputRow {
     pub source_offsets: Vec<usize>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct GridInput {
     pub buffer_id: usize,
     pub text: Arc<str>,

@@ -29,10 +29,16 @@ pub(super) struct ChanIo {
     pub(super) rows: usize,
     /// Last grid sent, so `draw_echo` can patch just the echo row.
     pub(super) last: Option<Grid>,
+    /// A resize is not represented by an input event, but still requires
+    /// a fresh grid on the next command-loop iteration.
+    pub(super) render_requested: bool,
 }
 
 impl ChanIo {
     pub(super) fn send_grid(&mut self, grid: Grid) -> io::Result<()> {
+        if !grid.blink_cursor && self.last.as_ref().is_some_and(|last| last == &grid) {
+            return Ok(());
+        }
         // Latest-wins: force_send displaces the oldest queued frame
         // when the bounded channel is full.
         let g = grid.clone();
@@ -94,6 +100,7 @@ impl KeyIo for ChanIo {
             Ok(GuiEvent::Resize(c, r)) => {
                 self.cols = c.max(10);
                 self.rows = r.max(3);
+                self.render_requested = true;
                 Ok(None)
             }
             Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
@@ -125,6 +132,7 @@ impl KeyIo for ChanIo {
             Ok(GuiEvent::Resize(c, r)) => {
                 self.cols = c.max(10);
                 self.rows = r.max(3);
+                self.render_requested = true;
                 Ok(None)
             }
             Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
@@ -143,6 +151,14 @@ impl KeyIo for ChanIo {
         let cached = self.last.as_ref().and_then(|grid| grid.input.as_ref());
         let grid = render_grid_with_input_cached(i, self.cols, self.rows, cached);
         self.send_grid(grid)
+    }
+
+    fn render_on_idle(&self) -> bool {
+        self.last.as_ref().is_some_and(|grid| grid.blink_cursor)
+    }
+
+    fn take_render_request(&mut self) -> bool {
+        std::mem::take(&mut self.render_requested)
     }
 
     fn draw_echo(&mut self, text: &str) -> io::Result<()> {
@@ -244,6 +260,7 @@ pub(super) fn start_logic_with_dump(
                 cols: 80,
                 rows: 24,
                 last: None,
+                render_requested: false,
             };
             let _ = remacs_runtime::frontend::run_editor_with(io, &mut i);
             // grid_tx drops here → the UI pump below quits the app.
