@@ -532,7 +532,8 @@ The following %-sequences are provided:
 	  (cons ?d (or (battery-search-for-one-match-in-files
                         (mapcar (lambda (d) (expand-file-name "temperature" d))
                                 (battery--files "/proc/acpi/thermal_zone/"))
-                        (rx "temperature:" (+ space) (group (+ digit)) " C" eol)
+                        (rx "temperature:" (+ space)
+                            (group (optional "-") (+ digit)) " C" eol)
                         1)
 		       "N/A"))
           (cons ?r (if rate
