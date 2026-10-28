@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex};
 #[cfg(target_os = "macos")]
 mod accessibility;
 #[cfg(target_os = "macos")]
+mod applescript;
+#[cfg(target_os = "macos")]
 use cocoa::base::{id, nil};
 #[cfg(target_os = "macos")]
 use cocoa::foundation::{NSInteger, NSString};
@@ -575,6 +577,13 @@ pub fn run_gui_with_dump(
                         let result = cx
                             .update(|app| app.hide_other_apps())
                             .map_err(|error| error.to_string());
+                        let _ = reply.send(result);
+                    }
+                    #[cfg(target_os = "macos")]
+                    GuiRequest::AppleScript { script, reply } => {
+                        let result = cx
+                            .update(|_app| applescript::execute(&script))
+                            .unwrap_or_else(|error| Err(error.to_string()));
                         let _ = reply.send(result);
                     }
                     GuiRequest::FileDialog {

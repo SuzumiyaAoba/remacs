@@ -262,6 +262,8 @@ pub struct Interp {
     pub(crate) drag_backend: Option<Rc<dyn crate::frontend::DragBackend>>,
     /// Host application hide/show bridge, installed by a GUI front-end.
     pub(crate) application_visibility_backend: Option<Rc<dyn crate::frontend::ApplicationVisibilityBackend>>,
+    /// Host AppleScript bridge, installed by the macOS GUI front-end.
+    pub(crate) apple_script_backend: Option<Rc<dyn crate::frontend::AppleScriptBackend>>,
     /// NS selection values retained for local selection reads and ownership checks.
     pub(crate) nsgui_selections: HashMap<SymId, Value>,
     /// Keyboard.c keeps a deferred switch-frame outside the public queues.

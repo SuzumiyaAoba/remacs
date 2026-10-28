@@ -165,6 +165,7 @@ impl Interp {
             color_panel_backend: None,
             drag_backend: None,
             application_visibility_backend: None,
+            apple_script_backend: None,
             nsgui_selections: HashMap::default(),
             unread_switch_frame: Value::Nil,
             minibuf_level: 0,

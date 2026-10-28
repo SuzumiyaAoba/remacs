@@ -1,7 +1,8 @@
 //! Logic thread and channel-backed implementation of the common input protocol.
 use remacs_runtime::{
     frontend::{
-        DragAction, Grid, GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput,
+        AppleScriptResult, DragAction, Grid, GridScrollBarOrientation, InputEvent, KeyIo,
+        MouseButton, MouseInput,
         MousePosition, fit_text_to_cells, render_frame_grid_with_mouse_position_cached,
         render_grid_with_mouse_position_cached,
     },
@@ -236,6 +237,11 @@ pub(super) enum GuiRequest {
         action: DragAction,
         started: SyncSender<Result<(), String>>,
         completed: SyncSender<Option<DragAction>>,
+    },
+    #[cfg(target_os = "macos")]
+    AppleScript {
+        script: String,
+        reply: SyncSender<Result<AppleScriptResult, String>>,
     },
 }
 
@@ -500,6 +506,28 @@ impl GuiApplicationVisibilityBackend {
         response
             .recv()
             .map_err(|_| "GUI application service stopped".to_owned())?
+    }
+}
+
+#[cfg(target_os = "macos")]
+struct GuiAppleScriptBackend {
+    requests: smol::channel::Sender<GuiRequest>,
+}
+
+#[cfg(target_os = "macos")]
+impl remacs_runtime::frontend::AppleScriptBackend for GuiAppleScriptBackend {
+    fn execute(&self, script: &str) -> Result<AppleScriptResult, String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::AppleScript {
+                script: script.to_owned(),
+                reply,
+            })
+            .map_err(|_| "GUI AppleScript service is unavailable".to_owned())?;
+        let result = response
+            .recv()
+            .map_err(|_| "GUI AppleScript service stopped".to_owned())?;
+        result
     }
 }
 
@@ -1739,6 +1767,10 @@ fn start_logic_inner(
                         requests: gui_requests_tx.clone(),
                     },
                 )));
+                #[cfg(target_os = "macos")]
+                i.set_apple_script_backend(Some(Rc::new(GuiAppleScriptBackend {
+                    requests: gui_requests_tx.clone(),
+                })));
                 #[cfg(target_os = "macos")]
                 i.set_drag_backend(Some(Rc::new(GuiDragBackend {
                     requests: gui_requests_tx.clone(),

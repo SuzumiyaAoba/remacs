@@ -96,6 +96,20 @@ pub trait ApplicationVisibilityBackend {
     fn hide_other_apps(&self) -> Result<(), String>;
 }
 
+/// Result of executing an AppleScript from a native GUI front-end.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AppleScriptResult {
+    Nil,
+    String(String),
+    Integer(i128),
+    Other,
+}
+
+/// Native AppleScript bridge used by the macOS GUI front-end.
+pub trait AppleScriptBackend {
+    fn execute(&self, script: &str) -> Result<AppleScriptResult, String>;
+}
+
 /// Input from a front-end: key events, committed text, or mouse actions.
 pub enum InputEvent {
     Key(i128),

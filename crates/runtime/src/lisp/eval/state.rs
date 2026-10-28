@@ -72,6 +72,14 @@ impl Interp {
         self.application_visibility_backend = backend;
     }
 
+    /// Install or remove the native AppleScript bridge used by NS frames.
+    pub fn set_apple_script_backend(
+        &mut self,
+        backend: Option<Rc<dyn crate::frontend::AppleScriptBackend>>,
+    ) {
+        self.apple_script_backend = backend;
+    }
+
     pub(crate) fn reset_dump_execution(&mut self) {
         self.specbind.clear();
         self.lexenv = None;

@@ -3,8 +3,8 @@
 //!
 //! Native NS functions that require an AppKit terminal continue to
 //! report "Window system is not in use or not initialized" when called
-//! without one. The GUI front-end supplies clipboard and drag backends for
-//! NS selection primitives; PRIMARY and SECONDARY remain process-local.
+//! without one. The GUI front-end supplies clipboard, drag, and AppleScript
+//! backends; PRIMARY and SECONDARY remain process-local.
 //! Functions that work without a display connection in GNU (font-name
 //! conversion, color lists, dock tile operations, sleep assertions,
 //! accessibility check) are implemented via dlopen'd AppKit runtime.
@@ -891,7 +891,22 @@ fn f_ns_do_applescript(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !matches!(a[0], Value::Str(_)) {
         return Err(i.wrong_type_mut("stringp", &a[0]));
     }
-    Err(winsys(i))
+    let Some(backend) = i.apple_script_backend.clone() else {
+        return Err(winsys(i));
+    };
+    let Value::Str(script) = &a[0] else {
+        unreachable!();
+    };
+    let script = script.borrow().to_unicode_lossy();
+    let result = backend
+        .execute(&script)
+        .map_err(|error| i.error(format!("AppleScript failed: {error}")))?;
+    Ok(match result {
+        crate::frontend::AppleScriptResult::Nil => Value::Nil,
+        crate::frontend::AppleScriptResult::String(value) => Value::string(value),
+        crate::frontend::AppleScriptResult::Integer(value) => Value::Int(value),
+        crate::frontend::AppleScriptResult::Other => Value::t(),
+    })
 }
 
 // ---------------------------------------------------------------------------
