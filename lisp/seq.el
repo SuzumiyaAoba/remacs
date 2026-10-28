@@ -250,6 +250,14 @@ the sequence, and its index within the sequence."
 (cl-defmethod seq-map (function (sequence sequence))
   (mapcar function sequence))
 
+;;Remacs: char-tables satisfy `sequencep' but are not accepted by `mapcar'.
+(cl-defmethod seq-map (function (sequence char-table))
+  (let (result)
+    (seq-do (lambda (elt)
+              (push (funcall function elt) result))
+            sequence)
+    (nreverse result)))
+
 (cl-defgeneric seq-mapn (function sequence &rest sequences)
   "Return the result of applying FUNCTION to each element of SEQUENCEs.
 Like `seq-map', but FUNCTION is mapped over all SEQUENCEs.
