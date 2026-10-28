@@ -153,6 +153,8 @@ impl Interp {
             quit_editor: false,
             exit_status: None,
             minibuf_reader: None,
+            clipboard_backend: None,
+            nsgui_selections: HashMap::default(),
             unread_switch_frame: Value::Nil,
             minibuf_level: 0,
             minibuf_list: Vec::new(),

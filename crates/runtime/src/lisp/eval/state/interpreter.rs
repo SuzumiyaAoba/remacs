@@ -238,6 +238,10 @@ pub struct Interp {
             dyn Fn(&mut Interp, &crate::lisp::text::EmacsStr, bool) -> Result<MinibufInput, Flow>,
         >,
     >,
+    /// Host clipboard bridge, installed by a GUI front-end.
+    pub(crate) clipboard_backend: Option<Rc<dyn crate::frontend::ClipboardBackend>>,
+    /// NS selection values retained for local selection reads and ownership checks.
+    pub(crate) nsgui_selections: HashMap<SymId, Value>,
     /// Keyboard.c keeps a deferred switch-frame outside the public queues.
     pub(crate) unread_switch_frame: Value,
     /// Nesting depth of active minibuffer reads (`minibuffer-depth').

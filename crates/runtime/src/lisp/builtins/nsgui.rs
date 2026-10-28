@@ -1,13 +1,13 @@
 //! NextStep (macOS Cocoa) primitives — GNU `nsfns.m'/`nsselect.m'/
 //! `nsmenu.m' ports.
 //!
-//! remacs never opens an NS terminal, so functions that GNU guards
-//! with `check_window_system' always signal
-//!   "Window system is not in use or not initialized"
-//! exactly like GNU in `--batch'/tty.  Functions that work without a
-//! display connection in GNU (font-name conversion, color lists, dock
-//! tile operations, sleep assertions, accessibility check) are
-//! implemented for real via dlopen'd AppKit/Objective-C runtime.
+//! Native NS functions that require an AppKit terminal continue to
+//! report "Window system is not in use or not initialized" when called
+//! without one.  The GUI front-end supplies a clipboard backend for the
+//! NS selection primitives; PRIMARY and SECONDARY remain process-local.
+//! Functions that work without a display connection in GNU (font-name
+//! conversion, color lists, dock tile operations, sleep assertions,
+//! accessibility check) are implemented via dlopen'd AppKit runtime.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -15,7 +15,7 @@ use std::sync::OnceLock;
 use super::{Interp, S, Subr};
 use crate::lisp::EvalResult;
 use crate::lisp::error::Flow;
-use crate::lisp::value::Value;
+use crate::lisp::value::{SymId, Value};
 
 // ---------------------------------------------------------------------------
 // Objective-C runtime bridge (libobjc + AppKit/Foundation via dynlib)
@@ -544,10 +544,139 @@ winsys_fn!(f_ns_frame_geometry);
 winsys_fn!(f_ns_mouse_absolute_pixel_position);
 winsys_fn!(f_ns_set_mouse_absolute_pixel_position);
 winsys_fn!(f_ns_show_character_palette);
-winsys_fn!(f_ns_own_selection_internal);
-winsys_fn!(f_ns_disown_selection_internal);
-winsys_fn!(f_ns_get_selection);
-winsys_fn!(f_ns_selection_owner_p);
+
+fn selection_symbol(i: &mut Interp, value: &Value) -> Result<SymId, Flow> {
+    match value {
+        Value::Nil => Ok(i.q("PRIMARY")),
+        Value::Sym(symbol) => Ok(*symbol),
+        other => Err(i.wrong_type_mut("symbolp", other)),
+    }
+}
+
+fn selection_data_text(value: &Value) -> Option<String> {
+    match value {
+        Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
+        _ => None,
+    }
+}
+
+fn require_selection_backend(
+    i: &mut Interp,
+) -> Result<std::rc::Rc<dyn crate::frontend::ClipboardBackend>, Flow> {
+    i.clipboard_backend
+        .clone()
+        .ok_or_else(|| winsys(i))
+}
+
+fn f_ns_own_selection_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let selection = selection_symbol(i, &a[0])?;
+    let clipboard = i.q("CLIPBOARD");
+    let value = a[1].clone();
+    let backend = require_selection_backend(i)?;
+    if selection == clipboard
+        && let Some(text) = selection_data_text(&value)
+    {
+        backend
+            .write_text(text)
+            .map_err(|error| i.error(format!("Clipboard write failed: {error}")))?;
+    }
+    i.nsgui_selections.insert(selection, value.clone());
+    Ok(value)
+}
+
+fn f_ns_disown_selection_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let selection = selection_symbol(i, &a[0])?;
+    let clipboard = i.q("CLIPBOARD");
+    let backend = require_selection_backend(i)?;
+    if selection == clipboard
+        && let Some(owned_text) = i
+            .nsgui_selections
+            .get(&selection)
+            .and_then(selection_data_text)
+    {
+        let current = backend
+            .read_text()
+            .map_err(|error| i.error(format!("Clipboard read failed: {error}")))?;
+        if current.as_deref() == Some(owned_text.as_str()) {
+            backend
+                .write_text(String::new())
+                .map_err(|error| i.error(format!("Clipboard write failed: {error}")))?;
+        }
+    }
+    i.nsgui_selections.remove(&selection);
+    Ok(Value::Nil)
+}
+
+fn f_ns_get_selection(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let selection = selection_symbol(i, &a[0])?;
+    let target = match &a[1] {
+        Value::Sym(target) => *target,
+        other => return Err(i.wrong_type_mut("symbolp", other)),
+    };
+    let backend = require_selection_backend(i)?;
+    let clipboard = i.q("CLIPBOARD");
+    let target_name = i.symbol_name(target);
+    if target_name == "TIMESTAMP" {
+        return Ok(Value::Nil);
+    }
+    if target_name == "TARGETS" {
+        let string = i.q("STRING");
+        return Ok(Value::vector(vec![Value::Sym(string)]));
+    }
+    if !matches!(target_name.as_str(), "STRING" | "TEXT" | "UTF8_STRING") {
+        return Ok(Value::Nil);
+    }
+    if selection == clipboard {
+        let text = backend
+            .read_text()
+            .map_err(|error| i.error(format!("Clipboard read failed: {error}")))?;
+        return Ok(text.map(Value::string).unwrap_or(Value::Nil));
+    }
+    Ok(i.nsgui_selections
+        .get(&selection)
+        .and_then(selection_data_text)
+        .map(Value::string)
+        .unwrap_or(Value::Nil))
+}
+
+fn f_ns_selection_exists_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let selection = selection_symbol(i, a.first().unwrap_or(&Value::Nil))?;
+    let clipboard = i.q("CLIPBOARD");
+    let Some(backend) = i.clipboard_backend.clone() else {
+        return Ok(Value::Nil);
+    };
+    let exists = if selection == clipboard {
+        backend
+            .read_text()
+            .map_err(|error| i.error(format!("Clipboard read failed: {error}")))?
+            .is_some()
+    } else {
+        i.nsgui_selections.contains_key(&selection)
+    };
+    Ok(Value::from_bool(exists))
+}
+
+fn f_ns_selection_owner_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let selection = selection_symbol(i, a.first().unwrap_or(&Value::Nil))?;
+    let clipboard = i.q("CLIPBOARD");
+    let backend = require_selection_backend(i)?;
+    let owns = if selection == clipboard {
+        let selected = i
+            .nsgui_selections
+            .get(&selection)
+            .and_then(selection_data_text);
+        match selected {
+            Some(selected) => backend
+                .read_text()
+                .map_err(|error| i.error(format!("Clipboard read failed: {error}")))?
+                .is_some_and(|current| current == selected),
+            None => false,
+        }
+    } else {
+        i.nsgui_selections.contains_key(&selection)
+    };
+    Ok(Value::from_bool(owns))
+}
 
 /// `ns-send-items': GNU nsselect.m CHECK_LISTs ITEMS and checks each
 /// element is a string ("Element not a string") before the
@@ -618,12 +747,6 @@ fn f_ns_do_applescript(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 // ---------------------------------------------------------------------------
 // nil-returning functions (GNU batch behavior)
 // ---------------------------------------------------------------------------
-
-fn f_ns_selection_exists_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU: no owned selection types without a terminal → nil.
-    let _ = (i, a);
-    Ok(Value::Nil)
-}
 
 fn f_ns_frame_list_z_order(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU: nil when no ns frames exist.

@@ -4071,8 +4071,13 @@ pub(crate) fn f_window_configuration_frame(i: &mut Interp, a: crate::lisp::Argv)
 /// but FRAME is decode_any_frame-checked first (non-frames are
 /// `framep' errors).
 fn f_window_system(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = frame_of(i, &arg(&a, 0))?;
-    Ok(Value::Nil)
+    let frame = frame_of(i, &arg(&a, 0))?;
+    let params = frame.borrow().params.clone();
+    let window_system = i.q("window-system");
+    Ok(crate::lisp::eval::plist_get_v(
+        &params,
+        &Value::Sym(window_system),
+    ))
 }
 fn f_frame_terminal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // Validate optional FRAME like GNU, then return its terminal.

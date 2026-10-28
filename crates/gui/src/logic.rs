@@ -6,7 +6,12 @@ use remacs_runtime::{
 use std::{
     io,
     ops::Range,
-    sync::mpsc::{self, Receiver, Sender},
+    rc::Rc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, Sender, SyncSender},
+    },
     time::Duration,
 };
 
@@ -16,6 +21,46 @@ pub(super) enum GuiEvent {
     Text(String),
     ReplaceText { range: Range<usize>, text: String },
     Resize(usize, usize),
+}
+
+pub(super) enum ClipboardRequest {
+    Ready(Arc<AtomicBool>),
+    Read(SyncSender<Result<Option<String>, String>>),
+    Write(String, Option<SyncSender<Result<(), String>>>),
+}
+
+struct GuiClipboardBackend {
+    requests: smol::channel::Sender<ClipboardRequest>,
+    ready: Arc<AtomicBool>,
+}
+
+impl remacs_runtime::frontend::ClipboardBackend for GuiClipboardBackend {
+    fn read_text(&self) -> Result<Option<String>, String> {
+        if !self.ready.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(ClipboardRequest::Read(reply))
+            .map_err(|_| "GUI clipboard service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI clipboard service stopped".to_owned())?
+    }
+
+    fn write_text(&self, text: String) -> Result<(), String> {
+        let ready = self.ready.load(Ordering::Acquire);
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(ClipboardRequest::Write(text, ready.then_some(reply)))
+            .map_err(|_| "GUI clipboard service is unavailable".to_owned())?;
+        if !ready {
+            return Ok(());
+        }
+        response
+            .recv()
+            .map_err(|_| "GUI clipboard service stopped".to_owned())?
+    }
 }
 
 /// `KeyIo` implementation backed by channels; runs on the logic
@@ -193,7 +238,20 @@ impl KeyIo for ChanIo {
 pub(super) fn start_logic(
     files: Vec<String>,
 ) -> io::Result<(Sender<GuiEvent>, smol::channel::Receiver<Grid>)> {
-    start_logic_with_dump(files, None, Vec::new())
+    let (events, grids, _clipboard_requests) =
+        start_logic_inner(files, None, Vec::new(), false)?;
+    Ok((events, grids))
+}
+
+#[cfg(test)]
+pub(super) fn start_logic_with_dump_for_test(
+    files: Vec<String>,
+    dump_file: Option<String>,
+    arguments: Vec<String>,
+) -> io::Result<(Sender<GuiEvent>, smol::channel::Receiver<Grid>)> {
+    let (events, grids, _clipboard_requests) =
+        start_logic_inner(files, dump_file, arguments, false)?;
+    Ok((events, grids))
 }
 
 fn apply_startup_arguments(
@@ -219,11 +277,33 @@ pub(super) fn start_logic_with_dump(
     files: Vec<String>,
     dump_file: Option<String>,
     arguments: Vec<String>,
-) -> io::Result<(Sender<GuiEvent>, smol::channel::Receiver<Grid>)> {
+) -> io::Result<(
+    Sender<GuiEvent>,
+    smol::channel::Receiver<Grid>,
+    smol::channel::Receiver<ClipboardRequest>,
+)> {
+    start_logic_inner(files, dump_file, arguments, true)
+}
+
+fn start_logic_inner(
+    files: Vec<String>,
+    dump_file: Option<String>,
+    arguments: Vec<String>,
+    enable_gui_selections: bool,
+) -> io::Result<(
+    Sender<GuiEvent>,
+    smol::channel::Receiver<Grid>,
+    smol::channel::Receiver<ClipboardRequest>,
+)> {
     let wait_for_dump = dump_file.is_some();
     let (startup_tx, startup_rx) = mpsc::channel::<Result<(), String>>();
     let (event_tx, event_rx) = mpsc::channel::<GuiEvent>();
     let (grid_tx, grid_rx) = smol::channel::bounded::<Grid>(1);
+    let (clipboard_tx, clipboard_rx) = smol::channel::unbounded::<ClipboardRequest>();
+    let clipboard_ready = Arc::new(AtomicBool::new(false));
+    clipboard_tx
+        .send_blocking(ClipboardRequest::Ready(clipboard_ready.clone()))
+        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "GUI clipboard channel closed"))?;
     std::thread::Builder::new()
         .name("remacs-logic".into())
         // Eval/macroexpand recursion needs far more than the default
@@ -246,11 +326,24 @@ pub(super) fn start_logic_with_dump(
                     }
                 },
             };
+            if enable_gui_selections && cfg!(target_os = "macos") {
+                i.set_clipboard_backend(Some(Rc::new(GuiClipboardBackend {
+                    requests: clipboard_tx,
+                    ready: clipboard_ready,
+                })));
+            }
             if let Err(error) = apply_startup_arguments(&mut i, &files, &arguments) {
                 let message = format!("GUI startup: {error:?}");
                 eprintln!("remacs: {message}");
                 let _ = startup_tx.send(Err(message));
                 return;
+            }
+            #[cfg(target_os = "macos")]
+            if enable_gui_selections {
+                // Startup still uses the shared terminal initializer; set
+                // NS identity afterward so generic selection methods dispatch
+                // without running native AppKit window initialization.
+                configure_ns_window_system(&mut i);
             }
             let _ = startup_tx.send(Ok(()));
             let io = ChanIo {
@@ -272,5 +365,24 @@ pub(super) fn start_logic_with_dump(
             .map_err(io::Error::other)?
             .map_err(io::Error::other)?;
     }
-    Ok((event_tx, grid_rx))
+    Ok((event_tx, grid_rx, clipboard_rx))
+}
+
+#[cfg(target_os = "macos")]
+fn configure_ns_window_system(i: &mut Interp) {
+    let window_system = i.intern("window-system");
+    let initial_window_system = i.intern("initial-window-system");
+    let ns = i.intern("ns");
+    let value = remacs_runtime::lisp::Value::Sym(ns);
+    let _ = i.set_symbol_default(window_system, value.clone());
+    let _ = i.set_symbol_default(initial_window_system, value.clone());
+    if let Some(frame) = i.selected_frame.clone() {
+        let key = remacs_runtime::lisp::Value::Sym(window_system);
+        let params = remacs_runtime::lisp::eval::plist_put_front(
+            &frame.borrow().params,
+            &key,
+            value,
+        );
+        frame.borrow_mut().params = params;
+    }
 }

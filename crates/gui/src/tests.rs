@@ -366,7 +366,7 @@ fn logic_thread_applies_directory_options_before_visiting_files() {
     let file = root.0.join("payload.txt");
     std::fs::write(&file, "GUI").unwrap();
     let file = file.to_string_lossy().into_owned();
-    let (tx, rx) = super::start_logic_with_dump(
+    let (tx, rx) = super::start_logic_with_dump_for_test(
         vec![file.clone()],
         None,
         vec![
@@ -467,7 +467,7 @@ fn startup_actions_run_on_gui_logic_thread() {
                 ]);
             }
         }
-        let (tx, rx) = super::start_logic_with_dump(Vec::new(), None, arguments).unwrap();
+        let (tx, rx) = super::start_logic_with_dump_for_test(Vec::new(), None, arguments).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
         loop {
             if let Ok(grid) = rx.try_recv() {

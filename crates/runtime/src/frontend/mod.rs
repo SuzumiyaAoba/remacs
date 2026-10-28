@@ -12,6 +12,12 @@ use std::time::Duration;
 
 use crate::lisp::Interp;
 
+/// Platform clipboard access used by window-system selection primitives.
+pub trait ClipboardBackend {
+    fn read_text(&self) -> Result<Option<String>, String>;
+    fn write_text(&self, text: String) -> Result<(), String>;
+}
+
 /// Input from a front-end: a key event or text committed by the OS.
 pub enum InputEvent {
     Key(i128),

@@ -11,6 +11,15 @@ use rustc_hash::FxHashMap as HashMap;
 use std::{cell::RefCell, rc::Rc};
 
 impl Interp {
+    /// Install or remove the host clipboard backend used by GUI selection
+    /// primitives. The backend remains attached to this interpreter only.
+    pub fn set_clipboard_backend(
+        &mut self,
+        backend: Option<Rc<dyn crate::frontend::ClipboardBackend>>,
+    ) {
+        self.clipboard_backend = backend;
+    }
+
     pub(crate) fn reset_dump_execution(&mut self) {
         self.specbind.clear();
         self.lexenv = None;
