@@ -713,6 +713,7 @@ For instance, if mode is #o700, then it produces `rwx------'."
   ;; FIXME: make it work even if we're not in tar-mode.
   (let ((data-buf (if (tar-data-swapped-p) tar-data-buffer
                     (current-buffer)))
+        (root (file-name-as-directory (file-truename default-directory)))
         (reporter (make-progress-reporter "Extracting")))
     (with-current-buffer data-buf
       (cl-assert (not enable-multibyte-characters)))
@@ -721,13 +722,17 @@ For instance, if mode is #o700, then it produces `rwx------'."
 	     ;; Note that default-directory may have different values
 	     ;; in the tar-mode and data buffers, so we stick to the
 	     ;; absolute file name from now on.
-	     (name (expand-file-name orig))
+	     (name (expand-file-name orig root))
              (dir (if (eq (tar-header-link-type descriptor) 5)
                       name
                     (file-name-directory name)))
              (link-desc (tar--describe-as-link descriptor))
              (start (tar-header-data-start descriptor))
              (end (+ start (tar-header-size descriptor))))
+        (unless (and (not (file-name-absolute-p orig))
+                     (file-in-directory-p name root))
+          (error "Refusing to extract archive member outside %s: %s"
+                 root orig))
         (unless (file-directory-p name)
           (progress-reporter-update reporter name)
           (if (and dir (not (file-exists-p dir)))
