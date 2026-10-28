@@ -85,6 +85,17 @@
   "Escape single quotes in STRING for a single-quoted Gnuplot string."
   (replace-regexp-in-string "'" "''" string t t))
 
+(defun org-babel-gnuplot-quote-double-string (string)
+  "Escape backslashes and double quotes in STRING for Gnuplot."
+  (unless (stringp string)
+    (setq string (format "%s" string)))
+  (mapconcat (lambda (char)
+               (let ((string (char-to-string char)))
+                 (if (memq char '(?\\ ?\"))
+                     (concat "\\" string)
+                   string)))
+             (string-to-list string) ""))
+
 (defun org-babel-gnuplot-process-vars (params)
   "Extract variables from PARAMS and process the variables.
 Dumps all vectors into files and returns an association list
@@ -164,23 +175,29 @@ code."
 		 (format "set xtics (%s)"
 			 (mapconcat (lambda (pair)
 				      (format "\"%s\" %d"
-					      (cdr pair) (car pair)))
+					      (org-babel-gnuplot-quote-double-string
+					       (cdr pair))
+					      (car pair)))
 				    x-labels ", "))))
       (when y-labels
 	(funcall add-to-body
 		 (format "set ytics (%s)"
 			 (mapconcat (lambda (pair)
 				      (format "\"%s\" %d"
-					      (cdr pair) (car pair)))
+					      (org-babel-gnuplot-quote-double-string
+					       (cdr pair))
+					      (car pair)))
 				    y-labels ", "))))
       (when time-ind
 	(funcall add-to-body "set xdata time")
 	(funcall add-to-body (concat "set timefmt \""
-				     (or timefmt
-					 "%Y-%m-%d-%H:%M:%S") "\"")))
+				     (org-babel-gnuplot-quote-double-string
+				      (or timefmt "%Y-%m-%d-%H:%M:%S")) "\"")))
       (when out-file
 	;; set the terminal at the top of the block
-	(funcall add-to-body (format "set output \"%s\"" out-file))
+	(funcall add-to-body
+		 (format "set output \"%s\""
+			 (org-babel-gnuplot-quote-double-string out-file)))
 	;; and close the terminal at the bottom of the block
 	(setq body (concat body "\nset output\n")))
       (when term (funcall add-to-body (format "set term %s" term)))
@@ -262,7 +279,10 @@ This function is called by `org-babel-execute-src-block'."
   "Return list of gnuplot statements assigning the block's variables.
 PARAMS is src block parameters alist defining variable assignments."
   (mapcar
-   (lambda (pair) (format "%s = \"%s\"" (car pair) (cdr pair)))
+   (lambda (pair)
+     (format "%s = \"%s\""
+             (car pair)
+             (org-babel-gnuplot-quote-double-string (cdr pair)))
    (org-babel-gnuplot-process-vars params)))
 
 (defvar gnuplot-buffer)
@@ -293,9 +313,9 @@ then create one.  Return the initialized session.  The current
 	(org-babel-gnuplot-quote-timestamp-field s)
       (if (zerop (length s))
 	  (or *org-babel-gnuplot-missing* s)
-	(if (string-match "[ \"]" s)
-	    (concat "\"" (mapconcat 'identity (split-string s "\"") "\"\"")
-		    "\"")
+	(if (or (string-match "[ \t\n\"]" s)
+		(string-match "\\\\" s))
+	    (concat "\"" (org-babel-gnuplot-quote-double-string s) "\"")
 	  s)))))
 
 (defun org-babel-gnuplot-table-to-data (table data-file params)

@@ -38,6 +38,17 @@
 (require 'org)
 (require 'org-table)
 
+(defun org-plot--gnuplot-quote-double-string (string)
+  "Escape backslashes and double quotes in STRING for Gnuplot."
+  (unless (stringp string)
+    (setq string (format "%s" string)))
+  (mapconcat (lambda (char)
+               (let ((string (char-to-string char)))
+                 (if (memq char '(?\\ ?\"))
+                     (concat "\\" string)
+                   string)))
+             (string-to-list string) ""))
+
 (defun org-plot--gnuplot-quote-string (string)
   "Escape single quotes in STRING for a single-quoted Gnuplot string."
   (replace-regexp-in-string "'" "''" string t t))
@@ -128,7 +139,7 @@ will be added.  Returns the resulting property list."
   (if (string-match org-table-number-regexp s) s
     (if (string-match org-ts-regexp3 s)
 	(org-plot-quote-timestamp-field s)
-      (concat "\"" (mapconcat 'identity (split-string s "\"") "\"\"") "\""))))
+      (concat "\"" (org-plot--gnuplot-quote-double-string s) "\""))))
 
 (defun org-plot/gnuplot-to-data (table data-file params)
   "Export TABLE to DATA-FILE in a format readable by gnuplot.
@@ -508,12 +519,15 @@ EOD
 (defun org--plot/radar (table params)
   "Create gnuplot code for a radar plot of TABLE with PARAMS."
   (let* ((data
-	  (concat "\"" (mapconcat #'identity (plist-get params :labels) "\" \"") "\""
+	  (concat "\""
+		  (mapconcat #'org-plot--gnuplot-quote-double-string
+			     (plist-get params :labels) "\" \"")
+		  "\""
 		  "\n"
 		  (mapconcat (lambda (row)
 			       (format
 				"\"%s\" %s"
-				(car row)
+				(org-plot--gnuplot-quote-double-string (car row))
 				(mapconcat #'identity (cdr row) " ")))
 			     (append table (list (car table)))
 			     "\n")))
@@ -527,7 +541,7 @@ EOD
 				    (mapcar #'string-to-number (cdr row)))))
 			 (format
 			  "\"%s\" %s %s %s"
-			  (car row)
+			  (org-plot--gnuplot-quote-double-string (car row))
 			  (or (plist-get params :ymin)
 			      (plist-get data :nice-min))
 			  (or (plist-get params :ymax)
@@ -616,19 +630,26 @@ manner suitable for prepending to a user-specified script."
 	(funcall ats
 		 (format "set xtics (%s)"
 			 (mapconcat (lambda (pair)
-				      (format "\"%s\" %d" (cdr pair) (car pair)))
+				      (format "\"%s\" %d"
+					      (org-plot--gnuplot-quote-double-string
+					       (cdr pair))
+					      (car pair)))
 				    x-labels ", "))))
       (when y-labels			; y labels (ytics)
 	(funcall ats
 		 (format "set ytics (%s)"
 			 (mapconcat (lambda (pair)
-				      (format "\"%s\" %d" (cdr pair) (car pair)))
+				      (format "\"%s\" %d"
+					      (org-plot--gnuplot-quote-double-string
+					       (cdr pair))
+					      (car pair)))
 				    y-labels ", "))))
       (when time-ind			; timestamp index
 	(funcall ats "set xdata time")
 	(funcall ats (concat "set timefmt \""
-			     (or timefmt	; timefmt passed to gnuplot
-				 "%Y-%m-%d-%H:%M:%S") "\"")))
+			     (org-plot--gnuplot-quote-double-string
+			      (or timefmt	; timefmt passed to gnuplot
+				  "%Y-%m-%d-%H:%M:%S")) "\"")))
       (unless preface
 	(let ((type-func (plist-get type :plot-func)))
 	  (when type-func
