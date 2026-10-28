@@ -148,7 +148,7 @@ With a non-negative numeric prefix arg, insert the digits comprising
 the arg into the current buffer.  Otherwise use the binding of the key
 which invoked this function, excluding the Autoarg keymap."
   (interactive "P")
-  (if (numberp n)
+  (if (and (numberp n) (>= n 0))
       (insert (number-to-string n))
     (let* ((autoarg-mode nil)		; hide the bindings
 	   (binding (key-binding (this-single-command-keys))))
