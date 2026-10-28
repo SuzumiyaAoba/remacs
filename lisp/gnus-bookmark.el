@@ -81,8 +81,7 @@
   :type 'string)
 
 (defcustom gnus-bookmark-file-coding-system
-  (if (mm-coding-system-p 'iso-2022-7bit)
-      'iso-2022-7bit)
+  'utf-8-emacs
   "Coding system used for writing Gnus bookmark files."
   :type '(symbol :tag "Coding system"))
 
