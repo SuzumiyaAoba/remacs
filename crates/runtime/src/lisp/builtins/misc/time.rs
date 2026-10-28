@@ -1143,12 +1143,18 @@ pub(super) fn f_load_average(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
 }
 
 pub(super) fn f_invocation_dir(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    let dir = std::env::args()
-        .next()
-        .and_then(|p| {
-            std::path::Path::new(&p)
-                .parent()
-                .map(|s| s.to_string_lossy().into_owned())
+    let invoked_path = std::env::args().next().map(std::path::PathBuf::from);
+    let path = invoked_path
+        .filter(|path| path.components().count() > 1)
+        .or_else(|| std::env::current_exe().ok());
+    let dir = path
+        .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
+        .map(|path| {
+            let mut dir = path.to_string_lossy().into_owned();
+            if !dir.ends_with(std::path::MAIN_SEPARATOR) {
+                dir.push(std::path::MAIN_SEPARATOR);
+            }
+            dir
         })
         .unwrap_or_default();
     let _ = i;
