@@ -151,8 +151,8 @@ If nil, use the value of `vc-diff-switches'.  If t, use no switches."
          (if (buffer-live-p -kill-buf-) (kill-buffer -kill-buf-))))))
 
 (defun vc-arch-file-source-p (file)
-  "Can return nil, `maybe' or a non-nil value.
-Only the value `maybe' can be trusted :-(."
+  "Return whether FILE is an Arch source file, or `maybe' if inconclusive.
+Only a non-nil value other than `maybe' confirms that FILE is a source file."
   ;; FIXME: Check the tag and name of parent dirs.
   (unless (string-match "\\`[,+]" (file-name-nondirectory file))
     (or (string-match "\\`{arch}/"
@@ -244,8 +244,9 @@ Only the value `maybe' can be trusted :-(."
   ;; Don't seriously check whether it's source or not.  Checking would
   ;; require running TLA, so it's better to not do it, so it also works if
   ;; TLA is not installed.
-  (and (vc-arch-root file)
-       (vc-arch-file-source-p file)))
+  (let ((source (and (vc-arch-root file)
+                     (vc-arch-file-source-p file))))
+    (and source (not (eq source 'maybe))))
 
 (defun vc-arch-default-version (file)
   (or (vc-file-getprop (vc-arch-root file) 'arch-default-version)
