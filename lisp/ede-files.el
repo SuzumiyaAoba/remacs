@@ -269,15 +269,16 @@ Do this only when developing new projects that are incorrectly putting
 (defun ede-project-directory-remove-hash (dir)
   "Reset the directory hash for DIR.
 Do this whenever a new project is created, as opposed to loaded."
-  ;; TODO - Use maphash, and delete by regexp, not by dir searching!
-  (setq dir (expand-file-name dir))
-  (remhash (file-name-as-directory dir) ede-project-directory-hash)
-  ;; Look for all subdirs of D, and remove them.
-  (let ((match (concat "^" (regexp-quote dir))))
-    (maphash (lambda (K _O)
-               (when (string-match match K)
-                 (remhash K ede-project-directory-hash)))
-             ede-project-directory-hash)))
+  (setq dir (directory-file-name (expand-file-name dir)))
+  (let ((directory (file-name-as-directory dir)))
+    ;; Remove exact entries and descendants, with a separator boundary.
+    (remhash dir ede-project-directory-hash)
+    (remhash directory ede-project-directory-hash)
+    (let ((match (concat "\\`" (regexp-quote directory))))
+      (maphash (lambda (key _object)
+                 (when (string-match match key)
+                   (remhash key ede-project-directory-hash)))
+               ede-project-directory-hash))))
 
 (defun ede--directory-project-from-hash (dir)
   "If there is an already loaded project for DIR, return it from the hash."
