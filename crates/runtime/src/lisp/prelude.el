@@ -36165,12 +36165,23 @@ other than the normal definition of FACE via `face-remap-set-base'."
       (force-mode-line-update))
     (cons face specs)))
 
+(defun face-remap--remove-first (object list)
+  "Return LIST with its first element EQ to OBJECT removed."
+  (cond ((null list) list)
+        ((eq object (car list)) (cdr list))
+        (t
+         (let ((tail (face-remap--remove-first object (cdr list))))
+           (if (eq tail (cdr list))
+               list
+             (cons (car list) tail))))))
+
 (defun face-remap-remove-relative (cookie)
   "Remove a face remapping previously added by `face-remap-add-relative'.
 COOKIE should be the return value from that function."
   (let ((remapping (assq (car cookie) face-remapping-alist)))
     (when remapping
-      (let ((updated-entries (remq (cdr cookie) (cdr remapping))))
+      (let ((updated-entries
+             (face-remap--remove-first (cdr cookie) (cdr remapping))))
 	(unless (eq updated-entries (cdr remapping))
 	  (setcdr remapping updated-entries)
 	  (when (or (null updated-entries)
