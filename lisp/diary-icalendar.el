@@ -3618,9 +3618,21 @@ inclusive.  START and END may be `icalendar-date' or
       (icalendar-date-time-variant dt :tz vtimezone)
     dt))
 
+(defun diary-icalendar--negate-duration (duration)
+  "Return the negation of iCalendar DURATION as a decoded-time value."
+  (if (integerp duration)
+      (- duration)
+    (make-decoded-time
+     :day (- (or (decoded-time-day duration) 0))
+     :hour (- (or (decoded-time-hour duration) 0))
+     :minute (- (or (decoded-time-minute duration) 0))
+     :second (- (or (decoded-time-second duration) 0)))))
+
 (defun diary-icalendar--rrule-entries-for-date
     (date entry rule start duration include exclude vtimezone)
-  "Return diary entries for DATE's recurrences in VTIMEZONE."
+  "Return diary entries for DATE's recurrences in VTIMEZONE.
+When DURATION is non-nil, include recurrences from earlier days that
+overlap DATE."
   (let* ((start (diary-icalendar--datetime-in-vtimezone start vtimezone))
          (include (mapcar (lambda (dt)
                             (diary-icalendar--datetime-in-vtimezone dt vtimezone))
@@ -3634,12 +3646,33 @@ inclusive.  START and END may be `icalendar-date' or
                      (icalendar-rdate include)
                      (icalendar-exdate exclude)))
          (date (icalendar-date/time-to-date date))
-         (lower (diary-icalendar--local-midnight date))
-         (upper (diary-icalendar--local-midnight
-                 (icalendar-date-add date :day 1)))
-         (recurrences
+         (local-lower (diary-icalendar--local-midnight date))
+         (local-upper (diary-icalendar--local-midnight
+                       (icalendar-date-add date :day 1)))
+         ;; Recurrences are in VTIMEZONE; make the local-day window
+         ;; comparable as absolute times in that zone.
+         (lower (icalendar-recur-tz-decode-time
+                 (encode-time local-lower) vtimezone))
+         (upper (icalendar-recur-tz-decode-time
+                 (encode-time local-upper) vtimezone))
+         (search-lower (if duration
+                           (icalendar-date/time-add-duration
+                            lower (diary-icalendar--negate-duration duration)
+                            vtimezone)
+                         lower))
+         (all-recurrences
           (icalendar-recur-recurrences-in-window
-           lower upper component vtimezone)))
+           search-lower upper component vtimezone))
+         (recurrences
+          (if duration
+              (seq-filter
+               (lambda (occurrence)
+                 (icalendar-date-time<=
+                  lower
+                  (icalendar-date/time-add-duration
+                   occurrence duration vtimezone)))
+               all-recurrences)
+            all-recurrences)))
     (when recurrences
       (mapconcat
        (lambda (occurrence)
