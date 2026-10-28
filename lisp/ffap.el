@@ -1405,18 +1405,18 @@ Assumes the buffer has not changed."
 
 Sets the variable `ffap-string-at-point-region' to the bounds of URL, if any."
   (when ffap-url-regexp
-    (let ((thing-at-point-beginning-of-url-regexp ffap-url-regexp)
-          (thing-at-point-default-mail-uri-scheme ffap-foo-at-bar-prefix)
-          val)
-      (setq val (thing-at-point-url-at-point ffap-lax-url
-                                             (if (use-region-p)
-                                                 (cons (region-beginning)
-                                                       (region-end)))))
-      (if val
-          (let ((bounds (thing-at-point-bounds-of-url-at-point
-                         ffap-lax-url)))
+    (let* ((thing-at-point-beginning-of-url-regexp ffap-url-regexp)
+           (thing-at-point-default-mail-uri-scheme ffap-foo-at-bar-prefix)
+           (region-bounds (and (use-region-p)
+                               (cons (region-beginning) (region-end))))
+           (val (thing-at-point-url-at-point ffap-lax-url region-bounds)))
+      (when val
+        (let ((bounds (or region-bounds
+                          (thing-at-point-bounds-of-url-at-point
+                           ffap-lax-url))))
+          (when bounds
             (setq ffap-string-at-point-region
-                  (list (car bounds) (cdr bounds)))))
+                  (list (car bounds) (cdr bounds))))))
       val)))
 
 (defvar ffap-gopher-regexp
