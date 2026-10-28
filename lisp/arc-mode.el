@@ -2092,6 +2092,51 @@ This doesn't recover lost files, it just undoes changes in the buffer itself."
 ;;; Section: Zip Archives
 
 (declare-function w32-get-console-codepage "w32proc.c")
+
+(defun archive-zip--crc32 (start length)
+  "Return ZIP CRC-32 of LENGTH raw bytes beginning at START."
+  (let ((crc #xffffffff)
+	(offset 0))
+    (while (< offset length)
+      (setq crc (logxor crc (get-byte (+ start offset))))
+      (dotimes (_ 8)
+	(setq crc
+	      (if (= (logand crc 1) 1)
+		  (logxor (lsh crc -1) #xedb88320)
+		(lsh crc -1))))
+      (setq offset (1+ offset)))
+    (logxor crc #xffffffff)))
+
+(defun archive-zip--unicode-path (extra-start extra-length filename-start
+				 filename-length)
+  "Return the valid Unicode Path Extra Field name, or nil.
+EXTRA-START and EXTRA-LENGTH describe the central-directory extra data.
+FILENAME-START and FILENAME-LENGTH describe the original filename bytes."
+  (let ((extra-end (min (+ extra-start extra-length) (point-max)))
+	(position extra-start)
+	name)
+    ;; Extra fields are independent blocks.  Bound every read by this
+    ;; central-directory entry, and skip malformed or unsupported UPath
+    ;; blocks without borrowing bytes from the following block.
+    (while (and (null name) (<= (+ position 4) extra-end))
+      (let* ((tag (archive-l-e position 2))
+	     (size (archive-l-e (+ position 2) 2))
+	     (data (+ position 4))
+	     (end (+ data size)))
+	(if (> end extra-end)
+	    (setq position extra-end)
+	  (when (and (= tag #x7075)
+		     (>= size 5)
+		     (= (get-byte data) 1)
+		     (= (archive-l-e (1+ data) 4)
+			(archive-zip--crc32 filename-start filename-length)))
+	    (setq name
+		  (decode-coding-string
+		   (buffer-substring-no-properties (+ data 5) end)
+		   'utf-8-unix)))
+	  (setq position end))))
+    name))
+
 (defun archive-zip-summarize ()
   (goto-char (- (point-max) (- 22 18)))
   (search-backward-regexp "[P]K\005\006")
@@ -2159,24 +2204,10 @@ This doesn't recover lost files, it just undoes changes in the buffer itself."
                           ;; an 8-byte uncompressed size.
                           (archive-l-e (+ p 46 fnlen 4) 8)
                         ucsize))
-             (up-len  (if (and (> exlen 9) ; 0x7075 Tag: 2 bytes,
-                                           ; TSize:      2 bytes,
-                                           ; Version:    1 byte,
-                                           ; CRC32:      4 bytes
-                               ;; UPath extension tag 0x7075 ("up")
-                               (eq (char-after (+ p 46 fnlen)) ?u)
-                               (eq (char-after (+ p 46 fnlen 1)) ?p))
-                          ;; Subtract 1 byte for version and 4 more
-                          ;; bytes for file-name's CRC-32
-                          (- (archive-l-e (+ p 46 fnlen 2) 2) 5)))
-             (upath   (if up-len
-                          ;; FIXME: Should verify UPath is up-to-date by
-                          ;; computing CRC-32 and comparing with the
-                          ;; value stored before UPath
-                          (decode-coding-region (+ p 46 fnlen 9)
-                                                (+ p 46 fnlen 9 up-len)
-                                                'utf-8-unix
-                                                t)))
+             ;; Remacs: honor only complete, supported UPath fields whose
+             ;; NameCRC32 still matches the central-directory filename.
+             (upath   (archive-zip--unicode-path (+ p 46 fnlen) exlen
+                                                 (+ p 46) fnlen))
              (efnname (or upath efnname))
 	     (isdir   (and (= ucsize 0)
 			   (string= (file-name-nondirectory efnname) "")))
