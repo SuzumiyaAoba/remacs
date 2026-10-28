@@ -161,10 +161,22 @@ impl ChanIo {
         Ok(())
     }
 
-    fn echo_grid(&self, mut grid: Grid, text: &str, reset_styles: bool) -> Grid {
+    fn echo_grid(
+        &self,
+        mut grid: Grid,
+        text: &str,
+        reset_styles: bool,
+        use_grid_cursor: bool,
+    ) -> Grid {
         let (shown, columns, visible_bytes) = fit_text_to_cells(text, self.cols);
         let echo_row = self.rows.saturating_sub(1);
-        let selected_cursor = grid.cursors.iter().find(|cursor| cursor.selected).copied();
+        let selected_cursor = use_grid_cursor
+            .then(|| grid.cursors.iter().find(|cursor| cursor.selected).copied())
+            .flatten();
+        let fallback_cursor_column = use_grid_cursor
+            .then(|| grid.cursor.map(|(column, _)| column))
+            .flatten();
+        let fallback_cursor_index = use_grid_cursor.then_some(grid.cursor_index).flatten();
         grid.cursors.retain(|cursor| !cursor.selected);
         if let Some(last) = grid.rows.last_mut() {
             *last = shown;
@@ -184,13 +196,21 @@ impl ChanIo {
                 last.truncate(char_count);
             }
         }
-        let cx = columns.min(self.cols.saturating_sub(1));
+        let cursor_column = selected_cursor
+            .map(|cursor| cursor.column)
+            .or(fallback_cursor_column)
+            .unwrap_or(columns);
+        let cursor_index = selected_cursor
+            .map(|cursor| cursor.index)
+            .or(fallback_cursor_index)
+            .unwrap_or(visible_bytes);
+        let cx = cursor_column.min(self.cols.saturating_sub(1));
         grid.cursor = Some((cx, echo_row));
-        grid.cursor_index = Some(visible_bytes);
+        grid.cursor_index = Some(cursor_index.min(visible_bytes));
         if let Some(mut cursor) = selected_cursor {
             cursor.row = echo_row;
             cursor.column = cx;
-            cursor.index = visible_bytes;
+            cursor.index = cursor_index.min(visible_bytes);
             cursor.after_index = None;
             grid.cursors.push(cursor);
         }
@@ -348,14 +368,14 @@ impl KeyIo for ChanIo {
             .last
             .clone()
             .unwrap_or_else(|| Grid::blank(self.cols, self.rows));
-        let grid = self.echo_grid(grid, text, true);
+        let grid = self.echo_grid(grid, text, true, false);
         self.send_grid(grid)
     }
 
     fn draw_echo_with_state(&mut self, i: &Interp, text: &str) -> io::Result<()> {
         let cached = self.last.as_ref().and_then(|grid| grid.input.as_ref());
         let grid = render_grid_with_input_cached(i, self.cols, self.rows, cached);
-        let grid = self.echo_grid(grid, text, false);
+        let grid = self.echo_grid(grid, text, false, true);
         self.send_grid(grid)
     }
 
