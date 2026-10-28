@@ -719,6 +719,9 @@ of the appropriate type."
   "List of any diary files included in the last call to `diary-list-entries'.
 Or to `diary-mark-entries'.")
 
+(defvar diary--include-stack nil
+  "Diary files currently being processed through nested includes.")
+
 (defvar diary-saved-point)              ; bound in diary-list-entries
 (defvar diary-including)
 (defvar diary--date-string)                    ; bound in diary-list-entries
@@ -780,6 +783,8 @@ LIST-ONLY is non-nil, in which case it just returns the list."
            (diary-buffer (find-buffer-visiting diary-file))
            ;; Dynamically bound in diary-include-files.
            (d-incp (and (boundp 'diary-including) diary-including))
+           (diary--include-stack
+            (if d-incp diary--include-stack (list diary-full-filename)))
            diary-entries-list file-glob-attrs temp-buff)
       (unless d-incp
         (setq diary-included-files nil)
@@ -894,26 +899,34 @@ This is recursive; that is, included files may include other files."
           (diary-mark-entries-hook #'diary-mark-included-diary-files)
           (diary-list-entries-hook #'diary-include-other-diary-files)
           (diary-including t)
-          diary-hook diary-list-include-blanks efile)
+          diary-hook diary-list-include-blanks)
       (if (file-exists-p diary-file)
           (if (file-readable-p diary-file)
-              (if (member (setq efile (expand-file-name diary-file))
-                          diary-included-files)
-                  (error "Recursive diary include for %s" diary-file)
-                (setq diary-included-files
-                      (append diary-included-files (list efile)))
-                (if mark
-                    (diary-mark-entries)
-                  ;; FIXME: `diary-include-files' can be run from
-                  ;; diary-mark-entries-hook (via
-                  ;; diary-mark-included-diary-files) or from
-                  ;; diary-list-entries-hook (via
-                  ;; diary-include-other-diary-files).  In the "list" case,
-                  ;; `number' is dynamically bound, but not in the "mark" case!
-                  (with-no-warnings (defvar number))
-                  (setq diary-entries-list
-                        (append diary-entries-list
-                                (diary-list-entries original-date number t)))))
+              (let ((efile (expand-file-name diary-file)))
+                (cond
+                 ((member efile diary--include-stack)
+                  (error "Recursive diary include for %s" diary-file))
+                 ;; A file already processed through another branch of
+                 ;; the include graph is a duplicate, not a recursion.
+                 ((member efile diary-included-files) nil)
+                 (t
+                  (setq diary-included-files
+                        (append diary-included-files (list efile)))
+                  (let ((diary--include-stack
+                         (cons efile diary--include-stack)))
+                    (if mark
+                        (diary-mark-entries)
+                      ;; FIXME: `diary-include-files' can be run from
+                      ;; diary-mark-entries-hook (via
+                      ;; diary-mark-included-diary-files) or from
+                      ;; diary-list-entries-hook (via
+                      ;; diary-include-other-diary-files).  In the "list" case,
+                      ;; `number' is dynamically bound, but not in the "mark" case!
+                      (with-no-warnings (defvar number))
+                      (setq diary-entries-list
+                            (append diary-entries-list
+                                    (diary-list-entries
+                                     original-date number t))))))))
             (display-warning
              'diary
              (format-message "Can't read included diary file %s\n"
@@ -1386,6 +1399,8 @@ marks.  This is intended to deal with deleted diary entries."
         (calendar-buffer (buffer-name (calendar-get-buffer)))
         ;; Dynamically bound in diary-include-files.
         (d-incp (and (boundp 'diary-including) diary-including))
+        (diary--include-stack
+         (if d-incp diary--include-stack (list (expand-file-name diary-file))))
         file-glob-attrs temp-buff)
     (unless d-incp
       (setq diary-included-files nil)
