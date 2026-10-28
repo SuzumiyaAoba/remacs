@@ -632,7 +632,7 @@ is non-nil, it also prints a message describing the number of deletions."
 	(setq line (buffer-substring-no-properties
 		    (line-beginning-position) (line-end-position)))
         (if (and keep-blanks (string= "" line))
-            (forward-line 1)
+            (forward-line (if reverse -1 1))
           (if (if adjacent (equal line prev-line) (gethash line lines))
               (progn
                 (delete-region (progn (forward-line 0) (point))
