@@ -2748,6 +2748,9 @@ frame's display)."
 DISPLAY can be a display name, a frame, or nil (meaning the selected
 frame's display)."
   (and (display-graphic-p display)
+       ;;Remacs: graphics support alone does not mean the renderer paints images.
+       (or (not (boundp 'remacs--image-rendering-supported))
+           remacs--image-rendering-supported)
        (fboundp 'image-mask-p)
        (fboundp 'image-size)))
 
