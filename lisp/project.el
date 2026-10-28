@@ -1193,7 +1193,7 @@ IGNORE starts with \"./\".  RELATIVE-DIR is relative to the project root."
                                 (project--rebase-rooted-ignore
                                  ignore relative-dir)
                               ignore))
-                          ignores)))))))
+                          ignores))))))))
 
 ;;;###autoload
 (defun project-or-external-find-regexp (regexp)
