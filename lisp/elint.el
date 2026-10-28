@@ -410,12 +410,30 @@ Return nil if there are no more forms, t otherwise."
 
 (defvar elint-env)			; from elint-init-env
 
+(defun elint-init-compile-form (form)
+  "Process FORM from an `eval-when-compile' body.
+Only compile-time macro definitions are added to the environment."
+  (when (listp form)
+    (cond
+     ((eq (car form) 'defmacro)
+      (setq elint-env
+	    (elint-env-add-macro elint-env (cadr form)
+				 (cons 'lambda (cddr form)))))
+     ((memq (car form)
+	    '(eval-when-compile eval-and-compile progn prog1 prog2
+	      with-no-warnings))
+      (mapc #'elint-init-compile-form (cdr form))))))
+
 (defun elint-init-form (form)
   "Process FORM, adding to ELINT-ENV if recognized."
   (cond
    ;; Eg nnmaildir seems to use [] as a form of comment syntax.
    ((not (listp form))
     (elint-warning "Skipping non-list form `%s'" form))
+   ((eq (car form) 'eval-when-compile)
+    (mapc #'elint-init-compile-form (cdr form)))
+   ((memq (car form) '(eval-and-compile progn prog1 prog2 with-no-warnings))
+    (mapc #'elint-init-form (cdr form)))
    ;; Add defined variable
    ((memq (car form) '(defvar defconst defcustom))
     (setq elint-env (elint-env-add-var elint-env (cadr form))))
@@ -487,14 +505,7 @@ Return nil if there are no more forms, t otherwise."
     (while forms
       (setq form (elint-top-form-form (car forms))
 	    forms (cdr forms))
-      ;; FIXME eval-when-compile should be treated differently (macros).
-      ;; Could bind something that makes elint-init-form only check
-      ;; defmacros.
-      (if (memq (car-safe form)
-		'(eval-and-compile eval-when-compile progn prog1 prog2
-				   with-no-warnings))
-	  (mapc 'elint-init-form (cdr form))
-	(elint-init-form form)))
+      (elint-init-form form))
     elint-env))
 
 (defun elint-add-required-env (env name file)
