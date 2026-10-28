@@ -37,8 +37,10 @@ The \"ISO year\" corresponds approximately to the Gregorian year, but
 weeks start on Monday and end on Sunday.  The first week of the ISO year is
 the first such week in which at least 4 days are in a year.  The ISO
 commercial DATE has the form (week day year) in which week is in the range
-1..52 and day is in the range 0..6 (1 = Monday, 2 = Tuesday, ..., 0 =
-Sunday).  The Gregorian date Sunday, December 31, 1 BC is imaginary."
+1..52 or 1..53, depending on the year, and day is in the range 0..6
+(1 = Monday, 2 = Tuesday, ..., 0 = Sunday).  For example,
+`(calendar-iso-to-absolute '(53 4 2020))' returns 737790.  The Gregorian
+date Sunday, December 31, 1 BC is imaginary."
   (let ((day (calendar-extract-day date)))
     (+ (calendar-dayname-on-or-before
         1 (+ 3 (calendar-absolute-from-gregorian
@@ -53,10 +55,11 @@ Sunday).  The Gregorian date Sunday, December 31, 1 BC is imaginary."
 The ISO year corresponds approximately to the Gregorian year, but weeks
 start on Monday and end on Sunday.  The first week of the ISO year is the
 first such week in which at least 4 days are in a year.  The ISO commercial
-date has the form (week day year) in which week is in the range 1..52 and
-day is in the range 0..6 (1 = Monday, 2 = Tuesday, ..., 0 = Sunday).  The
-absolute date is the number of days elapsed since the (imaginary) Gregorian
-date Sunday, December 31, 1 BC."
+date has the form (week day year) in which week is in the range 1..52 or
+1..53, depending on the year, and day is in the range 0..6 (1 = Monday,
+2 = Tuesday, ..., 0 = Sunday).  For example, `(calendar-iso-from-absolute
+737790)' returns `(53 4 2020)'.  The absolute date is the number of days
+elapsed since the (imaginary) Gregorian date Sunday, December 31, 1 BC."
   (let* ((approx (calendar-extract-year
                   (calendar-gregorian-from-absolute (- date 3))))
          (year (+ approx
