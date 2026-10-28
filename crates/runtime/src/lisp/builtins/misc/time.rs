@@ -458,10 +458,10 @@ enum ZoneKind {
     Named(String),
 }
 
-pub(crate) const MAX_FIXED_ZONE_OFFSET: i128 = 24 * 60 * 60;
+pub(crate) const MAX_FIXED_ZONE_OFFSET: i128 = i64::MAX as i128;
 
 pub(crate) fn valid_fixed_zone_offset(offset: i128) -> bool {
-    (-MAX_FIXED_ZONE_OFFSET..=MAX_FIXED_ZONE_OFFSET).contains(&offset)
+    (i64::MIN as i128..=MAX_FIXED_ZONE_OFFSET).contains(&offset)
 }
 
 pub(crate) fn invalid_time_zone(i: &mut Interp, zone: &Value) -> Flow {

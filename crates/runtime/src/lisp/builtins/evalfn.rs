@@ -4705,7 +4705,7 @@ fn f_current_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
 fn f_current_time_zone(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     /// GNU's name for an integer zone: sign plus HH, then MM/SS only
     /// when non-zero ("+01", "+0130", "+010101").
-    fn offset_name(off: i64) -> String {
+    fn offset_name(off: i128) -> String {
         let sign = if off < 0 { '-' } else { '+' };
         let a = off.abs();
         let (h, m, s) = (a / 3600, (a % 3600) / 60, a % 60);
@@ -4724,7 +4724,7 @@ fn f_current_time_zone(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         // GNU tzlookup treats numeric zero like t, not a named +00 offset.
         Some(Value::Int(0)) => (0, "UTC".to_string()),
         Some(Value::Int(off)) if super::misc::valid_fixed_zone_offset(*off) => {
-            (*off as i64, offset_name(*off as i64))
+            (*off as i64, offset_name(*off))
         }
         Some(Value::Int(_)) => (0, "UTC".to_string()),
         Some(Value::Sym(s)) if *s == t_sym => (0, "UTC".to_string()),
@@ -4749,7 +4749,7 @@ fn f_current_time_zone(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             (
                 off,
                 if name.is_empty() {
-                    offset_name(off)
+                    offset_name(off as i128)
                 } else {
                     name
                 },
