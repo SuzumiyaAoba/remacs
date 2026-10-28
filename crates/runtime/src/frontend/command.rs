@@ -693,7 +693,11 @@ fn minibuf_loop<T: KeyIo>(
             } else {
                 minibuf_echo_text(i, prompt)
             };
-            let _ = t.draw_echo(&shown.to_unicode_lossy());
+            if single {
+                let _ = t.draw_echo(&shown.to_unicode_lossy());
+            } else {
+                let _ = t.draw_echo_with_state(i, &shown.to_unicode_lossy());
+            }
         }
         // Propagate io errors — swallowing them as None spins an
         // infinite poll loop on a dead input source.

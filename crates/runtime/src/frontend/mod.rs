@@ -35,6 +35,11 @@ pub trait KeyIo {
     fn render(&mut self, i: &Interp) -> io::Result<()>;
     /// Show TEXT in the echo area (minibuffer prompt/status).
     fn draw_echo(&mut self, text: &str) -> io::Result<()>;
+    /// Show minibuffer text while retaining front-end style information.
+    /// Key-only front-ends inherit the plain echo-area implementation.
+    fn draw_echo_with_state(&mut self, _i: &Interp, text: &str) -> io::Result<()> {
+        self.draw_echo(text)
+    }
     /// Current frame size in text cells.
     fn size(&self) -> (usize, usize);
 }

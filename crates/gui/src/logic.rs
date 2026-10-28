@@ -40,6 +40,32 @@ impl ChanIo {
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "gui window closed"))?;
         Ok(())
     }
+
+    fn echo_grid(&self, mut grid: Grid, text: &str, reset_styles: bool) -> Grid {
+        let (shown, columns, visible_bytes) = fit_text_to_cells(text, self.cols);
+        if let Some(last) = grid.rows.last_mut() {
+            *last = shown;
+        }
+        if reset_styles {
+            if let Some(last) = grid.attrs.last_mut() {
+                last.iter_mut()
+                    .for_each(|c| *c = remacs_runtime::frontend::CellStyle::default());
+            }
+        }
+        if let Some(last) = grid.char_attrs.last_mut() {
+            let char_count = grid.rows.last().map_or(0, |row| row.chars().count());
+            if reset_styles {
+                *last = vec![remacs_runtime::frontend::CellStyle::default(); char_count];
+            } else {
+                last.resize(char_count, remacs_runtime::frontend::CellStyle::default());
+                last.truncate(char_count);
+            }
+        }
+        let cx = columns.min(self.cols.saturating_sub(1));
+        grid.cursor = Some((cx, self.rows.saturating_sub(1)));
+        grid.cursor_index = Some(visible_bytes);
+        grid
+    }
 }
 
 impl KeyIo for ChanIo {
@@ -98,25 +124,17 @@ impl KeyIo for ChanIo {
     }
 
     fn draw_echo(&mut self, text: &str) -> io::Result<()> {
-        let mut grid = self
+        let grid = self
             .last
             .clone()
             .unwrap_or_else(|| Grid::blank(self.cols, self.rows));
-        let (shown, columns, visible_bytes) = fit_text_to_cells(text, self.cols);
-        if let Some(last) = grid.rows.last_mut() {
-            *last = shown;
-        }
-        if let Some(last) = grid.attrs.last_mut() {
-            last.iter_mut()
-                .for_each(|c| *c = remacs_runtime::frontend::CellStyle::default());
-        }
-        if let Some(last) = grid.char_attrs.last_mut() {
-            let char_count = grid.rows.last().map_or(0, |row| row.chars().count());
-            *last = vec![remacs_runtime::frontend::CellStyle::default(); char_count];
-        }
-        let cx = columns.min(self.cols.saturating_sub(1));
-        grid.cursor = Some((cx, self.rows.saturating_sub(1)));
-        grid.cursor_index = Some(visible_bytes);
+        let grid = self.echo_grid(grid, text, true);
+        self.send_grid(grid)
+    }
+
+    fn draw_echo_with_state(&mut self, i: &Interp, text: &str) -> io::Result<()> {
+        let grid = render_grid(i, self.cols, self.rows);
+        let grid = self.echo_grid(grid, text, false);
         self.send_grid(grid)
     }
 
