@@ -661,26 +661,24 @@ This function uses the predicate `facemenu-color-equal' to compare
 color names.  If the optional argument LIST is non-nil, it should
 be a list of colors to display.  Otherwise, this function uses
 a list of colors that the current display can handle."
-  (let* ((list (mapcar 'list (or list (defined-colors))))
-	 (l list))
-    (while (cdr l)
-      (if (and (facemenu-color-equal (car (car l)) (car (car (cdr l))))
-               ;; On MS-Windows, there are logical colors that might have
-               ;; the same value but different names and meanings.  For
-               ;; example, `SystemMenuText' (the color w32 uses for the
-               ;; text in menu entries) and `SystemWindowText' (the default
-               ;; color w32 uses for the text in windows and dialogs) may
-               ;; be the same display color and be adjacent in the list.
-               ;; These system colors all have names prefixed with "System",
-               ;; which is hardcoded in w32fns.c (SYSTEM_COLOR_PREFIX).
-               ;; This makes them different to any other color.  Bug#9722
-	       (not (and (eq system-type 'windows-nt)
-			 (string-match-p "^System" (car (car l))))))
-	  (progn
-	    (setcdr (car l) (cons (car (car (cdr l))) (cdr (car l))))
-	    (setcdr l (cdr (cdr l))))
-	(setq l (cdr l))))
-    list))
+  (let ((colors (or list (defined-colors)))
+        result)
+    (dolist (color colors)
+      (let ((entry
+             (unless (and (eq system-type 'windows-nt)
+                          (string-match-p "^System" color))
+               (catch 'found
+                 (dolist (candidate result)
+                   ;; Keep Windows system colors distinct even when their
+                   ;; displayed values match other names.
+                   (unless (and (eq system-type 'windows-nt)
+                                (string-match-p "^System" (car candidate)))
+                     (when (facemenu-color-equal color (car candidate))
+                       (throw 'found candidate))))))))
+        (if entry
+            (setcdr entry (append (cdr entry) (list color)))
+          (push (list color) result))))
+    (nreverse result)))
 
 (defun facemenu-color-equal (a b)
   "Return t if colors A and B are the same color.
