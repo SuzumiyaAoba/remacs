@@ -236,6 +236,39 @@ to invocation.")
 
 ;;; Setup functions
 
+(defvar-local ediff--undo-diffs-changed nil)
+
+(defun ediff--note-undo-change (&rest _args)
+  "Mark current Ediff regions for recomputation during undo."
+  (when undo-in-progress
+    (setq ediff--undo-diffs-changed t)))
+
+(defun ediff--recompute-diffs-after-undo ()
+  "Recompute active Ediff sessions after undo changes this buffer."
+  (when ediff--undo-diffs-changed
+    (setq ediff--undo-diffs-changed nil)
+    (dolist (control-buffer ediff-this-buffer-ediff-sessions)
+      (when (ediff-buffer-live-p control-buffer)
+        (ediff-with-current-buffer control-buffer
+          (when (eq major-mode 'ediff-mode)
+            (condition-case err
+                (ediff-update-diffs)
+              (error
+               (message "Ediff: could not recompute differences after undo: %s"
+                        (error-message-string err))))))))))
+
+(defun ediff--install-undo-diff-hooks (buffer)
+  (ediff-with-current-buffer buffer
+    (setq-local ediff--undo-diffs-changed nil)
+    (add-hook 'after-change-functions #'ediff--note-undo-change nil t)
+    (add-hook 'post-command-hook #'ediff--recompute-diffs-after-undo nil t)))
+
+(defun ediff--remove-undo-diff-hooks-if-unused ()
+  (unless ediff-this-buffer-ediff-sessions
+    (remove-hook 'after-change-functions #'ediff--note-undo-change t)
+    (remove-hook 'post-command-hook #'ediff--recompute-diffs-after-undo t)
+    (kill-local-variable 'ediff--undo-diffs-changed)))
+
 ;; Common startup entry for all Ediff functions It now returns control buffer
 ;; so other functions can do post-processing SETUP-PARAMETERS is a list of the
 ;; form ((param .val) (param . val)...)  This serves a similar purpose to
@@ -455,6 +488,10 @@ to invocation.")
 		      (cons control-buffer
 			    ediff-this-buffer-ediff-sessions)))
 	    ))
+
+      (mapc #'ediff--install-undo-diff-hooks
+	    (list ediff-buffer-A ediff-buffer-B ediff-buffer-C
+		  ediff-ancestor-buffer))
 
       ;; the following must be after setting up  ediff-narrow-bounds AND after
       ;; nuking selective display
@@ -2416,6 +2453,7 @@ reverse the meaning of this variable."
 	(ediff-with-current-buffer ediff-buffer-A
 	  (setq ediff-this-buffer-ediff-sessions
 		(delq control-buffer ediff-this-buffer-ediff-sessions))
+	  (ediff--remove-undo-diff-hooks-if-unused)
 	  (kill-local-variable 'mode-line-buffer-identification)
 	  (kill-local-variable 'mode-line-format)
 	  )
@@ -2425,6 +2463,7 @@ reverse the meaning of this variable."
 	(ediff-with-current-buffer ediff-buffer-B
 	  (setq ediff-this-buffer-ediff-sessions
 		(delq control-buffer ediff-this-buffer-ediff-sessions))
+	  (ediff--remove-undo-diff-hooks-if-unused)
 	  (kill-local-variable 'mode-line-buffer-identification)
 	  (kill-local-variable 'mode-line-format)
 	  )
@@ -2434,6 +2473,7 @@ reverse the meaning of this variable."
 	(ediff-with-current-buffer ediff-buffer-C
 	  (setq ediff-this-buffer-ediff-sessions
 		(delq control-buffer ediff-this-buffer-ediff-sessions))
+	  (ediff--remove-undo-diff-hooks-if-unused)
 	  (kill-local-variable 'mode-line-buffer-identification)
 	  (kill-local-variable 'mode-line-format)
 	  )
@@ -2443,6 +2483,7 @@ reverse the meaning of this variable."
 	(ediff-with-current-buffer ediff-ancestor-buffer
 	  (setq ediff-this-buffer-ediff-sessions
 		(delq control-buffer ediff-this-buffer-ediff-sessions))
+	  (ediff--remove-undo-diff-hooks-if-unused)
 	  (kill-local-variable 'mode-line-buffer-identification)
 	  (kill-local-variable 'mode-line-format)
 	  )
