@@ -3902,8 +3902,7 @@ Set the match data to the next `|' on a row adjacent to a grid border."
       nil
       (0 'rst-literal append)))
 
-    ;; FIXME: `Quoted Literal Blocks`_ missing.
-    ;; This is multiline.
+    ;; `Quoted Literal Blocks`_ are matched after inline fontification below.
 
     ;; `Doctest Blocks`_
     ;; FIXME: This is wrong according to the specification:
@@ -3928,7 +3927,12 @@ Set the match data to the next `|' on a row adjacent to a grid border."
     ;;   Indentation is not required for doctest blocks.
     (,(rst-re 'lin-beg '(:grp (:alt ">>>" ell-tag)) '(:grp ".+"))
      (1 'rst-block)
-     (2 'rst-literal)))
+     (2 'rst-literal))
+
+    ;; Quoted literal blocks are matched as a whole so their content cannot
+    ;; receive inline markup faces.
+    (rst-font-lock-match-quoted-literal-block
+     (0 'rst-literal t)))
   "Keywords to highlight in rst mode.")
 
 (defvar font-lock-beg)
@@ -4120,6 +4124,53 @@ match was found.  _LIMIT is not used but mandated by the caller."
     ;; Make sure this is called only once.
     (setq rst-font-lock-find-unindented-line-end nil)
     t))
+
+(defun rst-font-lock-quoted-literal-char-p (char)
+  "Return non-nil if CHAR can quote a reStructuredText literal block."
+  (and char
+       (<= ?! char ?~)
+       (not (or (<= ?0 char ?9)
+                (<= ?A char ?Z)
+                (<= ?a char ?z)))))
+
+(defun rst-font-lock-quoted-literal-block-at (intro-end)
+  "Return the bounds of a quoted literal block following INTRO-END.
+INTRO-END is the end of a `::' literal-block introducer."
+  (save-match-data
+    (save-excursion
+      (goto-char intro-end)
+      (goto-char (line-end-position))
+      (let ((intro-start (line-beginning-position))
+            (blank-line nil))
+        (while (and (zerop (forward-line 1))
+                    (looking-at (rst-re 'lin-end)))
+          (setq blank-line t))
+        (when (and blank-line
+                   (< (point) (point-max))
+                   (rst-font-lock-quoted-literal-char-p (char-after)))
+          (let ((start (point))
+                (end (point))
+                (quote-char (char-after)))
+            (while (and (< (point) (point-max))
+                        (eq (char-after) quote-char))
+              (setq end (min (point-max) (1+ (line-end-position))))
+              (forward-line 1))
+            (when (> end start)
+              (list intro-start start end)))))))
+
+(defun rst-font-lock-match-quoted-literal-block (limit)
+  "Find a quoted literal block introduced before LIMIT.
+Return match data spanning the block and mark it as multiline."
+  (let ((intro (rst-re 'lin-beg 'lit-sta-2))
+        block)
+    (while (and (not block) (re-search-forward intro limit t))
+      (setq block
+            (rst-font-lock-quoted-literal-block-at (match-end 0))))
+    (when block
+      (set-match-data (list (cadr block) (caddr block)))
+      (goto-char (caddr block))
+      (put-text-property (car block) (caddr block) 'font-lock-multiline t)
+      t)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Adornments
