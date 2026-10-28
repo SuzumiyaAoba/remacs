@@ -5813,7 +5813,7 @@ FILENAME to find directory to run in, or defaults to `buffer-file-name'."
   (unless command (setq command (verilog-expand-command verilog-preprocessor)))
   (let* ((fontlocked font-lock-mode)
 	 (dir (file-name-directory (or filename buffer-file-name)))
-	 (cmd (concat "cd " dir "; " command)))
+	 (cmd (concat "cd " (shell-quote-argument dir) "; " command)))
     (with-output-to-temp-buffer "*Verilog-Preprocessed*"
       (with-current-buffer "*Verilog-Preprocessed*"
 	(insert (concat "// " cmd "\n"))
