@@ -18,6 +18,11 @@ pub trait ClipboardBackend {
     fn write_text(&self, text: String) -> Result<(), String>;
 }
 
+/// Host bell used by graphical front-ends for audible and visible feedback.
+pub trait BellBackend {
+    fn ring_bell(&self, frame_id: Option<usize>, visible: bool);
+}
+
 /// Host dialog backend used by interactive graphical front-ends. The logic
 /// thread blocks until the UI returns the selected button index.
 pub trait DialogBackend {

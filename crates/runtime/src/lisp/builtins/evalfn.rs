@@ -4496,10 +4496,34 @@ pub(crate) fn f_message(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(v)
 }
 pub(crate) fn f_ding(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {
+    // GNU gives a user-provided ring-bell-function precedence over both
+    // visible-bell and the host's audible bell.
+    let ring_bell_function = i
+        .q_soft("ring-bell-function")
+        .filter(|symbol| i.bound_p(*symbol))
+        .map(|symbol| i.symbol_value(symbol))
+        .unwrap_or(Value::Nil);
+    if ring_bell_function.truthy() {
+        i.apply(&ring_bell_function, Vec::<Value>::new())?;
+        return Ok(Value::Nil);
+    }
+
     // GNU's Fding: noninteractive sessions write \a to stdout.  It
     // stays in stdio's block buffer, so a piped reader sees it merged
     // with the next stdout write.
     if i.noninteractive {
+        crate::stdio::write(b"\x07");
+        return Ok(Value::Nil);
+    }
+
+    let visible = i
+        .q_soft("visible-bell")
+        .filter(|symbol| i.bound_p(*symbol))
+        .is_some_and(|symbol| i.symbol_value(symbol).truthy());
+    if let Some(backend) = i.bell_backend.clone() {
+        let frame_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id);
+        backend.ring_bell(frame_id, visible);
+    } else {
         crate::stdio::write(b"\x07");
     }
     Ok(Value::Nil)

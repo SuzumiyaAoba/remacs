@@ -157,6 +157,7 @@ impl Interp {
             exit_status: None,
             minibuf_reader: None,
             clipboard_backend: None,
+            bell_backend: None,
             dialog_backend: None,
             file_dialog_backend: None,
             frame_window_backend: None,

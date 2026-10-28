@@ -181,6 +181,7 @@ pub(super) enum GuiRequest {
     FrameSnapshots(Vec<FrameSnapshot>),
     FrameVisibility { frame_id: usize, visible: bool },
     FrameOrder { frame_id: usize, raise: bool },
+    Bell { frame_id: Option<usize>, visible: bool },
     ColorPanel {
         frame_id: usize,
         reply: SyncSender<Result<(), String>>,
@@ -345,6 +346,18 @@ impl remacs_runtime::frontend::FrameWindowBackend for GuiFrameVisibilityBackend 
                 raise: false,
             })
             .map_err(|_| "GUI window service is unavailable".to_owned())
+    }
+}
+
+struct GuiBellBackend {
+    requests: smol::channel::Sender<GuiRequest>,
+}
+
+impl remacs_runtime::frontend::BellBackend for GuiBellBackend {
+    fn ring_bell(&self, frame_id: Option<usize>, visible: bool) {
+        let _ = self
+            .requests
+            .send_blocking(GuiRequest::Bell { frame_id, visible });
     }
 }
 
@@ -1515,6 +1528,9 @@ fn start_logic_inner(
                 configure_gui_window_system(&mut i);
             }
             if enable_gui_requests {
+                i.set_bell_backend(Some(Rc::new(GuiBellBackend {
+                    requests: gui_requests_tx.clone(),
+                })));
                 i.set_dialog_backend(Some(Rc::new(GuiDialogBackend {
                     requests: gui_requests_tx.clone(),
                 })));

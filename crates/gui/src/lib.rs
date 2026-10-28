@@ -10,6 +10,16 @@ use cocoa::base::{id, nil};
 #[cfg(target_os = "macos")]
 use cocoa::foundation::{NSInteger, NSString};
 #[cfg(target_os = "macos")]
+#[link(name = "AppKit", kind = "framework")]
+unsafe extern "C" {
+    fn NSBeep();
+}
+#[cfg(target_os = "windows")]
+#[link(name = "user32")]
+unsafe extern "system" {
+    fn MessageBeep(u_type: u32) -> i32;
+}
+#[cfg(target_os = "macos")]
 use objc::{class, msg_send, runtime::{BOOL, YES}, sel, sel_impl};
 mod keys;
 mod logic;
@@ -335,6 +345,27 @@ pub fn run_gui_with_dump(
                                     lower_frame_window(window);
                                 }
                             });
+                        }
+                    }
+                    GuiRequest::Bell { frame_id, visible } => {
+                        if visible {
+                            let handle = frame_id
+                                .and_then(|frame_id| windows.get(&frame_id).copied())
+                                .or_else(|| windows.values().next().copied());
+                            if handle
+                                .and_then(|handle| {
+                                    handle
+                                        .update(cx, |view, window, cx| {
+                                            view.flash_bell(window, cx)
+                                        })
+                                        .ok()
+                                })
+                                .is_none()
+                            {
+                                ring_native_bell();
+                            }
+                        } else {
+                            ring_native_bell();
                         }
                     }
                     GuiRequest::ColorPanel { frame_id, reply } => {
@@ -789,6 +820,22 @@ fn show_native_character_palette(window: &Window) -> Result<(), String> {
     {
         let _ = window;
         Err("Character Viewer is available only on macOS".to_owned())
+    }
+}
+
+fn ring_native_bell() {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        NSBeep();
+    }
+    #[cfg(target_os = "windows")]
+    unsafe {
+        let _ = MessageBeep(0);
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        use std::io::Write;
+        let _ = std::io::stderr().write_all(b"\x07");
     }
 }
 

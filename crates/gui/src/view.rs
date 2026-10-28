@@ -297,6 +297,8 @@ pub(super) struct EditorView {
     runtime_frame_position: Option<(Option<i128>, Option<i128>)>,
     scroll_bar_drag: Option<ScrollBarDrag>,
     toolbar_pressed: bool,
+    bell_flash: bool,
+    bell_flash_generation: u64,
     focus_subscriptions: Vec<Subscription>,
     mouse_face_position: Rc<Cell<Option<(usize, usize)>>>,
     auto_raise: Rc<Cell<bool>>,
@@ -341,6 +343,8 @@ impl EditorView {
             runtime_frame_position: None,
             scroll_bar_drag: None,
             toolbar_pressed: false,
+            bell_flash: false,
+            bell_flash_generation: 0,
             focus_subscriptions: Vec::new(),
             mouse_face_position: Rc::new(Cell::new(None)),
             auto_raise: Rc::new(Cell::new(false)),
@@ -432,6 +436,25 @@ impl EditorView {
     pub(super) fn set_frame_behavior(&self, auto_raise: bool, auto_lower: bool) {
         self.auto_raise.set(auto_raise);
         self.auto_lower.set(auto_lower);
+    }
+
+    pub(super) fn flash_bell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.bell_flash_generation = self.bell_flash_generation.wrapping_add(1);
+        let generation = self.bell_flash_generation;
+        self.bell_flash = true;
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(140))
+                .await;
+            let _ = this.update(cx, |view, cx| {
+                if view.bell_flash_generation == generation {
+                    view.bell_flash = false;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 }
 
@@ -601,6 +624,7 @@ impl Render for EditorView {
             .default_bg
             .map(|color| ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32)
             .unwrap_or(BG);
+        let bell_flash = self.bell_flash;
         let mouse_cursor = gpui_cursor_style(self.grid.hover_cursor);
         let grid = self.grid.clone();
         let images = grid.images.clone();
@@ -1334,6 +1358,9 @@ impl Render for EditorView {
                                 },
                                 rgb(0x747a80),
                             ));
+                        }
+                        if bell_flash {
+                            window.paint_quad(fill(bounds, rgba((0xFFFFFF << 8) | 0x80)));
                         }
                     },
                 )

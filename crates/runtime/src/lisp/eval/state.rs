@@ -20,6 +20,11 @@ impl Interp {
         self.clipboard_backend = backend;
     }
 
+    /// Install or remove the host bell backend used by interactive GUI ding.
+    pub fn set_bell_backend(&mut self, backend: Option<Rc<dyn crate::frontend::BellBackend>>) {
+        self.bell_backend = backend;
+    }
+
     /// Install or remove the host dialog backend used by graphical frames.
     pub fn set_dialog_backend(&mut self, backend: Option<Rc<dyn crate::frontend::DialogBackend>>) {
         self.dialog_backend = backend;
