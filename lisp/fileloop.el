@@ -124,7 +124,7 @@ operating on the next file and nil otherwise."
         (condition-case err
             (insert-file-contents new nil)
           (file-missing
-           (fileloop-next-file novisit))
+           (setq new (fileloop-next-file novisit)))
           (file-error
            ;; See bug#79356 for discussion.
            (let ((msg (error-message-string err)))
