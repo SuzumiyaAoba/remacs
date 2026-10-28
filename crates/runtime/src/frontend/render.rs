@@ -2722,6 +2722,7 @@ struct FaceCtx {
     line_spacing: u32,
     line_height: u32,
     mark_active: u32,
+    face_remapping_alist: u32,
     inherit: u32,
     invisible: u32,
     buffer_invisibility_spec: u32,
@@ -2802,6 +2803,7 @@ impl FaceCtx {
             line_spacing: sym("line-spacing"),
             line_height: sym("line-height"),
             mark_active: sym("mark-active"),
+            face_remapping_alist: sym("face-remapping-alist"),
             inherit: sym(":inherit"),
             invisible: sym("invisible"),
             buffer_invisibility_spec: sym("buffer-invisibility-spec"),
@@ -3244,6 +3246,9 @@ fn builtin_face_defaults(i: &Interp, name: &str) -> StyleMix {
 /// faces and `face'/`font-lock-face' text-property runs collected
 /// once per render, and the active-region range.
 struct WindowFaces {
+    /// Buffer-local face replacements. Keep each cdr intact so direct
+    /// composite specs remain distinct from face-remap helper entries.
+    face_remappings: Vec<(crate::lisp::value::SymId, Value)>,
     /// Overlay snapshots and face values. Precedence is computed for the
     /// overlays covering each position, including interval containment.
     overlays: Vec<(crate::buffer::Overlay, Value)>,
@@ -3317,6 +3322,27 @@ fn window_faces(
             (true, Some(mk)) if mk != bb.point() => Some((mk.min(bb.point()), mk.max(bb.point()))),
             _ => None,
         }
+    };
+    let face_remappings = if ctx.face_remapping_alist == u32::MAX {
+        Vec::new()
+    } else {
+        i.buffer_local_toplevel_value(ctx.face_remapping_alist, bb.id)
+            .or_else(|| i.default_toplevel_value(ctx.face_remapping_alist))
+            .or_else(|| bb.locals.get(&ctx.face_remapping_alist).cloned())
+            .and_then(|alist| alist.list_to_vec().ok())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|entry| {
+                let Value::Cons(entry) = entry else {
+                    return None;
+                };
+                let (face, remapping) = {
+                    let entry = entry.borrow();
+                    (entry.car.clone(), entry.cdr.clone())
+                };
+                Some((i.sym_id(&face)?, remapping))
+            })
+            .collect()
     };
     // Overlays covering this buffer, for this window (a `window'
     // property restricts an overlay to one window — lazy-highlight
@@ -3626,6 +3652,7 @@ fn window_faces(
     .filter(|table| crate::lisp::builtins::misc::is_char_table(i, table))
     .collect();
     WindowFaces {
+        face_remappings,
         overlays,
         prop_faces,
         mouse_face,
@@ -4159,16 +4186,23 @@ fn visibility_at_pos(i: &Interp, faces: &WindowFaces, pos: usize) -> Visibility 
 /// face, then text-property faces (insertion order — last write
 /// wins), then overlays in ascending priority.
 fn style_at_pos(i: &Interp, ctx: &mut FaceCtx, wf: &WindowFaces, pos: usize) -> CellStyle {
-    let mut mix = ctx.builtin(i, "default", 0);
+    let mut mix = remapped_named_face(i, ctx, wf, "default", 0);
     if let Some((rs, re)) = wf.region {
         if pos >= rs && pos < re {
-            mix.merge(&ctx.builtin(i, "region", 0));
+            mix.merge(&remapped_named_face(i, ctx, wf, "region", 0));
         }
     }
     for (s, e, v, _) in &wf.prop_faces {
         if pos >= *s && pos < *e {
             let v = v.clone();
-            mix.merge(&ctx.face_value(i, &v, 0));
+            mix.merge(&face_value_with_remapping(
+                i,
+                ctx,
+                wf,
+                &v,
+                0,
+                &mut Vec::new(),
+            ));
         }
     }
     let mut overlays: Vec<_> = wf
@@ -4181,13 +4215,20 @@ fn style_at_pos(i: &Interp, ctx: &mut FaceCtx, wf: &WindowFaces, pos: usize) -> 
     crate::buffer::sort_overlays_by_priority(i, &mut overlays);
     for (_, index) in overlays {
         let face = wf.overlays[index].1.clone();
-        mix.merge(&ctx.face_value(i, &face, 0));
+        mix.merge(&face_value_with_remapping(
+            i,
+            ctx,
+            wf,
+            &face,
+            0,
+            &mut Vec::new(),
+        ));
     }
     if let Some((start, end, face)) = &wf.mouse_face
         && pos >= *start
         && pos < *end
     {
-        let mut mouse_face = ctx.face_value(i, face, 0);
+        let mut mouse_face = face_value_with_remapping(i, ctx, wf, face, 0, &mut Vec::new());
         // GNU keeps the underlying text metrics while applying mouse-face.
         mouse_face.font_family = None;
         mouse_face.font_weight = None;
@@ -4198,6 +4239,143 @@ fn style_at_pos(i: &Interp, ctx: &mut FaceCtx, wf: &WindowFaces, pos: usize) -> 
         mix.merge(&mouse_face);
     }
     mix.finish()
+}
+
+/// Return the face specs in a `face-remap-add-relative' entry in the
+/// order the renderer must merge them. The helper stores relative specs
+/// before the base face, while the base has the lowest priority.
+fn face_remapping_specs(
+    i: &Interp,
+    remapping: &Value,
+    face: crate::lisp::value::SymId,
+) -> (Vec<Value>, bool) {
+    let Ok(specs) = remapping.list_to_vec() else {
+        return (vec![remapping.clone()], false);
+    };
+    let is_plist = specs
+        .first()
+        .and_then(|value| i.sym_id(value))
+        .is_some_and(|symbol| i.symbol_name(symbol).starts_with(':'));
+    if is_plist {
+        return (vec![remapping.clone()], false);
+    }
+    let is_relative_sequence =
+        specs.len() > 1 && matches!(specs.last(), Some(Value::Sym(symbol)) if *symbol == face);
+    if is_relative_sequence {
+        (specs, true)
+    } else {
+        (vec![remapping.clone()], false)
+    }
+}
+
+fn remapped_named_face(
+    i: &Interp,
+    ctx: &mut FaceCtx,
+    faces: &WindowFaces,
+    name: &str,
+    depth: u32,
+) -> StyleMix {
+    if let Some(face) = i.intern_soft(name) {
+        face_value_with_remapping(i, ctx, faces, &Value::Sym(face), depth, &mut Vec::new())
+    } else {
+        ctx.builtin(i, name, depth)
+    }
+}
+
+/// Resolve a face spec while replacing named faces through the current
+/// buffer's face-remapping-alist. A remapped face can refer to itself
+/// as its base; that reference must use the normal face definition.
+fn face_value_with_remapping(
+    i: &Interp,
+    ctx: &mut FaceCtx,
+    faces: &WindowFaces,
+    value: &Value,
+    depth: u32,
+    remapping_stack: &mut Vec<crate::lisp::value::SymId>,
+) -> StyleMix {
+    if depth >= 16 {
+        return StyleMix::default();
+    }
+    let face = crate::editor::face_symbol(i, value);
+    if let Some(face) = face {
+        if remapping_stack.contains(&face) {
+            return ctx.face_value(i, value, depth);
+        }
+        if let Some(remapping) = faces
+            .face_remappings
+            .iter()
+            .find(|(candidate, _)| *candidate == face)
+            .map(|(_, remapping)| remapping.clone())
+        {
+            let (specs, reverse) = face_remapping_specs(i, &remapping, face);
+            let mut mix = StyleMix::default();
+            remapping_stack.push(face);
+            if reverse {
+                for spec in specs.iter().rev() {
+                    mix.merge(&face_value_with_remapping(
+                        i,
+                        ctx,
+                        faces,
+                        spec,
+                        depth + 1,
+                        remapping_stack,
+                    ));
+                }
+            } else {
+                for spec in &specs {
+                    mix.merge(&face_value_with_remapping(
+                        i,
+                        ctx,
+                        faces,
+                        spec,
+                        depth + 1,
+                        remapping_stack,
+                    ));
+                }
+            }
+            remapping_stack.pop();
+            return mix;
+        }
+    }
+
+    if let Value::Cons(_) = value {
+        let Ok(items) = value.list_to_vec() else {
+            return ctx.face_value(i, value, depth);
+        };
+        let is_plist = items
+            .first()
+            .and_then(|item| i.sym_id(item))
+            .is_some_and(|symbol| i.symbol_name(symbol).starts_with(':'));
+        if is_plist {
+            let inherit = crate::lisp::eval::plist_get(value, ctx.inherit);
+            let mut mix = StyleMix::default();
+            if inherit.truthy() {
+                mix.merge(&face_value_with_remapping(
+                    i,
+                    ctx,
+                    faces,
+                    &inherit,
+                    depth + 1,
+                    remapping_stack,
+                ));
+            }
+            mix.merge(&ctx.attrs(i, value));
+            return mix;
+        }
+        let mut mix = StyleMix::default();
+        for spec in &items {
+            mix.merge(&face_value_with_remapping(
+                i,
+                ctx,
+                faces,
+                spec,
+                depth + 1,
+                remapping_stack,
+            ));
+        }
+        return mix;
+    }
+    ctx.face_value(i, value, depth)
 }
 
 fn grid_pointer_shape(i: &Interp, value: Option<&Value>) -> GridPointerShape {
