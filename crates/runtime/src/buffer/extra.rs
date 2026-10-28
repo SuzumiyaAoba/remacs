@@ -456,23 +456,25 @@ fn f_get_byte(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             // signals (args-out-of-range (pos BEGV ZV)); a defaulted nil
             // POSITION uses PT, where PT==ZV at eob reads the trailing
             // byte area → 0.
-            if explicit && (pos < 1 || pos as usize > bb.text.len()) {
+            let begv = bb.begv.min(bb.text.len()) as i128 + 1;
+            let zv = bb.zv.min(bb.text.len()) as i128 + 1;
+            if explicit && (pos < begv || pos >= zv) {
                 return Err(i.signal_data(
                     crate::lisp::sym::ARGS_OUT_OF_RANGE,
                     vec![
                         a.get(0).cloned().unwrap_or(Value::Nil),
-                        Value::Int(1),
-                        Value::Int(bb.text.len() as i128 + 1),
+                        Value::Int(begv),
+                        Value::Int(zv),
                     ],
                 ));
             }
-            if pos < 1 || pos as usize > bb.text.len() + 1 {
+            if pos < begv || pos > zv {
                 return Err(i.signal_data(
                     crate::lisp::sym::ARGS_OUT_OF_RANGE,
                     vec![a.get(0).cloned().unwrap_or(Value::Nil)],
                 ));
             }
-            let c = if pos as usize == bb.text.len() + 1 {
+            let c = if pos == zv {
                 0
             } else {
                 (bb.text.char_at(pos as usize - 1)).code() as u32
