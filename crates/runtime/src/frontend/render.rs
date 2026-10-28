@@ -1480,7 +1480,7 @@ fn window_faces(
             Some((ov.clone(), fv))
         })
         .collect();
-    let mut invisible_overlays: Vec<(crate::buffer::Overlay, Value)> = bb
+    let invisible_overlays: Vec<(crate::buffer::Overlay, Value)> = bb
         .overlays
         .iter()
         .filter(|ov| ov.buffer == Some(bb.id) && ov.start < ov.end && ov.matches_window(i, win))
@@ -1488,16 +1488,6 @@ fn window_faces(
             let value = overlay.property(i, &Value::Sym(ctx.invisible));
             (!value.is_nil()).then(|| (overlay.clone(), value))
         })
-        .collect();
-    let mut invisible_order: Vec<_> = invisible_overlays
-        .iter()
-        .enumerate()
-        .map(|(index, (overlay, _))| (overlay, index))
-        .collect();
-    crate::buffer::sort_overlays_by_priority(i, &mut invisible_order);
-    invisible_overlays = invisible_order
-        .into_iter()
-        .map(|(_, index)| invisible_overlays[index].clone())
         .collect();
     let properties = bb.text.props.borrow();
     let prop_faces: Vec<(usize, usize, Value, usize)> = properties
@@ -1577,14 +1567,20 @@ fn invisibility_for_property(property: &Value, spec: &Value) -> Visibility {
     Visibility::Visible
 }
 
-fn visibility_at_pos(faces: &WindowFaces, pos: usize) -> Visibility {
-    if let Some((_, property)) = faces
+fn visibility_at_pos(i: &Interp, faces: &WindowFaces, pos: usize) -> Visibility {
+    let mut overlays: Vec<_> = faces
         .invisible_overlays
         .iter()
-        .rev()
-        .find(|(overlay, _)| pos >= overlay.start && pos < overlay.end)
-    {
-        return invisibility_for_property(property, &faces.invisibility_spec);
+        .enumerate()
+        .filter(|(_, (overlay, _))| pos >= overlay.start && pos < overlay.end)
+        .map(|(index, (overlay, _))| (overlay, index))
+        .collect();
+    crate::buffer::sort_overlays_by_priority(i, &mut overlays);
+    if let Some((_, index)) = overlays.into_iter().next_back() {
+        return invisibility_for_property(
+            &faces.invisible_overlays[index].1,
+            &faces.invisibility_spec,
+        );
     }
     if let Some((_, _, property)) = faces
         .invisible_props
@@ -1895,7 +1891,7 @@ fn render_grid_internal(
                 },
                 |index| {
                     wf.as_ref()
-                        .map(|wf| visibility_at_pos(wf, line_pos + index))
+                        .map(|wf| visibility_at_pos(i, wf, line_pos + index))
                         .unwrap_or(Visibility::Visible)
                 },
             );
@@ -1939,7 +1935,7 @@ fn render_grid_internal(
                     || display_columns_of(line.chars().take(point_index), tab_width),
                     |wf| {
                         visible_display_columns_of(&line, point_index, tab_width, |index| {
-                            visibility_at_pos(wf, line_pos + index)
+                            visibility_at_pos(i, wf, line_pos + index)
                         })
                     },
                 );
