@@ -1197,7 +1197,7 @@ IGNORE starts with \"./\".  RELATIVE-DIR is relative to the project root."
             (concat "./" (string-join suffix "/")
                     (if (string-suffix-p "/" path) "/" ""))
           "./")))
-     (t nil)))
+     (t nil))))
 
 (defun project--dir-ignores (project dir)
   (let* ((root (file-name-as-directory (project-root project)))
