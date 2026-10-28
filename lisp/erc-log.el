@@ -196,11 +196,10 @@ If you set this to nil, you may want to enable both
 `erc-save-buffer-on-part' and `erc-save-queries-on-quit'."
   :type 'boolean)
 
-(defcustom erc-log-file-coding-system 'emacs-mule
+(defcustom erc-log-file-coding-system 'utf-8-unix
   "The coding system ERC should use for writing log files.
 
-This should ideally, be a \"catch-all\" coding system, like
-`emacs-mule', or `iso-2022-7bit'."
+This should support all Unicode characters."
   :type 'coding-system)
 
 (defcustom erc-log-filter-function nil
