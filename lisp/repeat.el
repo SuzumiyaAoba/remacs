@@ -360,7 +360,8 @@ See `describe-repeat-maps' for a list of all repeatable commands."
   (if (not repeat-mode)
       (progn
         (remove-hook 'pre-command-hook 'repeat-pre-hook)
-        (remove-hook 'post-command-hook 'repeat-post-hook))
+        (remove-hook 'post-command-hook 'repeat-post-hook)
+        (repeat-exit))
     (when repeat-keep-prefix
       (add-hook 'pre-command-hook 'repeat-pre-hook))
     (add-hook 'post-command-hook 'repeat-post-hook)
