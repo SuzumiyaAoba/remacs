@@ -131,6 +131,14 @@ pub struct GridMenuItem {
     pub separator: bool,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct GridToolBarItem {
+    pub row: usize,
+    pub left: usize,
+    pub width: usize,
+    pub command: String,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GridScrollBarOrientation {
     Vertical,
@@ -266,6 +274,7 @@ pub struct Grid {
     /// Image runs from `display' properties, positioned in grid cells.
     pub images: Vec<GridImage>,
     pub menus: Vec<GridMenu>,
+    pub tool_bar_items: Vec<GridToolBarItem>,
     pub scroll_bars: Vec<GridScrollBar>,
     /// Cell styles, one entry for each display column in a row.
     pub attrs: Vec<Vec<CellStyle>>,
@@ -323,6 +332,7 @@ impl Grid {
             rows: vec![String::new(); height],
             images: Vec::new(),
             menus: Vec::new(),
+            tool_bar_items: Vec::new(),
             scroll_bars: Vec::new(),
             attrs: vec![vec![CellStyle::default(); width]; height],
             char_attrs: vec![Vec::new(); height],
@@ -1301,6 +1311,111 @@ fn render_menu_bar(i: &Interp) -> Vec<GridMenu> {
             items: item.items,
         })
         .collect()
+}
+
+fn render_tool_bar(
+    i: &Interp,
+    width: usize,
+    rows: usize,
+    default_style: CellStyle,
+    faces: &mut FaceCtx,
+    screen: &mut [Vec<ScreenCell>],
+) -> Vec<GridToolBarItem> {
+    let mut background = faces.builtin(i, "tool-bar", 0).finish();
+    if background.fg.is_none() {
+        background.fg = default_style.fg;
+    }
+    if background.bg.is_none() {
+        background.bg = default_style.bg.or(Some(CellColor(0x33, 0x36, 0x3a)));
+    }
+    for row in screen.iter_mut().take(rows) {
+        for cell in row {
+            *cell = ScreenCell {
+                chars: Vec::new(),
+                style: background,
+                occupied: true,
+                continuation: false,
+            };
+        }
+    }
+    let Some(map_id) = i.q_soft("tool-bar-map") else {
+        return Vec::new();
+    };
+    let map = i
+        .buffer_local_toplevel_value(map_id, i.current_buffer)
+        .or_else(|| i.default_toplevel_value(map_id))
+        .unwrap_or(Value::Nil);
+    let mut items = Vec::new();
+    let mut row = 0usize;
+    let mut column = 0usize;
+    for (key, definition) in crate::editor::keymap_own_bindings(i, &map) {
+        let (mut label, command, separator) = menu_label_and_definition(i, &key, &definition);
+        if separator {
+            column = column.saturating_add(1);
+            continue;
+        }
+        let Value::Sym(command) = command else {
+            continue;
+        };
+        if !i.fbound_p(command) {
+            continue;
+        }
+        if let Ok(parts) = definition.list_to_vec()
+            && matches!(parts.first(), Some(Value::Sym(id)) if i.symbol_name(*id) == "menu-item")
+        {
+            let properties = Value::list(parts.into_iter().skip(3).collect());
+            if let Some(label_symbol) = i.q_soft(":label")
+                && let Value::Str(value) = crate::lisp::eval::plist_get(&properties, label_symbol)
+            {
+                label = value.borrow().to_unicode_lossy();
+            }
+        }
+        let label_width = label
+            .chars()
+            .map(display_char_width)
+            .sum::<usize>()
+            .max(1);
+        let button_width = label_width.saturating_add(2).min(width.max(1));
+        if column.saturating_add(button_width) > width {
+            row = row.saturating_add(1);
+            column = 0;
+        }
+        if row >= rows || width == 0 {
+            break;
+        }
+        let text = fit_text_to_cells_with_tab_width(
+            &format!(" {label} "),
+            button_width,
+            8,
+        )
+        .0;
+        let mut button_style = background;
+        button_style.box_style = Some(BoxStyle {
+            vertical_width: 1,
+            horizontal_width: 1,
+            color: background.fg,
+            kind: BoxStyleKind::Released,
+        });
+        let cell_styles = vec![button_style; button_width];
+        let character_styles = text.chars().map(|_| button_style).collect::<Vec<_>>();
+        if let Some(screen_row) = screen.get_mut(row) {
+            place_text_row(
+                screen_row,
+                column,
+                &text,
+                &cell_styles,
+                &character_styles,
+            );
+        }
+        items.push(GridToolBarItem {
+            row,
+            left: column,
+            width: button_width,
+            command: i.symbol_name(command),
+        });
+        column = column.saturating_add(button_width).saturating_add(1);
+    }
+    items
 }
 
 fn scroll_thumb(
@@ -3076,6 +3191,7 @@ fn render_grid_internal(
     let mut char_attrs = vec![Vec::new(); height];
     let mut images = Vec::new();
     let menus = render_menu_bar(i);
+    let mut tool_bar_items = Vec::new();
     let mut scroll_bars = Vec::new();
     let mut mode_rows = Vec::new();
     let mut cursor_pos: Option<(usize, usize)> = None;
@@ -3098,6 +3214,7 @@ fn render_grid_internal(
                 rows,
                 images,
                 menus,
+                tool_bar_items,
                 scroll_bars,
                 attrs,
                 char_attrs,
@@ -3136,7 +3253,15 @@ fn render_grid_internal(
         0
     };
     let mini_height = 1usize;
-    let body_height = height.saturating_sub(mini_height);
+    let tool_bar_rows = if graphical {
+        crate::editor::frame_parameter_positive_size(i, &frame, "tool-bar-lines", 0)
+            .min(height.saturating_sub(mini_height))
+    } else {
+        0
+    };
+    let body_height = height
+        .saturating_sub(mini_height)
+        .saturating_sub(tool_bar_rows);
     let (root_left, root_top, root_width, root_height) = fb
         .root
         .as_ref()
@@ -3161,6 +3286,16 @@ fn render_grid_internal(
     let mut screen_rows: Vec<Vec<ScreenCell>> = (0..height)
         .map(|_| (0..width).map(|_| ScreenCell::new(default_style)).collect())
         .collect();
+    if tool_bar_rows > 0 {
+        tool_bar_items = render_tool_bar(
+            i,
+            width,
+            tool_bar_rows,
+            default_style,
+            &mut fctx,
+            &mut screen_rows,
+        );
+    }
     let mut selected_cursor: Option<(usize, usize, usize, usize)> = None;
 
     for w in &fb.windows {
@@ -3193,7 +3328,8 @@ fn render_grid_internal(
             )
         };
         let raw_window_left = scale_edge(raw_left, root_left, scale_x, width);
-        let raw_window_top = scale_edge(raw_top, root_top, scale_y, body_height);
+        let raw_window_top = scale_edge(raw_top, root_top, scale_y, body_height)
+            .saturating_add(tool_bar_rows);
         let raw_window_right = scale_edge(
             raw_left.saturating_add(raw_width),
             root_left,
@@ -3205,7 +3341,8 @@ fn render_grid_internal(
             root_top,
             scale_y,
             body_height,
-        );
+        )
+        .saturating_add(tool_bar_rows);
         let raw_window_width = raw_window_right.saturating_sub(raw_window_left);
         let raw_window_height = raw_window_bottom
             .saturating_sub(raw_window_top)
@@ -4142,6 +4279,7 @@ fn render_grid_internal(
         rows,
         images,
         menus,
+        tool_bar_items,
         scroll_bars,
         attrs,
         char_attrs,

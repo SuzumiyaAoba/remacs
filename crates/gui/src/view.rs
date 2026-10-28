@@ -8,7 +8,8 @@ use gpui::*;
 use remacs_runtime::editor::{CHAR_CTL, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
 use remacs_runtime::frontend::{
     BoxStyle, BoxStyleKind, CellColor, Grid, GridImage, GridImageSource, GridMenu, GridMenuItem,
-    GridScrollBar, GridScrollBarOrientation, MouseButton as RemacsMouseButton,
+    GridScrollBar, GridScrollBarOrientation, GridToolBarItem,
+    MouseButton as RemacsMouseButton,
 };
 use std::sync::mpsc::Sender;
 mod input;
@@ -94,6 +95,20 @@ fn send_scroll_bar_event(
     });
 }
 
+fn tool_bar_command_at(
+    items: &[GridToolBarItem],
+    point: Point<Pixels>,
+    cell_width: Pixels,
+    line_height: Pixels,
+) -> Option<String> {
+    let column = (f32::from(point.x) / f32::from(cell_width)).floor().max(0.0) as usize;
+    let row = (f32::from(point.y) / f32::from(line_height)).floor().max(0.0) as usize;
+    items
+        .iter()
+        .find(|item| item.row == row && column >= item.left && column < item.left + item.width)
+        .map(|item| item.command.clone())
+}
+
 #[derive(Clone, PartialEq, gpui::Action)]
 #[action(namespace = remacs, no_json)]
 struct RunMenuCommand {
@@ -112,6 +127,7 @@ pub(super) struct EditorView {
     cell_width: Pixels,
     geometry: Option<GuiGeometry>,
     scroll_bar_drag: Option<ScrollBarDrag>,
+    toolbar_pressed: bool,
     #[cfg(target_os = "macos")]
     accessibility_buffer_view: Option<usize>,
     #[cfg(target_os = "macos")]
@@ -139,6 +155,7 @@ impl EditorView {
             cell_width: px(8.0),
             geometry: None,
             scroll_bar_drag: None,
+            toolbar_pressed: false,
             #[cfg(target_os = "macos")]
             accessibility_buffer_view: None,
             #[cfg(target_os = "macos")]
@@ -337,6 +354,18 @@ impl Render for EditorView {
                 MouseButton::Left,
                 cx.listener(
                     move |this, event: &MouseDownEvent, window, cx| {
+                        if let Some(command) = tool_bar_command_at(
+                            &left_mouse_down_grid.tool_bar_items,
+                            event.position,
+                            cell_width,
+                            line_height,
+                        ) {
+                            this.toolbar_pressed = true;
+                            let _ = left_mouse_down_tx.send(GuiEvent::MenuCommand(command));
+                            window.prevent_default();
+                            cx.stop_propagation();
+                            return;
+                        }
                         if let Some((bar, pointer_offset)) =
                             scroll_bar_hit(&left_mouse_down_grid, event.position)
                         {
@@ -395,6 +424,12 @@ impl Render for EditorView {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseUpEvent, window, cx| {
+                    if this.toolbar_pressed {
+                        this.toolbar_pressed = false;
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        return;
+                    }
                     if this.scroll_bar_drag.take().is_some() {
                         window.prevent_default();
                         cx.stop_propagation();
