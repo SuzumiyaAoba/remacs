@@ -857,7 +857,47 @@ fn append_rendered_character(
     true
 }
 
-fn render_text_row<F, V, D>(
+#[allow(clippy::too_many_arguments)]
+fn append_rendered_text(
+    text: &str,
+    style: CellStyle,
+    hscroll: usize,
+    width: usize,
+    end_column: usize,
+    tab_width: usize,
+    column: &mut usize,
+    visible_columns: &mut usize,
+    rendered: &mut String,
+    cell_attrs: &mut [CellStyle],
+    char_attrs: &mut Vec<CellStyle>,
+    cell_offsets: &mut [usize],
+) -> bool {
+    for raw_display in text.chars() {
+        let display = match raw_display {
+            '\n' | '\r' => ' ',
+            other => other,
+        };
+        if !append_rendered_character(
+            display,
+            style,
+            hscroll,
+            width,
+            end_column,
+            tab_width,
+            column,
+            visible_columns,
+            rendered,
+            cell_attrs,
+            char_attrs,
+            cell_offsets,
+        ) {
+            return false;
+        }
+    }
+    true
+}
+
+fn render_text_row<F, V, D, B>(
     text: &EmacsText,
     hscroll: usize,
     width: usize,
@@ -866,11 +906,13 @@ fn render_text_row<F, V, D>(
     mut style_at: F,
     mut visibility_at: V,
     mut display_at: D,
+    mut boundary_strings_at: B,
 ) -> RenderedRow
 where
     F: FnMut(usize) -> CellStyle,
     V: FnMut(usize) -> Visibility,
     D: FnMut(usize) -> Option<DisplayReplacement>,
+    B: FnMut(usize) -> Vec<String>,
 {
     let chars: Vec<_> = text.chars().collect();
     let mut rendered = String::new();
@@ -887,6 +929,34 @@ where
     let mut images = Vec::new();
 
     for (index, ch) in chars.iter().enumerate() {
+        let mut keep_rendering = true;
+        for string in boundary_strings_at(index) {
+            if !append_rendered_text(
+                &string,
+                default_style,
+                hscroll,
+                width,
+                end_column,
+                tab_width,
+                &mut column,
+                &mut visible_columns,
+                &mut rendered,
+                &mut cell_attrs,
+                &mut char_attrs,
+                &mut cell_offsets,
+            ) {
+                keep_rendering = false;
+                break;
+            }
+        }
+        let offset = if column <= hscroll { 0 } else { rendered.len() };
+        source_offsets[index] = offset;
+        source_columns[index] = column;
+        if !keep_rendering {
+            source_offsets[index..].fill(offset);
+            source_columns[index..].fill(column);
+            break;
+        }
         let visibility = visibility_at(index);
         let draw_ellipsis = visibility == Visibility::Ellipsis && !hidden_run;
         if visibility != Visibility::Visible && !draw_ellipsis {
@@ -905,31 +975,20 @@ where
         let keep_rendering = match replacement {
             Some(DisplayReplacement::Hidden) => true,
             Some(DisplayReplacement::Text(replacement)) => {
-                let mut keep = true;
-                for raw_display in replacement.chars() {
-                    let display = match raw_display {
-                        '\n' | '\r' => ' ',
-                        other => other,
-                    };
-                    if !append_rendered_character(
-                        display,
-                        style,
-                        hscroll,
-                        width,
-                        end_column,
-                        tab_width,
-                        &mut column,
-                        &mut visible_columns,
-                        &mut rendered,
-                        &mut cell_attrs,
-                        &mut char_attrs,
-                        &mut cell_offsets,
-                    ) {
-                        keep = false;
-                        break;
-                    }
-                }
-                keep
+                append_rendered_text(
+                    &replacement,
+                    style,
+                    hscroll,
+                    width,
+                    end_column,
+                    tab_width,
+                    &mut column,
+                    &mut visible_columns,
+                    &mut rendered,
+                    &mut cell_attrs,
+                    &mut char_attrs,
+                    &mut cell_offsets,
+                )
             }
             Some(DisplayReplacement::Image {
                 source,
@@ -995,6 +1054,28 @@ where
             break;
         }
     }
+
+    for string in boundary_strings_at(chars.len()) {
+        if !append_rendered_text(
+            &string,
+            default_style,
+            hscroll,
+            width,
+            end_column,
+            tab_width,
+            &mut column,
+            &mut visible_columns,
+            &mut rendered,
+            &mut cell_attrs,
+            &mut char_attrs,
+            &mut cell_offsets,
+        ) {
+            break;
+        }
+    }
+    let offset = if column <= hscroll { 0 } else { rendered.len() };
+    source_offsets[chars.len()] = offset;
+    source_columns[chars.len()] = column;
 
     // The line end maps to the end of its visible text, before padding.
     let padding_char_start = char_attrs.len();
@@ -1551,12 +1632,22 @@ struct WindowFaces {
     prop_faces: Vec<(usize, usize, Value, usize)>,
     /// `display` text-property runs; the run is replaced once, at its start.
     display_props: Vec<(usize, usize, Option<DisplayReplacement>, usize)>,
+    /// Overlay strings positioned at the overlay's start/end boundaries.
+    overlay_strings: HashMap<usize, Vec<String>>,
     /// Invisible text ranges and visible overlays carrying `invisible`.
     invisible_overlays: Vec<(crate::buffer::Overlay, Value)>,
     invisible_props: Vec<(usize, usize, Value)>,
     invisibility_spec: Value,
     /// Active region as a half-open range when the mark is active.
     region: Option<(usize, usize)>,
+}
+
+#[derive(Clone)]
+struct OverlayStrings {
+    start: usize,
+    end: usize,
+    before: Option<String>,
+    after: Option<String>,
 }
 
 fn window_faces(
@@ -1615,6 +1706,73 @@ fn window_faces(
             (!value.is_nil()).then(|| (overlay.clone(), value))
         })
         .collect();
+    let before_string = i.q_soft("before-string");
+    let after_string = i.q_soft("after-string");
+    let mut overlay_strings: Vec<(crate::buffer::Overlay, OverlayStrings)> = bb
+        .overlays
+        .iter()
+        .filter(|overlay| overlay.buffer == Some(bb.id) && overlay.matches_window(i, win))
+        .filter_map(|overlay| {
+            let string_value = |property: Option<crate::lisp::value::SymId>| {
+                property.and_then(|property| match overlay.property(i, &Value::Sym(property)) {
+                    Value::Str(value) => Some(value.borrow().to_unicode_lossy()),
+                    _ => None,
+                })
+            };
+            let strings = OverlayStrings {
+                start: overlay.start,
+                end: overlay.end,
+                before: string_value(before_string),
+                after: string_value(after_string),
+            };
+            (strings.before.is_some() || strings.after.is_some())
+                .then(|| (overlay.clone(), strings))
+        })
+        .collect();
+    let mut overlay_order: Vec<_> = overlay_strings
+        .iter()
+        .enumerate()
+        .map(|(index, (overlay, _))| (overlay, index))
+        .collect();
+    crate::buffer::sort_overlays_by_priority(i, &mut overlay_order);
+    let overlay_strings: Vec<OverlayStrings> = overlay_order
+        .into_iter()
+        .map(|(_, index)| overlay_strings[index].1.clone())
+        .collect();
+    let mut ending_strings: HashMap<usize, Vec<String>> = HashMap::new();
+    let mut starting_strings: HashMap<usize, Vec<(Option<String>, Option<String>)>> =
+        HashMap::new();
+    for overlay in overlay_strings {
+        if overlay.start < overlay.end
+            && let Some(after) = &overlay.after
+        {
+            ending_strings
+                .entry(overlay.end)
+                .or_default()
+                .push(after.clone());
+        }
+        let empty_after = (overlay.start == overlay.end)
+            .then(|| overlay.after.clone())
+            .flatten();
+        if overlay.before.is_some() || empty_after.is_some() {
+            starting_strings
+                .entry(overlay.start)
+                .or_default()
+                .push((overlay.before, empty_after));
+        }
+    }
+    let mut overlay_strings = ending_strings;
+    for (position, starts) in starting_strings {
+        let strings = overlay_strings.entry(position).or_default();
+        for (before, after) in starts {
+            if let Some(before) = before {
+                strings.push(before);
+            }
+            if let Some(after) = after {
+                strings.push(after);
+            }
+        }
+    }
     let properties = bb.text.props.borrow();
     let prop_faces: Vec<(usize, usize, Value, usize)> = properties
         .iter()
@@ -1652,11 +1810,20 @@ fn window_faces(
         overlays,
         prop_faces,
         display_props,
+        overlay_strings,
         invisible_overlays,
         invisible_props,
         invisibility_spec,
         region,
     }
+}
+
+fn overlay_strings_at(faces: &WindowFaces, position: usize) -> Vec<String> {
+    faces
+        .overlay_strings
+        .get(&position)
+        .cloned()
+        .unwrap_or_default()
 }
 
 fn image_property(i: &Interp, plist: &Value, name: &str) -> Value {
@@ -2175,6 +2342,11 @@ fn render_grid_internal(
                     wf.as_ref()
                         .and_then(|wf| display_replacement_at(wf, line_pos + index))
                 },
+                |index| {
+                    wf.as_ref()
+                        .map(|wf| overlay_strings_at(wf, line_pos + index))
+                        .unwrap_or_default()
+                },
             );
             images.extend(rendered.images.iter().filter_map(|image| {
                 let column = window_left.saturating_add(image.column);
@@ -2398,6 +2570,11 @@ fn render_grid_internal(
             |index| {
                 wf.as_ref()
                     .and_then(|wf| display_replacement_at(wf, index))
+            },
+            |index| {
+                wf.as_ref()
+                    .map(|wf| overlay_strings_at(wf, index))
+                    .unwrap_or_default()
             },
         );
         images.extend(rendered.images.iter().map(|image| GridImage {
