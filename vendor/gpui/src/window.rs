@@ -1712,6 +1712,12 @@ impl Window {
         self.platform_window.set_opacity(opacity.clamp(0.0, 1.0));
     }
 
+    /// Update whether this window has native decorations and a transparent titlebar.
+    pub fn set_titlebar_appearance(&self, decorated: bool, transparent: bool) {
+        self.platform_window
+            .set_titlebar_appearance(decorated, transparent);
+    }
+
     /// Begin dragging text from this window to the operating system.
     ///
     /// The completion callback receives the operation accepted by the drop

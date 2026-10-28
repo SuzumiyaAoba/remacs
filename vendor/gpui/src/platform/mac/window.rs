@@ -431,6 +431,8 @@ struct MacWindowState {
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
     transparent_titlebar: bool,
+    undecorated: bool,
+    decorated_style_mask: NSWindowStyleMask,
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
     do_command_handled: Option<bool>,
@@ -626,25 +628,25 @@ impl MacWindow {
                 let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: NO];
             }
 
-            let mut style_mask;
-            if let Some(titlebar) = titlebar.as_ref() {
-                style_mask =
-                    NSWindowStyleMask::NSClosableWindowMask | NSWindowStyleMask::NSTitledWindowMask;
-
-                if is_resizable {
-                    style_mask |= NSWindowStyleMask::NSResizableWindowMask;
-                }
-
-                if is_minimizable {
-                    style_mask |= NSWindowStyleMask::NSMiniaturizableWindowMask;
-                }
-
-                if titlebar.appears_transparent {
-                    style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
-                }
+            let undecorated = titlebar.is_none();
+            let transparent_titlebar = titlebar.as_ref().is_some_and(|titlebar| {
+                titlebar.appears_transparent || titlebar.titlebar_appears_transparent
+            });
+            let mut decorated_style_mask =
+                NSWindowStyleMask::NSClosableWindowMask | NSWindowStyleMask::NSTitledWindowMask;
+            if is_resizable {
+                decorated_style_mask |= NSWindowStyleMask::NSResizableWindowMask;
+            }
+            if is_minimizable {
+                decorated_style_mask |= NSWindowStyleMask::NSMiniaturizableWindowMask;
+            }
+            let mut style_mask = if undecorated {
+                NSWindowStyleMask::NSBorderlessWindowMask
             } else {
-                style_mask = NSWindowStyleMask::NSTitledWindowMask
-                    | NSWindowStyleMask::NSFullSizeContentViewWindowMask;
+                decorated_style_mask
+            };
+            if transparent_titlebar {
+                style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
             }
 
             let native_window: id = match kind {
@@ -740,9 +742,9 @@ impl MacWindow {
                 traffic_light_position: titlebar
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
-                transparent_titlebar: titlebar
-                    .as_ref()
-                    .is_none_or(|titlebar| titlebar.appears_transparent),
+                transparent_titlebar,
+                undecorated,
+                decorated_style_mask,
                 previous_modifiers_changed_event: None,
                 keystroke_for_do_command: None,
                 do_command_handled: None,
@@ -788,9 +790,18 @@ impl MacWindow {
                 });
             }
 
-            if titlebar.is_none_or(|titlebar| titlebar.appears_transparent) {
+            if titlebar
+                .as_ref()
+                .is_some_and(|titlebar| titlebar.appears_transparent)
+            {
                 native_window.setTitlebarAppearsTransparent_(YES);
                 native_window.setTitleVisibility_(NSWindowTitleVisibility::NSWindowTitleHidden);
+            } else if titlebar
+                .as_ref()
+                .is_some_and(|titlebar| titlebar.titlebar_appears_transparent)
+            {
+                native_window.setTitlebarAppearsTransparent_(YES);
+                native_window.setTitleVisibility_(NSWindowTitleVisibility::NSWindowTitleVisible);
             }
 
             native_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
@@ -1459,6 +1470,35 @@ impl PlatformWindow for MacWindow {
         let window = self.0.lock().native_window;
         unsafe {
             let _: () = msg_send![window, setAlphaValue: opacity as f64];
+        }
+    }
+
+    fn set_titlebar_appearance(&self, decorated: bool, transparent: bool) {
+        let (window, style_mask) = {
+            let mut state = self.0.lock();
+            if state.undecorated == !decorated && state.transparent_titlebar == transparent {
+                return;
+            }
+            state.undecorated = !decorated;
+            state.transparent_titlebar = transparent;
+            let mut style_mask = if decorated {
+                state.decorated_style_mask
+            } else {
+                NSWindowStyleMask::NSBorderlessWindowMask
+            };
+            if decorated && transparent {
+                style_mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;
+            }
+            (state.native_window, style_mask)
+        };
+        unsafe {
+            window.setStyleMask_(style_mask);
+            window.setTitlebarAppearsTransparent_((decorated && transparent) as BOOL);
+            window.setTitleVisibility_(if decorated {
+                NSWindowTitleVisibility::NSWindowTitleVisible
+            } else {
+                NSWindowTitleVisibility::NSWindowTitleHidden
+            });
         }
     }
 

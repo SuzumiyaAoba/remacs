@@ -495,6 +495,13 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn toggle_fullscreen(&self);
     fn is_fullscreen(&self) -> bool;
     fn set_opacity(&self, _opacity: f32) {}
+    fn set_titlebar_appearance(&self, decorated: bool, _transparent: bool) {
+        self.request_decorations(if decorated {
+            WindowDecorations::Server
+        } else {
+            WindowDecorations::Client
+        });
+    }
     fn begin_text_drag_session(
         &self,
         _text: String,
@@ -1241,6 +1248,7 @@ impl Default for WindowOptions {
             titlebar: Some(TitlebarOptions {
                 title: Default::default(),
                 appears_transparent: Default::default(),
+                titlebar_appears_transparent: Default::default(),
                 traffic_light_position: Default::default(),
             }),
             focus: true,
@@ -1268,6 +1276,9 @@ pub struct TitlebarOptions {
     /// Should the default system titlebar be hidden to allow for a custom-drawn titlebar? (macOS and Windows only)
     /// Refer to [`WindowOptions::window_decorations`] on Linux
     pub appears_transparent: bool,
+
+    /// Should the native titlebar draw transparently while keeping its title visible?
+    pub titlebar_appears_transparent: bool,
 
     /// The position of the macOS traffic light buttons
     pub traffic_light_position: Option<Point<Pixels>>,

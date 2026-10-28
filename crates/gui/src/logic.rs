@@ -174,6 +174,7 @@ pub(super) struct FrameSnapshot {
     pub left: Option<i128>,
     pub top: Option<i128>,
     pub undecorated: bool,
+    pub ns_transparent_titlebar: bool,
     pub fullscreen: Option<String>,
     pub auto_raise: bool,
     pub auto_lower: bool,
@@ -1410,6 +1411,12 @@ impl KeyIo for ChanIo {
                     left: int_param("left"),
                     top: int_param("top"),
                     undecorated: frame_parameter_value(i, frame, "undecorated").truthy(),
+                    ns_transparent_titlebar: frame_parameter_value(
+                        i,
+                        frame,
+                        "ns-transparent-titlebar",
+                    )
+                    .truthy(),
                     fullscreen,
                     auto_raise: frame_parameter_value(i, frame, "auto-raise").truthy(),
                     auto_lower: frame_parameter_value(i, frame, "auto-lower").truthy(),

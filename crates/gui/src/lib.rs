@@ -125,6 +125,7 @@ pub fn run_gui_with_dump(
             let mut window_modes = HashMap::<usize, Option<String>>::new();
             let mut frame_behaviors = HashMap::<usize, (bool, bool, Option<String>, bool)>::new();
             let mut window_backgrounds = HashMap::<usize, WindowBackgroundAppearance>::new();
+            let mut window_titlebars = HashMap::<usize, (bool, bool)>::new();
             let mut native_visibility = HashMap::<usize, bool>::new();
             let mut primary_window = Some(primary_window);
             while let Ok(request) = gui_requests.recv().await {
@@ -140,6 +141,10 @@ pub fn run_gui_with_dump(
                             let alpha_inactive = snapshot.alpha_inactive;
                             let alpha_background = snapshot.alpha_background;
                             let background_appearance = frame_background_appearance(&snapshot);
+                            let titlebar_appearance = (
+                                snapshot.parent_frame.is_none() && !snapshot.undecorated,
+                                snapshot.ns_transparent_titlebar,
+                            );
                             let fullscreen = snapshot.fullscreen.clone();
                             let frame_size = (snapshot.width, snapshot.height);
                             let frame_left = snapshot.left;
@@ -167,6 +172,8 @@ pub fn run_gui_with_dump(
                                     frame_behaviors.get(&frame_id) != Some(&behavior);
                                 let update_background =
                                     window_backgrounds.get(&frame_id) != Some(&background_appearance);
+                                let update_titlebar =
+                                    window_titlebars.get(&frame_id) != Some(&titlebar_appearance);
                                 let requested_behavior = behavior.clone();
                                 let _ = handle.update(cx, move |view, window, cx| {
                                     let modifier_mapping_changed =
@@ -186,6 +193,12 @@ pub fn run_gui_with_dump(
                                     ));
                                     if update_background {
                                         window.set_background_appearance(background_appearance);
+                                    }
+                                    if update_titlebar {
+                                        window.set_titlebar_appearance(
+                                            titlebar_appearance.0,
+                                            titlebar_appearance.1,
+                                        );
                                     }
                                     if requested_fullscreen.is_none() {
                                         apply_frame_snapshot_bounds(
@@ -220,6 +233,7 @@ pub fn run_gui_with_dump(
                                 window_modes.insert(frame_id, fullscreen);
                                 frame_behaviors.insert(frame_id, behavior);
                                 window_backgrounds.insert(frame_id, background_appearance);
+                                window_titlebars.insert(frame_id, titlebar_appearance);
                                 native_visibility.entry(frame_id).or_insert(true);
                                 continue;
                             }
@@ -231,6 +245,7 @@ pub fn run_gui_with_dump(
                                 let initial_alpha_inactive = alpha_inactive;
                                 let initial_alpha_background = alpha_background;
                                 let initial_background_appearance = background_appearance;
+                                let initial_titlebar_appearance = titlebar_appearance;
                                 let initial_left = frame_left;
                                 let initial_top = frame_top;
                                 let _ = handle.update(cx, move |view, window, cx| {
@@ -245,6 +260,10 @@ pub fn run_gui_with_dump(
                                     ));
                                     window.set_background_appearance(
                                         initial_background_appearance,
+                                    );
+                                    window.set_titlebar_appearance(
+                                        initial_titlebar_appearance.0,
+                                        initial_titlebar_appearance.1,
                                     );
                                     if initial_fullscreen.is_none() {
                                         apply_frame_snapshot_bounds(
@@ -276,6 +295,7 @@ pub fn run_gui_with_dump(
                                 window_modes.insert(frame_id, fullscreen);
                                 frame_behaviors.insert(frame_id, behavior);
                                 window_backgrounds.insert(frame_id, initial_background_appearance);
+                                window_titlebars.insert(frame_id, initial_titlebar_appearance);
                                 native_visibility.insert(frame_id, true);
                                 windows.insert(frame_id, handle);
                                 continue;
@@ -287,6 +307,10 @@ pub fn run_gui_with_dump(
                             let alpha_inactive = snapshot.alpha_inactive;
                             let alpha_background = snapshot.alpha_background;
                             let background_appearance = frame_background_appearance(&snapshot);
+                            let titlebar_appearance = (
+                                snapshot.parent_frame.is_none() && !snapshot.undecorated,
+                                snapshot.ns_transparent_titlebar,
+                            );
                             let event_tx = event_tx.clone();
                             let handle = match cx.open_window(options, move |window, app| {
                                 window.set_opacity(frame_opacity(
@@ -295,6 +319,10 @@ pub fn run_gui_with_dump(
                                     window.is_window_active(),
                                 ));
                                 window.set_background_appearance(background_appearance);
+                                window.set_titlebar_appearance(
+                                    titlebar_appearance.0,
+                                    titlebar_appearance.1,
+                                );
                                 app.new(|cx| {
                                     let mut view = build_managed_editor_view(
                                         window,
@@ -317,6 +345,7 @@ pub fn run_gui_with_dump(
                             window_modes.insert(frame_id, snapshot.fullscreen.clone());
                             frame_behaviors.insert(frame_id, behavior.clone());
                             window_backgrounds.insert(frame_id, background_appearance);
+                            window_titlebars.insert(frame_id, titlebar_appearance);
                             let _ = handle.update(cx, move |view, window, _cx| {
                                 view.set_frame_behavior(behavior.0, behavior.1);
                                 set_frame_z_group_window(
@@ -342,6 +371,7 @@ pub fn run_gui_with_dump(
                             window_modes.remove(&frame_id);
                             frame_behaviors.remove(&frame_id);
                             window_backgrounds.remove(&frame_id);
+                            window_titlebars.remove(&frame_id);
                             native_visibility.remove(&frame_id);
                         }
                         if let Some(stack) = cx.update(|app| app.window_stack()).ok().flatten() {
@@ -685,11 +715,13 @@ fn frame_window_options(
         } else {
             WindowKind::Normal
         },
+        window_decorations: (child || frame.undecorated).then_some(WindowDecorations::Client),
         titlebar: if child || frame.undecorated {
             None
         } else {
             Some(TitlebarOptions {
                 title: Some(frame.name.clone().into()),
+                titlebar_appears_transparent: frame.ns_transparent_titlebar,
                 ..Default::default()
             })
         },
