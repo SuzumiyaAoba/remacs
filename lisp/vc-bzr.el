@@ -529,7 +529,6 @@ in the branch repository (or whose status not be determined)."
 
 (defun vc-bzr-find-file-hook ()
   (when (and buffer-file-name
-             ;; FIXME: We should check that "bzr status" says "conflict".
              (file-exists-p (concat buffer-file-name ".BASE"))
              (file-exists-p (concat buffer-file-name ".OTHER"))
              (file-exists-p (concat buffer-file-name ".THIS"))
@@ -537,7 +536,11 @@ in the branch repository (or whose status not be determined)."
              ;; conflict markers, it's not clear what we should do.
              (save-excursion
                (goto-char (point-min))
-               (re-search-forward "^<<<<<<< " nil t)))
+               (re-search-forward "^<<<<<<< " nil t))
+             ;;Remacs: stale sidecars and conflict markers do not prove the
+             ;;file is still conflicted after a `bzr resolve'.
+             (member (expand-file-name buffer-file-name)
+                     (vc-bzr-conflicted-files buffer-file-name)))
     ;; TODO: the merge algorithm used in `bzr merge' is nicely configurable,
     ;; but the one in `bzr pull' isn't, so it would be good to provide an
     ;; elisp function to remerge from the .BASE/OTHER/THIS files.

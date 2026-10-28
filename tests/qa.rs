@@ -1091,6 +1091,7 @@ qa!(qa_network_lookup_validation, "qa_network_lookup_validation.el");
 
 qa!(qa_gnutls_crypto_buffer_bytes, "qa_gnutls_crypto_buffer_bytes.el");
 qa!(qa_gnus_icalendar_button_map, "qa_gnus_icalendar_button_map.el");
+qa!(qa_vc_bzr_conflict_status, "qa_vc_bzr_conflict_status.el");
 
 qa!(qa_geometry_invalid, "qa_geometry_invalid.el");
 
