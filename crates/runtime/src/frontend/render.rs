@@ -2241,6 +2241,38 @@ fn render_grid_internal(
         let stretch_cursor = buffer_setting(i, "x-stretch-cursor", buf_id).truthy();
         let tab_width = buffer_tab_width(i, buf_id);
         let wrap_lines = !buffer_setting(i, "truncate-lines", buf_id).truthy();
+        let line_number_mode = buffer_setting(i, "display-line-numbers", buf_id);
+        let line_number_offset = match buffer_setting(i, "display-line-numbers-offset", buf_id) {
+            Value::Int(offset) => offset,
+            _ => 0,
+        };
+        let default_line_number_width = i
+            .buffers
+            .get(buf_id)
+            .map(|buffer| {
+                let bb = buffer.borrow();
+                let last_line = bb.text.line_of_pos(bb.zv.min(bb.text_len())) + 1;
+                (last_line as i128)
+                    .saturating_add(line_number_offset)
+                    .to_string()
+                    .chars()
+                    .count()
+                    .max(1)
+            })
+            .unwrap_or(1);
+        let line_number_width = match buffer_setting(i, "display-line-numbers-width", buf_id) {
+            Value::Int(width) if width > 0 => usize::try_from(width).unwrap_or(default_line_number_width),
+            _ => default_line_number_width,
+        };
+        let gutter_width = if line_number_mode.truthy() {
+            line_number_width
+                .saturating_add(1)
+                .min(window_width.saturating_sub(1))
+        } else {
+            0
+        };
+        let content_left = window_left.saturating_add(gutter_width);
+        let content_width = window_width.saturating_sub(gutter_width);
         let text_rows = window_height.saturating_sub(1);
         // Keep point inside the window: scroll `start' the minimal
         // amount, or recenter when point is more than a window-height
@@ -2289,7 +2321,7 @@ fn render_grid_internal(
                 } else {
                     start
                 };
-                if wrap_lines && window_width > 0 {
+                if wrap_lines && content_width > 0 {
                     let new_start_line = bb.text.line_of_pos(new_start);
                     let new_start_line_pos = bb.text.line_start(new_start_line);
                     let start_offset = new_start.saturating_sub(new_start_line_pos);
@@ -2303,7 +2335,7 @@ fn render_grid_internal(
                         let line_end = bb.text.line_end(line_pos);
                         let line = bb.text.substring(line_pos, line_end);
                         let line_len = line.chars().count();
-                        for range in wrap_ranges(&line, window_width, tab_width) {
+                        for range in wrap_ranges(&line, content_width, tab_width) {
                             if line_number == new_start_line
                                 && range.end <= start_offset
                                 && range.end < line_len
@@ -2343,15 +2375,15 @@ fn render_grid_internal(
                     .unwrap_or(true);
                 let new_hscroll = if wrap_lines {
                     0
-                } else if window_width > 0 && ahs_on && !suspend_hs {
+                } else if content_width > 0 && ahs_on && !suspend_hs {
                     let col = display_columns(
                         &bb.text.substring(bb.text.line_start(pt_line), pt),
                         tab_width,
                     );
                     if col < hscroll {
                         col
-                    } else if col >= hscroll + window_width {
-                        col + 1 - window_width
+                    } else if col >= hscroll + content_width {
+                        col + 1 - content_width
                     } else {
                         hscroll
                     }
@@ -2383,7 +2415,8 @@ fn render_grid_internal(
             if screen_row >= body_height || screen_row >= window_top + text_rows {
                 break;
             }
-            let (line, line_pos, row_end, point_index) = match i.buffers.get(buf_id) {
+            let (line, line_pos, row_end, point_index, line_number, point_line_number) =
+                match i.buffers.get(buf_id) {
                 Some(b) => {
                     let bb = b.borrow();
                     let ls = bb.text.line_start(bb.text.line_of_pos(start) + row);
@@ -2399,15 +2432,23 @@ fn render_grid_internal(
                         w.borrow().point
                     }
                     .clamp(bb.begv, bb.zv);
-                    let point_line = bb.text.line_start(bb.text.line_of_pos(point));
+                    let point_line_number = bb.text.line_of_pos(point);
+                    let point_line = bb.text.line_start(point_line_number);
                     let point_index = (point_line == ls).then(|| point - ls);
-                    (bb.text.substring(ls, le), ls, row_end, point_index)
+                    (
+                        bb.text.substring(ls, le),
+                        ls,
+                        row_end,
+                        point_index,
+                        bb.text.line_of_pos(ls) + 1,
+                        point_line_number,
+                    )
                 }
-                None => (EmacsText::new(), 0, 0, None),
+                None => (EmacsText::new(), 0, 0, None, 1, usize::MAX),
             };
             let line_len = line.chars().count();
             let ranges = if wrap_lines {
-                wrap_ranges(&line, window_width, tab_width)
+                wrap_ranges(&line, content_width, tab_width)
             } else {
                 vec![0..line_len]
             };
@@ -2447,10 +2488,46 @@ fn render_grid_internal(
                     line_pos + segment_end
                 };
                 let row_hscroll = if wrap_lines { 0 } else { hscroll };
+                if gutter_width > 0 {
+                    let number_style = if point_line_number + 1 == line_number {
+                        fctx.builtin(i, "line-number-current-line", 0).finish()
+                    } else {
+                        fctx.builtin(i, "line-number", 0).finish()
+                    };
+                    let show_number = segment_start == 0 || (row == 0 && start_offset > 0);
+                    let number = if show_number {
+                        let absolute = (line_number as i128).saturating_add(line_number_offset);
+                        let value = if matches!(line_number_mode, Value::Sym(symbol) if i.symbol_name(symbol) == "relative")
+                            && point_line_number + 1 != line_number
+                        {
+                            ((point_line_number as i128 + 1) - line_number as i128).abs()
+                        } else {
+                            absolute
+                        };
+                        format!("{value:>line_number_width$} ")
+                    } else {
+                        String::new()
+                    };
+                    let prefix = fit_text_to_cells_with_tab_width(
+                        &number,
+                        gutter_width,
+                        tab_width,
+                    )
+                    .0;
+                    let prefix_cells = vec![number_style; gutter_width];
+                    let prefix_chars = prefix.chars().map(|_| number_style).collect::<Vec<_>>();
+                    place_text_row(
+                        &mut screen_rows[y],
+                        window_left,
+                        &prefix,
+                        &prefix_cells,
+                        &prefix_chars,
+                    );
+                }
                 let mut rendered = render_text_row(
                     &segment_text,
                     row_hscroll,
-                    window_width,
+                    content_width,
                     tab_width,
                     default_style,
                     |index| {
@@ -2475,7 +2552,7 @@ fn render_grid_internal(
                     segment_end == line_len,
                 );
                 images.extend(rendered.images.iter().filter_map(|image| {
-                    let column = window_left.saturating_add(image.column);
+                    let column = content_left.saturating_add(image.column);
                     (column < width).then(|| GridImage {
                         row: y,
                         column,
@@ -2492,7 +2569,7 @@ fn render_grid_internal(
                         let end_pos = line_pos + line_len;
                         let tail = style_at_pos(i, &mut fctx, wf, end_pos);
                         if tail.extend {
-                            for cell in rendered.visible_columns..window_width {
+                            for cell in rendered.visible_columns..content_width {
                                 let mut t = tail;
                                 t.fg = None;
                                 t.bold = false;
@@ -2520,7 +2597,7 @@ fn render_grid_internal(
                     }
                 }
                 if let Some(point_index) = point_index
-                    && window_width > 0
+                    && content_width > 0
                 {
                     let point_col = rendered
                         .source_columns
@@ -2529,11 +2606,11 @@ fn render_grid_internal(
                         .unwrap_or(0);
                     let col = point_col
                         .saturating_sub(row_hscroll)
-                        .min(window_width - 1);
+                        .min(content_width - 1);
                     let byte_index = if point_col < row_hscroll {
                         0
-                    } else if point_col.saturating_sub(row_hscroll) >= window_width {
-                        rendered.cell_offsets[window_width - 1]
+                    } else if point_col.saturating_sub(row_hscroll) >= content_width {
+                        rendered.cell_offsets[content_width - 1]
                     } else {
                         rendered
                             .source_offsets
@@ -2542,7 +2619,7 @@ fn render_grid_internal(
                             .unwrap_or(rendered.text.len())
                     };
                     if selected_window {
-                        selected_cursor = Some((y, window_left, col, byte_index));
+                        selected_cursor = Some((y, content_left, col, byte_index));
                     }
                     if let Some((shape, thickness)) = cursor_style {
                         let stretch = segment_text.chars().nth(point_index).and_then(|ch| {
@@ -2558,7 +2635,7 @@ fn render_grid_internal(
                                 char_width > 1
                             };
                             (point_col >= row_hscroll
-                                && point_col.saturating_sub(row_hscroll) < window_width
+                                && point_col.saturating_sub(row_hscroll) < content_width
                                 && stretchable)
                                 .then(|| rendered.source_offsets.get(point_index + 1).copied())
                                 .flatten()
@@ -2574,7 +2651,7 @@ fn render_grid_internal(
                                 color: cursor_color,
                                 selected: selected_window,
                             },
-                            window_left,
+                        content_left,
                         ));
                     }
                 }
@@ -2590,10 +2667,10 @@ fn render_grid_internal(
                             buffer_start: segment_pos,
                             source_offsets: rendered.source_offsets.clone(),
                         });
-                        input_screen_lefts.push((row_index, window_left));
+                        input_screen_lefts.push((row_index, content_left));
                     }
                 }
-                place_rendered_row(&mut screen_rows[y], window_left, &rendered);
+                place_rendered_row(&mut screen_rows[y], content_left, &rendered);
                 screen_row += 1;
             }
         }
