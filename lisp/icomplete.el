@@ -511,7 +511,7 @@ if that doesn't produce a completion match."
                          ;; Never step in front of 'external', as that
                          ;; might lose us completions.
                          (not (memq 'external val)))
-                    (cons prop (cons 'flex (delq 'flex val)))
+                    (cons prop (cons 'flex (delq 'flex (copy-sequence val))))
                   entry)))
             (cdr cat.alist))))
    completion-category-defaults))
