@@ -137,10 +137,20 @@ Gregorian date Sunday, December 31, 1 BC."
   "Compute the Hebrew date (month day year) corresponding to absolute DATE.
 The absolute date is the number of days elapsed since the (imaginary)
 Gregorian date Sunday, December 31, 1 BC."
-  (let* ((greg-date (calendar-gregorian-from-absolute date))
-         (year (+ 3760 (calendar-extract-year greg-date)))
-         (month (aref [9 10 11 12 1 2 3 4 7 7 7 8]
-                      (1- (calendar-extract-month greg-date))))
+  (let* ((greg-date (and (>= date 1)
+                         (calendar-gregorian-from-absolute date)))
+         (hebrew-epoch (calendar-hebrew-to-absolute (list 7 1 1)))
+         (year (if greg-date
+                   (+ 3760 (calendar-extract-year greg-date))
+                 ;; Before Gregorian year 1, estimate directly from the
+                 ;; Hebrew 19-year cycle instead of using a BCE Gregorian
+                 ;; date as the month/year seed. A cycle spans about 6939
+                 ;; days; the loops below correct the estimate.
+                 (max 1 (1+ (/ (* (- date hebrew-epoch) 19) 6939)))))
+         (month (if greg-date
+                    (aref [9 10 11 12 1 2 3 4 7 7 7 8]
+                          (1- (calendar-extract-month greg-date)))
+                  7))
          (length (progn
                    ;;Remacs: the Gregorian-year estimate can overshoot for
                    ;;distant dates, so correct in both directions.

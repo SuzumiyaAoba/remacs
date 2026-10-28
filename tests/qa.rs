@@ -60,6 +60,7 @@ qa!(qa_backtrace_frames, "qa_backtrace_frames.el");
 qa!(qa_backup, "qa_backup.el");
 qa!(qa_buffer, "qa_buffer.el");
 qa!(qa_buffer_history, "qa_buffer_history.el");
+qa!(qa_calendar_hebrew_epoch, "qa_calendar_hebrew_epoch.el");
 qa!(qa_before_markers, "qa_before_markers.el");
 qa!(qa_float_output, "qa_float_output.el");
 qa!(qa_process_defaults, "qa_process_defaults.el");
