@@ -639,8 +639,10 @@ The following %-sequences are provided:
     ;; A zero ENERGY-NOW is a real empty-battery reading, not missing data.
     (when (and (> energy-full 0) (>= energy-now 0))
       (setq percentage-now (/ (* 100 energy-now) energy-full)))
+    ;; Sysfs reports charge and energy in micro-units; the %-sequence
+    ;; documents milliamp-hours or milliwatt-hours.
     (list (cons ?c (if (or (> energy-full 0) (> energy-now 0))
-                       (number-to-string (/ energy-now voltage-now))
+                       (number-to-string (/ (/ energy-now voltage-now) 1000))
                      "N/A"))
 	  (cons ?r (if (> power-now 0.0)
 		       (format "%.1f" (/ power-now 1000000.0))
