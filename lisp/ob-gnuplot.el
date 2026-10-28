@@ -282,7 +282,7 @@ PARAMS is src block parameters alist defining variable assignments."
    (lambda (pair)
      (format "%s = \"%s\""
              (car pair)
-             (org-babel-gnuplot-quote-double-string (cdr pair)))
+             (org-babel-gnuplot-quote-double-string (cdr pair))))
    (org-babel-gnuplot-process-vars params)))
 
 (defvar gnuplot-buffer)

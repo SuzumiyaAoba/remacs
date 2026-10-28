@@ -667,6 +667,7 @@ qa!(qa_mailcap_even_backslashes, "qa_mailcap_even_backslashes.el");
 qa!(qa_file_name_as_directory_handler, "qa_file_name_as_directory_handler.el");
 qa!(qa_file_name_nondirectory_byte_kind, "qa_file_name_nondirectory_byte_kind.el");
 qa!(qa_file_name_directory_byte_kind, "qa_file_name_directory_byte_kind.el");
+qa!(qa_ob_gnuplot_balanced, "qa_ob_gnuplot_balanced.el");
 qa!(qa_file_name_as_directory_byte_kind, "qa_file_name_as_directory_byte_kind.el");
 qa!(qa_directory_file_name_byte_kind, "qa_directory_file_name_byte_kind.el");
 qa!(qa_directory_file_name_many_slashes, "qa_directory_file_name_many_slashes.el");
