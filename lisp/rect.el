@@ -908,7 +908,8 @@ Ignores `line-move-visual'."
   (cond
    ((not rectangle-mark-mode)
     (funcall orig start end window rol))
-   (rectangle--inhibit-region-highlight
+   ((or rectangle--inhibit-region-highlight
+        rectangle--string-preview-state)
     (funcall redisplay-unhighlight-region-function rol)
     nil)
    ((and (eq 'rectangle (car-safe rol))
@@ -987,16 +988,6 @@ Ignores `line-move-visual'."
                    ((overlay-get ol 'before-string)
                     (overlay-put ol 'before-string nil)))
                   (cond
-                   ;; While doing rectangle--string-preview, the two sets of
-                   ;; overlays steps on the other's toes.  I fixed some of the
-                   ;; problems, but others remain.  The main one is the two
-                   ;; (rectangle--space-to rightcol) below which try to
-                   ;; virtually insert missing text, but during "preview", the
-                   ;; text is not missing (it's provided by preview's own
-                   ;; overlay).
-                   (rectangle--string-preview-state
-                    (if (overlay-get ol 'after-string)
-                        (overlay-put ol 'after-string nil)))
                    ((< mright rightcol)    ;`rightcol' is past EOL.
                     (let ((str (rectangle--space-to rightcol)))
                       (put-text-property 0 (length str) 'face 'region str)
