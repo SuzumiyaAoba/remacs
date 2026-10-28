@@ -201,6 +201,9 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
         match input {
             InputEvent::Key(key) => dispatch_key(&term, i, key, &mut keys, &mut arg_mode)?,
             InputEvent::Text(text) => dispatch_text(i, &text, &mut keys, &mut arg_mode),
+            InputEvent::Command(command) => {
+                dispatch_frontend_command(i, &command, &mut keys, &mut arg_mode)
+            }
             InputEvent::ReplaceText { range, text } => {
                 dispatch_text_range(i, &range, &text, &mut keys, &mut arg_mode)
             }
@@ -596,6 +599,37 @@ fn report_flow(i: &mut Interp, f: crate::lisp::error::Flow) {
         }
         crate::lisp::error::Flow::Exit(_) => i.quit_editor = true,
     }
+}
+
+fn dispatch_frontend_command(
+    i: &mut Interp,
+    command: &str,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) {
+    keys.clear();
+    *arg_mode = false;
+    let command = Value::Sym(i.intern(command));
+    let this_command = i.q("this-command");
+    let previous = i.symbol_value(this_command);
+    let last_command = i.q("last-command");
+    let _ = i.set_symbol(last_command, previous);
+    let _ = i.set_symbol(this_command, command.clone());
+    let last_event = i.q("last-command-event");
+    let _ = i.set_symbol(last_event, command.clone());
+    let prefix = i.q("prefix-arg");
+    let current_prefix = i.q("current-prefix-arg");
+    let prefix_value = i.symbol_value(prefix);
+    let _ = i.set_symbol(current_prefix, prefix_value);
+    let _ = i.set_symbol(prefix, Value::Nil);
+
+    let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "pre-command-hook");
+    match i.command_execute(&command) {
+        Ok(_) => post_command_undo_boundary(i),
+        Err(flow) => report_flow(i, flow),
+    }
+    let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "post-command-hook");
+    i.kbd_macro_mark = i.kbd_macro_events.len();
 }
 
 fn dispatch_key<T: KeyIo>(
@@ -1132,6 +1166,9 @@ fn minibuf_loop<T: KeyIo>(
                 }
             }
             InputEvent::Text(text) => dispatch_text(i, &text, &mut keys, &mut arg_mode),
+            InputEvent::Command(command) => {
+                dispatch_frontend_command(i, &command, &mut keys, &mut arg_mode)
+            }
             InputEvent::ReplaceText { range, text } => {
                 dispatch_text_range(i, &range, &text, &mut keys, &mut arg_mode)
             }

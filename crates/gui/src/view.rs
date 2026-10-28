@@ -7,7 +7,7 @@ use super::{
 use gpui::*;
 use remacs_runtime::editor::{CHAR_CTL, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
 use remacs_runtime::frontend::{
-    BoxStyle, BoxStyleKind, CellColor, Grid, GridImage, GridImageSource,
+    BoxStyle, BoxStyleKind, CellColor, Grid, GridImage, GridImageSource, GridMenu, GridMenuItem,
     MouseButton as RemacsMouseButton,
 };
 use std::sync::mpsc::Sender;
@@ -22,10 +22,17 @@ const CURSOR: u32 = 0xc5c8c6;
 const FONT_SIZE: f32 = 14.0;
 const LINE_HEIGHT: f32 = 19.0;
 
+#[derive(Clone, PartialEq, gpui::Action)]
+#[action(namespace = remacs, no_json)]
+struct RunMenuCommand {
+    command: String,
+}
+
 pub(super) struct EditorView {
     tx: Sender<GuiEvent>,
     pub(super) focus: FocusHandle,
     pub(super) grid: Grid,
+    installed_menus: Vec<GridMenu>,
     window_title: Option<String>,
     pub(super) cols: usize,
     rows: usize,
@@ -51,6 +58,7 @@ impl EditorView {
             tx,
             focus: cx.focus_handle(),
             grid: Grid::blank(0, 0),
+            installed_menus: Vec::new(),
             window_title: None,
             cols: 80,
             rows: 24,
@@ -72,6 +80,10 @@ impl Render for EditorView {
         if self.window_title.as_deref() != Some(self.grid.title.as_str()) {
             window.set_window_title(&self.grid.title);
             self.window_title = Some(self.grid.title.clone());
+        }
+        if self.installed_menus != self.grid.menus {
+            cx.set_menus(gpui_menus(&self.grid.menus));
+            self.installed_menus = self.grid.menus.clone();
         }
 
         let font_families = self.grid.font_families.clone();
@@ -239,6 +251,13 @@ impl Render for EditorView {
             .bg(rgb(default_background))
             .track_focus(&self.focus)
             .key_context("remacs")
+            .on_action(cx.listener(
+                |this: &mut EditorView, action: &RunMenuCommand, _window, _cx| {
+                    let _ = this
+                        .tx
+                        .send(GuiEvent::MenuCommand(action.command.clone()));
+                },
+            ))
             .on_mouse_down(MouseButton::Left, move |event, window, _cx| {
                 if let Some(position) =
                     input::mouse_position_for_point(&left_mouse_down_grid, event.position, window)
@@ -659,6 +678,36 @@ impl Render for EditorView {
                     .map(|image| grid_image_element(image, cell_width, line_height)),
             )
     }
+}
+
+fn gpui_menus(menus: &[GridMenu]) -> Vec<Menu> {
+    menus
+        .iter()
+        .map(|menu| Menu {
+            name: menu.label.clone().into(),
+            items: menu.items.iter().filter_map(gpui_menu_item).collect(),
+        })
+        .collect()
+}
+
+fn gpui_menu_item(item: &GridMenuItem) -> Option<MenuItem> {
+    if item.separator {
+        return Some(MenuItem::separator());
+    }
+    if !item.items.is_empty() {
+        return Some(MenuItem::submenu(Menu {
+            name: item.label.clone().into(),
+            items: item.items.iter().filter_map(gpui_menu_item).collect(),
+        }));
+    }
+    item.command.as_ref().map(|command| {
+        MenuItem::action(
+            item.label.clone(),
+            RunMenuCommand {
+                command: command.clone(),
+            },
+        )
+    })
 }
 
 fn grid_image_element(

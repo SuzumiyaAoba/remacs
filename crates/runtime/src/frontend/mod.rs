@@ -22,6 +22,8 @@ pub trait ClipboardBackend {
 pub enum InputEvent {
     Key(i128),
     Text(String),
+    /// Execute a command selected from a native GUI menu.
+    Command(String),
     ReplaceText { range: Range<usize>, text: String },
     MouseDown(MouseInput),
     Mouse(MouseInput),
@@ -114,6 +116,7 @@ pub use command::{
 };
 pub use render::{
     BoxStyle, BoxStyleKind, CellColor, CellStyle, Grid, GridCursor, GridCursorShape, GridImage,
-    GridImageSource, GridInput, GridInputRow, GridInputSelection, fit_text_to_cells, render_grid,
+    GridImageSource, GridInput, GridInputRow, GridInputSelection, GridMenu, GridMenuItem,
+    fit_text_to_cells, render_grid,
     render_grid_with_input_cached,
 };

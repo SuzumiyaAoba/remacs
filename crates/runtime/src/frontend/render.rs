@@ -117,6 +117,20 @@ pub enum GridImageSource {
     Data { format: String, bytes: Arc<[u8]> },
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct GridMenu {
+    pub label: String,
+    pub items: Vec<GridMenuItem>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct GridMenuItem {
+    pub label: String,
+    pub command: Option<String>,
+    pub items: Vec<GridMenuItem>,
+    pub separator: bool,
+}
+
 /// Builder state for CellStyle while face specs merge — each field is
 /// Option so an explicitly-nil attribute clears a lower layer.
 #[derive(Clone, Copy, Default)]
@@ -228,6 +242,7 @@ pub struct Grid {
     pub rows: Vec<String>,
     /// Image runs from `display' properties, positioned in grid cells.
     pub images: Vec<GridImage>,
+    pub menus: Vec<GridMenu>,
     /// Cell styles, one entry for each display column in a row.
     pub attrs: Vec<Vec<CellStyle>>,
     /// Character styles, `char_attrs[y][x]` alongside each row's chars.
@@ -283,6 +298,7 @@ impl Grid {
             default_style: CellStyle::default(),
             rows: vec![String::new(); height],
             images: Vec::new(),
+            menus: Vec::new(),
             attrs: vec![vec![CellStyle::default(); width]; height],
             char_attrs: vec![Vec::new(); height],
             mode_rows: Vec::new(),
@@ -1031,6 +1047,164 @@ fn format_mode_line_value(
             .collect(),
         _ => String::new(),
     }
+}
+
+fn menu_key_name(i: &Interp, key: &Value) -> String {
+    match key {
+        Value::Sym(symbol) => i.symbol_name(*symbol),
+        Value::Int(code) => char::from_u32(*code as u32)
+            .map(|character| character.to_string())
+            .unwrap_or_else(|| code.to_string()),
+        _ => i.princ_to_string(key).to_unicode_lossy(),
+    }
+}
+
+fn menu_label_and_definition(
+    i: &Interp,
+    key: &Value,
+    definition: &Value,
+) -> (String, Value, bool) {
+    let fallback = menu_key_name(i, key);
+    if let Value::Cons(cell) = definition {
+        let head = cell.borrow().car.clone();
+        if let Value::Str(label) = &head {
+            return (
+                label.borrow().to_unicode_lossy(),
+                cell.borrow().cdr.clone(),
+                false,
+            );
+        }
+        if matches!(head, Value::Sym(symbol) if i.symbol_name(symbol) == "menu-item") {
+            if let Ok(items) = definition.list_to_vec() {
+                let label = items
+                    .get(1)
+                    .and_then(|value| match value {
+                        Value::Str(label) => Some(label.borrow().to_unicode_lossy()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| fallback.clone());
+                let definition = items.get(2).cloned().unwrap_or(Value::Nil);
+                let separator = label == "--" || label.contains("separator");
+                return (label, definition, separator);
+            }
+        }
+    }
+    let separator = fallback.contains("separator")
+        || matches!(definition, Value::Str(label) if label.borrow().to_unicode_lossy() == "--");
+    if separator {
+        ("--".to_owned(), Value::Nil, true)
+    } else {
+        (fallback, definition.clone(), false)
+    }
+}
+
+fn menu_keymap_from_definition(i: &Interp, definition: &Value, depth: usize) -> Option<Value> {
+    if depth > 16 {
+        return None;
+    }
+    if crate::editor::is_keymap(i, definition) {
+        return Some(definition.clone());
+    }
+    match definition {
+        Value::Sym(symbol) => {
+            let value = i.symbol_value(*symbol);
+            if crate::editor::is_keymap(i, &value) {
+                return Some(value);
+            }
+            let function = i.symbol_function(*symbol);
+            crate::editor::is_keymap(i, &function).then_some(function)
+        }
+        Value::Cons(cell) => {
+            let (head, tail) = {
+                let cell = cell.borrow();
+                (cell.car.clone(), cell.cdr.clone())
+            };
+            if matches!(head, Value::Str(_)) {
+                return menu_keymap_from_definition(i, &tail, depth + 1);
+            }
+            if matches!(head, Value::Sym(symbol) if i.symbol_name(symbol) == "menu-item")
+                && let Ok(items) = definition.list_to_vec()
+            {
+                return items
+                    .get(2)
+                    .and_then(|definition| menu_keymap_from_definition(i, definition, depth + 1));
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn menu_items(i: &Interp, keymap: &Value, depth: usize) -> Vec<GridMenuItem> {
+    if depth > 8 {
+        return Vec::new();
+    }
+    crate::editor::keymap_own_bindings(i, keymap)
+        .into_iter()
+        .filter_map(|(key, definition)| {
+            let (label, definition, separator) =
+                menu_label_and_definition(i, &key, &definition);
+            if separator {
+                return Some(GridMenuItem {
+                    label,
+                    command: None,
+                    items: Vec::new(),
+                    separator: true,
+                });
+            }
+            if definition.is_nil() {
+                return None;
+            }
+            if let Some(submenu) = menu_keymap_from_definition(i, &definition, depth + 1) {
+                let items = menu_items(i, &submenu, depth + 1);
+                return (!items.is_empty()).then_some(GridMenuItem {
+                    label,
+                    command: None,
+                    items,
+                    separator: false,
+                });
+            }
+            let Value::Sym(command) = definition else {
+                return None;
+            };
+            i.fbound_p(command).then(|| GridMenuItem {
+                label,
+                command: Some(i.symbol_name(command)),
+                items: Vec::new(),
+                separator: false,
+            })
+        })
+        .collect()
+}
+
+fn render_menu_bar(i: &Interp) -> Vec<GridMenu> {
+    if !mode_line_variable(i, i.current_buffer, "menu-bar-mode")
+        .unwrap_or(Value::Nil)
+        .truthy()
+    {
+        return Vec::new();
+    }
+    let Some(global_map) = mode_line_variable(i, i.current_buffer, "global-map") else {
+        return Vec::new();
+    };
+    let menu_bar_key = crate::editor::event_code_for("menu-bar");
+    let Some((_, definition)) = crate::editor::keymap_own_bindings(i, &global_map)
+        .into_iter()
+        .find(|(key, _)| matches!(key, Value::Int(code) if *code == menu_bar_key))
+    else {
+        return Vec::new();
+    };
+    let Some(menu_bar_map) = menu_keymap_from_definition(i, &definition, 0) else {
+        return Vec::new();
+    };
+    menu_items(i, &menu_bar_map, 0)
+        .into_iter()
+        .filter(|item| !item.separator && !item.items.is_empty())
+        .map(|item| GridMenu {
+            label: item.label,
+            items: item.items,
+        })
+        .collect()
 }
 
 struct RenderedRow {
@@ -2745,6 +2919,7 @@ fn render_grid_internal(
     let mut attrs = vec![vec![default_style; width]; height];
     let mut char_attrs = vec![Vec::new(); height];
     let mut images = Vec::new();
+    let menus = render_menu_bar(i);
     let mut mode_rows = Vec::new();
     let mut cursor_pos: Option<(usize, usize)> = None;
     let mut positioned_cursors = Vec::new();
@@ -2765,6 +2940,7 @@ fn render_grid_internal(
                 default_style,
                 rows,
                 images,
+                menus,
                 attrs,
                 char_attrs,
                 mode_rows,
@@ -3502,6 +3678,7 @@ fn render_grid_internal(
         default_style,
         rows,
         images,
+        menus,
         attrs,
         char_attrs,
         mode_rows,
