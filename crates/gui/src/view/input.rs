@@ -222,6 +222,59 @@ impl TextInputState {
         map(requested.start)..map(requested.end)
     }
 
+    fn commit_partial_mark(
+        &mut self,
+        requested: Range<usize>,
+        text: &str,
+    ) -> Option<(Range<usize>, String)> {
+        let (Some(marked), Some(replacement)) =
+            (self.marked_range.clone(), self.replacement_range.clone())
+        else {
+            return None;
+        };
+        if requested.start < marked.start || requested.end > marked.end {
+            return None;
+        }
+        let local = requested.start - marked.start..requested.end - marked.start;
+        let (bytes, actual) = range(&self.marked, local);
+        let marked_len = self.len();
+        if actual.is_empty() || (actual.start == 0 && actual.end == marked_len) {
+            return None;
+        }
+
+        let prefix = self.marked[..bytes.start].to_owned();
+        let suffix = self.marked[bytes.end..].to_owned();
+        let (remaining, position, committed, selection) = if suffix.is_empty() {
+            let remaining_len = prefix.encode_utf16().count();
+            let selection = self.selection.start.min(remaining_len)
+                ..self.selection.end.min(remaining_len);
+            (prefix, replacement.start, text.to_owned(), selection)
+        } else {
+            // Keep the uncommitted suffix marked.  When the requested
+            // segment is in the middle, commit its preceding text with it;
+            // a text input client can represent only one marked range.
+            let committed = if prefix.is_empty() {
+                text.to_owned()
+            } else {
+                prefix + text
+            };
+            let remaining_len = suffix.encode_utf16().count();
+            let selection = self.selection.start.saturating_sub(actual.end).min(remaining_len)
+                ..self.selection.end.saturating_sub(actual.end).min(remaining_len);
+            let position = replacement
+                .start
+                .saturating_add(committed.encode_utf16().count());
+            (suffix, position, committed, selection)
+        };
+
+        let remaining_len = remaining.encode_utf16().count();
+        self.marked = remaining;
+        self.selection = selection;
+        self.replacement_range = Some(position..position);
+        self.marked_range = Some(position..position.saturating_add(remaining_len));
+        Some((replacement, committed))
+    }
+
     fn mark_document(
         &mut self,
         replacement: Option<Range<usize>>,
@@ -352,6 +405,16 @@ impl EntityInputHandler for EditorView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Commit a leading or trailing segment while retaining the rest as
+        // marked text.  The base document still needs the original replaced
+        // range, but the surviving mark starts next to the committed text.
+        if let Some(requested) = replacement.clone() {
+            if let Some((range, committed)) = self.input.commit_partial_mark(requested, text) {
+                self.send_replace_text(range, committed);
+                cx.notify();
+                return;
+            }
+        }
         let fallback = self.grid.input.as_ref().map(selected_document_range);
         let range = replacement
             .map(|range| self.input.base_range_for_virtual(range))
