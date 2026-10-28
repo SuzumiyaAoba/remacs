@@ -14,6 +14,7 @@ unicode-width = { workspace = true }
 cocoa = "=0.26.0"
 core-graphics = "=0.24.0"
 objc = "0.2"
+raw-window-handle = "0.6"
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

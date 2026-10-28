@@ -28,6 +28,7 @@ pub(super) enum GuiEvent {
         frame_id: usize,
         event: Box<GuiEvent>,
     },
+    FrameVisibility { frame_id: usize, visible: bool },
     Key(i128),
     Text(String),
     MenuCommand(String),
@@ -83,6 +84,19 @@ impl FrameEventSender {
         self.frame_id.set(Some(frame_id));
     }
 
+    pub(super) fn frame_id(&self) -> Option<usize> {
+        self.frame_id.get()
+    }
+
+    pub(super) fn send_visibility_update(
+        &self,
+        frame_id: usize,
+        visible: bool,
+    ) -> Result<(), mpsc::SendError<GuiEvent>> {
+        self.sender
+            .send(GuiEvent::FrameVisibility { frame_id, visible })
+    }
+
     pub(super) fn send(&self, event: GuiEvent) -> Result<(), mpsc::SendError<GuiEvent>> {
         let event = match self.frame_id.get() {
             Some(frame_id) => GuiEvent::ForFrame {
@@ -113,6 +127,7 @@ pub(super) struct FrameSnapshot {
 
 pub(super) enum GuiRequest {
     FrameSnapshots(Vec<FrameSnapshot>),
+    FrameVisibility { frame_id: usize, visible: bool },
     Prompt {
         frame_id: usize,
         message: String,
@@ -237,6 +252,18 @@ impl remacs_runtime::frontend::FileDialogBackend for GuiFileDialogBackend {
     }
 }
 
+struct GuiFrameVisibilityBackend {
+    requests: smol::channel::Sender<GuiRequest>,
+}
+
+impl remacs_runtime::frontend::FrameVisibilityBackend for GuiFrameVisibilityBackend {
+    fn set_visible(&self, frame_id: usize, visible: bool) -> Result<(), String> {
+        self.requests
+            .send_blocking(GuiRequest::FrameVisibility { frame_id, visible })
+            .map_err(|_| "GUI window service is unavailable".to_owned())
+    }
+}
+
 struct GuiClipboardBackend {
     requests: smol::channel::Sender<ClipboardRequest>,
     ready: Arc<AtomicBool>,
@@ -295,6 +322,7 @@ pub(super) struct ChanIo {
     active_frame_id: Option<usize>,
     primary_frame_id: Option<usize>,
     pending_frame_selection: Option<usize>,
+    pending_frame_visibility: Option<(usize, bool)>,
     pub(super) geometry_symbols: Option<GeometrySymbols>,
     pub(super) mouse_down: Option<(MouseButton, usize, i128, MousePosition)>,
     pub(super) scroll_remainder: f32,
@@ -603,6 +631,10 @@ impl KeyIo for ChanIo {
         };
         match event {
             GuiEvent::ForFrame { .. } => unreachable!("frame events are unwrapped"),
+            GuiEvent::FrameVisibility { frame_id, visible } => {
+                self.pending_frame_visibility = Some((frame_id, visible));
+                Ok(None)
+            }
             GuiEvent::Key(k) => Ok(Some(InputEvent::Key(k))),
             GuiEvent::Text(text) => Ok(Some(InputEvent::Text(text))),
             GuiEvent::MenuCommand(command) => Ok(Some(InputEvent::Command(command))),
@@ -705,6 +737,10 @@ impl KeyIo for ChanIo {
         };
         match event {
             GuiEvent::ForFrame { .. } => unreachable!("frame events are unwrapped"),
+            GuiEvent::FrameVisibility { frame_id, visible } => {
+                self.pending_frame_visibility = Some((frame_id, visible));
+                Ok(None)
+            }
             GuiEvent::Key(k) => Ok(Some(k)),
             GuiEvent::Text(text) => {
                 let mut chars = text.chars().map(|ch| ch as i128);
@@ -915,6 +951,10 @@ impl KeyIo for ChanIo {
         self.pending_frame_selection.take()
     }
 
+    fn take_frame_visibility_update(&mut self) -> Option<(usize, bool)> {
+        self.pending_frame_visibility.take()
+    }
+
     fn draw_echo(&mut self, text: &str) -> io::Result<()> {
         let grid = self
             .last
@@ -1090,6 +1130,9 @@ fn start_logic_inner(
                 i.set_file_dialog_backend(Some(Rc::new(GuiFileDialogBackend {
                     requests: gui_requests_tx.clone(),
                 })));
+                i.set_frame_visibility_backend(Some(Rc::new(GuiFrameVisibilityBackend {
+                    requests: gui_requests_tx.clone(),
+                })));
             }
             let _ = startup_tx.send(Ok(()));
             let selected_frame_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id);
@@ -1115,6 +1158,7 @@ fn start_logic_inner(
                 active_frame_id: selected_frame_id,
                 primary_frame_id: selected_frame_id,
                 pending_frame_selection: None,
+                pending_frame_visibility: None,
                 geometry_symbols: if enable_gui_selections {
                     Some(GeometrySymbols::intern(&mut i))
                 } else {

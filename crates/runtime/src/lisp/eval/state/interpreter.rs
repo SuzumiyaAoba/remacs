@@ -250,6 +250,8 @@ pub struct Interp {
     pub(crate) dialog_backend: Option<Rc<dyn crate::frontend::DialogBackend>>,
     /// Host file panel bridge, installed by a GUI front-end.
     pub(crate) file_dialog_backend: Option<Rc<dyn crate::frontend::FileDialogBackend>>,
+    /// Host native window visibility bridge, installed by a GUI front-end.
+    pub(crate) frame_visibility_backend: Option<Rc<dyn crate::frontend::FrameVisibilityBackend>>,
     /// NS selection values retained for local selection reads and ownership checks.
     pub(crate) nsgui_selections: HashMap<SymId, Value>,
     /// Keyboard.c keeps a deferred switch-frame outside the public queues.

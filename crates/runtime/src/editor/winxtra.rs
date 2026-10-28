@@ -500,7 +500,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("lower-frame", 0, 1, f_frame_live_nil, ""),
     S!("make-frame-visible", 0, 1, f_make_frame_visible, ""),
     S!("make-frame-invisible", 0, 2, f_make_frame_invisible, ""),
-    S!("iconify-frame", 0, 1, f_frame_live_nil, ""),
+    S!("iconify-frame", 0, 1, f_iconify_frame, ""),
     S!("x-focus-frame", 1, 2, f_x_focus_frame, ""),
     S!("redirect-frame-focus", 1, 2, f_redirect_frame_focus, ""),
     S!("reconsider-frame-fonts", 1, 1, f_reconsider_frame_fonts, ""),
@@ -3264,6 +3264,14 @@ fn f_frame_live_nil(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 }
 
+fn f_iconify_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = frame_live(i, &arg(&a, 0))?;
+    if crate::editor::frame_is_graphical(i, &frame) {
+        crate::editor::set_frame_visibility(i, &frame, false)?;
+    }
+    Ok(Value::Nil)
+}
+
 /// `frame-after-make-frame' — GNU checks FRAME with frame-live-p
 /// and returns the VALUE flag.
 fn f_frame_after_make_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -3921,14 +3929,18 @@ fn f_make_frame_visible(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU
     // decode_live_frame: nil → selected frame; any non-frame (or a
     // dead frame) is `(wrong-type-argument frame-live-p X)'.
-    match &arg(&a, 0) {
-        Value::Frame(f) if !f.borrow().dead => Ok(a[0].clone()),
+    let frame = match &arg(&a, 0) {
+        Value::Frame(f) if !f.borrow().dead => f.clone(),
         Value::Nil => match crate::editor::sel_frame(i) {
-            Some(f) => Ok(Value::Frame(f)),
-            None => Ok(Value::Nil),
+            Some(f) => f,
+            None => return Ok(Value::Nil),
         },
-        other => Err(i.wrong_type_mut("frame-live-p", other)),
+        other => return Err(i.wrong_type_mut("frame-live-p", other)),
+    };
+    if crate::editor::frame_is_graphical(i, &frame) {
+        crate::editor::set_frame_visibility(i, &frame, true)?;
     }
+    Ok(Value::Frame(frame))
 }
 
 /// frame-*-width/height parameter getters: arg must satisfy framep

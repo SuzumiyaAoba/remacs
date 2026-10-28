@@ -263,27 +263,47 @@ pub(super) fn apply_frame_selection<T: KeyIo>(
     term: &std::rc::Rc<std::cell::RefCell<T>>,
     i: &mut Interp,
 ) {
-    let Some(frame_id) = term.borrow_mut().take_frame_selection() else {
-        return;
-    };
-    let Some(frame) = i
-        .frames
-        .iter()
-        .find(|frame| frame.borrow().id == frame_id)
-        .cloned()
-    else {
-        return;
-    };
-    if i
-        .selected_frame
-        .as_ref()
-        .is_some_and(|selected| std::rc::Rc::ptr_eq(selected, &frame))
+    if let Some(frame_id) = term.borrow_mut().take_frame_selection()
+        && let Some(frame) = i
+            .frames
+            .iter()
+            .find(|frame| frame.borrow().id == frame_id)
+            .cloned()
+        && !i
+            .selected_frame
+            .as_ref()
+            .is_some_and(|selected| std::rc::Rc::ptr_eq(selected, &frame))
     {
-        return;
+        let select_frame = Value::Sym(i.intern("select-frame"));
+        if let Err(flow) = i.apply(&select_frame, vec![Value::Frame(frame)]) {
+            report_flow(i, flow);
+        }
     }
-    let select_frame = Value::Sym(i.intern("select-frame"));
-    if let Err(flow) = i.apply(&select_frame, vec![Value::Frame(frame)]) {
-        report_flow(i, flow);
+
+    if let Some((frame_id, visible)) = term.borrow_mut().take_frame_visibility_update()
+        && let Some(frame) = i
+            .frames
+            .iter()
+            .find(|frame| frame.borrow().id == frame_id)
+            .cloned()
+    {
+        let visibility = if visible {
+            Value::t()
+        } else {
+            Value::Sym(i.intern("icon"))
+        };
+        let visibility_key = Value::Sym(i.intern("visibility"));
+        let known_key = Value::Sym(i.intern("remacs--visibility-known"));
+        let params = crate::lisp::eval::plist_put_front(
+            &frame.borrow().params,
+            &visibility_key,
+            visibility,
+        );
+        frame.borrow_mut().params = crate::lisp::eval::plist_put_front(
+            &params,
+            &known_key,
+            Value::t(),
+        );
     }
 }
 

@@ -42,6 +42,11 @@ pub trait FileDialogBackend {
     ) -> Result<Option<String>, String>;
 }
 
+/// Host window visibility bridge used by GUI frame primitives.
+pub trait FrameVisibilityBackend {
+    fn set_visible(&self, frame_id: usize, visible: bool) -> Result<(), String>;
+}
+
 /// Input from a front-end: key events, committed text, or mouse actions.
 pub enum InputEvent {
     Key(i128),
@@ -139,6 +144,10 @@ pub trait KeyIo {
     /// frame before dispatching the input. Single-window front-ends inherit
     /// the default.
     fn take_frame_selection(&mut self) -> Option<usize> {
+        None
+    }
+    /// Visibility change reported by the native window manager.
+    fn take_frame_visibility_update(&mut self) -> Option<(usize, bool)> {
         None
     }
     /// Show TEXT in the echo area (minibuffer prompt/status).

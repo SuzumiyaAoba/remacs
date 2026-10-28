@@ -159,6 +159,7 @@ impl Interp {
             clipboard_backend: None,
             dialog_backend: None,
             file_dialog_backend: None,
+            frame_visibility_backend: None,
             nsgui_selections: HashMap::default(),
             unread_switch_frame: Value::Nil,
             minibuf_level: 0,

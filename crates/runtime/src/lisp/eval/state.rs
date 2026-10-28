@@ -33,6 +33,14 @@ impl Interp {
         self.file_dialog_backend = backend;
     }
 
+    /// Install or remove the host window visibility backend.
+    pub fn set_frame_visibility_backend(
+        &mut self,
+        backend: Option<Rc<dyn crate::frontend::FrameVisibilityBackend>>,
+    ) {
+        self.frame_visibility_backend = backend;
+    }
+
     pub(crate) fn reset_dump_execution(&mut self) {
         self.specbind.clear();
         self.lexenv = None;

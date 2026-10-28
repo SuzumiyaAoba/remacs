@@ -193,6 +193,7 @@ pub(super) struct EditorView {
     geometry: Option<GuiGeometry>,
     scroll_bar_drag: Option<ScrollBarDrag>,
     toolbar_pressed: bool,
+    focus_subscriptions: Vec<Subscription>,
     #[cfg(target_os = "macos")]
     accessibility_buffer_view: Option<usize>,
     #[cfg(target_os = "macos")]
@@ -229,6 +230,7 @@ impl EditorView {
             geometry: None,
             scroll_bar_drag: None,
             toolbar_pressed: false,
+            focus_subscriptions: Vec::new(),
             #[cfg(target_os = "macos")]
             accessibility_buffer_view: None,
             #[cfg(target_os = "macos")]
@@ -1481,6 +1483,25 @@ pub(super) fn build_managed_editor_view(
     if let Some(grid) = grid {
         view.grid = grid;
     }
+    let frame_events = view.tx.clone();
+    let subscription = window.on_focus_out(&view.focus, cx, move |_event, window, cx| {
+        if let (Some(frame_id), Some(stack)) = (frame_events.frame_id(), cx.window_stack()) {
+            let visible = stack.contains(&window.window_handle());
+            let _ = frame_events.send_visibility_update(frame_id, visible);
+        }
+    });
+    view.focus_subscriptions.push(subscription);
+    let frame_events = view.tx.clone();
+    let subscription = window.on_focus_in(&view.focus, cx, move |window, cx| {
+        if let Some(frame_id) = frame_events.frame_id() {
+            let visible = cx
+                .window_stack()
+                .map(|stack| stack.contains(&window.window_handle()))
+                .unwrap_or(true);
+            let _ = frame_events.send_visibility_update(frame_id, visible);
+        }
+    });
+    view.focus_subscriptions.push(subscription);
     view.focus.focus(window);
     view
 }

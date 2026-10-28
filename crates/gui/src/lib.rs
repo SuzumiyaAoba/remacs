@@ -5,11 +5,15 @@ use std::io;
 use std::sync::{Arc, Mutex};
 #[cfg(target_os = "macos")]
 mod accessibility;
+#[cfg(target_os = "macos")]
+use cocoa::base::{id, nil};
+#[cfg(target_os = "macos")]
+use objc::{msg_send, runtime::{BOOL, YES}, sel, sel_impl};
 mod keys;
 mod logic;
 mod monitor;
 mod view;
-use logic::{ClipboardRequest, FrameSnapshot, GuiRequest, start_logic_with_frames};
+use logic::{ClipboardRequest, FrameSnapshot, GuiEvent, GuiRequest, start_logic_with_frames};
 use view::{EditorView, build_managed_editor_view};
 
 /// Launch the gpui front-end. `files` are visited via `find-file`
@@ -94,6 +98,7 @@ pub fn run_gui_with_dump(
         cx.spawn(async move |cx| {
             let mut windows = HashMap::<usize, WindowHandle<EditorView>>::new();
             let mut window_modes = HashMap::<usize, Option<String>>::new();
+            let mut native_visibility = HashMap::<usize, bool>::new();
             let mut primary_window = Some(primary_window);
             while let Ok(request) = gui_requests.recv().await {
                 match request {
@@ -119,6 +124,7 @@ pub fn run_gui_with_dump(
                                     }
                                 });
                                 window_modes.insert(frame_id, fullscreen);
+                                native_visibility.entry(frame_id).or_insert(true);
                                 continue;
                             }
                             if let Some(handle) = primary_window.take() {
@@ -133,6 +139,7 @@ pub fn run_gui_with_dump(
                                     );
                                 });
                                 window_modes.insert(frame_id, fullscreen);
+                                native_visibility.insert(frame_id, true);
                                 windows.insert(frame_id, handle);
                                 continue;
                             }
@@ -157,7 +164,27 @@ pub fn run_gui_with_dump(
                                 }
                             };
                             window_modes.insert(frame_id, snapshot.fullscreen.clone());
+                            native_visibility.insert(frame_id, true);
                             windows.insert(frame_id, handle);
+                        }
+                        if let Some(stack) = cx.update(|app| app.window_stack()).ok().flatten() {
+                            for (frame_id, handle) in &windows {
+                                let any_window: AnyWindowHandle = (*handle).into();
+                                let visible = handle
+                                    .update(cx, |_view, window, _cx| {
+                                        native_frame_visible(window)
+                                    })
+                                    .ok()
+                                    .flatten()
+                                    .unwrap_or_else(|| stack.contains(&any_window));
+                                if native_visibility.get(frame_id) != Some(&visible) {
+                                    native_visibility.insert(*frame_id, visible);
+                                    let _ = event_tx.send(GuiEvent::FrameVisibility {
+                                        frame_id: *frame_id,
+                                        visible,
+                                    });
+                                }
+                            }
                         }
                     }
                     GuiRequest::Prompt {
@@ -185,6 +212,18 @@ pub fn run_gui_with_dump(
                             Err(format!("GUI frame {frame_id} is not open"))
                         };
                         let _ = reply.send(result);
+                    }
+                    GuiRequest::FrameVisibility { frame_id, visible } => {
+                        native_visibility.insert(frame_id, visible);
+                        if let Some(handle) = windows.get(&frame_id).copied() {
+                            let _ = handle.update(cx, |_view, window, _cx| {
+                                if visible {
+                                    show_frame_window(window);
+                                } else {
+                                    window.minimize_window();
+                                }
+                            });
+                        }
                     }
                     GuiRequest::FileDialog {
                         prompt,
@@ -321,6 +360,53 @@ fn apply_frame_window_state(window: &Window, fullscreen: Option<&str>) {
             }
         }
     }
+}
+
+fn native_frame_visible(window: &Window) -> Option<bool> {
+    #[cfg(target_os = "macos")]
+    {
+        let handle = raw_window_handle::HasWindowHandle::window_handle(window).ok()?;
+        let raw_window_handle::RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+            return None;
+        };
+        unsafe {
+            let view = handle.ns_view.as_ptr() as id;
+            let native_window: id = msg_send![view, window];
+            if native_window.is_null() {
+                return None;
+            }
+            let minimized: BOOL = msg_send![native_window, isMiniaturized];
+            Some(minimized != YES)
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window;
+        None
+    }
+}
+
+fn show_frame_window(window: &Window) {
+    #[cfg(target_os = "macos")]
+    if let Some(handle) = (|| {
+        let handle = raw_window_handle::HasWindowHandle::window_handle(window).ok()?;
+        let raw_window_handle::RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+            return None;
+        };
+        Some(handle)
+    })() {
+        unsafe {
+            let view = handle.ns_view.as_ptr() as id;
+            let native_window: id = msg_send![view, window];
+            if !native_window.is_null() {
+                let minimized: BOOL = msg_send![native_window, isMiniaturized];
+                if minimized == YES {
+                    let _: () = msg_send![native_window, deminiaturize: nil];
+                }
+            }
+        }
+    }
+    window.activate_window();
 }
 
 #[cfg(test)]

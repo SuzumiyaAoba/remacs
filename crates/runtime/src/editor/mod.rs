@@ -6085,10 +6085,44 @@ fn f_frame_live_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 }
 
+pub(crate) fn set_frame_visibility(
+    i: &mut Interp,
+    frame: &FrameRef,
+    visible: bool,
+) -> Result<(), Flow> {
+    let visibility_key = Value::Sym(i.intern("visibility"));
+    let known_key = Value::Sym(i.intern("remacs--visibility-known"));
+    let value = if visible {
+        Value::t()
+    } else {
+        Value::Sym(i.intern("icon"))
+    };
+    let params = crate::lisp::eval::plist_put_front(
+        &frame.borrow().params,
+        &visibility_key,
+        value,
+    );
+    frame.borrow_mut().params =
+        crate::lisp::eval::plist_put_front(&params, &known_key, Value::t());
+    if frame_is_graphical(i, frame)
+        && let Some(backend) = i.frame_visibility_backend.clone()
+    {
+        backend
+            .set_visible(frame.borrow().id, visible)
+            .map_err(|error| i.error(format!("Frame visibility failed: {error}")))?;
+    }
+    Ok(())
+}
+
 fn f_frame_visible_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU requires a live frame; our frames are always "visible".
     match &a[0] {
-        Value::Frame(f) if !f.borrow().dead => Ok(Value::t()),
+        Value::Frame(f) if !f.borrow().dead => {
+            if frame_parameter_value(i, f, "remacs--visibility-known").truthy() {
+                Ok(frame_parameter_value(i, f, "visibility"))
+            } else {
+                Ok(Value::t())
+            }
+        }
         other => Err(i.wrong_type_mut("frame-live-p", other)),
     }
 }
